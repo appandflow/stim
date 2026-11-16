@@ -2,7 +2,8 @@ import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, w
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { launcherFindings } from '../diagnostics/launcher-evidence.ts';
-import { launchersOf, logLauncherProblems } from '../workspace/launchers.ts';
+import { checkoutRootOf } from '../workspace/checkout-role.ts';
+import { launchersOf, logLauncherProblems, noteLauncherProblem } from '../workspace/launchers.ts';
 import { testContext } from './_context.ts';
 
 const launcherDirs = vi.hoisted(() => ({ list: new Array<string>() }));
@@ -89,4 +90,53 @@ describe('the doctor read of the launcher directories', () => {
   it('reports nothing when the whole read finishes within the budget', async () => {
     expect(await launcherFindings({}, new AbortController().signal)).toEqual([]);
   });
+});
+
+describe('ownership that cannot be established is reported with the rest', () => {
+  it('goes into the one record per pass, as a count and the first few', () => {
+    const operation = testContext();
+    const log = vi.fn<(level: string, event: string, msg: string, fields?: unknown) => void>();
+    for (let index = 0; index < 7; index++)
+      noteLauncherProblem(operation, { kind: 'owner', path: `/dev/app-${index}`, error: 'EACCES' });
+    logLauncherProblems(operation, log);
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(log).toHaveBeenCalledWith(
+      'warn',
+      'launcher_evidence_incomplete',
+      expect.stringContaining('7 found, first 5'),
+      expect.objectContaining({ count: 7 }),
+    );
+    expect(log.mock.calls[0]?.[2]).toContain('which git checkout owns /dev/app-0 could not be established (EACCES)');
+    expect(log.mock.calls[0]?.[2]).not.toContain('/dev/app-5');
+  });
+
+  test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+    'is a doctor finding for a registered project whose checkout cannot be read, and is noted for the pass',
+    async () => {
+      const base = realpathSync(mkdtempSync(join(tmpdir(), 'stim-launcher-owner-')));
+      const denied = join(base, 'denied');
+      mkdirSync(join(denied, 'app'), { recursive: true });
+      chmodSync(denied, 0o000);
+      launcherDirs.list = [];
+      try {
+        const operation = testContext();
+        const owner = await checkoutRootOf(join(denied, 'app'), undefined, operation);
+        expect(owner).toMatchObject({ unknown: expect.stringContaining('EACCES') });
+        const log = vi.fn<(level: string, event: string, msg: string, fields?: unknown) => void>();
+        logLauncherProblems(operation, log);
+        expect(log).toHaveBeenCalledTimes(1);
+
+        const [found] = await launcherFindings({}, undefined, [join(denied, 'app')]);
+        expect(found).toMatchObject({
+          code: 'launcher-evidence-incomplete',
+          detail: expect.stringContaining('could not be established (EACCES)'),
+          fix: expect.stringContaining('.git entry'),
+        });
+        expect(await launcherFindings({}, undefined, [])).toEqual([]);
+      } finally {
+        chmodSync(denied, 0o755);
+        rmSync(base, { recursive: true, force: true });
+      }
+    },
+  );
 });

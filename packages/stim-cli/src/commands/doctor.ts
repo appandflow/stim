@@ -769,7 +769,7 @@ async function assembleDoctorReport(
   const maintenance = maintenanceStatus(env);
   const daemon = daemonStatus(env);
   findings.push(...daemonFindings(daemon));
-  findings.push(...(await launcherFindings(env)));
+  findings.push(...(await launcherFindings(env, undefined, Object.keys(loadConfig()?.projects ?? {}))));
   const missingRoots = missingDiscoverRoots(loadConfig(), env);
   if (missingRoots.length)
     findings.push({

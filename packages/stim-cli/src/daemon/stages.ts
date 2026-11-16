@@ -39,7 +39,7 @@ import { getProject, loadConfig, type Config, type ProjectRecord } from '../work
 import { checkoutOwnerOf } from '../workspace/checkout-role.ts';
 import { discoverCheckouts } from '../workspace/discovery.ts';
 import { discoveredEvidence } from '../workspace/discovered-activity.ts';
-import { freshLaunchers, launchersOf, type Checkout, type Launching } from '../workspace/launchers.ts';
+import { freshLaunchers, launchersOf, launchingOf, type Checkout } from '../workspace/launchers.ts';
 import { discoveredReads, type DiscoveredReads } from '../workspace/discovered-reads.ts';
 import { listedRoots } from '../commands/gc/worktrees.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
@@ -372,13 +372,22 @@ export async function clearStoppedOutputs(
               })) === null
             )
               return { outcome: 'kept', bytes: 0, detail: 'it is no longer idle' };
-            const launching: Launching = { launchers, checkout: candidate.checkout };
-            const outputs = await idleOutputs(path, config, {
-              launchers: launchersOf(operation, operation?.signal),
-              checkout: candidate.checkout,
-            });
+            const outputs = await idleOutputs(
+              path,
+              config,
+              launchingOf(candidate.checkout, launchersOf(operation, operation?.signal), operation, operation?.signal),
+            );
             if (!outputs.paths.length) return null;
-            const bytes = await deleteOutputs(outputs.paths, launching, outputs.kept);
+            const bytes = await deleteOutputs(
+              outputs.paths,
+              launchingOf(
+                candidate.checkout,
+                freshLaunchers(operation, operation?.signal),
+                operation,
+                operation?.signal,
+              ),
+              outputs.kept,
+            );
             return {
               outcome: 'done',
               bytes,

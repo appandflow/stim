@@ -12,7 +12,7 @@ import { emptyWorkspaceDir, workspaceInUse, workspaceInUseAsync, withIdleWorkspa
 import { workspaceName } from '../../workspace/paths.ts';
 import { readWorkspaceState, workspaceLastUsed } from '../../workspace/workspace-state.ts';
 import { checkoutRootOf } from '../../workspace/checkout-role.ts';
-import { freshLaunchers, launchersOf } from '../../workspace/launchers.ts';
+import { freshLaunchers, launchersOf, launchingOf } from '../../workspace/launchers.ts';
 import { existingBuildDirsAsync, regenerableDirProblem } from '../../workspace/regenerable-dirs.ts';
 import { workspaceBuildInProgress } from './idle.ts';
 import { mapLimited, sizeConcurrency } from './limited.ts';
@@ -367,7 +367,12 @@ export async function workspaceBuildReasonsAsync(
 
 async function inTreeBuildDirs(root: string, operation?: StimContext, signal?: AbortSignal): Promise<string[]> {
   const dirs: string[] = [];
-  const launching = { launchers: launchersOf(operation, signal), checkout: await checkoutRootOf(root, signal) };
+  const launching = launchingOf(
+    await checkoutRootOf(root, signal, operation),
+    launchersOf(operation, signal),
+    operation,
+    signal,
+  );
   for (const path of await existingBuildDirsAsync(root))
     if (!(await regenerableDirProblem(root, path, signal, { launching }))) dirs.push(path);
   return dirs;
@@ -664,10 +669,12 @@ export async function clearWorkspaceOutputs(
           );
           if (again?.keptReason) return again.keptReason;
           const inTree: { path: string; problem: string | null }[] = [];
-          const launching = {
-            launchers: freshLaunchers(operation, signal),
-            checkout: await checkoutRootOf(root, signal),
-          };
+          const launching = launchingOf(
+            await checkoutRootOf(root, signal, operation),
+            freshLaunchers(operation, signal),
+            operation,
+            signal,
+          );
           for (const path of lighten ? await existingBuildDirsAsync(root) : [])
             inTree.push({ path, problem: await regenerableDirProblem(root, path, signal, { launching }) });
           for (const path of [

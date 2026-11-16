@@ -21,8 +21,9 @@ import { clearStoppedOutputs, stoppedOutputCandidates } from '../daemon/stages.t
 import { collectWorktreeSweep, removeWorktrees } from '../commands/gc/worktrees.ts';
 import { checkoutRootOf } from '../workspace/checkout-role.ts';
 import { saveConfig } from '../workspace/config.ts';
+import * as fsUtil from '../fs-util.ts';
 import { answered } from '../workspace/bounded-read.ts';
-import { freshLaunchers, launcherReason } from '../workspace/launchers.ts';
+import { freshLaunchers, launcherReason, launchingOf } from '../workspace/launchers.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { testContext } from './_context.ts';
 
@@ -75,7 +76,7 @@ describe('an executable on PATH that links into a checkout keeps it, whichever w
   const app = (path: string) => {
     mkdirSync(join(path, 'android', 'app', 'build', 'bin'), { recursive: true });
     writeFileSync(join(path, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
-    writeFileSync(join(path, '.gitignore'), 'build/\nnode_modules/\n');
+    writeFileSync(join(path, '.gitignore'), 'build/\nnode_modules/\ntarget/\n');
     writeFileSync(join(path, 'android', 'app', 'build', 'bin', 'tool'), '#!/bin/sh\n');
     git(path, 'init', '-q', '-b', 'main');
     git(path, 'add', '-A');
@@ -137,12 +138,12 @@ describe('an executable on PATH that links into a checkout keeps it, whichever w
 
     symlinkSync(tool, join(base, 'hop'));
     link(join(base, 'hop'));
-    const kept = await idleOutputs(path, config, { launchers: freshLaunchers(operation), checkout: path });
+    const kept = await idleOutputs(path, config, launchingOf(path, freshLaunchers(operation), operation));
     expect(kept.paths).not.toContain(outputs);
     expect(kept.kept).toEqual([expect.stringContaining('on PATH')]);
 
     unlinkSync(join(bin, 'tool'));
-    const free = await idleOutputs(path, config, { launchers: freshLaunchers(operation), checkout: path });
+    const free = await idleOutputs(path, config, launchingOf(path, freshLaunchers(operation), operation));
     expect(free.paths).toContain(outputs);
     expect(free.kept).toEqual([]);
   });
@@ -257,7 +258,7 @@ describe('an executable on PATH that links into a checkout keeps it, whichever w
       chmodSync(mono, 0o000);
       try {
         const owner = await checkoutRootOf(join(mono, 'apps', 'native'));
-        expect(owner).toEqual({ unknown: expect.stringContaining('EACCES') });
+        expect(owner).toMatchObject({ unknown: expect.stringContaining('EACCES') });
         expect(launcherReason(owner, { targets: [], incomplete: [] })).toContain('cannot be ruled out');
       } finally {
         chmodSync(mono, 0o755);
@@ -277,7 +278,7 @@ describe('an executable on PATH that links into a checkout keeps it, whichever w
     expect(await stuck).toBe('timed out');
 
     const owner = await checkoutRootOf(join(mono, 'apps'));
-    expect(owner).toEqual({ unknown: expect.stringContaining('/stalled-mount') });
+    expect(owner).toMatchObject({ unknown: expect.stringContaining('/stalled-mount') });
     expect(launcherReason(owner, { targets: [], incomplete: [] })).not.toBeNull();
 
     release('late');
@@ -293,6 +294,73 @@ describe('an executable on PATH that links into a checkout keeps it, whichever w
     expect(await checkoutRootOf(join(mono, 'apps', 'native'))).toBe(mono);
     expect(await checkoutRootOf(mono)).toBe(mono);
     expect(await checkoutRootOf(join(base, 'loose'))).toBe(join(base, 'loose'));
+  });
+
+  describe('a discovered checkout cleared through clearStoppedOutputs, read through the production launcher reader', () => {
+    const cargoApp = (path: string) => {
+      app(path);
+      mkdirSync(join(path, 'target', 'debug'), { recursive: true });
+      writeFileSync(join(path, 'target', 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55\n');
+      writeFileSync(join(path, 'target', 'debug', 'tool'), '#!/bin/sh\n');
+      age(path);
+    };
+    const roots = () => join(base, 'roots');
+    const configOf = (): Config => ({
+      version: 2,
+      projects: {},
+      repos: {},
+      maintenance: { discoverRoots: [roots()] },
+    });
+
+    it('keeps the Cargo target when a launcher appears during the Cargo process read of idleOutputs', async () => {
+      const path = join(roots(), 'app');
+      const config = configOf();
+      saveConfig(config);
+      cargoApp(path);
+      const idle = await stoppedOutputCandidates(config, reading, day);
+      const candidate = idle.find((entry) => entry.path === path) ?? fail();
+
+      const real = getExecutor();
+      let processReads = 0;
+      setExecutor({
+        ...real,
+        runFileQuietAsync: (file, args, options) => {
+          if (file === 'ps' && !args.includes('pid=,ppid=') && ++processReads === 2)
+            link(join(path, 'target', 'debug', 'tool'));
+          return real.runFileQuietAsync(file, args, options);
+        },
+      });
+      try {
+        await clearStoppedOutputs(candidate, config, day);
+      } finally {
+        resetExecutor();
+      }
+      expect(processReads).toBeGreaterThanOrEqual(2);
+      expect(existsSync(join(path, 'target'))).toBe(true);
+    });
+
+    it('keeps the build output when a launcher appears during the size walk, and clears it when none does', async () => {
+      const path = join(roots(), 'app');
+      const config = configOf();
+      saveConfig(config);
+      const tool = app(path);
+      const idle = await stoppedOutputCandidates(config, reading, day);
+      const candidate = idle.find((entry) => entry.path === path) ?? fail();
+
+      vi.spyOn(fsUtil, 'measuredDirectorySizeAsync').mockImplementation(async () => {
+        if (!existsSync(join(bin, 'tool'))) link(tool);
+        return 1;
+      });
+      expect(await clearStoppedOutputs(candidate, config, day)).toMatchObject({
+        detail: expect.stringContaining('on PATH'),
+      });
+      expect(existsSync(join(path, 'android', 'app', 'build'))).toBe(true);
+
+      unlinkSync(join(bin, 'tool'));
+      vi.spyOn(fsUtil, 'measuredDirectorySizeAsync').mockImplementation(async () => 1);
+      expect(await clearStoppedOutputs(candidate, config, day)).toMatchObject({ outcome: 'done' });
+      expect(existsSync(join(path, 'android', 'app', 'build'))).toBe(false);
+    });
   });
 
   it('reads the launcher directories where it reads the running processes, once per process read, and once for planning', async () => {
@@ -313,38 +381,52 @@ describe('an executable on PATH that links into a checkout keeps it, whichever w
 
     const real = getExecutor();
     let processReads = 0;
+    let snapshotReads = 0;
     setExecutor({
       ...real,
       runFileQuietAsync: (file, args, options) => {
-        if (file === 'ps' && !args.includes('pid=,ppid=')) processReads++;
+        if (file === 'ps' && args.includes('pid=,ppid=')) snapshotReads++;
+        else if (file === 'ps') processReads++;
         return real.runFileQuietAsync(file, args, options);
       },
     });
     try {
       launcherDirs.state.reads = 0;
       processReads = 0;
+      snapshotReads = 0;
       const idle = await stoppedOutputCandidates(config, reading, day);
       expect(idle).toHaveLength(4);
-      expect([launcherDirs.state.reads, processReads]).toEqual([1, 1]);
+      expect([launcherDirs.state.reads, processReads, snapshotReads]).toEqual([1, 1, 1]);
 
       launcherDirs.state.reads = 0;
       processReads = 0;
+      snapshotReads = 0;
       const pass = testContext();
       for (const candidate of idle) await clearStoppedOutputs(candidate, config, day, pass);
-      expect(processReads).toBe(idle.length);
-      expect(launcherDirs.state.reads).toBe(1 + processReads);
+      expect(snapshotReads).toBe(idle.length);
+      expect(launcherDirs.state.reads).toBe(1 + snapshotReads + idle.length);
 
       launcherDirs.state.reads = 0;
       processReads = 0;
-      await runDormantDependencies({
-        config,
-        act: true,
-        log: () => {},
-        ...reading,
-        operation: testContext(),
-        force: true,
-      });
-      expect(launcherDirs.state.reads).toBe(3);
+      snapshotReads = 0;
+      const dependencies = (act: boolean) =>
+        runDormantDependencies({
+          config,
+          act,
+          log: () => {},
+          ...reading,
+          operation: testContext(),
+          force: true,
+        });
+      await dependencies(false);
+      const planned = snapshotReads;
+      expect(launcherDirs.state.reads).toBe(1);
+
+      launcherDirs.state.reads = 0;
+      snapshotReads = 0;
+      await dependencies(true);
+      expect(snapshotReads).toBeGreaterThan(planned);
+      expect(launcherDirs.state.reads).toBe(1 + (snapshotReads - planned) + 1);
       expect(existsSync(join(linked, 'node_modules'))).toBe(false);
     } finally {
       resetExecutor();

@@ -10,7 +10,7 @@ import { canonicalPath } from '../../commands/gc/paths.ts';
 import { listedRoots } from '../../commands/gc/worktrees.ts';
 import { discoverCheckouts } from '../../workspace/discovery.ts';
 import { checkoutRootOf } from '../../workspace/checkout-role.ts';
-import { freshLaunchers, launchersOf, type Checkout } from '../../workspace/launchers.ts';
+import { launchersOf, launchingOf, type Checkout } from '../../workspace/launchers.ts';
 import { cargoTargetDirsAsync, isBuildDirPath, regenerableDirProblem } from '../../workspace/regenerable-dirs.ts';
 import { appRoots, artifactCheckoutsAsync } from './artifacts.ts';
 import { readVolumeSpaceAsync } from './budget.ts';
@@ -117,7 +117,7 @@ async function cargoTargetCandidates(
     }
   };
   const checkouts = await artifactCheckoutsAsync(signal, operation);
-  for (const root of registered) await add(root, false, await owningCheckout(root, checkouts, signal));
+  for (const root of registered) await add(root, false, await owningCheckout(root, checkouts, signal, operation));
   const discovered = new Set(
     (await discoverCheckouts(loadConfig(), listedRoots(), operation)).map(({ path }) => canonicalPath(path)),
   );
@@ -154,7 +154,7 @@ export async function measureCargoTargets(
     lastMeasured.set(dir, now);
     const problem = await regenerableDirProblem(root, dir, operation?.signal, {
       processes: false,
-      launching: { launchers: launchersOf(operation, operation?.signal), checkout },
+      launching: launchingOf(checkout, launchersOf(operation, operation?.signal), operation, operation?.signal),
     });
     if (problem) {
       scan.refused.set(dir, { workspace: root, reason: problem });
@@ -365,7 +365,7 @@ export async function planCargoTargetsAtPressure({
     if (tightened === 'normal') continue;
     const problem = await regenerableDirProblem(workspace, dir, signal, {
       processes: false,
-      launching: { launchers: launchersOf(operation, signal), checkout },
+      launching: launchingOf(checkout, launchersOf(operation, signal), operation, signal),
     });
     if (problem) {
       plan.skips.push({ target: dir, reason: problem, workspace });
@@ -410,13 +410,14 @@ async function owningCheckout(
   root: string,
   checkouts: readonly { path: string }[],
   signal: AbortSignal,
+  operation?: StimContext,
 ): Promise<Checkout> {
   const canonical = canonicalPath(root);
   const owner = checkouts
     .map(({ path }) => canonicalPath(path))
     .filter((path) => canonical === path || canonical.startsWith(`${path}${sep}`))
     .toSorted((a, b) => b.length - a.length)[0];
-  return owner ?? (await checkoutRootOf(canonical, signal));
+  return owner ?? (await checkoutRootOf(canonical, signal, operation));
 }
 
 async function managedAs(root: string, operation?: StimContext): Promise<{ checkout: Checkout } | null> {
@@ -424,7 +425,7 @@ async function managedAs(root: string, operation?: StimContext): Promise<{ check
   const signal = operation?.signal ?? new AbortController().signal;
   const checkouts = await artifactCheckoutsAsync(signal, operation);
   if (listedRoots().some((listed) => canonicalPath(listed) === canonical))
-    return { checkout: await owningCheckout(canonical, checkouts, signal) };
+    return { checkout: await owningCheckout(canonical, checkouts, signal, operation) };
   const checkout = checkouts.find((entry) =>
     appRoots(entry, 'build').some((base) => canonicalPath(base) === canonical),
   );
@@ -448,13 +449,15 @@ export async function trimCargoTargetAction(
   if (!root || !isBuildDirPath(action.target)) return kept('it is no longer a Cargo target/ Stim recognises');
   const managed = await managedAs(root, operation);
   if (!managed) return kept('its checkout is no longer in a workspace or discovery scope');
-  const launching = {
-    launchers: () => freshLaunchers(operation, operation?.signal)(),
-    checkout: managed.checkout,
-  };
+  const launching = launchingOf(
+    managed.checkout,
+    launchersOf(operation, operation?.signal),
+    operation,
+    operation?.signal,
+  );
   const problem = await regenerableDirProblem(root, action.target, operation?.signal, {
     processes: false,
-    launching: { launchers: launchersOf(operation, operation?.signal), checkout: managed.checkout },
+    launching,
   });
   if (problem) return kept(problem);
   const measure = action.level === undefined;

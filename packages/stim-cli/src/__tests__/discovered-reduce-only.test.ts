@@ -375,7 +375,7 @@ describe('checkouts found through a tool folder or the full scan', () => {
     });
     const launchers = async () => ({ targets: measured ? [join(output, 'tool')] : [], incomplete: [] });
     const kept: string[] = [];
-    expect(await deleteOutputs([output], { launchers, checkout }, kept)).toBe(0);
+    expect(await deleteOutputs([output], { launchers, anew: launchers, checkout }, kept)).toBe(0);
     expect(existsSync(output)).toBe(true);
     expect(kept).toEqual([expect.stringContaining('on PATH')]);
 

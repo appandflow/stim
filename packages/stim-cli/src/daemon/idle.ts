@@ -16,7 +16,7 @@ import {
 } from '@stim-cli/core/state';
 import { formatBytes, measuredDirectorySizeAsync } from '../fs-util.ts';
 import { checkoutRootOf } from '../workspace/checkout-role.ts';
-import { freshLaunchers, launcherReason, launchersOf, type Launching } from '../workspace/launchers.ts';
+import { freshLaunchers, launcherReason, launchersOf, launchingOf, type Launching } from '../workspace/launchers.ts';
 import { collectOwnedDeviceActivityAsync, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { workspaceOutputPaths } from '../commands/gc/workspaces.ts';
@@ -217,9 +217,8 @@ export async function idleOutputs(
 }
 
 /**
- * Deletes `paths`, measuring each first. It checks the executables on PATH once the measurement is done, immediately
- * before the removals, with the reading `launching` gives: for a registered workspace that reading is first taken here,
- * after the sizes; for a discovered checkout it is the one taken with the idleness evidence's process read. It keeps
+ * Deletes `paths`, measuring each first. It then reads the executables on PATH anew, with the reading `launching` gives,
+ * immediately before the removals, so the reading follows the size walk and every process read before it, and keeps
  * every path when one resolves into the checkout, saying so in `kept`.
  */
 export async function deleteOutputs(paths: readonly string[], launching: Launching, kept: string[]): Promise<number> {
@@ -326,15 +325,18 @@ async function enterIdleStage(
               const [kind, slot = 'default'] = key.split(':');
               return outcome?.status === 'shut-down' && booted.has(`${kind}:${slot}`) ? [key] : [];
             });
-            const launching: Launching = {
-              launchers: freshLaunchers(input.operation, input.operation?.signal),
-              checkout: await checkoutRootOf(path, input.operation?.signal),
-            };
-            const outputs = await idleOutputs(path, config, {
-              launchers: launchersOf(input.operation, input.operation?.signal),
-              checkout: launching.checkout,
-            });
-            const freed = await deleteOutputs(outputs.paths, launching, outputs.kept);
+            const { operation } = input;
+            const checkout = await checkoutRootOf(path, operation?.signal, operation);
+            const outputs = await idleOutputs(
+              path,
+              config,
+              launchingOf(checkout, launchersOf(operation, operation?.signal), operation, operation?.signal),
+            );
+            const freed = await deleteOutputs(
+              outputs.paths,
+              launchingOf(checkout, freshLaunchers(operation, operation?.signal), operation, operation?.signal),
+              outputs.kept,
+            );
             await recordStage(path, minutes, shutDown, freed);
             const idle = Math.floor(again.decision.idleMs / MINUTE_MS);
             const restore = revivable(path) ? 'stim revive' : 'stim ios or stim android';

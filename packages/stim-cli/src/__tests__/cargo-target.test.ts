@@ -306,7 +306,7 @@ test('a launcher on PATH that appears after the first reading keeps what it poin
     const result = await trimCargoTarget(target, {
       needBytes: 1,
       incremental: 'all',
-      launching: { launchers, checkout: target },
+      launching: { launchers, anew: launchers, checkout: target },
     });
 
     expect(readings).toBe(2);

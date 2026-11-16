@@ -21,7 +21,7 @@ import { projectDeviceSlots } from '../devices/device-slots.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
 import { readParked } from '../devices/sim-pool.ts';
 import { restoreProblem } from '../workspace/lightened.ts';
-import { launchersOf, type Launching } from '../workspace/launchers.ts';
+import { launchersOf, launchingOf, type Launching } from '../workspace/launchers.ts';
 import { formatBytes, measuredDirectorySizeAsync } from '../fs-util.ts';
 import { timedStep } from './step-timing.ts';
 import { executeAction, type ActContext, type ActionOutcome } from '../stimd/passes/act.ts';
@@ -277,10 +277,16 @@ async function idleOutputsRung(context: RungContext): Promise<void> {
       : {
           outcome: 'would' as const,
           bytes: context.measure
-            ? await idleOutputBytes(candidate.path, context.config, {
-                launchers: launchersOf(context.operation, context.operation?.signal),
-                checkout: candidate.checkout,
-              })
+            ? await idleOutputBytes(
+                candidate.path,
+                context.config,
+                launchingOf(
+                  candidate.checkout,
+                  launchersOf(context.operation, context.operation?.signal),
+                  context.operation,
+                  context.operation?.signal,
+                ),
+              )
             : 0,
           detail: wouldDetail(context),
         };

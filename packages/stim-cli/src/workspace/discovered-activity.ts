@@ -140,7 +140,7 @@ export async function discoveredEvidence(
   keep.push(...(await reads.sessions(path, now)));
   const running = runningFromReason(path, await reads.processes());
   if (running) keep.push(running);
-  const launcher = launcherReason(await checkoutRootOf(path, signal), await reads.launchers());
+  const launcher = launcherReason(await checkoutRootOf(path, signal, operation), await reads.launchers());
   if (launcher) keep.push(launcher);
   return { activity, keep };
 }

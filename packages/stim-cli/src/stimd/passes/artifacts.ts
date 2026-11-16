@@ -20,7 +20,7 @@ import {
 import { reclaimKeys } from '../../commands/worktree.ts';
 import { loadConfig } from '../../workspace/config.ts';
 import { discoverCheckouts } from '../../workspace/discovery.ts';
-import { launcherReason, launchersOf, type LauncherScan } from '../../workspace/launchers.ts';
+import { launcherReason, launchersOf, launchingOf, type LauncherScan } from '../../workspace/launchers.ts';
 import { gitQuiet, gitQuietAsync } from '../../workspace/git.ts';
 import { childEnvironment } from '../../workspace/git-read.ts';
 import { withIdleWorkspace, workspaceInUse, workspaceInUseAsync } from '../../workspace/in-use.ts';
@@ -472,7 +472,7 @@ export async function collectArtifactsAsync(
         if (!reason && candidate.source)
           reason =
             (await regenerableDirProblem(worktree.path, path, signal, {
-              launching: { launchers, checkout: worktree.path },
+              launching: launchingOf(worktree.path, launchers, operation, signal),
             })) ?? linkedWorktreeUsing(candidate, all);
         if (reason) skips.push({ target: path, reason });
         else candidates.push(candidate);
@@ -775,7 +775,7 @@ export async function clearSourceTrees(
         await artifactReads(candidate, 'dependencies', signal, operation, planning),
       ) ??
       (await regenerableDirProblem(worktree.path, path, signal, {
-        launching: { launchers: planning, checkout: worktree.path },
+        launching: launchingOf(worktree.path, planning, operation, signal),
       })) ??
       linkedWorktreeUsing(candidate, options.worktrees)
     );

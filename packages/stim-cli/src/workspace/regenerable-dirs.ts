@@ -251,6 +251,8 @@ export async function regenerableDirProblem(
     const others = await othersRunningAsync(await readRunningProcessesAsync(signal), signal);
     const running = runningFromReason(dirname(path), others);
     if (running) return `its app may be in use: ${running.replace(/ it\b/, ' its app')}`;
+    const after = launcherReason(launching.checkout, await launching.anew());
+    if (after) return after;
   }
   return null;
 }

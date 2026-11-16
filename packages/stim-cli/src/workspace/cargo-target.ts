@@ -320,7 +320,7 @@ async function readTargetUse(
     const lsof = await run('lsof', ['-nP', '-w', '-Fn'], 60_000);
     const ps = await run('ps', ['-axww', '-o', 'args='], 30_000);
     const used = targetPathsInUse(target, lsof, ps);
-    const launcher = launcherReason(launching.checkout, await launching.launchers());
+    const launcher = launcherReason(launching.checkout, await launching.anew());
     return launcher ? { kept: launcher } : { used };
   } catch {
     signal?.throwIfAborted();
@@ -396,8 +396,8 @@ interface CargoTrimOptions {
   /** Whether to walk what was removed to report its bytes; false reports 0 and removes at once. Default true. */
   measure?: boolean;
   /**
-   * A launcher reading that reads anew at every call, which the trim makes wherever it reads the processes using the
-   * target, and the checkout that owns the target; a launcher into any of it keeps the whole target. Every caller states it.
+   * The checkout that owns the target and how to read the launchers anew, which the trim does after each read of the
+   * processes using the target; a launcher into any of the checkout keeps the whole target. Every caller states it.
    */
   launching: Launching;
 }

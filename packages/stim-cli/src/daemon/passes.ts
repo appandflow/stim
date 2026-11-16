@@ -13,7 +13,7 @@ import { processContext } from '../cli-operation.ts';
 import { runMaintenance } from '../stimd/passes/run.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { checkoutRootOf } from '../workspace/checkout-role.ts';
-import { launchersOf, logLauncherProblems } from '../workspace/launchers.ts';
+import { launchersOf, launchingOf, logLauncherProblems } from '../workspace/launchers.ts';
 import { loadConfig, type Config } from '../workspace/config.ts';
 import { requestDaemonTick, stimdRefused } from './client.ts';
 import { runBootedParkedPass } from './booted-parked.ts';
@@ -464,10 +464,16 @@ export async function runForcedLadder({
           bytes:
             entry.freedBytes ??
             (entry.outcome === 'would-idle'
-              ? await idleOutputBytes(entry.path, config, {
-                  launchers: launchersOf(operation, operation?.signal),
-                  checkout: await checkoutRootOf(entry.path, operation?.signal),
-                })
+              ? await idleOutputBytes(
+                  entry.path,
+                  config,
+                  launchingOf(
+                    await checkoutRootOf(entry.path, operation?.signal, operation),
+                    launchersOf(operation, operation?.signal),
+                    operation,
+                    operation?.signal,
+                  ),
+                )
               : 0),
           detail: entry.outcome === 'would-idle' ? 'stim gc would do this' : entry.detail,
           ...(entry.outcome === 'idle' ? { restore: 'stim revive' } : {}),
@@ -538,10 +544,11 @@ export async function runDormantReduction({
         ? await clearStoppedOutputs(candidate, config, afterMs, operation)
         : {
             outcome: 'would' as const,
-            bytes: await idleOutputBytes(candidate.path, config, {
-              launchers: launchersOf(operation, operation?.signal),
-              checkout: candidate.checkout,
-            }),
+            bytes: await idleOutputBytes(
+              candidate.path,
+              config,
+              launchingOf(candidate.checkout, launchersOf(operation, operation?.signal), operation, operation?.signal),
+            ),
             detail: 'stim gc would do this',
           };
       if (result)

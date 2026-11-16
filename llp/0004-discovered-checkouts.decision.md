@@ -209,14 +209,16 @@ launcher read per process read and nothing is memoized past a process re-read. T
 pass's planning reading (shared by the operation, possibly minutes old) serves
 planning and the early checks only. The routes: the idleness evidence reads the
 processes and the launchers together (`discoveredEvidence`, one `DiscoveredReads`
-per check); `clearStoppedOutputs` keeps that reading for `deleteOutputs`, so for a
-discovered checkout the launcher read precedes the size measurement, and for a
-registered workspace, which has no process read in its idleness check, it is first
-taken in `deleteOutputs` after the sizes; `clearArtifact` and `clearSourceTrees`
-read the launchers once after their last recheck, before the removal; the Cargo
-trim takes a new launcher reading at each of its three process reads and checks the
-whole owning checkout against it before trimming anything; the worktree removal
-guard reads the processes and the launchers together. The plan-time
+per check); a directory check that reads the processes itself (a Cargo `target/` in
+`regenerableDirProblem`) takes a new launcher reading right after that read;
+`deleteOutputs`, for a registered workspace and a discovered checkout alike, takes
+its own new launcher reading after the size walk and immediately before the
+removals, and no reading is carried from the idleness check across a later process
+read; `clearArtifact` and `clearSourceTrees` read the launchers once after their
+last recheck, before the removal; the Cargo trim takes a new launcher reading at
+each of its three process reads and checks the whole owning checkout against it
+before trimming anything; the worktree removal guard reads the processes and the
+launchers together. The plan-time
 whole-checkout keep stays. The window that remains is the one for a launcher or a
 process that appears after the last read of its snapshot: Stim accepts it for
 processes and gives launchers no larger one.
@@ -568,7 +570,10 @@ a pending read of a folder that is not a launcher directory is reported as a rea
 outside PATH, not as a PATH directory. `stim doctor` reports the finding
 `launcher-evidence-incomplete` with the path, the error and the fix, from a read
 bounded by 3 seconds per call and a 10 second deadline that covers queue time and
-every entry read, and a read that reaches the deadline is reported as incomplete. Each daemon pass writes one
+every entry read, and a read that reaches the deadline is reported as incomplete; it
+also runs the same bounded ownership probe for each registered project. A checkout
+whose owner cannot be established is part of the same pass record, as a count and
+the first five. Each daemon pass writes one
 `launcher_evidence_incomplete` record, and each item's keep reason names the
 cause.
 
@@ -591,9 +596,10 @@ narrower root.
 Cost: one shared read per planning operation (55-72 ms for 995 symlinks) and one
 fresh read per process read. In a scratch pass of four idle discovered
 checkouts and one linked worktree, the launcher reads were 1 plan + 12 output
-reads + 4 dependency reads when every check read anew, and are 1 plan + 4 output
-reads (the shared planning read, then one fresh read per idleness process read)
-and 3 dependency reads (one planning, two fresh) now. The pressure ladder keeps going to later rungs when a kept checkout leaves the
+reads + 4 dependency reads when every check read anew, and are 1 plan + 8 output
+reads (the shared planning read, then per candidate one with the idleness process
+read and one after the size walk) and 3 dependency reads (one planning, one with
+the recheck's process read, one before the removal) now. The pressure ladder keeps going to later rungs when a kept checkout leaves the
 level short, as for every other keep reason.
 
 ## Links

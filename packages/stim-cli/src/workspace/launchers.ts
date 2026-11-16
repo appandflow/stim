@@ -12,7 +12,7 @@ import { launcherDirectories } from './launcher-directories.ts';
  * nothing is known about what it covers.
  */
 export interface LauncherProblem {
-  kind: 'directory' | 'entry' | 'pending';
+  kind: 'directory' | 'entry' | 'pending' | 'owner';
   path: string;
   error: string;
 }
@@ -40,6 +40,7 @@ export const absent = (error: unknown): boolean =>
   error instanceof Error && 'code' in error && ABSENT.includes(String(error.code));
 
 const READ_TIMEOUT_MS = 3000;
+const FIRST_PROBLEMS = 5;
 
 export const describe = (error: unknown): string =>
   error instanceof Error && 'code' in error
@@ -136,9 +137,7 @@ const newReader = (
   if (!operation) return read;
   return async () => {
     const scan = await read();
-    const seen = observed.get(operation) ?? new Map<string, LauncherProblem>();
-    for (const problem of scan.incomplete) seen.set(`${problem.kind} ${problem.path}`, problem);
-    observed.set(operation, seen);
+    for (const problem of scan.incomplete) noteLauncherProblem(operation, problem);
     return scan;
   };
 };
@@ -173,12 +172,32 @@ export function freshLaunchers(
 }
 
 /** A checkout root, or why ownership of a path could not be established, which keeps it. */
-export type Checkout = string | { unknown: string };
+export type Checkout = string | { unknown: string; problem: LauncherProblem };
 
 /** What a deletion path checks against PATH launchers: a launcher reading and the checkout it is checked against. */
 export interface Launching {
+  /** The reading the caller's checks share. */
   launchers: () => Promise<LauncherScan>;
+  /** A new reading, taken by a check that reads running processes itself, right after that read. */
+  anew: () => Promise<LauncherScan>;
   checkout: Checkout;
+}
+
+/** The `Launching` of a checkout whose checks share `launchers`, and whose process reads each take a new reading. */
+export function launchingOf(
+  checkout: Checkout,
+  launchers: () => Promise<LauncherScan>,
+  operation: StimContext | undefined,
+  signal?: AbortSignal,
+): Launching {
+  return { launchers, anew: () => freshLaunchers(operation, signal)(), checkout };
+}
+
+/** Records a problem met outside a reading, such as a checkout whose owner cannot be established. */
+export function noteLauncherProblem(operation: StimContext, problem: LauncherProblem): void {
+  const seen = observed.get(operation) ?? new Map<string, LauncherProblem>();
+  seen.set(`${problem.kind} ${problem.path}`, problem);
+  observed.set(operation, seen);
 }
 
 /** The launcher problems that readings of the operation have met since the last call, each once. */
@@ -194,13 +213,14 @@ export function logLauncherProblems(
   log: (level: 'warn', event: string, msg: string, fields?: Record<string, unknown>) => void,
 ): void {
   const problems = takeLauncherProblems(operation);
-  if (problems.length)
-    log(
-      'warn',
-      'launcher_evidence_incomplete',
-      `Launcher evidence is incomplete, so cleanup keeps every checkout: ${describeLauncherProblems(problems)}. Run stim doctor for the fix.`,
-      { problems },
-    );
+  if (!problems.length) return;
+  const first = problems.slice(0, FIRST_PROBLEMS);
+  log(
+    'warn',
+    'launcher_evidence_incomplete',
+    `Launcher evidence is incomplete, so cleanup keeps what it cannot rule out (${problems.length} found${problems.length > first.length ? `, first ${first.length}` : ''}): ${describeLauncherProblems(first)}. Run stim doctor for the fix.`,
+    { count: problems.length, problems: first },
+  );
 }
 
 /** The same, as one sentence for a log record or a finding. */
@@ -211,7 +231,9 @@ export function describeLauncherProblems(problems: readonly LauncherProblem[]): 
         ? `the directory ${path} could not be read (${error})`
         : kind === 'entry'
           ? `${path} could not be resolved (${error})`
-          : `${path}: ${error}`,
+          : kind === 'owner'
+            ? `which git checkout owns ${path} could not be established (${error})`
+            : `${path}: ${error}`,
     )
     .join('; ');
 }

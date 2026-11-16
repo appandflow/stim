@@ -1,3 +1,4 @@
+import { checkoutRootOf } from '../workspace/checkout-role.ts';
 import { launcherDirectories } from '../workspace/launcher-directories.ts';
 import { describeLauncherProblems, launcherReader, type LauncherProblem } from '../workspace/launchers.ts';
 import type { Finding } from './doctor.ts';
@@ -8,6 +9,7 @@ const FIX: Record<LauncherProblem['kind'], string> = {
   directory: 'remove the directory from PATH, or fix its permissions so it can be read',
   entry: 'remove or repair the link, or fix its permissions',
   pending: 'wait for the stalled read to finish, or disconnect the stalled mount it names',
+  owner: 'fix the permissions of the checkout folder or its .git entry, or wait for the stalled read to finish',
 };
 
 /**
@@ -18,6 +20,7 @@ const FIX: Record<LauncherProblem['kind'], string> = {
 export async function launcherFindings(
   env: NodeJS.ProcessEnv,
   signal: AbortSignal = AbortSignal.timeout(READ_BUDGET_MS),
+  projects: readonly string[] = [],
 ): Promise<Finding[]> {
   let problems: LauncherProblem[];
   try {
@@ -26,8 +29,15 @@ export async function launcherFindings(
       if (signal.aborted) stop();
       else signal.addEventListener('abort', stop, { once: true });
     });
-    problems = (await Promise.race([launcherReader(signal, { directories: launcherDirectories(env) })(), expired]))
-      .incomplete;
+    const read = async (): Promise<LauncherProblem[]> => {
+      const found = [...(await launcherReader(signal, { directories: launcherDirectories(env) })()).incomplete];
+      for (const project of projects) {
+        const owner = await checkoutRootOf(project, signal);
+        if (typeof owner !== 'string') found.push(owner.problem);
+      }
+      return found;
+    };
+    problems = await Promise.race([read(), expired]);
   } catch {
     problems = [{ kind: 'pending', path: 'the launcher directories', error: 'reading them did not finish in time' }];
   }
