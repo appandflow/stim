@@ -681,7 +681,7 @@ export async function startDevServer(
           code: 'STIM_SUPERVISOR_EXITED',
           message: `Cannot reuse or replace the recorded supervisor: ${recordedTarget.reason}.`,
           remedy:
-            'Stop it with the tool that started it, then retry `stim start`. If inspection is denied, retry with permission to inspect Stim processes. Stim leaves unverified processes alone.',
+            'Stop it with the tool that started it, then retry `stim start`. If inspection is denied, retry with permission to inspect Stim processes. Do not infer ownership from a process name, port or timestamp.',
         });
       }
       if (!resetCache && !resolution.metro && !supervisor) await gateBudget();
