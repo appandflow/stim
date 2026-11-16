@@ -15,6 +15,12 @@ export interface CensusFind {
   adoptable: boolean;
   /** When its build output was last measured, epoch ms; 0 when it was not measured yet. */
   evaluatedAt: number;
+  /**
+   * When the daemon last tried to measure it, epoch ms, whether or not the run got far enough to measure anything; it
+   * only orders the work, so a checkout whose run is cut short does not stay first. Absent in a file written before it
+   * existed, which reads as never tried.
+   */
+  attemptedAt?: number;
   /** The recognised build directories in it, the ones Stim would clear. */
   dirs: number;
   /** How many of them were measured, and how many were tried and failed or timed out (the rest are not measured yet). */
@@ -70,7 +76,8 @@ function parseFind(value: unknown): CensusFind | null {
     !finite(value.partialDirs) ||
     !finite(value.bytes) ||
     typeof value.unreadable !== 'boolean' ||
-    (value.gitActivityAt !== null && !finite(value.gitActivityAt))
+    (value.gitActivityAt !== null && !finite(value.gitActivityAt)) ||
+    (value.attemptedAt !== undefined && !finite(value.attemptedAt))
   )
     return null;
   return {
@@ -86,6 +93,7 @@ function parseFind(value: unknown): CensusFind | null {
     bytes: value.bytes,
     unreadable: value.unreadable,
     gitActivityAt: value.gitActivityAt,
+    ...(value.attemptedAt === undefined ? {} : { attemptedAt: value.attemptedAt }),
   };
 }
 

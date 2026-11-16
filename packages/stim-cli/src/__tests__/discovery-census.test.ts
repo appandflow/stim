@@ -159,6 +159,46 @@ describe('runDiscoveryCensusIfDue', () => {
     expect(complete()).toBe(true);
   });
 
+  it('measures the others when one checkout exhausts the budget every run, and leaves that one not measured', async () => {
+    const slow = join(home, 'dev', 'fresh');
+    const real = {
+      readNames: (path: string) => readdir(path),
+      isDirectory: async (path: string) => (await lstat(path)).isDirectory(),
+      realpath: (path: string) => realpath(path),
+      lstat: async (path: string) => {
+        const info = await lstat(path);
+        return {
+          kind: info.isDirectory() ? 'directory' : info.isFile() ? 'file' : 'other',
+          mtimeMs: info.mtimeMs,
+        } as const;
+      },
+      head: async (path: string, bytes: number) =>
+        (await lstat(path)).isFile() ? (await readFile(path, 'utf8')).slice(0, bytes) : null,
+    };
+    const io = {
+      ...real,
+      readNames: async (path: string) => {
+        if (path === join(slow, 'apps')) vi.setSystemTime(Date.now() + 100_000);
+        return real.readNames(path);
+      },
+    };
+    const complete = () =>
+      discoveryReport({
+        scan: readDiscoveryScanFile(),
+        census: readDiscoveryCensusFile(),
+        setting: { value: [join(home, 'dev', 'tools')], error: null },
+        home,
+        canonical: null,
+      }).complete;
+    await run(t0, { io });
+    const { census } = await run(t0 + hour, { io });
+    const of = (name: string) => census?.finds.find(({ path }) => path.endsWith(name));
+    expect(of('/dev/old')?.evaluatedAt).toBe(t0 + hour);
+    expect(of('/dev/fresh')).toMatchObject({ evaluatedAt: 0, measuredDirs: 0 });
+    expect(census?.pending).toBe(true);
+    expect(complete()).toBe(false);
+  });
+
   it('starts no read once the budget is spent, and keeps every checkout not measured yet', async () => {
     const { census } = await run(t0, { budgetMs: -1 });
     expect(census?.finds).toHaveLength(5);
@@ -478,6 +518,27 @@ describe('runDiscoveryCensusIfDue', () => {
       writeFileSync(join(home, 'dev', 'fresh', 'package.json'), JSON.stringify({ dependencies: {} }));
       const { census } = await run(t0);
       expect(census?.finds.some(({ path }) => path.endsWith('/dev/fresh'))).toBe(false);
+    });
+
+    it('keep a find whose manifest stops parsing at the next full scan, record its folder unreadable, and list it as unchecked', async () => {
+      writeFileSync(join(home, 'dev', 'fresh', 'package.json'), '<<<<<<< HEAD\n{}\n=======\n{}\n>>>>>>> main\n');
+      await scanAt(t0 + 8 * day);
+      const scanned = readDiscoveryScanFile();
+      const fresh = join(home, 'dev', 'fresh');
+      expect(scanned.status === 'read' && scanned.scan?.found).toContain(fresh);
+      expect(scanned.status === 'read' && scanned.scan?.unreadable).toContain(fresh);
+      const { census } = await run(t0 + 8 * day);
+      expect(census?.finds.find(({ path }) => path === fresh)).toMatchObject({ kind: 'unchecked' });
+      expect(census?.pending).toBe(true);
+      expect(
+        discoveryReport({
+          scan: scanned,
+          census: readDiscoveryCensusFile(),
+          setting: { value: [join(home, 'dev', 'tools')], error: null },
+          home,
+          canonical: null,
+        }).complete,
+      ).toBe(false);
     });
 
     it('make a checkout whose layout could not be read retried within the hour, not the day', async () => {

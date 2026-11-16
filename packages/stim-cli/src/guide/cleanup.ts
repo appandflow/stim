@@ -1337,7 +1337,7 @@ DISCOVERED CHECKOUTS NOT FULLY MANAGED (the census, the doctor listing)
   walk at a time on the machine, 10 seconds per directory (a build directory the
   gc worktree report sizes with private bytes is measured with them too), at most
   25 checkouts and 90 seconds per run; a checkout measured within a day is
-  carried over without a read; the others are taken longest-waiting first, and what
+  carried over without a read; the others are taken longest-waiting first (by last attempt), and what
   a run leaves keeps its earlier entry (or is "not measured yet") and keeps the
   census pending, so the next run, an hour later, continues; so does a
   checkout whose layout could not be read. A find whose revalidation did not

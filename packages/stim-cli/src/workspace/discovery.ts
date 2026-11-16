@@ -83,7 +83,7 @@ function projectState(path: string): boolean | 'unknown' {
  * `examples/` or `packages/` is, as in a monorepo whose root holds no app. `'unknown'` when nothing recognised it and
  * some read that decides this failed (a manifest that does not parse, a listing that cannot be read), so it may be one.
  */
-function recognition(path: string): boolean | 'unknown' {
+export function recognition(path: string): boolean | 'unknown' {
   let unknown = false;
   const own = projectState(path);
   if (own === true) return true;
@@ -109,7 +109,7 @@ function recognition(path: string): boolean | 'unknown' {
 }
 
 /** The recognition the walks, the sibling and root children and the deleting passes use: only a proven project counts. */
-export function recognises(path: string): boolean {
+function recognises(path: string): boolean {
   return recognition(path) === true;
 }
 

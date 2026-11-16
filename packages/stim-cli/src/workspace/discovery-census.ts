@@ -380,7 +380,9 @@ export async function runDiscoveryCensusIfDue(
     const entries: CensusFind[] = [];
     const due: Array<{
       index: number;
-      waitingSince: number;
+      tried: number;
+      measuredAt: number;
+      kept: CensusFind;
       placement: Pick<CensusFind, 'path' | 'kind' | 'folder' | 'adoptable'>;
     }> = [];
     const groups: Array<[CensusFind['kind'], string[]]> = [
@@ -416,13 +418,21 @@ export async function runDiscoveryCensusIfDue(
           earlier.measuredDirs === earlier.dirs &&
           earlier.failedDirs === 0;
         if (complete && now - earlier.evaluatedAt < REFRESH_MS) continue;
-        due.push({ index: entries.length - 1, waitingSince: kept.evaluatedAt, placement });
+        due.push({
+          index: entries.length - 1,
+          tried: kept.attemptedAt ?? 0,
+          measuredAt: kept.evaluatedAt,
+          kept,
+          placement,
+        });
       }
-    for (const { index, placement } of due.toSorted((a, b) => a.waitingSince - b.waitingSince)) {
+    for (const { index, kept, placement } of due.toSorted((a, b) => a.tried - b.tried || a.measuredAt - b.measuredAt)) {
       if (looked >= maxCheckouts || Date.now() > deadline || hungRead() !== null) break;
       looked++;
       const measured = await measureBuildOutput(placement.path, operation, deadline, io, readTimeoutMs);
-      if (measured) entries[index] = { ...placement, ...measured, evaluatedAt: now };
+      entries[index] = measured
+        ? { ...placement, ...measured, evaluatedAt: now, attemptedAt: now }
+        : { ...kept, attemptedAt: now };
     }
     operation.signal.throwIfAborted();
     writeCensus({

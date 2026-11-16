@@ -334,7 +334,8 @@ maintainer:
   `refreshMeasure` and the disk-usage cache: one walk at a time on the machine, 10
   seconds per directory, at most 25 checkouts and 90 seconds per run; a checkout
   measured within a day is carried over. The checkouts due are taken in the order
-  they have waited longest (never measured, then the oldest measurement), and what
+  they have waited longest (never tried, then the oldest attempt, `attemptedAt`, which
+  a run cut short by the budget also sets without touching the measurement), and what
   a run leaves keeps the census pending, so the next one, an hour later, continues;
   a measurement older than a day when the census was made is never read as current.
   A walk that failed or timed out is "could not be
@@ -480,7 +481,9 @@ checkouts that have waited longer, so it takes a slot of the 25 (`looked`) but n
 starves the others, until it is fixed or leaves the scan result.
 A find whose metadata read is denied, or whose project check could not read a
 manifest (one that does not parse, as a merge conflict leaves it) or a listing,
-is carried as unchecked without taking a slot,
+is carried as unchecked without taking a slot, and the full scan records the folder
+of such a manifest in its `unreadable` list, so `mergeFound` keeps the earlier finds
+at or below it (without descending less or finding more),
 but the census stays pending and reruns discovery every hour. A find that stays
 unreadable or unchecked keeps the list from ever being called complete, and doctor
 says so each time: it prints that the list may be incomplete and never that

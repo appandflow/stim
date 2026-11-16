@@ -15,7 +15,7 @@ import { canonicalPath } from '../commands/gc/paths.ts';
 import { diskPressure, diskThresholds } from '../daemon/pressure.ts';
 import { answered, hungRead, Unanswered } from './bounded-read.ts';
 import { loadConfig } from './config.ts';
-import { recognises } from './discovery.ts';
+import { recognition as projectRecognition } from './discovery.ts';
 import {
   MAX_DEPTH,
   REAL_RECOGNITION_IO,
@@ -44,7 +44,9 @@ interface ScanOutcome {
 
 /**
  * A pruned walk below `home` (`scanDescends`, `skip`): folders for which `isCheckout` holds are results and are not
- * entered; symlinks and other volumes are skipped; a folder the system refuses is recorded as unreadable, never an error.
+ * entered; symlinks and other volumes are skipped; a folder the system refuses is recorded as unreadable, never an error,
+ * and so is one whose project check could not read what decides it (`isCheckout` gives `'unknown'`): it is not a find,
+ * its subtree is still walked, and `mergeFound` keeps the earlier finds at or below it.
  * A read that does not answer within 3 seconds stops the walk at once: the folder is recorded unreadable, the result is
  * truncated, and the read stays the pending one (`bounded-read.ts`), so no further read starts, here or in a later scan,
  * until it settles. It also stops at `MAX_DEPTH` levels, `MAX_FOLDERS` folders or `budgetMs`, and says so in
@@ -56,7 +58,7 @@ interface ScanOutcome {
  */
 export async function scanForCheckouts(
   home: string,
-  isCheckout: (path: string) => boolean,
+  isCheckout: (path: string) => boolean | 'unknown',
   {
     budgetMs = BUDGET_MS,
     signal,
@@ -152,10 +154,12 @@ export async function scanForCheckouts(
         return;
       }
       if (nested === 'unsafe' || exhausted()) return;
-      if (isCheckout(folder)) {
+      const recognised = isCheckout(folder);
+      if (recognised === true) {
         outcome.found.push(folder);
         return;
       }
+      if (recognised === 'unknown') outcome.unreadable.push(folder);
     }
     if (depth >= MAX_DEPTH) return;
     for (const entry of entries) {
@@ -282,7 +286,7 @@ export async function runDiscoveryScanIfDue(
   const realHome = canonicalPath(home);
   const dotFolder = (path: string) => relative(realHome, path).startsWith('.');
   try {
-    const outcome = await scanForCheckouts(realHome, recognises, {
+    const outcome = await scanForCheckouts(realHome, projectRecognition, {
       signal: operation.signal,
       skip: scanSkipper(realHome),
       ...scanOptions,
