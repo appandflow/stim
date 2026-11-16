@@ -86,6 +86,10 @@ suite` before the fresh review; for a branch without a pull request run
 Benchmark harness tests run separately with `pnpm run test:bench`; CI runs them
 when the harness or its inputs change, and on full-suite runs.
 
+`packages/agent-eval` measures how real agents act on the skill, guides and command
+output; see its [README](./packages/agent-eval/README.md). It draws on subscription
+limits, so it runs only on demand, never in pull request CI.
+
 Filter unit tests with `pnpm test <file> -t "case name"`. Do not insert `--`
 before the file: pnpm forwards it to Vitest, which then ignores the filter and
 runs the full suite.
