@@ -875,7 +875,7 @@ IN USE
   it. \`worktree remove\` re-checks uncommitted and unpushed work under its
   removal locks, just before it reclaims anything. It refuses, even with
   --force, a worktree that an installed stim service runs from
-  (STIM_WORKTREE_SERVICE; see guide errors). A project root whose
+  (STIM_WORKTREE_SERVICE). A project root whose
   existence cannot be read (a permission error) is never treated as deleted.
 
 SWEEPING FINISHED WORKTREES

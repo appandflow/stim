@@ -367,7 +367,7 @@ async function reloadUnrecorded(
           error: failure(
             'STIM_RELOAD_FAILED',
             probe.reason,
-            `Metro is registered for this workspace but did not answer on port ${port}. Run \`stim reload${platform ? ` ${platform}` : ''}\` again. If it keeps timing out, run \`stim doctor\` to check the dev server.`,
+            `Metro is registered for this workspace but did not answer on port ${port}. Run \`stim reload${platform ? ` ${platform}` : ''}\` again. If it keeps timing out, run \`stim doctor\` to check the dev server. Do not touch the device.`,
           ),
         }
       : refusal();
@@ -402,7 +402,7 @@ async function reloadUnrecorded(
           error: failure(
             'STIM_RELOAD_FAILED',
             reloaded.reason,
-            `Metro is registered for this workspace but did not answer on port ${port}. Run \`stim reload ${target}\` again. If it keeps timing out, run \`stim doctor\` to check the dev server.`,
+            `Metro is registered for this workspace but did not answer on port ${port}. Run \`stim reload ${target}\` again. If it keeps timing out, run \`stim doctor\` to check the dev server. Do not touch the device.`,
           ),
         }
       : { ok: false, error: unlaunchedRefusal(target, port, session) };

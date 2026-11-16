@@ -1830,7 +1830,7 @@ IOS SCHEME SELECTION
   in the app directory's app.json against Xcode's listed schemes. It does not
   execute app config or choose an arbitrary scheme from an ambiguous list.
   If selection fails, pass --scheme with an available name, set ios.scheme, or
-  share the app scheme in Xcode first. See guide errors STIM_NO_SCHEME.
+  share the app scheme in Xcode first.
 
   Explicit schemes have separate artifact keys, shared-build locks, and Xcode
   build directories. Stim identifies the resulting application from Xcode's
@@ -2768,7 +2768,7 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   one with \`stim settings set disk.minFreeGb 60 --scope machine\`. The
   memory rules are fixed; \`guide settings\` lists the removed settings.
   \`stim doctor\` prints the current level and a finding while it is above
-  normal. See \`guide errors STIM_LOW_DISK\`.`,
+  normal.`,
     },
     options: {
       summary:

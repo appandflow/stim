@@ -5,6 +5,9 @@ import { captureProcessToken, processStartMicros, sameProcessRecord } from '../p
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState, updateWorkspaceState } from '../workspace/workspace-state.ts';
 
+export const MACOS_OWNER_HINT =
+  'Do not replace a PID or token with another running app; retry once its identity can be inspected.';
+
 export const macosDir = (root: string): string => join(workspaceDir(root), 'macos');
 export const macosLogFile = (root: string): string => join(workspaceLogsDir(root), 'macos.ndjson');
 export const macosRuntimeClaim = (root: string): string => join(macosDir(root), 'runtime.lock');
@@ -27,7 +30,9 @@ export function requiredMacosRecord(root: string): MacosAppRecord | null {
   const record = readMacosRecord(root);
   if (!record && readWorkspaceState(root)?.macos !== undefined) {
     throw Object.assign(
-      new Error('The recorded macOS owner is malformed; repair its workspace state before running.'),
+      new Error(
+        `The recorded macOS owner is malformed; repair its workspace state before running. ${MACOS_OWNER_HINT}`,
+      ),
       {
         code: 'STIM_MACOS_OWNER_UNVERIFIED',
       },

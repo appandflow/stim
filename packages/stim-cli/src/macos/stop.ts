@@ -4,7 +4,7 @@ import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import { withWorkspaceStateLockAsync, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { hostedBundleDirs, runningBundleInstancesAsync, runningInstancesInAsync, startedBy } from './instances.ts';
-import { macosRuntimeClaim, requiredMacosRecord } from './state.ts';
+import { MACOS_OWNER_HINT, macosRuntimeClaim, requiredMacosRecord } from './state.ts';
 import { processGroupAlive, readClaimSet } from '../ownership-claim.ts';
 import type { StimContext } from '@stim-cli/core';
 
@@ -31,9 +31,12 @@ export async function stopProcesses(
       const identity = inspectProcessIdentity(record);
       if (identity === 'gone' || identity === 'different') return false;
       if (identity !== 'same') {
-        throw Object.assign(new Error(`Cannot verify macOS owner pid ${record.pid}; no signal was sent.`), {
-          code: 'STIM_MACOS_OWNER_UNVERIFIED',
-        });
+        throw Object.assign(
+          new Error(`Cannot verify macOS owner pid ${record.pid}; no signal was sent. ${MACOS_OWNER_HINT}`),
+          {
+            code: 'STIM_MACOS_OWNER_UNVERIFIED',
+          },
+        );
       }
       return true;
     });
@@ -90,14 +93,17 @@ export async function stopMacosAppHeld(root: string, operation?: StimContext): P
       ),
       {
         code: 'STIM_MACOS_OWNER_UNVERIFIED',
-        remedy: 'Verify the remaining group members belong to this workspace before stopping them.',
+        remedy:
+          'Verify the remaining group members belong to this workspace before stopping them. Do not replace a PID or token with another running app.',
       },
     );
   }
   const claims = readClaimSet(macosRuntimeClaim(root));
   if (claims.unresolved.length || claims.live.length) {
     throw Object.assign(
-      new Error('The macOS runtime claim cannot be released; inspect its recorded owner before cleanup.'),
+      new Error(
+        `The macOS runtime claim cannot be released; inspect its recorded owner before cleanup. ${MACOS_OWNER_HINT}`,
+      ),
       {
         code: 'STIM_MACOS_OWNER_UNVERIFIED',
       },

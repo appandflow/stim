@@ -3,7 +3,7 @@ import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { inspectProcessIdentity } from '../process-identity.ts';
 import { getConcurrencyLimits, getConfigDir, getPlatformDeviceLimits, loadConfig } from '../workspace/config.ts';
 import { runningBundleInstancesAsync } from './instances.ts';
-import { requiredMacosRecord } from './state.ts';
+import { MACOS_OWNER_HINT, requiredMacosRecord } from './state.ts';
 
 function localLimit(context: StimContext): { max: number; setting: string } | undefined {
   return [
@@ -28,9 +28,12 @@ export async function peekLocalMacosCapacity(
     if (record?.host) continue;
     const identity = record?.app ? inspectProcessIdentity(record.app) : 'gone';
     if (identity === 'unknown') {
-      throw Object.assign(new Error(`Cannot verify the macOS app in ${project}; local app capacity is unknown.`), {
-        code: 'STIM_MACOS_OWNER_UNVERIFIED',
-      });
+      throw Object.assign(
+        new Error(`Cannot verify the macOS app in ${project}; local app capacity is unknown. ${MACOS_OWNER_HINT}`),
+        {
+          code: 'STIM_MACOS_OWNER_UNVERIFIED',
+        },
+      );
     }
     if (identity === 'same' || (await runningBundleInstancesAsync(project, context)).length > 0) running++;
     if (running >= limit.max) break;

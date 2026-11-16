@@ -23,7 +23,7 @@ export function withConfigLockAsync<T>(fn: () => T, signal?: AbortSignal): Promi
 }
 
 export function configCorruptRepair(path: string = getConfigPath()): string {
-  return `Repair the file, or move it aside to start over: mv "${path}" "${path}.broken"`;
+  return `Repair the file, or move it aside to start over: mv "${path}" "${path}.broken". Moving it aside orphans the devices it recorded; delete those by hand.`;
 }
 
 function configCorrupt(reason: string, path: string = getConfigPath()): Error {

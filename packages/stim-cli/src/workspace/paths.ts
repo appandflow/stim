@@ -51,7 +51,7 @@ export function ensureWorkspaceStorage(projectRoot: string): string {
     }
     if (readJsonObject(file)?.projectRoot === canonicalRoot) return dir;
     const error = new Error(
-      `Stim workspace collision at ${dir}: its workspace.json does not belong to ${canonicalRoot}.`,
+      `Stim workspace collision at ${dir}: its workspace.json does not belong to ${canonicalRoot}. Do not overwrite it until you identify which workspace owns it.`,
     ) as Error & { code?: string };
     error.code = 'STIM_WORKSPACE_COLLISION';
     throw error;
