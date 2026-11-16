@@ -44,12 +44,7 @@ afterEach(async () => {
   fixtureAbort.abort();
   await Promise.allSettled(pending);
   // https://github.com/nodejs/node/issues/64016: Windows rmSync can ignore retryDelay.
-  await rm(scratch, {
-    recursive: true,
-    force: true,
-    maxRetries: 5,
-    retryDelay: 50,
-  });
+  await rm(scratch, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
 });
 
 function context(signal: AbortSignal): StimContext {
@@ -58,12 +53,7 @@ function context(signal: AbortSignal): StimContext {
     buildCache: null,
     projectRoot: scratch,
     cwd: scratch,
-    env: {
-      ...process.env,
-      HOME: scratch,
-      USERPROFILE: scratch,
-      STIM_HOME: join(scratch, 'home'),
-    },
+    env: { ...process.env, HOME: scratch, USERPROFILE: scratch, STIM_HOME: join(scratch, 'home') },
     runId: 'report-fixture',
     signal: AbortSignal.any([signal, fixtureAbort.signal]),
     output: () => {},
@@ -203,54 +193,48 @@ test('cancellation does not signal a child whose captured identity no longer mat
   }
 });
 
-test.each([true])(
-  'failed initial birth capture never signals the unverifiable child on Windows (report=%s)',
-  async (report) => {
-    if (process.platform !== 'win32') return;
-    const controller = new AbortController();
-    let started: () => void = () => {};
-    const ready = new Promise<void>((resolve) => {
-      started = resolve;
-    });
-    let owned: { pid: number; processToken: string } | undefined;
-    let nativeClosed: Promise<void> = Promise.resolve();
-    const capture = vi.spyOn(identities, 'captureProcessIdentity').mockImplementation((pid) => {
-      const identity = captureProcessIdentity(pid);
-      if (!identity.ok) throw new Error(identity.reason);
-      owned = { pid, processToken: identity.token };
-      started();
-      return { ok: false, reason: 'ACCESS_DENIED' };
-    });
-    try {
-      const work = () =>
-        getExecutor().runFileAsync(process.execPath, ['-e', 'setTimeout(() => {}, 5000)'], {
-          timeoutMs: 'unbounded',
-          signal: controller.signal,
-          onSpawn: (child) => {
-            nativeClosed = new Promise<void>((resolve) => child.once('close', resolve));
-          },
-        });
-      const reading = (report ? runReport(context(controller.signal), work) : work()).catch((error: unknown) => error);
-      await ready;
-      controller.abort(new Error('cancel fixture'));
-      const failure = await Promise.race([
-        reading,
-        new Promise((resolve) => setTimeout(() => resolve('pending'), 1800)),
-      ]);
-      expect(failure).toMatchObject({
-        code: 'STIM_CLAIM_UNAVAILABLE',
-        message: expect.stringContaining(
-          `report child ${owned?.pid} running \`${basename(process.execPath)} -e setTimeout(() => {}, 5000)\` (its identity was not captured at spawn: ACCESS_DENIED)`,
-        ),
+test.each([true])('on Windows a failed birth capture never signals the child (report=%s)', async (report) => {
+  if (process.platform !== 'win32') return;
+  const controller = new AbortController();
+  let started: () => void = () => {};
+  const ready = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  let owned: { pid: number; processToken: string } | undefined;
+  let nativeClosed: Promise<void> = Promise.resolve();
+  const capture = vi.spyOn(identities, 'captureProcessIdentity').mockImplementation((pid) => {
+    const identity = captureProcessIdentity(pid);
+    if (!identity.ok) throw new Error(identity.reason);
+    owned = { pid, processToken: identity.token };
+    started();
+    return { ok: false, reason: 'ACCESS_DENIED' };
+  });
+  try {
+    const work = () =>
+      getExecutor().runFileAsync(process.execPath, ['-e', 'setTimeout(() => {}, 5000)'], {
+        timeoutMs: 'unbounded',
+        signal: controller.signal,
+        onSpawn: (child) => {
+          nativeClosed = new Promise<void>((resolve) => child.once('close', resolve));
+        },
       });
-      expect(inspectProcessIdentity(owned)).toBe('same');
-    } finally {
-      capture.mockRestore();
-      reapFixtureChild(owned);
-      await nativeClosed;
-    }
-  },
-);
+    const reading = (report ? runReport(context(controller.signal), work) : work()).catch((error: unknown) => error);
+    await ready;
+    controller.abort(new Error('cancel fixture'));
+    const failure = await Promise.race([reading, new Promise((resolve) => setTimeout(() => resolve('pending'), 1800))]);
+    expect(failure).toMatchObject({
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      message: expect.stringContaining(
+        `report child ${owned?.pid} running \`${basename(process.execPath)} -e setTimeout(() => {}, 5000)\` (its identity was not captured at spawn: ACCESS_DENIED)`,
+      ),
+    });
+    expect(inspectProcessIdentity(owned)).toBe('same');
+  } finally {
+    capture.mockRestore();
+    reapFixtureChild(owned);
+    await nativeClosed;
+  }
+});
 
 test('an uncaptured child whose kill fails is refused and recorded with the time it outlived its cancel', async () => {
   let childPid: number | undefined;
@@ -285,9 +269,7 @@ test('an uncaptured child whose kill fails is refused and recorded with the time
     await started;
     controller.abort(new Error('cancel fixture'));
     expect(await reading).toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
-    await vi.waitFor(() => expect(records).toHaveLength(1), {
-      timeout: 10_000,
-    });
+    await vi.waitFor(() => expect(records).toHaveLength(1), { timeout: 10_000 });
     expect(records[0]).toMatchObject({
       event: 'daemon_report_child_exited',
       fields: {
@@ -319,18 +301,10 @@ test('a cancelled uncaptured child is killed from a macrotask and the report set
     .spyOn(identities, 'captureProcessIdentity')
     .mockReturnValue({ ok: false, reason: 'ACCESS_DENIED' });
   const killOriginal = process.kill.bind(process);
-  const sent: {
-    pid: number;
-    signal: string | number | undefined;
-    fromImmediate: boolean;
-  }[] = [];
+  const sent: { pid: number; signal: string | number | undefined; fromImmediate: boolean }[] = [];
   const kill = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
     if (signal === 'SIGKILL')
-      sent.push({
-        pid,
-        signal,
-        fromImmediate: /processImmediate/.test(new Error().stack ?? ''),
-      });
+      sent.push({ pid, signal, fromImmediate: /processImmediate/.test(new Error().stack ?? '') });
     return killOriginal(pid, signal);
   });
   let childPid: number | undefined;
@@ -357,18 +331,12 @@ test('a cancelled uncaptured child is killed from a macrotask and the report set
     ).catch((error: unknown) => error);
     await started;
     controller.abort(new Error('cancel fixture'));
-    expect(await reading).not.toMatchObject({
-      code: 'STIM_CLAIM_UNAVAILABLE',
-    });
+    expect(await reading).not.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
     await nativeClosed;
     expect(exitSignal).toBe('SIGKILL');
     expect(sent).toEqual([{ pid: childPid, signal: 'SIGKILL', fromImmediate: true }]);
     expect(records).toHaveLength(1);
-    expect(records[0]?.fields).toMatchObject({
-      killedUncaptured: true,
-      captured: false,
-      exitSignal: 'SIGKILL',
-    });
+    expect(records[0]?.fields).toMatchObject({ killedUncaptured: true, captured: false, exitSignal: 'SIGKILL' });
     expect(records[0]?.fields).not.toHaveProperty('refusal');
   } finally {
     setReportChildLog(undefined);
@@ -657,10 +625,7 @@ test('a cancelled report closes its in-progress authenticated connection before 
           host: '127.0.0.1',
           servername: 'localhost',
         },
-        {
-          access: 'build',
-          serverKey: Buffer.alloc(32, 1).toString('base64url'),
-        },
+        { access: 'build', serverKey: Buffer.alloc(32, 1).toString('base64url') },
         10_000,
         operation.signal,
         operation,
@@ -683,9 +648,7 @@ test.skipIf(process.platform === 'win32')(
   async () => {
     const bin = join(scratch, 'bin');
     mkdirSync(bin);
-    writeFileSync(join(bin, 'git'), '#!/bin/sh\nexec /bin/sleep 3\n', {
-      mode: 0o755,
-    });
+    writeFileSync(join(bin, 'git'), '#!/bin/sh\nexec /bin/sleep 3\n', { mode: 0o755 });
     const activeController = new AbortController();
     const activeContext = context(activeController.signal);
     activeContext.env.PATH = bin;
@@ -933,11 +896,7 @@ test('a report stays unresolved until every failed cleanup resource is verified 
       undefined,
       () => secondClosed,
     );
-    await new Promise<void>((resolve) =>
-      operation.signal.addEventListener('abort', () => resolve(), {
-        once: true,
-      }),
-    );
+    await new Promise<void>((resolve) => operation.signal.addEventListener('abort', () => resolve(), { once: true }));
   }).catch((error: unknown) => error);
   assert(failure instanceof Error && 'cleanupSettled' in failure && typeof failure.cleanupSettled === 'function');
   expect(failure.cleanupSettled()).toBe(false);
@@ -962,11 +921,7 @@ test('a late task rejection retains its leaf proof after the aggregate cleanup d
   const reading = runReport(context(new AbortController().signal), async (operation) => {
     trackReportResource(operation, Promise.reject(childFailure), () => {}, undefined, undefined, settled);
     trackReportResource(operation, task, () => {});
-    await new Promise<void>((resolve) =>
-      operation.signal.addEventListener('abort', () => resolve(), {
-        once: true,
-      }),
-    );
+    await new Promise<void>((resolve) => operation.signal.addEventListener('abort', () => resolve(), { once: true }));
   }).catch((error: unknown) => error);
   await vi.advanceTimersByTimeAsync(35_000);
   const failure = await reading;
