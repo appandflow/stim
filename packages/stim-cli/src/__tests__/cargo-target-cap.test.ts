@@ -31,7 +31,6 @@ const candidate = (
   dir,
   identity,
   discovered,
-  reduceOnly: false,
   checkout: dir.replace(/\/target$/, ''),
   measuredAt,
 });

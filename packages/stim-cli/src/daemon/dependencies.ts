@@ -209,10 +209,7 @@ export async function rankSourceDependencies(
       });
       continue;
     }
-    const verdict = await sourceCheckoutIdle(candidate.worktree, rule.thresholdMs, rule.setting, {
-      operation,
-      reduceOnly: candidate.reduceOnly,
-    });
+    const verdict = await sourceCheckoutIdle(candidate.worktree, rule.thresholdMs, rule.setting, { operation });
     if ('kept' in verdict) {
       kept.push({ target: candidate.path, workspace, reason: verdict.kept });
       continue;
@@ -260,18 +257,15 @@ async function stillUnused(
   keys: readonly string[],
   worktree: string,
   idleMs: number,
-  reduceOnly: boolean,
   operation?: StimContext,
   setting?: string,
 ): Promise<string | null> {
   const [first] = keys;
   if (!source)
-    return first && !(await stillIdle(first, idleMs, { operation, setting, reduceOnly }))
-      ? 'it is no longer idle'
-      : null;
+    return first && !(await stillIdle(first, idleMs, { operation, setting })) ? 'it is no longer idle' : null;
   const held = new Set(workspaceKeys(keys));
   for (const key of new Set([...held, worktree]))
-    if (!(await stillIdle(key, idleMs, { operation, full: true, locked: held.has(key), setting, reduceOnly })))
+    if (!(await stillIdle(key, idleMs, { operation, full: true, locked: held.has(key), setting })))
       return `${key} is no longer idle`;
   return Date.now() - warmedFromAt(keys) < idleMs ? 'a worktree warm copied from it since' : null;
 }
@@ -306,8 +300,7 @@ export async function clearDependency(
         pinned: maintenancePinnedReader(operation),
         worktrees,
         requireRestorable,
-        recheck: (keys, worktree) =>
-          stillUnused(false, keys, worktree, idleMs, dependency.candidate.reduceOnly, operation),
+        recheck: (keys, worktree) => stillUnused(false, keys, worktree, idleMs, operation),
         level,
         operation,
       },
@@ -364,16 +357,7 @@ export async function clearSourceDependencies(
         protectedRoot,
         pinned: maintenancePinnedReader(operation),
         worktrees,
-        recheck: (keys, worktree) =>
-          stillUnused(
-            true,
-            keys,
-            worktree,
-            idleMs,
-            dependencies.some(({ candidate }) => candidate.reduceOnly),
-            operation,
-            setting,
-          ),
+        recheck: (keys, worktree) => stillUnused(true, keys, worktree, idleMs, operation, setting),
         level,
         operation,
       },

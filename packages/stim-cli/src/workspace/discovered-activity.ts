@@ -102,7 +102,7 @@ export async function scanSourceWrites(
 /**
  * What idleness rests on for a checkout with no Stim state: the newest source write (git-ignored files included), the
  * last commit and the last git write count as activity; a process running from or working in it, an agent session
- * working in it, or evidence that cannot be read keeps it.
+ * working in it, an executable on PATH that resolves into it, or evidence that cannot be read keeps it.
  */
 export async function discoveredEvidence(
   path: string,
@@ -111,14 +111,11 @@ export async function discoveredEvidence(
     idleMs,
     reads,
     operation,
-    reduceOnly,
   }: {
     now: number;
     idleMs: number;
     reads: DiscoveredReads;
     operation?: StimContext;
-    /** Found through a tool folder or the full scan, where an installed tool cannot be told from a checkout. */
-    reduceOnly: boolean;
   },
 ): Promise<IdleStopEvidence> {
   const signal = operation?.signal;
@@ -142,7 +139,7 @@ export async function discoveredEvidence(
   keep.push(...(await reads.sessions(path, now)));
   const running = runningFromReason(path, await reads.processes());
   if (running) keep.push(running);
-  const launcher = reduceOnly ? launcherReason(path, await reads.launchers()) : null;
+  const launcher = launcherReason(path, await reads.launchers());
   if (launcher) keep.push(launcher);
   return { activity, keep };
 }

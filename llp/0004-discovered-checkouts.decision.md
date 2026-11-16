@@ -188,8 +188,9 @@ sibling discovery recognise as before. An Xcode container without an app
 dependency is not a scan checkout, though sibling and root discovery still
 recognise it.
 
-A scan find outside a home dot-folder can also be an installed tool. Every route
-that deletes outputs, dependencies or Cargo data of a reduce-only checkout keeps
+An installed tool can be built in any checkout. Every route that deletes outputs,
+dependencies, Cargo data or the worktree itself of a checkout, registered or
+discovered by any route, keeps
 the checkout while an executable reachable through a PATH directory is a symlink
 that resolves into it: the idle stage (`discoveredEvidence`, and again under the
 locks in `clearStoppedOutputs`), the artifact and dependency passes
@@ -230,7 +231,7 @@ cap or the time budget follows the weekly schedule (hourly while the disk level 
 normal), since a retry would hit the same limit.
 A directory or entry that does not exist, and a dangling symlink, is no
 launcher. Any other failure to inspect a directory (permission, I/O, a timeout)
-keeps every reduce-only checkout for that operation, with a reason naming the
+keeps every checkout for that operation, with a reason naming the
 directory. A wrapper script that only names a path is not followed.
 
 Every source (main) checkout, registered or discovered by any route (siblings,
@@ -299,7 +300,7 @@ pruned, `~/Library`, `~/Movies`, `~/Music`, `~/Pictures`, `~/Public` and
 `~/Applications` left out, the low-disk scan running hourly while the daemon's disk level is above
 normal (high or critical, `disk.minFreeGb`) and no scan ran for an hour, the
 retry after an hour of a scan that failed or ended on a read that timed out, while one that stopped at the folder cap or the time budget counts as finished (`truncation` records which), the scan running only in the daemon
-after the pass, and the PATH launcher keep. The scan is not deferred under host
+after the pass, and the PATH launcher keep (extended to every checkout by the 2026-11-15 decision below). The scan is not deferred under host
 load; it takes about a second and a half on one MacBook.
 
 Points 4, 5 and 7 are implemented in "The doctor listing and the low-disk line".
@@ -521,9 +522,41 @@ day in `measureBuildOutput`) and stamps `evaluatedAt` with the evaluation time, 
 figure can rest on a walk up to two days old, and the "oldest measurement" date
 doctor prints is the evaluation time, not the walk time.
 
+## The launcher keep covers every checkout
+
+Maintainer decision, 2026-11-15 (#5765): "Work on all those and lmk tomorrow", in
+answer to a message whose open items included this one, put to the maintainer as:
+"#5765 (keep checkouts that a command on your PATH runs from): I recommend
+extending the keep to every discovered checkout and registered workspace. It only
+makes cleanup keep more, and costs one read of the PATH folders (55-72 ms
+measured)."
+
+Scope: apply the PATH launcher keep by the rule #5764 uses (read with the
+running-process evidence, fail closed) to every discovered checkout and to
+registered workspaces. The cadence test gets an injected launcher reader first.
+
+A checkout that an executable on PATH resolves into is kept whole from every
+action that removes files inside it, whatever its kind: a registered workspace, a
+checkout beside a known project, a child of `maintenance.discoverRoots`, a linked
+worktree, a tool-folder or scan find. That covers build outputs (`idleOutputs`,
+`deleteOutputs`, `gc` workspace outputs, `regenerableDirProblem`), dependencies
+and Pods (`artifactReads`), Cargo targets, discovered-checkout idleness
+(`discoveredEvidence`) and removal of a worktree, registered or discovered
+(`removeWorktrees`). `Launching` carries a launcher reader and a checkout for
+every caller; there is no variant without one. Stopping Metro or devices and
+archiving logs touch no launcher target and are not blocked. The reading is the
+operation's shared one at planning and a fresh one at each deletion check, as for
+processes. An unreadable launcher directory keeps every checkout. `reduceOnly`
+keeps its other meaning: such a checkout is never removed.
+
+Cost: one shared read per planning operation (55-72 ms for 995 symlinks) and one
+fresh read per deletion check, which is per output path and per dependency tree.
+The pressure ladder keeps going to later rungs when a kept checkout leaves the
+level short, as for every other keep reason.
+
 ## Links
 
-- Issues: #5512, #5515, #5757, #5762, #5775. Pull request: #5519.
+- Issues: #5512, #5515, #5757, #5762, #5765, #5775. Pull request: #5519.
 - Code: `packages/stim-cli/src/workspace/discovery.ts`,
   `packages/stim-cli/src/workspace/discovery-scan.ts`,
   `packages/stim-cli/src/workspace/discovery-census.ts`,

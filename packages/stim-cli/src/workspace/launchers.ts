@@ -119,32 +119,26 @@ export function freshLaunchers(
 }
 
 /**
- * Whether a PATH launcher can keep a checkout's outputs, which every caller on a deletion path states: `reduceOnly: false`
- * for a registered workspace, which has no launcher keep, or a fresh launcher reading and the checkout it is checked
- * against.
+ * What a deletion path checks against PATH launchers: a launcher reading and the checkout it is checked against. Every
+ * caller states it.
  */
-export type Launching =
-  | { reduceOnly: false }
-  | { reduceOnly: true; launchers: () => Promise<LauncherScan>; checkout: string };
-
-/** The `Launching` of a checkout for planning: the operation's shared reading for a reduce-only one, none otherwise. */
-export function planningLaunching(
-  reduceOnly: boolean,
-  checkout: string,
-  operation: StimContext | undefined,
-  signal?: AbortSignal,
-): Launching {
-  return reduceOnly ? { reduceOnly, launchers: launchersOf(operation, signal), checkout } : { reduceOnly };
+export interface Launching {
+  launchers: () => Promise<LauncherScan>;
+  checkout: string;
 }
 
-/** The `Launching` of a checkout for a deletion: a fresh launcher reading for a reduce-only one, none otherwise. */
-export function launchingOf(
-  reduceOnly: boolean,
+/** The `Launching` of a checkout for planning: the operation's shared reading. */
+export function planningLaunching(
   checkout: string,
   operation: StimContext | undefined,
   signal?: AbortSignal,
 ): Launching {
-  return reduceOnly ? { reduceOnly, launchers: freshLaunchers(operation, signal), checkout } : { reduceOnly };
+  return { launchers: launchersOf(operation, signal), checkout };
+}
+
+/** The `Launching` of a checkout for a deletion: a fresh launcher reading. */
+export function launchingOf(checkout: string, operation: StimContext | undefined, signal?: AbortSignal): Launching {
+  return { launchers: freshLaunchers(operation, signal), checkout };
 }
 
 /**

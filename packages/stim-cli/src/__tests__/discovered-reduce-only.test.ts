@@ -21,6 +21,7 @@ import { clearDependency } from '../daemon/dependencies.ts';
 import * as runningFrom from '../workspace/running-from.ts';
 import { answered } from '../workspace/bounded-read.ts';
 import { testContext } from './_context.ts';
+import { noLaunchers } from './fixtures/launching.ts';
 import * as fsUtil from '../fs-util.ts';
 import { deleteOutputs } from '../daemon/idle.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
@@ -279,11 +280,11 @@ describe('checkouts found through a tool folder or the full scan', () => {
     });
     const launchers = async () => ({ targets: measured ? [join(output, 'tool')] : [], incomplete: [] });
     const kept: string[] = [];
-    expect(await deleteOutputs([output], { reduceOnly: true, launchers, checkout }, kept)).toBe(0);
+    expect(await deleteOutputs([output], { launchers, checkout }, kept)).toBe(0);
     expect(existsSync(output)).toBe(true);
     expect(kept).toEqual([expect.stringContaining('on PATH')]);
 
-    expect(await deleteOutputs([output], { reduceOnly: false }, kept)).toBe(1);
+    expect(await deleteOutputs([output], noLaunchers(checkout), kept)).toBe(1);
     expect(existsSync(output)).toBe(false);
   });
 
@@ -590,7 +591,7 @@ describe('checkouts found through a tool folder or the full scan', () => {
     vi.stubEnv('STIM_MAINTENANCE_CARGO_TARGET_MAX_GB', '0.000001');
     const { signal } = new AbortController();
     const checkouts = await artifactCheckoutsAsync(signal, testContext({ env: {} }));
-    expect(checkouts.find((entry) => entry.path === codex)?.reduceOnly).toBe(true);
+    expect(checkouts.map((entry) => entry.path)).toContain(codex);
 
     const options = { now: Date.now(), windowMs: 0, protectedRoot: '', pinned: () => false };
     const dependencies = (await collectArtifactsAsync('dependencies', options, signal, testContext({ env: {} })))

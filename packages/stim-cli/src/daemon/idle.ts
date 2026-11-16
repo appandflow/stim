@@ -15,7 +15,7 @@ import {
   type IdleStageRecord,
 } from '@stim-cli/core/state';
 import { formatBytes, measuredDirectorySizeAsync } from '../fs-util.ts';
-import { launcherReason, type Launching } from '../workspace/launchers.ts';
+import { launcherReason, launchingOf, type Launching } from '../workspace/launchers.ts';
 import { collectOwnedDeviceActivityAsync, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { workspaceOutputPaths } from '../commands/gc/workspaces.ts';
@@ -216,14 +216,14 @@ export async function idleOutputs(
 }
 
 /**
- * Deletes `paths`, measuring each first. For a reduce-only checkout `guard` reads the executables on PATH anew after the
- * measurement, immediately before each removal, and keeps a path whose checkout one resolves into, saying so in `kept`.
+ * Deletes `paths`, measuring each first. It reads the executables on PATH anew after the measurement, immediately before
+ * each removal, and keeps a path whose checkout one resolves into, saying so in `kept`.
  */
 export async function deleteOutputs(paths: readonly string[], launching: Launching, kept: string[]): Promise<number> {
   let freed = 0;
   for (const path of paths) {
     const bytes = (await measuredDirectorySizeAsync(path, { timeoutMs: SIZE_TIMEOUT_MS })) ?? 0;
-    const launcher = launching.reduceOnly ? launcherReason(launching.checkout, await launching.launchers()) : null;
+    const launcher = launcherReason(launching.checkout, await launching.launchers());
     if (launcher) {
       kept.push(`kept ${path}: ${launcher}`);
       continue;
@@ -322,7 +322,7 @@ async function enterIdleStage(
               const [kind, slot = 'default'] = key.split(':');
               return outcome?.status === 'shut-down' && booted.has(`${kind}:${slot}`) ? [key] : [];
             });
-            const launching: Launching = { reduceOnly: false };
+            const launching = launchingOf(path, input.operation);
             const outputs = await idleOutputs(path, config, launching);
             const freed = await deleteOutputs(outputs.paths, launching, outputs.kept);
             await recordStage(path, minutes, shutDown, freed);

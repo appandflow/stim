@@ -300,15 +300,15 @@ function inUse(used: readonly string[], dir: string): boolean {
 }
 
 /**
- * The paths under `target` a running process executes from or holds open, from one `lsof` and one `ps` read, and for a
- * reduce-only checkout the paths under it that an executable on PATH resolves to, from a launcher reading taken at the
- * same moment; null when any of them cannot be read, which keeps everything.
+ * The paths under `target` a running process executes from or holds open, from one `lsof` and one `ps` read, and the
+ * paths under it that an executable on PATH resolves to, from a launcher reading taken at the same moment; null when
+ * any of them cannot be read, which keeps everything.
  */
 async function readTargetUse(
   target: string,
+  launchers: () => Promise<LauncherScan>,
   signal?: AbortSignal,
   lowPriority = false,
-  launchers?: () => Promise<LauncherScan>,
 ): Promise<string[] | null> {
   const exec = getExecutor();
   try {
@@ -319,7 +319,6 @@ async function readTargetUse(
     const lsof = await run('lsof', ['-nP', '-w', '-Fn'], 60_000);
     const ps = await run('ps', ['-axww', '-o', 'args='], 30_000);
     const used = targetPathsInUse(target, lsof, ps);
-    if (!launchers) return used;
     const scan = await launchers();
     if (scan.incomplete.length) return null;
     const prefix = `${folded(target)}/`;
@@ -399,8 +398,8 @@ interface CargoTrimOptions {
   /** Whether to walk what was removed to report its bytes; false reports 0 and removes at once. Default true. */
   measure?: boolean;
   /**
-   * For a reduce-only checkout, a fresh reading of the executables on PATH, taken wherever the processes using the target
-   * are read, so a path one of them resolves to is kept like a path a process runs from. Every caller states it.
+   * A fresh reading of the executables on PATH, taken wherever the processes using the target are read, so a path one of
+   * them resolves to is kept like a path a process runs from. Every caller states it.
    */
   launching: Launching;
 }
@@ -420,10 +419,8 @@ async function trimClaimed(
   }: CargoTrimOptions,
 ): Promise<CargoTrimResult> {
   const result: CargoTrimResult = { bytes: 0, removed: [], kept: [] };
-  const launchers = launching.reduceOnly ? launching.launchers : undefined;
-  const cannotRead = launchers
-    ? 'the files processes hold open or the executables on PATH cannot be read'
-    : 'the files processes hold open cannot be read';
+  const { launchers } = launching;
+  const cannotRead = 'the files processes hold open or the executables on PATH cannot be read';
   const stopped = (): boolean => stop?.aborted === true;
   const measured = (path: string): Promise<number> =>
     measure ? sizeOf(path, signal, lowPriority) : Promise.resolve(0);
@@ -442,7 +439,7 @@ async function trimClaimed(
       kept: [`a leftover ${aside} cannot be deleted: ${error instanceof Error ? error.message : error}`],
     };
   }
-  const first = await readTargetUse(target, signal, lowPriority, launchers);
+  const first = await readTargetUse(target, launchers, signal, lowPriority);
   if (first === null) return { ...result, kept: [cannotRead] };
   let used: string[] = first;
   const stale = staleCargoTargetPaths(target, now);
@@ -527,7 +524,7 @@ async function trimClaimed(
     if (!all) return { ...none, kept: 'its units cannot be listed' };
     const candidates = [...cargoUnitPaths(profile, idleCargoUnits(all, now, CARGO_PROFILE_IDLE_MS))];
     if (!candidates.length) return none;
-    const fresh = await readTargetUse(target, signal, lowPriority, launchers);
+    const fresh = await readTargetUse(target, launchers, signal, lowPriority);
     if (fresh === null) return { ...none, kept: cannotRead };
     let swept = 0;
     let bytes = 0;
@@ -600,7 +597,7 @@ async function trimClaimed(
   const refreshed = stopped()
     ? null
     : incremental === 'all' || result.bytes < needBytes
-      ? await readTargetUse(target, signal, lowPriority, launchers)
+      ? await readTargetUse(target, launchers, signal, lowPriority)
       : used;
   if (stopped()) {
     if (!result.kept.includes(DEADLINE_KEPT)) result.kept.push(DEADLINE_KEPT);

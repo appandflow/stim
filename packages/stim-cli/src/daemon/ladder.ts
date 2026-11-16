@@ -277,11 +277,7 @@ async function idleOutputsRung(context: RungContext): Promise<void> {
       : {
           outcome: 'would' as const,
           bytes: context.measure
-            ? await idleOutputBytes(
-                candidate.path,
-                context.config,
-                launchingOf(candidate.reduceOnly, candidate.path, context.operation),
-              )
+            ? await idleOutputBytes(candidate.path, context.config, launchingOf(candidate.path, context.operation))
             : 0,
           detail: wouldDetail(context),
         };

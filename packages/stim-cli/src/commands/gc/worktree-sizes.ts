@@ -58,7 +58,6 @@ async function buildStateDirs(path: string, keys: readonly string[], operation?:
     linked: true,
     locked: Boolean(matchWorktreeEntry(entries, path)?.locked),
     keys: own,
-    reduceOnly: false,
   };
   const dirs = new Map<string, string>();
   const privateSized = new Set<string>();

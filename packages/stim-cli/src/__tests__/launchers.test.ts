@@ -2,6 +2,8 @@ import { launcherDirectories } from '../workspace/launcher-directories.ts';
 import { scanForCheckouts } from '../workspace/discovery-scan.ts';
 import { launcherReader, launcherReason } from '../workspace/launchers.ts';
 
+vi.unmock('../workspace/launcher-directories.ts');
+
 const missing = (code: string) => Object.assign(new Error(code), { code });
 
 /** A fake of the directories on PATH: `listing` maps a directory to its entries, an Error, or nothing for absent. */

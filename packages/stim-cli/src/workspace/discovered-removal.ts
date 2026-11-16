@@ -122,7 +122,7 @@ export async function discoveredRemovalHold(
     return `it is managed by another tool (inside ${folder} of its main checkout)`;
   if (!(idleMs > 0)) return 'idle.dormantDays is 0, so its idleness cannot be established';
   const now = Date.now();
-  const decision = decideIdleStop(await discoveredEvidence(path, { now, idleMs, reads, operation, reduceOnly }), {
+  const decision = decideIdleStop(await discoveredEvidence(path, { now, idleMs, reads, operation }), {
     idleMs,
     now,
     setting: 'idle.dormantDays',

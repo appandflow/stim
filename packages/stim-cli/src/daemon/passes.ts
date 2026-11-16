@@ -460,7 +460,9 @@ export async function runForcedLadder({
           outcome: entry.outcome === 'idle' ? 'done' : entry.outcome === 'would-idle' ? 'would' : 'failed',
           bytes:
             entry.freedBytes ??
-            (entry.outcome === 'would-idle' ? await idleOutputBytes(entry.path, config, { reduceOnly: false }) : 0),
+            (entry.outcome === 'would-idle'
+              ? await idleOutputBytes(entry.path, config, launchingOf(entry.path, operation))
+              : 0),
           detail: entry.outcome === 'would-idle' ? 'stim gc would do this' : entry.detail,
           ...(entry.outcome === 'idle' ? { restore: 'stim revive' } : {}),
         });
@@ -530,11 +532,7 @@ export async function runDormantReduction({
         ? await clearStoppedOutputs(candidate, config, afterMs, operation)
         : {
             outcome: 'would' as const,
-            bytes: await idleOutputBytes(
-              candidate.path,
-              config,
-              launchingOf(candidate.reduceOnly, candidate.path, operation),
-            ),
+            bytes: await idleOutputBytes(candidate.path, config, launchingOf(candidate.path, operation)),
             detail: 'stim gc would do this',
           };
       if (result)
