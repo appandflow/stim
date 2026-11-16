@@ -190,7 +190,7 @@ describe('against a config file on disk', () => {
     expect(machine.corrupt.title).toBe('The Stim config is not a valid JSON object');
     expect(machine.corrupt.detail).toContain(join(home, 'config.json'));
     expect(machine.corrupt.fix).toBe(
-      `Repair the file, or move it aside to start over with mv "${join(home, 'config.json')}" "${join(home, 'config.json')}.broken". Moving it aside makes Stim forget the devices and projects it recorded; the devices stay on the machine. Run \`stim gc --dry-run\`, and delete any stim-* device it keeps with \`xcrun simctl delete <udid>\` or \`avdmanager delete avd -n <name>\`.`,
+      `Repair the file, or move it aside to start over with mv "${join(home, 'config.json')}" "${join(home, 'config.json')}.broken". Moving it aside makes Stim forget the devices and projects it recorded; the devices stay on the machine. \`stim gc --dry-run\` lists stim-* devices it cannot verify, which can belong to other Stim homes; delete one only if you know this home created it.`,
     );
     expect(await runDoctor(project)).toEqual([machine.corrupt]);
   });

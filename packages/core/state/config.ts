@@ -23,7 +23,7 @@ export function withConfigLockAsync<T>(fn: () => T, signal?: AbortSignal): Promi
 }
 
 export function configCorruptRepair(path: string = getConfigPath()): string {
-  return `Repair the file, or move it aside to start over with mv "${path}" "${path}.broken". Moving it aside makes Stim forget the devices and projects it recorded; the devices stay on the machine. Run \`stim gc --dry-run\`, and delete any stim-* device it keeps with \`xcrun simctl delete <udid>\` or \`avdmanager delete avd -n <name>\`.`;
+  return `Repair the file, or move it aside to start over with mv "${path}" "${path}.broken". Moving it aside makes Stim forget the devices and projects it recorded; the devices stay on the machine. \`stim gc --dry-run\` lists stim-* devices it cannot verify, which can belong to other Stim homes; delete one only if you know this home created it.`;
 }
 
 function configCorrupt(reason: string, path: string = getConfigPath()): Error {
