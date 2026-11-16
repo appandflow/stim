@@ -42,5 +42,5 @@
     "packages/stim-cli/src/optimizations.ts",
     "packages/stim-cli/src/stimd/metro/project-node.ts"
   ],
-  "digest": "139fad80a9417e239bd6555a06599a89c240455e108f569bcc9edbbec493ca86"
+  "digest": "363fccbc12041015272cef20c7b8b700d7f269a055a4b8a61a62af69cd8a9668"
 }
