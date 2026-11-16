@@ -1389,6 +1389,107 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
     expect(daemonLog()).toContain('its run directory was removed');
   }, 20_000);
 
+  async function answersHello(): Promise<boolean> {
+    const socket = connect(stimdSocket());
+    onTestFinished(() => {
+      socket.destroy();
+    });
+    const received = lines(socket);
+    socket.write(frame());
+    try {
+      await vi.waitFor(() => expect(received.join()).toContain('"op":"hello"'), { timeout: 2000, interval: 20 });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  test('binds its socket again when the socket file is removed, and a client then connects', async () => {
+    normalMeasurement();
+    const running = runStimd({ mode: 'on', tickMs: 60_000, homeWatchMs: 50 });
+    await listening();
+    expect(await answersHello()).toBe(true);
+    rmSync(stimdSocket());
+    await vi.waitFor(() => expect(daemonLog()).toContain('"event":"socket_rebound"'), { timeout: 10_000 });
+    expect(daemonRecords('socket_rebound')).toHaveLength(1);
+    expect(await answersHello()).toBe(true);
+    await stopStimd();
+    await running;
+  }, 20_000);
+
+  test('does not bind its socket again once it no longer holds the stimd claim', async () => {
+    normalMeasurement();
+    const before = new Set(process.listeners('SIGTERM'));
+    const running = runStimd({ mode: 'on', tickMs: 60_000, homeWatchMs: 50 });
+    await listening();
+    rmSync(stimdClaimRoot(), { recursive: true });
+    rmSync(stimdSocket());
+    await new Promise((done) => setTimeout(done, 400));
+    expect(existsSync(stimdSocket())).toBe(false);
+    expect(daemonLog()).not.toContain('socket_rebound');
+    const handler = process.listeners('SIGTERM').find((listener) => !before.has(listener));
+    assert(handler);
+    handler('SIGTERM');
+    await running;
+  }, 20_000);
+
+  test('does not bind its socket again while it shuts down', async () => {
+    normalMeasurement();
+    let finish: () => void = () => {};
+    const closing = new Promise<void>((done) => {
+      finish = done;
+    });
+    const net = vi.spyOn(netThread, 'createNetThread').mockReturnValue({
+      ensure: async () => ({ listening: false, message: 'unused' }),
+      running: () => null,
+      connect: () => false,
+      presence: () => false,
+      close: () => closing,
+    });
+    onTestFinished(() => net.mockRestore());
+    const before = new Set(process.listeners('SIGTERM'));
+    const running = runStimd({ mode: 'on', tickMs: 60_000, homeWatchMs: 50 });
+    try {
+      await listening();
+      const handler = process.listeners('SIGTERM').find((listener) => !before.has(listener));
+      assert(handler);
+      handler('SIGTERM');
+      await new Promise((done) => setTimeout(done, 400));
+      expect(existsSync(stimdSocket())).toBe(false);
+      expect(daemonLog()).not.toContain('socket_rebound');
+    } finally {
+      finish();
+      await running;
+    }
+  }, 20_000);
+
+  test('leaves a socket another process bound at its path alone', async () => {
+    normalMeasurement();
+    const before = new Set(process.listeners('SIGTERM'));
+    const running = runStimd({ mode: 'on', tickMs: 60_000, homeWatchMs: 50 });
+    await listening();
+    rmSync(stimdSocket());
+    let connections = 0;
+    const foreign = createServer(() => {
+      connections += 1;
+    });
+    await new Promise<void>((done) => foreign.listen(stimdSocket(), done));
+    try {
+      await new Promise((done) => setTimeout(done, 400));
+      const probe = connect(stimdSocket());
+      await new Promise((done) => probe.once('connect', done));
+      probe.destroy();
+      await vi.waitFor(() => expect(connections).toBe(1));
+      expect(daemonLog()).not.toContain('socket_rebound');
+    } finally {
+      await new Promise((done) => foreign.close(done));
+    }
+    const handler = process.listeners('SIGTERM').find((listener) => !before.has(listener));
+    assert(handler);
+    handler('SIGTERM');
+    await running;
+  }, 20_000);
+
   function normalMeasurement(level: 'normal' | 'warning' = 'normal'): void {
     const measureTick = measure.measureTick;
     const normal = vi.spyOn(measure, 'measureTick').mockImplementation(async (...args) => {

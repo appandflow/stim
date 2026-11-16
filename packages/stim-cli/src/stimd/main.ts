@@ -1,4 +1,4 @@
-import { runDirRemoved } from './run-dir.ts';
+import { pathMissing, runDirRemoved } from './run-dir.ts';
 import { createMetroTickets, handleMetroTicketRequest } from './metro/tickets.ts';
 import { createLeaseTickets, handleLeaseRequest } from './lease-tickets.ts';
 import { randomUUID } from 'node:crypto';
@@ -1790,13 +1790,41 @@ async function runStimdInner(
     if (!closing) void logs.ownedSync();
   };
   let runDirMisses = 0;
-  const homeWatch = attached
-    ? undefined
-    : setInterval(() => {
-        runDirMisses = runDirRemoved(stimdRunDir()) ? runDirMisses + 1 : 0;
-        if (!closing && runDirMisses >= HOME_WATCH_MISSES) shutdown('its run directory was removed');
-      }, homeWatchMs);
-  homeWatch?.unref();
+  let rebinding = false;
+  let lastRebindFailure = '';
+  const rebindSocket = async () => {
+    if (process.platform === 'win32' || rebinding || closing || ending || runDirMisses > 0 || !pathMissing(path))
+      return;
+    const holdsClaim = () => {
+      try {
+        return readClaimSet(stimdClaimRoot()).live.some((holder) => holder.claimId === own?.claimId);
+      } catch {
+        return false;
+      }
+    };
+    if (!holdsClaim()) return;
+    rebinding = true;
+    try {
+      server.close();
+      await listen(path, server);
+      lastRebindFailure = '';
+      log('warn', 'socket_rebound', `the socket file ${path} was gone, so stimd bound it again`);
+    } catch (error) {
+      const failure = errorText(error);
+      if (failure !== lastRebindFailure) log('error', 'socket_rebind_failed', failure);
+      lastRebindFailure = failure;
+    } finally {
+      rebinding = false;
+    }
+  };
+  const homeWatch = setInterval(() => {
+    if (!attached) {
+      runDirMisses = runDirRemoved(stimdRunDir()) ? runDirMisses + 1 : 0;
+      if (!closing && runDirMisses >= HOME_WATCH_MISSES) shutdown('its run directory was removed');
+    }
+    void rebindSocket();
+  }, homeWatchMs);
+  homeWatch.unref();
   const stopBuildEndTimer = startBuildEndTimer({
     allowed: maintenanceAllowed,
     busy: () => dependencyWork !== undefined,
