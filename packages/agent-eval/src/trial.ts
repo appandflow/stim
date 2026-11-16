@@ -127,6 +127,14 @@ export interface RunOptions extends DriverOptions {
   timeoutMs: number;
 }
 
+function killGroup(pid: number): void {
+  try {
+    process.kill(-pid, 'SIGKILL');
+  } catch {
+    return;
+  }
+}
+
 function runAgent(
   paths: TrialPaths,
   command: { command: string; args: string[]; env: Record<string, string> },
@@ -146,7 +154,7 @@ function runAgent(
     child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString('utf8')));
     const timer = setTimeout(() => {
       timedOut = true;
-      if (child.pid) process.kill(-child.pid, 'SIGKILL');
+      if (child.pid) killGroup(child.pid);
     }, timeoutMs);
     child.on('error', (error) => {
       clearTimeout(timer);
@@ -154,13 +162,7 @@ function runAgent(
     });
     child.on('close', (code) => {
       clearTimeout(timer);
-      if (child.pid) {
-        try {
-          process.kill(-child.pid, 'SIGKILL');
-        } catch {
-          return;
-        }
-      }
+      if (child.pid) killGroup(child.pid);
       resolve({ stdout, stderr, code, timedOut });
     });
   });
