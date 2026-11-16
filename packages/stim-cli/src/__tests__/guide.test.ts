@@ -40,6 +40,7 @@ import macosCommand from '../commands/macos.ts';
 import { buildReport } from '../engine/build-progress.ts';
 import { PLACEMENT_LIMIT, PLACEMENT_MAX_AGE_MS } from '../engine/stats.ts';
 import {
+  guideOp,
   topicNames,
   renderTopic,
   renderIndex,
@@ -62,22 +63,6 @@ function allBodies(): string[] {
     }
   }
   return bodies;
-}
-
-const NOT_A_REFUSAL_CODE = new Set([
-  'STIM_HOME',
-  'STIM_TRACE',
-  'STIM_TRACE_OWNER',
-  'STIM_ANDROID_CAS_TOOLCHAIN',
-  'STIM_BACKGROUND_LAUNCH',
-  'STIM_ACCESS_TICKET',
-  ...SETTINGS.flatMap((setting) => (setting.env ? [setting.env] : [])),
-]);
-
-function scrapedCodes(source: string): Set<string> {
-  return new Set(
-    [...source.matchAll(/STIM_[A-Z_]+/g)].map((m) => m[0]).filter((code) => !NOT_A_REFUSAL_CODE.has(code)),
-  );
 }
 
 const PHASE_LABELS = [
@@ -187,6 +172,43 @@ test('a section name that no topic declares renders nothing', () => {
   expect(renderSection('logs', 'phone')).toBe(null);
 });
 
+function sourceTexts(root: URL): string[] {
+  return readdirSync(root, { recursive: true, encoding: 'utf-8' })
+    .filter((file) => file.endsWith('.ts') && !/__tests__|\.test\.|node_modules/.test(file))
+    .map((file) => readFileSync(new URL(file, root), 'utf-8'));
+}
+
+test('every stim guide errors reference in a remedy, a guide or the router names a section that renders', () => {
+  const texts = [
+    ...['..', '../../../ci/src', '../../../server/src'].flatMap((dir) =>
+      sourceTexts(new URL(`${dir}/`, import.meta.url)),
+    ),
+    ...allBodies(),
+  ];
+  const named = new Set(texts.flatMap((text) => [...text.matchAll(/guide errors ([A-Za-z][\w-]*)/g)].map((m) => m[1])));
+  expect(named.size).toBeGreaterThan(0);
+  expect([...named].filter((name) => !renderSection('errors', name ?? ''))).toEqual([]);
+});
+
+test('an errors code without a section prints one line that sends the reader to the printed remedy', async () => {
+  const logs: string[] = [];
+  const originalLog = console.log;
+  console.log = (msg) => logs.push(String(msg));
+  try {
+    expect(
+      await runCli(
+        guideOp(async () => null),
+        ['errors', 'STIM_NO_METRO'],
+        { version: '9.9.9' },
+      ),
+    ).toBe(0);
+  } finally {
+    console.log = originalLog;
+  }
+  expect(logs).toHaveLength(1);
+  expect(logs[0]).toMatch(/^STIM_NO_METRO .*remedy/);
+});
+
 test('a sectioned topic prints its preamble and an index of every section', () => {
   for (const name of topicNames().filter((topic) => sectionNames(topic).length > 0)) {
     const body = renderSectionIndex(name);
@@ -272,47 +294,6 @@ test('the index lists every topic and the running version', () => {
   for (const name of topicNames()) expect(idx).toMatch(new RegExp(name));
 });
 
-test('the errors topic documents every code the build commands, the Node check and the iOS signing gate can emit', () => {
-  const body = renderTopic('errors');
-  assert(body);
-  const commandFiles = [
-    'device-provision.ts',
-    'device-tools.ts',
-    'ios.ts',
-    'android.ts',
-    'macos.ts',
-    'settings.ts',
-    'start.ts',
-    'native-runtime.ts',
-    'dev-client.ts',
-    'revive.ts',
-    'share.ts',
-    ...['ios', 'android'].flatMap((command) =>
-      readdirSync(new URL(`../commands/${command}/`, import.meta.url))
-        .filter((file) => file.endsWith('.ts'))
-        .map((file) => `${command}/${file}`),
-    ),
-  ];
-  const sources = [
-    ...commandFiles.map((file) => readFileSync(new URL(`../commands/${file}`, import.meta.url), 'utf-8')),
-    ...[
-      'engine/ios-profile.ts',
-      'engine/ios-signing.ts',
-      'engine/ios-provision.ts',
-      'engine/eas-build.ts',
-      'engine/ios-device.ts',
-    ].map((f) => readFileSync(new URL(`../${f}`, import.meta.url), 'utf-8')),
-    readFileSync(new URL('../../bin/node-check.ts', import.meta.url), 'utf-8'),
-    readFileSync(new URL('../../../server/bin/stim-server.ts', import.meta.url), 'utf-8'),
-  ].join('\n');
-  const codes = scrapedCodes(sources);
-  expect(codes.size).toBeGreaterThan(0);
-  for (const code of codes) {
-    expect(body).toContain(code);
-    expect(sectionLookup('errors')[code]).toBeDefined();
-  }
-});
-
 test('current guides require completed warming and leave worktree creation to Git', () => {
   const body = allBodies().join('\n');
   expect(body).toContain('git worktree add');
@@ -326,42 +307,6 @@ test('current guides require completed warming and leave worktree creation to Gi
   expect(body).not.toMatch(/worktree create|--carry-ignored|STIM_WORKTREE_BRANCH_EXISTS/);
   expect(body).not.toMatch(/worktreeDir|worktree\.baseRef|worktree\.include|\.worktreeinclude/);
   expect(sectionLookup('errors')['STIM_WORKTREE_BRANCH_EXISTS']).toBeUndefined();
-});
-
-test('the errors topic documents every code the engine can emit under a command', () => {
-  const body = renderTopic('errors');
-  assert(body);
-  const sources = [
-    'build-placement.ts',
-    'workspace/config.ts',
-    'engine/workspace-process-lock.ts',
-    'engine/build-slots.ts',
-    'engine/device-remote.ts',
-    'engine/warm-claim.ts',
-    'workspace/worktree-refresh.ts',
-    'workspace/service-guard.ts',
-  ]
-    .map((f) => readFileSync(new URL(`../${f}`, import.meta.url), 'utf-8'))
-    .join('\n');
-  const codes = new Set(
-    [...sources.matchAll(/(?:code:\s*|\.code\s*=\s*|readonly code\s*=\s*)'(STIM_[A-Z_]+)'/g)].map(
-      (m) => m[1] as string,
-    ),
-  );
-  expect(codes.size).toBeGreaterThan(0);
-  for (const code of codes) {
-    expect(body.includes(code)).toBeTruthy();
-    expect(sectionLookup('errors')[code]).toBeDefined();
-  }
-});
-
-test('the errors topic documents both codes the ownership-claim primitive raises', () => {
-  const body = renderTopic('errors');
-  assert(body);
-  for (const code of [CLAIM_REFUSED, CLAIM_UNAVAILABLE]) {
-    expect(body).toContain(code);
-    expect(sectionLookup('errors')[code]).toBeDefined();
-  }
 });
 
 test('AVD claim recovery requires checking native processes and keeping incomplete ownership', () => {
@@ -398,16 +343,9 @@ test('the rendered guide carries the warm --refresh contract, not just its sourc
   expect(options).toContain('keyed on the repository root');
   expect(options).toMatch(/worktree warm {4}--refresh/);
   expect(renderTopic('settings')).toContain('worktree.defaultBranch');
-  for (const code of ['STIM_MAIN_DIRTY', 'STIM_MAIN_DETACHED', 'STIM_MAIN_DIVERGED']) {
-    const section = renderSection('errors', code);
-    assert(section);
-    expect(section).toContain(code);
-    expect(renderTopic('errors')).toContain(code);
-  }
   expect(renderSection('errors', 'STIM_LOCK_TIMEOUT')).toContain('warm-locks');
   // The refusal is on the unflagged path, so the plain-warm contract has to name it where a waiter looks.
   expect(options).toContain('STIM_DEPS_INCOMPLETE');
-  expect(renderSection('errors', 'STIM_DEPS_INCOMPLETE')).toContain('warm-installs');
   for (const code of [CLAIM_REFUSED, CLAIM_UNAVAILABLE]) {
     expect(renderSection('errors', 'warm')).toContain(code);
     expect(options).toContain(code);
@@ -639,9 +577,7 @@ test('the agent guide routes each situation to a topic or section that renders',
     assert(route, row);
     const [, topic, section] = route;
     assert(topic);
-    expect(
-      section ? renderSection(topic, section === '<CODE>' ? 'STIM_NO_METRO' : section) : renderTopic(topic),
-    ).toBeTruthy();
+    expect(section ? renderSection(topic, section) : renderTopic(topic)).toBeTruthy();
   }
   expect(agent).toContain('stim guide errors <CODE>');
   expect(agent).toContain('stim guide agent react-native');
@@ -839,13 +775,12 @@ test('ports guidance documents reverse and its cap', () => {
 });
 
 test('guide prints the status block before the index and the agent topic, and never before a section', async () => {
-  const { guideOp } = await import('../commands/guide.ts');
   const status = async () => 'STATUS\n  Doctor is due for ios (never run).';
   const logs: string[] = [];
   const originalLog = console.log;
   console.log = (msg) => logs.push(String(msg));
   try {
-    for (const args of [[], ['agent'], ['errors', 'STIM_NO_METRO']]) {
+    for (const args of [[], ['agent'], ['errors', 'teardown']]) {
       await runCli(guideOp(status), args, { version: '9.9.9' });
     }
   } finally {

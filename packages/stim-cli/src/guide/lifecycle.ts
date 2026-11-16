@@ -1830,7 +1830,7 @@ IOS SCHEME SELECTION
   in the app directory's app.json against Xcode's listed schemes. It does not
   execute app config or choose an arbitrary scheme from an ambiguous list.
   If selection fails, pass --scheme with an available name, set ios.scheme, or
-  share the app scheme in Xcode first. See guide errors STIM_NO_SCHEME.
+  share the app scheme in Xcode first.
 
   Explicit schemes have separate artifact keys, shared-build locks, and Xcode
   build directories. Stim identifies the resulting application from Xcode's
@@ -2489,8 +2489,7 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   A listing failure under a set cap leaves the count unknown and admission
   refuses with STIM_NO_DEVICE; under the derived cap alone the boot goes ahead
   with only the boots in flight counted. Unresolved wait or boot claims refuse
-  with the claim code and the command to remove that exact claim. See
-  \`guide errors STIM_AT_CAPACITY\`.
+  with the claim code and the command to remove that exact claim.
 
     concurrency.maxIosDevices      booted owned iOS simulators at once.
     concurrency.maxAndroidDevices  booted owned Android emulators at once.
@@ -3231,7 +3230,7 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   included, so the signing gate runs before it: the app's own
   embedded.mobileprovision must be unexpired and must name this phone, and when
   Stim modifies the bundle the identity that profile names must be in this
-  machine's keychain (see \`guide errors STIM_NO_PROFILE\`). A gate refusal on
+  machine's keychain. A gate refusal on
   a CACHED app falls back to a full build; on a freshly built one it exits on
   its own code, because building again would produce the same app.
 

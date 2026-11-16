@@ -703,8 +703,7 @@ ON FAILURE
   when Chrome closed (its profile is kept), else "skipped" (its identity could
   not be verified) or "failed", and ok is then false.
 
-  Branch on \`code\`, never on the message text. \`guide errors\` enumerates
-  every code.
+  Branch on \`code\`, never on the message text.
 
 RULES
   - Never hardcode or guess a udid/serial/port. Read them from the payload.
