@@ -41,7 +41,8 @@ export function planMetroReach({ mode, metroPort, publicUrl = null, isExpo, avai
     if (!isExpo) {
       return {
         failed: 'metro.tunnel is "expo", but this workspace does not run an Expo dev server.',
-        remedy: 'Use "auto" to let stim start a tunnel, or "off" if the device shares this machine.',
+        remedy:
+          'Use "auto" to let stim start a tunnel, "off" if the device shares this machine, or set metro.publicUrl to an existing endpoint.',
       };
     }
     return { expoTunnel: true };
@@ -51,7 +52,7 @@ export function planMetroReach({ mode, metroPort, publicUrl = null, isExpo, avai
     if (!available.includes(mode)) {
       return {
         failed: `metro.tunnel is "${mode}", but ${mode} is not on PATH.`,
-        remedy: `Install ${NAMED[mode] ?? mode}, or set metro.tunnel to "auto".`,
+        remedy: `Install ${NAMED[mode] ?? mode}, set metro.tunnel to "auto", or set metro.publicUrl to an existing endpoint.`,
       };
     }
     return { start: mode };

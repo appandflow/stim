@@ -320,7 +320,7 @@ describe('the remote session workspace lock', () => {
       expect(second).toMatchObject({
         failed: true,
         code: 'STIM_LOCK_TIMEOUT',
-        remedy: `If pid ${process.pid} is stuck, stop it, then run the remote command again.`,
+        remedy: `Inspect pid ${process.pid} first. If it is stuck, stop it, then run the remote command again; otherwise wait for it to finish and run the command again.`,
       });
       expect((second as { reason: string }).reason).toContain(
         `EAS remote start (pid ${process.pid}, in ${root}, running for 60m`,

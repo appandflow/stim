@@ -1716,7 +1716,10 @@ async function startTunnelChild(
   if ('failed' in started) {
     if (started.cleanupFailed) throw unverifiedChild(claim, { pid: 0 }, started.reason);
     releaseClaim(claim);
-    return unreachable(`Could not start a managed Metro tunnel for port ${port}.`, started.reason);
+    return unreachable(
+      `Could not start a managed Metro tunnel for port ${port}.`,
+      `${started.reason} Set metro.tunnel to a provider that starts, or set metro.publicUrl to an existing endpoint.`,
+    );
   }
   const tunnel: TunnelChild = {
     claim:

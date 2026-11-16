@@ -726,7 +726,9 @@ describe('action: already running', { timeout: 30_000 }, () => {
     expect(JSON.parse(result.logs[0] ?? '')).toEqual({
       code: 'STIM_REMOTE_START_REQUIRED',
       message: `The dev server on port ${port} is local-only and cannot gain a managed tunnel while it is running.`,
-      remedy: 'Run `stim stop`, then `stim start --remote`.',
+      remedy: owned
+        ? 'Run `stim stop`, then `stim start --remote`.'
+        : 'Stim does not supervise that server. Set metro.publicUrl to an endpoint that reaches it, or stop it yourself and run `stim start --remote` so Stim supervises it.',
     });
   });
 

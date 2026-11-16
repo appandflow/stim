@@ -441,7 +441,11 @@ async function runAndroid(request: ToolRequest, target: ToolTarget, d: ToolDeps)
   if (request.tool === 'location' && !('clear' in request)) {
     const reply = await adb(['emu', 'geo', 'fix', String(request.longitude), String(request.latitude)]);
     if (/^KO\b/m.test(reply)) {
-      return failure(FAILED, `The emulator console refused the location: ${reply.trim()}`, null);
+      return failure(
+        FAILED,
+        `The emulator console refused the location: ${reply.trim()}`,
+        `Check that ${target.deviceName} is responsive with \`stim status\`, then retry.`,
+      );
     }
     return {
       ...base,
@@ -482,7 +486,7 @@ async function runAndroid(request: ToolRequest, target: ToolTarget, d: ToolDeps)
       return failure(
         FAILED,
         `${target.deviceName} did not report ${request.service} as ${wanted ? 'granted' : request.action === 'reset' ? 'reset' : 'revoked'} for ${appId} after the change: ${JSON.stringify(states)}`,
-        `Run \`adb shell dumpsys package ${appId}\` to read the device state.`,
+        `Run \`adb shell dumpsys package ${appId}\` to read the device state, check ${target.deviceName} with \`stim status\`, then retry.`,
       );
     }
     const skipped = requested.filter((name) => !permissions.some((permission) => permission.name === name));
@@ -512,7 +516,7 @@ async function runAndroid(request: ToolRequest, target: ToolTarget, d: ToolDeps)
       return failure(
         FAILED,
         `${target.deviceName} reports Wi-Fi ${wifi === null ? 'unknown' : wifi ? 'on' : 'off'} and mobile data ${data === null ? 'unknown' : data ? 'on' : 'off'} after asking for ${request.enabled ? 'on' : 'off'}.`,
-        'Run `adb shell settings get global wifi_on` and `mobile_data` to read the device state.',
+        `Run \`adb shell settings get global wifi_on\` and \`mobile_data\` to read the device state, check ${target.deviceName} with \`stim status\`, then retry.`,
       );
     }
     return { ...base, tool: 'network', enabled: request.enabled, readBack: { wifi, data } };

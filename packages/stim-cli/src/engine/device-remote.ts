@@ -855,7 +855,7 @@ export async function ensureRemoteBootOwned<T extends BootResult>({
         failed: true,
         code,
         reason: `${describeEasProjectLockHolder(holder, now())} has held the EAS project lock for ${formatElapsed(heldMs)}; an EAS session start holds it for at most ${formatElapsed(EAS_START_HOLD_MS)}.`,
-        remedy: `If pid ${holder.owner.pid} is stuck, stop it, then run the remote command again.`,
+        remedy: `Inspect pid ${holder.owner.pid} first. If it is stuck, stop it, then run the remote command again; otherwise wait for it to finish and run the command again.`,
       };
     }
     return {
@@ -1186,7 +1186,8 @@ export async function ensureMetroReachable({
     if (plan.start === 'tailscale' && ctx.backend === 'eas') {
       return {
         failed: 'metro.tunnel is "tailscale", but an EAS Simulator is not on your tailnet and cannot reach it.',
-        remedy: 'Use the proxy backend with a device on the same tailnet, or set metro.tunnel to "auto" or "ngrok".',
+        remedy:
+          'Use the proxy backend with a device on the same tailnet, set metro.tunnel to "auto" or "ngrok", or set metro.publicUrl to an existing endpoint.',
         code: REMOTE_METRO_ERROR,
       };
     }

@@ -96,7 +96,9 @@ export async function withWorkspaceProcessLock<T>(
     }
     if (holder && onHeld) await onHeld(holder);
     if (now() >= deadline) {
-      const error = new Error(`Timed out waiting for the ${name} lock at ${path}.`);
+      const error = new Error(
+        `Timed out waiting for the ${name} lock at ${path}. Another Stim process holds it; wait for it to finish, then run the command again.`,
+      );
       (error as Error & { code?: string }).code = 'STIM_LOCK_TIMEOUT';
       throw error;
     }

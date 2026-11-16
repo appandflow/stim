@@ -238,7 +238,8 @@ function timeoutError(holder: WarmClaimHolder | null, elapsedMs: number, root: s
   const who = holder ? `${holderName(holder)} (pid ${holder.pid})` : 'another stim worktree warm';
   const error = new Error(
     `Waited ${formatElapsed(elapsedMs)} for ${who} to release the warm lock on this repository. ` +
-      `The lock is ${root}; remove it if nothing is really warming:\n  ${claimRemoveCommand(root)}`,
+      'Wait for it to finish, then run the command again. ' +
+      `The lock is ${root}; remove it only after confirming that no stim worktree warm is running:\n  ${claimRemoveCommand(root)}`,
   ) as Error & { code?: string };
   error.code = 'STIM_LOCK_TIMEOUT';
   return error;
