@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, readFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { isBlanked, matchRule, relativeCwd, unscriptedMessage } from './stim-script.ts';
 import type { Invocation, StimEvalConfig } from './types.ts';
 
@@ -9,6 +9,18 @@ const config: StimEvalConfig = JSON.parse(readFileSync(configPath, 'utf8'));
 const cwd = process.cwd();
 const cwdRelative = relativeCwd(config.workspace, cwd);
 const startedAt = Date.now();
+
+function homeReadable(): boolean | undefined {
+  if (existsSync(config.log)) return undefined;
+  try {
+    readFileSync(config.probe);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const probed = homeReadable();
 
 function answer(): Pick<Invocation, 'kind' | 'exitCode'> & { stdout: Buffer; stderr: Buffer } {
   if (isBlanked(config.blank, argv))
@@ -47,6 +59,7 @@ const record: Invocation = {
   stderrBytes: result.stderr.length,
   path: process.env.PATH ?? '',
   self: process.argv[1] ?? '',
+  ...(probed === undefined ? {} : { homeReadable: probed }),
 };
 appendFileSync(config.log, `${JSON.stringify(record)}\n`);
 process.exitCode = result.exitCode;

@@ -25,6 +25,7 @@ export interface Invocation {
   stderrBytes: number;
   path: string;
   self: string;
+  homeReadable?: boolean;
 }
 
 export interface StimEvalConfig {
@@ -34,6 +35,7 @@ export interface StimEvalConfig {
   workspace: string;
   guideCli: string;
   guideHome: string;
+  probe: string;
 }
 
 export interface AttemptedCommand {
@@ -73,11 +75,6 @@ export interface DriverOptions {
   bin: string | null;
 }
 
-export interface FinishContext {
-  killed: boolean;
-  quarantineDir: string;
-}
-
 export interface AgentDriver {
   name: 'claude' | 'codex';
   expectedSkills(withSkill: boolean): string[];
@@ -85,7 +82,7 @@ export interface AgentDriver {
   secrets(paths: TrialPaths): string[];
   command(paths: TrialPaths, prompt: string, options: DriverOptions): AgentCommand;
   parse(transcript: string): AgentRun;
-  finish(paths: TrialPaths, context: FinishContext): string | null;
+  finish(paths: TrialPaths): string | null;
 }
 
 export interface GradeInput {
@@ -98,6 +95,7 @@ export interface Check {
   pass: boolean;
   detail: string;
   observation?: boolean;
+  inconclusive?: boolean;
 }
 
 export interface EvalCase {

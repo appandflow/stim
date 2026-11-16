@@ -1,7 +1,7 @@
 import type { EventEmitter } from 'node:events';
 import { constants } from 'node:os';
 
-const SIGNALS = ['SIGINT', 'SIGTERM'] as const;
+const SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const;
 
 export interface Interrupt {
   signal: AbortSignal;

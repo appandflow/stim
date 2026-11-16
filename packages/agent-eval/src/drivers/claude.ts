@@ -1,16 +1,13 @@
 import { existsSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
-import { REPO_ROOT } from '../trial.ts';
 import type { AgentCommand, AgentDriver, AgentRun, AttemptedCommand, DriverOptions, TrialPaths } from '../types.ts';
-import { asArray, asNumber, asRecord, asString, minimalPath, parseLines, writeSkill } from './shared.ts';
+import { asArray, asNumber, asRecord, asString, checkoutReads, minimalPath, parseLines, writeSkill } from './shared.ts';
 
 const TOOLS = 'Bash,Read,Glob,Grep,Skill';
 const ALLOWED = [
   'Bash(stim:*)',
   'Bash(npx stim:*)',
   'Bash(cd:*)',
-  'Bash(ls:*)',
-  'Bash(cat:*)',
   'Bash(pwd)',
   'Bash(git status:*)',
   'Bash(git worktree list:*)',
@@ -30,7 +27,7 @@ function trialSettings(paths: TrialPaths): object {
       autoAllowBashIfSandboxed: false,
       filesystem: {
         denyRead: ['~/'],
-        allowRead: [dirname(dirname(process.execPath)), REPO_ROOT],
+        allowRead: [dirname(dirname(process.execPath)), ...checkoutReads()],
         allowWrite: [paths.harness],
       },
     },

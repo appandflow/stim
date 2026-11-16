@@ -49,20 +49,25 @@ stated it in these words.
 A case passes on checks over the invocation log and the transcript: commands
 that must have run, ordering, forbidden commands and a limit on unscripted
 commands. Bytes of guide output read, turns and tokens are reported, not graded.
-A case passes only when every trial passes. A help invocation never satisfies a
-must-run check, and a forbidden command counts however it was spelled (`stim`,
-`npx stim`, inside a compound command), denied or not. No model judges a trial; a
-judge arrives only where code cannot decide.
+A case passes only when every trial passed. A help invocation never satisfies a
+must-run check. A forbidden command is caught when it was executed (the scripted
+`stim` logs it) or when the transcript shows an attempt in which a word with the
+basename `stim` is followed later in the same simple command by the forbidden
+word; spellings that hide the word, such as a variable or a script, are not
+caught unless they ran. A trial whose forbidden action did not happen and whose
+required evidence is missing is inconclusive, neither a pass nor a failure, so
+`free-disk` passes only on a dry run; the guide's "ask the user before gc" is not
+judged by code. No model judges a trial; a judge arrives only where code cannot
+decide.
 
 ## Trials are confined and the maintainer's logins are protected
 
 The reviewer of record and Codex review chose these rules for the first pull
 request; the maintainer has not stated them. A trial confines each agent as far as
 its CLI supports (Claude's OS sandbox and read denies, a Codex permissions profile)
-and the README lists what stays readable. Results are private (0700 and 0600) and
-redacted for the trial's Codex login values and token shapes. The runner writes a
-refreshed Codex login over the real one only when that cannot replace a newer one,
-and otherwise keeps a private copy. Interruption stops the owned agent, and a
+and the README lists what stays readable. Each trial proves the confinement applied: the scripted `stim` tries to read a marker the runner put in the real home, and a readable or missing probe makes the trial invalid. Results are written outside every root an agent can read, are private (0700 and 0600) and are
+redacted for the trial's Codex login values and token shapes. The runner never writes the
+real Codex login; a file that replaced the link is moved next to it. Interruption stops the owned agent, and a
 process group is signalled only while its leader has not exited, by the rule of
 [LLP 0007](./0007-claims-and-child-cleanup.decision.md).
 

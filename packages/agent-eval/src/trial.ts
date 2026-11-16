@@ -1,6 +1,8 @@
 import { execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import {
   chmodSync,
+  copyFileSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -10,8 +12,8 @@ import {
   existsSync,
   readdirSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { tmpdir, userInfo } from 'node:os';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type {
   AgentDriver,
@@ -24,11 +26,11 @@ import type {
 } from './types.ts';
 import { redact } from './redact.ts';
 
-export const PACKAGE_ROOT: string = fileURLToPath(new URL('..', import.meta.url));
+const PACKAGE_ROOT: string = fileURLToPath(new URL('..', import.meta.url));
 export const REPO_ROOT: string = join(PACKAGE_ROOT, '..', '..');
 const SKILL_PATH = join(REPO_ROOT, 'packages', 'stim-cli', 'skill', 'SKILL.md');
 const GUIDE_CLI = join(REPO_ROOT, 'packages', 'stim-cli', 'bin', 'cli.ts');
-const ENTRY = join(PACKAGE_ROOT, 'src', 'scripted-stim.ts');
+const RUNTIME_FILES = ['scripted-stim.ts', 'stim-script.ts'];
 
 export interface Arm {
   name: string;
@@ -39,6 +41,7 @@ export interface Arm {
 export interface TrialOutcome {
   run: AgentRun;
   invocations: Invocation[];
+  invocationsText: string;
   problems: string[];
   notes: string[];
   durationMs: number;
@@ -94,7 +97,7 @@ function writeWorkspace(paths: TrialPaths, files: Record<string, string>): void 
   git(main, paths.home, ['worktree', 'add', '-q', '-b', 'feature/eval', paths.workspace]);
 }
 
-function writeScriptedStim(paths: TrialPaths, evalCase: EvalCase, arm: Arm): void {
+function writeScriptedStim(paths: TrialPaths, evalCase: EvalCase, arm: Arm, probe: string): void {
   const config: StimEvalConfig = {
     rules: evalCase.script,
     blank: arm.blank,
@@ -102,11 +105,17 @@ function writeScriptedStim(paths: TrialPaths, evalCase: EvalCase, arm: Arm): voi
     workspace: paths.workspace,
     guideCli: GUIDE_CLI,
     guideHome: join(paths.harness, 'guide-home'),
+    probe,
   };
+  const library = join(paths.bin, 'lib');
+  mkdirSync(library);
+  writeFileSync(join(library, 'package.json'), '{"type":"module"}\n');
+  for (const file of RUNTIME_FILES) copyFileSync(join(PACKAGE_ROOT, 'src', file), join(library, file));
+  const entry = join(library, 'scripted-stim.ts');
   const configPath = join(paths.bin, 'stim-eval.json');
   writeFileSync(configPath, JSON.stringify(config));
   const wrapper = join(paths.bin, 'stim');
-  writeFileSync(wrapper, `#!/bin/sh\nNODE_NO_WARNINGS=1 exec "${process.execPath}" "${ENTRY}" "${configPath}" "$@"\n`);
+  writeFileSync(wrapper, `#!/bin/sh\nNODE_NO_WARNINGS=1 exec "${process.execPath}" "${entry}" "${configPath}" "$@"\n`);
   chmodSync(wrapper, 0o755);
   const npx = join(paths.bin, 'npx');
   writeFileSync(
@@ -127,8 +136,8 @@ function readInvocations(paths: TrialPaths): Invocation[] {
 
 export interface RunOptions extends DriverOptions {
   timeoutMs: number;
-  quarantineDir: string;
   signal?: AbortSignal;
+  confine?: boolean;
 }
 
 interface AgentResult {
@@ -141,10 +150,17 @@ interface AgentResult {
 }
 
 const DRAIN_MS = 1000;
+const GRACE_MS = 2000;
+const SCAN_PS_MS = 5000;
+const SCAN_LSOF_MS = 30_000;
+
+function unexited(child: ChildProcess): child is ChildProcess & { pid: number } {
+  return child.pid !== undefined && child.exitCode === null && child.signalCode === null;
+}
 
 function stopGroup(child: ChildProcess): void {
   setImmediate(() => {
-    if (child.pid === undefined || child.exitCode !== null || child.signalCode !== null) return;
+    if (!unexited(child)) return;
     try {
       process.kill(-child.pid, 'SIGKILL');
     } catch {
@@ -153,19 +169,61 @@ function stopGroup(child: ChildProcess): void {
   });
 }
 
-function groupMembers(pgid: number): number {
-  const table = spawnSync('ps', ['-axo', 'pgid=,pid='], { encoding: 'utf8' }).stdout ?? '';
-  return table
-    .split('\n')
-    .map((line) => line.trim().split(/\s+/).map(Number))
-    .filter(([group, pid]) => group === pgid && pid !== pgid).length;
+function terminate(child: ChildProcess): void {
+  setImmediate(() => {
+    if (!unexited(child)) return;
+    try {
+      process.kill(child.pid, 'SIGTERM');
+    } catch {
+      return;
+    }
+    setTimeout(() => stopGroup(child), GRACE_MS).unref();
+  });
 }
+
+function leftoverProcesses(leader: number | undefined, base: string, secrets: string[]): string | null {
+  if (process.platform === 'win32') return null;
+  const failed = 'could not check for leftover processes';
+  const name = basename(base);
+  const ps = spawnSync('ps', ['-axo', 'pid=,pgid=,command='], { encoding: 'utf8', timeout: SCAN_PS_MS });
+  if (ps.error || ps.status !== 0) return failed;
+  const found = new Map<number, string>();
+  for (const line of ps.stdout.split('\n')) {
+    const match = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line);
+    if (!match) continue;
+    const pid = Number(match[1]);
+    const command = match[3] ?? '';
+    if (pid === process.pid || pid === ps.pid || command.startsWith('ps -axo')) continue;
+    if ((leader !== undefined && Number(match[2]) === leader) || command.includes(name)) found.set(pid, command);
+  }
+  const lsof = spawnSync('lsof', ['-a', '-d', 'cwd', '-Fpn'], { encoding: 'utf8', timeout: SCAN_LSOF_MS });
+  if (lsof.error || lsof.status === null || lsof.stdout === '') return failed;
+  let owner = 0;
+  for (const line of lsof.stdout.split('\n')) {
+    if (line.startsWith('p')) owner = Number(line.slice(1));
+    else if (line.startsWith('n') && line.slice(1).startsWith(base) && owner !== process.pid && owner !== lsof.pid)
+      found.set(owner, found.get(owner) ?? `working directory ${line.slice(1)}`);
+  }
+  if (found.size === 0) return null;
+  const list = [...found].map(([pid, command]) => `${pid} ${command.slice(0, 100)}`).join('; ');
+  return redact(`processes remain after the agent exited, left for the operator and not signalled: ${list}`, secrets);
+}
+
+const NOT_STARTED: AgentResult = {
+  stdout: '',
+  stderr: '',
+  code: null,
+  timedOut: false,
+  interrupted: true,
+  leftover: null,
+};
 
 function runAgent(
   paths: TrialPaths,
   command: { command: string; args: string[]; env: Record<string, string> },
   timeoutMs: number,
   signal: AbortSignal | undefined,
+  secrets: string[],
 ): Promise<AgentResult> {
   return new Promise((resolve) => {
     const child = spawn(command.command, command.args, {
@@ -186,23 +244,18 @@ function runAgent(
       signal?.removeEventListener('abort', onAbort);
       child.stdout.destroy();
       child.stderr.destroy();
-      const pgid = child.pid;
-      const members = pgid === undefined || process.platform === 'win32' ? 0 : groupMembers(pgid);
-      const leftover =
-        members > 0
-          ? `${members} processes remain in the agent's process group after it exited and were not signalled`
-          : null;
+      const leftover = leftoverProcesses(child.pid, paths.base, secrets);
       resolve({ stdout, stderr: `${stderr}${extra}`, code, timedOut, interrupted, leftover });
     };
     const onAbort = (): void => {
       interrupted = true;
-      stopGroup(child);
+      terminate(child);
     };
     child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString('utf8')));
     child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString('utf8')));
     const timer = setTimeout(() => {
       timedOut = true;
-      stopGroup(child);
+      terminate(child);
     }, timeoutMs);
     if (signal?.aborted) onAbort();
     else signal?.addEventListener('abort', onAbort, { once: true });
@@ -212,12 +265,21 @@ function runAgent(
   });
 }
 
-function finishDriver(driver: AgentDriver, paths: TrialPaths, killed: boolean, quarantineDir: string): string | null {
+function finishDriver(driver: AgentDriver, paths: TrialPaths): string | null {
   try {
-    return driver.finish(paths, { killed, quarantineDir });
+    return driver.finish(paths);
   } catch (error) {
     return `the ${driver.name} cleanup failed: ${error instanceof Error ? error.message : String(error)}`;
   }
+}
+
+function probeResult(invocations: Invocation[]): string | null {
+  const probe = invocations.find((each) => each.homeReadable !== undefined);
+  if (!probe)
+    return 'the confinement probe never ran: the agent did not call stim, so the sandbox is not shown to apply';
+  return probe.homeReadable
+    ? 'the agent could read a marker file under the real home: the sandbox settings were not applied'
+    : null;
 }
 
 export async function runTrial(
@@ -227,36 +289,62 @@ export async function runTrial(
   options: RunOptions,
 ): Promise<TrialOutcome> {
   const paths = createPaths();
+  const probe = join(userInfo().homedir, `.stim-eval-probe-${basename(paths.base)}`);
   const started = Date.now();
+  const confine = options.confine !== false;
+  const stop = new AbortController();
+  const onOuterAbort = (): void => stop.abort();
+  options.signal?.addEventListener('abort', onOuterAbort, { once: true });
   let result: AgentResult | null = null;
   let secrets: string[] = [];
   let failure: unknown = null;
+  let watcher: ReturnType<typeof setInterval> | null = null;
   try {
+    writeFileSync(probe, randomBytes(8).toString('hex'), { mode: 0o600 });
     writeWorkspace(paths, evalCase.workspace.files);
-    writeScriptedStim(paths, evalCase, arm);
+    writeScriptedStim(paths, evalCase, arm, probe);
     driver.prepare(paths, arm.skill ? readFileSync(SKILL_PATH, 'utf8') : null);
     secrets = driver.secrets(paths);
-    result = await runAgent(paths, driver.command(paths, evalCase.prompt, options), options.timeoutMs, options.signal);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    if (options.signal?.aborted) result = NOT_STARTED;
+    else {
+      if (confine)
+        watcher = setInterval(() => {
+          if (readInvocations(paths).some((each) => each.homeReadable === true)) stop.abort();
+        }, 250);
+      result = await runAgent(
+        paths,
+        driver.command(paths, evalCase.prompt, options),
+        options.timeoutMs,
+        stop.signal,
+        secrets,
+      );
+    }
   } catch (error) {
     failure = error;
   }
+  if (watcher) clearInterval(watcher);
+  options.signal?.removeEventListener('abort', onOuterAbort);
   try {
-    const killed = result === null || result.timedOut || result.interrupted;
-    const note = finishDriver(driver, paths, killed, options.quarantineDir);
+    const note = finishDriver(driver, paths);
     if (failure !== null || result === null) throw failure ?? new Error('the agent did not run');
     const problems: string[] = [];
     if (result.timedOut) problems.push(`the agent exceeded ${options.timeoutMs} ms and was killed`);
-    if (result.interrupted) problems.push('the run was interrupted and the agent was killed');
+    if (result.interrupted) problems.push('the run was stopped and the agent was killed');
     if (result.code !== 0 && !result.timedOut && !result.interrupted)
       problems.push(`the agent exited with ${result.code}`);
     if (result.leftover) problems.push(result.leftover);
     if (readdirSync(paths.stimHome).length > 0) problems.push('the real stim ran: the agent Stim home is not empty');
+    const invocations = readInvocations(paths);
+    const confinement = confine ? probeResult(invocations) : null;
+    if (confinement) problems.push(confinement);
     const transcript = redact(result.stdout, secrets);
     const run = driver.parse(transcript);
     if (run.error) problems.push(run.error);
     return {
       run,
-      invocations: readInvocations(paths),
+      invocations,
+      invocationsText: redact(invocations.map((each) => JSON.stringify(each)).join('\n'), secrets),
       problems,
       notes: note ? [note] : [],
       durationMs: Date.now() - started,
@@ -264,6 +352,7 @@ export async function runTrial(
       stderr: redact(result.stderr, secrets),
     };
   } finally {
+    rmSync(probe, { force: true });
     rmSync(paths.base, { recursive: true, force: true });
   }
 }

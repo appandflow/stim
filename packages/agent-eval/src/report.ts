@@ -3,6 +3,7 @@ import type { Check } from './types.ts';
 export interface TrialRecord {
   index: number;
   pass: boolean;
+  inconclusive: boolean;
   invalid: string[];
   checks: Check[];
   guideBytes: number;
@@ -37,20 +38,18 @@ function format(value: number | null): string {
 
 export function markdownTable(cells: CellResult[]): string {
   const rows = [
-    '| agent | case | arm | trials passed | median guide bytes | median turns | median tokens |',
-    '| --- | --- | --- | --- | --- | --- | --- |',
+    '| agent | case | arm | trials passed | inconclusive | median guide bytes | median turns | median tokens |',
+    '| --- | --- | --- | --- | --- | --- | --- | --- |',
   ];
   for (const cell of cells) {
-    const passed = cell.trials.filter((trial) => trial.pass && trial.invalid.length === 0).length;
-    const invalid = cell.trials.filter((trial) => trial.invalid.length > 0).length;
-    const asked = cell.trials.filter(
-      (trial) =>
-        trial.pass && trial.checks.some((check) => check.name === 'asked without a dry run' && check.detail === 'true'),
-    ).length;
-    const status = `${passed}/${cell.planned}${asked > 0 ? ` (${asked} asked without a dry run)` : ''}${invalid > 0 ? ` (${invalid} invalid)` : ''}${cell.trials.length < cell.planned ? ' (not run)' : ''}`;
+    const valid = cell.trials.filter((trial) => trial.invalid.length === 0);
+    const passed = valid.filter((trial) => trial.pass).length;
+    const unclear = valid.filter((trial) => trial.inconclusive).length;
+    const invalid = cell.trials.length - valid.length;
+    const status = `${passed}/${cell.planned}${invalid > 0 ? ` (${invalid} invalid)` : ''}${cell.trials.length < cell.planned ? ' (not run)' : ''}`;
     const turns = median(cell.trials.flatMap((trial) => (trial.turns === null ? [] : [trial.turns])));
     rows.push(
-      `| ${cell.agent} | ${cell.case} | ${cell.arm} | ${status} | ${format(median(cell.trials.map((trial) => trial.guideBytes)))} | ${format(turns)} | ${format(median(cell.trials.map((trial) => trial.tokens)))} |`,
+      `| ${cell.agent} | ${cell.case} | ${cell.arm} | ${status} | ${unclear} | ${format(median(cell.trials.map((trial) => trial.guideBytes)))} | ${format(turns)} | ${format(median(cell.trials.map((trial) => trial.tokens)))} |`,
     );
   }
   return `${rows.join('\n')}\n`;

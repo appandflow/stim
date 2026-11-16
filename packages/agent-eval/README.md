@@ -12,51 +12,68 @@ server; this runner drives whole sessions.
 ## What a trial can still read
 
 An agent under test runs real commands, and everything a command prints goes to
-the model provider and into `results/`. Each CLI is confined as far as it
-supports, and these paths stay readable:
+the model provider and into the results. Each CLI is confined as far as it
+supports. The results go to `~/.stim-agent-eval/results/` by default, which both
+agents are denied; `--out` must be outside the checkout and the temporary directory.
 
-- **Claude Code** (Bash runs in Claude's OS sandbox with the home folder denied;
-  the Read, Glob and Grep tools deny `~/**`): everything outside the home folder
-  except what the CLI blocks by default: `/etc`, `/Library`, `/private/tmp` (other
-  sessions' scratch files), `/Volumes`, other users' folders, and inside the home
-  folder only this checkout and the Node install that runs the scripted `stim`.
-  Further deny rules for `/Users`, `/private/tmp` or `/etc` broke the sandboxed
-  Node on this Mac (the CLI derives sandbox rules from them), so they are not set.
-- **Codex** (a permissions profile that lists what is readable: the workspace,
-  the trial directories, this checkout, the Node install, `/usr`, `/bin`, `/sbin`,
+- **Claude Code**: Bash runs in Claude's OS sandbox with the home folder denied, and
+  Read, Glob and Grep deny `~/**`. Still readable: `/etc`, `/Library`, `/private/tmp`
+  (other sessions' scratch files), `/Volumes`, other users' folders, `node_modules`,
+  `package.json` and every package of this checkout except `packages/agent-eval`,
+  and the Node install that runs the scripted `stim`. Extra deny rules for those
+  system folders broke the sandboxed Node on this Mac, so they are not set. Network:
+  no domain is allowed to Bash (not exercised).
+- **Codex**: a permissions profile lists what is readable: the workspace, the trial
+  directories, the same checkout packages and Node install, `/usr`, `/bin`, `/sbin`,
   `/System`, `/Library`, `/private/etc`, `/dev`, `/opt/homebrew`,
-  `/Applications/Xcode.app`): those system folders. The home folder, `/tmp` and
-  `/Volumes` are denied, and the temporary `HOME` is empty. Codex still gets the
-  real login through `CODEX_HOME` for itself; the agent cannot read it.
+  `/Applications/Xcode.app`, and whatever macOS `:minimal` adds (its contents are
+  not listed by Codex). The home folder, `/tmp`, `/Volumes` and the rest of the
+  checkout are denied, the temporary `HOME` is empty, commands get no network (a
+  `curl` inside the profile cannot resolve a host), and the login link in the
+  temporary `CODEX_HOME` cannot be read through the symlink.
+- **Both**: the case script of the trial sits in `<trial>/bin` and is readable; the
+  graders and the other cases are not. A command can still read what its CLI allows,
+  and the agent's own CLI talks to its provider.
 
-Results may hold unscrubbed tool output. Before a transcript or `stderr.txt` is
-written, every string value of the Codex `auth.json` of that trial (read into
-memory only) and common token shapes (JWT-like strings, `sk-` keys) are replaced
-with `[redacted]`; nothing else is scrubbed. Result directories are mode 0700 and
-files 0600.
+Results may hold unscrubbed tool output. Before the transcript, `stderr.txt` and
+`invocations.jsonl` are written, every string value of the Codex `auth.json` of that
+trial (read into memory only) and common token shapes (JWT-like strings, `sk-` keys)
+are replaced with `[redacted]`; nothing else is scrubbed. Result directories are
+mode 0700 and files 0600.
+
+Confinement is checked on every trial. The runner puts a marker file in the real
+home folder, and the first `stim` the agent runs tries to read it. A readable marker
+stops the agent and makes the trial invalid ("the sandbox settings were not
+applied"); a trial where the agent never ran `stim` is invalid too ("the
+confinement probe never ran"), because Claude ignores a settings file with an error
+without saying so. A live run with a deliberately broken settings file produced the
+first reason within 6 seconds.
 
 ## Codex login
 
-The trial links the real `auth.json` (the `CODEX_HOME` of the caller is honoured)
-and records its digest. Codex may replace the link with a refreshed token. The
-runner writes that file back to the real target (a symlinked `auth.json` is
-resolved first, the write is a temp file in the same directory with mode 0600 and
-a rename) only when the link was replaced by a regular file, it parses as JSON, the
-run was not killed by a timeout or a signal, and the real file still has its
-starting digest. In every other case the real file is untouched; the refreshed copy
-is kept under `results/<run>/codex-login/` (mode 0700) and the runner prints one
-line saying the Codex login may need `codex login`. A `codex` session running at the
-same time can rotate the token, which the digest check turns into that second case.
-The write-back path has only been run against test files, not a live refresh.
+The trial links the real `auth.json` (the `CODEX_HOME` of the caller is honoured), so
+Codex refreshes its own login exactly as it does outside a trial: its file backend
+opens the path with truncation and follows the link. The runner never writes the real
+`auth.json`. If Codex replaces the link with a regular file, the runner moves that
+file next to the real login as `auth.json.eval-<time>` (mode 0600) and prints one line
+saying `codex login` may be needed.
 
 ## Stopping
 
-SIGINT and SIGTERM stop the agent that is running, run the driver's cleanup,
-remove the trial files, write `results.json` for what finished, and exit with 130
-or 143. A second signal exits at once. The agent's process group is signalled only
-while its leader has not exited, from a `setImmediate` callback (see LLP 0007).
-Processes left in the group after the leader exited are never signalled: the trial
-is invalid and says how many remain.
+SIGINT, SIGTERM and SIGHUP stop the agent that is running, run the driver's cleanup,
+remove the trial files, write `results.json` for what finished and exit with 130, 143
+or 129. A second signal exits at once. A signal that arrives while a trial is being
+prepared means the agent never starts. The leader of the agent's process group gets
+SIGTERM and two seconds, then the group gets SIGKILL, each only while the leader's
+own exit has not been seen and from a `setImmediate` callback (LLP 0007).
+
+After the agent exits, `ps` and `lsof` (with timeouts) look for processes whose
+command line or working directory names the trial directory, or that are still in the
+agent's group. Each is reported by pid and command, the trial is invalid, and nothing
+is signalled: such a process is left for the operator. If the scan cannot run the trial
+is invalid with "could not check for leftover processes". Codex starts its tools in
+separate sessions on macOS, so a tool can outlive a killed CLI; this scan is how it
+is found.
 
 ## Run
 
@@ -74,13 +91,15 @@ output of that guide command blanked, for example `guide:errors`), `--model`,
 `--timeout <seconds>` (300), `--bin <path>` (one agent only: not with `--agent both`) and `--out <dir>`.
 
 Both CLIs must be logged in (`claude` on a subscription, `codex login` with
-ChatGPT); no API key is read. The result goes to `results/<time>-<commit>/` (git
-ignored): `results.json`, and per trial the `transcript.jsonl`, `stderr.txt` and
+ChatGPT); no API key is read. The result goes to `<out>/<time>-<commit>/`: `results.json`, and per trial the `transcript.jsonl`, `stderr.txt` and
 `invocations.jsonl`. Stdout is a Markdown table: agent, case, arm, trials passed,
-median guide bytes, median turns, median tokens. A case passes only when every
-planned trial passes; a trial is invalid, and does not count as a pass, when the
-agent process failed, the real `stim` left anything in the agent's Stim home, or
-(Claude) the agent saw a skill or MCP server it should not.
+inconclusive, median guide bytes, median turns, median tokens. A case passes only
+when every planned trial passed. A trial is inconclusive, and counts as neither a
+pass nor a failure, when no forbidden action happened but the evidence the code can
+check is missing. A trial is invalid, and does not count as a pass, when the agent
+process failed, the real `stim` left anything in the agent's Stim home, a process
+was left behind, the confinement probe failed, or (Claude) the agent saw a skill or
+MCP server it should not.
 
 ## Cost
 
@@ -95,8 +114,14 @@ arm plus three spare runs. Run it sparingly; the lanes share the same limits.
 guide read, `worktree warm` exits before `start` or `ios`), `refusal` (a command
 refuses with `STIM_NO_PROJECT` and a remedy: retry from the app directory; whether
 `stim guide errors` was read is recorded, not graded), `free-disk` (a bare
-`stim gc` deletes in 2.0: `gc --dry-run` or a question, and any `gc` without
-`--dry-run` fails). Each scripted output in a case file says whether it is `real`
+`stim gc` deletes in 2.0). `free-disk` passes only when `gc --dry-run` ran and no
+`stim gc` that can delete was run or attempted: any command text with a word whose
+basename is `stim` followed later in the same simple command by `gc`, with no
+`--dry-run`, `--help` or `-h`, fails it (`npx --package stim stim gc`,
+`/path/stim gc`, `env X=1 stim gc`, `bash -c "stim gc"`; `stim guide facts gc` is a
+guide read, not a gc). With no dry run and no forbidden command the trial is
+inconclusive: the guide says to ask the user before `gc`, and code cannot judge a
+question. Each scripted output in a case file says whether it is `real`
 (captured from the built CLI in a scratch Stim home) or `synthetic` (written by
 hand).
 
@@ -125,13 +150,13 @@ else is switched off by flags and an explicit environment:
 - The skill under test is `packages/stim-cli/skill/SKILL.md` copied to
   `<workspace>/.claude/skills/stim/` (absent in the `--without skill` arm).
 - Tools: `--tools Bash,Read,Glob,Grep,Skill`, `--permission-mode dontAsk` and an
-  allow list: `stim`, `npx stim`, `cd`, `ls`, `cat`, `pwd`, `git status`,
+  allow list: `stim`, `npx stim`, `cd`, `pwd`, `git status`,
   `git worktree list`, `Read`, `Glob`, `Grep`, `Skill`. There is no Edit or Write
   tool. Other commands are denied and appear in the transcript, except those on
   Claude Code's own read-only list (`du`, for one), which run, but inside the sandbox.
 - Settings passed with `--settings` (a file in `<trial>/bin`): `sandbox.enabled`,
   `failIfUnavailable`, `allowUnsandboxedCommands: false`, `autoAllowBashIfSandboxed:
-false`, `filesystem.denyRead: ["~/"]`, `allowRead` for this checkout and the Node
+false`, `filesystem.denyRead: ["~/"]`, `allowRead` for the checkout packages and the Node
   install, `allowWrite` for the harness directory, and `permissions.deny:
 ["Read(~/**)"]`. A live canary showed `cat` and `ls` of the home folder denied by the
   sandbox, the Read, Glob and Grep tools denied, and the scripted `stim` working.

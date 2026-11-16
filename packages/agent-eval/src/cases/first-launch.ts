@@ -58,7 +58,7 @@ export const firstLaunch: EvalCase = {
   ],
   grade(input) {
     return [
-      ran(input, { argv: ['guide'] }),
+      ran(input, { argv: ['guide'], exit: 0 }),
       ran(input, { argv: ['worktree', 'warm'], exit: 0 }),
       ran(input, { argv: ['ios'] }),
       exitedBefore(input, { argv: ['worktree', 'warm'] }, { argv: ['start'] }),

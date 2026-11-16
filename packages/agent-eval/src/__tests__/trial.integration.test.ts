@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { tmpdir, userInfo } from 'node:os';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { CASES } from '../cases/index.ts';
@@ -44,7 +44,7 @@ printf '{"type":"result","subtype":"success","is_error":false,"num_turns":2,"res
       model: null,
       bin,
       timeoutMs: 60_000,
-      quarantineDir: join(directory, 'q'),
+      confine: false,
     });
     expect(outcome.problems).toEqual([]);
     expect(outcome.invocations.map((each) => [each.kind, each.argv.join(' ')])).toEqual([
@@ -69,7 +69,7 @@ printf '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"res
       model: null,
       bin,
       timeoutMs: 60_000,
-      quarantineDir: join(directory, 'q'),
+      confine: false,
     });
     expect(outcome.run.finalMessage).toBe('skill=[]');
     expect(outcome.invocations.map((each) => [each.kind, each.stdoutBytes])).toEqual([['blanked', 0]]);
@@ -84,7 +84,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"resul
       model: null,
       bin,
       timeoutMs: 60_000,
-      quarantineDir: join(directory, 'q'),
+      confine: false,
     });
     expect(outcome.problems).toEqual(['the real stim ran: the agent Stim home is not empty']);
   }, 30_000);
@@ -96,7 +96,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"resul
       model: null,
       bin,
       timeoutMs: 700,
-      quarantineDir: join(directory, 'q'),
+      confine: false,
     });
     expect(Date.now() - started).toBeLessThan(10_000);
     expect(outcome.problems).toContain('the agent exceeded 700 ms and was killed');
@@ -106,7 +106,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"resul
     model: null,
     bin: null,
     timeoutMs: 60_000,
-    quarantineDir: join(directory, 'q'),
+    confine: false,
     ...extra,
   });
 
@@ -135,7 +135,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"resul
     const [pid, workspace] = readFileSync(marker, 'utf8').trim().split(' ');
     controller.abort();
     const outcome = await running;
-    expect(outcome.problems).toContain('the run was interrupted and the agent was killed');
+    expect(outcome.problems).toContain('the run was stopped and the agent was killed');
     expect(alive(Number(pid))).toBe(false);
     expect(existsSync(dirname(workspace ?? ''))).toBe(false);
   }, 30_000);
@@ -148,7 +148,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"resul
     const outcome = await runTrial(firstLaunch, withSkill, claudeDriver, options({ bin }));
     const pid = Number(readFileSync(marker, 'utf8'));
     try {
-      expect(outcome.problems.join(' ')).toMatch(/1 processes remain in the agent's process group/);
+      expect(outcome.problems.join(' ')).toMatch(/left for the operator and not signalled: \d+ sleep 29/);
       expect(alive(pid)).toBe(true);
     } finally {
       process.kill(pid, 'SIGKILL');
@@ -169,9 +169,10 @@ echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"resul
       trials: 2,
       maxRuns: 5,
       timeoutMs: 1000,
+      confine: false,
       model: null,
       bin: null,
-      quarantineDir: join(directory, 'q'),
+
       onProgress: () => undefined,
       onTrial: () => undefined,
     });
@@ -186,7 +187,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"resul
     const marker = join(directory, 'cli-agent.txt');
     const bin = fakeAgent(`echo "$$ $PWD" > "${marker}"\nsleep 30`);
     const cli = fileURLToPath(new URL('../cli.ts', import.meta.url));
-    const out = join(directory, 'results');
+    const out = join(userInfo().homedir, '.stim-agent-eval', `test-${basename(directory)}`);
     const child = spawn(
       process.execPath,
       [cli, '--agent', 'claude', '--bin', bin, '--case', 'first-launch', '--trials', '1', '--out', out],
@@ -203,6 +204,72 @@ echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"resul
     expect(alive(Number(pid))).toBe(false);
     expect(existsSync(dirname(workspace ?? ''))).toBe(false);
     const [run] = readdirSync(out);
-    expect(existsSync(join(out, run ?? '', 'results.json'))).toBe(true);
+    const written = existsSync(join(out, run ?? '', 'results.json'));
+    rmSync(out, { recursive: true, force: true });
+    expect(written).toBe(true);
   }, 60_000);
+
+  test('a trial is invalid, and the agent is stopped, when the home marker is readable from the scripted stim', async () => {
+    const bin = fakeAgent('stim ios\nsleep 30');
+    const started = Date.now();
+    const outcome = await runTrial(firstLaunch, withSkill, claudeDriver, options({ bin, confine: true }));
+    expect(Date.now() - started).toBeLessThan(25_000);
+    expect(outcome.problems.join(' ')).toMatch(/could read a marker file under the real home/);
+  }, 40_000);
+
+  test('a trial is invalid when the confinement probe never ran', async () => {
+    const bin = fakeAgent(
+      'echo \'{"type":"result","subtype":"success","is_error":false,"num_turns":1,"result":"","usage":{}}\'',
+    );
+    const outcome = await runTrial(firstLaunch, withSkill, claudeDriver, options({ bin, confine: true }));
+    expect(outcome.problems.join(' ')).toMatch(/confinement probe never ran/);
+  }, 30_000);
+
+  test('a signal that arrived before the agent could start means the agent never starts', async () => {
+    const marker = join(directory, 'started.txt');
+    const bin = fakeAgent(`echo started > "${marker}"`);
+    const controller = new AbortController();
+    controller.abort();
+    const outcome = await runTrial(firstLaunch, withSkill, claudeDriver, options({ bin, signal: controller.signal }));
+    expect(existsSync(marker)).toBe(false);
+    expect(outcome.problems).toContain('the run was stopped and the agent was killed');
+  }, 30_000);
+
+  test('an abort asks the agent to stop with SIGTERM before anything is killed', async () => {
+    const marker = join(directory, 'term.txt');
+    const ready = join(directory, 'ready.txt');
+    const bin = fakeAgent(
+      `trap 'echo terminated > "${marker}"; exit 0' TERM\necho ready > "${ready}"\nsleep 30 &\nwait`,
+    );
+    const controller = new AbortController();
+    const running = runTrial(firstLaunch, withSkill, claudeDriver, options({ bin, signal: controller.signal }));
+    await until(() => existsSync(ready));
+    controller.abort();
+    await running;
+    expect(readFileSync(marker, 'utf8').trim()).toBe('terminated');
+  }, 30_000);
+
+  test('a process in another session that works in the trial directory is reported by pid and not signalled', async () => {
+    const marker = join(directory, 'detached.pid');
+    const bin = fakeAgent(
+      `perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' sleep 28 >/dev/null 2>&1 &\necho $! > "${marker}"\nsleep 1\necho '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"result":"","usage":{}}'`,
+    );
+    const outcome = await runTrial(firstLaunch, withSkill, claudeDriver, options({ bin }));
+    const pid = Number(readFileSync(marker, 'utf8'));
+    try {
+      expect(outcome.problems.join(' ')).toContain(`left for the operator and not signalled: ${pid} `);
+      expect(alive(pid)).toBe(true);
+    } finally {
+      process.kill(pid, 'SIGKILL');
+    }
+  }, 60_000);
+
+  test('the saved invocation log is redacted like the transcript', async () => {
+    const bin = fakeAgent('stim sekrit-value-123');
+    const driver = { ...claudeDriver, secrets: () => ['sekrit-value-123'] };
+    const outcome = await runTrial(firstLaunch, withSkill, driver, options({ bin }));
+    expect(outcome.invocations[0]?.argv).toEqual(['sekrit-value-123']);
+    expect(outcome.invocationsText).not.toContain('sekrit-value-123');
+    expect(outcome.invocationsText).toContain('[redacted]');
+  }, 30_000);
 });

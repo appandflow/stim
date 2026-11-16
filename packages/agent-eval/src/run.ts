@@ -1,4 +1,4 @@
-import { guideBytes, passed } from './graders.ts';
+import { guideBytes, verdict } from './graders.ts';
 import type { CellResult, TrialRecord } from './report.ts';
 import { runTrial, type Arm } from './trial.ts';
 import type { AgentDriver, EvalCase } from './types.ts';
@@ -12,8 +12,8 @@ export interface EvalOptions {
   timeoutMs: number;
   model: string | null;
   bin: string | null;
-  quarantineDir: string;
   signal?: AbortSignal;
+  confine?: boolean;
   onProgress(line: string): void;
   onTrial(
     cell: { agent: string; case: string; arm: string; index: number },
@@ -59,6 +59,7 @@ export async function runEvals(options: EvalOptions): Promise<EvalOutcome> {
             cell.trials.push({
               index,
               pass: false,
+              inconclusive: false,
               invalid: [
                 `the trial failed before it could be graded: ${error instanceof Error ? error.message : String(error)}`,
               ],
@@ -86,7 +87,8 @@ export async function runEvals(options: EvalOptions): Promise<EvalOutcome> {
           const tokens = outcome.run.tokens.input + outcome.run.tokens.output;
           const record: TrialRecord = {
             index,
-            pass: passed(checks),
+            pass: verdict(checks) === 'pass',
+            inconclusive: verdict(checks) === 'inconclusive',
             invalid,
             checks,
             guideBytes: guideBytes(outcome.invocations),
@@ -101,7 +103,7 @@ export async function runEvals(options: EvalOptions): Promise<EvalOutcome> {
             {
               transcript: outcome.transcript,
               stderr: outcome.stderr,
-              invocations: outcome.invocations.map((each) => JSON.stringify(each)).join('\n'),
+              invocations: outcome.invocationsText,
             },
           );
         }

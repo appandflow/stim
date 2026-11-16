@@ -1,5 +1,6 @@
-import { accessSync, constants, mkdirSync, writeFileSync } from 'node:fs';
+import { accessSync, constants, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { REPO_ROOT } from '../trial.ts';
 import type { TrialPaths } from '../types.ts';
 
 export function minimalPath(paths: TrialPaths): string {
@@ -58,4 +59,15 @@ export function asNumber(value: unknown): number {
 export function unwrapShell(command: string): string {
   const wrapped = /^(?:\/bin\/)?(?:zsh|bash|sh) -l?c (['"])([\s\S]*)\1$/.exec(command);
   return wrapped?.[2] ?? command;
+}
+
+export function checkoutReads(): string[] {
+  const packages = join(REPO_ROOT, 'packages');
+  return [
+    join(REPO_ROOT, 'node_modules'),
+    join(REPO_ROOT, 'package.json'),
+    ...readdirSync(packages)
+      .filter((name) => name !== 'agent-eval')
+      .map((name) => join(packages, name)),
+  ];
 }

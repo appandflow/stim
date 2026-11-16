@@ -1,24 +1,12 @@
-import { createHash, randomBytes } from 'node:crypto';
-import {
-  chmodSync,
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  readFileSync,
-  realpathSync,
-  renameSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { existsSync, lstatSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { secretValues } from '../redact.ts';
-import { REPO_ROOT } from '../trial.ts';
-import type { AgentCommand, AgentDriver, AgentRun, DriverOptions, FinishContext, TrialPaths } from '../types.ts';
+import type { AgentCommand, AgentDriver, AgentRun, DriverOptions, TrialPaths } from '../types.ts';
 import {
   asNumber,
   asRecord,
   asString,
+  checkoutReads,
   minimalPath,
   parseLines,
   resolveBinary,
@@ -89,7 +77,6 @@ function realAuth(): string {
 
 interface LoginState {
   target: string;
-  digest: string;
   secrets: string[];
 }
 
@@ -106,10 +93,6 @@ const SYSTEM_READS = [
   '/Applications/Xcode.app',
 ];
 
-function digest(content: Buffer): string {
-  return createHash('sha256').update(content).digest('hex');
-}
-
 function permissionProfile(paths: TrialPaths): string {
   const access: Record<string, string> = {
     ':minimal': 'read',
@@ -119,7 +102,7 @@ function permissionProfile(paths: TrialPaths): string {
     [paths.home]: 'read',
     [join(paths.codexHome, 'skills')]: 'read',
     [dirname(dirname(process.execPath))]: 'read',
-    [REPO_ROOT]: 'read',
+    ...Object.fromEntries(checkoutReads().map((path) => [path, 'read'])),
     ...Object.fromEntries(SYSTEM_READS.map((path) => [path, 'read'])),
     '/tmp': 'deny',
     '/private/tmp': 'deny',
@@ -129,24 +112,6 @@ function permissionProfile(paths: TrialPaths): string {
     .join(', ')} }`;
 }
 
-function quarantine(paths: TrialPaths, refreshed: Buffer, directory: string, reasons: string[]): string {
-  mkdirSync(directory, { recursive: true, mode: 0o700 });
-  chmodSync(directory, 0o700);
-  const copy = join(directory, `auth-${basename(paths.base)}.json`);
-  writeFileSync(copy, refreshed, { mode: 0o600 });
-  return `the Codex login may need codex login again: ${reasons.join('; ')}. The refreshed copy is at ${copy}; the real auth.json was not touched`;
-}
-
-function writeBack(target: string, refreshed: Buffer): void {
-  const temp = join(dirname(target), `.auth.json.eval-${process.pid}-${randomBytes(4).toString('hex')}`);
-  try {
-    writeFileSync(temp, refreshed, { mode: 0o600, flag: 'wx' });
-    renameSync(temp, target);
-  } finally {
-    rmSync(temp, { force: true });
-  }
-}
-
 export const codexDriver: AgentDriver = {
   name: 'codex',
   expectedSkills: (withSkill) => (withSkill ? ['stim'] : []),
@@ -154,8 +119,7 @@ export const codexDriver: AgentDriver = {
     const auth = realAuth();
     if (!existsSync(auth)) throw new Error('Codex login not found; run codex login first.');
     const target = realpathSync(auth);
-    const content = readFileSync(target);
-    LOGINS.set(paths, { target, digest: digest(content), secrets: secretValues(content.toString('utf8')) });
+    LOGINS.set(paths, { target, secrets: secretValues(readFileSync(target, 'utf8')) });
     symlinkSync(target, join(paths.codexHome, 'auth.json'));
     writeFileSync(join(paths.home, '.zprofile'), `export PATH="${paths.bin}:$PATH"\n`);
     if (skill !== null) writeSkill(join(paths.codexHome, 'skills'), skill);
@@ -195,34 +159,14 @@ export const codexDriver: AgentDriver = {
   },
   parse: parseCodex,
   secrets: (paths) => LOGINS.get(paths)?.secrets ?? [],
-  finish(paths: TrialPaths, context: FinishContext): string | null {
+  finish(paths: TrialPaths): string | null {
     const state = LOGINS.get(paths);
     const link = join(paths.codexHome, 'auth.json');
     const kind = lstatSync(link, { throwIfNoEntry: false });
     if (!state || !kind || kind.isSymbolicLink()) return null;
-    const refreshed = readFileSync(link);
-    if (digest(refreshed) === state.digest) return null;
-    const reasons: string[] = [];
-    if (context.killed) reasons.push('the run was killed by a timeout or a signal');
-    try {
-      JSON.parse(refreshed.toString('utf8'));
-    } catch {
-      reasons.push('the refreshed file is not valid JSON');
-    }
-    try {
-      if (digest(readFileSync(state.target)) !== state.digest)
-        reasons.push('the real auth.json changed during the trial');
-    } catch {
-      reasons.push('the real auth.json cannot be read');
-    }
-    if (reasons.length === 0) {
-      try {
-        writeBack(state.target, refreshed);
-        return null;
-      } catch (error) {
-        reasons.push(`writing the real auth.json failed: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    }
-    return quarantine(paths, refreshed, context.quarantineDir, reasons);
+    const moved = join(dirname(state.target), `auth.json.eval-${Date.now()}`);
+    writeFileSync(moved, readFileSync(link), { mode: 0o600, flag: 'wx' });
+    rmSync(link);
+    return `Codex replaced the login link with its own file during the trial; it was moved to ${moved} and the real login was not touched. codex login may be needed`;
   },
 };
