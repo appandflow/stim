@@ -375,6 +375,8 @@ between its rung's startedAt and its end. Steps and what items counts:
   plan_history                  the actions or worktrees the plan returned
   dormant_dependencies          the dormant dependency step, when it runs (at
                                 most hourly); the actions it took or kept
+  build_end_measure             the walk of folders a finished build wrote;
+                                the folders walked
 A step writes one record, never one per item. A tick at normal writes one
 (dormant_candidates); at high up to 16 and at critical up to 22; the dormant
 dependency step adds about 7 an hour. The records change nothing a pass does.

@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { readdirSync, statSync } from 'node:fs';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
@@ -33,6 +33,50 @@ export function diskUsageCacheFile(path: string): string {
 /** The file that records when the last walk of `path` failed, so other processes do not repeat it at once. */
 export function diskUsageFailureFile(path: string): string {
   return join(diskUsageCacheDir(), cacheName(path).replace(/\.json$/, '.failed.json'));
+}
+
+/**
+ * A local native build of the workspace at `path` ended: the folders it wrote are stale. Every mark is its own file, so
+ * a consumer removes only the marks it listed before it measured, never one written after.
+ */
+export interface BuildEndMarker {
+  file: string;
+  path: string;
+}
+
+const buildEndMarkerName = /^[0-9a-f]{32}\.[0-9a-f-]{36}\.stale\.json$/;
+
+/** A new, unused marker file for the workspace at `path`. */
+export function newBuildEndMarkerFile(path: string): string {
+  return join(diskUsageCacheDir(), cacheName(path).replace(/\.json$/, `.${randomUUID()}.stale.json`));
+}
+
+function buildEndMarkerNames(): string[] {
+  try {
+    return readdirSync(diskUsageCacheDir()).filter((name) => buildEndMarkerName.test(name));
+  } catch {
+    return [];
+  }
+}
+
+/** Every marker file of the workspace at `path`, including one whose content cannot be read. */
+export function buildEndMarkerFilesOf(path: string): string[] {
+  const prefix = cacheName(path).replace(/\.json$/, '.');
+  return buildEndMarkerNames()
+    .filter((name) => name.startsWith(prefix))
+    .map((name) => join(diskUsageCacheDir(), name));
+}
+
+/** The markers of finished builds that nothing has measured yet, oldest name first. */
+export function listBuildEndMarkers(): BuildEndMarker[] {
+  const markers: BuildEndMarker[] = [];
+  for (const name of buildEndMarkerNames().toSorted()) {
+    const file = join(diskUsageCacheDir(), name);
+    const path = readJsonObject(file)?.path;
+    if (typeof path === 'string' && isAbsolute(path) && name.startsWith(cacheName(path).replace(/\.json$/, '.')))
+      markers.push({ file, path });
+  }
+  return markers;
 }
 
 /** The file that caches the pull request of the worktree at `path`. */

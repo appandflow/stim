@@ -108,6 +108,35 @@ ladder runs it once, and leaves its own workspace's `target/` alone), so a
 checkout in use does not lose its `incremental/` data every tick; walks above
 normal are not niced.
 
+## The folders a build wrote are measured by the daemon
+
+When a local native compile ends, whether it succeeded, failed or was cancelled,
+the command writes a marker naming its workspace and nothing else. Every 30
+seconds stimd starts its measure thread when markers exist and no measure job
+runs. The job walks the workspace's build output folders, its Stim workspace
+folder and a Cargo `target/` through the disk-usage cache with the cache
+bypassed, then removes the markers it listed before the walk. A build that ended
+meanwhile leaves a newer marker, which stays. A marker for a workspace that no
+longer exists is dropped.
+
+The measure thread is not gated by host load, so a marker is measured at any
+level and waits only for the walk claim: a held claim keeps every marker for the
+next period. The walk is the same one the thread already runs: one at a time,
+under the walk claim, with a time limit. The cache numbers feed `stim status`,
+Desktop and the `stim gc` worktree report. No deletion, reduction, refusal or
+build admission reads them: the caps read the maintenance size scan, the
+dependency ranking reads only `node_modules` and Pods entries, which this job
+never writes, and the headroom estimate (LLP 0006) reads the build ledger.
+
+Maintainer decision, 2026-11-14: "Yes, add it", in answer to the proposal to add
+a size measurement at the end of each build to the second pull request for this
+issue (#5759).
+
+Maintainer decision, 2026-11-15: "For rest for with ur recs", which accepts a
+marker plus a 30 second timer with no protocol change, no cap check brought
+forward when a measurement crosses a cap, no use of the measurement in the
+headroom estimate, and no new setting (#5759).
+
 ## One idle day reduces a workspace
 
 A workspace with no activity for `idle.dormantDays` (default 1) is reduced to

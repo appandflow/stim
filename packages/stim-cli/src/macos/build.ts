@@ -23,6 +23,7 @@ import {
   type OffloadChoice,
 } from '../offload/client.ts';
 import { automaticBuild, namedBuildMachine, OffloadRefusal, requireLocalBuild } from '../build-placement.ts';
+import { markBuildEnded } from '../build-end-marker.ts';
 import { createBuildHeadroom } from '../engine/build-headroom-run.ts';
 import { macosDir } from './state.ts';
 import { reidentifyBundle } from './stage.ts';
@@ -282,8 +283,13 @@ export async function buildMacosBundle({
         const headroom = createBuildHeadroom({ root, platform: 'macos', context });
         await headroom.begin();
         progress.step('compile');
-        const bin = await recipe.compile({ scratch, writer, note });
-        await headroom.finish();
+        let bin: Awaited<ReturnType<typeof recipe.compile>>;
+        try {
+          bin = await recipe.compile({ scratch, writer, note });
+          await headroom.finish();
+        } finally {
+          markBuildEnded(root);
+        }
         progress.step('install');
         const staged = join(staging, `${recipe.product}.app`);
         await recipe.stage(bin, staged, bundleId, displayName);

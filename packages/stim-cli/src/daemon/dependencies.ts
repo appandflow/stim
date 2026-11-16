@@ -1,11 +1,14 @@
+import { existsSync, rmSync } from 'node:fs';
+import { sep } from 'node:path';
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import type { StimContext } from '@stim-cli/core';
-import type { DaemonLadderAction, PressureLevel } from '@stim-cli/core/state';
+import { listBuildEndMarkers, type DaemonLadderAction, type PressureLevel } from '@stim-cli/core/state';
 import { getProject } from '../workspace/config.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { formatBytes } from '../fs-util.ts';
 import {
   artifactWorktreesAsync,
+  appRoots,
   artifactWorktreesFor,
   clearArtifact,
   clearSourceTrees,
@@ -16,8 +19,9 @@ import {
 import { maintenancePinnedReader } from '../stimd/passes/protect.ts';
 import { knownPrivateBytes, refreshMeasure, trustedMeasure } from '../disk-usage.ts';
 import { workspaceKeys } from '../workspace/lightened.ts';
+import { workspaceDir } from '../workspace/paths.ts';
 import { checkDependencyEdits } from '../workspace/dependency-edits.ts';
-import { ARTIFACT_DIRS, existingDirsOf } from '../workspace/regenerable-dirs.ts';
+import { ARTIFACT_DIRS, existingBuildDirsAsync, existingDirsOf } from '../workspace/regenerable-dirs.ts';
 import { writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
 import {
   dormantAfterMs,
@@ -586,4 +590,51 @@ export async function measureDependencyTrees(operation: StimContext): Promise<vo
     const { outcome } = await refreshMeasure(path, { timeoutMs: WALK_TIMEOUT_MS, claim: true, operation });
     if (outcome === 'busy') return;
   }
+}
+
+const FIXED_BUILD = ARTIFACT_DIRS.build.map((dir) => `${sep}${dir.split('/').join(sep)}`);
+
+async function buildEndFolders(root: string): Promise<{ dir: string; private: boolean }[]> {
+  const worktree = { path: root, linked: false, locked: false, keys: [], reduceOnly: false };
+  const dirs = new Set<string>();
+  for (const base of appRoots(worktree, 'build'))
+    for (const dir of await existingBuildDirsAsync(base)) dirs.add(canonicalPath(dir));
+  const folders = [...dirs].map((dir) => ({ dir, private: !FIXED_BUILD.some((fixed) => dir.endsWith(fixed)) }));
+  const workspace = workspaceDir(root);
+  return existsSync(workspace) ? [{ dir: workspace, private: false }, ...folders] : folders;
+}
+
+// @ref LLP 0001#the-folders-a-build-wrote-are-measured-by-the-daemon -- a marker waits for the walk claim, never for load
+/**
+ * Measures the build output folders and the Cargo `target/` of every workspace whose build ended, through
+ * `refreshMeasure` with the cache bypassed, and returns how many folders it walked. A marker is removed once its
+ * workspace was visited, and only the marker files listed before the walk, so a build that ended meanwhile stays
+ * marked. A held walk claim ends the pass and keeps every marker not yet consumed. It never touches a dependency tree.
+ */
+export async function measureBuildEnds(operation: StimContext): Promise<number> {
+  const byRoot = new Map<string, string[]>();
+  for (const { file, path } of listBuildEndMarkers()) byRoot.set(path, [...(byRoot.get(path) ?? []), file]);
+  let walked = 0;
+  for (const [root, files] of byRoot) {
+    operation.signal.throwIfAborted();
+    if (existsSync(root)) {
+      for (const { dir, private: withPrivate } of await buildEndFolders(root)) {
+        const { outcome } = await refreshMeasure(dir, {
+          timeoutMs: WALK_TIMEOUT_MS,
+          maxAgeMs: 0,
+          claim: true,
+          operation,
+          private: withPrivate,
+          knownToExist: true,
+        });
+        if (outcome === 'busy') return walked;
+        walked++;
+      }
+    }
+    for (const file of files)
+      try {
+        rmSync(file, { force: true });
+      } catch {}
+  }
+  return walked;
 }

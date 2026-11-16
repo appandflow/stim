@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, join, sep } from 'node:path';
 import {
   agentSessionsCacheFile,
+  buildEndMarkerFilesOf,
   diskUsageCacheFile,
   gitMergeCacheFile,
   diskUsageFailureFile,
@@ -48,6 +49,7 @@ export function forgetStatusMeasures(worktree: string, workspaces: readonly stri
   const files = [
     pullRequestCacheFile(worktree),
     gitMergeCacheFile(worktree),
+    ...roots.flatMap(buildEndMarkerFilesOf),
     ...roots.flatMap((root) => [
       diskUsageCacheFile(root),
       diskUsageFailureFile(root),

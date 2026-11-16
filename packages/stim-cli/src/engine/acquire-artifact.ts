@@ -9,6 +9,7 @@ import {
   type waitForBuild,
 } from './build-lock.ts';
 import type { acquireBuildSlot, BuildSlotHandle, releaseBuildSlot } from './build-slots.ts';
+import { markBuildEnded } from '../build-end-marker.ts';
 import { createBuildHeadroom } from './build-headroom-run.ts';
 import { createCleanupScope } from './cleanup-scope.ts';
 import { WorkspaceProcessCleanupError } from './workspace-process-lock.ts';
@@ -158,9 +159,13 @@ export async function acquireArtifact<Artifact, Preparation, Placement, Failure>
         ...lifecycle.build,
         compile: async (placement, preparation) => {
           await headroom?.begin();
-          const compiled = await lifecycle.build.compile(placement, preparation);
-          await headroom?.finish();
-          return compiled;
+          try {
+            const compiled = await lifecycle.build.compile(placement, preparation);
+            await headroom?.finish();
+            return compiled;
+          } finally {
+            markBuildEnded(root);
+          }
         },
       },
       release: async (failure) => {
