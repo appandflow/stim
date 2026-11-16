@@ -29,9 +29,15 @@ lines of remedy, such as the teardown and ownership-claim recovery. A remedy
 that needs such a section names the exact `stim guide errors <CODE>` command.
 A guide, another remedy or a page that names a section names one that renders.
 
-`stim guide errors <CODE>` for a code with no section prints one line, on
-standard output with exit code 0, that says the printed remedy is the guidance.
-A name that is not a code is an unknown section, with the index and exit code 1.
+## A code with no section prints one line
+
+The implementing agent chose this behavior while working on
+[#5773](https://github.com/appandflow/stim/issues/5773); the maintainer has not
+stated it. `stim guide errors <CODE>` for a name shaped like a code (`STIM_` and
+capitals) that has no section prints one line, on standard output with exit code
+0, that says the printed remedy is the guidance. It cannot tell a deleted code
+from a mistyped one, so both get the line. Any other name is an unknown section,
+with the index on standard error and exit code 1.
 
 ## Code
 

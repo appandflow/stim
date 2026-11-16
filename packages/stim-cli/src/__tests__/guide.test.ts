@@ -185,7 +185,9 @@ test('every stim guide errors reference in a remedy, a guide or the router names
     ),
     ...allBodies(),
   ];
-  const named = new Set(texts.flatMap((text) => [...text.matchAll(/guide errors ([A-Za-z][\w-]*)/g)].map((m) => m[1])));
+  const named = new Set(
+    texts.flatMap((text) => [...text.matchAll(/guide errors\s+([A-Za-z][\w-]*)/g)].map((m) => m[1])),
+  );
   expect(named.size).toBeGreaterThan(0);
   expect([...named].filter((name) => !renderSection('errors', name ?? ''))).toEqual([]);
 });

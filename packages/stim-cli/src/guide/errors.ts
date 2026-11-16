@@ -27,7 +27,7 @@ on the message.`,
   with this code and asks to retry; it does not re-place the built architecture.
   remote-only never runs here and never joins the local queue: it refuses
   with this code when no host could ever take the run, and waits for a host that
-  is only full or loaded (see STIM_AT_CAPACITY).
+  is only full or loaded (that wait ends with STIM_AT_CAPACITY).
   An unreachable host's message and remedy are the diagnosis stim doctor gives
   (Tailscale off, Mac offline with last seen, serve route, stim-server), without
   tailscale ping. Check stim-server and Tailscale there,
@@ -653,12 +653,29 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
       summary: 'a remote start could not create its managed tunnel or tell the device where Metro is',
       body: () => `STIM_REMOTE_METRO_UNREACHABLE
   A remote start could not create its selected managed tunnel, or the device
-  could not be told where Metro is. Follows the same remedy as
-  STIM_NO_REMOTE_SESSION's tunnel guidance -- set metro.tunnel, or use
+  could not be told where Metro is. Set metro.tunnel, or use
   metro.publicUrl for an existing endpoint. A Re.Pack app (repack-child,
   \`guide metro\`) refuses with this code on a --remote, tunnel or hosted run,
   because Re.Pack writes its localhost origin into the bundle's asset and chunk
   URLs: run it on a local simulator or emulator, or set metro.command.`,
+    },
+    STIM_SHARE_REFUSED: {
+      separator: '--- SHARE CODES (`stim share`) ---',
+      summary: 'stim-server, or stim on Windows, would not start, stop or list a web share; the message names why',
+      body: () => `STIM_SHARE_REFUSED
+  The share was refused, by stim-server or by stim itself on Windows. The
+  message names the reason: the device is
+  not booted or not owned by this workspace (run stim ios or stim android
+  first), Tailscale is not running, Funnel is not enabled for this node (a
+  tailnet admin enables it; Stim never changes tailnet settings), every Funnel
+  port already serves something (free one, see tailscale serve status), a
+  route claim left by a crash cannot be resolved (follow the claim remedy in
+  the message), the running stim-server predates web shares (update it), the
+  link a --reuse asks for is live now ("That link is live now": it never
+  stopped, or its device is away and it is stopped for now), or the machine runs Windows, which has no local
+  stim-server socket (every
+  stim share action refuses at once, starting nothing; run it from the macOS
+  or Linux host that runs the device). See stim guide share.`,
     },
     STIM_WEB_NO_URL: {
       separator: '--- WEB CODES (`stim web`) ---',
@@ -1177,6 +1194,14 @@ not on any remote"  (worktree remove)
   On Linux, a path-specific socket allowance is unsupported; run the command
   outside the sandbox. status, logs, reload, doctor and other read commands
   keep working inside the sandbox.`,
+    },
+    STIM_RUN_FAILED: {
+      summary: 'a programmatic operation failed without a more specific Stim code',
+      body: () => `STIM_RUN_FAILED  (programmatic API)
+  The underlying operation threw an error without a specific code. Its
+  message and workspace log path are preserved in StimError. Read diagnostics()
+  and call stop() in cleanup, including after a partial run. If the error is
+  unexpected, report its message and logs at github.com/appandflow/stim/issues.`,
     },
     ci: {
       summary: 'the codes stim ci run and stim ci build report in failure, cleanup.error and diagnostics.error',
