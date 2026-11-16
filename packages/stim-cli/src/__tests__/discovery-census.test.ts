@@ -134,6 +134,31 @@ describe('runDiscoveryCensusIfDue', () => {
     expect(third?.pending).toBe(false);
   });
 
+  it('keeps the census pending while the bound leaves expired measurements, refreshes the longest-waiting first, and finishes the rest in the next runs', async () => {
+    const complete = () =>
+      discoveryReport({
+        scan: readDiscoveryScanFile(),
+        census: readDiscoveryCensusFile(),
+        setting: { value: [join(home, 'dev', 'tools')], error: null },
+        home,
+        canonical: null,
+      }).complete;
+    const { census: first } = await run(t0, { maxCheckouts: 3 });
+    const measuredFirst = (first?.finds ?? []).filter(({ evaluatedAt }) => evaluatedAt === t0).map(({ path }) => path);
+    expect(measuredFirst).toHaveLength(3);
+    const { census: second } = await run(t0 + day, { maxCheckouts: 3 });
+    const at = (census: typeof second, when: number) =>
+      (census?.finds ?? []).filter(({ evaluatedAt }) => evaluatedAt === when).map(({ path }) => path);
+    expect(at(second, t0 + day).filter((path) => measuredFirst.includes(path))).toHaveLength(1);
+    expect(at(second, t0 + day)).toHaveLength(3);
+    expect(second?.pending).toBe(true);
+    expect(complete()).toBe(false);
+    const { census: third } = await run(t0 + day + hour, { maxCheckouts: 3 });
+    expect(third?.finds.every(({ evaluatedAt }) => evaluatedAt >= t0 + day)).toBe(true);
+    expect(third?.pending).toBe(false);
+    expect(complete()).toBe(true);
+  });
+
   it('starts no read once the budget is spent, and keeps every checkout not measured yet', async () => {
     const { census } = await run(t0, { budgetMs: -1 });
     expect(census?.finds).toHaveLength(5);
@@ -430,6 +455,29 @@ describe('runDiscoveryCensusIfDue', () => {
         null,
       ]);
       expect(report.complete).toBe(false);
+    });
+
+    it('list a find whose manifest no longer parses as unchecked, keep the census pending, and never print that everything is managed', async () => {
+      writeFileSync(join(home, 'dev', 'fresh', 'package.json'), '<<<<<<< HEAD\n{}\n=======\n{}\n>>>>>>> main\n');
+      const { census } = await run(t0);
+      expect(
+        census?.finds.filter(({ kind }) => kind === 'unchecked').map(({ path }) => path.slice(home.length)),
+      ).toEqual(['/dev/fresh']);
+      expect(census?.pending).toBe(true);
+      const report = discoveryReport({
+        scan: readDiscoveryScanFile(),
+        census: readDiscoveryCensusFile(),
+        setting: { value: [join(home, 'dev', 'tools')], error: null },
+        home,
+        canonical: null,
+      });
+      expect(report.complete).toBe(false);
+    });
+
+    it('drop a find that is no longer a project, as only that proves it gone', async () => {
+      writeFileSync(join(home, 'dev', 'fresh', 'package.json'), JSON.stringify({ dependencies: {} }));
+      const { census } = await run(t0);
+      expect(census?.finds.some(({ path }) => path.endsWith('/dev/fresh'))).toBe(false);
     });
 
     it('make a checkout whose layout could not be read retried within the hour, not the day', async () => {

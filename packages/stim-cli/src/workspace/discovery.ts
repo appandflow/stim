@@ -7,7 +7,7 @@ import { machineSettingValue, readDiscoveryScan, type Config, type DiscoveryScan
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { projectRegistry } from '../integrations/projects.ts';
 import { isProtectedLocation } from './protected-locations.ts';
-import { scanEntryValid, scanSkipper } from './scan-rules.ts';
+import { absent, scanEntryValid, scanSkipper } from './scan-rules.ts';
 import { matchWorktreeEntry, resolveSourceCheckoutAsync } from './worktree.ts';
 
 const DISCOVER_ROOTS_SETTING = 'maintenance.discoverRoots';
@@ -68,30 +68,49 @@ const PROJECT_FOLDERS = ['apps', 'examples', 'packages'];
 const PROJECT_FOLDER_ENTRIES = 50;
 const READ_TIMEOUT_MS = 3000;
 
-function isProject(path: string): boolean {
+/** Whether project detection recognises the folder as a project; `'unknown'` when it could not read what decides that. */
+function projectState(path: string): boolean | 'unknown' {
   try {
-    return projectRegistry.selectDoctor(path).problem === null;
+    const { problem } = projectRegistry.selectDoctor(path);
+    return problem === null ? true : problem.kind === 'unreadable' ? 'unknown' : false;
   } catch {
-    return false;
+    return 'unknown';
   }
 }
 
 /**
  * Whether Stim's project detection recognises the folder: it is a project itself, or a direct child of its `apps/`,
- * `examples/` or `packages/` is, as in a monorepo whose root holds no app.
+ * `examples/` or `packages/` is, as in a monorepo whose root holds no app. `'unknown'` when nothing recognised it and
+ * some read that decides this failed (a manifest that does not parse, a listing that cannot be read), so it may be one.
  */
-export function recognises(path: string): boolean {
-  if (isProject(path)) return true;
-  return PROJECT_FOLDERS.some((folder) => {
+function recognition(path: string): boolean | 'unknown' {
+  let unknown = false;
+  const own = projectState(path);
+  if (own === true) return true;
+  if (own === 'unknown') unknown = true;
+  for (const folder of PROJECT_FOLDERS) {
+    let names: string[];
     try {
-      return readdirSync(join(path, folder), { withFileTypes: true })
+      names = readdirSync(join(path, folder), { withFileTypes: true })
         .filter((entry) => entry.isDirectory() && !entry.isSymbolicLink())
         .slice(0, PROJECT_FOLDER_ENTRIES)
-        .some((entry) => isProject(join(path, folder, entry.name)));
-    } catch {
-      return false;
+        .map((entry) => entry.name);
+    } catch (error) {
+      if (!absent(error)) unknown = true;
+      continue;
     }
-  });
+    for (const name of names) {
+      const child = projectState(join(path, folder, name));
+      if (child === true) return true;
+      if (child === 'unknown') unknown = true;
+    }
+  }
+  return unknown ? 'unknown' : false;
+}
+
+/** The recognition the walks, the sibling and root children and the deleting passes use: only a proven project counts. */
+export function recognises(path: string): boolean {
+  return recognition(path) === true;
 }
 
 /** `read`'s result, or null when it fails or has not answered within the timeout, as a hung mount would not. */
@@ -241,7 +260,7 @@ function discovery(config: Config | null, known: readonly string[], operation?: 
 /** The checkouts of the last full scan that are still what the scan found, see `scanEntryValid`. */
 async function revalidatedScan(scan: DiscoveryScan | null): Promise<{ valid: DiscoveryChild[]; pending: string[] }> {
   const home = canonicalPath(homedir());
-  const rules = { home, isCheckout: recognises, skip: scanSkipper(home) };
+  const rules = { home, isCheckout: recognition, skip: scanSkipper(home) };
   const valid: DiscoveryChild[] = [];
   const pending: string[] = [];
   const ancestors = new Map();
@@ -378,7 +397,7 @@ export async function unmanagedScanFinds(
   const home = canonicalPath(homedir());
   const roots = canonicalDiscoverRoots(config, operation.env);
   const knownRoots = known.map(canonicalPath);
-  const rules = { home, isCheckout: recognises, skip: scanSkipper(home) };
+  const rules = { home, isCheckout: recognition, skip: scanSkipper(home) };
   const ancestors = new Map();
   const covered = (path: string): boolean =>
     !isAbsolute(path) ||

@@ -333,8 +333,11 @@ maintainer:
   Pods, and not proof that a directory is deletable. It goes through
   `refreshMeasure` and the disk-usage cache: one walk at a time on the machine, 10
   seconds per directory, at most 25 checkouts and 90 seconds per run; a checkout
-  measured within a day is carried over, and what a run leaves is measured by the
-  next one an hour later. A walk that failed or timed out is "could not be
+  measured within a day is carried over. The checkouts due are taken in the order
+  they have waited longest (never measured, then the oldest measurement), and what
+  a run leaves keeps the census pending, so the next one, an hour later, continues;
+  a measurement older than a day when the census was made is never read as current.
+  A walk that failed or timed out is "could not be
   measured" and a directory not reached is "not measured yet", never zero; a total
   with either is "at least".
 - Every read of a checkout's layout goes through the shared bounded reader
@@ -392,7 +395,11 @@ maintainer:
   census carries it as `unchecked` with any earlier measurement and its age,
   stays pending (retried within the hour, as is a checkout whose layout read
   failed), and doctor prints "every checkout it found is managed" only for a
-  finished scan, a census made from it and no unchecked find.
+  finished scan, a census made from it and no unchecked find. A project check
+  that could not read what decides it (a manifest that does not parse, a listing
+  that fails other than by absence) leaves the find unchecked in the same way,
+  while only proof that it is no longer a project drops it. The deleting passes
+  select only a find that is proven a project, as before.
 - The measuring walk is told the directory exists (`knownToExist`), because the
   census established that through the bounded reader; `refreshMeasure` makes no
   other synchronous call on the measured path (its cache, failure and claim files
@@ -468,13 +475,25 @@ is treated as managed and is not listed, although only that project or checkout 
 managed. This is the symmetric coverage rule `selectDiscovered` applies to the
 deleting passes; a monorepo root with a registered app inside it is the common case.
 
-A find whose layout read is permanently denied is re-measured each run and takes one
-of the 25 slots (`looked`) of every run until it is fixed or leaves the scan result.
-A find whose metadata read is denied is carried as unchecked without taking a slot,
+A find whose layout read is permanently denied is re-measured each run, after the
+checkouts that have waited longer, so it takes a slot of the 25 (`looked`) but never
+starves the others, until it is fixed or leaves the scan result.
+A find whose metadata read is denied, or whose project check could not read a
+manifest (one that does not parse, as a merge conflict leaves it) or a listing,
+is carried as unchecked without taking a slot,
 but the census stays pending and reruns discovery every hour. A find that stays
 unreadable or unchecked keeps the list from ever being called complete, and doctor
 says so each time: it prints that the list may be incomplete and never that
-everything is managed. The census
+everything is managed. After `maintenance.discoverRoots` changes, or a new scan, the
+census predates it until the daemon lists again (about an hour): doctor says so, and
+offers no command and no reason that discovery did not select the listed folders.
+After a project is registered the census is not rebuilt for up to a day and doctor
+cannot tell, since the census does not record the registered projects: the listing
+may then include checkouts that are managed now, with no notice. A non-absolute path
+in the scan file is dropped by revalidation and by the coverage test without
+notice; it cannot be a checkout the scanner found, and rejecting it when the file
+is read would make the file unusable for the scheduler, which then keeps none of the
+previous finds of a truncated scan. The census
 file is read without a lock (it is replaced atomically under a lock, so a reader
 sees the old or the new file). A `du` that exits non-zero (denied files) is recorded
 as a measured lower bound: its bytes count and the totals read "at least".

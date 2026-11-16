@@ -16,7 +16,7 @@ import { listedRoots } from '../commands/gc/worktrees.ts';
 import { refreshMeasure } from '../disk-usage.ts';
 import { answered, hungRead } from './bounded-read.ts';
 import { loadConfig } from './config.ts';
-import { DISCOVER_ROOTS_KEY, rootsOf } from './discovery-report.ts';
+import { DISCOVER_ROOTS_KEY, REFRESH_MS, rootsOf } from './discovery-report.ts';
 import { isBroadFolder, unmanagedScanFinds } from './discovery.ts';
 import {
   ARTIFACT_DIRS,
@@ -27,7 +27,6 @@ import {
 } from './regenerable-dirs.ts';
 
 const HOUR_MS = 60 * 60_000;
-const DAY_MS = 24 * HOUR_MS;
 /** Per build directory: the walk of the one disk-usage walk the machine allows at a time. */
 const WALK_TIMEOUT_MS = 10_000;
 /** Per filesystem read of a checkout's layout. */
@@ -52,7 +51,7 @@ export function censusDue(
 ): boolean {
   if (!last || last.at > now || last.scanRanAt !== scanRanAt) return true;
   if (last.roots.length !== roots.length || last.roots.some((root, at) => root !== roots[at])) return true;
-  return now - last.at >= (last.pending ? HOUR_MS : DAY_MS);
+  return now - last.at >= (last.pending ? HOUR_MS : REFRESH_MS);
 }
 
 function writeCensus(census: DiscoveryCensus): void {
@@ -299,7 +298,7 @@ async function measureBuildOutput(
     if (Date.now() > deadline) continue;
     const { outcome, measure, partial } = await refreshMeasure(dir, {
       timeoutMs: WALK_TIMEOUT_MS,
-      maxAgeMs: DAY_MS,
+      maxAgeMs: REFRESH_MS,
       claim: true,
       operation,
       private: !FIXED_BUILD.some((fixed) => dir.endsWith(fixed)),
@@ -332,8 +331,10 @@ export function isUnverifiedCleanup(error: unknown): boolean {
  * Bounds: every read of a checkout's layout goes through the bounded reader (`CensusIo`); at most `MAX_CHECKOUTS`
  * checkouts are looked at per run and none after `BUDGET_MS`; walks are one at a time machine-wide (`refreshMeasure`
  * with a claim), each with `WALK_TIMEOUT_MS`; nothing starts while a timed-out read is pending. A checkout measured
- * within a day is carried over without a read; one left over keeps its earlier entry, or is not measured yet, and the
- * next run, within the hour, continues. The idle evidence of a checkout is not read: it walks the checkout's source with
+ * within a day is carried over without a read. The others are due: they are taken in the order they have waited longest
+ * (never measured first, then the oldest measurement), so a run that cannot reach all of them still advances through
+ * them. One left over keeps its earlier entry, which keeps the census pending, and the next run, within the hour,
+ * continues. The idle evidence of a checkout is not read: it walks the checkout's source with
  * no bound the census could apply.
  *
  * Aborts and errors with `reportCleanup` (or STIM_CLAIM_UNAVAILABLE) propagate unchanged, for the daemon's cleanup
@@ -377,6 +378,11 @@ export async function runDiscoveryCensusIfDue(
     const deadline = Date.now() + budgetMs;
     let looked = 0;
     const entries: CensusFind[] = [];
+    const due: Array<{
+      index: number;
+      waitingSince: number;
+      placement: Pick<CensusFind, 'path' | 'kind' | 'folder' | 'adoptable'>;
+    }> = [];
     const groups: Array<[CensusFind['kind'], string[]]> = [
       ['reduce-only', finds.reduceOnly],
       ['dot-folder', finds.dotFolder],
@@ -401,28 +407,23 @@ export async function runDiscoveryCensusIfDue(
               unreadable: false,
               gitActivityAt: null,
             };
-        if (kind === 'unchecked') {
-          entries.push(kept);
-          continue;
-        }
+        entries.push(kept);
+        if (kind === 'unchecked') continue;
         const complete =
           earlier &&
           earlier.evaluatedAt > 0 &&
           !earlier.unreadable &&
           earlier.measuredDirs === earlier.dirs &&
           earlier.failedDirs === 0;
-        if (complete && now - earlier.evaluatedAt < DAY_MS) {
-          entries.push(kept);
-          continue;
-        }
-        if (looked >= maxCheckouts || Date.now() > deadline || hungRead() !== null) {
-          entries.push(kept);
-          continue;
-        }
-        looked++;
-        const measured = await measureBuildOutput(path, operation, deadline, io, readTimeoutMs);
-        entries.push(measured ? { ...placement, ...measured, evaluatedAt: now } : kept);
+        if (complete && now - earlier.evaluatedAt < REFRESH_MS) continue;
+        due.push({ index: entries.length - 1, waitingSince: kept.evaluatedAt, placement });
       }
+    for (const { index, placement } of due.toSorted((a, b) => a.waitingSince - b.waitingSince)) {
+      if (looked >= maxCheckouts || Date.now() > deadline || hungRead() !== null) break;
+      looked++;
+      const measured = await measureBuildOutput(placement.path, operation, deadline, io, readTimeoutMs);
+      if (measured) entries[index] = { ...placement, ...measured, evaluatedAt: now };
+    }
     operation.signal.throwIfAborted();
     writeCensus({
       version: 1,
@@ -435,6 +436,7 @@ export async function runDiscoveryCensusIfDue(
           find.kind === 'unchecked' ||
           find.unreadable ||
           find.evaluatedAt === 0 ||
+          now - find.evaluatedAt >= REFRESH_MS ||
           find.measuredDirs + find.failedDirs < find.dirs,
       ),
       finds: entries,

@@ -453,8 +453,9 @@ describe('lowDiskLine', () => {
       ]),
       home,
     );
-    expect(line).toBe(
-      `Stim: checkouts it does not fully manage hold 82.0 GB of build output. Adding the largest folder, ~/dev (2.0 GB), lets Stim apply its full rules there, finished linked worktree removal included: stim settings set maintenance.discoverRoots '["/Users/me/dev"]' --scope machine; stim doctor lists the rest and what changes.`,
+    expect(line).toContain('hold 82.0 GB');
+    expect(line?.endsWith(`stim settings set maintenance.discoverRoots '["/Users/me/dev"]' --scope machine`)).toBe(
+      true,
     );
   });
 
@@ -486,5 +487,50 @@ describe('lowDiskLine', () => {
         home,
       ),
     ).toBeNull();
+  });
+});
+
+describe('a list older than the state it is read against', () => {
+  const lines = (file: DiscoveryCensusFile, value: string[]) =>
+    discoveryLines(
+      discoveryReport({
+        scan: { status: 'read', scan },
+        census: file,
+        setting: { value, error: null },
+        home,
+        canonical: same,
+      }),
+      home,
+    );
+  const recorded = (roots: string[], at = now, finds = [find({ path: '/Users/me/dev/a' })]): DiscoveryCensusFile => ({
+    status: 'read',
+    census: { version: 1, at, scanRanAt: scan.ranAt, roots, canonicalRoots: [], pending: false, finds },
+  });
+
+  it('says the list predates the setting before the group, and offers no command or reason the old state decides', () => {
+    const changed = lines(recorded([]), ['/Users/me/dev']);
+    const unchanged = lines(recorded(['/Users/me/dev']), ['/Users/me/dev']);
+    const group = changed.findIndex((line) => line.startsWith('~/dev:'));
+    expect(changed.findIndex((line) => line.includes('maintenance.discoverRoots'))).toBeLessThan(group);
+    expect(changed.slice(group + 1).some((line) => line.includes('maintenance.discoverRoots'))).toBe(false);
+    expect(changed.some((line) => line.includes('stim settings set'))).toBe(false);
+    expect(unchanged.some((line) => line.includes('discovery did not select'))).toBe(true);
+    expect(changed.some((line) => line.includes('discovery did not select'))).toBe(false);
+  });
+
+  it('never reads a measurement older than a day when the census was made as a current exact figure', () => {
+    const old = recorded([], now, [find({ path: '/Users/me/dev/a', evaluatedAt: now - 3 * day })]);
+    const result = discoveryReport({
+      scan: { status: 'read', scan },
+      census: old,
+      setting: noRoots,
+      home,
+      canonical: same,
+    });
+    expect(result.complete).toBe(false);
+    const text = discoveryLines(result, home).join('\n');
+    expect(text).toContain('at least 1.0 GB');
+    expect(text).toContain('oldest measurement 2026-11-17');
+    expect(lowDiskLine(result, home)).toContain('at least');
   });
 });

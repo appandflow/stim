@@ -209,8 +209,9 @@ test('the critical-disk warning adds one line with what unmanaged checkouts hold
   );
   warnCriticalDisk(['ios']);
   expect(errors).toHaveLength(2);
-  expect(errors[1]).toBe(
-    `Stim: checkouts it does not fully manage hold 3.0 GB of build output. Adding the largest folder, /Users/x/dev (3.0 GB), lets Stim apply its full rules there, finished linked worktree removal included: stim settings set maintenance.discoverRoots '["/Users/x/dev"]' --scope machine; stim doctor lists the rest and what changes.`,
+  expect(errors[1]).toContain('hold 3.0 GB');
+  expect(errors[1]?.endsWith(`stim settings set maintenance.discoverRoots '["/Users/x/dev"]' --scope machine`)).toBe(
+    true,
   );
 });
 

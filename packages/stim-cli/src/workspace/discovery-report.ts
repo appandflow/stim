@@ -3,6 +3,9 @@ import type { CensusFind, DiscoveryCensusFile, DiscoveryScanFile, ScanTruncation
 
 export const DISCOVER_ROOTS_KEY = 'maintenance.discoverRoots';
 
+/** How long a measurement of a checkout's build output stays current before the daemon measures it again. */
+export const REFRESH_MS: number = 24 * 60 * 60_000;
+
 // @ref LLP 0004#the-doctor-listing-and-the-low-disk-line -- the daemon measures, commands read
 /** One folder of checkouts Stim does not fully manage, and what adopting it would take. */
 interface UnmanagedGroup {
@@ -60,7 +63,8 @@ export interface DiscoveryReport {
   /**
    * Whether the listing may be taken as everything the scan found: false when the scan stopped early, failed or could
    * not read a path, the census is not from the current scan, is still pending or predates a roots change, or any group
-   * is unchecked or holds a failed, partial or not yet measured checkout. Every figure and the sentence that all is
+   * is unchecked, holds a failed, partial or not yet measured checkout, or a measurement older than `REFRESH_MS` when the
+   * census was made. Every figure and the sentence that all is
    * managed follow this one value.
    */
   complete: boolean;
@@ -196,6 +200,7 @@ export function discoveryReport({
   const unchanged = recorded.length === lexical.length && recorded.every((root, at) => root === lexical[at]);
   const roots = new Set([...lexical, ...census.census.canonicalRoots, ...(canonical ? lexical.map(canonical) : [])]);
   const current = summary.ranAt === census.census.scanRanAt;
+  const madeAt = census.census.at;
   const byFolder = new Map<string, { first: CensusFind; finds: CensusFind[] }>();
   for (const listed of census.census.finds) {
     const find = current
@@ -231,6 +236,7 @@ export function discoveryReport({
       current &&
       !census.census.pending &&
       unchanged &&
+      census.census.finds.every((find) => find.evaluatedAt === 0 || madeAt - find.evaluatedAt < REFRESH_MS) &&
       groups.every((group) => group.kind !== 'unchecked' && group.failed + group.partial + group.notMeasuredYet === 0),
     groups,
   };
@@ -309,6 +315,11 @@ export function discoveryLines(report: DiscoveryReport, home: string): string[] 
     lines.push(
       'That list was made from an earlier scan than the last one, so its sizes are not shown until the daemon lists again.',
     );
+  if (report.rootsChangedSinceCensus)
+    lines.push(
+      'That list was made before maintenance.discoverRoots last changed, so some of these may be managed now; the daemon lists again within about an hour.',
+    );
+  const outdated = !report.censusCurrent || report.rootsChangedSinceCensus;
   for (const group of report.groups) {
     lines.push('');
     if (group.kind === 'unchecked') {
@@ -325,25 +336,27 @@ export function discoveryLines(report: DiscoveryReport, home: string): string[] 
     lines.push(
       `${shorten(group.folder, home)}: ${count(group.checkouts, 'checkout')}, ${sizeText(group, report.complete)}`,
     );
-    lines.push(
-      group.kind === 'reduce-only'
-        ? '  Stim reduces their build output when idle and never removes them. Adding the folder to maintenance.discoverRoots applies the full discovered-checkout rules, which include removing finished linked worktrees:'
-        : '  Under a home dot-folder, where Stim cannot tell a checkout from an installed tool, so it does nothing with them. Adding the folder to maintenance.discoverRoots lets Stim reduce their build output and, for linked worktrees, remove finished ones:',
-    );
-    lines.push(
-      group.command
-        ? `  ${group.command}`
-        : group.commandProblem === 'too-broad'
-          ? '  This folder is the home folder or holds it, which maintenance.discoverRoots cannot name.'
-          : group.commandProblem === 'already-named'
-            ? '  This folder is already named in maintenance.discoverRoots, so there is nothing to add; these are listed because discovery did not select them or could not check them yet.'
-            : '  maintenance.discoverRoots does not read, so no command is offered; fix it with stim settings first.',
-    );
+    if (!outdated) {
+      lines.push(
+        group.kind === 'reduce-only'
+          ? '  Stim reduces their build output when idle and never removes them. Adding the folder to maintenance.discoverRoots applies the full discovered-checkout rules, which include removing finished linked worktrees:'
+          : '  Under a home dot-folder, where Stim cannot tell a checkout from an installed tool, so it does nothing with them. Adding the folder to maintenance.discoverRoots lets Stim reduce their build output and, for linked worktrees, remove finished ones:',
+      );
+      lines.push(
+        group.command
+          ? `  ${group.command}`
+          : group.commandProblem === 'too-broad'
+            ? '  This folder is the home folder or holds it, which maintenance.discoverRoots cannot name.'
+            : group.commandProblem === 'already-named'
+              ? '  This folder is already named in maintenance.discoverRoots, so there is nothing to add; these are listed because discovery did not select them or could not check them yet.'
+              : '  maintenance.discoverRoots does not read, so no command is offered; fix it with stim settings first.',
+      );
+    }
     for (const { path, gitActivityAt } of group.members)
       lines.push(
         `  ${shorten(path, home)}: last git activity ${gitActivityAt === null ? 'unknown' : gitActivityAt.slice(0, 10)}`,
       );
-    if (group.kind === 'reduce-only')
+    if (group.kind === 'reduce-only' && !outdated)
       lines.push(
         '  Stim has not checked whether they are in use or hold uncommitted or unpushed work; last git activity is when git last wrote there and says nothing about edits made without it; delete a checkout you no longer need yourself, after checking that.',
       );
@@ -363,5 +376,5 @@ export function lowDiskLine(report: DiscoveryReport, home: string): string | nul
   const largest = report.groups.find((group) => group.kind === 'reduce-only' && group.command && group.bytes > 0);
   const holding = `Stim: checkouts it does not fully manage hold ${qualifier}${gb(total)} of build output`;
   if (!largest?.command) return `${holding}; stim doctor lists them.`;
-  return `${holding}. Adding the largest folder, ${shorten(largest.folder, home)} (${qualifier}${gb(largest.bytes)}), lets Stim apply its full rules there, finished linked worktree removal included: ${largest.command}; stim doctor lists the rest and what changes.`;
+  return `${holding}. stim doctor lists them and what adopting each folder changes. Adding the largest folder, ${shorten(largest.folder, home)} (${qualifier}${gb(largest.bytes)}), lets Stim apply its full rules there, finished linked worktree removal included: ${largest.command}`;
 }

@@ -1337,12 +1337,14 @@ DISCOVERED CHECKOUTS NOT FULLY MANAGED (the census, the doctor listing)
   walk at a time on the machine, 10 seconds per directory (a build directory the
   gc worktree report sizes with private bytes is measured with them too), at most
   25 checkouts and 90 seconds per run; a checkout measured within a day is
-  carried over without a read, and what a run leaves keeps its earlier entry or
-  is "not measured yet" and the next run, an hour later, continues; so does a
+  carried over without a read; the others are taken longest-waiting first, and what
+  a run leaves keeps its earlier entry (or is "not measured yet") and keeps the
+  census pending, so the next run, an hour later, continues; so does a
   checkout whose layout could not be read. A find whose revalidation did not
   answer (a read pending) is kept as its own kind, unchecked: neither listed as
   managed nor dropped, with any earlier measurement and its age, and the census
-  stays pending so it is retried within the hour. Doctor prints that every
+  stays pending so it is retried within the hour; so is a find whose project
+  check could not read a manifest or listing. Doctor prints that every
   checkout it found is managed only for a finished scan, a census made from it
   and no unchecked find. The measuring walk is told the directory exists
   (refreshMeasure knownToExist), so it makes no synchronous probe of the
