@@ -376,7 +376,7 @@ test('ending the job cancels its builds even when another repository query canno
     expect(existsSync(host.clientDir('builder'))).toBe(true);
     expect(existsSync(area)).toBe(true);
   } finally {
-    job.cancel();
+    job.cancel('client-cancel');
     await job.done;
     session.close();
     await host.close();

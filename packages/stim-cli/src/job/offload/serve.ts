@@ -4,6 +4,7 @@ import { OFFLOAD_JOB_METHODS, type OffloadJobKind, type ProtocolError } from '@s
 import { isJsonObject } from '@stim-cli/core/state';
 import { appendAudit, type BuildLimits } from '@stim-cli/server/build';
 import { BuildHost } from './host.ts';
+import type { CancelReason } from './job-record.ts';
 
 /** What stimd tells an offload job in `STIM_JOB_SPEC`: the client it serves and the worker's build limits. */
 export interface OffloadJobSpec {
@@ -74,12 +75,14 @@ export async function serveOffloadJob(
     return session.artifact(params);
   };
   let code = 0;
+  let reason: CancelReason = 'connection-closed';
   const ended = new Promise<void>((resolve) => {
     const reader = new JobFrameReader();
     let queue = Promise.resolve();
-    const end = (exit: number) => {
+    const end = (exit: number, why: CancelReason = exit === JOB_BAD_REQUEST ? 'bad-request' : 'connection-closed') => {
       if (!open) return;
       code = exit;
+      reason = stop.aborted ? 'job-stopped' : why;
       open = false;
       input.off('data', onData);
       resolve();
@@ -112,15 +115,16 @@ export async function serveOffloadJob(
       } catch {
         return end(JOB_BAD_REQUEST);
       }
-      for (const frame of frames) queue = queue.then(() => handle(frame.data, frame.binary)).catch(() => end(1));
+      for (const frame of frames)
+        queue = queue.then(() => handle(frame.data, frame.binary)).catch(() => end(1, 'job-error'));
     };
     input.on('data', onData);
     input.once('end', () => void queue.then(() => end(0)));
     input.once('error', () => end(0));
-    stop.addEventListener('abort', () => end(0), { once: true });
+    stop.addEventListener('abort', () => end(0, 'job-stopped'), { once: true });
   });
   await ended;
-  session.close();
-  await host.close();
+  session.close(reason);
+  await host.close(reason);
   return code;
 }

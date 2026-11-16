@@ -68,6 +68,7 @@ import { namedBuildMachine, OffloadRefusal, workerFailureReason } from '../build
 import type { PlacementCandidate } from '../placement-log.ts';
 import { toolchainMismatches, toolchainNotes, cocoapodsDifference, type OffloadProblem } from './toolchain.ts';
 import type { ExactOffload, ExactPins, ExactToolProblem } from '../integrations/exact-offload.ts';
+import { OUTPUT_SILENCE_MS, heartbeatPhase, outputLine, silenceText } from './output-silence.ts';
 import { buildsOnlyOnWorker, type BuildTarget, type WorkerToolchain } from '../engine/toolchain.ts';
 import { ambientContext, dependencyLockfile, swiftpmArtifactQuery, type StimContext } from '@stim-cli/core';
 import {
@@ -1860,15 +1861,25 @@ export async function offloadBuild(
         return void reattach(String(event.outcome.message));
       }
       if (event.outcome) return settle(event.outcome);
-      if (event.record) onRecord(event.record);
+      if (event.record) {
+        lastOutput = { at: Date.now(), line: outputLine(event.record) ?? lastOutput.line };
+        onRecord(event.record);
+      }
       if (event.phase && typeof event.msg === 'string') {
         onEnter(event.phase);
-        onPhase(event.phase, event.msg);
+        const silentMs = Date.now() - lastOutput.at;
+        onPhase(
+          event.phase,
+          silentMs >= OUTPUT_SILENCE_MS && heartbeatPhase(event.phase, event.msg)
+            ? `${event.msg.trimEnd()}; ${silenceText(silentMs, lastOutput.line)}`
+            : event.msg,
+        );
       }
     };
     let syncMs = 0;
     let uploadedBytes = 0;
     let workerStarted = 0;
+    let lastOutput: { at: number; line: string | null } = { at: Date.now(), line: null };
     let fingerprintInputs: Promise<FingerprintInputs | Uncertain | null> | undefined;
     const keyedByFingerprint =
       !native && request.platform !== 'macos' && !(request.platform === 'ios' && request.exact);
@@ -1933,6 +1944,7 @@ export async function offloadBuild(
         `${synced.files} files, uploaded ${synced.uploaded} (${mb(uploadedBytes)}) in ${seconds(syncMs)}`,
       );
       workerStarted = Date.now();
+      lastOutput = { at: workerStarted, line: null };
       early = [];
       choice.connection.onProgress((event) => (job === null ? early.push(event) : handle(event)));
       if (!namedBuildMachine(choice.selected)) requireAutomaticMachine('build', choice.machine);

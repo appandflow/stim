@@ -457,7 +457,12 @@ no tokens or tickets, each of these lines starting with an ISO time:
 ms=<n> error=<code>" for an error reply (once a minute per client, method,
 code and reason, ignoring its numbers), ending in reason="<message>" for a build-busy or build-refused
 refusal; and "host_connect ... error=<reason_with_underscores>" when its connection to a hosting
-machine fails. With debug.logs on or STIM_DEBUG=1 for the server it logs every
+machine fails; and, whatever debug.logs says, "build job cancel job=<id>
+client=<id> reason=<why> silentSeconds=<n>" and "build job ended job=<id>
+client=<id> code=<code> stopped=<why> exit=<n> signal=<s> claimsReleased=<bool>"
+(empty fields omitted) for an offloaded build that is stopped or ends without
+an artifact; a client that ends its build closes its connection, so why reads
+connection-closed, as can a stim-server stop. With debug.logs on or STIM_DEBUG=1 for the server it logs every
 request instead: "debug request method=<m> client=<id> run=<runId> ms=<n>
 slow=true whois=<ms> probe=<ms> error=<code> reason="<message>"" (slow means 1000 ms or more;
 whois and probe are the hello's Tailscale identity lookup and its wait for
@@ -475,6 +480,11 @@ stim logs does not show them. Read them with jq:
 Events: run_start, run_end { exit, ms }, exec { program, ms, ok, exit? }, and
 remote_connect and remote_request { ms, ok, code? } for requests to another
 machine. They carry no arguments, tokens or tickets.
+On a build worker, server.ndjson follows each offloaded build by job id:
+build.job.start, build.job.cancel { reason, silentMs, lastOutput, group: the
+build's processes before the first signal }, build.job.signal, build.job.exit
+{ code, signal, stderrTail: the worker process's last stderr lines } and
+build.job.settled { claimsReleased }. lastOutput and stderrTail are free text.
 
 TIMING TRACES
 STIM_TRACE=<path> makes a stim command write a timeline of where it spent its

@@ -52,7 +52,8 @@ export interface DebugLog {
 
 /**
  * Debug-level records for one component (`cli` or `server`). Off by default; `STIM_DEBUG=1` or `debug.logs` turns it
- * on. Callers pass names, durations and codes, never arguments, environment values, tokens or tickets.
+ * on. Callers pass names, durations and codes, never arguments, environment values, tokens or tickets; the one free
+ * text is an offloaded build's last output line and its worker's stderr lines.
  */
 export function createDebugLog(
   component: 'cli' | 'server',

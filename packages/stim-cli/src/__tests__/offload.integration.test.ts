@@ -25,6 +25,7 @@ import {
   offerProblems,
   offloadPlacement,
   pickOffer,
+  remotePhaseText,
   type BuildOffer,
 } from '../offload/client.ts';
 import {
@@ -576,6 +577,68 @@ describe('strict client routing', () => {
       expect(close).toHaveBeenCalled();
     },
   );
+
+  it('says in a heartbeat how long the worker printed no build output, once past the threshold', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    onTestFinished(() => void vi.useRealTimers());
+    const start = Date.now();
+    let listener: ((event: Record<string, unknown>) => void) | null = null;
+    const at = (minutes: number, event: Record<string, unknown>) => {
+      vi.setSystemTime(start + minutes * 60_000);
+      listener?.({ job: 'job-1', ...event });
+    };
+    const request = vi.fn<BuildConnection['request']>().mockImplementation(async (method) => {
+      if (method === 'job.start') return { result: { job: 'job-1' } };
+      if (method === 'build.offer') return { result: offer({ capacity: capacity({ loadPerCore: 1.5 }) }) };
+      if (method === 'build.sync') return { result: { missing: [] } };
+      if (method === 'build.start') {
+        setTimeout(() => {
+          at(1, { record: { src: 'build', level: 'info', msg: 'Build complete! (93.69 secs.)' } });
+          at(5, { phase: 'build', msg: '  build       still compiling (5m00s)' });
+          at(7, { phase: 'build', msg: '  build       still compiling (7m00s)' });
+          at(7, { phase: 'build', msg: 'resolving native modules' });
+          at(8, { outcome: { ok: false, code: 'worker-failed', message: 'stopped' } });
+        });
+        return { result: { job: 'job-1' } };
+      }
+      return { result: {} };
+    });
+    const connection = Object.assign(Object.create(BuildConnection.prototype), {
+      host: [],
+      request,
+      close: vi.fn<() => void>(),
+      watch: () => {},
+      onProgress: (next: typeof listener) => (listener = next ?? listener),
+    });
+    vi.spyOn(BuildConnection, 'open').mockResolvedValue(connection);
+    const choice = await choose();
+    assert(typeof choice !== 'string');
+    const phases: string[] = [];
+    await offloadBuild({
+      choice,
+      expectedFingerprint: 'fingerprint',
+      fingerprintInputs: async () => replayInputs([]),
+      request: {
+        platform: 'ios',
+        runtime: RUNTIME,
+        configuration: null,
+        scheme: null,
+        iosProjectPath: 'ios',
+        isExpo: false,
+        optimizations: {},
+      },
+      stagingDir: join(root, 'staging'),
+      onPhase: (name, msg) => phases.push(remotePhaseText(name, msg, 'mini')),
+      onEnter: () => {},
+      onRecord: () => {},
+      note: () => {},
+    });
+    expect(phases.slice(1)).toEqual([
+      'still compiling (5m00s) (on mini)',
+      'still compiling (7m00s); no build output for 6m00s, last line: "Build complete! (93.69 secs.)" (on mini)',
+      'resolving native modules (on mini)',
+    ]);
+  });
 
   it('an Android sync leaves signing keys out and keeps debug.keystore', async () => {
     mkdirSync(join(root, 'android', 'app'), { recursive: true });
