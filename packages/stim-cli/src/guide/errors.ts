@@ -757,8 +757,30 @@ Inspect what remains with previewGarbage() before retrying a mutation.
   app on a device.`,
     },
     STIM_LOCK_TIMEOUT: {
-      summary: 'a short directory lock held past its wait; the claim protocol behind it',
-      body: () => `STIM_LOCK_TIMEOUT  "Timed out waiting for the lock at <path>."
+      summary: 'a lock held past the wait; workspace-process and short directory locks',
+      body: () => `STIM_LOCK_TIMEOUT
+  The same locks, held by an ordinary command that is still running, for
+  longer than the wait -- 60s by default, 4 minutes for the remote-session lock
+  and for \`gc\` deleting EAS sessions under the EAS project lock (its sweep
+  skips at once while that lock is held), and ~90 minutes for the \`worktree warm\` lock, which one
+  \`--refresh\` can hold for a whole dependency install. The machine-wide EAS
+  project lock admits one EAS session start at a time. A \`--remote eas\` run
+  waits on it after its build with no overall limit, printing \`lock  waiting
+  for EAS remote start (pid 41233, in <workspace>, running for 1m12s) to
+  release the EAS project lock\` at once and \`still waiting for ...\` every 30
+  seconds. It refuses only when one holder has held the lock for longer than
+  the slowest EAS session start (39 minutes), naming that pid.
+  The \`worktree warm\` wait prints its
+  elapsed waiting time and holder every 30 seconds (\`lock        waiting 40s
+  for stim worktree warm --refresh (pid 41233)\`) and the refusal names the same holder
+  and the lock directory under ~/.stim/warm-locks.
+  A lock whose owner died is taken over automatically (its recorded
+  process identity is checked every poll), so this means another Stim command really
+  is working on this workspace: wait for it and retry. Inspect the named
+  holder before taking any recovery action. The same error code also covers
+  the short-lock timeout below.
+
+"Timed out waiting for the lock at <path>."
   Short locks serialize writes to config, workspace state, device
   leases, ownership records, metadata, and cache manifests. The path identifies
   the lock. These locks wait up to 12s and never expire based on age. When

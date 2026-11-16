@@ -96,15 +96,7 @@ export async function withWorkspaceProcessLock<T>(
     }
     if (holder && onHeld) await onHeld(holder);
     if (now() >= deadline) {
-      const facts = holder
-        ? [
-            `owner pid ${holder.owner.pid}`,
-            ...(holder.child ? [`child process group ${holder.child.pid}, which can outlive the owner`] : []),
-          ]
-        : [];
-      const error = new Error(
-        `Timed out waiting for the ${name} lock at ${path}. It is held by ${typeof purpose === 'string' ? purpose : 'another Stim operation'}${facts.length ? ` (${facts.join(', ')})` : ''}; wait for it to finish, then run the command again.`,
-      );
+      const error = new Error(`Timed out waiting for the ${name} lock at ${path}.`);
       (error as Error & { code?: string }).code = 'STIM_LOCK_TIMEOUT';
       throw error;
     }

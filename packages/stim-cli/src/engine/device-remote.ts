@@ -855,7 +855,7 @@ export async function ensureRemoteBootOwned<T extends BootResult>({
         failed: true,
         code,
         reason: `${describeEasProjectLockHolder(holder, now())} has held the EAS project lock for ${formatElapsed(heldMs)}; an EAS session start holds it for at most ${formatElapsed(EAS_START_HOLD_MS)}.`,
-        remedy: `Run \`ps -p ${holder.owner.pid} -o pid,etime,command\`. Stop pid ${holder.owner.pid} only if it shows the EAS remote start named above and it is stuck; if it shows nothing or another command, do not signal it, and wait for the claim's child${holder.child ? ` (process group ${holder.child.pid})` : ''} to finish. Then run the remote command again.`,
+        remedy: `If pid ${holder.owner.pid} is stuck, stop it, then run the remote command again.`,
       };
     }
     return {

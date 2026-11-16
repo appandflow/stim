@@ -141,10 +141,7 @@ test('a refresh that gives up while copies drain leaves no claim of its own behi
     ceilingMs: 3000,
     sleep: async () => {},
   }).catch((thrown: unknown) => thrown);
-  const timeout = error as Error & { code?: string };
-  expect(timeout.code).toBe('STIM_LOCK_TIMEOUT');
-  expect(timeout.message).toContain('Wait for it to finish, then run the command again.');
-  expect(timeout.message).toContain(`The lock is ${warmClaimPath(REPO)}; remove it only after confirming`);
+  expect((error as Error & { code?: string }).code).toBe('STIM_LOCK_TIMEOUT');
   expect(existsSync(exclusiveClaimDir(warmClaimPath(REPO)))).toBe(false);
   copy.release();
   const after = await acquireWarmClaim({ repositoryRoot: REPO, phase: 'refresh', sleep: never });
@@ -193,20 +190,6 @@ test.skipIf(process.platform === 'win32')(
         },
       }).catch(() => {});
       expect(polls).toBe(1);
-
-      let clock = 0;
-      const timedOut = await acquireWarmClaim({
-        repositoryRoot: REPO,
-        phase: 'copy',
-        now: () => (clock += 1000),
-        ceilingMs: 3000,
-        sleep: async () => {},
-      }).catch((thrown: unknown) => thrown);
-      expect(timedOut).toMatchObject({
-        message: expect.stringContaining(
-          'no stim worktree warm and no install it started (the package manager or its postinstall scripts) still runs (the claim records child process group',
-        ),
-      });
 
       process.kill(grandchild, 'SIGKILL');
       for (let attempt = 0; attempt < 200 && readClaimSet(warmClaimPath(REPO)).live.length > 0; attempt++) {

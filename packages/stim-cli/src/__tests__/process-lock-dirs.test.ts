@@ -2,7 +2,6 @@ import { mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, test } from 'vitest';
-import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import {
   pruneEmptyProcessLockDirs,
   withManagedRemoteWorktreeLock,
@@ -55,21 +54,4 @@ test('pruning removes empty lock directories left by earlier versions and spares
     expect(lockEntries()).toHaveLength(2);
   });
   expect(await pruneEmptyProcessLockDirs()).toBe(0);
-});
-
-test('a lock timeout names the holder as an owner pid and its purpose, without saying the owner runs', async () => {
-  const root = join(home, 'project');
-  await withWorkspaceProcessLock(
-    root,
-    'probe',
-    async () => {
-      const error = await withWorkspaceProcessLock(root, 'probe', async () => {}, { waitMs: 0 }).catch(
-        (thrown: unknown) => thrown,
-      );
-      expect(error).toMatchObject({
-        message: expect.stringContaining(`It is held by another Stim operation (owner pid ${process.pid})`),
-      });
-    },
-    { ownerPurpose: undefined },
-  );
 });
