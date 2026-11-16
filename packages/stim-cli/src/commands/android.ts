@@ -154,7 +154,7 @@ import {
   pooledAndroidDevice,
 } from './android/support.ts';
 import { startDeviceLogStream } from '../daemon/client.ts';
-import { collisionRemedy, emulatorLogFile, workspaceLogsDir } from '../workspace/paths.ts';
+import { workspaceStateRemedy, emulatorLogFile, workspaceLogsDir } from '../workspace/paths.ts';
 import { ownedSessionName } from '../engine/eas-simulator.ts';
 import type { FailExtra, AndroidRecord, RunAndroidResult, AndroidBootLike } from './android/types.ts';
 import {
@@ -841,9 +841,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   } catch (error) {
     const code = (error as Error & { code?: string })?.code || 'STIM_WORKSPACE_STATE';
     const message = `Could not prepare this workspace's Stim state: ${(error as Error)?.message || error}`;
-    const remedy =
-      collisionRemedy(error) ??
-      'Check that STIM_HOME is writable and has free space. An EPERM on a directory you can write is a sandbox: allow writes to STIM_HOME, or run Stim with the sandbox disabled (`stim guide errors sandbox`).';
+    const remedy = workspaceStateRemedy(error);
     out(phaseLine('error', chalk.red(`${code}: ${message}`)));
     out(phaseLine('remedy', remedy));
     if (json) emit(JSON.stringify({ code, message, remedy }));

@@ -23,17 +23,18 @@ export function withConfigLockAsync<T>(fn: () => T, signal?: AbortSignal): Promi
 }
 
 export function configCorruptRepair(path: string = getConfigPath()): string {
-  return `Repair the file, or move it aside to start over with mv "${path}" "${path}.broken". Moving it aside drops the device records it holds; \`stim gc --dry-run\` then lists those stim-* devices as unrecognized, with the command that deletes each.`;
+  return `Repair the file, or move it aside to start over with mv "${path}" "${path}.broken". Moving it aside makes Stim forget the devices and projects it recorded; the devices stay on the machine. Run \`stim gc --dry-run\`, and delete any stim-* device it keeps with \`xcrun simctl delete <udid>\` or \`avdmanager delete avd -n <name>\`.`;
 }
 
 function configCorrupt(reason: string, path: string = getConfigPath()): Error {
+  const repair = configCorruptRepair(path);
   const corrupt = new Error(
     `Stim config at ${path} ${reason}\n` +
       'It holds the records of the simulators and emulators Stim owns, so it is never reset automatically.\n' +
-      configCorruptRepair(path),
+      repair,
   );
   (corrupt as Error & { code?: string }).code = 'STIM_CONFIG_CORRUPT';
-  return corrupt;
+  return Object.assign(corrupt, { repair });
 }
 
 /** The build worker root: `server.workerRoot` when it is absolute, else `$STIM_HOME/build-worker`. */

@@ -99,9 +99,14 @@ export async function stopMacosAppHeld(root: string, operation?: StimContext): P
   }
   const claims = readClaimSet(macosRuntimeClaim(root));
   if (claims.unresolved.length || claims.live.length) {
-    throw Object.assign(new Error(`The macOS runtime claim cannot be released. ${MACOS_OWNER_HINT}`), {
-      code: 'STIM_MACOS_OWNER_UNVERIFIED',
-    });
+    throw Object.assign(
+      new Error(
+        `The macOS runtime claim ${macosRuntimeClaim(root)} cannot be released. Inspect its recorded owner. Do not replace a PID or token with another running app. Run \`stim stop\` again.`,
+      ),
+      {
+        code: 'STIM_MACOS_OWNER_UNVERIFIED',
+      },
+    );
   }
   return true;
 }

@@ -60,10 +60,13 @@ export function classifyFailure(
   const path = typeof raw === 'string' ? raw : null;
   if (code === 'STIM_CONFIG_CORRUPT') {
     const message = error.message.replaceAll('\n', ' ');
-    const repair = message.lastIndexOf('Repair the file');
+    const repair: unknown = Reflect.get(error, 'repair');
     return {
       kind: 'home',
-      remedy: repair < 0 ? bounded(message) : `${bounded(message.slice(0, repair))}${message.slice(repair)}`,
+      remedy:
+        typeof repair === 'string' && message.endsWith(repair)
+          ? `${bounded(message.slice(0, -repair.length))}${repair}`
+          : bounded(message),
     };
   }
   const inside = path !== null && insideHome(path, home);

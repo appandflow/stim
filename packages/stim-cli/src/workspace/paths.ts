@@ -60,13 +60,16 @@ export function ensureWorkspaceStorage(projectRoot: string): string {
   });
 }
 
-/** The remedy a workspace collision carries, or undefined for any other error. */
-export function collisionRemedy(error: unknown): string | undefined {
+export function workspaceStateRemedy(error: unknown, short = false): string {
   const remedy: unknown =
     error instanceof Error && Reflect.get(error, 'code') === 'STIM_WORKSPACE_COLLISION'
       ? Reflect.get(error, 'remedy')
       : undefined;
-  return typeof remedy === 'string' ? remedy : undefined;
+  if (typeof remedy === 'string') return remedy;
+  const base = 'Check that STIM_HOME is writable and has free space.';
+  return short
+    ? base
+    : `${base} An EPERM on a directory you can write is a sandbox: allow writes to STIM_HOME, or run Stim with the sandbox disabled (\`stim guide errors sandbox\`).`;
 }
 
 /** Initializes or validates workspace storage after asynchronously acquiring its metadata lock. */

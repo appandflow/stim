@@ -6,9 +6,12 @@ import type { Config } from './config-types.ts';
 export function readHomeIdentity(config: Config | null = loadConfig()): string | null {
   const id = config?.homeId;
   if (id === undefined) return null;
-  if (!validHomeId(id))
-    throw Object.assign(new Error(`Stim home identity is not a UUID. ${configCorruptRepair()}`), {
+  if (!validHomeId(id)) {
+    const repair = configCorruptRepair();
+    throw Object.assign(new Error(`Stim home identity is not a UUID. ${repair}`), {
       code: 'STIM_CONFIG_CORRUPT',
+      repair,
     });
+  }
   return id.toLowerCase();
 }

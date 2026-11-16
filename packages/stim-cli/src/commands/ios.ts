@@ -79,7 +79,7 @@ import { COMPILATION_CACHE_NOT_RUN } from '../engine/xcode.ts';
 import { setRemoteLogSink } from '../remote-log.ts';
 import { resolveBuildMachine } from '../build-placement.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
-import { workspaceLogsDir } from '../workspace/paths.ts';
+import { workspaceLogsDir, workspaceStateRemedy } from '../workspace/paths.ts';
 import { recordWorkspaceUseAsync } from '../workspace/workspace-state.ts';
 import { printLightenedFailure, restoreLightenedDependencies } from '../workspace/lightened.ts';
 import { NO_PROJECT_REFUSAL } from '../workspace/project.ts';
@@ -529,13 +529,10 @@ async function runIos(
     const code = (error as Error & { code?: string })?.code || 'STIM_WORKSPACE_STATE';
     const message = `Could not prepare this workspace's Stim state: ${(error as Error)?.message || error}`;
     note(chalk.red(`${code}: ${message}`));
-    note(
-      chalk.dim(
-        'Check that STIM_HOME is writable and has free space. An EPERM on a directory you can write is a sandbox: allow writes to STIM_HOME, or run Stim with the sandbox disabled (`stim guide errors sandbox`).',
-      ),
-    );
-    if (json) emit(JSON.stringify({ code, message, remedy: 'Check that STIM_HOME is writable and has free space.' }));
-    onFailure({ code, message, remedy: 'Check that STIM_HOME is writable and has free space.' });
+    note(chalk.dim(workspaceStateRemedy(error)));
+    const remedy = workspaceStateRemedy(error, true);
+    if (json) emit(JSON.stringify({ code, message, remedy }));
+    onFailure({ code, message, remedy });
     return null;
   }
 
