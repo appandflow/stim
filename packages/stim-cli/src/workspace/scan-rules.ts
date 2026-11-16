@@ -12,11 +12,12 @@ export const MAX_DEPTH = 7;
 
 const within = (path: string, folder: string): boolean => path === folder || path.startsWith(`${folder}${sep}`);
 
-/** Folders directly in the home folder the scan never reads: system, media and the two the maintainer excluded. */
+/** Folders directly in the home folder the scan never reads: system, media and the three the maintainer excluded. */
 const HOME_SKIPPED = new Set([
   'Library',
   'Applications',
   'Desktop',
+  'Documents',
   'Downloads',
   'Movies',
   'Music',

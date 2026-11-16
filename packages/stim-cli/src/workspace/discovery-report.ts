@@ -292,7 +292,10 @@ export function discoveryLines(report: DiscoveryReport, home: string): string[] 
   const unread = scan.unreadable.length
     ? ` It could not read ${scan.unreadable.map((path) => shorten(path, home)).join(', ')}.`
     : '';
-  const lines = [`${when}${cut}${unread}`];
+  const lines = [
+    `${when}${cut}${unread}`,
+    'It does not scan ~/Documents; name a folder of checkouts there in maintenance.discoverRoots.',
+  ];
   if (report.census === 'absent') return [...lines, 'The daemon has not yet listed and measured what it found.'];
   if (report.census === 'unreadable')
     return [...lines, 'The list of what it found cannot be read, so Stim does not know what is unmanaged.'];
