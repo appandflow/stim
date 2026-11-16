@@ -1224,14 +1224,12 @@ cleanup, never by a command): weekly, and also while the disk level is above
 normal when no scan has run for an hour; a scan that failed or ended on a read that timed out is retried after an hour,
 one that stopped at its folder cap or time budget is not.
 The schedule is kept with the result, so a restarted daemon forgets nothing. It
-reads ~/Documents (macOS may ask once; a folder that does not answer within 3
-seconds, such as one waiting for that answer, is recorded as unreadable, ends
-that scan early with the previous finds kept, and is read on the next scan), skips ~/Desktop, ~/Downloads, ~/Library, the media
+skips ~/Desktop, ~/Documents, ~/Downloads, ~/Library, the media
 folders, other volumes, symlinks, dependency or build folders, deeper
 dot-folders, the Stim home and every dot-folder starting with .stim, the build
 worker root, and the tool homes and caches among the home folder's other
 dot-folders (.npm, .gradle, .cache and the like; .exact is entered), stops at a
-recognised project and goes seven levels deep. The scan has a 45 second budget,
+recognised project and goes seven levels deep. A folder that does not answer within 3 seconds is recorded as unreadable, ends that scan early with the finds kept, and is read next scan. Name checkouts in ~/Documents with maintenance.discoverRoots (macOS asks once). The scan has a 45 second budget,
 checked before every read it makes (including every read of the project checks
 below); when it runs out the scan ends truncated as a budget stop and keeps the
 previous finds. It can overrun the budget by at most one read's 3 second timeout,
