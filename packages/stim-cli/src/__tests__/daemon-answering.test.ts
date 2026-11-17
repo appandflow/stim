@@ -107,6 +107,21 @@ describe('a stimd that holds the claim and did not answer', () => {
     expect(unansweredFindings(silent, NOW)[0]?.fix).toContain('`kill 4242`');
   });
 
+  test.each<[string, Partial<DaemonStatus>, boolean]>([
+    ['exactly three intervals old', { lastTickAt: '2026-11-02T11:57:00.000Z' }, false],
+    ['one millisecond over three intervals', { lastTickAt: '2026-11-02T11:56:59.999Z' }, true],
+    ['newer than now', { lastTickAt: '2026-11-02T12:00:05.000Z' }, false],
+    [
+      'an old tick with a claim started after now',
+      { lastTickAt: '2026-11-02T11:00:00.000Z', running: { pid: 4242, since: '2026-11-02T12:00:30.000Z' } },
+      false,
+    ],
+  ])('the fix with a tick %s names kill: %s', (_name, over, kill) => {
+    const found = unansweredFindings(status({ unanswered: { pid: 4242, waitedMs: 3000 }, ...over }), NOW);
+    expect(found.map((finding) => finding.code)).toEqual(['stimd-not-answering']);
+    expect(/kill/.test(found[0]?.fix ?? '')).toBe(kill);
+  });
+
   test('a stimd that answered gets no finding and the usual line', () => {
     expect(unansweredFindings(status(), NOW)).toEqual([]);
     expect(daemonLine(status(), NOW)).toMatch(

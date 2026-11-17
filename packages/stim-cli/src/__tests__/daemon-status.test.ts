@@ -29,6 +29,19 @@ describe('a late tick', () => {
   const findings = (value: DaemonStatus, probed?: boolean) =>
     daemonFindings(value, { now: NOW, serving: () => [], ...(probed === undefined ? {} : { probed }) });
 
+  test.each<[string, Partial<DaemonStatus>, number]>([
+    ['exactly three intervals old', { lastTickAt: '2026-11-02T11:57:00.000Z' }, 0],
+    ['one millisecond over three intervals', { lastTickAt: '2026-11-02T11:56:59.999Z' }, 1],
+    ['newer than now', { lastTickAt: '2026-11-02T12:00:05.000Z' }, 0],
+    [
+      'a claim started after now, with an old tick',
+      { lastTickAt: '2026-11-02T11:00:00.000Z', running: { pid: 4242, since: '2026-11-02T12:00:30.000Z' } },
+      0,
+    ],
+  ])('with a tick %s reports %i late finding', (_name, over, count) => {
+    expect(findings(status({ running, ...over }), true)).toHaveLength(count);
+  });
+
   test('of a stimd that answered the probe is reported as late, with no kill', () => {
     const [finding, ...rest] = findings(late, true);
     expect(rest).toEqual([]);

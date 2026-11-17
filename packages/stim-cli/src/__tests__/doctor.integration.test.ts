@@ -1986,6 +1986,10 @@ function writeDaemonTick(minutesAgo: number): void {
   onTestFinished(() => {
     vi.useRealTimers();
   });
+  writeSnapshot(start);
+}
+
+function writeSnapshot(tickAt: number): void {
   mkdirSync(daemonDir(), { recursive: true });
   writeFileSync(
     daemonSnapshotFile(),
@@ -1993,8 +1997,8 @@ function writeDaemonTick(minutesAgo: number): void {
       version: 1,
       pid: process.pid,
       mode: 'on',
-      startedAt: new Date(start).toISOString(),
-      tickAt: new Date(start).toISOString(),
+      startedAt: new Date(tickAt).toISOString(),
+      tickAt: new Date(tickAt).toISOString(),
       intervalMs: 60_000,
     }),
   );
@@ -2254,6 +2258,15 @@ describe('doctor on a stimd whose last tick is late', () => {
     const found = await doctorDaemonFindings();
     expect(found.map((finding) => finding.code)).toEqual(['stimd-not-answering']);
     expect(found[0]?.fix).toContain(`kill ${process.pid}`);
+  }, 60_000);
+
+  test('that ticks while the probe is pending names no kill', async () => {
+    holdDaemonClaim();
+    await serveStimdSocket(null, () => writeSnapshot(Date.now()));
+    writeDaemonTick(10);
+    const found = await doctorDaemonFindings();
+    expect(found.map((finding) => finding.code)).toEqual(['stimd-not-answering']);
+    expect(found[0]?.fix).not.toMatch(/kill/);
   }, 60_000);
 
   test('that does not answer but ticked a minute ago names no kill', async () => {
