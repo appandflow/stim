@@ -100,14 +100,15 @@ const sameOwner = (a: ClaimProblem, b: ClaimProblem) =>
 /**
  * Each unresolved build slot: its claim, owner and the command that removes it. For a slot an offloaded build holds,
  * the command also removes the job's `fingerprint-work/<job>` directory and the job's repository and engine claims
- * that the same owner left unresolved, in the order of the `cleanup-unresolved` refusal.
+ * that the same owner left unresolved, in the order of the `cleanup-unresolved` refusal. An engine claim records no
+ * job, so while the owner leaves another slot unresolved its engine claims are named but left out of the command.
  * @ref LLP 0007#a-null-child-is-never-recovered -- status, gc and maintenance name the claim, its owner and the command
  */
 export function unresolvedBuildSlotClaims(
   env: NodeJS.ProcessEnv,
   slots: BuildSlotInfo[] = listBuildSlots(),
 ): { slot: number | null; unresolved: string; removeCommand: string }[] {
-  return slots.flatMap(({ index, problem }) => {
+  return slots.flatMap(({ index, problem }, at) => {
     if (!problem) return [];
     const { offloaded, client, repo, job } = problem.details ?? {};
     if (
@@ -125,19 +126,25 @@ export function unresolvedBuildSlotClaims(
     const engineClaims = readBuildClaims(engineRoot(env)).flatMap(({ survey }) =>
       survey.unresolved.filter((other) => sameOwner(other, problem)),
     );
+    const shared = slots.some((other, i) => i !== at && other.problem && sameOwner(other.problem, problem));
     const others = [
       ...repoClaims.map(({ path }) => `repository claim ${path}`),
-      ...engineClaims.map(({ path }) => `engine claim ${path}`),
+      ...(shared ? [] : engineClaims.map(({ path }) => `engine claim ${path}`)),
     ];
+    const unattributed = shared && engineClaims.length ? engineClaims.map(({ path }) => path).join(', ') : null;
     return [
       {
         slot: index,
         unresolved: `the offloaded build ${job} of ${repo} for ${client}: ${claimProblemText(problem)}${
           others.length ? `; the same owner holds the ${others.join(' and the ')}` : ''
+        }${
+          unattributed
+            ? `; it also holds the engine claims ${unattributed}, which name no build, so they are left out until only one of its slots is unresolved`
+            : ''
         }`,
         removeCommand: [
           claimRemoveCommand(join(area, 'fingerprint-work', job)),
-          ...[...repoClaims, problem, ...engineClaims].map(({ path }) => claimFilesRemoveCommand(path)),
+          ...[...repoClaims, problem, ...(shared ? [] : engineClaims)].map(({ path }) => claimFilesRemoveCommand(path)),
         ].join(' && '),
       },
     ];

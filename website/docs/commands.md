@@ -1913,7 +1913,9 @@ offloaded build stopped before its worker reported cleanup, gets a
 of `{ unresolved, removeCommand }`. It names the claim, its owner pid, when it
 was claimed and whether that process still runs. For an offloaded build it also
 names the job's repository and engine claims, and gives one command that
-removes them with the job's `fingerprint-work/<job>` directory. `stim gc` lists
+removes them with the job's `fingerprint-work/<job>` directory. An engine claim
+records no build, so while the same job process leaves another slot unresolved
+its engine claims are named but left out of the command. `stim gc` lists
 the same line under "Needs a person:" and maintenance in its blocked reasons.
 Run the command only once nothing from that build runs. `capacity.devices.inUse` is `null`, with `unknown` saying why, when the
 devices could not be listed.

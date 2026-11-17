@@ -492,6 +492,35 @@ test('status names an unresolved offloaded build slot, its dead owner and one co
   );
 });
 
+test('engine claims of an owner that leaves two offloaded slots unresolved stay out of both commands', () => {
+  const engineRoot = join(tmpHome, 'engine');
+  vi.stubEnv('STIM_ENGINE_ROOT', engineRoot);
+  const owner = goneClaimOwner();
+  const pending = { record: null };
+  for (const [index, repo] of [
+    [0, 'app'],
+    [1, 'web'],
+  ] as const)
+    plantClaim(buildSlotPath(index), 'exclusive', owner, {
+      claimId: `slot-${index}`,
+      details: { index, offloaded: true, client: 'dev-1', repo, job: `job-${index}` },
+      child: pending,
+    });
+  const engines = ['a', 'b'].map((id) =>
+    plantClaim(buildClaimRoot(engineRoot, 'aaaaaaaaaaaa'), 'shared', owner, { claimId: id, child: pending }),
+  );
+
+  const holders = buildSlotUsage(2, process.env).holders;
+
+  expect(holders).toHaveLength(2);
+  for (const holder of holders) {
+    for (const engine of engines) {
+      expect(holder.claim?.unresolved).toContain(engine);
+      expect(holder.claim?.removeCommand).not.toContain(engine);
+    }
+  }
+});
+
 test('automatic build admission rechecks membership after waiting without releasing another build', async () => {
   const held = tryAcquireBuildSlot({ max: 1 });
   assert(held);
