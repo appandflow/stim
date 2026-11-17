@@ -768,8 +768,11 @@ async function assembleDoctorReport(
       fix: 'Run `stim doctor --fix` to remove them; it never touches a running job or one whose home exists.',
     });
   const maintenance = maintenanceStatus(env);
-  const daemon = daemonStatus(env);
-  findings.push(...daemonFindings(daemon));
+  const answer = await daemonAnswer;
+  const decidedAt = Date.now();
+  const answered = withAnswer(daemonStatus(env), answer);
+  findings.push(...daemonFindings(answered, { probed: true, now: decidedAt }));
+  const silent = unansweredFindings(answered, decidedAt);
   const missingRoots = missingDiscoverRoots(loadConfig(), env);
   if (missingRoots.length)
     findings.push({
@@ -786,8 +789,7 @@ async function assembleDoctorReport(
       detail: `${broadRoots.join(', ')} resolve${broadRoots.length === 1 ? 's' : ''} to the home folder, a folder holding it or the filesystem root, so nothing is discovered there.`,
       fix: 'Name folders below the home folder, such as ~/Developer.',
     });
-  const answered = withAnswer(daemon, await daemonAnswer);
-  findings.push(...unansweredFindings(answered));
+  findings.push(...silent);
   return {
     project: root,
     platform: opts.platform ?? null,

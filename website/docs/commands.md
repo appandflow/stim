@@ -144,7 +144,7 @@ what the `stim-daemon`'s ladder reclaims. `--json` adds this report as
 `pressure`. Doctor also prints the [`stim-daemon`](./settings.md#stim-daemon)
 line with its mode, whether it runs and when it last ticked, its last action
 (or its snapshot file before the first), the daemon log and the cleanup
-log with the last pass. It reports a daemon that stopped ticking, a stim-daemon from before Stim 2.0 that
+log with the last pass. It reports a daemon that is late with its ticks, a stim-daemon from before Stim 2.0 that
 holds the daemon claim, with its pid and stop command, a daemon
 that stays up for a child whose cleanup it could not verify, with how to check
 the child, and that stopping that stimd is safe and ends the wait, a stimd held back after
@@ -161,7 +161,10 @@ age of its last tick (doctor's finding code is `stimd-not-answering`) and, when 
 missing. In `--json` that is `daemon.unanswered` (`pid`, `waitedMs`,
 `socketMissing`); it is absent when stimd answers. It reports one probe, so a
 machine under heavy load can show it for a stimd that answers later, and
-neither command stops or replaces the stimd. `status --watch` probes in the
+neither command stops or replaces the stimd. Doctor then shows only that
+finding, not a late-tick one beside it, and its fix names `kill <pid>` only when
+the last tick is also older than three intervals. A stimd that answers with late
+ticks gets a late-tick finding that does not say to kill it. `status --watch` probes in the
 background every 10 seconds and never waits for it.
 
 `doctor` also flags when an agent harness sandboxes shell commands and Stim is
