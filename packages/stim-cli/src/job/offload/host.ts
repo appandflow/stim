@@ -1090,6 +1090,7 @@ export class BuildHost {
     };
     let killTimer: NodeJS.Timeout | null = null;
     let killedAt: number | null = null;
+    let groupGone = false;
     let finished = false;
     const caching = new AbortController();
     const foreign = child.pid === undefined || process.platform === 'win32' ? null : foreignDescendants(child.pid);
@@ -1109,13 +1110,13 @@ export class BuildHost {
           group: jobLog.enabled() ? groupProcesses(child.pid) : undefined,
         });
       }
-      foreign?.find();
+      foreign?.find(!groupGone);
       signalGroup('SIGTERM');
       foreign?.signal('SIGTERM');
       killTimer = setTimeout(() => {
         killedAt = Date.now();
-        foreign?.find();
-        signalGroup('SIGKILL');
+        foreign?.find(!groupGone);
+        if (!groupGone) signalGroup('SIGKILL');
         foreign?.signal('SIGKILL');
       }, this.limits.killGraceMs);
       killTimer.unref();
@@ -1228,11 +1229,12 @@ export class BuildHost {
         const drainAndroid = job.platform === 'android' && (killTimer !== null || abnormal || !outcome.ok);
         let abandoned = false;
         const settle = async () => {
+          groupGone ||= child.pid === undefined || !processGroupAlive(child.pid);
           if (killTimer) {
-            foreign?.find();
+            foreign?.find(!groupGone);
             foreign?.signal(killedAt === null ? 'SIGTERM' : 'SIGKILL');
           }
-          if ((child.pid !== undefined && processGroupAlive(child.pid)) || (killTimer && foreign && !foreign.gone())) {
+          if (!groupGone || (killTimer && foreign && !foreign.gone())) {
             if (killedAt === null || Date.now() - killedAt < this.limits.killGraceMs) {
               setTimeout(settle, GROUP_POLL_MS);
               return;

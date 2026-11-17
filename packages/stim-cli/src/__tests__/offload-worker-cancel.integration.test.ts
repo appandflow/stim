@@ -225,10 +225,13 @@ describe.skipIf(process.platform === 'win32')('a host-stopped offload worker', (
 
   // An Xcode build service and its script phases run in process groups of their own: the job's process exits once
   // nothing holds its event loop, and those processes are reparented once the build service exits.
-  test(
-    'a closed connection stops what xcodebuild started in other process groups and records the outcome',
+  test.each([
+    ['cancelled', 'can list processes'],
+    ['cleanup-unresolved', 'cannot list processes'],
+  ] as const)(
+    'a closed connection ends %s when the host %s, with what xcodebuild started in other process groups',
     { timeout: 150_000 },
-    async () => {
+    async (code, listing) => {
       const { root, home, path, foreign, manifest, blobs, params, cleanup } = await prepare(
         ({ pidFile, foreignFile }) => `case " $* " in *' -destination '*) ;; *) exit 0;; esac
 echo $$ >> '${pidFile}'
@@ -237,10 +240,12 @@ if (fork) { sleep 600; exit 0 }
 setpgrp(0, 0); $SIG{TERM} = "IGNORE";
 open(my $f, ">>", $ARGV[0]); print $f "$$\\n"; close($f); exec "sleep", "600"' '${foreignFile}' &
 service=$!
+echo $service >> '${pidFile}'
 (trap 'sleep 2; exit 0' TERM; sleep 600 & wait) &
 trap 'kill -KILL $service; exit 143' TERM
 wait`,
       );
+      if (listing === 'cannot list processes') script(join(root, 'bin', 'ps'), 'exit 1');
       const job = getExecutor().spawn(process.execPath, [cli, '__job', 'offload-build'], {
         cwd: root,
         stdio: ['pipe', 'pipe', 'ignore'],
@@ -292,11 +297,18 @@ wait`,
           .trim()
           .split('\n');
         expect(actions.map((line) => JSON.parse(line))).toMatchObject([
-          { action: 'build', ok: false, error: { message: expect.stringMatching(/^cancelled: /) } },
+          { action: 'build', ok: false, error: { message: expect.stringMatching(new RegExp(`^${code}: `)) } },
         ]);
-        expect(lines(foreign).filter(alive)).toEqual([]);
-        expect(readClaimSet(buildSlotPath(0))).toMatchObject({ live: [], unresolved: [] });
-        expect(readClaimSet(`${area}.claims`)).toMatchObject({ live: [], unresolved: [] });
+        const slot = readClaimSet(buildSlotPath(0));
+        const held = readClaimSet(`${area}.claims`);
+        const kept = code === 'cancelled' ? 0 : 1;
+        expect({
+          survivors: lines(foreign).filter(alive).length,
+          live: slot.live.length + held.live.length,
+          unresolved: [slot.unresolved.length, held.unresolved.length],
+        }).toEqual({ survivors: kept, live: 0, unresolved: [kept, kept] });
+        for (const { path: claim } of [...slot.unresolved, ...held.unresolved])
+          expect(actions[0]).toContain(`rm -f '${claim}'`);
       } finally {
         job.kill('SIGKILL');
         cleanup();

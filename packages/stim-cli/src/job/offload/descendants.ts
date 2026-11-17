@@ -19,8 +19,8 @@ function processTable(): Row[] | null {
   });
 }
 
-/** The descendants of `group`'s members and of `roots` that are outside `group`, `roots` excluded. */
-function outside(table: Row[], group: number, roots: Iterable<number>): Map<number, Row> {
+/** The descendants of `group`'s members (none when null) and of `roots` that are outside `group`, `roots` excluded. */
+function outside(table: Row[], group: number | null, roots: Iterable<number>): Map<number, Row> {
   const children = new Map<number, Row[]>();
   for (const row of table) children.set(row.ppid, [...(children.get(row.ppid) ?? []), row]);
   const start = new Set([...table.filter((row) => row.pgid === group).map((row) => row.pid), ...roots]);
@@ -32,13 +32,12 @@ function outside(table: Row[], group: number, roots: Iterable<number>): Map<numb
         found.set(row.pid, row);
         queue.push(row.pid);
       }
-  for (const [pid, row] of found) if (row.pgid === group) found.delete(pid);
   return found;
 }
 
 export interface ForeignDescendants {
   readonly unknown: boolean;
-  find(): void;
+  find(fromGroup: boolean): void;
   signal(signal: NodeJS.Signals): void;
   gone(): boolean;
 }
@@ -46,7 +45,7 @@ export interface ForeignDescendants {
 /**
  * The processes an offloaded build started outside the worker's process group `group`, such as an Xcode build
  * service and its script phases, which run in process groups of their own. `find` walks the process tree down from the
- * group's members and the recorded processes whose identity still reads `same` once the listing is taken, and records each new one by its identity: it is captured, then
+ * group's members (only while `fromGroup`: once the group is gone its id may name another group) and the recorded processes whose identity still reads `same` once the listing is taken, and records each new one by its identity: it is captured, then
  * kept only when a second listing still shows it below the same roots, so a pid reused between the listing and the
  * capture is never recorded. `signal` sends to a recorded process only while its identity reads `same`. `gone` is true
  * once every recorded identity reads `gone` or `different`. `unknown` turns true, and stays true, when a listing fails,
@@ -64,12 +63,12 @@ export function foreignDescendants(group: number): ForeignDescendants {
     get unknown(): boolean {
       return unknown;
     },
-    find(): void {
+    find(fromGroup: boolean): void {
       const before = processTable();
       if (!before) return void (unknown = true);
       const roots = live();
       const captured = new Map<number, string>();
-      for (const pid of outside(before, group, roots).keys()) {
+      for (const pid of outside(before, fromGroup ? group : null, roots).keys()) {
         const identity = captureProcessIdentity(pid);
         if (identity.ok) captured.set(pid, identity.token);
         else if (identity.code !== 'NOT_FOUND') unknown = true;
@@ -77,7 +76,7 @@ export function foreignDescendants(group: number): ForeignDescendants {
       if (captured.size === 0) return;
       const after = processTable();
       if (!after) return void (unknown = true);
-      const below = outside(after, group, live());
+      const below = outside(after, fromGroup ? group : null, live());
       for (const [pid, processToken] of captured) {
         const status = inspectProcessIdentity({ pid, processToken });
         if (below.has(pid)) recorded.set(pid, { pid, processToken });
