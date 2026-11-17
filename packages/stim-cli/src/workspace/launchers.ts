@@ -80,7 +80,12 @@ export function launcherReader(
             // access(2) follows the link the way execve(2) does, without readlink(2): macOS denies resolving
             // `/usr/sbin/weakpass_edit`, whose target is in root-only `authserver`, and this user cannot run it either,
             // while a mode 0700 root link such as a 1Password `/usr/local/bin` entry cannot be read but still runs.
-            if (denied(error) && !(await answered(directory, () => io.executable(entry), timeoutMs))) continue;
+            if (!denied(error)) throw error;
+            const runs = await answered(directory, () => io.executable(entry), timeoutMs).catch((gone: unknown) => {
+              if (absent(gone)) return false;
+              throw gone;
+            });
+            if (!runs) continue;
             throw error;
           }
         }

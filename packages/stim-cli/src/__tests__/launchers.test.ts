@@ -9,6 +9,7 @@ const io = (
   listing: Record<string, string[] | Error>,
   links: Record<string, string | Error> = {},
   unrunnable: readonly string[] = [],
+  gone: readonly string[] = [],
 ) => ({
   readdir: async (path: string) => {
     const entry = listing[path];
@@ -23,7 +24,10 @@ const io = (
     if (!target) throw missing('ENOENT');
     return target;
   },
-  executable: async (path: string) => !unrunnable.includes(path),
+  executable: async (path: string) => {
+    if (gone.includes(path)) throw missing('ENOENT');
+    return !unrunnable.includes(path);
+  },
 });
 
 const scan = (directories: string[], fake: ReturnType<typeof io>) =>
@@ -70,6 +74,11 @@ describe('the PATH launcher scan', () => {
     expect(launcherReason('/work/other', unrunnable)).toBeNull();
     const runnable = await scan(['/usr/sbin'], io({ '/usr/sbin': ['weakpass_edit', 'tool'] }, links));
     expect(runnable.incomplete).toEqual(['/usr/sbin']);
+    const vanished = await scan(
+      ['/usr/sbin'],
+      io({ '/usr/sbin': ['weakpass_edit', 'tool'] }, links, [], ['/usr/sbin/weakpass_edit']),
+    );
+    expect(vanished).toEqual({ targets: ['/work/app/.build/release/tool'], incomplete: [] });
   });
 
   it('ends a reading at once as incomplete when a read does not answer, and starts no read while it is pending', async () => {
