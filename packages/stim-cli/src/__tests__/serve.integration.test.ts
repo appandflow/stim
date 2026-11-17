@@ -281,8 +281,9 @@ test("a service process that finds a stimd serving a share-only net thread on an
   process.env.STIM_HOME = home;
   const stimd = spawn(process.execPath, [join(root, 'packages/stim-cli/dist/cli.mjs'), '__stimd', '--mode', 'off'], {
     env,
-    stdio: 'ignore',
+    stdio: ['ignore', 'ignore', 'pipe'],
   });
+  const stimdErr = lines(stimd.stderr);
   const stimdExited = once(stimd, 'exit');
   let service: ReturnType<typeof spawn> | undefined;
   try {
@@ -299,8 +300,16 @@ test("a service process that finds a stimd serving a share-only net thread on an
 
     const child = spawn(
       process.execPath,
-      [join(root, 'packages/stim-cli/dist/cli.mjs'), '__stimd', '--service', '--port', String(port)],
-      { env, stdio: ['ignore', 'pipe', 'pipe'] },
+      [
+        join(root, 'packages/stim-cli/dist/cli.mjs'),
+        '__stimd',
+        '--service',
+        '--port',
+        String(port),
+        '--env',
+        'STIM_TEST_SERVICE_ONLY',
+      ],
+      { env: { ...env, STIM_TEST_SERVICE_ONLY: 'from-the-unit' }, stdio: ['ignore', 'pipe', 'pipe'] },
     );
     service = child;
     const serviceErr = lines(child.stderr);
@@ -313,6 +322,7 @@ test("a service process that finds a stimd serving a share-only net thread on an
     }
     expect(JSON.parse(readFileSync(stimdRecordFile(), 'utf8'))).toMatchObject({ pid: stimd.pid, netPort: port });
     expect(service.exitCode).toBeNull();
+    expect(stimdErr.text()).not.toContain('STIM_TEST_SERVICE_ONLY has no value');
     await expect(fetch(`http://127.0.0.1:${shared.port}/health`)).rejects.toThrow('fetch failed');
 
     expect(await desktopEnsure(socket, { port: 0, loopbackOnly: true })).toMatchObject({ listening: true, port });

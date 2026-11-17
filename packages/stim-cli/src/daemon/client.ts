@@ -1866,15 +1866,24 @@ export async function ensureNet(share: boolean, env: NodeJS.ProcessEnv = process
 /**
  * Asks the stimd that holds this home to start its net thread on `port`, for a `stim serve` that found one running, and
  * resolves once that stimd closes the connection. A net thread that already runs keeps its own port and options, except
- * for a service (`service`), whose ask moves it to the service's options. The connection is closed at once when the
- * answer is not a listening one, or for a service, not on its port.
+ * for a service (`service`), whose ask moves it to the service's options and sends the values of its bare `--env`
+ * names, which the net thread it starts uses and no successor's arguments carry. The connection is closed at once
+ * when the answer is not a listening one, or for a service, not on its port.
  */
 export function serveThroughStimd(
   params: { port: number; loopbackOnly: boolean; extraEnv: string[]; pathPrepend: string[]; service: boolean },
   onAnswer: (answer: NetAnswer | null) => void,
 ): Promise<void> {
+  const envValues = params.service
+    ? Object.fromEntries(
+        params.extraEnv.flatMap((name) => {
+          const value = name.includes('=') ? undefined : process.env[name];
+          return value === undefined ? [] : [[name, value]];
+        }),
+      )
+    : {};
   return new Promise((done) => {
-    const socket = openStimd([{ op: 'net.ensure', params }], (reply) => {
+    const socket = openStimd([{ op: 'net.ensure', params: { ...params, envValues } }], (reply) => {
       const answer = netAnswer(reply);
       onAnswer(answer);
       if (!answer?.listening || (params.service && params.port !== 0 && answer.port !== params.port)) socket.destroy();

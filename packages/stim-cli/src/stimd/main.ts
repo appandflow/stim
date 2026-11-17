@@ -1419,6 +1419,13 @@ async function runStimdInner(
           });
           const running = net.running();
           const forService = params.service === true && !share;
+          const values = forService && isJsonObject(params.envValues) ? params.envValues : {};
+          const resolved = {
+            ...options,
+            extraEnv: options.extraEnv.map((name) =>
+              typeof values[name] === 'string' && !name.includes('=') ? `${name}=${values[name]}` : name,
+            ),
+          };
           // @ref LLP 0012#a-service-stimd-serves-the-service-port -- a service's ask moves a thread on other options
           const serviceMove =
             forService &&
@@ -1445,7 +1452,7 @@ async function runStimdInner(
             );
             restartingNet = true;
             return net
-              .restart(options, () => !closing)
+              .restart(resolved, () => !closing)
               .finally(() => {
                 restartingNet = false;
               })
@@ -1469,7 +1476,7 @@ async function runStimdInner(
                 })
             : restart
               ? restartNet()
-              : ensureNet(options);
+              : ensureNet(resolved);
           void answer.then(
             (state) => {
               lastContact = Date.now();

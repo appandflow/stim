@@ -110,19 +110,25 @@ Any starter can win the home after a handover: the successor, the unit's own
 restart, or a stimd a command started, which has no service options and, with
 a saved share, runs a share-only net thread on a random loopback port. So the
 unit's process (`--service` without `--carried`), when it finds a stimd holding
-the home, asks `net.ensure` with `service: true`. stimd then restarts a net
-thread that runs share-only or on another port or listener scope with the
-service's options, and Stim Desktop no longer moves it. The move compares with
-the thread that runs, and an ask that waits on the stop gets the service's
-thread. While work pins stimd, or a workspace action runs in the net thread (a
-Desktop or phone build, start, stop or reload), or the net thread runs or admits an offloaded job
-(its artifact delivery and a client engine install included) or holds a hosted session the next server
-cannot resume (a macOS session, or one installing), or runs a runtime
-install or another device-host probe, it refuses instead, and the
-asker exits 1, so the unit's restart asks again; otherwise the net thread stops
-admitting both in the same step that finds none, stimd checks its own pinned
-work once more, and the move follows (or the net thread admits again). Once stimd closes its net
-thread for good, no ask starts another.
+the home, asks `net.ensure` with `service: true` and the values of its bare
+`--env` names, which the holder may not have. stimd restarts a net thread that
+runs share-only, or on another port or listener scope, with the service's
+options and those values; the values reach only that thread, never a
+successor's arguments. Stim Desktop no longer moves the thread after a service
+ask. The move compares with the thread that runs, and an ask that waits on the
+stop gets the service's thread.
+
+stimd refuses the move while work pins it, and while the net thread runs
+anything a restart would end: a workspace action (a Desktop or phone build,
+start, stop, reload or settings write), an offloaded job or one being admitted
+(its artifact delivery and a client engine install included), a hosted session
+the next server cannot resume (a macOS session, or one installing), or a
+runtime install or other device-host probe. The asker then exits 1 and the
+unit's restart asks again. Otherwise the net thread stops admitting all of
+these in the same step that finds none, stimd checks its own pinned work once
+more, and the move follows, or the net thread admits again. Once stimd closes
+its net thread for good, no ask starts another.
+
 The asker also exits 1, naming both ports, when the answer is another port.
 stimd records its net thread's port as `netPort` in `run/stimd.json` (null
 while none listens), and `stim service status` names a holder on another port.
