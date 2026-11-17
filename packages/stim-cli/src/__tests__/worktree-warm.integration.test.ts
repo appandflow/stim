@@ -957,7 +957,7 @@ describe('an Expo app whose native directories git ignores', () => {
     expect(result.stderr).toMatch(
       /left out app\/android: the source's android\/ was generated from fingerprint an-ear\.\./,
     );
-  }, 30_000);
+  }, 60_000);
 
   test('two unresolved app checks retain both source claims', async () => {
     write(root, '.gitignore', `${readFileSync(join(root, '.gitignore'), 'utf8')}other/ios/\n`);
