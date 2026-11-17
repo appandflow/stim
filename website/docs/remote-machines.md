@@ -853,11 +853,14 @@ values of the environment variables the build reads from your shell, and every
 variable in your shell when project code enumerates `process.env`, so the worker
 builds with the same values. Stim's own secrets and settings overrides, toolchain
 and home paths such as `PATH`, `JAVA_HOME` and `ANDROID_HOME`, and shell-session
-variables stay on your machine. Both machines evaluate the fingerprint with the
-same Node major.minor: the project's pinned Node (`.nvmrc`, `.node-version`, `.tool-versions` or
-Volta), or else the Node running Stim. A worker with a different one refuses the
-build with `fingerprint-runtime`; pin the project's Node, or install the same
-version on both. Those files and variables can hold secrets: Stim assumes every paired
+variables stay on your machine. Each machine evaluates the fingerprint with the
+project's pinned Node (`.nvmrc`, `.node-version`, `.tool-versions` or Volta), or
+else the Node running Stim. A worker on a different Node major.minor still builds
+when it computes the same fingerprint. When the fingerprints differ, the
+`fingerprint-mismatch` refusal names both Node versions, and calls the Node
+difference the likely cause when only the sources Stim evaluates with Node (the
+Expo config and autolinking) differ; pin the project's Node to a version both
+machines have installed. Those files and variables can hold secrets: Stim assumes every paired
 Mac belongs to the same person. Nothing under
 `node_modules` is sent, since the build Mac installs dependencies itself, and
 neither is build output the fingerprint ignores, such as `ios/Pods` or
