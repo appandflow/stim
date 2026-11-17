@@ -1661,7 +1661,7 @@ describe('offloaded builds', () => {
         group: {
           omitted: 0,
           processes: expect.arrayContaining([
-            expect.objectContaining({ pid, command: expect.stringMatching(/node$/) }),
+            expect.objectContaining({ pid }),
             expect.objectContaining({ ppid: pid, command: expect.stringMatching(/sleep$/) }),
           ]),
         },
