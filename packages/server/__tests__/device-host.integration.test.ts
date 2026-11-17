@@ -1318,7 +1318,15 @@ describe('a hosted session across a server restart', () => {
     host.appLaunch('client', app.params);
     expect(host.active()).toBe(2);
     expect(host.working()).toBe(1);
+    expect(host.seal()).toBe(1);
     expect(host.attach('client', { session: session.id })).toHaveProperty('result.state', 'ready');
+  });
+
+  test('seal refuses new hosted work only when every session would survive a restart', async () => {
+    await installed();
+    expect(await host.installRuntime('client', { runtime: 'bad' })).toHaveProperty('error.code', 'bad-request');
+    expect(host.seal()).toBe(0);
+    expect(await host.installRuntime('client', { runtime: 'bad' })).toHaveProperty('error.code', 'forbidden');
   });
 
   test('a session with an install in flight keeps the stop path on close', async () => {

@@ -2475,6 +2475,16 @@ export class DeviceHost {
     );
   }
 
+  /**
+   * Refuses new hosted work, as `close` does, when every owned session can be resumed by the next server (`working` is
+   * 0), and returns 0; otherwise changes nothing and returns `working`.
+   */
+  seal(): number {
+    const busy = this.working();
+    if (busy === 0) this.closed = true;
+    return busy;
+  }
+
   working(): number {
     try {
       const records = readHostedSessions();

@@ -194,12 +194,12 @@ test('sealing offload jobs before a net thread move changes nothing while a job 
   assert.ok(worker);
   const connection = await open(endpoint, credential);
   expect(await connection.startJob('offload-probe', 'app', false)).toBeNull();
-  expect(worker.sealOffloadJobs()).toBe(1);
+  expect(worker.sealForRestart()).toBe(1);
   const second = await open(endpoint, credential);
   expect(await second.startJob('offload-probe', 'app', false)).toBeNull();
   second.close();
   connection.close();
-  await vi.waitFor(() => expect(worker.sealOffloadJobs()).toBe(0), { timeout: 10_000 });
+  await vi.waitFor(() => expect(worker.sealForRestart()).toBe(0), { timeout: 10_000 });
   const late = await open(endpoint, credential);
   expect(
     await late.request('job.start', { kind: 'offload-probe', stim: version, build: 'a'.repeat(12), repo: 'app' }),

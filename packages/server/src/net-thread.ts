@@ -83,7 +83,7 @@ async function run(port: MessagePort, options: NetOptions): Promise<void> {
     else if (message.type === 'end') connections.get(message.id)?.push(null);
     else if (message.type === 'presence') server.publishPresence(message.params);
     else if (message.type === 'keep') keep();
-    else if (message.type === 'seal') post({ type: 'sealed', jobs: server.sealOffloadJobs() });
+    else if (message.type === 'seal') post({ type: 'sealed', jobs: server.sealForRestart() });
     else
       void close()
         .then(

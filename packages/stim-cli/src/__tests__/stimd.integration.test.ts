@@ -245,7 +245,7 @@ test('shutdown retains the daemon claim until the net thread and observers close
   const net = vi.spyOn(netThread, 'createNetThread').mockReturnValue({
     ensure: async () => ({ listening: false, message: 'unused' }),
     restart: async () => ({ listening: false, message: 'unused' }),
-    sealOffloadJobs: async () => 0,
+    sealForRestart: async () => 0,
     running: () => null,
     connect: () => false,
     presence: () => false,
@@ -281,7 +281,7 @@ test.skipIf(process.platform === 'win32')(
       return {
         ensure: async () => ({ listening: false, message: 'unused' }),
         restart: async () => ({ listening: false, message: 'unused' }),
-        sealOffloadJobs: async () => 0,
+        sealForRestart: async () => 0,
         running: () => null,
         connect: () => false,
         presence: () => false,

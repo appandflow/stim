@@ -46,10 +46,10 @@ export interface NetThread {
   /** Whether the net thread runs, with which options, on which port once it listens, and the port it was asked for. */
   running(): { shareOnly: boolean; loopbackOnly: boolean; port: number | null; asked: number } | null;
   /**
-   * Asks the listening net thread to refuse new offloaded jobs when none runs or is being admitted, before a restart;
-   * resolves with 0 when it sealed (or none listens), else with how many jobs it has and nothing changed.
+   * Before a restart, asks the listening net thread to refuse new offloaded jobs and hosted sessions when none runs
+   * that a restart would end; resolves with 0 when it did (or none listens), else with how many and nothing changed.
    */
-  sealOffloadJobs(): Promise<number>;
+  sealForRestart(): Promise<number>;
   /** Hands `socket`, whose first frames stimd has read, to a listening net thread; false when none listens. */
   connect(socket: Socket, head: Buffer): boolean;
   /** Forwards one agent action's presence to a listening net thread; false when none listens. */
@@ -197,7 +197,7 @@ export function createNetThread(
       });
       return true;
     },
-    sealOffloadJobs() {
+    sealForRestart() {
       if (!listening) return Promise.resolve(0);
       return new Promise((answer) => {
         busyAnswers.push(answer);
