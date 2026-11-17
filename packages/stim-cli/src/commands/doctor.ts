@@ -768,7 +768,8 @@ async function assembleDoctorReport(
       fix: 'Run `stim doctor --fix` to remove them; it never touches a running job or one whose home exists.',
     });
   const maintenance = maintenanceStatus(env);
-  const answered = withAnswer(daemonStatus(env), await daemonAnswer);
+  const answer = await daemonAnswer;
+  const answered = withAnswer(daemonStatus(env), answer);
   findings.push(...daemonFindings(answered, { probed: true }));
   const missingRoots = missingDiscoverRoots(loadConfig(), env);
   if (missingRoots.length)
