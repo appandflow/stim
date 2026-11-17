@@ -13,9 +13,11 @@ import {
   settingOrigin,
   settingsLayers,
   settingValueAt,
+  unknownMachineKeys,
   unknownSettingKeys,
   type SettingsLayer,
 } from '../workspace/settings.ts';
+import { getConfigPath } from '../workspace/config.ts';
 import { REMOVED_SETTINGS, replacementAdvice, settingDefinition, type SettingsObject } from '@stim-cli/core/state';
 
 export interface MachineSettings {
@@ -139,14 +141,23 @@ export function checkMachineSettings({
       fix: leftover.remedy,
     });
 
+  const machineUnknown = unknownMachineKeys(machineConfig);
+  const machineFile = layers.find((layer) => layer.scope === 'machine')?.file ?? getConfigPath();
   const holders = repositoryLayer ? [...layers, repositoryLayer] : layers;
   const unknownKeys = new Set([
     ...unknownSettingKeys(settings),
     ...(repositoryLayer ? unknownSettingKeys(repositoryLayer.settings) : []),
+    ...machineUnknown,
   ]);
+  const reportedInert = new Set<string>();
   for (const key of unknownKeys) {
-    for (const holder of holders.filter((layer) => settingValueAt(layer.settings, key) !== undefined)) {
-      const file = holder.file;
+    const files = holders
+      .filter((layer) => settingValueAt(layer.settings, key) !== undefined)
+      .map((layer) => layer.file);
+    if (machineUnknown.includes(key) && !files.includes(machineFile)) files.push(machineFile);
+    for (const file of files) {
+      if (reportedInert.has(`${key}\0${file}`)) continue;
+      reportedInert.add(`${key}\0${file}`);
       if (leftovers.some((leftover) => leftover.key === key && leftover.file === file)) continue;
       findings.push({
         level: 'note',

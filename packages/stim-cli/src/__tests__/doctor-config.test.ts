@@ -8,6 +8,7 @@ import {
   type DoctorInspectionOptions,
   runDoctor as inspectDoctor,
 } from '../diagnostics/doctor.ts';
+import { loadConfig } from '../workspace/config.ts';
 import { resolveOptimizations } from '../optimizations.ts';
 
 import type { SettingsObject } from '@stim-cli/core/state';
@@ -71,6 +72,7 @@ test('a removed name in the machine config file is an inert key', () => {
         optimizations: resolveOptimizations(machine.settings, {}),
         exists: () => false,
         env: {},
+        machineConfig: loadConfig(),
       }),
     ).toEqual([
       expect.objectContaining({ title: 'A key in the config is inert', fix: `Remove remote.buildMode from ${file}.` }),

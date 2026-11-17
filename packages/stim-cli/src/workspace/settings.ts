@@ -547,10 +547,7 @@ export function unknownSettingKeys(settings: unknown, prefix = ''): string[] {
       (!isPlainObject(value) || ![...KNOWN_SETTINGS].some((k) => k.startsWith(`${path}.`)))
     )
       continue;
-    if (
-      isPlainObject(value) &&
-      [...MACHINE_KNOWN_SETTINGS, ...REMOVED_SETTINGS.keys()].some((k) => k.startsWith(`${path}.`))
-    ) {
+    if (isPlainObject(value) && [...KNOWN_SETTINGS, ...REMOVED_SETTINGS.keys()].some((k) => k.startsWith(`${path}.`))) {
       unknown.push(...unknownSettingKeys(value, path));
       continue;
     }
@@ -589,33 +586,28 @@ export function removedMachineSettings(machine: unknown): SettingsObject {
   return settings;
 }
 
-function unknownMachineKeys(own: SettingsObject, prefix = ''): string[] {
+function unknownScopedKeys(own: SettingsObject, prefix = ''): string[] {
   const unknown: string[] = [];
   for (const [key, value] of Object.entries(own)) {
     const path = prefix ? `${prefix}.${key}` : key;
     if (path === '$schema') continue;
-    if (isPlainObject(value) && [...MACHINE_KNOWN_SETTINGS].some((k) => k.startsWith(`${path}.`))) {
-      unknown.push(...unknownMachineKeys(value, path));
+    const group = [...MACHINE_KNOWN_SETTINGS].some((k) => k.startsWith(`${path}.`));
+    if (isPlainObject(value) && (group || !MACHINE_KNOWN_SETTINGS.has(path))) {
+      unknown.push(...unknownScopedKeys(value, path));
     } else if (!MACHINE_KNOWN_SETTINGS.has(path)) unknown.push(path);
   }
   return unknown;
 }
 
-export function unknownMachineSettings(machine: unknown): SettingsObject {
-  const settings: SettingsObject = {};
-  if (!isPlainObject(machine)) return settings;
-  const own = Object.fromEntries(Object.entries(machine).filter(([key]) => !MACHINE_RECORD_KEYS.has(key)));
-  for (const key of unknownMachineKeys(own)) {
-    setSettingValueAt(settings, key, settingValueAt(own, key));
-  }
-  return settings;
+export function unknownMachineKeys(machine: unknown): string[] {
+  if (!isPlainObject(machine)) return [];
+  return unknownScopedKeys(
+    Object.fromEntries(Object.entries(machine).filter(([key]) => !MACHINE_RECORD_KEYS.has(key))),
+  );
 }
 
 function machineLayerSettings(machine: unknown): SettingsObject | null {
-  const settings: SettingsObject = mergeSettingsLayers([
-    unknownMachineSettings(machine),
-    removedMachineSettings(machine),
-  ]);
+  const settings: SettingsObject = removedMachineSettings(machine);
   const optimizations = settingValueAt(machine, 'optimizations');
   if (optimizations !== undefined) settings.optimizations = optimizations;
   for (const setting of MACHINE_READABLE_SETTINGS) {

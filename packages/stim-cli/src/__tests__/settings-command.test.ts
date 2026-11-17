@@ -206,6 +206,32 @@ test('machine records are not unknown keys and unset refuses to remove them', as
   expect(readFileSync(machine, 'utf-8')).toBe(text);
 });
 
+test('a machine-only setting in a project layer keeps its group report and unset leaves the machine value', async () => {
+  const machine = join(home, 'config.json');
+  writeFileSync(
+    machine,
+    JSON.stringify({
+      version: 2,
+      projects: { [app]: { settings: { concurrency: { maxBuilds: 9 } } } },
+      repos: {},
+      concurrency: { maxBuilds: 2 },
+    }),
+  );
+  const workspaceFile = `${machine} (projects["${app}"].settings)`;
+  expect(JSON.parse((await settings(['--json'])).out[0] ?? '').unknown).toEqual([
+    { key: 'concurrency', scope: 'workspace', file: workspaceFile, value: { maxBuilds: 9 } },
+  ]);
+
+  const unset = await settings(['unset', 'concurrency', '--json']);
+  expect(JSON.parse(unset.out[0] ?? '')).toEqual({
+    key: 'concurrency',
+    removed: [{ scope: 'workspace', file: workspaceFile }],
+  });
+  const config = JSON.parse(readFileSync(machine, 'utf-8'));
+  expect(config.concurrency).toEqual({ maxBuilds: 2 });
+  expect(config.projects[app].settings).toEqual({});
+});
+
 test('unset of maintenance.idleStopHours removes the still-active machine setting', async () => {
   saveConfig({ version: 2, projects: {}, repos: {}, maintenance: { idleStopHours: 0 } });
 

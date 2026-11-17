@@ -16,13 +16,7 @@ import {
 import { getConfigPath, getProjectSettings, getRepoSettings, loadConfig, type Config } from './config.ts';
 import { gitPath, killOnAbort } from './git-read.ts';
 import { findCommandWorkspaceAsync } from './project.ts';
-import {
-  mergeSettingsLayers,
-  readCommittedSettings,
-  removedMachineSettings,
-  unknownMachineSettings,
-  unknownSettingKeys,
-} from './settings.ts';
+import { readCommittedSettings, removedMachineSettings, unknownMachineKeys, unknownSettingKeys } from './settings.ts';
 import { settingDefault, stimDesktopInstalled, stimDesktopInstalledAsync } from '../devices/stim-desktop.ts';
 
 const MASK = '********';
@@ -247,11 +241,7 @@ export function unknownEntries(context: SettingsContext): SettingsPayload['unkno
     {
       scope: 'machine',
       file: layerFile(context, 'machine', null),
-      settings: mergeSettingsLayers([
-        { optimizations: context.machine?.optimizations },
-        unknownMachineSettings(context.machine),
-        removedMachineSettings(context.machine),
-      ]),
+      settings: { optimizations: context.machine?.optimizations, ...removedMachineSettings(context.machine) },
     },
     {
       scope: 'workspace',
@@ -273,14 +263,20 @@ export function unknownEntries(context: SettingsContext): SettingsPayload['unkno
       settings: context.committed.repository,
     });
   }
-  return sources.flatMap(({ scope, file, settings }) =>
-    file === null
-      ? []
-      : unknownSettingKeys(settings).map((key) => {
-          const value = settingValueAt(settings, key);
-          return { key, scope, file, value };
-        }),
-  );
+  return sources.flatMap(({ scope, file, settings }) => {
+    if (file === null) return [];
+    const keys = new Set(unknownSettingKeys(settings));
+    if (scope === 'machine') for (const key of unknownMachineKeys(context.machine)) keys.add(key);
+    return [...keys].map((key) => {
+      const own = settingValueAt(settings, key);
+      return {
+        key,
+        scope,
+        file,
+        value: own === undefined && scope === 'machine' ? settingValueAt(context.machine, key) : own,
+      };
+    });
+  });
 }
 
 function settingsPayload(context: SettingsContext): SettingsPayload {
