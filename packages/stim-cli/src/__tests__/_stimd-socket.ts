@@ -17,13 +17,14 @@ export function holdDaemonClaim(): void {
   });
 }
 
-/** Listens on this home's stimd socket; a connection gets `reply` when it is not null, and silence otherwise. */
-export async function serveStimdSocket(reply: string | null): Promise<void> {
+/** Listens on this home's stimd socket; a connection gets `reply` when it is not null, and silence otherwise. `onFrame` runs when the first frame of a connection arrives. */
+export async function serveStimdSocket(reply: string | null, onFrame?: () => void): Promise<void> {
   const sockets = new Set<Socket>();
   const server = createServer((socket) => {
     sockets.add(socket);
     socket.on('error', () => {});
     socket.once('data', () => {
+      onFrame?.();
       if (reply !== null) socket.write(`${reply}\n`);
     });
   });

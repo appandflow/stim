@@ -1988,7 +1988,7 @@ RULES
     intervalMs come from $STIM_HOME/daemon/snapshot.json, which also holds
     the tick's measurement and each running workspace's decision; null
     before a first tick. A last tick older than three intervals while it runs
-    means it stopped ticking (\`stim doctor\`). claim is an unresolved claim's
+    means its ticks are late (\`stim doctor\`). claim is an unresolved claim's
     path and reason with removeCommand. pressure is the last tick's
     { level, disk, memory, reasons, memoryWarningSince } (\`guide lifecycle
     budget\`), absent until a tick measured it; the snapshot also lists the
