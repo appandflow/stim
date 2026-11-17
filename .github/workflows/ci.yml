@@ -86,7 +86,7 @@ on:
       - 'apps/desktop/Tests/VisualFixtureTests/Fixtures/real-archive/**'
 
 concurrency:
-  group: ci-v2-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}${{ inputs.full && '-full' || '' }}${{ (inputs.crash_loop || '0') != '0' && format('-loop-{0}', inputs.crash_loop_scope) || '' }}
+  group: ci-v2-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}${{ inputs.full && '-full' || '' }}${{ (inputs.crash_loop || '0') != '0' && format('-loop-{0}-{1}-{2}', inputs.crash_loop_scope, inputs.crash_loop, inputs.crash_loop_node_flags) || '' }}
   cancel-in-progress: true
 
 permissions:
