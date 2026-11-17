@@ -17,8 +17,9 @@ import { dirname, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
-import { recordCreatedDevice } from '../devices/created-devices.ts';
-import { teardownOwnedIosSim } from '../devices/teardown.ts';
+import { readCreatedDevices, recordCreatedDevice } from '../devices/created-devices.ts';
+import { createOwnedIosSim } from '../devices/ios.ts';
+import { deleteOwnedIosSimNow, teardownOwnedIosSim } from '../devices/teardown.ts';
 import { EXACT_SIM_TARGET, exactOffloadParam, exactOffloadPlan } from '../integrations/exact-offload.ts';
 import { runOffloadWorker } from '../job/offload/worker.ts';
 import { manifestDigest } from '../offload/manifest.ts';
@@ -33,6 +34,16 @@ vi.mock('../devices/ios.ts', async (actual) => ({
     runtime: null,
   })),
   bootIosSim: vi.fn<typeof import('../devices/ios.ts').bootIosSim>(async () => {}),
+  listAllIosSimsAsync: vi.fn<typeof import('../devices/ios.ts').listAllIosSimsAsync>(async () => [
+    {
+      udid: 'LEFT-BY-A-STOPPED-BUILD',
+      name: 'stim-exact-left',
+      state: 'Booted',
+      runtime: 'com.apple.CoreSimulator.SimRuntime.iOS-27-0',
+      deviceTypeIdentifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-17',
+      available: true,
+    },
+  ]),
 }));
 vi.mock('../engine/device-capacity.ts', async (actual) => ({
   ...(await actual<typeof import('../engine/device-capacity.ts')>()),
@@ -45,6 +56,7 @@ vi.mock('../devices/teardown.ts', async (actual) => ({
   teardownOwnedIosSim: vi.fn<typeof import('../devices/teardown.ts').teardownOwnedIosSim>(async () => ({
     status: 'torn-down',
   })),
+  deleteOwnedIosSimNow: vi.fn<typeof import('../devices/teardown.ts').deleteOwnedIosSimNow>(() => true),
 }));
 
 let root: string;
@@ -193,6 +205,7 @@ test('the worker runs Exact without the simulator, the worker caches or Exact se
 test('an Exact app that declares native modules builds next to a simulator the build owns, deleted after', async () => {
   vi.mocked(teardownOwnedIosSim).mockClear();
   recordCreatedDevice('ios', 'LEFT-BY-A-STOPPED-BUILD');
+  recordCreatedDevice('ios', 'DELETED-BEFORE-ITS-LEDGER-ENTRY');
   const { result, area } = await build({
     'exact.mjs': LAUNCHER,
     'app.json': JSON.stringify({ modules: ['shop-map'] }),
@@ -203,6 +216,7 @@ test('an Exact app that declares native modules builds next to a simulator the b
     ['LEFT-BY-A-STOPPED-BUILD', { del: true }],
     ['PROBE-SIM', { del: true }],
   ]);
+  expect([...readCreatedDevices().ios]).toEqual(['LEFT-BY-A-STOPPED-BUILD']);
 });
 
 test("the app's relative path to exact2 holds a checkout of the pinned commit inside the build area", async () => {
@@ -259,6 +273,17 @@ test('the worker refuses a setting app.json does not declare', async () => {
   expect(result).toMatchObject({ ok: false, code: 'bad-request' });
 });
 
+test('a build that ends before it compiles still deletes the simulator an earlier build left', async () => {
+  vi.mocked(teardownOwnedIosSim).mockClear();
+  recordCreatedDevice('ios', 'LEFT-BY-A-STOPPED-BUILD');
+  const { result } = await build(
+    { 'exact.mjs': LAUNCHER, 'app.json': JSON.stringify({ env: ['API_URL'] }) },
+    { env: { PATH: '/tmp/evil' } },
+  );
+  expect(result).toMatchObject({ ok: false, code: 'bad-request' });
+  expect(vi.mocked(teardownOwnedIosSim).mock.calls).toEqual([['LEFT-BY-A-STOPPED-BUILD', { del: true }]]);
+});
+
 test('an Exact app in a subdirectory builds in the plain checkout, which already carries its folder name', async () => {
   const project = 'apps/\u5e97';
   const { result, area } = await build(
@@ -269,4 +294,27 @@ test('an Exact app in a subdirectory builds in the plain checkout, which already
   expect(lstatSync(join(area, 'src')).isDirectory()).toBe(true);
   expect(readdirSync(area)).not.toContain('checkout');
   expect(existsSync(join(area, 'src', project, 'env-seen.txt'))).toBe(true);
+});
+
+test('a build cancelled while its simulator is being created deletes that simulator before it reports', async () => {
+  vi.mocked(deleteOwnedIosSimNow).mockClear();
+  vi.mocked(createOwnedIosSim).mockImplementationOnce(async () => {
+    await new Promise((resolve) => setImmediate(resolve));
+    process.emit('SIGTERM');
+    await new Promise((resolve) => setImmediate(resolve));
+    return { udid: 'RACE-SIM', name: 'stim-exact-race', deviceType: null, runtime: null };
+  });
+  void build({ 'exact.mjs': LAUNCHER, 'app.json': JSON.stringify({ modules: ['shop-map'] }) });
+  const reported = await vi.waitFor(
+    () => {
+      const index = vi
+        .mocked(process.stdout.write)
+        .mock.calls.findIndex(([chunk]) => String(chunk).includes('"code":"cancelled"'));
+      if (index < 0) throw new Error('no cancelled result yet');
+      return vi.mocked(process.stdout.write).mock.invocationCallOrder[index];
+    },
+    { timeout: 10_000 },
+  );
+  expect(vi.mocked(deleteOwnedIosSimNow).mock.calls).toEqual([['RACE-SIM', 1500]]);
+  expect(vi.mocked(deleteOwnedIosSimNow).mock.invocationCallOrder[0]).toBeLessThan(reported ?? 0);
 });

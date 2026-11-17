@@ -308,8 +308,8 @@ would not take this app's builds now, each as a finding with a fix: it does
 not answer, it runs an incompatible Stim build (update it to this machine's build), its
 CPU differs; for iOS (unless `--platform android`) its Xcode, simulator SDK or
 CocoaPods selected for this project differ, it has no Bundler for a project whose `Gemfile.lock` pins
-CocoaPods (its own CocoaPods version does not matter then), or it has no
-iPhone simulator on the runtime `stim ios` builds for here; for Android (with
+CocoaPods (its own CocoaPods version does not matter then), or it lacks the
+simulator runtime `stim ios` builds for here; for Android (with
 `--platform android`, or an app with `android/` or Expo) its JDK major differs
 or its SDK lacks the NDK, build-tools or compile platform; its worker volume has less than 10 GB free;
 or it is busy. A machine that is not a Mac cannot build iOS or macOS apps: it

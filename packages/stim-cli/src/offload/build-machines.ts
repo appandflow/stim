@@ -158,7 +158,7 @@ const PROBLEM_TITLES: Record<OffloadProblem['code'], string> = {
   'simulator-sdk': 'has another simulator SDK',
   cocoapods: 'has no CocoaPods, or another version',
   bundler: 'has no Bundler',
-  runtime: "has no simulator for this project's iOS runtime",
+  runtime: "lacks this project's iOS simulator runtime",
   jdk: 'runs another JDK major version',
   'android-sdk': 'has no Android SDK',
   ndk: "lacks this project's NDK",
@@ -212,7 +212,7 @@ function problemFix(problem: OffloadProblem, entry: string): string {
     case 'runtime':
       return (
         commandFix(problem, entry) ??
-        `Install that iOS simulator runtime on ${entry} with at least one iPhone simulator, or set ios.runtime here to one ${entry} has.`
+        `Install that iOS simulator runtime on ${entry}, or set ios.runtime here to one ${entry} has.`
       );
     case 'jdk':
       return (

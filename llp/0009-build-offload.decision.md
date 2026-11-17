@@ -87,7 +87,8 @@ a subdirectory whose exact2 sits more than one folder above its repository build
 
 For an app that declares native modules, the worker creates a simulator in the build's own Stim home, boots it
 through device boot admission, passes it as `EXACT_SIM`, and deletes it through centralized teardown when the build
-ends or the job is stopped; every Exact build starts by deleting any simulator that home's ledger still lists, and
+ends or the job is stopped (a stopped job waits for a creation in progress, LLP 0013); every offloaded build starts by deleting any simulator that home's ledger still
+lists, before it can reuse a retained artifact, and
 stim-server neither evicts an area nor removes a client's areas while an area's home ledger lists a device.
 
 Exact can run an app on a simulator during the build to resolve native modules, and without `EXACT_SIM` it takes any

@@ -798,7 +798,9 @@ Setup checks installed tools and prints fixes; it does not install Xcode,
 runtimes, CocoaPods, Java or the Android SDK. Desktop's Tools step compares
 them against the client. No tool result blocks the next step: problems are
 shown, and the machine stays added. Hosting alone does not need CocoaPods
-or Android tools.
+or Android tools. An iOS build needs the client's simulator runtime installed on
+the worker, not a simulator: when the runtime has no iPhone simulator, the build
+creates one in its own Stim home, never boots it, and deletes it when it ends.
 
 **Install This Mac's Build** can update an approved worker over the tailnet.
 An exact npm release needs no extra setting. Installing this checkout's own
