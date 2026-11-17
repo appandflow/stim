@@ -152,7 +152,23 @@ and reports a settled `cancelled` result only once every
 process group it started outside its own through exec is gone; the host then
 releases the claims after the worker's own group has exited, as for a finished
 build. A worker that does not report within the kill grace period is killed and
-keeps its claims. This SIGTERM rule was chosen by the implementer of #5792, not
+keeps its claims. Off Windows, a stopped build's host also follows what the build
+tool started in other process groups (Xcode runs its build service and each
+script phase in a group of its own): before it first signals the worker's group,
+and at each check after, it walks the process tree down from the group's members,
+while the group is not yet seen empty, and from the processes it recorded whose
+identity still matches, records each one outside the group by its identity once a
+second listing confirms it, signals a recorded process only while that identity
+still matches, and releases the claims only once the group and every recorded
+process are gone. Once the group reads empty its id is no longer signalled or
+walked from. A process listing or identity it cannot read, a captured process that
+left the tree before it was confirmed, or anything still running a kill grace
+period after SIGKILL ends the build `cleanup-unresolved` with its claims kept; the
+outcome is recorded either way. A process whose parent exited before a walk saw
+it is not seen: one that left the tree before the first walk, or one started
+after a walk whose parent exits before the next. A daemon the build started that
+would have outlived it is stopped too.
+This SIGTERM rule and the tree walk were chosen by the implementers of #5792, not
 by the maintainer. stim-server evicts areas of approved
 clients unused for longer than `server.workerAreaMaxAgeDays` and, near the disk
 floor, the least recently used not used in the last 3 hours, which under the
