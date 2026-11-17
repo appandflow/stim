@@ -192,10 +192,17 @@ exit 1
       const pids = [stimdPid(), ...stimds.map((stimd) => stimd.pid), ...childPids()].filter(
         (pid): pid is number => pid !== undefined && pid !== null,
       );
-      for (const pid of pids.filter(alive)) process.kill(pid, 'SIGTERM');
-      await until('the processes to exit', () => !pids.some(alive)).catch(() => {
-        for (const pid of pids.filter(alive)) process.kill(pid, 'SIGKILL');
-      });
+      const signal = (signalName: NodeJS.Signals) => {
+        for (const pid of pids.filter(alive)) {
+          try {
+            process.kill(pid, signalName);
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+          }
+        }
+      };
+      signal('SIGTERM');
+      await until('the processes to exit', () => !pids.some(alive)).catch(() => signal('SIGKILL'));
       delete process.env.STIM_HOME;
       rmSync(tmp, { recursive: true, force: true });
     }
