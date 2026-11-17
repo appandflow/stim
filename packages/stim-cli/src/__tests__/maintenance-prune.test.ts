@@ -13,6 +13,7 @@ import { dirname, join } from 'node:path';
 import { configDir } from '@stim-cli/core';
 import {
   archiveDir,
+  buildSlotPath,
   diskUsageCacheFile,
   gitMergeCacheFile,
   gcLogFile,
@@ -32,7 +33,7 @@ import { testContext } from './_context.ts';
 import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
 import { saveConfig, upsertProject } from '../workspace/config.ts';
 import * as inUse from '../workspace/in-use.ts';
-import { liveClaimOwner, plantClaim } from './_factories.ts';
+import { goneClaimOwner, liveClaimOwner, plantClaim } from './_factories.ts';
 
 const DAY_MS = 86_400_000;
 
@@ -355,6 +356,24 @@ test('the daily sweep prunes all four, logs each prune and each keep, and a repo
   expect(records.filter((record) => record.event === 'gc_item').map((record) => record.kind)).toEqual(
     expect.arrayContaining(['statusCache', 'deviceLease', 'archive', 'homeEntry']),
   );
+});
+
+test('the records plan reports an unresolved build slot as blocked, naming its owner and the removal command', async () => {
+  const owner = goneClaimOwner();
+  const claim = plantClaim(buildSlotPath(0), 'exclusive', owner, {
+    details: { index: 0, projectRoot: join(projects, 'app') },
+    child: { record: null },
+  });
+
+  const { blocked } = await planRecords({ devices: false });
+
+  expect(blocked).toHaveLength(1);
+  expect(blocked[0]).toMatch(/^build slot 0 is unresolved: /);
+  expect(blocked[0]).toContain(`its owner pid ${owner.pid} (claimed `);
+  expect(blocked[0]).toContain(`is no longer running; the claim is at ${claim}.`);
+  expect(
+    blocked[0]?.endsWith(`If nothing is using it, run: rm -f '${claim}' '${claim.replace(/\.claim$/, '.child')}'`),
+  ).toBe(true);
 });
 
 test('a pass that stimd aborts while it lists devices plans no device action and ends at once', async () => {

@@ -624,15 +624,6 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   Reap the AVD the same way, or pass \`--slot <name>\` to create the requested
   profile beside it.`,
     },
-    STIM_DEVICE_TOOL_FAILED: {
-      summary: 'simctl or adb failed, or the device did not report the change afterwards',
-      body: () => `STIM_DEVICE_TOOL_FAILED
-  The tool call exited non-zero or timed out, with its output in the message, or
-  the read-back after an Android permission or network change did not show the
-  requested state. For a permission, the app must declare the permission in its
-  manifest; when it declares none of the service's permissions the call refuses
-  with this code. Check the device with \`stim status\` and retry.`,
-    },
     STIM_REMOTE_METRO_UNREACHABLE: {
       separator: '--- REMOTE-DEVICE CODES (`ios --remote <proxy|eas>` / `android --remote <proxy|eas>`) ---',
       summary: 'a remote start could not create its managed tunnel or tell the device where Metro is',
@@ -662,27 +653,8 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   stim share action refuses at once, starting nothing; run it from the macOS
   or Linux host that runs the device). See stim guide share.`,
     },
-    STIM_WEB_NO_URL: {
-      separator: '--- WEB CODES (`stim web`) ---',
-      summary: 'not an Expo app and web.url is unset, so Stim does not know which page to open',
-      body: () => `STIM_WEB_NO_URL
-  Only Expo serves web from Metro, so for any other app Stim needs web.url.
-  stim web never starts a web server, for any framework. Start yours on a
-  named port and point web.url at it:
-    pnpm exec vite --port "$(stim ports get web)" --strictPort
-    stim settings set web.url 'http://localhost:{port:web}/' --scope workspace
-  See stim guide web.`,
-    },
-    STIM_REMOTE_START_REQUIRED: {
-      separator: '--- DEV-SERVER CODES (`stim start`) ---',
-      summary: 'a running server cannot gain a remote tunnel; stop, then start --remote, or metro.publicUrl',
-      body: () => `STIM_REMOTE_START_REQUIRED
-  A healthy bare or Expo server was started without its required remote
-  tunnel. A running server cannot gain that option. For a Stim supervisor,
-  run \`stim stop\`, then \`stim start --remote\`. For an external server,
-  configure metro.publicUrl or let Stim supervise the server.`,
-    },
     STIM_BAD_ARG: {
+      separator: '--- DEV-SERVER CODES (`stim start`) ---',
       summary: 'an argument, setting, directory, flavor, or device name refused before anything starts',
       aliases: ['STIM_NO_PROJECT'],
       body: () => `STIM_BAD_ARG / STIM_NO_PROJECT
@@ -898,43 +870,13 @@ emulator process <pid> is still running"
   adb cannot reach the emulator.`,
     },
     remove: {
-      summary: 'worktree remove refused a dirty tree: what it restores itself and what --force discards',
-      body: () => `"Refusing to remove <path>: uncommitted changes / untracked files / commits
-not on any remote"  (worktree remove)
-  A native build rewrites tracked files, and Stim RESTORES the one class it can
-  prove is not work: a modified \`<app>/ios/Podfile.lock\` (tracked and
-  unstaged) whose text \`ios/Pods/Manifest.lock\`, the copy \`pod install\` makes,
-  holds too, or that is unchanged since gc deleted \`ios/Pods\` while the two
-  matched. When the only dirt left is such a lock, \`worktree remove\` runs the
-  checkout itself and says so. Known hole: a deliberate \`pod update\` (or a
-  hand-resolved lock) followed by an install leaves the same evidence, so
-  commit it before removing or it is restored as churn. Stim cannot tell what
-  \`pod install\` changed in \`*.xcodeproj/project.pbxproj\` from a hand edit,
-  so that file, and a lock without the evidence, count as uncommitted work.
-  ONE other dirty path and the whole set is refused, so this never eats real
-  work.
-  A tracked file marked assume-unchanged, or skip-worktree with the file on
-  disk, hides edits from git status, so \`worktree remove\` refuses and names
-  it with the command that shows the edit:
-  \`git -C <worktree> update-index --no-skip-worktree <file>\` (or
-  \`--no-assume-unchanged\`), then commit or discard it; \`--force\` is the last
-  resort. Files a sparse checkout leaves out are absent from disk and do not
-  count.
-  Untracked \`.watchman-cookie-*\` files, which watchman writes into the roots
-  it watches, are not work either: \`worktree remove\` deletes them itself and
-  ignores them when it counts dirty paths. Any other untracked file still
-  refuses.
-  When it does refuse, the refusal PRINTS THE DIRTY PATHS, and the restore
-  command under it carries those same paths: run it as printed rather than
-  reaching for --force.
-  It is built from what git reported, so in a monorepo it names
-  \`apps/<app>/ios/Podfile.lock\` rather than an \`ios/...\` example that would
-  fail with "did not match any file(s) known to git".
-  A setup script that rewrites tracked assets (brand icons, generated config)
-  produces the same refusal, with the same treatment: restore the paths the
-  refusal actually named.
-  Use --force only when you genuinely intend to discard work; it deletes
-  uncommitted and untracked files permanently.`,
+      summary: 'worktree remove restores a modified Podfile.lock only on proof it is pod install churn',
+      body: () => `worktree remove  (restored Podfile.lock)
+  Stim restores a modified \`<app>/ios/Podfile.lock\` itself only when
+  \`ios/Pods/Manifest.lock\`, the copy \`pod install\` makes, holds the same
+  text, or when the lock is unchanged since gc deleted \`ios/Pods\` while the
+  two matched. A deliberate \`pod update\` followed by an install leaves the
+  same evidence, so commit it before removing or it is restored as churn.`,
     },
     warm: {
       summary: 'worktree warm claim storage refusals and recovery',

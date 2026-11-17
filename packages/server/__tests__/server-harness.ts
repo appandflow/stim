@@ -248,11 +248,23 @@ if (process.argv[2].startsWith('offer')) {
   print({ type: 'log', record: { src: 'build', level: 'info', msg: 'CompileC' } });
   if (process.env.FAKE_WORKER_HANG) {
     process.on('SIGTERM', () => {});
+    if (process.env.FAKE_WORKER_SLEEP) {
+      const { spawn } = await import('node:child_process');
+      spawn('sleep', ['3600'], { stdio: 'ignore' });
+      process.stderr.write('fake worker: waiting on sleep\\n');
+      print({ type: 'log', record: { src: 'build', level: 'info', msg: 'waiting on sleep' } });
+    }
     setInterval(() => {}, 1000);
   } else {
     if (process.env.FAKE_WORKER_GATE) {
       const { existsSync } = await import('node:fs');
       while (!existsSync(process.env.FAKE_WORKER_GATE)) await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    if (process.env.FAKE_WORKER_STDERR_HOLDER) {
+      const { spawn } = await import('node:child_process');
+      const holder = spawn('sleep', ['60'], { detached: true, stdio: ['ignore', 'ignore', 'inherit'] });
+      writeFileSync(process.env.FAKE_WORKER_STDERR_HOLDER, String(holder.pid));
+      holder.unref();
     }
     if (process.env.FAKE_WORKER_CRASH) {
       print({ type: 'result', ok: false, code: 'worker-crashed', message: 'The worker crashed.' });

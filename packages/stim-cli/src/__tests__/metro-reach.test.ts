@@ -1,4 +1,4 @@
-import { detectProviders, planMetroReach } from '../engine/metro-reach.ts';
+import { detectProviders, planMetroReach, tunnelStartRemedy } from '../engine/metro-reach.ts';
 
 const BARE = { metroPort: 8085, isExpo: false } as const;
 
@@ -26,5 +26,14 @@ describe('provider detection', () => {
       expect(detectProviders(onPath)).toEqual([]);
     }
     expect(detectProviders(() => false, 'tailscale')).toEqual([]);
+  });
+});
+
+describe('the tunnel start remedy', () => {
+  test('ends the reason as a sentence before the advice, and gives none after a cancellation', () => {
+    expect(tunnelStartRemedy('ngrok: Could not start ngrok: spawn ENOENT', false)).toBe(
+      'ngrok: Could not start ngrok: spawn ENOENT. Set metro.tunnel to a provider that starts, or set metro.publicUrl to an existing endpoint.',
+    );
+    expect(tunnelStartRemedy('Metro tunnel startup was cancelled.', true)).toBe('Metro tunnel startup was cancelled.');
   });
 });
