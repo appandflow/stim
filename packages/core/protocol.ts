@@ -1155,7 +1155,7 @@ export interface BuildToolchain {
   simulatorSdk: string | null;
   macosSdk: string | null;
   cocoapods: string | null;
-  /** Simulator runtime identifiers that have an iPhone simulator to build for. */
+  /** Installed iOS simulator runtime identifiers that support an iPhone simulator to build for. */
   runtimes: string[];
   /** The major version of the JDK Gradle runs on there. */
   jdk: string | null;

@@ -95,7 +95,14 @@ import {
 } from '../../integrations/exact-offload.ts';
 import { runExactIosBuild } from '../../integrations/exact-ios.ts';
 import { readCreatedDevices } from '../../devices/created-devices.ts';
-import { bootIosSim, createOwnedIosSim } from '../../devices/ios.ts';
+import {
+  bootIosSim,
+  createOwnedIosSim,
+  listIosRuntimesAsync,
+  pickDefaultIosCreation,
+  type IosCreationChoice,
+  type IosRuntime,
+} from '../../devices/ios.ts';
 import { deleteOwnedIosSimNow, teardownOwnedIosSim } from '../../devices/teardown.ts';
 import { withDeviceBootAdmission } from '../../engine/device-capacity.ts';
 import type { IosProject } from '../../integrations/ios-project.ts';
@@ -725,20 +732,60 @@ async function ensureDependencies(job: WorkerJob, src: string): Promise<void> {
   installed();
 }
 
+/** The labels of the simulators offloaded builds create and delete, which another build must not borrow. */
+const JOB_SIMULATOR = /^stim-(?:build|exact)-/;
+
 /**
- * The generic simulator destination compiles arm64 and x86_64, so the worker names one of its own iPhone
- * simulators on the client's runtime. It is a build destination only: nothing boots or installs on it.
+ * Names the simulator `xcodebuild` builds for on `runtime`. The generic simulator destination compiles arm64 and
+ * x86_64, so the worker names an available iPhone simulator there, or creates one in this build's Stim home when the
+ * runtime has none. It is a build destination only: nothing boots or installs on it.
  */
-function destination(runtime: string): string | null {
+async function iosDestination(
+  job: WorkerJob,
+  runtime: string,
+): Promise<{ target: string; simulator?: JobSimulator } | { code: string; message: string }> {
+  let listed: {
+    devices?: Record<
+      string,
+      Array<{ udid: string; name?: string; deviceTypeIdentifier: string; isAvailable: boolean }>
+    >;
+  } = {};
   try {
-    const listed = JSON.parse(
+    listed = JSON.parse(
       getExecutor().runFileQuiet('xcrun', ['simctl', 'list', 'devices', 'available', '-j'], { timeoutMs: 20_000 }) ??
         '{}',
-    ) as { devices?: Record<string, Array<{ udid: string; deviceTypeIdentifier: string; isAvailable: boolean }>> };
-    const device = (listed.devices?.[runtime] ?? []).find(availableIphone);
-    return device ? `id=${device.udid}` : null;
-  } catch {
-    return null;
+    );
+  } catch {}
+  const device = (listed.devices?.[runtime] ?? []).find(
+    (each) => availableIphone(each) && !JOB_SIMULATOR.test(each.name ?? ''),
+  );
+  if (device) return { target: `id=${device.udid}` };
+  let installed: IosRuntime | undefined;
+  try {
+    installed = (await listIosRuntimesAsync()).find((each) => each.identifier === runtime);
+  } catch (error) {
+    return {
+      code: 'destination-simulator',
+      message: `Could not list the simulator runtimes to build for ${runtime}: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+  const pick = installed ? pickDefaultIosCreation([], [installed]) : null;
+  if (!installed || !pick)
+    return { code: 'no-runtime', message: `The ${runtime} simulator runtime is not installed here.` };
+  // @ref LLP 0013#a-build-destination-the-build-creates -- created in the job's home, never booted, deleted when the build ends
+  note('build', `creating a simulator on ${runtime} to build for`);
+  try {
+    const simulator = await jobSimulator(`build-${job.job.slice(0, 8)}`, {
+      ...pick,
+      deviceType: installed.supportedDeviceTypes.find((each) => each.identifier === pick.deviceTypeId)?.name ?? null,
+      runtime: installed.version,
+    });
+    return { target: `id=${simulator.udid}`, simulator };
+  } catch (error) {
+    return {
+      code: 'destination-simulator',
+      message: `Could not create a simulator on ${runtime} to build for: ${error instanceof Error ? error.message : String(error)}`,
+    };
   }
 }
 
@@ -1311,31 +1358,49 @@ function placeExact2(area: string, root: string, link: string, checkout: string,
   return null;
 }
 
+interface JobSimulator {
+  udid: string;
+  remove(): Promise<void>;
+}
+
 /**
- * A simulator this build's Stim home owns, booted through device admission, for Exact's native-module roster probe,
- * which spawns on a simulator (exact2 `host/apple/build.mjs`) and with no `EXACT_SIM` takes any booted one. `created`
- * learns its udid as soon as it exists.
+ * Creates a simulator this build's Stim home owns. A cancelled build deletes it at once; otherwise `remove` deletes it
+ * through teardown.
  */
-async function exactProbeSimulator(
-  job: WorkerJob,
-  root: string,
-  created: (udid: string) => void,
-): Promise<{ udid: string; remove(): Promise<void> } | string> {
-  note('build', 'creating a simulator for the native-module roster');
-  let udid: string;
-  try {
-    ({ udid } = await createOwnedIosSim(`exact-${job.job.slice(0, 8)}`));
-  } catch (error) {
-    return `could not create a simulator for the native-module roster: ${error instanceof Error ? error.message : String(error)}`;
-  }
-  created(udid);
+async function jobSimulator(label: string, choice?: IosCreationChoice): Promise<JobSimulator> {
+  const { udid } = await createOwnedIosSim(label, {}, choice);
+  const stop = () => {
+    deleteOwnedIosSimNow(udid, 1500);
+  };
+  cancelCleanups.add(stop);
   let removing: Promise<void> | undefined;
   const remove = () =>
     (removing ??= (async () => {
       const outcome = await teardownOwnedIosSim(udid, { del: true });
-      if (outcome.status === 'failed')
-        note('build', `could not delete the roster simulator ${udid}: ${outcome.reason}`);
+      cancelCleanups.delete(stop);
+      if (outcome.status === 'failed') note('build', `could not delete the simulator ${udid}: ${outcome.reason}`);
     })());
+  return { udid, remove };
+}
+
+/** Deletes the simulators a stopped or killed earlier build left in this build's Stim home. */
+async function deleteLeftoverSimulators(): Promise<void> {
+  for (const udid of readCreatedDevices().ios) await teardownOwnedIosSim(udid, { del: true });
+}
+
+/**
+ * A simulator this build's Stim home owns, booted through device admission, for Exact's native-module roster probe,
+ * which spawns on a simulator (exact2 `host/apple/build.mjs`) and with no `EXACT_SIM` takes any booted one.
+ */
+async function exactProbeSimulator(job: WorkerJob, root: string): Promise<JobSimulator | string> {
+  note('build', 'creating a simulator for the native-module roster');
+  let simulator: JobSimulator;
+  try {
+    simulator = await jobSimulator(`exact-${job.job.slice(0, 8)}`);
+  } catch (error) {
+    return `could not create a simulator for the native-module roster: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  const { udid, remove } = simulator;
   try {
     await withDeviceBootAdmission(
       { platform: 'ios', key: udid },
@@ -1403,16 +1468,11 @@ async function compileExact(
   Object.assign(env, exact.env, { EXACT2: checkout });
   if (exact.link) env.EXACT2 = resolvePath(root, exact.link);
   delete env.EXACT_SIM;
-  for (const udid of readCreatedDevices().ios) await teardownOwnedIosSim(udid, { del: true });
-  let made: string | null = null;
-  const stop = () => {
-    if (made) deleteOwnedIosSimNow(made, 1500);
-  };
-  cancelCleanups.add(stop);
+  await deleteLeftoverSimulators();
   let probe: Awaited<ReturnType<typeof exactProbeSimulator>> | null = null;
   let built: Awaited<ReturnType<typeof runExactIosBuild>>;
   try {
-    probe = exactDeclaresModules(manifest) ? await exactProbeSimulator(job, root, (udid) => (made = udid)) : null;
+    probe = exactDeclaresModules(manifest) ? await exactProbeSimulator(job, root) : null;
     if (typeof probe === 'string') return { ok: false, code: 'exact-simulator', message: probe };
     if (probe) env.EXACT_SIM = probe.udid;
     note('build', `Exact ${job.configuration === 'Release' ? 'Release' : 'Debug'}`);
@@ -1428,7 +1488,6 @@ async function compileExact(
     );
   } finally {
     if (probe && typeof probe !== 'string') await probe.remove();
-    cancelCleanups.delete(stop);
   }
   if (built.ok) return { ok: true, path: built.appPath, cache: {} };
   const lines = built.diagnostics.map((each) => each.message);
@@ -1692,23 +1751,28 @@ async function compileMacos(
 
 async function compileIos(job: WorkerJob, root: string, log: NdjsonWriter, time: Timer): Promise<Compiled> {
   const runtime = job.runtime ?? '';
-  const target = destination(runtime);
-  if (!target)
-    return { ok: false, code: 'no-runtime', message: `There is no iPhone simulator on ${runtime} to build for.` };
+  await deleteLeftoverSimulators();
+  const destination = await iosDestination(job, runtime);
+  if ('code' in destination) return { ok: false, ...destination };
   note('build', `xcodebuild for ${runtime}`);
-  const built = await time('buildMs', () =>
-    buildIos({
-      root,
-      iosDir: iosProjectDirSetting({ ios: { projectPath: job.iosProjectPath ?? undefined } }, root).dir,
-      destination: target,
-      logWriter: log,
-      ...(job.scheme ? { scheme: job.scheme } : {}),
-      ...(job.configuration ? { configuration: job.configuration } : {}),
-      ...(job.optimizations ? { optimizations: job.optimizations } : {}),
-      onHeartbeat: (line) => note('build', line),
-      onNote: (line) => note('build', line),
-    }),
-  );
+  let built: Awaited<ReturnType<typeof buildIos>>;
+  try {
+    built = await time('buildMs', () =>
+      buildIos({
+        root,
+        iosDir: iosProjectDirSetting({ ios: { projectPath: job.iosProjectPath ?? undefined } }, root).dir,
+        destination: destination.target,
+        logWriter: log,
+        ...(job.scheme ? { scheme: job.scheme } : {}),
+        ...(job.configuration ? { configuration: job.configuration } : {}),
+        ...(job.optimizations ? { optimizations: job.optimizations } : {}),
+        onHeartbeat: (line) => note('build', line),
+        onNote: (line) => note('build', line),
+      }),
+    );
+  } finally {
+    await destination.simulator?.remove();
+  }
   if (!built.ok) {
     if (built.compilationCacheCorruption) {
       const report = await clearCorruptCompilationCache(built.compilationCacheCorruption, root);

@@ -70,6 +70,35 @@ A byte check is the condition for skipping install.
 [LLP 0010](./0010-hosted-devices.decision.md#resume-the-recorded-session)
 describes hosted parking and adoption.
 
+## A build destination the build creates
+
+An offloaded iOS simulator build names a simulator as its `xcodebuild`
+destination. The worker uses an available iPhone simulator on the client's
+runtime, other than one an offloaded build created (`stim-build-*` or
+`stim-exact-*`), exactly as before. When the runtime is installed and has no
+such simulator, the build creates one, `stim-build-<job> (<model> <runtime>)`,
+in the job's own Stim home, where the created-devices ledger records it. It is
+never booted, so it takes no device slot and stays outside the pool and the
+`concurrency.maxDevices` count. Teardown deletes it when the build ends, and
+the job's cancel path deletes it at once. Each build deletes, through teardown,
+any simulator its home's ledger still lists from a stopped or killed earlier
+build. A failed creation refuses the build with the `simctl` error, and the
+client falls back to a local build as for any other offload failure. A worker's
+offer lists every installed iOS runtime that supports an iPhone, so a worker
+with the runtime and no simulator offers iOS builds.
+
+The job's home is the only Stim home a build can record into, and a build area
+whose home ledger lists a device is never evicted (LLP 0009), so a destination
+kept across builds would pin its area. `simctl create` of a simulator that is
+never booted costs well under a second. Two builds that run at once in different
+areas each create and delete their own, and the per-home ledger lock covers each
+record; one area runs one build at a time. Skipping other builds' simulators
+keeps one build from compiling for a simulator another build deletes. The
+per-job lifetime, the naming and that skip rule were chosen by the implementer
+of #5803, not by the maintainer.
+Maintainer decision: "why do we require a sim, cant stim just create automatically", 2026-11-16.
+[Issue](https://github.com/appandflow/stim/issues/5803).
+
 ## Revive an installed app
 
 For a recorded Release React Native or native-process launch, `stim revive`

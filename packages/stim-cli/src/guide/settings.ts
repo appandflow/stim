@@ -1223,8 +1223,8 @@ node and never sends the token to another node. \`doctor\` reports each
 remote machine's build pairing state and, for an approved one, asks it for one build
 offer and lists every reason it would not take this app's iOS build: no
 answer, an incompatible Stim build, CPU, Xcode, simulator SDK or CocoaPods, no
-Bundler for an app whose Gemfile.lock pins CocoaPods, no iPhone simulator on
-the runtime \`stim ios\` builds for here, low disk, or busy. With Package.swift
+Bundler for an app whose Gemfile.lock pins CocoaPods, no installed simulator
+runtime that \`stim ios\` builds for here, low disk, or busy. With Package.swift
 and no platform selection on a Mac, it also checks the macOS Xcode and SDK.
 A client with no Xcode and no simulator SDK, such as Linux or Windows, has no
 Xcode to match: the Mac's own Xcode, simulator SDK and CocoaPods are the
@@ -1429,8 +1429,8 @@ accept and sudo xcodebuild -runFirstLaunch for the checks that fail, or xcodes
 install <version> with no Xcode app. A runtime the machine lacks gets
 xcodebuild -downloadPlatform iOS -buildVersion <version>, or a pointer to the
 Xcode problem when xcode-select is the cause. A stim-server that reports no
-developerDir keeps the prose fix. It also needs an
-iPhone simulator on the target runtime. A missing or different global CocoaPods
+developerDir keeps the prose fix. With the runtime but no iPhone simulator, it
+creates one per build and deletes it after. A missing or different global CocoaPods
 keeps auto, remote and remote-only placement from choosing the machine for a project that does not
 pin it, unless the machine already holds the exact artifact; the placement line
 says why and doctor shows the install command. A named --remote-build still

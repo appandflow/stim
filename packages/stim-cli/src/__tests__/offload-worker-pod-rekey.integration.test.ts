@@ -22,10 +22,12 @@ import { getExecutor } from '../exec.ts';
 
 const cli = fileURLToPath(new URL('../../dist/cli.mjs', import.meta.url));
 const modules = fileURLToPath(new URL('../../../../apps/mobile/node_modules', import.meta.url));
+const RUNTIME = 'com.apple.CoreSimulator.SimRuntime.iOS-27-0';
 const sha = (data: Buffer) => createHash('sha256').update(data).digest('hex');
 
 const CHANGES = [
   'lock',
+  'no-simulator',
   'other',
   'added',
   'after-build',
@@ -41,7 +43,8 @@ describe.skipIf(process.platform === 'win32')('post-pods worker rekey', () => {
     'build.start %s post-pods changes through the real worker',
     { timeout: 180_000 },
     async (change) => {
-      const pods = change === 'node-lock' ? 'lock' : change === 'node-other' ? 'other' : change;
+      const pods =
+        change === 'node-lock' || change === 'no-simulator' ? 'lock' : change === 'node-other' ? 'other' : change;
       const temp = realpathSync(mkdtempSync(join(tmpdir(), 'stim-worker-pods-')));
       const project = join(temp, 'project');
       const home = join(temp, 'home');
@@ -108,13 +111,23 @@ describe.skipIf(process.platform === 'win32')('post-pods worker rekey', () => {
           'pod',
           `mkdir -p Pods\nprintf 'PODS:\\n  - Fixture (1.0.0)\\n\\nCOCOAPODS: 1.16.2\\n' > Podfile.lock\ncp Podfile.lock Pods/Manifest.lock\n${pods === 'other' ? "printf '\\n# changed by pod install\\n' >> Podfile" : change === 'added' ? "mkdir -p Fixture; printf '// generated\\n' > Fixture/Generated.swift" : change === 'workspace' ? "mkdir -p Fixture.xcworkspace/xcshareddata/swiftpm; printf '{}\\n' > Fixture.xcworkspace/xcshareddata/swiftpm/Package.resolved" : change === 'declared' ? "printf 'added\\n' > ../native-extra/added.txt" : ':'}`,
         );
+        const simulator = join(temp, 'created-simulator');
+        const simctlLog = join(temp, 'simctl-log');
         script(
           'xcrun',
-          `printf '%s\\n' '{"devices":{"iOS-27-0":[{"udid":"fixture","deviceTypeIdentifier":"com.apple.CoreSimulator.SimDeviceType.iPhone-17","isAvailable":true}]}}'`,
+          change === 'no-simulator'
+            ? `printf '%s\\n' "$*" >> ${JSON.stringify(simctlLog)}
+case "$*" in
+  'simctl list runtimes'*) printf '%s\\n' '{"runtimes":[{"identifier":"${RUNTIME}","platform":"iOS","isAvailable":true,"name":"iOS 27.0","version":"27.0","supportedDeviceTypes":[{"identifier":"com.apple.CoreSimulator.SimDeviceType.iPhone-17","name":"iPhone 17"}]}]}';;
+  'simctl create '*) printf '%s' "$3" > ${JSON.stringify(simulator)}; printf 'CREATED-UDID\\n';;
+  'simctl delete '*) rm -f ${JSON.stringify(simulator)};;
+  'simctl list'*) if [ -f ${JSON.stringify(simulator)} ]; then printf '{"devices":{"${RUNTIME}":[{"udid":"CREATED-UDID","name":"%s","state":"Shutdown","deviceTypeIdentifier":"com.apple.CoreSimulator.SimDeviceType.iPhone-17","isAvailable":true}]}}\\n' "$(cat ${JSON.stringify(simulator)})"; else printf '%s\\n' '{"devices":{"${RUNTIME}":[]}}'; fi;;
+esac`
+            : `printf '%s\\n' '{"devices":{"iOS-27-0":[{"udid":"fixture","deviceTypeIdentifier":"com.apple.CoreSimulator.SimDeviceType.iPhone-17","isAvailable":true}]}}'`,
         );
         script(
           'xcodebuild',
-          `case " $* " in *' -list '*) printf '%s\\n' '{"project":{"name":"Fixture","schemes":["Fixture"]}}'; exit 0;; esac\nprintf built > ${JSON.stringify(join(temp, 'compiled'))}\n${change === 'after-build' ? "mkdir -p Fixture; printf '// generated\\n' > Fixture/Generated.swift" : ':'}\ndd=''\nwhile [ "$#" -gt 0 ]; do if [ "$1" = '-derivedDataPath' ]; then shift; dd="$1"; fi; shift; done\napp="$dd/Build/Products/Debug-iphonesimulator/Fixture.app"\nmkdir -p "$app"\nprintf '%s\\n' '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>dev.stim.fixture</string></dict></plist>' > "$app/Info.plist"\nprintf '%s\\n' '** BUILD SUCCEEDED **'`,
+          `case " $* " in *' -list '*) printf '%s\\n' '{"project":{"name":"Fixture","schemes":["Fixture"]}}'; exit 0;; esac\nprintf '%s' "$*" > ${JSON.stringify(join(temp, 'xcodebuild-args'))}\nprintf built > ${JSON.stringify(join(temp, 'compiled'))}\n${change === 'after-build' ? "mkdir -p Fixture; printf '// generated\\n' > Fixture/Generated.swift" : ':'}\ndd=''\nwhile [ "$#" -gt 0 ]; do if [ "$1" = '-derivedDataPath' ]; then shift; dd="$1"; fi; shift; done\napp="$dd/Build/Products/Debug-iphonesimulator/Fixture.app"\nmkdir -p "$app"\nprintf '%s\\n' '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>dev.stim.fixture</string></dict></plist>' > "$app/Info.plist"\nprintf '%s\\n' '** BUILD SUCCEEDED **'`,
         );
         await run('git', ['init', '--quiet', project]);
         await run('git', ['-C', project, 'add', '.']);
@@ -168,7 +181,7 @@ describe.skipIf(process.platform === 'win32')('post-pods worker rekey', () => {
           repo: 'repo',
           project: '',
           platform: 'ios',
-          runtime: 'iOS-27-0',
+          runtime: change === 'no-simulator' ? RUNTIME : 'iOS-27-0',
           stimBuild: 'fixture',
           compat: 6,
           fingerprint: change === 'node-config' ? 'c'.repeat(64) : initial.hash,
@@ -207,6 +220,7 @@ describe.skipIf(process.platform === 'win32')('post-pods worker rekey', () => {
         const runtimeNode = replay.runtime.node.replace('.', '\\.');
         const expected = {
           lock: { ok: true, fingerprint: expect.any(String), artifact: { sha256: expect.any(String) } },
+          'no-simulator': { ok: true, fingerprint: expect.any(String), artifact: { sha256: expect.any(String) } },
           other: { ok: false, code: 'fingerprint-mismatch', message: expect.not.stringContaining('Node') },
           added: { ok: false, code: 'no-fingerprint', message: expect.stringContaining('ios/Fixture/Generated.swift') },
           'after-build': { ok: false, code: 'fingerprint-moved' },
@@ -238,6 +252,28 @@ describe.skipIf(process.platform === 'win32')('post-pods worker rekey', () => {
           console.error('Unexpected worker outcome:', JSON.stringify(result));
         expect(result).toMatchObject(expected[change]);
         expect(existsSync(join(temp, 'compiled'))).toBe(pods === 'lock' || change === 'after-build');
+        const simctl = change === 'no-simulator' ? readFileSync(simctlLog, 'utf8') : null;
+        expect(
+          simctl === null
+            ? null
+            : {
+                destination: readFileSync(join(temp, 'xcodebuild-args'), 'utf8').includes(
+                  '-destination id=CREATED-UDID',
+                ),
+                created:
+                  /^simctl create stim-build-[^ ]+ \(iPhone 17 27\.0\) com\.apple\.CoreSimulator\.SimDeviceType\.iPhone-17 com\.apple\.CoreSimulator\.SimRuntime\.iOS-27-0$/m.test(
+                    simctl,
+                  ),
+                deleted: /^simctl delete CREATED-UDID$/m.test(simctl),
+                booted: /^simctl boot /m.test(simctl),
+                remains: existsSync(simulator),
+                ledger: JSON.parse(readFileSync(join(mirror, '..', 'home', 'created-devices.json'), 'utf8')).ios,
+              },
+        ).toEqual(
+          change === 'no-simulator'
+            ? { destination: true, created: true, deleted: true, booted: false, remains: false, ledger: [] }
+            : null,
+        );
         let verified: { fingerprintChanged: boolean; sizeMatches: boolean; digestMatches: boolean } | null = null;
         if (pods === 'lock') {
           if (

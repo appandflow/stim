@@ -150,17 +150,28 @@ test('native Xcode discovery preserves required facts without invoking unrelated
   let native = true;
   const probe = (file: string, args: string[] = []) => {
     if (file === 'xcodebuild') return 'Xcode 27.0';
-    if (file === 'xcrun' && args[0] === 'simctl')
+    if (file === 'xcrun' && args.join(' ') === 'simctl list runtimes --json')
       return JSON.stringify({
-        devices: {
-          [runtime]: [
-            {
-              name: 'stim-worker (iPhone 17)',
-              isAvailable: true,
-              deviceTypeIdentifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-17',
-            },
-          ],
-        },
+        runtimes: [
+          {
+            identifier: runtime,
+            platform: 'iOS',
+            isAvailable: true,
+            name: 'iOS 27.0',
+            version: '27.0',
+            supportedDeviceTypes: [
+              { identifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-17', name: 'iPhone 17' },
+            ],
+          },
+          {
+            identifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-0',
+            platform: 'iOS',
+            isAvailable: true,
+            name: 'iOS 26.0',
+            version: '26.0',
+            supportedDeviceTypes: [{ identifier: 'com.apple.CoreSimulator.SimDeviceType.iPad-Air', name: 'iPad Air' }],
+          },
+        ],
       });
     if (file === 'xcrun' && args[1] === 'iphonesimulator') return '27.0';
     if (file === 'xcode-select') return '/Applications/Xcode.app/Contents/Developer\n';
@@ -170,7 +181,9 @@ test('native Xcode discovery preserves required facts without invoking unrelated
     if (file === 'bundle') return 'Bundler version 2.6.0';
     throw new Error(`Unexpected probe ${file} ${args.join(' ')}`);
   };
-  setExecutor(makeExecutor({ runFileQuiet: probe, runFileAsync: async (file, args) => probe(file, args) }));
+  setExecutor(
+    makeExecutor({ runFile: probe, runFileQuiet: probe, runFileAsync: async (file, args) => probe(file, args) }),
+  );
   expect(await iosToolchainAsync(root, null)).toMatchObject({
     xcode: 'Xcode 27.0',
     simulatorSdk: '27.0',
