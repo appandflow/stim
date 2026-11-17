@@ -20,9 +20,8 @@ import { workspaceKeys } from '../workspace/lightened.ts';
 import { freshLaunchers } from '../workspace/launchers.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import { hungRead } from '../workspace/bounded-read.ts';
-import { buildOutputDirs } from '../workspace/discovery-census.ts';
+import { buildOutputDirs, dependencyDirsOf } from '../workspace/discovery-census.ts';
 import { checkDependencyEdits } from '../workspace/dependency-edits.ts';
-import { ARTIFACT_DIRS, existingDirsOf } from '../workspace/regenerable-dirs.ts';
 import { writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
 import {
   dormantAfterMs,
@@ -571,8 +570,14 @@ async function takeIdleDependencies(
 async function dependencyTrees(operation: StimContext): Promise<string[]> {
   const trees = new Set<string>();
   for (const worktree of await artifactWorktreesAsync(operation.signal, operation)) {
-    for (const base of new Set([worktree.path, ...worktree.keys]))
-      for (const path of existingDirsOf(base, ARTIFACT_DIRS.dependencies)) trees.add(path);
+    for (const base of new Set([worktree.path, ...worktree.keys])) {
+      const found = await dependencyDirsOf(base, operation.signal);
+      if (found === null) {
+        if (hungRead() !== null) return [...trees];
+        continue;
+      }
+      for (const path of found) trees.add(path);
+    }
   }
   return [...trees];
 }

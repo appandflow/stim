@@ -7,7 +7,7 @@ import { listBuildEndMarkers, newBuildEndMarkerFile } from '@stim-cli/core/state
 import { testContext } from './_context.ts';
 import { markBuildEnded } from '../build-end-marker.ts';
 import { writeCacheFile } from '../cache-file.ts';
-import { measureBuildEnds } from '../daemon/dependencies.ts';
+import { measureBuildEnds, measureDependencyTrees } from '../daemon/dependencies.ts';
 import { forgetStatusMeasures } from '../status-measures.ts';
 import { startBuildEndTimer } from '../stimd/build-end-timer.ts';
 import { upsertProject } from '../workspace/config.ts';
@@ -20,8 +20,9 @@ const state = vi.hoisted(() => {
     outcome: 'measured' | 'busy';
     during: () => void;
     io: CensusIo | null;
+    worktree: string;
     platform: NodeJS.Platform | undefined;
-  } = { calls: [], outcome: 'measured', during: () => {}, io: null, platform: undefined };
+  } = { calls: [], outcome: 'measured', during: () => {}, io: null, platform: undefined, worktree: '' };
   return value;
 });
 vi.mock('../disk-usage.ts', async (original) => ({
@@ -32,6 +33,10 @@ vi.mock('../disk-usage.ts', async (original) => ({
     return { outcome: state.outcome, measure: null };
   },
 }));
+vi.mock('../stimd/passes/artifacts.ts', async (original) => ({
+  ...(await original<typeof import('../stimd/passes/artifacts.ts')>()),
+  artifactWorktreesAsync: async () => [{ path: state.worktree, keys: [] }],
+}));
 vi.mock('../workspace/discovery-census.ts', async (original) => {
   const real = await original<typeof import('../workspace/discovery-census.ts')>();
   return {
@@ -41,6 +46,8 @@ vi.mock('../workspace/discovery-census.ts', async (original) => {
         ...(state.io ? { io: state.io } : {}),
         ...(state.platform ? { platform: state.platform } : {}),
       }),
+    dependencyDirsOf: (root: string, signal: AbortSignal) =>
+      real.dependencyDirsOf(root, signal, state.io ? { io: state.io } : {}),
   };
 });
 
@@ -58,6 +65,7 @@ beforeEach(() => {
   state.outcome = 'measured';
   state.during = () => {};
   state.io = null;
+  state.worktree = app;
   state.platform = undefined;
 });
 
@@ -239,6 +247,23 @@ it('ends the pass and keeps the marker when a read of the workspace does not ans
   await pass;
   expect(walked()).toEqual([]);
   expect(listBuildEndMarkers()).toHaveLength(1);
+  stalled.release();
+  await vi.advanceTimersByTimeAsync(0);
+});
+
+it('measures the dependency trees that answer, and none when a read does not', async () => {
+  mkdirSync(join(app, 'node_modules'));
+  await measureDependencyTrees(operation());
+  expect(walked()).toEqual([join(app, 'node_modules')]);
+
+  state.calls = [];
+  vi.useFakeTimers();
+  const stalled = stalledIo();
+  state.io = stalled.io;
+  const pass = measureDependencyTrees(operation());
+  await vi.advanceTimersByTimeAsync(3000);
+  await pass;
+  expect(walked()).toEqual([]);
   stalled.release();
   await vi.advanceTimersByTimeAsync(0);
 });

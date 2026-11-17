@@ -299,6 +299,29 @@ export async function buildOutputDirs(
   }
 }
 
+/**
+ * The dependency directories (`ARTIFACT_DIRS.dependencies`) that exist as real directories under `root`, through the
+ * bounded reader. Null when a read failed or did not answer; an abort propagates.
+ */
+export async function dependencyDirsOf(
+  root: string,
+  signal: AbortSignal,
+  { io = REAL_IO, timeoutMs = READ_TIMEOUT_MS }: { io?: CensusIo; timeoutMs?: number } = {},
+): Promise<string[] | null> {
+  const reader = boundedReader(io, Infinity, signal, timeoutMs);
+  try {
+    const found: string[] = [];
+    for (const dir of ARTIFACT_DIRS.dependencies) {
+      const path = join(root, dir);
+      if (await reader.directory(path)) found.push(path);
+    }
+    return found;
+  } catch (error) {
+    if (error instanceof Unreadable) return null;
+    throw error;
+  }
+}
+
 type Measurement = Pick<
   CensusFind,
   'dirs' | 'measuredDirs' | 'failedDirs' | 'partialDirs' | 'bytes' | 'unreadable' | 'gitActivityAt'
