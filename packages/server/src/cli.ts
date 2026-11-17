@@ -220,8 +220,7 @@ export async function serve(
         }
         return rewritten;
       },
-      (error: Error) =>
-        console.error(`stim: could not rewrite ${label} to name the stimd shim: ${error.message}`),
+      (error: Error) => console.error(`stim: could not rewrite ${label} to name the stimd shim: ${error.message}`),
     );
   console.log(`stim-server ${pkg.version} (stim ${stim.version}, protocol ${PROTOCOL_VERSION})`);
   for (const { host, port: bound } of server.addresses) {
@@ -556,7 +555,8 @@ export async function setup(args: string[]): Promise<void> {
 }
 
 export function grant(id: string, values: { read?: boolean; control?: boolean }): void {
-  if (Boolean(values.read) === Boolean(values.control)) fail('pairings grant takes exactly one of --control or --read.');
+  if (Boolean(values.read) === Boolean(values.control))
+    fail('pairings grant takes exactly one of --control or --read.');
   const scope = values.control ? 'control' : 'read';
   const capabilities = capabilitiesFor(scope === 'control');
   const outcome = grantDevice(id, [...capabilities]);
