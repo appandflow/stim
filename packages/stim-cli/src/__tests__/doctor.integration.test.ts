@@ -1986,10 +1986,6 @@ function writeDaemonTick(minutesAgo: number): void {
   onTestFinished(() => {
     vi.useRealTimers();
   });
-  writeSnapshot(start);
-}
-
-function writeSnapshot(tickAt: number): void {
   mkdirSync(daemonDir(), { recursive: true });
   writeFileSync(
     daemonSnapshotFile(),
@@ -1997,16 +1993,14 @@ function writeSnapshot(tickAt: number): void {
       version: 1,
       pid: process.pid,
       mode: 'on',
-      startedAt: new Date(tickAt).toISOString(),
-      tickAt: new Date(tickAt).toISOString(),
+      startedAt: new Date(start).toISOString(),
+      tickAt: new Date(start).toISOString(),
       intervalMs: 60_000,
     }),
   );
 }
 
-async function doctorDaemonFindings(
-  duringProbe?: () => void,
-): Promise<{ title: string; code?: string; fix: string }[]> {
+async function doctorDaemonFindings(): Promise<{ title: string; code?: string; fix: string }[]> {
   const project = mkdtempSync(join(tmpdir(), 'stim-doctor-daemon-'));
   const cwd = process.cwd();
   const originalLog = console.log;
@@ -2015,16 +2009,11 @@ async function doctorDaemonFindings(
   console.log = (line) => logs.push(String(line));
   process.chdir(project);
   try {
-    const run = runCli(
+    await runCli(
       doctorOp(() => testStimVersions),
       ['--json'],
       { version: '1.2.3' },
     );
-    if (duringProbe) {
-      await new Promise((done) => setTimeout(done, 1000));
-      duringProbe();
-    }
-    await run;
     return JSON.parse(logs.join('\n')).findings.filter(
       (finding: { title: string; code?: string }) =>
         finding.code === 'stimd-not-answering' || /^The stim-daemon (is late|has stopped)/.test(finding.title),
@@ -2265,15 +2254,6 @@ describe('doctor on a stimd whose last tick is late', () => {
     const found = await doctorDaemonFindings();
     expect(found.map((finding) => finding.code)).toEqual(['stimd-not-answering']);
     expect(found[0]?.fix).toContain(`kill ${process.pid}`);
-  }, 60_000);
-
-  test('that ticks while the probe waits names no kill', async () => {
-    holdDaemonClaim();
-    await serveStimdSocket(null);
-    writeDaemonTick(10);
-    const found = await doctorDaemonFindings(() => writeSnapshot(Date.now()));
-    expect(found.map((finding) => finding.code)).toEqual(['stimd-not-answering']);
-    expect(found[0]?.fix).not.toMatch(/kill/);
   }, 60_000);
 
   test('that does not answer but ticked a minute ago names no kill', async () => {

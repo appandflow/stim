@@ -769,8 +769,10 @@ async function assembleDoctorReport(
     });
   const maintenance = maintenanceStatus(env);
   const answer = await daemonAnswer;
+  const decidedAt = Date.now();
   const answered = withAnswer(daemonStatus(env), answer);
-  findings.push(...daemonFindings(answered, { probed: true }));
+  findings.push(...daemonFindings(answered, { probed: true, now: decidedAt }));
+  const silent = unansweredFindings(answered, decidedAt);
   const missingRoots = missingDiscoverRoots(loadConfig(), env);
   if (missingRoots.length)
     findings.push({
@@ -787,7 +789,7 @@ async function assembleDoctorReport(
       detail: `${broadRoots.join(', ')} resolve${broadRoots.length === 1 ? 's' : ''} to the home folder, a folder holding it or the filesystem root, so nothing is discovered there.`,
       fix: 'Name folders below the home folder, such as ~/Developer.',
     });
-  findings.push(...unansweredFindings(answered));
+  findings.push(...silent);
   return {
     project: root,
     platform: opts.platform ?? null,
