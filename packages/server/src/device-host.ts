@@ -259,11 +259,14 @@ function loopbackAccepts(port: number): Promise<boolean> {
 }
 
 /** Owns hosted reservations, not build jobs or viewer connections. Native work runs in the packaged CLI child. */
+const RESTARTING = 'This machine is restarting its server; try again in a moment.';
+
 export class DeviceHost {
   private readonly owned = new Map<string, OwnedSession>();
   private readonly revoked = new Set<string>();
   private readonly probes = new Map<WorkerRun, string>();
   private closed = false;
+  private sealed = false;
   private readonly detachedSessions = new Set<string>();
   private readonly resuming = new Map<string, Promise<void>>();
   private lastIdleSweep: number | undefined;
@@ -739,6 +742,7 @@ export class DeviceHost {
   }
 
   stopForPerson(session: string): AppAnswer<Methods['device-host.sessions.stop']['result']> {
+    if (this.sealed) return refused('action-failed', RESTARTING);
     try {
       const record = readHostedSessions().find((each) => each.id === session);
       if (!record) return refused('unknown-session', 'No such hosted session.');
@@ -753,6 +757,7 @@ export class DeviceHost {
     if (!this.options.allowed(client)) return refused('forbidden', 'Current device-host approval is required.');
     if (!isJsonObject(params) || typeof params.session !== 'string')
       return refused('bad-request', 'stop needs session.');
+    if (this.sealed) return refused('action-failed', RESTARTING);
     try {
       const record = readHostedSessions().find((each) => each.client === client && each.id === params.session);
       if (!record) return refused('unknown-session', 'This client has no such hosted session.');
@@ -2483,11 +2488,13 @@ export class DeviceHost {
   /** Refuses new hosted work from now on, as `close` does, ahead of a restart that `restartWork` cleared. */
   seal(): void {
     this.closed = true;
+    this.sealed = true;
   }
 
   /** Admits hosted work again after a `seal` whose restart did not follow. */
   unseal(): void {
     this.closed = false;
+    this.sealed = false;
   }
 
   working(): number {

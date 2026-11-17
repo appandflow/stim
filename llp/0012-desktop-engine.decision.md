@@ -129,7 +129,7 @@ start, stop, reload or settings write), an offloaded job or one being admitted
 the next server cannot resume (a macOS session, or one installing), or a
 runtime install or other device-host probe. The asker then exits 1 and the
 unit's restart asks again. Otherwise the net thread stops admitting all of
-these in the same step that finds none, stimd checks its own pinned work once
+these (hosted session stops included) in the same step that finds none, stimd checks its own pinned work once
 more, and the move follows, or the net thread admits again. Once stimd closes
 its net thread for good, no ask starts another.
 

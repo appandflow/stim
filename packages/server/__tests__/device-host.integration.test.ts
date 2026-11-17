@@ -1323,11 +1323,14 @@ describe('a hosted session across a server restart', () => {
   });
 
   test('a restart ends no work while every session would be resumed, and seal refuses new hosted work', async () => {
-    await installed();
+    const { session } = await installed();
     expect(host.restartWork()).toBe(0);
     expect(await host.installRuntime('client', { runtime: 'bad' })).toHaveProperty('error.code', 'bad-request');
     host.seal();
     expect(await host.installRuntime('client', { runtime: 'bad' })).toHaveProperty('error.code', 'forbidden');
+    expect(host.stop('client', { session: session.id })).toHaveProperty('error.code', 'action-failed');
+    expect(host.stopForPerson(session.id)).toHaveProperty('error.code', 'action-failed');
+    expect(readHostedSessions().find((record) => record.id === session.id)?.state).toBe('ready');
     host.unseal();
     expect(await host.installRuntime('client', { runtime: 'bad' })).toHaveProperty('error.code', 'bad-request');
   });
