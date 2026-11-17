@@ -1907,7 +1907,15 @@ form while Stim derives the cap because the setting is unset, and in `--json` as
 `capacity.builds` and `capacity.devices`: `max`, `inUse` and `holders`. A build slot's holder names
 the workspace building in it, or the client whose offloaded build this Mac
 runs; a device's holder names the workspace label and device slot that record
-it. `capacity.devices.inUse` is `null`, with `unknown` saying why, when the
+it. An unresolved build slot, one whose claim Stim cannot settle, such as an
+offloaded build stopped before its worker reported cleanup, gets a
+`build slot N is unresolved: ...` line and, in `--json`, a holder `claim`
+of `{ unresolved, removeCommand }`. It names the claim, its owner pid, when it
+was claimed and whether that process still runs. For an offloaded build it also
+names the job's repository and engine claims, and gives one command that
+removes them with the job's `fingerprint-work/<job>` directory. `stim gc` lists
+the same line under "Needs a person:" and maintenance in its blocked reasons.
+Run the command only once nothing from that build runs. `capacity.devices.inUse` is `null`, with `unknown` saying why, when the
 devices could not be listed.
 
 `concurrency.maxIosDevices` and `concurrency.maxAndroidDevices` add an

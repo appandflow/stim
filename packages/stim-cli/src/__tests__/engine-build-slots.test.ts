@@ -23,6 +23,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   rmSync(tmpHome, { recursive: true, force: true });
   delete process.env.STIM_HOME;
 });
@@ -423,19 +424,72 @@ test('status slot usage counts the live and unresolved slots a build could take,
   plantClaim(buildSlotPath(2), 'exclusive', liveClaimOwner(), {
     details: { index: 2, offloaded: true, client: 'dev-1', repo: 'r', job: 'j' },
   });
-  plantClaim(buildSlotPath(3), 'exclusive', { pid: 4242, processToken: 'nonsense' }, { details: { index: 3 } });
+  const slot3 = plantClaim(
+    buildSlotPath(3),
+    'exclusive',
+    { pid: 4242, processToken: 'nonsense' },
+    { details: { index: 3 } },
+  );
   plantClaim(buildSlotPath(4), 'exclusive', liveClaimOwner(), { details: { index: 4, projectRoot: '/w/over' } });
-  const usage = buildSlotUsage(4);
+  const usage = buildSlotUsage(4, process.env);
   expect(usage).toMatchObject({
     max: 4,
     inUse: 3,
     holders: [
       { slot: 0, workspace: '/w/a', client: null },
       { slot: 2, workspace: null, client: 'dev-1' },
-      { slot: 3, workspace: null, client: null, since: null, unresolved: true },
+      {
+        slot: 3,
+        workspace: null,
+        client: null,
+        since: null,
+        unresolved: true,
+        claim: {
+          unresolved: expect.stringContaining(`its owner pid 4242`),
+          removeCommand: `rm -f '${slot3}' '${slot3.replace(/\.claim$/, '.child')}'`,
+        },
+      },
     ],
   });
   expect(usage.holders[0]?.since).toEqual(expect.any(String));
+});
+
+test('status names an unresolved offloaded build slot, its dead owner and one command for the whole job', () => {
+  const engineRoot = join(tmpHome, 'engine');
+  vi.stubEnv('STIM_ENGINE_ROOT', engineRoot);
+  const owner = goneClaimOwner();
+  const pending = { record: null };
+  const startedAt = '2026-11-16T04:26:42.000Z';
+  const slot = plantClaim(buildSlotPath(0), 'exclusive', owner, {
+    claimId: 'slot',
+    startedAt,
+    details: { index: 0, offloaded: true, client: 'dev-1', repo: 'app', job: 'job-1' },
+    child: pending,
+  });
+  const area = join(tmpHome, 'build-worker', 'dev-1', 'repos', 'app');
+  const work = join(area, 'fingerprint-work', 'job-1');
+  mkdirSync(work, { recursive: true });
+  const repo = plantClaim(`${area}.claims`, 'exclusive', owner, { claimId: 'repo', child: pending });
+  const engine = plantClaim(buildClaimRoot(engineRoot, 'aaaaaaaaaaaa'), 'shared', owner, {
+    claimId: 'engine',
+    child: pending,
+  });
+  plantClaim(buildClaimRoot(engineRoot, 'bbbbbbbbbbbb'), 'shared', goneClaimOwner(4243), {
+    claimId: 'other-job',
+    child: pending,
+  });
+  const files = (claim: string) => `'${claim}' '${claim.replace(/\.claim$/, '.child')}'`;
+
+  const [holder] = buildSlotUsage(2, process.env).holders;
+
+  expect(holder).toMatchObject({ slot: 0, unresolved: true });
+  expect(holder?.claim?.unresolved).toContain(slot);
+  expect(holder?.claim?.unresolved).toContain(`its owner pid ${owner.pid} (claimed ${startedAt}) is no longer running`);
+  expect(holder?.claim?.unresolved).toContain(repo);
+  expect(holder?.claim?.unresolved).toContain(engine);
+  expect(holder?.claim?.removeCommand).toBe(
+    `rm -rf '${work}' && rm -f ${files(repo)} && rm -f ${files(slot)} && rm -f ${files(engine)}`,
+  );
 });
 
 test('automatic build admission rechecks membership after waiting without releasing another build', async () => {

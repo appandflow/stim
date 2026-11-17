@@ -595,6 +595,12 @@ export function loadLine({ loadPerCore, busyAt, limit }: StatusCapacityLoad): st
   return `load ${loadPerCore}/core (busy at ${busyAt}${limit === null ? '' : `, holding at ${limit}`})`;
 }
 
+/** One unresolved build slot as one line, for `stim status`, `stim gc` and maintenance. */
+export const unresolvedBuildSlotLine = (
+  slot: number | null,
+  { unresolved, removeCommand }: { unresolved: string; removeCommand: string },
+): string => `build slot ${slot ?? '?'} is unresolved: ${unresolved}. If nothing is using it, run: ${removeCommand}`;
+
 /**
  * The plain status lines for the build and device caps, naming `concurrency.maxBuilds` and `concurrency.maxDevices`
  * or, for a cap `derived` marks, that Stim derived it and which setting overrides it.
@@ -617,6 +623,8 @@ export function slotUsageLines(
             : `slot ${holder.slot}`,
     );
     lines.push(`builds ${builds.inUse}/${builds.max} (${buildCap})${holders.length ? `: ${holders.join(', ')}` : ''}`);
+    for (const holder of builds.holders)
+      if (holder.claim) lines.push(unresolvedBuildSlotLine(holder.slot, holder.claim));
   }
   if (devices) {
     if (devices.inUse === null) {

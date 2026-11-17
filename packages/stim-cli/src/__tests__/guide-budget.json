@@ -26,7 +26,7 @@
     "agent report": 1500,
     "facts payloads": 37250,
     "facts gc": 26000,
-    "facts status": 51750,
+    "facts status": 52100,
     "facts stats": 10500,
     "lifecycle hosted-android": 12500,
     "lifecycle hosted-ios": 23750,

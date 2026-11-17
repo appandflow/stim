@@ -810,6 +810,12 @@ export interface StatusBuildSlotHolder {
   client: string | null;
   since: string | null;
   unresolved?: true;
+  /**
+   * For an unresolved slot: what holds it (the claim path, its owner pid, claim time and whether that process still
+   * runs, and for an offloaded build the job and its other claims) and the one command that removes the claim and
+   * child files, plus an offloaded build's `fingerprint-work/<job>` directory, once nothing from it runs.
+   */
+  claim?: { unresolved: string; removeCommand: string };
 }
 
 /** `inUse` counts the slots below `max` that a live or unresolved claim holds, which a new build cannot take. */
