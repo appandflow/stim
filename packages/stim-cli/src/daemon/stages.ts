@@ -36,10 +36,10 @@ import { linkedFirst, type CheckoutRole } from '../policy/checkout-order.ts';
 import { dormantAction, dormantThresholdMs, longestIdleFirst } from '../policy/pressure.ts';
 import { resolveSupervisorTarget } from '../stimd/metro/ownership.ts';
 import { getProject, loadConfig, type Config, type ProjectRecord } from '../workspace/config.ts';
-import { checkoutRoleOf } from '../workspace/checkout-role.ts';
+import { checkoutOwnerOf } from '../workspace/checkout-role.ts';
 import { discoverCheckouts } from '../workspace/discovery.ts';
 import { discoveredEvidence } from '../workspace/discovered-activity.ts';
-import { launchingOf } from '../workspace/launchers.ts';
+import { freshLaunchers, launchersOf, launchingOf, type Checkout } from '../workspace/launchers.ts';
 import { discoveredReads, type DiscoveredReads } from '../workspace/discovered-reads.ts';
 import { listedRoots } from '../commands/gc/worktrees.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
@@ -66,8 +66,8 @@ export interface StageCandidate {
   idleMs: number;
   /** A source checkout is taken after every linked worktree. */
   role: CheckoutRole;
-  /** Found through a tool folder or the full scan; a PATH launcher into it keeps its outputs. */
-  reduceOnly: boolean;
+  /** The git worktree root that owns the workspace, which an executable on PATH can point anywhere into. */
+  checkout: Checkout;
 }
 
 /** `idle.dormantDays` in milliseconds; 0 when the dormant stage is off. */
@@ -159,7 +159,6 @@ async function idleVerdict(
     operation?: StimContext;
     reads?: DiscoveredReads;
     full?: boolean;
-    /** Found through a tool folder or the full scan: a PATH launcher into the checkout keeps it. Every caller states it. */
     reduceOnly: boolean;
   },
 ): Promise<{ idleMs: number } | { kept: string }> {
@@ -262,7 +261,7 @@ async function readIdleWorkspaces(
   worthIt: (path: string, project: ProjectRecord) => boolean | Promise<boolean>,
   { discover = false, full = false, onKept }: Omit<IdleSelection, 'setting'> & { discover?: boolean } = {},
 ): Promise<StageCandidate[]> {
-  const readings: (Omit<StageCandidate, 'idleMs' | 'role'> & { idleMs: number | null })[] = [];
+  const readings: (Omit<StageCandidate, 'idleMs' | 'role' | 'checkout'> & { idleMs: number | null })[] = [];
   const reads = discoveredReads(reading.operation?.signal, reading.operation);
   const found = discover ? await discoverCheckouts(config, listedRoots(), reading.operation) : [];
   const discovered = found.map(({ path }): [string, ProjectRecord] => [path, {}]);
@@ -289,7 +288,7 @@ async function readIdleWorkspaces(
         if ('idleMs' in verdict) idleMs = verdict.idleMs;
         else onKept?.(path, verdict.kept);
       }
-      readings.push({ path, project, idleMs, reduceOnly: reduceOnly.has(path) });
+      readings.push({ path, project, idleMs });
     } catch (error) {
       if (isClaimUnavailable(error) && 'reportCleanup' in error) throw error;
       reading.operation?.signal.throwIfAborted();
@@ -297,8 +296,7 @@ async function readIdleWorkspaces(
   }
   const idle = longestIdleFirst(readings);
   const candidates: StageCandidate[] = [];
-  for (const entry of idle)
-    candidates.push(Object.assign(entry, { role: await checkoutRoleOf(entry.path, reading.operation) }));
+  for (const entry of idle) candidates.push(Object.assign(entry, await checkoutOwnerOf(entry.path, reading.operation)));
   return linkedFirst(candidates);
 }
 
@@ -319,11 +317,10 @@ export async function stillIdle(
     full = false,
     locked = true,
     setting = PRESSURE_THRESHOLD,
-    reduceOnly,
-  }: { operation?: StimContext; full?: boolean; locked?: boolean; setting?: string; reduceOnly: boolean },
+  }: { operation?: StimContext; full?: boolean; locked?: boolean; setting?: string },
 ): Promise<boolean> {
-  const reads = discoveredReads(operation?.signal, operation, true);
-  return (await idleFor(path, thresholdMs, setting, { locked, operation, full, reads, reduceOnly })) !== null;
+  const reads = discoveredReads(operation?.signal, operation, freshLaunchers(operation, operation?.signal));
+  return (await idleFor(path, thresholdMs, setting, { locked, operation, full, reads, reduceOnly: false })) !== null;
 }
 
 /** Workspaces with nothing running, idle `thresholdMs` by the activity definition: linked worktrees, then source checkouts, longest-idle first in each. */
@@ -364,6 +361,7 @@ export async function clearStoppedOutputs(
   operation?: StimContext,
 ): Promise<StageResult | null> {
   const { path } = candidate;
+  const launchers = freshLaunchers(operation, operation?.signal);
   const run = await withIdleWorkspace(
     path,
     async (): Promise<StageResult | null> => {
@@ -376,15 +374,32 @@ export async function clearStoppedOutputs(
               (await idleFor(path, thresholdMs, PRESSURE_THRESHOLD, {
                 locked: true,
                 operation,
-                reads: discoveredReads(operation?.signal, operation, true),
-                reduceOnly: candidate.reduceOnly,
+                reads: discoveredReads(operation?.signal, operation, launchers),
+                reduceOnly: false,
               })) === null
             )
               return { outcome: 'kept', bytes: 0, detail: 'it is no longer idle' };
-            const launching = launchingOf(candidate.reduceOnly, path, operation);
-            const outputs = await idleOutputs(path, config, launching);
+            const outputs = await idleOutputs(
+              path,
+              config,
+              launchingOf(
+                candidate.checkout,
+                () => freshLaunchers(operation, operation?.signal)(),
+                operation,
+                operation?.signal,
+              ),
+            );
             if (!outputs.paths.length) return null;
-            const bytes = await deleteOutputs(outputs.paths, launching, outputs.kept);
+            const bytes = await deleteOutputs(
+              outputs.paths,
+              launchingOf(
+                candidate.checkout,
+                launchersOf(operation, operation?.signal, false),
+                operation,
+                operation?.signal,
+              ),
+              outputs.kept,
+            );
             return {
               outcome: 'done',
               bytes,

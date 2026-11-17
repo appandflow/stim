@@ -241,10 +241,8 @@ export async function regenerableDirProblem(
   const unignored = await gitQuietAsync(root, ['ls-files', '--others', '--exclude-standard', '--', rel], { signal });
   if (unignored === null) return 'git cannot tell whether it ignores every file in it';
   if (unignored.trim()) return 'it holds files git does not ignore';
-  if (launching.reduceOnly) {
-    const launcher = launcherReason(launching.checkout, await launching.launchers());
-    if (launcher) return launcher;
-  }
+  const launcher = launcherReason(launching.checkout, await launching.launchers());
+  if (launcher) return launcher;
   if (
     processes &&
     basename(path) === CARGO_TARGET &&
@@ -253,6 +251,8 @@ export async function regenerableDirProblem(
     const others = await othersRunningAsync(await readRunningProcessesAsync(signal), signal);
     const running = runningFromReason(dirname(path), others);
     if (running) return `its app may be in use: ${running.replace(/ it\b/, ' its app')}`;
+    const after = launcherReason(launching.checkout, await launching.anew());
+    if (after) return after;
   }
   return null;
 }

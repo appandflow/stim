@@ -1,3 +1,4 @@
+import { freshLaunchers } from '../workspace/launchers.ts';
 import { execSync } from 'node:child_process';
 
 import {
@@ -1918,6 +1919,7 @@ test('the maintenance ladder collects .dd and CMake output of a registered workt
 
   const clear = (target: string) =>
     clearArtifact({ kind: 'would-clear-build-dirs', target, bytes: 0, reason: 'test' }, 'build', {
+      launchers: freshLaunchers(undefined),
       windowMs: 0,
       protectedRoot: '',
       pinned: () => false,
@@ -1948,6 +1950,7 @@ function maintenanceArtifactFixture(sessions: Awaited<ReturnType<typeof agentSes
     clear: async () =>
       clearArtifact({ kind: 'would-clear-build-dirs', target: dd, bytes: 0, reason: 'test' }, 'build', {
         ...options,
+        launchers: freshLaunchers(undefined),
         worktrees: await artifactWorktreesAsync(signal),
       }),
   };
