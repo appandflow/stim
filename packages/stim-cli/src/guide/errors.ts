@@ -307,7 +307,7 @@ install or prebuild rewrote there. Stim already sends the gitignored files the
 fingerprint reads, such as .env.local. Make the named input agree on both Macs,
 for example by committing the lockfile pod install rewrote there; pairing does
 not change it. When it names a Node difference as the likely cause, pin the
-project's Node (.nvmrc) or install this machine's Node version on the worker.
+project's Node (.nvmrc) to a version both Macs have installed.
 
 Run stim remote add <machine> to ask for build access if not approved. Check
 stim remote list. A person on the worker approves this machine

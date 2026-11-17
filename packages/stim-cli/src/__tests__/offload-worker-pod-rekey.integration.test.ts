@@ -229,7 +229,7 @@ describe.skipIf(process.platform === 'win32')('post-pods worker rekey', () => {
             code: 'fingerprint-mismatch',
             message: expect.stringMatching(
               new RegExp(
-                `differing sources: config.*; the likely cause is Node: the worker evaluates the fingerprint with Node ${runtimeNode} and this machine with Node 20\\.1.*install Node 20\\.1 on the worker$`,
+                `differing sources: config.*; the likely cause is Node: the worker evaluates the fingerprint with Node ${runtimeNode} and this machine with Node 20\\.1.*to a version both machines have installed$`,
               ),
             ),
           },

@@ -859,8 +859,7 @@ else the Node running Stim. A worker on a different Node major.minor still build
 when it computes the same fingerprint. When the fingerprints differ, the
 `fingerprint-mismatch` refusal names both Node versions, and calls the Node
 difference the likely cause when only the sources Stim evaluates with Node (the
-Expo config and autolinking) differ; pin the project's Node, or install the
-client's version on the worker. Those files and variables can hold secrets: Stim assumes every paired
+Expo config and autolinking) differ; pin the project's Node to a version both machines have installed. Those files and variables can hold secrets: Stim assumes every paired
 Mac belongs to the same person. Nothing under
 `node_modules` is sent, since the build Mac installs dependencies itself, and
 neither is build output the fingerprint ignores, such as `ios/Pods` or

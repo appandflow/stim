@@ -613,7 +613,7 @@ function fingerprintMismatch(
       ? []
       : evaluated
         ? [
-            `the likely cause is Node: the worker evaluates the fingerprint with Node ${node} and this machine with Node ${client}, and only sources Stim evaluates with Node differ; pin the project's Node (.nvmrc) or install Node ${client} on the worker`,
+            `the likely cause is Node: the worker evaluates the fingerprint with Node ${node} and this machine with Node ${client}, and only sources Stim evaluates with Node differ; pin the project's Node (.nvmrc) to a version both machines have installed`,
           ]
         : [`the worker evaluates the fingerprint with Node ${node}, this machine with Node ${client}`];
   return [
