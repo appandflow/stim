@@ -119,7 +119,9 @@ in which case it refuses and the unit's next restart asks again. An ask that
 waits on the stop gets the service's thread. A service's ask that starts the
 thread or the move holds the service's ownership from that moment, so Stim
 Desktop cannot replace the thread while it starts; a thread that does not
-listen on the service port releases it. Once the service's thread runs,
+listen on the service port releases it, and a move that fails puts the
+share-only thread back on its previous options so saved web shares keep
+serving until the next ask retries. Once the service's thread runs,
 Stim Desktop no longer moves it. A net thread that serves clients on other
 options (Desktop's or `stim serve`'s) is not replaced: the asker exits 1
 naming both ports, and `stim service status` names the holder's port. Which of

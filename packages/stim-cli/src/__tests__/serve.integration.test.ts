@@ -429,3 +429,51 @@ test("a Desktop ask that arrives while the service's thread starts does not repl
     rmSync(home, { recursive: true, force: true });
   }
 }, 60_000);
+
+test('a service move that cannot bind the service port leaves the share-only thread serving and retries later', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-net-service-held-'));
+  const env = { ...process.env, STIM_HOME: home, HOME: home, USERPROFILE: home, PATH: '' };
+  const previousHome = process.env.STIM_HOME;
+  process.env.STIM_HOME = home;
+  const stimd = spawn(process.execPath, [join(root, 'packages/stim-cli/dist/cli.mjs'), '__stimd', '--mode', 'off'], {
+    env,
+    stdio: 'ignore',
+  });
+  const stimdExited = once(stimd, 'exit');
+  const holder = createServer();
+  try {
+    const deadline = Date.now() + 15_000;
+    while (!existsSync(stimdRecordFile())) {
+      if (Date.now() > deadline || stimd.exitCode !== null) throw new Error('stimd wrote no run/stimd.json');
+      await new Promise((done) => setTimeout(done, 50));
+    }
+    const { socket, build } = JSON.parse(readFileSync(stimdRecordFile(), 'utf8'));
+    const first = { kind: 'cli', build };
+    expect(await ensureAs(socket, first, { share: true })).toMatchObject({ listening: true });
+    holder.listen(0, '127.0.0.1');
+    await once(holder, 'listening');
+    const address = holder.address();
+    assert.ok(address && typeof address === 'object');
+    const port = address.port;
+    const ask = { port, loopbackOnly: false, extraEnv: [], pathPrepend: [], service: true };
+
+    expect(await ensureAs(socket, first, ask)).toMatchObject({ listening: false });
+    const record = JSON.parse(readFileSync(stimdRecordFile(), 'utf8'));
+    expect(record.netPort).toEqual(expect.any(Number));
+    expect(record.netPort).not.toBe(port);
+    expect((await fetch(`http://127.0.0.1:${record.netPort}/health`)).status).toBeLessThan(600);
+
+    holder.close();
+    await once(holder, 'close');
+    expect(await ensureAs(socket, first, ask)).toMatchObject({ listening: true, port });
+
+    stimd.kill('SIGTERM');
+    expect(await stimdExited).toEqual([0, null]);
+  } finally {
+    holder.close();
+    if (stimd.exitCode === null && stimd.signalCode === null) stimd.kill('SIGKILL');
+    if (previousHome === undefined) delete process.env.STIM_HOME;
+    else process.env.STIM_HOME = previousHome;
+    rmSync(home, { recursive: true, force: true });
+  }
+}, 60_000);
