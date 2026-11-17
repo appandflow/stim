@@ -1,4 +1,5 @@
-import { lstat, readdir, realpath } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { access, lstat, readdir, realpath } from 'node:fs/promises';
 import { join, sep } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
 import { canonicalPath } from '../commands/gc/paths.ts';
@@ -8,8 +9,9 @@ import { launcherDirectories } from './launcher-directories.ts';
 /**
  * One thing the inspection of the launcher directories could not settle: a directory that could not be read, an entry
  * that could not be resolved, or a read that has not answered. A directory or entry that does not exist, and a
- * dangling symlink, is no launcher. Anything else that fails (permission, I/O, a loop, a timeout) is a problem, and
- * nothing is known about what it covers.
+ * dangling symlink, is no launcher. Neither is an entry that this user may neither inspect or resolve nor execute
+ * (EACCES from both). Anything else that fails (permission, I/O, a loop, a timeout) is a problem, and nothing is
+ * known about what it covers.
  */
 export interface LauncherProblem {
   kind: 'directory' | 'entry' | 'pending' | 'owner';
@@ -27,17 +29,28 @@ interface LauncherIo {
   readdir: (path: string) => Promise<string[]>;
   isSymlink: (path: string) => Promise<boolean>;
   realpath: (path: string) => Promise<string>;
+  /** False when this user may not execute the path (EACCES); any other failure throws. */
+  executable: (path: string) => Promise<boolean>;
 }
 
 const REAL_IO: LauncherIo = {
   readdir: (path) => readdir(path),
   isSymlink: async (path) => (await lstat(path)).isSymbolicLink(),
   realpath: (path) => realpath(path),
+  executable: (path) =>
+    access(path, constants.X_OK).then(
+      () => true,
+      (error: unknown) => {
+        if (denied(error)) return false;
+        throw error;
+      },
+    ),
 };
 
 const ABSENT = ['ENOENT', 'ENOTDIR'];
 export const absent = (error: unknown): boolean =>
   error instanceof Error && 'code' in error && ABSENT.includes(String(error.code));
+const denied = (error: unknown) => error instanceof Error && 'code' in error && error.code === 'EACCES';
 
 const READ_TIMEOUT_MS = 3000;
 const FIRST_PROBLEMS = 5;
@@ -94,7 +107,22 @@ export function launcherReader(
           } catch (error) {
             if (error instanceof Unanswered) throw error;
             signal?.throwIfAborted();
-            if (!absent(error)) found.incomplete.push({ kind: 'entry', path: entry, error: describe(error) });
+            if (absent(error)) continue;
+            if (denied(error)) {
+              // access(2) follows the link the way execve(2) does, without readlink(2): macOS denies resolving
+              // `/usr/sbin/weakpass_edit`, whose target is in root-only `authserver`, and this user cannot run it either,
+              // while a mode 0700 root link such as a 1Password `/usr/local/bin` entry cannot be read but still runs.
+              try {
+                if (!(await answered(directory, () => io.executable(entry), timeoutMs))) continue;
+              } catch (gone) {
+                if (gone instanceof Unanswered) throw gone;
+                signal?.throwIfAborted();
+                if (absent(gone)) continue;
+                found.incomplete.push({ kind: 'entry', path: entry, error: describe(gone) });
+                continue;
+              }
+            }
+            found.incomplete.push({ kind: 'entry', path: entry, error: describe(error) });
           }
         }
       } catch (error) {

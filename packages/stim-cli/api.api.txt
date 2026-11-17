@@ -298,6 +298,7 @@
 [*] interface DaemonStatus { @@1 running: {
 [*] interface DaemonStatus { @@1 setting?: DaemonMode;
 [*] interface DaemonStatus { @@1 testWaiting?: DaemonTestWaiter[];
+[*] interface DaemonStatus { @@1 unanswered?: {
 [*] interface DaemonStatus { @@1 unverified?: UnverifiedCleanup[];
 [*] interface DaemonStatus { @@1 unverifiedConsoles?: UnverifiedConsole[];
 [*] interface DaemonStatus { @@1 waiting?: DaemonWaiter[];
@@ -313,10 +314,12 @@
 [*] interface DaemonStatus { @@2 remedy: string;
 [*] interface DaemonStatus { @@2 removeCommand: string;
 [*] interface DaemonStatus { @@2 since: string;
+[*] interface DaemonStatus { @@2 socketMissing?: true;
 [*] interface DaemonStatus { @@2 stop: string;
 [*] interface DaemonStatus { @@2 unresolved: string;
 [*] interface DaemonStatus { @@2 until: string;
 [*] interface DaemonStatus { @@2 verified: boolean;
+[*] interface DaemonStatus { @@2 waitedMs: number;
 [*] interface DaemonTestWaiter {
 [*] interface DaemonTestWaiter { @@1 label: string;
 [*] interface DaemonTestWaiter { @@1 position: number;

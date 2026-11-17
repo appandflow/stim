@@ -156,9 +156,18 @@ export function daemonLine(status: DaemonStatus, now: number = Date.now()): stri
   const pressure = status.pressure
     ? `; pressure ${status.pressure.level}${status.pressure.reasons.length ? ` (${status.pressure.reasons.join('; ')})` : ''}`
     : '';
-  return status.running
-    ? `${label}: running since ${clock(status.running.since)} (pid ${status.running.pid}), ${tick}${pressure}${claim}`
-    : `${label}: not running, ${tick}${pressure}; start, ios, android, web, macos and revive start it${claim}`;
+  if (!status.running)
+    return `${label}: not running, ${tick}${pressure}; start, ios, android, web, macos and revive start it${claim}`;
+  const { pid, since } = status.running;
+  const state = status.unanswered
+    ? `holds the claim since ${clock(since)} (pid ${pid}), ${unansweredText(status.unanswered)}`
+    : `running since ${clock(since)} (pid ${pid})`;
+  return `${label}: ${state}, ${tick}${pressure}${claim}`;
+}
+
+/** The sentence the daemon line and the doctor finding give for a stimd that holds the claim and did not answer. */
+export function unansweredText({ waitedMs, socketMissing }: NonNullable<DaemonStatus['unanswered']>): string {
+  return `did not answer within ${waitedMs / 1000} s${socketMissing ? ' (its socket file is missing)' : ''}`;
 }
 
 /** The last action a daemon of this home took, or null before its first. */

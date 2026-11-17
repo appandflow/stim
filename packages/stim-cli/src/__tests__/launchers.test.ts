@@ -11,7 +11,12 @@ vi.unmock('../workspace/launcher-directories.ts');
 const missing = (code: string) => Object.assign(new Error(code), { code });
 
 /** A fake of the directories on PATH: `listing` maps a directory to its entries, an Error, or nothing for absent. */
-const io = (listing: Record<string, string[] | Error>, links: Record<string, string | Error> = {}) => ({
+const io = (
+  listing: Record<string, string[] | Error>,
+  links: Record<string, string | Error> = {},
+  unrunnable: readonly string[] = [],
+  gone: Record<string, string> = {},
+) => ({
   readdir: async (path: string) => {
     const entry = listing[path];
     if (entry instanceof Error) throw entry;
@@ -24,6 +29,10 @@ const io = (listing: Record<string, string[] | Error>, links: Record<string, str
     if (target instanceof Error) throw target;
     if (!target) throw missing('ENOENT');
     return target;
+  },
+  executable: async (path: string) => {
+    if (gone[path]) throw missing(gone[path]);
+    return !unrunnable.includes(path);
   },
 });
 
@@ -63,6 +72,23 @@ describe('the PATH launcher scan', () => {
     );
     expect(result.targets).toEqual(['/work/app/bin/tool']);
     expect(result.incomplete).toEqual([{ kind: 'entry', path: '/bin1/denied', error: 'EPERM' }]);
+  });
+
+  it('passes over a symlink it may not resolve only when this user may not execute it either', async () => {
+    const links = {
+      '/usr/sbin/weakpass_edit': missing('EACCES'),
+      '/usr/sbin/tool': '/work/app/.build/release/tool',
+    };
+    const entries = { '/usr/sbin': ['weakpass_edit', 'tool'] };
+    const unrunnable = await scan(['/usr/sbin'], io(entries, links, ['/usr/sbin/weakpass_edit']));
+    expect(unrunnable).toEqual({ targets: ['/work/app/.build/release/tool'], incomplete: [] });
+    expect(launcherReason('/work/other', unrunnable)).toBeNull();
+    const runnable = await scan(['/usr/sbin'], io(entries, links));
+    expect(runnable.incomplete).toEqual([{ kind: 'entry', path: '/usr/sbin/weakpass_edit', error: 'EACCES' }]);
+    const vanished = await scan(['/usr/sbin'], io(entries, links, [], { '/usr/sbin/weakpass_edit': 'ENOENT' }));
+    expect(vanished).toEqual({ targets: ['/work/app/.build/release/tool'], incomplete: [] });
+    const unchecked = await scan(['/usr/sbin'], io(entries, links, [], { '/usr/sbin/weakpass_edit': 'EIO' }));
+    expect(unchecked.incomplete).toEqual([{ kind: 'entry', path: '/usr/sbin/weakpass_edit', error: 'EIO' }]);
   });
 
   it('matches whole path segments, so a launcher into app-2 does not keep app', () => {

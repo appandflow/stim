@@ -1389,6 +1389,79 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
     expect(daemonLog()).toContain('its run directory was removed');
   }, 20_000);
 
+  async function exchange(first: Record<string, unknown>): Promise<string[]> {
+    const socket = connect(stimdSocket());
+    socket.on('error', () => {});
+    onTestFinished(() => {
+      socket.destroy();
+    });
+    const received = lines(socket);
+    const closed = new Promise((done) => socket.once('close', done));
+    socket.write(`${JSON.stringify(first)}\n`);
+    await closed;
+    return received;
+  }
+
+  test('answers a probe frame with its pid and build and ends, leaving no record and no client note', async () => {
+    normalMeasurement();
+    const running = runStimd({ mode: 'on', tickMs: 60_000 });
+    await listening();
+    const logged = daemonLog().length;
+    const other = await exchange({ kind: 'cli', build: 'another-build' });
+    expect(JSON.parse(other[0] ?? '{}')).toMatchObject({ op: 'engine-changed' });
+    const logAfterClient = daemonLog().length;
+    for (const build of [undefined, 'another-build'])
+      expect((await exchange({ kind: 'probe', build })).map((line) => JSON.parse(line))).toEqual([
+        { op: 'probe', pid: process.pid, build: stimdBuildId() },
+      ]);
+    expect(daemonLog().length).toBe(logAfterClient);
+    expect(logged).toBeLessThanOrEqual(logAfterClient);
+    await stopStimd();
+    await running;
+  }, 20_000);
+
+  function reachStimd(first: Record<string, unknown>): Promise<void> {
+    return new Promise((done) => {
+      const socket = connect(stimdSocket());
+      socket.on('error', () => done());
+      socket.once('close', () => done());
+      socket.once('data', () => socket.destroy());
+      socket.write(`${JSON.stringify(first)}\n`);
+    });
+  }
+
+  test.each([
+    ['a probe', { kind: 'probe' }, true],
+    ['a client hello', { kind: 'cli', build: stimdBuildId() }, false],
+  ])(
+    '%s: an idle stimd that is contacted every 30 ms exits %s',
+    async (_name, first, exits) => {
+      normalMeasurement();
+      const contacting = new AbortController();
+      const running = runStimd({ mode: 'on', tickMs: 200 }).finally(() => {
+        contacting.abort();
+      });
+      await listening();
+      void (async () => {
+        while (!contacting.signal.aborted) {
+          await reachStimd(first);
+          await new Promise((done) => setTimeout(done, 30));
+        }
+      })();
+      const outcome = await Promise.race([
+        running.then(() => 'exited'),
+        new Promise((done) => setTimeout(() => done('running'), 4000)),
+      ]);
+      expect(outcome).toBe(exits ? 'exited' : 'running');
+      contacting.abort();
+      if (!exits) {
+        await new Promise((done) => setTimeout(done, 100));
+        await running;
+      }
+    },
+    30_000,
+  );
+
   function normalMeasurement(level: 'normal' | 'warning' = 'normal'): void {
     const measureTick = measure.measureTick;
     const normal = vi.spyOn(measure, 'measureTick').mockImplementation(async (...args) => {
