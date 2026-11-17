@@ -82,7 +82,8 @@ never booted, so it takes no device slot and stays outside the pool and the
 `concurrency.maxDevices` count. Teardown deletes it when the build ends, and
 the job's cancel path deletes it at once. Each build deletes, through teardown,
 any simulator its home's ledger still lists from a stopped or killed earlier
-build. A failed creation refuses the build with the `simctl` error, and the
+build, and forgets an entry whose simulator a complete `simctl` listing no
+longer shows, so an interrupted teardown does not keep the area pinned. A failed creation refuses the build with the `simctl` error, and the
 client falls back to a local build as for any other offload failure. A worker's
 offer lists every installed iOS runtime that supports an iPhone, so a worker
 with the runtime and no simulator offers iOS builds.
