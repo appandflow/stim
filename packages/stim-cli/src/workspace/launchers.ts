@@ -8,9 +8,9 @@ import { launcherDirectories } from './launcher-directories.ts';
 
 /**
  * Where the executables on PATH that are symlinks resolve to, and the directories whose inspection could not be
- * completed. A directory or entry that does not exist, a dangling symlink, and a symlink that cannot be resolved and that
- * this user may not execute, is no launcher. Anything else that fails (permission, I/O, a timeout) is incomplete, and
- * nothing is known about that directory.
+ * completed. A directory or entry that does not exist, a dangling symlink, and an entry that this user may neither
+ * inspect or resolve nor execute (EACCES from both), is no launcher. Anything else that fails (permission, I/O, a
+ * timeout) is incomplete, and nothing is known about that directory.
  */
 export interface LauncherScan {
   targets: string[];
