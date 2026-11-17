@@ -1461,7 +1461,12 @@ async function runStimdInner(
           const answer = serviceMove
             ? pinned()
               ? Promise.resolve(held)
-              : net.sealForRestart().then((jobs) => (jobs > 0 || closing ? held : restartNet()))
+              : net.sealForRestart().then((jobs) => {
+                  if (jobs > 0 || closing) return held;
+                  if (!pinned()) return restartNet();
+                  net.unsealForRestart();
+                  return held;
+                })
             : restart
               ? restartNet()
               : ensureNet(options);

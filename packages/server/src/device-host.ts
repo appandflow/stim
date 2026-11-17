@@ -2485,6 +2485,11 @@ export class DeviceHost {
     this.closed = true;
   }
 
+  /** Admits hosted work again after a `seal` whose restart did not follow. */
+  unseal(): void {
+    this.closed = false;
+  }
+
   working(): number {
     try {
       const records = readHostedSessions();

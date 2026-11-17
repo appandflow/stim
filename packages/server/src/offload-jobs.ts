@@ -184,6 +184,11 @@ export class OffloadJobs {
     return busy;
   }
 
+  /** Admits jobs again after a `seal` whose restart did not follow. */
+  unseal(): void {
+    this.closed = false;
+  }
+
   private async admit(client: JobClient, socket: NoiseSocket, params: unknown): Promise<Answer> {
     if (this.options.attached)
       return refused(

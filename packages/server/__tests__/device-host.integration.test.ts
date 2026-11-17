@@ -1328,6 +1328,8 @@ describe('a hosted session across a server restart', () => {
     expect(await host.installRuntime('client', { runtime: 'bad' })).toHaveProperty('error.code', 'bad-request');
     host.seal();
     expect(await host.installRuntime('client', { runtime: 'bad' })).toHaveProperty('error.code', 'forbidden');
+    host.unseal();
+    expect(await host.installRuntime('client', { runtime: 'bad' })).toHaveProperty('error.code', 'bad-request');
   });
 
   test('a session with an install in flight keeps the stop path on close', async () => {

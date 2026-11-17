@@ -245,6 +245,8 @@ export interface RunningServer {
    * returns how many there are and refuses nothing.
    */
   sealForRestart: () => number;
+  /** Undoes a `sealForRestart` that answered 0 when the restart does not follow. */
+  unsealForRestart: () => void;
   close: () => Promise<void>;
 }
 
@@ -2309,6 +2311,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const busy = jobs.seal();
       if (busy === 0) hostedDevices.seal();
       return busy;
+    },
+    unsealForRestart: () => {
+      if (closing) return;
+      jobs.unseal();
+      hostedDevices.unseal();
     },
     ready,
     close: async () => {

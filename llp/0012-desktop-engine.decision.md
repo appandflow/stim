@@ -117,9 +117,10 @@ the thread that runs, and an ask that waits on the stop gets the service's
 thread. While work pins stimd, or the net thread runs or admits an offloaded job
 (its artifact delivery and a client engine install included) or holds a hosted session the next server
 cannot resume (a macOS session, or one installing), or runs a runtime
-install, it refuses instead, and the
+install or another device-host probe, it refuses instead, and the
 asker exits 1, so the unit's restart asks again; otherwise the net thread stops
-admitting both in the same step that finds none, and the move follows. Once stimd closes its net
+admitting both in the same step that finds none, stimd checks its own pinned
+work once more, and the move follows (or the net thread admits again). Once stimd closes its net
 thread for good, no ask starts another.
 The asker also exits 1, naming both ports, when the answer is another port.
 stimd records its net thread's port as `netPort` in `run/stimd.json` (null

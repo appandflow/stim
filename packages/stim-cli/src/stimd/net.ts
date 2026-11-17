@@ -24,6 +24,7 @@ type ToNet =
   | { type: 'presence'; params: unknown }
   | { type: 'keep' }
   | { type: 'seal' }
+  | { type: 'unseal' }
   | { type: 'stop' };
 
 type FromNet =
@@ -50,6 +51,8 @@ export interface NetThread {
    * that a restart would end; resolves with 0 when it did (or none listens), else with how many and nothing changed.
    */
   sealForRestart(): Promise<number>;
+  /** Undoes a `sealForRestart` that resolved with 0 when the restart does not follow. */
+  unsealForRestart(): void;
   /** Hands `socket`, whose first frames stimd has read, to a listening net thread; false when none listens. */
   connect(socket: Socket, head: Buffer): boolean;
   /** Forwards one agent action's presence to a listening net thread; false when none listens. */
@@ -196,6 +199,9 @@ export function createNetThread(
         if (sockets.delete(id)) post({ type: 'end', id });
       });
       return true;
+    },
+    unsealForRestart() {
+      post({ type: 'unseal' });
     },
     sealForRestart() {
       if (!listening) return Promise.resolve(0);
