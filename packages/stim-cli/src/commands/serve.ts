@@ -137,7 +137,7 @@ export async function legacyMain(): Promise<void> {
     const scope = /unknown option '(--(?:build|device-host|test))'/.exec(error.message);
     process.stderr.write(
       scope
-        ? `stim-server: ${scope[1]} applies only to \`stim setup\`, which a person runs on this machine with the requesting machine's setup ticket.\n`
+        ? `stim: ${scope[1]} applies only to \`stim setup\`, which a person runs on this machine with the requesting machine's setup ticket.\n`
         : `${error.message}\n`,
     );
     process.exitCode = 1;
