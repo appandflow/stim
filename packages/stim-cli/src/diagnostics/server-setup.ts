@@ -210,7 +210,7 @@ function updateRemedy(server: ServerReading, version: string): string {
     return `Run \`stim engine update\` there, or \`stim engine use ${version}\` for exactly this version.`;
   if (server.kind === 'desktop')
     return 'Update Stim Desktop; it bundles the server it runs. Or install a server separately with `stim service install` so Desktop adopts it.';
-  return `Stop pid ${server.pid} and start \`stim-server\` from the installation on PATH again.`;
+  return `Stop pid ${server.pid} and start \`stim serve\` from the installation on PATH again.`;
 }
 
 function versionFindings(setup: ServerSetup): Finding[] {
@@ -445,7 +445,7 @@ function desktopAuthorityFindings(setup: ServerSetup): Finding[] {
       fix:
         owner.kind === 'service'
           ? `Run \`stim engine update\` to move it past ${local.version}.`
-          : `Stop pid ${owner.pid} and start a newer \`stim-server\`, or install it as a service with \`stim service install\`.`,
+          : `Stop pid ${owner.pid} and start a newer \`stim serve\`, or install it as a service with \`stim service install\`.`,
     },
   ];
 }

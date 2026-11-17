@@ -36,13 +36,13 @@ const serveOp = defineOp({
       const narrower = opts.share === true ? '--share' : opts.loopbackOnly === true ? '--loopback-only' : null;
       if (narrower) {
         console.error(
-          `stim-server: STIM_BAD_ARG: --tailnet listens on the tailnet, and ${narrower} serves this machine only. Pass one of them.`,
+          `stim: STIM_BAD_ARG: --tailnet listens on the tailnet, and ${narrower} serves this machine only. Pass one of them.`,
         );
         process.exitCode = 1;
         return;
       }
       const note = await (await loadServerCli()).rememberTailnet();
-      if (note) console.error(`stim-server: ${note}`);
+      if (note) console.error(`stim: ${note}`);
     }
     await serveInStimd({
       port,
@@ -63,7 +63,7 @@ export default stimServe;
  * Stim Desktop 0.x launches this with its private key on stdin and keeps the pipe open for its own lifetime.
  */
 function refuse(message: string): void {
-  console.error(`stim-server: ${message}`);
+  console.error(`stim: ${message}`);
   process.exitCode = 1;
 }
 
@@ -105,7 +105,7 @@ async function serveInStimd(serve: ServeOptions): Promise<void> {
   });
   if (served) return;
   if (!stimdLive()) return refuse(daemonClaimRefusal());
-  console.error('stim-server: a stimd already serves this Stim home; asking it to start its net thread.');
+  console.error('stim: a stimd already serves this Stim home; asking it to start its net thread.');
   let heard = false;
   await serveThroughStimd(serve, (answer) => {
     heard = true;
