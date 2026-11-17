@@ -95,7 +95,7 @@ permissions:
 jobs:
   test:
     name: test (node ${{ matrix.node }})
-    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.crash_loop != '0') }}
+    if: ${{ !(github.event_name == 'workflow_dispatch' && (inputs.crash_loop || '0') != '0') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -292,7 +292,7 @@ jobs:
 
   crash-repro:
     name: crash loop (node 24)
-    if: github.event_name == 'workflow_dispatch' && inputs.crash_loop != '0'
+    if: github.event_name == 'workflow_dispatch' && (inputs.crash_loop || '0') != '0'
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
