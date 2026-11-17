@@ -103,6 +103,28 @@ implementing agent for [#5587](https://github.com/appandflow/stim/issues/5587)
 and [#5567](https://github.com/appandflow/stim/issues/5567), not by the
 maintainer.
 
+## A service stimd serves the service port
+
+The stimd that holds a home a service unit serves listens on the unit's port.
+Any starter can win the home after a handover: the successor, the unit's own
+restart, or a stimd a command started, which has no service options and, with
+a saved share, runs a share-only net thread on a random loopback port. So the
+unit's process (`--service` without `--carried`), when it finds a stimd holding
+the home, asks `net.ensure` with `service: true`. stimd then restarts a net
+thread that runs share-only or on another port or listener scope with the
+service's options, and Stim Desktop no longer moves it. While work pins stimd
+it refuses instead, and the asker exits 1, so the unit's restart asks again.
+The asker also exits 1, naming both ports, when the answer is another port.
+stimd records its net thread's port as `netPort` in `run/stimd.json` (null
+while none listens), and `stim service status` names a holder on another port.
+
+Maintainer direction: "can u check the update process to make sure this doesnt happen? Can we make sure stimd always uses same port so this wont hjappen", relayed on [#5811](https://github.com/appandflow/stim/issues/5811).
+
+Chosen by the implementing agent, not the maintainer: moving the thread on the
+service's ask rather than deciding which starter may take the home, refusing
+while pinned rather than deferring the move, and leaving a unit that names one
+engine build to `stim service install` (status reports it).
+
 ## Code
 
 - [Home and socket discovery](../apps/desktop/Sources/StimKit/StimHome.swift), [machine engine paths](../apps/desktop/Sources/StimKit/EngineState.swift), [server lifecycle](../apps/desktop/Sources/StimDesktop/ServerController.swift), and [paired endpoint validation](../apps/desktop/Sources/StimKit/PairingPayload.swift).

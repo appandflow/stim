@@ -938,6 +938,8 @@ When an offloaded build stops printing, its heartbeat says so after 5 minutes, f
 
 Run `stim doctor` on the worker. It reports competing servers, version or home mismatches, route problems, missing permissions and service startup failures, with suggested fixes. Use `stim service status` for the installed service.
 
+A stimd that a command started can hold the Stim home when the service starts, for example right after an engine switch. The service then moves that stimd's server onto the service's port; while running work holds it, the service exits and its next restart tries again. `stim service status` names a stimd that holds the home on another port (`stimd` in `--json`), and a unit that starts one engine build instead of the engine's `bin/stimd` (`followsEngine: false`), which `stim service install` replaces.
+
 ## Ask your agent
 
 These responses are illustrative. Placement comes from `stim status --json`

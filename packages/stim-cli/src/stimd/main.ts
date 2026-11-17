@@ -218,6 +218,21 @@ const strings = (value: unknown): string[] =>
 const reportNet = (answer: NetAnswer | null): void =>
   answer?.listening ? undefined : console.error(`stimd: ${answer?.message ?? 'stimd did not answer'}`);
 
+/** Reports the answer of the stimd a service unit's process asked for its net thread; exit 1 unless it serves `port`. */
+const reportServiceNet =
+  (port: number, service: boolean) =>
+  (answer: NetAnswer | null): void => {
+    if (answer?.listening && (!service || port === 0 || answer.port === port)) return;
+    process.exitCode = 1;
+    console.error(
+      `stimd: ${
+        answer?.listening
+          ? `the stimd of this Stim home serves port ${answer.port}, not the service's port ${port}`
+          : (answer?.message ?? 'stimd did not answer')
+      }`,
+    );
+  };
+
 async function takeClaim(
   root: string,
   mode: 'exclusive' | 'shared',
@@ -923,6 +938,7 @@ async function runStimdInner(
         return;
       }
       if (restartingNet) return;
+      recordNet(null);
       handleNetStop(serve, closing, attached !== undefined, requestEnd, shutdown, requestTick);
     },
     (why) => maybeUpdate(why, ASKED_MS),
@@ -1109,6 +1125,26 @@ async function runStimdInner(
     if (follower) engineDirs = workspaceEngineDirs(loadConfig());
   } catch {}
   let netServes: ServeOptions | null = serve ?? null;
+  let serviceNet = service;
+  const writeRecord = (netPort: number | null) =>
+    writeAtomic(stimdRecordFile(), {
+      format: RECORD_FORMAT,
+      pid: process.pid,
+      socket: path,
+      build,
+      version: identity.version,
+      netPort,
+    });
+  const recordNet = (netPort: number | null) => {
+    try {
+      if (!closing && readJsonObject(stimdRecordFile())?.pid === process.pid) writeRecord(netPort);
+    } catch {}
+  };
+  const ensureNet = (options: NetOptions) =>
+    net.ensure(options).then((answer) => {
+      if (answer.listening) recordNet(answer.port);
+      return answer;
+    });
   let restartWhy: string | null = null;
   let switchedTo: { build: string; version: string } | null = null;
   let updatedInPlace: { build: string; version: string } | null = null;
@@ -1382,24 +1418,49 @@ async function runStimdInner(
             ...(kind === 'desktop' ? { owner: 'desktop' } : {}),
           });
           const running = net.running();
-          const restart =
-            kind === 'desktop' &&
-            !service &&
-            !pinned() &&
+          const forService = params.service === true && !share;
+          // @ref LLP 0012#a-service-stimd-serves-the-service-port -- a service's ask moves a thread on other options
+          const serviceMove =
+            forService &&
             running !== null &&
-            (running.loopbackOnly !== options.loopbackOnly ||
-              (port !== undefined && port !== 0 && running.port !== null && port !== running.port));
+            (running.shareOnly ||
+              netServes === null ||
+              netServes.port !== options.port ||
+              netServes.loopbackOnly !== options.loopbackOnly);
+          if (serviceMove && pinned()) {
+            reply({
+              op: 'net',
+              listening: false,
+              message: `the net thread serves port ${running.port ?? 'unknown'}; it moves to port ${options.port} once the work stimd holds ends`,
+            });
+            continue;
+          }
+          const restart =
+            serviceMove ||
+            (kind === 'desktop' &&
+              !serviceNet &&
+              !pinned() &&
+              running !== null &&
+              (running.loopbackOnly !== options.loopbackOnly ||
+                (port !== undefined && port !== 0 && running.port !== null && port !== running.port)));
+          if (forService) serviceNet = true;
           if (!running || restart) netServes = options;
           const answer = restart
             ? (() => {
-                log('info', 'net_restart', 'Stim Desktop asked for other net thread options; restarting it');
+                log(
+                  'info',
+                  'net_restart',
+                  serviceMove
+                    ? `the service asked for port ${options.port}; restarting the net thread on it`
+                    : 'Stim Desktop asked for other net thread options; restarting it',
+                );
                 restartingNet = true;
                 return net.close().then(() => {
                   restartingNet = false;
-                  return net.ensure(options);
+                  return ensureNet(options);
                 });
               })()
-            : net.ensure(options);
+            : ensureNet(options);
           void answer.then(
             (state) => {
               lastContact = Date.now();
@@ -1737,13 +1798,7 @@ async function runStimdInner(
     await listen(path, server);
     bound = true;
     startup.signal.throwIfAborted();
-    writeAtomic(stimdRecordFile(), {
-      format: RECORD_FORMAT,
-      pid: process.pid,
-      socket: path,
-      build,
-      version: identity.version,
-    });
+    writeRecord(null);
   } catch (error) {
     shutdown(
       `cannot listen on ${path}: ${error instanceof Error ? error.message : String(error)}`,
@@ -1761,12 +1816,12 @@ async function runStimdInner(
   adoptMetroChildren(log);
   resumeLogStreams(logs, log, attached !== undefined);
   (retention ?? follower)?.record(Boolean(retention), [...workspaceEngineDirs(loadConfig()), ...metroEngineDirs()]);
-  if (serve) void net.ensure(netOptions(serve)).then((answer) => onNet?.(answer));
+  if (serve) void ensureNet(netOptions(serve)).then((answer) => onNet?.(answer));
   else if (attached === undefined && shareWorkPending()) {
     // @ref LLP 0011#a-share-only-net-thread-resumes-with-stimd -- a stimd that starts finds the shares the last one served
     const options = netOptions({ port: 0, loopbackOnly: true, shareOnly: true });
     netServes = options;
-    void net.ensure(options);
+    void ensureNet(options);
   }
   startup.signal.throwIfAborted();
   await logs.ownedSync();
@@ -2131,16 +2186,18 @@ export async function runStimdEntry(argv: readonly string[]): Promise<void> {
     if (code !== 0) markAbnormal?.(`exit code ${code}`);
   });
   try {
+    const service = serve !== undefined && !argv.includes('--carried');
     const served = await runStimd({
       mode:
         parseDaemonMode(at >= 0 ? argv[at + 1] : undefined) ??
         daemonMode(argv.includes(ATTACHED_ARG) ? process.env : {}),
       serve,
       onNet: reportNet,
-      service: serve !== undefined && !argv.includes('--carried'),
+      service,
       ...(argv.includes(ATTACHED_ARG) ? { attached: { handover: !argv.includes(NO_HANDOVER_ARG) } } : {}),
     });
-    if (serve && !served && stimdLive()) await serveThroughStimd(serve, reportNet);
+    if (serve && !served && stimdLive())
+      await serveThroughStimd({ ...serve, service }, reportServiceNet(serve.port, service));
   } catch (error) {
     const message =
       isClaimRefusal(error) || isClaimUnavailable(error)

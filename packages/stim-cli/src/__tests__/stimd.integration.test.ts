@@ -1266,7 +1266,14 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
     daemons.push({ child, exited });
     await listening();
     const record = JSON.parse(readFileSync(stimdRecordFile(), 'utf8'));
-    expect(record).toEqual({ format: 1, pid: child.pid, socket: stimdSocket(), build, version: expect.any(String) });
+    expect(record).toEqual({
+      format: 1,
+      pid: child.pid,
+      socket: stimdSocket(),
+      build,
+      version: expect.any(String),
+      netPort: null,
+    });
     expect(fs.statSync(stimdSocket()).mode & 0o777).toBe(0o600);
     const ask = (first: Record<string, unknown>) =>
       new Promise<string[]>((done) => {

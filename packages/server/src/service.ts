@@ -13,11 +13,11 @@ import {
 import { createRequire } from 'node:module';
 import { createServer } from 'node:net';
 import { homedir } from 'node:os';
-import { basename, delimiter, dirname, isAbsolute, join } from 'node:path';
+import { basename, delimiter, dirname, isAbsolute, join, sep } from 'node:path';
 import { clearFreeClaimSet, readClaimSet, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import { execStartOverride } from '@stim-cli/core';
 import { inspectProcessIdentity } from '@stim-cli/core/process-identity';
-import { stimBuildDigest, stimdClaimRoot, tailscaleEnv } from '@stim-cli/core/state';
+import { readJsonObject, stimBuildDigest, stimdClaimRoot, stimdRecordFile, tailscaleEnv } from '@stim-cli/core/state';
 import type { WorkerRootUsage } from './worker-areas.ts';
 import {
   jobArguments,
@@ -584,6 +584,16 @@ export interface ServiceStatus {
   envNames: string[];
   pathPrepend: string[];
   stimBuild: { service: string | null; cli: string | null; match: boolean | null };
+  /**
+   * The live stimd of the Stim home the service runs and the port its net thread listens on (null: none listens); null
+   * when no stimd runs or it predates recording the port.
+   */
+  stimd: { pid: number; port: number | null } | null;
+  /**
+   * Whether the unit starts the engine's `bin/stimd` shim, which follows engine switches; false when it names one engine
+   * build's launcher, null without an engine store or when it names a copy outside it.
+   */
+  followsEngine: boolean | null;
   /** Whether systemd keeps this user's services running without a login; null under launchd. */
   linger: boolean | null;
 }
@@ -616,9 +626,26 @@ function unitDist(script: string): string | null {
   }
 }
 
+/** The live stimd of `home` and its net thread's port, from `run/stimd.json`; null when none runs or it records none. */
+function homeStimd(home: string): ServiceStatus['stimd'] {
+  const record = readJsonObject(stimdRecordFile(home));
+  const pid = record?.pid;
+  if (typeof pid !== 'number' || !record || !('netPort' in record) || !alive(pid)) return null;
+  return { pid, port: typeof record.netPort === 'number' ? record.netPort : null };
+}
+
+/** Whether `script` is the engine shim (true), another file in the engine store (false), or outside it (null). */
+function followsEngine(script: string): boolean | null {
+  const shim = unitShim();
+  if (!shim) return null;
+  if (script === shim) return true;
+  return script.startsWith(`${dirname(dirname(shim))}${sep}`) ? false : null;
+}
+
 export async function serviceStatus(label: string): Promise<ServiceStatus> {
   const manager = serviceManager();
   const installed = await readInstalled(label);
+  const home = installed?.stimHome && isAbsolute(installed.stimHome) ? installed.stimHome : join(homedir(), '.stim');
   const job = await loaded(label);
   const health = installed?.port ? await fetchHealth(installed.port) : null;
   const serviceDist = installed?.script ? unitDist(installed.script) : null;
@@ -664,6 +691,8 @@ export async function serviceStatus(label: string): Promise<ServiceStatus> {
     envNames: (installed?.env ?? []).map((entry) => entry.slice(0, entry.indexOf('='))),
     pathPrepend: installed?.pathPrepend ?? [],
     stimBuild: { service, cli, match: service && cli ? service === cli : null },
+    stimd: installed ? homeStimd(home) : null,
+    followsEngine: installed?.script ? followsEngine(installed.script) : null,
     linger: await manager.linger(),
   };
 }
@@ -725,6 +754,10 @@ export function statusLines(status: ServiceStatus, panes: { screen: string; cont
           ? `  health: starting, still reading the Stim home (${detail})`
           : `  health: ok, ${detail}`,
   );
+  if (status.stimd && status.stimd.port !== status.port)
+    lines.push(
+      `  stimd: pid ${status.stimd.pid} holds this Stim home and ${status.stimd.port === null ? 'serves no net thread' : `serves port ${status.stimd.port}`}, not port ${status.port}; ${status.health ? '' : 'nothing answers the service port until it moves; '}${serviceManager().restartRemedy(status.label)} to move it`,
+    );
   if (status.health?.tailscale) lines.push(`  tailscale: ${status.health.tailscale}`);
   if (status.health?.route) lines.push(`  tailscale route: ${status.health.route}`);
   if (status.health?.keepAwake) lines.push(`  keep awake: ${keepAwakeText(status.health.keepAwake)}`);
@@ -756,6 +789,10 @@ export function statusLines(status: ServiceStatus, panes: { screen: string; cont
     );
   }
   lines.push(`  node: ${status.node}`, `  server: ${status.script}`);
+  if (status.followsEngine === false)
+    lines.push(
+      '  engine: the unit starts one engine build, not the engine shim, so it restarts that build after every engine switch; run `stim service install` again',
+    );
   lines.push(`  log: ${status.logPath}`);
   if (status.pathPrepend.length) lines.push(`  path-prepend: ${status.pathPrepend.join(delimiter)}`);
   if (status.envNames.length) lines.push(`  env: ${status.envNames.join(', ')}`);

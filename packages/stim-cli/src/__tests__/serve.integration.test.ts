@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { connect } from 'node:net';
+import { connect, createServer } from 'node:net';
 import { createHmac } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -230,6 +230,72 @@ test('a Desktop net.ensure with other listener options restarts the net thread w
     expect(await stimdExited).toEqual([0, null]);
   } finally {
     if (stimd.exitCode === null && stimd.signalCode === null) stimd.kill('SIGKILL');
+    if (previousHome === undefined) delete process.env.STIM_HOME;
+    else process.env.STIM_HOME = previousHome;
+    rmSync(home, { recursive: true, force: true });
+  }
+}, 60_000);
+
+/** A TCP port nothing listens on at the time of the call. */
+async function freePort(): Promise<number> {
+  const server = createServer();
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+  server.close();
+  await once(server, 'close');
+  return address.port;
+}
+
+test("a service process that finds a stimd serving a share-only net thread on another port moves it to the service's port", async () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-net-service-'));
+  const env = { ...process.env, STIM_HOME: home, HOME: home, USERPROFILE: home, PATH: '' };
+  const previousHome = process.env.STIM_HOME;
+  process.env.STIM_HOME = home;
+  const stimd = spawn(process.execPath, [join(root, 'packages/stim-cli/dist/cli.mjs'), '__stimd', '--mode', 'off'], {
+    env,
+    stdio: 'ignore',
+  });
+  const stimdExited = once(stimd, 'exit');
+  let service: ReturnType<typeof spawn> | undefined;
+  try {
+    const deadline = Date.now() + 15_000;
+    while (!existsSync(stimdRecordFile())) {
+      if (Date.now() > deadline || stimd.exitCode !== null) throw new Error('stimd wrote no run/stimd.json');
+      await new Promise((done) => setTimeout(done, 50));
+    }
+    const { socket } = JSON.parse(readFileSync(stimdRecordFile(), 'utf8'));
+    const shared = await desktopEnsure(socket, { share: true });
+    expect(shared).toMatchObject({ listening: true });
+    const port = await freePort();
+    expect(shared.port).not.toBe(port);
+
+    const child = spawn(
+      process.execPath,
+      [join(root, 'packages/stim-cli/dist/cli.mjs'), '__stimd', '--service', '--port', String(port)],
+      { env, stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+    service = child;
+    const serviceErr = lines(child.stderr);
+    const signal = AbortSignal.timeout(20_000);
+    for (;;) {
+      if (service.exitCode !== null) throw new Error(`the service process exited: ${serviceErr.text()}`);
+      const response = await fetch(`http://127.0.0.1:${port}/health`, { signal }).catch(() => null);
+      if (response) break;
+      await new Promise((done) => setTimeout(done, 100));
+    }
+    expect(JSON.parse(readFileSync(stimdRecordFile(), 'utf8'))).toMatchObject({ pid: stimd.pid, netPort: port });
+    expect(service.exitCode).toBeNull();
+    await expect(fetch(`http://127.0.0.1:${shared.port}/health`)).rejects.toThrow('fetch failed');
+
+    const serviceExited = once(service, 'exit');
+    stimd.kill('SIGTERM');
+    expect(await stimdExited).toEqual([0, null]);
+    await serviceExited;
+  } finally {
+    for (const child of [stimd, service])
+      if (child && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
     if (previousHome === undefined) delete process.env.STIM_HOME;
     else process.env.STIM_HOME = previousHome;
     rmSync(home, { recursive: true, force: true });
