@@ -271,6 +271,17 @@ test('the worker refuses a setting app.json does not declare', async () => {
   expect(result).toMatchObject({ ok: false, code: 'bad-request' });
 });
 
+test('a build that ends before it compiles still deletes the simulator an earlier build left', async () => {
+  vi.mocked(teardownOwnedIosSim).mockClear();
+  recordCreatedDevice('ios', 'LEFT-BY-A-STOPPED-BUILD');
+  const { result } = await build(
+    { 'exact.mjs': LAUNCHER, 'app.json': JSON.stringify({ env: ['API_URL'] }) },
+    { env: { PATH: '/tmp/evil' } },
+  );
+  expect(result).toMatchObject({ ok: false, code: 'bad-request' });
+  expect(vi.mocked(teardownOwnedIosSim).mock.calls).toEqual([['LEFT-BY-A-STOPPED-BUILD', { del: true }]]);
+});
+
 test('an Exact app in a subdirectory builds in the plain checkout, which already carries its folder name', async () => {
   const project = 'apps/\u5e97';
   const { result, area } = await build(

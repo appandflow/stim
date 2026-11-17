@@ -947,6 +947,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
     }
   };
   const failed = (code: string, message: string): WorkerResult => ({ ok: false, code, message, timings });
+  await deleteLeftoverSimulators();
   ensureCheckout(job.area, join(job.area, 'src'), job);
   const src = realpathSync(join(job.area, 'src'));
   const root = join(src, job.project);
@@ -1485,7 +1486,6 @@ async function compileExact(
   Object.assign(env, exact.env, { EXACT2: checkout });
   if (exact.link) env.EXACT2 = resolvePath(root, exact.link);
   delete env.EXACT_SIM;
-  await deleteLeftoverSimulators();
   let probe: Awaited<ReturnType<typeof exactProbeSimulator>> | null = null;
   let built: Awaited<ReturnType<typeof runExactIosBuild>>;
   try {
@@ -1768,7 +1768,6 @@ async function compileMacos(
 
 async function compileIos(job: WorkerJob, root: string, log: NdjsonWriter, time: Timer): Promise<Compiled> {
   const runtime = job.runtime ?? '';
-  await deleteLeftoverSimulators();
   const destination = await iosDestination(job, runtime);
   if ('code' in destination) return { ok: false, ...destination };
   note('build', `xcodebuild for ${runtime}`);
