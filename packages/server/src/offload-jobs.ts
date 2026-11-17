@@ -175,11 +175,11 @@ export class OffloadJobs {
   }
 
   /**
-   * Refuses every later job, as `close` does, when no job runs and none is being admitted, and returns 0; otherwise
-   * changes nothing and returns how many there are.
+   * Refuses every later job, as `close` does, when no job runs, none is being admitted and no client engine is being
+   * installed, and returns 0; otherwise changes nothing and returns how many there are.
    */
   seal(): number {
-    const busy = this.jobs.size + this.admitting;
+    const busy = this.jobs.size + this.admitting + this.fetches.size;
     if (busy === 0) this.closed = true;
     return busy;
   }

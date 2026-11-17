@@ -115,7 +115,7 @@ thread that runs share-only or on another port or listener scope with the
 service's options, and Stim Desktop no longer moves it. The move compares with
 the thread that runs, and an ask that waits on the stop gets the service's
 thread. While work pins stimd, or the net thread runs or admits an offloaded job
-(its artifact delivery included) or holds a hosted session the next server
+(its artifact delivery and a client engine install included) or holds a hosted session the next server
 cannot resume (a macOS session, or one installing), or runs a runtime
 install, it refuses instead, and the
 asker exits 1, so the unit's restart asks again; otherwise the net thread stops
