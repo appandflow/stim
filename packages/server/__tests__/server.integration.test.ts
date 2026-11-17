@@ -46,7 +46,7 @@ import {
 import { execFileSync, spawn } from 'node:child_process';
 import { createServer as createHttpServer, get } from 'node:http';
 import { randomUUID } from 'node:crypto';
-import { connect as connectNet, createServer as createNetServer, type Socket } from 'node:net';
+import { connect as connectNet, createServer as createNetServer, type Server, type Socket } from 'node:net';
 import { homedir, networkInterfaces, totalmem } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { duplexPair } from 'node:stream';
@@ -3415,12 +3415,12 @@ describe('the web share listener of a server', () => {
     runsAsService: async () => installed,
   });
 
-  async function configure(): Promise<number> {
-    const probe = createNetServer();
+  async function configure(holder?: Server): Promise<number> {
+    const probe = holder ?? createNetServer();
     await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve));
     const address = probe.address();
     const port = typeof address === 'object' && address ? address.port : 0;
-    await new Promise<void>((resolve) => probe.close(() => resolve()));
+    if (!holder) await new Promise<void>((resolve) => probe.close(() => resolve()));
     writeFileSync(
       join(String(process.env.STIM_HOME), 'config.json'),
       JSON.stringify({
@@ -3456,10 +3456,17 @@ describe('the web share listener of a server', () => {
     ['the on-demand server of stim share', { service: service(true), shareServer: { idle: () => {} } }],
     ['a server with no service label', {}],
   ] as const)('does not bind it for %s', async (_name, overrides) => {
-    const port = await configure();
-    await start(overrides);
-    await new Promise((done) => setTimeout(done, 200));
-    expect(await answers(port)).toBe(false);
+    const holder = createNetServer();
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await configure(holder);
+      await start(overrides);
+      await new Promise((done) => setTimeout(done, 200));
+      expect(logged.mock.calls.filter(([line]) => String(line).includes('web share listener'))).toEqual([]);
+    } finally {
+      logged.mockRestore();
+      await new Promise<void>((resolve) => holder.close(() => resolve()));
+    }
   });
 });
 
