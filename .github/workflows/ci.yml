@@ -36,6 +36,10 @@ on:
         type: choice
         options: [stimd, all]
         default: stimd
+      crash_loop_node_flags:
+        description: Node or V8 flags for the vitest forks of the crash loop, space separated
+        type: string
+        default: ''
   workflow_call:
     inputs:
       full:
@@ -297,6 +301,8 @@ jobs:
       - name: Enable native crash capture
         run: bash scripts/ci/crash-capture.sh enable
       - name: Repeat the integration suite
+        env:
+          CRASH_LOOP_NODE_FLAGS: ${{ inputs.crash_loop_node_flags }}
         run: bash scripts/ci/crash-capture.sh loop "${{ inputs.crash_loop }}" "${{ inputs.crash_loop_scope }}"
       - name: Report a native crash
         id: crash

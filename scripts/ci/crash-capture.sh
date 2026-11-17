@@ -73,10 +73,15 @@ case "$cmd" in
     if [ "$scope" = stimd ]; then
       filters=(stimd-log-stream stimd.integration stimd-log-worker-crash stimd-windows-stream-stop)
     fi
+    node_flags=()
+    for flag in ${CRASH_LOOP_NODE_FLAGS:-}; do
+      node_flags+=("--execArgv=$flag")
+    done
+    echo "forks node flags: ${CRASH_LOOP_NODE_FLAGS:-none}"
     ulimit -c unlimited
     for i in $(seq 1 "$iterations"); do
       echo "::group::iteration $i"
-      pnpm run test:integration "${filters[@]}" 2>&1 | tee "$OUT_DIR/loop-$i.log"
+      pnpm run test:integration "${filters[@]}" "${node_flags[@]}" 2>&1 | tee "$OUT_DIR/loop-$i.log"
       status=${PIPESTATUS[0]}
       echo "::endgroup::"
       echo "iteration $i exit $status"
