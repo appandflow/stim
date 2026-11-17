@@ -18,7 +18,8 @@ import { Readable } from 'node:stream';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 import { readCreatedDevices, recordCreatedDevice } from '../devices/created-devices.ts';
-import { teardownOwnedIosSim } from '../devices/teardown.ts';
+import { createOwnedIosSim } from '../devices/ios.ts';
+import { deleteOwnedIosSimNow, teardownOwnedIosSim } from '../devices/teardown.ts';
 import { EXACT_SIM_TARGET, exactOffloadParam, exactOffloadPlan } from '../integrations/exact-offload.ts';
 import { runOffloadWorker } from '../job/offload/worker.ts';
 import { manifestDigest } from '../offload/manifest.ts';
@@ -55,6 +56,7 @@ vi.mock('../devices/teardown.ts', async (actual) => ({
   teardownOwnedIosSim: vi.fn<typeof import('../devices/teardown.ts').teardownOwnedIosSim>(async () => ({
     status: 'torn-down',
   })),
+  deleteOwnedIosSimNow: vi.fn<typeof import('../devices/teardown.ts').deleteOwnedIosSimNow>(() => true),
 }));
 
 let root: string;
@@ -292,4 +294,24 @@ test('an Exact app in a subdirectory builds in the plain checkout, which already
   expect(lstatSync(join(area, 'src')).isDirectory()).toBe(true);
   expect(readdirSync(area)).not.toContain('checkout');
   expect(existsSync(join(area, 'src', project, 'env-seen.txt'))).toBe(true);
+});
+
+test('a build cancelled while its simulator is being created deletes that simulator before it reports', async () => {
+  vi.mocked(deleteOwnedIosSimNow).mockClear();
+  vi.mocked(createOwnedIosSim).mockImplementationOnce(async () => {
+    await new Promise((resolve) => setImmediate(resolve));
+    process.emit('SIGTERM');
+    await new Promise((resolve) => setImmediate(resolve));
+    return { udid: 'RACE-SIM', name: 'stim-exact-race', deviceType: null, runtime: null };
+  });
+  void build({ 'exact.mjs': LAUNCHER, 'app.json': JSON.stringify({ modules: ['shop-map'] }) });
+  const reported = await vi.waitFor(() => {
+    const index = vi
+      .mocked(process.stdout.write)
+      .mock.calls.findIndex(([chunk]) => String(chunk).includes('"code":"cancelled"'));
+    if (index < 0) throw new Error('no cancelled result yet');
+    return vi.mocked(process.stdout.write).mock.invocationCallOrder[index];
+  });
+  expect(vi.mocked(deleteOwnedIosSimNow).mock.calls).toEqual([['RACE-SIM', 1500]]);
+  expect(vi.mocked(deleteOwnedIosSimNow).mock.invocationCallOrder[0]).toBeLessThan(reported ?? 0);
 });

@@ -224,6 +224,7 @@ function emit(value: unknown): void {
 
 let cancelled = new AbortController();
 const cancelCleanups = new Set<() => void>();
+const creations = new Set<Promise<unknown>>();
 let resultWritten = false;
 
 function emitResult(value: Record<string, unknown>): void {
@@ -256,7 +257,8 @@ function cancelOnSigterm(): () => void {
         cleanup();
       } catch {}
     }
-    const finish = () => {
+    const finish = async () => {
+      await Promise.allSettled(creations);
       const line = resultWritten
         ? ''
         : `${JSON.stringify({ type: 'result', ok: false, code: 'cancelled', message: 'The build was cancelled.', fingerprintSettled: true })}\n`;
@@ -268,7 +270,7 @@ function cancelOnSigterm(): () => void {
       for (const [token, record] of detached)
         if (record && inspectProcessIdentity(record) === 'gone' && !processGroupAlive(record.pid))
           detached.delete(token);
-      if (detached.size === 0) finish();
+      if (detached.size === 0) void finish();
       else setTimeout(poll, 25);
     };
     poll();
@@ -1372,7 +1374,21 @@ interface JobSimulator {
  * through teardown.
  */
 async function jobSimulator(label: string, choice?: IosCreationChoice): Promise<JobSimulator> {
-  const { udid } = await createOwnedIosSim(label, {}, choice);
+  const creation = (async () => {
+    const created = await createOwnedIosSim(label, {}, choice);
+    if (cancelled.signal.aborted) {
+      deleteOwnedIosSimNow(created.udid, 1500);
+      throw cancelled.signal.reason;
+    }
+    return created.udid;
+  })();
+  creations.add(creation);
+  let udid: string;
+  try {
+    udid = await creation;
+  } finally {
+    creations.delete(creation);
+  }
   const stop = () => {
     deleteOwnedIosSimNow(udid, 1500);
   };
