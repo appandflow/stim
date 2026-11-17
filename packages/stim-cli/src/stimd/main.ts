@@ -1457,7 +1457,7 @@ async function runStimdInner(
                 restartingNet = true;
                 return net.close().then(() => {
                   restartingNet = false;
-                  return ensureNet(options);
+                  return closing ? { listening: false as const, message: 'stimd is ending' } : ensureNet(options);
                 });
               })()
             : ensureNet(options);
