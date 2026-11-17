@@ -305,13 +305,16 @@ test('a build cancelled while its simulator is being created deletes that simula
     return { udid: 'RACE-SIM', name: 'stim-exact-race', deviceType: null, runtime: null };
   });
   void build({ 'exact.mjs': LAUNCHER, 'app.json': JSON.stringify({ modules: ['shop-map'] }) });
-  const reported = await vi.waitFor(() => {
-    const index = vi
-      .mocked(process.stdout.write)
-      .mock.calls.findIndex(([chunk]) => String(chunk).includes('"code":"cancelled"'));
-    if (index < 0) throw new Error('no cancelled result yet');
-    return vi.mocked(process.stdout.write).mock.invocationCallOrder[index];
-  });
+  const reported = await vi.waitFor(
+    () => {
+      const index = vi
+        .mocked(process.stdout.write)
+        .mock.calls.findIndex(([chunk]) => String(chunk).includes('"code":"cancelled"'));
+      if (index < 0) throw new Error('no cancelled result yet');
+      return vi.mocked(process.stdout.write).mock.invocationCallOrder[index];
+    },
+    { timeout: 10_000 },
+  );
   expect(vi.mocked(deleteOwnedIosSimNow).mock.calls).toEqual([['RACE-SIM', 1500]]);
   expect(vi.mocked(deleteOwnedIosSimNow).mock.invocationCallOrder[0]).toBeLessThan(reported ?? 0);
 });

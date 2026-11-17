@@ -80,8 +80,9 @@ such simulator, the build creates one, `stim-build-<job> (<model> <runtime>)`,
 in the job's own Stim home, where the created-devices ledger records it. It is
 never booted, so it takes no device slot and stays outside the pool and the
 `concurrency.maxDevices` count. Teardown deletes it when the build ends, and
-the job's cancel path deletes it at once, waiting for a creation in progress
-before the cancelled job exits. Each build first deletes, through teardown,
+the job's cancel path deletes it at once; when `simctl create` returns after
+the cancel, the job deletes that simulator before it reports. A `simctl create`
+the cancel interrupts can leave a simulator no ledger records (#5819). Each build first deletes, through teardown,
 any simulator its home's ledger still lists from a stopped or killed earlier
 build, and forgets an entry whose simulator a complete `simctl` listing no
 longer shows, so an interrupted teardown does not keep the area pinned. A

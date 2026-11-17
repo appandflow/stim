@@ -1374,6 +1374,7 @@ interface JobSimulator {
  * through teardown.
  */
 async function jobSimulator(label: string, choice?: IosCreationChoice): Promise<JobSimulator> {
+  cancelled.signal.throwIfAborted();
   const creation = (async () => {
     const created = await createOwnedIosSim(label, {}, choice);
     if (cancelled.signal.aborted) {
