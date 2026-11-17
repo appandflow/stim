@@ -236,6 +236,32 @@ test('a Desktop net.ensure with other listener options restarts the net thread w
   }
 }, 60_000);
 
+/** Asks stimd at `socket` for its net thread with the first frame `first`, and resolves with the `net` answer. */
+function ensureAs(
+  socket: string,
+  first: Record<string, unknown>,
+  params: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    const client = connect(socket);
+    let buffer = '';
+    client.setEncoding('utf8');
+    client.on('error', reject);
+    client.on('data', (chunk: string) => {
+      buffer += chunk;
+      for (let end = buffer.indexOf('\n'); end >= 0; end = buffer.indexOf('\n')) {
+        const reply = JSON.parse(buffer.slice(0, end));
+        buffer = buffer.slice(end + 1);
+        if (reply.op === 'net') {
+          client.destroy();
+          resolve(reply);
+        }
+      }
+    });
+    client.write(`${JSON.stringify(first)}\n${JSON.stringify({ op: 'net.ensure', params })}\n`);
+  });
+}
+
 /** A TCP port nothing listens on at the time of the call. */
 async function freePort(): Promise<number> {
   const server = createServer();
@@ -288,6 +314,19 @@ test("a service process that finds a stimd serving a share-only net thread on an
     expect(JSON.parse(readFileSync(stimdRecordFile(), 'utf8'))).toMatchObject({ pid: stimd.pid, netPort: port });
     expect(service.exitCode).toBeNull();
     await expect(fetch(`http://127.0.0.1:${shared.port}/health`)).rejects.toThrow('fetch failed');
+
+    expect(await desktopEnsure(socket, { port: 0, loopbackOnly: true })).toMatchObject({ listening: true, port });
+
+    const ask = { port, loopbackOnly: false, extraEnv: [], pathPrepend: [], service: true };
+    const { build } = JSON.parse(readFileSync(stimdRecordFile(), 'utf8'));
+    const shareAgain = await desktopEnsure(socket, { share: true });
+    expect(shareAgain.port).toBe(port);
+    const racing = [
+      ensureAs(socket, { kind: 'cli', build }, { port: 0, loopbackOnly: true, service: true }),
+      ensureAs(socket, { kind: 'cli', build }, ask),
+    ];
+    await Promise.all(racing);
+    expect(await ensureAs(socket, { kind: 'cli', build }, ask)).toMatchObject({ listening: true, port });
 
     const serviceExited = once(service, 'exit');
     stimd.kill('SIGTERM');

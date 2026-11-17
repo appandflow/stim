@@ -634,20 +634,21 @@ function homeStimd(home: string): ServiceStatus['stimd'] {
   return { pid, port: typeof record.netPort === 'number' ? record.netPort : null };
 }
 
+function canonical(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
 /** Whether `script` is the engine shim (true), another file in the engine store (false), or outside it (null). */
 function followsEngine(unitScript: string): boolean | null {
   const shim = unitShim();
   if (!shim) return null;
-  const real = (path: string) => {
-    try {
-      return realpathSync(path);
-    } catch {
-      return path;
-    }
-  };
-  const scripts = [unitScript, real(unitScript)];
-  if (scripts.includes(real(shim)) || scripts.includes(shim)) return true;
-  const roots = [dirname(dirname(shim)), real(dirname(dirname(shim)))];
+  const scripts = [unitScript, canonical(unitScript)];
+  if (scripts.includes(canonical(shim)) || scripts.includes(shim)) return true;
+  const roots = [dirname(dirname(shim)), canonical(dirname(dirname(shim)))];
   return scripts.some((script) => roots.some((root) => script.startsWith(`${root}${sep}`))) ? false : null;
 }
 

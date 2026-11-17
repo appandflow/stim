@@ -1423,10 +1423,7 @@ async function runStimdInner(
           const serviceMove =
             forService &&
             running !== null &&
-            (running.shareOnly ||
-              netServes === null ||
-              netServes.port !== options.port ||
-              netServes.loopbackOnly !== options.loopbackOnly);
+            (running.shareOnly || running.asked !== options.port || running.loopbackOnly !== options.loopbackOnly);
           if (serviceMove && pinned()) {
             reply({
               op: 'net',

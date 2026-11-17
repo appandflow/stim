@@ -41,8 +41,8 @@ type NetAnswer = { listening: true; port: number } | { listening: false; message
 export interface NetThread {
   /** Starts the net thread with `options` unless it runs; resolves once it listens or refuses. */
   ensure(options: NetOptions): Promise<NetAnswer>;
-  /** Whether the net thread runs, with which options, and on which port once it listens. */
-  running(): { shareOnly: boolean; loopbackOnly: boolean; port: number | null } | null;
+  /** Whether the net thread runs, with which options, on which port once it listens, and the port it was asked for. */
+  running(): { shareOnly: boolean; loopbackOnly: boolean; port: number | null; asked: number } | null;
   /** Hands `socket`, whose first frames stimd has read, to a listening net thread; false when none listens. */
   connect(socket: Socket, head: Buffer): boolean;
   /** Forwards one agent action's presence to a listening net thread; false when none listens. */
@@ -68,6 +68,7 @@ export function createNetThread(
   let shareOnly = false;
   let loopbackOnly = false;
   let port: number | null = null;
+  let asked = 0;
   let cleanupFailure: Error | undefined;
   let failureNotified = false;
   let nextId = 1;
@@ -121,6 +122,7 @@ export function createNetThread(
       }
       shareOnly = options.shareOnly;
       loopbackOnly = options.loopbackOnly;
+      asked = options.port;
       const thread = new Worker(spawnEntry('net-thread'), { workerData: { net: options } });
       let clean = false;
       worker = thread;
@@ -162,7 +164,7 @@ export function createNetThread(
       });
       return started;
     },
-    running: () => (worker ? { shareOnly, loopbackOnly, port } : null),
+    running: () => (worker ? { shareOnly, loopbackOnly, port, asked } : null),
     connect(socket, head) {
       if (!listening) return false;
       const id = nextId++;
