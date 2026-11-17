@@ -114,9 +114,11 @@ the home, asks `net.ensure` with `service: true`. stimd then restarts a net
 thread that runs share-only or on another port or listener scope with the
 service's options, and Stim Desktop no longer moves it. The move compares with
 the thread that runs, and an ask that waits on the stop gets the service's
-thread. While work pins stimd, or the net thread runs an offloaded job (its
-artifact delivery included), it refuses instead, and the asker exits 1, so the
-unit's restart asks again.
+thread. While work pins stimd, or the net thread runs or admits an offloaded job
+(its artifact delivery included), it refuses instead, and the asker exits 1, so
+the unit's restart asks again; otherwise the net thread stops admitting jobs in
+the same step that finds none, and the move follows. Once stimd closes its net
+thread for good, no ask starts another.
 The asker also exits 1, naming both ports, when the answer is another port.
 stimd records its net thread's port as `netPort` in `run/stimd.json` (null
 while none listens), and `stim service status` names a holder on another port.

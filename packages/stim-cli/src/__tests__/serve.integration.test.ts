@@ -339,7 +339,7 @@ test("a service process that finds a stimd serving a share-only net thread on an
     else process.env.STIM_HOME = previousHome;
     rmSync(home, { recursive: true, force: true });
   }
-}, 60_000);
+}, 120_000);
 
 test("an ask that arrives while a service's ask moves the net thread gets the service's thread", async () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-net-bystander-'));

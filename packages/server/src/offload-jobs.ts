@@ -102,6 +102,7 @@ export class OffloadJobs {
   private readonly failed = new Map<string, { failure: InstallFailure; at: number }>();
   private readonly options: OffloadJobsOptions;
   private closed = false;
+  private admitting = 0;
   private own: string | null = null;
 
   constructor(options: OffloadJobsOptions) {
@@ -165,6 +166,25 @@ export class OffloadJobs {
   }
 
   async start(client: JobClient, socket: NoiseSocket, params: unknown): Promise<Answer> {
+    this.admitting++;
+    try {
+      return await this.admit(client, socket, params);
+    } finally {
+      this.admitting--;
+    }
+  }
+
+  /**
+   * Refuses every later job, as `close` does, when no job runs and none is being admitted, and returns 0; otherwise
+   * changes nothing and returns how many there are.
+   */
+  seal(): number {
+    const busy = this.jobs.size + this.admitting;
+    if (busy === 0) this.closed = true;
+    return busy;
+  }
+
+  private async admit(client: JobClient, socket: NoiseSocket, params: unknown): Promise<Answer> {
     if (this.options.attached)
       return refused(
         'build-busy',

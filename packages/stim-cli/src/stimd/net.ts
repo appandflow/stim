@@ -23,7 +23,7 @@ type ToNet =
   | { type: 'end'; id: number }
   | { type: 'presence'; params: unknown }
   | { type: 'keep' }
-  | { type: 'busy' }
+  | { type: 'seal' }
   | { type: 'stop' };
 
 type FromNet =
@@ -33,7 +33,7 @@ type FromNet =
   | { type: 'data'; id: number; chunk: Uint8Array }
   | { type: 'end'; id: number }
   | { type: 'idle' }
-  | { type: 'busy'; jobs: number }
+  | { type: 'sealed'; jobs: number }
   | { type: 'update'; why: string }
   | { type: 'restart'; why: string };
 
@@ -45,8 +45,11 @@ export interface NetThread {
   ensure(options: NetOptions): Promise<NetAnswer>;
   /** Whether the net thread runs, with which options, on which port once it listens, and the port it was asked for. */
   running(): { shareOnly: boolean; loopbackOnly: boolean; port: number | null; asked: number } | null;
-  /** The offloaded jobs the listening net thread runs now; 0 when none listens. */
-  offloadJobs(): Promise<number>;
+  /**
+   * Asks the listening net thread to refuse new offloaded jobs when none runs or is being admitted, before a restart;
+   * resolves with 0 when it sealed (or none listens), else with how many jobs it has and nothing changed.
+   */
+  sealOffloadJobs(): Promise<number>;
   /** Hands `socket`, whose first frames stimd has read, to a listening net thread; false when none listens. */
   connect(socket: Socket, head: Buffer): boolean;
   /** Forwards one agent action's presence to a listening net thread; false when none listens. */
@@ -56,7 +59,7 @@ export interface NetThread {
    * waits on the stop starts a thread with `options` too, not its own.
    */
   restart(options: NetOptions, proceed: () => boolean): Promise<NetAnswer>;
-  /** Stops the net thread and waits for it. */
+  /** Stops the net thread for good and waits for it; later asks are refused. */
   close(): Promise<void>;
 }
 
@@ -79,6 +82,7 @@ export function createNetThread(
   let port: number | null = null;
   let asked = 0;
   let replacing: NetOptions | null = null;
+  let ending = false;
   const busyAnswers: ((jobs: number) => void)[] = [];
   let cleanupFailure: Error | undefined;
   let failureNotified = false;
@@ -124,6 +128,7 @@ export function createNetThread(
   return {
     ensure(requested: NetOptions): Promise<NetAnswer> {
       if (cleanupFailure) return Promise.resolve({ listening: false, message: cleanupFailure.message });
+      if (ending) return Promise.resolve({ listening: false, message: 'stimd is ending' });
       if (stopping) return stopping.then(() => this.ensure(requested));
       const options = replacing ?? requested;
       replacing = null;
@@ -160,7 +165,7 @@ export function createNetThread(
             if (!shareOnly) return;
             log('info', 'net_idle', 'no web share is left; stopping the net thread');
             stop(thread);
-          } else if (message.type === 'busy') busyAnswers.shift()?.(message.jobs);
+          } else if (message.type === 'sealed') busyAnswers.shift()?.(message.jobs);
           else if (message.type === 'update') onUpdate(message.why);
           else if (message.type === 'restart') onRestart(message.why);
           else if (message.type === 'data') sockets.get(message.id)?.write(message.chunk);
@@ -192,11 +197,11 @@ export function createNetThread(
       });
       return true;
     },
-    offloadJobs() {
+    sealOffloadJobs() {
       if (!listening) return Promise.resolve(0);
       return new Promise((answer) => {
         busyAnswers.push(answer);
-        post({ type: 'busy' });
+        post({ type: 'seal' });
       });
     },
     presence(params) {
@@ -207,7 +212,7 @@ export function createNetThread(
     async restart(options, proceed) {
       replacing = options;
       try {
-        await this.close();
+        await stopThread();
       } catch (error) {
         replacing = null;
         throw error;
@@ -216,20 +221,24 @@ export function createNetThread(
       replacing = null;
       return { listening: false, message: 'stimd is ending' };
     },
-    async close() {
-      const thread = worker;
-      if (!thread) {
-        if (cleanupFailure) throw cleanupFailure;
-        return;
-      }
-      const stopped = stop(thread);
-      const timer = setTimeout(() => {
-        unverified('worker did not exit after shutdown');
-        void thread.terminate();
-      }, STOP_WAIT_MS);
-      await stopped;
-      clearTimeout(timer);
-      if (cleanupFailure) throw cleanupFailure;
+    close() {
+      ending = true;
+      return stopThread();
     },
   };
+  async function stopThread(): Promise<void> {
+    const thread = worker;
+    if (!thread) {
+      if (cleanupFailure) throw cleanupFailure;
+      return;
+    }
+    const stopped = stop(thread);
+    const timer = setTimeout(() => {
+      unverified('worker did not exit after shutdown');
+      void thread.terminate();
+    }, STOP_WAIT_MS);
+    await stopped;
+    clearTimeout(timer);
+    if (cleanupFailure) throw cleanupFailure;
+  }
 }

@@ -239,8 +239,11 @@ export interface RunningServer {
   publishPresence: (params: unknown) => string | null;
   /** Settles once the first read of the Stim home finished: `ready`, or `degraded` while a read does not return. */
   ready: Promise<StartupState>;
-  /** The offloaded jobs that run now, a build or its artifact delivery included. */
-  offloadJobs: () => number;
+  /**
+   * Seals offloaded job admission when no job runs or is being admitted (a build or its artifact delivery included),
+   * and returns 0; otherwise returns how many there are and seals nothing.
+   */
+  sealOffloadJobs: () => number;
   close: () => Promise<void>;
 }
 
@@ -2299,7 +2302,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       localHttp.emit('connection', stream);
     },
     publishPresence: (params) => recordPresence(localAgents, params)?.message ?? null,
-    offloadJobs: () => jobs.live().length,
+    sealOffloadJobs: () => jobs.seal(),
     ready,
     close: async () => {
       for (const stop of stopWatching) stop();

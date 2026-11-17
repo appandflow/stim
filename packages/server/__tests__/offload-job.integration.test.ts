@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict';
 import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -186,3 +187,24 @@ test('a build the worker lacks runs from the packed tarball only under server.ac
   expect(await connection.request('build.offer', { repo: 'app' }, 60_000)).toHaveProperty('result.toolchain');
   connection.close();
 }, 660_000);
+
+test('sealing offload jobs before a net thread move changes nothing while a job runs, and refuses later jobs once none runs', async () => {
+  const { endpoint, credential } = await paired();
+  const worker = server;
+  assert.ok(worker);
+  const connection = await open(endpoint, credential);
+  expect(await connection.startJob('offload-probe', 'app', false)).toBeNull();
+  expect(worker.sealOffloadJobs()).toBe(1);
+  const second = await open(endpoint, credential);
+  expect(await second.startJob('offload-probe', 'app', false)).toBeNull();
+  second.close();
+  connection.close();
+  await vi.waitFor(() => expect(worker.sealOffloadJobs()).toBe(0), { timeout: 10_000 });
+  const late = await open(endpoint, credential);
+  expect(
+    await late.request('job.start', { kind: 'offload-probe', stim: version, build: 'a'.repeat(12), repo: 'app' }),
+  ).toMatchObject({
+    error: { code: 'build-busy', message: 'This machine is stopping.' },
+  });
+  late.close();
+}, 120_000);
