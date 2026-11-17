@@ -492,7 +492,7 @@ test('status names an unresolved offloaded build slot, its dead owner and one co
   );
 });
 
-test('engine claims of an owner that leaves two offloaded slots unresolved stay out of both commands', () => {
+test('engine claims of an owner that leaves two offloaded slots unresolved get their own command, outside each slot command', () => {
   const engineRoot = join(tmpHome, 'engine');
   vi.stubEnv('STIM_ENGINE_ROOT', engineRoot);
   const owner = goneClaimOwner();
@@ -514,10 +514,12 @@ test('engine claims of an owner that leaves two offloaded slots unresolved stay 
 
   expect(holders).toHaveLength(2);
   for (const holder of holders) {
-    for (const engine of engines) {
-      expect(holder.claim?.unresolved).toContain(engine);
-      expect(holder.claim?.removeCommand).not.toContain(engine);
-    }
+    for (const engine of engines) expect(holder.claim?.removeCommand).not.toContain(engine);
+    expect(holder.claim?.unresolved).toContain(
+      `once every build of owner pid ${owner.pid} has stopped, run: ${engines
+        .map((engine) => `rm -f '${engine}' '${engine.replace(/\.claim$/, '.child')}'`)
+        .join(' && ')}`,
+    );
   }
 });
 

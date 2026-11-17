@@ -101,7 +101,8 @@ const sameOwner = (a: ClaimProblem, b: ClaimProblem) =>
  * Each unresolved build slot: its claim, owner and the command that removes it. For a slot an offloaded build holds,
  * the command also removes the job's `fingerprint-work/<job>` directory and the job's repository and engine claims
  * that the same owner left unresolved, in the order of the `cleanup-unresolved` refusal. An engine claim records no
- * job, so while the owner leaves another slot unresolved its engine claims are named but left out of the command.
+ * job, so while the owner leaves another slot unresolved its engine claims get their own command for when every build
+ * of that owner has stopped.
  * @ref LLP 0007#a-null-child-is-never-recovered -- status, gc and maintenance name the claim, its owner and the command
  */
 export function unresolvedBuildSlotClaims(
@@ -131,17 +132,16 @@ export function unresolvedBuildSlotClaims(
       ...repoClaims.map(({ path }) => `repository claim ${path}`),
       ...(shared ? [] : engineClaims.map(({ path }) => `engine claim ${path}`)),
     ];
-    const unattributed = shared && engineClaims.length ? engineClaims.map(({ path }) => path).join(', ') : null;
+    const unattributed =
+      shared && engineClaims.length
+        ? `; it also holds the engine claims ${engineClaims.map(({ path }) => path).join(', ')}, which name no build; once every build of owner pid ${problem.owner?.pid} has stopped, run: ${engineClaims.map(({ path }) => claimFilesRemoveCommand(path)).join(' && ')}`
+        : '';
     return [
       {
         slot: index,
         unresolved: `the offloaded build ${job} of ${repo} for ${client}: ${claimProblemText(problem)}${
           others.length ? `; the same owner holds the ${others.join(' and the ')}` : ''
-        }${
-          unattributed
-            ? `; it also holds the engine claims ${unattributed}, which name no build, so they are left out until only one of its slots is unresolved`
-            : ''
-        }`,
+        }${unattributed}`,
         removeCommand: [
           claimRemoveCommand(join(area, 'fingerprint-work', job)),
           ...[...repoClaims, problem, ...(shared ? [] : engineClaims)].map(({ path }) => claimFilesRemoveCommand(path)),

@@ -1915,7 +1915,8 @@ was claimed and whether that process still runs. For an offloaded build it also
 names the job's repository and engine claims, and gives one command that
 removes them with the job's `fingerprint-work/<job>` directory. An engine claim
 records no build, so while the same job process leaves another slot unresolved
-its engine claims are named but left out of the command. `stim gc` lists
+its engine claims get a separate command, to run once every build of that
+process has stopped. `stim gc` lists
 the same line under "Needs a person:" and maintenance in its blocked reasons.
 Run the command only once nothing from that build runs. `capacity.devices.inUse` is `null`, with `unknown` saying why, when the
 devices could not be listed.
