@@ -1191,12 +1191,6 @@ async function fingerprintOwned(
   } catch (error) {
     return { uncertain: error instanceof Error ? error.message : String(error) };
   }
-  if (opts.replay && !opts.replay.allowChanges) {
-    const expected = opts.replay.sources.map((source) => [source.id, source.kind, source.hash]);
-    const actual = inputs.map((input) => [input.name, input.kind, input.hash]);
-    if (canonicalJson(expected.toSorted(([a], [b]) => byCodeUnit(a ?? '', b ?? ''))) !== canonicalJson(actual))
-      return { uncertain: 'the worker fingerprint inputs differ from the client' };
-  }
   if (session) {
     session.save();
     writeWorkspaceEnv(project, workspaceEnv(opts.env), opts.operation?.home);

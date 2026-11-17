@@ -229,8 +229,18 @@ read is retried after an hour whatever the disk level; one that stopped at the f
 cap or the time budget follows the weekly schedule (hourly while the disk level is above
 normal), since a retry would hit the same limit.
 A directory or entry that does not exist, and a dangling symlink, is no
-launcher. Any other failure to inspect a directory (permission, I/O, a timeout)
-keeps every reduce-only checkout for that operation, with a reason naming the
+launcher. Neither is an entry whose inspection (`lstat`) or resolution fails
+with EACCES when `access(X_OK)`, which follows the link as `execve` does, also
+fails with EACCES, or finds the entry gone: no process of this user can run it.
+That includes every entry of a directory this user can list but not search.
+(#5804: macOS 27's `/usr/sbin/weakpass_edit` points into the root-only
+`/usr/sbin/authserver`, and reading it as a failure kept every reduce-only
+checkout on every pass.) A link this user cannot resolve but can execute, such
+as a root link with mode 0700 (macOS denies `readlink` on it, not the path
+lookup), stays a failure. Not seen, as a result: a launcher that only root or
+another user can run, pointing into one of this user's checkouts. Any other
+failure to inspect a directory (permission, I/O, a timeout) keeps every
+reduce-only checkout for that operation, with a reason naming the
 directory. A wrapper script that only names a path is not followed.
 
 Every source (main) checkout, registered or discovered by any route (siblings,

@@ -593,17 +593,34 @@ function fingerprintMismatch(
   there: string,
   sources: readonly Input[],
   mutated: { steps: readonly string[]; files: readonly string[] },
+  node: string,
 ): string {
-  const differing = job.expectedSources
+  const changes = job.expectedSources
     ? diffInputs(
         job.expectedSources.map(({ id, kind, hash }) => ({ name: id, kind, hash })),
         sources,
-      ).map((change) => change.name)
+      )
     : [];
+  const differing = changes.map((change) => change.name);
+  const client = job.fingerprintRuntime?.node;
+  // @ref LLP 0009#node-versions-of-client-and-worker -- only evaluated sources blame a Node difference
+  const evaluated =
+    changes.length > 0 &&
+    !mutated.files.length &&
+    changes.every((change) => change.kind === 'config' || change.kind === 'autolinking');
+  const nodeNote =
+    !client || client === node
+      ? []
+      : evaluated
+        ? [
+            `the likely cause is Node: the worker evaluates the fingerprint with Node ${node} and this machine with Node ${client}, and only sources Stim evaluates with Node differ; pin the project's Node (.nvmrc) to a version both machines have installed`,
+          ]
+        : [`the worker evaluates the fingerprint with Node ${node}, this machine with Node ${client}`];
   return [
     `the checkout there fingerprints ${there.slice(0, 12)}, here ${job.expectedFingerprint?.slice(0, 12)}`,
     ...(mutated.files.length ? [`${mutated.steps.join(' and ')} there rewrote ${namedList(mutated.files)}`] : []),
     ...(differing.length ? [`differing sources: ${namedList(differing)}`] : []),
+    ...nodeNote,
   ].join('; ');
 }
 
@@ -612,6 +629,7 @@ function fingerprintRefusal(
   iosDir: string,
   built: { hash: string; sources: readonly Input[] },
   mutated: () => { steps: readonly string[]; files: readonly string[] },
+  node: string,
 ): string | null {
   if (built.hash === job.expectedFingerprint) return null;
   if (job.podsOnWorker && job.expectedSources && mutated().steps.includes('pod install')) {
@@ -622,7 +640,7 @@ function fingerprintRefusal(
     const lock = iosDir === '.' ? 'Podfile.lock' : `${iosDir}/Podfile.lock`;
     if (changes.length > 0 && changes.every((change) => change.kind === 'file' && change.name === lock)) return null;
   }
-  return fingerprintMismatch(job, built.hash, built.sources, mutated());
+  return fingerprintMismatch(job, built.hash, built.sources, mutated(), node);
 }
 
 /**
@@ -968,14 +986,16 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
     }
 
     const runtime = fingerprintRuntime(realRoot, process.env);
-    if (isUncertain(runtime) || !isDeepStrictEqual(runtime, job.fingerprintRuntime))
+    if (isUncertain(runtime))
+      return failed('fingerprint-runtime', `The worker cannot identify its fingerprint runtime: ${runtime.uncertain}`);
+    // @ref LLP 0009#node-versions-of-client-and-worker -- a Node difference alone does not refuse
+    if (
+      runtime.evaluator !== job.fingerprintRuntime?.evaluator ||
+      !isDeepStrictEqual(runtime.packages, job.fingerprintRuntime.packages)
+    )
       return failed(
         'fingerprint-runtime',
-        isUncertain(runtime)
-          ? `The worker cannot identify its fingerprint runtime: ${runtime.uncertain}`
-          : runtime.node !== job.fingerprintRuntime?.node
-            ? `The worker evaluates the fingerprint with Node ${runtime.node} and the client with Node ${job.fingerprintRuntime?.node}; offloading needs the same Node major.minor on both.`
-            : 'The worker fingerprint evaluator or its project packages differ from the client.',
+        'The worker fingerprint evaluator or its project packages differ from the client.',
       );
 
     const platform = job.platform;
@@ -1002,7 +1022,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
     if (initial.hash !== job.expectedFingerprint)
       return failed(
         'fingerprint-mismatch',
-        fingerprintMismatch(job, initial.hash, initial.inputs, { steps: [], files: [] }),
+        fingerprintMismatch(job, initial.hash, initial.inputs, { steps: [], files: [] }, runtime.node),
       );
     const mutations = await prepareReplayNative(job, platform, realRoot, realSrc, initial, iosProject, log, time);
     if (!Array.isArray(mutations)) return failed(mutations.code, mutations.message);
@@ -1016,10 +1036,16 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
       sources = after.inputs;
       if (mutations.includes('expo prebuild')) recordPrebuild(realRoot, platform, after.hash);
     }
-    const refused = fingerprintRefusal(job, iosProject.relative, { hash: fingerprint, sources }, () => ({
-      steps: mutations,
-      files: mutations.length ? rewrittenFiles(src, job.manifest, mirrored.record) : [],
-    }));
+    const refused = fingerprintRefusal(
+      job,
+      iosProject.relative,
+      { hash: fingerprint, sources },
+      () => ({
+        steps: mutations,
+        files: mutations.length ? rewrittenFiles(src, job.manifest, mirrored.record) : [],
+      }),
+      runtime.node,
+    );
     if (refused) return failed('fingerprint-mismatch', refused);
 
     const tools = job.cacheArtifact ? await reactNativeArtifactToolchain(platform, realRoot, iosProject.dir) : null;
