@@ -123,11 +123,12 @@ export function settingsOp(io: Output = CONSOLE, env: NodeJS.ProcessEnv = proces
     },
     run: ({ args: [key], options: opts, parent }) =>
       run(wantsJson(opts.json, parent), io, async () => {
-        if (REMOVED_SETTINGS.has(key) && !settingDefinition(key)) {
+        if (!settingDefinition(key)) {
           const removal = await unsetReplacedSetting(
             { key, scope: opts.scope },
             { cwd: process.cwd(), env, note: io.note },
           );
+          if (removal.removed.length === 0 && !REMOVED_SETTINGS.has(key)) requireSetting(key);
           reportRemoval(io, wantsJson(opts.json, parent), removal, opts.scope);
           return;
         }

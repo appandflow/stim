@@ -531,6 +531,12 @@ export function iosLanHostSettingError(settings: unknown): string | null {
   return settingError(settings, 'ios.lanHost');
 }
 
+const MACHINE_KNOWN_SETTINGS = new Set(
+  SETTINGS.flatMap((setting) => setting.key.split('.').map((_, index, parts) => parts.slice(0, index + 1).join('.'))),
+);
+
+const MACHINE_RECORD_KEYS: ReadonlySet<string> = new Set(['version', 'homeId', 'projects', 'repos']);
+
 export function unknownSettingKeys(settings: unknown, prefix = ''): string[] {
   if (!isPlainObject(settings)) return [];
   const unknown: string[] = [];
@@ -542,7 +548,10 @@ export function unknownSettingKeys(settings: unknown, prefix = ''): string[] {
       (!isPlainObject(value) || ![...KNOWN_SETTINGS].some((k) => k.startsWith(`${path}.`)))
     )
       continue;
-    if (isPlainObject(value) && [...KNOWN_SETTINGS, ...REMOVED_SETTINGS.keys()].some((k) => k.startsWith(`${path}.`))) {
+    if (
+      isPlainObject(value) &&
+      [...MACHINE_KNOWN_SETTINGS, ...REMOVED_SETTINGS.keys()].some((k) => k.startsWith(`${path}.`))
+    ) {
       unknown.push(...unknownSettingKeys(value, path));
       continue;
     }
@@ -581,8 +590,33 @@ export function removedMachineSettings(machine: unknown): SettingsObject {
   return settings;
 }
 
+function unknownMachineKeys(own: SettingsObject, prefix = ''): string[] {
+  const unknown: string[] = [];
+  for (const [key, value] of Object.entries(own)) {
+    const path = prefix ? `${prefix}.${key}` : key;
+    if (path === '$schema') continue;
+    if (isPlainObject(value) && [...MACHINE_KNOWN_SETTINGS].some((k) => k.startsWith(`${path}.`))) {
+      unknown.push(...unknownMachineKeys(value, path));
+    } else if (!MACHINE_KNOWN_SETTINGS.has(path)) unknown.push(path);
+  }
+  return unknown;
+}
+
+export function unknownMachineSettings(machine: unknown): SettingsObject {
+  const settings: SettingsObject = {};
+  if (!isPlainObject(machine)) return settings;
+  const own = Object.fromEntries(Object.entries(machine).filter(([key]) => !MACHINE_RECORD_KEYS.has(key)));
+  for (const key of unknownMachineKeys(own)) {
+    setSettingValueAt(settings, key, settingValueAt(own, key));
+  }
+  return settings;
+}
+
 function machineLayerSettings(machine: unknown): SettingsObject | null {
-  const settings: SettingsObject = removedMachineSettings(machine);
+  const settings: SettingsObject = mergeSettingsLayers([
+    unknownMachineSettings(machine),
+    removedMachineSettings(machine),
+  ]);
   const optimizations = settingValueAt(machine, 'optimizations');
   if (optimizations !== undefined) settings.optimizations = optimizations;
   for (const setting of MACHINE_READABLE_SETTINGS) {

@@ -46,6 +46,42 @@ test('a removed name in the config or the environment is an inert key, with no r
   expect(check({}, [], { STIM_REMOTE_BUILD_MODE: 'force' })).toEqual([]);
 });
 
+test('a removed name in the machine config file is an inert key', () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-doctor-machine-'));
+  const before = process.env.STIM_HOME;
+  process.env.STIM_HOME = home;
+  try {
+    const file = join(home, 'config.json');
+    writeFileSync(
+      file,
+      JSON.stringify({
+        version: 2,
+        projects: {},
+        repos: {},
+        remote: { buildMode: 'force' },
+        concurrency: { maxBuilds: 2 },
+      }),
+    );
+    const machine = readMachineSettings({});
+    expect(
+      checkMachineSettings({
+        settings: machine.settings,
+        layers: machine.layers,
+        projectRoot: '/app',
+        optimizations: resolveOptimizations(machine.settings, {}),
+        exists: () => false,
+        env: {},
+      }),
+    ).toEqual([
+      expect.objectContaining({ title: 'A key in the config is inert', fix: `Remove remote.buildMode from ${file}.` }),
+    ]);
+  } finally {
+    if (before === undefined) delete process.env.STIM_HOME;
+    else process.env.STIM_HOME = before;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test('STIM_MAINTENANCE in the environment is reported with daemon.mode and STIM_DAEMON', () => {
   expect(check({}, [], { STIM_MAINTENANCE: 'off' })).toEqual([
     expect.objectContaining({

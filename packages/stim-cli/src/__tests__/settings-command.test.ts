@@ -126,6 +126,54 @@ test('a name that was removed from the settings is refused and warned about like
   ]);
 });
 
+test('removed names at machine scope are reported with their file and unset removes them', async () => {
+  const machine = join(home, 'config.json');
+  writeFileSync(
+    machine,
+    JSON.stringify({
+      version: 2,
+      projects: {},
+      repos: {},
+      remote: { buildMode: 'force', machines: [] },
+      daemon: { enabled: true, mode: 'on' },
+      caches: { injectMetroStore: true },
+      budget: { maxLiveWorkspaces: 3 },
+      devices: { reclaimIdleMinutes: 5 },
+      concurrency: { maxBuilds: 2 },
+    }),
+  );
+
+  const { out, note } = await settings(['--json']);
+  expect(JSON.parse(out[0] ?? '').unknown).toEqual(
+    expect.arrayContaining([
+      { key: 'remote.buildMode', scope: 'machine', file: machine, value: 'force' },
+      { key: 'daemon.enabled', scope: 'machine', file: machine, value: true },
+      { key: 'caches.injectMetroStore', scope: 'machine', file: machine, value: true },
+      { key: 'budget.maxLiveWorkspaces', scope: 'machine', file: machine, value: 3 },
+      { key: 'devices.reclaimIdleMinutes', scope: 'machine', file: machine, value: 5 },
+    ]),
+  );
+  expect(JSON.parse(out[0] ?? '').unknown).toHaveLength(5);
+  expect((await settings([])).note).toEqual(
+    expect.arrayContaining([expect.stringContaining(`remote.buildMode in ${machine} is not read by Stim.`)]),
+  );
+  expect(note).toEqual([]);
+
+  const unset = await settings(['unset', 'remote.buildMode', '--json']);
+  expect(unset.exitCode).toBe(0);
+  expect(JSON.parse(unset.out[0] ?? '')).toEqual({
+    key: 'remote.buildMode',
+    removed: [{ scope: 'machine', file: machine }],
+  });
+  const config = JSON.parse(readFileSync(machine, 'utf-8'));
+  expect(config.remote).toEqual({ machines: [] });
+  expect(config.daemon).toEqual({ enabled: true, mode: 'on' });
+
+  const typo = await settings(['unset', 'remote.nothing']);
+  expect(typo.exitCode).toBe(1);
+  expect(typo.note.join('\n')).toContain('"remote.nothing" is not a Stim setting.');
+});
+
 test('unset of maintenance.idleStopHours removes the still-active machine setting', async () => {
   saveConfig({ version: 2, projects: {}, repos: {}, maintenance: { idleStopHours: 0 } });
 
