@@ -239,6 +239,8 @@ export interface RunningServer {
   publishPresence: (params: unknown) => string | null;
   /** Settles once the first read of the Stim home finished: `ready`, or `degraded` while a read does not return. */
   ready: Promise<StartupState>;
+  /** The offloaded jobs that run now, a build or its artifact delivery included. */
+  offloadJobs: () => number;
   close: () => Promise<void>;
 }
 
@@ -2297,6 +2299,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       localHttp.emit('connection', stream);
     },
     publishPresence: (params) => recordPresence(localAgents, params)?.message ?? null,
+    offloadJobs: () => jobs.live().length,
     ready,
     close: async () => {
       for (const stop of stopWatching) stop();

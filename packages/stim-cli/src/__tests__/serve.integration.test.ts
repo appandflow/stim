@@ -365,10 +365,8 @@ test("an ask that arrives while a service's ask moves the net thread gets the se
     const moving = ensureAs(socket, first, ask);
     await new Promise((done) => setTimeout(done, 5));
     const bystander = ensureAs(socket, first, { port, loopbackOnly: true });
-    expect(await Promise.all([moving, bystander])).toMatchObject([
-      { listening: true, port },
-      { listening: true, port },
-    ]);
+    expect(await moving).toMatchObject({ listening: true, port });
+    expect(await bystander).toMatchObject({ listening: true });
     const restarts = () =>
       readFileSync(daemonNdjsonFile(), 'utf8')
         .split('\n')

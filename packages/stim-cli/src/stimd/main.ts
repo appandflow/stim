@@ -1424,14 +1424,6 @@ async function runStimdInner(
             forService &&
             running !== null &&
             (running.shareOnly || running.asked !== options.port || running.loopbackOnly !== options.loopbackOnly);
-          if (serviceMove && pinned()) {
-            reply({
-              op: 'net',
-              listening: false,
-              message: `the net thread serves port ${running.port ?? 'unknown'}; the service's next ask moves it to port ${options.port} once the work stimd holds ends`,
-            });
-            continue;
-          }
           const restart =
             serviceMove ||
             (kind === 'desktop' &&
@@ -1441,28 +1433,38 @@ async function runStimdInner(
               (running.loopbackOnly !== options.loopbackOnly ||
                 (port !== undefined && port !== 0 && running.port !== null && port !== running.port)));
           if (forService) serviceNet = true;
-          if (!running || restart) netServes = options;
-          const answer = restart
-            ? (() => {
-                log(
-                  'info',
-                  'net_restart',
-                  serviceMove
-                    ? `the service asked for port ${options.port}; restarting the net thread on it`
-                    : 'Stim Desktop asked for other net thread options; restarting it',
-                );
-                restartingNet = true;
-                return net
-                  .restart(options, () => !closing)
-                  .finally(() => {
-                    restartingNet = false;
-                  })
-                  .then((state) => {
-                    if (state.listening) recordNet(state.port);
-                    return state;
-                  });
-              })()
-            : ensureNet(options);
+          if (!running) netServes = options;
+          const restartNet = () => {
+            netServes = options;
+            log(
+              'info',
+              'net_restart',
+              serviceMove
+                ? `the service asked for port ${options.port}; restarting the net thread on it`
+                : 'Stim Desktop asked for other net thread options; restarting it',
+            );
+            restartingNet = true;
+            return net
+              .restart(options, () => !closing)
+              .finally(() => {
+                restartingNet = false;
+              })
+              .then((state) => {
+                if (state.listening) recordNet(state.port);
+                return state;
+              });
+          };
+          const held = {
+            listening: false as const,
+            message: `the net thread serves port ${running?.port ?? 'unknown'}; the service's next ask moves it to port ${options.port} once the work it and stimd hold ends`,
+          };
+          const answer = serviceMove
+            ? pinned()
+              ? Promise.resolve(held)
+              : net.offloadJobs().then((jobs) => (jobs > 0 || pinned() || closing ? held : restartNet()))
+            : restart
+              ? restartNet()
+              : ensureNet(options);
           void answer.then(
             (state) => {
               lastContact = Date.now();

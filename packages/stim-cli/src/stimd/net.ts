@@ -23,6 +23,7 @@ type ToNet =
   | { type: 'end'; id: number }
   | { type: 'presence'; params: unknown }
   | { type: 'keep' }
+  | { type: 'busy' }
   | { type: 'stop' };
 
 type FromNet =
@@ -32,6 +33,7 @@ type FromNet =
   | { type: 'data'; id: number; chunk: Uint8Array }
   | { type: 'end'; id: number }
   | { type: 'idle' }
+  | { type: 'busy'; jobs: number }
   | { type: 'update'; why: string }
   | { type: 'restart'; why: string };
 
@@ -43,6 +45,8 @@ export interface NetThread {
   ensure(options: NetOptions): Promise<NetAnswer>;
   /** Whether the net thread runs, with which options, on which port once it listens, and the port it was asked for. */
   running(): { shareOnly: boolean; loopbackOnly: boolean; port: number | null; asked: number } | null;
+  /** The offloaded jobs the listening net thread runs now; 0 when none listens. */
+  offloadJobs(): Promise<number>;
   /** Hands `socket`, whose first frames stimd has read, to a listening net thread; false when none listens. */
   connect(socket: Socket, head: Buffer): boolean;
   /** Forwards one agent action's presence to a listening net thread; false when none listens. */
@@ -75,6 +79,7 @@ export function createNetThread(
   let port: number | null = null;
   let asked = 0;
   let replacing: NetOptions | null = null;
+  const busyAnswers: ((jobs: number) => void)[] = [];
   let cleanupFailure: Error | undefined;
   let failureNotified = false;
   let nextId = 1;
@@ -109,6 +114,7 @@ export function createNetThread(
     port = null;
     for (const socket of sockets.values()) socket.destroy();
     sockets.clear();
+    for (const answer of busyAnswers.splice(0)) answer(0);
     if (!cleanupFailure) onExit();
     else if (!failureNotified) {
       failureNotified = true;
@@ -154,7 +160,8 @@ export function createNetThread(
             if (!shareOnly) return;
             log('info', 'net_idle', 'no web share is left; stopping the net thread');
             stop(thread);
-          } else if (message.type === 'update') onUpdate(message.why);
+          } else if (message.type === 'busy') busyAnswers.shift()?.(message.jobs);
+          else if (message.type === 'update') onUpdate(message.why);
           else if (message.type === 'restart') onRestart(message.why);
           else if (message.type === 'data') sockets.get(message.id)?.write(message.chunk);
           else sockets.get(message.id)?.end();
@@ -184,6 +191,13 @@ export function createNetThread(
         if (sockets.delete(id)) post({ type: 'end', id });
       });
       return true;
+    },
+    offloadJobs() {
+      if (!listening) return Promise.resolve(0);
+      return new Promise((answer) => {
+        busyAnswers.push(answer);
+        post({ type: 'busy' });
+      });
     },
     presence(params) {
       if (!listening) return false;

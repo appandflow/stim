@@ -112,8 +112,11 @@ a saved share, runs a share-only net thread on a random loopback port. So the
 unit's process (`--service` without `--carried`), when it finds a stimd holding
 the home, asks `net.ensure` with `service: true`. stimd then restarts a net
 thread that runs share-only or on another port or listener scope with the
-service's options, and Stim Desktop no longer moves it. While work pins stimd
-it refuses instead, and the asker exits 1, so the unit's restart asks again.
+service's options, and Stim Desktop no longer moves it. The move compares with
+the thread that runs, and an ask that waits on the stop gets the service's
+thread. While work pins stimd, or the net thread runs an offloaded job (its
+artifact delivery included), it refuses instead, and the asker exits 1, so the
+unit's restart asks again.
 The asker also exits 1, naming both ports, when the answer is another port.
 stimd records its net thread's port as `netPort` in `run/stimd.json` (null
 while none listens), and `stim service status` names a holder on another port.
