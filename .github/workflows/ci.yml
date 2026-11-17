@@ -100,6 +100,10 @@ jobs:
     permissions:
       contents: read
       actions: read
+    env:
+      # V8 on the Node 24 line can crash while freeing dead WebAssembly code (nodejs/node#66366);
+      # remove with appandflow/stim#5821 once nodejs/node#66376 ships.
+      VITEST_NODE_FLAGS: ${{ matrix.node == 24 && '--execArgv=--no-wasm-code-gc' || '' }}
     strategy:
       # Repository builds require Node 22.18 or later because tsdown uses that
       # floor. Prove Node 22 and the current LTS line 24.
@@ -182,9 +186,9 @@ jobs:
             unit_files+=("$unit_file")
           done < <(node scripts/ci-unit-test-files.mjs)
           if ((${#unit_files[@]})); then
-            pnpm run test "${unit_files[@]}" --reporter=default --reporter=json --outputFile.json=test-results/unit-${{ matrix.node }}.json
+            pnpm run test "${unit_files[@]}" ${VITEST_NODE_FLAGS:+"$VITEST_NODE_FLAGS"} --reporter=default --reporter=json --outputFile.json=test-results/unit-${{ matrix.node }}.json
           else
-            pnpm run test:unit --reporter=default --reporter=json --outputFile.json=test-results/unit-${{ matrix.node }}.json
+            pnpm run test:unit ${VITEST_NODE_FLAGS:+"$VITEST_NODE_FLAGS"} --reporter=default --reporter=json --outputFile.json=test-results/unit-${{ matrix.node }}.json
           fi
 
       - name: Benchmark harness tests (vitest)
@@ -239,7 +243,7 @@ jobs:
             ulimit -c unlimited
             exec > >(tee crash-report/integration.log) 2>&1
           fi
-          pnpm run test:integration --reporter=default --reporter=json --outputFile.json=test-results/integration-${{ matrix.node }}.json
+          pnpm run test:integration ${VITEST_NODE_FLAGS:+"$VITEST_NODE_FLAGS"} --reporter=default --reporter=json --outputFile.json=test-results/integration-${{ matrix.node }}.json
 
       - name: Report a native crash
         id: crash
