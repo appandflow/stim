@@ -93,13 +93,18 @@ describe('a stimd that holds the claim and did not answer', () => {
     );
   });
 
-  test('the doctor finding has a code, names the pid and the tick age, and never says to kill it', () => {
+  test('the doctor finding has a code and names the pid and the tick age', () => {
     const [finding, ...rest] = unansweredFindings(silent, NOW);
     expect(rest).toEqual([]);
     expect(finding).toMatchObject({ code: 'stimd-not-answering', level: 'cost' });
     expect(finding?.detail).toContain('pid 4242 did not answer within 3 s');
     expect(finding?.detail).toContain('last tick was 5m ago');
-    expect(`${finding?.detail} ${finding?.fix}`).not.toMatch(/kill|rm |remove/i);
+  });
+
+  test('the fix names kill with the claim pid only when the last tick is also late', () => {
+    const recent = status({ unanswered: { pid: 4242, waitedMs: 3000 }, lastTickAt: '2026-11-02T11:59:00.000Z' });
+    expect(unansweredFindings(recent, NOW)[0]?.fix).not.toMatch(/kill/);
+    expect(unansweredFindings(silent, NOW)[0]?.fix).toContain('`kill 4242`');
   });
 
   test('a stimd that answered gets no finding and the usual line', () => {

@@ -41,7 +41,7 @@ import { parseCmakeCacheLauncher } from '../diagnostics/doctor-cxx.ts';
 import { runCli } from '../cli/define-op.ts';
 import { holdDaemonClaim, serveStimdSocket } from './_stimd-socket.ts';
 import { doctorOp, doctorSuccessLines, parseDoctorPlatform, shadowedStimFinding } from '../commands/doctor.ts';
-import { statsFile, type StatsPlacement } from '@stim-cli/core/state';
+import { daemonDir, daemonSnapshotFile, statsFile, type StatsPlacement } from '@stim-cli/core/state';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import type { EasAuthResult } from '../engine/remote-cache.ts';
 import { workspaceDerivedData } from '../workspace/paths.ts';
@@ -1980,6 +1980,51 @@ test('doctor records its run per platform in the project record', async () => {
   }
 });
 
+function writeDaemonTick(minutesAgo: number): void {
+  const start = Date.now();
+  vi.useFakeTimers({ toFake: ['Date'], now: start + minutesAgo * 60_000 });
+  onTestFinished(() => {
+    vi.useRealTimers();
+  });
+  mkdirSync(daemonDir(), { recursive: true });
+  writeFileSync(
+    daemonSnapshotFile(),
+    JSON.stringify({
+      version: 1,
+      pid: process.pid,
+      mode: 'on',
+      startedAt: new Date(start).toISOString(),
+      tickAt: new Date(start).toISOString(),
+      intervalMs: 60_000,
+    }),
+  );
+}
+
+async function doctorDaemonFindings(): Promise<{ title: string; code?: string; fix: string }[]> {
+  const project = mkdtempSync(join(tmpdir(), 'stim-doctor-daemon-'));
+  const cwd = process.cwd();
+  const originalLog = console.log;
+  writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'monorepo-root' }));
+  const logs: string[] = [];
+  console.log = (line) => logs.push(String(line));
+  process.chdir(project);
+  try {
+    await runCli(
+      doctorOp(() => testStimVersions),
+      ['--json'],
+      { version: '1.2.3' },
+    );
+    return JSON.parse(logs.join('\n')).findings.filter(
+      (finding: { title: string; code?: string }) =>
+        finding.code === 'stimd-not-answering' || /^The stim-daemon (is late|has stopped)/.test(finding.title),
+    );
+  } finally {
+    process.chdir(cwd);
+    console.log = originalLog;
+    rmSync(project, { recursive: true, force: true });
+  }
+}
+
 test('doctor reports a stimd that holds the claim and did not answer, in --json and as a finding', async () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doctor-silent-stimd-'));
   const cwd = process.cwd();
@@ -2190,4 +2235,33 @@ test('doctor lists the checkouts the scan found that Stim does not fully manage,
   expect(text).toContain('/work/dev');
   expect(text).toContain(command);
   expect(text).toContain('2026-10-01');
+});
+
+describe('doctor on a stimd whose last tick is late', () => {
+  test('that answers reports late ticks and never names kill', async () => {
+    holdDaemonClaim();
+    await serveStimdSocket('{"op":"hello"}');
+    writeDaemonTick(10);
+    const found = await doctorDaemonFindings();
+    expect(found.map((finding) => finding.title)).toEqual(['The stim-daemon is late with its ticks']);
+    expect(found[0]?.fix).not.toMatch(/kill/);
+  });
+
+  test('that does not answer reports only the not-answering finding, with kill and the claim pid', async () => {
+    holdDaemonClaim();
+    await serveStimdSocket(null);
+    writeDaemonTick(10);
+    const found = await doctorDaemonFindings();
+    expect(found.map((finding) => finding.code)).toEqual(['stimd-not-answering']);
+    expect(found[0]?.fix).toContain(`kill ${process.pid}`);
+  }, 60_000);
+
+  test('that does not answer but ticked a minute ago names no kill', async () => {
+    holdDaemonClaim();
+    await serveStimdSocket(null);
+    writeDaemonTick(1);
+    const found = await doctorDaemonFindings();
+    expect(found.map((finding) => finding.code)).toEqual(['stimd-not-answering']);
+    expect(found[0]?.fix).not.toMatch(/kill/);
+  }, 60_000);
 });
