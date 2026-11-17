@@ -114,7 +114,10 @@ the home, asks `net.ensure` with `service: true`. stimd then restarts a net
 thread that runs share-only or on another port or listener scope with the
 service's options, and Stim Desktop no longer moves it. The move compares with
 the thread that runs, and an ask that waits on the stop gets the service's
-thread. While work pins stimd, or the net thread runs or admits an offloaded job
+thread. The ask carries each of the unit's `--env` names with its value from the
+unit's environment, which the stimd that holds the home may not have. While
+work pins stimd, or a workspace action runs in the net thread (a Desktop or
+phone build, start or stop), or the net thread runs or admits an offloaded job
 (its artifact delivery and a client engine install included) or holds a hosted session the next server
 cannot resume (a macOS session, or one installing), or runs a runtime
 install or another device-host probe, it refuses instead, and the
