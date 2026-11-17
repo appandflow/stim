@@ -102,7 +102,7 @@ Look at every commit in the list and decide:
 
 - **Patch** (`0.2.0 -> 0.2.1`) — bug fixes, doc-only changes, internal refactors with no user-visible effect.
 - **Minor** (`0.2.0 -> 0.3.0`) — new commands, new flags, additions to existing commands, and breaking changes that follow [Compatibility and breaking changes](#compatibility-and-breaking-changes).
-- **Major** (`1.x -> 2.0`) — only a change to a frozen surface (rule 6 of that section).
+- **Major** (`1.x -> 2.0`) — only a change to a frozen surface (rule 6 of that section), except 2.0.0, which the maintainer chose as a major for the one-engine migration: Maintainer decision: "I really want to get a stable stim 2.0 out", 2026-11-17 ([decision comment](https://github.com/appandflow/stim/issues/5591#issuecomment-6959798844)).
 
 If anything in the list is breaking, call it out under "Removed (breaking)" /
 "Migration notes" in the draft release notes.
