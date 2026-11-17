@@ -5,7 +5,11 @@ import { launcherReader, launcherReason } from '../workspace/launchers.ts';
 const missing = (code: string) => Object.assign(new Error(code), { code });
 
 /** A fake of the directories on PATH: `listing` maps a directory to its entries, an Error, or nothing for absent. */
-const io = (listing: Record<string, string[] | Error>, links: Record<string, string | Error> = {}) => ({
+const io = (
+  listing: Record<string, string[] | Error>,
+  links: Record<string, string | Error> = {},
+  unrunnable: readonly string[] = [],
+) => ({
   readdir: async (path: string) => {
     const entry = listing[path];
     if (entry instanceof Error) throw entry;
@@ -19,6 +23,7 @@ const io = (listing: Record<string, string[] | Error>, links: Record<string, str
     if (!target) throw missing('ENOENT');
     return target;
   },
+  executable: async (path: string) => !unrunnable.includes(path),
 });
 
 const scan = (directories: string[], fake: ReturnType<typeof io>) =>
@@ -52,16 +57,19 @@ describe('the PATH launcher scan', () => {
     }
   });
 
-  it('reads the rest of a directory past a symlink this user may not search, which no process of theirs can run', async () => {
-    const result = await scan(
+  it('passes over a symlink it may not resolve only when this user may not execute it either', async () => {
+    const links = {
+      '/usr/sbin/weakpass_edit': missing('EACCES'),
+      '/usr/sbin/tool': '/work/app/.build/release/tool',
+    };
+    const unrunnable = await scan(
       ['/usr/sbin'],
-      io(
-        { '/usr/sbin': ['weakpass_edit', 'tool'] },
-        { '/usr/sbin/weakpass_edit': missing('EACCES'), '/usr/sbin/tool': '/work/app/.build/release/tool' },
-      ),
+      io({ '/usr/sbin': ['weakpass_edit', 'tool'] }, links, ['/usr/sbin/weakpass_edit']),
     );
-    expect(result).toEqual({ targets: ['/work/app/.build/release/tool'], incomplete: [] });
-    expect(launcherReason('/work/other', result)).toBeNull();
+    expect(unrunnable).toEqual({ targets: ['/work/app/.build/release/tool'], incomplete: [] });
+    expect(launcherReason('/work/other', unrunnable)).toBeNull();
+    const runnable = await scan(['/usr/sbin'], io({ '/usr/sbin': ['weakpass_edit', 'tool'] }, links));
+    expect(runnable.incomplete).toEqual(['/usr/sbin']);
   });
 
   it('ends a reading at once as incomplete when a read does not answer, and starts no read while it is pending', async () => {
