@@ -27,6 +27,7 @@ import { fingerprintNativeInputs } from '../integrations/native-inputs.ts';
 import type { BuildTarget } from '../engine/toolchain.ts';
 import { requestNativeRunCancel, withNativeBuildRun } from '../engine/native-run.ts';
 import { getExecutor } from '../exec.ts';
+import { ClaimRefusedError } from '../ownership-claim.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 
 const ports = new Map<string, number>();
@@ -414,6 +415,25 @@ describe('offloadBuild', () => {
       );
     },
   );
+
+  it('keeps the removal command of a start refusal that names a claim', async () => {
+    const claimPath = join(repo, 'home', 'engine', 'claims', 'b'.repeat(40), 'shared', `${'c'.repeat(36)}.claim`);
+    const refused = new ClaimRefusedError({
+      claimPath,
+      root: claimPath,
+      reason: 'it spawned the process that holds it and was killed before recording which one',
+      label: 'offload engine',
+    });
+    machines.push(
+      await fakeMachine('mini', offer(0.1), {
+        error: { code: 'build-refused', message: `Cannot retain the selected engine: ${String(refused)}` },
+      }),
+    );
+    expect(await run(['mini'], () => {})).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining(refused.removeCommand),
+    });
+  });
 
   it('moves past a machine whose connection dies during the sync', async () => {
     const busy = await fakeMachine('busy', offer(0.1), { error: { code: 'build-busy', message: 'busy' } });

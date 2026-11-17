@@ -101,6 +101,7 @@ const RESUME_MAX_DELAY_MS = 15_000;
 /** What `build.attach` answers for a job its stim-server does not hold, which is the case after the server restarted. */
 const BUILD_JOB_UNKNOWN = /No such build job/;
 const MAX_WORKER_RESTARTS = 2;
+const MAX_REASON_CHARS = 2000;
 const PAGE_BYTES = 48 * 1024;
 const CHUNK_BYTES = 60 * 1024;
 const MAX_BUFFERED = 8 * 1024 * 1024;
@@ -1729,7 +1730,7 @@ export async function offloadBuild(
   const started = Date.now();
   const fail = (reason: string): Extract<OffloadOutcome, { ok: false }> => {
     closeOffload(choice);
-    return { ok: false, machine: choice.machine, reason: reason.split('\n')[0]!.slice(0, 300) };
+    return { ok: false, machine: choice.machine, reason: reason.replace(/\s*\n\s*/g, ' ').slice(0, MAX_REASON_CHARS) };
   };
   const signal = runCancellationSignal(ambientContext());
   const checkCancelled = () => throwIfCancelled(signal, 'offloaded build');
