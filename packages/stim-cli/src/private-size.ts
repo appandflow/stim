@@ -11,7 +11,13 @@ const NICENESS = '19';
 /** `stim-privsize` exits 2 when the volume does not report private sizes (not APFS). */
 const UNSUPPORTED_STATUS = 2;
 /** Files a package manager or `pod install` rewrites on every install, so a reinstall changes the signature. */
-const INSTALL_MARKERS = ['.modules.yaml', '.package-lock.json', '.yarn-state.yml', '.yarn-integrity', 'Manifest.lock'];
+export const INSTALL_MARKERS: readonly string[] = [
+  '.modules.yaml',
+  '.package-lock.json',
+  '.yarn-state.yml',
+  '.yarn-integrity',
+  'Manifest.lock',
+];
 
 export interface TreeSize {
   bytes: number;
@@ -112,5 +118,13 @@ function stamp(file: string): string | null {
 export function treeSignature(path: string): string | null {
   const root = stamp(path);
   if (root === null) return null;
-  return [root, ...INSTALL_MARKERS.map((name) => stamp(join(path, name)) ?? '-')].join(',');
+  return installSignature(
+    root,
+    INSTALL_MARKERS.map((name) => stamp(join(path, name))),
+  );
+}
+
+/** The signature `treeSignature` returns, from the stamps (`inode:mtimeMs`) of the root and of each `INSTALL_MARKERS` entry, null when absent. */
+export function installSignature(root: string, markers: readonly (string | null)[]): string {
+  return [root, ...markers.map((marker) => marker ?? '-')].join(',');
 }

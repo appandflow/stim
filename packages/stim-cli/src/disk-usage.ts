@@ -42,11 +42,11 @@ function currentSignature(path: string): string {
  * and act on: a dependency tree's counts only while its install signature still matches, since a reinstall or a fresh
  * clone changes both its allocated and its private bytes. Null when the folder was not measured or the entry is stale.
  */
-export function trustedMeasure(path: string): DiskMeasure | null {
+export function trustedMeasure(path: string, signature?: string): DiskMeasure | null {
   const measure = readDiskUsage(path);
   if (!measure) return null;
   if (!isDependencyTree(path)) return measure;
-  return measure.signature === currentSignature(path) ? measure : null;
+  return measure.signature === (signature ?? currentSignature(path)) ? measure : null;
 }
 
 /** What deleting the dependency tree at `path` would free: its private bytes, or null when they are not known. */
@@ -57,9 +57,14 @@ export function knownPrivateBytes(path: string): number | null {
 /** The trusted measurement of `path` when it is fresh enough for a caller with `maxAgeMs` and `valid`, else null. */
 export function freshMeasure(
   path: string,
-  { maxAgeMs = DEPENDENCY_MAX_AGE_MS, valid, now = Date.now }: Pick<RefreshOptions, 'maxAgeMs' | 'valid' | 'now'> = {},
+  {
+    maxAgeMs = DEPENDENCY_MAX_AGE_MS,
+    valid,
+    now = Date.now,
+    signature,
+  }: Pick<RefreshOptions, 'maxAgeMs' | 'valid' | 'now' | 'signature'> = {},
 ): DiskMeasure | null {
-  const measure = trustedMeasure(path);
+  const measure = trustedMeasure(path, signature);
   if (!measure) return null;
   const limit = isDependencyTree(path) ? DEPENDENCY_MAX_AGE_MS : maxAgeMs;
   return now() - Date.parse(measure.measuredAt) < limit && (valid?.(measure) ?? true) ? measure : null;
@@ -125,6 +130,11 @@ export interface RefreshOptions {
    * probed with a synchronous `existsSync`, which a stalled mount can block.
    */
   knownToExist?: true;
+  /**
+   * The dependency tree's install signature, read by the caller through a bounded read. Without it the signature is
+   * read with synchronous stats, which a stalled mount can block.
+   */
+  signature?: string;
 }
 
 export type RefreshOutcome = 'fresh' | 'measured' | 'failed' | 'busy';
@@ -191,7 +201,7 @@ export async function refreshMeasure(
   try {
     if (claim && skip()) return fresh();
     const startedAt = now();
-    const signature = dependency ? treeSignature(path) : null;
+    const signature = dependency ? (options.signature ?? treeSignature(path)) : null;
     const targets = options.targets?.();
     let size: { bytes: number; privateBytes: number | null; partial?: true } | null;
     if (targets && !targets.length) size = { bytes: 0, privateBytes: null };

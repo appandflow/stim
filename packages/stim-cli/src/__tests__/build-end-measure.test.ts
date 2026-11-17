@@ -268,6 +268,29 @@ it('measures the dependency trees that answer, and none when a read does not', a
   await vi.advanceTimersByTimeAsync(0);
 });
 
+it('still measures a readable dependency tree when its sibling cannot be read', async () => {
+  mkdirSync(join(app, 'node_modules'));
+  mkdirSync(join(app, 'ios', 'Pods'), { recursive: true });
+  const unreadable = (path: string) => path.endsWith(join('ios', 'Pods'));
+  const eio = Object.assign(new Error('input/output error'), { code: 'EIO' });
+  state.io = {
+    readNames: (path) => readdir(path),
+    isDirectory: async (path) => {
+      if (unreadable(path)) throw eio;
+      return (await lstat(path)).isDirectory();
+    },
+    realpath: async (path) => path,
+    head: async () => null,
+    lstat: async (path) => {
+      if (unreadable(path)) throw eio;
+      const info = await lstat(path);
+      return { kind: info.isDirectory() ? 'directory' : 'file', mtimeMs: info.mtimeMs, ino: info.ino };
+    },
+  };
+  await measureDependencyTrees(operation());
+  expect(walked()).toEqual([join(app, 'node_modules')]);
+});
+
 it('settles an aborted pass during a stalled discovery and keeps the marker', async () => {
   vi.useFakeTimers();
   const stalled = stalledIo();

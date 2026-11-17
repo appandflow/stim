@@ -567,24 +567,27 @@ async function takeIdleDependencies(
   return actions;
 }
 
-async function dependencyTrees(operation: StimContext): Promise<string[]> {
-  const trees = new Set<string>();
+async function dependencyTrees(operation: StimContext): Promise<{ path: string; signature: string }[]> {
+  const trees = new Map<string, string>();
   for (const worktree of await artifactWorktreesAsync(operation.signal, operation)) {
     for (const base of new Set([worktree.path, ...worktree.keys])) {
-      const found = await dependencyDirsOf(base, operation.signal);
-      if (found === null) {
-        if (hungRead() !== null) return [...trees];
-        continue;
-      }
-      for (const path of found) trees.add(path);
+      const { found } = await dependencyDirsOf(base, operation.signal);
+      for (const { path, signature } of found) trees.set(path, signature);
+      if (hungRead() !== null) return [...trees].map(([path, signature]) => ({ path, signature }));
     }
   }
-  return [...trees];
+  return [...trees].map(([path, signature]) => ({ path, signature }));
 }
 
 export async function measureDependencyTrees(operation: StimContext): Promise<void> {
-  for (const path of await dependencyTrees(operation)) {
-    const { outcome } = await refreshMeasure(path, { timeoutMs: WALK_TIMEOUT_MS, claim: true, operation });
+  for (const { path, signature } of await dependencyTrees(operation)) {
+    const { outcome } = await refreshMeasure(path, {
+      timeoutMs: WALK_TIMEOUT_MS,
+      claim: true,
+      operation,
+      knownToExist: true,
+      signature,
+    });
     if (outcome === 'busy') return;
   }
 }

@@ -14,6 +14,7 @@ import {
 } from '@stim-cli/core/state';
 import { listedRoots } from '../commands/gc/worktrees.ts';
 import { refreshMeasure } from '../disk-usage.ts';
+import { INSTALL_MARKERS, installSignature } from '../private-size.ts';
 import { answered, hungRead } from './bounded-read.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { loadConfig } from './config.ts';
@@ -88,7 +89,7 @@ export interface CensusIo {
   readNames: (path: string) => Promise<string[]>;
   isDirectory: (path: string) => Promise<boolean>;
   /** What the path is, without following a symlink, and when it was last modified. */
-  lstat: (path: string) => Promise<{ kind: 'directory' | 'file' | 'other'; mtimeMs: number }>;
+  lstat: (path: string) => Promise<{ kind: 'directory' | 'file' | 'other'; mtimeMs: number; ino?: number }>;
   realpath: (path: string) => Promise<string>;
   /** Null unless it is a regular file; else its first `bytes` bytes as text. */
   head: (path: string, bytes: number) => Promise<string | null>;
@@ -100,7 +101,11 @@ const REAL_IO: CensusIo = {
   realpath: (path) => realpath(path),
   lstat: async (path) => {
     const info = await lstat(path);
-    return { kind: info.isDirectory() ? 'directory' : info.isFile() ? 'file' : 'other', mtimeMs: info.mtimeMs };
+    return {
+      kind: info.isDirectory() ? 'directory' : info.isFile() ? 'file' : 'other',
+      mtimeMs: info.mtimeMs,
+      ino: info.ino,
+    };
   },
   head: async (path, bytes) => {
     if (!(await lstat(path)).isFile()) return null;
@@ -300,26 +305,35 @@ export async function buildOutputDirs(
 }
 
 /**
- * The dependency directories (`ARTIFACT_DIRS.dependencies`) that exist as real directories under `root`, through the
- * bounded reader. Null when a read failed or did not answer; an abort propagates.
+ * The dependency directories (`ARTIFACT_DIRS.dependencies`) under `root` that are real directories, each with its install
+ * signature, and the ones whose read failed or did not answer, kept apart so a failed read is never an absent
+ * directory and never discards a sibling that was read. Every read goes through the bounded reader; an abort propagates.
  */
 export async function dependencyDirsOf(
   root: string,
   signal: AbortSignal,
   { io = REAL_IO, timeoutMs = READ_TIMEOUT_MS }: { io?: CensusIo; timeoutMs?: number } = {},
-): Promise<string[] | null> {
+): Promise<{ found: { path: string; signature: string }[]; unreadable: string[] }> {
   const reader = boundedReader(io, Infinity, signal, timeoutMs);
-  try {
-    const found: string[] = [];
-    for (const dir of ARTIFACT_DIRS.dependencies) {
-      const path = join(root, dir);
-      if (await reader.directory(path)) found.push(path);
+  const found: { path: string; signature: string }[] = [];
+  const unreadable: string[] = [];
+  for (const dir of ARTIFACT_DIRS.dependencies) {
+    const path = join(root, dir);
+    try {
+      const info = await reader.info(path);
+      if (info?.kind !== 'directory') continue;
+      const markers: (string | null)[] = [];
+      for (const name of INSTALL_MARKERS) {
+        const marker = await reader.info(join(path, name));
+        markers.push(marker && `${marker.ino}:${marker.mtimeMs}`);
+      }
+      found.push({ path, signature: installSignature(`${info.ino}:${info.mtimeMs}`, markers) });
+    } catch (error) {
+      if (!(error instanceof Unreadable)) throw error;
+      unreadable.push(path);
     }
-    return found;
-  } catch (error) {
-    if (error instanceof Unreadable) return null;
-    throw error;
   }
+  return { found, unreadable };
 }
 
 type Measurement = Pick<
