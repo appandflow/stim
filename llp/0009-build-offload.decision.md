@@ -129,7 +129,7 @@ an artifact only under a fingerprint it recomputed equal to the client's. When
 the fingerprints differ and the Node versions differ, the `fingerprint-mismatch`
 refusal names both; it calls Node the likely cause only when every differing
 source is a `config` or `autolinking` row, which Stim produces by running project
-JavaScript, and nothing pod install or prebuild rewrote differs, else it notes
+JavaScript, and pod install or prebuild rewrote no synced file, else it notes
 the versions without blaming them. The worker does not look for an installed
 Node matching the client's.
 
