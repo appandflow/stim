@@ -155,6 +155,15 @@ left in a config file or the environment, with the setting that replaces it.
 Both `stim status` and `stim doctor` show the claim and remedy when stimd cannot
 recover a physical iPhone console.
 
+When a stimd holds the claim but sends no reply to a probe within 3 seconds,
+`stim status` and `stim doctor` say `did not answer within 3 s`, with the pid, the
+age of its last tick (doctor's finding code is `stimd-not-answering`) and, when the socket file does not exist, that it is
+missing. In `--json` that is `daemon.unanswered` (`pid`, `waitedMs`,
+`socketMissing`); it is absent when stimd answers. It reports one probe, so a
+machine under heavy load can show it for a stimd that answers later, and
+neither command stops or replaces the stimd. `status --watch` probes in the
+background every 10 seconds and never waits for it.
+
 `doctor` also flags when an agent harness sandboxes shell commands and Stim is
 not allowed through it, which shows up as unrelated-looking failures against
 the simulator service, the adb server, and Stim's own state directory, or as
@@ -1816,7 +1825,7 @@ hold and for each of the last abnormal stimd exits. Each workspace prints a
 activity, `idle` or `dormant` with the time in it and what the stage freed or
 deleted, or `stopped`. This line is separate from the JSON `stage` object
 above. In `--json`, `daemon` carries `mode`, `running`, `lastTickAt`,
-`pressure`, `waiting`, `unverified`, `crashHold`, `abnormalExits` and `recent`, the last 20 actions any daemon of this home
+`pressure`, `waiting`, `unverified`, `crashHold`, `abnormalExits`, `unanswered` and `recent`, the last 20 actions any daemon of this home
 took, oldest first; an environment the daemon staged carries `idleStage` or
 `dormantStage`.
 

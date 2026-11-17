@@ -164,6 +164,11 @@ export interface DaemonStatus {
   setting?: DaemonMode;
   running: { pid: number; since: string } | null;
   /**
+   * Set by `stim status` and `stim doctor` when a stimd holds the claim and sent no reply to a probe within
+   * `waitedMs`; `socketMissing` when its socket file does not exist. Absent when it answered.
+   */
+  unanswered?: { pid: number; waitedMs: number; socketMissing?: true };
+  /**
    * A stim-daemon from before Stim 2.0 holds the daemon claim; it is not this home's running daemon. `verified` is
    * whether its claim has the record that daemon writes, which the next stimd start stops.
    */
