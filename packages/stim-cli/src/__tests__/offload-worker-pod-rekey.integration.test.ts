@@ -24,11 +24,24 @@ const cli = fileURLToPath(new URL('../../dist/cli.mjs', import.meta.url));
 const modules = fileURLToPath(new URL('../../../../apps/mobile/node_modules', import.meta.url));
 const sha = (data: Buffer) => createHash('sha256').update(data).digest('hex');
 
+const CHANGES = [
+  'lock',
+  'other',
+  'added',
+  'after-build',
+  'workspace',
+  'declared',
+  'node-lock',
+  'node-other',
+  'node-config',
+] as const;
+
 describe.skipIf(process.platform === 'win32')('post-pods worker rekey', () => {
-  test.each(['lock', 'other', 'added', 'after-build', 'workspace', 'declared'] as const)(
+  test.each(CHANGES)(
     'build.start %s post-pods changes through the real worker',
     { timeout: 180_000 },
     async (change) => {
+      const pods = change === 'node-lock' ? 'lock' : change === 'node-other' ? 'other' : change;
       const temp = realpathSync(mkdtempSync(join(tmpdir(), 'stim-worker-pods-')));
       const project = join(temp, 'project');
       const home = join(temp, 'home');
@@ -93,7 +106,7 @@ describe.skipIf(process.platform === 'win32')('post-pods worker rekey', () => {
         script('pnpm', ':');
         script(
           'pod',
-          `mkdir -p Pods\nprintf 'PODS:\\n  - Fixture (1.0.0)\\n\\nCOCOAPODS: 1.16.2\\n' > Podfile.lock\ncp Podfile.lock Pods/Manifest.lock\n${change === 'other' ? "printf '\\n# changed by pod install\\n' >> Podfile" : change === 'added' ? "mkdir -p Fixture; printf '// generated\\n' > Fixture/Generated.swift" : change === 'workspace' ? "mkdir -p Fixture.xcworkspace/xcshareddata/swiftpm; printf '{}\\n' > Fixture.xcworkspace/xcshareddata/swiftpm/Package.resolved" : change === 'declared' ? "printf 'added\\n' > ../native-extra/added.txt" : ':'}`,
+          `mkdir -p Pods\nprintf 'PODS:\\n  - Fixture (1.0.0)\\n\\nCOCOAPODS: 1.16.2\\n' > Podfile.lock\ncp Podfile.lock Pods/Manifest.lock\n${pods === 'other' ? "printf '\\n# changed by pod install\\n' >> Podfile" : change === 'added' ? "mkdir -p Fixture; printf '// generated\\n' > Fixture/Generated.swift" : change === 'workspace' ? "mkdir -p Fixture.xcworkspace/xcshareddata/swiftpm; printf '{}\\n' > Fixture.xcworkspace/xcshareddata/swiftpm/Package.resolved" : change === 'declared' ? "printf 'added\\n' > ../native-extra/added.txt" : ':'}`,
         );
         script(
           'xcrun',
@@ -158,13 +171,17 @@ describe.skipIf(process.platform === 'win32')('post-pods worker rekey', () => {
           runtime: 'iOS-27-0',
           stimBuild: 'fixture',
           compat: 6,
-          fingerprint: initial.hash,
+          fingerprint: change === 'node-config' ? 'c'.repeat(64) : initial.hash,
           fingerprintSchema: replay.schema,
-          fingerprintSources: replay.sources.map(({ name, kind, hash }) => ({ id: name, kind, hash })),
+          fingerprintSources: replay.sources.map(({ name, kind, hash }) => ({
+            id: name,
+            kind,
+            hash: change === 'node-config' && kind === 'config' ? '0'.repeat(64) : hash,
+          })),
           fingerprintEnv: replay.env,
           fingerprintNative: replay.native,
           fingerprintLayout: replay.layout,
-          fingerprintRuntime: replay.runtime,
+          fingerprintRuntime: change.startsWith('node-') ? { ...replay.runtime, node: '20.1' } : replay.runtime,
           ...(replay.fingerprintInputs ? { fingerprintInputs: replay.fingerprintInputs } : {}),
           podsOnWorker: true,
         });
@@ -187,9 +204,10 @@ describe.skipIf(process.platform === 'win32')('post-pods worker rekey', () => {
               mirrorExpo: existsSync(join(mirror, 'node_modules/expo')),
             }),
           );
+        const runtimeNode = replay.runtime.node.replace('.', '\\.');
         const expected = {
           lock: { ok: true, fingerprint: expect.any(String), artifact: { sha256: expect.any(String) } },
-          other: { ok: false, code: 'fingerprint-mismatch' },
+          other: { ok: false, code: 'fingerprint-mismatch', message: expect.not.stringContaining('Node') },
           added: { ok: false, code: 'no-fingerprint', message: expect.stringContaining('ios/Fixture/Generated.swift') },
           'after-build': { ok: false, code: 'fingerprint-moved' },
           workspace: {
@@ -198,13 +216,30 @@ describe.skipIf(process.platform === 'win32')('post-pods worker rekey', () => {
             message: expect.stringContaining('ios/Fixture.xcworkspace/xcshareddata/swiftpm/Package.resolved'),
           },
           declared: { ok: false, code: 'no-fingerprint', message: expect.stringContaining('native-extra/added.txt') },
+          'node-lock': { ok: true, fingerprint: expect.any(String), artifact: { sha256: expect.any(String) } },
+          'node-other': {
+            ok: false,
+            code: 'fingerprint-mismatch',
+            message: expect.stringMatching(
+              new RegExp(`differing sources: ios/Podfile.*with Node ${runtimeNode}, this machine with Node 20\\.1$`),
+            ),
+          },
+          'node-config': {
+            ok: false,
+            code: 'fingerprint-mismatch',
+            message: expect.stringMatching(
+              new RegExp(
+                `differing sources: config.*; the likely cause is Node: the worker evaluates the fingerprint with Node ${runtimeNode} and this machine with Node 20\\.1.*install Node 20\\.1 on the worker$`,
+              ),
+            ),
+          },
         };
         if (result && typeof result === 'object' && 'ok' in result && result.ok !== expected[change].ok)
           console.error('Unexpected worker outcome:', JSON.stringify(result));
         expect(result).toMatchObject(expected[change]);
-        expect(existsSync(join(temp, 'compiled'))).toBe(change === 'lock' || change === 'after-build');
+        expect(existsSync(join(temp, 'compiled'))).toBe(pods === 'lock' || change === 'after-build');
         let verified: { fingerprintChanged: boolean; sizeMatches: boolean; digestMatches: boolean } | null = null;
-        if (change === 'lock') {
+        if (pods === 'lock') {
           if (
             !result ||
             typeof result !== 'object' ||
@@ -227,7 +262,7 @@ describe.skipIf(process.platform === 'win32')('post-pods worker rekey', () => {
           };
         }
         expect(verified).toEqual(
-          change === 'lock' ? { fingerprintChanged: true, sizeMatches: true, digestMatches: true } : null,
+          pods === 'lock' ? { fingerprintChanged: true, sizeMatches: true, digestMatches: true } : null,
         );
       } catch (error) {
         uncertain = typeof error === 'object' && error !== null && 'reportCleanup' in error;
