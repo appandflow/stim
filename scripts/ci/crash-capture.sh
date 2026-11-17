@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
-# Native crash capture for the Linux Node 24 test job (issue 5791).
-#   enable            set kernel.core_pattern and record the Node build
-#   report            print a backtrace of every core file, write crash-report/
-#   loop N SCOPE      repeat the integration suite N times, stop at the first core
-# The caller raises the core size limit with `ulimit -c unlimited` in the shell
-# that runs the tests; a limit does not survive into another step.
+# A core size limit set with ulimit does not survive into another step, so the
+# caller raises it in the shell that runs the tests.
 set -uo pipefail
 
 CORE_DIR=/var/tmp/stim-cores
@@ -67,6 +63,13 @@ case "$cmd" in
   loop)
     iterations=${1:-20}
     scope=${2:-stimd}
+    case "$iterations" in
+      '' | *[!0-9]* | 0*)
+        echo "loop count must be a positive integer: $iterations" >&2
+        exit 2
+        ;;
+    esac
+    failed=0
     deadline=$((SECONDS + 33 * 60))
     mkdir -p "$OUT_DIR"
     filters=()
@@ -81,10 +84,13 @@ case "$cmd" in
     ulimit -c unlimited
     for i in $(seq 1 "$iterations"); do
       echo "::group::iteration $i"
-      pnpm run test:integration "${filters[@]}" "${node_flags[@]}" 2>&1 | tee "$OUT_DIR/loop-$i.log"
+      pnpm run test:integration ${filters[@]+"${filters[@]}"} ${node_flags[@]+"${node_flags[@]}"} 2>&1 | tee "$OUT_DIR/loop-$i.log"
       status=${PIPESTATUS[0]}
       echo "::endgroup::"
       echo "iteration $i exit $status"
+      if [ "$status" -ne 0 ]; then
+        failed=$((failed + 1))
+      fi
       if find "$CORE_DIR" -maxdepth 1 -name 'core.*' 2>/dev/null | grep -q .; then
         echo "core file found after iteration $i"
         exit 1
@@ -98,6 +104,10 @@ case "$cmd" in
         break
       fi
     done
+    if [ "$failed" -gt 0 ]; then
+      echo "$failed iterations exited non-zero without a crash"
+      exit 1
+    fi
     ;;
   *)
     echo "usage: crash-capture.sh enable|report|loop" >&2

@@ -28,7 +28,7 @@ on:
         type: boolean
         default: false
       crash_loop:
-        description: Repeat the integration suite this many times on Node 24 and skip the other test jobs (0 runs the normal workflow)
+        description: Repeat the integration suite this many times on Node 24 in place of test (node N); 0 runs the normal workflow. Dispatch with full off to skip the macOS and Windows jobs.
         type: string
         default: '0'
       crash_loop_scope:
@@ -307,7 +307,9 @@ jobs:
       - name: Repeat the integration suite
         env:
           CRASH_LOOP_NODE_FLAGS: ${{ inputs.crash_loop_node_flags }}
-        run: bash scripts/ci/crash-capture.sh loop "${{ inputs.crash_loop }}" "${{ inputs.crash_loop_scope }}"
+          CRASH_LOOP_COUNT: ${{ inputs.crash_loop }}
+          CRASH_LOOP_SCOPE: ${{ inputs.crash_loop_scope }}
+        run: bash scripts/ci/crash-capture.sh loop "$CRASH_LOOP_COUNT" "$CRASH_LOOP_SCOPE"
       - name: Report a native crash
         id: crash
         if: always()
