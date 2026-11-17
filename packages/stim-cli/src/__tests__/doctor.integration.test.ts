@@ -7,6 +7,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -1346,6 +1347,36 @@ test('detectFingerprintParity against a real repo: a dirty app.json fires the no
       ? execSync(`ls ${JSON.stringify(join(repo, '.git', 'worktrees'))}`, { encoding: 'utf-8' }).trim()
       : '';
     expect(stale).toBe('');
+  } finally {
+    resetExecutor();
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('a parity check leaves no workspace state for its temporary worktree', async () => {
+  const base = mkdtempSync(join(tmpdir(), 'stim-parity-state-'));
+  const repo = join(base, 'repo');
+  mkdirSync(repo);
+  const git = (...args: string[]) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
+  try {
+    git('init', '-q');
+    git('config', 'user.email', 'test@example.com');
+    git('config', 'user.name', 'test');
+    writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'app' }));
+    git('add', '.');
+    git('commit', '-qm', 'fixture');
+    const executor = getExecutor();
+    setExecutor({
+      ...executor,
+      runFileAsync(file, args, options) {
+        if (args.some((arg: string) => arg.endsWith('fingerprint-precompute.mjs')))
+          return Promise.resolve(JSON.stringify({ hash: 'same', portable: true, inputs: [] }));
+        return executor.runFileAsync(file, args, options);
+      },
+    });
+    expect(await detectFingerprintParity(repo, { platform: 'android' })).toBeNull();
+
+    expect(readdirSync(join(testHome, 'workspaces')).filter((name) => name.startsWith('head--'))).toEqual([]);
   } finally {
     resetExecutor();
     rmSync(base, { recursive: true, force: true });
