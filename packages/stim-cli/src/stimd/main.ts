@@ -948,6 +948,7 @@ async function runStimdInner(
     },
   );
   let restartingNet = false;
+  let servicePending: Promise<NetAnswer> | null = null;
   let updating: Promise<void> | null = null;
   const maybeUpdate = (why: string, everyMs: number) => {
     if (!follower || updating || closing) return;
@@ -1427,7 +1428,8 @@ async function runStimdInner(
             ),
           };
           // @ref LLP 0012#a-service-stimd-serves-the-service-port -- a service's ask replaces a share-only thread
-          const serviceMove = forService && running?.shareOnly === true;
+          const joined = forService ? servicePending : null;
+          const serviceMove = forService && !joined && running?.shareOnly === true;
           const restart =
             serviceMove ||
             (kind === 'desktop' &&
@@ -1437,7 +1439,7 @@ async function runStimdInner(
               running !== null &&
               (running.loopbackOnly !== options.loopbackOnly ||
                 (port !== undefined && port !== 0 && running.port !== null && port !== running.port)));
-          const reserved = forService && (serviceMove || !running);
+          const reserved = forService && !joined && (serviceMove || !running);
           const wasService = serviceNet;
           const previous = netServes;
           if (!running) netServes = options;
@@ -1469,24 +1471,29 @@ async function runStimdInner(
                 restartingNet = false;
               });
           };
-          const answer = serviceMove
-            ? pinned()
-              ? Promise.resolve({
-                  listening: false as const,
-                  message: `the net thread serves web shares on port ${running.port ?? 'unknown'}; the service's next ask replaces it once the work stimd holds ends`,
-                })
-              : restartNet()
-            : restart
-              ? restartNet()
-              : ensureNet(resolved);
-          if (forService)
+          const answer = joined
+            ? joined
+            : serviceMove
+              ? pinned()
+                ? Promise.resolve({
+                    listening: false as const,
+                    message: `the net thread serves web shares on port ${running.port ?? 'unknown'}; the service's next ask replaces it once the work stimd holds ends`,
+                  })
+                : restartNet()
+              : restart
+                ? restartNet()
+                : ensureNet(resolved);
+          if (reserved) servicePending = answer;
+          if (forService && !joined)
             void answer.then(
               (state) => {
+                if (servicePending === answer) servicePending = null;
                 if (state.listening && state.port === options.port) serviceNet = true;
                 else if (reserved) serviceNet = wasService;
                 return undefined;
               },
               () => {
+                if (servicePending === answer) servicePending = null;
                 if (reserved) serviceNet = wasService;
               },
             );
