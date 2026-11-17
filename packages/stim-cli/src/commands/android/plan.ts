@@ -81,6 +81,7 @@ export interface AndroidPlanInputs extends AndroidBuildPlanInputs {
   readonly slot: string;
   /** Set when the run installs a recorded build: refuses before any device work if there is none. */
   readonly recordedBuild?: RecordedBuildRequest;
+  readonly expectedDevice?: string;
   readonly signal?: AbortSignal;
   readonly systemImage: string | null;
   readonly deviceProfile?: string | null;
@@ -322,6 +323,7 @@ export async function resolveAndroidRunPlan(
     signal,
     easProfile,
     recordedBuild,
+    expectedDevice,
     variant: variantFlag,
     systemImage: systemImageFlag,
     deviceProfile: deviceProfileFlag,
@@ -394,8 +396,12 @@ export async function resolveAndroidRunPlan(
       'Use only documented android.avdConfig keys, or an android.avdConfigFile fragment contained by the app directory.',
     );
   }
-  const systemImage = resolveSystemImage(systemImageFlag, settings);
-  const deviceProfile = resolveDeviceProfile(deviceProfileFlag, settings);
+  const { systemImage, deviceProfile } = expectedDevice
+    ? { systemImage: null, deviceProfile: null }
+    : {
+        systemImage: resolveSystemImage(systemImageFlag, settings),
+        deviceProfile: resolveDeviceProfile(deviceProfileFlag, settings),
+      };
   const isExpo = detectExpo();
   const physical = isPhysicalDeviceRequest(deviceFlag);
   if (physical && deviceFlag === '') {
@@ -439,7 +445,7 @@ export async function resolveAndroidRunPlan(
         : remoteAndroidSetting(settings);
   const machine = remoteTarget?.kind === 'machine' ? remoteTarget.machine : null;
   const remoteBackend = !physical && remoteTarget?.kind === 'backend' ? remoteTarget.backend : null;
-  if (!machine) {
+  if (!machine && !expectedDevice) {
     const refusal = await androidDeviceSelectorRefusal(
       {
         settingsContext,

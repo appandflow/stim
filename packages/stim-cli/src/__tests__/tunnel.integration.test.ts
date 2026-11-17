@@ -285,6 +285,18 @@ describe('startTunnel: nothing here throws -- every failure is a returned value'
     expect(killed).toBe(false);
   });
 
+  test('each provider reason ends as a sentence where the reasons are joined', async () => {
+    const result = await startTunnelSequence({
+      providers: ['ngrok', 'cloudflared'],
+      port: 8081,
+      start: async ({ provider }) => ({ failed: true, reason: `Could not start ${provider}: spawn ENOENT` }),
+    });
+    expect(result).toEqual({
+      failed: true,
+      reason: 'ngrok: Could not start ngrok: spawn ENOENT. cloudflared: Could not start cloudflared: spawn ENOENT.',
+    });
+  });
+
   test('does not fall back when SIGKILL cannot confirm child exit', async () => {
     const providers: string[] = [];
     const child = makeChildProcess({ kill: () => true });

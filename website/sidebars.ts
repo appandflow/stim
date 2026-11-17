@@ -5,6 +5,7 @@ const sidebars: SidebarsConfig = {
     'why',
     'requirements',
     'getting-started',
+    'migrate-to-2',
     'desktop',
     {
       type: 'category',

@@ -1,9 +1,10 @@
-import { mkdtempSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { autoUpdateOn } from '../stimd/auto-update.ts';
 import { crashLoop, keptBoots, type Boot } from '@stim-cli/core/state';
+import { loadConfig } from '../workspace/config.ts';
 import { classifyFailure, crashLoopAction } from '../stimd/crash-hold.ts';
 
 const MINUTE = 60_000;
@@ -133,5 +134,22 @@ describe('failure classification', () => {
     } finally {
       rmSync(link);
     }
+  });
+
+  it('keeps the whole repair command of a corrupt config at any path length', () => {
+    const dir = join(home, 'Repair the file', 'x'.repeat(200));
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'config.json'), `[${' '.repeat(300)}`);
+    let error: unknown;
+    try {
+      loadConfig(dir);
+    } catch (caught) {
+      error = caught;
+    }
+    const path = join(dir, 'config.json');
+    expect(classifyFailure(error, home)).toMatchObject({
+      kind: 'home',
+      remedy: expect.stringContaining(`mv "${path}" "${path}.broken"`),
+    });
   });
 });

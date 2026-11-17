@@ -567,13 +567,13 @@ test.each<[string, string, Partial<ReloadDeps>, string]>([
     '`stim android`',
   ],
   [
-    'a shut-down owned simulator, from a Release launch revive skips',
+    'a shut-down owned simulator, from a Release launch',
     'ios',
     {
       readLaunches: () => ({ ios: { ...iosLaunch, release: true, metroPort: null } }),
       resolveIos: shutDownSim,
     },
-    '`stim ios`',
+    '`stim revive`',
   ],
   [
     'a shut-down owned simulator, from a native-process launch revive relaunches',
@@ -585,13 +585,13 @@ test.each<[string, string, Partial<ReloadDeps>, string]>([
     '`stim revive`',
   ],
   [
-    'an owned emulator that is not running, from a native-process launch revive skips',
+    'an owned emulator that is not running, from a native-process launch',
     'android',
     {
       readLaunches: () => ({ android: { ...androidLaunch, runtime: 'process', metroPort: null } }),
       resolveAndroid: async () => ({ notRunning: true }),
     },
-    '`stim android`',
+    '`stim revive`',
   ],
 ])('a recorded app on %s gets the remedy that brings it back', async (_name, platform, overrides, remedy) => {
   const result = await runReload({

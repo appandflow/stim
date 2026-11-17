@@ -21,17 +21,25 @@ vi.mock('../workspace/protected-locations.ts', async (original) => {
 });
 
 const DAY = 24 * 3_600_000;
-const candidate = (dir: string, discovered: boolean, measuredAt: number | null): CargoTargetCandidate => ({
+const candidate = (
+  dir: string,
+  discovered: boolean,
+  measuredAt: number | null,
+  identity = dir,
+): CargoTargetCandidate => ({
   root: dir.replace(/\/target$/, ''),
   dir,
+  identity,
   discovered,
+  reduceOnly: false,
+  checkout: dir.replace(/\/target$/, ''),
   measuredAt,
 });
 
 describe('selectCargoTargets', () => {
   it('walks a directory once, prefers the registered owner, and rotates the discovered ones by last measurement', () => {
     const targets = [
-      candidate('/a/target', true, 1),
+      candidate('/alias/target', true, 1, '/a/target'),
       candidate('/a/target', false, 1),
       candidate('/b/target', true, 5),
       candidate('/c/target', true, null),
@@ -43,7 +51,9 @@ describe('selectCargoTargets', () => {
 
     const measured = new Set(first.measured.map(({ dir }) => dir));
     const next = selectCargoTargets(
-      targets.map((entry) => candidate(entry.dir, entry.discovered, measured.has(entry.dir) ? 9 : entry.measuredAt)),
+      targets.map((entry) =>
+        candidate(entry.dir, entry.discovered, measured.has(entry.dir) ? 9 : entry.measuredAt, entry.identity),
+      ),
       2,
     );
     expect(next.measured.map(({ dir }) => dir)).toContain('/b/target');
@@ -201,7 +211,7 @@ describe('the Cargo target cap over a root target/', () => {
     ).rejects.toThrow(/abort/i);
   });
 
-  it('never measures a checkout under a home dot-folder or the temp directory, though discovery lists its folder', async () => {
+  it('measures a checkout inside a named discover root even under a home dot-folder or the temp directory', async () => {
     const dotfolder = join(base, 'home', '.tools');
     const scratch = join(base, 'scratch');
     const ok = join(base, 'home', 'Developer');
@@ -226,7 +236,9 @@ describe('the Cargo target cap over a root target/', () => {
 
     const sizes = await measureCargoTargets(Date.now());
 
-    expect(sizes.map(({ dir }) => dir)).toEqual([join(ok, 'app', 'target')]);
+    expect(sizes.map(({ dir }) => dir).toSorted()).toEqual(
+      [dotfolder, scratch, ok].map((folder) => join(folder, 'app', 'target')).toSorted(),
+    );
   });
 
   it('skips a root target whose files git does not ignore, and one without the Cargo tag', async () => {

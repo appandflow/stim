@@ -133,7 +133,7 @@ describe.skipIf(!existsSync(MOBILE_MODULES))('fingerprint evaluators on the inst
     expect(indexedAfter.hash).toBe(after.hash);
   });
 
-  test('listed-file replay ignores an unlisted file and refuses a changed listed file', SLOW, async () => {
+  test('listed-file replay ignores an unlisted file and keys a changed listed file differently', SLOW, async () => {
     const root = expoApp({
       'fingerprint.config.js': "module.exports = { extraSources: [{ type: 'file', filePath: 'native-input.txt' }] };\n",
       'native-input.txt': 'before',
@@ -155,7 +155,12 @@ describe.skipIf(!existsSync(MOBILE_MODULES))('fingerprint evaluators on the inst
     const same = await replay();
     expect(isUncertain(same) ? same : same.hash).toBe(initial.hash);
     write(join(root, 'native-input.txt'), 'changed');
-    expect(isUncertain(await replay())).toBe(true);
+    const changed = await replay();
+    if (isUncertain(changed)) throw new Error(changed.uncertain);
+    expect(changed.hash).not.toBe(initial.hash);
+    expect(changed.inputs.find((input) => input.name === 'native-input.txt')?.hash).not.toBe(
+      initial.inputs.find((input) => input.name === 'native-input.txt')?.hash,
+    );
   });
 
   test('a nested package env path keeps a local key but is not portable to a worker', SLOW, async () => {

@@ -86,7 +86,7 @@ interface Fixture {
   strandedPort: number | null;
   failRoute: { open: boolean; close: boolean };
   listenerBoundAtRouteClose: boolean[];
-  status: (value: ReturnType<typeof payload>) => void;
+  status: (value: unknown) => void;
   hostedSources: {
     subscribed: FrameListener[];
     unsubscribed: number;
@@ -98,7 +98,7 @@ interface Fixture {
 
 function fixture(limits: Partial<ShareLimits> = {}, deps: Partial<ShareDeps> = {}): Fixture {
   const listeners = new Set<StatusListener>();
-  let latest = payload();
+  let latest: unknown = payload();
   const f: Fixture = {
     subscribed: [],
     keyframes: 0,
@@ -2095,10 +2095,14 @@ describe('a web share', () => {
       const restored = await f.hub.start(saved, { restore: true });
       if ('code' in restored) throw new Error(restored.message);
       const { expiresAt: _expires, ...rest } = saved;
+      const port = f.hub.port;
       const again = await f.hub.start({ ...rest, expiresMinutes: 30 });
       if ('code' in again) throw new Error(again.message);
       expect(again.id).not.toBe(restored.id);
       expect(again.url).toBe(restored.url);
+      expect(f.hub.port).toBe(port);
+      expect(f.routeOpens).toHaveLength(1);
+      expect(f.routeCloses).toBe(0);
       expect(f.hub.list().map((row) => row.id)).toEqual([again.id]);
       expect(Date.parse(again.expiresAt) - Date.now()).toBeGreaterThan(29 * 60_000);
       expect(await login(local(again, f.hub.port ?? 0), 'saved-password')).toContain('stim_share=');
@@ -2196,6 +2200,43 @@ describe('a web share', () => {
           },
         },
       ],
+    });
+
+    it('closes the acquired source and route when the link expires while the route opens', async () => {
+      let resume = () => {};
+      const opening = new Promise<void>((resolve) => (resume = resolve));
+      const open = vi.fn<ShareDeps['route']['open']>(async () => {
+        await opening;
+        return { url: 'http://127.0.0.1', port: 80 };
+      });
+      const close = vi.fn<ShareDeps['route']['close']>(async () => {});
+      const pending = fixture(
+        {},
+        {
+          route: {
+            open,
+            close,
+            stranded: () => null,
+            removeStranded: async () => {},
+          },
+        },
+      );
+      pending.status(hostedPayload());
+      const starting = pending.hub.start(shareRequest({ expiresAt: Date.now() + 6000 }));
+      try {
+        await vi.waitFor(() => expect(open).toHaveBeenCalledOnce());
+        vi.advanceTimersByTime(6000);
+        resume();
+        expect(await starting).toEqual({ code: 'bad-request', message: 'That link has expired.' });
+        expect(pending.hub.list()).toEqual([]);
+        expect(pending.hostedSources.map((source) => source.closed)).toEqual([1]);
+        await vi.waitFor(() => expect(close).toHaveBeenCalledOnce());
+        expect(pending.hub.port).toBeNull();
+      } finally {
+        resume();
+        await pending.hub.close();
+        pending.presence.close();
+      }
     });
 
     it('streams and drives through the hosted source, never the local frame pool or control hub', async () => {
@@ -2372,5 +2413,21 @@ describe("a web share starting while the workspace's devices may be shut down", 
     );
     await f.hub.start(shareRequest());
     expect(registeredAtRelease).toEqual([1]);
+  });
+
+  it('does not register a link that expires while waiting for the native-run claim', async () => {
+    const held = claim();
+    const f = fixture({}, { holdWorkspace: held.holdWorkspace });
+    const starting = f.hub.start(shareRequest({ expiresAt: Date.now() + 6000 }));
+    vi.advanceTimersByTime(6000);
+    held.open();
+    try {
+      expect(await starting).toEqual({ code: 'bad-request', message: 'That link has expired.' });
+      expect(f.hub.list()).toEqual([]);
+      expect(f.routeOpens).toEqual([]);
+      expect(held.events).toEqual([`hold ${WORKSPACE}`, 'release']);
+    } finally {
+      await f.hub.close();
+    }
   });
 });

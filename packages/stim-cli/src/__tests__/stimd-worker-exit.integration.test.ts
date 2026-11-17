@@ -21,6 +21,48 @@ async function stopFixture(pid: number, token: string): Promise<void> {
   }
 }
 
+test('the hourly dependency check survives retirement of the worker that started it', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-dependency-cadence-'));
+  vi.stubEnv('STIM_HOME', home);
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const entry = vi
+    .spyOn(entries, 'spawnEntry')
+    .mockReturnValue(fileURLToPath(new URL('./fixtures/dependency-cadence-worker.ts', import.meta.url)));
+  const traces: Record<string, unknown>[] = [];
+  const threads = createThreadTable((_level, event, _message, fields) => {
+    if (event === 'fixture' && fields) traces.push(fields);
+  });
+  const start = Date.now();
+  const run = (minutes: number, options: { disabled?: boolean; fail?: boolean; force?: boolean } = {}) => {
+    const input = { cwd: home, now: start + minutes * 60_000, ...options };
+    return threads.run('passes', input);
+  };
+  try {
+    await run(-1, { disabled: true });
+    await expect(run(0, { fail: true })).rejects.toThrow('inventory failed');
+    await vi.advanceTimersByTimeAsync(120_001);
+    await run(3);
+    await run(4, { force: true });
+    await run(60);
+
+    const [disabled, first, replacement, forced, due] = traces;
+    expect(first?.threadId).not.toBe(replacement?.threadId);
+    expect([disabled, first, replacement, forced, due].map((trace) => trace?.inspected)).toEqual([
+      false,
+      true,
+      false,
+      true,
+      true,
+    ]);
+  } finally {
+    await threads.close();
+    entry.mockRestore();
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 describe.skipIf(process.platform === 'win32')('unexpected worker exit', () => {
   test.each(['exit', 'abort'])(
     'a worker %s with an outstanding job reports a surviving child',

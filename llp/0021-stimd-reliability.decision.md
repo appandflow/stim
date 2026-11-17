@@ -116,6 +116,40 @@ instead of waiting out the handover wait. The next stimd removes the marker. The
 Desktop poll already starts a stimd when `run/stimd.json` is missing, so it needs no
 marker.
 
+## A stimd that does not answer is reported
+
+`stim status` and `stim doctor` send a stimd that holds the daemon claim a probe
+frame, `{kind: "probe"}`, and wait 3 s for any reply, connecting again while the
+socket refuses or is missing. stimd answers it with `{op: "probe", pid, build}`
+and closes the connection. That path runs before the client checks: it sets no
+contact time, so a probed stimd still exits when idle, notes no client build, so a
+probe never starts a handover, and logs nothing. The accept-time engine check
+still runs for every connection; it depends only on stimd's own state and the
+engine on disk, so a probe only brings it forward. A stimd that predates the
+frame answers `unknown-kind`, which also counts as a reply. A stimd that is
+shutting down closes the connection with no reply and has already removed its
+socket file, so the probe reports it as not answering with the file missing.
+
+Without a reply the commands say so with the pid, the wait and the age of the last
+tick (`daemon.unanswered` in `--json`, the finding `stimd-not-answering`, a cost).
+The wording is an observation, never "dead" or "hung": event-loop stalls of up to
+85 s were measured while awake. The result belongs to the stimd it was taken
+against: it is dropped when the claim holder changed during the probe, and never
+joined to a status that names another pid. The probe starts no stimd, writes no
+claim and signals nothing; stopping or replacing a stimd that does not answer is
+not decided here.
+
+Limit: a stimd that predates the probe frame cannot be told from a live one by its
+pid, so the claim's pid stands, and its `unknown-kind` reply is the only evidence
+that it answers.
+
+`status --watch` and the stim-server status worker probe in the background, at most
+every 10 s, and never wait for it: the first paint and each refresh come first, and
+a silent stimd adds one more line when the 3 s end. `status` and `doctor` run the
+probe beside the rest of their read, so a healthy stimd adds no measurable time and
+a silent one adds the 3 s. Through the `status --json` shortcut that asks stimd
+first, which already waits 5 s, a silent stimd takes about 8 s.
+
 ## Collect diagnostics with the existing reports
 
 The [diagnostic procedure](../website/docs/dev-server-and-logs.md#collect-diagnostics-for-a-stimd-problem)
@@ -145,5 +179,13 @@ threshold of five for unknown deaths, the rule that a refusal is no crash, the
 hold that never refuses an attached stimd and lets commands fall back, `doctor
 --fix`, and the exit code 1 for every abnormal shutdown; none of these is the
 maintainer's wording.
+
+The implementing lane of issue #5774 chose the whole section on reporting a stimd that
+does not answer, none of which is the maintainer's wording: the 3 s wait, the 100 ms
+retry, the probe frame, the 10 s watch interval, probing on every `status` and
+`doctor`, the finding code and its cost level, and dropping a result taken against
+another claim holder. The maintainer's "Work on all those and lmk tomorrow",
+2026-11-15, made #5774 part of the 2.0 work; it did not choose these. The
+socket-presence check that fix 1 of #5579 names is not part of this change.
 
 Related: #5579.

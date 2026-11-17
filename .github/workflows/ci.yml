@@ -23,6 +23,23 @@ on:
         description: Validate build-only Apple operations and artifact export on macOS
         type: boolean
         default: false
+      crash_probe:
+        description: Segfault a process on purpose in test (node 24) to prove the crash report works
+        type: boolean
+        default: false
+      crash_loop:
+        description: Repeat the integration suite this many times on Node 24 in place of test (node N); 0 runs the normal workflow. Dispatch with full off to skip the macOS and Windows jobs.
+        type: string
+        default: '0'
+      crash_loop_scope:
+        description: Files the crash loop runs
+        type: choice
+        options: [stimd, all]
+        default: stimd
+      crash_loop_node_flags:
+        description: Node or V8 flags for the vitest forks of the crash loop, space separated
+        type: string
+        default: ''
   workflow_call:
     inputs:
       full:
@@ -69,7 +86,7 @@ on:
       - 'apps/desktop/Tests/VisualFixtureTests/Fixtures/real-archive/**'
 
 concurrency:
-  group: ci-v2-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}${{ inputs.full && '-full' || '' }}
+  group: ci-v2-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}${{ inputs.full && '-full' || '' }}${{ (inputs.crash_loop || '0') != '0' && format('-loop-{0}-{1}-{2}', inputs.crash_loop_scope, inputs.crash_loop, inputs.crash_loop_node_flags) || '' }}
   cancel-in-progress: true
 
 permissions:
@@ -78,10 +95,15 @@ permissions:
 jobs:
   test:
     name: test (node ${{ matrix.node }})
+    if: ${{ !(github.event_name == 'workflow_dispatch' && (inputs.crash_loop || '0') != '0') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
       actions: read
+    env:
+      # V8 on the Node 24 line can crash while freeing dead WebAssembly code (nodejs/node#66366);
+      # remove with appandflow/stim#5821 once nodejs/node#66376 ships.
+      VITEST_NODE_FLAGS: ${{ matrix.node == 24 && '--execArgv=--no-wasm-code-gc' || '' }}
     strategy:
       # Repository builds require Node 22.18 or later because tsdown uses that
       # floor. Prove Node 22 and the current LTS line 24.
@@ -164,9 +186,9 @@ jobs:
             unit_files+=("$unit_file")
           done < <(node scripts/ci-unit-test-files.mjs)
           if ((${#unit_files[@]})); then
-            pnpm run test "${unit_files[@]}" --reporter=default --reporter=json --outputFile.json=test-results/unit-${{ matrix.node }}.json
+            pnpm run test "${unit_files[@]}" ${VITEST_NODE_FLAGS:+"$VITEST_NODE_FLAGS"} --reporter=default --reporter=json --outputFile.json=test-results/unit-${{ matrix.node }}.json
           else
-            pnpm run test:unit --reporter=default --reporter=json --outputFile.json=test-results/unit-${{ matrix.node }}.json
+            pnpm run test:unit ${VITEST_NODE_FLAGS:+"$VITEST_NODE_FLAGS"} --reporter=default --reporter=json --outputFile.json=test-results/unit-${{ matrix.node }}.json
           fi
 
       - name: Benchmark harness tests (vitest)
@@ -200,9 +222,41 @@ jobs:
             pnpm run test:bench
           fi
 
+      - name: Enable native crash capture
+        if: matrix.node == 24 && github.event_name != 'pull_request'
+        run: bash scripts/ci/crash-capture.sh enable
+
+      - name: Crash capture probe
+        if: matrix.node == 24 && github.event_name == 'workflow_dispatch' && inputs.crash_probe
+        shell: bash
+        run: |
+          ulimit -c unlimited
+          node -e "process.kill(process.pid, 'SIGSEGV')" || true
+
       - name: Integration tests (vitest)
         if: github.event_name != 'pull_request' && (github.event_name != 'push' || matrix.node == 24)
-        run: pnpm run test:integration --reporter=default --reporter=json --outputFile.json=test-results/integration-${{ matrix.node }}.json
+        shell: bash
+        env:
+          CRASH_CAPTURE: ${{ matrix.node == 24 && '1' || '' }}
+        run: |
+          if [[ "$CRASH_CAPTURE" == 1 ]]; then
+            ulimit -c unlimited
+            exec > >(tee crash-report/integration.log) 2>&1
+          fi
+          pnpm run test:integration ${VITEST_NODE_FLAGS:+"$VITEST_NODE_FLAGS"} --reporter=default --reporter=json --outputFile.json=test-results/integration-${{ matrix.node }}.json
+
+      - name: Report a native crash
+        id: crash
+        if: always() && matrix.node == 24 && github.event_name != 'pull_request'
+        run: bash scripts/ci/crash-capture.sh report
+
+      - name: Retain the native crash report
+        if: always() && steps.crash.outputs.crashed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-crash-report-node-24
+          path: crash-report/
+          retention-days: 14
 
       - name: Retain unit-test timings
         if: always()
@@ -235,6 +289,38 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/test-timings.mjs main
+
+  crash-repro:
+    name: crash loop (node 24)
+    if: github.event_name == 'workflow_dispatch' && (inputs.crash_loop || '0') != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: ./.github/actions/setup-stim
+        with:
+          node: 24
+      - name: Enable native crash capture
+        run: bash scripts/ci/crash-capture.sh enable
+      - name: Repeat the integration suite
+        env:
+          CRASH_LOOP_NODE_FLAGS: ${{ inputs.crash_loop_node_flags }}
+          CRASH_LOOP_COUNT: ${{ inputs.crash_loop }}
+          CRASH_LOOP_SCOPE: ${{ inputs.crash_loop_scope }}
+        run: bash scripts/ci/crash-capture.sh loop "$CRASH_LOOP_COUNT" "$CRASH_LOOP_SCOPE"
+      - name: Report a native crash
+        id: crash
+        if: always()
+        run: bash scripts/ci/crash-capture.sh report
+      - name: Retain the native crash report
+        if: always() && steps.crash.outputs.crashed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-crash-report-node-24
+          path: crash-report/
+          retention-days: 14
 
   native-paths:
     name: native paths changed

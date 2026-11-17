@@ -164,27 +164,31 @@ test('refuses when the workspace simulator does not boot', async () => {
   });
 });
 
-test.skipIf(process.platform === 'win32')('waits for the boot before build admission, and boots once', async () => {
-  exactScript('[ "$EXACT_SIM" = SIM-2 ] && exit 7\nexit 1');
-  let finish: (udid: string) => void = () => {};
-  let calls = 0;
-  const recipe = exactIosProject(root).artifact(
-    context(null, () => {
-      calls += 1;
-      return new Promise((resolve) => (finish = (udid) => resolve({ ok: true, udid })));
-    }),
-  );
+test.skipIf(process.platform === 'win32')(
+  'waits for the boot before build admission, not before placement, and boots once',
+  async () => {
+    exactScript('[ "$EXACT_SIM" = SIM-2 ] && exit 7\nexit 1');
+    let finish: (udid: string) => void = () => {};
+    let calls = 0;
+    const recipe = exactIosProject(root).artifact(
+      context(null, () => {
+        calls += 1;
+        return new Promise((resolve) => (finish = (udid) => resolve({ ok: true, udid })));
+      }),
+    );
 
-  let identified = false;
-  const identity = recipe.identity().then(() => (identified = true));
-  await new Promise(setImmediate);
-  expect(identified).toBe(false);
-  finish('SIM-2');
-  await identity;
+    await recipe.identity();
+    let admitted = false;
+    const admission = recipe.beforeLocalBuild?.().then(() => (admitted = true));
+    await new Promise(setImmediate);
+    expect(admitted).toBe(false);
+    finish('SIM-2');
+    await admission;
 
-  expect(await recipe.compile()).toMatchObject({ ok: false, exitCode: 7 });
-  expect(calls).toBe(1);
-});
+    expect(await recipe.compile()).toMatchObject({ ok: false, exitCode: 7 });
+    expect(calls).toBe(1);
+  },
+);
 
 test("an Exact build is incremental when target/ already holds the simulator's Rust output for its configuration", async () => {
   const incremental = async (configuration: string | null) => {
@@ -261,16 +265,13 @@ test('an app that declares native modules keeps an automatic placement here and 
 });
 
 test('names why an Exact build that cannot offload stays here, and refuses a named build machine', async () => {
-  writeFileSync(join(root, 'app.json'), JSON.stringify({ app: { id: 'com.example.shop' }, modules: ['camera'] }));
+  writeFileSync(join(root, 'app.json'), JSON.stringify({ app: { id: 'com.example.shop' } }));
   expect(await plan({ remoteBuild: 'auto' })).toMatchObject({
     buildPlacement: { preference: 'auto', reason: 'builds on this machine: no remote machine is paired' },
   });
   expect(await plan({ remoteBuild: 'mini' })).toMatchObject({
     outcome: null,
-    refusal: {
-      code: 'STIM_OFFLOAD_REFUSED',
-      message: expect.stringContaining('Exact apps that declare native modules build here'),
-    },
+    refusal: { code: 'STIM_OFFLOAD_REFUSED', message: expect.stringContaining('exact.mjs is not readable') },
   });
 });
 

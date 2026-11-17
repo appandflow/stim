@@ -68,7 +68,14 @@ test('an idle-stopped workspace gets Metro, its simulator and the app it launche
   const { deps, calls, runs } = harness({
     readLaunches: () => ({
       ios: iosLaunch,
-      'android:release': { ...iosLaunch, appId: 'com.example.release', release: true, metroPort: null },
+      'android:release': {
+        ...iosLaunch,
+        appId: 'com.example.release',
+        avdName: 'stim-other',
+        deviceId: 'emulator-5554',
+        release: true,
+        metroPort: null,
+      },
     }),
   });
   const result = await runRevive({ root: '/project', note: () => {}, requestedDevice: 'U1', deps });
@@ -185,22 +192,6 @@ test.each<[string, Partial<ReviveDeps>, string | null]>([
 });
 
 test.each<[string, string, Partial<ReviveDeps>, string]>([
-  [
-    'a Release build as its last launch',
-    'U1',
-    { readLaunches: () => ({ ios: { ...iosLaunch, release: true, metroPort: null } }) },
-    '`stim ios`',
-  ],
-  [
-    'a native-process launch as its last launch',
-    'stim-avd',
-    {
-      readLaunches: () => ({
-        android: { ...iosLaunch, deviceId: 'emulator-5554', avdName: 'stim-avd', runtime: 'process', metroPort: null },
-      }),
-    },
-    '`stim android`',
-  ],
   [
     'an emulator launch an older Stim recorded without its AVD name',
     'stim-avd',
@@ -320,7 +311,7 @@ test.each<[string, string | null]>([
         slot: 'default',
         configuration: 'Debug',
         recordedBuild: null,
-        installedApp: 'com.example.exact',
+        installedApp: { appId: 'com.example.exact', kind: 'process' },
         expectedDevice: 'U1',
       },
     ]);
@@ -329,6 +320,46 @@ test.each<[string, string | null]>([
       'Simulator stim-app rebooted.',
       'com.example.exact relaunched from cold on Simulator stim-app; in-app state is gone.',
     ]);
+  },
+);
+
+test.each([
+  ['ios', 'embedded-js', 'U1'],
+  ['android', 'embedded-js', 'stim-avd'],
+  ['android', 'process', 'stim-avd'],
+] as const)(
+  '%s %s revive restores the installed app without starting an idle Metro',
+  async (platform, kind, device) => {
+    const { deps, calls, runs } = harness({
+      getProject: () => ({
+        ...project,
+        platforms: { ...project.platforms, android: { avdName: 'stim-avd', owned: true } },
+      }),
+      readLaunches: () => ({
+        [platform]: {
+          ...iosLaunch,
+          ...(platform === 'android' ? { avdName: device, deviceId: 'emulator-5554' } : {}),
+          metroPort: null,
+          release: kind === 'embedded-js',
+          ...(kind === 'process' ? { runtime: 'process' as const } : {}),
+          artifact: undefined,
+        },
+      }),
+      resolveCachedApp: () => {
+        throw new Error('installed-only revive checked the cache');
+      },
+    });
+    const result = await runRevive({ root: '/project', note: () => {}, requestedDevice: device, deps });
+    assert(result.ok);
+    expect(calls).toEqual([platform]);
+    expect(runs).toMatchObject([
+      {
+        recordedBuild: null,
+        installedApp: { appId: iosLaunch.appId, kind },
+        expectedDevice: device,
+      },
+    ]);
+    expect(result.facts.revived.metro).toMatchObject({ port: null, restarted: false });
   },
 );
 
@@ -350,14 +381,6 @@ test.each<[string, Partial<ReviveDeps>, string]>([
     'STIM_NO_METRO',
   ],
   ['an app without Metro was never registered', { ...exactDeps, getProject: () => null }, 'STIM_NO_PROJECT'],
-  [
-    'the last launch was a Release build and Metro was stopped',
-    {
-      readState: () => ({}),
-      readLaunches: () => ({ ios: { ...iosLaunch, release: true, metroPort: null } }),
-    },
-    'STIM_NO_METRO',
-  ],
 ])('when %s, the refusal names stim ios, never stim start', async (_name, overrides, code) => {
   const { deps, calls } = harness(overrides);
   const result = await runRevive({ root: '/project', note: () => {}, deps });

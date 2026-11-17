@@ -196,7 +196,8 @@ after owned cleanup; a caller abort rejects with
 If child identity cannot be verified after a one-second retry budget, cleanup
 refuses with `STIM_CLAIM_UNAVAILABLE` instead of a cancellation or timeout
 error. Child cleanup errors name the launcher PID; unverifiable processes and descendants
-are left untouched. On POSIX, a launcher that exited before identity capture can only
+are left untouched. On POSIX it first sends SIGKILL to a cancelled child whose identity was not
+captured, never to its group. A launcher that exited before identity capture can only
 finish successfully once its process group is proven gone.
 After a termination request, cleanup waits for a child to close, then for its
 process group to exit: each wait is 5 seconds times the host's load per CPU,
@@ -270,8 +271,8 @@ reference:
 - [EAS development builds](https://stim.appandflow.com/docs/eas-builds).
 - [Commands](https://stim.appandflow.com/docs/commands) and
   [settings](https://stim.appandflow.com/docs/settings).
-- [Troubleshooting](https://stim.appandflow.com/docs/troubleshooting): every
-  refusal code and its remedy.
+- [Troubleshooting](https://stim.appandflow.com/docs/troubleshooting): recovery
+  procedures too long for a printed remedy.
 
 The installed CLI contains version-matched operational guidance:
 

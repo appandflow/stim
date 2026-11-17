@@ -14,8 +14,10 @@ import {
   type MaintenanceState,
   type MaintenanceRecord,
   type MaintenanceSize,
+  type PressureLevel,
 } from '@stim-cli/core/state';
 import { tryAcquireClaim, releaseClaim, type ClaimHandle, type ClaimHolder } from '@stim-cli/core/ownership-claim';
+import { diskPressure, diskThresholds } from '../../daemon/pressure.ts';
 import { tickListsSims, type TickMeasurement } from '../../daemon/measure.ts';
 import { listAvdsAsync } from '../../devices/android.ts';
 import { listAllIosSimsAsync } from '../../devices/ios.ts';
@@ -36,6 +38,8 @@ import { executeAction, type ActionOutcome } from './act.ts';
 import { plannedMaintenance, triggeringRoot, type PlannedMaintenance } from './preview.ts';
 import { maintenanceLogger } from './log.ts';
 import { executedActionName } from '../../maintenance-kind.ts';
+import { isUnverifiedCleanup, runDiscoveryCensusIfDue } from '../../workspace/discovery-census.ts';
+import { runDiscoveryScanIfDue } from '../../workspace/discovery-scan.ts';
 import { maintenanceItem, openGcLog, type GcLog } from '../../commands/gc/log.ts';
 
 function writeState(state: MaintenanceState): void {
@@ -318,6 +322,10 @@ function throwUnverifiedCleanup(error: unknown): void {
   if (error instanceof Error && 'reportCleanup' in error) throw error;
 }
 
+function recordedDiskLevel(state: MaintenanceState, env?: NodeJS.ProcessEnv): PressureLevel {
+  return diskPressure(state.pressure?.disk ?? [], diskThresholds(loadConfig(), env).thresholds).level;
+}
+
 async function deferIfLoaded(
   state: MaintenanceState,
   check: MaintenanceCheck,
@@ -331,7 +339,7 @@ async function deferIfLoaded(
   keepState: () => void,
   cap: { ran: boolean },
 ): Promise<boolean> {
-  if (!deferCheck(state, check, Date.now(), sizeScanDeferred())) return false;
+  if (!deferCheck(state, check, Date.now(), sizeScanDeferred(), recordedDiskLevel(state, operation?.env))) return false;
   record('maintenance_skip', 'debug', `${check} check deferred: host load exceeds 4 per core`, {
     target: check,
     reason: 'host load exceeds 4 per core',
@@ -401,12 +409,15 @@ export async function runMaintenance(
     crashLine(error);
     return;
   }
+  let scanAfter = false;
+  let passFailed = false;
   let logger: ReturnType<typeof maintenanceLogger> | undefined;
   let gcLog: GcLog | undefined;
   try {
     const resolved = resolveMaintenanceSettings();
     const settings = report && resolved.mode === 'on' ? { ...resolved, mode: 'report' as const } : resolved;
     if (settings.mode === 'off') return;
+    scanAfter = true;
     const state: MaintenanceState = readMaintenanceState() ?? {
       version: 1,
       lastAt: {},
@@ -416,7 +427,7 @@ export async function runMaintenance(
       recent: [],
       plan: [],
     };
-    const checks = due(state, settings, startedAt);
+    const checks = due(state, settings, startedAt, recordedDiskLevel(state, tick?.operation.env));
     if (checks.length === 0) return;
     const background = BACKGROUND_TRIGGERS.has(trigger);
     let writeError: string | null = null;
@@ -723,6 +734,7 @@ export async function runMaintenance(
     }
     writeState(state);
   } catch (error) {
+    passFailed = true;
     throwUnverifiedCleanup(error);
     const message = error instanceof Error ? error.message : String(error);
     try {
@@ -736,7 +748,40 @@ export async function runMaintenance(
     logger?.close();
     keepReserve();
     releaseClaim(claim);
+    if (scanAfter) await scanAfterPass(tick, passFailed, trigger);
   }
+}
+
+/**
+ * The discovery scan and the census of what it found, after the pass has released its claim. Not after a failed pass or a
+ * cancellation. The scan's errors stay inside. The census's too, except an unverified child cleanup, which propagates
+ * unchanged for the daemon's cleanup containment (LLP 0007): this runs only after a pass that did not fail, so it masks
+ * no earlier error. A census failure it contains is recorded in the maintenance log.
+ */
+async function scanAfterPass(tick: MaintenanceTick | undefined, passFailed: boolean, trigger: string): Promise<void> {
+  if (passFailed || tick?.operation.signal.aborted) return;
+  try {
+    await runDiscoveryScanIfDue(tick);
+  } catch {}
+  let failure: string | void;
+  try {
+    failure = await runDiscoveryCensusIfDue(tick);
+  } catch (error) {
+    if (isUnverifiedCleanup(error)) throw error;
+    return;
+  }
+  if (!failure) return;
+  try {
+    const logger = maintenanceLogger(resolveMaintenanceSettings(), `census-${process.pid}`, trigger);
+    try {
+      logger.write('maintenance_failure', 'error', `The discovery census failed: ${failure}`, {
+        target: 'discovery census',
+        error: failure,
+      });
+    } finally {
+      logger.close();
+    }
+  } catch {}
 }
 
 function crashLine(error: unknown): void {

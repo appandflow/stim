@@ -2,6 +2,7 @@ import { runDirRemoved } from './run-dir.ts';
 import { createMetroTickets, handleMetroTicketRequest } from './metro/tickets.ts';
 import { createLeaseTickets, handleLeaseRequest } from './lease-tickets.ts';
 import { randomUUID } from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { StimContext } from '@stim-cli/core';
 import {
   chmodSync,
@@ -29,6 +30,7 @@ import {
   crashLoop,
   isJsonObject,
   readJsonObject,
+  runId as currentRunId,
   stimdClaimRoot,
   stimdRecordFile,
   stimdRunDir,
@@ -42,6 +44,7 @@ import {
   readDaemonSnapshot,
   readStimdBoots,
   readMaintenanceState,
+  listBuildEndMarkers,
   readHostedSessions,
   readHostedAppMetadata,
   type HostedDeviceSession,
@@ -50,6 +53,7 @@ import {
   type DaemonRecentAction,
   type DaemonSnapshot,
 } from '@stim-cli/core/state';
+import { startBuildEndTimer } from './build-end-timer.ts';
 import {
   ClaimUnavailableError,
   claimFailure,
@@ -122,6 +126,7 @@ import {
 import { invocation, traceInvocation, withInvocation, type Invocation } from './forwarded.ts';
 import { createPassesLane, createThreadTable } from './threads.ts';
 import { createCleanupWatch, isUnverifiedCleanup } from './cleanup-watch.ts';
+import { setReportChildLog } from '../report-child-log.ts';
 import { createStreams } from './logs/streams.ts';
 import { handleLogRequest } from './logs/protocol.ts';
 import { writeDesktopKey } from './desktop-key.ts';
@@ -768,8 +773,11 @@ async function runStimdInner(
   mkdirSync(stimdRunDir(), { recursive: true, mode: 0o700 });
   const previousRun = previousRunId(daemonNdjsonFile());
   const writer = createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES, reportFailures: true });
+  const daemonRunId = currentRunId();
+  const inDaemonContext = AsyncLocalStorage.snapshot();
   const log = (level: Level, event: string, msg: string, fields: Record<string, unknown> = {}) =>
     writer.write({ src: 'stimd', level, event, msg, ...fields });
+  setReportChildLog(log);
   const path = stimdSocket();
   const bootAt = Date.now();
   const leftover = readClaimSet(stimdClaimRoot()).dead;
@@ -961,21 +969,36 @@ async function runStimdInner(
     desktopKey: key,
     script,
   });
-  const logs = createStreams((message) => log('warn', 'device_logs', message), log);
+  const logs = createStreams(
+    (message) => log('warn', 'device_logs', message),
+    log,
+    () => reportUnverified(),
+  );
   const threads = createThreadTable(log, (error) => failBackground(error, 'a thread cleanup could not be verified'));
   let backgroundFailure: unknown;
   const cleanups = createCleanupWatch(log);
   const reportUnverified = () => {
+    if (!claim) return;
+    const { unverified: previous, unverifiedConsoles: previousConsoles, ...kept } = claim.details;
     const unverified = cleanups.entries();
-    if (!claim || JSON.stringify(unverified) === JSON.stringify(claim.details.unverified ?? [])) return;
-    const kept = Object.fromEntries(Object.entries(claim.details).filter(([field]) => field !== 'unverified'));
+    const unverifiedConsoles = logs.unverifiedConsoles();
+    if (
+      JSON.stringify(unverified) === JSON.stringify(previous ?? []) &&
+      JSON.stringify(unverifiedConsoles) === JSON.stringify(previousConsoles ?? [])
+    )
+      return;
     try {
-      claim = updateClaimDetails(claim, unverified.length ? { ...kept, unverified } : kept) ?? claim;
+      claim =
+        updateClaimDetails(claim, {
+          ...kept,
+          ...(unverified.length ? { unverified } : {}),
+          ...(unverifiedConsoles.length ? { unverifiedConsoles } : {}),
+        }) ?? claim;
     } catch (error) {
       log(
         'warn',
         'daemon_cleanup_report_failed',
-        `could not record the children stimd waits for in its claim: ${error instanceof Error ? error.message : String(error)}`,
+        `could not record unverified cleanup in the daemon claim: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   };
@@ -992,6 +1015,22 @@ async function runStimdInner(
   const statuses = createStatusSnapshots(log, join(daemonDir(), 'status-cwds.json'));
   let dependencyScanAt = -Infinity;
   let dependencyWork: Promise<void> | undefined;
+  const startMeasureJob = (input: { cwd: string; buildEnd?: true }, failedEvent: string): Promise<void> => {
+    const work = threads
+      .run('measure', input)
+      .then(() => undefined)
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        if (isUnverifiedCleanup(error) && !contain(error))
+          failBackground(error, 'dependency cleanup could not be verified');
+        if (message !== 'aborted') log('warn', failedEvent, message);
+      })
+      .finally(() => {
+        dependencyWork = undefined;
+      });
+    dependencyWork = work;
+    return work;
+  };
   const loopDelay = monitorEventLoopDelay();
   loopDelay.enable();
   const waiters: Record<Resource, Socket[]> = { build: [], boot: [], test: [] };
@@ -1035,7 +1074,18 @@ async function runStimdInner(
   const opContexts = new Map<Socket, Invocation & { workspace: string }>();
   const opControllers = new Map<Socket, AbortController>();
   const opTokens = new Map<string, Socket>();
-  const leaseTickets = createLeaseTickets((message) => log('warn', 'device_lease_release_failed', message));
+  const leaseTickets = createLeaseTickets(
+    (message) => log('warn', 'device_lease_release_failed', message),
+    ({ waitMs, outcome }) =>
+      inDaemonContext(() =>
+        log('info', 'device_lease_acquire', 'device lease acquisition finished', {
+          runId: daemonRunId,
+          operation: 'lease.acquire',
+          waitMs,
+          outcome,
+        }),
+      ),
+  );
   const metroTickets = createMetroTickets(log);
   const socketTokens = new WeakMap<Socket, string>();
   const opCommands = new WeakMap<Socket, string>();
@@ -1245,6 +1295,11 @@ async function runStimdInner(
         }
         const reply = (fields: Record<string, unknown>) => socket.write(`${JSON.stringify(fields)}\n`);
         if (!framed) {
+          if (message.kind === 'probe') {
+            reply({ op: 'probe', pid: process.pid, build });
+            socket.end();
+            return;
+          }
           // compat C26 permanent
           if (message.kind !== 'cli' && message.kind !== 'api' && message.kind !== 'desktop') {
             reply({ op: 'error', code: 'unknown-kind', message: 'the first frame names no client kind' });
@@ -1747,6 +1802,12 @@ async function runStimdInner(
         if (!closing && runDirMisses >= HOME_WATCH_MISSES) shutdown('its run directory was removed');
       }, homeWatchMs);
   homeWatch?.unref();
+  const stopBuildEndTimer = startBuildEndTimer({
+    allowed: maintenanceAllowed,
+    busy: () => dependencyWork !== undefined,
+    markers: () => listBuildEndMarkers().map((marker) => marker.file),
+    start: () => startMeasureJob({ cwd: process.cwd(), buildEnd: true }, 'daemon_build_end_measure_failed'),
+  });
   for (;;) {
     if (!tickRequested && !closing) {
       await new Promise<void>((done) => {
@@ -1813,18 +1874,7 @@ async function runStimdInner(
       actions.push(...lane.take());
       if (maintenanceAllowed() && !dependencyWork && Date.now() - dependencyScanAt >= DEPENDENCY_SCAN_MS) {
         dependencyScanAt = Date.now();
-        dependencyWork = threads
-          .run('measure', { cwd: process.cwd() })
-          .then(() => undefined)
-          .catch((error: unknown) => {
-            const message = error instanceof Error ? error.message : String(error);
-            if (isUnverifiedCleanup(error) && !contain(error))
-              failBackground(error, 'dependency cleanup could not be verified');
-            if (message !== 'aborted') log('warn', 'daemon_dependency_scan_failed', message);
-          })
-          .finally(() => {
-            dependencyWork = undefined;
-          });
+        startMeasureJob({ cwd: process.cwd() }, 'daemon_dependency_scan_failed');
       }
       const reclaimStarted = performance.now();
       const reclaimed = await reclaimForBootWaiters({
@@ -1949,6 +1999,7 @@ async function runStimdInner(
     await writerDone;
     for (const signal of DETACHED_SIGNALS) process.off(signal, onSignal);
     clearInterval(homeWatch);
+    stopBuildEndTimer();
     clearTimeout(attachedWatchdog);
   }
   return true;

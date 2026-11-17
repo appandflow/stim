@@ -17,12 +17,14 @@ import { collectOwnedDeviceActivityAsync } from '../commands/gc/idle.ts';
 import { REAL_BYTES_THRESHOLD, runDormantDependencies } from '../daemon/dependencies.ts';
 import { runIdlePass } from '../daemon/idle.ts';
 import { runLadder } from '../daemon/ladder.ts';
+import * as cargoTargetPasses from '../stimd/passes/cargo-target.ts';
 import { runLadderToFree } from '../daemon/passes.ts';
 import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { dormantCandidates, pendingDormant, runDormantPass } from '../daemon/stages.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { parkSim, readParked } from '../devices/sim-pool.ts';
 import * as android from '../devices/android.ts';
+import * as simPool from '../devices/sim-pool.ts';
 import * as ios from '../devices/ios.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
 import * as teardown from '../devices/teardown.ts';
@@ -454,6 +456,92 @@ describe('the pressure ladder', () => {
     ]);
     expect(deleted).toEqual([]);
   });
+
+  function cargoApp() {
+    vi.stubEnv('STIM_DISK_MIN_FREE_GB', '100000000');
+    vi.stubEnv('STIM_DISK_CRITICAL_FREE_GB', '0');
+    vi.stubEnv('STIM_DISK_HARD_FLOOR_GB', '0');
+    const app = join(projects, 'rust-app');
+    mkdirSync(join(app, 'ios', 'App.xcodeproj'), { recursive: true });
+    writeFileSync(join(app, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+    writeFileSync(join(app, '.gitignore'), 'target/\n');
+    for (const args of [
+      ['init', '-q', '-b', 'main'],
+      ['add', '-A'],
+      ['commit', '-q', '-m', 'init'],
+    ])
+      execSync(`git -C ${app} -c user.name=t -c user.email=t@t ${args.join(' ')}`);
+    const target = join(app, 'target');
+    const incremental = join(target, 'debug', 'incremental');
+    const fill = () => {
+      mkdirSync(join(target, 'debug', '.fingerprint'), { recursive: true });
+      mkdirSync(incremental, { recursive: true });
+      writeFileSync(join(incremental, 'data'), 'x'.repeat(50_000));
+    };
+    fill();
+    writeFileSync(join(target, 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55\n');
+    upsertProject(app, { metroPort: null });
+    return { app, target, incremental, fill };
+  }
+
+  test.skipIf(process.platform === 'win32')(
+    'at high rung 3 trims the incremental data of a Cargo target first, again only after 10 minutes, with no size scan',
+    async () => {
+      const { target, incremental, fill } = cargoApp();
+      const remeasure = async () => pressure('high');
+
+      const first = await runLadder(input(true, remeasure), pressure('high'));
+
+      expect(existsSync(incremental)).toBe(false);
+      expect(existsSync(join(target, 'debug', '.fingerprint'))).toBe(true);
+      expect(first.actions.map((action) => [action.rung, action.kind, action.target, action.outcome])).toEqual([
+        [3, 'trim-cargo', target, 'done'],
+      ]);
+
+      fill();
+      await runLadder(input(true, remeasure), pressure('high'));
+      expect(existsSync(incremental)).toBe(true);
+
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(Date.now() + 11 * MINUTE_MS);
+      await runLadder(input(true, remeasure), pressure('high'));
+      expect(existsSync(incremental)).toBe(false);
+    },
+  );
+
+  test.skipIf(process.platform === 'win32')(
+    'rung 3 plans no Cargo target when the level has cleared by the time it starts',
+    async () => {
+      const { incremental } = cargoApp();
+      const plan = vi.spyOn(cargoTargetPasses, 'planCargoTargetsAtPressure');
+      let calls = 0;
+
+      await runLadder(
+        {
+          ...input(true, async () => (++calls === 1 ? pressure('high') : pressure('normal'))),
+          fromRung: 3,
+          lastRung: 3,
+        },
+        pressure('high'),
+      );
+
+      expect(plan).not.toHaveBeenCalled();
+      expect(existsSync(incremental)).toBe(true);
+    },
+  );
+
+  test.skipIf(process.platform === 'win32')(
+    'a command ladder leaves the Cargo target of its own workspace alone',
+    async () => {
+      const { app, incremental } = cargoApp();
+      const remeasure = async () => pressure('high');
+
+      const { actions } = await runLadder({ ...input(true, remeasure), protectedRoot: app }, pressure('high'));
+
+      expect(existsSync(incremental)).toBe(true);
+      expect(actions).toEqual([]);
+    },
+  );
 
   test('at high disk pressure rung 1 deletes the outputs of a stopped workspace idle 2 minutes, not of one used since', async () => {
     const outputs = (name: string, usedAgoMs: number) => {
@@ -1139,3 +1227,77 @@ describe.skipIf(process.platform === 'win32')(
     }, 20_000);
   },
 );
+
+describe('rung timing records', () => {
+  const steps = () =>
+    log.mock.calls
+      .filter(([, event]) => event === 'daemon_step')
+      .map(([logLevel, , , fields]) => Object.assign({ logLevel }, fields));
+  const run = (operation?: ReturnType<typeof testContext>) => {
+    const config = loadConfig();
+    if (!config) throw new Error('missing fixture config');
+    return runLadder(
+      {
+        config,
+        act: true,
+        log,
+        devices: [],
+        simsFailed: false,
+        remeasure: async () => pressure('high'),
+        fromRung: 2,
+        lastRung: 2,
+        ...(operation ? { operation } : {}),
+      },
+      pressure('high'),
+    );
+  };
+
+  beforeEach(() => {
+    let clock = 0;
+    vi.spyOn(performance, 'now').mockImplementation(() => (clock += 100));
+  });
+
+  test('a rung that finishes records its start, duration, actions and outcome', async () => {
+    vi.spyOn(simPool, 'readParked').mockReturnValue([]);
+
+    await run();
+
+    expect(steps()).toEqual([
+      {
+        logLevel: 'debug',
+        step: 'rung',
+        rung: 2,
+        pressureLevel: 'high',
+        startedAt: expect.stringMatching(/^\d{4}-\d\d-\d\dT[\d:.]+Z$/),
+        durationMs: 100,
+        items: 0,
+        outcome: 'finished',
+      },
+    ]);
+  });
+
+  test('a rung that throws records the failure, and the ladder goes on as before', async () => {
+    vi.spyOn(simPool, 'readParked').mockImplementation(() => {
+      throw new Error('boom');
+    });
+
+    const { actions } = await run();
+
+    expect(steps()).toMatchObject([{ step: 'rung', rung: 2, outcome: 'threw', error: 'boom' }]);
+    expect(actions).toMatchObject([{ rung: 2, kind: 'rung', outcome: 'failed', detail: 'boom' }]);
+    expect(log).toHaveBeenCalledWith('warn', 'pressure_rung_failed', 'rung 2 failed: boom');
+  });
+
+  test('a rung stopped by an abort records it and the abort still reaches the caller', async () => {
+    const controller = new AbortController();
+    vi.spyOn(simPool, 'readParked').mockImplementation(() => {
+      controller.abort();
+      throw new Error('stopped');
+    });
+
+    await expect(run(testContext({ signal: controller.signal }))).rejects.toMatchObject({ name: 'AbortError' });
+
+    expect(steps()).toMatchObject([{ step: 'rung', rung: 2, outcome: 'aborted' }]);
+    expect(steps()[0]).not.toHaveProperty('error');
+  });
+});

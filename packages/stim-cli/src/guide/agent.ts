@@ -22,7 +22,6 @@ Choose the guide for the app or task. Read only the matching route.
 | Inspect runtime errors or device output | stim guide logs |
 | Verify a fix in the UI | stim guide lifecycle verification |
 | App readiness markers | stim guide lifecycle readiness |
-| A refusal with a code | stim guide errors <CODE> |
 | Shell sandbox | stim guide errors sandbox |
 | Build cache or unexpected rebuild | stim guide lifecycle builds |
 | Queued build or device | stim guide lifecycle concurrency |
@@ -63,10 +62,10 @@ STIM_ACCESS_TICKET or edit remote.*, server.* or hosting.* for the user.
 NEXT STEP
 
 On launch, use the printed UI command when interaction is needed. On failure,
-follow the reported diagnostic and remedy. Use stim logs --errors when the
-launch output lacks the cause or to verify recovery. STIM_NO_PROJECT from logs
-means there is no captured workspace timeline. Verify the expected UI before
-claiming the fix.
+follow the printed remedy; if it is missing or falls short, run
+stim guide errors <CODE>. Use stim logs --errors when the launch output lacks
+the cause or to verify recovery. STIM_NO_PROJECT from logs means there is no
+captured workspace timeline. Verify the expected UI before claiming the fix.
 
 When a command first prints "Open in Stim: <link>", share that link with the user once.
 Run stim guide for the full topic index.`,
@@ -140,9 +139,9 @@ RULES DURING THE LOOP
 - When the app shows "could not connect", a red or blank screen after a
   pause, run stim revive. After an idle stop it restarts Metro, boots the owned
   simulator or emulator the app last ran on, and relaunches the app from cold,
-  so in-app state is gone. An app that runs without Metro (Exact) gets its
-  simulator booted and the installed app relaunched. It never builds and never
-  starts what the workspace did not have; when it refuses, follow its remedy
+  so in-app state is gone. For Release React Native and native apps, revive
+  launches the app already installed on the owned simulator or emulator.
+  Revive never builds. If the app is missing, follow the printed remedy
   (guide metro).
 - Run ios or android again after a native input changes. A JavaScript-only
   change does not need one.

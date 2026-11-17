@@ -497,17 +497,28 @@ bun --version, rustup and git; it never runs the app's code.
 Remote builds: with paired build Macs (guide remote), remote.build and
 --remote-build place an Exact build like any iOS simulator build. The worker
 runs the same ./exact.mjs ios --no-install [--release] in the app's directory,
-with EXACT2 at ~/.exact/exact2/<commit> and no simulator,
-and this Mac installs the .app on its owned or hosted simulator; nothing is cached. The
-worker needs Exact's own toolchain: Bun at ~/.bun-<version>, rustup with the
-Rust version exact2 pins and its aarch64-apple-ios-sim target, and the exact2
-commit this app uses, set up with Exact's setup. A machine that lacks one is
+with EXACT2 at the worker's exact2 checkout for the app's commit (or at the
+copy it places at the app's relative path to exact2) and no simulator, and this Mac installs the .app on its owned or hosted simulator;
+nothing is cached. For an app whose app.json declares native modules, the worker
+creates and boots a simulator of its own for the build, passes it as EXACT_SIM
+for Exact's module roster read, and deletes it after. The app's relative path to
+exact2 (the one its Cargo manifests use) holds a checkout of that commit inside
+the worker's build area; for an app in a subdirectory of its repository, exact2
+may sit at most one folder above the repository. The worker needs Exact's own toolchain: Bun at
+~/.bun-<version>, rustup with the Rust version exact2 pins and its
+aarch64-apple-ios-sim target, and the exact2 commit this app uses at
+~/.exact/exact2/<commit> or ~/.exact/exact2/<the client's checkout folder
+name>, set up with Exact's setup; the install command clones into
+~/.exact/exact2/<commit> and fetches the commit from
+the remote this Mac's exact2 checkout has it on, so a fork works. A machine that lacks one is
 skipped and the placement line names the missing piece and the command that
 installs it; stim doctor lists the same for each machine in remote.machines. The values of the settings app.json env declares travel with the
 build: this shell's, else .env.local's, else .env's, as Exact reads them. These
-build here: apps whose app.json declares native modules (Exact may read them on
-a simulator), an exact2 checkout with local changes, and a repository-root app
-whose folder name is not a plain ASCII file name.
+build here: an exact2 checkout with local changes, an exact2 checkout that
+shares no top directory with the app or whose folder name is not a plain ASCII
+file name, an app in a subdirectory whose exact2 sits more than one folder
+above its repository, and a repository-root app whose folder name is not a
+plain ASCII file name.
 
 Only iOS simulators, here or hosted, are supported. macOS, web, Android and physical devices
 use Exact's own commands.`,
@@ -1402,7 +1413,11 @@ result as proof instead of requiring an unrelated screenshot.`,
 
   The \`~\` value is an estimate, never a countdown; the third line is a
   project with no record to estimate from yet. \`guide facts stats\` says where
-  the number comes from.
+  the number comes from. A build on another machine ends its heartbeat with
+  \`(on <machine>)\`, and once that machine has relayed no build output for 5
+  minutes the heartbeat also says so and quotes the last line it relayed:
+
+    build       still compiling (7m00s); no build output for 6m00s, last line: "Build complete! (93.69 secs.)" (on mini)
 
   The lifecycle commands use the same column. \`worktree warm\` reports
   copied and kept entries on stderr, with empty stdout:
@@ -1819,7 +1834,7 @@ IOS SCHEME SELECTION
   in the app directory's app.json against Xcode's listed schemes. It does not
   execute app config or choose an arbitrary scheme from an ambiguous list.
   If selection fails, pass --scheme with an available name, set ios.scheme, or
-  share the app scheme in Xcode first. See guide errors STIM_NO_SCHEME.
+  share the app scheme in Xcode first.
 
   Explicit schemes have separate artifact keys, shared-build locks, and Xcode
   build directories. Stim identifies the resulting application from Xcode's
@@ -2478,8 +2493,7 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   A listing failure under a set cap leaves the count unknown and admission
   refuses with STIM_NO_DEVICE; under the derived cap alone the boot goes ahead
   with only the boots in flight counted. Unresolved wait or boot claims refuse
-  with the claim code and the command to remove that exact claim. See
-  \`guide errors STIM_AT_CAPACITY\`.
+  with the claim code and the command to remove that exact claim.
 
     concurrency.maxIosDevices      booted owned iOS simulators at once.
     concurrency.maxAndroidDevices  booted owned Android emulators at once.
@@ -2758,7 +2772,7 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   one with \`stim settings set disk.minFreeGb 60 --scope machine\`. The
   memory rules are fixed; \`guide settings\` lists the removed settings.
   \`stim doctor\` prints the current level and a finding while it is above
-  normal. See \`guide errors STIM_LOW_DISK\`.`,
+  normal.`,
     },
     options: {
       summary:
@@ -3220,7 +3234,7 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   included, so the signing gate runs before it: the app's own
   embedded.mobileprovision must be unexpired and must name this phone, and when
   Stim modifies the bundle the identity that profile names must be in this
-  machine's keychain (see \`guide errors STIM_NO_PROFILE\`). A gate refusal on
+  machine's keychain. A gate refusal on
   a CACHED app falls back to a full build; on a freshly built one it exits on
   its own code, because building again would produce the same app.
 

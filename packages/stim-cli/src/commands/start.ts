@@ -17,7 +17,12 @@ import { resolveSupervisorTarget, type SupervisorStateRecord } from '../stimd/me
 import type { MetroResolution } from '../metro.ts';
 import { IDLE_STOP_KEY, queryLogs, trace } from '@stim-cli/core/state';
 import { levelRank } from '../ndjson.ts';
-import { ensureWorkspaceStorage, workspaceLogsDir, workspaceAgentDeviceDir } from '../workspace/paths.ts';
+import {
+  workspaceStateRemedy,
+  ensureWorkspaceStorage,
+  workspaceLogsDir,
+  workspaceAgentDeviceDir,
+} from '../workspace/paths.ts';
 import { createPortProbe, isMetroRunning, reserveMetroPort } from '../ports.ts';
 import { PORT_INSPECTION_REMEDY, PortInspectionError } from '../listening-ports.ts';
 import { projectProblem, detectIsExpo, findProjectRoot, NO_PROJECT_REFUSAL } from '../workspace/project.ts';
@@ -262,6 +267,11 @@ interface ManagedTunnelTracking {
 
 const TUNNEL_ANSWER_MS = 90_000;
 
+const remoteStartRemedy = (supervised: boolean): string =>
+  supervised
+    ? 'Run `stim stop`, then `stim start --remote`.'
+    : 'Stim does not supervise that server. Set metro.publicUrl to an endpoint that reaches it, or stop it yourself and run `stim start --remote` so Stim supervises it.';
+
 function tunnelRefusal(answer: Record<string, unknown>): StartRefusalArgs {
   const message = typeof answer.message === 'string' ? answer.message : 'stimd did not start the managed tunnel';
   const remedy = typeof answer.remedy === 'string' ? answer.remedy : null;
@@ -360,8 +370,7 @@ export function startOp(overrides: Partial<StartCommandDeps> = {}): Op {
         return fail({
           code: (error as Error & { code?: string })?.code || 'STIM_WORKSPACE_STATE',
           message: `Could not prepare this workspace's Stim state: ${(error as Error)?.message || error}`,
-          remedy:
-            'Check that STIM_HOME is writable and has free space. An EPERM on a directory you can write is a sandbox: allow writes to STIM_HOME, or run Stim with the sandbox disabled (`stim guide errors sandbox`).',
+          remedy: workspaceStateRemedy(error),
         });
       }
       recordWorkspaceUse(root);
@@ -681,7 +690,7 @@ export async function startDevServer(
           code: 'STIM_SUPERVISOR_EXITED',
           message: `Cannot reuse or replace the recorded supervisor: ${recordedTarget.reason}.`,
           remedy:
-            'Stop it with the tool that started it, then retry `stim start`. Stim leaves unverified processes alone.',
+            'Stop it with the tool that started it, then retry `stim start`. If inspection is denied, retry with permission to inspect Stim processes. Do not infer ownership from a process name, port or timestamp.',
         });
       }
       if (!resetCache && !resolution.metro && !supervisor) await gateBudget();
@@ -746,7 +755,7 @@ export async function startDevServer(
               return fail({
                 code: 'STIM_REMOTE_START_REQUIRED',
                 message: `The dev server on port ${port} is local-only and cannot gain a managed tunnel while it is running.`,
-                remedy: 'Run `stim stop`, then `stim start --remote`.',
+                remedy: remoteStartRemedy(Boolean(currentSupervisor)),
               });
             }
           }
@@ -785,17 +794,20 @@ export async function startDevServer(
           if (await metroNowRuns()) {
             if (tracking.startedHere) {
               const stopped = await stopStarted();
+              const startAgain = remoteStartRemedy(
+                Boolean(liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port })),
+              );
               if (stopped.status === 'failed') {
                 return fail({
                   code: 'STIM_REMOTE_START_REQUIRED',
                   message: `The dev server on port ${port} started before the managed tunnel was ready.`,
-                  remedy: `Tunnel cleanup failed for pid ${record.pid}: ${stopped.reason}. The tunnel record remains available to \`stim stop\`.`,
+                  remedy: `Tunnel cleanup failed for pid ${record.pid}: ${stopped.reason}. The tunnel record remains available to \`stim stop\`. ${startAgain}`,
                 });
               }
               return fail({
                 code: 'STIM_REMOTE_START_REQUIRED',
                 message: `The dev server on port ${port} started before the managed tunnel was ready.`,
-                remedy: 'Run `stim stop`, then `stim start --remote`.',
+                remedy: startAgain,
               });
             }
           } else if (!d.isTunnelAlive(record.pid, record.processToken)) {
@@ -845,7 +857,7 @@ export async function startDevServer(
             fail({
               code: 'STIM_REMOTE_START_REQUIRED',
               message: `The Expo dev server on port ${port} is local-only and cannot gain a tunnel while it is running.`,
-              remedy: 'Run `stim stop`, then `stim start --remote`.',
+              remedy: remoteStartRemedy(Boolean(supervisor)),
             });
           }
         };

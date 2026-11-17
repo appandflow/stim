@@ -150,7 +150,7 @@ export async function resolveScheme(
       error: {
         code: 'STIM_NO_SCHEME',
         message: `Could not list schemes for ${project.path}.`,
-        remedy: `Run \`xcodebuild ${project.flag} ${project.path} -list\` to see what it reports.`,
+        remedy: `Run \`xcodebuild ${project.flag} ${project.path} -list\` to see what it reports, and share the app scheme in Xcode if it is missing.`,
       },
     };
   }
@@ -180,7 +180,7 @@ export async function resolveScheme(
         message: `Could not select an app scheme in ${project.path} (schemes: ${found}).`,
         remedy:
           listing.schemes.length > 0
-            ? 'Pass --scheme <name>, or set ios.scheme, to select the intended shared app scheme. Stim does not guess between unmatched schemes.'
+            ? 'Pass --scheme <name>, or set ios.scheme, to select the intended app scheme, and share it in Xcode if it is not listed. Stim does not guess between unmatched schemes.'
             : 'Share the app scheme in Xcode (Product > Scheme > Manage Schemes, tick Shared) so xcodebuild can see it.',
       },
     };

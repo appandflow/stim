@@ -62,7 +62,7 @@ import { shutDownIdleDevices } from '../../devices/idle-shutdown.ts';
 import { workspaceDeviceLastUseAt } from '../../devices/activity.ts';
 import { withIdleWorkspace } from '../../workspace/in-use.ts';
 import { liveShareKeepReason } from '../../local-server.ts';
-import { detectProviders, planMetroReach, PUBLIC_METRO_ENV } from '../../engine/metro-reach.ts';
+import { detectProviders, planMetroReach, PUBLIC_METRO_ENV, tunnelStartRemedy } from '../../engine/metro-reach.ts';
 import { ownStoreEngine } from '../../daemon/engine-switch.ts';
 import type { ManagedProvider } from '../../engine/metro-reach.ts';
 import { metroRequestAt } from '../passes/idle-stop.ts';
@@ -1716,7 +1716,10 @@ async function startTunnelChild(
   if ('failed' in started) {
     if (started.cleanupFailed) throw unverifiedChild(claim, { pid: 0 }, started.reason);
     releaseClaim(claim);
-    return unreachable(`Could not start a managed Metro tunnel for port ${port}.`, started.reason);
+    return unreachable(
+      `Could not start a managed Metro tunnel for port ${port}.`,
+      tunnelStartRemedy(started.reason, signal?.aborted === true),
+    );
   }
   const tunnel: TunnelChild = {
     claim:

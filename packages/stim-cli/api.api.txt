@@ -298,7 +298,9 @@
 [*] interface DaemonStatus { @@1 running: {
 [*] interface DaemonStatus { @@1 setting?: DaemonMode;
 [*] interface DaemonStatus { @@1 testWaiting?: DaemonTestWaiter[];
+[*] interface DaemonStatus { @@1 unanswered?: {
 [*] interface DaemonStatus { @@1 unverified?: UnverifiedCleanup[];
+[*] interface DaemonStatus { @@1 unverifiedConsoles?: UnverifiedConsole[];
 [*] interface DaemonStatus { @@1 waiting?: DaemonWaiter[];
 [*] interface DaemonStatus { @@1 } | null;
 [*] interface DaemonStatus { @@1 }[];
@@ -312,10 +314,12 @@
 [*] interface DaemonStatus { @@2 remedy: string;
 [*] interface DaemonStatus { @@2 removeCommand: string;
 [*] interface DaemonStatus { @@2 since: string;
+[*] interface DaemonStatus { @@2 socketMissing?: true;
 [*] interface DaemonStatus { @@2 stop: string;
 [*] interface DaemonStatus { @@2 unresolved: string;
 [*] interface DaemonStatus { @@2 until: string;
 [*] interface DaemonStatus { @@2 verified: boolean;
+[*] interface DaemonStatus { @@2 waitedMs: number;
 [*] interface DaemonTestWaiter {
 [*] interface DaemonTestWaiter { @@1 label: string;
 [*] interface DaemonTestWaiter { @@1 position: number;
@@ -359,8 +363,18 @@
 [*] interface DiscoveredCheckout { @@1 from: string;
 [*] interface DiscoveredCheckout { @@1 origin: DiscoveryOrigin;
 [*] interface DiscoveredCheckout { @@1 path: string;
+[*] interface DiscoveredCheckout { @@1 reduceOnly?: boolean;
+[*] interface DiscoveryReport {
+[*] interface DiscoveryReport { @@1 census: "read" | "absent" | "unreadable" | "unusable" | "none";
+[*] interface DiscoveryReport { @@1 censusAt: number | null;
+[*] interface DiscoveryReport { @@1 censusCurrent: boolean;
+[*] interface DiscoveryReport { @@1 complete: boolean;
+[*] interface DiscoveryReport { @@1 groups: UnmanagedGroup[];
+[*] interface DiscoveryReport { @@1 rootsChangedSinceCensus: boolean;
+[*] interface DiscoveryReport { @@1 scan: ScanSummary;
 [*] interface DoctorReport {
 [*] interface DoctorReport { @@1 @internal daemon: DaemonStatus & {
+[*] interface DoctorReport { @@1 @internal discovery: DiscoveryReport;
 [*] interface DoctorReport { @@1 @internal maintenance: ReturnType<typeof maintenanceStatus> & {
 [*] interface DoctorReport { @@1 deviceHosts: Array<Awaited<ReturnType<typeof inspectDeviceHostMachines>>["machines"][number] & {
 [*] interface DoctorReport { @@1 findings: Finding[];
@@ -1408,11 +1422,30 @@
 [*] interface TunnelOutcome { @@1 provider?: string;
 [*] interface TunnelOutcome { @@1 reason?: string;
 [*] interface TunnelOutcome { @@1 status: string;
+[*] interface UnmanagedGroup {
+[*] interface UnmanagedGroup { @@1 bytes: number;
+[*] interface UnmanagedGroup { @@1 checkouts: number;
+[*] interface UnmanagedGroup { @@1 command: string | null;
+[*] interface UnmanagedGroup { @@1 commandProblem: "too-broad" | "already-named" | "setting-unreadable" | "unchecked" | null;
+[*] interface UnmanagedGroup { @@1 failed: number;
+[*] interface UnmanagedGroup { @@1 folder: string;
+[*] interface UnmanagedGroup { @@1 kind: "reduce-only" | "dot-folder" | "unchecked";
+[*] interface UnmanagedGroup { @@1 measured: number;
+[*] interface UnmanagedGroup { @@1 members: Array<{
+[*] interface UnmanagedGroup { @@1 notMeasuredYet: number;
+[*] interface UnmanagedGroup { @@1 oldestMeasuredAt: number | null;
+[*] interface UnmanagedGroup { @@1 partial: number;
+[*] interface UnmanagedGroup { @@2 gitActivityAt: string | null;
+[*] interface UnmanagedGroup { @@2 path: string;
 [*] interface UnverifiedCleanup {
 [*] interface UnverifiedCleanup { @@1 child: number;
 [*] interface UnverifiedCleanup { @@1 message: string;
 [*] interface UnverifiedCleanup { @@1 remedy: string;
 [*] interface UnverifiedCleanup { @@1 since: string;
+[*] interface UnverifiedConsole {
+[*] interface UnverifiedConsole { @@1 message: string;
+[*] interface UnverifiedConsole { @@1 remedy: string;
+[*] interface UnverifiedConsole { @@1 since: string;
 [*] interface WatchmanRoot {
 [*] interface WatchmanRoot { @@1 detail: string | null;
 [*] interface WatchmanRoot { @@1 path: string;
@@ -1494,7 +1527,7 @@
 [*] type DeviceToolRequest = { @branch4 @@1 platform: "android";
 [*] type DeviceToolRequest = { @branch4 @@1 state: "on" | "off";
 [*] type DeviceToolRequest = { @branch4 @@1 tool: "network";
-[*] type DiscoveryOrigin = "worktree" | "sibling" | "root";
+[*] type DiscoveryOrigin = "worktree" | "sibling" | "root" | "scan";
 [*] type DiskPressureLevel = 0 | 1 | 2 | 3;
 [*] type DoctorPlatform = "ios" | "android";
 [*] type EngineOptions = Omit<StimOptions, "buildCacheDir"> & {
@@ -1656,6 +1689,16 @@
 [*] type RunSelectors = PlatformRunOptions extends (infer Options) ? Options extends { @branch1 @@0 } ? Omit<Options, "wait"> & {
 [*] type RunSelectors = PlatformRunOptions extends (infer Options) ? Options extends { @branch1 @@1 waitSeconds?: number | false;
 [*] type RunSelectors = PlatformRunOptions extends (infer Options) ? Options extends { @branch2 @@0 } : Options : never;
+[*] type ScanSummary = {
+[*] type ScanSummary = { @@1 ranAt: number;
+[*] type ScanSummary = { @@1 status: "read";
+[*] type ScanSummary = { @@1 trigger: "weekly" | "low-disk";
+[*] type ScanSummary = { @@1 truncation: ScanTruncation;
+[*] type ScanSummary = { @@1 unreadable: string[];
+[*] type ScanSummary = { @@1 visited: number;
+[*] type ScanSummary = { @branch1 @@0 } | {
+[*] type ScanSummary = { @branch1 @@1 status: "absent" | "unreadable" | "unusable";
+[*] type ScanTruncation = "none" | "budget" | "folders" | "read" | "failed";
 [*] type SettingScope = "machine" | "workspace" | "repo" | "committed";
 [*] type SettingsPayload = {
 [*] type SettingsPayload = { @@1 files: Partial<Record<SettingScope, string>>;

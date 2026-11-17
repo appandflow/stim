@@ -16,6 +16,7 @@ import { acquireBuildSlot, releaseBuildSlot } from '../engine/build-slots.ts';
 import { markClaimChildPending, readClaimSet, releaseClaim, type ClaimHandle } from '../ownership-claim.ts';
 import { operationState } from '../engine/operation-state.ts';
 import { testContext } from './_context.ts';
+import { listBuildEndMarkers } from '@stim-cli/core/state';
 
 class Refusal extends Error {}
 
@@ -24,6 +25,7 @@ beforeEach(() => {
   scratch = mkdtempSync(join(tmpdir(), 'stim-acquire-artifact-'));
 });
 afterEach(() => {
+  vi.unstubAllEnvs();
   rmSync(scratch, { recursive: true, force: true });
 });
 
@@ -115,6 +117,27 @@ function fixture(compile: (stage: (name: string) => string) => Promise<string>) 
   };
   return { held, taken, adapter, request, run: () => acquireArtifact(adapter, request) };
 }
+
+test.each(['fails', 'succeeds'] as const)('marks the workspace once when a local compile %s', async (how) => {
+  vi.stubEnv('STIM_HOME', join(scratch, 'stim-home'));
+  const fixtureRun = fixture(async (stage) => {
+    if (how === 'fails') throw new Error('gradle failed');
+    return stage('built');
+  });
+  await fixtureRun.run().catch(() => {});
+  expect(listBuildEndMarkers().map((marker) => marker.path)).toEqual([scratch]);
+});
+
+test('marks nothing when the compile never began', async () => {
+  vi.stubEnv('STIM_HOME', join(scratch, 'stim-home'));
+  const fixtureRun = fixture(async () => 'unused');
+  fixtureRun.adapter.lifecycle = ((original) => (run: Parameters<typeof original>[0]) => ({
+    ...original(run),
+    resolve: async () => ({ kind: 'ready' as const, artifact: 'cached' }),
+  }))(fixtureRun.adapter.lifecycle);
+  await fixtureRun.run();
+  expect(listBuildEndMarkers()).toEqual([]);
+});
 
 test.each(['plain', 'class'] as const)('preserves a %s cleanup refusal when release diagnostics fail', async (kind) => {
   const failure =

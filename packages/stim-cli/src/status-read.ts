@@ -90,6 +90,7 @@ import {
   readLastBuilds,
   readDevicePlacement,
   withStateReadCache,
+  type DaemonStatus,
   type MachineUsageState,
   type StatusCapacity,
   archivedUsage,
@@ -199,6 +200,8 @@ export interface StatusSnapshot {
   simsAvailable: boolean;
   simctlError: string | null;
   cwdRoot: string | null;
+  /** Whether the running stimd answered a hello, set by the `status` command and left out when stimd reads status. */
+  daemonAnswer?: Pick<DaemonStatus, 'unanswered'>;
   tables: DeviceProcessTables;
   machine: MachineUsageState | null;
   slotUsage: Pick<StatusCapacity, 'builds' | 'devices' | 'platformDevices'>;
@@ -552,7 +555,7 @@ async function readStatusFacts(probes: StatusProbes, gitScope: GitScope, cwd: st
   const { maxBuilds, maxDevices } = admissionLimits();
   const platformLimits = getPlatformDeviceLimits();
   const slotUsage: StatusSnapshot['slotUsage'] = {
-    ...(maxBuilds > 0 ? { builds: buildSlotUsage(maxBuilds) } : {}),
+    ...(maxBuilds > 0 ? { builds: buildSlotUsage(maxBuilds, process.env) } : {}),
     ...(maxDevices > 0 || platformLimits.ios > 0 || platformLimits.android > 0
       ? await deviceSlotUsages(maxDevices, platformLimits, {
           config: cfg,

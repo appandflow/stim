@@ -130,6 +130,170 @@ test('the next command, report-only gc included, warns on stderr while the daemo
   expect(errors).toEqual([expect.stringContaining('disk pressure is critical (4.0 GB free on /')]);
 });
 
+test('the critical-disk warning adds one line with what unmanaged checkouts hold and the command for the largest folder, only from a readable census', () => {
+  mkdirSync(join(home, 'daemon'), { recursive: true });
+  mkdirSync(join(home, 'maintenance'), { recursive: true });
+  writeFileSync(
+    join(home, 'daemon', 'snapshot.json'),
+    JSON.stringify({
+      version: 1,
+      pid: 1,
+      startedAt: new Date().toISOString(),
+      mode: 'on',
+      tickAt: new Date().toISOString(),
+      tickMs: 1,
+      intervalMs: 60_000,
+      measurement: {},
+      workspaces: [],
+      pressure: {
+        level: 'critical',
+        disk: 'critical',
+        memory: 'normal',
+        reasons: ['4.0 GB free on /'],
+        memoryWarningSince: null,
+      },
+    }),
+  );
+  const ranAt = Date.now();
+  writeFileSync(
+    join(home, 'maintenance', 'discovery-scan.json'),
+    JSON.stringify({
+      version: 2,
+      ranAt,
+      completedAt: ranAt,
+      lowScanAt: 0,
+      durationMs: 1,
+      trigger: 'weekly',
+      visited: 1,
+      found: [],
+      dotFolderFound: [],
+      unreadable: [],
+      truncated: false,
+      truncation: 'none',
+    }),
+  );
+  const find = {
+    path: '/Users/x/dev/app',
+    kind: 'reduce-only',
+    folder: '/Users/x/dev',
+    adoptable: true,
+    evaluatedAt: ranAt,
+    dirs: 1,
+    measuredDirs: 1,
+    failedDirs: 0,
+    partialDirs: 0,
+    bytes: 3 * 1024 ** 3,
+    unreadable: false,
+    gitActivityAt: null,
+  };
+  const census = join(home, 'maintenance', 'discovery-census.json');
+  const errors: string[] = [];
+  vi.spyOn(console, 'error').mockImplementation((...args) => void errors.push(args.join(' ')));
+
+  writeFileSync(census, '{');
+  warnCriticalDisk(['ios']);
+  expect(errors).toHaveLength(1);
+
+  errors.length = 0;
+  writeFileSync(
+    census,
+    JSON.stringify({
+      version: 1,
+      at: ranAt,
+      scanRanAt: ranAt,
+      roots: [],
+      canonicalRoots: [],
+      pending: false,
+      finds: [find],
+    }),
+  );
+  warnCriticalDisk(['ios']);
+  expect(errors).toHaveLength(2);
+  expect(errors[1]).toContain('hold 3.0 GB');
+  expect(errors[1]?.endsWith(`stim settings set maintenance.discoverRoots '["/Users/x/dev"]' --scope machine`)).toBe(
+    true,
+  );
+});
+
+test('the critical-disk warning lists nothing once maintenance.discoverRoots changed since the census, and reads no folder to decide', () => {
+  mkdirSync(join(home, 'daemon'), { recursive: true });
+  mkdirSync(join(home, 'maintenance'), { recursive: true });
+  writeFileSync(
+    join(home, 'daemon', 'snapshot.json'),
+    JSON.stringify({
+      version: 1,
+      pid: 1,
+      startedAt: new Date().toISOString(),
+      mode: 'on',
+      tickAt: new Date().toISOString(),
+      tickMs: 1,
+      intervalMs: 60_000,
+      measurement: {},
+      workspaces: [],
+      pressure: {
+        level: 'critical',
+        disk: 'critical',
+        memory: 'normal',
+        reasons: ['4.0 GB free on /'],
+        memoryWarningSince: null,
+      },
+    }),
+  );
+  const ranAt = Date.now();
+  writeFileSync(
+    join(home, 'maintenance', 'discovery-scan.json'),
+    JSON.stringify({
+      version: 2,
+      ranAt,
+      completedAt: ranAt,
+      lowScanAt: 0,
+      durationMs: 1,
+      trigger: 'weekly',
+      visited: 1,
+      found: [],
+      dotFolderFound: [],
+      unreadable: [],
+      truncated: false,
+      truncation: 'none',
+    }),
+  );
+  writeFileSync(
+    join(home, 'maintenance', 'discovery-census.json'),
+    JSON.stringify({
+      version: 1,
+      at: ranAt,
+      scanRanAt: ranAt,
+      roots: [],
+      canonicalRoots: [],
+      pending: false,
+      finds: [
+        {
+          path: '/nowhere/dev/app',
+          kind: 'reduce-only',
+          folder: '/nowhere/dev',
+          adoptable: true,
+          evaluatedAt: ranAt,
+          dirs: 1,
+          measuredDirs: 1,
+          failedDirs: 0,
+          partialDirs: 0,
+          bytes: 1024 ** 3,
+          unreadable: false,
+          gitActivityAt: null,
+        },
+      ],
+    }),
+  );
+  const errors: string[] = [];
+  vi.spyOn(console, 'error').mockImplementation((...args) => void errors.push(args.join(' ')));
+  warnCriticalDisk(['ios']);
+  expect(errors).toHaveLength(2);
+  errors.length = 0;
+  saveConfig({ version: 2, projects: {}, repos: {}, maintenance: { discoverRoots: ['/nowhere/stalled-mount'] } });
+  warnCriticalDisk(['ios']);
+  expect(errors).toHaveLength(1);
+});
+
 const DAEMON_ROW =
   '  101 /opt/jdk/bin/java -cp /opt/gradle-9.4.1/lib/gradle-daemon-main-9.4.1.jar org.gradle.launcher.daemon.bootstrap.GradleDaemon 9.4.1\n';
 const WRAPPER_ROW = '  202 /opt/jdk/bin/java -jar /app/gradle/wrapper/gradle-wrapper.jar assembleDebug\n';

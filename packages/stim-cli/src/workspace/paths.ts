@@ -51,11 +51,25 @@ export function ensureWorkspaceStorage(projectRoot: string): string {
     }
     if (readJsonObject(file)?.projectRoot === canonicalRoot) return dir;
     const error = new Error(
-      `Stim workspace collision at ${dir}: its workspace.json does not belong to ${canonicalRoot}.`,
-    ) as Error & { code?: string };
+      `Stim workspace collision at ${dir}: its workspace.json does not belong to ${canonicalRoot}. Do not overwrite it until you identify which workspace owns it.`,
+    ) as Error & { code?: string; remedy?: string };
     error.code = 'STIM_WORKSPACE_COLLISION';
+    error.remedy =
+      'Read workspace.json in that directory to see which project path it names, and change nothing until you know.';
     throw error;
   });
+}
+
+export function workspaceStateRemedy(error: unknown, short = false): string {
+  const remedy: unknown =
+    error instanceof Error && Reflect.get(error, 'code') === 'STIM_WORKSPACE_COLLISION'
+      ? Reflect.get(error, 'remedy')
+      : undefined;
+  if (typeof remedy === 'string') return remedy;
+  const base = 'Check that STIM_HOME is writable and has free space.';
+  return short
+    ? base
+    : `${base} An EPERM on a directory you can write is a sandbox: allow writes to STIM_HOME, or run Stim with the sandbox disabled (\`stim guide errors sandbox\`).`;
 }
 
 /** Initializes or validates workspace storage after asynchronously acquiring its metadata lock. */

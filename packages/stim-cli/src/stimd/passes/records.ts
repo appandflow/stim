@@ -29,6 +29,8 @@ import {
   type DeviceRecords,
 } from '../../commands/gc/records.ts';
 import { GC_OUTPUT, type GcResult } from '../../commands/gc/results.ts';
+import { unresolvedBuildSlotClaims } from '../../engine/build-slots.ts';
+import { unresolvedBuildSlotLine } from '../../status.ts';
 import type { MaintenancePlan } from './plan.ts';
 
 const ORPHANED_DEVICES = 'owned devices of removed projects';
@@ -98,6 +100,10 @@ export async function planRecords({
   for (const path of invalidProjects)
     actions.push({ kind: 'would-prune-project', target: path, bytes: 0, reason: 'its registry entry is invalid' });
   for (const entry of skipped) skips.push({ target: entry.dir, reason: entry.reason });
+  await attempt('unresolved build slots', async () => {
+    for (const { slot, ...claim } of unresolvedBuildSlotClaims(operation?.env ?? process.env))
+      blocked.push(unresolvedBuildSlotLine(slot, claim));
+  });
 
   let deviceRecords: DeviceRecords | null = null;
   if (devices && !(background && deviceSweepIsScoped(operation?.env ?? process.env)))

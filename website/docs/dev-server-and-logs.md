@@ -186,9 +186,9 @@ a blank screen. [`stim revive`](./commands.md#revive) resumes exactly what the
 idle stop paused, and nothing more: it restarts the dev server, boots the owned
 simulators and emulators the app last ran on, and relaunches the app from cold
 from the build cache entry that launch installed. In-app state is gone. It
-never builds, and never creates or adopts a device. For an app that runs
-without Metro, such as an Exact app, it boots the owned simulator and
-relaunches the app installed there.
+never builds, and never creates or adopts a device. For a Release React Native
+or native app, it boots the owned simulator or emulator and relaunches the
+installed app. If the app is missing, revive prints the platform launch command.
 
 <StimTabs code={`stim revive`} />
 
@@ -529,6 +529,24 @@ Use the daemon log path printed by `stim doctor` or named in its JSON as
 rotated during it, look in `daemon.ndjson.1` too. Include records from both
 sides of a restart or engine switch. Preserve timestamps, event names, error
 codes, build versions, and the run IDs needed to join those records.
+
+Each step of the daemon's cleanup passes writes one `daemon_step` record when
+it ends: every pressure ladder rung, and the loops that read evidence for a
+checkout (`idle_stage_candidates`, `stopped_output_candidates`,
+`dormant_candidates`, `collect_artifacts`, `rank_dependencies`,
+`rank_source_dependencies`, `plan_rung6`, `plan_worktrees`, `plan_history`,
+`dormant_dependencies`). A record has `step`, `startedAt`, `durationMs`, `items`
+(the items it visited or returned, when it counts any), and `outcome`
+(`finished`, `threw` or `aborted`); a rung adds `rung` and `pressureLevel`, and a step
+that threw adds `error`. A tick at normal writes one, up to 16 at high and up
+to 22 at critical. Use them to see which step a slow tick or maintenance run
+spent its time in. The records change nothing a pass does.
+
+For local device lease contention, look for `device_lease_acquire` when the
+request was refused or spent at least five seconds waiting. `waitMs` counts
+time spent waiting for another holder to release the lease. `outcome` records
+how the acquisition ended. The event uses the daemon's run ID and omits the
+workspace, device, and ticket details.
 
 For a startup failure, check the last lines of `run/stimd.log` if present. The
 latest tick is in `daemon/snapshot.json`, the current daemon record is in

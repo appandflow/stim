@@ -6,12 +6,13 @@
 **Author:** Janic Duplessis / Claude
 **Date:** 2026-11-12
 
-This document follows the review of
+This document follows the public API review in
 [#5592](https://github.com/appandflow/stim/issues/5592#issuecomment-6836925220)
-and the coordinating session's reviews of #5613 (into which #5628 was folded). The maintainer
-decided only that 2.0 is a breaking release. The rules below are the review's
-proposals and the coordinator's decisions as implemented; none is a maintainer
-decision, and the list at the end names the choices that wait for one.
+and the implementation in [#5613](https://github.com/appandflow/stim/pull/5613),
+which includes #5628. The maintainer confirmed the 2.0 choices in
+[#5685](https://github.com/appandflow/stim/issues/5685) and
+[#5592](https://github.com/appandflow/stim/issues/5592#issuecomment-6864811267).
+The other provisions record the review and the coordinator's implementation decisions.
 
 ## Public entries
 
@@ -21,8 +22,8 @@ These entries of the `stim` package are public:
   `STIM_API_VERSION`);
 - `stim/plugin`, for plugins;
 - `stim/ci` and `stim/ci/artifacts`;
-- `stim/cache-manifest`, which exports only `register`, `unregister` and
-  `CacheEntry`.
+- `stim/cache-manifest`, which exports `register(entry)`, `unregister(dir)`
+  and `CacheEntry`. Stim chooses the manifest path.
 
 `stim/internal/*` exists because tsdown keeps `stim/` imports external
 (`neverBundle`), so the bundled stim-server and CI runner import those entries
@@ -33,7 +34,10 @@ exports `createLocalStim`, so an editor's auto-import never offers a second
 A doc comment that starts with `@internal` marks a declaration or member that
 serves Stim Desktop or stim-server, such as `deviceTool()` or the `admission`
 option; it may change in any release. So may every type that only such
-members reach.
+members reach. `StimDeviceToolOptions`, `StimGcItem`, `StimGcItemOptions`,
+`StimGcItemResult` and `StimMachineAccessOptions` have no named public export.
+The public `before*` hooks remain available, and the run selectors `simulatorApp`
+and `remote` remain optional strings.
 
 ## Routing between builds
 
@@ -52,7 +56,9 @@ engine speaking another integer refuses with `STIM_ENGINE_UNAVAILABLE`, naming
 `StimOptions.buildCache` is `buildCacheDir`, because run and build options have
 a `buildCache` boolean that turns the cache on or off. Run's `wait` is
 `waitSeconds`, the name `start` already used, and both take a whole number
-above 0. `diagnostics`' `errors` is `errorsOnly`, as `logs()` names it.
+above 0. For iOS and Android runs, `waitSeconds: false` skips waiting for an
+owned-device slot or a physical device lease, like `--no-wait`.
+`diagnostics`' `errors` is `errorsOnly`, as `logs()` names it.
 `stim/ci`'s `buildCache` is `buildCacheDir`.
 
 `gc()` is `previewGarbage()`. The method always previewed, so RELEASE rule 5
@@ -71,13 +77,23 @@ Only the `cache-provider` contract is stable in 2.x. The `transport` and
 `agent-driver` kinds are experimental: they are built in only, their shapes
 expose host internals (the claim protocol, Tailscale terms), and their
 contracts and integers may change in a minor release. `stim/plugin` exports only
-what a plugin implements or tests with.
+what a plugin implements or tests with, including `loadCacheProvider` and the
+contract test kits. The export list drops `cacheProviderContractChecks`.
+`CacheProviderModule.apiVersion` is required, and
+`BuildCacheCapability.resolve` and `BuildCacheCapability.store` return promises.
+The `@stim-cli/cache-s3` peer range tracks the published Stim version so the
+`next` channel's 2.0 prereleases satisfy it.
 
 ## JSON payloads
 
 Within 2.x a `--json` payload, a `logs --json` record and an API result only
 gain fields and enum values. `website/docs/commands.md` ("JSON stability within
-2.x") names the parts that carry no compatibility.
+2.x") names the parts that carry no compatibility. Results retain `exitCode`
+and `ok` where those fields are defined, along with their platform-specific
+run and build facts.
+Keep the current settings and flags for 2.0. Normalize run and build JSON
+only with coordinated Desktop and CI decoder updates, subject to the JSON
+compatibility rules.
 
 ## The gate
 
@@ -122,24 +138,27 @@ base's reset header fails. Read from the base, these files cannot be edited by
 the pull request that resets, so a reset cannot recur after 2.0.0 or in a
 later pull request.
 
-## Choices for the maintainer
+## Provenance
 
-1. `gc()` renamed to `previewGarbage()` (see above).
-2. `buildCacheDir`, `waitSeconds` (`false` also bypasses another workspace's
-   physical-device lease, as `--no-wait` does) and `errorsOnly`.
-3. `STIM_API_VERSION` and `RUN_OP_VERSION`, both 1 at 2.0.0.
-4. `stim/cache-manifest`'s `register(entry)` and `unregister(dir)`, which no
-   longer take the manifest path.
-5. The `stim/internal/*` entries, the `@internal` members and the types no
-   longer exported (`StimDeviceToolOptions`, `StimGcItem`,
-   `StimGcItemOptions`, `StimGcItemResult`, `StimMachineAccessOptions`).
-6. `stim/plugin` reduced to an explicit list, including the removal of
-   `cacheProviderContractChecks`, and `loadCacheProvider` kept in it.
-7. The `transport` and `agent-driver` kinds declared experimental.
-8. `@stim-cli/cache-s3`'s peer range `^<version>` rather than `^2.0.0`: a
-   `^2.0.0` range excludes the `2.0.0-next` prereleases the `next` channel
-   publishes, so it would warn on every prerelease install.
-9. Left as they are: `ok` versus `exitCode` in results, `simulatorApp?: string`
-   and `remote?: string` on run, the run and build facts differences (review
-   item 1.8), `CacheProviderModule.apiVersion`, which the loader never reads,
-   and the `before*` hooks, which stay public.
+**Maintainer decision:** "Keep new names" (2026-11-13) for `buildCacheDir`,
+`waitSeconds`, `errorsOnly` and `previewGarbage`.
+[Rename decision](https://github.com/appandflow/stim/issues/5685#issuecomment-6857364673).
+
+**Maintainer decision:** "yes" (2026-11-13) to keeping the cache provider
+contract and both `exitCode` and `ok`.
+[Contract decision](https://github.com/appandflow/stim/issues/5685#issuecomment-6862867536).
+
+The maintainer recorded the remaining 2.0 decisions on 2026-11-13.
+
+> keep the current settings and flags for 2.0. Normalize run/build JSON only if
+> Desktop and CI can ship their decoder changes together. The API renames and
+> cache provider contract already decided in #5685 stand.
+
+[Settings, flags, and JSON decision](https://github.com/appandflow/stim/issues/5592#issuecomment-6864811267).
+
+The API review proposed removing the unused optional
+`SettingsPayload.unknown[].replacement` during the one-time reset. The field
+remains in the public `StimSettings` declarations and API report. Its removal
+is deferred to a future versioned API change under the gate above.
+[Review note](https://github.com/appandflow/stim/issues/5592#issuecomment-6842811722),
+[public API report](../packages/stim-cli/api.api.txt).

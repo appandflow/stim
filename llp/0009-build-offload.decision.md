@@ -75,14 +75,27 @@ A simulator build does not need store signing credentials. Syncing every ignored
 An offloaded Exact
 build is keyed by the synced manifest's digest, installed from the fetched
 app and never cached; it carries the values of the settings `app.json` `env`
-declares that the client's environment, `.env.local` or `.env` sets, and only for an
-app that declares no native modules. Its worker needs Exact's own Bun, Rust
-and exact2 for the app's pins, reports what it lacks in the offer, and builds
+declares that the client's environment, `.env.local` or `.env` sets. Its worker needs Exact's own Bun, Rust
+and exact2 for the app's pins, at `~/.exact/exact2/<commit>` or in a folder named like the client's exact2
+checkout, reports what it lacks in the offer with commands that fetch the commit from the client's remote, and builds
 an app at the repository root in a checkout folder named like the client's; it shares the worker
-user's `~/.cargo` and `~/.cache/exact` across clients.
+user's `~/.cargo` and `~/.cache/exact` across clients. The app's relative path to exact2, which its Cargo
+manifests use, holds a checkout of the pinned commit inside the build area that shares that checkout's objects (`git
+clone --shared`) with a copy of its `node_modules`, never outside the area, in the app, or on one of the area's own entries, and replaced only when the
+worker made it; a repository-root app's checkout sits as many folders below the area as that path climbs, and an app in
+a subdirectory whose exact2 sits more than one folder above its repository builds on the client.
 
-Exact can run an app on a simulator during the build to resolve native modules.
-An offload has no access to the client's owned simulator. [LLP 0014](./0014-native-builds.decision.md#use-fixed-invocations).
+For an app that declares native modules, the worker creates a simulator in the build's own Stim home, boots it
+through device boot admission, passes it as `EXACT_SIM`, and deletes it through centralized teardown when the build
+ends or the job is stopped (a stopped job waits for a creation in progress, LLP 0013); every offloaded build starts by deleting any simulator that home's ledger still
+lists, before it can reuse a retained artifact, and
+stim-server neither evicts an area nor removes a client's areas while an area's home ledger lists a device.
+
+Exact can run an app on a simulator during the build to resolve native modules, and without `EXACT_SIM` it takes any
+booted simulator or boots one itself. An offload has no access to the client's owned simulator, and a simulator kept
+in a build area's home would outlive that home when the area is evicted. Exact names each compiler input by its place
+under the exact2 directory it runs from, which Bun resolves through links while Cargo reports the linked path, so a link
+at the app's path fails the build. [LLP 0014](./0014-native-builds.decision.md#use-fixed-invocations).
 
 ## Run the client build
 
@@ -104,6 +117,43 @@ the job a chance to cancel its build because Node implements SIGTERM there
 with `TerminateProcess`. This spawn and framing are frozen.
 
 Executing the client’s version keeps a worker update from changing the build recipe or forcing an otherwise eligible run back to the client. The resident server carries frames across versions while the job interprets its own protocol. [Exact client jobs](https://github.com/appandflow/stim/pull/5373), [Engine integration](https://github.com/appandflow/stim/pull/5380).
+
+## Node versions of client and worker
+
+A React Native or Expo worker evaluates the fingerprint with the project's
+pinned Node, or else the Node running its Stim, as the client does, and a
+different Node major.minor does not refuse the build. The worker still refuses
+with `fingerprint-runtime` when it cannot identify its runtime or when its
+evaluator shims or the project packages that evaluation loads differ from the
+client's. The fingerprint comparison is the gate: the worker builds and stores
+an artifact only under a fingerprint it recomputed equal to the client's. When
+the fingerprints differ and the Node versions differ, the `fingerprint-mismatch`
+refusal names both; it calls Node the likely cause only when every differing
+source is a `config` or `autolinking` row, which Stim produces by running project
+JavaScript, and pod install or prebuild rewrote no synced file, else it notes
+the versions without blaming them. The worker does not look for an installed
+Node matching the client's.
+
+Recorded in [#5812](https://github.com/appandflow/stim/issues/5812):
+
+Maintainer decision: "lets do 2 and 3", 2026-11-16
+
+Maintainer decision: "is it expensive to do 2? If not do it, if it is lets just skip and wee'll just rely on fingerprint check", 2026-11-16
+
+Maintainer decision: "On figerprint mismatch could we know node version is the cause of mismatch and just warn there", 2026-11-16
+
+Option 2, the worker running an installed Node of the client's version for an
+unpinned project, was skipped as not cheap: the evaluator, the dependency
+install marker and the build's own `node` invocations each choose their Node
+separately. The fingerprint does not hash the Node version, so two machines on
+different Node versions can compute the same one (an Expo SDK 58 app did under
+Node 22.22 and 24.22), and refusing them up front sent such builds back to the
+client. The worker's first evaluation reports a differing source through the
+same `fingerprint-mismatch` refusal, with the sources named. A Node difference that leaves the fingerprint equal but changes the built
+app is not caught; the build's own project JavaScript (prebuild's config
+plugins, autolinking in pod install and Gradle, Xcode's script phases) runs on
+the `node` first on the worker's `PATH`, which the old check did not constrain
+either. A project that pins its Node gets that Node on both machines.
 
 ## Artifact compatibility
 
@@ -132,7 +182,32 @@ claim. Non-Android claims follow the worker process group. Android claims
 stay child-pending because Gradle daemons leave that group; cancellation
 releases them only after this repository's verified daemon identities exit.
 Unknown cleanup or a server crash retains unresolved repository and build-slot
-claims for manual inspection and recovery. stim-server evicts areas of approved
+claims for manual inspection and recovery, and the refusal names one command
+that removes the fingerprint work directory and every retained claim. A worker
+stopped with SIGTERM (a cancel, a closed connection or the build timeout)
+aborts its fingerprint evaluation, stops its Gradle daemons or Exact simulator,
+and reports a settled `cancelled` result only once every
+process group it started outside its own through exec is gone; the host then
+releases the claims after the worker's own group has exited, as for a finished
+build. A worker that does not report within the kill grace period is killed and
+keeps its claims. Off Windows, a stopped build's host also follows what the build
+tool started in other process groups (Xcode runs its build service and each
+script phase in a group of its own): before it first signals the worker's group,
+and at each check after, it walks the process tree down from the group's members,
+while the group is not yet seen empty, and from the processes it recorded whose
+identity still matches, records each one outside the group by its identity once a
+second listing confirms it, signals a recorded process only while that identity
+still matches, and releases the claims only once the group and every recorded
+process are gone. Once the group reads empty its id is no longer signalled or
+walked from. A process listing or identity it cannot read, a captured process that
+left the tree before it was confirmed, or anything still running a kill grace
+period after SIGKILL ends the build `cleanup-unresolved` with its claims kept; the
+outcome is recorded either way. A process whose parent exited before a walk saw
+it is not seen: one that left the tree before the first walk, or one started
+after a walk whose parent exits before the next. A daemon the build started that
+would have outlived it is stopped too.
+This SIGTERM rule and the tree walk were chosen by the implementers of #5792, not
+by the maintainer. stim-server evicts areas of approved
 clients unused for longer than `server.workerAreaMaxAgeDays` and, near the disk
 floor, the least recently used not used in the last 3 hours, which under the
 floor also go; it keeps each client's most recently used area and retains one

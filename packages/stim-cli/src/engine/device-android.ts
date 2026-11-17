@@ -53,6 +53,7 @@ import {
   withDeviceBootAdmission,
   type DeviceSlotWaitPolicy,
 } from './device-capacity.ts';
+import { RecordedDeviceLostError } from './recorded-device.ts';
 import type {
   BootResult,
   DeviceFlags,
@@ -100,7 +101,8 @@ export async function ensureOwnedAndroidDevice({
 } & EmulatorLogging): Promise<OwnedDeviceRecord> {
   const projectAvdConfig = androidAvdConfigSetting(settings, settingsRoot);
   const avdConfig = { ...OWNED_AVD_CONFIG_DEFAULTS, ...projectAvdConfig };
-  const requestedProfile = flags.deviceProfile || settings.android?.deviceProfile || null;
+  const expected = flags.expectedDevice;
+  const requestedProfile = expected ? null : flags.deviceProfile || settings.android?.deviceProfile || null;
   let replacedProfile: string | null = null;
   if (record?.setupIncomplete && record.avdName) {
     const avdName = record.avdName;
@@ -117,7 +119,7 @@ export async function ensureOwnedAndroidDevice({
     }
     record = null;
   }
-  const requestedImage = flags.systemImageFlag || null;
+  const requestedImage = expected ? null : flags.systemImageFlag || null;
   const currentImage = requestedImage && record?.owned && record.avdName ? ownedAvdSystemImage(record.avdName) : null;
   if (record?.avdName && requestedImage && currentImage && currentImage !== requestedImage) {
     const avdName = record.avdName;
@@ -154,6 +156,9 @@ export async function ensureOwnedAndroidDevice({
       const resolved = await resolveOwnedAvdSerialAsync(record.avdName, {
         preferredSerial: record.consolePort ? `emulator-${record.consolePort}` : undefined,
       });
+      if (expected && (resolved.notOwned || resolved.missing)) {
+        throw new RecordedDeviceLostError('android', expected, 'no longer exists as a Stim-owned device');
+      }
       const currentProfile = resolved.notOwned || resolved.missing ? null : ownedAvdDeviceProfile(record.avdName);
       if (requestedProfile && currentProfile && currentProfile !== requestedProfile) {
         throw new AvdRecoveryError(

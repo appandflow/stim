@@ -238,16 +238,26 @@ user that runs its Stim service:
 - Bun at `~/.bun-<version>`, the version `exact.mjs` pins.
 - rustup with the Rust version the exact2 checkout pins and its
   `aarch64-apple-ios-sim` target, which Exact's setup does not add.
-- The exact2 commit the app uses, at `~/.exact/exact2/<commit>`, set up with
-  `bun scripts/exact.mjs setup` there. A setup line about Chrome or Android does
-  not matter for iOS builds.
+- The exact2 commit the app uses, at `~/.exact/exact2/<commit>` or in a folder
+  named like the client's exact2 checkout (`~/.exact/exact2/<name>`), set up
+  with `bun scripts/exact.mjs setup` there. The install command clones into
+  `~/.exact/exact2/<commit>` and fetches the commit from the remote the client's
+  exact2 checkout has it on, so an app built against an exact2 fork works. A setup line about Chrome or Android does not
+  matter for iOS builds.
 
 A worker that lacks one is skipped: the placement line, the refusal of a
 named `--remote-build` and `stim doctor` in the app name the missing piece and
 the command that installs it there. Exact builds share that user's `~/.cargo` and `~/.cache/exact`, whichever
 client sent them, and keep `target/` warm in the checkout's own repository area.
-The worker never gives an Exact build a simulator, so apps whose `app.json`
-declares native modules build on the client.
+An app's Cargo manifests name exact2 by a path relative to the app; the worker
+puts a checkout of the pinned commit at that path inside the repository area,
+sharing its exact2 checkout's git objects and copying its installed packages
+(about 300 MB for exact2 today); for an app in a subdirectory of its repository, exact2 may sit at most
+one folder above the repository. For an app
+whose `app.json` declares native modules, the worker creates a simulator of its
+own for each build, boots it, passes it to Exact as `EXACT_SIM` to read the
+module roster, and deletes it when the build ends. Creating and booting that
+simulator adds about 45 seconds to such a build on a Mac mini.
 
 `stim ios --remote <mac>` also runs an Exact app on a hosted simulator there,
 built on the client or a build Mac; hosting needs no Exact toolchain. Apps that
@@ -564,7 +574,7 @@ project with iOS too still reports it offloadable for Android builds.
 
 #### Serve the phone app from Linux
 
-A Linux machine that starts workspaces, such as a bot running `stim ios --remote <mac>`, can run `stim-server` as the owning server for them. The phone app pairs with that machine and sees its workspaces, its offloaded builds and the hosted simulators it started, which it reaches through the Linux machine's server and not through the Mac that hosts them. Stim Desktop does not pair with other machines' servers yet.
+A Linux machine that starts workspaces, such as a bot running `stim ios --remote <mac>`, can run `stim-server` as the owning server for them. The phone app pairs with that machine and sees its workspaces, its offloaded builds and the hosted simulators it started, which it reaches through the Linux machine's server and not through the Mac that hosts them. Stim Desktop on another Mac pairs with it the same way: see [Pair with another machine](./desktop.md#pair-with-another-machine).
 
 1. Install `stim` and run its server as a systemd user service, as in the manual path above:
 
@@ -733,7 +743,7 @@ paths are still too long refuses with `STIM_PATH_TOO_LONG`.
 | `device-host` | Running the client's native app in its own hosted device or app session.                     |
 | `read`        | Reading workspaces, logs and device screens, including workspace text diffs where supported. |
 | `control`     | Device input and workspace Reload/Stop actions for a paired viewer.                          |
-| `test`        | Running any command the requesting machine sends, as the worker user, with no sandbox.       |
+| `test`        | A separate test client record that can authorize managed worker updates.                     |
 
 Build, device-host and test grants are separate from each other and from viewer
 read/control grants. Pairing a phone does not grant build, hosting or test
@@ -742,9 +752,8 @@ access, and `stim pairings grant` never grants `build`, `device-host` or
 
 ### Test approval
 
-A person on the worker approves `test` by adding `--test` to the setup command
-the requesting machine printed. No Stim command asks for `test` yet; the
-`stim test` command that will use it is not released:
+The `stim test` command proposal was retired before 2.0. A person on the
+worker can still record a test approval using a setup ticket and `--test`.
 
 <Tabs groupId="stim-invocation" defaultValue="global">
 <TabItem value="global" label="Global">
@@ -763,9 +772,9 @@ STIM_SETUP_TICKET=<43-base64url-characters> npx --yes stim setup --expires <ISO-
 </TabItem>
 </Tabs>
 
-Setup asks its own Y/n question, which says the approved machine may run any
-command it sends on this machine, as this user, with no sandbox. The command
-can read and change that user's files. Approve it only for your own machines.
+Setup asks a separate Y/n question. The prompt describes the authority in the
+original proposal, which would have let the approved machine run commands as
+the worker user without a sandbox. Approve it only for your own machines.
 The approval is stored in `test-clients.json`, apart from every other record,
 and `stim pairings` lists it with kind `test-client` and access `test`; revoke
 it with `stim pairings revoke <id>`. A Linux worker can approve `test`; a
@@ -789,7 +798,9 @@ Setup checks installed tools and prints fixes; it does not install Xcode,
 runtimes, CocoaPods, Java or the Android SDK. Desktop's Tools step compares
 them against the client. No tool result blocks the next step: problems are
 shown, and the machine stays added. Hosting alone does not need CocoaPods
-or Android tools.
+or Android tools. An iOS build needs the client's simulator runtime installed on
+the worker, not a simulator: when the runtime has no iPhone simulator, the build
+creates one in its own Stim home, never boots it, and deletes it when it ends.
 
 **Install This Mac's Build** can update an approved worker over the tailnet.
 An exact npm release needs no extra setting. Installing this checkout's own
@@ -844,11 +855,14 @@ values of the environment variables the build reads from your shell, and every
 variable in your shell when project code enumerates `process.env`, so the worker
 builds with the same values. Stim's own secrets and settings overrides, toolchain
 and home paths such as `PATH`, `JAVA_HOME` and `ANDROID_HOME`, and shell-session
-variables stay on your machine. Both machines evaluate the fingerprint with the
-same Node major.minor: the project's pinned Node (`.nvmrc`, `.node-version`, `.tool-versions` or
-Volta), or else the Node running Stim. A worker with a different one refuses the
-build with `fingerprint-runtime`; pin the project's Node, or install the same
-version on both. Those files and variables can hold secrets: Stim assumes every paired
+variables stay on your machine. Each machine evaluates the fingerprint with the
+project's pinned Node (`.nvmrc`, `.node-version`, `.tool-versions` or Volta), or
+else the Node running Stim. A worker on a different Node major.minor still builds
+when it computes the same fingerprint. When the fingerprints differ, the
+`fingerprint-mismatch` refusal names both Node versions, and calls the Node
+difference the likely cause when only the sources Stim evaluates with Node (the
+Expo config and autolinking) differ; pin the project's Node to a version both
+machines have installed. Those files and variables can hold secrets: Stim assumes every paired
 Mac belongs to the same person. Nothing under
 `node_modules` is sent, since the build Mac installs dependencies itself, and
 neither is build output the fingerprint ignores, such as `ios/Pods` or
@@ -877,9 +891,8 @@ a client's records.
 
 Build approval permits the client's project code, including config plugins,
 CocoaPods hooks, Xcode script phases and Gradle plugins, to run as the server
-user. It is not a sandbox for untrusted projects. Test approval goes further:
-the client chooses the command itself. Approved build, device-host or test
-clients can also request managed server updates. Only accept requests from
+user. It is not a sandbox for untrusted projects. Approved build, device-host
+or test clients can also request managed server updates. Only accept requests from
 machines you trust. Forwarded peer addresses label approvals and key rate
 limits. A local process on the server can forge one to lock a peer out
 temporarily; it cannot authenticate.
@@ -923,6 +936,8 @@ stim logs --source build`}
 />
 
 Placement logs show why each machine was selected or skipped. For request timings, set `debug.logs` on the worker and read its stim service log.
+
+When an offloaded build stops printing, its heartbeat says so after 5 minutes, for example `build       still compiling (7m00s); no build output for 6m00s, last line: "Build complete! (93.69 secs.)" (on mini)`. With `debug.logs` on, the worker's `~/.stim/logs/debug/server.ndjson` records each offloaded build by job id: why it was cancelled or timed out, the processes its build was running just before the first signal, the worker process's last stderr lines, and whether its claims were released.
 
 ### Check this machine's stim setup
 

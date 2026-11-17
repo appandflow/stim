@@ -16,8 +16,9 @@ Commands use `stim`. If Stim is not installed globally, replace `stim` with
 :::
 
 Run `stim <command> --help` for parser help. Run `stim guide` for the full
-reference that ships with the installed version. Every refusal code has an
-entry in the [troubleshooting reference](./troubleshooting.md).
+reference that ships with the installed version. A refusal prints its remedy;
+the [troubleshooting reference](./troubleshooting.md) covers the recovery
+procedures too long for a remedy.
 
 `start --json`, `ios --json`, `android --json` and `macos --json` report
 `agentDevice: { stateDir }`, an absolute path under
@@ -95,6 +96,11 @@ version from its `package.json` and runs `eas whoami` only with an `eas` on
 `PATH` outside the repository and its `node_modules/.bin` directories.
 `worktree warm`, `start`, `ios`, and `android` also run project code.
 
+Doctor also prints a section, "Checkouts Stim does not fully manage", from the
+last home folder scan and the daemon's measurement of what it found; `--json`
+carries it as `discovery`. It reads cached files and never scans or measures.
+See [checkouts Stim never ran in](./worktrees.md#checkouts-stim-never-ran-in).
+
 `--platform ios` or `--platform android` limits native findings to that
 platform while keeping shared project checks. The selected project integration
 supplies framework checks and repairs; React Native and Expo checks include
@@ -138,7 +144,7 @@ what the `stim-daemon`'s ladder reclaims. `--json` adds this report as
 `pressure`. Doctor also prints the [`stim-daemon`](./settings.md#stim-daemon)
 line with its mode, whether it runs and when it last ticked, its last action
 (or its snapshot file before the first), the daemon log and the cleanup
-log with the last pass. It reports a daemon that stopped ticking, a stim-daemon from before Stim 2.0 that
+log with the last pass. It reports a daemon that is late with its ticks, a stim-daemon from before Stim 2.0 that
 holds the daemon claim, with its pid and stop command, a daemon
 that stays up for a child whose cleanup it could not verify, with how to check
 the child, and that stopping that stimd is safe and ends the wait, a stimd held back after
@@ -146,6 +152,20 @@ three abnormal exits in 10 minutes with what to fix, abnormal exits of the last
 day, a daemon claim it cannot
 resolve, and any [removed setting](./settings.md#stim-daemon)
 left in a config file or the environment, with the setting that replaces it.
+Both `stim status` and `stim doctor` show the claim and remedy when stimd cannot
+recover a physical iPhone console.
+
+When a stimd holds the claim but sends no reply to a probe within 3 seconds,
+`stim status` and `stim doctor` say `did not answer within 3 s`, with the pid, the
+age of its last tick (doctor's finding code is `stimd-not-answering`) and, when the socket file does not exist, that it is
+missing. In `--json` that is `daemon.unanswered` (`pid`, `waitedMs`,
+`socketMissing`); it is absent when stimd answers. It reports one probe, so a
+machine under heavy load can show it for a stimd that answers later, and
+neither command stops or replaces the stimd. Doctor then shows only that
+finding, not a late-tick one beside it, and its fix names `kill <pid>` only when
+the last tick is also older than three intervals. A stimd that answers with late
+ticks gets a late-tick finding that does not say to kill it. `status --watch` probes in the
+background every 10 seconds and never waits for it.
 
 `doctor` also flags when an agent harness sandboxes shell commands and Stim is
 not allowed through it, which shows up as unrelated-looking failures against
@@ -288,8 +308,8 @@ would not take this app's builds now, each as a finding with a fix: it does
 not answer, it runs an incompatible Stim build (update it to this machine's build), its
 CPU differs; for iOS (unless `--platform android`) its Xcode, simulator SDK or
 CocoaPods selected for this project differ, it has no Bundler for a project whose `Gemfile.lock` pins
-CocoaPods (its own CocoaPods version does not matter then), or it has no
-iPhone simulator on the runtime `stim ios` builds for here; for Android (with
+CocoaPods (its own CocoaPods version does not matter then), or it lacks the
+simulator runtime `stim ios` builds for here; for Android (with
 `--platform android`, or an app with `android/` or Expo) its JDK major differs
 or its SDK lacks the NDK, build-tools or compile platform; its worker volume has less than 10 GB free;
 or it is busy. A machine that is not a Mac cannot build iOS or macOS apps: it
@@ -719,12 +739,18 @@ never runs the app's code.
 With [remote machines](./remote-machines.md), `remote.build` and
 `--remote-build` place an Exact build like any iOS simulator build. The worker
 runs the same `./exact.mjs ios --no-install` in the app's directory, with
-`EXACT2` at `~/.exact/exact2/<commit>` and no simulator, and
-this Mac installs the `.app` on its owned simulator. Nothing is cached. The
-values of the settings `app.json` `env` declares travel with the build: this
-shell's, else `.env.local`'s, else `.env`'s, as Exact reads them. Apps whose
-`app.json` declares native modules, an `exact2` checkout with local changes and
-repository-root apps whose folder name is not a plain ASCII file name build here. See
+`EXACT2` at its exact2 checkout for the app's commit (or at the copy it
+places at the app's relative path to exact2), and
+this Mac installs the `.app` on its owned simulator. Nothing is cached. For an
+app whose `app.json` declares native modules, the worker creates and boots a
+simulator of its own for that build, passes it as `EXACT_SIM` so Exact can read
+the module roster, and deletes it afterwards. The values of the settings
+`app.json` `env` declares travel with the build: this shell's, else
+`.env.local`'s, else `.env`'s, as Exact reads them. These build here: an
+`exact2` checkout with local changes, one that shares no top directory with the
+app or whose folder name is not a plain ASCII file name, an app in a
+subdirectory whose `exact2` sits more than one folder above its repository, and
+repository-root apps whose folder name is not a plain ASCII file name. See
 [Exact apps on a worker](./remote-machines.md#exact-apps-on-the-worker) for
 what the worker needs; `stim doctor` reports what each machine in
 `remote.machines` lacks.
@@ -1129,23 +1155,17 @@ and restores exactly what the stop paused, never more:
 - **Metro.** When the dev server's last stop was an idle stop, it starts it
   again on the workspace's port, as `stim start` would. A dev server that is
   running is left alone.
-- **Devices.** For each recorded launch except Release, Android
-  native-process and hosted launches (see below), it boots the owned simulator or
-  emulator the app ran on (the same UDID or AVD), on this machine and through
-  the same device admission as `ios` and `android` (`concurrency.maxDevices`
-  included). It never creates or adopts another device.
-- **App.** It relaunches the app from cold from the build cache entry that
-  launch installed, without fingerprinting or building. In-app state is gone.
-  An app still running is left alone unless Metro restarted.
+- **Devices.** For recorded local launches, it boots the owned simulator or
+  emulator the app ran on (the same UDID or AVD) through device admission
+  (`concurrency.maxDevices` included).
+- **App.** For an app using Metro, it relaunches the app from the build cache
+  entry used by its last launch. For Release React Native or native apps,
+  it relaunches the app already installed on the device. In-app state is
+  gone when the app is relaunched. A running app is left alone unless it
+  needs Metro and Metro restarted.
 
-An app that runs without Metro, such as an [Exact](https://github.com/expo/exact)
-app, has nothing to restart: revive boots the owned simulator its recorded
-launch ran on, through the same ownership check and admission, and launches
-the app already installed there. It installs nothing and never builds, so it
-works after the idle stage deleted the app's build directory. Release launches
-of a React Native app and Android native-process launches do not use Metro,
-and hosted launches belong to their host, so revive does not relaunch them; run `stim ios` or `stim android` for
-them. Revive refuses instead of widening:
+Installed-only revival works after idle cleanup removes the build directory and
+works without a Metro idle stop. Hosted launches stay on their host.
 
 - `STIM_NO_METRO` when Metro is not running and its last stop was not an idle
   stop (it was never started, or a signal or crash stopped it), or when
@@ -1157,17 +1177,13 @@ them. Revive refuses instead of widening:
   hook, when the device agent-device asked for is neither one of them nor one
   this workspace owns.
 - `STIM_NO_RECORDED_BUILD` when the build cache entry a launch installed is
-  gone, for example after `stim gc`, or the launch names none (never cached, or
-  recorded before revive), or when the simulator no longer has an app that
-  runs without Metro installed. Run as agent-device's boot hook for a device this
-  workspace owns, it also refuses with this code when the last launch on that
-  device is one revive does not relaunch, or no launch is recorded on it. The
-  remedy names `stim ios` or `stim android`.
+  gone or absent, when the recorded app that runs without Metro is missing from
+  the device, or when the owned device requested by agent-device has no matching
+  launch. The remedy names `stim ios` or `stim android`.
 
-It checks all three before starting anything. Only a device that changes after
-that check is refused later, by the run that boots it, with Metro already
-restarted. Each line on stderr says what came
-back:
+Stim checks device ownership and any required cache entry before restarting
+Metro or booting a device. It checks for an installed app after the device boots.
+Each line on stderr says what came back:
 
 ```text
 Metro stopped idle 14h02m ago, restarted on port 8081.
@@ -1182,7 +1198,7 @@ com.example.app relaunched from cold on Simulator stim-my-app (iPhone 17 Pro 26.
 revive relaunched only apps that run without Metro. agent-device runs
 `stim revive --json` itself when it finds the workspace's device shut down and
 reads the workspace's boot hook; revive then restores only the launch on that
-device, plus Metro. See
+device and resumes Metro when its app needs it. See
 [agent-device actions](./dev-server-and-logs.md#agent-device-actions).
 
 ## `agent-device`
@@ -1812,7 +1828,7 @@ hold and for each of the last abnormal stimd exits. Each workspace prints a
 activity, `idle` or `dormant` with the time in it and what the stage freed or
 deleted, or `stopped`. This line is separate from the JSON `stage` object
 above. In `--json`, `daemon` carries `mode`, `running`, `lastTickAt`,
-`pressure`, `waiting`, `unverified`, `crashHold`, `abnormalExits` and `recent`, the last 20 actions any daemon of this home
+`pressure`, `waiting`, `unverified`, `crashHold`, `abnormalExits`, `unanswered` and `recent`, the last 20 actions any daemon of this home
 took, oldest first; an environment the daemon staged carries `idleStage` or
 `dormantStage`.
 
@@ -1903,7 +1919,18 @@ form while Stim derives the cap because the setting is unset, and in `--json` as
 `capacity.builds` and `capacity.devices`: `max`, `inUse` and `holders`. A build slot's holder names
 the workspace building in it, or the client whose offloaded build this Mac
 runs; a device's holder names the workspace label and device slot that record
-it. `capacity.devices.inUse` is `null`, with `unknown` saying why, when the
+it. An unresolved build slot, one whose claim Stim cannot settle, such as an
+offloaded build stopped before its worker reported cleanup, gets a
+`build slot N is unresolved: ...` line and, in `--json`, a holder `claim`
+of `{ unresolved, removeCommand }`. It names the claim, its owner pid, when it
+was claimed and whether that process still runs. For an offloaded build it also
+names the job's repository and engine claims, and gives one command that
+removes them with the job's `fingerprint-work/<job>` directory. An engine claim
+records no build, so while the same job process leaves another slot unresolved
+its engine claims get a separate command, to run once every build of that
+process has stopped. `stim gc` lists
+the same line under "Needs a person:" and maintenance in its blocked reasons.
+Run the command only once nothing from that build runs. `capacity.devices.inUse` is `null`, with `unknown` saying why, when the
 devices could not be listed.
 
 `concurrency.maxIosDevices` and `concurrency.maxAndroidDevices` add an
@@ -3075,8 +3102,9 @@ Prints version-matched reference text. Topics are agent, facts, metro, ports,
 logs, errors, lifecycle, cleanup, and settings. Those topics also cover caches,
 remote devices, and release builds. The errors, lifecycle, facts, and cleanup
 topics have sections: called bare they print a section index, and a named
-section prints on its own. `stim guide errors` lists every refusal code and
-`stim guide errors <CODE>` prints one.
+section prints on its own. A refusal prints its own remedy; `stim guide errors`
+lists the recovery procedures too long for one, and a remedy that needs one
+names the exact `stim guide errors <name>` command.
 
 The bare index and the agent topic open with a STATUS block when something is
 due: doctor for a platform that never ran in this app, ran more than seven
@@ -3097,8 +3125,7 @@ exit with a nonzero code and print an error code, message, and remedy. An empty
 A `start`, `ios` or `android` run that finds free disk under
 `disk.hardFloorGb` has the `stim-daemon` run its pressure ladder first
 and refuses with `STIM_LOW_DISK`, naming the largest uses of disk, only while
-free disk stays under it. Run `stim guide errors
-STIM_LOW_DISK` for the remedies.
+free disk stays under it. The refusal prints the remedies.
 
 ### JSON stability within 2.x
 
@@ -3129,9 +3156,9 @@ archive usage line. See [archived workspaces](./worktrees.md#archived-workspaces
 
 A person on the worker machine runs `stim setup` to set it up and approve
 build, device-host or test access (`--build`, `--device-host`, `--test`) for
-the machine holding one setup ticket, until one expiry. Test access lets that
-machine run any command it sends, as this user, with no sandbox; see
-[test approval](./remote-machines.md#test-approval). The requesting machine makes the ticket: Stim Desktop's Add Machine
+the machine holding one setup ticket, until one expiry. The separate test
+client record can authorize managed worker updates. See
+[test approval](./remote-machines.md#test-approval). The requesting machine makes the ticket. Stim Desktop's Add Machine
 flow shows the command, and `stim remote add <machine>` or `stim doctor --fix`
 prints it on a machine without Desktop. Each grant asks Y/n in a terminal (Enter approves); `--yes` is
 required to approve without a terminal. Agents never run setup

@@ -10,6 +10,11 @@ import { startDevServer, type StartDevServerRequest } from './start.ts';
 import { ensureWorkspaceStorageAsync } from '../workspace/paths.ts';
 import { LAUNCH_BUNDLING, LAUNCH_UNVERIFIED } from '../engine/launch-verify.ts';
 
+export interface InstalledLaunch {
+  appId: string;
+  kind: 'embedded-js' | 'process';
+}
+
 export interface MobileRuntimePreparation {
   metroPort: number | null;
 }

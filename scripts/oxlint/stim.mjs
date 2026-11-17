@@ -130,7 +130,16 @@ const refusalRemedy = {
         const value = code && unwrap(code.value);
         if (value?.type !== 'Literal' || typeof value.value !== 'string' || !value.value.startsWith('STIM_')) return;
         if (exemptCodes.test(value.value)) return;
-        if (node.properties.some((p) => p.type === 'SpreadElement' || ['remedy', 'diagnostics'].includes(keyName(p))))
+        const remedy = node.properties.find((p) => p.type === 'Property' && keyName(p) === 'remedy');
+        const given = remedy && unwrap(remedy.value);
+        const empty =
+          (given?.type === 'Literal' && (given.value === null || given.value === '')) ||
+          (given?.type === 'Identifier' && given.name === 'undefined') ||
+          (given?.type === 'TemplateLiteral' && given.expressions.length === 0 && given.quasis[0].value.cooked === '');
+        if (
+          !empty &&
+          node.properties.some((p) => p.type === 'SpreadElement' || ['remedy', 'diagnostics'].includes(keyName(p)))
+        )
           return;
         context.report({ node, message: `${value.value} needs a remedy that says how to recover.` });
       },

@@ -423,7 +423,8 @@ function staleNativeDirRefusal(platform: string): { code: string; message: strin
       `run \`expo prebuild\` over it.`,
     remedy:
       `Stop excluding ${dir}/ from the fingerprint (check .fingerprintignore) so the cache key covers its files, ` +
-      `or add ${dir}/ to .gitignore and untrack it so Stim regenerates it from the app config.`,
+      `or add ${dir}/ to .gitignore and untrack it so Stim regenerates it from the app config. ` +
+      'If git could not answer, fix the checkout first, then run again.',
   };
 }
 

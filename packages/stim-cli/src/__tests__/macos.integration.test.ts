@@ -27,6 +27,7 @@ import {
   parseMacosRecord,
   readMacosRecord,
   readBuildHistory,
+  listBuildEndMarkers,
   type MacosAppRecord,
   type MacosProcess,
 } from '@stim-cli/core/state';
@@ -134,8 +135,8 @@ test('malformed app ownership is a refusal, never treated as no owned app', asyn
   writeWorkspaceState(root, { macos: { ...record(), app: { pid: 42 } } });
   expect(parseMacosRecord({ ...record(), app: { pid: 42 } })).toBeNull();
   expect(parseMacosRecord({ ...record(), host: { machine: 'mini', session: 'not-a-session' } })).toBeNull();
-  expect(() => requiredMacosRecord(root)).toThrow('owner is malformed');
-  await expect(stopMacosApp(root)).rejects.toThrow('owner is malformed');
+  expect(() => requiredMacosRecord(root)).toThrow('is malformed. Repair the macos entry in');
+  await expect(stopMacosApp(root)).rejects.toThrow('is malformed. Repair the macos entry in');
   expect(workspaceInUse(root)).toContain('its macOS process owner cannot be verified');
 });
 
@@ -1270,6 +1271,12 @@ describe('macOS build placement and promotion', () => {
       expect((await pending).app).toEqual(app);
     },
   );
+
+  it('marks the workspace for measurement when a local compile ends', async () => {
+    await build({ buildMachine: 'local' });
+    expect(localBuilds).toBe(1);
+    expect(listBuildEndMarkers().map((marker) => marker.path)).toEqual([root]);
+  });
 
   it('inputs changed during compilation are installed without publishing a completed cache entry', async () => {
     const store = vi.fn<NonNullable<MacosArtifactRecipe['cache']>['store']>();

@@ -137,6 +137,7 @@ export async function prepareOwnedAvd({
   let prepared: PreparedAvd;
   let child: ChildProcess | undefined;
   let spawnAttempted = false;
+  let creationRecordCleared = false;
   const creationRunning = () => child?.pid !== undefined && processGroupAlive(child.pid);
   let configurationFailure: { error: unknown } | undefined;
   try {
@@ -144,6 +145,9 @@ export async function prepareOwnedAvd({
       const creation = await createOwnedAvd(label, {
         systemImage,
         deviceProfile,
+        onCreationRecordCleared: () => {
+          creationRecordCleared = true;
+        },
         spawn: (...args) => {
           spawnAttempted = true;
           markClaimChildPending(claim);
@@ -174,6 +178,10 @@ export async function prepareOwnedAvd({
       prepared = { ...creation.result, created: true };
     } catch (error) {
       const message = String((error as Error)?.message || error);
+      if (creationRecordCleared) {
+        await releaseReservation();
+        throw error;
+      }
       if (!message.includes('already exists')) {
         if (!spawnAttempted) await releaseReservation();
         throw error;

@@ -12,6 +12,8 @@ import {
 import { processContext } from '../cli-operation.ts';
 import { runMaintenance } from '../stimd/passes/run.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
+import { checkoutRootOf } from '../workspace/checkout-role.ts';
+import { freshLaunchers, launchersOf, launchingOf, logLauncherProblems } from '../workspace/launchers.ts';
 import { loadConfig, type Config } from '../workspace/config.ts';
 import { requestDaemonTick, stimdRefused } from './client.ts';
 import { runBootedParkedPass } from './booted-parked.ts';
@@ -168,6 +170,7 @@ export async function runHomePasses({
   }
   operation.signal.throwIfAborted();
   const ladderMs = lap();
+  logLauncherProblems(operation, log);
   return {
     config,
     now,
@@ -205,6 +208,7 @@ export function createMaintenanceLane(
     fields?: Record<string, unknown>,
   ) => void,
   precompute: { run(input: PrecomputeInput, act: boolean): Promise<void> } = createFingerprintPrecompute(log),
+  dependencyCadence: BigInt64Array = new BigInt64Array(1),
 ): MaintenanceLane {
   let current: Promise<void> | null = null;
   let failure: unknown;
@@ -230,11 +234,12 @@ export function createMaintenanceLane(
           log('warn', 'daemon_fingerprint_precompute', error instanceof Error ? error.message : String(error));
         });
         const fingerprintMs = lap();
-        const deleted = await runDormantDependencies({ config, act, log, ...reading });
+        const deleted = await runDormantDependencies({ config, act, log, ...reading, cadence: dependencyCadence });
         taken.push(...deleted);
         const dependenciesMs = lap();
         const skipped = await runMaintenance('daemon', { report: !act, tick: { operation, measured } });
         const maintenanceMs = lap();
+        logLauncherProblems(operation, log);
         const tookMs = Math.round(performance.now() - started);
         log('debug', 'daemon_maintenance', `maintenance ${tookMs}ms${skipped ? `; skipped: ${skipped}` : ''}`, {
           tookMs,
@@ -325,7 +330,7 @@ async function runCommandLadder(
         // @ref LLP 0003#never-from-a-build-command -- the build is about to read those caches
         lastRung: 8,
         ...(protectedRoot ? { protectedRoot } : {}),
-        ...(headroom ? { operation: headroom.operation } : {}),
+        ...(headroom ? { operation: headroom.operation, stop: headroom.stop } : {}),
       },
       pressure,
     );
@@ -456,7 +461,20 @@ export async function runForcedLadder({
           target: entry.path,
           workspace: entry.path,
           outcome: entry.outcome === 'idle' ? 'done' : entry.outcome === 'would-idle' ? 'would' : 'failed',
-          bytes: entry.freedBytes ?? (entry.outcome === 'would-idle' ? await idleOutputBytes(entry.path, config) : 0),
+          bytes:
+            entry.freedBytes ??
+            (entry.outcome === 'would-idle'
+              ? await idleOutputBytes(
+                  entry.path,
+                  config,
+                  launchingOf(
+                    await checkoutRootOf(entry.path, operation?.signal, operation),
+                    launchersOf(operation, operation?.signal, false),
+                    operation,
+                    operation?.signal,
+                  ),
+                )
+              : 0),
           detail: entry.outcome === 'would-idle' ? 'stim gc would do this' : entry.detail,
           ...(entry.outcome === 'idle' ? { restore: 'stim revive' } : {}),
         });
@@ -526,7 +544,16 @@ export async function runDormantReduction({
         ? await clearStoppedOutputs(candidate, config, afterMs, operation)
         : {
             outcome: 'would' as const,
-            bytes: await idleOutputBytes(candidate.path, config),
+            bytes: await idleOutputBytes(
+              candidate.path,
+              config,
+              launchingOf(
+                candidate.checkout,
+                () => freshLaunchers(operation, operation?.signal)(),
+                operation,
+                operation?.signal,
+              ),
+            ),
             detail: 'stim gc would do this',
           };
       if (result)

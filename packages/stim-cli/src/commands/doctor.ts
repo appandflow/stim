@@ -1,13 +1,18 @@
+import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import {
   daemonNdjsonFile,
   daemonSnapshotFile,
   gcLogFile,
+  machineSettingValue,
   readDaemonSnapshot,
+  readDiscoveryCensusFile,
+  readDiscoveryScanFile,
   type DaemonPressure,
   type DaemonStatus,
 } from '@stim-cli/core/state';
 import { clearCrashHold } from '../stimd/crash-hold.ts';
+import { probeDaemonAnswer, unansweredFindings, withAnswer } from '../daemon/answering.ts';
 import { daemonFindings, daemonLine, daemonStatus, lastActionLine } from '../daemon/status.ts';
 import { discoverToolchain, projectNodeBin, projectNodePin, type ToolchainEntry } from '@stim-cli/core/toolchain';
 import { maintenanceStatus, maintenanceLine } from '../stimd/passes/status.ts';
@@ -21,13 +26,19 @@ import type { ProjectDoctor } from '../integrations/project-doctor.ts';
 import { getProject, loadConfig } from '../workspace/config.ts';
 import { broadDiscoverRoots, missingDiscoverRoots } from '../workspace/discovery.ts';
 import {
+  DISCOVER_ROOTS_KEY,
+  discoveryLines,
+  discoveryReport,
+  type DiscoveryReport,
+} from '../workspace/discovery-report.ts';
+import {
   projectSettingsContextAsync,
   resolveAndroidLayout,
   settingValueAt,
   type ProjectSettingsContext,
   type SettingsObject,
 } from '../workspace/settings.ts';
-import type { StimContext } from '@stim-cli/core';
+import { isScopedHome, type StimContext } from '@stim-cli/core';
 import { readMachineSettings, type MachineSettings } from '../diagnostics/doctor-config.ts';
 import { checkWorktreeStorageLayout } from '../diagnostics/doctor-storage.ts';
 import {
@@ -63,6 +74,7 @@ import { confirmInTerminal } from './device-provision.ts';
 import { inspectHostedAgentDriver } from '../device-host/agent-driver.ts';
 import { readServerSetup } from '../diagnostics/server-setup-probe.ts';
 import { isServerFinding, serverSetupFindings } from '../diagnostics/server-setup.ts';
+import { launcherFindings } from '../diagnostics/launcher-evidence.ts';
 import { serverNetworkFindings } from '../diagnostics/server-network.ts';
 import { serverPermissionFindings } from '../diagnostics/server-permissions.ts';
 import { serviceToolchainEntries, serviceToolchainFindings } from '../diagnostics/server-toolchain.ts';
@@ -217,6 +229,24 @@ function toolchainLines(report: ToolchainReport): string[] {
         ]
       : []),
   ];
+}
+
+function canonicalOrSelf(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
+const DISCOVERY_TITLE = 'Checkouts Stim does not fully manage';
+
+function discoverySection(report: DiscoveryReport, env: NodeJS.ProcessEnv): string[] {
+  const lines =
+    report.scan.status === 'absent' && isScopedHome(env)
+      ? ['A scoped Stim home never scans the home folder, so it lists nothing.']
+      : discoveryLines(report, homedir());
+  return lines.map((line) => (line ? `  ${line}` : line));
 }
 
 function pressureLines(pressure: DaemonPressure | null): string[] {
@@ -398,6 +428,11 @@ export interface DoctorReport {
   maintenance: ReturnType<typeof maintenanceStatus> & { logPath: string };
   /** @internal Carries no compatibility: the stim-daemon state, as `status --json` prints it. */
   daemon: DaemonStatus & { logPath: string };
+  /**
+   * @internal Carries no compatibility: what the last home folder scan found that Stim does not fully manage, grouped
+   * by folder with the size of the build output, from the daemon's cached result.
+   */
+  discovery: DiscoveryReport;
   remoteMachines: Array<BuildMachinesInspection['machines'][number] & { priority?: number }>;
   deviceHosts: Array<Awaited<ReturnType<typeof inspectDeviceHostMachines>>['machines'][number] & { priority?: number }>;
   toolchain: ToolchainReport | null;
@@ -695,6 +730,7 @@ async function assembleDoctorReport(
   );
 
   const serverSetup = withoutUnhandledRejection(readServerSetup(version, shareSettings(settings)));
+  const daemonAnswer = probeDaemonAnswer(daemonStatus(env));
   const watchman = await watchmanMemory;
   if (watchman) findings.push(watchman);
   if (!memorySweepIsScoped(env)) findings.push(...memoryCulpritFindings(await readMemoryCulpritsAsync()));
@@ -733,8 +769,12 @@ async function assembleDoctorReport(
       fix: 'Run `stim doctor --fix` to remove them; it never touches a running job or one whose home exists.',
     });
   const maintenance = maintenanceStatus(env);
-  const daemon = daemonStatus(env);
-  findings.push(...daemonFindings(daemon));
+  const answer = await daemonAnswer;
+  const decidedAt = Date.now();
+  const answered = withAnswer(daemonStatus(env), answer);
+  findings.push(...daemonFindings(answered, { probed: true, now: decidedAt }));
+  findings.push(...(await launcherFindings(env, undefined, Object.keys(loadConfig()?.projects ?? {}))));
+  const silent = unansweredFindings(answered, decidedAt);
   const missingRoots = missingDiscoverRoots(loadConfig(), env);
   if (missingRoots.length)
     findings.push({
@@ -751,13 +791,21 @@ async function assembleDoctorReport(
       detail: `${broadRoots.join(', ')} resolve${broadRoots.length === 1 ? 's' : ''} to the home folder, a folder holding it or the filesystem root, so nothing is discovered there.`,
       fix: 'Name folders below the home folder, such as ~/Developer.',
     });
+  findings.push(...silent);
   return {
     project: root,
     platform: opts.platform ?? null,
     stim,
     pressure: pressure.pressure,
     maintenance: { ...maintenance, logPath: gcLogFile() },
-    daemon: { ...daemon, logPath: daemonNdjsonFile() },
+    daemon: { ...answered, logPath: daemonNdjsonFile() },
+    discovery: discoveryReport({
+      scan: readDiscoveryScanFile(),
+      census: readDiscoveryCensusFile(),
+      setting: machineSettingValue(DISCOVER_ROOTS_KEY, { config: loadConfig(), env }),
+      home: homedir(),
+      canonical: canonicalOrSelf,
+    }),
     remoteMachines: withPriority(remoteMachines.machines),
     deviceHosts: withPriority(deviceHostMachines.machines),
     toolchain,
@@ -842,6 +890,9 @@ export function doctorOp(
             toolchain ? toolchainLines(toolchain) : [],
           ),
           ...maintenanceLines,
+          '',
+          DISCOVERY_TITLE,
+          ...discoverySection(report.discovery, process.env),
         ];
         for (const [index, line] of lines.entries()) {
           if (index === 1) console.log(chalk.green(line));
@@ -871,6 +922,9 @@ export function doctorOp(
         console.log(`  ${f.detail}`);
         if (f.fix) console.log(chalk.dim(`  -> ${f.fix}`));
       }
+
+      console.log(chalk.bold(`\n${DISCOVERY_TITLE}`));
+      for (const line of discoverySection(report.discovery, process.env)) console.log(chalk.dim(line));
 
       const serverOnly = findings.every(isServerFinding);
       console.log(

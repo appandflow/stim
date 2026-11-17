@@ -1,9 +1,12 @@
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync, type Dirent } from 'node:fs';
 import { lstat, mkdir, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { cargoTargetTrimClaims } from '@stim-cli/core/state';
+import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-claim.ts';
 import { getExecutor } from '../exec.ts';
 import { measuredDirectorySizeAsync } from '../fs-util.ts';
 import { withCargoLocks } from './cargo-lock.ts';
+import { launcherReason, type Launching } from './launchers.ts';
 import { cargoUnitPaths, cargoUnitWasRead, idleCargoUnits, readCargoUnits, removalOrder } from './cargo-units.ts';
 
 const CARGO_PROFILE_IDLE_MS: number = 24 * 3_600_000;
@@ -18,6 +21,8 @@ const EXACT_LEDGER = '.exact-sweep.json';
 const NOT_PROFILES = new Set(['.exact-swept']);
 const OWN_PREFIX = '.stim-';
 const STRANDED = 'NOT-RESTORED';
+const CANNOT_READ = 'the files processes hold open or the executables on PATH cannot be read';
+const DEADLINE_KEPT = 'the rest was left at the build headroom deadline';
 const NOT_RESTORED = `${OWN_PREFIX}not-restored-`;
 const FOLD_CASE = process.platform === 'darwin' || process.platform === 'win32';
 
@@ -296,10 +301,16 @@ function inUse(used: readonly string[], dir: string): boolean {
 }
 
 /**
- * The paths under `target` a running process executes from or holds open, from one `lsof` and one `ps` read; null when
- * either cannot be read, which keeps everything.
+ * The paths under `target` a running process executes from or holds open, from one `lsof` and one `ps` read, with the
+ * launcher reading taken at the same moment: an executable on PATH that resolves into the owning checkout, or evidence
+ * that cannot be read, keeps everything.
  */
-async function readTargetUse(target: string, signal?: AbortSignal, lowPriority = false): Promise<string[] | null> {
+async function readTargetUse(
+  target: string,
+  launching: Launching,
+  signal?: AbortSignal,
+  lowPriority = false,
+): Promise<{ used: string[] } | { kept: string }> {
   const exec = getExecutor();
   try {
     const run = (file: string, args: string[], timeoutMs: number) =>
@@ -308,10 +319,16 @@ async function readTargetUse(target: string, signal?: AbortSignal, lowPriority =
         : exec.runFileAsync(file, args, { timeoutMs, signal });
     const lsof = await run('lsof', ['-nP', '-w', '-Fn'], 60_000);
     const ps = await run('ps', ['-axww', '-o', 'args='], 30_000);
-    return targetPathsInUse(target, lsof, ps);
+    const used = targetPathsInUse(target, lsof, ps);
+    const scan = await launching.anew();
+    const launcher = launcherReason(launching.checkout, scan);
+    if (launcher) return { kept: launcher };
+    const prefix = `${folded(target)}/`;
+    for (const path of scan.targets) if (folded(path).startsWith(prefix)) used.push(folded(path));
+    return { used };
   } catch {
     signal?.throwIfAborted();
-    return null;
+    return { kept: CANNOT_READ };
   }
 }
 
@@ -335,24 +352,7 @@ async function sizeOf(path: string, signal?: AbortSignal, lowPriority = false): 
  * gets the directory back. Nothing slow runs between the check and the rename. A path a process executes from or holds
  * open, and a profile whose lock file (`.cargo-lock`, `.cargo-build-lock` or `.cargo-artifact-lock`) a build holds, stays.
  */
-export async function trimCargoTarget(
-  registeredTarget: string,
-  {
-    needBytes,
-    incremental = 'toNeed',
-    units = 'none',
-    lowPriority = false,
-    now = Date.now(),
-    signal,
-  }: {
-    needBytes: number;
-    incremental?: 'toNeed' | 'all';
-    units?: 'none' | 'toNeed' | 'all';
-    lowPriority?: boolean;
-    now?: number;
-    signal?: AbortSignal;
-  },
-): Promise<CargoTrimResult> {
+export async function trimCargoTarget(registeredTarget: string, options: CargoTrimOptions): Promise<CargoTrimResult> {
   const result: CargoTrimResult = { bytes: 0, removed: [], kept: [] };
   let target: string;
   try {
@@ -360,6 +360,70 @@ export async function trimCargoTarget(
   } catch {
     return { ...result, kept: [`${registeredTarget} cannot be resolved to its on-disk path`] };
   }
+  // @ref LLP 0005#never-delete-what-a-build-took-back -- one trim of a target at a time across processes
+  let claim: ClaimHandle | null | undefined;
+  try {
+    const attempt = tryAcquireClaim({
+      root: cargoTargetTrimClaims(target),
+      mode: 'exclusive',
+      label: 'Cargo target trim',
+      details: { target },
+    });
+    if (attempt.pending) releaseClaim(attempt.pending);
+    claim = attempt.acquired;
+    if (!claim) {
+      const holder = attempt.held;
+      return {
+        ...result,
+        kept: [`another trim of it holds ${holder?.path ?? 'its claim'}${holder ? ` (pid ${holder.owner.pid})` : ''}`],
+      };
+    }
+  } catch (error) {
+    return { ...result, kept: [`its trim claim cannot be taken: ${error instanceof Error ? error.message : error}`] };
+  }
+  try {
+    return await trimClaimed(target, options);
+  } finally {
+    releaseClaim(claim);
+  }
+}
+
+interface CargoTrimOptions {
+  needBytes: number;
+  incremental?: 'toNeed' | 'all';
+  units?: 'none' | 'toNeed' | 'all';
+  lowPriority?: boolean;
+  now?: number;
+  signal?: AbortSignal;
+  /** Stops the trim between units that completed; a unit in flight finishes. */
+  stop?: AbortSignal;
+  /** Whether to walk what was removed to report its bytes; false reports 0 and removes at once. Default true. */
+  measure?: boolean;
+  /**
+   * The checkout that owns the target and how to read the launchers anew, which the trim does after each read of the
+   * processes using the target; a launcher into any of the checkout keeps the whole target. Every caller states it.
+   */
+  launching: Launching;
+}
+
+async function trimClaimed(
+  target: string,
+  {
+    needBytes,
+    incremental = 'toNeed',
+    units = 'none',
+    lowPriority = false,
+    now = Date.now(),
+    signal,
+    stop,
+    measure = true,
+    launching,
+  }: CargoTrimOptions,
+): Promise<CargoTrimResult> {
+  const result: CargoTrimResult = { bytes: 0, removed: [], kept: [] };
+  const stopped = (): boolean => stop?.aborted === true;
+  const measured = (path: string): Promise<number> =>
+    measure ? sizeOf(path, signal, lowPriority) : Promise.resolve(0);
   const aside = join(target, ASIDE);
   let keepAside = false;
   if (existsSync(join(aside, STRANDED)))
@@ -375,9 +439,9 @@ export async function trimCargoTarget(
       kept: [`a leftover ${aside} cannot be deleted: ${error instanceof Error ? error.message : error}`],
     };
   }
-  const first = await readTargetUse(target, signal, lowPriority);
-  if (first === null) return { ...result, kept: ['the files processes hold open cannot be read'] };
-  let used: string[] = first;
+  const first = await readTargetUse(target, launching, signal, lowPriority);
+  if ('kept' in first) return { ...result, kept: [first.kept] };
+  let used: string[] = first.used;
   const stale = staleCargoTargetPaths(target, now);
   if ('refusal' in stale) return { ...result, kept: [stale.refusal] };
   let moved = 0;
@@ -389,6 +453,10 @@ export async function trimCargoTarget(
     locks: (where: string) => Promise<string[]>,
   ): Promise<boolean> => {
     signal?.throwIfAborted();
+    if (stopped()) {
+      if (!result.kept.includes(DEADLINE_KEPT)) result.kept.push(DEADLINE_KEPT);
+      return false;
+    }
     const profiles = await locks(dir);
     if (inUse(used, dir)) {
       result.kept.push(`${label}: a process uses it`);
@@ -441,7 +509,7 @@ export async function trimCargoTarget(
         return false;
       }
     }
-    result.bytes += bytes ?? (await sizeOf(there, signal, lowPriority));
+    result.bytes += bytes ?? (await measured(there));
     result.removed.push(label);
     return true;
   };
@@ -456,17 +524,18 @@ export async function trimCargoTarget(
     if (!all) return { ...none, kept: 'its units cannot be listed' };
     const candidates = [...cargoUnitPaths(profile, idleCargoUnits(all, now, CARGO_PROFILE_IDLE_MS))];
     if (!candidates.length) return none;
-    const fresh = await readTargetUse(target, signal, lowPriority);
-    if (fresh === null) return { ...none, kept: 'the files processes hold open cannot be read' };
+    const fresh = await readTargetUse(target, launching, signal, lowPriority);
+    if ('kept' in fresh) return { ...none, kept: fresh.kept };
     let swept = 0;
     let bytes = 0;
     // @ref LLP 0005#never-delete-what-a-build-took-back -- Exact serializes access-time resets and ledger replacement
     const locks = [join(target, `${EXACT_LEDGER}.lock`), ...PROFILE_LOCKS.map((name) => join(profile, name))];
     for (let at = 0; at < candidates.length; at += UNIT_CHUNK) {
       signal?.throwIfAborted();
+      if (stopped()) return { units: swept, bytes, kept: DEADLINE_KEPT };
       const chunk = candidates
         .slice(at, at + UNIT_CHUNK)
-        .filter(([, paths]) => !paths.some((path) => inUse(fresh, join(profile, path))));
+        .filter(([, paths]) => !paths.some((path) => inUse(fresh.used, join(profile, path))));
       if (!chunk.length) continue;
       const batch = join(aside, `units-${moved++}`);
       const movedBatch = await withCargoLocks(
@@ -498,7 +567,7 @@ export async function trimCargoTarget(
       if ('kept' in movedBatch) return { units: swept, bytes, kept: movedBatch.kept };
       if ('kept' in movedBatch.value) return { units: swept, bytes, kept: movedBatch.value.kept };
       swept += movedBatch.value.units;
-      if (movedBatch.value.units) bytes += await sizeOf(batch, signal, lowPriority);
+      if (movedBatch.value.units) bytes += await measured(batch);
     }
     return { units: swept, bytes };
   };
@@ -525,16 +594,22 @@ export async function trimCargoTarget(
   const remaining = (cargoProfileDirs(target) ?? []).filter(
     (profile) => ![...removedStale].some((gone) => profile === gone || profile.startsWith(`${gone}/`)),
   );
-  const refreshed =
-    incremental === 'all' || result.bytes < needBytes ? await readTargetUse(target, signal, lowPriority) : used;
-  if (refreshed === null) result.kept.push('the files processes hold open cannot be read');
-  else used = refreshed;
-  if (refreshed !== null && (incremental === 'all' || result.bytes < needBytes)) {
+  const refreshed = stopped()
+    ? null
+    : incremental === 'all' || result.bytes < needBytes
+      ? await readTargetUse(target, launching, signal, lowPriority)
+      : { used };
+  if (stopped()) {
+    if (!result.kept.includes(DEADLINE_KEPT)) result.kept.push(DEADLINE_KEPT);
+  } else if (refreshed && 'kept' in refreshed) result.kept.push(refreshed.kept);
+  else if (refreshed) used = refreshed.used;
+  if (refreshed && 'used' in refreshed && (incremental === 'all' || result.bytes < needBytes)) {
     const candidates: { path: string; bytes: number }[] = [];
     for (const profile of remaining) {
       const dir = join(profile, 'incremental');
       if (incremental === 'toNeed' && inUse(used, profile)) continue;
-      if (existsSync(dir)) candidates.push({ path: dir, bytes: await sizeOf(dir, signal, lowPriority) });
+      if (existsSync(dir))
+        candidates.push({ path: dir, bytes: incremental === 'all' ? 0 : await sizeOf(dir, signal, lowPriority) });
     }
     const chosen =
       incremental === 'all'
@@ -549,6 +624,7 @@ export async function trimCargoTarget(
   if (units === 'all' || (units === 'toNeed' && result.bytes < needBytes))
     for (const profile of remaining) {
       signal?.throwIfAborted();
+      if (stopped()) break;
       const key = profile.slice(target.length + 1);
       const swept = await sweepUnits(profile, key);
       if (swept.kept) result.kept.push(`${key}: ${swept.kept}`);

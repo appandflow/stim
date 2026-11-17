@@ -509,12 +509,9 @@ leased until <time>" for each one.`,
                   when revive started the dev server an idle stop had
                   stopped; stoppedAt and reason ("idle") describe that stop,
                   and are null when Metro was already running. port is
-                  null when revive relaunched only native-process launches
-                  of a workspace with no Metro to resume
-  devices         one entry per recorded launch on a local owned
-                  simulator or emulator, except Release, Android
-                  native-process and hosted launches, which revive does
-                  not relaunch. Run as
+                  null when revive uses only installed apps with no Metro
+  devices         one entry per restored launch on a local owned
+                  simulator or emulator. Run as
                   agent-device's boot hook, only the launch on the device
                   agent-device asked for: { platform, slot, deviceId, deviceName,
                   rebooted, app: { bundleId, relaunched, launched } }.
@@ -565,6 +562,12 @@ leased until <time>" for each one.`,
                   invalid. level is the higher of disk and memory, each
                   "normal", "high" or "critical"; reasons names each
                   condition above normal (\`guide lifecycle budget\`)
+  discovery       unmanaged checkouts the home scan found (internal): { scan,
+                  census, censusAt, censusCurrent, complete (false: figures read
+                  "at least"), rootsChangedSinceCensus, groups: [{ folder, kind
+                  reduce-only | dot-folder | unchecked, checkouts, bytes,
+                  measured, partial, failed, notMeasuredYet, command,
+                  commandProblem, oldestMeasuredAt, members }] }
   deviceHosts     one { machine, state, dnsName?, fingerprint?, deviceId?, requestedAt?,
                   expiresAt?, host? } per remote.machines entry. state is "approved",
                   "pending", "not-asked", "revoked", "lapsed", "key-changed",
@@ -706,8 +709,7 @@ ON FAILURE
   when Chrome closed (its profile is kept), else "skipped" (its identity could
   not be verified) or "failed", and ok is then false.
 
-  Branch on \`code\`, never on the message text. \`guide errors\` enumerates
-  every code.
+  Branch on \`code\`, never on the message text.
 
 RULES
   - Never hardcode or guess a udid/serial/port. Read them from the payload.
@@ -1947,12 +1949,17 @@ RULES
            because no setting sets it yet, so state is never holding.
 
   builds   { max, inUse, holders: [{ slot, workspace, client, since,
-           unresolved? }] }. inUse counts the slots below max that a new
-           build cannot take. workspace is the root of the local build in
+           unresolved?, claim? }] }. inUse counts the slots below max that a
+           new build cannot take. workspace is the root of the local build in
            the slot; client is the device id of the client whose offloaded
            build this machine runs in it. An unresolved slot has a claim
            whose holder Stim cannot identify; both are null, and the slot
-           stays in use until that claim is removed.
+           stays in use until that claim is removed. claim is { unresolved,
+           removeCommand }: the claim, its owner pid, claim time and
+           liveness, an offloaded build's job and other claims, and one
+           command removing them and its fingerprint-work/<job>; gc and
+           maintenance list it in blocked. Run it once nothing of that
+           build runs.
   devices  { max, inUse, unknown?, holders: [{ platform, label, workspace,
            slot, booting? }] }, the owned devices the cap counts: booted or
            booting stim simulators, owned emulators adb lists, and boots in
@@ -1981,7 +1988,7 @@ RULES
     intervalMs come from $STIM_HOME/daemon/snapshot.json, which also holds
     the tick's measurement and each running workspace's decision; null
     before a first tick. A last tick older than three intervals while it runs
-    means it stopped ticking (\`stim doctor\`). claim is an unresolved claim's
+    means its ticks are late (\`stim doctor\`). claim is an unresolved claim's
     path and reason with removeCommand. pressure is the last tick's
     { level, disk, memory, reasons, memoryWarningSince } (\`guide lifecycle
     budget\`), absent until a tick measured it; the snapshot also lists the
@@ -1993,17 +2000,16 @@ RULES
     detail, restore?, at }; the idle stage at idle.minutes is rung 1 there
     too. unverified lists the children whose cleanup the running daemon could
     not verify and stays up for, { since, child, message, remedy }, absent when none;
-    plain status prints a line for each and \`stim doctor\` reports each with
-    its remedy. crashHold is { build, count, until, remedy }, present while stimd
+    status prints a line for each; doctor adds its remedy. crashHold is { build, count, until, remedy }, present while stimd
     refuses to start after three abnormal exits of one build within 10 minutes;
-    abnormalExits lists the abnormal exits of the last day, { at, build, pid,
+    abnormalExits lists the last day's abnormal exits, { at, build, pid,
     reason, home? }, oldest first, home naming what to fix when the Stim home
-    caused it. Plain status prints both, and \`stim doctor\` reports the hold
-    with its remedy. A stimd that died with no clean exit (killed, out of memory,
+    caused it. Status prints both; doctor reports the hold. unanswered { pid,
+    waitedMs, socketMissing? } means no probe reply in waitedMs (3 s). A stimd that died with no clean exit (killed, out of memory,
     crashed) is logged by the next stimd as stimd_predecessor_lost in
     daemon.ndjson and counts, unless it died in an earlier system boot; a handover
     whose successor never started is logged as successor_missing and the next
-    command starts a stimd at once. Plain status prints the newest action as "Last daemon action" and every
+    command starts a stimd at once. Status prints the newest action as "Last daemon action" and every
     workspace's stage line: running with its last activity, idle or dormant
     with the time in it, or stopped.
 

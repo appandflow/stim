@@ -992,7 +992,8 @@ machine value to stop a hosted session whose client has been gone that long. GB 
 <MaintenanceSettings />
 
 Size, idle, worktree and sweep checks wait while the one-minute load is above
-4 per core; the `stim-daemon`'s pressure level and ladder never wait.
+4 per core and every volume's disk level is normal; at high or critical load
+defers none of them. The `stim-daemon`'s pressure level and ladder never wait.
 On macOS the memory signal is the sysctl pressure level, with no signal when
 sysctl fails, and other platforms use `os.freemem()`.
 The build-cache and Metro caps trim entries down to 80% of the limit. The Swift
@@ -1026,8 +1027,15 @@ writes debug records to `$STIM_HOME/logs/debug/cli.ndjson`: each run's start and
 end, every child process with its program name, duration and exit status, and
 every request to another machine with its duration and result code. stim-server
 writes `server.ndjson` there and logs every request with its timings to its
-service log. Records never carry arguments,
-environment values, tokens or tickets, nothing is sent anywhere, and the file
+service log. On a build worker, `server.ndjson` also follows each offloaded
+build: its start and claims, why it was cancelled, the processes in its
+process group just before the first signal (pid, parent, elapsed time and
+executable), each signal, its exit with the worker process's last stderr lines,
+and whether its claims were released. Whether or not `debug.logs` is on, the
+service log gets one line for a cancel and one for a build that ended without
+an artifact. Records never carry arguments, environment values, tokens or
+tickets, apart from whatever an offloaded build's last output line and the
+worker's stderr lines contain; nothing is sent anywhere, and the file
 rotates at about 8 MiB with one previous generation kept.
 
 <StimTabs code="stim settings set debug.logs true --scope machine" />

@@ -352,6 +352,45 @@ Each record has src: gc, level (info, or error for a failed item), msg and
            and the reason a kept or failed item was left
 Records of one run share runId. See stim guide cleanup, WHAT WAS CLEARED.
 
+DAEMON LOG TIMING
+$STIM_HOME/daemon/daemon.ndjson (rotated at 8 MiB, one older file kept as
+daemon.ndjson.1) carries one debug record, event daemon_step, for each timed
+step. It is written when the step ends, whether it finished, threw or was
+aborted, so a step that took hours shows where the time went. Fields: step,
+startedAt (ISO time), durationMs, items (when the step counts any), outcome
+(finished, threw or aborted), error (threw only, at most 200 characters), and
+for a rung: rung and pressureLevel (the level the rung ran at). A loop's record falls
+between its rung's startedAt and its end. Steps and what items counts:
+  rung                          a pressure ladder rung; the actions it recorded
+  idle_stage_candidates,
+  stopped_output_candidates,
+  dormant_candidates            the workspace and checkout evidence loops;
+                                the checkouts visited
+  collect_artifacts             the artifact scan of a dependency step; the
+                                candidates and skips it found
+  rank_dependencies,
+  rank_source_dependencies      the dependencies ranked, and for the source
+                                step also those kept
+  plan_rung6, plan_worktrees,
+  plan_history                  the actions or worktrees the plan returned
+  dormant_dependencies          the dormant dependency step, when it runs (at
+                                most hourly); the actions it took or kept
+  build_end_measure             folders walked
+A step writes one record. A normal tick writes one (dormant_candidates), a high
+one up to 16, a critical one up to 22; the dormant step adds ~7/hour,
+build_end_measure one a pass. None alter a pass.
+Each disk-usage cache entry written after a walk also records walkMs, in milliseconds, from just
+before the install signature and target reads to the end of the folder walk;
+nothing reads it yet.
+When a report child's cleanup is refused (STIM_CLAIM_UNAVAILABLE) inside stimd, or a cancelled child whose identity
+was not captured is killed after its cancel (POSIX), the daemon log also gets one info record, event
+daemon_report_child_exited, when that child's own exit is seen. It never appears for a child that has not exited. Fields: pid, command (program and redacted, bounded arguments), cancelReason (timeout,
+report_budget, abort, overflow, exit, close or unknown; report_budget is the report's own budget, abort is any
+other abort), timeoutMs (when the call had one), spawnToCancelMs, cancelToExitMs (negative when the exit came before
+the cancel), exitCode, exitSignal, refusal (unverified, did_not_close or descendants; absent when the cleanup was not refused),
+killedUncaptured (true when the kill was sent), captured and captureReason.
+It changes nothing a pass does.
+
 BUILD LEDGER
 stim logs --source builds reads $STIM_HOME/builds/builds.ndjson from any
 directory: one record per native build run (ios, android or macos; compiled
@@ -418,7 +457,12 @@ no tokens or tickets, each of these lines starting with an ISO time:
 ms=<n> error=<code>" for an error reply (once a minute per client, method,
 code and reason, ignoring its numbers), ending in reason="<message>" for a build-busy or build-refused
 refusal; and "host_connect ... error=<reason_with_underscores>" when its connection to a hosting
-machine fails. With debug.logs on or STIM_DEBUG=1 for the server it logs every
+machine fails; and, whatever debug.logs says, "build job cancel job=<id>
+client=<id> reason=<why> silentSeconds=<n>" and "build job ended job=<id>
+client=<id> code=<code> stopped=<why> exit=<n> signal=<s> claimsReleased=<bool>"
+(empty fields omitted) for an offloaded build that is stopped or ends without
+an artifact; a client that ends its build closes its connection, so why reads
+connection-closed, as can a stim-server stop. With debug.logs on or STIM_DEBUG=1 for the server it logs every
 request instead: "debug request method=<m> client=<id> run=<runId> ms=<n>
 slow=true whois=<ms> probe=<ms> error=<code> reason="<message>"" (slow means 1000 ms or more;
 whois and probe are the hello's Tailscale identity lookup and its wait for
@@ -436,6 +480,11 @@ stim logs does not show them. Read them with jq:
 Events: run_start, run_end { exit, ms }, exec { program, ms, ok, exit? }, and
 remote_connect and remote_request { ms, ok, code? } for requests to another
 machine. They carry no arguments, tokens or tickets.
+On a build worker, server.ndjson follows each offloaded build by job id:
+build.job.start, build.job.cancel { reason, silentMs, lastOutput, group: the
+build's processes before the first signal }, build.job.signal, build.job.exit
+{ code, signal, stderrTail: the worker process's last stderr lines } and
+build.job.settled { claimsReleased }. lastOutput and stderrTail are free text.
 
 TIMING TRACES
 STIM_TRACE=<path> makes a stim command write a timeline of where it spent its

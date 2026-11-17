@@ -135,6 +135,27 @@ export function parseUnverifiedCleanups(value: unknown): UnverifiedCleanup[] {
     : [];
 }
 
+/** A physical iPhone console the running daemon could not take over or settle. */
+export interface UnverifiedConsole {
+  since: string;
+  message: string;
+  remedy: string;
+}
+
+/** The well-formed entries of a daemon claim's `unverifiedConsoles` details. */
+export function parseUnverifiedConsoles(value: unknown): UnverifiedConsole[] {
+  return Array.isArray(value)
+    ? value.flatMap((entry) =>
+        isJsonObject(entry) &&
+        typeof entry.since === 'string' &&
+        typeof entry.message === 'string' &&
+        typeof entry.remedy === 'string'
+          ? [{ since: entry.since, message: entry.message, remedy: entry.remedy }]
+          : [],
+      )
+    : [];
+}
+
 /** Whether the home daemon runs, and when it last ticked; `status` and `doctor` print it. */
 export interface DaemonStatus {
   /** The running daemon's mode, else the mode `daemon.mode` resolves to here. */
@@ -142,6 +163,11 @@ export interface DaemonStatus {
   /** The mode `daemon.mode` resolves to here, when the running daemon started in another one. */
   setting?: DaemonMode;
   running: { pid: number; since: string } | null;
+  /**
+   * Set by `stim status` and `stim doctor` when a stimd holds the claim and sent no reply to a probe within
+   * `waitedMs`; `socketMissing` when its socket file does not exist. Absent when it answered.
+   */
+  unanswered?: { pid: number; waitedMs: number; socketMissing?: true };
   /**
    * A stim-daemon from before Stim 2.0 holds the daemon claim; it is not this home's running daemon. `verified` is
    * whether its claim has the record that daemon writes, which the next stimd start stops.
@@ -160,6 +186,8 @@ export interface DaemonStatus {
   recent?: DaemonRecentAction[];
   /** The children the running daemon stays up for, from its claim. */
   unverified?: UnverifiedCleanup[];
+  /** Physical iPhone console recoveries the daemon could not verify. */
+  unverifiedConsoles?: UnverifiedConsole[];
   /** Set while stimd refuses to start after three abnormal exits in 10 minutes. */
   crashHold?: { build: string; count: number; until: string; remedy: string };
   /** The last abnormal stimd exits of the last day, oldest first. */

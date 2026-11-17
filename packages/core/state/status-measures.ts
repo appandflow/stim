@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { readdirSync, statSync } from 'node:fs';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
@@ -33,6 +33,56 @@ export function diskUsageCacheFile(path: string): string {
 /** The file that records when the last walk of `path` failed, so other processes do not repeat it at once. */
 export function diskUsageFailureFile(path: string): string {
   return join(diskUsageCacheDir(), cacheName(path).replace(/\.json$/, '.failed.json'));
+}
+
+/**
+ * A local native build of the workspace at `path` ended: the folders it wrote are stale. Every mark is its own file, so
+ * a consumer removes only the marks it listed before it measured, never one written after.
+ */
+export interface BuildEndMarker {
+  file: string;
+  /** The workspace the marker names, or null when its content cannot be read or does not match its file name. */
+  path: string | null;
+  /** When the build ended (epoch milliseconds), or null when the file cannot be read. */
+  markedAt: number | null;
+}
+
+const buildEndMarkerName = /^[0-9a-f]{32}\.[0-9a-f-]{36}\.stale\.json$/;
+
+/** A new, unused marker file for the workspace at `path`. */
+export function newBuildEndMarkerFile(path: string): string {
+  return join(diskUsageCacheDir(), cacheName(path).replace(/\.json$/, `.${randomUUID()}.stale.json`));
+}
+
+function buildEndMarkerNames(): string[] {
+  try {
+    return readdirSync(diskUsageCacheDir()).filter((name) => buildEndMarkerName.test(name));
+  } catch {
+    return [];
+  }
+}
+
+/** Every marker file of the workspace at `path`, including one whose content cannot be read. */
+export function buildEndMarkerFilesOf(path: string): string[] {
+  const prefix = cacheName(path).replace(/\.json$/, '.');
+  return buildEndMarkerNames()
+    .filter((name) => name.startsWith(prefix))
+    .map((name) => join(diskUsageCacheDir(), name));
+}
+
+/** The markers of finished builds that nothing has measured yet, oldest name first, including unreadable ones. */
+export function listBuildEndMarkers(): BuildEndMarker[] {
+  return buildEndMarkerNames()
+    .toSorted()
+    .map((name) => {
+      const file = join(diskUsageCacheDir(), name);
+      const entry = readJsonObject(file);
+      const path = entry?.path;
+      const markedAt = typeof entry?.markedAt === 'number' && Number.isFinite(entry.markedAt) ? entry.markedAt : null;
+      const named =
+        typeof path === 'string' && isAbsolute(path) && name.startsWith(cacheName(path).replace(/\.json$/, '.'));
+      return { file, path: named ? path : null, markedAt };
+    });
 }
 
 /** The file that caches the pull request of the worktree at `path`. */
@@ -210,6 +260,15 @@ export function readDiskUsage(path: string): DiskMeasure | null {
     ...(typeof privateBytes === 'number' && Number.isFinite(privateBytes) && privateBytes >= 0 ? { privateBytes } : {}),
     ...(typeof signature === 'string' ? { signature } : {}),
   };
+}
+
+/**
+ * Whether the cached walk of `path` ended with `du` exiting non-zero, so its bytes are a lower bound. A separate reader:
+ * `DiskMeasure` and everything that reads it stay as they were, and an entry without the field reads as complete.
+ */
+export function readDiskUsagePartial(path: string): boolean {
+  const entry = readJsonObject(diskUsageCacheFile(path));
+  return entry !== null && entry.path === path && entry.partial === true;
 }
 
 /** When the last walk of `path` failed (an ISO time), or null when none is recorded. */

@@ -673,7 +673,10 @@ for one command. While on, the CLI writes debug records to
 STIM_HOME/logs/debug/cli.ndjson (run_start, run_end, exec with the program name,
 duration and exit status but never arguments, remote_connect and
 remote_request with durations and codes); stim-server writes server.ndjson there
-and logs every request with its timings to its service log. The file rotates at about 8 MiB and keeps one previous
+and logs every request with its timings to its service log. A build worker
+also records each offloaded build's start, cancel reason, the process group
+running at the cancel, signals, exit with the worker process's last stderr
+lines, and claim release in server.ndjson. The file rotates at about 8 MiB and keeps one previous
 generation, and nothing is sent anywhere. Keys named like a secret are redacted.
   stim settings set debug.logs true --scope machine
 See \`guide logs\` for reading the files.
@@ -796,7 +799,8 @@ new work on a persistent stimd.
 AUTOMATIC MAINTENANCE IS MACHINE-LEVEL
 Automatic maintenance runs in daemon.mode: it removes what gc would under the
 caps below, measures sizes at most hourly and waits while the one-minute load
-is above 4 per core, except that the Cargo target cap still measures and
+is above 4 per core while every volume's disk level is normal (at high or critical load defers
+no check), except that the Cargo target cap still measures and
 trims hourly at low priority, and the size scan deferred for 3 hours runs anyway (the other checks stay
 deferred);
 stim status and its JSON (maintenance.deferred) say what is deferred and since
@@ -1140,16 +1144,16 @@ releases the setup claim and exits 1; a typed N also exits 1. Hosting grants
 include no read, control or build capability.
 
 TEST ACCESS
-\`stim setup --test\` approves the machine holding the ticket to run any
-command it sends on the worker, as the worker's user, with no sandbox. It is
-its own approval with its own Y/n question, in test-clients.json; it never
+\`stim setup --test\` records a separate test approval for the machine holding
+the ticket. Its Y/n question describes the authority intended for the retired
+test command proposal. The record lives in test-clients.json and never
 comes with read, control, build or device-host, and \`stim pairings grant\`
 never grants it. Approval is terminal-only: Stim Desktop's in-app approval
 refuses --test. A Linux worker may approve it; a Windows worker refuses it.
 Setup refuses --test against a running server whose /health has no
 busy.tests, which predates it, and names the update. Agents never run
-\`stim setup\` or approve requests. The stim test command that uses this
-approval is not released yet.
+\`stim setup\` or approve requests. Test clients can request managed worker
+engine updates.
 On a remote Mac that hosts, Stim Desktop > Settings > Connections > Using this
 machine > Running here lists the simulators, emulators and apps approved machines
 run there, below the machines using it. Stop asks for confirmation, ends the session and deletes
@@ -1219,8 +1223,8 @@ node and never sends the token to another node. \`doctor\` reports each
 remote machine's build pairing state and, for an approved one, asks it for one build
 offer and lists every reason it would not take this app's iOS build: no
 answer, an incompatible Stim build, CPU, Xcode, simulator SDK or CocoaPods, no
-Bundler for an app whose Gemfile.lock pins CocoaPods, no iPhone simulator on
-the runtime \`stim ios\` builds for here, low disk, or busy. With Package.swift
+Bundler for an app whose Gemfile.lock pins CocoaPods, no installed simulator
+runtime that \`stim ios\` builds for here, low disk, or busy. With Package.swift
 and no platform selection on a Mac, it also checks the macOS Xcode and SDK.
 A client with no Xcode and no simulator SDK, such as Linux or Windows, has no
 Xcode to match: the Mac's own Xcode, simulator SDK and CocoaPods are the
@@ -1309,10 +1313,11 @@ environment variables the build reads from this shell, and every variable when
 project code enumerates process.env, secrets included; only Stim's own secrets,
 toolchain and home paths, Stim settings overrides, and shell-session names stay
 here. Nothing under node_modules and no build output the fingerprint ignores is
-sent. Both machines evaluate the fingerprint with the same Node major.minor: the
-project's pinned Node, or else the one running Stim; a worker with another
-refuses the build with fingerprint-runtime. A fingerprint-mismatch refusal
-names the sources that differ and the files pod install or prebuild rewrote there.
+sent. Each machine evaluates the fingerprint with the project's pinned Node, or
+else the one running Stim; another Node refuses only if the fingerprints
+differ. A fingerprint-mismatch refusal names the sources that differ, the files
+pod install or prebuild rewrote there, and differing Nodes, the likely
+cause when only evaluated config differs.
 Run stim remote add <machine> to ask for build access if not approved. A person
 on the worker approves it by running the stim setup command it printed, with
 its ticket and expiry. Check stim settings get remote.machines,
@@ -1424,8 +1429,8 @@ accept and sudo xcodebuild -runFirstLaunch for the checks that fail, or xcodes
 install <version> with no Xcode app. A runtime the machine lacks gets
 xcodebuild -downloadPlatform iOS -buildVersion <version>, or a pointer to the
 Xcode problem when xcode-select is the cause. A stim-server that reports no
-developerDir keeps the prose fix. It also needs an
-iPhone simulator on the target runtime. A missing or different global CocoaPods
+developerDir keeps the prose fix. A runtime with no iPhone simulator gets one
+per build. A missing or different global CocoaPods
 keeps auto, remote and remote-only placement from choosing the machine for a project that does not
 pin it, unless the machine already holds the exact artifact; the placement line
 says why and doctor shows the install command. A named --remote-build still

@@ -1,4 +1,5 @@
 import { maintenanceStatus, maintenanceLines } from '../stimd/passes/status.ts';
+import { probeDaemonAnswer, withAnswer } from '../daemon/answering.ts';
 import {
   crashLines,
   daemonLine,
@@ -10,6 +11,7 @@ import {
 import {
   createRefreshScheduler,
   WATCH_DEBOUNCE_MS,
+  WATCH_ANSWER_INTERVAL_MS,
   WATCH_FALLBACK_MS,
   WATCH_LIGHT_INTERVAL_MS,
   WATCH_MACHINE_INTERVAL_MS,
@@ -162,8 +164,11 @@ const statusOp: Op = defineOp({
   async run({ options }) {
     if (options.watch) return watchStatus(Boolean(options.json));
     const json = Boolean(options.json);
-    for (const line of renderStatus(await readStatus({ probes: liveProbes({ sharedListing: true }) }), json))
-      console.log(line);
+    const [snapshot, daemonAnswer] = await Promise.all([
+      readStatus({ probes: liveProbes({ sharedListing: true }) }),
+      probeDaemonAnswer(daemonStatus()),
+    ]);
+    for (const line of renderStatus({ ...snapshot, daemonAnswer }, json)) console.log(line);
   },
 });
 
@@ -227,6 +232,7 @@ export function renderStatus(
     cwdRoot,
     machine,
     slotUsage,
+    daemonAnswer,
   }: StatusSnapshot,
   json: boolean,
   settle: (payload: StatusPayload) => StatusPayload = (payload) => payload,
@@ -254,7 +260,7 @@ export function renderStatus(
   });
 
   const maintenance = maintenanceStatus();
-  const daemon = daemonStatus();
+  const daemon = withAnswer(daemonStatus(), daemonAnswer);
   if (json) {
     const payload = {
       environments: states.map((state, i) =>
@@ -482,6 +488,25 @@ export function runStatusWatch({
   let sources: StatusSources | null = null;
   let tablesAt = 0;
   let machineDue = false;
+  let answer: StatusSnapshot['daemonAnswer'] = {};
+  let answerAt = 0;
+  let probing = false;
+  let stopped = false;
+  const probeAnswer = () => {
+    if (probing || Date.now() - answerAt < WATCH_ANSWER_INTERVAL_MS) return;
+    probing = true;
+    answerAt = Date.now();
+    void probeDaemonAnswer(daemonStatus())
+      .then((result) => {
+        const changed = JSON.stringify(result) !== JSON.stringify(answer);
+        answer = result;
+        if (changed && !stopped) scheduler.trigger('light');
+        return undefined;
+      })
+      .finally(() => {
+        probing = false;
+      });
+  };
   const measurer: StatusMeasurer = createStatusMeasurer({ updated: () => scheduler.trigger('light') });
   const scheduler = createRefreshScheduler({
     debounceMs: WATCH_DEBOUNCE_MS,
@@ -522,6 +547,8 @@ export function runStatusWatch({
           sources?.watchProcesses(watchedPids(snapshot));
           if (first) scheduler.trigger('full', 0);
         }
+        probeAnswer();
+        snapshot.daemonAnswer = answer;
         measurer.schedule(snapshot.states, snapshot.worktrees);
         text = renderStatus(snapshot, json, (full) => (payload = watchPayload(lastPayload, full)), cwd).join('\n');
       } catch (error) {
@@ -554,6 +581,7 @@ export function runStatusWatch({
   scheduler.trigger('full', 0);
   return {
     stop() {
+      stopped = true;
       clearInterval(fallback);
       clearInterval(machine);
       scheduler.stop();

@@ -23,7 +23,11 @@ devices or tear them down. The ownership re-check
 before boot and teardown applies that rule, and `gc` only lists other `stim-*`
 devices with a manual delete command. Never do any of those actions to a
 user-created emulator or simulator. Keep a device record
-when teardown fails so `gc` can find the device later.
+when teardown fails so `gc` can find the device later. Android records the AVD
+name before creation so an interruption leaves a record for recovery. A verified
+creation failure rolls back the new ledger entry and the workspace's own setup
+reservation if the storage is still available, has no AVD data or registration
+for that name, and the creation process cannot still write it.
 
 Scratch homes and the main home use the same naming convention. Name-based ownership previously let a main-home GC delete devices that agents still owned. The per-home record lets cleanup distinguish those devices even when their names look identical. [Cross-home deletion fix](https://github.com/appandflow/stim/pull/1395), [Ownership recheck](https://github.com/appandflow/stim/pull/4693).
 
@@ -65,6 +69,52 @@ A byte check is the condition for skipping install.
 
 [LLP 0010](./0010-hosted-devices.decision.md#resume-the-recorded-session)
 describes hosted parking and adoption.
+
+## A build destination the build creates
+
+An offloaded iOS simulator build names a simulator as its `xcodebuild`
+destination. The worker uses an available iPhone simulator on the client's
+runtime, other than one an offloaded build created (`stim-build-*` or
+`stim-exact-*`), exactly as before. When the runtime is installed and has no
+such simulator, the build creates one, `stim-build-<job> (<model> <runtime>)`,
+in the job's own Stim home, where the created-devices ledger records it. It is
+never booted, so it takes no device slot and stays outside the pool and the
+`concurrency.maxDevices` count. Teardown deletes it when the build ends, and
+the job's cancel path deletes it at once; when `simctl create` returns after
+the cancel, the job deletes that simulator before it reports. A `simctl create`
+the cancel interrupts can leave a simulator no ledger records (#5819). Each build first deletes, through teardown,
+any simulator its home's ledger still lists from a stopped or killed earlier
+build, and forgets an entry whose simulator a complete `simctl` listing no
+longer shows, so an interrupted teardown does not keep the area pinned. A
+failed creation refuses the build with the `simctl` error, and the client falls
+back to a local build as for any other offload failure. A worker's
+offer lists every installed iOS runtime that supports an iPhone, so a worker
+with the runtime and no simulator offers iOS builds.
+
+The job's home is the only Stim home a build can record into, and a build area
+whose home ledger lists a device is never evicted (LLP 0009), so a destination
+kept across builds would pin its area. `simctl create` of a simulator that is
+never booted costs well under a second. Two builds that run at once in different
+areas each create and delete their own, and the per-home ledger lock covers each
+record; one area runs one build at a time. Skipping other builds' simulators
+keeps one build from compiling for a simulator another build deletes. The
+per-job lifetime, the naming and that skip rule were chosen by the implementer
+of #5803, not by the maintainer.
+Maintainer decision: "why do we require a sim, cant stim just create automatically", 2026-11-16.
+[Issue](https://github.com/appandflow/stim/issues/5803).
+
+## Revive an installed app
+
+For a recorded Release React Native or native-process launch, `stim revive`
+boots the same owned local device through normal admission and opens the app
+already installed there. This lets a workspace resume after idle cleanup
+removes its build outputs without reinstalling or starting Metro for that app.
+Revive checks that the same simulator or AVD is still owned; a missing device
+does not trigger creation or adoption. If the app is missing, revive names
+the platform launch command with the recorded slot.
+Maintainer decision: "`stim revive` should relaunch the recorded installed app for Release React Native and native Android without rebuilding. If the app is gone, refuse with the platform launch command as the remedy.", 2026-11-13.
+[Issue comment](https://github.com/appandflow/stim/issues/5486#issuecomment-6864811222),
+[revive](../packages/stim-cli/src/commands/revive.ts).
 
 ## Unused runtimes and unavailable simulators
 

@@ -12,7 +12,7 @@ import {
   workspaceLogsDir,
   sharedCompilationCache,
 } from '@stim-cli/core/state';
-import { runMaintenance } from '../stimd/passes/run.ts';
+import { runMaintenance, type MaintenanceTick } from '../stimd/passes/run.ts';
 import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
 import * as measurements from '../stimd/passes/measure.ts';
 import * as preview from '../stimd/passes/preview.ts';
@@ -25,6 +25,7 @@ import { runCli } from '../cli/define-op.ts';
 import { warnCriticalDisk } from '../stimd/passes/trigger.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { makeChildProcess } from './_factories.ts';
+import { testContext } from './_context.ts';
 
 const disk = vi.hoisted(() => ({ full: false, reserve: '', code: 'ENOSPC', partialReserveWrite: false }));
 vi.mock('@stim-cli/core/ownership-claim', async (importOriginal) => {
@@ -501,4 +502,80 @@ test('an invalid cache cap falls back only that cap while report mode remains en
   } finally {
     delete process.env.STIM_CACHES_BUILD_CACHE_MAX_GB;
   }
+});
+
+const quietTick = (signal?: AbortSignal): MaintenanceTick => ({
+  operation: testContext(signal ? { signal } : {}),
+  measured: {
+    measurement: {
+      disk: [{ volume: '/', freeMb: 500_000 }],
+      memory: { level: 'normal', availableBytes: null, totalBytes: 0 },
+      load1: 0,
+      cores: 1,
+      bootedSimulators: null,
+      runningEmulators: null,
+      interaction: null,
+    },
+    sims: null,
+    simsError: null,
+    devices: [],
+  },
+});
+
+test('the discovery scan runs once after a successful daemon pass, with that pass tick', async () => {
+  const scan = vi.spyOn(await import('../workspace/discovery-scan.ts'), 'runDiscoveryScanIfDue').mockResolvedValue();
+  const tick = quietTick();
+  await runMaintenance('daemon', { tick });
+  expect(scan).toHaveBeenCalledTimes(1);
+  expect(scan).toHaveBeenCalledWith(tick);
+});
+
+test('an unverified child cleanup in a pass surfaces as that failure, not as the abort of a due discovery scan', async () => {
+  const failure = Object.assign(new Error('unverified cleanup'), {
+    code: 'STIM_CLAIM_UNAVAILABLE',
+    reportCleanup: true,
+  });
+  const controller = new AbortController();
+  vi.spyOn(measurements, 'pressureFromMeasurement').mockImplementation(() => {
+    controller.abort();
+    throw failure;
+  });
+  const scan = vi
+    .spyOn(await import('../workspace/discovery-scan.ts'), 'runDiscoveryScanIfDue')
+    .mockImplementation(async () => controller.signal.throwIfAborted());
+  const tick = quietTick(controller.signal);
+  await expect(runMaintenance('daemon', { tick })).rejects.toBe(failure);
+  expect(scan).not.toHaveBeenCalled();
+});
+
+test('an unverified child cleanup from the census reaches the caller of the pass as the same object', async () => {
+  const failure = Object.assign(new Error('unverified cleanup'), { reportCleanup: true });
+  vi.spyOn(await import('../workspace/discovery-scan.ts'), 'runDiscoveryScanIfDue').mockResolvedValue();
+  vi.spyOn(await import('../workspace/discovery-census.ts'), 'runDiscoveryCensusIfDue').mockRejectedValue(failure);
+  await expect(runMaintenance('daemon', { tick: quietTick() })).rejects.toBe(failure);
+});
+
+test('a census failure that was contained is recorded in the maintenance log', async () => {
+  vi.spyOn(await import('../workspace/discovery-scan.ts'), 'runDiscoveryScanIfDue').mockResolvedValue();
+  vi.spyOn(await import('../workspace/discovery-census.ts'), 'runDiscoveryCensusIfDue').mockResolvedValue(
+    'disk exploded',
+  );
+  await runMaintenance('daemon', { tick: quietTick() });
+  const failures = readFileSync(gcLogFile(), 'utf8')
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line))
+    .filter((record) => record.event === 'maintenance_failure' && record.target === 'discovery census');
+  expect(failures).toEqual([expect.objectContaining({ error: 'disk exploded' })]);
+});
+
+test('an unverified child cleanup from the census reaches the caller even when the pass was aborted meanwhile', async () => {
+  const failure = Object.assign(new Error('unverified cleanup'), { reportCleanup: true });
+  const controller = new AbortController();
+  vi.spyOn(await import('../workspace/discovery-scan.ts'), 'runDiscoveryScanIfDue').mockResolvedValue();
+  vi.spyOn(await import('../workspace/discovery-census.ts'), 'runDiscoveryCensusIfDue').mockImplementation(async () => {
+    controller.abort();
+    throw failure;
+  });
+  await expect(runMaintenance('daemon', { tick: quietTick(controller.signal) })).rejects.toBe(failure);
 });

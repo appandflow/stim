@@ -77,6 +77,83 @@ The full table lives in `website/docs/commands.md` (the `gc` section) and in
 `stim guide cleanup`; this document records why the levels are shaped this
 way, not the table.
 
+## Pressure acts without waiting for measurement or load
+
+While any volume is at high or critical, no cleanup step waits for a size
+scan, a `du` of what it frees, or host load to drop. A step whose decision
+needs no byte count (the Cargo `target/` trim, LLP 0005) plans from structure
+and runs at once; a step that needs sizes measures them at once. Host load
+defers the size, idle, worktree and sweep checks only while every volume is at
+normal. The walk itself keeps its protections (one at a time, the walk claim,
+time limits, abort on handover). Walks above normal run at normal priority:
+under the load that defers a walk at normal, a walk niced to 19 gets almost no
+CPU, and the disk is what is short.
+
+Reason: on 2026-11-14 a Mac spent an evening at high and critical, reached 0.2
+GB free three times, and emptied Stim's own shared caches before it trimmed 40
+GB of Cargo data it was allowed to remove. The Cargo trim was planned only by
+the maintenance pass, which starts after the daemon tick's pressure ladder
+(112 minutes that evening) and after the lane's dormant dependency step (69
+minutes), so it waited 3 h 26 min from the previous Cargo measurement.
+
+Maintainer decision: "we def should not have to wait on full disk measurement
+to be able to remove caches", 2026-11-14.
+
+Maintainer decision: "Lets make sure that if disk space is low we do any needed
+measurement right away since disk space is prio over cpu use", 2026-11-14.
+
+Chosen by the coordinator, not the maintainer: the Cargo trim runs as the first
+step of ladder rung 3, at most every 10 minutes per level in the long-lived daemon (a build command's
+ladder runs it once, and leaves its own workspace's `target/` alone), so a
+checkout in use does not lose its `incremental/` data every tick; walks above
+normal are not niced.
+
+## The folders a build wrote are measured by the daemon
+
+When a local native compile ends, whether it succeeded, failed or was cancelled,
+the command writes a marker naming the project root it already holds, with no
+read of the workspace. Every 30 seconds stimd starts its measure thread when
+markers exist and no measure job runs. The job walks only for a root this Stim
+home has registered whose bounded canonical path is still the marker's root (a
+difference of case alone counts as the same root on macOS and Windows only when
+the root itself is a real directory, not a link), and
+drops a marker for any other root, an unreadable marker file, or a marker over
+an hour old, without a read inside that root. A workspace layout that cannot be
+read keeps the marker and measures nothing for that root. An expired marker is
+dropped, and those folders are measured again at the next build end or when
+`stim gc` reports; nothing else refreshes them on a schedule, because the hourly
+size scan measures only the Stim workspace folders. The disk-usage cache is keyed by the exact path string, so each folder is
+walked and keyed as the gc worktree report spells it, the registered root joined
+with the name as enumerated; the canonical path only bounds what may be walked. A
+case-only redirect through a replaced ancestor on a case-sensitive volume is not
+detected and only changes which folder's size is shown. A Windows 8.3 short-name root
+differs by more than case, so that workspace gets no build-end measurement. For a known root it walks the build output folders the gc
+worktree report measures (inside the workspace, a Cargo `target/` included) and
+the Stim workspace folder, through the disk-usage cache with the cache bypassed,
+then removes the markers it listed before the walk. A build that ended meanwhile
+leaves a newer marker, which stays. Every read of the workspace goes through the
+census's bounded reader, so an unresponsive mount cannot hold shutdown: a read
+that does not answer ends the pass and keeps the markers. A pass that leaves its
+markers doubles the wait before the next one, from 30 seconds to four minutes.
+
+The measure thread is not gated by host load, so a marker is measured at any
+level and waits only for the walk claim: a held claim keeps every marker for the
+next period. The walk is the same one the thread already runs: one at a time,
+under the walk claim, with a time limit. The cache numbers feed `stim status`,
+Desktop and the `stim gc` worktree report. No deletion, reduction, refusal or
+build admission reads them: the caps read the maintenance size scan, the
+dependency ranking reads only `node_modules` and Pods entries, which this job
+never writes, and the headroom estimate (LLP 0006) reads the build ledger.
+
+Maintainer decision, 2026-11-14: "Yes, add it", in answer to the proposal to add
+a size measurement at the end of each build to the second pull request for this
+issue (#5759).
+
+Maintainer decision, 2026-11-15: "For rest for with ur recs", which accepts a
+marker plus a 30 second timer with no protocol change, no cap check brought
+forward when a measurement crosses a cap, no use of the measurement in the
+headroom estimate, and no new setting (#5759).
+
 ## One idle day reduces a workspace
 
 A workspace with no activity for `idle.dormantDays` (default 1) is reduced to

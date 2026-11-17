@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
@@ -35,6 +35,7 @@ import {
   prepareIosDevices,
   quote,
   readNdjson,
+  runCacheRace,
   topFileNames,
   verifyCleanup,
   workspaceLogsDir,
@@ -601,40 +602,49 @@ async function main() {
   } else {
     const wt3 = worktreeCreate('e2e-cache-3', appDir);
     const wt4 = worktreeCreate('e2e-cache-4', appDir);
-    prepareIosDevices({ h, platform: PLATFORM, cleanup, targets: [{ cwd: wt3 }, { cwd: wt4 }] });
     if (PLATFORM === 'ios') {
       assertMatchingPods(wt3);
       assertMatchingPods(wt4);
     }
     startAndAssertMode(wt3);
     startAndAssertMode(wt4);
+    const prepared = prepareIosDevices({
+      h,
+      platform: PLATFORM,
+      cleanup,
+      targets: [{ cwd: wt3 }, { cwd: wt4 }],
+      shutdown: false,
+    });
     const casBeforeRace = dirStats(CAS_DIR);
     banner('racing two workspaces at ONE uncached fingerprint');
     log(`both address an empty build cache at ${RACE_CACHE_ROOT}; the build LOCK is shared through STIM_HOME`);
     const raceEnv = { ...ENV, STIM_BUILD_CACHE: RACE_CACHE_ROOT };
-    const [r3, r4] = await Promise.all([
-      cliAsync([PLATFORM, '--json'], { cwd: wt3, env: raceEnv }),
-      cliAsync([PLATFORM, '--json'], { cwd: wt4, env: raceEnv }),
-    ]);
+    const [r3, r4] = await runCacheRace(h, [PLATFORM, '--json'], { workspaces: [wt3, wt4], env: raceEnv, cleanup });
     const casAfterRace = dirStats(CAS_DIR);
-    raceOutcome = { r3, r4, casBeforeRace, casAfterRace };
+    raceOutcome = { r3, r4, casBeforeRace, casAfterRace, prepared };
   }
 
   await runCheck('single-flight', (c) => {
     if (!raceOutcome) return c.skip('--skip-race was passed, so no race was run');
-    const { r3, r4 } = raceOutcome;
+    const { r3, r4, prepared } = raceOutcome;
     for (const [label, r] of [
       ['wt3', r3],
       ['wt4', r4],
     ]) {
       assert(r.code === 0, `${label} exited ${r.code}:\n${lastLines(r.stderr, 25)}`);
+      const udid = prepared.find(({ cwd }) => cwd === r.cwd)?.udid;
+      if (udid) {
+        assert(r.facts.udid === udid, `${label} launched on ${r.facts.udid}, expected prepared simulator ${udid}`);
+        c.ev(`${label}: used prepared simulator ${udid}`);
+      }
       if (ENV.STIM_E2E_STRICT_QA === '1') assertVerifiedLaunch({ h, facts: r.facts, label, cwd: r.cwd });
       c.ev(
         `${label}: cacheHit=${JSON.stringify(r.facts.cacheHit)} waitedForBuild=${JSON.stringify(r.facts.waitedForBuild)} durationMs=${r.facts.durationMs}`,
       );
     }
+    if (PLATFORM === 'ios') assert(r3.facts.udid !== r4.facts.udid, 'the cache racers shared one iOS simulator');
     assert(
-      r3.facts.cacheKey === r4.facts.cacheKey,
+      r3.facts.cacheKey && r3.facts.cacheKey === r4.facts.cacheKey,
       `the racers did not fingerprint alike (${r3.facts.cacheKey} vs ${r4.facts.cacheKey}), so they were never racing the same entry`,
     );
     c.ev(`both racers computed the same key: ${r3.facts.cacheKey}`);
@@ -656,6 +666,13 @@ async function main() {
       Number(waiter.facts.waitedForBuild?.ms) > 0 && waiter.facts.waitedForBuild?.pid,
       `waitedForBuild must carry the builder's pid and a non-zero wait: ${JSON.stringify(waiter.facts.waitedForBuild)}`,
     );
+    if (PLATFORM === 'ios') {
+      const buildStarts = (cwd) => readNdjson(buildLog(cwd)).filter((record) => record.event === 'build_start').length;
+      assert(
+        buildStarts(builder.cwd) === 1 && buildStarts(waiter.cwd) === 0,
+        'exactly the iOS cache builder must run xcodebuild',
+      );
+    }
     const line = waiter.stderr.split('\n').find((l) => /waited .* -> installed from cache/.test(l));
     assert(
       line,
@@ -932,37 +949,6 @@ function snapshotRepo(dir) {
   };
 }
 
-function cliAsync(argv, { cwd, env = ENV, timeout = 40 * 60 * 1000 } = {}) {
-  return new Promise((resolveP) => {
-    const child = spawn(process.execPath, [CLI, ...argv], { cwd, env });
-    let stdout = '';
-    let stderr = '';
-    const tag = `[${argv[0]} in ${cwd.split('/').pop()}] `;
-    child.stdout.setEncoding('utf-8');
-    child.stderr.setEncoding('utf-8');
-    child.stdout.on('data', (d) => {
-      stdout += d;
-    });
-    child.stderr.on('data', (d) => {
-      stderr += d;
-      for (const l of String(d).split('\n')) if (l.trim()) process.stderr.write(tag + l + '\n');
-    });
-    const timer = setTimeout(() => child.kill('SIGKILL'), timeout);
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      let facts = {};
-      try {
-        facts = JSON.parse(stdout.trim().split('\n').findLast(Boolean));
-      } catch {}
-      resolveP({ code: code ?? 1, stdout, stderr, facts, cwd });
-    });
-  }).then((result) => {
-    cleanup.recordWorkspace(cwd);
-    if (result.code === 0) cleanup.recordBuild(result.facts);
-    return result;
-  });
-}
-
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function settle(dir, label, { firstGrowthMs = 90000, quietMs = 6000, timeoutMs = 240000, stepMs = 1500 } = {}) {
@@ -1113,6 +1099,7 @@ function finishRun(error) {
   }
   if (error) {
     log(`FATAL: ${error?.message || error}`);
+    if (preserveGradleHome) log(`Keeping ${WORK_DIR} and ${HOME_DIR} for native cleanup.`);
     dumpDiagnostics(h, created);
   }
   const summary = emitSummary(Date.now() - startedAt, error ? String(error?.message || error) : null);

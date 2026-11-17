@@ -77,11 +77,16 @@ tester.run('refusal-remedy', plugin.rules['refusal-remedy'], {
     "failedResult({ code: 'STIM_NO_DEVICE', diagnostics: [{ message: 'm', remedy: 'r' }] });",
     "fail({ code: 'STIM_BAD_ARG', message: 'm' }, { code: 'STIM_CANCELLED' }, { code: 'STIM_CI_CANCELLED' });",
     "const options = { code: 'EEXIST' };",
+    "fail({ code: 'STIM_NO_DEVICE', message: 'm', remedy: describe(error) });",
+    "fail({ code: 'STIM_NO_DEVICE', message: 'm', remedy });",
     "process.emitWarning('relative path', { code: 'STIM_RELATIVE_PATH' });",
   ],
   invalid: [
     { code: "fail({ code: 'STIM_NO_DEVICE', message: 'm' });", errors: 1 },
     { code: "fail({ code: 'STIM_NO_DEVICE' as const });", filename: 'refusal.ts', errors: 1 },
+    { code: "fail({ code: 'STIM_NO_DEVICE', message: 'm', remedy: null });", errors: 1 },
+    { code: "fail({ code: 'STIM_NO_DEVICE', message: 'm', remedy: '' });", errors: 1 },
+    { code: "fail({ code: 'STIM_NO_DEVICE', message: 'm', remedy: undefined });", errors: 1 },
   ],
 });
 

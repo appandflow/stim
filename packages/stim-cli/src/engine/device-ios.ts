@@ -288,7 +288,7 @@ export async function ensureOwnedIosDevice({
       } else if (resolved.missing) {
       } else {
         const sim = resolved.sim as SimRecord;
-        const wantedType = flags.deviceType || settings?.ios?.deviceType;
+        const wantedType = flags.expectedDevice ? undefined : flags.deviceType || settings?.ios?.deviceType;
         const deviceTypes = await listIosDeviceTypesAsync({ snapshot: simSnapshot });
         const mismatch = deviceTypeMismatch(sim.deviceTypeIdentifier, wantedType, deviceTypes);
         if (mismatch) {

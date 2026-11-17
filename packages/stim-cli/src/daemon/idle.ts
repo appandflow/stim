@@ -15,6 +15,8 @@ import {
   type IdleStageRecord,
 } from '@stim-cli/core/state';
 import { formatBytes, measuredDirectorySizeAsync } from '../fs-util.ts';
+import { checkoutRootOf } from '../workspace/checkout-role.ts';
+import { launcherReason, launchersOf, launchingOf, type Launching } from '../workspace/launchers.ts';
 import { collectOwnedDeviceActivityAsync, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { workspaceOutputPaths } from '../commands/gc/workspaces.ts';
@@ -36,7 +38,7 @@ import { createNdjsonWriter } from '../ndjson.ts';
 import { IDLE_SETTING, idleKeep, idleScope, PRESSURE_IDLE_MS, type IdleKeepFacts } from '../policy/idle.ts';
 import { metroStoreRoot } from '../stimd/metro/metro-store.ts';
 import { resolveSupervisorTarget } from '../stimd/metro/ownership.ts';
-import { MODE_COMMAND, readWorkspaceLaunches, revivesWithoutMetro } from '../stimd/metro/state.ts';
+import { MODE_COMMAND, readWorkspaceLaunches, launchWithoutMetro } from '../stimd/metro/state.ts';
 import { getProject, type Config, type ProjectRecord } from '../workspace/config.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
@@ -48,6 +50,7 @@ import {
   resolveProjectSettingsAsync,
 } from '../workspace/settings.ts';
 import { readWorkspaceState, updateWorkspaceStateAsync } from '../workspace/workspace-state.ts';
+import type { DaemonLog } from './step-timing.ts';
 
 const MINUTE_MS = 60_000;
 const SIZE_TIMEOUT_MS = 60_000;
@@ -68,7 +71,7 @@ export interface IdlePassInput {
   protectedRoot?: string;
   /** The daemon tick's context, whose reads run without blocking its event loop. */
   operation?: StimContext;
-  log: (level: 'info' | 'warn' | 'error', event: string, msg: string, fields?: Record<string, unknown>) => void;
+  log: DaemonLog;
 }
 
 type Candidate =
@@ -186,11 +189,15 @@ async function decide(
 }
 
 /** The regenerable outputs the idle stage deletes, and why each other one stays. */
-export async function idleOutputs(path: string, config: Config): Promise<{ paths: string[]; kept: string[] }> {
+export async function idleOutputs(
+  path: string,
+  config: Config,
+  launching: Launching,
+): Promise<{ paths: string[]; kept: string[] }> {
   const paths = workspaceOutputPaths(workspaceDir(path));
   const kept: string[] = [];
   for (const dir of await existingBuildDirsAsync(path)) {
-    const problem = await regenerableDirProblem(path, dir);
+    const problem = await regenerableDirProblem(path, dir, undefined, { launching });
     if (problem) kept.push(`kept ${dir}: ${problem}`);
     else paths.push(dir);
   }
@@ -209,10 +216,21 @@ export async function idleOutputs(path: string, config: Config): Promise<{ paths
   return { paths, kept };
 }
 
-export async function deleteOutputs(paths: readonly string[]): Promise<number> {
+/**
+ * Deletes `paths` one at a time: it measures a path, reads the executables on PATH anew (`launching.anew`) and removes
+ * the path, or keeps it and says so in `kept` when one resolves into the checkout. Each removal has a reading of its
+ * own, taken after the size walk and every process read before it, so none is older than the removal before it.
+ */
+export async function deleteOutputs(paths: readonly string[], launching: Launching, kept: string[]): Promise<number> {
   let freed = 0;
   for (const path of paths) {
-    freed += (await measuredDirectorySizeAsync(path, { timeoutMs: SIZE_TIMEOUT_MS })) ?? 0;
+    const bytes = (await measuredDirectorySizeAsync(path, { timeoutMs: SIZE_TIMEOUT_MS })) ?? 0;
+    const launcher = launcherReason(launching.checkout, await launching.anew());
+    if (launcher) {
+      kept.push(`kept ${path}: ${launcher}`);
+      continue;
+    }
+    freed += bytes;
     await rm(path, { recursive: true, force: true });
   }
   return freed;
@@ -243,7 +261,7 @@ export function revivable(path: string): boolean {
     return (
       parsed !== null &&
       !hostedNativeRecords(state, parsed.platform)[parsed.slot] &&
-      revivesWithoutMetro(parsed.platform, record)
+      launchWithoutMetro(record) !== null
     );
   });
 }
@@ -306,8 +324,18 @@ async function enterIdleStage(
               const [kind, slot = 'default'] = key.split(':');
               return outcome?.status === 'shut-down' && booted.has(`${kind}:${slot}`) ? [key] : [];
             });
-            const outputs = await idleOutputs(path, config);
-            const freed = await deleteOutputs(outputs.paths);
+            const { operation } = input;
+            const checkout = await checkoutRootOf(path, operation?.signal, operation);
+            const outputs = await idleOutputs(
+              path,
+              config,
+              launchingOf(checkout, launchersOf(operation, operation?.signal, false), operation, operation?.signal),
+            );
+            const freed = await deleteOutputs(
+              outputs.paths,
+              launchingOf(checkout, launchersOf(operation, operation?.signal, false), operation, operation?.signal),
+              outputs.kept,
+            );
             await recordStage(path, minutes, shutDown, freed);
             const idle = Math.floor(again.decision.idleMs / MINUTE_MS);
             const restore = revivable(path) ? 'stim revive' : 'stim ios or stim android';

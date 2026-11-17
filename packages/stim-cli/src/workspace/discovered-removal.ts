@@ -111,15 +111,18 @@ export async function discoveredRemovalHold(
     main,
     idleMs,
     reads,
+    reduceOnly,
     operation,
-  }: { main: string | null; idleMs: number; reads: DiscoveredReads; operation?: StimContext },
+  }: { main: string | null; idleMs: number; reads: DiscoveredReads; reduceOnly: boolean; operation?: StimContext },
 ): Promise<string | null> {
+  if (reduceOnly)
+    return 'it was found in a tool folder or by the full scan, so Stim reduces its outputs and never removes it';
   const folder = main ? relative(main, path).split('/')[0] : undefined;
   if (folder?.startsWith('.') && folder !== '.worktrees' && !folder.startsWith('..'))
     return `it is managed by another tool (inside ${folder} of its main checkout)`;
   if (!(idleMs > 0)) return 'idle.dormantDays is 0, so its idleness cannot be established';
   const now = Date.now();
-  const decision = decideIdleStop(await discoveredEvidence(path, { now, idleMs, reads, operation }), {
+  const decision = decideIdleStop(await discoveredEvidence(path, { now, idleMs, reads, operation, reduceOnly }), {
     idleMs,
     now,
     setting: 'idle.dormantDays',

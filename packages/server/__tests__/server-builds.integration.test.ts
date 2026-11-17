@@ -1606,6 +1606,87 @@ describe('offloaded builds', () => {
     },
   );
 
+  test.each<'client-cancel' | 'timeout'>(['client-cancel', 'timeout'])(
+    'records in the debug log why a hung build was stopped (%s), what its process group ran and its stderr',
+    { skip: !fakeTailscale },
+    async (reason) => {
+      configure({ server: { maxLoadPerCore: 100_000 }, debug: { logs: true } });
+      const port = await startWorker({
+        env: { FAKE_WORKER_HANG: '1', FAKE_WORKER_SLEEP: '1' },
+        buildLimits: { killGraceMs: 100, ...(reason === 'timeout' ? { timeoutMs: 3000 } : {}) },
+      });
+      const { client, id } = await buildClient(port);
+      await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
+      client.socket.send(blob('x'));
+      const reply = await client.request('build.start', START);
+      const result: unknown = 'result' in reply ? reply.result : null;
+      assert(isJsonObject(result) && typeof result.job === 'string');
+      const job = result.job;
+      await eventually(() => existsSync(join(root, 'job.json')));
+      const { pid } = JSON.parse(readFileSync(join(root, 'job.json'), 'utf8'));
+      expect(await client.next()).toMatchObject({ phase: 'build' });
+      expect(await client.next()).toMatchObject({ record: { msg: 'CompileC' } });
+      expect(await client.next()).toMatchObject({ record: { msg: 'waiting on sleep' } });
+      if (reason === 'client-cancel') await client.request('build.cancel', { job });
+      expect((await progress(client)).at(-1)).toMatchObject({
+        outcome: {
+          code: 'cleanup-unresolved',
+          message: expect.stringMatching(
+            new RegExp(
+              `^Build cleanup is unresolved\\..* before retrying\\. Stopped \\(${reason}\\) after no build output for \\d+s, last line: "waiting on sleep"\\.$`,
+            ),
+          ),
+        },
+      });
+
+      const records = () =>
+        readFileSync(join(String(process.env.STIM_HOME), 'logs', 'debug', 'server.ndjson'), 'utf8')
+          .trim()
+          .split('\n')
+          .map((line): Record<string, unknown> => JSON.parse(line))
+          .filter((record) => record.job === job);
+      expect(records().map((record) => record.event)).toEqual([
+        'build.job.start',
+        'build.job.cancel',
+        'build.job.signal',
+        'build.job.signal',
+        'build.job.exit',
+        'build.job.settled',
+      ]);
+      const [started, cancel, term, kill, exit, settled] = records();
+      expect(started).toMatchObject({ client: id, repo: 'app-1', workerPid: pid });
+      expect(cancel).toMatchObject({
+        reason,
+        lastOutput: 'waiting on sleep',
+        group: {
+          omitted: 0,
+          processes: expect.arrayContaining([
+            expect.objectContaining({ pid }),
+            expect.objectContaining({ ppid: pid, command: expect.stringMatching(/sleep$/) }),
+          ]),
+        },
+      });
+      expect([term?.signal, kill?.signal]).toEqual(['SIGTERM', 'SIGKILL']);
+      expect(exit).toMatchObject({ signal: 'SIGKILL', result: null, stderrTail: ['fake worker: waiting on sleep'] });
+      expect(settled).toMatchObject({ ok: false, code: 'cleanup-unresolved', claimsReleased: { area: false } });
+    },
+  );
+
+  test.skipIf(!fakeTailscale)('settles a build whose worker left a detached process holding its stderr', async () => {
+    const holder = join(root, 'stderr-holder.pid');
+    const port = await startWorker({ env: { FAKE_WORKER_STDERR_HOLDER: holder } });
+    const { client } = await buildClient(port);
+    await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
+    client.socket.send(blob('x'));
+    expect(await client.request('build.start', START)).toMatchObject({ result: { job: expect.any(String) } });
+    try {
+      expect((await progress(client)).at(-1)).toMatchObject({ outcome: { ok: true } });
+      expect(alive(Number(readFileSync(holder, 'utf8')))).toBe(true);
+    } finally {
+      if (existsSync(holder)) process.kill(Number(readFileSync(holder, 'utf8')), 'SIGKILL');
+    }
+  });
+
   test.skipIf(!fakeTailscale)(
     'refuses paths outside the mirror, and closes the connection on a blob it did not ask for or whose bytes differ',
     async () => {

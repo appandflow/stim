@@ -1,6 +1,6 @@
 import { dependencyInstall, reusableDependencies, type StimContext, withAmbientContext } from '@stim-cli/core';
 import { processContext } from '../../cli-operation.ts';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import {
   reactNativeArtifactReceipt,
@@ -19,6 +19,7 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   readdirSync,
   readlinkSync,
@@ -29,7 +30,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { basename, delimiter, dirname, join, relative, sep } from 'node:path';
+import { basename, delimiter, dirname, isAbsolute, join, relative, resolve as resolvePath, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { createGzip } from 'node:zlib';
 
@@ -41,7 +42,9 @@ import type { CcacheActivity, CompilationCacheActivity } from '../../engine/buil
 import { CCACHE_UNAVAILABLE, resolveCcache } from '../../engine/ccache.ts';
 import { assembleTaskFor } from '../../engine/gradle.ts';
 
-import { getExecutor } from '../../exec.ts';
+import { getExecutor, observeDetachedChildren, windowsSystemExecutable } from '../../exec.ts';
+import { processGroupAlive } from '../../ownership-claim.ts';
+import { captureProcessIdentity, inspectProcessIdentity } from '../../process-identity.ts';
 import {
   fingerprint as computeFingerprint,
   fingerprintRuntime,
@@ -83,12 +86,28 @@ import { isJsonObject, windowsShortDir, windowsShortDirKey } from '@stim-cli/cor
 import { projectRegistry } from '../../integrations/projects.ts';
 import {
   exactCheckoutDir,
+  EXACT2_MAKING,
+  reservedAreaEntry,
   exactDeclaredSettings,
   exactDeclaresModules,
   exactToolProblems,
   type ExactOffload,
 } from '../../integrations/exact-offload.ts';
 import { runExactIosBuild } from '../../integrations/exact-ios.ts';
+import { forgetCreatedDeviceAsync, readCreatedDevices } from '../../devices/created-devices.ts';
+import { findStaleLedgerEntries } from '../../commands/gc/ledger.ts';
+import {
+  bootIosSim,
+  createOwnedIosSim,
+  listAllIosSimsAsync,
+  listIosRuntimesAsync,
+  pickDefaultIosCreation,
+  type IosCreationChoice,
+  type IosRuntime,
+  type IosSimRecord,
+} from '../../devices/ios.ts';
+import { deleteOwnedIosSimNow, teardownOwnedIosSim, teardownUnavailableOwnedIosSim } from '../../devices/teardown.ts';
+import { withDeviceBootAdmission } from '../../engine/device-capacity.ts';
 import type { IosProject } from '../../integrations/ios-project.ts';
 import { buildIosOperation } from '../../commands/ios/build.ts';
 import { buildAndroidOperation } from '../../commands/android/build.ts';
@@ -203,6 +222,66 @@ function emit(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value)}\n`);
 }
 
+let cancelled = new AbortController();
+const cancelCleanups = new Set<() => void>();
+const creations = new Set<Promise<unknown>>();
+let resultWritten = false;
+
+function emitResult(value: Record<string, unknown>): void {
+  if (resultWritten || cancelled.signal.aborted) return;
+  resultWritten = true;
+  emit({ type: 'result', ...value });
+}
+
+function cancelOnSigterm(): () => void {
+  const detached = new Map<string, { pid: number; processToken: string } | null>();
+  observeDetachedChildren({
+    begin() {
+      cancelled.signal.throwIfAborted();
+      const token = randomUUID();
+      detached.set(token, null);
+      return token;
+    },
+    started(token, pid) {
+      const captured = captureProcessIdentity(pid);
+      if (captured.ok) detached.set(token, { pid, processToken: captured.token });
+    },
+    settled(token) {
+      detached.delete(token);
+    },
+  });
+  const onSigterm = () => {
+    cancelled.abort(new Error('The build was cancelled.'));
+    for (const cleanup of cancelCleanups) {
+      try {
+        cleanup();
+      } catch {}
+    }
+    const finish = async () => {
+      await Promise.allSettled(creations);
+      const line = resultWritten
+        ? ''
+        : `${JSON.stringify({ type: 'result', ok: false, code: 'cancelled', message: 'The build was cancelled.', fingerprintSettled: true })}\n`;
+      resultWritten = true;
+      process.stdout.write(line, () => process.exit(143));
+    };
+    // @ref LLP 0009#repository-ownership-and-cleanup -- a cancelled worker reports settled only once its detached groups are gone
+    const poll = () => {
+      for (const [token, record] of detached)
+        if (record && inspectProcessIdentity(record) === 'gone' && !processGroupAlive(record.pid))
+          detached.delete(token);
+      if (detached.size === 0) void finish();
+      else setTimeout(poll, 25);
+    };
+    poll();
+  };
+  process.once('SIGTERM', onSigterm);
+  return () => {
+    process.off('SIGTERM', onSigterm);
+    observeDetachedChildren(null);
+  };
+}
+
 function note(phase: string, msg: string): void {
   emit({ type: 'phase', phase, msg });
 }
@@ -294,12 +373,16 @@ const PRIVATE_DIRS = [
  */
 function makePrivateWindowsDirs(dirs: Array<[dir: string, key?: string]>): void {
   try {
-    getExecutor().runFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', PRIVATE_DIRS], {
-      input: dirs.map((entry) => entry.join('\t')).join('\n'),
-      // Windows PowerShell must rebuild pwsh's module path: https://github.com/PowerShell/PowerShell/issues/18530.
-      omitEnv: Object.keys(process.env).filter((key) => key.toLowerCase() === 'psmodulepath'),
-      timeoutMs: 60_000,
-    });
+    getExecutor().runFile(
+      windowsSystemExecutable('powershell.exe'),
+      ['-NoProfile', '-NonInteractive', '-Command', PRIVATE_DIRS],
+      {
+        input: dirs.map((entry) => entry.join('\t')).join('\n'),
+        // Windows PowerShell must rebuild pwsh's module path: https://github.com/PowerShell/PowerShell/issues/18530.
+        omitEnv: Object.keys(process.env).filter((key) => key.toLowerCase() === 'psmodulepath'),
+        timeoutMs: 60_000,
+      },
+    );
   } catch (error) {
     const reason = (error instanceof Error ? error.message : String(error)).trim().split('\n').at(-1);
     throw new Error(`Could not prepare the private Windows build directories: ${reason}`, { cause: error });
@@ -311,7 +394,7 @@ function makePrivateWindowsDirs(dirs: Array<[dir: string, key?: string]>): void 
  * repository's Gradle home is made private too; an area whose `src` is a directory keeps it.
  */
 function ensureCheckout(area: string, src: string, job: Pick<WorkerJob, 'exact' | 'project'>): void {
-  if (job.exact && job.project === '') exactCheckout(area, job.exact.name);
+  if (job.exact && job.project === '') exactCheckout(area, job.exact.name, job.exact.link);
   const stat = lstatSync(src, { throwIfNoEntry: false });
   if (process.platform === 'win32') {
     const linked = !stat || stat.isSymbolicLink();
@@ -522,17 +605,34 @@ function fingerprintMismatch(
   there: string,
   sources: readonly Input[],
   mutated: { steps: readonly string[]; files: readonly string[] },
+  node: string,
 ): string {
-  const differing = job.expectedSources
+  const changes = job.expectedSources
     ? diffInputs(
         job.expectedSources.map(({ id, kind, hash }) => ({ name: id, kind, hash })),
         sources,
-      ).map((change) => change.name)
+      )
     : [];
+  const differing = changes.map((change) => change.name);
+  const client = job.fingerprintRuntime?.node;
+  // @ref LLP 0009#node-versions-of-client-and-worker -- only evaluated sources blame a Node difference
+  const evaluated =
+    changes.length > 0 &&
+    !mutated.files.length &&
+    changes.every((change) => change.kind === 'config' || change.kind === 'autolinking');
+  const nodeNote =
+    !client || client === node
+      ? []
+      : evaluated
+        ? [
+            `the likely cause is Node: the worker evaluates the fingerprint with Node ${node} and this machine with Node ${client}, and only sources Stim evaluates with Node differ; pin the project's Node (.nvmrc) to a version both machines have installed`,
+          ]
+        : [`the worker evaluates the fingerprint with Node ${node}, this machine with Node ${client}`];
   return [
     `the checkout there fingerprints ${there.slice(0, 12)}, here ${job.expectedFingerprint?.slice(0, 12)}`,
     ...(mutated.files.length ? [`${mutated.steps.join(' and ')} there rewrote ${namedList(mutated.files)}`] : []),
     ...(differing.length ? [`differing sources: ${namedList(differing)}`] : []),
+    ...nodeNote,
   ].join('; ');
 }
 
@@ -541,6 +641,7 @@ function fingerprintRefusal(
   iosDir: string,
   built: { hash: string; sources: readonly Input[] },
   mutated: () => { steps: readonly string[]; files: readonly string[] },
+  node: string,
 ): string | null {
   if (built.hash === job.expectedFingerprint) return null;
   if (job.podsOnWorker && job.expectedSources && mutated().steps.includes('pod install')) {
@@ -551,7 +652,7 @@ function fingerprintRefusal(
     const lock = iosDir === '.' ? 'Podfile.lock' : `${iosDir}/Podfile.lock`;
     if (changes.length > 0 && changes.every((change) => change.kind === 'file' && change.name === lock)) return null;
   }
-  return fingerprintMismatch(job, built.hash, built.sources, mutated());
+  return fingerprintMismatch(job, built.hash, built.sources, mutated(), node);
 }
 
 /**
@@ -636,20 +737,60 @@ async function ensureDependencies(job: WorkerJob, src: string): Promise<void> {
   installed();
 }
 
+/** The labels of the simulators offloaded builds create and delete, which another build must not borrow. */
+const JOB_SIMULATOR = /^stim-(?:build|exact)-/;
+
 /**
- * The generic simulator destination compiles arm64 and x86_64, so the worker names one of its own iPhone
- * simulators on the client's runtime. It is a build destination only: nothing boots or installs on it.
+ * Names the simulator `xcodebuild` builds for on `runtime`. The generic simulator destination compiles arm64 and
+ * x86_64, so the worker names an available iPhone simulator there, or creates one in this build's Stim home when the
+ * runtime has none. It is a build destination only: nothing boots or installs on it.
  */
-function destination(runtime: string): string | null {
+async function iosDestination(
+  job: WorkerJob,
+  runtime: string,
+): Promise<{ target: string; simulator?: JobSimulator } | { code: string; message: string }> {
+  let listed: {
+    devices?: Record<
+      string,
+      Array<{ udid: string; name?: string; deviceTypeIdentifier: string; isAvailable: boolean }>
+    >;
+  } = {};
   try {
-    const listed = JSON.parse(
+    listed = JSON.parse(
       getExecutor().runFileQuiet('xcrun', ['simctl', 'list', 'devices', 'available', '-j'], { timeoutMs: 20_000 }) ??
         '{}',
-    ) as { devices?: Record<string, Array<{ udid: string; deviceTypeIdentifier: string; isAvailable: boolean }>> };
-    const device = (listed.devices?.[runtime] ?? []).find(availableIphone);
-    return device ? `id=${device.udid}` : null;
-  } catch {
-    return null;
+    );
+  } catch {}
+  const device = (listed.devices?.[runtime] ?? []).find(
+    (each) => availableIphone(each) && !JOB_SIMULATOR.test(each.name ?? ''),
+  );
+  if (device) return { target: `id=${device.udid}` };
+  let installed: IosRuntime | undefined;
+  try {
+    installed = (await listIosRuntimesAsync()).find((each) => each.identifier === runtime);
+  } catch (error) {
+    return {
+      code: 'destination-simulator',
+      message: `Could not list the simulator runtimes to build for ${runtime}: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+  const pick = installed ? pickDefaultIosCreation([], [installed]) : null;
+  if (!installed || !pick)
+    return { code: 'no-runtime', message: `The ${runtime} simulator runtime is not installed here.` };
+  // @ref LLP 0013#a-build-destination-the-build-creates -- created in the job's home, never booted, deleted when the build ends
+  note('build', `creating a simulator on ${runtime} to build for`);
+  try {
+    const simulator = await jobSimulator(`build-${job.job.slice(0, 8)}`, {
+      ...pick,
+      deviceType: installed.supportedDeviceTypes.find((each) => each.identifier === pick.deviceTypeId)?.name ?? null,
+      runtime: installed.version,
+    });
+    return { target: `id=${simulator.udid}`, simulator };
+  } catch (error) {
+    return {
+      code: 'destination-simulator',
+      message: `Could not create a simulator on ${runtime} to build for: ${error instanceof Error ? error.message : String(error)}`,
+    };
   }
 }
 
@@ -808,6 +949,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
     }
   };
   const failed = (code: string, message: string): WorkerResult => ({ ok: false, code, message, timings });
+  await deleteLeftoverSimulators();
   ensureCheckout(job.area, join(job.area, 'src'), job);
   const src = realpathSync(join(job.area, 'src'));
   const root = join(src, job.project);
@@ -897,14 +1039,16 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
     }
 
     const runtime = fingerprintRuntime(realRoot, process.env);
-    if (isUncertain(runtime) || !isDeepStrictEqual(runtime, job.fingerprintRuntime))
+    if (isUncertain(runtime))
+      return failed('fingerprint-runtime', `The worker cannot identify its fingerprint runtime: ${runtime.uncertain}`);
+    // @ref LLP 0009#node-versions-of-client-and-worker -- a Node difference alone does not refuse
+    if (
+      runtime.evaluator !== job.fingerprintRuntime?.evaluator ||
+      !isDeepStrictEqual(runtime.packages, job.fingerprintRuntime.packages)
+    )
       return failed(
         'fingerprint-runtime',
-        isUncertain(runtime)
-          ? `The worker cannot identify its fingerprint runtime: ${runtime.uncertain}`
-          : runtime.node !== job.fingerprintRuntime?.node
-            ? `The worker evaluates the fingerprint with Node ${runtime.node} and the client with Node ${job.fingerprintRuntime?.node}; offloading needs the same Node major.minor on both.`
-            : 'The worker fingerprint evaluator or its project packages differ from the client.',
+        'The worker fingerprint evaluator or its project packages differ from the client.',
       );
 
     const platform = job.platform;
@@ -924,13 +1068,14 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
               ? 'production'
               : 'development',
         replay: { native: replaySettings.native, sources: replaySettings.sources, allowChanges },
+        signal: cancelled.signal,
       });
     const initial = await time('fingerprintMs', () => replay());
     if (isUncertain(initial)) return failed('no-fingerprint', initial.uncertain);
     if (initial.hash !== job.expectedFingerprint)
       return failed(
         'fingerprint-mismatch',
-        fingerprintMismatch(job, initial.hash, initial.inputs, { steps: [], files: [] }),
+        fingerprintMismatch(job, initial.hash, initial.inputs, { steps: [], files: [] }, runtime.node),
       );
     const mutations = await prepareReplayNative(job, platform, realRoot, realSrc, initial, iosProject, log, time);
     if (!Array.isArray(mutations)) return failed(mutations.code, mutations.message);
@@ -944,10 +1089,16 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
       sources = after.inputs;
       if (mutations.includes('expo prebuild')) recordPrebuild(realRoot, platform, after.hash);
     }
-    const refused = fingerprintRefusal(job, iosProject.relative, { hash: fingerprint, sources }, () => ({
-      steps: mutations,
-      files: mutations.length ? rewrittenFiles(src, job.manifest, mirrored.record) : [],
-    }));
+    const refused = fingerprintRefusal(
+      job,
+      iosProject.relative,
+      { hash: fingerprint, sources },
+      () => ({
+        steps: mutations,
+        files: mutations.length ? rewrittenFiles(src, job.manifest, mirrored.record) : [],
+      }),
+      runtime.node,
+    );
     if (refused) return failed('fingerprint-mismatch', refused);
 
     const tools = job.cacheArtifact ? await reactNativeArtifactToolchain(platform, realRoot, iosProject.dir) : null;
@@ -1096,16 +1247,24 @@ async function nativeIdentityRefusal(
 
 /**
  * Makes `<area>/src` a link to `<area>/checkout/<name>`: Exact names the crates it generates after the real name of the
- * app directory, so the app must build in a directory named like the client's. An existing `src` directory moves there.
+ * app directory, so the app must build in a directory named like the client's. The checkout sits as many folders below
+ * the area as the app's relative path to exact2 climbs above it, so that path ends inside the area. An existing `src`
+ * directory, or the checkout an earlier link pointed at, moves there.
  */
-function exactCheckout(area: string, name: string): void {
+function exactCheckout(area: string, name: string, link: string | null): void {
   const src = join(area, 'src');
-  const target = join('checkout', name);
+  const climbs = (link?.match(/^(?:\.\.\/)+/)?.[0].length ?? 0) / 3;
+  const target = join('checkout', ...Array<string>(Math.max(0, climbs - 2)).fill('up'), name);
+  const dest = join(area, target);
   const stat = lstatSync(src, { throwIfNoEntry: false });
-  if (stat?.isSymbolicLink() && readlinkSync(src) === target) return;
-  mkdirSync(join(area, 'checkout'), { recursive: true });
-  if (stat?.isDirectory() && !existsSync(join(area, target))) renameSync(src, join(area, target));
-  else mkdirSync(join(area, target), { recursive: true });
+  const current = stat?.isSymbolicLink() ? readlinkSync(src) : null;
+  if (current === target) return;
+  mkdirSync(dirname(dest), { recursive: true });
+  if (!existsSync(dest)) {
+    if (current?.startsWith(`checkout${sep}`) && existsSync(join(area, current))) renameSync(join(area, current), dest);
+    else if (stat?.isDirectory()) renameSync(src, dest);
+    else mkdirSync(dest, { recursive: true });
+  }
   rmSync(src, { recursive: !stat?.isSymbolicLink(), force: true });
   symlinkSync(target, src);
 }
@@ -1129,7 +1288,171 @@ async function compileSyncedManifest(
     : workerOperation(root, (context) => compileMacos(context, job, root, log, time));
 }
 
-/** Runs the Exact build with this machine's exact2 for the pins and the client's settings, never on a simulator. */
+function inside(dir: string, path: string): boolean {
+  const rel = relative(dir, path);
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+}
+
+const EXACT2_SOURCE = 'stim.exact2-source';
+
+/** Copies exact2's installed packages, which git leaves out, where Exact finds its TypeScript tools. */
+function copyPackages(from: string, to: string): void {
+  rmSync(join(to, 'node_modules'), { recursive: true, force: true });
+  if (existsSync(join(from, 'node_modules')))
+    cpSync(join(from, 'node_modules'), join(to, 'node_modules'), {
+      recursive: true,
+      verbatimSymlinks: true,
+      mode: constants.COPYFILE_FICLONE,
+    });
+}
+
+/**
+ * Puts a checkout of exact2 at the app's relative path to it, inside the build area: Exact's Cargo manifests name
+ * exact2's crates by that path, and Exact names each compiler input by its place under the exact2 directory it runs
+ * from (exact2 `scripts/app.mjs` `nameOf`), which Bun resolves through links, so the path holds a real checkout. It
+ * shares this machine's checkout's objects, and never lands in the app, on one of the area's own entries, or outside
+ * the area. Returns why it cannot.
+ */
+function placeExact2(area: string, root: string, link: string, checkout: string, commit: string): string | null {
+  const realArea = realpathSync(area);
+  const at = resolvePath(root, link);
+  const top = relative(realArea, at).split(sep)[0] ?? '';
+  let parent = dirname(at);
+  while (!existsSync(parent)) parent = dirname(parent);
+  const realParent = realpathSync(parent);
+  if (
+    !inside(realArea, at) ||
+    inside(root, at) ||
+    at === join(realArea, 'checkout') ||
+    (top !== 'checkout' && reservedAreaEntry(top)) ||
+    !inside(realArea, realParent) ||
+    inside(root, realParent) ||
+    inside(join(realArea, 'home'), realParent)
+  )
+    return `the app names exact2 at ${link}, which this machine cannot place inside its build area`;
+  if (lstatSync(at, { throwIfNoEntry: false })) {
+    const source = gitQuiet(area, ['config', '--file', join(at, '.git', 'config'), '--get', EXACT2_SOURCE]);
+    if (source === null) return `${at} is not an exact2 checkout this machine made`;
+    if (source !== checkout) rmSync(at, { recursive: true, force: true });
+  }
+  const place = () => {
+    if (!existsSync(at)) {
+      mkdirSync(dirname(at), { recursive: true });
+      for (const left of readdirSync(dirname(at)))
+        if (left.startsWith(EXACT2_MAKING)) rmSync(join(dirname(at), left), { recursive: true, force: true });
+      const making = mkdtempSync(join(dirname(at), EXACT2_MAKING));
+      git(dirname(at), ['clone', '--quiet', '--shared', '--no-checkout', checkout, making], {
+        write: true,
+        timeoutMs: 120_000,
+      });
+      git(making, ['config', EXACT2_SOURCE, checkout], { write: true });
+      copyPackages(checkout, making);
+      renameSync(making, at);
+    }
+    const head = gitQuiet(at, ['rev-parse', 'HEAD']);
+    if (head !== commit || git(at, ['status', '--porcelain', '--untracked-files=no'], { timeoutMs: 60_000 }) !== '') {
+      if (head !== commit) copyPackages(checkout, at);
+      git(at, ['checkout', '--quiet', '--force', '--detach', commit], { write: true, timeoutMs: 300_000 });
+    }
+  };
+  try {
+    place();
+  } catch {
+    rmSync(at, { recursive: true, force: true });
+    place();
+  }
+  return null;
+}
+
+interface JobSimulator {
+  udid: string;
+  remove(): Promise<void>;
+}
+
+/**
+ * Creates a simulator this build's Stim home owns. A cancelled build deletes it at once; otherwise `remove` deletes it
+ * through teardown.
+ */
+async function jobSimulator(label: string, choice?: IosCreationChoice): Promise<JobSimulator> {
+  cancelled.signal.throwIfAborted();
+  const creation = (async () => {
+    const created = await createOwnedIosSim(label, {}, choice);
+    if (cancelled.signal.aborted) {
+      deleteOwnedIosSimNow(created.udid, 1500);
+      throw cancelled.signal.reason;
+    }
+    return created.udid;
+  })();
+  creations.add(creation);
+  let udid: string;
+  try {
+    udid = await creation;
+  } finally {
+    creations.delete(creation);
+  }
+  const stop = () => {
+    deleteOwnedIosSimNow(udid, 1500);
+  };
+  cancelCleanups.add(stop);
+  let removing: Promise<void> | undefined;
+  const remove = () =>
+    (removing ??= (async () => {
+      const outcome = await teardownOwnedIosSim(udid, { del: true });
+      cancelCleanups.delete(stop);
+      if (outcome.status === 'failed') note('build', `could not delete the simulator ${udid}: ${outcome.reason}`);
+    })());
+  return { udid, remove };
+}
+
+/**
+ * Deletes the simulators a stopped or killed earlier build left in this build's Stim home, and forgets the ledger
+ * entries of simulators already gone, so a teardown interrupted after `simctl delete` does not keep the area pinned.
+ */
+async function deleteLeftoverSimulators(): Promise<void> {
+  const ledger = readCreatedDevices();
+  if (!ledger.ios.size) return;
+  let sims: IosSimRecord[];
+  try {
+    sims = await listAllIosSimsAsync({ includeUnavailable: true });
+  } catch {
+    return;
+  }
+  for (const { id } of findStaleLedgerEntries(ledger, sims)) await forgetCreatedDeviceAsync('ios', id);
+  for (const sim of sims)
+    if (ledger.ios.has(sim.udid))
+      await (sim.available ? teardownOwnedIosSim(sim.udid, { del: true }) : teardownUnavailableOwnedIosSim(sim.udid));
+}
+
+/**
+ * A simulator this build's Stim home owns, booted through device admission, for Exact's native-module roster probe,
+ * which spawns on a simulator (exact2 `host/apple/build.mjs`) and with no `EXACT_SIM` takes any booted one.
+ */
+async function exactProbeSimulator(job: WorkerJob, root: string): Promise<JobSimulator | string> {
+  note('build', 'creating a simulator for the native-module roster');
+  let simulator: JobSimulator;
+  try {
+    simulator = await jobSimulator(`exact-${job.job.slice(0, 8)}`);
+  } catch (error) {
+    return `could not create a simulator for the native-module roster: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  const { udid, remove } = simulator;
+  try {
+    await withDeviceBootAdmission(
+      { platform: 'ios', key: udid },
+      () => bootIosSim(udid, { openViewer: false, out: (line) => note('build', line) }),
+      { root, out: (line) => note('build', line) },
+    );
+  } catch (error) {
+    await remove();
+    return `could not boot a simulator for the native-module roster: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  return { udid, remove };
+}
+
+/**
+ * Runs the Exact build with this machine's exact2 for the pins and the client's settings. An app that declares native
+ * modules builds next to a simulator this build owns; any other runs on none.
+ */
 async function compileExact(
   job: WorkerJob,
   exact: ExactOffload,
@@ -1152,12 +1475,7 @@ async function compileExact(
   } catch {
     return { ok: false, code: 'bad-project', message: 'The Exact app has no readable app.json.' };
   }
-  if (!isJsonObject(manifest) || exactDeclaresModules(manifest))
-    return {
-      ok: false,
-      code: 'exact-modules',
-      message: 'This machine does not build Exact apps that declare native modules.',
-    };
+  if (!isJsonObject(manifest)) return { ok: false, code: 'bad-project', message: 'app.json is not a JSON object.' };
   const declared = exactDeclaredSettings(manifest);
   const undeclared = Object.keys(exact.env).filter((name) => !declared.includes(name));
   if (undeclared.length)
@@ -1169,6 +1487,9 @@ async function compileExact(
       code: 'exact-tools',
       message: `Exact's toolchain is incomplete here: ${missing.map((problem) => problem.reason).join('; ')}.`,
     };
+  const checkout = exactCheckoutDir(exact);
+  const unplaced = exact.link ? placeExact2(job.area, root, exact.link, checkout, exact.exact2) : null;
+  if (unplaced) return { ok: false, code: 'exact-tools', message: `${unplaced}.` };
   const env: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(process.env))
     if (
@@ -1179,18 +1500,29 @@ async function compileExact(
       !key.startsWith('EXACT_')
     )
       env[key] = value;
-  Object.assign(env, exact.env, { EXACT2: exactCheckoutDir(exact) });
-  note('build', `Exact ${job.configuration === 'Release' ? 'Release' : 'Debug'}`);
-  const built = await time('buildMs', () =>
-    runExactIosBuild({
-      root,
-      release: job.configuration === 'Release',
-      env,
-      logWriter: log,
-      onHeartbeat: (line) => note('build', line),
-      estimateMs: null,
-    }),
-  );
+  Object.assign(env, exact.env, { EXACT2: checkout });
+  if (exact.link) env.EXACT2 = resolvePath(root, exact.link);
+  delete env.EXACT_SIM;
+  let probe: Awaited<ReturnType<typeof exactProbeSimulator>> | null = null;
+  let built: Awaited<ReturnType<typeof runExactIosBuild>>;
+  try {
+    probe = exactDeclaresModules(manifest) ? await exactProbeSimulator(job, root) : null;
+    if (typeof probe === 'string') return { ok: false, code: 'exact-simulator', message: probe };
+    if (probe) env.EXACT_SIM = probe.udid;
+    note('build', `Exact ${job.configuration === 'Release' ? 'Release' : 'Debug'}`);
+    built = await time('buildMs', () =>
+      runExactIosBuild({
+        root,
+        release: job.configuration === 'Release',
+        env,
+        logWriter: log,
+        onHeartbeat: (line) => note('build', line),
+        estimateMs: null,
+      }),
+    );
+  } finally {
+    if (probe && typeof probe !== 'string') await probe.remove();
+  }
   if (built.ok) return { ok: true, path: built.appPath, cache: {} };
   const lines = built.diagnostics.map((each) => each.message);
   return { ok: false, code: 'exact-build-failed', message: lines.join(' | ') || 'The Exact build failed.' };
@@ -1282,11 +1614,8 @@ async function compileNativeAndroid(job: WorkerJob, root: string, log: NdjsonWri
     writeConfigSetting({ scope: 'workspace', projectPath: root }, `optimizations.android.${key}`, options[key]);
   removeDaemonIdleOverride();
   const gradlew = join(root, process.platform === 'win32' ? 'gradlew.bat' : 'gradlew');
-  const stop = () => {
-    stopGradleDaemons(gradlew, 4000);
-    process.exit(143);
-  };
-  process.once('SIGTERM', stop);
+  const stop = () => stopGradleDaemons(gradlew, 4000);
+  cancelCleanups.add(stop);
   const logFile = join(workspaceLogsDir(root), 'build-android.ndjson');
   let cacheArtifact: { identity: { hash: string; key: string }; receipt: NativeGradleArtifactReceipt } | undefined;
   note('build', `native Gradle ${options.variant ?? 'debug'}`);
@@ -1347,7 +1676,7 @@ async function compileNativeAndroid(job: WorkerJob, root: string, log: NdjsonWri
       message: (error as Error).message,
     };
   } finally {
-    process.off('SIGTERM', stop);
+    cancelCleanups.delete(stop);
     if (existsSync(logFile)) for (const record of parseNdjsonText(readFileSync(logFile, 'utf8'))) log.write(record);
   }
 }
@@ -1456,23 +1785,27 @@ async function compileMacos(
 
 async function compileIos(job: WorkerJob, root: string, log: NdjsonWriter, time: Timer): Promise<Compiled> {
   const runtime = job.runtime ?? '';
-  const target = destination(runtime);
-  if (!target)
-    return { ok: false, code: 'no-runtime', message: `There is no iPhone simulator on ${runtime} to build for.` };
+  const destination = await iosDestination(job, runtime);
+  if ('code' in destination) return { ok: false, ...destination };
   note('build', `xcodebuild for ${runtime}`);
-  const built = await time('buildMs', () =>
-    buildIos({
-      root,
-      iosDir: iosProjectDirSetting({ ios: { projectPath: job.iosProjectPath ?? undefined } }, root).dir,
-      destination: target,
-      logWriter: log,
-      ...(job.scheme ? { scheme: job.scheme } : {}),
-      ...(job.configuration ? { configuration: job.configuration } : {}),
-      ...(job.optimizations ? { optimizations: job.optimizations } : {}),
-      onHeartbeat: (line) => note('build', line),
-      onNote: (line) => note('build', line),
-    }),
-  );
+  let built: Awaited<ReturnType<typeof buildIos>>;
+  try {
+    built = await time('buildMs', () =>
+      buildIos({
+        root,
+        iosDir: iosProjectDirSetting({ ios: { projectPath: job.iosProjectPath ?? undefined } }, root).dir,
+        destination: destination.target,
+        logWriter: log,
+        ...(job.scheme ? { scheme: job.scheme } : {}),
+        ...(job.configuration ? { configuration: job.configuration } : {}),
+        ...(job.optimizations ? { optimizations: job.optimizations } : {}),
+        onHeartbeat: (line) => note('build', line),
+        onNote: (line) => note('build', line),
+      }),
+    );
+  } finally {
+    await destination.simulator?.remove();
+  }
   if (!built.ok) {
     if (built.compilationCacheCorruption) {
       const report = await clearCorruptCompilationCache(built.compilationCacheCorruption, root);
@@ -1522,11 +1855,8 @@ async function compileAndroid(
   const options = job.android;
   if (!options) return { ok: false, code: 'bad-request', message: 'The job has no Gradle options.' };
   const onNote = (line: string) => note('build', line);
-  const stop = () => {
-    stopGradleDaemons(gradlewPath(layout), 4000);
-    process.exit(143);
-  };
-  process.once('SIGTERM', stop);
+  const stop = () => stopGradleDaemons(gradlewPath(layout), 4000);
+  cancelCleanups.add(stop);
   note(
     'build',
     `gradle ${layout.custom ? `${layout.module}:` : ''}${assembleTaskFor(options.variant)} for ${options.abi ?? 'every ABI'}`,
@@ -1558,7 +1888,7 @@ async function compileAndroid(
       ...(androidPackage ? { androidPackage } : {}),
     };
   } finally {
-    process.off('SIGTERM', stop);
+    cancelCleanups.delete(stop);
   }
 }
 
@@ -1568,17 +1898,21 @@ async function compileAndroid(
  * `build`, each reading its input from stdin and writing JSON lines to stdout.
  */
 export async function runOffloadWorker(mode: string | undefined, arg?: string): Promise<void> {
+  cancelled = new AbortController();
+  resultWritten = false;
+  const stopWatching = mode === 'build' ? cancelOnSigterm() : null;
   try {
     await workerMode(mode, arg);
   } catch (error) {
-    emit({
-      type: 'result',
+    emitResult({
       ok: false,
       code: 'worker-crashed',
       message: String((error as Error)?.message ?? error),
       fingerprintSettled: false,
     });
   }
+  if (cancelled.signal.aborted) await new Promise<never>(() => {});
+  stopWatching?.();
 }
 
 async function workerMode(mode: string | undefined, arg?: string): Promise<void> {
@@ -1649,8 +1983,7 @@ async function workerMode(mode: string | undefined, arg?: string): Promise<void>
     if (job.platform === 'android' && job.jdk) {
       const unavailable = useJdkMajor(job.jdk);
       if (unavailable)
-        return emit({
-          type: 'result',
+        return emitResult({
           ok: false,
           code: 'build-refused',
           message: unavailable,
@@ -1660,7 +1993,7 @@ async function workerMode(mode: string | undefined, arg?: string): Promise<void>
     const originalEnv = { ...process.env };
     useParentFingerprintOwnership(job.fingerprintTemp);
     try {
-      return emit({ type: 'result', ...(await build(job)), fingerprintSettled: true });
+      return emitResult({ ...(await build(job)), fingerprintSettled: true });
     } finally {
       for (const name of Object.keys(process.env)) if (!Object.hasOwn(originalEnv, name)) delete process.env[name];
       Object.assign(process.env, originalEnv);

@@ -22,7 +22,7 @@ import { detectFingerprintParity, fingerprintReportGate } from '../diagnostics/d
 import { readFingerprint } from '../fingerprint-precompute.ts';
 import { runReport } from '../report-runtime.ts';
 import { readClaimSet } from '../ownership-claim.ts';
-import { markObserving, recordDetachedGroups } from '../fingerprint/detached-groups.ts';
+import { recordDetachedGroups } from '../fingerprint/detached-groups.ts';
 import { captureProcessIdentity, inspectProcessIdentity } from '../process-identity.ts';
 import { testContext } from './_context.ts';
 import { claimOwnerStartedAfter } from './_factories.ts';
@@ -80,25 +80,31 @@ async function until(check: () => boolean, ms: number): Promise<boolean> {
   return check();
 }
 
-test.skipIf(process.platform === 'win32')(
-  'a SIGTERM that arrives while the child loads its modules still writes the acknowledgement',
-  async () => {
-    const area = realpathSync(mkdtempSync(join(tmpdir(), 'stim-fp-boot-')));
-    temps.push(area);
-    const loading = join(area, 'loading');
-    const acknowledgement = join(area, 'settled.json');
-    const source = readFileSync(BOOTSTRAP, 'utf8');
-    const chunk = /import\("(\.\/precompute-child-[^"]+\.mjs)"\)/.exec(source)?.[1];
-    if (!chunk) throw new Error('the child bootstrap does not import its main module');
-    write(join(area, 'boot.mjs'), source);
-    write(
-      join(area, chunk),
-      `import { writeFileSync } from 'node:fs';
+function blockedBootstrap() {
+  const area = realpathSync(mkdtempSync(join(tmpdir(), 'stim-fp-boot-')));
+  temps.push(area);
+  const loading = join(area, 'loading');
+  const script = join(area, 'boot.mjs');
+  const source = readFileSync(BOOTSTRAP, 'utf8');
+  const chunk = /import\("(\.\/precompute-child-[^"]+\.mjs)"\)/.exec(source)?.[1];
+  if (!chunk) throw new Error('the child bootstrap does not import its main module');
+  write(script, source);
+  write(
+    join(area, chunk),
+    `import { writeFileSync } from 'node:fs';
 writeFileSync(${JSON.stringify(loading)}, '');
 await new Promise((resolve) => setTimeout(resolve, 15000));
 export const runPrecomputeChild = async () => {};`,
-    );
-    const child = spawn(process.execPath, [join(area, 'boot.mjs')], { stdio: ['pipe', 'ignore', 'ignore'] });
+  );
+  return { area, loading, script };
+}
+
+test.skipIf(process.platform === 'win32')(
+  'a SIGTERM that arrives while the child loads its modules still writes the acknowledgement',
+  async () => {
+    const { area, loading, script } = blockedBootstrap();
+    const acknowledgement = join(area, 'settled.json');
+    const child = spawn(process.execPath, [script], { stdio: ['pipe', 'ignore', 'ignore'] });
     const exited = new Promise<number | null>((resolve) => child.once('exit', (code) => resolve(code)));
     child.stdin.end(JSON.stringify({ ownership: { directory: area, acknowledgement, nonce: 'n1' } }));
     try {
@@ -111,6 +117,53 @@ export const runPrecomputeChild = async () => {};`,
     }
   },
   30_000,
+);
+
+test.skipIf(process.platform === 'win32')(
+  'a fingerprint child killed while loading its evaluator releases the workspace claim for retry',
+  SLOW,
+  async () => {
+    const root = expoApp({});
+    const { loading, script } = blockedBootstrap();
+    const context = testContext({ projectRoot: root, env: env() });
+    const executor = getExecutor();
+    const started: { child?: ReturnType<typeof spawn> } = {};
+    setExecutor({
+      ...executor,
+      runFileAsync: (file, args, options) => {
+        if (args[0] !== BOOTSTRAP) return executor.runFileAsync(file, args, options);
+        const request: { ownership: { directory: string } } = JSON.parse(String(options.input));
+        temps.push(request.ownership.directory);
+        return executor.runFileAsync(file, [script], {
+          ...options,
+          onSpawn: (child) => {
+            started.child = child;
+            options.onSpawn?.(child);
+          },
+        });
+      },
+    });
+    const request = { root, platform: 'ios', embedMode: 'development' } as const;
+    const outcome = readFingerprint(context, request).catch((error: unknown) => error);
+    try {
+      expect(await until(() => existsSync(loading), 20_000)).toBe(true);
+      const child = started.child;
+      if (!child?.pid) throw new Error('the fingerprint child did not start');
+      const identity = captureProcessIdentity(child.pid);
+      if (!identity.ok) throw new Error('the fingerprint child has no verified identity');
+      const record = { pid: child.pid, processToken: identity.token };
+      expect(child.kill('SIGKILL')).toBe(true);
+      expect(await outcome).toMatchObject({ signal: 'SIGKILL' });
+      expect(inspectProcessIdentity(record)).toBe('gone');
+      expect(existsSync(lockOf(context.home, root))).toBe(false);
+      resetExecutor();
+      expect(await readFingerprint(context, request)).toMatchObject({ hash: expect.any(String) });
+    } finally {
+      const child = started.child;
+      if (child?.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      await outcome;
+    }
+  },
 );
 
 test.skipIf(process.platform === 'win32')(
@@ -160,7 +213,7 @@ async function killedChild(
       options.onSpawn?.(child);
       const captured = child.pid === undefined ? null : captureProcessIdentity(child.pid);
       if (child.pid === undefined || !captured?.ok) throw new Error('the fixture child has no identity');
-      if (observing) markObserving(request.ownership.directory);
+      if (observing) write(join(request.ownership.directory, 'observing.json'), '{}');
       await ledger(request.ownership.directory, { pid: child.pid, processToken: captured.token });
       child.kill('SIGKILL');
       await exited;

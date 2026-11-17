@@ -3,11 +3,12 @@ import type { DaemonLadderAction } from '@stim-cli/core/state';
 import type { MaintenanceLane } from '../daemon/passes.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 import { childKey } from './cleanup-watch.ts';
+import { setReportChildLog } from '../report-child-log.ts';
 import { serveThreadJobs } from './thread-jobs.ts';
 
 type ThreadName = 'passes' | 'measure';
 type PassesInput = Omit<Parameters<MaintenanceLane['start']>[0], 'operation'> & { act: boolean; cwd: string };
-type ThreadInput = PassesInput | { cwd: string };
+type ThreadInput = PassesInput | { cwd: string; buildEnd?: true };
 type Log = (
   level: 'debug' | 'info' | 'warn' | 'error',
   event: string,
@@ -67,6 +68,7 @@ export interface ThreadTable {
  */
 export function createThreadTable(log: Log, onLost: (error: Error) => void = () => {}): ThreadTable {
   const threads = new Map<ThreadName, Thread>();
+  const dependencyCadence = new BigInt64Array(new SharedArrayBuffer(BigInt64Array.BYTES_PER_ELEMENT));
   const idleEnd = (name: ThreadName, thread: Thread) => {
     thread.idle = setTimeout(() => {
       if (thread.unsettled.size === 0) end(name, thread);
@@ -81,7 +83,7 @@ export function createThreadTable(log: Log, onLost: (error: Error) => void = () 
   };
   const start = (name: ThreadName): Thread => {
     const worker = new Worker(spawnEntry('stimd-thread'), {
-      workerData: { stimdThread: name },
+      workerData: { stimdThread: name, ...(name === 'passes' ? { dependencyCadence } : {}) },
     });
     const thread: Thread = { worker, pending: null, idle: null, unsettled: new Set(), lost: false };
     worker.on('message', (message: FromThread) => {
@@ -229,7 +231,9 @@ const thread: ThreadName | 'logs' | undefined = isMainThread ? undefined : worke
 if (thread === 'logs') await import('./logs/writer-thread.ts');
 else if (thread && parentPort) {
   const port = parentPort;
+  const dependencyCadence: BigInt64Array | undefined = workerData.dependencyCadence;
   const log: Log = (level, event, msg, fields = {}) => port.postMessage({ type: 'log', level, event, msg, fields });
+  setReportChildLog(log);
   const { processContext } = await import('../cli-operation.ts');
   let lane: MaintenanceLane | undefined;
   serveThreadJobs<ThreadInput>(
@@ -238,13 +242,23 @@ else if (thread && parentPort) {
     async (input, operation) => {
       if ('act' in input) {
         const { createMaintenanceLane } = await import('../daemon/passes.ts');
-        lane ??= createMaintenanceLane(log);
+        lane ??= createMaintenanceLane(log, undefined, dependencyCadence);
         lane.start({ ...input, operation }, input.act);
         await lane.settled();
         return lane.take();
       }
-      const { measureDependencyTrees } = await import('../daemon/dependencies.ts');
-      await measureDependencyTrees(operation);
+      const { measureBuildEnds, measureDependencyTrees } = await import('../daemon/dependencies.ts');
+      if (input.buildEnd) {
+        const { timedStep } = await import('../daemon/step-timing.ts');
+        await timedStep(
+          log,
+          'build_end_measure',
+          async (tally) => {
+            tally.items = await measureBuildEnds(operation);
+          },
+          { signal: operation.signal },
+        );
+      } else await measureDependencyTrees(operation);
       return [];
     },
     () => {

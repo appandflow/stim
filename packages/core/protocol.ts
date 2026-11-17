@@ -38,8 +38,7 @@ export const PROTOCOL_SCHEMA_FILE = 'protocol.schema.json';
  * `read` serves state. `control` also runs {@link ACTIONS}; only the machine grants it. `build` lets another machine run
  * project code here to build for it; it never comes with `read` or `control`, and only the machine approves it.
  * `device-host` permits a client's native app code in its own hosted sessions, and grants no other capability. `test`
- * lets another machine run any command it sends here, as this user and with no sandbox; it never comes with another
- * capability, and only the machine approves it.
+ * is a separate worker approval that can authorize managed engine updates.
  */
 export const CAPABILITIES = ['read', 'control', 'build', 'device-host', 'test'] as const;
 
@@ -1064,11 +1063,16 @@ export interface BuildOfferParams {
   exact?: BuildExactPins;
 }
 
-/** The exact2 commit and the Bun and Rust versions an Exact app builds with. */
+/**
+ * The exact2 commit and the Bun and Rust versions an Exact app builds with, the name of the client's exact2 checkout
+ * folder, and the URL of a remote that has the commit, if the client knows one.
+ */
 export interface BuildExactPins {
   exact2: string;
   bun: string;
   rust: string;
+  checkout: string;
+  url: string | null;
 }
 
 /**
@@ -1151,7 +1155,7 @@ export interface BuildToolchain {
   simulatorSdk: string | null;
   macosSdk: string | null;
   cocoapods: string | null;
-  /** Simulator runtime identifiers that have an iPhone simulator to build for. */
+  /** Installed iOS simulator runtime identifiers that support an iPhone simulator to build for. */
   runtimes: string[];
   /** The major version of the JDK Gradle runs on there. */
   jdk: string | null;
@@ -1322,10 +1326,11 @@ export interface BuildStartParams {
   reuseArtifact?: boolean;
   /**
    * An Exact app's iOS build: the app directory's name (Exact names its generated crates after it), its pins, and the
-   * values of the settings its `app.json` declares that the client's environment or `.env.local` sets. `fingerprint`
-   * is the synced manifest's digest, and no artifact is retained.
+   * values of the settings its `app.json` declares that the client's environment or `.env.local` sets, and the path from
+   * the app directory to its exact2 checkout when that path climbs out of the repository. `fingerprint` is the synced
+   * manifest's digest, and no artifact is retained.
    */
-  exact?: BuildExactPins & { name: string; env: Record<string, string> };
+  exact?: BuildExactPins & { name: string; env: Record<string, string>; link: string | null };
 }
 
 export interface BuildJobParams {

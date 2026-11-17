@@ -44,6 +44,7 @@ import { projectDeviceSlots } from '../../devices/device-slots.ts';
 import { listAllIosSimsAsync } from '../../devices/ios.ts';
 import { liveShareKeepReason } from '../../local-server.ts';
 import { withIdleWorkspace } from '../../workspace/in-use.ts';
+import { freshLaunchers } from '../../workspace/launchers.ts';
 import { isOnMountedVolume, listMountedVolumes } from '../../fs-util.ts';
 import { loadConfig } from '../../workspace/config.ts';
 import { cacheBlocked, lowestFree, measureDisk, measureDiskAsync } from './measure.ts';
@@ -89,6 +90,8 @@ export interface ActContext {
   operation?: StimContext;
   /** The Cargo target trim runs its child processes at low priority. */
   lowPriority?: boolean;
+  /** The Cargo target trim leaves what it has not moved yet once this aborts. */
+  stop?: AbortSignal;
 }
 
 const protectWindowMs = (settings: Pick<MaintenanceSettings, 'protectRecentHours'>) =>
@@ -400,6 +403,7 @@ async function clearArtifacts(action: MaintenanceAction, context: ActContext): P
     protectedRoot: context.protectedRoot,
     pinned: maintenancePinnedReader(context.operation),
     worktrees: (context.worktrees ??= await artifactWorktreesFor(context.operation)),
+    launchers: freshLaunchers(context.operation, context.operation?.signal),
     operation: context.operation,
   });
 }
@@ -551,7 +555,7 @@ export async function executeAction(action: MaintenanceAction, context: ActConte
             'the stim-daemon stops idle workspaces; maintenance stops one with a hosted device after maintenance.idleStopHours',
           );
     case 'would-clear-build-dirs':
-      return trimCargoTargetAction(action, context.operation, context.lowPriority);
+      return trimCargoTargetAction(action, context.operation, context.lowPriority, context.stop);
     case 'would-delete-dependencies':
       return clearArtifacts(action, context);
     case 'would-stop-gradle-daemons':

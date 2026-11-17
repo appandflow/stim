@@ -95,7 +95,7 @@ export function lookupRecordedBuild(
     refusal: {
       code: NO_RECORDED_BUILD,
       message: `No recorded ${selectors.platform} build${described ? ` (${described})` : ''} exists for this checkout, so there is no app to install.`,
-      remedy: 'Build the app first with the same selectors, then run again.',
+      remedy: 'Build the app first with the same selectors and Stim home, then run again.',
     },
   };
 }

@@ -1,6 +1,7 @@
+import { rmSync } from 'node:fs';
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import type { StimContext } from '@stim-cli/core';
-import type { DaemonLadderAction, PressureLevel } from '@stim-cli/core/state';
+import { listBuildEndMarkers, type DaemonLadderAction, type PressureLevel } from '@stim-cli/core/state';
 import { getProject } from '../workspace/config.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { formatBytes } from '../fs-util.ts';
@@ -16,6 +17,10 @@ import {
 import { maintenancePinnedReader } from '../stimd/passes/protect.ts';
 import { knownPrivateBytes, refreshMeasure, trustedMeasure } from '../disk-usage.ts';
 import { workspaceKeys } from '../workspace/lightened.ts';
+import { freshLaunchers } from '../workspace/launchers.ts';
+import { workspaceDir } from '../workspace/paths.ts';
+import { hungRead } from '../workspace/bounded-read.ts';
+import { buildOutputDirs } from '../workspace/discovery-census.ts';
 import { checkDependencyEdits } from '../workspace/dependency-edits.ts';
 import { ARTIFACT_DIRS, existingDirsOf } from '../workspace/regenerable-dirs.ts';
 import { writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
@@ -31,6 +36,7 @@ import {
 import { sourceDependenciesDue } from '../policy/checkout-order.ts';
 import { warmedFromAt } from '../workspace/source-dependencies.ts';
 import type { Config } from '../workspace/config.ts';
+import { timedStep, type DaemonLog } from './step-timing.ts';
 
 /**
  * The private bytes above which deleting a node_modules or Pods tree is worth a `stim worktree warm` or reinstall.
@@ -105,6 +111,7 @@ export async function rankDependencies(
   protectedRoot: string,
   operation?: StimContext,
   source = false,
+  log?: DaemonLog,
 ): Promise<RankedDependency[]> {
   const rank = new Map(
     idle.flatMap((candidate, index) => {
@@ -113,11 +120,17 @@ export async function rankDependencies(
     }),
   );
   if (!rank.size) return [];
-  const found = await collectArtifactsAsync(
-    'dependencies',
-    { now: Date.now(), windowMs: 0, protectedRoot, pinned: maintenancePinnedReader(operation), source },
-    operation?.signal ?? new AbortController().signal,
-    operation,
+  const found = await timedStep(
+    log,
+    'collect_artifacts',
+    () =>
+      collectArtifactsAsync(
+        'dependencies',
+        { now: Date.now(), windowMs: 0, protectedRoot, pinned: maintenancePinnedReader(operation), source },
+        operation?.signal ?? new AbortController().signal,
+        operation,
+      ),
+    { signal: operation?.signal, items: (result) => result && result.candidates.length + result.skips.length },
   );
   return found.candidates
     .flatMap((candidate) => {
@@ -162,6 +175,7 @@ export async function rankSourceDependencies(
   protectedRoot: string,
   rule: SourceRule,
   operation?: StimContext,
+  log?: DaemonLog,
 ): Promise<{ ranked: RankedDependency[]; kept: { target: string; workspace?: string; reason: string }[] }> {
   const rank = new Map(
     idle.flatMap((candidate, index) => {
@@ -169,11 +183,17 @@ export async function rankSourceDependencies(
       return key ? [[key, index] as const] : [];
     }),
   );
-  const found = await collectArtifactsAsync(
-    'dependencies',
-    { now: Date.now(), windowMs: 0, protectedRoot, pinned: maintenancePinnedReader(operation), source: true },
-    operation?.signal ?? new AbortController().signal,
-    operation,
+  const found = await timedStep(
+    log,
+    'collect_artifacts',
+    () =>
+      collectArtifactsAsync(
+        'dependencies',
+        { now: Date.now(), windowMs: 0, protectedRoot, pinned: maintenancePinnedReader(operation), source: true },
+        operation?.signal ?? new AbortController().signal,
+        operation,
+      ),
+    { signal: operation?.signal, items: (result) => result && result.candidates.length + result.skips.length },
   );
   const kept: { target: string; workspace?: string; reason: string }[] = found.skips.map(({ target, reason }) => ({
     target,
@@ -194,7 +214,10 @@ export async function rankSourceDependencies(
       });
       continue;
     }
-    const verdict = await sourceCheckoutIdle(candidate.worktree, rule.thresholdMs, rule.setting, operation);
+    const verdict = await sourceCheckoutIdle(candidate.worktree, rule.thresholdMs, rule.setting, {
+      operation,
+      reduceOnly: candidate.reduceOnly,
+    });
     if ('kept' in verdict) {
       kept.push({ target: candidate.path, workspace, reason: verdict.kept });
       continue;
@@ -247,10 +270,11 @@ async function stillUnused(
 ): Promise<string | null> {
   const [first] = keys;
   if (!source)
-    return first && !(await stillIdle(first, idleMs, operation, false, true, setting)) ? 'it is no longer idle' : null;
+    return first && !(await stillIdle(first, idleMs, { operation, setting })) ? 'it is no longer idle' : null;
   const held = new Set(workspaceKeys(keys));
   for (const key of new Set([...held, worktree]))
-    if (!(await stillIdle(key, idleMs, operation, true, held.has(key), setting))) return `${key} is no longer idle`;
+    if (!(await stillIdle(key, idleMs, { operation, full: true, locked: held.has(key), setting })))
+      return `${key} is no longer idle`;
   return Date.now() - warmedFromAt(keys) < idleMs ? 'a worktree warm copied from it since' : null;
 }
 
@@ -268,6 +292,7 @@ export async function clearDependency(
   requireRestorable: boolean = true,
   level: PressureLevel = 'normal',
 ): Promise<{ status: 'done' | 'kept' | 'failed'; bytes: number; detail: string }> {
+  const launchers = freshLaunchers(operation, operation?.signal);
   try {
     return await clearArtifact(
       {
@@ -284,6 +309,7 @@ export async function clearDependency(
         pinned: maintenancePinnedReader(operation),
         worktrees,
         requireRestorable,
+        launchers,
         recheck: (keys, worktree) => stillUnused(false, keys, worktree, idleMs, operation),
         level,
         operation,
@@ -334,6 +360,7 @@ export async function clearSourceDependencies(
   operation?: StimContext,
   setting?: string,
 ): Promise<TreeResult[]> {
+  const launchers = freshLaunchers(operation, operation?.signal);
   try {
     const results = await clearSourceTrees(
       dependencies.map(({ candidate }) => candidate.path),
@@ -341,6 +368,7 @@ export async function clearSourceDependencies(
         protectedRoot,
         pinned: maintenancePinnedReader(operation),
         worktrees,
+        launchers,
         recheck: (keys, worktree) => stillUnused(true, keys, worktree, idleMs, operation, setting),
         level,
         operation,
@@ -376,28 +404,38 @@ export async function wouldDelete(
   return { status: 'would', bytes, detail };
 }
 
-let dormantCheckedAt = -Infinity;
-
 /**
- * The dormant stage's dependency step, at most hourly unless `force`: the node_modules and Pods of linked worktrees
+ * The dormant stage's dependency step, at most hourly with a cadence clock: the node_modules and Pods of linked worktrees
  * idle `idle.dormantDays` whose private bytes reach REAL_BYTES_THRESHOLD or are not measured yet, most first, each
  * recorded so the next Stim command restores it. A tree is taken even when `stim worktree warm` could not put the
  * same versions back, since a reinstall does; copy-on-write clones below the threshold stay. Then, as the last
  * step, those of source checkouts idle `idle.sourceDormantDays`, each recorded in the source checkout's workspace.
  */
 export async function runDormantDependencies(
-  input: Pick<IdlePassInput, 'config' | 'act' | 'log'> & DeviceReading & { force?: boolean },
+  input: Pick<IdlePassInput, 'config' | 'act' | 'log'> & DeviceReading & { force?: boolean; cadence?: BigInt64Array },
 ): Promise<DaemonLadderAction[]> {
-  const { config } = input;
+  const { config, cadence } = input;
   const afterMs = dormantAfterMs(config);
   const sourceMs = sourceDormantAfterMs(config);
-  if (!config || (afterMs <= 0 && sourceMs <= 0) || (!input.force && Date.now() - dormantCheckedAt < HOUR_MS))
-    return [];
-  dormantCheckedAt = Date.now();
-  const actions: DaemonLadderAction[] = [];
-  if (afterMs > 0) actions.push(...(await takeIdleDependencies(input, config, afterMs, false)));
-  if (sourceMs > 0) actions.push(...(await takeIdleDependencies(input, config, sourceMs, true)));
-  return actions;
+  if (!config || (afterMs <= 0 && sourceMs <= 0)) return [];
+  if (cadence) {
+    // Zero means no check yet. Record the start before any awaited work so a failed pass still counts.
+    const now = BigInt(Date.now()) + 1n;
+    const checkedAt = Atomics.load(cadence, 0);
+    if (!input.force && checkedAt !== 0n && now - checkedAt < BigInt(HOUR_MS)) return [];
+    Atomics.store(cadence, 0, now);
+  }
+  return timedStep(
+    input.log,
+    'dormant_dependencies',
+    async () => {
+      const actions: DaemonLadderAction[] = [];
+      if (afterMs > 0) actions.push(...(await takeIdleDependencies(input, config, afterMs, false)));
+      if (sourceMs > 0) actions.push(...(await takeIdleDependencies(input, config, sourceMs, true)));
+      return actions;
+    },
+    { signal: input.operation?.signal, items: (actions) => actions?.length },
+  );
 }
 
 async function takeIdleDependencies(
@@ -425,18 +463,25 @@ async function takeIdleDependencies(
   const actions: DaemonLadderAction[] = [];
   let take: RankedDependency[];
   if (source) {
-    const { ranked, kept } = await rankSourceDependencies(
-      idle,
-      keeps,
-      input.protectedRoot ?? '',
-      {
-        level: 'normal',
-        dormantMs: afterMs,
-        criticalIdleMs: Infinity,
-        thresholdMs: afterMs,
-        setting: 'idle.sourceDormantDays',
-      },
-      operation,
+    const { ranked, kept } = await timedStep(
+      input.log,
+      'rank_source_dependencies',
+      () =>
+        rankSourceDependencies(
+          idle,
+          keeps,
+          input.protectedRoot ?? '',
+          {
+            level: 'normal',
+            dormantMs: afterMs,
+            criticalIdleMs: Infinity,
+            thresholdMs: afterMs,
+            setting: 'idle.sourceDormantDays',
+          },
+          operation,
+          input.log,
+        ),
+      { signal: operation?.signal, items: (found) => (found ? found.ranked.length + found.kept.length : undefined) },
     );
     if (!input.act || input.force)
       for (const entry of kept)
@@ -466,7 +511,15 @@ async function takeIdleDependencies(
         });
   } else {
     if (!idle.length) return [];
-    take = selectDependencies(await rankDependencies(idle, input.protectedRoot ?? '', operation), 'take').take;
+    take = selectDependencies(
+      await timedStep(
+        input.log,
+        'rank_dependencies',
+        () => rankDependencies(idle, input.protectedRoot ?? '', operation, false, input.log),
+        { signal: operation?.signal, items: (ranked) => ranked?.length },
+      ),
+      'take',
+    ).take;
   }
   const worktrees = take.length ? await artifactWorktreesFor(operation) : [];
   const why = `${source ? 'idle.sourceDormantDays' : 'idle.dormantDays'} is ${afterMs / (24 * HOUR_MS)}`;
@@ -529,4 +582,58 @@ export async function measureDependencyTrees(operation: StimContext): Promise<vo
     const { outcome } = await refreshMeasure(path, { timeoutMs: WALK_TIMEOUT_MS, claim: true, operation });
     if (outcome === 'busy') return;
   }
+}
+
+const BUILD_END_MARKER_MAX_AGE_MS = HOUR_MS;
+
+function dropMarkers(files: readonly string[]): void {
+  for (const file of files)
+    try {
+      rmSync(file, { force: true });
+    } catch {}
+}
+
+// @ref LLP 0001#the-folders-a-build-wrote-are-measured-by-the-daemon -- a marker waits for the walk claim, never for load
+/**
+ * Measures the build output folders and the Cargo `target/` of every registered workspace whose build ended, and its
+ * Stim workspace folder, through `refreshMeasure` with the cache bypassed, and returns how many folders it walked. The
+ * folders are the ones the gc worktree report measures: inside the workspace, found through the census's bounded
+ * reads. A marker is removed once its workspace was visited, and only the marker files listed before the walk, so a
+ * build that ended meanwhile stays marked. A marker file that is unreadable, names a root this Stim home does not
+ * know, names a root that no longer resolves to itself, or is over an hour old is removed without a read inside that
+ * root. A layout that could not be read keeps the marker and measures nothing for that root. A held walk claim, or a
+ * read that does not answer, ends the pass and keeps every marker not yet consumed. It never touches a dependency tree.
+ */
+export async function measureBuildEnds(operation: StimContext, now: number = Date.now()): Promise<number> {
+  const byRoot = new Map<string, string[]>();
+  for (const { file, path, markedAt } of listBuildEndMarkers()) {
+    if (path === null || markedAt === null || now - markedAt > BUILD_END_MARKER_MAX_AGE_MS) dropMarkers([file]);
+    else byRoot.set(path, [...(byRoot.get(path) ?? []), file]);
+  }
+  let walked = 0;
+  for (const [root, files] of byRoot) {
+    operation.signal.throwIfAborted();
+    if (getProject(root)) {
+      const found = await buildOutputDirs(root, operation.signal);
+      if (found === null) {
+        if (hungRead() !== null) return walked;
+        continue;
+      }
+      const folders = found === 'absent' ? [] : [...found, { dir: workspaceDir(root), private: false }];
+      for (const { dir, private: withPrivate } of folders) {
+        const { outcome } = await refreshMeasure(dir, {
+          timeoutMs: WALK_TIMEOUT_MS,
+          maxAgeMs: 0,
+          claim: true,
+          operation,
+          private: withPrivate,
+          ...(dir === workspaceDir(root) ? {} : { knownToExist: true as const }),
+        });
+        if (outcome === 'busy') return walked;
+        walked++;
+      }
+    }
+    dropMarkers(files);
+  }
+  return walked;
 }

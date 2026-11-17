@@ -88,7 +88,9 @@ export async function withWorkspaceProcessLock<T>(
     const holder = attempt.held ?? attempt.waitingFor?.[0];
     const purpose = holder?.details.purpose;
     if (typeof purpose === 'string' && rejectOwnerPurposes.includes(purpose)) {
-      const error = new Error(`The ${name} lock at ${path} is held for ${purpose}.`);
+      const error = new Error(
+        `The ${name} lock at ${path} is held for ${purpose}. Let it finish, then run the command again.`,
+      );
       (error as Error & { code?: string }).code = 'STIM_LOCK_REFUSED';
       throw error;
     }

@@ -10,7 +10,7 @@ import { getExecutor } from '../exec.ts';
 import { pidExists, signalProcessTree, signalProcessTreeAsync } from '../metro.ts';
 import { captureProcessIdentity, captureProcessToken, inspectProcessIdentity } from '../process-identity.ts';
 import { createLineReader } from '../process-output.ts';
-import { resolveTailscaleBinary, type ManagedProvider } from './metro-reach.ts';
+import { endSentence, resolveTailscaleBinary, type ManagedProvider } from './metro-reach.ts';
 import { probePublicHttp } from './public-http-probe.ts';
 import {
   clearClaimChild,
@@ -690,7 +690,7 @@ export async function startTunnelSequence({
       requireReachable,
     });
     if (!('failed' in result)) return { provider, ...result };
-    failures.push(`${provider}: ${result.reason}`);
+    failures.push(`${provider}: ${endSentence(result.reason)}`);
     if (result.cleanupFailed) return { failed: true, reason: failures.join(' '), cleanupFailed: true };
   }
   return { failed: true, reason: failures.join(' ') || 'No managed tunnel provider was selected.' };

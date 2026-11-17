@@ -4,6 +4,7 @@ import {
   anyCrashLoop,
   daemonSnapshotFile,
   parseUnverifiedCleanups,
+  parseUnverifiedConsoles,
   readDaemonSnapshot,
   readStimdBoots,
   type DaemonStatus,
@@ -53,6 +54,7 @@ export function daemonStatus(env: NodeJS.ProcessEnv = process.env): DaemonStatus
   const runningMode = holder ? (parseDaemonMode(snapshot?.mode) ?? parseDaemonMode(holder.details.mode)) : null;
   const mode = runningMode ?? setting;
   const unverified = parseUnverifiedCleanups(holder?.details.unverified);
+  const unverifiedConsoles = parseUnverifiedConsoles(holder?.details.unverifiedConsoles);
   const now = Date.now();
   const boots = readStimdBoots();
   const loop = anyCrashLoop(boots, now);
@@ -84,6 +86,7 @@ export function daemonStatus(env: NodeJS.ProcessEnv = process.env): DaemonStatus
     ...(testWaiting.length ? { testWaiting } : {}),
     ...(read?.recent?.length ? { recent: read.recent } : {}),
     ...(unverified.length ? { unverified } : {}),
+    ...(unverifiedConsoles.length ? { unverifiedConsoles } : {}),
     ...(loop
       ? {
           crashHold: {
@@ -106,12 +109,18 @@ export function daemonStatus(env: NodeJS.ProcessEnv = process.env): DaemonStatus
   };
 }
 
-/** One line per child whose cleanup the running daemon could not verify, with how long it has waited for it. */
+/** One line per unresolved cleanup or console recovery the daemon reports. */
 export function unverifiedLines(status: DaemonStatus, now: number = Date.now()): string[] {
-  return (status.unverified ?? []).map(
-    (entry) =>
-      `Daemon waits ${formatLongDuration(Math.max(0, now - Date.parse(entry.since)))} for child ${entry.child}, whose cleanup was not verified: ${entry.message} ${entry.remedy}`,
-  );
+  const age = (since: string) => formatLongDuration(Math.max(0, now - Date.parse(since)));
+  return [
+    ...(status.unverified ?? []).map(
+      (entry) =>
+        `Daemon waits ${age(entry.since)} for child ${entry.child}, whose cleanup was not verified: ${entry.message} ${entry.remedy}`,
+    ),
+    ...(status.unverifiedConsoles ?? []).map(
+      (entry) => `Daemon has waited ${age(entry.since)} for a device console: ${entry.message} ${entry.remedy}`,
+    ),
+  ];
 }
 
 /** The hold, and the last abnormal exits with when and why, which `stim status` prints under the daemon line. */
@@ -147,9 +156,18 @@ export function daemonLine(status: DaemonStatus, now: number = Date.now()): stri
   const pressure = status.pressure
     ? `; pressure ${status.pressure.level}${status.pressure.reasons.length ? ` (${status.pressure.reasons.join('; ')})` : ''}`
     : '';
-  return status.running
-    ? `${label}: running since ${clock(status.running.since)} (pid ${status.running.pid}), ${tick}${pressure}${claim}`
-    : `${label}: not running, ${tick}${pressure}; start, ios, android, web, macos and revive start it${claim}`;
+  if (!status.running)
+    return `${label}: not running, ${tick}${pressure}; start, ios, android, web, macos and revive start it${claim}`;
+  const { pid, since } = status.running;
+  const state = status.unanswered
+    ? `holds the claim since ${clock(since)} (pid ${pid}), ${unansweredText(status.unanswered)}`
+    : `running since ${clock(since)} (pid ${pid})`;
+  return `${label}: ${state}, ${tick}${pressure}${claim}`;
+}
+
+/** The sentence the daemon line and the doctor finding give for a stimd that holds the claim and did not answer. */
+export function unansweredText({ waitedMs, socketMissing }: NonNullable<DaemonStatus['unanswered']>): string {
+  return `did not answer within ${waitedMs / 1000} s${socketMissing ? ' (its socket file is missing)' : ''}`;
 }
 
 /** The last action a daemon of this home took, or null before its first. */
@@ -190,10 +208,26 @@ function servingWorkspaces(): string[] {
   );
 }
 
-/** A stuck daemon claim, a daemon that stopped ticking, or no daemon while a dev server runs. */
+/** Whether a running daemon's last tick, or its start when it has not ticked yet, is older than three tick intervals. */
+export function ticksLate(status: DaemonStatus, now: number = Date.now()): boolean {
+  if (!status.running) return false;
+  const tickAt = Date.parse(status.lastTickAt ?? '');
+  const since = Math.max(Number.isFinite(tickAt) ? tickAt : 0, Date.parse(status.running.since) || 0);
+  return now - since > 3 * (status.intervalMs ?? 60_000);
+}
+
+/**
+ * A stuck daemon claim, a late or stopped daemon, or no daemon while a dev server runs. `probed` says the caller
+ * probed a running stimd for an answer and put the result in `status.unanswered`: a late stimd that answered is
+ * reported without a kill, and one that did not answer is left to the not-answering finding.
+ */
 export function daemonFindings(
   status: DaemonStatus,
-  { now = Date.now(), serving = servingWorkspaces }: { now?: number; serving?: () => string[] } = {},
+  {
+    now = Date.now(),
+    serving = servingWorkspaces,
+    probed = false,
+  }: { now?: number; serving?: () => string[]; probed?: boolean } = {},
 ): Finding[] {
   const findings: Finding[] = [];
   // compat C32 until 2.1.0
@@ -221,6 +255,13 @@ export function daemonFindings(
       detail: `Since ${entry.since}: ${entry.message} Until child ${entry.child} has stopped, the daemon does not exit when idle or switch engines, and the claims that child holds stay taken.`,
       fix: entry.remedy,
     });
+  for (const entry of status.unverifiedConsoles ?? [])
+    findings.push({
+      level: 'cost',
+      title: 'The stim-daemon could not recover a device console',
+      detail: `Since ${entry.since}: ${entry.message}`,
+      fix: entry.remedy,
+    });
   if (status.crashHold)
     findings.push({
       level: 'cost',
@@ -239,17 +280,24 @@ export function daemonFindings(
   }
   if (status.mode === 'off') return findings;
   const tickAt = Date.parse(status.lastTickAt ?? '');
-  const late = 3 * (status.intervalMs ?? 60_000);
-  const since = status.running
-    ? Math.max(Number.isFinite(tickAt) ? tickAt : 0, Date.parse(status.running.since) || 0)
-    : NaN;
-  if (status.running && now - since > late)
-    findings.push({
-      level: 'cost',
-      title: 'The stim-daemon has stopped ticking',
-      detail: `stim-daemon pid ${status.running.pid} holds its claim, but its last tick was ${Number.isFinite(tickAt) ? `${formatLongDuration(now - tickAt)} ago` : 'never written'}, so idle workspaces and dev servers are not stopped. Its log is ${daemonNdjsonFile()}.`,
-      fix: `Stop it with \`kill ${status.running.pid}\`; the next stim start, ios or android starts a new one.`,
-    });
+  if (status.running && !status.unanswered && ticksLate(status, now)) {
+    const last = Number.isFinite(tickAt) ? `${formatLongDuration(now - tickAt)} ago` : 'never written';
+    findings.push(
+      probed
+        ? {
+            level: 'cost',
+            title: 'The stim-daemon is late with its ticks',
+            detail: `stim-daemon pid ${status.running.pid} holds its claim and answered, but its last tick was ${last}, so idle workspaces and dev servers are not stopped until it ticks. A long pass or a busy machine can delay a tick. Its log is ${daemonNdjsonFile()}.`,
+            fix: `Read ${daemonNdjsonFile()} for the pass it is in, or run \`stim doctor\` again later.`,
+          }
+        : {
+            level: 'cost',
+            title: 'The stim-daemon has stopped ticking',
+            detail: `stim-daemon pid ${status.running.pid} holds its claim, but its last tick was ${last}, so idle workspaces and dev servers are not stopped. Its log is ${daemonNdjsonFile()}.`,
+            fix: `Stop it with \`kill ${status.running.pid}\`; the next stim start, ios or android starts a new one.`,
+          },
+    );
+  }
   if (!status.running && !status.claim && !status.older) {
     const running = serving();
     if (running.length)
