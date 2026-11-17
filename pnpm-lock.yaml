@@ -413,6 +413,8 @@ importers:
         specifier: workspace:*
         version: link:../core
 
+  packages/agent-eval: {}
+
   packages/cache:
     dependencies:
       '@stim-cli/core':

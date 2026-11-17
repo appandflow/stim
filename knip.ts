@@ -44,6 +44,9 @@ export default ({ production }: { production?: boolean }): KnipConfig => ({
       // tsdown bundles the workspace packages; their bare unique-pid import stays external.
       ignoreDependencies: production ? ['@stim-cli/*', 'unique-pid'] : [],
     },
+    'packages/agent-eval': {
+      entry: ['src/scripted-stim.ts!', 'src/__tests__/entry.ts'],
+    },
     'packages/cache-s3': {
       // https://github.com/webpro-nl/knip/pull/2218: strict mode rejects published optional peer types.
       ignoreDependencies: production ? ['stim'] : [],
