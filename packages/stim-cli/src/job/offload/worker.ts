@@ -94,16 +94,19 @@ import {
   type ExactOffload,
 } from '../../integrations/exact-offload.ts';
 import { runExactIosBuild } from '../../integrations/exact-ios.ts';
-import { readCreatedDevices } from '../../devices/created-devices.ts';
+import { forgetCreatedDeviceAsync, readCreatedDevices } from '../../devices/created-devices.ts';
+import { findStaleLedgerEntries } from '../../commands/gc/ledger.ts';
 import {
   bootIosSim,
   createOwnedIosSim,
+  listAllIosSimsAsync,
   listIosRuntimesAsync,
   pickDefaultIosCreation,
   type IosCreationChoice,
   type IosRuntime,
+  type IosSimRecord,
 } from '../../devices/ios.ts';
-import { deleteOwnedIosSimNow, teardownOwnedIosSim } from '../../devices/teardown.ts';
+import { deleteOwnedIosSimNow, teardownOwnedIosSim, teardownUnavailableOwnedIosSim } from '../../devices/teardown.ts';
 import { withDeviceBootAdmission } from '../../engine/device-capacity.ts';
 import type { IosProject } from '../../integrations/ios-project.ts';
 import { buildIosOperation } from '../../commands/ios/build.ts';
@@ -1383,9 +1386,23 @@ async function jobSimulator(label: string, choice?: IosCreationChoice): Promise<
   return { udid, remove };
 }
 
-/** Deletes the simulators a stopped or killed earlier build left in this build's Stim home. */
+/**
+ * Deletes the simulators a stopped or killed earlier build left in this build's Stim home, and forgets the ledger
+ * entries of simulators already gone, so a teardown interrupted after `simctl delete` does not keep the area pinned.
+ */
 async function deleteLeftoverSimulators(): Promise<void> {
-  for (const udid of readCreatedDevices().ios) await teardownOwnedIosSim(udid, { del: true });
+  const ledger = readCreatedDevices();
+  if (!ledger.ios.size) return;
+  let sims: IosSimRecord[];
+  try {
+    sims = await listAllIosSimsAsync({ includeUnavailable: true });
+  } catch {
+    return;
+  }
+  for (const { id } of findStaleLedgerEntries(ledger, sims)) await forgetCreatedDeviceAsync('ios', id);
+  for (const sim of sims)
+    if (ledger.ios.has(sim.udid))
+      await (sim.available ? teardownOwnedIosSim(sim.udid, { del: true }) : teardownUnavailableOwnedIosSim(sim.udid));
 }
 
 /**

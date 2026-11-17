@@ -17,7 +17,7 @@ import { dirname, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
-import { recordCreatedDevice } from '../devices/created-devices.ts';
+import { readCreatedDevices, recordCreatedDevice } from '../devices/created-devices.ts';
 import { teardownOwnedIosSim } from '../devices/teardown.ts';
 import { EXACT_SIM_TARGET, exactOffloadParam, exactOffloadPlan } from '../integrations/exact-offload.ts';
 import { runOffloadWorker } from '../job/offload/worker.ts';
@@ -33,6 +33,16 @@ vi.mock('../devices/ios.ts', async (actual) => ({
     runtime: null,
   })),
   bootIosSim: vi.fn<typeof import('../devices/ios.ts').bootIosSim>(async () => {}),
+  listAllIosSimsAsync: vi.fn<typeof import('../devices/ios.ts').listAllIosSimsAsync>(async () => [
+    {
+      udid: 'LEFT-BY-A-STOPPED-BUILD',
+      name: 'stim-exact-left',
+      state: 'Booted',
+      runtime: 'com.apple.CoreSimulator.SimRuntime.iOS-27-0',
+      deviceTypeIdentifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-17',
+      available: true,
+    },
+  ]),
 }));
 vi.mock('../engine/device-capacity.ts', async (actual) => ({
   ...(await actual<typeof import('../engine/device-capacity.ts')>()),
@@ -193,6 +203,7 @@ test('the worker runs Exact without the simulator, the worker caches or Exact se
 test('an Exact app that declares native modules builds next to a simulator the build owns, deleted after', async () => {
   vi.mocked(teardownOwnedIosSim).mockClear();
   recordCreatedDevice('ios', 'LEFT-BY-A-STOPPED-BUILD');
+  recordCreatedDevice('ios', 'DELETED-BEFORE-ITS-LEDGER-ENTRY');
   const { result, area } = await build({
     'exact.mjs': LAUNCHER,
     'app.json': JSON.stringify({ modules: ['shop-map'] }),
@@ -203,6 +214,7 @@ test('an Exact app that declares native modules builds next to a simulator the b
     ['LEFT-BY-A-STOPPED-BUILD', { del: true }],
     ['PROBE-SIM', { del: true }],
   ]);
+  expect([...readCreatedDevices().ios]).toEqual(['LEFT-BY-A-STOPPED-BUILD']);
 });
 
 test("the app's relative path to exact2 holds a checkout of the pinned commit inside the build area", async () => {
