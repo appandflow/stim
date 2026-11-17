@@ -7,6 +7,7 @@
   struct ConnectionsPlayground: View {
     var segment: ConnectionsSegment
     var now: Date
+    var scenario: PlaygroundScenario = .ready
     var height: CGFloat = 640
     @State private var allows = true
     @State private var awake = false
@@ -42,6 +43,11 @@
           "control":true,"expiresAt":"\(iso(2_520))","viewers":1,"auth":"generated"}]
         """
       return (try? JSONDecoder().decode([WebShare].self, from: Data(json.utf8))) ?? []
+    }
+
+    private var unreadablePairings: [UnreadablePairing] {
+      let json = #"[{"file":"devices.json","index":2,"id":"fixture-id"},{"file":"test-clients.json","version":3}]"#
+      return (try? Self.decoder.decode([UnreadablePairing].self, from: Data(json.utf8))) ?? []
     }
 
     private var sessions: [HostedSession] {
@@ -107,7 +113,9 @@
     private var incoming: some View {
       IncomingConnectionsContent(
         allowsConnections: $allows, problem: nil, phoneApp: true,
-        connections: Connections.incoming(devices), keepsAwake: $awake, shares: shares,
+        connections: scenario == .ready ? Connections.incoming(devices) : [],
+        unreadablePairings: scenario == .empty ? [] : unreadablePairings, stimHome: "/Playground/.stim",
+        keepsAwake: $awake, shares: shares,
         workspaceTitle: { _ in "checkout" }, sessions: sessions, addPhone: {}, addMachine: {}, explain: { _ in }, fix: { _ in },
         setAccess: { _, _ in }, rename: { _ in }, revoke: { _ in }, stopShare: { _ in }, stopWorkspaceShares: { _ in },
         stopSession: { _ in },

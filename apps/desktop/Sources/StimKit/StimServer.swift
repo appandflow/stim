@@ -144,8 +144,16 @@ public struct PairedDevice: Decodable, Equatable, Identifiable, Sendable {
   public var isPhone: Bool { !isBuildClient && !isDeviceHostClient && !isTestClient }
 }
 
-struct PairedDeviceList: Decodable {
-  var devices: [PairedDevice]
+public struct UnreadablePairing: Decodable, Hashable, Sendable {
+  public var file: String
+  public var index: Int?
+  public var id: String?
+  public var version: Double?
+}
+
+public struct PairedDeviceList: Decodable, Sendable {
+  public var devices: [PairedDevice]
+  public var unreadable: [UnreadablePairing]?
 }
 
 /// Runs this Mac's Stim engine for the pairing commands Desktop has no request for.
@@ -198,9 +206,8 @@ public struct StimServerCLI: Sendable {
       source: .cli, decoder: Self.decoder)
   }
 
-  public func devices() async throws -> [PairedDevice] {
+  public func pairings() async throws -> PairedDeviceList {
     try decodeReporting(PairedDeviceList.self, from: await run(["pairings", "--json"]), source: .cli, decoder: Self.decoder)
-      .devices
   }
 
   public func grant(_ id: String, control: Bool) async throws {
