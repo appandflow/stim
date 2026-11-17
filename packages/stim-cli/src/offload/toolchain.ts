@@ -5,7 +5,6 @@ import {
   cocoapodsInstall,
   installedJdkMajors,
   iosToolchainForRuby,
-  iphoneRuntimes,
   localJdk,
   quiet,
   sdkReport,
@@ -16,6 +15,7 @@ import {
   type WorkerToolchain,
   type XcodeApp,
 } from '../engine/toolchain.ts';
+import { listIosRuntimes, pickDefaultIosCreation, type IosRuntime } from '../devices/ios.ts';
 
 export function workerToolchain(rubyVersion: string | null = null, native?: 'xcode' | 'gradle'): WorkerToolchain {
   if (native === 'gradle')
@@ -31,9 +31,9 @@ export function workerToolchain(rubyVersion: string | null = null, native?: 'xco
       jdks: installedJdkMajors(),
       ...sdkReport(),
     };
-  let listed: unknown = null;
+  let installed: IosRuntime[] = [];
   try {
-    listed = JSON.parse(quiet('xcrun', ['simctl', 'list', 'devices', 'available', '-j']) ?? 'null');
+    installed = listIosRuntimes();
   } catch {}
   const ios = iosToolchainForRuby(rubyVersion, native);
   return {
@@ -42,7 +42,8 @@ export function workerToolchain(rubyVersion: string | null = null, native?: 'xco
     os: process.platform,
     macosSdk: native ? null : (quiet('xcrun', ['--sdk', 'macosx', '--show-sdk-version'])?.trim() ?? null),
     bundler: native ? null : quiet('bundle', ['--version'])?.trim() || null,
-    runtimes: iphoneRuntimes(listed),
+    // @ref LLP 0013#a-build-destination-the-build-creates -- a runtime that supports an iPhone is enough
+    runtimes: installed.filter((runtime) => pickDefaultIosCreation([], [runtime])).map((runtime) => runtime.identifier),
     jdk: native ? null : localJdk(),
     ...(native ? {} : { jdks: installedJdkMajors() }),
     ...(native ? { androidSdk: null } : sdkReport()),
@@ -342,7 +343,7 @@ function xcodeProblem(local: { xcode: string | null }, worker: WorkerToolchain, 
 }
 
 function runtimeProblem(runtime: string, worker: WorkerToolchain, followsXcode: boolean): OffloadProblem {
-  const reason = `no iPhone simulator on ${runtime} there`;
+  const reason = `no ${runtime} simulator runtime there`;
   if (followsXcode) {
     return { code: 'runtime', reason: `${reason}; this follows from the Xcode problem`, followsFrom: 'xcode' };
   }
@@ -352,7 +353,7 @@ function runtimeProblem(runtime: string, worker: WorkerToolchain, followsXcode: 
         code: 'runtime',
         reason,
         commands: [`xcodebuild -downloadPlatform iOS -buildVersion ${version[1]}.${version[2]}`],
-        lead: `download the iOS ${version[1]}.${version[2]} simulator runtime if it is not installed (an installed runtime also needs an iPhone simulator)`,
+        lead: `download the iOS ${version[1]}.${version[2]} simulator runtime`,
       }
     : { code: 'runtime', reason };
 }

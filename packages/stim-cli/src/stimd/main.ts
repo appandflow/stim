@@ -1295,6 +1295,11 @@ async function runStimdInner(
         }
         const reply = (fields: Record<string, unknown>) => socket.write(`${JSON.stringify(fields)}\n`);
         if (!framed) {
+          if (message.kind === 'probe') {
+            reply({ op: 'probe', pid: process.pid, build });
+            socket.end();
+            return;
+          }
           // compat C26 permanent
           if (message.kind !== 'cli' && message.kind !== 'api' && message.kind !== 'desktop') {
             reply({ op: 'error', code: 'unknown-kind', message: 'the first frame names no client kind' });

@@ -12,6 +12,7 @@ import {
   type DaemonStatus,
 } from '@stim-cli/core/state';
 import { clearCrashHold } from '../stimd/crash-hold.ts';
+import { probeDaemonAnswer, unansweredFindings, withAnswer } from '../daemon/answering.ts';
 import { daemonFindings, daemonLine, daemonStatus, lastActionLine } from '../daemon/status.ts';
 import { discoverToolchain, projectNodeBin, projectNodePin, type ToolchainEntry } from '@stim-cli/core/toolchain';
 import { maintenanceStatus, maintenanceLine } from '../stimd/passes/status.ts';
@@ -728,6 +729,7 @@ async function assembleDoctorReport(
   );
 
   const serverSetup = withoutUnhandledRejection(readServerSetup(version, shareSettings(settings)));
+  const daemonAnswer = probeDaemonAnswer(daemonStatus(env));
   const watchman = await watchmanMemory;
   if (watchman) findings.push(watchman);
   if (!memorySweepIsScoped(env)) findings.push(...memoryCulpritFindings(await readMemoryCulpritsAsync()));
@@ -766,8 +768,11 @@ async function assembleDoctorReport(
       fix: 'Run `stim doctor --fix` to remove them; it never touches a running job or one whose home exists.',
     });
   const maintenance = maintenanceStatus(env);
-  const daemon = daemonStatus(env);
-  findings.push(...daemonFindings(daemon));
+  const answer = await daemonAnswer;
+  const decidedAt = Date.now();
+  const answered = withAnswer(daemonStatus(env), answer);
+  findings.push(...daemonFindings(answered, { probed: true, now: decidedAt }));
+  const silent = unansweredFindings(answered, decidedAt);
   const missingRoots = missingDiscoverRoots(loadConfig(), env);
   if (missingRoots.length)
     findings.push({
@@ -784,13 +789,14 @@ async function assembleDoctorReport(
       detail: `${broadRoots.join(', ')} resolve${broadRoots.length === 1 ? 's' : ''} to the home folder, a folder holding it or the filesystem root, so nothing is discovered there.`,
       fix: 'Name folders below the home folder, such as ~/Developer.',
     });
+  findings.push(...silent);
   return {
     project: root,
     platform: opts.platform ?? null,
     stim,
     pressure: pressure.pressure,
     maintenance: { ...maintenance, logPath: gcLogFile() },
-    daemon: { ...daemon, logPath: daemonNdjsonFile() },
+    daemon: { ...answered, logPath: daemonNdjsonFile() },
     discovery: discoveryReport({
       scan: readDiscoveryScanFile(),
       census: readDiscoveryCensusFile(),

@@ -156,9 +156,18 @@ export function daemonLine(status: DaemonStatus, now: number = Date.now()): stri
   const pressure = status.pressure
     ? `; pressure ${status.pressure.level}${status.pressure.reasons.length ? ` (${status.pressure.reasons.join('; ')})` : ''}`
     : '';
-  return status.running
-    ? `${label}: running since ${clock(status.running.since)} (pid ${status.running.pid}), ${tick}${pressure}${claim}`
-    : `${label}: not running, ${tick}${pressure}; start, ios, android, web, macos and revive start it${claim}`;
+  if (!status.running)
+    return `${label}: not running, ${tick}${pressure}; start, ios, android, web, macos and revive start it${claim}`;
+  const { pid, since } = status.running;
+  const state = status.unanswered
+    ? `holds the claim since ${clock(since)} (pid ${pid}), ${unansweredText(status.unanswered)}`
+    : `running since ${clock(since)} (pid ${pid})`;
+  return `${label}: ${state}, ${tick}${pressure}${claim}`;
+}
+
+/** The sentence the daemon line and the doctor finding give for a stimd that holds the claim and did not answer. */
+export function unansweredText({ waitedMs, socketMissing }: NonNullable<DaemonStatus['unanswered']>): string {
+  return `did not answer within ${waitedMs / 1000} s${socketMissing ? ' (its socket file is missing)' : ''}`;
 }
 
 /** The last action a daemon of this home took, or null before its first. */
@@ -199,10 +208,26 @@ function servingWorkspaces(): string[] {
   );
 }
 
-/** A stuck daemon claim, a daemon that stopped ticking, or no daemon while a dev server runs. */
+/** Whether a running daemon's last tick, or its start when it has not ticked yet, is older than three tick intervals. */
+export function ticksLate(status: DaemonStatus, now: number = Date.now()): boolean {
+  if (!status.running) return false;
+  const tickAt = Date.parse(status.lastTickAt ?? '');
+  const since = Math.max(Number.isFinite(tickAt) ? tickAt : 0, Date.parse(status.running.since) || 0);
+  return now - since > 3 * (status.intervalMs ?? 60_000);
+}
+
+/**
+ * A stuck daemon claim, a late or stopped daemon, or no daemon while a dev server runs. `probed` says the caller
+ * probed a running stimd for an answer and put the result in `status.unanswered`: a late stimd that answered is
+ * reported without a kill, and one that did not answer is left to the not-answering finding.
+ */
 export function daemonFindings(
   status: DaemonStatus,
-  { now = Date.now(), serving = servingWorkspaces }: { now?: number; serving?: () => string[] } = {},
+  {
+    now = Date.now(),
+    serving = servingWorkspaces,
+    probed = false,
+  }: { now?: number; serving?: () => string[]; probed?: boolean } = {},
 ): Finding[] {
   const findings: Finding[] = [];
   // compat C32 until 2.1.0
@@ -255,17 +280,24 @@ export function daemonFindings(
   }
   if (status.mode === 'off') return findings;
   const tickAt = Date.parse(status.lastTickAt ?? '');
-  const late = 3 * (status.intervalMs ?? 60_000);
-  const since = status.running
-    ? Math.max(Number.isFinite(tickAt) ? tickAt : 0, Date.parse(status.running.since) || 0)
-    : NaN;
-  if (status.running && now - since > late)
-    findings.push({
-      level: 'cost',
-      title: 'The stim-daemon has stopped ticking',
-      detail: `stim-daemon pid ${status.running.pid} holds its claim, but its last tick was ${Number.isFinite(tickAt) ? `${formatLongDuration(now - tickAt)} ago` : 'never written'}, so idle workspaces and dev servers are not stopped. Its log is ${daemonNdjsonFile()}.`,
-      fix: `Stop it with \`kill ${status.running.pid}\`; the next stim start, ios or android starts a new one.`,
-    });
+  if (status.running && !status.unanswered && ticksLate(status, now)) {
+    const last = Number.isFinite(tickAt) ? `${formatLongDuration(now - tickAt)} ago` : 'never written';
+    findings.push(
+      probed
+        ? {
+            level: 'cost',
+            title: 'The stim-daemon is late with its ticks',
+            detail: `stim-daemon pid ${status.running.pid} holds its claim and answered, but its last tick was ${last}, so idle workspaces and dev servers are not stopped until it ticks. A long pass or a busy machine can delay a tick. Its log is ${daemonNdjsonFile()}.`,
+            fix: `Read ${daemonNdjsonFile()} for the pass it is in, or run \`stim doctor\` again later.`,
+          }
+        : {
+            level: 'cost',
+            title: 'The stim-daemon has stopped ticking',
+            detail: `stim-daemon pid ${status.running.pid} holds its claim, but its last tick was ${last}, so idle workspaces and dev servers are not stopped. Its log is ${daemonNdjsonFile()}.`,
+            fix: `Stop it with \`kill ${status.running.pid}\`; the next stim start, ios or android starts a new one.`,
+          },
+    );
+  }
   if (!status.running && !status.claim && !status.older) {
     const running = serving();
     if (running.length)

@@ -24,6 +24,45 @@ const status = (over: Partial<DaemonStatus>): DaemonStatus => ({
 const titles = (value: DaemonStatus, serving: string[] = []) =>
   daemonFindings(value, { now: NOW, serving: () => serving }).map((finding) => finding.title);
 
+describe('a late tick', () => {
+  const late = status({ running, lastTickAt: '2026-11-02T11:56:00.000Z' });
+  const findings = (value: DaemonStatus, probed?: boolean) =>
+    daemonFindings(value, { now: NOW, serving: () => [], ...(probed === undefined ? {} : { probed }) });
+
+  test.each<[string, Partial<DaemonStatus>, number]>([
+    ['exactly three intervals old', { lastTickAt: '2026-11-02T11:57:00.000Z' }, 0],
+    ['one millisecond over three intervals', { lastTickAt: '2026-11-02T11:56:59.999Z' }, 1],
+    ['newer than now', { lastTickAt: '2026-11-02T12:00:05.000Z' }, 0],
+    [
+      'a claim started after now, with an old tick',
+      { lastTickAt: '2026-11-02T11:00:00.000Z', running: { pid: 4242, since: '2026-11-02T12:00:30.000Z' } },
+      0,
+    ],
+  ])('with a tick %s reports %i late finding', (_name, over, count) => {
+    expect(findings(status({ running, ...over }), true)).toHaveLength(count);
+  });
+
+  test('of a stimd that answered the probe is reported as late, with no kill', () => {
+    const [finding, ...rest] = findings(late, true);
+    expect(rest).toEqual([]);
+    expect(finding?.title).toBe('The stim-daemon is late with its ticks');
+    expect(`${finding?.detail} ${finding?.fix}`).not.toMatch(/kill/);
+  });
+
+  test('of a stimd that did not answer leaves the finding to the not-answering one', () => {
+    const silent = { ...late, unanswered: { pid: 4242, waitedMs: 3000 } };
+    expect(findings(silent, true)).toEqual([]);
+    expect(findings(silent)).toEqual([]);
+  });
+
+  test('of a stimd nobody probed keeps the stopped-ticking finding with its kill', () => {
+    const [finding, ...rest] = findings(late);
+    expect(rest).toEqual([]);
+    expect(finding?.title).toBe('The stim-daemon has stopped ticking');
+    expect(finding?.fix).toContain('`kill 4242`');
+  });
+});
+
 test.each<[string, DaemonStatus, string[], string[]]>([
   [
     'a crash hold',
