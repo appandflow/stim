@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { DESKTOP_API, PHONE_API } from '@stim-cli/core/protocol';
-import { desktopKeyFile, isJsonObject, stimBuildDigest, stimdRecordFile } from '@stim-cli/core/state';
+import { daemonNdjsonFile, desktopKeyFile, isJsonObject, stimBuildDigest, stimdRecordFile } from '@stim-cli/core/state';
 import { noiseConnect, stimdConnect, terminateClients } from '../../../server/__tests__/noise-client.ts';
 
 const execute = promisify(execFile);
@@ -335,6 +335,54 @@ test("a service process that finds a stimd serving a share-only net thread on an
   } finally {
     for (const child of [stimd, service])
       if (child && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    if (previousHome === undefined) delete process.env.STIM_HOME;
+    else process.env.STIM_HOME = previousHome;
+    rmSync(home, { recursive: true, force: true });
+  }
+}, 60_000);
+
+test("an ask that arrives while a service's ask moves the net thread gets the service's thread", async () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-net-bystander-'));
+  const env = { ...process.env, STIM_HOME: home, HOME: home, USERPROFILE: home, PATH: '' };
+  const previousHome = process.env.STIM_HOME;
+  process.env.STIM_HOME = home;
+  const stimd = spawn(process.execPath, [join(root, 'packages/stim-cli/dist/cli.mjs'), '__stimd', '--mode', 'off'], {
+    env,
+    stdio: 'ignore',
+  });
+  const stimdExited = once(stimd, 'exit');
+  try {
+    const deadline = Date.now() + 15_000;
+    while (!existsSync(stimdRecordFile())) {
+      if (Date.now() > deadline || stimd.exitCode !== null) throw new Error('stimd wrote no run/stimd.json');
+      await new Promise((done) => setTimeout(done, 50));
+    }
+    const { socket, build } = JSON.parse(readFileSync(stimdRecordFile(), 'utf8'));
+    const first = { kind: 'cli', build };
+    expect(await ensureAs(socket, first, { share: true })).toMatchObject({ listening: true });
+    const port = await freePort();
+    const ask = { port, loopbackOnly: false, extraEnv: [], pathPrepend: [], service: true };
+    const moving = ensureAs(socket, first, ask);
+    await new Promise((done) => setTimeout(done, 5));
+    const bystander = ensureAs(socket, first, { port, loopbackOnly: true });
+    expect(await Promise.all([moving, bystander])).toMatchObject([
+      { listening: true, port },
+      { listening: true, port },
+    ]);
+    const restarts = () =>
+      readFileSync(daemonNdjsonFile(), 'utf8')
+        .split('\n')
+        .filter((line) => line.includes('"net_restart"')).length;
+    const flushed = () => new Promise((done) => setTimeout(done, 1000));
+    await flushed();
+    const before = restarts();
+    expect(await ensureAs(socket, first, ask)).toMatchObject({ listening: true, port });
+    await flushed();
+    expect(restarts()).toBe(before);
+    stimd.kill('SIGTERM');
+    expect(await stimdExited).toEqual([0, null]);
+  } finally {
+    if (stimd.exitCode === null && stimd.signalCode === null) stimd.kill('SIGKILL');
     if (previousHome === undefined) delete process.env.STIM_HOME;
     else process.env.STIM_HOME = previousHome;
     rmSync(home, { recursive: true, force: true });

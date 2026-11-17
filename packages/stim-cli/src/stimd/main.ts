@@ -1428,7 +1428,7 @@ async function runStimdInner(
             reply({
               op: 'net',
               listening: false,
-              message: `the net thread serves port ${running.port ?? 'unknown'}; it moves to port ${options.port} once the work stimd holds ends`,
+              message: `the net thread serves port ${running.port ?? 'unknown'}; the service's next ask moves it to port ${options.port} once the work stimd holds ends`,
             });
             continue;
           }
@@ -1452,10 +1452,15 @@ async function runStimdInner(
                     : 'Stim Desktop asked for other net thread options; restarting it',
                 );
                 restartingNet = true;
-                return net.close().then(() => {
-                  restartingNet = false;
-                  return closing ? { listening: false as const, message: 'stimd is ending' } : ensureNet(options);
-                });
+                return net
+                  .restart(options, () => !closing)
+                  .finally(() => {
+                    restartingNet = false;
+                  })
+                  .then((state) => {
+                    if (state.listening) recordNet(state.port);
+                    return state;
+                  });
               })()
             : ensureNet(options);
           void answer.then(
