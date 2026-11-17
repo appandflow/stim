@@ -207,7 +207,7 @@ evidence, as part of the same snapshot, and is never reused across two process
 reads. Within one snapshot every check shares that one reading, so the cost is one
 launcher read per process read and nothing is memoized past a process re-read. The
 pass's planning reading (shared by the operation, possibly minutes old) serves
-planning and the early checks only. The routes: the idleness evidence reads the
+planning and the early checks only, except a source checkout's tree selection before its claims, which reads anew. The routes: the idleness evidence reads the
 processes and the launchers together (`discoveredEvidence`, one `DiscoveredReads`
 per check); a directory check that reads the processes itself (a Cargo `target/` in
 `regenerableDirProblem`) takes a new launcher reading right after that read;

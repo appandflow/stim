@@ -763,7 +763,9 @@ export async function clearSourceTrees(
     source: true,
   };
   const planning = launchersOf(operation, signal);
+  const selection = freshLaunchers(operation, signal);
   const checkTree = async (path: string, held?: readonly string[]): Promise<string | null> => {
+    const reading = held ? planning : selection;
     const candidate = { ...base, path, ...(held ? { source: false } : {}) };
     const pinned = await pinsOf(candidate.keys, options.pinned);
     return (
@@ -778,10 +780,10 @@ export async function clearSourceTrees(
           inUse: await inUseOf(candidate, 'dependencies', signal, operation, held),
           ...(held ? { locked: held } : {}),
         },
-        await artifactReads(candidate, 'dependencies', signal, operation, planning),
+        await artifactReads(candidate, 'dependencies', signal, operation, reading),
       ) ??
       (await regenerableDirProblem(worktree.path, path, signal, {
-        launching: launchingOf(worktree.path, planning, operation, signal),
+        launching: launchingOf(worktree.path, reading, operation, signal),
       })) ??
       linkedWorktreeUsing(candidate, options.worktrees)
     );

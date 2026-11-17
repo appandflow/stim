@@ -23,9 +23,9 @@ import { checkoutRootOf } from '../workspace/checkout-role.ts';
 import { saveConfig } from '../workspace/config.ts';
 import * as fsUtil from '../fs-util.ts';
 import * as gitModule from '../workspace/git.ts';
-import { collectArtifactsAsync } from '../stimd/passes/artifacts.ts';
+import { clearSourceTrees, collectArtifactsAsync } from '../stimd/passes/artifacts.ts';
 import { answered } from '../workspace/bounded-read.ts';
-import { freshLaunchers, launcherReason, launchingOf } from '../workspace/launchers.ts';
+import { freshLaunchers, launcherReason, launchersOf, launchingOf } from '../workspace/launchers.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { testContext } from './_context.ts';
 
@@ -315,6 +315,37 @@ describe('an executable on PATH that links into a checkout keeps it, whichever w
         expect.objectContaining({ target: modules, reason: expect.stringContaining('on PATH') }),
       ]),
     );
+  });
+
+  it('skips a source checkout dependency tree before any claim when a link appears after the planning read', async () => {
+    const roots = join(base, 'roots');
+    const path = join(roots, 'app');
+    saveConfig({ version: 2, projects: {}, repos: {}, maintenance: { discoverRoots: [roots] } });
+    app(path);
+    mkdirSync(join(path, 'node_modules', 'dep'), { recursive: true });
+    writeFileSync(join(path, 'node_modules', 'dep', 'cli'), 'x');
+    age(path);
+    const modules = join(path, 'node_modules');
+    const operation = testContext();
+    await launchersOf(operation, operation.signal)();
+    link(join(modules, 'dep', 'cli'));
+    const recheck = vi.fn<() => Promise<string | null>>(async () => null);
+
+    const results = await clearSourceTrees([modules], {
+      protectedRoot: '',
+      pinned: () => false,
+      worktrees: [{ path, linked: false, locked: false, keys: [path] }],
+      recheck,
+      level: 'normal',
+      launchers: freshLaunchers(operation, operation.signal),
+      operation,
+    });
+
+    expect(results.get(modules)).toEqual(
+      expect.objectContaining({ status: 'kept', detail: expect.stringContaining('on PATH') }),
+    );
+    expect(recheck).not.toHaveBeenCalled();
+    expect(existsSync(modules)).toBe(true);
   });
 
   it('owns a registered app inside a monorepo by the worktree root, and a folder in no checkout by itself', async () => {
