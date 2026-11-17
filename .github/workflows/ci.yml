@@ -82,7 +82,7 @@ on:
       - 'apps/desktop/Tests/VisualFixtureTests/Fixtures/real-archive/**'
 
 concurrency:
-  group: ci-v2-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}${{ inputs.full && '-full' || '' }}
+  group: ci-v2-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}${{ inputs.full && '-full' || '' }}${{ (inputs.crash_loop || '0') != '0' && format('-loop-{0}', inputs.crash_loop_scope) || '' }}
   cancel-in-progress: true
 
 permissions:
