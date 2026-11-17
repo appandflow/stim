@@ -240,14 +240,24 @@ export interface RunningServer {
   /** Settles once the first read of the Stim home finished: `ready`, or `degraded` while a read does not return. */
   ready: Promise<StartupState>;
   /**
-   * Before a restart of this server: when no offloaded job runs or is being admitted (its artifact delivery included),
-   * every hosted session can be resumed and no runtime install or probe runs, refuses new ones and returns 0; otherwise
-   * returns how many there are and refuses nothing.
+   * Before a restart of this server: when no workspace action (a Desktop or phone build, start, stop, reload, settings
+   * write) runs, no offloaded job runs or is being admitted (its artifact delivery included), every hosted session can
+   * be resumed and no runtime install or probe runs, refuses new ones of each and returns 0; otherwise returns how many
+   * there are and refuses nothing.
    */
   sealForRestart: () => number;
   /** Undoes a `sealForRestart` that answered 0 when the restart does not follow. */
   unsealForRestart: () => void;
   close: () => Promise<void>;
+}
+
+/** The workspaces that run an action now; every workspace reads as busy while a restart seal holds. */
+class WorkspaceActions extends Set<string> {
+  sealed = false;
+
+  override has(workspace: string): boolean {
+    return this.sealed || super.has(workspace);
+  }
 }
 
 const CLOSE_AUTH_TIMEOUT = 4408;
@@ -630,7 +640,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const logLimits: LogLimits = { ...LOG_LIMITS, ...options.logLimits };
   const commandLimits: CommandLimits = { ...COMMAND_LIMITS, ...options.commandLimits };
   const actionLimits: CommandLimits = { ...ACTION_LIMITS, ...options.actionLimits };
-  const busyWorkspaces = new Set<string>();
+  const busyWorkspaces = new WorkspaceActions();
   const retainedLifecycles = new Set<() => void>();
   const planQueues = new Map<string, Promise<void>>();
   const readDetailsReport = (
@@ -2306,16 +2316,20 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     },
     publishPresence: (params) => recordPresence(localAgents, params)?.message ?? null,
     sealForRestart: () => {
-      const hosted = hostedDevices.restartWork();
+      const hosted = hostedDevices.restartWork() + busyWorkspaces.size;
       if (hosted > 0) return hosted;
       const busy = jobs.seal();
-      if (busy === 0) hostedDevices.seal();
+      if (busy === 0) {
+        hostedDevices.seal();
+        busyWorkspaces.sealed = true;
+      }
       return busy;
     },
     unsealForRestart: () => {
       if (closing) return;
       jobs.unseal();
       hostedDevices.unseal();
+      busyWorkspaces.sealed = false;
     },
     ready,
     close: async () => {

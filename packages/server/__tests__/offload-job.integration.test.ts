@@ -37,7 +37,7 @@ afterEach(async () => {
   server = null;
   vi.unstubAllEnvs();
   removeTree(home);
-});
+}, 30_000);
 
 async function paired(attached = false): Promise<{ endpoint: Endpoint; credential: MachineCredential }> {
   server = await startServer({

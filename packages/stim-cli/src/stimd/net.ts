@@ -86,7 +86,7 @@ export function createNetThread(
   let asked = 0;
   let replacing: NetOptions | null = null;
   let ending = false;
-  const busyAnswers: ((jobs: number) => void)[] = [];
+  const sealAnswers = new Map<Worker, ((jobs: number) => void)[]>();
   let cleanupFailure: Error | undefined;
   let failureNotified = false;
   let nextId = 1;
@@ -121,7 +121,6 @@ export function createNetThread(
     port = null;
     for (const socket of sockets.values()) socket.destroy();
     sockets.clear();
-    for (const answer of busyAnswers.splice(0)) answer(0);
     if (!cleanupFailure) onExit();
     else if (!failureNotified) {
       failureNotified = true;
@@ -168,7 +167,7 @@ export function createNetThread(
             if (!shareOnly) return;
             log('info', 'net_idle', 'no web share is left; stopping the net thread');
             stop(thread);
-          } else if (message.type === 'sealed') busyAnswers.shift()?.(message.jobs);
+          } else if (message.type === 'sealed') sealAnswers.get(thread)?.shift()?.(message.jobs);
           else if (message.type === 'update') onUpdate(message.why);
           else if (message.type === 'restart') onRestart(message.why);
           else if (message.type === 'data') sockets.get(message.id)?.write(message.chunk);
@@ -182,6 +181,8 @@ export function createNetThread(
         thread.once('exit', (code) => {
           if (!clean) unverified(`worker exited with code ${code} without confirming cleanup`, false);
           answer({ listening: false, message: `the net thread exited with code ${code}` });
+          for (const sealed of sealAnswers.get(thread) ?? []) sealed(0);
+          sealAnswers.delete(thread);
           if (worker === thread) ended();
         });
       });
@@ -204,10 +205,11 @@ export function createNetThread(
       post({ type: 'unseal' });
     },
     sealForRestart() {
-      if (!listening) return Promise.resolve(0);
+      const thread = worker;
+      if (!listening || !thread) return Promise.resolve(0);
       return new Promise((answer) => {
-        busyAnswers.push(answer);
-        post({ type: 'seal' });
+        sealAnswers.set(thread, [...(sealAnswers.get(thread) ?? []), answer]);
+        thread.postMessage({ type: 'seal' });
       });
     },
     presence(params) {
