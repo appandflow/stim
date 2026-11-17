@@ -1429,8 +1429,8 @@ accept and sudo xcodebuild -runFirstLaunch for the checks that fail, or xcodes
 install <version> with no Xcode app. A runtime the machine lacks gets
 xcodebuild -downloadPlatform iOS -buildVersion <version>, or a pointer to the
 Xcode problem when xcode-select is the cause. A stim-server that reports no
-developerDir keeps the prose fix. With the runtime but no iPhone simulator, it
-creates one per build and deletes it after. A missing or different global CocoaPods
+developerDir keeps the prose fix. A runtime with no iPhone simulator gets one
+per build. A missing or different global CocoaPods
 keeps auto, remote and remote-only placement from choosing the machine for a project that does not
 pin it, unless the machine already holds the exact artifact; the placement line
 says why and doctor shows the install command. A named --remote-build still
