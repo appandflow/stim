@@ -1274,7 +1274,7 @@ async function runStimdInner(
     };
     if (keepOwn) return missing('its cleanup was not verified, so no successor was started');
     try {
-      launchStimd(process.env, startMode, process.platform, entry, serveArgs(carried, service));
+      launchStimd(process.env, startMode, process.platform, entry, serveArgs(carried, service || serviceNet));
     } catch (error) {
       return missing(`the launch failed: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -1432,6 +1432,7 @@ async function runStimdInner(
             serviceMove ||
             (kind === 'desktop' &&
               !serviceNet &&
+              !restartingNet &&
               !pinned() &&
               running !== null &&
               (running.loopbackOnly !== options.loopbackOnly ||
@@ -1439,6 +1440,7 @@ async function runStimdInner(
           if (!running) netServes = options;
           const restartNet = () => {
             netServes = options;
+            if (serviceMove) serviceNet = true;
             log(
               'info',
               'net_restart',
@@ -1468,10 +1470,13 @@ async function runStimdInner(
               ? restartNet()
               : ensureNet(resolved);
           if (forService)
-            void answer.then((state) => {
-              if (state.listening && state.port === options.port) serviceNet = true;
-              return undefined;
-            });
+            void answer.then(
+              (state) => {
+                if (state.listening && state.port === options.port) serviceNet = true;
+                return undefined;
+              },
+              () => undefined,
+            );
           void answer.then(
             (state) => {
               lastContact = Date.now();
@@ -1692,7 +1697,7 @@ async function runStimdInner(
       successorArgs: () => {
         const running = net.running();
         const carried = running && netServes ? { ...netServes, shareOnly: running.shareOnly } : null;
-        return serveArgs(carried, service);
+        return serveArgs(carried, service || serviceNet);
       },
       release: (why) => closeAttachedWork(ending === 'stdin' ? why : `${why} (${ending})`),
       log,
