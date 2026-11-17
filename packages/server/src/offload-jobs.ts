@@ -97,7 +97,7 @@ function meetsNode(engines: unknown): boolean {
 export class OffloadJobs {
   private readonly jobs = new Map<string, Job>();
   private readonly spliced = new WeakMap<object, Job>();
-  private readonly uploads = new WeakMap<object, Upload>();
+  private readonly uploads = new Map<object, Upload>();
   private readonly fetches = new Map<string, Promise<InstallFailure>>();
   private readonly failed = new Map<string, { failure: InstallFailure; at: number }>();
   private readonly options: OffloadJobsOptions;
@@ -175,11 +175,11 @@ export class OffloadJobs {
   }
 
   /**
-   * Refuses every later job, as `close` does, when no job runs, none is being admitted and no client engine is being
-   * installed, and returns 0; otherwise changes nothing and returns how many there are.
+   * Refuses every later job, as `close` does, when no job runs, none is being admitted, no package is being uploaded
+   * and no client engine is being installed, and returns 0; otherwise changes nothing and returns how many there are.
    */
   seal(): number {
-    const busy = this.jobs.size + this.admitting + this.fetches.size;
+    const busy = this.jobs.size + this.admitting + this.fetches.size + this.uploads.size;
     if (busy === 0) this.closed = true;
     return busy;
   }

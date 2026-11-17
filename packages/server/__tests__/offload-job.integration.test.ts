@@ -192,9 +192,23 @@ test('sealing offload jobs before a net thread move changes nothing while a job 
   const { endpoint, credential } = await paired();
   const worker = server;
   assert.ok(worker);
+  writeFileSync(join(home, 'config.json'), JSON.stringify({ server: { acceptClientBuilds: true } }));
+  const uploading = await open(endpoint, credential);
+  const upload = { name: 'stim.tgz', size: 10, sha256: 'a'.repeat(64) };
+  expect(
+    await uploading.request('job.start', {
+      kind: 'offload-probe',
+      stim: version,
+      build: 'b'.repeat(12),
+      repo: 'app',
+      package: upload,
+    }),
+  ).toHaveProperty('result.upload');
+  expect(worker.sealForRestart()).toBe(1);
+  uploading.close();
   const connection = await open(endpoint, credential);
   expect(await connection.startJob('offload-probe', 'app', false)).toBeNull();
-  expect(worker.sealForRestart()).toBe(1);
+  await vi.waitFor(() => expect(worker.sealForRestart()).toBe(1));
   const second = await open(endpoint, credential);
   expect(await second.startJob('offload-probe', 'app', false)).toBeNull();
   second.close();

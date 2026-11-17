@@ -113,17 +113,18 @@ unit's process (`--service` without `--carried`), when it finds a stimd holding
 the home, asks `net.ensure` with `service: true` and the values of its bare
 `--env` names, which the holder may not have. stimd restarts a net thread that
 runs share-only, or on another port or listener scope, with the service's
-options and those values, and also one that runs without the values the ask
-carries; the values reach only that thread, never a successor's arguments or
-environment. A successor after a handover therefore starts without them, and
-the unit's next ask moves its thread again. Stim Desktop no longer moves the thread after a service
+options and those values, and also one whose values differ from the ask's (a
+thread a service ask did not start takes them from stimd's environment). The
+values reach only that thread, never a successor's arguments; a successor
+inherits only the names stimd passes on, and the unit's next ask after a
+handover moves its thread again when a value is missing. Stim Desktop no longer moves the thread after a service
 ask. The move compares with the thread that runs, and an ask that waits on the
 stop gets the service's thread.
 
 stimd refuses the move while work pins it, and while the net thread runs
 anything a restart would end: a workspace action (a Desktop or phone build,
 start, stop, reload or settings write), an offloaded job or one being admitted
-(its artifact delivery and a client engine install included), a hosted session
+(its artifact delivery, a package upload and a client engine install included), a hosted session
 the next server cannot resume (a macOS session, or one installing), or a
 runtime install or other device-host probe. The asker then exits 1 and the
 unit's restart asks again. Otherwise the net thread stops admitting all of

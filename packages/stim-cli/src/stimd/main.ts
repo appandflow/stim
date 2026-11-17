@@ -1434,7 +1434,9 @@ async function runStimdInner(
             (running.shareOnly ||
               running.asked !== options.port ||
               running.loopbackOnly !== options.loopbackOnly ||
-              Object.entries(values).some(([name, value]) => netValues[name] !== value));
+              Object.entries(values).some(
+                ([name, value]) => (name in netValues ? netValues[name] : process.env[name]) !== value,
+              ));
           const restart =
             serviceMove ||
             (kind === 'desktop' &&

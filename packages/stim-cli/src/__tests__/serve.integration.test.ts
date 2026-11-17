@@ -393,6 +393,10 @@ test("an ask that arrives while a service's ask moves the net thread gets the se
     expect(await ensureAs(socket, first, valued)).toMatchObject({ listening: true, port });
     await flushed();
     expect(restarts()).toBe(before + 1);
+    const inherited = { ...ask, extraEnv: ['HOME'], envValues: { HOME: home } };
+    expect(await ensureAs(socket, first, inherited)).toMatchObject({ listening: true, port });
+    await flushed();
+    expect(restarts()).toBe(before + 1);
     stimd.kill('SIGTERM');
     expect(await stimdExited).toEqual([0, null]);
   } finally {
