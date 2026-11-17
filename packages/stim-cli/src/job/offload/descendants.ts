@@ -46,7 +46,7 @@ export interface ForeignDescendants {
 /**
  * The processes an offloaded build started outside the worker's process group `group`, such as an Xcode build
  * service and its script phases, which run in process groups of their own. `find` walks the process tree down from the
- * group's members and the processes already recorded, and records each new one by its identity: it is captured, then
+ * group's members and the recorded processes whose identity still reads `same` once the listing is taken, and records each new one by its identity: it is captured, then
  * kept only when a second listing still shows it below the same roots, so a pid reused between the listing and the
  * capture is never recorded. `signal` sends to a recorded process only while its identity reads `same`. `gone` is true
  * once every recorded identity reads `gone` or `different`. `unknown` turns true, and stays true, when a listing fails,
@@ -58,6 +58,8 @@ export interface ForeignDescendants {
 export function foreignDescendants(group: number): ForeignDescendants {
   const recorded = new Map<number, { pid: number; processToken: string }>();
   let unknown = false;
+  const live = () =>
+    [...recorded.values()].filter((record) => inspectProcessIdentity(record) === 'same').map(({ pid }) => pid);
   return {
     get unknown(): boolean {
       return unknown;
@@ -65,8 +67,9 @@ export function foreignDescendants(group: number): ForeignDescendants {
     find(): void {
       const before = processTable();
       if (!before) return void (unknown = true);
+      const roots = live();
       const captured = new Map<number, string>();
-      for (const pid of outside(before, group, recorded.keys()).keys()) {
+      for (const pid of outside(before, group, roots).keys()) {
         const identity = captureProcessIdentity(pid);
         if (identity.ok) captured.set(pid, identity.token);
         else if (identity.code !== 'NOT_FOUND') unknown = true;
@@ -74,10 +77,11 @@ export function foreignDescendants(group: number): ForeignDescendants {
       if (captured.size === 0) return;
       const after = processTable();
       if (!after) return void (unknown = true);
-      const below = outside(after, group, recorded.keys());
+      const below = outside(after, group, live());
       for (const [pid, processToken] of captured) {
+        const status = inspectProcessIdentity({ pid, processToken });
         if (below.has(pid)) recorded.set(pid, { pid, processToken });
-        else if (inspectProcessIdentity({ pid, processToken }) === 'same') unknown = true;
+        else if (status !== 'gone' && status !== 'different') unknown = true;
       }
     },
     signal(signal: NodeJS.Signals): void {
