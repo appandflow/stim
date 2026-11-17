@@ -37,6 +37,7 @@ Update the phone app alongside Desktop if you use it. Upgrades with paired clien
 
 - **Native cache.** The 2.0 fingerprint uses new keys. Expect one cold build per distinct native fingerprint whose only cache entry was made by 1.40. Matching 2.0 builds can reuse the new entry across worktrees. If a worktree warmed by 1.40 reports a lockfile newer than its npm install stamp, run `npm install` in the directory named by the warning so future builds can be cached. [Native artifact cache](./build-caches.md#native-artifact-cache)
 - **Expo-generated native directories.** Preserve manual edits before the first native run. For an untracked `ios/` or `android/` with a readable prebuild record from an older Stim, 2.0 runs Expo prebuild once for that platform in each generated worktree. A local run prebuilds in place. An offload worker can regenerate its own copy with `--clean`. If `STIM_PREBUILD_FAILED` says the record is unreadable, preserve your edits, move only the generated directory named by the error aside, and rerun. Leave tracked and hand-maintained native directories in place. [React Native and Expo inputs](./build-caches.md#react-native-and-expo-inputs)
+- **Build credentials.** An offloaded build removes Stim's own access and setup credentials from the worker's build environment. A build whose embedded config or dependency reads a private Stim credential, or that enumerates the project environment while one is present, is uncached. Remove the credential from the build environment to get caching back. Project build tools can still print the environment values they receive.
 - **Owned iOS simulators.** `ios.simslim` now defaults to `on`, including for previously created Stim simulators at their next boot. Set `ios.simslim` to `off` for a project that needs stock simulator services. [Owned devices](./owned-devices.md)
 
 ## Change cleanup scripts before running them
@@ -52,6 +53,7 @@ stim gc --dry-run --pressure high`}
 - `--delete` is gone. Use plain `stim gc` to apply the measured level after reviewing a dry run.
 - `--cache`, `--older-than`, and `--worktrees` are gone. Review the [maintenance settings](./settings.md#automatic-maintenance) for age and worktree policy. Use `--pressure normal`, `high`, or `critical` to choose a level for one pass.
 - `normal` includes age and dormancy cleanup, such as eligible worktree dependencies, parked devices, and unused iOS simulator runtimes. It can also clear dependencies from a dormant source checkout. `high` also applies pressure cleanup to idle workspaces and trims caches. `critical` can empty shared Stim caches and clean other tools' caches on the default home. An explicit `--pressure critical` runs the last stage even if space is recovered earlier. [Full cleanup rules](./commands.md#gc)
+- `stim worktree remove` and the automatic sweep keep hand edits to a registered worktree's `ios/Podfile.lock` and `project.pbxproj`. `worktree remove` refuses a changed `project.pbxproj`, and a tracked file marked `assume-unchanged` or `skip-worktree`, naming the file. Commit or discard the change, or pass `--force`.
 - Review configured `maintenance.discoverRoots` in the dry run. A root you explicitly configured brings eligible checkouts under the cleanup rules even if the root is in a home dot-folder or the system temp directory. [Discovery scope](./worktrees.md#checkouts-stim-never-ran-in)
 
 If you relied on the 1.40 defaults, review these values. An explicitly configured value still takes precedence.
@@ -82,7 +84,7 @@ The CLI gives no replacement hint for these names.
 | Old key                      | What to use in 2.0                                                                                                                      |
 | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | `remote.buildMode`           | `remote.build` / `STIM_REMOTE_BUILD`. Map `auto` to `auto`, `force` to `remote`, and `off` to `local`. Remove `STIM_REMOTE_BUILD_MODE`. |
-| `share.webrtc`               | Remove it and `STIM_WEBRTC_STUN`. Shared web video uses the share socket.                                                               |
+| `share.webrtc`               | Only a `next` build could set it, with `STIM_WEBRTC_STUN`; 1.40 had neither. Remove both. Shared web video uses the share socket.       |
 | `devices.reclaimIdleMinutes` | Remove it. While a run waits to boot, Stim can reclaim the longest-idle device of another workspace idle for at least two minutes.      |
 | `daemon.enabled`             | `daemon.mode`. Map `true` to `on` and `false` to `off`.                                                                                 |
 | `caches.injectMetroStore`    | `optimizations.metroSharedCache`.                                                                                                       |
@@ -109,7 +111,16 @@ The pressure ladder uses fixed rules for the choices below. Remove these keys an
 
 ## Update CLI automation and integrations
 
+Every command now runs from one operation registry. A subcommand refuses an option it does not define, such as `stim serve` subcommands given `--json` when they have none. Remove the option from scripts that passed one.
+
 The server and CI runner ship in `stim`. Use `stim serve` in place of `stim-server`. Use `stim pair`, `stim pairings`, `stim service`, and `stim setup` for those workflows, and replace `stim-ci` with `stim ci`. For the [GitHub Action](./ci.md#github-actions), set `version` to 2.0.0 or later, or stay on an older action ref with its supported version. If `cli-path` points into a Stim checkout, build it and use `packages/stim-cli/bin/stim.mjs`.
+
+### Packages that stop publishing
+
+`@stim-cli/core`, `cache`, `agent-driver`, `agent-driver-agent-device`, `metro`, `expo-build-cache`, `ci`, `transport`, `transport-tailscale`, `transport-local` and `server` are bundled into `stim` and no longer publish. Versions already on npm stay installable but get no updates, and the `stim-server` and `stim-ci` binaries are gone. `@stim-cli/cache-s3` stays published. If your code imports one of these packages, import from `stim`, `stim/ci` or `stim/plugin` instead.
+
+- **`@stim-cli/metro`.** Remove `sharedCacheStores` and the package from `metro.config.js` and your dependencies. Stim sets Metro's shared transform store itself when it starts Metro; `optimizations.metroSharedCache` controls it.
+- **`@stim-cli/expo-build-cache`.** Remove it from your dependencies and from the Expo `buildCacheProvider` config. Stim's engine no longer reads a cache it wrote. Build with `stim ios` and `stim android`.
 
 ### JavaScript and TypeScript
 
