@@ -4,10 +4,10 @@ import { processContext } from '../cli-operation.ts';
 import { diffInputs, isUncertain } from '../fingerprint/key.ts';
 import { reportSignal, reportTimeRemainingMs, trackReportResource } from '../report-runtime.ts';
 import { sizeScanDeferred } from '../stimd/passes/measure.ts';
-import type { StimContext } from '@stim-cli/core';
+import { workspaceName, type StimContext } from '@stim-cli/core';
 import { resolveOptimizations, type Optimizations } from '../optimizations.ts';
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync } from 'fs';
-import { rm } from 'fs/promises';
+import { rm, rmdir } from 'fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { plural, quotedPath } from '../command-output.ts';
 import { getExecutor } from '../exec.ts';
@@ -1635,6 +1635,7 @@ export async function detectFingerprintParity(
   const release = () => released();
   let added = false;
   let retain = false;
+  let headWorkspace: string | undefined;
   trackReportResource(operation, cleanup, () => cleanup);
 
   try {
@@ -1646,6 +1647,8 @@ export async function detectFingerprintParity(
       )) !== null;
     if (!added) return null;
     const headApp = join(worktree, await appPathInRepository(projectRoot));
+    const headState = join(context.home, 'workspaces', workspaceName(headApp));
+    if (!existsSync(headState)) headWorkspace = headState;
     const sourceTop = await repoRootAsync(projectRoot);
     if (sourceTop) {
       const top = realpathSync.native(sourceTop);
@@ -1745,6 +1748,7 @@ export async function detectFingerprintParity(
           throw new Error('The temporary worktree is still registered or its registration cannot be read.');
       }
       await rm(base, { recursive: true, force: true });
+      if (headWorkspace) await rmdir(headWorkspace).catch(() => {});
       if (added && !operation) await gitQuietAsync(projectRoot, ['worktree', 'prune'], { write: true });
     } catch (error) {
       if (!operation) throw error;
