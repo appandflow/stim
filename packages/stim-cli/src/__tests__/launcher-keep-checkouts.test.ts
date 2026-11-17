@@ -328,14 +328,14 @@ describe('an executable on PATH that links into a checkout keeps it, whichever w
     age(path);
     const modules = join(path, 'node_modules');
     const operation = testContext();
-    await launchersOf(operation, operation.signal)();
+    await launchersOf(operation, operation.signal, false)();
     link(join(modules, 'dep', 'cli'));
     const recheck = vi.fn<() => Promise<string | null>>(async () => null);
 
     const results = await clearSourceTrees([modules], {
       protectedRoot: '',
       pinned: () => false,
-      worktrees: [{ path, linked: false, locked: false, keys: [path] }],
+      worktrees: [{ path, linked: false, locked: false, keys: [path], reduceOnly: false }],
       recheck,
       level: 'normal',
       launchers: freshLaunchers(operation, operation.signal),
@@ -354,7 +354,7 @@ describe('an executable on PATH that links into a checkout keeps it, whichever w
     const tool = app(path);
     const build = join(path, 'android', 'app', 'build');
     const operation = testContext();
-    await launchersOf(operation, operation.signal)();
+    await launchersOf(operation, operation.signal, false)();
     link(tool);
     const recheck = vi.fn<() => Promise<string | null>>(async () => null);
 
@@ -365,7 +365,7 @@ describe('an executable on PATH that links into a checkout keeps it, whichever w
         windowMs: 0,
         protectedRoot: '',
         pinned: () => false,
-        worktrees: [{ path, linked: false, locked: false, keys: [path] }],
+        worktrees: [{ path, linked: false, locked: false, keys: [path], reduceOnly: false }],
         recheck,
         launchers: freshLaunchers(operation, operation.signal),
         operation,
@@ -400,7 +400,7 @@ describe('an executable on PATH that links into a checkout keeps it, whichever w
     const results = await clearSourceTrees([first, second], {
       protectedRoot: '',
       pinned: () => false,
-      worktrees: [{ path, linked: false, locked: false, keys: [path] }],
+      worktrees: [{ path, linked: false, locked: false, keys: [path], reduceOnly: false }],
       recheck,
       level: 'normal',
       launchers: freshLaunchers(operation, operation.signal),
@@ -421,7 +421,7 @@ describe('an executable on PATH that links into a checkout keeps it, whichever w
     writeFileSync(join(modules, 'dep', 'cli'), 'x');
     age(path);
     const operation = testContext();
-    await launchersOf(operation, operation.signal)();
+    await launchersOf(operation, operation.signal, false)();
     const recheck = vi.fn<() => Promise<string | null>>(async () => {
       link(join(modules, 'dep', 'cli'));
       return null;
@@ -435,7 +435,7 @@ describe('an executable on PATH that links into a checkout keeps it, whichever w
     const results = await clearSourceTrees([modules], {
       protectedRoot: '',
       pinned: () => false,
-      worktrees: [{ path, linked: false, locked: false, keys: [path] }],
+      worktrees: [{ path, linked: false, locked: false, keys: [path], reduceOnly: false }],
       recheck,
       level: 'normal',
       launchers: freshLaunchers(operation, operation.signal),

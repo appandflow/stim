@@ -166,8 +166,23 @@ describe('the launcher directories', () => {
       mkdirSync(join(base, 'bin'));
       writeFileSync(join(base, 'real'), 'x');
       symlinkSync(join(base, 'real'), join(base, 'bin', 'tool'));
-      const found = await launchersOf(testContext({ env: { PATH: join(base, 'bin') } }))();
+      const found = await launchersOf(testContext({ env: { PATH: join(base, 'bin') } }), undefined, false)();
       expect(found.targets).toContain(join(base, 'real'));
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps the planning reading of reduce-only checkouts apart from the one every other checkout shares', async () => {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), 'stim-launchers-')));
+    try {
+      mkdirSync(join(base, 'bin'));
+      writeFileSync(join(base, 'real'), 'x');
+      const operation = testContext({ env: { PATH: join(base, 'bin') } });
+      expect((await launchersOf(operation, undefined, false)()).targets).not.toContain(join(base, 'real'));
+      symlinkSync(join(base, 'real'), join(base, 'bin', 'tool'));
+      expect((await launchersOf(operation, undefined, false)()).targets).not.toContain(join(base, 'real'));
+      expect((await launchersOf(operation, undefined, true)()).targets).toContain(join(base, 'real'));
     } finally {
       rmSync(base, { recursive: true, force: true });
     }

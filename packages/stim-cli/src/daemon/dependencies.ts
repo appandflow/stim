@@ -214,7 +214,10 @@ export async function rankSourceDependencies(
       });
       continue;
     }
-    const verdict = await sourceCheckoutIdle(candidate.worktree, rule.thresholdMs, rule.setting, { operation });
+    const verdict = await sourceCheckoutIdle(candidate.worktree, rule.thresholdMs, rule.setting, {
+      operation,
+      reduceOnly: candidate.reduceOnly,
+    });
     if ('kept' in verdict) {
       kept.push({ target: candidate.path, workspace, reason: verdict.kept });
       continue;

@@ -74,6 +74,8 @@ export interface ArtifactWorktree {
   keys: string[];
   /** Why a running agent session keeps the worktree, read when the worktrees were listed. */
   agents?: string[];
+  /** Found through a tool folder or the full scan, where an installed tool cannot be told from a checkout. */
+  reduceOnly: boolean;
 }
 
 export interface ArtifactCandidate {
@@ -84,6 +86,7 @@ export interface ArtifactCandidate {
   agents?: string[];
   /** In a source checkout, whose dependencies no worktree warm restores. */
   source?: boolean;
+  reduceOnly: boolean;
 }
 
 function isDirectory(path: string): boolean {
@@ -111,7 +114,7 @@ function registeredRoots(roots: string[]): string[] {
 export function artifactWorktrees(): ArtifactWorktree[] {
   const found = new Map<string, ArtifactWorktree>();
   for (const root of registeredRoots(candidateRoots())) {
-    const entry = artifactWorktree(root, listWorktrees(root));
+    const entry = artifactWorktree(root, listWorktrees(root), false);
     if (entry) found.set(entry.path, entry);
   }
   return [...found.values()];
@@ -120,6 +123,7 @@ export function artifactWorktrees(): ArtifactWorktree[] {
 function artifactWorktree(
   root: string,
   entries: WorktreeEntry[],
+  reduceOnly: boolean,
   source: SourceCheckout = sourceCheckoutOf(entries),
 ): ArtifactWorktree | null {
   const entry = matchWorktreeEntry(entries, root);
@@ -131,6 +135,7 @@ function artifactWorktree(
     linked: entry.path !== source.path,
     locked: Boolean(entry.locked),
     keys,
+    reduceOnly,
   };
 }
 
@@ -148,6 +153,7 @@ export async function artifactCheckoutsAsync(
   const found = new Map<string, ArtifactWorktree>();
   const discovered = await discoverCheckouts(loadConfig(), listedRoots(), operation);
   const known = new Set([...listedRoots(), ...discovered.map(({ path }) => path)]);
+  const reduceOnly = new Set(discovered.filter((entry) => entry.reduceOnly).map(({ path }) => path));
   for (const root of (await candidateRootsAsync(operation, discovered)).filter((entry) => known.has(entry))) {
     signal.throwIfAborted();
     const { entries, ...source } = await resolveSourceCheckoutAsync(root, {
@@ -155,8 +161,8 @@ export async function artifactCheckoutsAsync(
       signal,
       declareFor: operation,
     });
-    const entry = artifactWorktree(root, entries, source);
-    if (entry) found.set(entry.path, entry);
+    const entry = artifactWorktree(root, entries, reduceOnly.has(root), source);
+    if (entry) found.set(entry.path, found.get(entry.path)?.reduceOnly ? { ...entry, reduceOnly: true } : entry);
   }
   return [...found.values()];
 }
@@ -426,7 +432,8 @@ export async function collectArtifactsAsync(
         ? (listed = await readRunningProcessesAsync(signal))
         : listed
       : null;
-  const launchers = operation ? launchersOf(operation, signal) : () => launchersOf(undefined, signal)();
+  const launchersFor = (reduceOnly: boolean) =>
+    operation ? launchersOf(operation, signal, reduceOnly) : () => launchersOf(undefined, signal, reduceOnly)();
   const all = await artifactWorktreesAsync(signal, operation);
   for (const worktree of all) {
     if (kind === 'dependencies' && worktree.linked === Boolean(options.source)) continue;
@@ -461,6 +468,7 @@ export async function collectArtifactsAsync(
           keys: worktree.keys,
           locked: worktree.locked,
           agents: worktree.agents,
+          reduceOnly: worktree.reduceOnly,
           ...(options.source ? { source: true } : {}),
         };
         const inUse = protectedHere ? null : await inUseOf(candidate, kind, signal, operation);
@@ -473,7 +481,7 @@ export async function collectArtifactsAsync(
             candidate,
             kind,
             { ...options, pinned, running, ...(inUse ? { inUse } : {}) },
-            await artifactReads(candidate, kind, signal, operation, launchers),
+            await artifactReads(candidate, kind, signal, operation, launchersFor(candidate.reduceOnly)),
           );
         if (!reason && candidate.source)
           reason =
@@ -583,6 +591,7 @@ export function collectArtifacts(
           path,
           keys: worktree.keys,
           locked: worktree.locked,
+          reduceOnly: worktree.reduceOnly,
         };
         const reason = protectedHere
           ? 'the command that started this pass runs inside its worktree'
@@ -631,6 +640,7 @@ export async function clearArtifact(
     keys: worktree.keys,
     locked: worktree.locked,
     agents,
+    reduceOnly: worktree.reduceOnly,
   };
   const running = kind === 'dependencies' ? await readRunningProcessesAsync() : null;
   const pinned = await pinsOf(candidate.keys, options.pinned);
@@ -760,6 +770,7 @@ export async function clearSourceTrees(
     locked: worktree.locked,
     agents: (await agentSessionUse([worktree.path], Date.now(), signal))[0] ?? [],
     source: true,
+    reduceOnly: worktree.reduceOnly,
   };
   const checkTree = async (path: string, held?: readonly string[]): Promise<string | null> => {
     const candidate = { ...base, path, ...(held ? { source: false } : {}) };

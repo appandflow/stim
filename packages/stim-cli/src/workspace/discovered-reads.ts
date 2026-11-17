@@ -8,22 +8,29 @@ import type { StimContext } from '@stim-cli/core';
 /** What one pass reads once for every checkout: the process table and the agent sessions. */
 export interface DiscoveredReads {
   processes: () => Promise<RunningProcesses | null>;
-  /** Where the executables on PATH that are symlinks resolve to, and what could not be read. */
-  launchers: () => Promise<LauncherScan>;
+  /** Where the executables on PATH that are symlinks resolve to, and what could not be read, for a checkout that is or is not reduce-only. */
+  launchers: (reduceOnly: boolean) => Promise<LauncherScan>;
   /** Why an agent session working in the path keeps it. */
   sessions: (path: string, now: number) => Promise<string[]>;
 }
 
-/** A deletion passes `launchers`, the operation's fresh reading; planning takes the operation's shared one. */
+/** A deletion passes `launchers`, the operation's fresh reading; planning takes the operation's shared ones. */
 export function discoveredReads(
   signal?: AbortSignal,
   operation?: StimContext,
-  launchers: () => Promise<LauncherScan> = launchersOf(operation, signal),
+  launchers?: () => Promise<LauncherScan>,
 ): DiscoveredReads {
   let found: Promise<AgentSession[]> | undefined;
+  const planning = new Map<boolean, () => Promise<LauncherScan>>();
   return {
     processes: processReader(signal),
-    launchers,
+    launchers: launchers
+      ? () => launchers()
+      : (reduceOnly) => {
+          let read = planning.get(reduceOnly);
+          if (!read) planning.set(reduceOnly, (read = launchersOf(operation, signal, reduceOnly)));
+          return read();
+        },
     sessions: async (path, now) => {
       found ??= discoverAgentSessions({ now });
       const sessions = await found;

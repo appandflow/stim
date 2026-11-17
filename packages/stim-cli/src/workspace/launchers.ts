@@ -152,6 +152,7 @@ export function launcherReader(
 }
 
 const readers = new WeakMap<StimContext, () => Promise<LauncherScan>>();
+const reduceOnlyReaders = new WeakMap<StimContext, () => Promise<LauncherScan>>();
 const observed = new WeakMap<StimContext, Map<string, LauncherProblem>>();
 
 const newReader = (
@@ -171,17 +172,20 @@ const newReader = (
 };
 
 /**
- * The launcher reader of an operation for planning: every route of one pass shares one reading. Without an operation it
- * is a new reader, so a caller holds the one it gets and calls it for every check of its own operation.
+ * The launcher readers of an operation for planning: the routes of one pass that check a reduce-only checkout share one
+ * reading, taken at the first such check, and every other route shares a second reading. Without an operation it is a
+ * new reader, so a caller holds the one it gets and calls it for every check of its own operation.
  */
 export function launchersOf(
   operation: StimContext | undefined,
-  signal?: AbortSignal,
+  signal: AbortSignal | undefined,
+  reduceOnly: boolean,
   directories?: readonly string[],
 ): () => Promise<LauncherScan> {
   if (!operation) return newReader(operation, signal, directories);
-  let reader = readers.get(operation);
-  if (!reader) readers.set(operation, (reader = newReader(operation, signal, directories)));
+  const shared = reduceOnly ? reduceOnlyReaders : readers;
+  let reader = shared.get(operation);
+  if (!reader) shared.set(operation, (reader = newReader(operation, signal, directories)));
   return reader;
 }
 

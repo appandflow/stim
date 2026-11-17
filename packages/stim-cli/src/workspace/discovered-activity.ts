@@ -112,11 +112,14 @@ export async function discoveredEvidence(
     idleMs,
     reads,
     operation,
+    reduceOnly,
   }: {
     now: number;
     idleMs: number;
     reads: DiscoveredReads;
     operation?: StimContext;
+    /** Found through a tool folder or the full scan, where an installed tool cannot be told from a checkout. */
+    reduceOnly: boolean;
   },
 ): Promise<IdleStopEvidence> {
   const signal = operation?.signal;
@@ -140,7 +143,7 @@ export async function discoveredEvidence(
   keep.push(...(await reads.sessions(path, now)));
   const running = runningFromReason(path, await reads.processes());
   if (running) keep.push(running);
-  const launcher = launcherReason(await checkoutRootOf(path, signal, operation), await reads.launchers());
+  const launcher = launcherReason(await checkoutRootOf(path, signal, operation), await reads.launchers(reduceOnly));
   if (launcher) keep.push(launcher);
   return { activity, keep };
 }

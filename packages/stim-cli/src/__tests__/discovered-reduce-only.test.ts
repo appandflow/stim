@@ -36,6 +36,7 @@ import { stoppedOutputCandidates } from '../daemon/stages.ts';
 import { saveConfig } from '../workspace/config.ts';
 import { collectWorktreeSweep, removeWorktrees } from '../commands/gc/worktrees.ts';
 import { discoverCheckouts, discoveredOutside } from '../workspace/discovery.ts';
+import * as gitModule from '../workspace/git.ts';
 
 vi.mock('../workspace/protected-locations.ts', async (original) => {
   const real = await original<typeof import('../workspace/protected-locations.ts')>();
@@ -480,6 +481,37 @@ describe('checkouts found through a tool folder or the full scan', () => {
         detail: expect.stringContaining('on PATH'),
       });
       expect(existsSync(modules)).toBe(true);
+    });
+
+    it('plans a reduce-only worktree from its own first launcher reading, not one an earlier checkout of another kind took', async () => {
+      const prepare = (found: string) => {
+        mkdirSync(join(found, 'node_modules', '.bin'), { recursive: true });
+        writeFileSync(join(found, 'node_modules', '.bin', 'tool'), '#!/bin/sh\n');
+        age(found);
+        return join(found, 'node_modules');
+      };
+      const plain = worktree(join(base, 'dev', 'sibling-wt'), 'sibling');
+      const reduceOnly = worktree(join(base, 'home', '.codex', 'worktrees', 'ab12', 'main'), 'codex');
+      const plainModules = prepare(plain);
+      const reduceOnlyModules = prepare(reduceOnly);
+      const bin = join(base, 'home', 'bin');
+      mkdirSync(bin);
+      const checked: string[] = [];
+      const real = gitModule.gitQuietAsync;
+      vi.spyOn(gitModule, 'gitQuietAsync').mockImplementation(async (...args) => {
+        if (args[1].includes('ls-files')) {
+          checked.push(args[0]);
+          if (args[0] === reduceOnly) symlinkSync(join(reduceOnlyModules, '.bin', 'tool'), join(bin, 'tool'));
+        }
+        return real(...args);
+      });
+
+      const planned = await collectArtifactsAsync('dependencies', collectOptions, signal, operation());
+
+      expect(checked.indexOf(plain)).toBeGreaterThanOrEqual(0);
+      expect(checked.indexOf(plain)).toBeLessThan(checked.indexOf(reduceOnly));
+      expect(planned.candidates.map((entry) => entry.path)).toEqual([plainModules]);
+      expect(planned.skips).toMatchObject([{ target: reduceOnlyModules, reason: expect.stringContaining('on PATH') }]);
     });
 
     it('keeps it when a launcher appears after the process read that precedes the deletion', async () => {

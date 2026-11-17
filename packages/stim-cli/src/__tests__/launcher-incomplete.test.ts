@@ -45,8 +45,8 @@ describe.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
 
     it('is one log record per pass naming the cause, however many readings met it', async () => {
       const operation = testContext();
-      await launchersOf(operation)();
-      await launchersOf(operation)();
+      await launchersOf(operation, undefined, false)();
+      await launchersOf(operation, undefined, false)();
       const log = vi.fn<(level: string, event: string, msg: string, fields?: unknown) => void>();
       logLauncherProblems(operation, log);
       expect(log).toHaveBeenCalledTimes(1);

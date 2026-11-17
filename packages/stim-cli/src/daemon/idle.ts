@@ -329,11 +329,11 @@ async function enterIdleStage(
             const outputs = await idleOutputs(
               path,
               config,
-              launchingOf(checkout, launchersOf(operation, operation?.signal), operation, operation?.signal),
+              launchingOf(checkout, launchersOf(operation, operation?.signal, false), operation, operation?.signal),
             );
             const freed = await deleteOutputs(
               outputs.paths,
-              launchingOf(checkout, launchersOf(operation, operation?.signal), operation, operation?.signal),
+              launchingOf(checkout, launchersOf(operation, operation?.signal, false), operation, operation?.signal),
               outputs.kept,
             );
             await recordStage(path, minutes, shutDown, freed);

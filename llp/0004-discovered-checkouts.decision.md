@@ -206,8 +206,10 @@ from it, so launcher evidence is read wherever the code reads running-process
 evidence, as part of the same snapshot, and is never reused across two process
 reads. Within one snapshot every check shares that one reading, so the cost is one
 launcher read per process read and nothing is memoized past a process re-read. The
-pass's planning reading (shared by the operation, possibly minutes old) serves
-planning only. `clearArtifact` and `clearSourceTrees` take a new reading at each of
+pass's planning readings serve planning only and can be minutes old. There are two,
+each shared by the operation: one for reduce-only checkouts, taken at the first check
+of such a checkout, and one for every other checkout. `clearArtifact` and
+`clearSourceTrees` take a new reading at each of
 their checks, before and under the claims, and for each tree. The routes: the idleness evidence reads the
 processes and the launchers together (`discoveredEvidence`, one `DiscoveredReads`
 per check); a directory check that reads the processes itself (a Cargo `target/` in
@@ -565,7 +567,7 @@ and Pods (`artifactReads`), Cargo targets, discovered-checkout idleness
 (`removeWorktrees`). `Launching` carries a launcher reader and a checkout for
 every caller; there is no variant without one. Stopping Metro or devices and
 archiving logs touch no launcher target and are not blocked. The reading is the
-operation's shared one at planning and a fresh one with each process read of a
+operation's shared one of the checkout's kind at planning and a fresh one with each process read of a
 deletion, as above. `reduceOnly` keeps its other meaning: such a checkout is never
 removed.
 
@@ -604,7 +606,7 @@ folder the owner, which keeps more), and leaves the owner unknown when a level
 cannot be read for any reason but proven absence: that keeps the checkout, never a
 narrower root.
 
-Cost: one shared read per planning operation (55-72 ms for 995 symlinks) and one
+Cost: up to two shared reads per planning operation (55-72 ms for 995 symlinks) and one
 fresh read per process read, plus one at each decision where main read anew. In a
 scratch pass of four idle discovered checkouts and one linked worktree, the
 launcher reads were 1 plan + 12 output reads + 4 dependency reads when every check

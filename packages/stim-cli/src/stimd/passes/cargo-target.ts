@@ -34,6 +34,8 @@ export interface CargoTargetCandidate {
   dir: string;
   identity: string;
   discovered: boolean;
+  /** Found through a tool folder or the full scan: a PATH launcher into the checkout keeps its target. */
+  reduceOnly: boolean;
   /** The checkout that owns the target, which a PATH launcher can point anywhere into; `root` is the app inside it. */
   checkout: Checkout;
   measuredAt: number | null;
@@ -98,7 +100,7 @@ async function cargoTargetCandidates(
 ): Promise<CargoTargetCandidate[]> {
   const signal = operation?.signal ?? new AbortController().signal;
   const found: CargoTargetCandidate[] = [];
-  const add = async (base: string, discovered: boolean, checkout: Checkout) => {
+  const add = async (base: string, discovered: boolean, reduceOnly: boolean, checkout: Checkout) => {
     const root = canonicalPath(base);
     for (const path of await cargoTargetDirsAsync(root)) {
       try {
@@ -110,6 +112,7 @@ async function cargoTargetCandidates(
           dir: path,
           identity,
           discovered,
+          reduceOnly,
           checkout,
           measuredAt: lastMeasured.get(path) ?? null,
         });
@@ -117,13 +120,14 @@ async function cargoTargetCandidates(
     }
   };
   const checkouts = await artifactCheckoutsAsync(signal, operation);
-  for (const root of registered) await add(root, false, await owningCheckout(root, checkouts, signal, operation));
+  for (const root of registered)
+    await add(root, false, false, await owningCheckout(root, checkouts, signal, operation));
   const discovered = new Set(
     (await discoverCheckouts(loadConfig(), listedRoots(), operation)).map(({ path }) => canonicalPath(path)),
   );
   for (const checkout of checkouts)
     for (const base of appRoots(checkout, 'build'))
-      await add(base, discovered.has(canonicalPath(checkout.path)), checkout.path);
+      await add(base, discovered.has(canonicalPath(checkout.path)), checkout.reduceOnly, checkout.path);
   return found;
 }
 
@@ -150,11 +154,16 @@ export async function measureCargoTargets(
     now,
   );
   scan.unlisted = unlisted.map(({ dir }) => dir);
-  for (const { root, dir, checkout } of measured) {
+  for (const { root, dir, reduceOnly, checkout } of measured) {
     lastMeasured.set(dir, now);
     const problem = await regenerableDirProblem(root, dir, operation?.signal, {
       processes: false,
-      launching: launchingOf(checkout, launchersOf(operation, operation?.signal), operation, operation?.signal),
+      launching: launchingOf(
+        checkout,
+        launchersOf(operation, operation?.signal, reduceOnly),
+        operation,
+        operation?.signal,
+      ),
     });
     if (problem) {
       scan.refused.set(dir, { workspace: root, reason: problem });
@@ -359,13 +368,13 @@ export async function planCargoTargetsAtPressure({
   if (settings.cargoTargetMaxGb === 0) return plan;
   const registered = Object.keys(loadConfig()?.projects ?? {});
   const { measured } = selectCargoTargets(await cargoTargetCandidates(registered, operation), Infinity, now);
-  for (const { root: workspace, dir, checkout } of measured) {
+  for (const { root: workspace, dir, reduceOnly, checkout } of measured) {
     signal?.throwIfAborted();
     const tightened = level ?? (await diskLevel(dir, signal));
     if (tightened === 'normal') continue;
     const problem = await regenerableDirProblem(workspace, dir, signal, {
       processes: false,
-      launching: launchingOf(checkout, launchersOf(operation, signal), operation, signal),
+      launching: launchingOf(checkout, launchersOf(operation, signal, reduceOnly), operation, signal),
     });
     if (problem) {
       plan.skips.push({ target: dir, reason: problem, workspace });

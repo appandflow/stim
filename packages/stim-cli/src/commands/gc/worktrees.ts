@@ -944,7 +944,7 @@ export async function collectWorktreeSweep({
     };
   });
   const linked = inspected.filter(({ facts }) => facts.source === 'linked');
-  const launchers = launchersOf(operation, operation?.signal);
+  const launchers = launchersOf(operation, operation?.signal, false);
   for (const { candidate, facts } of linked) {
     for (const key of candidate.keys)
       facts.inUse.push(...(await workspaceInUseAsync(key, { managedLocks: true }, operation?.signal, operation)));

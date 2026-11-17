@@ -369,7 +369,7 @@ async function inTreeBuildDirs(root: string, operation?: StimContext, signal?: A
   const dirs: string[] = [];
   const launching = launchingOf(
     await checkoutRootOf(root, signal, operation),
-    launchersOf(operation, signal),
+    launchersOf(operation, signal, false),
     operation,
     signal,
   );
