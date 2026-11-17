@@ -436,7 +436,7 @@ function exactHostedUnsupported(root: string): string | undefined {
   const manifest = readJsonObject(join(root, 'app.json'));
   return !manifest || !exactDeclaresModules(manifest)
     ? undefined
-    : 'an Exact app that declares native modules builds next to its own simulator, since Exact may run code on it to read them';
+    : 'an Exact app that declares native modules runs on a simulator on this Mac, which a build here uses to read them';
 }
 
 export function exactIosProject(root: string): IosProject {
