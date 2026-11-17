@@ -111,7 +111,7 @@ The pressure ladder uses fixed rules for the choices below. Remove these keys an
 
 ## Update CLI automation and integrations
 
-Every command now runs from one operation registry. A subcommand refuses an option it does not define, for example `stim pairings grant <id> --json`. The 1.40 `stim-server pair` and `stim-server devices` commands are now `stim pair` and `stim pairings` (`list`, `grant`, `revoke`). Remove the option from scripts that passed one.
+Every command now runs from one operation registry. A subcommand refuses an option it does not define, for example `stim pairings grant <id> --json`. The 1.40 `stim-server pair` and `stim-server devices` commands are now `stim pair` and `stim pairings` (`list`, `grant`, `revoke`), and `stim-server log` is `stim pairings log`. Remove the option from scripts that passed one.
 
 The server and CI runner ship in `stim`. Use `stim serve` in place of `stim-server`. Use `stim pair`, `stim pairings`, `stim service`, and `stim setup` for those workflows, and replace `stim-ci` with `stim ci`. For the [GitHub Action](./ci.md#github-actions), set `version` to 2.0.0 or later, or stay on an older action ref with its supported version. If `cli-path` points into a Stim checkout, build it and use `packages/stim-cli/bin/stim.mjs`.
 
