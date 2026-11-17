@@ -120,7 +120,7 @@
   "packages/stim-cli": {
     "src": {
       "as": 817,
-      "nonNull": 339,
+      "nonNull": 338,
       "refusalRemedy": 17,
       "commander": 0
     },

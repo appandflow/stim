@@ -13,7 +13,8 @@ import {
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildSlotPath } from '@stim-cli/core/state';
+import { JobFrameReader, jobFrame } from '@stim-cli/core/noise-session';
+import { buildSlotPath, isJsonObject } from '@stim-cli/core/state';
 import { getExecutor } from '../exec.ts';
 import { fingerprint } from '../fingerprint/evaluate.ts';
 import { isUncertain } from '../fingerprint/key.ts';
@@ -47,6 +48,116 @@ const script = (path: string, body: string) => {
   chmodSync(path, 0o755);
 };
 
+const lines = (file: string) => (existsSync(file) ? readFileSync(file, 'utf8').trim().split('\n').map(Number) : []);
+
+/**
+ * A React Native iOS project with pods on the worker, fake `pod`, `xcrun` and an `xcodebuild` whose build runs `build`,
+ * and the fingerprint the client would send for it. `hung-pids` and `foreign-pids` under `root` collect the PIDs the
+ * fixture's processes write.
+ */
+async function prepare(build: (paths: { pidFile: string; foreignFile: string }) => string) {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-offload-cancel-')));
+  const project = join(root, 'project');
+  const home = join(root, 'home');
+  const bin = join(root, 'bin');
+  const pids = join(root, 'hung-pids');
+  const foreign = join(root, 'foreign-pids');
+  mkdirSync(project);
+  mkdirSync(home);
+  mkdirSync(bin);
+  writeFileSync(
+    join(home, 'config.json'),
+    JSON.stringify({ server: { maxLoadPerCore: 100_000 }, daemon: { mode: 'off' }, concurrency: { maxBuilds: 1 } }),
+  );
+  const path = `${bin}${delimiter}${process.env.PATH ?? ''}`;
+  vi.stubEnv('STIM_HOME', home);
+  vi.stubEnv('STIM_ENGINE_ROOT', join(root, 'engine'));
+  vi.stubEnv('PATH', path);
+  script(join(bin, 'pnpm'), ':');
+  script(
+    join(bin, 'pod'),
+    "mkdir -p Pods\nprintf 'PODS:\\n  - Fixture (1.0.0)\\n\\nCOCOAPODS: 1.16.2\\n' > Podfile.lock\ncp Podfile.lock Pods/Manifest.lock",
+  );
+  script(
+    join(bin, 'xcrun'),
+    `printf '%s\\n' '{"devices":{"iOS-27-0":[{"udid":"fixture","deviceTypeIdentifier":"com.apple.CoreSimulator.SimDeviceType.iPhone-17","isAvailable":true}]}}'`,
+  );
+  script(
+    join(bin, 'xcodebuild'),
+    `case " $* " in *' -list '*) printf '%s\\n' '{"project":{"name":"Fixture","schemes":["Fixture"]}}'; exit 0;; esac\n${build({ pidFile: pids, foreignFile: foreign })}`,
+  );
+  const files: Record<string, string> = {
+    'package.json': JSON.stringify({
+      name: 'worker-cancel',
+      version: '1.0.0',
+      dependencies: { expo: '*', 'react-native': '*' },
+    }),
+    'app.config.js': `const { appendFileSync, existsSync } = require('node:fs');
+const { join } = require('node:path');
+if (existsSync(join(__dirname, '..', 'hang-evaluator'))) {
+  appendFileSync(join(__dirname, '..', 'hung-pids'), process.pid + '\\n');
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
+}
+module.exports = { name: 'Fixture', slug: 'fixture' };
+`,
+    'pnpm-lock.yaml': readFileSync(join(modules, '..', '..', '..', 'pnpm-lock.yaml'), 'utf8'),
+    '.gitignore': 'node_modules\nios/Pods/\n',
+    'ios/Podfile':
+      "platform :ios, '16.0'\nconfig_command = ['node', '--eval', 'require(require.resolve(\"expo/bin/autolinking\"))(process.argv.slice(1))', 'react-native-config', '--json', '--platform', 'ios']\nconfig = use_native_modules!(config_command)\n",
+    'ios/Fixture.xcodeproj/project.pbxproj': '// fixture\n',
+  };
+  for (const [file, text] of Object.entries(files)) {
+    mkdirSync(dirname(join(project, file)), { recursive: true });
+    writeFileSync(join(project, file), text);
+  }
+  symlinkSync(modules, join(project, 'node_modules'), 'junction');
+  await getExecutor().runFileAsync('git', ['init', '--quiet', project], { timeoutMs: 30_000 });
+  await getExecutor().runFileAsync('git', ['-C', project, 'add', '.'], { timeoutMs: 30_000 });
+  const target = { platform: 'ios' as const };
+  const initial = await fingerprint(project, target, {
+    env: process.env,
+    embedMode: 'development',
+    index: 'skip',
+    signal: AbortSignal.timeout(60_000),
+  });
+  if (isUncertain(initial)) throw new Error(initial.uncertain);
+  const replay = fingerprintOffloadInputs(project, target, initial, process.env);
+  if (isUncertain(replay)) throw new Error(replay.uncertain);
+  const blobs = Object.keys(files).map((file) => {
+    const data = readFileSync(join(project, file));
+    return { path: file, kind: 'file' as const, size: data.length, sha256: sha(data), data };
+  });
+  const manifest = blobs.map(({ data: _data, ...item }) => item);
+  const params = {
+    repo: 'repo',
+    project: '',
+    platform: 'ios',
+    runtime: 'iOS-27-0',
+    stimBuild: 'fixture',
+    compat: 6,
+    fingerprint: initial.hash,
+    fingerprintSchema: replay.schema,
+    fingerprintSources: replay.sources.map(({ name, kind, hash }) => ({ id: name, kind, hash })),
+    fingerprintEnv: replay.env,
+    fingerprintNative: replay.native,
+    fingerprintLayout: replay.layout,
+    fingerprintRuntime: replay.runtime,
+    podsOnWorker: true,
+  };
+  const cleanup = () => {
+    vi.unstubAllEnvs();
+    for (const pid of [...lines(pids), ...lines(foreign)])
+      if (alive(pid))
+        try {
+          process.kill(-pid, 'SIGKILL');
+        } catch {
+          process.kill(pid, 'SIGKILL');
+        }
+    rmSync(root, { recursive: true, force: true });
+  };
+  return { root, home, path, pids, foreign, manifest, blobs, params, cleanup };
+}
+
 describe.skipIf(process.platform === 'win32')('a host-stopped offload worker', () => {
   test.each([
     ['cancel', 'xcodebuild'],
@@ -56,72 +167,9 @@ describe.skipIf(process.platform === 'win32')('a host-stopped offload worker', (
     'a %s while %s hangs ends the build as cancelled and admits the next build',
     { timeout: 150_000 },
     async (stop, hang) => {
-      const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-offload-cancel-')));
-      const project = join(root, 'project');
-      const home = join(root, 'home');
-      const bin = join(root, 'bin');
-      const pids = join(root, 'hung-pids');
-      mkdirSync(project);
-      mkdirSync(home);
-      mkdirSync(bin);
-      writeFileSync(
-        join(home, 'config.json'),
-        JSON.stringify({ server: { maxLoadPerCore: 100_000 }, daemon: { mode: 'off' }, concurrency: { maxBuilds: 1 } }),
+      const { pids, manifest, blobs, params, cleanup } = await prepare(
+        ({ pidFile }) => `echo $$ >> '${pidFile}'\nexec sleep 600`,
       );
-      vi.stubEnv('STIM_HOME', home);
-      vi.stubEnv('STIM_ENGINE_ROOT', join(root, 'engine'));
-      vi.stubEnv('PATH', `${bin}${delimiter}${process.env.PATH ?? ''}`);
-      script(join(bin, 'pnpm'), ':');
-      script(
-        join(bin, 'pod'),
-        "mkdir -p Pods\nprintf 'PODS:\\n  - Fixture (1.0.0)\\n\\nCOCOAPODS: 1.16.2\\n' > Podfile.lock\ncp Podfile.lock Pods/Manifest.lock",
-      );
-      script(
-        join(bin, 'xcrun'),
-        `printf '%s\\n' '{"devices":{"iOS-27-0":[{"udid":"fixture","deviceTypeIdentifier":"com.apple.CoreSimulator.SimDeviceType.iPhone-17","isAvailable":true}]}}'`,
-      );
-      script(
-        join(bin, 'xcodebuild'),
-        `case " $* " in *' -list '*) printf '%s\\n' '{"project":{"name":"Fixture","schemes":["Fixture"]}}'; exit 0;; esac\necho $$ >> '${pids}'\nexec sleep 600`,
-      );
-      const files: Record<string, string> = {
-        'package.json': JSON.stringify({
-          name: 'worker-cancel',
-          version: '1.0.0',
-          dependencies: { expo: '*', 'react-native': '*' },
-        }),
-        'app.config.js': `const { appendFileSync, existsSync } = require('node:fs');
-const { join } = require('node:path');
-if (existsSync(join(__dirname, '..', 'hang-evaluator'))) {
-  appendFileSync(join(__dirname, '..', 'hung-pids'), process.pid + '\\n');
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
-}
-module.exports = { name: 'Fixture', slug: 'fixture' };
-`,
-        'pnpm-lock.yaml': readFileSync(join(modules, '..', '..', '..', 'pnpm-lock.yaml'), 'utf8'),
-        '.gitignore': 'node_modules\nios/Pods/\n',
-        'ios/Podfile':
-          "platform :ios, '16.0'\nconfig_command = ['node', '--eval', 'require(require.resolve(\"expo/bin/autolinking\"))(process.argv.slice(1))', 'react-native-config', '--json', '--platform', 'ios']\nconfig = use_native_modules!(config_command)\n",
-        'ios/Fixture.xcodeproj/project.pbxproj': '// fixture\n',
-      };
-      for (const [path, text] of Object.entries(files)) {
-        mkdirSync(dirname(join(project, path)), { recursive: true });
-        writeFileSync(join(project, path), text);
-      }
-      symlinkSync(modules, join(project, 'node_modules'), 'junction');
-      await getExecutor().runFileAsync('git', ['init', '--quiet', project], { timeoutMs: 30_000 });
-      await getExecutor().runFileAsync('git', ['-C', project, 'add', '.'], { timeoutMs: 30_000 });
-      const target = { platform: 'ios' as const };
-      const initial = await fingerprint(project, target, {
-        env: process.env,
-        embedMode: 'development',
-        index: 'skip',
-        signal: AbortSignal.timeout(60_000),
-      });
-      if (isUncertain(initial)) throw new Error(initial.uncertain);
-      const replay = fingerprintOffloadInputs(project, target, initial, process.env);
-      if (isUncertain(replay)) throw new Error(replay.uncertain);
-
       const host = new BuildHost({
         worker: cli,
         workerArgs: ['__job', 'offload-worker'],
@@ -133,37 +181,13 @@ module.exports = { name: 'Fixture', slug: 'fixture' };
         if ('outcome' in event) outcomes.push(event.outcome);
       });
       const area = join(host.clientDir('client'), 'repos', 'repo');
-      const hung = () =>
-        [pids, join(area, 'hung-pids')].flatMap((file) =>
-          existsSync(file) ? readFileSync(file, 'utf8').trim().split('\n').map(Number) : [],
-        );
+      const hung = () => [...lines(pids), ...lines(join(area, 'hung-pids'))];
       try {
-        const manifest = Object.keys(files).map((path) => {
-          const data = readFileSync(join(project, path));
-          return { path, kind: 'file' as const, size: data.length, sha256: sha(data) };
-        });
         session.sync({ repo: 'repo', files: manifest, done: true });
-        for (const item of manifest)
-          session.blob(Buffer.concat([Buffer.from(item.sha256, 'hex'), readFileSync(join(project, item.path))]));
+        for (const item of blobs) session.blob(Buffer.concat([Buffer.from(item.sha256, 'hex'), item.data]));
         mkdirSync(join(area, 'src'), { recursive: true });
         symlinkSync(modules, join(area, 'src', 'node_modules'), 'junction');
         if (hang === 'evaluator') writeFileSync(join(area, 'hang-evaluator'), '');
-        const params = {
-          repo: 'repo',
-          project: '',
-          platform: 'ios',
-          runtime: 'iOS-27-0',
-          stimBuild: 'fixture',
-          compat: 6,
-          fingerprint: initial.hash,
-          fingerprintSchema: replay.schema,
-          fingerprintSources: replay.sources.map(({ name, kind, hash }) => ({ id: name, kind, hash })),
-          fingerprintEnv: replay.env,
-          fingerprintNative: replay.native,
-          fingerprintLayout: replay.layout,
-          fingerprintRuntime: replay.runtime,
-          podsOnWorker: true,
-        };
         const first = await session.start(params);
         if (!('result' in first)) throw new Error(first.error.message);
         await until(() => hung().length > 0 || outcomes.length > 0, 60_000, `the hung ${hang}`);
@@ -187,15 +211,95 @@ module.exports = { name: 'Fixture', slug: 'fixture' };
       } finally {
         session.close();
         await host.close();
-        vi.unstubAllEnvs();
-        for (const pid of hung())
+        for (const pid of lines(join(area, 'hung-pids')))
           if (alive(pid))
             try {
               process.kill(-pid, 'SIGKILL');
             } catch {
               process.kill(pid, 'SIGKILL');
             }
-        rmSync(root, { recursive: true, force: true });
+        cleanup();
+      }
+    },
+  );
+
+  // An Xcode build service and its script phases run in process groups of their own: the job's process exits once
+  // nothing holds its event loop, and those processes are reparented once the build service exits.
+  test(
+    'a closed connection stops what xcodebuild started in other process groups and records the outcome',
+    { timeout: 150_000 },
+    async () => {
+      const { root, home, path, foreign, manifest, blobs, params, cleanup } = await prepare(
+        ({ pidFile, foreignFile }) => `case " $* " in *' -destination '*) ;; *) exit 0;; esac
+echo $$ >> '${pidFile}'
+perl -e 'setpgrp(0, 0);
+if (fork) { sleep 600; exit 0 }
+setpgrp(0, 0); $SIG{TERM} = "IGNORE";
+open(my $f, ">>", $ARGV[0]); print $f "$$\\n"; close($f); exec "sleep", "600"' '${foreignFile}' &
+service=$!
+(trap 'sleep 2; exit 0' TERM; sleep 600 & wait) &
+trap 'kill -KILL $service; exit 143' TERM
+wait`,
+      );
+      const job = getExecutor().spawn(process.execPath, [cli, '__job', 'offload-build'], {
+        cwd: root,
+        stdio: ['pipe', 'pipe', 'ignore'],
+        env: {
+          ...process.env,
+          STIM_HOME: home,
+          STIM_ENGINE_ROOT: join(root, 'engine'),
+          PATH: path,
+          STIM_JOB_SPEC: JSON.stringify({
+            client: 'client',
+            clientName: 'Client',
+            limits: { minFreeBytes: 0, killGraceMs: 3000 },
+          }),
+        },
+      });
+      const exited = new Promise<void>((resolve) => job.on('exit', () => resolve()));
+      const replies = new Map<number, (value: Record<string, unknown>) => void>();
+      const reader = new JobFrameReader();
+      const { stdin, stdout } = job;
+      if (!stdin || !stdout) throw new Error('the job has no pipes');
+      stdout.on('data', (chunk: Buffer) => {
+        for (const frame of reader.push(chunk)) {
+          const message: unknown = JSON.parse(frame.data.toString('utf8'));
+          if (isJsonObject(message) && typeof message.id === 'number') replies.get(message.id)?.(message);
+        }
+      });
+      let next = 0;
+      const request = (method: string, body: unknown) =>
+        new Promise<Record<string, unknown>>((resolve) => {
+          const id = ++next;
+          replies.set(id, resolve);
+          stdin.write(jobFrame(Buffer.from(JSON.stringify({ id, method, params: body })), false));
+        });
+      const area = join(home, 'build-worker', 'client', 'repos', 'repo');
+      try {
+        await request('build.sync', { repo: 'repo', files: manifest, done: true });
+        for (const item of blobs)
+          stdin.write(jobFrame(Buffer.concat([Buffer.from(item.sha256, 'hex'), item.data]), true));
+        await request('build.offer', { repo: 'repo' });
+        mkdirSync(join(area, 'src'), { recursive: true });
+        symlinkSync(modules, join(area, 'src', 'node_modules'), 'junction');
+        expect(await request('build.start', params)).toHaveProperty('result.job');
+        await until(() => lines(foreign).length > 0, 60_000, 'the script phase');
+        expect(lines(foreign).filter(alive)).toHaveLength(1);
+        stdin.end();
+        await exited;
+
+        const actions = readFileSync(join(home, 'server', 'actions.ndjson'), 'utf8')
+          .trim()
+          .split('\n');
+        expect(actions.map((line) => JSON.parse(line))).toMatchObject([
+          { action: 'build', ok: false, error: { message: expect.stringMatching(/^cancelled: /) } },
+        ]);
+        expect(lines(foreign).filter(alive)).toEqual([]);
+        expect(readClaimSet(buildSlotPath(0))).toMatchObject({ live: [], unresolved: [] });
+        expect(readClaimSet(`${area}.claims`)).toMatchObject({ live: [], unresolved: [] });
+      } finally {
+        job.kill('SIGKILL');
+        cleanup();
       }
     },
   );

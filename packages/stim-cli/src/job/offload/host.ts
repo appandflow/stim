@@ -100,6 +100,7 @@ import { spawnEntry } from '../../spawn-entry.ts';
 import { BuildArtifactCache, validArtifactIdentity } from '../../offload/build-artifact-cache.ts';
 import { exactOffloadParam, exactPinsParam, exactToolProblems } from '../../integrations/exact-offload.ts';
 import { runArtifactQuery, type ArtifactQueryResult } from './artifact-query.ts';
+import { foreignDescendants } from './descendants.ts';
 import { groupProcesses, jobLog, keepTail, serviceLine, type CancelReason } from './job-record.ts';
 import { outputLine, silenceText } from '../../offload/output-silence.ts';
 
@@ -1088,8 +1089,10 @@ export class BuildHost {
       } catch {}
     };
     let killTimer: NodeJS.Timeout | null = null;
+    let killedAt: number | null = null;
     let finished = false;
     const caching = new AbortController();
+    const foreign = child.pid === undefined || process.platform === 'win32' ? null : foreignDescendants(child.pid);
     const cancel = (reason: CancelReason) => {
       caching.abort();
       if (killTimer || finished) return;
@@ -1106,8 +1109,15 @@ export class BuildHost {
           group: jobLog.enabled() ? groupProcesses(child.pid) : undefined,
         });
       }
+      foreign?.find();
       signalGroup('SIGTERM');
-      killTimer = setTimeout(() => signalGroup('SIGKILL'), this.limits.killGraceMs);
+      foreign?.signal('SIGTERM');
+      killTimer = setTimeout(() => {
+        killedAt = Date.now();
+        foreign?.find();
+        signalGroup('SIGKILL');
+        foreign?.signal('SIGKILL');
+      }, this.limits.killGraceMs);
       killTimer.unref();
     };
     jobLog.log('build.job.start', {
@@ -1216,17 +1226,25 @@ export class BuildHost {
         entry.outcome = outcome;
         if (child.pid !== undefined && processGroupAlive(child.pid)) cancel('group-outlived-worker');
         const drainAndroid = job.platform === 'android' && (killTimer !== null || abnormal || !outcome.ok);
+        let abandoned = false;
         const settle = async () => {
-          if (child.pid !== undefined && processGroupAlive(child.pid)) {
-            setTimeout(settle, GROUP_POLL_MS).unref();
-            return;
+          if (killTimer) {
+            foreign?.find();
+            foreign?.signal(killedAt === null ? 'SIGTERM' : 'SIGKILL');
+          }
+          if ((child.pid !== undefined && processGroupAlive(child.pid)) || (killTimer && foreign && !foreign.gone())) {
+            if (killedAt === null || Date.now() - killedAt < this.limits.killGraceMs) {
+              setTimeout(settle, GROUP_POLL_MS);
+              return;
+            }
+            abandoned = true;
           }
           await treeKilled;
           if (killTimer) clearTimeout(killTimer);
           finished = true;
           const drained = !drainAndroid || (await this.drainCancelledAndroid(client, repo));
           let released = false;
-          if (drained && (entry.cleanupSettled || spawnFailed)) {
+          if (drained && (entry.cleanupSettled || spawnFailed) && !abandoned && !(killTimer && foreign?.unknown)) {
             try {
               rmSync(fingerprintTemp, { recursive: true, force: true });
             } catch {}
