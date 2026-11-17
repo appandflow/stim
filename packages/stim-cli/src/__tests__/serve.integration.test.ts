@@ -389,3 +389,43 @@ test("an ask that arrives while a service's ask moves the net thread gets the se
     rmSync(home, { recursive: true, force: true });
   }
 }, 60_000);
+
+test("a Desktop ask that arrives while the service's thread starts does not replace it", async () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-net-service-start-'));
+  const env = { ...process.env, STIM_HOME: home, HOME: home, USERPROFILE: home, PATH: '' };
+  const previousHome = process.env.STIM_HOME;
+  process.env.STIM_HOME = home;
+  const stimd = spawn(process.execPath, [join(root, 'packages/stim-cli/dist/cli.mjs'), '__stimd', '--mode', 'off'], {
+    env,
+    stdio: 'ignore',
+  });
+  const stimdExited = once(stimd, 'exit');
+  try {
+    const deadline = Date.now() + 15_000;
+    while (!existsSync(stimdRecordFile())) {
+      if (Date.now() > deadline || stimd.exitCode !== null) throw new Error('stimd wrote no run/stimd.json');
+      await new Promise((done) => setTimeout(done, 50));
+    }
+    const { socket, build } = JSON.parse(readFileSync(stimdRecordFile(), 'utf8'));
+    const port = await freePort();
+    const starting = ensureAs(
+      socket,
+      { kind: 'cli', build },
+      { port, loopbackOnly: false, extraEnv: [], pathPrepend: [], service: true },
+    );
+    await new Promise((done) => setTimeout(done, 5));
+    const desktop = ensureAs(socket, { kind: 'desktop' }, { port: 0, loopbackOnly: true });
+    expect(await starting).toMatchObject({ listening: true, port });
+    expect(await desktop).toMatchObject({ listening: true, port });
+    expect((await fetch(`http://127.0.0.1:${port}/health`)).status).toBeLessThan(600);
+    expect(JSON.parse(readFileSync(stimdRecordFile(), 'utf8'))).toMatchObject({ netPort: port });
+
+    stimd.kill('SIGTERM');
+    expect(await stimdExited).toEqual([0, null]);
+  } finally {
+    if (stimd.exitCode === null && stimd.signalCode === null) stimd.kill('SIGKILL');
+    if (previousHome === undefined) delete process.env.STIM_HOME;
+    else process.env.STIM_HOME = previousHome;
+    rmSync(home, { recursive: true, force: true });
+  }
+}, 60_000);

@@ -1437,10 +1437,12 @@ async function runStimdInner(
               running !== null &&
               (running.loopbackOnly !== options.loopbackOnly ||
                 (port !== undefined && port !== 0 && running.port !== null && port !== running.port)));
+          const reserved = forService && (serviceMove || !running);
+          const wasService = serviceNet;
           if (!running) netServes = options;
+          if (reserved) serviceNet = true;
           const restartNet = () => {
             netServes = options;
-            if (serviceMove) serviceNet = true;
             log(
               'info',
               'net_restart',
@@ -1473,9 +1475,12 @@ async function runStimdInner(
             void answer.then(
               (state) => {
                 if (state.listening && state.port === options.port) serviceNet = true;
+                else if (reserved) serviceNet = wasService;
                 return undefined;
               },
-              () => undefined,
+              () => {
+                if (reserved) serviceNet = wasService;
+              },
             );
           void answer.then(
             (state) => {
