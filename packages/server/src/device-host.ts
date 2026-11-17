@@ -2475,14 +2475,14 @@ export class DeviceHost {
     );
   }
 
-  /**
-   * Refuses new hosted work, as `close` does, when every owned session can be resumed by the next server (`working` is
-   * 0), and returns 0; otherwise changes nothing and returns `working`.
-   */
-  seal(): number {
-    const busy = this.working();
-    if (busy === 0) this.closed = true;
-    return busy;
+  /** The work a restart of this server would end: sessions it cannot leave running, and runtime installs or probes. */
+  restartWork(): number {
+    return this.working() + this.probes.size;
+  }
+
+  /** Refuses new hosted work from now on, as `close` does, ahead of a restart that `restartWork` cleared. */
+  seal(): void {
+    this.closed = true;
   }
 
   working(): number {

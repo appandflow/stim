@@ -1318,14 +1318,15 @@ describe('a hosted session across a server restart', () => {
     host.appLaunch('client', app.params);
     expect(host.active()).toBe(2);
     expect(host.working()).toBe(1);
-    expect(host.seal()).toBe(1);
+    expect(host.restartWork()).toBe(1);
     expect(host.attach('client', { session: session.id })).toHaveProperty('result.state', 'ready');
   });
 
-  test('seal refuses new hosted work only when every session would survive a restart', async () => {
+  test('a restart ends no work while every session would be resumed, and seal refuses new hosted work', async () => {
     await installed();
+    expect(host.restartWork()).toBe(0);
     expect(await host.installRuntime('client', { runtime: 'bad' })).toHaveProperty('error.code', 'bad-request');
-    expect(host.seal()).toBe(0);
+    host.seal();
     expect(await host.installRuntime('client', { runtime: 'bad' })).toHaveProperty('error.code', 'forbidden');
   });
 
@@ -3636,6 +3637,7 @@ test('disconnect cancellation settles a runtime install worker before returning'
   const pid = await readPid(join(home, 'runtime-entered'));
   const worker = { pid, processToken: processIdentity.captureProcessToken(pid) };
   expect(worker.processToken).toEqual(expect.any(String));
+  expect(host.restartWork()).toBe(1);
   abort.abort();
   if (process.platform === 'win32') writeFileSync(gate, '');
   expect(await pending).toHaveProperty('error.code', 'action-failed');

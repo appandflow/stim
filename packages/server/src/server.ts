@@ -240,9 +240,9 @@ export interface RunningServer {
   /** Settles once the first read of the Stim home finished: `ready`, or `degraded` while a read does not return. */
   ready: Promise<StartupState>;
   /**
-   * Before a restart of this server: when no offloaded job runs or is being admitted (its artifact delivery included)
-   * and every hosted session can be resumed, refuses new ones of both and returns 0; otherwise returns how many there
-   * are and refuses nothing.
+   * Before a restart of this server: when no offloaded job runs or is being admitted (its artifact delivery included),
+   * every hosted session can be resumed and no runtime install or probe runs, refuses new ones and returns 0; otherwise
+   * returns how many there are and refuses nothing.
    */
   sealForRestart: () => number;
   close: () => Promise<void>;
@@ -2304,10 +2304,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     },
     publishPresence: (params) => recordPresence(localAgents, params)?.message ?? null,
     sealForRestart: () => {
-      const hosted = hostedDevices.working();
+      const hosted = hostedDevices.restartWork();
       if (hosted > 0) return hosted;
       const busy = jobs.seal();
-      return busy > 0 ? busy : hostedDevices.seal();
+      if (busy === 0) hostedDevices.seal();
+      return busy;
     },
     ready,
     close: async () => {
