@@ -1949,12 +1949,17 @@ RULES
            because no setting sets it yet, so state is never holding.
 
   builds   { max, inUse, holders: [{ slot, workspace, client, since,
-           unresolved? }] }. inUse counts the slots below max that a new
-           build cannot take. workspace is the root of the local build in
+           unresolved?, claim? }] }. inUse counts the slots below max that a
+           new build cannot take. workspace is the root of the local build in
            the slot; client is the device id of the client whose offloaded
            build this machine runs in it. An unresolved slot has a claim
            whose holder Stim cannot identify; both are null, and the slot
-           stays in use until that claim is removed.
+           stays in use until that claim is removed. claim is { unresolved,
+           removeCommand }: the claim, its owner pid, claim time and
+           liveness, an offloaded build's job and other claims, and one
+           command removing them and its fingerprint-work/<job>; gc and
+           maintenance list it in blocked. Run it once nothing of that
+           build runs.
   devices  { max, inUse, unknown?, holders: [{ platform, label, workspace,
            slot, booting? }] }, the owned devices the cap counts: booted or
            booting stim simulators, owned emulators adb lists, and boots in

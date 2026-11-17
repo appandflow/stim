@@ -74,6 +74,8 @@ export interface ClaimProblem {
   startedAt?: string;
   /** The Stim home its holder named, for a claim in a store several homes share. */
   home?: string;
+  /** The details its holder recorded, when the claim could be read. */
+  details?: ClaimDetails;
 }
 
 export interface ClaimSurvey {
@@ -177,15 +179,23 @@ export function claimFilesRemoveCommand(path: string): string {
     : claimRemoveCommand(path);
 }
 
-/** An unresolved claim as one line: why, who held it, and the command that removes it once nothing uses it. */
-export function describeClaimProblem(problem: ClaimProblem): string {
+/** An unresolved claim as one clause: why, who held it (pid, claim time and whether it still runs), and where it is. */
+export function claimProblemText(problem: ClaimProblem): string {
   const status = problem.owner ? inspectProcessIdentity(problem.owner) : null;
   const holder = problem.owner
     ? `; its owner pid ${problem.owner.pid}${problem.startedAt ? ` (claimed ${problem.startedAt})` : ''} ${
         status === 'gone' ? 'is no longer running' : status === 'same' ? 'is running' : 'could not be identified'
       }`
     : '';
-  return `${problem.reason}${holder}; the claim is at ${problem.path}. If nothing is using it, run: ${claimFilesRemoveCommand(problem.path)}`;
+  return `${problem.reason}${holder}; the claim is at ${problem.path}`;
+}
+
+/** An unresolved claim as one line: `claimProblemText` and the command that removes it once nothing uses it. */
+export function describeClaimProblem(
+  problem: ClaimProblem,
+  removeCommand: string = claimFilesRemoveCommand(problem.path),
+): string {
+  return `${claimProblemText(problem)}. If nothing is using it, run: ${removeCommand}`;
 }
 
 export function isClaimRefusal(err: unknown): err is ClaimRefusedError {
@@ -450,6 +460,7 @@ function survey(dir: string, mode: ClaimMode, into: ClaimSurvey): void {
         startedAt: holder.startedAt,
         ...(holder.childPending ? { pendingChild: true } : {}),
         ...(typeof holder.details.home === 'string' ? { home: holder.details.home } : {}),
+        details: holder.details,
         ...(Array.isArray(holder.details.engineDirs)
           ? {
               engineDirs: holder.details.engineDirs.filter(

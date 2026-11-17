@@ -2,7 +2,13 @@ import { readdirSync, statSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import type { StatusBuildSlotHolder, StatusBuildSlots } from '@stim-cli/core/state';
 import { formatElapsed } from '../command-output.ts';
-import { readClaimSet, releaseClaim, type ClaimHandle, type ClaimHolder } from '../ownership-claim.ts';
+import {
+  readClaimSet,
+  releaseClaim,
+  type ClaimHandle,
+  type ClaimHolder,
+  type ClaimProblem,
+} from '../ownership-claim.ts';
 import { declareSpawnsOn, stopDeclaringSpawnsOn } from './spawn-claims.ts';
 import { ambientContext } from '@stim-cli/core';
 import { daemonWaiter, notifyReleased, opWaiting } from '../daemon/client.ts';
@@ -56,6 +62,8 @@ export interface SlotInfo {
   client: string | null;
   alive: boolean;
   unresolved: boolean;
+  /** The first claim of the slot whose holder cannot be resolved. */
+  problem?: ClaimProblem;
 }
 
 export interface SlotHandle {
@@ -369,6 +377,7 @@ export function listSlots(slots: SlotClass): SlotInfo[] {
       client: info?.client ?? null,
       alive: survey.live.length > 0,
       unresolved: survey.unresolved.length > 0,
+      ...(survey.unresolved[0] ? { problem: survey.unresolved[0] } : {}),
     });
   }
   return found;

@@ -552,7 +552,7 @@ async function readStatusFacts(probes: StatusProbes, gitScope: GitScope, cwd: st
   const { maxBuilds, maxDevices } = admissionLimits();
   const platformLimits = getPlatformDeviceLimits();
   const slotUsage: StatusSnapshot['slotUsage'] = {
-    ...(maxBuilds > 0 ? { builds: buildSlotUsage(maxBuilds) } : {}),
+    ...(maxBuilds > 0 ? { builds: buildSlotUsage(maxBuilds, process.env) } : {}),
     ...(maxDevices > 0 || platformLimits.ios > 0 || platformLimits.android > 0
       ? await deviceSlotUsages(maxDevices, platformLimits, {
           config: cfg,
