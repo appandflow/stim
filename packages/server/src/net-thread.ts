@@ -9,8 +9,6 @@ export type ToNet =
   | { type: 'end'; id: number }
   | { type: 'presence'; params: unknown }
   | { type: 'keep' }
-  | { type: 'seal' }
-  | { type: 'unseal' }
   | { type: 'stop' };
 
 /** What the net thread sends stimd's main thread. */
@@ -21,7 +19,6 @@ export type FromNet =
   | { type: 'data'; id: number; chunk: Uint8Array }
   | { type: 'end'; id: number }
   | { type: 'idle' }
-  | { type: 'sealed'; jobs: number }
   | { type: 'update'; why: string }
   | { type: 'restart'; why: string };
 
@@ -84,8 +81,6 @@ async function run(port: MessagePort, options: NetOptions): Promise<void> {
     else if (message.type === 'end') connections.get(message.id)?.push(null);
     else if (message.type === 'presence') server.publishPresence(message.params);
     else if (message.type === 'keep') keep();
-    else if (message.type === 'seal') post({ type: 'sealed', jobs: server.sealForRestart() });
-    else if (message.type === 'unseal') server.unsealForRestart();
     else
       void close()
         .then(

@@ -23,8 +23,6 @@ type ToNet =
   | { type: 'end'; id: number }
   | { type: 'presence'; params: unknown }
   | { type: 'keep' }
-  | { type: 'seal' }
-  | { type: 'unseal' }
   | { type: 'stop' };
 
 type FromNet =
@@ -34,7 +32,6 @@ type FromNet =
   | { type: 'data'; id: number; chunk: Uint8Array }
   | { type: 'end'; id: number }
   | { type: 'idle' }
-  | { type: 'sealed'; jobs: number }
   | { type: 'update'; why: string }
   | { type: 'restart'; why: string };
 
@@ -44,15 +41,8 @@ type NetAnswer = { listening: true; port: number } | { listening: false; message
 export interface NetThread {
   /** Starts the net thread with `options` unless it runs; resolves once it listens or refuses. */
   ensure(options: NetOptions): Promise<NetAnswer>;
-  /** Whether the net thread runs, with which options, on which port once it listens, and the port it was asked for. */
-  running(): { shareOnly: boolean; loopbackOnly: boolean; port: number | null; asked: number } | null;
-  /**
-   * Before a restart, asks the listening net thread to refuse new offloaded jobs and hosted sessions when none runs
-   * that a restart would end; resolves with 0 when it did (or none listens), else with how many and nothing changed.
-   */
-  sealForRestart(): Promise<number>;
-  /** Undoes a `sealForRestart` that resolved with 0 when the restart does not follow. */
-  unsealForRestart(): void;
+  /** Whether the net thread runs, with which options, and on which port once it listens. */
+  running(): { shareOnly: boolean; loopbackOnly: boolean; port: number | null } | null;
   /** Hands `socket`, whose first frames stimd has read, to a listening net thread; false when none listens. */
   connect(socket: Socket, head: Buffer): boolean;
   /** Forwards one agent action's presence to a listening net thread; false when none listens. */
@@ -83,10 +73,8 @@ export function createNetThread(
   let shareOnly = false;
   let loopbackOnly = false;
   let port: number | null = null;
-  let asked = 0;
   let replacing: NetOptions | null = null;
   let ending = false;
-  const sealAnswers = new Map<Worker, ((jobs: number) => void)[]>();
   let cleanupFailure: Error | undefined;
   let failureNotified = false;
   let nextId = 1;
@@ -143,7 +131,6 @@ export function createNetThread(
       }
       shareOnly = options.shareOnly;
       loopbackOnly = options.loopbackOnly;
-      asked = options.port;
       const thread = new Worker(spawnEntry('net-thread'), { workerData: { net: options } });
       let clean = false;
       worker = thread;
@@ -167,8 +154,7 @@ export function createNetThread(
             if (!shareOnly) return;
             log('info', 'net_idle', 'no web share is left; stopping the net thread');
             stop(thread);
-          } else if (message.type === 'sealed') sealAnswers.get(thread)?.shift()?.(message.jobs);
-          else if (message.type === 'update') onUpdate(message.why);
+          } else if (message.type === 'update') onUpdate(message.why);
           else if (message.type === 'restart') onRestart(message.why);
           else if (message.type === 'data') sockets.get(message.id)?.write(message.chunk);
           else sockets.get(message.id)?.end();
@@ -181,14 +167,12 @@ export function createNetThread(
         thread.once('exit', (code) => {
           if (!clean) unverified(`worker exited with code ${code} without confirming cleanup`, false);
           answer({ listening: false, message: `the net thread exited with code ${code}` });
-          for (const sealed of sealAnswers.get(thread) ?? []) sealed(0);
-          sealAnswers.delete(thread);
           if (worker === thread) ended();
         });
       });
       return started;
     },
-    running: () => (worker ? { shareOnly, loopbackOnly, port, asked } : null),
+    running: () => (worker ? { shareOnly, loopbackOnly, port } : null),
     connect(socket, head) {
       if (!listening) return false;
       const id = nextId++;
@@ -200,17 +184,6 @@ export function createNetThread(
         if (sockets.delete(id)) post({ type: 'end', id });
       });
       return true;
-    },
-    unsealForRestart() {
-      post({ type: 'unseal' });
-    },
-    sealForRestart() {
-      const thread = worker;
-      if (!listening || !thread) return Promise.resolve(0);
-      return new Promise((answer) => {
-        sealAnswers.set(thread, [...(sealAnswers.get(thread) ?? []), answer]);
-        thread.postMessage({ type: 'seal' });
-      });
     },
     presence(params) {
       if (!listening) return false;

@@ -111,38 +111,28 @@ restart, or a stimd a command started, which has no service options and, with
 a saved share, runs a share-only net thread on a random loopback port. So the
 unit's process (`--service` without `--carried`), when it finds a stimd holding
 the home, asks `net.ensure` with `service: true` and the values of its bare
-`--env` names, which the holder may not have. stimd restarts a net thread that
-runs share-only, or on another port or listener scope, with the service's
-options and those values, and also one whose environment differs from the
-ask's: its `--env` entries with their values (a bare name takes stimd's value
-unless the ask that started the thread sent one) and its `--path-prepend`. The
-values reach only that thread, never a successor's arguments; a successor
-inherits only the names stimd passes on, and the unit's next ask after a
-handover moves its thread again when a value is missing. Stim Desktop no longer moves the thread after a service
-ask. The move compares with the thread that runs, and an ask that waits on the
-stop gets the service's thread.
+`--env` names, which the holder may not have. When the holder runs a
+share-only net thread, stimd replaces it with one on the service's options and
+those values (the values reach only that thread, never a successor's
+arguments; the new thread restores the saved shares), unless work pins stimd,
+in which case it refuses and the unit's next restart asks again. An ask that
+waits on the stop gets the service's thread. Once the service's thread runs,
+Stim Desktop no longer moves it. A net thread that serves clients on other
+options (Desktop's or `stim serve`'s) is not replaced: the asker exits 1
+naming both ports, and `stim service status` names the holder's port. Which of
+the two owns the home then is the open decision of
+[#5095](https://github.com/appandflow/stim/issues/5095).
 
-stimd refuses the move while work pins it, and while the net thread runs
-anything a restart would end: a workspace action (a Desktop or phone build,
-start, stop, reload or settings write), an offloaded job or one being admitted
-(its artifact delivery, a package upload and a client engine install included), a hosted session
-the next server cannot resume (a macOS session, or one installing), or a
-runtime install or other device-host probe. The asker then exits 1 and the
-unit's restart asks again. Otherwise the net thread stops admitting all of
-these (hosted session stops included) in the same step that finds none, stimd checks its own pinned work once
-more, and the move follows, or the net thread admits again. Once stimd closes
-its net thread for good, no ask starts another.
-
-The asker also exits 1, naming both ports, when the answer is another port.
 stimd records its net thread's port as `netPort` in `run/stimd.json` (null
-while none listens), and `stim service status` names a holder on another port.
+while none listens). Once stimd closes its net thread for good, no ask starts
+another.
 
 Maintainer direction: "can u check the update process to make sure this doesnt happen? Can we make sure stimd always uses same port so this wont hjappen", relayed on [#5811](https://github.com/appandflow/stim/issues/5811).
 
-Chosen by the implementing agent, not the maintainer: moving the thread on the
-service's ask rather than deciding which starter may take the home, refusing
-while pinned rather than deferring the move, and leaving a unit that names one
-engine build to `stim service install` (status reports it).
+Chosen by the implementing agent, not the maintainer: replacing only a
+share-only thread, refusing while pinned rather than deferring, and leaving a
+unit that names one engine build to `stim service install` (status reports
+it).
 
 ## Code
 

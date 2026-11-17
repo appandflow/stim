@@ -330,17 +330,6 @@ test("a service process that finds a stimd serving a share-only net thread on an
 
     expect(await desktopEnsure(socket, { port: 0, loopbackOnly: true })).toMatchObject({ listening: true, port });
 
-    const ask = { port, loopbackOnly: false, extraEnv: [], pathPrepend: [], service: true };
-    const { build } = JSON.parse(readFileSync(stimdRecordFile(), 'utf8'));
-    const shareAgain = await desktopEnsure(socket, { share: true });
-    expect(shareAgain.port).toBe(port);
-    const racing = [
-      ensureAs(socket, { kind: 'cli', build }, { port: 0, loopbackOnly: true, service: true }),
-      ensureAs(socket, { kind: 'cli', build }, ask),
-    ];
-    await Promise.all(racing);
-    expect(await ensureAs(socket, { kind: 'cli', build }, ask)).toMatchObject({ listening: true, port });
-
     const serviceExited = once(service, 'exit');
     stimd.kill('SIGTERM');
     expect(await stimdExited).toEqual([0, null]);
@@ -391,24 +380,6 @@ test("an ask that arrives while a service's ask moves the net thread gets the se
     await flushed();
     expect(restarts()).toBe(before);
 
-    const valued = {
-      ...ask,
-      extraEnv: ['STIM_TEST_SERVICE_ONLY', 'HOME'],
-      envValues: { STIM_TEST_SERVICE_ONLY: 'unit' },
-    };
-    expect(await ensureAs(socket, first, valued)).toMatchObject({ listening: true, port });
-    expect(await ensureAs(socket, first, valued)).toMatchObject({ listening: true, port });
-    await flushed();
-    expect(restarts()).toBe(before + 1);
-    const inherited = { ...valued, envValues: { ...valued.envValues, HOME: home } };
-    expect(await ensureAs(socket, first, inherited)).toMatchObject({ listening: true, port });
-    await flushed();
-    expect(restarts()).toBe(before + 1);
-    const prepended = { ...inherited, pathPrepend: ['/opt/stim-test/bin'] };
-    expect(await ensureAs(socket, first, prepended)).toMatchObject({ listening: true, port });
-    expect(await ensureAs(socket, first, prepended)).toMatchObject({ listening: true, port });
-    await flushed();
-    expect(restarts()).toBe(before + 2);
     stimd.kill('SIGTERM');
     expect(await stimdExited).toEqual([0, null]);
   } finally {

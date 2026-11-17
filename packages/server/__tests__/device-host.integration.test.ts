@@ -1318,21 +1318,7 @@ describe('a hosted session across a server restart', () => {
     host.appLaunch('client', app.params);
     expect(host.active()).toBe(2);
     expect(host.working()).toBe(1);
-    expect(host.restartWork()).toBe(1);
     expect(host.attach('client', { session: session.id })).toHaveProperty('result.state', 'ready');
-  });
-
-  test('a restart ends no work while every session would be resumed, and seal refuses new hosted work', async () => {
-    const { session } = await installed();
-    expect(host.restartWork()).toBe(0);
-    expect(await host.installRuntime('client', { runtime: 'bad' })).toHaveProperty('error.code', 'bad-request');
-    host.seal();
-    expect(await host.installRuntime('client', { runtime: 'bad' })).toHaveProperty('error.code', 'forbidden');
-    expect(host.stop('client', { session: session.id })).toHaveProperty('error.code', 'action-failed');
-    expect(host.stopForPerson(session.id)).toHaveProperty('error.code', 'action-failed');
-    expect(readHostedSessions().find((record) => record.id === session.id)?.state).toBe('ready');
-    host.unseal();
-    expect(await host.installRuntime('client', { runtime: 'bad' })).toHaveProperty('error.code', 'bad-request');
   });
 
   test('a session with an install in flight keeps the stop path on close', async () => {
@@ -3642,7 +3628,6 @@ test('disconnect cancellation settles a runtime install worker before returning'
   const pid = await readPid(join(home, 'runtime-entered'));
   const worker = { pid, processToken: processIdentity.captureProcessToken(pid) };
   expect(worker.processToken).toEqual(expect.any(String));
-  expect(host.restartWork()).toBe(1);
   abort.abort();
   if (process.platform === 'win32') writeFileSync(gate, '');
   expect(await pending).toHaveProperty('error.code', 'action-failed');

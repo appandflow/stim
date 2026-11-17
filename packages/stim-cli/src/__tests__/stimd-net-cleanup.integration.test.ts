@@ -157,7 +157,7 @@ test("an ask that waits on a restart's stop gets the restart's thread, not its o
   first.emit('message', { type: 'closed' });
   first.emit('exit', 0);
   await vi.waitFor(() => expect(current()).not.toBe(first));
-  expect(net.running()).toMatchObject({ asked: 7787, loopbackOnly: false });
+  expect(net.running()).toMatchObject({ loopbackOnly: false });
   current().emit('message', { type: 'listening', port: 7787 });
   await expect(Promise.all([restarting, parked])).resolves.toEqual([
     { listening: true, port: 7787 },
