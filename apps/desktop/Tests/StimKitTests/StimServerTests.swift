@@ -154,4 +154,27 @@ import Testing
     #expect(devices.filter(\.isPhone).map(\.id) == ["phone"])
     #expect(!devices.contains { $0.canControl })
   }
+
+  @Test(arguments: [#"{"devices":[]}"#, #"{"devices":[],"unreadable":[]}"#])
+  func readsPairingsWithoutUnreadableRows(_ json: String) throws {
+    let pairings = try StimServerCLI.decoder.decode(PairedDeviceList.self, from: Data(json.utf8))
+    #expect((pairings.unreadable ?? []).isEmpty)
+  }
+
+  @Test func readsIndividualUnreadableEntriesAndNewerRegistries() throws {
+    let pairings = try StimServerCLI.decoder.decode(
+      PairedDeviceList.self,
+      from: Data(
+        #"""
+        {"devices":[{"id":"phone","name":"Phone","keyFingerprint":"k1","pairedAt":"2026-09-25T05:00:00Z","capabilities":["read","control"]}],
+         "unreadable":[{"file":"devices.json","index":0,"id":"opaque"},{"file":"devices.json","index":2},
+                       {"file":"build-clients.json","version":3}]}
+        """#.utf8))
+    let unreadable = try #require(pairings.unreadable)
+    #expect(pairings.devices.first?.canControl == true)
+    #expect(unreadable.map(\.file) == ["devices.json", "devices.json", "build-clients.json"])
+    #expect(unreadable.map(\.index) == [0, 2, nil])
+    #expect(unreadable.map(\.id) == ["opaque", nil, nil])
+    #expect(unreadable.map(\.version) == [nil, nil, 3])
+  }
 }
