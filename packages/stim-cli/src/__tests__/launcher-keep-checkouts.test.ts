@@ -23,7 +23,8 @@ import { checkoutRootOf } from '../workspace/checkout-role.ts';
 import { saveConfig } from '../workspace/config.ts';
 import * as fsUtil from '../fs-util.ts';
 import * as gitModule from '../workspace/git.ts';
-import { clearSourceTrees, collectArtifactsAsync } from '../stimd/passes/artifacts.ts';
+import * as dependencyEdits from '../workspace/dependency-edits.ts';
+import { clearArtifact, clearSourceTrees, collectArtifactsAsync } from '../stimd/passes/artifacts.ts';
 import { answered } from '../workspace/bounded-read.ts';
 import { freshLaunchers, launcherReason, launchersOf, launchingOf } from '../workspace/launchers.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
@@ -348,6 +349,106 @@ describe('an executable on PATH that links into a checkout keeps it, whichever w
     expect(existsSync(modules)).toBe(true);
   });
 
+  it('keeps a build output before any claim when a link appears after the planning read', async () => {
+    const path = join(base, 'roots', 'app');
+    const tool = app(path);
+    const build = join(path, 'android', 'app', 'build');
+    const operation = testContext();
+    await launchersOf(operation, operation.signal)();
+    link(tool);
+    const recheck = vi.fn<() => Promise<string | null>>(async () => null);
+
+    const result = await clearArtifact(
+      { kind: 'would-clear-build-dirs', target: build, bytes: 0, reason: 'test' },
+      'build',
+      {
+        windowMs: 0,
+        protectedRoot: '',
+        pinned: () => false,
+        worktrees: [{ path, linked: false, locked: false, keys: [path] }],
+        recheck,
+        launchers: freshLaunchers(operation, operation.signal),
+        operation,
+      },
+    );
+
+    expect(result).toEqual(expect.objectContaining({ status: 'kept', detail: expect.stringContaining('on PATH') }));
+    expect(recheck).not.toHaveBeenCalled();
+    expect(existsSync(build)).toBe(true);
+  });
+
+  it('keeps the second of two source trees out of the selection when a link appears after the first is checked', async () => {
+    const path = join(base, 'roots', 'app');
+    app(path);
+    const first = join(path, 'node_modules');
+    const second = join(path, 'ios', 'Pods');
+    for (const dir of [first, second]) {
+      mkdirSync(join(dir, 'dep'), { recursive: true });
+      writeFileSync(join(dir, 'dep', 'cli'), 'x');
+    }
+    age(path);
+    const operation = testContext();
+    const real = gitModule.gitQuietAsync;
+    vi.spyOn(gitModule, 'gitQuietAsync').mockImplementation(async (...args) => {
+      const out = await real(...args);
+      if (args[1].includes('ls-files') && args[1].some((arg) => arg.includes('Pods')) && !existsSync(join(bin, 'tool')))
+        link(join(second, 'dep', 'cli'));
+      return out;
+    });
+    const recheck = vi.fn<() => Promise<string | null>>(async () => null);
+
+    const results = await clearSourceTrees([first, second], {
+      protectedRoot: '',
+      pinned: () => false,
+      worktrees: [{ path, linked: false, locked: false, keys: [path] }],
+      recheck,
+      level: 'normal',
+      launchers: freshLaunchers(operation, operation.signal),
+      operation,
+    });
+
+    expect(results.get(second)).toEqual(
+      expect.objectContaining({ status: 'kept', detail: expect.stringContaining('on PATH') }),
+    );
+    expect(existsSync(second)).toBe(true);
+  });
+
+  it('keeps a source tree that a link reaches at the check under the claims, though the link is gone by the final read', async () => {
+    const path = join(base, 'roots', 'app');
+    app(path);
+    const modules = join(path, 'node_modules');
+    mkdirSync(join(modules, 'dep'), { recursive: true });
+    writeFileSync(join(modules, 'dep', 'cli'), 'x');
+    age(path);
+    const operation = testContext();
+    await launchersOf(operation, operation.signal)();
+    const recheck = vi.fn<() => Promise<string | null>>(async () => {
+      link(join(modules, 'dep', 'cli'));
+      return null;
+    });
+    const real = dependencyEdits.checkDependencyEdits;
+    vi.spyOn(dependencyEdits, 'checkDependencyEdits').mockImplementation(async (...args) => {
+      if (existsSync(join(bin, 'tool'))) unlinkSync(join(bin, 'tool'));
+      return real(...args);
+    });
+
+    const results = await clearSourceTrees([modules], {
+      protectedRoot: '',
+      pinned: () => false,
+      worktrees: [{ path, linked: false, locked: false, keys: [path] }],
+      recheck,
+      level: 'normal',
+      launchers: freshLaunchers(operation, operation.signal),
+      operation,
+    });
+
+    expect(recheck).toHaveBeenCalled();
+    expect(results.get(modules)).toEqual(
+      expect.objectContaining({ status: 'kept', detail: expect.stringContaining('on PATH') }),
+    );
+    expect(existsSync(modules)).toBe(true);
+  });
+
   it('owns a registered app inside a monorepo by the worktree root, and a folder in no checkout by itself', async () => {
     const mono = join(base, 'dev', 'mono');
     mkdirSync(join(mono, 'apps', 'native'), { recursive: true });
@@ -519,7 +620,7 @@ describe('an executable on PATH that links into a checkout keeps it, whichever w
       snapshotReads = 0;
       await dependencies(true);
       expect(snapshotReads).toBeGreaterThan(planned);
-      expect(launcherDirs.state.reads).toBe(1 + (snapshotReads - planned) + 1);
+      expect(launcherDirs.state.reads).toBe(1 + (snapshotReads - planned) + 3);
       expect(existsSync(join(linked, 'node_modules'))).toBe(false);
     } finally {
       resetExecutor();

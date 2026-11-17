@@ -634,12 +634,11 @@ export async function clearArtifact(
   };
   const running = kind === 'dependencies' ? await readRunningProcessesAsync() : null;
   const pinned = await pinsOf(candidate.keys, options.pinned);
-  const planning = launchersOf(operation, signal);
   const early = keptReason(
     candidate,
     kind,
     { ...options, pinned, now: Date.now(), running, inUse: await inUseOf(candidate, kind, signal, operation) },
-    await artifactReads(candidate, kind, signal, operation, planning),
+    await artifactReads(candidate, kind, signal, operation, freshLaunchers(operation, signal)),
   );
   if (early) return { status: 'kept', bytes: 0, detail: early };
   const unrestorable =
@@ -661,7 +660,7 @@ export async function clearArtifact(
         inUse: await inUseOf(candidate, kind, signal, operation, key),
         ...(key ? { locked: key } : {}),
       },
-      await artifactReads(candidate, kind, signal, operation, planning),
+      await artifactReads(candidate, kind, signal, operation, freshLaunchers(operation, signal)),
     );
     if (reason) return reason;
     const late = key && options.recheck ? await options.recheck(candidate.keys, candidate.worktree) : null;
@@ -762,10 +761,7 @@ export async function clearSourceTrees(
     agents: (await agentSessionUse([worktree.path], Date.now(), signal))[0] ?? [],
     source: true,
   };
-  const planning = launchersOf(operation, signal);
-  const selection = freshLaunchers(operation, signal);
   const checkTree = async (path: string, held?: readonly string[]): Promise<string | null> => {
-    const reading = held ? planning : selection;
     const candidate = { ...base, path, ...(held ? { source: false } : {}) };
     const pinned = await pinsOf(candidate.keys, options.pinned);
     return (
@@ -780,10 +776,10 @@ export async function clearSourceTrees(
           inUse: await inUseOf(candidate, 'dependencies', signal, operation, held),
           ...(held ? { locked: held } : {}),
         },
-        await artifactReads(candidate, 'dependencies', signal, operation, reading),
+        await artifactReads(candidate, 'dependencies', signal, operation, freshLaunchers(operation, signal)),
       ) ??
       (await regenerableDirProblem(worktree.path, path, signal, {
-        launching: launchingOf(worktree.path, reading, operation, signal),
+        launching: launchingOf(worktree.path, freshLaunchers(operation, signal), operation, signal),
       })) ??
       linkedWorktreeUsing(candidate, options.worktrees)
     );

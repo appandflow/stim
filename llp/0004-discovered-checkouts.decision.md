@@ -207,7 +207,8 @@ evidence, as part of the same snapshot, and is never reused across two process
 reads. Within one snapshot every check shares that one reading, so the cost is one
 launcher read per process read and nothing is memoized past a process re-read. The
 pass's planning reading (shared by the operation, possibly minutes old) serves
-planning and the early checks only, except a source checkout's tree selection before its claims, which reads anew. The routes: the idleness evidence reads the
+planning only. `clearArtifact` and `clearSourceTrees` take a new reading at each of
+their checks, before and under the claims, and for each tree. The routes: the idleness evidence reads the
 processes and the launchers together (`discoveredEvidence`, one `DiscoveredReads`
 per check); a directory check that reads the processes itself (a Cargo `target/` in
 `regenerableDirProblem`) takes a new launcher reading right after that read;
@@ -599,8 +600,8 @@ scratch pass of four idle discovered checkouts and one linked worktree, the
 launcher reads were 1 plan + 12 output reads + 4 dependency reads when every check
 read anew, and are 1 plan + 12 output reads, none of them the shared planning read (per candidate one with the idleness
 process read, one at its directory check and one before each of its removals) and
-3 dependency reads (one planning, one with the recheck's process read, one before
-the removal) now. The pressure ladder keeps going to later rungs when a kept checkout leaves the
+5 dependency reads (one planning, one with the recheck's process read, a new one at
+each of the early and under-claims checks, one before the removal) now. The pressure ladder keeps going to later rungs when a kept checkout leaves the
 level short, as for every other keep reason.
 
 ## Links
