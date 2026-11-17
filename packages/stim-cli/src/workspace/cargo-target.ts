@@ -320,8 +320,12 @@ async function readTargetUse(
     const lsof = await run('lsof', ['-nP', '-w', '-Fn'], 60_000);
     const ps = await run('ps', ['-axww', '-o', 'args='], 30_000);
     const used = targetPathsInUse(target, lsof, ps);
-    const launcher = launcherReason(launching.checkout, await launching.anew());
-    return launcher ? { kept: launcher } : { used };
+    const scan = await launching.anew();
+    const launcher = launcherReason(launching.checkout, scan);
+    if (launcher) return { kept: launcher };
+    const prefix = `${folded(target)}/`;
+    for (const path of scan.targets) if (folded(path).startsWith(prefix)) used.push(folded(path));
+    return { used };
   } catch {
     signal?.throwIfAborted();
     return { kept: CANNOT_READ };

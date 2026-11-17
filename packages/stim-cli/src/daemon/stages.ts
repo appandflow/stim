@@ -159,7 +159,6 @@ async function idleVerdict(
     operation?: StimContext;
     reads?: DiscoveredReads;
     full?: boolean;
-    /** Found through a tool folder or the full scan: a PATH launcher into the checkout keeps it. Every caller states it. */
     reduceOnly: boolean;
   },
 ): Promise<{ idleMs: number } | { kept: string }> {

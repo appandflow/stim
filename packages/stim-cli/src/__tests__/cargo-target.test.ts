@@ -291,6 +291,32 @@ test('a trim stopped at a deadline keeps every unit it has not moved, finishes t
   }
 });
 
+test.skipIf(process.platform !== 'darwin' && process.platform !== 'win32')(
+  'a launcher target under a case variant of the target keeps its profile, and a stale profile with none goes',
+  async () => {
+    try {
+      makeProfile('debug', 3 * DAY);
+      makeProfile('release', 3 * DAY);
+      stubProcesses({});
+      const disk = realpathSync.native(target);
+      const variant = target.replace('stim-cargo-target-', 'STIM-CARGO-TARGET-');
+      expect(variant).not.toBe(target);
+
+      const result = await trimCargoTarget(variant, {
+        needBytes: 0,
+        launching: launchingWith(variant, { targets: [`${disk}/debug/deps/tool`], incomplete: [] }),
+      });
+
+      expect(existsSync(join(target, 'debug', 'deps', 'libx.rlib'))).toBe(true);
+      expect(existsSync(join(target, 'release'))).toBe(false);
+      expect(result.removed).toEqual(['release']);
+      expect(result.kept.join(' ')).toContain('debug');
+    } finally {
+      resetExecutor();
+    }
+  },
+);
+
 test('a launcher on PATH that appears after the first reading keeps what it points into at the later reading, and an incomplete reading keeps everything', async () => {
   try {
     makeProfile('release', 0);

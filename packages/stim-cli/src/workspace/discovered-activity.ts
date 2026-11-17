@@ -118,7 +118,6 @@ export async function discoveredEvidence(
     idleMs: number;
     reads: DiscoveredReads;
     operation?: StimContext;
-    /** Found through a tool folder or the full scan, where an installed tool cannot be told from a checkout. */
     reduceOnly: boolean;
   },
 ): Promise<IdleStopEvidence> {

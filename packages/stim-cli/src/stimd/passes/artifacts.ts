@@ -74,7 +74,6 @@ export interface ArtifactWorktree {
   keys: string[];
   /** Why a running agent session keeps the worktree, read when the worktrees were listed. */
   agents?: string[];
-  /** Found through a tool folder or the full scan, where an installed tool cannot be told from a checkout. */
   reduceOnly: boolean;
 }
 

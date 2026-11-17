@@ -34,7 +34,6 @@ export interface CargoTargetCandidate {
   dir: string;
   identity: string;
   discovered: boolean;
-  /** Found through a tool folder or the full scan: a PATH launcher into the checkout keeps its target. */
   reduceOnly: boolean;
   /** The checkout that owns the target, which a PATH launcher can point anywhere into; `root` is the app inside it. */
   checkout: Checkout;
