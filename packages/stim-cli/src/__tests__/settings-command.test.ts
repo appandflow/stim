@@ -174,6 +174,38 @@ test('removed names at machine scope are reported with their file and unset remo
   expect(typo.note.join('\n')).toContain('"remote.nothing" is not a Stim setting.');
 });
 
+test('machine records are not unknown keys and unset refuses to remove them', async () => {
+  const machine = join(home, 'config.json');
+  const text = JSON.stringify({
+    version: 2,
+    projects: {},
+    repos: {},
+    homeId: 'home-1',
+    parked: { ios: [{ udid: 'A' }], android: [{ avd: 'b' }] },
+    iosSimulatorApp: 'stim-desktop',
+    androidEmulatorApp: 'stim-desktop',
+    hosting: { agentDriver: 'agent-device' },
+    server: { acceptClientBuilds: true, workerRoot: 'w', keepAwake: true, buildsPaused: false },
+    concurrency: { maxBuilds: 2, maxDevices: 4 },
+    archive: {
+      maxAgeDays: 30,
+      logs: { maxAgeDays: 7 },
+      recordings: { maxAgeDays: 7 },
+      agentActions: { maxAgeDays: 7 },
+    },
+    debug: { logs: true },
+    ios: { simslim: true },
+    remote: { build: 'auto' },
+  });
+  writeFileSync(machine, text);
+
+  expect(JSON.parse((await settings(['--json'])).out[0] ?? '').unknown).toEqual([]);
+
+  const unset = await settings(['unset', 'parked.ios']);
+  expect(unset.exitCode).toBe(1);
+  expect(readFileSync(machine, 'utf-8')).toBe(text);
+});
+
 test('unset of maintenance.idleStopHours removes the still-active machine setting', async () => {
   saveConfig({ version: 2, projects: {}, repos: {}, maintenance: { idleStopHours: 0 } });
 

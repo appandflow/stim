@@ -24,6 +24,7 @@ import {
   settingValueError,
   REMOTE_DEVICE_BACKENDS,
   REMOVED_SETTINGS,
+  MACHINE_RECORD_KEYS,
   SETTING_GROUPS,
   SETTINGS,
   WEB_VIEWPORTS,
@@ -534,8 +535,6 @@ export function iosLanHostSettingError(settings: unknown): string | null {
 const MACHINE_KNOWN_SETTINGS = new Set(
   SETTINGS.flatMap((setting) => setting.key.split('.').map((_, index, parts) => parts.slice(0, index + 1).join('.'))),
 );
-
-const MACHINE_RECORD_KEYS: ReadonlySet<string> = new Set(['version', 'homeId', 'projects', 'repos']);
 
 export function unknownSettingKeys(settings: unknown, prefix = ''): string[] {
   if (!isPlainObject(settings)) return [];

@@ -129,3 +129,7 @@ export interface StimConfig {
   [key: string]: unknown;
 }
 export type Config = StimConfig;
+
+export const MACHINE_RECORD_KEYS: ReadonlySet<string> = new Set<string>([
+  ...(['version', 'homeId', 'projects', 'repos', 'parked'] satisfies Array<keyof StimConfig & string>),
+]);
