@@ -113,8 +113,10 @@ unit's process (`--service` without `--carried`), when it finds a stimd holding
 the home, asks `net.ensure` with `service: true` and the values of its bare
 `--env` names, which the holder may not have. stimd restarts a net thread that
 runs share-only, or on another port or listener scope, with the service's
-options and those values; the values reach only that thread, never a
-successor's arguments. Stim Desktop no longer moves the thread after a service
+options and those values, and also one that runs without the values the ask
+carries; the values reach only that thread, never a successor's arguments or
+environment. A successor after a handover therefore starts without them, and
+the unit's next ask moves its thread again. Stim Desktop no longer moves the thread after a service
 ask. The move compares with the thread that runs, and an ask that waits on the
 stop gets the service's thread.
 

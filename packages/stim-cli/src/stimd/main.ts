@@ -1126,6 +1126,7 @@ async function runStimdInner(
   } catch {}
   let netServes: ServeOptions | null = serve ?? null;
   let serviceNet = service;
+  let netValues: Record<string, unknown> = {};
   const writeRecord = (netPort: number | null) =>
     writeAtomic(stimdRecordFile(), {
       format: RECORD_FORMAT,
@@ -1430,7 +1431,10 @@ async function runStimdInner(
           const serviceMove =
             forService &&
             running !== null &&
-            (running.shareOnly || running.asked !== options.port || running.loopbackOnly !== options.loopbackOnly);
+            (running.shareOnly ||
+              running.asked !== options.port ||
+              running.loopbackOnly !== options.loopbackOnly ||
+              Object.entries(values).some(([name, value]) => netValues[name] !== value));
           const restart =
             serviceMove ||
             (kind === 'desktop' &&
@@ -1440,9 +1444,13 @@ async function runStimdInner(
               (running.loopbackOnly !== options.loopbackOnly ||
                 (port !== undefined && port !== 0 && running.port !== null && port !== running.port)));
           if (forService) serviceNet = true;
-          if (!running) netServes = options;
+          if (!running) {
+            netServes = options;
+            netValues = values;
+          }
           const restartNet = () => {
             netServes = options;
+            netValues = values;
             log(
               'info',
               'net_restart',

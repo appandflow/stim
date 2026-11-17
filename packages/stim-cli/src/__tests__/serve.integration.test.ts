@@ -387,6 +387,12 @@ test("an ask that arrives while a service's ask moves the net thread gets the se
     expect(await ensureAs(socket, first, ask)).toMatchObject({ listening: true, port });
     await flushed();
     expect(restarts()).toBe(before);
+
+    const valued = { ...ask, extraEnv: ['STIM_TEST_SERVICE_ONLY'], envValues: { STIM_TEST_SERVICE_ONLY: 'unit' } };
+    expect(await ensureAs(socket, first, valued)).toMatchObject({ listening: true, port });
+    expect(await ensureAs(socket, first, valued)).toMatchObject({ listening: true, port });
+    await flushed();
+    expect(restarts()).toBe(before + 1);
     stimd.kill('SIGTERM');
     expect(await stimdExited).toEqual([0, null]);
   } finally {
