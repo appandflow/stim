@@ -7,8 +7,9 @@ import { launcherDirectories } from './launcher-directories.ts';
 
 /**
  * Where the executables on PATH that are symlinks resolve to, and the directories whose inspection could not be
- * completed. A directory or entry that does not exist, and a dangling symlink, is no launcher. Anything else that
- * fails (permission, I/O, a timeout) is incomplete, and nothing is known about that directory.
+ * completed. A directory or entry that does not exist, a dangling symlink, and a symlink whose path this user may not
+ * search, is no launcher. Anything else that fails (a directory that cannot be listed, EPERM, I/O, a timeout) is
+ * incomplete, and nothing is known about that directory.
  */
 export interface LauncherScan {
   targets: string[];
@@ -29,6 +30,11 @@ const REAL_IO: LauncherIo = {
 
 const ABSENT = ['ENOENT', 'ENOTDIR'];
 const absent = (error: unknown) => error instanceof Error && 'code' in error && ABSENT.includes(String(error.code));
+/**
+ * POSIX: EACCES resolving a link means a directory on its path denies this user search permission, which execve(2)
+ * needs too, so no process of this user can run it (macOS `/usr/sbin/weakpass_edit` into root-only `authserver`).
+ */
+const unrunnable = (error: unknown) => error instanceof Error && 'code' in error && error.code === 'EACCES';
 
 const READ_TIMEOUT_MS = 3000;
 
@@ -63,7 +69,7 @@ export function launcherReader(
             if (!(await answered(directory, () => io.isSymlink(entry), timeoutMs))) continue;
             found.targets.push(await answered(directory, () => io.realpath(entry), timeoutMs));
           } catch (error) {
-            if (!absent(error)) throw error;
+            if (!absent(error) && !unrunnable(error)) throw error;
           }
         }
       } catch (error) {

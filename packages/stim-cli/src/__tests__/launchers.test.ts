@@ -45,9 +45,23 @@ describe('the PATH launcher scan', () => {
     const unreadable = await scan(['/locked', '/bin1'], io({ '/locked': missing('EACCES'), '/bin1': [] }));
     expect(unreadable.incomplete).toEqual(['/locked']);
     expect(launcherReason('/work/app', unreadable)).toContain('/locked');
-    const unresolved = await scan(['/bin1'], io({ '/bin1': ['tool'] }, { '/bin1/tool': missing('EIO') }));
-    expect(unresolved.incomplete).toEqual(['/bin1']);
-    expect(launcherReason('/work/app', unresolved)).toContain('cannot be ruled out');
+    for (const code of ['EIO', 'EPERM']) {
+      const unresolved = await scan(['/bin1'], io({ '/bin1': ['tool'] }, { '/bin1/tool': missing(code) }));
+      expect(unresolved.incomplete).toEqual(['/bin1']);
+      expect(launcherReason('/work/app', unresolved)).toContain('cannot be ruled out');
+    }
+  });
+
+  it('reads the rest of a directory past a symlink this user may not search, which no process of theirs can run', async () => {
+    const result = await scan(
+      ['/usr/sbin'],
+      io(
+        { '/usr/sbin': ['weakpass_edit', 'tool'] },
+        { '/usr/sbin/weakpass_edit': missing('EACCES'), '/usr/sbin/tool': '/work/app/.build/release/tool' },
+      ),
+    );
+    expect(result).toEqual({ targets: ['/work/app/.build/release/tool'], incomplete: [] });
+    expect(launcherReason('/work/other', result)).toBeNull();
   });
 
   it('ends a reading at once as incomplete when a read does not answer, and starts no read while it is pending', async () => {
