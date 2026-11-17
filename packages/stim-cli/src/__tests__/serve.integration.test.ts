@@ -315,7 +315,10 @@ test("a service process that finds a stimd serving a share-only net thread on an
     const serviceErr = lines(child.stderr);
     const signal = AbortSignal.timeout(20_000);
     for (;;) {
-      if (service.exitCode !== null) throw new Error(`the service process exited: ${serviceErr.text()}`);
+      if (service.exitCode !== null) {
+        await once(child.stderr, 'close');
+        throw new Error(`the service process exited ${service.exitCode}: ${serviceErr.text()}`);
+      }
       const response = await fetch(`http://127.0.0.1:${port}/health`, { signal }).catch(() => null);
       if (response) break;
       await new Promise((done) => setTimeout(done, 100));
@@ -388,15 +391,24 @@ test("an ask that arrives while a service's ask moves the net thread gets the se
     await flushed();
     expect(restarts()).toBe(before);
 
-    const valued = { ...ask, extraEnv: ['STIM_TEST_SERVICE_ONLY'], envValues: { STIM_TEST_SERVICE_ONLY: 'unit' } };
+    const valued = {
+      ...ask,
+      extraEnv: ['STIM_TEST_SERVICE_ONLY', 'HOME'],
+      envValues: { STIM_TEST_SERVICE_ONLY: 'unit' },
+    };
     expect(await ensureAs(socket, first, valued)).toMatchObject({ listening: true, port });
     expect(await ensureAs(socket, first, valued)).toMatchObject({ listening: true, port });
     await flushed();
     expect(restarts()).toBe(before + 1);
-    const inherited = { ...ask, extraEnv: ['HOME'], envValues: { HOME: home } };
+    const inherited = { ...valued, envValues: { ...valued.envValues, HOME: home } };
     expect(await ensureAs(socket, first, inherited)).toMatchObject({ listening: true, port });
     await flushed();
     expect(restarts()).toBe(before + 1);
+    const prepended = { ...inherited, pathPrepend: ['/opt/stim-test/bin'] };
+    expect(await ensureAs(socket, first, prepended)).toMatchObject({ listening: true, port });
+    expect(await ensureAs(socket, first, prepended)).toMatchObject({ listening: true, port });
+    await flushed();
+    expect(restarts()).toBe(before + 2);
     stimd.kill('SIGTERM');
     expect(await stimdExited).toEqual([0, null]);
   } finally {

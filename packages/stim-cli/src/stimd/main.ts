@@ -218,6 +218,18 @@ const strings = (value: unknown): string[] =>
 const reportNet = (answer: NetAnswer | null): void =>
   answer?.listening ? undefined : console.error(`stimd: ${answer?.message ?? 'stimd did not answer'}`);
 
+/**
+ * The environment a net thread started with `options` applies on top of stimd's own: each `--env` entry as
+ * `NAME=value` (a bare name takes stimd's value) and the `--path-prepend` directories, in one comparable string.
+ */
+function netEnvironmentOf(options: Pick<ServeOptions, 'extraEnv' | 'pathPrepend'> | null): string {
+  if (!options) return '';
+  const env = options.extraEnv.map((entry) =>
+    entry.includes('=') || process.env[entry] === undefined ? entry : `${entry}=${process.env[entry]}`,
+  );
+  return JSON.stringify([env.toSorted(), options.pathPrepend]);
+}
+
 /** Reports the answer of the stimd a service unit's process asked for its net thread; exit 1 unless it serves `port`. */
 const reportServiceNet =
   (port: number, service: boolean) =>
@@ -1126,7 +1138,7 @@ async function runStimdInner(
   } catch {}
   let netServes: ServeOptions | null = serve ?? null;
   let serviceNet = service;
-  let netValues: Record<string, unknown> = {};
+  let netEnvironment = netEnvironmentOf(serve ?? null);
   const writeRecord = (netPort: number | null) =>
     writeAtomic(stimdRecordFile(), {
       format: RECORD_FORMAT,
@@ -1434,9 +1446,7 @@ async function runStimdInner(
             (running.shareOnly ||
               running.asked !== options.port ||
               running.loopbackOnly !== options.loopbackOnly ||
-              Object.entries(values).some(
-                ([name, value]) => (name in netValues ? netValues[name] : process.env[name]) !== value,
-              ));
+              netEnvironmentOf(resolved) !== netEnvironment);
           const restart =
             serviceMove ||
             (kind === 'desktop' &&
@@ -1448,11 +1458,11 @@ async function runStimdInner(
           if (forService) serviceNet = true;
           if (!running) {
             netServes = options;
-            netValues = values;
+            netEnvironment = netEnvironmentOf(resolved);
           }
           const restartNet = () => {
             netServes = options;
-            netValues = values;
+            netEnvironment = netEnvironmentOf(resolved);
             log(
               'info',
               'net_restart',
@@ -1847,6 +1857,7 @@ async function runStimdInner(
     // @ref LLP 0011#a-share-only-net-thread-resumes-with-stimd -- a stimd that starts finds the shares the last one served
     const options = netOptions({ port: 0, loopbackOnly: true, shareOnly: true });
     netServes = options;
+    netEnvironment = netEnvironmentOf(options);
     void ensureNet(options);
   }
   startup.signal.throwIfAborted();
