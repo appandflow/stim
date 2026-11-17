@@ -574,7 +574,7 @@ project with iOS too still reports it offloadable for Android builds.
 
 #### Serve the phone app from Linux
 
-A Linux machine that starts workspaces, such as a bot running `stim ios --remote <mac>`, can run `stim-server` as the owning server for them. The phone app pairs with that machine and sees its workspaces, its offloaded builds and the hosted simulators it started, which it reaches through the Linux machine's server and not through the Mac that hosts them. Stim Desktop does not pair with other machines' servers yet.
+A Linux machine that starts workspaces, such as a bot running `stim ios --remote <mac>`, can run `stim-server` as the owning server for them. The phone app pairs with that machine and sees its workspaces, its offloaded builds and the hosted simulators it started, which it reaches through the Linux machine's server and not through the Mac that hosts them. Stim Desktop on another Mac pairs with it the same way: see [Pair with another machine](./desktop.md#pair-with-another-machine).
 
 1. Install `stim` and run its server as a systemd user service, as in the manual path above:
 
