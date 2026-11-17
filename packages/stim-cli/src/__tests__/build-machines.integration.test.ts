@@ -528,7 +528,7 @@ describe('inspectBuildMachines', () => {
                 commands: ['sudo xcode-select -s /Applications/Xcode-27.1.app/Contents/Developer'],
                 lead: 'select Xcode-27.1',
               },
-              { code: 'runtime', reason: 'no iPhone simulator on iOS-27-0 there', followsFrom: 'xcode' },
+              { code: 'runtime', reason: 'no iOS-27-0 simulator runtime there', followsFrom: 'xcode' },
               {
                 code: 'cocoapods',
                 reason: 'CocoaPods 1.17.0 there, 1.16.2 here',

@@ -11,6 +11,8 @@ import { clearFreeClaimSet, describeClaimProblem, readClaimSet } from '../../own
 import { emptyWorkspaceDir, workspaceInUse, workspaceInUseAsync, withIdleWorkspace } from '../../workspace/in-use.ts';
 import { workspaceName } from '../../workspace/paths.ts';
 import { readWorkspaceState, workspaceLastUsed } from '../../workspace/workspace-state.ts';
+import { checkoutRootOf } from '../../workspace/checkout-role.ts';
+import { freshLaunchers, launchersOf, launchingOf } from '../../workspace/launchers.ts';
 import { existingBuildDirsAsync, regenerableDirProblem } from '../../workspace/regenerable-dirs.ts';
 import { workspaceBuildInProgress } from './idle.ts';
 import { mapLimited, sizeConcurrency } from './limited.ts';
@@ -363,10 +365,16 @@ export async function workspaceBuildReasonsAsync(
   return workspaceBuildInProgress(root) ? [...reasons, BUILD_IN_PROGRESS] : reasons;
 }
 
-async function inTreeBuildDirs(root: string, signal?: AbortSignal): Promise<string[]> {
+async function inTreeBuildDirs(root: string, operation?: StimContext, signal?: AbortSignal): Promise<string[]> {
   const dirs: string[] = [];
+  const launching = launchingOf(
+    await checkoutRootOf(root, signal, operation),
+    launchersOf(operation, signal, false),
+    operation,
+    signal,
+  );
   for (const path of await existingBuildDirsAsync(root))
-    if (!(await regenerableDirProblem(root, path, signal, { launching: { reduceOnly: false } }))) dirs.push(path);
+    if (!(await regenerableDirProblem(root, path, signal, { launching }))) dirs.push(path);
   return dirs;
 }
 
@@ -583,7 +591,8 @@ export function collectWorkspaceOutputs({
     const inTree = new Map<string, string[]>();
     if (lighten)
       for (const { dir, projectRoot } of listed)
-        if (projectRoot !== null && !exclude.includes(dir)) inTree.set(dir, await inTreeBuildDirs(projectRoot, signal));
+        if (projectRoot !== null && !exclude.includes(dir))
+          inTree.set(dir, await inTreeBuildDirs(projectRoot, operation, signal));
     const entries = outputEntries(listed, inTree);
     const bytes = measure
       ? await outputBytes(
@@ -660,11 +669,14 @@ export async function clearWorkspaceOutputs(
           );
           if (again?.keptReason) return again.keptReason;
           const inTree: { path: string; problem: string | null }[] = [];
+          const launching = launchingOf(
+            await checkoutRootOf(root, signal, operation),
+            freshLaunchers(operation, signal),
+            operation,
+            signal,
+          );
           for (const path of lighten ? await existingBuildDirsAsync(root) : [])
-            inTree.push({
-              path,
-              problem: await regenerableDirProblem(root, path, signal, { launching: { reduceOnly: false } }),
-            });
+            inTree.push({ path, problem: await regenerableDirProblem(root, path, signal, { launching }) });
           for (const path of [
             ...workspaceOutputPaths(entry.dir),
             ...inTree.filter((dir) => !dir.problem).map((dir) => dir.path),

@@ -4,7 +4,7 @@ import { daemonClaimRoot, daemonNdjsonFile, stimdSocket, type DaemonStatus } fro
 import { readClaimSet } from '@stim-cli/core/ownership-claim';
 import { formatLongDuration } from '../command-output.ts';
 import type { Finding } from '../diagnostics/doctor.ts';
-import { unansweredText } from './status.ts';
+import { ticksLate, unansweredText } from './status.ts';
 
 const ANSWER_WAIT_MS = 3000;
 const RETRY_MS = 100;
@@ -102,7 +102,9 @@ export function unansweredFindings(status: DaemonStatus, now: number = Date.now(
       level: 'cost',
       title: 'stimd holds its claim but did not answer',
       detail: `stimd pid ${unanswered.pid} ${unansweredText(unanswered)}; its last tick was ${tick}. This is what one probe saw: a busy machine can delay an answer. Commands that need stimd wait for it and then fail with STIM_DAEMON_UNAVAILABLE.`,
-      fix: `Run \`stim status\` again to see whether it answers now; ${daemonNdjsonFile()} has what it last did.`,
+      fix: ticksLate(status, now)
+        ? `Run \`stim status\` again. If it still does not answer, stop it with \`kill ${running.pid}\`; the next stim start, ios or android starts a new one. ${daemonNdjsonFile()} has what it last did.`
+        : `Run \`stim status\` again to see whether it answers now; ${daemonNdjsonFile()} has what it last did.`,
     },
   ];
 }

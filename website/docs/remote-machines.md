@@ -574,7 +574,7 @@ project with iOS too still reports it offloadable for Android builds.
 
 #### Serve the phone app from Linux
 
-A Linux machine that starts workspaces, such as a bot running `stim ios --remote <mac>`, can run `stim-server` as the owning server for them. The phone app pairs with that machine and sees its workspaces, its offloaded builds and the hosted simulators it started, which it reaches through the Linux machine's server and not through the Mac that hosts them. Stim Desktop does not pair with other machines' servers yet.
+A Linux machine that starts workspaces, such as a bot running `stim ios --remote <mac>`, can run `stim-server` as the owning server for them. The phone app pairs with that machine and sees its workspaces, its offloaded builds and the hosted simulators it started, which it reaches through the Linux machine's server and not through the Mac that hosts them. Stim Desktop on another Mac pairs with it the same way: see [Pair with another machine](./desktop.md#pair-with-another-machine).
 
 1. Install `stim` and run its server as a systemd user service, as in the manual path above:
 
@@ -798,7 +798,9 @@ Setup checks installed tools and prints fixes; it does not install Xcode,
 runtimes, CocoaPods, Java or the Android SDK. Desktop's Tools step compares
 them against the client. No tool result blocks the next step: problems are
 shown, and the machine stays added. Hosting alone does not need CocoaPods
-or Android tools.
+or Android tools. An iOS build needs the client's simulator runtime installed on
+the worker, not a simulator: when the runtime has no iPhone simulator, the build
+creates one in its own Stim home, never boots it, and deletes it when it ends.
 
 **Install This Mac's Build** can update an approved worker over the tailnet.
 An exact npm release needs no extra setting. Installing this checkout's own
@@ -853,11 +855,14 @@ values of the environment variables the build reads from your shell, and every
 variable in your shell when project code enumerates `process.env`, so the worker
 builds with the same values. Stim's own secrets and settings overrides, toolchain
 and home paths such as `PATH`, `JAVA_HOME` and `ANDROID_HOME`, and shell-session
-variables stay on your machine. Both machines evaluate the fingerprint with the
-same Node major.minor: the project's pinned Node (`.nvmrc`, `.node-version`, `.tool-versions` or
-Volta), or else the Node running Stim. A worker with a different one refuses the
-build with `fingerprint-runtime`; pin the project's Node, or install the same
-version on both. Those files and variables can hold secrets: Stim assumes every paired
+variables stay on your machine. Each machine evaluates the fingerprint with the
+project's pinned Node (`.nvmrc`, `.node-version`, `.tool-versions` or Volta), or
+else the Node running Stim. A worker on a different Node major.minor still builds
+when it computes the same fingerprint. When the fingerprints differ, the
+`fingerprint-mismatch` refusal names both Node versions, and calls the Node
+difference the likely cause when only the sources Stim evaluates with Node (the
+Expo config and autolinking) differ; pin the project's Node to a version both
+machines have installed. Those files and variables can hold secrets: Stim assumes every paired
 Mac belongs to the same person. Nothing under
 `node_modules` is sent, since the build Mac installs dependencies itself, and
 neither is build output the fingerprint ignores, such as `ios/Pods` or

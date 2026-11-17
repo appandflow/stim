@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { lstat, realpath } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
 import { loadConfig, type MaintenanceAction, type MaintenanceSize, type PressureLevel } from '@stim-cli/core/state';
 import { getExecutor } from '../../exec.ts';
@@ -9,7 +9,8 @@ import { measuredDirectorySizeAsync } from '../../fs-util.ts';
 import { canonicalPath } from '../../commands/gc/paths.ts';
 import { listedRoots } from '../../commands/gc/worktrees.ts';
 import { discoverCheckouts } from '../../workspace/discovery.ts';
-import { launchingOf, planningLaunching } from '../../workspace/launchers.ts';
+import { checkoutRootOf } from '../../workspace/checkout-role.ts';
+import { freshLaunchers, launchersOf, launchingOf, type Checkout } from '../../workspace/launchers.ts';
 import { cargoTargetDirsAsync, isBuildDirPath, regenerableDirProblem } from '../../workspace/regenerable-dirs.ts';
 import { appRoots, artifactCheckoutsAsync } from './artifacts.ts';
 import { readVolumeSpaceAsync } from './budget.ts';
@@ -33,10 +34,9 @@ export interface CargoTargetCandidate {
   dir: string;
   identity: string;
   discovered: boolean;
-  /** Found through a tool folder or the full scan: a PATH launcher into the checkout keeps its target. */
   reduceOnly: boolean;
   /** The checkout that owns the target, which a PATH launcher can point anywhere into; `root` is the app inside it. */
-  checkout: string;
+  checkout: Checkout;
   measuredAt: number | null;
 }
 
@@ -99,7 +99,7 @@ async function cargoTargetCandidates(
 ): Promise<CargoTargetCandidate[]> {
   const signal = operation?.signal ?? new AbortController().signal;
   const found: CargoTargetCandidate[] = [];
-  const add = async (base: string, discovered: boolean, reduceOnly: boolean, checkout: string) => {
+  const add = async (base: string, discovered: boolean, reduceOnly: boolean, checkout: Checkout) => {
     const root = canonicalPath(base);
     for (const path of await cargoTargetDirsAsync(root)) {
       try {
@@ -118,11 +118,13 @@ async function cargoTargetCandidates(
       } catch {}
     }
   };
-  for (const root of registered) await add(root, false, false, root);
+  const checkouts = await artifactCheckoutsAsync(signal, operation);
+  for (const root of registered)
+    await add(root, false, false, await owningCheckout(root, checkouts, signal, operation));
   const discovered = new Set(
     (await discoverCheckouts(loadConfig(), listedRoots(), operation)).map(({ path }) => canonicalPath(path)),
   );
-  for (const checkout of await artifactCheckoutsAsync(signal, operation))
+  for (const checkout of checkouts)
     for (const base of appRoots(checkout, 'build'))
       await add(base, discovered.has(canonicalPath(checkout.path)), checkout.reduceOnly, checkout.path);
   return found;
@@ -155,7 +157,12 @@ export async function measureCargoTargets(
     lastMeasured.set(dir, now);
     const problem = await regenerableDirProblem(root, dir, operation?.signal, {
       processes: false,
-      launching: planningLaunching(reduceOnly, checkout, operation),
+      launching: launchingOf(
+        checkout,
+        launchersOf(operation, operation?.signal, reduceOnly),
+        operation,
+        operation?.signal,
+      ),
     });
     if (problem) {
       scan.refused.set(dir, { workspace: root, reason: problem });
@@ -366,7 +373,7 @@ export async function planCargoTargetsAtPressure({
     if (tightened === 'normal') continue;
     const problem = await regenerableDirProblem(workspace, dir, signal, {
       processes: false,
-      launching: planningLaunching(reduceOnly, checkout, operation, signal),
+      launching: launchingOf(checkout, launchersOf(operation, signal, reduceOnly), operation, signal),
     });
     if (problem) {
       plan.skips.push({ target: dir, reason: problem, workspace });
@@ -403,18 +410,34 @@ export async function planCargoTargetsAtPressure({
   return plan;
 }
 
-async function managedAs(
+/**
+ * The git worktree root that owns a registered workspace: the deepest of the worktrees already resolved for this pass
+ * that contains it, else the nearest ancestor holding a `.git` entry, else the workspace itself.
+ */
+async function owningCheckout(
   root: string,
+  checkouts: readonly { path: string }[],
+  signal: AbortSignal,
   operation?: StimContext,
-): Promise<{ reduceOnly: boolean; checkout: string } | null> {
+): Promise<Checkout> {
   const canonical = canonicalPath(root);
-  if (listedRoots().some((listed) => canonicalPath(listed) === canonical))
-    return { reduceOnly: false, checkout: canonical };
+  const owner = checkouts
+    .map(({ path }) => canonicalPath(path))
+    .filter((path) => canonical === path || canonical.startsWith(`${path}${sep}`))
+    .toSorted((a, b) => b.length - a.length)[0];
+  return owner ?? (await checkoutRootOf(canonical, signal, operation));
+}
+
+async function managedAs(root: string, operation?: StimContext): Promise<{ checkout: Checkout } | null> {
+  const canonical = canonicalPath(root);
   const signal = operation?.signal ?? new AbortController().signal;
-  const checkout = (await artifactCheckoutsAsync(signal, operation)).find((entry) =>
+  const checkouts = await artifactCheckoutsAsync(signal, operation);
+  if (listedRoots().some((listed) => canonicalPath(listed) === canonical))
+    return { checkout: await owningCheckout(canonical, checkouts, signal, operation) };
+  const checkout = checkouts.find((entry) =>
     appRoots(entry, 'build').some((base) => canonicalPath(base) === canonical),
   );
-  return checkout ? { reduceOnly: checkout.reduceOnly, checkout: checkout.path } : null;
+  return checkout ? { checkout: checkout.path } : null;
 }
 
 async function targetVolume(target: string, signal?: AbortSignal): Promise<{ freeMb: number; device: number } | null> {
@@ -434,7 +457,12 @@ export async function trimCargoTargetAction(
   if (!root || !isBuildDirPath(action.target)) return kept('it is no longer a Cargo target/ Stim recognises');
   const managed = await managedAs(root, operation);
   if (!managed) return kept('its checkout is no longer in a workspace or discovery scope');
-  const launching = launchingOf(managed.reduceOnly, managed.checkout, operation);
+  const launching = launchingOf(
+    managed.checkout,
+    () => freshLaunchers(operation, operation?.signal)(),
+    operation,
+    operation?.signal,
+  );
   const problem = await regenerableDirProblem(root, action.target, operation?.signal, {
     processes: false,
     launching,

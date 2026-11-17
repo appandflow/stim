@@ -21,6 +21,8 @@ import { clearDependency } from '../daemon/dependencies.ts';
 import * as runningFrom from '../workspace/running-from.ts';
 import { answered } from '../workspace/bounded-read.ts';
 import { testContext } from './_context.ts';
+import { freshLaunchers } from '../workspace/launchers.ts';
+import { noLaunchers } from './fixtures/launching.ts';
 import * as fsUtil from '../fs-util.ts';
 import { deleteOutputs } from '../daemon/idle.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
@@ -34,6 +36,7 @@ import { stoppedOutputCandidates } from '../daemon/stages.ts';
 import { saveConfig } from '../workspace/config.ts';
 import { collectWorktreeSweep, removeWorktrees } from '../commands/gc/worktrees.ts';
 import { discoverCheckouts, discoveredOutside } from '../workspace/discovery.ts';
+import * as gitModule from '../workspace/git.ts';
 
 vi.mock('../workspace/protected-locations.ts', async (original) => {
   const real = await original<typeof import('../workspace/protected-locations.ts')>();
@@ -217,6 +220,47 @@ describe('checkouts found through a tool folder or the full scan', () => {
     expect(trim).toMatchObject({ status: 'kept', detail: expect.stringContaining('on PATH') });
   });
 
+  it('keeps the Cargo target of a registered app inside a monorepo when a PATH launcher resolves into the checkout outside that app', async () => {
+    const mono = join(base, 'dev', 'mono');
+    const app = join(mono, 'apps', 'native');
+    mkdirSync(join(app, 'ios', 'App.xcodeproj'), { recursive: true });
+    mkdirSync(join(app, 'target', 'debug', '.fingerprint'), { recursive: true });
+    mkdirSync(join(app, 'target', 'debug', 'incremental'), { recursive: true });
+    mkdirSync(join(mono, 'bin'), { recursive: true });
+    writeFileSync(join(app, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+    writeFileSync(join(app, '.gitignore'), 'target/\n');
+    writeFileSync(join(app, 'target', 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55\n');
+    writeFileSync(join(app, 'target', 'debug', 'incremental', 'data'), 'x'.repeat(10_000));
+    writeFileSync(join(mono, 'bin', 'tool'), '#!/bin/sh\n');
+    execFileSync('git', ['-C', mono, 'init', '-q']);
+    execFileSync('git', ['-C', mono, 'add', '-A']);
+    execFileSync('git', ['-C', mono, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'x']);
+    saveConfig({ version: 2, projects: { [app]: {} }, repos: {} });
+    vi.stubEnv('STIM_MAINTENANCE_CARGO_TARGET_MAX_GB', '0.000001');
+    const plan = () =>
+      planCargoTargetsAtPressure({
+        settings: resolveMaintenanceSettings(),
+        pinned: () => false,
+        now: Date.now(),
+        level: 'high',
+        operation: testContext({ env: {} }),
+      });
+    const planned = await plan();
+    expect(planned.actions).toMatchObject([{ kind: 'would-clear-build-dirs', target: join(app, 'target') }]);
+
+    mkdirSync(join(base, 'home', 'bin'));
+    symlinkSync(join(mono, 'bin', 'tool'), join(base, 'home', 'bin', 'tool'));
+    const kept = await plan();
+    expect(kept.actions).toEqual([]);
+    expect(kept.skips).toMatchObject([{ target: join(app, 'target'), reason: expect.stringContaining('on PATH') }]);
+    const [action] = planned.actions;
+    if (!action) throw new Error('no trim was planned');
+    expect(await trimCargoTargetAction(action, testContext({ env: {} }))).toMatchObject({
+      status: 'kept',
+      detail: expect.stringContaining('on PATH'),
+    });
+  });
+
   it('keeps what a launcher that appears during the trim own process read points into, and trims it when none appears', async () => {
     const tool = join(base, 'home', 'tools', 'mytool');
     mkdirSync(join(tool, 'ios', 'App.xcodeproj'), { recursive: true });
@@ -267,6 +311,59 @@ describe('checkouts found through a tool folder or the full scan', () => {
     }
   });
 
+  it.each([
+    ['at the second process read, between the trim phases', 2, join('target', 'debug', 'incremental', 'x', 'tool')],
+    ['outside target/, elsewhere in the checkout, at the first process read', 1, join('bin', 'tool')],
+  ])(
+    'keeps the Cargo target when a launcher appears %s, read through the production launcher factory',
+    async (_, appearsAt, inside) => {
+      const tool = join(base, 'home', 'tools', 'mytool');
+      mkdirSync(join(tool, 'ios', 'App.xcodeproj'), { recursive: true });
+      mkdirSync(join(tool, 'bin'), { recursive: true });
+      mkdirSync(join(tool, 'target', 'debug', '.fingerprint'), { recursive: true });
+      mkdirSync(join(tool, 'target', 'debug', 'incremental', 'x'), { recursive: true });
+      writeFileSync(join(tool, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+      writeFileSync(join(tool, '.gitignore'), 'target/\n');
+      writeFileSync(join(tool, 'bin', 'tool'), '#!/bin/sh\n');
+      writeFileSync(join(tool, 'target', 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55\n');
+      writeFileSync(join(tool, 'target', 'debug', 'incremental', 'x', 'tool'), 'x'.repeat(10_000));
+      execFileSync('git', ['-C', tool, 'init', '-q']);
+      execFileSync('git', ['-C', tool, 'add', '-A']);
+      execFileSync('git', ['-C', tool, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'x']);
+      writeScan([tool]);
+      vi.stubEnv('STIM_MAINTENANCE_CARGO_TARGET_MAX_GB', '0.000001');
+      mkdirSync(join(base, 'home', 'bin'));
+      const link = join(base, 'home', 'bin', 'tool');
+      const real = getExecutor();
+      let lsofReads = 0;
+      setExecutor({
+        ...real,
+        runFileAsync: async (file, args, options) => {
+          if (file === 'ps') return '';
+          if (file !== 'lsof') return real.runFileAsync(file, args, options);
+          if (++lsofReads === appearsAt) symlinkSync(join(tool, inside), link);
+          return '';
+        },
+      });
+      try {
+        const planned = await planCargoTargetsAtPressure({
+          settings: resolveMaintenanceSettings(),
+          pinned: () => false,
+          now: Date.now(),
+          level: 'high',
+          operation: testContext({ env: {} }),
+        });
+        const [action] = planned.actions;
+        if (!action) throw new Error('no trim was planned');
+        expect(await trimCargoTargetAction(action, testContext({ env: {} }))).toMatchObject({ status: 'kept' });
+        expect(lsofReads).toBeGreaterThanOrEqual(appearsAt);
+        expect(existsSync(join(tool, 'target', 'debug', 'incremental', 'x', 'tool'))).toBe(true);
+      } finally {
+        resetExecutor();
+      }
+    },
+  );
+
   it('keeps an output a launcher resolves into when it appears while deleteOutputs measures, and deletes it otherwise', async () => {
     const checkout = join(base, 'home', 'tools', 'out');
     const output = join(checkout, 'build');
@@ -279,11 +376,11 @@ describe('checkouts found through a tool folder or the full scan', () => {
     });
     const launchers = async () => ({ targets: measured ? [join(output, 'tool')] : [], incomplete: [] });
     const kept: string[] = [];
-    expect(await deleteOutputs([output], { reduceOnly: true, launchers, checkout }, kept)).toBe(0);
+    expect(await deleteOutputs([output], { launchers, anew: launchers, checkout }, kept)).toBe(0);
     expect(existsSync(output)).toBe(true);
     expect(kept).toEqual([expect.stringContaining('on PATH')]);
 
-    expect(await deleteOutputs([output], { reduceOnly: false }, kept)).toBe(1);
+    expect(await deleteOutputs([output], noLaunchers(checkout), kept)).toBe(1);
     expect(existsSync(output)).toBe(false);
   });
 
@@ -348,6 +445,7 @@ describe('checkouts found through a tool folder or the full scan', () => {
         {
           windowMs: 0,
           protectedRoot: '',
+          launchers: freshLaunchers(shared ?? operation()),
           pinned: () => false,
           worktrees: await artifactWorktreesAsync(signal, shared),
           ...(shared ? { operation: shared } : {}),
@@ -383,6 +481,37 @@ describe('checkouts found through a tool folder or the full scan', () => {
         detail: expect.stringContaining('on PATH'),
       });
       expect(existsSync(modules)).toBe(true);
+    });
+
+    it('plans a reduce-only worktree from its own first launcher reading, not one an earlier checkout of another kind took', async () => {
+      const prepare = (found: string) => {
+        mkdirSync(join(found, 'node_modules', '.bin'), { recursive: true });
+        writeFileSync(join(found, 'node_modules', '.bin', 'tool'), '#!/bin/sh\n');
+        age(found);
+        return join(found, 'node_modules');
+      };
+      const plain = worktree(join(base, 'dev', 'sibling-wt'), 'sibling');
+      const reduceOnly = worktree(join(base, 'home', '.codex', 'worktrees', 'ab12', 'main'), 'codex');
+      const plainModules = prepare(plain);
+      const reduceOnlyModules = prepare(reduceOnly);
+      const bin = join(base, 'home', 'bin');
+      mkdirSync(bin);
+      const checked: string[] = [];
+      const real = gitModule.gitQuietAsync;
+      vi.spyOn(gitModule, 'gitQuietAsync').mockImplementation(async (...args) => {
+        if (args[1].includes('ls-files')) {
+          checked.push(args[0]);
+          if (args[0] === reduceOnly) symlinkSync(join(reduceOnlyModules, '.bin', 'tool'), join(bin, 'tool'));
+        }
+        return real(...args);
+      });
+
+      const planned = await collectArtifactsAsync('dependencies', collectOptions, signal, operation());
+
+      expect(checked.indexOf(plain)).toBeGreaterThanOrEqual(0);
+      expect(checked.indexOf(plain)).toBeLessThan(checked.indexOf(reduceOnly));
+      expect(planned.candidates.map((entry) => entry.path)).toEqual([plainModules]);
+      expect(planned.skips).toMatchObject([{ target: reduceOnlyModules, reason: expect.stringContaining('on PATH') }]);
     });
 
     it('keeps it when a launcher appears after the process read that precedes the deletion', async () => {
@@ -590,7 +719,7 @@ describe('checkouts found through a tool folder or the full scan', () => {
     vi.stubEnv('STIM_MAINTENANCE_CARGO_TARGET_MAX_GB', '0.000001');
     const { signal } = new AbortController();
     const checkouts = await artifactCheckoutsAsync(signal, testContext({ env: {} }));
-    expect(checkouts.find((entry) => entry.path === codex)?.reduceOnly).toBe(true);
+    expect(checkouts.map((entry) => entry.path)).toContain(codex);
 
     const options = { now: Date.now(), windowMs: 0, protectedRoot: '', pinned: () => false };
     const dependencies = (await collectArtifactsAsync('dependencies', options, signal, testContext({ env: {} })))

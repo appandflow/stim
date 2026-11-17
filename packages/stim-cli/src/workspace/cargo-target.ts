@@ -6,7 +6,7 @@ import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-cl
 import { getExecutor } from '../exec.ts';
 import { measuredDirectorySizeAsync } from '../fs-util.ts';
 import { withCargoLocks } from './cargo-lock.ts';
-import type { LauncherScan, Launching } from './launchers.ts';
+import { launcherReason, type Launching } from './launchers.ts';
 import { cargoUnitPaths, cargoUnitWasRead, idleCargoUnits, readCargoUnits, removalOrder } from './cargo-units.ts';
 
 const CARGO_PROFILE_IDLE_MS: number = 24 * 3_600_000;
@@ -21,6 +21,7 @@ const EXACT_LEDGER = '.exact-sweep.json';
 const NOT_PROFILES = new Set(['.exact-swept']);
 const OWN_PREFIX = '.stim-';
 const STRANDED = 'NOT-RESTORED';
+const CANNOT_READ = 'the files processes hold open or the executables on PATH cannot be read';
 const DEADLINE_KEPT = 'the rest was left at the build headroom deadline';
 const NOT_RESTORED = `${OWN_PREFIX}not-restored-`;
 const FOLD_CASE = process.platform === 'darwin' || process.platform === 'win32';
@@ -300,16 +301,16 @@ function inUse(used: readonly string[], dir: string): boolean {
 }
 
 /**
- * The paths under `target` a running process executes from or holds open, from one `lsof` and one `ps` read, and for a
- * reduce-only checkout the paths under it that an executable on PATH resolves to, from a launcher reading taken at the
- * same moment; null when any of them cannot be read, which keeps everything.
+ * The paths under `target` a running process executes from or holds open, from one `lsof` and one `ps` read, with the
+ * launcher reading taken at the same moment: an executable on PATH that resolves into the owning checkout, or evidence
+ * that cannot be read, keeps everything.
  */
 async function readTargetUse(
   target: string,
+  launching: Launching,
   signal?: AbortSignal,
   lowPriority = false,
-  launchers?: () => Promise<LauncherScan>,
-): Promise<string[] | null> {
+): Promise<{ used: string[] } | { kept: string }> {
   const exec = getExecutor();
   try {
     const run = (file: string, args: string[], timeoutMs: number) =>
@@ -319,15 +320,15 @@ async function readTargetUse(
     const lsof = await run('lsof', ['-nP', '-w', '-Fn'], 60_000);
     const ps = await run('ps', ['-axww', '-o', 'args='], 30_000);
     const used = targetPathsInUse(target, lsof, ps);
-    if (!launchers) return used;
-    const scan = await launchers();
-    if (scan.incomplete.length) return null;
+    const scan = await launching.anew();
+    const launcher = launcherReason(launching.checkout, scan);
+    if (launcher) return { kept: launcher };
     const prefix = `${folded(target)}/`;
     for (const path of scan.targets) if (folded(path).startsWith(prefix)) used.push(folded(path));
-    return used;
+    return { used };
   } catch {
     signal?.throwIfAborted();
-    return null;
+    return { kept: CANNOT_READ };
   }
 }
 
@@ -399,8 +400,8 @@ interface CargoTrimOptions {
   /** Whether to walk what was removed to report its bytes; false reports 0 and removes at once. Default true. */
   measure?: boolean;
   /**
-   * For a reduce-only checkout, a fresh reading of the executables on PATH, taken wherever the processes using the target
-   * are read, so a path one of them resolves to is kept like a path a process runs from. Every caller states it.
+   * The checkout that owns the target and how to read the launchers anew, which the trim does after each read of the
+   * processes using the target; a launcher into any of the checkout keeps the whole target. Every caller states it.
    */
   launching: Launching;
 }
@@ -420,10 +421,6 @@ async function trimClaimed(
   }: CargoTrimOptions,
 ): Promise<CargoTrimResult> {
   const result: CargoTrimResult = { bytes: 0, removed: [], kept: [] };
-  const launchers = launching.reduceOnly ? launching.launchers : undefined;
-  const cannotRead = launchers
-    ? 'the files processes hold open or the executables on PATH cannot be read'
-    : 'the files processes hold open cannot be read';
   const stopped = (): boolean => stop?.aborted === true;
   const measured = (path: string): Promise<number> =>
     measure ? sizeOf(path, signal, lowPriority) : Promise.resolve(0);
@@ -442,9 +439,9 @@ async function trimClaimed(
       kept: [`a leftover ${aside} cannot be deleted: ${error instanceof Error ? error.message : error}`],
     };
   }
-  const first = await readTargetUse(target, signal, lowPriority, launchers);
-  if (first === null) return { ...result, kept: [cannotRead] };
-  let used: string[] = first;
+  const first = await readTargetUse(target, launching, signal, lowPriority);
+  if ('kept' in first) return { ...result, kept: [first.kept] };
+  let used: string[] = first.used;
   const stale = staleCargoTargetPaths(target, now);
   if ('refusal' in stale) return { ...result, kept: [stale.refusal] };
   let moved = 0;
@@ -527,8 +524,8 @@ async function trimClaimed(
     if (!all) return { ...none, kept: 'its units cannot be listed' };
     const candidates = [...cargoUnitPaths(profile, idleCargoUnits(all, now, CARGO_PROFILE_IDLE_MS))];
     if (!candidates.length) return none;
-    const fresh = await readTargetUse(target, signal, lowPriority, launchers);
-    if (fresh === null) return { ...none, kept: cannotRead };
+    const fresh = await readTargetUse(target, launching, signal, lowPriority);
+    if ('kept' in fresh) return { ...none, kept: fresh.kept };
     let swept = 0;
     let bytes = 0;
     // @ref LLP 0005#never-delete-what-a-build-took-back -- Exact serializes access-time resets and ledger replacement
@@ -538,7 +535,7 @@ async function trimClaimed(
       if (stopped()) return { units: swept, bytes, kept: DEADLINE_KEPT };
       const chunk = candidates
         .slice(at, at + UNIT_CHUNK)
-        .filter(([, paths]) => !paths.some((path) => inUse(fresh, join(profile, path))));
+        .filter(([, paths]) => !paths.some((path) => inUse(fresh.used, join(profile, path))));
       if (!chunk.length) continue;
       const batch = join(aside, `units-${moved++}`);
       const movedBatch = await withCargoLocks(
@@ -600,13 +597,13 @@ async function trimClaimed(
   const refreshed = stopped()
     ? null
     : incremental === 'all' || result.bytes < needBytes
-      ? await readTargetUse(target, signal, lowPriority, launchers)
-      : used;
+      ? await readTargetUse(target, launching, signal, lowPriority)
+      : { used };
   if (stopped()) {
     if (!result.kept.includes(DEADLINE_KEPT)) result.kept.push(DEADLINE_KEPT);
-  } else if (refreshed === null) result.kept.push(cannotRead);
-  else used = refreshed;
-  if (refreshed !== null && (incremental === 'all' || result.bytes < needBytes)) {
+  } else if (refreshed && 'kept' in refreshed) result.kept.push(refreshed.kept);
+  else if (refreshed) used = refreshed.used;
+  if (refreshed && 'used' in refreshed && (incremental === 'all' || result.bytes < needBytes)) {
     const candidates: { path: string; bytes: number }[] = [];
     for (const profile of remaining) {
       const dir = join(profile, 'incremental');
