@@ -50,7 +50,7 @@ const STAMPS: Record<TreeKind, readonly string[]> = {
 /** What `pod install` generates afresh for every pod, rather than a pod's own sources. */
 const POD_GENERATED = ['Pods.xcodeproj', 'Target Support Files', 'Headers', 'Local Podspecs'];
 /** The dot-directories at a node_modules root that hold packages; every other one is a tool's cache (`.cache`, `.vite`). */
-const TREE_DOT_DIRS = ['.pnpm', '.bun', '.deno', '.bin'];
+const TREE_DOT_DIRS = ['.pnpm', '.bun', '.deno'];
 const GRADLE_SCRIPTS = ['build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts'];
 /** What Gradle writes inside its `build` directory; a JS `build` directory holds none of them. */
 const GRADLE_BUILD_ENTRIES = ['intermediates', 'generated', 'outputs', 'tmp', '.transforms', 'kotlin', 'classes'];
@@ -58,6 +58,14 @@ const PACKAGE_ENTRY_FIELDS = ['main', 'module', 'types', 'typings', 'react-nativ
 
 function kindOf(tree: string): TreeKind {
   return basename(tree) === 'Pods' ? 'Pods' : 'node_modules';
+}
+
+/**
+ * Whether `segments` lies in a `.bin` directory of a node_modules tree, which package managers regenerate on every
+ * install: pnpm 11 writes its shell shims there about 90 ms after `.modules.yaml`.
+ */
+function inBinDir(segments: readonly string[]): boolean {
+  return segments.some((name, i) => name === '.bin' && (i === 0 || segments[i - 1] === 'node_modules'));
 }
 
 function isMissing(error: unknown): boolean {
@@ -107,7 +115,7 @@ function gradleBuildDir(dir: string, packageRoot: string | null): boolean {
  * Whether the entry at `segments`, relative to a dependency tree of `kind`, holds what package managers and native
  * builds write after an install rather than an edit. Directories: `node_modules/.cache`; `.gradle`, `.kotlin` and
  * `.cxx` in a package's `android` directory or beside a Gradle build script, and `build` there when Gradle wrote it;
- * a package's `ios/build`; `xcuserdata` in Pods. Files: the package manager's own state at the tree's root.
+ * a package's `ios/build`; `.bin` at the root or in any nested node_modules; `xcuserdata` in Pods. Files: the package manager's own state at the tree's root.
  */
 function excludedFromEdits(
   kind: TreeKind,
@@ -127,6 +135,7 @@ function excludedFromEdits(
     return kind === 'node_modules' && segments.length === 2 && segments[0] === '.pnpm' && name === 'lock.yaml';
   }
   if (kind === 'Pods') return name === 'xcuserdata';
+  if (inBinDir(segments)) return true;
   if (segments.length === 1 && name.startsWith('.') && !TREE_DOT_DIRS.includes(name)) return true;
   if (parent === 'ios' && name === 'build') return true;
   const gradleSide = parent === 'android' || siblings.some((sibling) => GRADLE_SCRIPTS.includes(sibling));
@@ -378,7 +387,9 @@ export async function checkDependencyEdits(
   const tree = canonicalOr(path);
   const record = readDependencyInstall(tree);
   const signature = treeSignature(tree);
-  const known = (record?.edits?.files ?? []).filter((file) => unchanged(tree, file));
+  const known = (record?.edits?.files ?? []).filter(
+    (file) => unchanged(tree, file) && !(kindOf(tree) === 'node_modules' && inBinDir(file.rel.split('/'))),
+  );
   if (
     level !== 'critical' &&
     known.length &&

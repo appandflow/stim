@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
@@ -6,6 +6,8 @@ import {
   noteEditsBeforeInstall,
   recordDependencyInstall,
 } from '../workspace/dependency-edits.ts';
+import { updateDependencyInstall } from '../workspace/dependency-install-records.ts';
+import { treeSignature } from '../private-size.ts';
 
 const HOUR = 60 * 60_000;
 let home: string;
@@ -57,6 +59,11 @@ afterEach(() => {
 
 test('an untouched tree is deleted; Gradle, pnpm and tool-cache output does not keep it, a JS build directory beside a Gradle script does', async () => {
   installAt(ago(HOUR));
+  write(join(tree, '.bin', 'tsc'), '#!/bin/sh');
+  write(
+    join(tree, '.pnpm', 'typescript@5.6.3', 'node_modules', 'typescript', 'node_modules', '.bin', 'tsc'),
+    '#!/bin/sh',
+  );
   write(join(tree, 'pkg', 'android', 'build', 'intermediates', 'classes.jar'));
   write(join(tree, 'pkg', 'android', '.cxx', 'Debug', 'build.ninja'));
   write(join(tree, '@react-native', 'gradle-plugin', 'shared', 'build.gradle.kts'), 'x', ago(2 * HOUR));
@@ -73,6 +80,25 @@ test('an untouched tree is deleted; Gradle, pnpm and tool-cache output does not 
   write(join(tree, 'hybrid', 'build', 'tmp', 'x.bin'), 'x', ago(2 * HOUR));
 
   expect(await keptFiles()).toContain('hybrid/build/index.js');
+});
+
+test('.bin shims a version of Stim recorded as edits no longer keep the tree', async () => {
+  installAt(ago(HOUR));
+  write(join(tree, '.bin', 'tsc'), '#!/bin/sh');
+  const shim = lstatSync(join(tree, '.bin', 'tsc'));
+  const signature = treeSignature(tree);
+  if (signature === null) throw new Error('the tree has no install signature');
+  updateDependencyInstall(tree, (record) => ({
+    ...record,
+    edits: {
+      signature,
+      files: [{ rel: '.bin/tsc', mtimeMs: shim.mtimeMs, size: shim.size }],
+      complete: true,
+      at: new Date().toISOString(),
+    },
+  }));
+
+  expect(await checkDependencyEdits(tree, { level: 'high', worktree })).toEqual({ delete: true });
 });
 
 test('a file edited after the install keeps the tree at critical too', async () => {

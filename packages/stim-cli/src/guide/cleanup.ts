@@ -669,8 +669,9 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
   after an install Stim did not run, a file changed since the previous
   reference stays an edit unless its package was reinstalled. Not checked:
   the package manager's state files, dot-directories at a node_modules root
-  other than .pnpm, .bun, .deno and .bin (treated as tool caches, a custom
-  pnpm virtual-store directory included), .gradle, .kotlin, .cxx and Gradle's
+  other than .pnpm, .bun and .deno (treated as tool caches, a custom pnpm
+  virtual-store directory included), the .bin directory of any node_modules,
+  .gradle, .kotlin, .cxx and Gradle's
   build in a package's android directory or beside a Gradle build script, a
   package's ios/build, and Pods' xcuserdata. Known misses: an edit that keeps
   an older modification time (cp -p, rsync -t, tar), a file deleted by hand,
