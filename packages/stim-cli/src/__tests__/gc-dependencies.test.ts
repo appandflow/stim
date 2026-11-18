@@ -1,6 +1,7 @@
 import {
   currentSourceDependencies,
   diskUsageCacheFile,
+  diskUsageWalkClaims,
   readJsonObject,
   readWorkspaceState,
   workspaceLightenedFile,
@@ -794,6 +795,47 @@ test.skipIf(process.platform === 'win32')(
       );
     }
     expect(partial).toHaveBeenCalledTimes(1);
+  },
+  60_000,
+);
+
+test.skipIf(process.platform === 'win32')(
+  'gc starts no size walk while another holds the walk claim, and takes up what that walk recorded on the next run',
+  async () => {
+    const roots = idleRepo([{ name: 'feature', workspace: true }]);
+    const source = roots.repo ?? '';
+    const modules = join(source, 'node_modules');
+    const pods = join(source, 'ios', 'Pods');
+    ageCheckout(source, daysAgo(8));
+    for (const path of [modules, pods]) rmSync(diskUsageCacheFile(path), { force: true });
+    const walk = vi.fn<() => null>(() => null);
+    walks.set(modules, walk);
+    walks.set(pods, walk);
+    const detail = (payload: LevelPayload, target: string) =>
+      payload.actions.find((action) => action.kind === 'delete-dependencies' && action.target === target)?.detail;
+    const held = tryAcquireClaim({ root: diskUsageWalkClaims(), mode: 'exclusive', label: 'disk usage walk' }).acquired;
+    assert(held);
+    try {
+      const { payload } = await gcJson('normal');
+      for (const target of [modules, pods])
+        expect(detail(payload, target)).toBe(
+          'another size walk on this machine was running, so stim gc did not measure it this run and its real size is unknown and it stays',
+        );
+      expect(walk).not.toHaveBeenCalled();
+      writeCacheFile(diskUsageCacheFile(modules), {
+        path: modules,
+        measuredAt: new Date().toISOString(),
+        bytes: 1024 ** 3,
+        privateBytes: 10 * 1024 ** 2,
+        signature: treeSignature(modules),
+      });
+    } finally {
+      releaseClaim(held);
+    }
+
+    const { payload } = await gcJson('normal');
+    expect(detail(payload, modules)).toMatch(/^10M of its 1\.0G is its own/);
+    expect(walk).toHaveBeenCalledTimes(1);
   },
   60_000,
 );

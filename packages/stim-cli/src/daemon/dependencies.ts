@@ -64,6 +64,8 @@ const WALK_FAILED =
   'its private-size walk could not count which of its blocks other files share, so its real size is unknown and it stays';
 const MEASURE_BUDGET_MS = 2 * 60_000;
 const MIN_WALK_MS = 10_000;
+const WALK_BUSY =
+  'another size walk on this machine was running, so stim gc did not measure it this run and its real size is unknown and it stays';
 const VERBS: Record<DaemonLadderAction['outcome'], string> = {
   would: 'would delete',
   done: 'deleted',
@@ -148,9 +150,14 @@ async function measureUnknown(
   }
   const order = new Map(due.map((dependency) => [dependency, triedBefore(dependency)]));
   const deadline = Date.now() + MEASURE_BUDGET_MS;
+  let busy = false;
   for (const dependency of due.toSorted(
     (a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0) || (b.bytes ?? -1) - (a.bytes ?? -1),
   )) {
+    if (busy) {
+      dependency.unknown = WALK_BUSY;
+      continue;
+    }
     const remainingMs = deadline - Date.now();
     if (remainingMs < MIN_WALK_MS) {
       dependency.unknown = `stim gc spent its ${MEASURE_BUDGET_MS / 60_000} minutes of measuring on other trees first, so its real size is unknown and it stays`;
@@ -161,7 +168,13 @@ async function measureUnknown(
       operation,
       valid: (cached) => cached.privateBytes !== undefined,
       failures: true,
+      claim: true,
     });
+    if (outcome === 'busy') {
+      busy = true;
+      dependency.unknown = WALK_BUSY;
+      continue;
+    }
     if (measure?.privateBytes !== undefined && !(partial && measure.privateBytes < REAL_BYTES_THRESHOLD)) {
       dependency.bytes = measure.bytes;
       dependency.privateBytes = measure.privateBytes;
