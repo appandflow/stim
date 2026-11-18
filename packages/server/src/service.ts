@@ -1043,6 +1043,11 @@ async function uninstallJob(label: string): Promise<string[]> {
       );
     }
     const route = await serveRoute(tailscale, process.env, installed.port, status.ips);
+    if (route.state === 'unknown') {
+      throw new ServiceError(
+        `${label} created the tailscale serve route on https port ${installed.serve.port}, and \`tailscale serve status\` could not be read (${route.reason}), so uninstall cannot check it. Kept the ${label} ${fileNoun()}. Run this again once Tailscale answers.`,
+      );
+    }
     if (route.state === 'routed' && route.port === installed.serve.port) {
       routeOff = installed.serve.port;
     } else {
@@ -1058,11 +1063,12 @@ async function uninstallJob(label: string): Promise<string[]> {
   await requireUninstallPortReleased(label, installed, routeOff);
   if (routeOff && tailscale) {
     const removed = await run(tailscale, ['serve', `--https=${routeOff}`, 'off'], tailscaleEnv(process.env));
-    notes.push(
-      removed.ok
-        ? `Removed the tailscale serve route on https port ${routeOff}.`
-        : `Could not remove the tailscale serve route: ${removed.stderr.trim()}. Run \`tailscale serve --https=${routeOff} off\`.`,
-    );
+    if (!removed.ok) {
+      throw new ServiceError(
+        `Stopped ${label} but could not remove its tailscale serve route on https port ${routeOff}: ${removed.stderr.trim()}. Kept the ${label} ${fileNoun()}, which starts again at the next login. Run \`tailscale serve --https=${routeOff} off\`, or retry \`stim service uninstall --label ${label}\`.`,
+      );
+    }
+    notes.push(`Removed the tailscale serve route on https port ${routeOff}.`);
   }
   await serviceManager().remove(label);
   notes.unshift(
