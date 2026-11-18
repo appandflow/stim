@@ -156,9 +156,35 @@ describe('serverSetupFindings', () => {
     );
     const versions = findings.filter((each) => each.code === 'server-version');
     expect(versions[0]?.fix).toBe(
-      'Run `stim engine update` there, or `stim engine use 1.41.0` for exactly this version.',
+      "Run `STIM_HOME=/Users/me/.stim stim service install --port 7788`. The service does not run the engine's stimd shim, so `stim engine update` does not move it.",
     );
     expect(versions[1]?.fix).toContain('Update Stim Desktop');
+  });
+
+  it('reinstalls a 1.x service with its options and the migration guide, and moves an engine service with the engine', () => {
+    const old = service({ label: 'worker' });
+    old.installed = {
+      ...old.installed,
+      label: 'worker',
+      env: ['ANDROID_HOME=/opt/android', 'SECRET_TOKEN=hunter2'],
+      pathPrepend: ['/opt/homebrew/bin', '/Users/me/My Tools'],
+    };
+    const [legacy] = serverSetupFindings(
+      setup({
+        version: '2.0.0',
+        services: [old],
+        servers: [reading({ label: 'worker', health: health({ stim: '1.40.0' }) })],
+      }),
+    );
+    expect(legacy?.fix).toBe(
+      'Run `STIM_HOME=/Users/me/.stim stim service install --label worker --port 7788 --path-prepend /opt/homebrew/bin --path-prepend "/Users/me/My Tools"`, adding `--env NAME=<value>` for ANDROID_HOME, SECRET_TOKEN as the service sets them now. The service does not run the engine\'s stimd shim, so `stim engine update` does not move it. Then follow https://stim.appandflow.com/docs/migrate-to-2#for-agents.',
+    );
+    const shim = service();
+    shim.installed = { ...shim.installed, node: null, script: '/Users/me/.stim/engine/bin/stimd' };
+    const [engine] = serverSetupFindings(
+      setup({ version: '2.1.0', services: [shim], servers: [reading({ health: health({ stim: '2.0.0' }) })] }),
+    );
+    expect(engine?.fix).toBe('Run `stim engine update` there, or `stim engine use 2.1.0` for exactly this version.');
   });
 
   it('asks to update the CLI when the server is newer', () => {

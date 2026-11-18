@@ -1,5 +1,5 @@
 import { DESKTOP_API } from '@stim-cli/core/protocol';
-import type { InstalledService, LaunchdJob, UnitJob } from '@stim-cli/core/state';
+import { UPGRADE_GUIDE_URL, type InstalledService, type LaunchdJob, type UnitJob } from '@stim-cli/core/state';
 import type { Finding } from './doctor.ts';
 import { compareStimVersions } from './stim-installations.ts';
 
@@ -205,9 +205,26 @@ export const labelFlag = (label: string): string => (label === 'dev.stim.server'
 
 export const sameHome = (a: string, b: string): boolean => a.replace(/\/+$/, '') === b.replace(/\/+$/, '');
 
-function updateRemedy(server: ServerReading, version: string): string {
-  if (server.kind === 'service')
-    return `Run \`stim engine update\` there, or \`stim engine use ${version}\` for exactly this version.`;
+const majorOf = (version: string | undefined): number => Number(/^(\d+)\./.exec(version ?? '')?.[1] ?? NaN);
+
+const shellWord = (value: string): string => (/^[\w./:@%+=,-]+$/.test(value) ? value : `"${value}"`);
+
+function updateRemedy(server: ServerReading, setup: ServerSetup): string {
+  if (server.kind === 'service') {
+    const installed = setup.services.find((each) => each.label === server.label)?.installed;
+    const earlierMajor = majorOf(server.health?.stim) < majorOf(setup.version);
+    if (installed?.script?.endsWith('/bin/stimd') && !earlierMajor)
+      return `Run \`stim engine update\` there, or \`stim engine use ${setup.version}\` for exactly this version.`;
+    const home = installed?.stimHome ? `STIM_HOME=${shellWord(installed.stimHome)} ` : '';
+    const paths = (installed?.pathPrepend ?? []).map((dir) => ` --path-prepend ${shellWord(dir)}`).join('');
+    const command = `${home}stim service install${labelFlag(server.label ?? 'dev.stim.server')} --port ${installed?.port ?? server.port}${paths}`;
+    const names = (installed?.env ?? []).map((entry) => entry.slice(0, entry.indexOf('=')));
+    const env = names.length
+      ? `, adding \`--env NAME=<value>\` for ${names.join(', ')} as the service sets them now`
+      : '';
+    const guide = earlierMajor ? ` Then follow ${UPGRADE_GUIDE_URL}.` : '';
+    return `Run \`${command}\`${env}. The service does not run the engine's stimd shim, so \`stim engine update\` does not move it.${guide}`;
+  }
   if (server.kind === 'desktop')
     return 'Update Stim Desktop; it bundles the server it runs. Or install a server separately with `stim service install` so Desktop adopts it.';
   return `Stop pid ${server.pid} and start \`stim serve\` from the installation on PATH again.`;
@@ -226,7 +243,7 @@ function versionFindings(setup: ServerSetup): Finding[] {
           level: 'note',
           title: `A stim-server runs another build of stim ${setup.version} than this machine's`,
           detail: `${describeServer(server)}. Both report ${setup.version}, but their builds differ (${stimBuild} and ${setup.build}), as with a checkout build beside a release; machines with another build compatibility version refuse each other's builds.`,
-          fix: updateRemedy(server, setup.version),
+          fix: updateRemedy(server, setup),
         },
       ];
     }
@@ -238,7 +255,7 @@ function versionFindings(setup: ServerSetup): Finding[] {
         title: `A stim-server runs stim ${server.health.stim}, but this machine's stim is ${setup.version}`,
         detail: `${describeServer(server)}. Remote builds need both machines on one build compatibility version, and a server of another version can refuse requests that a newer stim sends.`,
         fix: older
-          ? updateRemedy(server, setup.version)
+          ? updateRemedy(server, setup)
           : `Update the \`stim\` on PATH to ${server.health.stim} with \`npm install --global stim@${server.health.stim}\`.`,
       },
     ];
