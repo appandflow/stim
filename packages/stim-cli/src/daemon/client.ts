@@ -34,6 +34,7 @@ import { ANDROID_LOCATION_VARIABLES } from '../devices/android-locations.ts';
 import { endForSwitch, engineShim, ownStoreEngine, switchedEngine } from './engine-switch.ts';
 import { legacyDaemonHolder, legacyDaemonStop } from './legacy-daemon.ts';
 import { buildClaimRoot } from '../engine-store/claims.ts';
+import { engineRoot, readRecords } from '../engine-store/store.ts';
 import { getExecutor } from '../exec.ts';
 import { spawnEntry, stimBuild } from '../spawn-entry.ts';
 import { daemonMode, spawnsDaemon } from './mode.ts';
@@ -315,7 +316,7 @@ export function otherBuildRefusal(): { code: 'STIM_DAEMON_UNAVAILABLE'; message:
               ]
             : [
                 `${stimd} runs Stim ${version}, not this stim's ${stimBuild().version}, and has not restarted on this build.`,
-                `Run the command with Stim ${version}, run \`stim engine install\` so every copy of stim runs one engine, or ${kill}; the next stim command starts one of this build.`,
+                `Run the command with Stim ${version}, ${readRecords(engineRoot(process.env)).current ? '' : 'run `stim engine install` so every copy of stim runs one engine, '}or ${kill}; the next stim command starts one of this build.`,
               ];
   return { code: 'STIM_DAEMON_UNAVAILABLE', message: why, remedy };
 }
