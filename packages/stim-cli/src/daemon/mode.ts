@@ -20,10 +20,10 @@ function machineDaemonMode(config: Config | null | undefined): DaemonMode | null
   return parseDaemonMode(config?.daemon?.mode) ?? leftoverDaemonMode(config, {});
 }
 
-/** The machine setting `daemon.mode`, else a leftover `maintenance.mode`, or null when neither is usable. */
+/** The machine setting `daemon.mode` alone, or null when it is unset or invalid. */
 export function configuredDaemonMode(): DaemonMode | null {
   try {
-    return machineDaemonMode(loadConfig());
+    return parseDaemonMode(loadConfig()?.daemon?.mode);
   } catch {
     return null;
   }
