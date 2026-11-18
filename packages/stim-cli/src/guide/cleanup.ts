@@ -166,7 +166,10 @@ In on mode a pass runs, cheapest to rebuild first:
      from target/exact-filesystem-tool does not protect the rest
   3. build-cache and Metro entries, least recently used first, down to
      80% of caches.buildCacheMaxGb or
-     caches.metroCacheMaxGb, and entries unused for olderThanDays
+     caches.metroCacheMaxGb, and entries unused for olderThanDays, Metro
+     file maps and Jest's default cache (TMPDIR/jest_<uid>, not on
+     Windows) included; a Jest entry goes once its whole config is
+     unused, none while Jest runs
   4. the Swift compilation cache, emptied whole once it is over
      caches.swiftCompilationCacheMaxGb (default 0, no cap), whatever the free
      disk, and kept while an iOS build holds its shared
@@ -523,7 +526,7 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
   Workspace build outputs and shared caches over their caps
     maintenance caps, N. Kept: in use, pinned, a running build.
   What the age sweep removes after maintenance.olderThanDays (parked devices,
-  outputs, idle worktrees when opted in)
+  outputs, cache entries, Jest's cache, idle worktrees when opted in)
     maintenance sweep, N. Kept: recently used, pinned.
   Unused iOS simulator runtimes (xcrun simctl runtime delete <identifier>)
     maintenance sweep, N. Kept: any simulator on the machine uses it, simctl
@@ -1331,8 +1334,7 @@ TMPDIR LEFTOVERS
   directories (stim-claim-*, stim-host-*, stim-fakehome-*,
   stim-hosted-macos-*, stim-server-*, stim-ws-*, stim-parity-*), xctrace recordings
   (instruments*.ktrace), SwiftPM temp directories (TemporaryDirectory.* with a
-  six-character suffix, left by swift and xcodebuild) and Jest's
-  jest_<uid in base 36> cache. \`gc\` at high or critical checks them again and deletes a
+  six-character suffix, left by swift and xcodebuild). \`gc\` at high or critical checks them again and deletes a
   Stim temp directory, recording or SwiftPM temp directory only when nothing in
   it changed for 24 hours. It keeps a Stim temp directory that contains or
   sits inside a registered project, holds a live or unverifiable ownership
@@ -1345,8 +1347,8 @@ TMPDIR LEFTOVERS
   temp directory while a swift or xcodebuild process runs, or when the process
   list cannot be read. Stim's own SwiftPM macOS builds run swift with the
   ambient TMPDIR, because SwiftPM keeps the locks for its shared caches there,
-  so their temp directories land here too. Jest's cache and every other entry
-  are never deleted. gc never follows a symlink and never acts outside TMPDIR.
+  so their temp directories land here too. Every other entry is never
+  deleted. gc never follows a symlink and never acts outside TMPDIR.
   With STIM_HOME set it neither reports nor deletes them, because TMPDIR is
   shared by every Stim home. Pressure ladder rung 6 runs the same deletion
   daily in the age sweep, and at once under disk pressure.

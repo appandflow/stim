@@ -5,7 +5,7 @@ import { basename, dirname, join, relative, resolve, sep, isAbsolute } from 'nod
 import chalk from 'chalk';
 import { readClaimSet } from '@stim-cli/core/ownership-claim';
 import { getExecutor } from '../../exec.ts';
-import { directorySizeAsync, formatBytes } from '../../fs-util.ts';
+import { formatBytes } from '../../fs-util.ts';
 import { plural } from '../../command-output.ts';
 import { removeTemporaryEntryAsync } from '../../temporary.ts';
 import { PARITY_PREFIX, parityLeftoverKept, removeParityLeftover } from '../../diagnostics/parity-worktrees.ts';
@@ -60,21 +60,19 @@ export interface TempLeftoverReport {
   recheck?: (staged: string, original: string, kind: DeletableKind) => Promise<string | null>;
 }
 
-const REMEDIES: Record<TempLeftoverKind, string> = {
+const REMEDIES: Record<DeletableKind, string> = {
   stim: 'stim gc --pressure high removes them once they are idle for 24 hours',
   xctrace:
     'stim gc --pressure high removes them once they are idle for 24 hours and no xctrace or Instruments process runs; export a recording you need first',
   swiftpm:
     'stim gc --pressure high removes them once they are idle for 24 hours and no swift or xcodebuild process runs',
-  jest: 'Jest owns this cache; clear it with `npx jest --clearCache`',
 };
 
-function kindOf(name: string, stat: Stats, jestName: string | null): TempLeftoverKind | null {
+function kindOf(name: string, stat: Stats): DeletableKind | null {
   const unstaged = name.startsWith(STAGING_PREFIX) ? name.slice(STAGING_PREFIX.length) : name;
   if (stat.isDirectory() && STIM_PREFIXES.some((prefix) => unstaged.startsWith(prefix))) return 'stim';
   if ((stat.isFile() || stat.isDirectory()) && TRACE_PATTERN.test(name)) return 'xctrace';
   if (stat.isDirectory() && SWIFTPM_PATTERN.test(name)) return 'swiftpm';
-  if (stat.isDirectory() && name === jestName) return 'jest';
   return null;
 }
 
@@ -197,7 +195,7 @@ function temporaryRoot(env: NodeJS.ProcessEnv): string {
 
 /**
  * Recognized leftovers directly inside the user's TMPDIR, never following a symlink: Stim's own temp directories,
- * xctrace recordings, SwiftPM's `TemporaryDirectory.*` and Jest's cache. All but Jest's are deleted, and only once
+ * xctrace recordings and SwiftPM's `TemporaryDirectory.*`. They are deleted only once
  * nothing in them changed for 24 hours. Null with STIM_HOME set, because TMPDIR is shared by every Stim home, and for the real TMPDIR a test
  * process recorded in STIM_TEST_GUARD_REAL_TMPDIR.
  */
@@ -224,7 +222,6 @@ export async function collectTempLeftovers({
     return null;
   }
   const uid = process.getuid?.();
-  const jestName = uid === undefined ? null : `jest_${uid.toString(36)}`;
   const registeredProjects = () => Object.keys(loadConfig()?.projects ?? {}).flatMap((key) => [key, canonicalKey(key)]);
   let projects = registeredProjects();
   let executables: Set<string> | null | undefined;
@@ -257,13 +254,8 @@ export async function collectTempLeftovers({
     const path = join(root, name);
     const stat = await lstatOrError(path);
     if (!stat || 'error' in stat || stat.isSymbolicLink() || (uid !== undefined && stat.uid !== uid)) continue;
-    const kind = kindOf(name, stat, jestName);
+    const kind = kindOf(name, stat);
     if (!kind) continue;
-    if (kind === 'jest') {
-      const bytes = await directorySizeAsync(path, { timeoutMs: 10_000, signal, operation });
-      entries.push({ kind, path, bytes, willDelete: false, kept: 'report only: Jest owns it' });
-      continue;
-    }
     const identity =
       kind === 'stim' && name.startsWith(STAGING_PREFIX) ? join(root, name.slice(STAGING_PREFIX.length)) : path;
     const { bytes, kept } = await judge(path, stat, kind, identity);
@@ -283,7 +275,7 @@ export interface TempLeftoverGroup {
 }
 
 function summarize(report: TempLeftoverReport): TempLeftoverGroup[] {
-  return (['stim', 'xctrace', 'swiftpm', 'jest'] as const).flatMap((kind) => {
+  return (['stim', 'xctrace', 'swiftpm'] as const).flatMap((kind) => {
     const entries = report.entries.filter((entry) => entry.kind === kind);
     if (!entries.length) return [];
     const deleting = entries.filter((entry) => entry.willDelete);

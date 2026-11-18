@@ -1008,7 +1008,8 @@ the same cap. Under disk pressure the
 `maintenance.sweepHours` (24) sets how often the age sweep runs.
 `maintenance.olderThanDays` (3; 0 turns these off) is how long something stays
 unused before that sweep removes it: workspace build outputs, shared cache
-entries, parked simulators and emulators, and clean, pushed linked worktrees
+entries (Metro file maps and, on macOS and Linux, Jest's default cache
+directory in the temp directory among them), parked simulators and emulators, and clean, pushed linked worktrees
 (only with `maintenance.removeIdleWorktrees`, off by default). The age sweep
 also stops idle Gradle and Kotlin daemons, shuts down an unused watchman over 2 GiB, deletes Gradle versions no project
 pins once unmodified for `maintenance.gradleVersionIdleDays` (7; 0 keeps
