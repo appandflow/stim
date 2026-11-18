@@ -41,7 +41,7 @@ import type {
   Methods,
 } from '../protocol.ts';
 import { existsSync } from 'node:fs';
-import { StatusFeed } from '../status-feed.ts';
+import { StatusFeed, type StatusWorkerRequest } from '../status-feed.ts';
 import type { JsonObject } from '../feed.ts';
 import type { StartupState } from '../startup.ts';
 import type { Registries, PairedDevice } from '../registry.ts';
@@ -193,6 +193,8 @@ export interface ServerOptions {
    * server becomes ready so the first client gets a payload at once.
    */
   statusAtBoot?: boolean;
+  /** Starts the status worker on another thread; by default the server starts it as its own child worker. */
+  spawnStatusWorker?: (request: StatusWorkerRequest) => void;
   /** The Expo push API base URL; tests point it at a local server. */
   pushEndpoint?: string;
   pushLimits?: Partial<PushLimits>;

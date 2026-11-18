@@ -461,7 +461,8 @@ function watchedPids({ roots, states }: StatusSnapshot): number[] {
 }
 
 export interface StatusWatch {
-  stop(): void;
+  /** Ends the watch as `StatusSources.stop` does, calling `released` once its children have ended. */
+  stop(released?: () => void): void;
 }
 
 /**
@@ -580,12 +581,12 @@ export function runStatusWatch({
   });
   scheduler.trigger('full', 0);
   return {
-    stop() {
+    stop(released) {
       stopped = true;
       clearInterval(fallback);
       clearInterval(machine);
       scheduler.stop();
-      sources?.stop();
+      sources?.stop(released);
     },
   };
 }

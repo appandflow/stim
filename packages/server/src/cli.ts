@@ -5,6 +5,7 @@ import { readHostedSessions } from '@stim-cli/core/state';
 import { discoverToolchain } from '@stim-cli/core/toolchain';
 import { bundledStim } from './environment.ts';
 import { formatHostedSessions, readHostedSessionRows } from './hosted-sessions.ts';
+import type { StatusWorkerRequest } from './status-feed.ts';
 import { readAudit } from './actions.ts';
 import {
   installService,
@@ -131,13 +132,14 @@ export class NetRefusal extends Error {}
 /**
  * stim-server's listeners and handlers as stimd's net thread runs them. `idle` runs when a share-only server ends;
  * `requestUpdate` asks stimd to check for a newer engine; `requestRestart` asks it to exit once it is idle, so the
- * service manager starts it again from the unit it rewrote.
+ * service manager starts it again from the unit it rewrote. `spawnStatusWorker` asks stimd to start the status worker.
  */
 export async function serve(
   options: NetOptions,
   idle: () => void,
   requestUpdate: (why: string) => void = () => {},
   requestRestart: (why: string) => void = () => {},
+  spawnStatusWorker?: (request: StatusWorkerRequest) => void,
 ): Promise<NetThread> {
   const { port, extraEnv, pathPrepend, loopbackOnly, shareOnly } = options;
   delete process.env.NODE_COMPILE_CACHE;
@@ -185,6 +187,7 @@ export async function serve(
       transports: [lan],
       tailnet,
       keepAwake: { setting: lanSetting.keepAwake, onChange: lanSetting.onKeepAwakeChange },
+      ...(spawnStatusWorker ? { spawnStatusWorker } : {}),
       service: {
         label: serviceManagerOrNull()?.runningLabel(process.env) ?? null,
         node: process.execPath,

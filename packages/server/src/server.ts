@@ -517,6 +517,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     worker: join(dirname(options.stimCli), 'status-worker.mjs'),
     env: options.env,
     cwd: homedir(),
+    ...(options.spawnStatusWorker ? { spawn: options.spawnStatusWorker } : {}),
   });
   const statusViewsCache = new WeakMap<JsonObject, StatusViews>();
   const viewsOf = (payload: JsonObject): StatusViews => {
