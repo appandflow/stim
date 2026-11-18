@@ -380,8 +380,16 @@ const SCOPE_TEXT: Record<Scope, string> = {
   test: 'request managed engine updates',
 };
 
-/** Prints a pairing payload; `loopbackOnly` says the listener serves this machine only, so only a local endpoint pairs. */
-export async function pair(port: number, json: boolean, control: boolean, loopbackOnly = false): Promise<void> {
+/**
+ * Prints a pairing payload. `thisMachineOnly`, asked once before the token is made, says whether the listener serves
+ * this machine only, in which case only the local endpoint pairs.
+ */
+export async function pair(
+  port: number,
+  json: boolean,
+  control: boolean,
+  thisMachineOnly: () => Promise<boolean> = async () => false,
+): Promise<void> {
   const tailscaleModule = await tailscalePackage();
   const { findTailscale, readTailscaleStatus, serveRoute } = tailscaleModule;
   const binary = findTailscale(process.env);
@@ -400,7 +408,7 @@ export async function pair(port: number, json: boolean, control: boolean, loopba
     note = routeNote(tailscaleModule, route, port);
     tailnet = true;
   }
-  if (loopbackOnly && endpoint !== local)
+  if ((await thisMachineOnly()) && endpoint !== local)
     fail(
       `refusing to pair: this Stim home's server serves this machine only, so a device cannot reach ${endpoint}. Turn on Allow connections in Stim Desktop, or run stim serve without --loopback-only, then pair again.`,
     );
