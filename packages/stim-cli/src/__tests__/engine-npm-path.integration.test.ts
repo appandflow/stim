@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { npmEnv } from '../engine-store/npm.ts';
@@ -43,8 +43,9 @@ describe.skipIf(process.platform === 'win32')('npm lookup for engine updates', (
     ).resolves.toBe('8.8.8');
   });
 
-  it('runs the real npm next to this node when PATH has no npm', async () => {
-    process.env.PATH = '/usr/bin:/bin';
+  it('runs the real npm found beside this node, or on the ambient PATH when the node has none', async () => {
+    const besideNode = existsSync(join(dirname(realExecPath), 'npm'));
+    process.env.PATH = besideNode ? '/usr/bin:/bin' : realPath;
     const out = await getExecutor().runFileAsync('npm', ['--version'], { timeoutMs: 30_000, env: npmEnv(process.env) });
     expect(out).toMatch(/^\d+\.\d+\.\d+/);
   });
