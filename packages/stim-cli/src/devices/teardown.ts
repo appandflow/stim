@@ -320,10 +320,26 @@ async function parkOwnedIosSim(
   return { record, evicted };
 }
 
+function assertIosSimUnreferenced(udid: string): void {
+  const config = loadConfig();
+  if (!config) throw new Error(`Cannot verify references to simulator ${udid} without a Stim config; it was kept.`);
+  for (const [projectPath, project] of Object.entries(config.projects)) {
+    for (const { slot, platforms } of projectDeviceSlots(project)) {
+      if (platforms.ios?.deviceUdid === udid) {
+        throw new Error(`Simulator ${udid} is referenced by ${projectPath} (${slot}); it was kept.`);
+      }
+    }
+  }
+  if (readParked('ios', { config }).some((entry) => entry.udid === udid)) {
+    throw new Error(`Simulator ${udid} is in the simulator pool; it was kept.`);
+  }
+}
+
 export async function teardownOwnedIosSim(
   udid: string,
   {
     del = false,
+    unreferenced = false,
     label,
     park,
     deferShutdown,
@@ -332,6 +348,8 @@ export async function teardownOwnedIosSim(
     operation,
   }: {
     del?: boolean;
+    /** With `del`, refuses to delete a simulator that a project record or the pool references when the delete runs. */
+    unreferenced?: boolean;
     label?: string;
     park?: ParkRequest;
     /** Leaves a booted simulator booted until `until`, after ending its sessions and its app, and records it for the daemon. */
@@ -353,6 +371,7 @@ export async function teardownOwnedIosSim(
       };
     }
     if (resolved.missing) return { status: 'missing' };
+    if (del && unreferenced) await withConfigLockAsync(() => assertIosSimUnreferenced(udid), operation?.signal);
     await closeOwnedDeviceSessions(
       { platform: 'ios', id: udid },
       async () => Boolean((await resolveOwnedIosSimNow(udid, operation)).sim),
@@ -411,6 +430,7 @@ export async function teardownOwnedIosSim(
       }
     }
     if (del) {
+      if (unreferenced) await withConfigLockAsync(() => assertIosSimUnreferenced(udid), operation?.signal);
       await deleteIosSim(udid, operation);
       return { status: 'torn-down', label: label ?? sim.name ?? udid, ...(parkFallback ? { parkFallback } : {}) };
     }
