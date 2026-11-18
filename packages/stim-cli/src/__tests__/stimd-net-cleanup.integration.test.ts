@@ -148,23 +148,6 @@ test('a restart message from the net thread reaches stimd', async () => {
   expect(onRestart).toHaveBeenCalledWith('unit rewritten');
 });
 
-test("an ask that waits on a restart's stop gets the restart's thread, not its own", async () => {
-  const { net } = await listening();
-  const first = current();
-  const service = { ...options, port: 7787, loopbackOnly: false };
-  const restarting = net.restart(service, () => true);
-  const parked = net.ensure({ ...options, port: 9 });
-  first.emit('message', { type: 'closed' });
-  first.emit('exit', 0);
-  await vi.waitFor(() => expect(current()).not.toBe(first));
-  expect(net.running()).toMatchObject({ loopbackOnly: false });
-  current().emit('message', { type: 'listening', port: 7787 });
-  await expect(Promise.all([restarting, parked])).resolves.toEqual([
-    { listening: true, port: 7787 },
-    { listening: true, port: 7787 },
-  ]);
-});
-
 test('close during a restart starts no thread for the restart or an ask waiting on it', async () => {
   const { net } = await listening();
   const first = current();

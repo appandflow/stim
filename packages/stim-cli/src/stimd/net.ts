@@ -56,10 +56,7 @@ export interface NetThread {
   connect(socket: Socket, head: Buffer): boolean;
   /** Forwards one agent action's presence to a listening net thread; false when none listens. */
   presence(params: unknown): boolean;
-  /**
-   * Stops the net thread and, unless `proceed` says no once it stopped, starts it again with `options`; an ask that
-   * waits on the stop starts a thread with `options` too, not its own.
-   */
+  /** Stops the net thread and, unless `proceed` says no once it stopped, starts it again with `options`. */
   restart(options: NetOptions, proceed: () => boolean): Promise<NetAnswer>;
   /** Stops the net thread for good and waits for it; later asks are refused. */
   close(): Promise<void>;
@@ -82,7 +79,6 @@ export function createNetThread(
   let shareOnly = false;
   let loopbackOnly = false;
   let port: number | null = null;
-  let replacing: NetOptions | null = null;
   let ending = false;
   let cleanupFailure: Error | undefined;
   let failureNotified = false;
@@ -134,12 +130,10 @@ export function createNetThread(
     }
   };
   return {
-    ensure(requested: NetOptions): Promise<NetAnswer> {
+    ensure(options: NetOptions): Promise<NetAnswer> {
       if (cleanupFailure) return Promise.resolve({ listening: false, message: cleanupFailure.message });
       if (ending) return Promise.resolve({ listening: false, message: 'stimd is ending' });
-      if (stopping) return stopping.then(() => this.ensure(requested));
-      const options = replacing ?? requested;
-      replacing = null;
+      if (stopping) return stopping.then(() => this.ensure(options));
       if (started) {
         if (!options.shareOnly && shareOnly) {
           shareOnly = false;
@@ -211,16 +205,8 @@ export function createNetThread(
       return true;
     },
     async restart(options, proceed) {
-      replacing = options;
-      try {
-        await stopThread();
-      } catch (error) {
-        replacing = null;
-        throw error;
-      }
-      if (proceed()) return this.ensure(options);
-      replacing = null;
-      return { listening: false, message: 'stimd is ending' };
+      await stopThread();
+      return proceed() ? this.ensure(options) : { listening: false, message: 'stimd is ending' };
     },
     close() {
       ending = true;
