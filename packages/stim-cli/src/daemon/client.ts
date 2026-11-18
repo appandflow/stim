@@ -437,7 +437,7 @@ async function admitOperation(
   held: Socket[],
 ): Promise<{ opToken: string } | { answer: Record<string, unknown> | null }> {
   const existing = operationToken(operation);
-  if (existing) return { opToken: existing };
+  if (existing && !admissions.get(existing)?.lost) return { opToken: existing };
   const env = operation?.env ?? process.env;
   const context = (await import('../stimd/forwarded.ts')).invocation(root, env);
   if ('code' in context) return { answer: { op: 'error', ...context } };
@@ -1500,7 +1500,10 @@ export async function startDeviceLogStream(
 ): Promise<{ streamId: string } | { error: string }> {
   throwIfCancelled(operation?.signal, 'device log startup');
   const opToken = operationToken(operation);
-  if (!opToken) return { error: 'the operation has no stimd connection' };
+  if (!opToken) {
+    const refused = otherBuildRefusal();
+    return { error: refused ? `${refused.message} ${refused.remedy}` : 'the operation has no stimd connection' };
+  }
   // @ref LLP 0012#a-command-continues-across-a-stimd-restart -- a stream start answers the stream that already runs for the slot
   const reply = await resumable(operation, operation?.signal, opToken, (token) =>
     askStimd('logs.start', 10_000, { opToken: token, params: spec }, operation?.signal),

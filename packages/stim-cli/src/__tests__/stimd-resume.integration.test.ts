@@ -32,6 +32,7 @@ import {
   beforeCommand,
   cancelCliOp,
   ensureMetroThroughStimd,
+  ensureTunnelThroughStimd,
   releaseDeviceTicket,
   releaseOrphanedTicket,
   startDeviceLogStream,
@@ -585,6 +586,24 @@ describe.skipIf(process.platform === 'win32')('a command not waiting on stimd wh
     const reply = await startDeviceLogStream(logSpec(root), context(root));
     expect(reply).toEqual({ error: expect.stringContaining('stim doctor --fix') });
   }, 60_000);
+  test('a tunnel request after the kill starts a stimd even with the daemon mode off', async () => {
+    const root = workspace('app');
+    const first = await startStimd();
+    vi.stubEnv('STIM_DAEMON', 'off');
+    const forwarded = invocation(root, process.env);
+    if ('code' in forwarded) throw new Error(forwarded.message);
+    await beforeCommand('start', process.env, { cwd: root, recordUse: false, pin: true, invocation: forwarded });
+    first.kill('SIGKILL');
+    await once(first, 'exit');
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const answer = await ensureTunnelThroughStimd(
+      { root, port: 8081, mode: 'off', isExpo: false, ngrokUrl: null },
+      10_000,
+      context(root),
+    );
+    expect(answer).not.toMatchObject({ code: 'STIM_DAEMON_UNAVAILABLE' });
+    expect(stimdPid()).not.toBe(first.pid);
+  }, 60_000);
 });
 
 function pausedMetroProject() {
@@ -810,6 +829,22 @@ async function withCIHoldServer(replies: Record<string, unknown>[], run: (connec
     releaseClaim(claim);
   }
 }
+
+describe.skipIf(process.platform === 'win32')('a command refused by another build', () => {
+  test('a log stream start answers the refusal with its remedy', async () => {
+    const root = workspace('app');
+    await withCIHoldServer([otherBuildHold, otherBuildHold, otherBuildHold], async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      await admitCli(root).catch(() => {});
+      const reply = await startDeviceLogStream(
+        { root, platform: 'ios', slot: 'default', udid: 'U1', bundleId: 'com.test.app', appName: 'Test' },
+        context(root),
+      );
+      expect(reply).toEqual({ error: expect.stringContaining('2.0.0-other') });
+      expect(JSON.stringify(reply)).not.toContain('no stimd connection');
+    });
+  }, 60_000);
+});
 
 describe.skipIf(process.platform === 'win32')('a CI hold', () => {
   test.each([

@@ -53,11 +53,12 @@ Viewing another server and asking a remote worker to run a local workspace have 
 ## A command continues across a stimd restart
 
 A command's admission (`op.begin` and its token) lives only in the memory of
-the stimd that gave it. When that stimd goes away while the command waits on it
-(a crash, a kill, an in-place update, an engine switch), the CLI admits the
-command again with the stimd that replaces it, the way it was first admitted,
-starting one where the command would have started one. It then repeats the
-step it was waiting on and continues, printing one stderr line that stimd
+the stimd that gave it. When that stimd goes away under the command, whether or not it
+is waiting on stimd at that moment (a crash, a kill, an in-place update, an
+engine switch), the CLI admits the command again with the stimd that replaces it, the way it was first admitted,
+starting one where the command would have started one. A command not waiting
+is admitted again at its next stimd step. It then repeats the step it was
+waiting on and continues, printing one stderr line that stimd
 restarted. It does this once per operation, and the whole resume (every wait in
 it) takes at most 30 seconds. A cancelled operation stops resuming at once and
 is not admitted again. With no stimd admitting it again, or when the stimd that
