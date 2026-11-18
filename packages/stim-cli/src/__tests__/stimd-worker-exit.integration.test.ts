@@ -92,6 +92,35 @@ test('an idle worker whose bounded read is still pending is kept, so a stuck fol
   }
 });
 
+test('a kept worker that exits before answering settle leaves no idle poll behind', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const root = mkdtempSync(join(tmpdir(), 'stim-worker-settle-'));
+  const fixture = join(root, 'worker.mjs');
+  writeFileSync(
+    fixture,
+    `
+import { parentPort } from 'node:worker_threads';
+parentPort.on('message', (message) => {
+  if (message.type === 'settle') process.exit(1);
+  parentPort.postMessage({ type: 'done', result: [], reading: true });
+});
+`,
+  );
+  const entry = vi.spyOn(entries, 'spawnEntry').mockReturnValue(fixture);
+  const threads = createThreadTable(() => {});
+  const timers = vi.getTimerCount();
+  try {
+    await threads.run('measure', { cwd: root });
+    await vi.advanceTimersByTimeAsync(120_001);
+    await vi.waitFor(() => expect(vi.getTimerCount()).toBe(timers));
+  } finally {
+    await threads.close();
+    entry.mockRestore();
+    vi.useRealTimers();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 describe.skipIf(process.platform === 'win32')('unexpected worker exit', () => {
   test.each(['exit', 'abort'])(
     'a worker %s with an outstanding job reports a surviving child',

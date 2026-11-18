@@ -116,6 +116,9 @@ export function createThreadTable(log: Log, onLost: (error: Error) => void = () 
     });
     const gone = (error: Error) => {
       if (threads.get(name) === thread) threads.delete(name);
+      if (thread.idle) clearTimeout(thread.idle);
+      thread.idle = null;
+      thread.reading = false;
       if (thread.unsettled.size > 0 && !thread.lost) {
         thread.lost = true;
         onLost(
