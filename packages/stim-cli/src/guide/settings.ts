@@ -1592,9 +1592,9 @@ list, a \`note\` finding only the doctor report:
   server-desktop-authority  cost: the server stimd's socket reaches (not Desktop's own)
                          sends no desktopApi or a lower one than this stim's, so
                          Desktop cannot run actions through it; update it
-  server-version         note: a server's stim version differs from this stim; the
-                         service updates with \`stim engine update\`, or from a
-                         client with \`stim remote update <mac>\`
+  server-version         note: a server's stim differs from this one; update an
+                         engine service with \`stim engine update\`, others with
+                         \`stim service install\`, or \`stim remote update <mac>\`
   server-home            note: a server serves another Stim home than this stim's
   server-leftover        note: servers started by hand, with pid, home and port
   server-keep-awake      note: this Mac serves approved build or device-host clients
