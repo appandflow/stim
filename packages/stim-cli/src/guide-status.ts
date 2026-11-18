@@ -156,7 +156,8 @@ function projectPins(projectRoot: string): string[] {
     const deps = manifest[field];
     if (!isJsonObject(deps)) continue;
     for (const [name, range] of Object.entries(deps)) {
-      if (name === 'stim' && typeof range === 'string' && /^\D*1\./.test(range)) names.add(`stim ${range}`);
+      if (typeof range !== 'string' || /^(workspace|link|file):/.test(range)) continue;
+      if (name === 'stim' && /^\D*1\./.test(range)) names.add(`stim ${range}`);
       else if (name.startsWith('@stim-cli/') && name !== '@stim-cli/cache-s3') names.add(name);
     }
   }
@@ -168,7 +169,7 @@ async function upgradeLeftovers(
   projectRoot: string | null,
   cwd: string,
   env: NodeJS.ProcessEnv,
-  runs: NonNullable<ProjectRecord['doctorRuns']> | null,
+  runs: DoctorRunRecord[],
   running: string,
 ): Promise<string[]> {
   const found: string[] = [];
@@ -189,8 +190,8 @@ async function upgradeLeftovers(
     if (pins.length) found.push(`package.json names ${listed(pins)}`);
   }
   const current = major(running);
-  const checked = Object.values(runs ?? {}).find((run) => {
-    const at = major(run?.version);
+  const checked = runs.find((run) => {
+    const at = major(run.version);
     return at !== null && current !== null && at < current;
   });
   if (checked) found.push(`doctor last ran with stim ${checked.version}`);
@@ -230,9 +231,10 @@ export async function guideStatus({
   fetch?: typeof fetch;
 }): Promise<string | null> {
   const doctor: DoctorDue[] = [];
-  let runs: NonNullable<ProjectRecord['doctorRuns']> | null = null;
+  const recorded: DoctorRunRecord[] = [];
   if (projectRoot) {
     const platforms = projectRegistry.selectDoctor(projectRoot).platforms;
+    let runs: NonNullable<ProjectRecord['doctorRuns']> | null = null;
     try {
       runs = getProject(projectRoot)?.doctorRuns ?? {};
     } catch {
@@ -240,12 +242,14 @@ export async function guideStatus({
     }
     if (runs) {
       for (const platform of platforms) {
-        const reason = doctorDueReason(runs[platform], running, now);
+        const run = runs[platform];
+        if (run) recorded.push(run);
+        const reason = doctorDueReason(run, running, now);
         if (reason) doctor.push({ platform, reason });
       }
     }
   }
-  const leftovers = await upgradeLeftovers(projectRoot, cwd, env, runs, running);
+  const leftovers = await upgradeLeftovers(projectRoot, cwd, env, recorded, running);
   const latest = await checkForUpdate(running, { now, fetch: fetchImpl });
   return renderGuideStatus({ running, leftovers, doctor, latest });
 }

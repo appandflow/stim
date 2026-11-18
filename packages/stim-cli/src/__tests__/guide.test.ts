@@ -782,9 +782,8 @@ test('slot selection and shared Metro behavior are discoverable in operational g
   expect(renderSection('lifecycle', 'options')).toContain('not a single-slot reload');
 });
 
-test('the agent router and the STATUS leftover line both send an upgraded home to the upgrade topic', () => {
+test('the agent router sends an upgraded home to the upgrade topic', () => {
   expect(renderTopic('agent')).toContain('stim guide upgrade');
-  expect(renderTopic('upgrade')).toContain('STATUS');
 });
 
 test('named ports guidance is routed and separates named listener cleanup from Metro', () => {

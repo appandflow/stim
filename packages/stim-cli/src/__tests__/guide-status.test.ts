@@ -167,7 +167,7 @@ test('guideStatus sends a home and project an earlier Stim left to stim guide up
 
   releaseClaim(claim);
   writeFileSync(configFile, JSON.stringify(config));
-  manifest('^2.0.0');
+  manifest('^2.0.0', { '@stim-cli/core': 'workspace:^' });
   upsertProject(root, { doctorRuns: { ios: { at: NOW.toISOString(), version: '2.0.0' } } });
   const migrated = await guideStatus({ projectRoot: root, running: '2.0.0', env: process.env, now: NOW, fetch });
   expect(migrated ?? '').not.toContain('stim guide upgrade');
