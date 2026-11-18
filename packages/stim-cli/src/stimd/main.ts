@@ -959,7 +959,7 @@ async function runStimdInner(
       const on = autoUpdateOn(
         loadConfig()?.engine?.autoUpdate,
         readRecords(follower.engine.root).state.installedBy,
-        service,
+        service || serviceNet,
       );
       if (!on || !updateDue(lastUpdateCheck(follower.engine.root), Date.now(), everyMs)) return;
     } catch {
