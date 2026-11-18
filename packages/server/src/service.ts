@@ -1065,7 +1065,7 @@ async function uninstallJob(label: string): Promise<string[]> {
     const removed = await run(tailscale, ['serve', `--https=${routeOff}`, 'off'], tailscaleEnv(process.env));
     if (!removed.ok) {
       throw new ServiceError(
-        `Stopped ${label} but could not remove its tailscale serve route on https port ${routeOff}: ${removed.stderr.trim()}. Kept the ${label} ${fileNoun()}, which starts again at the next login. Run \`tailscale serve --https=${routeOff} off\`, or retry \`stim service uninstall --label ${label}\`.`,
+        `Stopped ${label} but could not remove its tailscale serve route on https port ${routeOff}: ${removed.stderr.trim()}. Kept the ${label} ${fileNoun()}. Retry \`stim service uninstall --label ${label}\`, or remove the route with \`tailscale serve --https=${routeOff} off\` and then retry.`,
       );
     }
     notes.push(`Removed the tailscale serve route on https port ${routeOff}.`);
