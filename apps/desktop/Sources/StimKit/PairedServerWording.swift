@@ -76,8 +76,8 @@ public enum PairedServerWording {
     case "desktop-api-older":
       return PairedServerNotice(
         tone: .warning, title: "Update stim on \(machine)",
-        detail: "Its Stim engine is older than Stim Desktop. On this machine, run the command below.",
-        command: name.isEmpty ? nil : "stim remote update \(name)")
+        detail: "Its Stim engine is older than Stim Desktop. On it, run the command below.",
+        command: "stim engine update")
     case "desktop-api-newer":
       return PairedServerNotice(
         tone: .warning, title: "Update Stim Desktop",

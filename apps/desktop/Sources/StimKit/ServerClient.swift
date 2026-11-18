@@ -378,7 +378,7 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
             } else if older {
               refusal = (
                 "desktop-api-older",
-                "\(server) is older than Stim Desktop; run stim remote update \(hello.server.name)"
+                "\(server) is older than Stim Desktop. On that machine, run stim engine update."
               )
             } else {
               refusal = (

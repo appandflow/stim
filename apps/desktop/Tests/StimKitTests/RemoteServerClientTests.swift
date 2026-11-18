@@ -84,7 +84,7 @@ import Testing
   @Test(
     arguments: [
       (nil, "Install stim 2 on floco", "npm i -g stim@latest"),
-      (0, "Update stim on floco", "stim remote update floco"),
+      (0, "Update stim on floco", "stim engine update"),
       (2, "Update Stim Desktop", nil),
     ] as [(Int?, String, String?)])
   func aRemoteWithADifferentDesktopApiShowsItsOwnRemedyInTheConnectionStatus(
