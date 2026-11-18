@@ -320,8 +320,8 @@ async function parkOwnedIosSim(
   return { record, evicted };
 }
 
-export function withIosDeviceNameLock<T>(fn: () => Promise<T>): Promise<T> {
-  return withWorkspaceProcessLock(getConfigDir(), 'ios-device-names', async () => fn(), { external: true });
+export function withIosDeviceNameLock<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  return withWorkspaceProcessLock(getConfigDir(), 'ios-device-names', async () => fn(), { external: true, signal });
 }
 
 function iosSimReference(udid: string): string | null {
@@ -363,19 +363,8 @@ export async function teardownOwnedIosSim(
   const reportedBusy = new Set<string>();
   try {
     if (del && unreferenced) {
-      return await withIosDeviceNameLock(async () => {
-        const holder = iosSimReference(udid);
-        if (holder) return { status: 'skipped', kind: 'referenced', reason: `referenced by ${holder}` };
-        return await teardownOwnedIosSim(udid, {
-          del,
-          label,
-          park,
-          deferShutdown,
-          workspace,
-          shutdownClock,
-          operation,
-        });
-      });
+      const holder = await withIosDeviceNameLock(async () => iosSimReference(udid), operation?.signal);
+      if (holder) return { status: 'skipped', kind: 'referenced', reason: `referenced by ${holder}` };
     }
     const resolved = await resolveOwnedIosSimNow(udid, operation);
     if (resolved.notOwned) {
