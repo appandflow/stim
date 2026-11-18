@@ -370,8 +370,8 @@ export async function acquireRunLease({
   operation?: StimContext;
 }): Promise<AcquireRunLeaseResult> {
   if (operation) {
-    const { acquireDeviceTicket, operationToken } = await import('../daemon/client.ts');
-    if (operationToken(operation))
+    const { acquireDeviceTicket, operationToken, readmitLostOperation } = await import('../daemon/client.ts');
+    if (operationToken(operation) && (await readmitLostOperation(operation)))
       return acquireDeviceTicket(
         { root, platform, slot, id, deviceName, idLabel, waitSeconds, noWait, installBoundMs, appId },
         operation,
