@@ -195,3 +195,14 @@ test('a worker that never reports gets a bounded answer and the next ask starts 
   current().emit('message', { type: 'listening', port: 1234 });
   await expect(second).resolves.toEqual({ listening: true, port: 1234 });
 });
+
+test('a listening message after the start deadline is ignored', async () => {
+  vi.useFakeTimers();
+  const net = createNetThread(log, () => {});
+  const first = net.ensure(options);
+  await vi.advanceTimersByTimeAsync(30_000);
+  await first;
+  current().emit('message', { type: 'listening', port: 1234 });
+  expect(net.running()).toMatchObject({ port: null });
+  expect(net.presence({})).toBe(false);
+});

@@ -136,7 +136,9 @@ export function createNetThread(
       let clean = false;
       worker = thread;
       started = new Promise<NetAnswer>((settle) => {
+        let timedOut = false;
         const timer = setTimeout(() => {
+          timedOut = true;
           const message = `the net thread did not report within ${START_WAIT_MS / 1000} s`;
           log('warn', 'net_start_timeout', message);
           settle({ listening: false, message });
@@ -149,6 +151,7 @@ export function createNetThread(
         };
         thread.on('message', (message: FromNet) => {
           if (message.type === 'listening') {
+            if (timedOut || stopping) return;
             listening = true;
             port = message.port;
             log('info', 'net_started', `the net thread listens on port ${message.port}`);
@@ -165,7 +168,7 @@ export function createNetThread(
           } else if (message.type === 'idle') {
             if (!shareOnly) return;
             log('info', 'net_idle', 'no web share is left; stopping the net thread');
-            stop(thread);
+            stopThread().catch(() => {});
           } else if (message.type === 'update') onUpdate(message.why);
           else if (message.type === 'restart') onRestart(message.why);
           else if (message.type === 'data') sockets.get(message.id)?.write(message.chunk);

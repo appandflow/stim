@@ -247,6 +247,7 @@ function ensureAs(
     let buffer = '';
     client.setEncoding('utf8');
     client.on('error', reject);
+    client.on('close', () => reject(new Error('stimd closed the connection without an answer')));
     client.on('data', (chunk: string) => {
       buffer += chunk;
       for (let end = buffer.indexOf('\n'); end >= 0; end = buffer.indexOf('\n')) {
@@ -529,6 +530,25 @@ test('two overlapping service asks against a held service port restore the share
     else process.env.STIM_HOME = previousHome;
     rmSync(home, { recursive: true, force: true });
   }
+}, 120_000);
+
+test('a service ask for port 0 moves the share-only thread and keeps its listener and ownership', async () => {
+  await withStimd('port-zero', async ({ socket, build }) => {
+    const cli = { kind: 'cli', build };
+    expect(await ensureAs(socket, cli, { share: true })).toMatchObject({ listening: true });
+    const answer = await ensureAs(socket, cli, {
+      port: 0,
+      loopbackOnly: true,
+      extraEnv: [],
+      pathPrepend: [],
+      service: true,
+    });
+    expect(answer).toMatchObject({ listening: true });
+    const port = Number(answer.port);
+    expect((await fetch(`http://127.0.0.1:${port}/health`)).status).toBeLessThan(600);
+    const desktop = await ensureAs(socket, { kind: 'desktop' }, { port: await freePort(), loopbackOnly: true });
+    expect(desktop).toMatchObject({ listening: true, port });
+  });
 }, 120_000);
 
 test('a matching service ask that lands while the booted thread starts joins it', async () => {

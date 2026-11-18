@@ -1477,7 +1477,7 @@ async function runStimdInner(
                   .restart(resolved, () => !closing)
                   .then(async (state) => {
                     if (state.listening) recordNet(state.port);
-                    if (serviceMove && !(state.listening && state.port === options.port)) {
+                    if (serviceMove && !(state.listening && (options.port === 0 || state.port === options.port))) {
                       netServes = previous;
                       const restored = await net
                         .restart(
@@ -1512,7 +1512,7 @@ async function runStimdInner(
               if (forService)
                 void answer.then(
                   (state) => {
-                    if (state.listening && state.port === options.port) serviceNet = true;
+                    if (state.listening && (options.port === 0 || state.port === options.port)) serviceNet = true;
                     else if (reserved) serviceNet = wasService;
                     return undefined;
                   },
