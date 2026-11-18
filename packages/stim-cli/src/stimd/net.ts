@@ -3,7 +3,6 @@ import { Worker } from 'node:worker_threads';
 import { spawnEntry } from '../spawn-entry.ts';
 
 const STOP_WAIT_MS = 15_000;
-const START_WAIT_MS = 2 * STOP_WAIT_MS;
 
 /** The options of `stim serve`, a service unit or a request to stimd, as the net thread takes them. */
 export interface NetOptions {
@@ -69,8 +68,6 @@ export function createNetThread(
 ): NetThread {
   let worker: Worker | null = null;
   let started: Promise<NetAnswer> | null = null;
-  let late: Promise<NetAnswer> | null = null;
-  let lateTimer: ReturnType<typeof setTimeout> | undefined;
   let stopping: Promise<unknown> | null = null;
   let listening = false;
   let shareOnly = false;
@@ -130,27 +127,14 @@ export function createNetThread(
           shareOnly = false;
           post({ type: 'keep' });
         }
-        return Promise.race([started, late ?? started]);
+        return started;
       }
       shareOnly = options.shareOnly;
       loopbackOnly = options.loopbackOnly;
       const thread = new Worker(spawnEntry('net-thread'), { workerData: { net: options } });
       let clean = false;
       worker = thread;
-      late = new Promise<NetAnswer>((deadline) => {
-        const timer = setTimeout(() => {
-          const message = `the net thread did not report within ${START_WAIT_MS / 1000} s`;
-          log('warn', 'net_start_timeout', message);
-          deadline({ listening: false, message });
-        }, START_WAIT_MS);
-        timer.unref();
-        lateTimer = timer;
-      });
-      started = new Promise<NetAnswer>((settle) => {
-        const answer = (reply: NetAnswer) => {
-          clearTimeout(lateTimer);
-          settle(reply);
-        };
+      started = new Promise<NetAnswer>((answer) => {
         thread.on('message', (message: FromNet) => {
           if (message.type === 'listening') {
             if (stopping) return;
@@ -187,7 +171,7 @@ export function createNetThread(
           if (worker === thread) ended();
         });
       });
-      return Promise.race([started, late]);
+      return started;
     },
     running: () => (worker ? { shareOnly, loopbackOnly, port } : null),
     connect(socket, head) {

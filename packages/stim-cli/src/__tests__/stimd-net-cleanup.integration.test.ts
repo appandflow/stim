@@ -179,18 +179,3 @@ test('close during a restart starts no thread for the restart or an ask waiting 
   expect(net.running()).toBeNull();
   expect(current()).toBe(first);
 });
-
-test('a slow start gets a bounded answer, keeps its worker, and a later ask joins it once it listens', async () => {
-  vi.useFakeTimers();
-  const net = createNetThread(log, () => {});
-  const first = net.ensure(options);
-  const slow = current();
-  await vi.advanceTimersByTimeAsync(30_000);
-  await expect(first).resolves.toMatchObject({ listening: false });
-  expect(state.messages).not.toContain('stop');
-  await expect(net.ensure(options)).resolves.toMatchObject({ listening: false });
-  expect(current()).toBe(slow);
-  slow.emit('message', { type: 'listening', port: 1234 });
-  await expect(net.ensure(options)).resolves.toEqual({ listening: true, port: 1234 });
-  expect(current()).toBe(slow);
-});

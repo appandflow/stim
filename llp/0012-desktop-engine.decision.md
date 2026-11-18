@@ -127,7 +127,7 @@ thread or the move holds the service's ownership from that moment, so Stim
 Desktop cannot replace the thread while it starts; a thread that does not
 listen on the service port releases it, and a move that fails puts the
 share-only thread back on its previous options so saved web shares keep
-serving until the next ask retries. stimd handles every `net.ensure` one at a time, in arrival order, against the thread as it is when the ask's turn comes, so one rollback configuration and one ownership reservation exist. A move's rollback restores the share-only options the thread ran on, never a proposal that did not start. A matching service ask joins a thread that is still starting. A service ask for port 0 matches any port, on the loopback setting alone. A thread start has a 30-second deadline, after which the waiting ask is answered as not listening and the queue moves on, while the thread keeps starting and a later ask joins it once it listens. The boot start of `stim serve` or of saved shares is the first turn of that queue. A service ask that finds a running thread that is not share-only and whose loopback setting or port differs from the service's is refused without taking ownership. Once the service's thread runs,
+serving until the next ask retries. stimd handles every `net.ensure` one at a time, in arrival order, against the thread as it is when the ask's turn comes, so one rollback configuration and one ownership reservation exist. A move's rollback restores the share-only options the thread ran on, never a proposal that did not start. A matching service ask joins a thread that is still starting. A service ask for port 0 matches any port, on the loopback setting alone. A thread start has no deadline of its own: an ask waits for it as it did before the queue, and the start is bounded by its own steps. The boot start of `stim serve` or of saved shares is the first turn of that queue. A service ask that finds a running thread that is not share-only and whose loopback setting or port differs from the service's is refused without taking ownership. Once the service's thread runs,
 Stim Desktop no longer moves it. A net thread that serves clients on other
 options (Desktop's or `stim serve`'s) is not replaced: the asker exits 1
 naming both ports, and `stim service status` names the holder's port. Which of
@@ -143,8 +143,7 @@ Maintainer direction: "can u check the update process to make sure this doesnt h
 Chosen by the implementing agent, not the maintainer: replacing only a
 share-only thread, refusing while pinned rather than deferring, and leaving a
 unit that names one engine build to `stim service install` (status reports
-it), serving every `net.ensure` one at a time in arrival order, the 30-second
-start deadline of a net thread, matching a service ask for port 0 on the
+it), serving every `net.ensure` one at a time in arrival order, matching a service ask for port 0 on the
 loopback setting alone, and refusing a service ask whose options do not match a
 running non-share thread.
 
