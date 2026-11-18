@@ -5,6 +5,7 @@ import {
   settingDefinition,
   type Config,
   type DaemonMode,
+  UPGRADE_GUIDE_URL,
 } from '@stim-cli/core/state';
 
 const MODE = settingDefinition('daemon.mode');
@@ -87,6 +88,6 @@ export function removedEnvironmentRefusal(
   return {
     code: 'STIM_BAD_ARG',
     message: `${replaced.join('. ')}.`,
-    remedy: `Unset ${found.map(({ env: name }) => name).join(', ')}, then run the command again; \`stim guide settings\` lists what replaced each.`,
+    remedy: `Unset ${found.map(({ env: name }) => name).join(', ')}, then run the command again; ${UPGRADE_GUIDE_URL} lists what replaced each.`,
   };
 }

@@ -12,7 +12,7 @@ import { mergeSettingsLayers } from '../workspace/settings.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { resolveOptimizations } from '../optimizations.ts';
 
-import type { SettingsObject } from '@stim-cli/core/state';
+import { UPGRADE_GUIDE_URL, type SettingsObject } from '@stim-cli/core/state';
 import { writeCasToolchain } from './_factories.ts';
 
 vi.mock('../engine/ios-signing.ts', async (importOriginal) => ({
@@ -152,6 +152,8 @@ test('STIM_MAINTENANCE in the environment is reported with daemon.mode and STIM_
   ]);
 });
 
+const UPGRADE = ` The other migration steps are at ${UPGRADE_GUIDE_URL}.`;
+
 test.each([
   [
     'maintenance.mode off in the machine config',
@@ -173,7 +175,7 @@ test.each([
     exists: () => false,
     env: {},
   });
-  expect(findings).toEqual([expect.objectContaining({ level: 'cost', fix })]);
+  expect(findings).toEqual([expect.objectContaining({ level: 'cost', fix: `${fix}${UPGRADE}` })]);
 });
 
 test('an old value that turned nothing off, or sits in a layer it was never read from, stays a note', () => {
@@ -220,7 +222,7 @@ test('a leftover whose replacement a layer already sets names that value and ask
     expect.objectContaining({
       level: 'cost',
       detail: expect.stringContaining(`idle.minutes is 0 in ${MACHINE}.`),
-      fix: 'Run `stim settings unset metro.idleStopMinutes`.',
+      fix: `Run \`stim settings unset metro.idleStopMinutes\`.${UPGRADE}`,
     }),
   ]);
 });

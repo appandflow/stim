@@ -17,7 +17,13 @@ import {
   unknownSettingKeys,
   type SettingsLayer,
 } from '../workspace/settings.ts';
-import { REMOVED_SETTINGS, replacementAdvice, settingDefinition, type SettingsObject } from '@stim-cli/core/state';
+import {
+  REMOVED_SETTINGS,
+  replacementAdvice,
+  settingDefinition,
+  UPGRADE_GUIDE_URL,
+  type SettingsObject,
+} from '@stim-cli/core/state';
 
 export interface MachineSettings {
   settings: SettingsObject;
@@ -137,7 +143,7 @@ export function checkMachineSettings({
       detail: leftover.refuses
         ? `${leftover.message} start, ios, android, web, macos, revive and gc refuse to run while it is there.`
         : leftover.message,
-      fix: leftover.remedy,
+      fix: `${leftover.remedy} The other migration steps are at ${UPGRADE_GUIDE_URL}.`,
     });
 
   const holders = repositoryLayer ? [...layers, repositoryLayer] : layers;

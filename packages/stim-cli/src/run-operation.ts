@@ -5,6 +5,7 @@ import { loadConfig } from './workspace/config.ts';
 import { findProjectRoot, projectProblem } from './workspace/project.ts';
 import { readRecords, engineRoot } from './engine-store/store.ts';
 import { STIM_VERSION } from './stim-version.ts';
+import { UPGRADE_GUIDE_URL } from '@stim-cli/core/state';
 
 export type Admission = NonNullable<StimOptions['admission']>;
 
@@ -168,6 +169,6 @@ function removedConfigRefusal(command: string, cwd: string, env: NodeJS.ProcessE
   return {
     code: 'STIM_BAD_ARG',
     message: found.map((entry) => entry.message).join(' '),
-    remedy: `Run, in order: ${steps.map((step) => `\`${step}\``).join(', ')}. Then run the command again.`,
+    remedy: `Run, in order: ${steps.map((step) => `\`${step}\``).join(', ')}. Then run the command again. The other migration steps are at ${UPGRADE_GUIDE_URL}.`,
   };
 }

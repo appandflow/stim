@@ -136,6 +136,7 @@
       "packages/stim-cli/src/cache/caches.ts legacy",
       "packages/stim-cli/src/devices/sim-pool.ts legacy",
       "packages/stim-cli/src/engine/device-android.ts legacy",
+      "packages/stim-cli/src/guide-status.ts legacy",
       "packages/stim-cli/src/guide/errors.ts legacy",
       "packages/stim-cli/src/guide/lifecycle.ts legacy",
       "packages/stim-cli/src/guide/logs.ts legacy",
