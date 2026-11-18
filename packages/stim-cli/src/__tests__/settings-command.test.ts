@@ -219,7 +219,7 @@ test('a machine-only setting in a project layer keeps its group report as on mai
   expect(readFileSync(machine, 'utf-8')).toBe(before);
 });
 
-test('a literal dotted property is reported under its own name and never resolves into a record', async () => {
+test('a literal dotted machine property is ignored and never touches a record or a project setting', async () => {
   const machine = join(home, 'config.json');
   const text = JSON.stringify({
     version: 2,
@@ -227,12 +227,12 @@ test('a literal dotted property is reported under its own name and never resolve
     repos: {},
     parked: { ios: [{ udid: 'A' }] },
     'parked.ios': 'stale',
+    'ios.deviceType': 'iPhone 16',
   });
   writeFileSync(machine, text);
+  writeFileSync(join(app, '.stim.json'), JSON.stringify({ ios: { deviceType: 'iPhone 17' } }));
 
-  expect(JSON.parse((await settings(['--json'])).out[0] ?? '').unknown).toEqual([
-    { key: 'parked.ios', scope: 'machine', file: machine, value: 'stale' },
-  ]);
+  expect(JSON.parse((await settings(['--json'])).out[0] ?? '').unknown).toEqual([]);
   expect((await settings(['unset', 'parked.ios', '--scope', 'machine'])).exitCode).toBe(1);
   expect(readFileSync(machine, 'utf-8')).toBe(text);
 });

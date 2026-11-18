@@ -591,11 +591,11 @@ function unknownScopedEntries(own: SettingsObject, prefix = ''): Array<{ key: st
   for (const [name, value] of Object.entries(own)) {
     const path = prefix ? `${prefix}.${name}` : name;
     if (path === '$schema') continue;
-    const dotted = name.includes('.');
-    const group = !dotted && [...MACHINE_KNOWN_SETTINGS].some((k) => k.startsWith(`${path}.`));
-    if (isPlainObject(value) && !dotted && (group || !MACHINE_KNOWN_SETTINGS.has(path))) {
+    if (name.includes('.')) continue;
+    const group = [...MACHINE_KNOWN_SETTINGS].some((k) => k.startsWith(`${path}.`));
+    if (isPlainObject(value) && (group || !MACHINE_KNOWN_SETTINGS.has(path))) {
       unknown.push(...unknownScopedEntries(value, path));
-    } else if (dotted || !MACHINE_KNOWN_SETTINGS.has(path)) unknown.push({ key: path, value });
+    } else if (!MACHINE_KNOWN_SETTINGS.has(path)) unknown.push({ key: path, value });
   }
   return unknown;
 }
