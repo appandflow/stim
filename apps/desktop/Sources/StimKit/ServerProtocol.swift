@@ -10,7 +10,6 @@ public enum ServerProtocol {
     "unauthorized", "protocol-unsupported", "server-key-mismatch", "unknown-secret", "other-server",
   ]
 
-  /// Desktop's own refusals of a paired server whose `desktopApi` differs: missing (stim 1.x), lower, or higher.
   public static let desktopApiCodes: Set<String> = ["desktop-api-1x", "desktop-api-older", "desktop-api-newer"]
 
   /// The methods stim-server answers only on its Unix socket (`desktopMethod` in `packages/server/src/server.ts`).
