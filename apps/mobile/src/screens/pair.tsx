@@ -98,8 +98,10 @@ export function Pair() {
   };
 
   const onManual = () => {
-    const parsed = manualPairing(endpoint, token);
+    const pasted = endpoint.trim().startsWith('{');
+    const parsed = pasted ? parsePairingCode(endpoint) : manualPairing(endpoint, token);
     if (!parsed.ok) return setError(parsed.error);
+    if (pasted) setEndpoint('');
     // iOS offers to save a password when a secure text field leaves the screen with text in it, so the
     // field is emptied, and that change reaches the native view, before the form is replaced.
     tokenInput.current?.clear();
@@ -110,7 +112,7 @@ export function Pair() {
   const onCancelConfirm = () => {
     if (step.kind !== 'confirm') return;
     busy.current = false;
-    if (step.from === 'manual') setToken(step.payload.pairingToken);
+    if (step.from === 'manual' && !step.payload.fingerprint) setToken(step.payload.pairingToken);
     setStep({ kind: step.from });
   };
 
@@ -140,7 +142,7 @@ export function Pair() {
           <View style={styles.form}>
             <Field
               mono
-              label={t`Endpoint`}
+              label={t`Endpoint or pairing code`}
               value={endpoint}
               onChangeText={setEndpoint}
               placeholder="wss://my-machine.tail1234.ts.net:7443"
@@ -222,14 +224,14 @@ export function Pair() {
             hitSlop={{ top: 12, bottom: 12, left: 8, right: 8 }}
           >
             <Text variant="body" weight="medium" tone="brand" style={styles.centered}>
-              {step.kind === 'scan' ? t`Enter the Endpoint and Token Instead` : t`Scan a QR Code Instead`}
+              {step.kind === 'scan' ? t`Enter the Endpoint or Pairing Code Instead` : t`Scan a QR Code Instead`}
             </Text>
           </Touch>
         ) : null}
         <Text variant="footnote" tone="tertiary" style={styles.centered}>
           <Trans>
-            Stim Desktop shows the code under Pair a Phone. The phone connects through Tailscale, so it works on any
-            network where both devices are signed in to the same tailnet.
+            Stim Desktop shows the code under Pair a Phone, and stim pair prints it on the machine. The phone connects
+            through Tailscale, so it works on any network where both devices are signed in to the same tailnet.
           </Trans>
         </Text>
       </ScrollView>

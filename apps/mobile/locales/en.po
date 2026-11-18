@@ -1797,12 +1797,12 @@ msgid "Ended session, {duration} duration"
 msgstr "Ended session, {duration} duration"
 
 #: src/screens/pair.tsx
-msgid "Endpoint"
-msgstr "Endpoint"
+msgid "Endpoint or pairing code"
+msgstr "Endpoint or pairing code"
 
 #: src/screens/pair.tsx
-msgid "Enter the Endpoint and Token Instead"
-msgstr "Enter the Endpoint and Token Instead"
+msgid "Enter the Endpoint or Pairing Code Instead"
+msgstr "Enter the Endpoint or Pairing Code Instead"
 
 #: src/lib/pairing.ts
 msgid "Enter the pairing token Stim Desktop shows."
@@ -3916,8 +3916,8 @@ msgid "Stim Caches and Outputs"
 msgstr "Stim Caches and Outputs"
 
 #: src/screens/pair.tsx
-msgid "Stim Desktop shows the code under Pair a Phone. The phone connects through Tailscale, so it works on any network where both devices are signed in to the same tailnet."
-msgstr "Stim Desktop shows the code under Pair a Phone. The phone connects through Tailscale, so it works on any network where both devices are signed in to the same tailnet."
+msgid "Stim Desktop shows the code under Pair a Phone, and stim pair prints it on the machine. The phone connects through Tailscale, so it works on any network where both devices are signed in to the same tailnet."
+msgstr "Stim Desktop shows the code under Pair a Phone, and stim pair prints it on the machine. The phone connects through Tailscale, so it works on any network where both devices are signed in to the same tailnet."
 
 #: src/screens/welcome.tsx
 msgid "Stim Desktop with Serve to Phones On"
@@ -4197,6 +4197,13 @@ msgstr "This changes only the name this phone shows for the machine. The name on
 msgid "This device is not running."
 msgstr "This device is not running."
 
+#: src/lib/pairing.ts
+#: src/lib/pairing.ts
+#: src/lib/pairing.ts
+#: src/lib/pairing.ts
+msgid "This is not a Stim pairing code."
+msgstr "This is not a Stim pairing code."
+
 #: src/screens/pair.tsx
 msgid "This is not a Tailscale (.ts.net) address. Pair only if you trust it."
 msgstr "This is not a Tailscale (.ts.net) address. Pair only if you trust it."
@@ -4252,13 +4259,6 @@ msgstr "This phone is read-only: it cannot reload or stop workspaces, or control
 #: src/screens/mac-list.tsx
 msgid "This phone stops connecting to it. {notice}"
 msgstr "This phone stops connecting to it. {notice}"
-
-#: src/lib/pairing.ts
-#: src/lib/pairing.ts
-#: src/lib/pairing.ts
-#: src/lib/pairing.ts
-msgid "This QR code is not a Stim pairing code."
-msgstr "This QR code is not a Stim pairing code."
 
 #: src/components/route-error-boundary.tsx
 msgid "This Screen Could Not Be Shown"
