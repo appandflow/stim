@@ -1,4 +1,5 @@
 import { CliUsageError, defineOp, type Op } from '../cli/define-op.ts';
+import type { NetAnswer } from '../daemon/client.ts';
 import { loadServerCli } from '../server-cli.ts';
 import { DEFAULT_PORT } from '@stim-cli/server/service-plist';
 
@@ -14,10 +15,14 @@ const pairOp: Op = defineOp({
     const port = Number(opts.port);
     if (!Number.isInteger(port) || port < 0 || port > 65535)
       throw new CliUsageError(`--port must be a port number, got ${opts.port}.`);
-    const { pair } = await loadServerCli();
-    await pair(port, opts.json === true, opts.control === true);
     const { ensureNet, stimdRefused } = await import('../daemon/client.ts');
-    const answer = await ensureNet(false);
+    const { pair } = await loadServerCli();
+    const asked: { answer: NetAnswer | null } = { answer: null };
+    await pair(port, opts.json === true, opts.control === true, async () => {
+      asked.answer = await ensureNet(false);
+      return asked.answer?.listening === true && asked.answer.loopbackOnly === true;
+    });
+    const { answer } = asked;
     if (!answer && stimdRefused())
       console.error(
         "This Stim home's stimd runs another Stim build, so this stim cannot check that its server listens. The pairing is saved, and that server takes it if it listens.",

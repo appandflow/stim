@@ -1888,15 +1888,15 @@ export function drainOwned(root: string, env: NodeJS.ProcessEnv = process.env): 
   return ownedRequest('logs.drain', root, env);
 }
 
-/** Whether the net thread serves, on which port, or why it does not. */
-export type NetAnswer = { listening: true; port: number } | { listening: false; message: string };
+/** Whether the net thread serves, on which port and whether for this machine only, or why it does not. */
+export type NetAnswer = { listening: true; port: number; loopbackOnly?: true } | { listening: false; message: string };
 
 const NET_START_MS = 60_000;
 
 function netAnswer(reply: Record<string, unknown> | null): NetAnswer | null {
   if (reply?.op !== 'net') return null;
   return reply.listening === true && typeof reply.port === 'number'
-    ? { listening: true, port: reply.port }
+    ? { listening: true, port: reply.port, ...(reply.loopbackOnly === true ? { loopbackOnly: true as const } : {}) }
     : { listening: false, message: String(reply.message) };
 }
 
