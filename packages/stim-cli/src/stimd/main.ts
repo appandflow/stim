@@ -1420,6 +1420,13 @@ async function runStimdInner(
           });
           const running = net.running();
           const forService = params.service === true && !share;
+          if (servicePending && !forService) {
+            const replay = () => {
+              if (!socket.destroyed) onData(Buffer.from(`${JSON.stringify(message)}\n`));
+            };
+            void servicePending.then(replay, replay);
+            continue;
+          }
           const values = forService && isJsonObject(params.envValues) ? params.envValues : {};
           const resolved = {
             ...options,

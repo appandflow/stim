@@ -123,7 +123,7 @@ listen on the service port releases it, and a move that fails puts the
 share-only thread back on its previous options so saved web shares keep
 serving until the next ask retries. Only one service ask starts or moves the
 thread at a time; a service ask that arrives meanwhile gets that ask's answer,
-so one rollback configuration and one ownership reservation exist. Once the service's thread runs,
+so one rollback configuration and one ownership reservation exist. Any other ask waits until that ask settles, including its rollback, and is then handled against the settled thread. Once the service's thread runs,
 Stim Desktop no longer moves it. A net thread that serves clients on other
 options (Desktop's or `stim serve`'s) is not replaced: the asker exits 1
 naming both ports, and `stim service status` names the holder's port. Which of
