@@ -3,6 +3,7 @@ import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { StimContext } from '@stim-cli/core';
 import { stimBuildId } from '@stim-cli/core/state';
+import { stableNode } from '@stim-cli/server/service-plist';
 import { installKind } from '../../bin/route.mjs';
 import { getExecutor } from '../exec.ts';
 import { claimsHeld, readBuildClaims } from './claims.ts';
@@ -196,11 +197,12 @@ async function flip(
   }
   const router = join(root, build, 'bin', 'stim.mjs');
   mkdirSync(join(root, 'bin'), { recursive: true });
-  writeRecord(join(root, 'bin', 'stim'), `#!/bin/sh\nexec "${node.path}" "${router}" "$@"`, 0o755);
-  writeRecord(join(root, 'bin', 'stim.cmd'), `@"${node.path}" "${router}" %*\r`);
+  const shimNode = stableNode(promotion.ctx.env.PATH);
+  writeRecord(join(root, 'bin', 'stim'), `#!/bin/sh\nexec "${shimNode}" "${router}" "$@"`, 0o755);
+  writeRecord(join(root, 'bin', 'stim.cmd'), `@"${shimNode}" "${router}" %*\r`);
   writeRecord(
     join(root, 'bin', 'stimd'),
-    `#!/bin/sh\nexec "${node.path}" "${join(root, build, 'dist', 'cli.mjs')}" __stimd "$@"`,
+    `#!/bin/sh\nexec "${shimNode}" "${join(root, build, 'dist', 'cli.mjs')}" __stimd "$@"`,
     0o755,
   );
 }

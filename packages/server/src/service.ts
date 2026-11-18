@@ -27,6 +27,7 @@ import {
   validateLabel,
   normalizeEnv,
   ServiceError,
+  stableNode,
   type InstalledService,
   type ServeRecord,
   type ServiceSpec,
@@ -73,24 +74,6 @@ const startCommand = () => START_COMMANDS[serviceManager().name];
 
 const plistPath = (label: string) => serviceManager().file(label);
 const logPath = (label: string) => serviceManager().logPath(label);
-
-/**
- * The `node` to put in the plist: `process.execPath` is a resolved path such as a Homebrew Cellar version that
- * disappears on the next upgrade, so prefer a `node` on PATH that resolves to the same binary.
- */
-export function stableNode(pathEnv: string | undefined): string {
-  const real = realpathSync(process.execPath);
-  for (const dir of (pathEnv ?? '').split(delimiter)) {
-    if (!dir) continue;
-    try {
-      const candidate = join(dir, process.platform === 'win32' ? 'node.exe' : 'node');
-      if (realpathSync(candidate) === real) return candidate;
-    } catch {
-      continue;
-    }
-  }
-  return real;
-}
 
 const loaded = (label: string): Promise<ServiceJob | null> => serviceManager().job(label);
 const readInstalled = (label: string): Promise<InstalledService | null> => serviceManager().read(label);

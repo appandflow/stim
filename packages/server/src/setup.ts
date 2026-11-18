@@ -34,7 +34,6 @@ import {
   prepareRoute,
   recordServiceRoute,
   requireManaged,
-  stableNode,
 } from './service.ts';
 import { selectEngine } from './engine-select.ts';
 import { installServer, serverBuild } from './release-install.ts';
@@ -44,6 +43,7 @@ import {
   DEFAULT_LABEL,
   DEFAULT_PORT,
   ServiceError,
+  stableNode,
   validateLabel,
   validatePort,
   validateServeEnvironment,

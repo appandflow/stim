@@ -1,8 +1,27 @@
-import { delimiter, isAbsolute } from 'node:path';
+import { realpathSync } from 'node:fs';
+import { delimiter, isAbsolute, join } from 'node:path';
 import { isJsonObject, type InstalledService } from '@stim-cli/core/state';
 import type { ServeRecord } from '@stim-cli/transport-tailscale';
 
 export class ServiceError extends Error {}
+
+/**
+ * The `node` to put in the plist: `process.execPath` is a resolved path such as a Homebrew Cellar version that
+ * disappears on the next upgrade, so prefer a `node` on PATH that resolves to the same binary.
+ */
+export function stableNode(pathEnv: string | undefined): string {
+  const real = realpathSync(process.execPath);
+  for (const dir of (pathEnv ?? '').split(delimiter)) {
+    if (!dir) continue;
+    try {
+      const candidate = join(dir, process.platform === 'win32' ? 'node.exe' : 'node');
+      if (realpathSync(candidate) === real) return candidate;
+    } catch {
+      continue;
+    }
+  }
+  return real;
+}
 
 export const DEFAULT_LABEL = 'dev.stim.server';
 export const DEFAULT_PORT = 7787;
