@@ -2496,9 +2496,10 @@ times: a file modified after the install (when an install, `pod install` or
 `stim worktree warm` that Stim ran there finished, or else the package
 manager's stamp) is an edit, except in a 10-minute window after the stamp when
 the root `package.json` declares an install script. Not checked:
-dot-directories at the `node_modules` root other than `.pnpm`, `.bun`, `.deno`
-and `.bin` (tool caches such as `.cache` and `.vite`, a custom pnpm
-virtual-store directory included), Gradle, CMake and Xcode output, and the
+dot-directories at the `node_modules` root other than `.pnpm`, `.bun` and
+`.deno` (tool caches such as `.cache` and `.vite`, a custom pnpm
+virtual-store directory included), the `.bin` executable shims the package
+manager writes, Gradle, CMake and Xcode output, and the
 package manager's state files. Known misses: an edit that keeps an older
 modification time (`cp -p`, `rsync -t`, a tar extract), a file deleted by
 hand, an edit inside an install window, and an edit to a package whose
