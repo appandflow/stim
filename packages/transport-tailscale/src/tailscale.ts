@@ -128,16 +128,21 @@ function reaches(address: unknown, target: number, hosts: Set<string>): URL | nu
  * Reads `tailscale serve status --json`, an ipn.ServeConfig: `TCP` maps a port to `{ HTTPS }` or
  * `{ TCPForward }`, `Web` maps `<host>:<port>` to `{ Handlers: { <mount>: { Proxy } } }`,
  * `AllowFunnel` maps `<host>:<port>` to true, and `Foreground` holds the same shape per
- * foreground session. Any handler or TCP forward that reaches the server on a Funnel port exposes
- * it; only a `/` HTTP proxy on an HTTPS port is a route a client can use.
+ * foreground session. `Services` maps named Tailscale Services, which serve on their own
+ * addresses and so never route this node's port. Any handler or TCP forward that reaches the
+ * server on a Funnel port exposes it; only a `/` HTTP proxy on an HTTPS port is a route a client
+ * can use.
  */
 function parseServeStatus(value: unknown, target: number, ips: string[]): ServeRoute {
   if (!isJsonObject(value)) return { state: 'unknown', reason: 'it printed no serve config', port: SERVE_PORT };
-  if (Object.keys(value).length && !['TCP', 'Web', 'AllowFunnel', 'Foreground'].some((field) => field in value)) {
+  if (
+    Object.keys(value).length &&
+    !['TCP', 'Web', 'Services', 'AllowFunnel', 'Foreground'].some((field) => field in value)
+  ) {
     return { state: 'unknown', reason: 'it printed an unrecognized serve config', port: SERVE_PORT };
   }
   if (
-    ['TCP', 'Web', 'AllowFunnel', 'Foreground'].some(
+    ['TCP', 'Web', 'Services', 'AllowFunnel', 'Foreground'].some(
       (field) => value[field] !== undefined && !isJsonObject(value[field]),
     )
   ) {
