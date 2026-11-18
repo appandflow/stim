@@ -108,6 +108,35 @@ ladder runs it once, and leaves its own workspace's `target/` alone), so a
 checkout in use does not lose its `incremental/` data every tick; walks above
 normal are not niced.
 
+## Each rung frees only the volumes under pressure
+
+While disk sets the level, a rung deletes an item only when the path it will
+delete lies on a volume under `disk.minFreeGb`, measured at the start of the
+rung; a path or device that cannot be resolved is kept (invariant 8). The path is the one
+deleted, not the workspace it belongs to: each build output, each owned or
+parked device's data folder (the simulator's data path, or the AVD folders under
+the storage roots its deletion searches), each cache and Cargo `target/`, each
+`node_modules` or Pods tree, each worktree, and the roots of rung 6's Gradle
+versions, TMPDIR leftovers and trash. A dormant workspace is taken only when
+its Stim workspace folder, whose logs it archives, or an owned device's data
+lies on such a volume, and loses only the devices there. Rung 8 and rung 9 take an item only on a volume
+under the critical level (LLP 0003). Under pressure from disk alone, the
+activity pass gives the 2-minute idle threshold only to a workspace with its
+checkout or Stim workspace folder on such a volume and deletes only its outputs
+there; memory pressure idles every workspace. The ladder a build runs for its
+headroom (LLP 0006) plans its Cargo trim at high and treats only the build's
+volume as short. The Gradle, Kotlin and watchman stops relieve memory and are
+not gated. `stim gc --pressure` treats every volume as short; `stim gc` at the
+measured level is gated, its idle pass included.
+
+Reason: free disk on any volume sets the level, but deleting on a healthy volume
+frees nothing where space is needed. A project on an external disk under the
+high level made every tick clear the `node_modules`, outputs and caches of the
+internal disk, and the level never cleared (#5877).
+
+Chosen by the 2.0 reliability review and the fix for #5877, not by the
+maintainer, following the reason LLP 0003 gives for rung 9.
+
 ## The folders a build wrote are measured by the daemon
 
 When a local native compile ends, whether it succeeded, failed or was cancelled,
@@ -226,7 +255,7 @@ chosen by the coordinator and the reviews of #5540, not by the maintainer.
 
 ## Links
 
-- Issues: #5492, #5512, #5524. Pull requests: #5514, #5540.
+- Issues: #5492, #5512, #5524, #5877. Pull requests: #5514, #5540.
 - Code: `packages/stim-cli/src/policy/checkout-order.ts`,
   `packages/stim-cli/src/workspace/source-dependencies.ts`,
   `packages/stim-cli/src/stimd/passes/artifacts.ts`,

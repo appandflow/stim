@@ -817,6 +817,22 @@ export function avdStorageRoots(env: NodeJS.ProcessEnv = ambientEnv()): string[]
   ];
 }
 
+/** The directories holding an AVD's data under the storage roots its deletion searches, resolved through links. */
+export function avdDataDirectories(avdName: string, env: NodeJS.ProcessEnv = ambientEnv()): string[] {
+  const dirs = new Set<string>();
+  for (const root of avdStorageRoots(env)) {
+    let ini = '';
+    try {
+      ini = readFileSync(join(root, `${avdName}.ini`), 'utf8');
+    } catch {}
+    for (const candidate of [...(ini ? avdIniPaths(root, ini) : []), join(root, `${avdName}.avd`)])
+      try {
+        dirs.add(realpathSync(candidate));
+      } catch {}
+  }
+  return [...dirs];
+}
+
 export interface OrphanedAvdDirectory {
   name: string;
   directory: string;

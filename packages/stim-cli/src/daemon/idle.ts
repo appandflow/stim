@@ -37,6 +37,7 @@ import {
 import { createNdjsonWriter } from '../ndjson.ts';
 import { IDLE_SETTING, idleKeep, idleScope, PRESSURE_IDLE_MS, type IdleKeepFacts } from '../policy/idle.ts';
 import { metroStoreRoot } from '../stimd/metro/metro-store.ts';
+import { onShortVolume } from '../stimd/passes/unowned.ts';
 import { resolveSupervisorTarget } from '../stimd/metro/ownership.ts';
 import { MODE_COMMAND, readWorkspaceLaunches, launchWithoutMetro } from '../stimd/metro/state.ts';
 import { getProject, type Config, type ProjectRecord } from '../workspace/config.ts';
@@ -65,8 +66,11 @@ export interface IdlePassInput {
   devices: OwnedDeviceActivity[];
   /** False in `daemon.mode report`: decide and log, act on nothing. */
   act: boolean;
-  /** Set while the pressure level is high or critical: the idle stage then takes every workspace idle 2 minutes. */
-  pressure?: { level: 'high' | 'critical'; reasons: string[] };
+  /**
+   * Set while the pressure level is high or critical: the idle stage then takes every workspace idle 2 minutes, or with
+   * `volumes`, set when disk alone raised the level, only those on one of those devices.
+   */
+  pressure?: { level: 'high' | 'critical'; reasons: string[]; volumes?: ReadonlySet<number> };
   /** A workspace the pass never takes: the one the running command belongs to. */
   protectedRoot?: string;
   /** The daemon tick's context, whose reads run without blocking its event loop. */
@@ -193,6 +197,7 @@ export async function idleOutputs(
   path: string,
   config: Config,
   launching: Launching,
+  deletable?: (path: string) => boolean,
 ): Promise<{ paths: string[]; kept: string[] }> {
   const paths = workspaceOutputPaths(workspaceDir(path));
   const kept: string[] = [];
@@ -213,7 +218,7 @@ export async function idleOutputs(
     if (sharer) kept.push(`kept the Metro store ${store}: the running dev server of ${sharer[0]} shares it`);
     else paths.push(store);
   }
-  return { paths, kept };
+  return { paths: deletable ? paths.filter(deletable) : paths, kept };
 }
 
 /**
@@ -325,11 +330,13 @@ async function enterIdleStage(
               return outcome?.status === 'shut-down' && booted.has(`${kind}:${slot}`) ? [key] : [];
             });
             const { operation } = input;
+            const volumes = input.pressure?.volumes;
             const checkout = await checkoutRootOf(path, operation?.signal, operation);
             const outputs = await idleOutputs(
               path,
               config,
               launchingOf(checkout, launchersOf(operation, operation?.signal, false), operation, operation?.signal),
+              volumes ? (output) => onShortVolume([output], volumes) : undefined,
             );
             const freed = await deleteOutputs(
               outputs.paths,
@@ -370,10 +377,13 @@ export async function runIdlePass(input: IdlePassInput): Promise<DaemonWorkspace
   const decisions: DaemonWorkspaceDecision[] = [];
   const config = input.config;
   if (!config) return decisions;
+  const { pressure, ...unpressured } = input;
   for (const [path, project] of Object.entries(config.projects)) {
     let entry: DaemonWorkspaceDecision;
+    const here =
+      pressure?.volumes && !onShortVolume([path, workspaceDir(path)], pressure.volumes) ? unpressured : input;
     try {
-      const { candidate: found, decision } = await decide(path, project, input, false);
+      const { candidate: found, decision } = await decide(path, project, here, false);
       if (!found.runs) continue;
       const last = decision?.last ? { basis: decision.last.basis, at: new Date(decision.last.at).toISOString() } : null;
       if (!decision) entry = { path, lastActivity: last, outcome: 'kept', detail: 'kept' in found ? found.kept : '' };
@@ -387,7 +397,7 @@ export async function runIdlePass(input: IdlePassInput): Promise<DaemonWorkspace
           detail: `no activity for ${Math.floor(decision.idleMs / MINUTE_MS)} minutes; daemon.mode report acts on nothing`,
         };
       } else {
-        const result = await enterIdleStage(path, project, config, input);
+        const result = await enterIdleStage(path, project, config, here);
         entry = { path, lastActivity: last, ...result };
       }
     } catch (error) {
