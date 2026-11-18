@@ -374,8 +374,35 @@ function HomeEmpty({
   const loading =
     macs === null ||
     (items === 0 &&
-      connections.some((c) => !c.status && !c.missing && (c.state.kind === 'connecting' || c.state.kind === 'open')));
+      connections.some(
+        (c) => !c.status && !c.missing && ((c.state.kind === 'connecting' && !c.retrying) || c.state.kind === 'open'),
+      ));
   if (loading) return <ActivityIndicator style={styles.loading} color={theme.colors.primary} />;
+  const unreachable = connections.filter(
+    (c) => !c.status && !c.missing && c.retrying && (c.state.kind === 'connecting' || c.state.kind === 'waiting'),
+  );
+  if (items === 0 && unreachable.length > 0) {
+    const names = unreachable.map((c) => c.mac.name).join(', ');
+    return (
+      <View style={styles.empty}>
+        <Text variant="headline" style={styles.emptyMessage}>
+          {t`Cannot Reach ${names}`}
+        </Text>
+        <Text tone="secondary" style={styles.emptyMessage}>
+          {plural(unreachable.length, {
+            one: 'Check that Tailscale is on for this phone and the machine.',
+            other: 'Check that Tailscale is on for this phone and the machines.',
+          })}
+        </Text>
+        <Button
+          title={t`Retry`}
+          loading={unreachable.every((c) => c.state.kind === 'connecting')}
+          onPress={() => unreachable.forEach((c) => c.connection?.retryNow())}
+          style={styles.primaryButton}
+        />
+      </View>
+    );
+  }
   if (view === 'devices') {
     return (
       <View style={styles.empty}>

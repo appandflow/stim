@@ -23,15 +23,18 @@ export function connectionColor(state: ConnectionState, missing: boolean, colors
 export function MacChip({ mac, onPress }: { mac: PairedMac; onPress: () => void }) {
   const { theme } = useUnistyles();
   const large = useLargeText();
-  const { state, missing } = useMachineLink(mac.id);
+  const { state, missing, retrying } = useMachineLink(mac.id);
   const usage = useMachineUsage(mac.id);
-  const dot = connectionColor(state, missing, theme.colors);
+  const offline = retrying && state.kind === 'connecting';
+  const dot = offline ? theme.colors.warning : connectionColor(state, missing, theme.colors);
   const name = mac.name;
   const open = state.kind === 'open';
   const stats = open ? machineStats(usage) : [];
   const detail = open
     ? stats.map((s) => `${s.label} ${s.value}`).join(', ') || t`Loading`
-    : describeState(state, missing);
+    : offline
+      ? t`Offline`
+      : describeState(state, missing);
   return (
     <Touch
       feedback="card"

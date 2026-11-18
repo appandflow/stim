@@ -23,6 +23,8 @@ export interface MachineLink {
   home: string | null;
   /** When the connection last dropped; null while connected or before the first connection. */
   disconnectedAt: number | null;
+  /** Whether the link dropped or an attempt failed since it was last open, so `connecting` is a retry. */
+  retrying?: boolean;
   archiveSummary?: string | null;
   archivesRead?: string | null;
 }

@@ -111,6 +111,11 @@ msgstr "{0, plural, one {1 device} other {# devices}}"
 msgid "{0, plural, one {Agent session} other {Agent sessions}}"
 msgstr "{0, plural, one {Agent session} other {Agent sessions}}"
 
+#. placeholder {0}: unreachable.length
+#: src/screens/home.tsx
+msgid "{0, plural, one {Check that Tailscale is on for this phone and the machine.} other {Check that Tailscale is on for this phone and the machines.}}"
+msgstr "{0, plural, one {Check that Tailscale is on for this phone and the machine.} other {Check that Tailscale is on for this phone and the machines.}}"
+
 #. placeholder {0}: row.deviceCount
 #: src/screens/mac-status.tsx
 msgid "{0, plural, one {device {deviceSize}} other {# devices {deviceSize}}}"
@@ -1269,6 +1274,10 @@ msgstr "Cannot plan: {planMessage}"
 msgid "Cannot reach {endpoint}. Check that Tailscale is connected on this phone."
 msgstr "Cannot reach {endpoint}. Check that Tailscale is connected on this phone."
 
+#: src/screens/home.tsx
+msgid "Cannot Reach {names}"
+msgstr "Cannot Reach {names}"
+
 #: src/lib/build-machines.ts
 msgid "Cannot take builds"
 msgstr "Cannot take builds"
@@ -1505,6 +1514,7 @@ msgstr "Connecting"
 msgid "Connection closed."
 msgstr "Connection closed."
 
+#: src/lib/connection.ts
 #: src/lib/connection.ts
 #: src/lib/connection.ts
 msgid "Connection lost."
@@ -2915,6 +2925,7 @@ msgstr "of {estimate}"
 msgid "Off"
 msgstr "Off"
 
+#: src/components/mac-chip.tsx
 #: src/lib/home-list.ts
 #: src/lib/home-list.ts
 msgid "Offline"
@@ -3504,6 +3515,7 @@ msgstr "Retained"
 msgid "Retention and Size"
 msgstr "Retention and Size"
 
+#: src/screens/home.tsx
 #: src/screens/pair.tsx
 #: src/screens/workspace-diff.tsx
 msgid "Retry"
