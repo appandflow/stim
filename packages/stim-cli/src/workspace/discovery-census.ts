@@ -14,7 +14,8 @@ import {
 } from '@stim-cli/core/state';
 import { listedRoots } from '../commands/gc/worktrees.ts';
 import { refreshMeasure } from '../disk-usage.ts';
-import { answered, hungRead } from './bounded-read.ts';
+import { INSTALL_MARKERS, installSignature } from '../private-size.ts';
+import { answered, hungRead, Unanswered } from './bounded-read.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { loadConfig } from './config.ts';
 import { DISCOVER_ROOTS_KEY, REFRESH_MS, rootsOf } from './discovery-report.ts';
@@ -88,7 +89,7 @@ export interface CensusIo {
   readNames: (path: string) => Promise<string[]>;
   isDirectory: (path: string) => Promise<boolean>;
   /** What the path is, without following a symlink, and when it was last modified. */
-  lstat: (path: string) => Promise<{ kind: 'directory' | 'file' | 'other'; mtimeMs: number }>;
+  lstat: (path: string) => Promise<{ kind: 'directory' | 'file' | 'other'; mtimeMs: number; ino?: number }>;
   realpath: (path: string) => Promise<string>;
   /** Null unless it is a regular file; else its first `bytes` bytes as text. */
   head: (path: string, bytes: number) => Promise<string | null>;
@@ -100,7 +101,11 @@ const REAL_IO: CensusIo = {
   realpath: (path) => realpath(path),
   lstat: async (path) => {
     const info = await lstat(path);
-    return { kind: info.isDirectory() ? 'directory' : info.isFile() ? 'file' : 'other', mtimeMs: info.mtimeMs };
+    return {
+      kind: info.isDirectory() ? 'directory' : info.isFile() ? 'file' : 'other',
+      mtimeMs: info.mtimeMs,
+      ino: info.ino,
+    };
   },
   head: async (path, bytes) => {
     if (!(await lstat(path)).isFile()) return null;
@@ -119,7 +124,13 @@ const REAL_IO: CensusIo = {
 class OutOfBudget extends Error {}
 
 /** A read failed (permission, I/O) or did not answer in time, so the layout of the checkout is not known. */
-class Unreadable extends Error {}
+class Unreadable extends Error {
+  unanswered: boolean;
+  constructor(message: string, unanswered = false) {
+    super(message);
+    this.unanswered = unanswered;
+  }
+}
 
 const absent = (error: unknown): boolean =>
   error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR');
@@ -151,7 +162,7 @@ function boundedReader(io: CensusIo, deadline: number, signal: AbortSignal, time
     } catch (error) {
       signal.throwIfAborted();
       if (absent(error)) return missing;
-      throw new Unreadable(error instanceof Error ? error.message : String(error));
+      throw new Unreadable(error instanceof Error ? error.message : String(error), error instanceof Unanswered);
     }
   };
   const names = (path: string) => read<string[]>(path, [], () => io.readNames(path));
@@ -293,6 +304,45 @@ export async function buildOutputDirs(
         kept.set(real, dir);
     }
     return [...kept.values()].map((dir) => ({ dir, private: !FIXED_BUILD.some((fixed) => dir.endsWith(fixed)) }));
+  } catch (error) {
+    if (error instanceof Unreadable) return null;
+    throw error;
+  }
+}
+
+function stamped(info: Awaited<ReturnType<CensusIo['lstat']>> | null): string | null {
+  if (!info) return null;
+  if (info.ino === undefined) throw new Error('the census io returned no inode');
+  return `${info.ino}:${info.mtimeMs}`;
+}
+
+/**
+ * The install signature of the dependency directory at `path`, read through the bounded reader, as `treeSignature` would
+ * compute it: null when `path` is not a real directory, or when a read did not answer or the directory itself could
+ * not be read. A marker whose read answered with an error counts as missing, as `treeSignature` does; one that did not
+ * answer in time leaves the signature unknown (null), never a fabricated one. An abort propagates.
+ */
+export async function dependencyTreeSignature(
+  path: string,
+  signal: AbortSignal,
+  { io = REAL_IO, timeoutMs = READ_TIMEOUT_MS }: { io?: CensusIo; timeoutMs?: number } = {},
+): Promise<string | null> {
+  const reader = boundedReader(io, Infinity, signal, timeoutMs);
+  try {
+    const info = await reader.info(path);
+    if (info?.kind !== 'directory') return null;
+    const root = stamped(info);
+    if (root === null) return null;
+    const markers: (string | null)[] = [];
+    for (const name of INSTALL_MARKERS) {
+      try {
+        markers.push(stamped(await reader.info(join(path, name))));
+      } catch (error) {
+        if (!(error instanceof Unreadable) || error.unanswered) throw error;
+        markers.push(null);
+      }
+    }
+    return installSignature(root, markers);
   } catch (error) {
     if (error instanceof Unreadable) return null;
     throw error;

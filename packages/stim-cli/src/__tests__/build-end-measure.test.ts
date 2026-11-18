@@ -1,5 +1,14 @@
 import { lstat, readdir } from 'node:fs/promises';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -7,7 +16,8 @@ import { listBuildEndMarkers, newBuildEndMarkerFile } from '@stim-cli/core/state
 import { testContext } from './_context.ts';
 import { markBuildEnded } from '../build-end-marker.ts';
 import { writeCacheFile } from '../cache-file.ts';
-import { measureBuildEnds } from '../daemon/dependencies.ts';
+import { INSTALL_MARKERS, installSignature, treeSignature } from '../private-size.ts';
+import { measureBuildEnds, measureDependencyTrees } from '../daemon/dependencies.ts';
 import { forgetStatusMeasures } from '../status-measures.ts';
 import { startBuildEndTimer } from '../stimd/build-end-timer.ts';
 import { upsertProject } from '../workspace/config.ts';
@@ -16,21 +26,26 @@ import type { CensusIo } from '../workspace/discovery-census.ts';
 
 const state = vi.hoisted(() => {
   const value: {
-    calls: { path: string; private: boolean | undefined; known: boolean | undefined }[];
+    calls: { path: string; private: boolean | undefined; known: boolean | undefined; signature: string | undefined }[];
     outcome: 'measured' | 'busy';
     during: () => void;
     io: CensusIo | null;
+    worktree: string;
     platform: NodeJS.Platform | undefined;
-  } = { calls: [], outcome: 'measured', during: () => {}, io: null, platform: undefined };
+  } = { calls: [], outcome: 'measured', during: () => {}, io: null, platform: undefined, worktree: '' };
   return value;
 });
 vi.mock('../disk-usage.ts', async (original) => ({
   ...(await original<typeof import('../disk-usage.ts')>()),
-  refreshMeasure: async (path: string, options: { private?: boolean; knownToExist?: true }) => {
-    state.calls.push({ path, private: options.private, known: options.knownToExist });
+  refreshMeasure: async (path: string, options: { private?: boolean; knownToExist?: true; signature?: string }) => {
+    state.calls.push({ path, private: options.private, known: options.knownToExist, signature: options.signature });
     state.during();
     return { outcome: state.outcome, measure: null };
   },
+}));
+vi.mock('../stimd/passes/artifacts.ts', async (original) => ({
+  ...(await original<typeof import('../stimd/passes/artifacts.ts')>()),
+  artifactWorktreesAsync: async () => [{ path: state.worktree, keys: [] }],
 }));
 vi.mock('../workspace/discovery-census.ts', async (original) => {
   const real = await original<typeof import('../workspace/discovery-census.ts')>();
@@ -41,6 +56,8 @@ vi.mock('../workspace/discovery-census.ts', async (original) => {
         ...(state.io ? { io: state.io } : {}),
         ...(state.platform ? { platform: state.platform } : {}),
       }),
+    dependencyTreeSignature: (path: string, signal: AbortSignal) =>
+      real.dependencyTreeSignature(path, signal, state.io ? { io: state.io } : {}),
   };
 });
 
@@ -58,6 +75,7 @@ beforeEach(() => {
   state.outcome = 'measured';
   state.during = () => {};
   state.io = null;
+  state.worktree = app;
   state.platform = undefined;
 });
 
@@ -241,6 +259,118 @@ it('ends the pass and keeps the marker when a read of the workspace does not ans
   expect(listBuildEndMarkers()).toHaveLength(1);
   stalled.release();
   await vi.advanceTimersByTimeAsync(0);
+});
+
+it('measures the dependency trees that answer, and none when a read does not', async () => {
+  mkdirSync(join(app, 'node_modules'));
+  await measureDependencyTrees(operation());
+  expect(walked()).toEqual([join(app, 'node_modules')]);
+
+  state.calls = [];
+  vi.useFakeTimers();
+  const stalled = stalledIo();
+  state.io = stalled.io;
+  const pass = measureDependencyTrees(operation());
+  await vi.advanceTimersByTimeAsync(3000);
+  await pass;
+  expect(walked()).toEqual([]);
+  stalled.release();
+  await vi.advanceTimersByTimeAsync(0);
+});
+
+it('still measures a readable dependency tree when its sibling cannot be read', async () => {
+  mkdirSync(join(app, 'node_modules'));
+  mkdirSync(join(app, 'ios', 'Pods'), { recursive: true });
+  const unreadable = (path: string) => path.endsWith(join('ios', 'Pods'));
+  const eio = Object.assign(new Error('input/output error'), { code: 'EIO' });
+  state.io = {
+    readNames: (path) => readdir(path),
+    isDirectory: async (path) => {
+      if (unreadable(path)) throw eio;
+      return (await lstat(path)).isDirectory();
+    },
+    realpath: async (path) => path,
+    head: async () => null,
+    lstat: async (path) => {
+      if (unreadable(path)) throw eio;
+      const info = await lstat(path);
+      return { kind: info.isDirectory() ? 'directory' : 'file', mtimeMs: info.mtimeMs, ino: info.ino };
+    },
+  };
+  await measureDependencyTrees(operation());
+  expect(walked()).toEqual([join(app, 'node_modules')]);
+});
+
+it('still measures a dependency tree whose install marker cannot be read, with that marker counted missing', async () => {
+  const tree = join(app, 'node_modules');
+  mkdirSync(tree);
+  writeFileSync(join(tree, '.package-lock.json'), '{}');
+  const eio = Object.assign(new Error('input/output error'), { code: 'EIO' });
+  state.io = {
+    readNames: (path) => readdir(path),
+    isDirectory: async (path) => (await lstat(path)).isDirectory(),
+    realpath: async (path) => path,
+    head: async () => null,
+    lstat: async (path) => {
+      if (path.endsWith('.package-lock.json')) throw eio;
+      const info = await lstat(path);
+      return { kind: info.isDirectory() ? 'directory' : 'file', mtimeMs: info.mtimeMs, ino: info.ino };
+    },
+  };
+  await measureDependencyTrees(operation());
+  const root = lstatSync(tree);
+  expect(state.calls.map((call) => [call.path, call.signature])).toEqual([
+    [
+      tree,
+      installSignature(
+        `${root.ino}:${root.mtimeMs}`,
+        INSTALL_MARKERS.map(() => null),
+      ),
+    ],
+  ]);
+});
+
+it('leaves a tree alone for this pass when an install marker read does not answer', async () => {
+  const tree = join(app, 'node_modules');
+  mkdirSync(tree);
+  vi.useFakeTimers();
+  const release: (() => void)[] = [];
+  state.io = {
+    readNames: async (path) => readdirSync(path),
+    isDirectory: async (path) => lstatSync(path).isDirectory(),
+    realpath: async (path) => path,
+    head: async () => null,
+    lstat: async (path) => {
+      if (path.endsWith('.package-lock.json'))
+        return new Promise((done) => release.push(() => done({ kind: 'file', mtimeMs: 0, ino: 0 })));
+      const info = lstatSync(path);
+      return { kind: info.isDirectory() ? 'directory' : 'file', mtimeMs: info.mtimeMs, ino: info.ino };
+    },
+  };
+  const pass = measureDependencyTrees(operation());
+  await vi.advanceTimersByTimeAsync(3000);
+  await pass;
+  expect(walked()).toEqual([]);
+  release.forEach((done) => done());
+  await vi.advanceTimersByTimeAsync(0);
+});
+
+it('reads a tree signature when its turn comes, not before an earlier tree is walked', async () => {
+  const modules = join(app, 'node_modules');
+  const pods = join(app, 'ios', 'Pods');
+  mkdirSync(modules);
+  mkdirSync(pods, { recursive: true });
+  const before = treeSignature(pods);
+  state.during = () => {
+    if (state.calls.length === 1) writeFileSync(join(pods, 'Manifest.lock'), 'changed');
+  };
+  await measureDependencyTrees(operation());
+  const after = treeSignature(pods);
+  expect(after).not.toBe(before);
+  expect(state.calls.map((call) => [call.path, call.signature])).toEqual([
+    [modules, treeSignature(modules)],
+    [pods, after],
+  ]);
 });
 
 it('settles an aborted pass during a stalled discovery and keeps the marker', async () => {
