@@ -30,7 +30,7 @@ import { artifactWorktreesFor } from '../stimd/passes/artifacts.ts';
 import { cacheBlocked } from '../stimd/passes/measure.ts';
 import { cacheEntryProtectionFor, maintenancePinned, maintenancePinnedReader } from '../stimd/passes/protect.ts';
 import { executedActionName } from '../maintenance-kind.ts';
-import { planCargoTargetsAtPressure } from '../stimd/passes/cargo-target.ts';
+import { measuredDiskLevel, planCargoTargetsAtPressure } from '../stimd/passes/cargo-target.ts';
 import { resolveMaintenanceSettings, type MaintenanceSettings } from '../stimd/passes/settings.ts';
 import { planRung6, planWorktrees } from '../stimd/passes/sweep.ts';
 import { planHistory } from '../stimd/passes/records.ts';
@@ -438,7 +438,14 @@ async function cargoTargetsStep(context: RungContext): Promise<void> {
     now,
     signal: context.operation?.signal,
     ...(context.operation ? { operation: context.operation } : {}),
-    ...(context.volume === undefined ? {} : { level: context.level }),
+    ...(context.volume === undefined
+      ? {}
+      : {
+          diskLevel: async (dir: string, signal?: AbortSignal) => {
+            const measured = await measuredDiskLevel(dir, signal);
+            return measured === 'normal' ? context.level : measured;
+          },
+        }),
   });
   for (const action of plan.actions) {
     const workspace = action.workspace ? canonicalOrNull(action.workspace) : null;
