@@ -137,7 +137,7 @@ export function checkMachineSettings({
       detail: leftover.refuses
         ? `${leftover.message} start, ios, android, web, macos, revive and gc refuse to run while it is there.`
         : leftover.message,
-      fix: leftover.remedy,
+      fix: `${leftover.remedy} \`stim guide upgrade\` lists the other migration steps.`,
     });
 
   const holders = repositoryLayer ? [...layers, repositoryLayer] : layers;

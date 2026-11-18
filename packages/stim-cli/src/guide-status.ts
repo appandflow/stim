@@ -4,7 +4,9 @@ import { getConfigDir, getProject, upsertProject, withConfigLockAsync } from './
 import { projectRegistry } from './integrations/projects.ts';
 import type { DoctorPlatform } from './diagnostics/doctor.ts';
 import { compareStimVersions } from './diagnostics/stim-installations.ts';
-import { isJsonObject, type DoctorRunRecord, type ProjectRecord } from '@stim-cli/core/state';
+import { legacyDaemonHolder } from './daemon/legacy-daemon.ts';
+import { readSettingsContext, unknownEntries } from './workspace/settings-payload.ts';
+import { isJsonObject, REMOVED_SETTINGS, type DoctorRunRecord, type ProjectRecord } from '@stim-cli/core/state';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DOCTOR_STALE_MS = 7 * DAY_MS;
@@ -128,12 +130,80 @@ interface DoctorDue {
 
 interface GuideStatusFacts {
   running: string;
+  leftovers: string[];
   doctor: DoctorDue[];
   latest: string | null;
 }
 
-function renderGuideStatus({ running, doctor, latest }: GuideStatusFacts): string | null {
+const major = (version: string | undefined): number | null => {
+  const found = /^(\d+)\./.exec(version ?? '');
+  return found ? Number(found[1]) : null;
+};
+
+const listed = (names: string[]): string =>
+  names.length > 3 ? `${names.slice(0, 3).join(', ')} and ${names.length - 3} more` : names.join(', ');
+
+function projectPins(projectRoot: string): string[] {
+  let manifest: unknown;
+  try {
+    manifest = JSON.parse(readFileSync(join(projectRoot, 'package.json'), 'utf-8'));
+  } catch {
+    return [];
+  }
+  if (!isJsonObject(manifest)) return [];
+  const names = new Set<string>();
+  for (const field of ['dependencies', 'devDependencies']) {
+    const deps = manifest[field];
+    if (!isJsonObject(deps)) continue;
+    for (const [name, range] of Object.entries(deps)) {
+      if (name === 'stim' && typeof range === 'string' && /^\D*1\./.test(range)) names.add(`stim ${range}`);
+      else if (name.startsWith('@stim-cli/') && name !== '@stim-cli/cache-s3') names.add(name);
+    }
+  }
+  return [...names];
+}
+
+/** What an earlier Stim left that this one does not read or replaced, each as one short phrase. */
+async function upgradeLeftovers(
+  projectRoot: string | null,
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  runs: NonNullable<ProjectRecord['doctorRuns']> | null,
+  running: string,
+): Promise<string[]> {
+  const found: string[] = [];
+  try {
+    const keys = [...new Set(unknownEntries(await readSettingsContext(cwd, env)).map((entry) => entry.key))];
+    if (keys.length) found.push(`settings Stim does not read (${listed(keys)})`);
+  } catch {}
+  const variables = [...REMOVED_SETTINGS.values()].flatMap((entry) =>
+    entry.env && env[entry.env]?.trim() ? [entry.env] : [],
+  );
+  if (variables.length) found.push(`removed environment variables (${listed(variables)})`);
+  // compat C32 until 2.1.0
+  const older = legacyDaemonHolder();
+  if (older) found.push(`a daemon from an older Stim (pid ${older.owner.pid})`);
+  // compat end
+  if (projectRoot) {
+    const pins = projectPins(projectRoot);
+    if (pins.length) found.push(`package.json names ${listed(pins)}`);
+  }
+  const current = major(running);
+  const checked = Object.values(runs ?? {}).find((run) => {
+    const at = major(run?.version);
+    return at !== null && current !== null && at < current;
+  });
+  if (checked) found.push(`doctor last ran with stim ${checked.version}`);
+  return found;
+}
+
+function renderGuideStatus({ running, leftovers, doctor, latest }: GuideStatusFacts): string | null {
   const lines: string[] = [];
+  if (leftovers.length)
+    lines.push(
+      `  Not migrated from an earlier Stim: ${leftovers.join('; ')}.`,
+      '  Before other work:  stim guide upgrade',
+    );
   if (doctor.length) {
     const named = doctor.map((due) => `${due.platform} (${due.reason})`).join(' and ');
     const command = doctor.length === 1 ? `stim doctor --platform ${doctor[0]?.platform}` : 'stim doctor';
@@ -147,18 +217,22 @@ function renderGuideStatus({ running, doctor, latest }: GuideStatusFacts): strin
 export async function guideStatus({
   projectRoot,
   running,
+  cwd = projectRoot ?? process.cwd(),
+  env = process.env,
   now = new Date(),
   fetch: fetchImpl = fetch,
 }: {
   projectRoot: string | null;
   running: string;
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
   now?: Date;
   fetch?: typeof fetch;
 }): Promise<string | null> {
   const doctor: DoctorDue[] = [];
+  let runs: NonNullable<ProjectRecord['doctorRuns']> | null = null;
   if (projectRoot) {
     const platforms = projectRegistry.selectDoctor(projectRoot).platforms;
-    let runs: NonNullable<ProjectRecord['doctorRuns']> | null = null;
     try {
       runs = getProject(projectRoot)?.doctorRuns ?? {};
     } catch {
@@ -171,6 +245,7 @@ export async function guideStatus({
       }
     }
   }
+  const leftovers = await upgradeLeftovers(projectRoot, cwd, env, runs, running);
   const latest = await checkForUpdate(running, { now, fetch: fetchImpl });
-  return renderGuideStatus({ running, doctor, latest });
+  return renderGuideStatus({ running, leftovers, doctor, latest });
 }

@@ -66,6 +66,6 @@ export function removedEnvironmentRefusal(
   return {
     code: 'STIM_BAD_ARG',
     message: `${replaced.join('. ')}.`,
-    remedy: `Unset ${found.map(({ env: name }) => name).join(', ')}, then run the command again; \`stim guide settings\` lists what replaced each.`,
+    remedy: `Unset ${found.map(({ env: name }) => name).join(', ')}, then run the command again; \`stim guide upgrade\` lists what replaced each.`,
   };
 }

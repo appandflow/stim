@@ -168,6 +168,6 @@ function removedConfigRefusal(command: string, cwd: string, env: NodeJS.ProcessE
   return {
     code: 'STIM_BAD_ARG',
     message: found.map((entry) => entry.message).join(' '),
-    remedy: `Run, in order: ${steps.map((step) => `\`${step}\``).join(', ')}. Then run the command again.`,
+    remedy: `Run, in order: ${steps.map((step) => `\`${step}\``).join(', ')}. Then run the command again; \`stim guide upgrade\` lists the other migration steps.`,
   };
 }

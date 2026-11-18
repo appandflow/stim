@@ -473,7 +473,7 @@ test('the share topic documents every share setting and the default proxy port',
   expect(body).toContain(`127.0.0.1:${keys.find((setting) => setting.key === 'share.port')?.default}`);
 });
 
-test('the placement words are documented for every workload, and a removed setting only in the settings topic', () => {
+test('the placement words are documented for every workload, and a removed setting only in the upgrade topic', () => {
   for (const body of [renderTopic('settings'), renderTopic('macos'), renderSection('lifecycle', 'hosted-ios')]) {
     assert(body);
     expect(PLACEMENT_WORDS.filter((word) => !body.includes(word))).toEqual([]);
@@ -485,16 +485,18 @@ test('the placement words are documented for every workload, and a removed setti
   const settings = renderTopic('settings');
   assert(settings);
   expect(settings).toContain(`stim settings set remote.machines '["fast-mini","slow-mini"]'`);
+  const upgrade = renderTopic('upgrade');
+  assert(upgrade);
   for (const [key, replaced] of [...REMOVED_SETTINGS].filter(([, entry]) => !entry.kept)) {
     for (const name of [`\`${key}\``, replaced.env ?? key, `stim settings unset ${key}`])
-      expect(settings).toContain(name);
+      expect(upgrade).toContain(name);
   }
 });
 
-test('only the settings topic names a removed setting, and every section of every other topic leaves them out', () => {
+test('only the upgrade topic names a removed setting, and every section of every other topic leaves them out', () => {
   const removed = [...REMOVED_SETTINGS].filter(([, entry]) => !entry.kept).map(([key]) => key);
   for (const [name, topic] of Object.entries(TOPICS)) {
-    if (name === 'settings') continue;
+    if (name === 'upgrade') continue;
     const bodies = [
       renderTopic(name),
       ...Object.keys(topic.sections ?? {}).map((section) => renderSection(name, section)),
@@ -778,6 +780,11 @@ test('slot selection and shared Metro behavior are discoverable in operational g
   expect(renderTopic('logs')).toContain('--slot <name>');
   expect(renderTopic('cleanup')).toContain('stop --slot <name>');
   expect(renderSection('lifecycle', 'options')).toContain('not a single-slot reload');
+});
+
+test('the agent router and the STATUS leftover line both send an upgraded home to the upgrade topic', () => {
+  expect(renderTopic('agent')).toContain('stim guide upgrade');
+  expect(renderTopic('upgrade')).toContain('STATUS');
 });
 
 test('named ports guidance is routed and separates named listener cleanup from Metro', () => {

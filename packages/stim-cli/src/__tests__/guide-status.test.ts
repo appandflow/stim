@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { daemonClaimRoot, legacyDaemonSocket } from '@stim-cli/core/state';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { upsertProject } from '../workspace/config.ts';
 import { checkForUpdate, doctorDueReason, guideStatus, recordDoctorCheck, updateCacheFile } from '../guide-status.ts';
@@ -124,4 +125,50 @@ test('guideStatus skips the doctor lines when the config is corrupt instead of r
   const status = await guideStatus({ projectRoot: root, running: '1.4.0', now: NOW, fetch });
   expect(status).toContain('stim 1.5.0 is available');
   expect(status).not.toContain('Doctor');
+});
+
+test('guideStatus sends a home and project an earlier Stim left to stim guide upgrade until they are migrated', async () => {
+  const root = appRoot();
+  const manifest = (stim: string, extra: Record<string, string> = {}) =>
+    writeFileSync(
+      join(root, 'package.json'),
+      JSON.stringify({ dependencies: { 'react-native': '*' }, devDependencies: { stim, ...extra } }),
+    );
+  manifest('^1.40.0', { '@stim-cli/metro': '1.40.0', '@stim-cli/cache-s3': '^2.0.0' });
+  upsertProject(root, { doctorRuns: { ios: { at: NOW.toISOString(), version: '1.40.0' } } });
+  const configFile = join(home, 'config.json');
+  const config = JSON.parse(readFileSync(configFile, 'utf-8'));
+  writeFileSync(configFile, JSON.stringify({ ...config, maintenance: { mode: 'off' } }));
+  const claim = tryAcquireClaim({
+    root: daemonClaimRoot(),
+    mode: 'exclusive',
+    label: 'stim-daemon',
+    details: { socket: legacyDaemonSocket(), mode: 'on' },
+  }).acquired;
+  if (!claim) throw new Error('Could not acquire fixture claim.');
+  onTestFinished(() => {
+    releaseClaim(claim);
+  });
+  const { fetch } = fakeFetch('2.0.0');
+  const env = { ...process.env, STIM_MAINTENANCE: 'off' };
+
+  const upgraded = await guideStatus({ projectRoot: root, running: '2.0.0', env, now: NOW, fetch });
+  expect(upgraded).toContain('Before other work:  stim guide upgrade');
+  for (const item of [
+    'maintenance.mode',
+    'STIM_MAINTENANCE',
+    `pid ${process.pid}`,
+    'stim ^1.40.0',
+    '@stim-cli/metro',
+    'doctor last ran with stim 1.40.0',
+  ])
+    expect(upgraded).toContain(item);
+  expect(upgraded).not.toContain('cache-s3');
+
+  releaseClaim(claim);
+  writeFileSync(configFile, JSON.stringify(config));
+  manifest('^2.0.0');
+  upsertProject(root, { doctorRuns: { ios: { at: NOW.toISOString(), version: '2.0.0' } } });
+  const migrated = await guideStatus({ projectRoot: root, running: '2.0.0', env: process.env, now: NOW, fetch });
+  expect(migrated ?? '').not.toContain('stim guide upgrade');
 });
