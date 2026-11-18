@@ -947,8 +947,11 @@ async function runStimdInner(
     },
   );
   let restartingNet = false;
+  const netAskers = new Set<Socket>();
   const netGone = () => {
     recordNet(null);
+    for (const socket of netAskers) socket.end();
+    netAskers.clear();
     handleNetStop(serve, closing, attached !== undefined, requestEnd, shutdown, requestTick);
   };
   let netTurns: Promise<unknown> = Promise.resolve();
@@ -1523,6 +1526,10 @@ async function runStimdInner(
               return answer.then(
                 (state) => {
                   lastContact = Date.now();
+                  if (state.listening && !socket.destroyed) {
+                    netAskers.add(socket);
+                    socket.once('close', () => netAskers.delete(socket));
+                  }
                   return reply({ op: 'net', ...state });
                 },
                 (error: unknown) => reply({ op: 'net', listening: false, message: String(error) }),

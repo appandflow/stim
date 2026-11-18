@@ -58,6 +58,7 @@ import {
   ensureStimd,
   observeOwnedWeb,
   requestDaemonTick,
+  serveThroughStimd,
   stimdBuildId,
 } from '../daemon/client.ts';
 import { holdCIStimd } from '../stimd/attached.ts';
@@ -317,6 +318,46 @@ test.skipIf(process.platform === 'win32')(
   },
   30_000,
 );
+
+test('stim serve --share against a running stimd asks for a share-only thread and ends when it ends', async () => {
+  let netEnded: (failure?: Error) => void = () => {};
+  const asked: netThread.NetOptions[] = [];
+  let thread: { shareOnly: boolean; loopbackOnly: boolean; port: number } | null = null;
+  const net = vi.spyOn(netThread, 'createNetThread').mockImplementation((_log, onExit) => {
+    netEnded = onExit;
+    return {
+      ensure: async (options) => {
+        asked.push(options);
+        thread = { shareOnly: options.shareOnly, loopbackOnly: options.loopbackOnly, port: 4321 };
+        return { listening: true, port: 4321 };
+      },
+      restart: async () => ({ listening: false, message: 'unused' }),
+      running: () => thread,
+      connect: () => false,
+      presence: () => false,
+      close: async () => {},
+    };
+  });
+  const run = runStimd({ tickMs: 60_000, mode: 'report' });
+  try {
+    await listening();
+    const answers: unknown[] = [];
+    const served = serveThroughStimd(
+      { port: 0, loopbackOnly: true, extraEnv: [], pathPrepend: [], shareOnly: true, service: false },
+      (answer) => answers.push(answer),
+    );
+    await vi.waitFor(() => expect(answers).toEqual([{ listening: true, port: 4321 }]), { timeout: 10_000 });
+    expect(asked).toMatchObject([{ shareOnly: true, loopbackOnly: true }]);
+    thread = null;
+    netEnded();
+    await served;
+  } finally {
+    thread = null;
+    if (existsSync(stimdRecordFile())) await stopStimd();
+    await run;
+    net.mockRestore();
+  }
+}, 30_000);
 
 async function stopStimd(): Promise<void> {
   saveConfig({ version: 2, projects: {}, repos: {}, daemon: { mode: 'off' } });
