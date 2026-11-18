@@ -91,7 +91,7 @@ test.each([
   });
   expect(result.status).toBe(1);
   expect(result.stdout).toBe('');
-  expect(result.stderr).toBe('stim-server: Desktop bootstrap input is invalid or unavailable.\n');
+  expect(result.stderr).toBe('stim: Desktop bootstrap input is invalid or unavailable.\n');
 });
 
 test.skipIf(process.platform === 'win32')(
@@ -110,7 +110,7 @@ test.skipIf(process.platform === 'win32')(
       });
       expect(result.status).toBe(1);
       expect(result.stderr).toBe(
-        `stim-server: port ${port} is held by pid ${process.pid}; stop it (kill ${process.pid}), or run stim serve --port <n>.\n`,
+        `stim: port ${port} is held by pid ${process.pid}; stop it (kill ${process.pid}), or run stim serve --port <n>.\n`,
       );
     } finally {
       await new Promise<void>((done) => holder.close(() => done()));
