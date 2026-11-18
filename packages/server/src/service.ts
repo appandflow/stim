@@ -182,10 +182,15 @@ async function homeListener(
 }
 
 /**
- * The service stimd of `home` that serves `port` from outside the job whose process is `jobPid`: the successor an
- * engine switch handed the port to, which its claim marks `serviceUnit`. Null when that cannot be proved.
+ * The stimd of unit `label` that serves `port` from outside the job whose process is `jobPid`: the successor an
+ * engine switch handed the port to, whose claim names `label` as its `serviceUnit`. Null when that cannot be proved.
  */
-async function outsideStimd(home: string, port: number, jobPid: number | null): Promise<ClaimHolder | null> {
+async function outsideStimd(
+  home: string,
+  port: number,
+  label: string,
+  jobPid: number | null,
+): Promise<ClaimHolder | null> {
   if (process.platform === 'win32' || jobPid === null) return null;
   const { listeners, stimd } = await homeListener(home, port);
   const pid = stimd?.owner.pid;
@@ -193,7 +198,7 @@ async function outsideStimd(home: string, port: number, jobPid: number | null): 
     !stimd ||
     pid === process.pid ||
     pid === jobPid ||
-    stimd.details.serviceUnit !== true ||
+    stimd.details.serviceUnit !== label ||
     stimd.details.attached === true ||
     !listeners?.includes(String(pid))
   )
@@ -234,7 +239,7 @@ async function unload(
 ): Promise<void> {
   const job = await loaded(label);
   if (!job) return;
-  const outside = unit ? await outsideStimd(unit.home, unit.port, job.pid) : null;
+  const outside = unit ? await outsideStimd(unit.home, unit.port, label, job.pid) : null;
   const listeners = port === null ? [] : await listenerPids(port);
   const stopped = await serviceManager().stop(label);
   const deadline = Date.now() + UNLOAD_WAIT_MS;

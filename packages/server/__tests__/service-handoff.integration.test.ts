@@ -151,22 +151,24 @@ function fixture(label: string, port: number) {
   vi.stubEnv('STIM_HOME', join(scratch, 'caller'));
   vi.stubEnv('STIM_ENGINE_ROOT', store);
   mkdirSync(join(scratch, 'Library', 'LaunchAgents'), { recursive: true });
-  writeFileSync(
-    join(scratch, 'Library', 'LaunchAgents', `${label}.plist`),
-    renderPlist({
-      label,
-      host: null,
-      node: process.execPath,
-      script: join(store, 'bin', 'stimd'),
-      port,
-      env: [],
-      pathPrepend: [],
-      environment: { STIM_HOME: home },
-      logPath: join(scratch, 'service.log'),
-      workingDirectory: scratch,
-      serve: null,
-    }),
-  );
+  const writeUnit = (unitLabel: string) =>
+    writeFileSync(
+      join(scratch, 'Library', 'LaunchAgents', `${unitLabel}.plist`),
+      renderPlist({
+        label: unitLabel,
+        host: null,
+        node: process.execPath,
+        script: join(store, 'bin', 'stimd'),
+        port,
+        env: [],
+        pathPrepend: [],
+        environment: { STIM_HOME: home },
+        logPath: join(scratch, `${unitLabel}.log`),
+        workingDirectory: scratch,
+        serve: null,
+      }),
+    );
+  writeUnit(label);
   const record = () => {
     try {
       const parsed: unknown = JSON.parse(readFileSync(join(home, 'run', 'stimd.json'), 'utf8'));
@@ -271,6 +273,15 @@ function fixture(label: string, port: number) {
     rmSync(scratch, { recursive: true, force: true });
   };
 
+  /** Installs another unit for the same home and port and runs its stimd outside the job of `label`. */
+  const runOtherUnit = async (other: string) => {
+    writeUnit(other);
+    cli(first, serviceArgs, { XPC_SERVICE_NAME: other });
+    const started = await until('the other unit stimd', () => record());
+    await answers('the other unit stimd');
+    return started;
+  };
+
   /** Starts a stimd with the arguments an older build gives its successor: `--service` alone, outside any job. */
   const runBareService = async () => {
     cli(first, serviceArgs);
@@ -317,6 +328,7 @@ function fixture(label: string, port: number) {
     runServe,
     runDesktop,
     runBareService,
+    runOtherUnit,
     switchEngine,
     setJob,
     stopHome,
@@ -340,7 +352,7 @@ describe.skipIf(process.platform !== 'darwin')('a service after an engine handof
     const service = fixture(label, port);
     try {
       const successor = await service.handOver();
-      expect(homeClaim(service.home)?.details.serviceUnit).toBe(true);
+      expect(homeClaim(service.home)?.details.serviceUnit).toBe(label);
       expect((await serviceStatus(label)).listener).toEqual({
         pid: successor.pid,
         stimd: expect.objectContaining({ build: successor.build }),
@@ -375,6 +387,24 @@ describe.skipIf(process.platform !== 'darwin')('a service after an engine handof
       const events = readFileSync(join(service.home, 'daemon', 'daemon.ndjson'), 'utf8');
       expect(events).toContain('daemon_exited');
       expect(events).not.toContain('daemon_signal_during_shutdown');
+    } finally {
+      await service.cleanup();
+    }
+  }, 240_000);
+
+  it('install leaves running a stimd that another unit label of the same home and port marked', async () => {
+    const label = 'dev.stim.handoff-label-a';
+    const port = await freePort();
+    const service = fixture(label, port);
+    try {
+      const other = await service.runOtherUnit('dev.stim.handoff-label-b');
+      expect(homeClaim(service.home)?.details.serviceUnit).toBe('dev.stim.handoff-label-b');
+      await service.setJob(true);
+      await installJob(
+        { label, port, env: [], pathPrepend: [], serve: false, stimHome: service.home },
+        { script: service.script, host: null, requestPermissions: false },
+      ).catch(() => undefined);
+      expect(gone(other.pid)).toBe(false);
     } finally {
       await service.cleanup();
     }

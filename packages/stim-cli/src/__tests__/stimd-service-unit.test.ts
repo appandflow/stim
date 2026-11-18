@@ -2,9 +2,9 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { renderUnit } from '../../../server/src/service-unit.ts';
-import { startedByServiceUnit } from '../stimd/service-unit.ts';
+import { serviceUnitLabel } from '../stimd/service-unit.ts';
 
-describe('startedByServiceUnit on systemd', () => {
+describe('serviceUnitLabel on systemd', () => {
   let home: string;
 
   beforeEach(() => {
@@ -37,11 +37,11 @@ describe('startedByServiceUnit on systemd', () => {
   });
 
   it.each([
-    ['the unit install wrote for this port', { STIM_SERVICE_LABEL: 'dev.stim.server' }, 7787, true],
-    ['that unit for another port', { STIM_SERVICE_LABEL: 'dev.stim.server' }, 7788, false],
-    ['a label with no unit file', { STIM_SERVICE_LABEL: 'dev.stim.other' }, 7787, false],
-    ['no label, as outside a unit', {}, 7787, false],
+    ['the unit install wrote for this port', { STIM_SERVICE_LABEL: 'dev.stim.server' }, 7787, 'dev.stim.server'],
+    ['that unit for another port', { STIM_SERVICE_LABEL: 'dev.stim.server' }, 7788, null],
+    ['a label with no unit file', { STIM_SERVICE_LABEL: 'dev.stim.other' }, 7787, null],
+    ['no label, as outside a unit', {}, 7787, null],
   ])('marks a process started by %s', (_case, env, port, expected) => {
-    expect(startedByServiceUnit(env, port, 'linux')).toBe(expected);
+    expect(serviceUnitLabel(env, port, 'linux')).toBe(expected);
   });
 });
