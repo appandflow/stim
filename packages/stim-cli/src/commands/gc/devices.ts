@@ -710,7 +710,7 @@ export async function deleteProjectDevices(
     operation?.signal.throwIfAborted();
     const r =
       d.kind === 'ios'
-        ? await teardownOwnedIosSim(d.id, { del: true, label: d.name, operation })
+        ? await teardownOwnedIosSim(d.id, { del: true, unreferenced: !('project' in d), label: d.name, operation })
         : await teardownOwnedAvd(d.name, {
             operation,
             del: true,

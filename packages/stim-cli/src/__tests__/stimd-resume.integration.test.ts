@@ -77,7 +77,10 @@ function alive(pid: number): boolean {
 }
 
 async function startStimd(): Promise<ChildProcess> {
-  const child = spawn(process.execPath, [entry, '__stimd'], { env: { ...process.env }, stdio: 'ignore' });
+  const child = spawn(process.execPath, [entry, '__stimd'], {
+    env: { ...process.env, STIM_DAEMON: 'on' },
+    stdio: 'ignore',
+  });
   await vi.waitFor(() => expect(stimdPid()).toBe(child.pid), { timeout: 15_000, interval: 50 });
   return child;
 }
@@ -413,7 +416,10 @@ esac
     );
     const held = takeLease({ root: other, platform: 'android', id: device, kind: 'run', durationMs: 60_000 });
     assert(held.status === 'taken');
-    const first = spawn(process.execPath, [entry, '__stimd'], { env: { ...process.env }, stdio: 'ignore' });
+    const first = spawn(process.execPath, [entry, '__stimd'], {
+      env: { ...process.env, STIM_DAEMON: 'on' },
+      stdio: 'ignore',
+    });
     const firstExit = once(first, 'exit');
     let command: { child: ChildProcess; exited: Promise<unknown> } | undefined;
     retainFixture = true;

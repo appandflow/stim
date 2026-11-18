@@ -4,14 +4,7 @@ import { deviceSlotKey, deviceSlotPlatforms, projectDeviceSlots } from '../devic
 import chalk from 'chalk';
 import { phaseLine } from '../command-output.ts';
 import { workspaceId, workspaceLogsDir } from '../workspace/paths.ts';
-import {
-  clearDevice,
-  getConfigDir,
-  loadConfig,
-  saveConfig,
-  setDevice,
-  withConfigLockAsync,
-} from '../workspace/config.ts';
+import { clearDevice, loadConfig, saveConfig, setDevice, withConfigLockAsync } from '../workspace/config.ts';
 import { configuredIosSimulatorViewer, type IosSimulatorApp } from '../devices/ios-simulator-viewer.ts';
 import { getExecutor, isTimeoutError } from '../exec.ts';
 import { hostMemoryPressureAdvice, readHostMemoryPressure, reportMemoryCulprits } from '../host-memory.ts';
@@ -39,7 +32,7 @@ import {
 } from '../devices/ios.ts';
 import { adoptParked, dropParked, parkedMaxSetting, readParked, selectParked } from '../devices/sim-pool.ts';
 import { iosSimSlimDefaultSetting, iosSimSlimProfileSetting } from '../workspace/settings.ts';
-import { teardownOwnedIosSim, teardownParkedIosSim } from '../devices/teardown.ts';
+import { teardownOwnedIosSim, teardownParkedIosSim, withIosDeviceNameLock } from '../devices/teardown.ts';
 import {
   desiredSlimLabels,
   iosRuntimeKeepsOverrides,
@@ -53,7 +46,6 @@ import {
 } from './simslim.ts';
 import { stopDeviceLogStream } from '../daemon/client.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
-import { withWorkspaceProcessLock } from './workspace-process-lock.ts';
 import { claimFailure } from '../ownership-claim.ts';
 import {
   DeviceAdmissionRefusal,
@@ -526,10 +518,6 @@ export async function ensureOwnedIosDevice({
     runtime: choice.runtime,
     creating: { runtimeId: choice.runtimeId, created: createdRecord },
   };
-}
-
-function withIosDeviceNameLock<T>(fn: () => T): Promise<T> {
-  return withWorkspaceProcessLock(getConfigDir(), 'ios-device-names', async () => fn(), { external: true });
 }
 
 function ownedIosNameSuffix(
