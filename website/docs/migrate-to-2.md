@@ -27,6 +27,8 @@ An npm installation can run directly. If you want a managed machine engine, use 
 
 2.0 workers use peer compatibility version 3 and build compatibility version 6. If `stim remote update <machine>` can reach and update the worker, use it. If the old worker cannot negotiate an update, upgrade it locally and reinstall its service with `stim service install`, retaining its service options. On Windows, reinstall the service even after an engine update so the scheduled task runs the new build. If an old server still holds the serving port, stop that server or choose a different port with `stim serve --port <port>` and point the clients at it.
 
+If `stim service install` refuses because a Stim daemon serves the service's port outside the service's job and install cannot prove it belongs to the service, that daemon started before this Stim build. Stop it once its work drains with the `kill <pid>` it prints, then run `stim service install --label <label>` again. Its dev servers keep running and the next daemon takes them over.
+
 If `stim service uninstall` reports that the service's daemon is still listening after an engine handoff, the service definition and any route it owns are kept. Let that daemon finish its work, stop the reported daemon, and retry `stim service uninstall --label <label>`. [Ubuntu uninstall check](https://github.com/appandflow/stim/actions/runs/43663535775/job/132657852299)
 
 The live 1.40-to-2.0 upgrade checks kept the existing Metro process and verified the same bundle on macOS, Linux, and Windows. macOS and Linux exercised legacy daemon takeover. Windows started its first resident daemon while the 1.40 Metro was still running. [Upgrade results](https://github.com/appandflow/stim/issues/5590#issuecomment-6888597398)

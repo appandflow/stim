@@ -410,7 +410,7 @@ describe.skipIf(process.platform !== 'darwin')('a service after an engine handof
     }
   }, 240_000);
 
-  it('install leaves running a stimd started with an older build successor arguments', async () => {
+  it('install refuses before unloading when a stimd from an older build serves the port outside the job', async () => {
     const label = 'dev.stim.handoff-bare-service';
     const port = await freePort();
     const service = fixture(label, port);
@@ -418,10 +418,15 @@ describe.skipIf(process.platform !== 'darwin')('a service after an engine handof
       const bare = await service.runBareService();
       expect(homeClaim(service.home)?.details.serviceUnit).toBeUndefined();
       await service.setJob(true);
-      await installJob(
-        { label, port, env: [], pathPrepend: [], serve: false, stimHome: service.home },
-        { script: service.script, host: null, requestPermissions: false },
-      ).catch(() => undefined);
+      const job = launchd.job;
+      await expect(
+        installJob(
+          { label, port, env: [], pathPrepend: [], serve: false, stimHome: service.home },
+          { script: service.script, host: null, requestPermissions: false },
+        ),
+      ).rejects.toThrow(`Stim daemon PID ${bare.pid} for ${service.home} serves port ${port} outside the ${label} job`);
+      expect(launchd.job).toBe(job);
+      expect(job?.exitCode).toBeNull();
       expect(gone(bare.pid)).toBe(false);
     } finally {
       await service.cleanup();
@@ -461,13 +466,15 @@ describe.skipIf(process.platform !== 'darwin')('a service after an engine handof
       const served = await service.runServe();
       for (const runs of [false, true]) {
         await service.setJob(runs);
-        await expect(install()).rejects.toThrow(`did not stop and release port ${port}`);
+        await expect(install()).rejects.toThrow(
+          runs ? 'cannot prove it belongs to' : `did not stop and release port ${port}`,
+        );
         expect(gone(served.pid)).toBe(false);
       }
       await service.stopHome();
       const desktop = await service.runDesktop();
       await service.setJob(true);
-      await expect(install()).rejects.toThrow(`did not stop and release port ${port}`);
+      await expect(install()).rejects.toThrow('cannot prove it belongs to');
       expect(gone(desktop.pid)).toBe(false);
     } finally {
       await service.cleanup();

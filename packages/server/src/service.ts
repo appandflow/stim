@@ -182,15 +182,10 @@ async function homeListener(
 }
 
 /**
- * The stimd of unit `label` that serves `port` from outside the job whose process is `jobPid`: the successor an
- * engine switch handed the port to, whose claim names `label` as its `serviceUnit`. Null when that cannot be proved.
+ * The stimd of `home` that serves `port` from outside the job whose process is `jobPid`, such as the successor an
+ * engine switch handed the port to. Null when that cannot be proved.
  */
-async function outsideStimd(
-  home: string,
-  port: number,
-  label: string,
-  jobPid: number | null,
-): Promise<ClaimHolder | null> {
+async function outsideStimd(home: string, port: number, jobPid: number | null): Promise<ClaimHolder | null> {
   if (process.platform === 'win32' || jobPid === null) return null;
   const { listeners, stimd } = await homeListener(home, port);
   const pid = stimd?.owner.pid;
@@ -198,7 +193,6 @@ async function outsideStimd(
     !stimd ||
     pid === process.pid ||
     pid === jobPid ||
-    stimd.details.serviceUnit !== label ||
     stimd.details.attached === true ||
     !listeners?.includes(String(pid))
   )
@@ -239,7 +233,13 @@ async function unload(
 ): Promise<void> {
   const job = await loaded(label);
   if (!job) return;
-  const outside = unit ? await outsideStimd(unit.home, unit.port, label, job.pid) : null;
+  const outside = unit ? await outsideStimd(unit.home, unit.port, job.pid) : null;
+  if (unit && outside && outside.details.serviceUnit !== label) {
+    const other = typeof outside.details.serviceUnit === 'string' ? outside.details.serviceUnit : null;
+    throw new ServiceError(
+      `Stim daemon PID ${outside.owner.pid} for ${unit.home} serves port ${unit.port} outside the ${label} job, and ${other ? `its claim names the unit ${other}` : 'it carries no service mark, as a stimd started before this Stim build does'}, so install cannot prove it belongs to ${label} and left the service as it was. Stop it once its work drains with \`kill ${outside.owner.pid}\`; its dev servers keep running and the next stimd takes them over. Then run \`stim service install --label ${label}\` again.`,
+    );
+  }
   const listeners = port === null ? [] : await listenerPids(port);
   const stopped = await serviceManager().stop(label);
   const deadline = Date.now() + UNLOAD_WAIT_MS;
