@@ -233,7 +233,12 @@ readings and the home scan (`bounded-read.ts`): while it is pending, no further
 launcher or scan read starts, every launcher reading reports incomplete
 immediately naming the folder, and a scheduled scan is skipped. A hung mount
 therefore holds one libuv thread per isolate, and reduction of every checkout
-stays off until that read settles. Two isolates in the daemon can
+stays off until that read settles. stimd does not retire an idle worker thread
+while such a read is pending, because its replacement would start with no
+pending read and could hold another thread. Discovery's listings of sibling and
+`maintenance.discoverRoots` folders and their children take the same slot: a
+folder or child not listed while a read is pending is not discovered, so
+nothing acts on it. Two isolates in the daemon can
 read launchers, the main thread and the passes thread, so up to two reads can be
 outstanding there; the scan runs only on the passes thread, and CLI commands are
 separate processes. A scan stops at the first read that times out: the result is

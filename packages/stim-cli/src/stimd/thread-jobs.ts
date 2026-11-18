@@ -3,6 +3,7 @@ import type { StimContext } from '@stim-cli/core';
 import type { DaemonLadderAction } from '@stim-cli/core/state';
 import { operationState } from '../engine/operation-state.ts';
 import { reportChildOf } from '../engine/workspace-process-error.ts';
+import { hungRead } from '../workspace/bounded-read.ts';
 import { createCleanupWatch } from './cleanup-watch.ts';
 
 type ToThread<Input> = { type: 'run'; input: Input & { cwd: string } } | { type: 'abort' } | { type: 'settle' };
@@ -11,7 +12,8 @@ type ToThread<Input> = { type: 'run'; input: Input & { cwd: string } } | { type:
  * Serves one stimd thread's jobs on `port`, one at a time, each with its own operation from `context`. A job whose
  * cleanup refusal names one child and leaves no other child of its operation running is watched here: the failure
  * crosses with that child's identity, and each `settle` releases what a stopped child alone retained and answers with
- * the children still watched. `forget` runs after such a failure, for a job that keeps state between runs.
+ * the children still watched. Every answer also says whether a timed-out read of this thread is still pending
+ * (`bounded-read.ts`). `forget` runs after such a failure, for a job that keeps state between runs.
  */
 export function serveThreadJobs<Input>(
   port: MessagePort,
@@ -26,13 +28,14 @@ export function serveThreadJobs<Input>(
     if (message.type === 'abort') return controller.abort();
     if (message.type === 'settle') {
       watch.settle();
-      return port.postMessage({ type: 'settled', pending: watch.keys() });
+      return port.postMessage({ type: 'settled', pending: watch.keys(), reading: hungRead() !== null });
     }
     controller = new AbortController();
     const { signal } = controller;
     const operation = context(message.input.cwd, signal);
     try {
-      port.postMessage({ type: 'done', result: await run(message.input, operation) });
+      const result = await run(message.input, operation);
+      port.postMessage({ type: 'done', result, reading: hungRead() !== null });
     } catch (error) {
       const cleanup = error instanceof Error && 'reportCleanup' in error;
       const child = reportChildOf(error);
@@ -41,6 +44,7 @@ export function serveThreadJobs<Input>(
       if (contained) forget();
       port.postMessage({
         type: 'failed',
+        reading: hungRead() !== null,
         message: signal.aborted && !cleanup ? 'aborted' : error instanceof Error ? error.message : String(error),
         ...(cleanup
           ? {

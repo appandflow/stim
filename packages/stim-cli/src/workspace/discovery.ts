@@ -6,6 +6,7 @@ import { isScopedHome, type StimContext } from '@stim-cli/core';
 import { machineSettingValue, readDiscoveryScan, type Config, type DiscoveryScan } from '@stim-cli/core/state';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { projectRegistry } from '../integrations/projects.ts';
+import { answered } from './bounded-read.ts';
 import { isProtectedLocation } from './protected-locations.ts';
 import { absent, scanEntryValid, scanSkipper } from './scan-rules.ts';
 import { matchWorktreeEntry, resolveSourceCheckoutAsync } from './worktree.ts';
@@ -113,18 +114,12 @@ function recognises(path: string): boolean {
   return recognition(path) === true;
 }
 
-/** `read`'s result, or null when it fails or has not answered within the timeout, as a hung mount would not. */
-async function within<T>(read: Promise<T>, ms = READ_TIMEOUT_MS): Promise<T | null> {
-  let timer: NodeJS.Timeout | undefined;
+/** `read`'s result, or null when it fails, has not answered within the timeout, or waits on another hung read. */
+async function within<T>(path: string, read: () => Promise<T>): Promise<T | null> {
   try {
-    return await Promise.race([
-      read.catch(() => null),
-      new Promise<null>((done) => {
-        timer = setTimeout(() => done(null), ms);
-      }),
-    ]);
-  } finally {
-    clearTimeout(timer);
+    return await answered(path, read, READ_TIMEOUT_MS);
+  } catch {
+    return null;
   }
 }
 
@@ -134,15 +129,15 @@ async function childrenOf(
   from: string,
   operation?: StimContext,
 ): Promise<DiscoveryChild[]> {
-  const entries = await within(readdir(folder, { withFileTypes: true }));
+  const entries = await within(folder, () => readdir(folder, { withFileTypes: true }));
   operation?.signal.throwIfAborted();
   const children: DiscoveryChild[] = [];
   for (const entry of entries ?? []) {
     operation?.signal.throwIfAborted();
     if (!entry.isDirectory() || entry.isSymbolicLink() || entry.name.startsWith('.')) continue;
     const path = canonicalPath(join(folder, entry.name));
-    const answered = (await within(readdir(path))) !== null;
-    children.push({ path, origin, from, recognised: answered && recognises(path) });
+    const listed = (await within(path, () => readdir(path))) !== null;
+    children.push({ path, origin, from, recognised: listed && recognises(path) });
   }
   return children;
 }

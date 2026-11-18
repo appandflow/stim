@@ -14,7 +14,12 @@ SIGINT, and on the detached path SIGHUP) is a clean, logged shutdown. An uncaugh
 exception, or an unhandled rejection, which Node routes to the same handler, is
 written to the log with its stack (bounded to 8000 characters) before the exit. A
 second signal during a shutdown logs once and forces a logged exit after 5 s; it
-is never a silent default kill. A stimd that cannot record its own end (SIGKILL,
+is never a silent default kill. A forced exit, after a second signal or when an
+attached stimd's shutdown outlasts its wait, writes its boot record and then sends
+itself SIGKILL, so it ends on that signal rather than exit code 1. Reason:
+`process.exit` joins worker threads, and a worker whose filesystem request waits
+on a libuv thread that never returns, such as a hung directory open, never joins.
+A stimd that cannot record its own end (SIGKILL,
 out of memory, a native abort) is recorded by the next stimd: a dead holder of the
 stimd claim whose details lack `kept` is logged as `stimd_predecessor_lost` with
 its pid, build, start time and last tick, and its boot counts as abnormal. A stimd

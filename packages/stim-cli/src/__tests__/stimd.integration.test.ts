@@ -1833,7 +1833,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
 
     expect(spawned).toHaveLength(1);
     expect(spawned[0]?.args.slice(1)).toEqual(['__stimd', '--mode', 'report']);
-    expect(spawned[0]?.options?.env).toEqual(kept);
+    expect(spawned[0]?.options?.env).toEqual({ ...kept, UV_THREADPOOL_SIZE: '16' });
   });
 
   describe('a Linux command starts the daemon as a transient user service so a runner that kills the call cannot reach it', () => {

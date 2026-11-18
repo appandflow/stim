@@ -1779,12 +1779,23 @@ async function runStimdInner(
       sealed = true;
       return closeAttachedWork('attached cleanup failed', error);
     });
+  // @ref LLP 0021#every-exit-leaves-a-record -- a forced exit records itself, then SIGKILLs itself
+  const forceExit = (reason: string, kind?: 'unknown') => {
+    try {
+      markAbnormal?.(reason, undefined, kind);
+    } finally {
+      process.kill(process.pid, 'SIGKILL');
+    }
+  };
   const requestEnd = (why: string, level: Level = 'info') => {
     if (ending) return;
     ending = why;
     endingLevel = level;
     retention?.record(true, [...workspaceEngineDirs(loadConfig()), ...metroEngineDirs()]);
-    attachedWatchdog = setTimeout(() => process.exit(1), waitMs + KILL_GRACE_MS);
+    attachedWatchdog = setTimeout(
+      () => forceExit(`forced exit: the attached shutdown did not finish within ${waitMs + KILL_GRACE_MS} ms`),
+      waitMs + KILL_GRACE_MS,
+    );
     attachedWatchdog.unref();
     foregroundAbort.abort();
     stopMetroTicks();
@@ -1805,9 +1816,11 @@ async function runStimdInner(
       `${signal} while shutting down; exiting in 5 s if it has not finished`,
     );
     setTimeout(() => {
-      log('error', 'daemon_forced_exit', `shutdown did not finish within 5 s of a second ${signal}`);
-      markAbnormal?.(`forced exit after a second ${signal}`, undefined, 'unknown');
-      process.exit(1);
+      try {
+        log('error', 'daemon_forced_exit', `shutdown did not finish within 5 s of a second ${signal}`);
+      } finally {
+        forceExit(`forced exit after a second ${signal}`, 'unknown');
+      }
     }, SECOND_SIGNAL_GRACE_MS).unref();
   };
   const shutdown = (why: string, level: Level = 'info', cause?: unknown) => {
