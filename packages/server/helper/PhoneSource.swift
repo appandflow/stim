@@ -179,7 +179,7 @@ final class PhoneSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate 
   /// hardened runtime and lacks the camera entitlement, such as a bare `node`.
   private func denied() -> Never {
     fail(
-      "macOS denied Camera access, which capturing an iPhone screen needs. Run stim-server from Stim, and allow Stim "
+      "macOS denied Camera access, which capturing an iPhone screen needs. Run stim serve from Stim, and allow Stim "
         + "in System Settings > Privacy & Security > Camera.")
   }
 

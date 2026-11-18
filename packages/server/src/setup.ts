@@ -1111,7 +1111,7 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
         if (deps.now() >= Date.parse(opts.expiresAt)) break;
         if (!yes) {
           printer.clear();
-          if (!(concise && display.tty)) deps.stderr(`stim-server: ${capability} approval refused.`);
+          if (!(concise && display.tty)) deps.stderr(`stim: ${capability} approval refused.`);
           step(`approve.${capability}`, 'failed', `${capability} refused`, 'No approval given.');
           continue;
         }
@@ -1186,19 +1186,19 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
     } catch (writeError) {
       const detail = `Could not write the setup journal: ${(writeError as Error).message}`;
       printer.clear();
-      deps.stderr(`stim-server: ${detail}`);
+      deps.stderr(`stim: ${detail}`);
       output.warnings.push(detail);
     }
     const code = (error as { code?: string }).code;
     printer.clear();
-    if (!(concise && display.tty)) deps.stderr(`stim-server: ${code ? `${code}: ` : ''}${message}`);
+    if (!(concise && display.tty)) deps.stderr(`stim: ${code ? `${code}: ` : ''}${message}`);
     output.warnings.push(message);
   } finally {
     if (secretStored && options) {
       try {
         deps.dropSecret(options.journal);
       } catch (error) {
-        deps.stderr(`stim-server: could not delete the setup ticket's secret: ${(error as Error).message}`);
+        deps.stderr(`stim: could not delete the setup ticket's secret: ${(error as Error).message}`);
       }
     }
     try {
@@ -1217,7 +1217,7 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
         journal.steps.push({ id: 'journal', state: 'failed', title: 'Setup journal', detail: message });
         journal.exit = setupExitCode(journal);
         printer.clear();
-        deps.stderr(`stim-server: ${message}`);
+        deps.stderr(`stim: ${message}`);
         output.warnings.push(message);
       }
       output.ok = journal.exit === 0;

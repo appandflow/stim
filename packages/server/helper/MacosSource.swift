@@ -61,7 +61,7 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
     guard CGPreflightScreenCaptureAccess() else {
       if let host = ProcessInfo.processInfo.environment["STIM_CAPTURE_HOST"] {
         fail(
-          "\(Self.screenPermission) access is unavailable for stim-frames. Allow \(host) in System Settings > Privacy & Security > \(Self.screenPermission) on this Mac, or run `stim-server service install` again on this Mac to show the request, then reconnect. The server never requests or resets permissions; status and logs remain available."
+          "\(Self.screenPermission) access is unavailable for stim-frames. Allow \(host) in System Settings > Privacy & Security > \(Self.screenPermission) on this Mac, or run `stim service install` again on this Mac to show the request, then reconnect. The server never requests or resets permissions; status and logs remain available."
         )
       }
       fail(
@@ -360,7 +360,7 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
       let permission = Self.controlPermission
       if let host = ProcessInfo.processInfo.environment["STIM_CAPTURE_HOST"] {
         throw refusal(
-          "Control needs \(permission) permission. Allow \(host) in System Settings > Privacy & Security > \(permission) on this Mac, or run `stim-server service install` again on this Mac to show the request, then reconnect. The server never requests or resets permissions; viewing and logs remain available."
+          "Control needs \(permission) permission. Allow \(host) in System Settings > Privacy & Security > \(permission) on this Mac, or run `stim service install` again on this Mac to show the request, then reconnect. The server never requests or resets permissions; viewing and logs remain available."
         )
       }
       throw refusal(

@@ -59,12 +59,12 @@ type TailscaleModule = Awaited<ReturnType<typeof tailscalePackage>>;
 const pkg = { version: bundledStim().version };
 
 function fail(message: string): never {
-  console.error(`stim-server: ${message}`);
+  console.error(`stim: ${message}`);
   process.exit(1);
 }
 
 function tailscaleNote(tailscale: TailscaleState): string | null {
-  const remedy = `Remote clients cannot connect until Tailscale runs; stim-server checks again every few seconds and then prints the \`tailscale serve\` command to run once.`;
+  const remedy = `Remote clients cannot connect until Tailscale runs; stim checks again every few seconds and then prints the \`tailscale serve\` command to run once.`;
   if (tailscale.state === 'not-running') return `Tailscale is not running (${tailscale.backendState}). ${remedy}`;
   if (tailscale.state === 'unavailable') return `Tailscale is unavailable: ${tailscale.reason}. ${remedy}`;
   return null;
@@ -202,7 +202,7 @@ export async function serve(
       throw new NetRefusal(
         pid
           ? `port ${port} is held by pid ${pid}; stop it (${process.platform === 'win32' ? `taskkill /PID ${pid} /F` : `kill ${pid}`}), or run stim serve --port <n>.`
-          : `port ${port} is in use; another stim-server may already be running. Pass --port to use another port.`,
+          : `port ${port} is in use; another stim serve may already be running. Pass --port to use another port.`,
       );
     }
     throw error;
@@ -220,8 +220,7 @@ export async function serve(
         }
         return rewritten;
       },
-      (error: Error) =>
-        console.error(`stim-server: could not rewrite ${label} to name the stimd shim: ${error.message}`),
+      (error: Error) => console.error(`stim: could not rewrite ${label} to name the stimd shim: ${error.message}`),
     );
   console.log(`stim-server ${pkg.version} (stim ${stim.version}, protocol ${PROTOCOL_VERSION})`);
   for (const { host, port: bound } of server.addresses) {
@@ -254,7 +253,7 @@ export async function serve(
     const { addresses, problems } = lan.lan();
     const next = problems.join('\n');
     if (next !== lanProblems && problems.length)
-      for (const problem of problems) console.error(`stim-server: server.lanAddresses: ${problem}.`);
+      for (const problem of problems) console.error(`stim: server.lanAddresses: ${problem}.`);
     lanProblems = next;
     if (addresses.length)
       console.log(`local network endpoints: ${addresses.map((host) => `ws://${host}:${port}`).join(', ')}`);
@@ -343,7 +342,7 @@ async function watchTailnetTriggers(tailnet: Tailnet, label: string | null): Pro
       await check();
       reported = '';
     } catch (error) {
-      const line = `stim-server: could not check whether this machine uses the tailnet: ${String(error)}`;
+      const line = `stim: could not check whether this machine uses the tailnet: ${String(error)}`;
       if (line !== reported) console.error(line);
       reported = line;
     }
@@ -364,7 +363,7 @@ function reportShutdownFailure(failure: unknown): void {
   if (failure instanceof AggregateError) {
     for (const kept of failure.errors) reportShutdownFailure(kept);
   } else {
-    process.stderr.write(`stim-server: ${failure instanceof Error ? failure.message : String(failure)}\n`);
+    process.stderr.write(`stim: ${failure instanceof Error ? failure.message : String(failure)}\n`);
   }
 }
 
@@ -556,7 +555,8 @@ export async function setup(args: string[]): Promise<void> {
 }
 
 export function grant(id: string, values: { read?: boolean; control?: boolean }): void {
-  if (Boolean(values.read) === Boolean(values.control)) fail('devices grant takes exactly one of --control or --read.');
+  if (Boolean(values.read) === Boolean(values.control))
+    fail('pairings grant takes exactly one of --control or --read.');
   const scope = values.control ? 'control' : 'read';
   const capabilities = capabilitiesFor(scope === 'control');
   const outcome = grantDevice(id, [...capabilities]);
