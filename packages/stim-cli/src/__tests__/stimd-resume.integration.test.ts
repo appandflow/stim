@@ -34,6 +34,7 @@ import {
   ensureMetroThroughStimd,
   releaseDeviceTicket,
   releaseOrphanedTicket,
+  startDeviceLogStream,
   stimdBuildId,
 } from '../daemon/client.ts';
 import { listLeaseFiles, releaseRunLease, takeLease } from '../engine/device-lease.ts';
@@ -525,6 +526,64 @@ esac
     expect(Date.now() - started).toBeLessThan(20_000);
     expect(errors.mock.calls.filter(([line]) => line === RESTARTED)).toHaveLength(0);
     expect(listLeaseFiles().map((file) => file.lease?.holder)).toEqual([other]);
+  }, 60_000);
+});
+
+describe.skipIf(process.platform === 'win32')('a command not waiting on stimd when it restarts', () => {
+  const killIdle = async (root: string) => {
+    const first = await startStimd();
+    await admitCli(root);
+    first.kill('SIGKILL');
+    await once(first, 'exit');
+    return first;
+  };
+  const logSpec = (root: string) => ({
+    root,
+    platform: 'ios' as const,
+    slot: 'default',
+    udid: 'U1',
+    bundleId: 'com.test.app',
+    appName: 'Test',
+  });
+
+  test('a device lease asked after the kill is admitted again by the new stimd', async () => {
+    const root = workspace('app');
+    const first = await killIdle(root);
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const operation = context(root);
+    const result = await acquireDeviceTicket({ ...leaseParams(root), waitSeconds: 0 }, operation, () => {});
+    expect(result).toMatchObject({ status: 'leased' });
+    expect(stimdPid()).not.toBe(first.pid);
+    expect(errors.mock.calls.filter(([line]) => line === RESTARTED)).toHaveLength(1);
+    await releaseDeviceTicket(String(result.ticket), operation);
+    expect(listLeaseFiles()).toEqual([]);
+  }, 60_000);
+
+  test('a log stream start after the kill reaches the new stimd instead of reporting no connection', async () => {
+    const root = workspace('app');
+    await killIdle(root);
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const reply = await startDeviceLogStream(logSpec(root), context(root));
+    expect(JSON.stringify(reply)).not.toContain('no stimd connection');
+    expect(errors.mock.calls.filter(([line]) => line === RESTARTED)).toHaveLength(1);
+  }, 60_000);
+
+  test('a log stream start that stimd cannot admit again answers the refusal with its remedy', async () => {
+    const root = workspace('app');
+    await killIdle(root);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const now = Date.now();
+    const boots = [3, 2, 1].map((ago) => ({
+      at: now - ago * 1000,
+      build: stimdBuildId(),
+      pid: 1,
+      abnormal: true,
+      cause: 'engine',
+      reason: 'thrown for the test',
+    }));
+    writeFileSync(stimdBootsFile(), JSON.stringify({ format: 1, boots }));
+    const reply = await startDeviceLogStream(logSpec(root), context(root));
+    expect(reply).toEqual({ error: expect.stringContaining('stim doctor --fix') });
   }, 60_000);
 });
 

@@ -198,6 +198,7 @@ let refusal: {
   workspaces: string[];
 } | null = null;
 let opSocket: Socket | null = null;
+let lostOpToken: string | undefined;
 const opTokens = new WeakMap<Socket, string>();
 const attachedOps = new WeakSet<Socket>();
 let following: Promise<never> | null = null;
@@ -1129,7 +1130,10 @@ function beginOp(
       signal?.removeEventListener('abort', abort);
       if (begun) {
         if (held) held.push(socket);
-        else opSocket = socket;
+        else {
+          opSocket = socket;
+          lostOpToken = undefined;
+        }
         socket.unref();
       } else socket.destroy();
       resolve(begun);
@@ -1151,15 +1155,24 @@ function beginOp(
     signal?.addEventListener('abort', abort, { once: true });
     if (signal?.aborted) abort();
     socket.once('close', () => {
-      if (opSocket === socket) opSocket = null;
+      releaseOpSocket(socket);
       finish(false);
     });
   });
 }
 
+/** Drops the CLI op socket on close, remembering its token when stimd closed it so the op can be admitted again. */
+function releaseOpSocket(socket: Socket): void {
+  if (opSocket !== socket) return;
+  opSocket = null;
+  const token = opTokens.get(socket);
+  lostOpToken = token && admissions.get(token)?.lost ? token : undefined;
+}
+
 export function admittedOpToken(held?: Socket[]): string | undefined {
   const socket = held?.[0] ?? opSocket;
-  return socket ? opTokens.get(socket) : undefined;
+  if (socket) return opTokens.get(socket);
+  return held ? undefined : lostOpToken;
 }
 
 export function operationToken(operation?: StimContext): string | undefined {
@@ -1168,6 +1181,7 @@ export function operationToken(operation?: StimContext): string | undefined {
 }
 
 export function cancelCliOp(): void {
+  lostOpToken = undefined;
   opSocket?.destroy();
 }
 
@@ -1314,9 +1328,8 @@ async function readmit(
       if (admission.held) admission.held.push(socket);
       else {
         opSocket = socket;
-        socket.once('close', () => {
-          if (opSocket === socket) opSocket = null;
-        });
+        lostOpToken = undefined;
+        socket.once('close', () => releaseOpSocket(socket));
       }
       const record = admissions.get(token);
       if (record) Object.assign(record, { held: admission.held, resumed: true });
@@ -1353,6 +1366,11 @@ async function resumable(
   opToken: string,
   step: (opToken: string) => Promise<Record<string, unknown> | null>,
 ): Promise<Record<string, unknown> | null> {
+  if (admissions.get(opToken)?.lost) {
+    const readmitted = await resumeAdmission(opToken, operation, false, signal);
+    if (readmitted && 'error' in readmitted) throw readmitted.error;
+    if (readmitted) opToken = readmitted.token;
+  }
   const reply = await step(opToken);
   if ((reply && reply.op !== 'error') || signal?.aborted) return reply;
   const next = await resumeAdmission(opToken, operation, reply === null, signal);
@@ -1489,6 +1507,9 @@ export async function startDeviceLogStream(
   ).catch((error: unknown): Record<string, unknown> => ({
     op: 'error',
     message: error instanceof Error ? error.message : String(error),
+    ...(error instanceof Error && 'remedy' in error && typeof error.remedy === 'string'
+      ? { remedy: error.remedy }
+      : {}),
   }));
   throwIfCancelled(operation?.signal, 'device log startup');
   if (reply?.op === 'logs.started' && typeof reply.streamId === 'string') return { streamId: reply.streamId };
