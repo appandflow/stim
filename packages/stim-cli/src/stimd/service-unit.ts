@@ -1,8 +1,13 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { LABEL_VARIABLE, parseInstalledPlist, parseUnit, type InstalledService } from '@stim-cli/core/state';
-import { validateLabel } from '@stim-cli/server/service-plist';
+import {
+  isServiceLabel,
+  LABEL_VARIABLE,
+  parseInstalledPlist,
+  parseUnit,
+  type InstalledService,
+} from '@stim-cli/core/state';
 import { getExecutor } from '../exec.ts';
 
 const PLUTIL_TIMEOUT_MS = 5_000;
@@ -31,7 +36,7 @@ export function serviceUnitLabel(
   platform: NodeJS.Platform = process.platform,
 ): string | null {
   const label = platform === 'darwin' ? env.XPC_SERVICE_NAME : platform === 'linux' ? env[LABEL_VARIABLE] : undefined;
-  if (!label || validateLabel(label)) return null;
+  if (!label || !isServiceLabel(label)) return null;
   try {
     const installed = installedUnit(label, platform);
     return installed?.managed === true && installed.label === label && installed.port === port ? label : null;
@@ -44,5 +49,5 @@ export function serviceUnitLabel(
 export function unitSuccessorLabel(argv: readonly string[]): string | undefined {
   const at = argv.indexOf('--unit-successor');
   const label = at >= 0 ? argv[at + 1] : undefined;
-  return label && !validateLabel(label) ? label : undefined;
+  return label && isServiceLabel(label) ? label : undefined;
 }
