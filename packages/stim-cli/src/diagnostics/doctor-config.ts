@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
-import { configCorruptRepair } from '../workspace/config.ts';
+import { configCorruptRepair, getConfigPath } from '../workspace/config.ts';
 import type { Finding } from './doctor.ts';
 import { configSettingRefusal, envSettingRefusal } from '../workspace/settings-payload.ts';
 import { compilerCacheFallbackMessage, type CompilerCacheFallback, type Optimizations } from '../optimizations.ts';
@@ -13,6 +13,7 @@ import {
   settingOrigin,
   settingsLayers,
   settingValueAt,
+  unknownMachineEntries,
   unknownSettingKeys,
   type SettingsLayer,
 } from '../workspace/settings.ts';
@@ -144,18 +145,25 @@ export function checkMachineSettings({
     ...unknownSettingKeys(settings),
     ...(repositoryLayer ? unknownSettingKeys(repositoryLayer.settings) : []),
   ]);
+  const reportedInert = new Set<string>();
+  const reportInert = (key: string, file: string) => {
+    if (reportedInert.has(`${key}\0${file}`)) return;
+    reportedInert.add(`${key}\0${file}`);
+    if (leftovers.some((leftover) => leftover.key === key && leftover.file === file)) return;
+    findings.push({
+      level: 'note',
+      title: 'A key in the config is inert',
+      detail: `${key} in ${file} is not read by Stim, so its value changes nothing.`,
+      fix: `Remove ${key} from ${file}.`,
+    });
+  };
   for (const key of unknownKeys) {
     for (const holder of holders.filter((layer) => settingValueAt(layer.settings, key) !== undefined)) {
-      const file = holder.file;
-      if (leftovers.some((leftover) => leftover.key === key && leftover.file === file)) continue;
-      findings.push({
-        level: 'note',
-        title: 'A key in the config is inert',
-        detail: `${key} in ${file} is not read by Stim, so its value changes nothing.`,
-        fix: `Remove ${key} from ${file}.`,
-      });
+      reportInert(key, holder.file);
     }
   }
+  const machineFile = layers.find((layer) => layer.scope === 'machine')?.file ?? getConfigPath();
+  for (const { key } of unknownMachineEntries(machineConfig)) reportInert(key, machineFile);
 
   const buildValueRefusal = configSettingRefusal('remote.build', remoteBuild);
   if (buildValueRefusal)
