@@ -88,9 +88,7 @@ test.each([false, true])(
       expect(fixture.close).toHaveBeenCalledOnce();
       expect(process.exitCode).toBe(failed ? 1 : undefined);
       expect(stderr).toBe(
-        failed
-          ? 'stim-server: daemon claim /claims/daemon was kept\nstim-server: runner claim /claims/runner was kept\n'
-          : '',
+        failed ? 'stim: daemon claim /claims/daemon was kept\nstim: runner claim /claims/runner was kept\n' : '',
       );
     } finally {
       vi.restoreAllMocks();
