@@ -67,9 +67,10 @@ export function parsePairingCode(text: string): PairingResult {
   try {
     value = JSON.parse(text);
   } catch {
-    return { ok: false, error: t`This QR code is not a Stim pairing code.` };
+    return { ok: false, error: t`This is not a Stim pairing code.` };
   }
-  if (!value || typeof value !== 'object') return { ok: false, error: t`This QR code is not a Stim pairing code.` };
+  if (!value || typeof value !== 'object') return { ok: false, error: t`This is not a Stim pairing code.` };
+  if ('qr' in value && value.qr && typeof value.qr === 'object') value = value.qr;
   const { v, name, endpoint, pairingToken, fingerprint } = value as Record<string, unknown>;
   if (v === 1)
     return {
@@ -80,9 +81,9 @@ export function parsePairingCode(text: string): PairingResult {
   if (v !== 2) return { ok: false, error: t`This pairing code needs a newer version of the app.` };
   // compat end
   if (typeof endpoint !== 'string' || typeof pairingToken !== 'string' || typeof fingerprint !== 'string') {
-    return { ok: false, error: t`This QR code is not a Stim pairing code.` };
+    return { ok: false, error: t`This is not a Stim pairing code.` };
   }
-  if (!KEY.test(fingerprint)) return { ok: false, error: t`This QR code is not a Stim pairing code.` };
+  if (!KEY.test(fingerprint)) return { ok: false, error: t`This is not a Stim pairing code.` };
   const parsed = manualPairing(endpoint, pairingToken, typeof name === 'string' ? name : '');
   return parsed.ok ? { ok: true, payload: { ...parsed.payload, fingerprint } } : parsed;
 }

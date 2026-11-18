@@ -112,10 +112,10 @@ test('manual choice clears the failed scan and returning to the camera permits a
   );
   await scan();
   await connect();
-  await fireEvent.press(screen.getByText('Enter the Endpoint and Token Instead'));
+  await fireEvent.press(screen.getByText('Enter the Endpoint or Pairing Code Instead'));
   expect(screen.queryByText('Cannot reach Fixture Mac')).toBeNull();
   expect(screen.queryByTestId('camera')).toBeNull();
-  expect(screen.getByText('Endpoint')).toBeTruthy();
+  expect(screen.getByText('Endpoint or pairing code')).toBeTruthy();
 
   await fireEvent.press(screen.getByText('Scan a QR Code Instead'));
   await scan();
@@ -176,15 +176,77 @@ test('a typed endpoint also waits for Connect, and Cancel keeps what was typed',
       </I18nProvider>
     </GestureHandlerRootView>,
   );
-  await fireEvent.press(screen.getByText('Enter the Endpoint and Token Instead'));
-  await fireEvent.changeText(screen.getByLabelText('Endpoint'), 'wss://evil.example.com');
+  await fireEvent.press(screen.getByText('Enter the Endpoint or Pairing Code Instead'));
+  await fireEvent.changeText(screen.getByLabelText('Endpoint or pairing code'), 'wss://evil.example.com');
   await fireEvent.changeText(screen.getByLabelText('Pairing token'), 'kp7CvKCHww1rpbHjqsuHFhKCp0yAlBBLVKNdFQ0ngI4');
   await fireEvent.press(screen.getByText('Pair'));
   await screen.findByText('evil.example.com');
   expect(pairing).not.toHaveBeenCalled();
 
   await fireEvent.press(screen.getByText('Cancel'));
-  expect(screen.getByLabelText('Endpoint').props.value).toBe('wss://evil.example.com');
+  expect(screen.getByLabelText('Endpoint or pairing code').props.value).toBe('wss://evil.example.com');
   expect(screen.getByLabelText('Pairing token').props.defaultValue).toBe('kp7CvKCHww1rpbHjqsuHFhKCp0yAlBBLVKNdFQ0ngI4');
   expect(pairing).not.toHaveBeenCalled();
+
+  await fireEvent.press(screen.getByText('Pair'));
+  await screen.findByText('evil.example.com');
+  await connect();
+  expect(pairing).toHaveBeenCalledWith(
+    'wss://evil.example.com',
+    { pairingToken: 'kp7CvKCHww1rpbHjqsuHFhKCp0yAlBBLVKNdFQ0ngI4' },
+    expect.any(String),
+    'mobile',
+  );
+});
+
+test('a pasted stim pair line goes to Connect with its fingerprint and Cancel leaves both fields empty', async () => {
+  await render(
+    <GestureHandlerRootView>
+      <I18nProvider i18n={i18n}>
+        <Pair />
+      </I18nProvider>
+    </GestureHandlerRootView>,
+  );
+  await fireEvent.press(screen.getByText('Enter the Endpoint or Pairing Code Instead'));
+  await fireEvent.changeText(
+    screen.getByLabelText('Endpoint or pairing code'),
+    ` ${remote('wss://mac.tail1234.ts.net').data}\n`,
+  );
+  await fireEvent.changeText(screen.getByLabelText('Pairing token'), 'kp7CvKCHww1rpbHjqsuHFhKCp0yAlBBLVKNdFQ0ngI4');
+  await fireEvent.press(screen.getByText('Pair'));
+  await screen.findByText('mac.tail1234.ts.net');
+
+  await fireEvent.press(screen.getByText('Cancel'));
+  expect(screen.getByLabelText('Endpoint or pairing code').props.value).toBe('');
+  expect(screen.getByLabelText('Pairing token').props.defaultValue).toBe('');
+
+  await fireEvent.changeText(screen.getByLabelText('Endpoint or pairing code'), scanned.data);
+  await fireEvent.press(screen.getByText('Pair'));
+  await screen.findByText('127.0.0.1');
+  await connect();
+  expect(pairing).toHaveBeenCalledWith(
+    'ws://127.0.0.1:1',
+    {
+      pairingToken: 'TzVwCxX0F3_3bAXKpgOSMq7xNgGMdHUpcnWL3yIrj5w',
+      fingerprint: 'kM6qZt0yD3R8oN1vWlFc2sB9eHjXaQ4uYiPg7rTkLmE',
+    },
+    expect.any(String),
+    'mobile',
+  );
+});
+
+test('a pasted code that is not a pairing code shows an error and stays on the form', async () => {
+  await render(
+    <GestureHandlerRootView>
+      <I18nProvider i18n={i18n}>
+        <Pair />
+      </I18nProvider>
+    </GestureHandlerRootView>,
+  );
+  await fireEvent.press(screen.getByText('Enter the Endpoint or Pairing Code Instead'));
+  await fireEvent.changeText(screen.getByLabelText('Endpoint or pairing code'), '{"v":2,"endpoint":');
+  await fireEvent.press(screen.getByText('Pair'));
+  expect(screen.getByText('This is not a Stim pairing code.')).toBeTruthy();
+  expect(screen.getByLabelText('Endpoint or pairing code').props.value).toBe('{"v":2,"endpoint":');
+  expect(screen.queryByText('Connect')).toBeNull();
 });

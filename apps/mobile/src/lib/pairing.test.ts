@@ -27,6 +27,11 @@ describe('parsePairingCode', () => {
     });
   });
 
+  it('reads the payload inside the stim pair --json wrapper', () => {
+    const wrapped = JSON.stringify({ qr: JSON.parse(code({})), expiresAt: '2026-11-18T12:05:00.000Z' });
+    expect(parsePairingCode(wrapped)).toEqual(parsePairingCode(code({})));
+  });
+
   it('accepts the endpoints the shared vectors list for the phone app', () => {
     expect(vectors.endpoints.some((vector) => vector.kind === 'localNetwork')).toBe(true);
     for (const { endpoint, phone } of vectors.endpoints) {
@@ -35,7 +40,7 @@ describe('parsePairingCode', () => {
   });
 
   it('refuses a code without a fingerprint, a malformed token, and other QR codes', () => {
-    expect(parsePairingCode('https://example.com').ok).toBe(false);
+    expect(parsePairingCode('https://example.com')).toEqual({ ok: false, error: 'This is not a Stim pairing code.' });
     expect(parsePairingCode(code({ fingerprint: undefined })).ok).toBe(false);
     expect(parsePairingCode(code({ pairingToken: 't0k' })).ok).toBe(false);
   });
