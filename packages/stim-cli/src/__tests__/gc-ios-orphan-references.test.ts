@@ -55,6 +55,6 @@ test('an orphaned iOS simulator that a project record references by delete time 
 
   const failures = await deleteProjectDevices([{ kind: 'ios', id: 'U1', name: 'stim-app' }], [], []);
 
-  expect(failures).toBe(1);
+  expect(failures).toBe(0);
   expect(calls.some((c) => /simctl delete U1/.test(c))).toBe(false);
 });

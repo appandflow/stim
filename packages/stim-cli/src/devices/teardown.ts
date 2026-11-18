@@ -17,7 +17,7 @@ import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { existsSync, lstatSync, realpathSync, renameSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
-import { getProject, loadConfig, withConfigLockAsync } from '../workspace/config.ts';
+import { getConfigDir, getProject, loadConfig, withConfigLockAsync } from '../workspace/config.ts';
 import { withWorkspaceProcessLock, WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { pidExists, signalProcessTreeAsync } from '../metro.ts';
 import { releaseBrowserPort } from '../named-ports.ts';
@@ -320,19 +320,19 @@ async function parkOwnedIosSim(
   return { record, evicted };
 }
 
-function assertIosSimUnreferenced(udid: string): void {
+export function withIosDeviceNameLock<T>(fn: () => Promise<T>): Promise<T> {
+  return withWorkspaceProcessLock(getConfigDir(), 'ios-device-names', async () => fn(), { external: true });
+}
+
+function iosSimReference(udid: string): string | null {
   const config = loadConfig();
   if (!config) throw new Error(`Cannot verify references to simulator ${udid} without a Stim config; it was kept.`);
   for (const [projectPath, project] of Object.entries(config.projects)) {
     for (const { slot, platforms } of projectDeviceSlots(project)) {
-      if (platforms.ios?.deviceUdid === udid) {
-        throw new Error(`Simulator ${udid} is referenced by ${projectPath} (${slot}); it was kept.`);
-      }
+      if (platforms.ios?.deviceUdid === udid) return `${projectPath} (${slot})`;
     }
   }
-  if (readParked('ios', { config }).some((entry) => entry.udid === udid)) {
-    throw new Error(`Simulator ${udid} is in the simulator pool; it was kept.`);
-  }
+  return readParked('ios', { config }).some((entry) => entry.udid === udid) ? 'the simulator pool' : null;
 }
 
 export async function teardownOwnedIosSim(
@@ -362,6 +362,21 @@ export async function teardownOwnedIosSim(
   let parkFallback: string | undefined;
   const reportedBusy = new Set<string>();
   try {
+    if (del && unreferenced) {
+      return await withIosDeviceNameLock(async () => {
+        const holder = iosSimReference(udid);
+        if (holder) return { status: 'skipped', kind: 'referenced', reason: `referenced by ${holder}` };
+        return await teardownOwnedIosSim(udid, {
+          del,
+          label,
+          park,
+          deferShutdown,
+          workspace,
+          shutdownClock,
+          operation,
+        });
+      });
+    }
     const resolved = await resolveOwnedIosSimNow(udid, operation);
     if (resolved.notOwned) {
       return {
@@ -371,7 +386,6 @@ export async function teardownOwnedIosSim(
       };
     }
     if (resolved.missing) return { status: 'missing' };
-    if (del && unreferenced) await withConfigLockAsync(() => assertIosSimUnreferenced(udid), operation?.signal);
     await closeOwnedDeviceSessions(
       { platform: 'ios', id: udid },
       async () => Boolean((await resolveOwnedIosSimNow(udid, operation)).sim),
@@ -430,7 +444,6 @@ export async function teardownOwnedIosSim(
       }
     }
     if (del) {
-      if (unreferenced) await withConfigLockAsync(() => assertIosSimUnreferenced(udid), operation?.signal);
       await deleteIosSim(udid, operation);
       return { status: 'torn-down', label: label ?? sim.name ?? udid, ...(parkFallback ? { parkFallback } : {}) };
     }
