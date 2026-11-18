@@ -1,4 +1,11 @@
-import { loadConfig, REMOVED_SETTINGS, settingDefinition, type Config, type DaemonMode } from '@stim-cli/core/state';
+import {
+  loadConfig,
+  REMOVED_SETTINGS,
+  settingDefinition,
+  settingValueAt,
+  type Config,
+  type DaemonMode,
+} from '@stim-cli/core/state';
 
 const MODE = settingDefinition('daemon.mode');
 
@@ -8,10 +15,20 @@ export function parseDaemonMode(value: unknown): DaemonMode | null {
   return DAEMON_MODES.find((mode) => mode === value) ?? null;
 }
 
-/** The machine setting `daemon.mode` alone, or null when it is unset or invalid. */
+const LEFTOVER = REMOVED_SETTINGS.get('maintenance.mode');
+
+/** `daemon.mode` in `config`, else the `off` or `report` a 1.x `maintenance.mode` left in it, else null. */
+function machineDaemonMode(config: Config | null | undefined): DaemonMode | null {
+  return (
+    parseDaemonMode(config?.daemon?.mode) ??
+    parseDaemonMode(LEFTOVER?.off?.(settingValueAt(config, 'maintenance.mode')))
+  );
+}
+
+/** The machine setting `daemon.mode`, else a leftover `maintenance.mode`, or null when neither is usable. */
 export function configuredDaemonMode(): DaemonMode | null {
   try {
-    return parseDaemonMode(loadConfig()?.daemon?.mode);
+    return machineDaemonMode(loadConfig());
   } catch {
     return null;
   }
@@ -27,7 +44,7 @@ export function daemonMode(env: NodeJS.ProcessEnv = process.env, config?: Config
   const fromEnv = MODE?.env ? parseDaemonMode(env[MODE.env]) : null;
   if (fromEnv) return fromEnv;
   if (env.CI) return 'off';
-  return (config === undefined ? configuredDaemonMode() : parseDaemonMode(config?.daemon?.mode)) ?? 'on';
+  return (config === undefined ? configuredDaemonMode() : machineDaemonMode(config)) ?? 'on';
 }
 
 /** Whether this command may start stimd: `daemon.mode` is not off. */
