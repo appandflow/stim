@@ -652,13 +652,12 @@ test.skipIf(process.platform === 'win32')(
     ageCheckout(source, daysAgo(8));
     rmSync(diskUsageCacheFile(modules), { force: true });
     ageTree(source, daysAgo(8));
-    if (!(await privateSizeKnowable(modules))) skip('the test volume cannot report shared blocks');
+    if (!(await privateSizeKnowable(modules, 10_000))) skip('the test volume cannot report shared blocks');
 
     const { payload } = await gcJson('normal');
 
-    const kept = (payload as LevelPayload).actions.find(
-      (action) => action.kind === 'delete-dependencies' && action.target === modules,
-    );
+    const typed: LevelPayload = payload;
+    const kept = typed.actions.find((action) => action.kind === 'delete-dependencies' && action.target === modules);
     expect(kept).toMatchObject({ outcome: 'kept' });
     expect(kept?.detail).toMatch(
       /^\d+K of its \d+(\.\d)?M is its own and the rest is shared with copy-on-write clones or hard links/,
@@ -675,12 +674,12 @@ test.skipIf(process.platform === 'win32')(
     const modules = join(source, 'node_modules');
     const pods = join(source, 'ios', 'Pods');
     ageCheckout(source, daysAgo(8));
-    if (!(await privateSizeKnowable(modules))) skip('the test volume cannot report shared blocks');
+    if (!(await privateSizeKnowable(modules, 10_000))) skip('the test volume cannot report shared blocks');
     const unmeasured = () => {
-      for (const [path, bytes] of [
-        [modules, 2 * 1024 ** 3],
-        [pods, 1024 ** 3],
-      ] as const)
+      for (const { path, bytes } of [
+        { path: modules, bytes: 2 * 1024 ** 3 },
+        { path: pods, bytes: 1024 ** 3 },
+      ])
         writeCacheFile(diskUsageCacheFile(path), {
           path,
           measuredAt: new Date().toISOString(),
@@ -698,7 +697,7 @@ test.skipIf(process.platform === 'win32')(
     unmeasured();
     walks.set(modules, () => ({ bytes: 2 * 1024 ** 3, privateBytes: null }));
     walks.set(pods, slow);
-    const first = (await gcJson('normal')).payload as LevelPayload;
+    const first: LevelPayload = (await gcJson('normal')).payload;
     expect(detail(first, modules)).toBe(
       'its volume cannot report which of its blocks other files share, so its real size is unknown and it stays',
     );
@@ -708,7 +707,7 @@ test.skipIf(process.platform === 'win32')(
 
     unmeasured();
     walks.set(modules, slow);
-    const second = (await gcJson('normal')).payload as LevelPayload;
+    const second: LevelPayload = (await gcJson('normal')).payload;
     expect(detail(second, pods)).toBe(
       'stim gc spent its 2 minutes of measuring on other trees first, so its real size is unknown and it stays',
     );

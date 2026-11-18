@@ -56,7 +56,7 @@ describe.runIf(process.platform === 'linux')('measureTree on Linux', () => {
     linkSync(join(store, 'package.js'), join(tree, '.pnpm', 'package.js'));
     linkSync(join(tree, 'own'), join(tree, '.pnpm', 'own-link'));
     symlinkSync(store, join(tree, 'outside'));
-    if (!(await privateSizeKnowable(tree))) skip('the test volume shares blocks through reflinks too');
+    if (!(await privateSizeKnowable(tree, 10_000))) skip('the test volume shares blocks through reflinks too');
 
     const size = await measureTree(tree, { timeoutMs: 60_000 });
 

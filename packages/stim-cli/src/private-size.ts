@@ -4,6 +4,7 @@ import { statfs } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
 import { privateSizeHelper } from './clonefile.ts';
+import { answered } from './workspace/bounded-read.ts';
 import { runOperationFile } from './engine/operation-exec.ts';
 import { WorkspaceProcessCleanupError } from './engine/workspace-process-lock.ts';
 import { getExecutor } from './exec.ts';
@@ -29,13 +30,13 @@ const LINK_COUNTED_VOLUMES: ReadonlySet<number> = new Set([0xef53, 0x01021994]);
 
 /**
  * Whether a walk may tell what deleting the tree at `path` would free: on macOS the `stim-privsize` helper decides
- * during the walk, on Linux the volume must be link-counted.
+ * during the walk, on Linux the volume must be link-counted. A volume that does not answer within `timeoutMs` cannot.
  */
-export async function privateSizeKnowable(path: string): Promise<boolean> {
+export async function privateSizeKnowable(path: string, timeoutMs: number): Promise<boolean> {
   if (process.platform === 'darwin') return true;
   if (process.platform !== 'linux') return false;
   try {
-    return LINK_COUNTED_VOLUMES.has((await statfs(path)).type);
+    return LINK_COUNTED_VOLUMES.has((await answered(path, () => statfs(path), timeoutMs)).type);
   } catch {
     return false;
   }
@@ -62,18 +63,18 @@ function parseFind(output: string): TreeSize {
   const linked = new Map<string, { links: number; seen: number; bytes: number }>();
   let bytes = 0;
   let privateBytes = 0;
-  for (const [, links, inode, blocks] of output.matchAll(/^(\d+) (\d+) (\d+)$/gm)) {
+  for (const [, links = '', inode = '', blocks = ''] of output.matchAll(/^(\d+) (\d+) (\d+)$/gm)) {
     const size = Number(blocks) * 512;
     if (links === '1') {
       bytes += size;
       privateBytes += size;
       continue;
     }
-    const entry = linked.get(inode!);
+    const entry = linked.get(inode);
     if (entry) entry.seen++;
     else {
       bytes += size;
-      linked.set(inode!, { links: Number(links), seen: 1, bytes: size });
+      linked.set(inode, { links: Number(links), seen: 1, bytes: size });
     }
   }
   for (const entry of linked.values()) if (entry.seen >= entry.links) privateBytes += entry.bytes;
@@ -132,7 +133,7 @@ export async function measureTree(
   };
   const counted = !options.targets && options.private !== false;
   const helper = counted ? await privateSizeHelper(operation) : null;
-  if (!helper && counted && process.platform === 'linux' && (await privateSizeKnowable(path))) {
+  if (!helper && counted && process.platform === 'linux' && (await privateSizeKnowable(path, options.timeoutMs))) {
     try {
       return parseFind(await walk('find', [path, '-type', 'f', '-printf', '%n %i %b\\n']));
     } catch (error) {

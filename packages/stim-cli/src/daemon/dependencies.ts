@@ -110,16 +110,21 @@ async function measureUnknown(
   walk: boolean,
   operation?: StimContext,
 ): Promise<void> {
+  const deadline = Date.now() + MEASURE_BUDGET_MS;
+  const outOfTime = `stim gc spent its ${MEASURE_BUDGET_MS / 60_000} minutes of measuring on other trees first, so its real size is unknown and it stays`;
   const due: RankedDependency[] = [];
   for (const dependency of ranked.filter(({ privateBytes }) => privateBytes === null)) {
-    if (!(await privateSizeKnowable(dependency.candidate.path))) dependency.unknown = VOLUME_CANNOT_TELL;
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      if (walk) dependency.unknown = outOfTime;
+    } else if (!(await privateSizeKnowable(dependency.candidate.path, remainingMs)))
+      dependency.unknown = VOLUME_CANNOT_TELL;
     else if (walk) due.push(dependency);
   }
-  const deadline = Date.now() + MEASURE_BUDGET_MS;
   for (const dependency of due.toSorted((a, b) => (b.bytes ?? -1) - (a.bytes ?? -1))) {
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) {
-      dependency.unknown = `stim gc spent its ${MEASURE_BUDGET_MS / 60_000} minutes of measuring on other trees first, so its real size is unknown and it stays`;
+      dependency.unknown = outOfTime;
       continue;
     }
     const { outcome, measure } = await refreshMeasure(dependency.candidate.path, {
