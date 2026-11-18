@@ -13,7 +13,7 @@ import {
   settingOrigin,
   settingsLayers,
   settingValueAt,
-  unknownMachineKeys,
+  unknownMachineEntries,
   unknownSettingKeys,
   type SettingsLayer,
 } from '../workspace/settings.ts';
@@ -140,7 +140,7 @@ export function checkMachineSettings({
       fix: leftover.remedy,
     });
 
-  const machineUnknown = unknownMachineKeys(machineConfig);
+  const machineUnknown = unknownMachineEntries(machineConfig).map((entry) => entry.key);
   const machineFile = layers.find((layer) => layer.scope === 'machine')?.file ?? getConfigPath();
   const holders = repositoryLayer ? [...layers, repositoryLayer] : layers;
   const unknownKeys = new Set([

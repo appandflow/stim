@@ -126,7 +126,7 @@ test('a name that was removed from the settings is refused and warned about like
   ]);
 });
 
-test('removed names at machine scope are reported with their file and unset removes them', async () => {
+test('removed names at machine scope are reported with their file and unset refuses them as on main', async () => {
   const machine = join(home, 'config.json');
   writeFileSync(
     machine,
@@ -159,19 +159,11 @@ test('removed names at machine scope are reported with their file and unset remo
   );
   expect(note).toEqual([]);
 
-  const unset = await settings(['unset', 'remote.buildMode', '--json']);
-  expect(unset.exitCode).toBe(0);
-  expect(JSON.parse(unset.out[0] ?? '')).toEqual({
-    key: 'remote.buildMode',
-    removed: [{ scope: 'machine', file: machine }],
-  });
-  const config = JSON.parse(readFileSync(machine, 'utf-8'));
-  expect(config.remote).toEqual({ machines: [] });
-  expect(config.daemon).toEqual({ enabled: true, mode: 'on' });
-
-  const typo = await settings(['unset', 'remote.nothing']);
-  expect(typo.exitCode).toBe(1);
-  expect(typo.note.join('\n')).toContain('"remote.nothing" is not a Stim setting.');
+  const before = readFileSync(machine, 'utf-8');
+  const unset = await settings(['unset', 'remote.buildMode']);
+  expect(unset.exitCode).toBe(1);
+  expect(unset.note.join('\n')).toContain('"remote.buildMode" is not a Stim setting.');
+  expect(readFileSync(machine, 'utf-8')).toBe(before);
 });
 
 test('machine records are not unknown keys and unset refuses to remove them', async () => {
@@ -206,7 +198,7 @@ test('machine records are not unknown keys and unset refuses to remove them', as
   expect(readFileSync(machine, 'utf-8')).toBe(text);
 });
 
-test('a machine-only setting in a project layer keeps its group report and unset leaves the machine value', async () => {
+test('a machine-only setting in a project layer keeps its group report as on main', async () => {
   const machine = join(home, 'config.json');
   writeFileSync(
     machine,
@@ -222,14 +214,27 @@ test('a machine-only setting in a project layer keeps its group report and unset
     { key: 'concurrency', scope: 'workspace', file: workspaceFile, value: { maxBuilds: 9 } },
   ]);
 
-  const unset = await settings(['unset', 'concurrency', '--json']);
-  expect(JSON.parse(unset.out[0] ?? '')).toEqual({
-    key: 'concurrency',
-    removed: [{ scope: 'workspace', file: workspaceFile }],
+  const before = readFileSync(machine, 'utf-8');
+  expect((await settings(['unset', 'concurrency'])).exitCode).toBe(1);
+  expect(readFileSync(machine, 'utf-8')).toBe(before);
+});
+
+test('a literal dotted property is reported under its own name and never resolves into a record', async () => {
+  const machine = join(home, 'config.json');
+  const text = JSON.stringify({
+    version: 2,
+    projects: {},
+    repos: {},
+    parked: { ios: [{ udid: 'A' }] },
+    'parked.ios': 'stale',
   });
-  const config = JSON.parse(readFileSync(machine, 'utf-8'));
-  expect(config.concurrency).toEqual({ maxBuilds: 2 });
-  expect(config.projects[app].settings).toEqual({});
+  writeFileSync(machine, text);
+
+  expect(JSON.parse((await settings(['--json'])).out[0] ?? '').unknown).toEqual([
+    { key: 'parked.ios', scope: 'machine', file: machine, value: 'stale' },
+  ]);
+  expect((await settings(['unset', 'parked.ios', '--scope', 'machine'])).exitCode).toBe(1);
+  expect(readFileSync(machine, 'utf-8')).toBe(text);
 });
 
 test('unset of maintenance.idleStopHours removes the still-active machine setting', async () => {

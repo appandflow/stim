@@ -586,22 +586,23 @@ export function removedMachineSettings(machine: unknown): SettingsObject {
   return settings;
 }
 
-function unknownScopedKeys(own: SettingsObject, prefix = ''): string[] {
-  const unknown: string[] = [];
-  for (const [key, value] of Object.entries(own)) {
-    const path = prefix ? `${prefix}.${key}` : key;
+function unknownScopedEntries(own: SettingsObject, prefix = ''): Array<{ key: string; value: unknown }> {
+  const unknown: Array<{ key: string; value: unknown }> = [];
+  for (const [name, value] of Object.entries(own)) {
+    const path = prefix ? `${prefix}.${name}` : name;
     if (path === '$schema') continue;
-    const group = [...MACHINE_KNOWN_SETTINGS].some((k) => k.startsWith(`${path}.`));
-    if (isPlainObject(value) && (group || !MACHINE_KNOWN_SETTINGS.has(path))) {
-      unknown.push(...unknownScopedKeys(value, path));
-    } else if (!MACHINE_KNOWN_SETTINGS.has(path)) unknown.push(path);
+    const dotted = name.includes('.');
+    const group = !dotted && [...MACHINE_KNOWN_SETTINGS].some((k) => k.startsWith(`${path}.`));
+    if (isPlainObject(value) && !dotted && (group || !MACHINE_KNOWN_SETTINGS.has(path))) {
+      unknown.push(...unknownScopedEntries(value, path));
+    } else if (dotted || !MACHINE_KNOWN_SETTINGS.has(path)) unknown.push({ key: path, value });
   }
   return unknown;
 }
 
-export function unknownMachineKeys(machine: unknown): string[] {
+export function unknownMachineEntries(machine: unknown): Array<{ key: string; value: unknown }> {
   if (!isPlainObject(machine)) return [];
-  return unknownScopedKeys(
+  return unknownScopedEntries(
     Object.fromEntries(Object.entries(machine).filter(([key]) => !MACHINE_RECORD_KEYS.has(key))),
   );
 }
