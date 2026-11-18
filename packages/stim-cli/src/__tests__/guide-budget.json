@@ -25,7 +25,7 @@
     "agent ownership": 9500,
     "agent report": 1500,
     "facts payloads": 37250,
-    "facts gc": 26000,
+    "facts gc": 26050,
     "facts status": 52100,
     "facts stats": 10500,
     "lifecycle hosted-android": 12500,
@@ -33,10 +33,10 @@
     "lifecycle pool": 13750,
     "lifecycle builds": 38500,
     "lifecycle concurrency": 12000,
-    "lifecycle budget": 17000,
+    "lifecycle budget": 17050,
     "lifecycle options": 25000,
     "lifecycle devices": 11000,
-    "cleanup gc": 72750,
+    "cleanup gc": 72800,
     "cleanup disk": 16250
   }
 }

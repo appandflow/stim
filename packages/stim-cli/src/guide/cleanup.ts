@@ -636,8 +636,9 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
   whose node_modules a linked worktree listed by git links to (a symlink at the
   same relative path or in its top two directory levels, up to 2000 entries,
   resolving into the tree; past the bound or at an unreadable directory the
-  tree is kept; unlisted worktrees are not scanned), nor a tree not measured yet at the 7-day
-  rule (critical takes it), or that is not a real
+  tree is kept; unlisted worktrees are not scanned), nor a tree of unknown size at the 7-day
+  rule (gc measures them first, up to 2 minutes, and says why one stays
+  unknown; critical takes it), or that is not a real
   git-ignored directory with no tracked or unignored file and on its own volume. The deletion is
   recorded in the checkout's workspace; \`stim worktree warm\` in a linked
   worktree then says on stderr that the source has no installed dependencies

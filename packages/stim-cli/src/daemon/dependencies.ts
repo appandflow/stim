@@ -17,6 +17,7 @@ import {
 } from '../stimd/passes/artifacts.ts';
 import { maintenancePinnedReader } from '../stimd/passes/protect.ts';
 import { knownPrivateBytes, refreshMeasure, trustedMeasure } from '../disk-usage.ts';
+import { privateSizeKnowable } from '../private-size.ts';
 import { workspaceKeys } from '../workspace/lightened.ts';
 import { freshLaunchers } from '../workspace/launchers.ts';
 import { workspaceDir } from '../workspace/paths.ts';
@@ -49,7 +50,10 @@ const HOUR_MS = 60 * 60_000;
 const WALK_TIMEOUT_MS = 10 * 60_000;
 const RESTORE = 'stim worktree warm';
 export const SOURCE_RESTORE = "the project's own install in it, or stim worktree warm --refresh in a linked worktree";
-const UNKNOWN_KEPT = 'its real size is not measured yet, or the volume cannot tell, so it stays';
+const NOT_MEASURED = 'its real size is not measured since its last install, so it stays';
+const VOLUME_CANNOT_TELL =
+  'its volume cannot report which of its blocks other files share, so its real size is unknown and it stays';
+const MEASURE_BUDGET_MS = 2 * 60_000;
 const VERBS: Record<DaemonLadderAction['outcome'], string> = {
   would: 'would delete',
   done: 'deleted',
@@ -65,6 +69,8 @@ export interface RankedDependency {
   bytes: number | null;
   /** What deleting it would free, from a measurement whose install signature still matches; null when unknown. */
   privateBytes: number | null;
+  /** Why `privateBytes` is null. */
+  unknown?: string;
 }
 
 type Measured = RankedDependency & { privateBytes: number };
@@ -91,8 +97,45 @@ export function selectDependencies(
     .filter((dependency) => dependency.privateBytes < REAL_BYTES_THRESHOLD)
     .map((dependency) => ({ dependency, detail: sharedDetail(dependency) }));
   if (unknown === 'take') take.push(...unmeasured);
-  else kept.push(...unmeasured.map((dependency) => ({ dependency, detail: UNKNOWN_KEPT })));
+  else kept.push(...unmeasured.map((dependency) => ({ dependency, detail: dependency.unknown ?? NOT_MEASURED })));
   return { take, kept };
+}
+
+/**
+ * Records why each tree in `ranked` has no private size. With `walk`, as in a `stim gc` pass, it first walks those its
+ * volume can size, largest first, one at a time for at most MEASURE_BUDGET_MS in all, and records what each walk found.
+ */
+async function measureUnknown(
+  ranked: readonly RankedDependency[],
+  walk: boolean,
+  operation?: StimContext,
+): Promise<void> {
+  const due: RankedDependency[] = [];
+  for (const dependency of ranked.filter(({ privateBytes }) => privateBytes === null)) {
+    if (!(await privateSizeKnowable(dependency.candidate.path))) dependency.unknown = VOLUME_CANNOT_TELL;
+    else if (walk) due.push(dependency);
+  }
+  const deadline = Date.now() + MEASURE_BUDGET_MS;
+  for (const dependency of due.toSorted((a, b) => (b.bytes ?? -1) - (a.bytes ?? -1))) {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      dependency.unknown = `stim gc spent its ${MEASURE_BUDGET_MS / 60_000} minutes of measuring on other trees first, so its real size is unknown and it stays`;
+      continue;
+    }
+    const { outcome, measure } = await refreshMeasure(dependency.candidate.path, {
+      timeoutMs: remainingMs,
+      operation,
+      valid: (cached) => cached.privateBytes !== undefined,
+    });
+    if (measure?.privateBytes !== undefined) {
+      dependency.bytes = measure.bytes;
+      dependency.privateBytes = measure.privateBytes;
+    } else
+      dependency.unknown =
+        outcome === 'failed'
+          ? `its size walk did not finish within the ${Math.ceil(remainingMs / 1000)} seconds stim gc had left, so its real size is unknown and it stays`
+          : VOLUME_CANNOT_TELL;
+  }
 }
 
 function canonicalOrNull(path: string): string | null {
@@ -496,6 +539,7 @@ async function takeIdleDependencies(
           detail: entry.reason,
           setting: 'idle.sourceDormantDays',
         });
+    if (!input.act || input.force) await measureUnknown(ranked, Boolean(input.force), operation);
     const selected = selectDependencies(ranked, 'keep');
     take = selected.take;
     if (!input.act || input.force)

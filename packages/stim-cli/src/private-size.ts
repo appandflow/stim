@@ -1,5 +1,6 @@
 import type { ChildProcess } from 'node:child_process';
 import { lstatSync } from 'node:fs';
+import { statfs } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
 import { privateSizeHelper } from './clonefile.ts';
@@ -19,6 +20,27 @@ export const INSTALL_MARKERS: readonly string[] = [
   'Manifest.lock',
 ];
 
+/**
+ * statfs(2) `f_type` of the Linux volumes whose files share blocks only through hard links: ext2, ext3 and ext4
+ * (EXT4_SUPER_MAGIC) and tmpfs (TMPFS_MAGIC). Btrfs and XFS can share blocks between files with one link each
+ * (reflinks), which a link count does not show.
+ */
+const LINK_COUNTED_VOLUMES: ReadonlySet<number> = new Set([0xef53, 0x01021994]);
+
+/**
+ * Whether a walk may tell what deleting the tree at `path` would free: on macOS the `stim-privsize` helper decides
+ * during the walk, on Linux the volume must be link-counted.
+ */
+export async function privateSizeKnowable(path: string): Promise<boolean> {
+  if (process.platform === 'darwin') return true;
+  if (process.platform !== 'linux') return false;
+  try {
+    return LINK_COUNTED_VOLUMES.has((await statfs(path)).type);
+  } catch {
+    return false;
+  }
+}
+
 export interface TreeSize {
   bytes: number;
   /** What deleting the tree would free; null when the volume or the machine cannot tell. */
@@ -32,6 +54,32 @@ function parseHelper(output: string): TreeSize | null {
   return match ? { bytes: Number(match[1]), privateBytes: Number(match[2]) } : null;
 }
 
+/**
+ * Sums `find -printf '%n %i %b\\n'` lines: a file counts once per inode, and frees its blocks only when every one of
+ * its links is in the tree, so a file hard-linked from a package store outside it frees nothing.
+ */
+function parseFind(output: string): TreeSize {
+  const linked = new Map<string, { links: number; seen: number; bytes: number }>();
+  let bytes = 0;
+  let privateBytes = 0;
+  for (const [, links, inode, blocks] of output.matchAll(/^(\d+) (\d+) (\d+)$/gm)) {
+    const size = Number(blocks) * 512;
+    if (links === '1') {
+      bytes += size;
+      privateBytes += size;
+      continue;
+    }
+    const entry = linked.get(inode!);
+    if (entry) entry.seen++;
+    else {
+      bytes += size;
+      linked.set(inode!, { links: Number(links), seen: 1, bytes: size });
+    }
+  }
+  for (const entry of linked.values()) if (entry.seen >= entry.links) privateBytes += entry.bytes;
+  return { bytes, privateBytes };
+}
+
 function parseDu(output: string): TreeSize | null {
   const sizes = [...output.matchAll(/^(\d+)\s/gm)].map((match) => Number(match[1]));
   return sizes.length ? { bytes: sizes.reduce((sum, kb) => sum + kb, 0) * 1024, privateBytes: null } : null;
@@ -39,7 +87,8 @@ function parseDu(output: string): TreeSize | null {
 
 /**
  * The size of the tree at `path` in one walk: on macOS with the Command Line Tools, `stim-privsize` gives the allocated
- * and private bytes; elsewhere, or when the helper fails, `du -sk` gives the allocated bytes and the private bytes stay
+ * and private bytes; on a Linux volume `privateSizeKnowable` accepts, GNU `find` lists each file's links and blocks for
+ * the same count; elsewhere, or when that walk fails, `du -sk` gives the allocated bytes and the private bytes stay
  * unknown. With `targets`, or `private: false`, only `du -sk` runs, over the targets' sum. Null when neither could
  * measure it, or when the helper was stopped at the timeout. With an operation the walk is its declared child; without
  * one `onSpawn` sees it and it runs at low priority. Claimed background walks keep their low priority with an operation.
@@ -81,7 +130,16 @@ export async function measureTree(
     const stdout: unknown = error instanceof Error && 'stdout' in error ? error.stdout : undefined;
     return { status, stdout };
   };
-  const helper = options.targets || options.private === false ? null : await privateSizeHelper(operation);
+  const counted = !options.targets && options.private !== false;
+  const helper = counted ? await privateSizeHelper(operation) : null;
+  if (!helper && counted && process.platform === 'linux' && (await privateSizeKnowable(path))) {
+    try {
+      return parseFind(await walk('find', [path, '-type', 'f', '-printf', '%n %i %b\\n']));
+    } catch (error) {
+      failed(error);
+      if (error instanceof Error && 'signal' in error && error.signal) return null;
+    }
+  }
   if (helper) {
     try {
       const size = parseHelper(await walk(helper, [path]));

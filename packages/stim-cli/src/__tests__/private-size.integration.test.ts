@@ -3,7 +3,7 @@ import { linkSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, symli
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { measureTree } from '../private-size.ts';
+import { measureTree, privateSizeKnowable } from '../private-size.ts';
 
 let scratch: string;
 
@@ -40,5 +40,27 @@ describe.skipIf(process.platform !== 'darwin')('measureTree with the stim-privsi
       bytes: allocated(join(tree, 'clone')) + copy + allocated(join(tree, 'from-store')),
       privateBytes: copy,
     });
+  }, 120_000);
+});
+
+describe.runIf(process.platform === 'linux')('measureTree on Linux', () => {
+  test('counts a file hard-linked from a package store outside the tree as shared, and one linked only inside once as its own', async ({
+    skip,
+  }) => {
+    const store = join(scratch, 'store');
+    const tree = join(scratch, 'tree');
+    mkdirSync(store);
+    mkdirSync(join(tree, '.pnpm'), { recursive: true });
+    writeFileSync(join(store, 'package.js'), randomBytes(2 * 1024 * 1024));
+    writeFileSync(join(tree, 'own'), randomBytes(1024 * 1024));
+    linkSync(join(store, 'package.js'), join(tree, '.pnpm', 'package.js'));
+    linkSync(join(tree, 'own'), join(tree, '.pnpm', 'own-link'));
+    symlinkSync(store, join(tree, 'outside'));
+    if (!(await privateSizeKnowable(tree))) skip('the test volume shares blocks through reflinks too');
+
+    const size = await measureTree(tree, { timeoutMs: 60_000 });
+
+    const own = allocated(join(tree, 'own'));
+    expect(size).toEqual({ bytes: own + allocated(join(store, 'package.js')), privateBytes: own });
   }, 120_000);
 });

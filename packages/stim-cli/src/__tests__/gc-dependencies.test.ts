@@ -11,6 +11,7 @@ import {
   mkdirSync,
   mkdtempSync,
   chmodSync,
+  linkSync,
   readFileSync,
   readdirSync,
   realpathSync,
@@ -22,7 +23,7 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { writeCacheFile } from '../cache-file.ts';
-import { treeSignature } from '../private-size.ts';
+import { privateSizeKnowable, treeSignature } from '../private-size.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { runGc } from '../commands/gc.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
@@ -56,6 +57,17 @@ vi.mock('../commands/worktree.ts', async (importOriginal) => ({
   },
 }));
 vi.mock('../devices/machine-cache-usage.ts', () => ({ getMachineCacheReport: async () => null }));
+const walks = vi.hoisted(() => new Map<string, () => { bytes: number; privateBytes: number | null } | null>());
+vi.mock('../private-size.ts', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../private-size.ts')>();
+  return {
+    ...real,
+    measureTree: async (path: string, options: Parameters<typeof real.measureTree>[1]) => {
+      const walk = walks.get(path);
+      return walk ? walk() : real.measureTree(path, options);
+    },
+  };
+});
 
 let home: string;
 let projects: string;
@@ -84,6 +96,7 @@ beforeEach(() => {
   warm.exitCode = 0;
   warm.calls = [];
   warm.restores = [];
+  walks.clear();
 });
 
 afterEach(() => {
@@ -614,12 +627,91 @@ test.skipIf(process.platform === 'win32')(
     ageCheckout(source, daysAgo(8));
     rmSync(diskUsageCacheFile(modules), { force: true });
     rmSync(diskUsageCacheFile(join(source, 'ios', 'Pods')), { force: true });
+    walks.set(modules, () => null);
+    walks.set(join(source, 'ios', 'Pods'), () => null);
     ageTree(source, daysAgo(8));
     const normal = await quietly(() => runGc({ pressure: 'normal' }));
     expect(normal).toBeDefined();
     expect(existsSync(sourceModules(source))).toBe(true);
     await quietly(() => runGc({ pressure: 'critical' }));
     expect(existsSync(sourceModules(source))).toBe(false);
+  },
+  60_000,
+);
+
+test.skipIf(process.platform === 'win32')(
+  'gc measures a source checkout tree not measured since its install, and keeps one hard-linked from a package store as worth almost nothing',
+  async ({ skip }) => {
+    const roots = idleRepo([{ name: 'feature', workspace: true }]);
+    const source = roots.repo ?? '';
+    const modules = join(source, 'node_modules');
+    const store = join(projects, 'store');
+    mkdirSync(join(store, 'pkg'), { recursive: true });
+    writeFileSync(join(store, 'pkg', 'large.js'), Buffer.alloc(8 * 1024 * 1024, 1));
+    linkSync(join(store, 'pkg', 'large.js'), join(modules, 'pkg', 'large.js'));
+    ageCheckout(source, daysAgo(8));
+    rmSync(diskUsageCacheFile(modules), { force: true });
+    ageTree(source, daysAgo(8));
+    if (!(await privateSizeKnowable(modules))) skip('the test volume cannot report shared blocks');
+
+    const { payload } = await gcJson('normal');
+
+    const kept = (payload as LevelPayload).actions.find(
+      (action) => action.kind === 'delete-dependencies' && action.target === modules,
+    );
+    expect(kept).toMatchObject({ outcome: 'kept' });
+    expect(kept?.detail).toMatch(
+      /^\d+K of its \d+(\.\d)?M is its own and the rest is shared with copy-on-write clones or hard links/,
+    );
+  },
+  60_000,
+);
+
+test.skipIf(process.platform === 'win32')(
+  'a source checkout tree gc could not measure says why it stays: a volume that cannot tell, a walk that did not finish, no time left',
+  async ({ skip }) => {
+    const roots = idleRepo([{ name: 'feature', workspace: true }]);
+    const source = roots.repo ?? '';
+    const modules = join(source, 'node_modules');
+    const pods = join(source, 'ios', 'Pods');
+    ageCheckout(source, daysAgo(8));
+    if (!(await privateSizeKnowable(modules))) skip('the test volume cannot report shared blocks');
+    const unmeasured = () => {
+      for (const [path, bytes] of [
+        [modules, 2 * 1024 ** 3],
+        [pods, 1024 ** 3],
+      ] as const)
+        writeCacheFile(diskUsageCacheFile(path), {
+          path,
+          measuredAt: new Date().toISOString(),
+          bytes,
+          signature: treeSignature(path),
+        });
+    };
+    const detail = (payload: LevelPayload, target: string) =>
+      payload.actions.find((action) => action.kind === 'delete-dependencies' && action.target === target)?.detail;
+    const slow = () => {
+      vi.setSystemTime(Date.now() + 2 * 60_000);
+      return null;
+    };
+
+    unmeasured();
+    walks.set(modules, () => ({ bytes: 2 * 1024 ** 3, privateBytes: null }));
+    walks.set(pods, slow);
+    const first = (await gcJson('normal')).payload as LevelPayload;
+    expect(detail(first, modules)).toBe(
+      'its volume cannot report which of its blocks other files share, so its real size is unknown and it stays',
+    );
+    expect(detail(first, pods)).toBe(
+      'its size walk did not finish within the 120 seconds stim gc had left, so its real size is unknown and it stays',
+    );
+
+    unmeasured();
+    walks.set(modules, slow);
+    const second = (await gcJson('normal')).payload as LevelPayload;
+    expect(detail(second, pods)).toBe(
+      'stim gc spent its 2 minutes of measuring on other trees first, so its real size is unknown and it stays',
+    );
   },
   60_000,
 );

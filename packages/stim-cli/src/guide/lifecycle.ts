@@ -2576,8 +2576,8 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
        Each one holding 256 MB or more of its own (private) bytes goes, most
        first; a copy-on-write clone holding less frees almost nothing and is
        kept, logged as kept. A tree whose private size is unknown (off APFS,
-       without the Command Line Tools, or not measured since its last
-       install) goes after the measured ones, longest-idle first. The daemon
+       ext4 and tmpfs, without the Command Line Tools, or not measured since
+       its last install) goes after the measured ones, longest-idle first. The daemon
        measures each tree in the background, one walk at a time on the
        machine, after its install changes and at least every 6 hours
     6. idle Gradle and Kotlin daemons, an unused watchman (over 2 GiB, or over
@@ -2707,8 +2707,9 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   last use), or at critical under rung 8 by the same evidence. Runs from or
   works in it means a process whose working directory is in the checkout or
   whose command line names a path in it; reading files in an editor with no
-  process there is not activity. A tree whose size is not measured yet is not
-  taken at the 7-day rule, and is at critical, as for a linked worktree. A
+  process there is not activity. A tree of unknown size is not taken at the
+  7-day rule (stim gc measures them first, up to 2 minutes, and says why one
+  stays unknown), and is at critical. A
   linked worktree listed by git with a symlink at the same relative path, or in
   its top two directory levels (up to 2000 entries, not entering node_modules or
   .git), that resolves into the tree keeps it; past 2000 entries or at a
@@ -2734,8 +2735,7 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   as freed are the data directories of the devices it
   deleted, measured before deletion; a device whose size cannot be measured is
   named in the action's detail and left out of the total. A tree under 256 MB
-  of its own (private) bytes, a copy-on-write clone, and trees whose private
-  size is unknown stay. The dependency step is logged as dormant_dependencies.
+  of its own (private) bytes, a clone or store hard links, and trees whose private size is unknown stay. The dependency step is logged as dormant_dependencies.
   Still kept: a workspace in use, with a running dev server or build, leased,
   locked, driven, hosted, pinned by maintenance.keep or with idle.minutes 0,
   and a path that cannot be proven. \`stim status\` shows a dormant
