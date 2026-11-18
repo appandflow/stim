@@ -91,9 +91,17 @@ const gone = (pid: number) => {
 };
 
 /**
+ * Runs its arguments as a child and exits with it, as Stim Host does. macOS shells reset `XPC_SERVICE_NAME` to 0 in
+ * the children they fork, so a shell cannot stand in for a launchd job's process.
+ */
+const HOST = `const child = require('node:child_process').spawn(process.argv[1], process.argv.slice(2), { stdio: 'ignore' });
+process.on('SIGTERM', () => {});
+child.on('exit', (code) => process.exit(code ?? 1));`;
+
+/**
  * A Stim home, an engine store with two builds of this checkout's `stim` dist, and a LaunchAgent for `label`. The
- * launchctl mock runs its job as `sh -c <stimd>` in its own process group, so the stimd is the child of the job's
- * process as under Stim Host.
+ * launchctl mock runs its job as `HOST <stimd>` in its own process group with `XPC_SERVICE_NAME` set to the label, so
+ * the stimd is the child of the job's process as under Stim Host.
  */
 function fixture(label: string, port: number) {
   const scratch = mkdtempSync(join(tmpdir(), 'stim-service-handoff-'));
@@ -132,7 +140,7 @@ function fixture(label: string, port: number) {
     TMPDIR: process.env.TMPDIR ?? tmpdir(),
   };
   const cli = (build: string, args: string[], extraEnv: Record<string, string> = {}) =>
-    spawn('/bin/sh', ['-c', '"$@"; exit $?', 'sh', process.execPath, join(store, build, 'dist', 'cli.mjs'), ...args], {
+    spawn(process.execPath, ['-e', HOST, process.execPath, join(store, build, 'dist', 'cli.mjs'), ...args], {
       env: { ...env, ...extraEnv },
       stdio: 'ignore',
       detached: true,
@@ -265,7 +273,7 @@ function fixture(label: string, port: number) {
 
   /** Starts a stimd with the arguments an older build gives its successor: `--service` alone, outside any job. */
   const runBareService = async () => {
-    cli(next, serviceArgs);
+    cli(first, serviceArgs);
     const started = await until('the bare --service stimd', () => record());
     await answers('the bare --service stimd');
     return started;
