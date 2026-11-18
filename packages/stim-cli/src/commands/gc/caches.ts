@@ -44,7 +44,13 @@ function emptyVerdict(c: GcCache): { willEmpty: boolean; emptySkipped: string | 
     return { willEmpty: false, emptySkipped: 'report-only shared cache; Stim never deletes it' };
   }
   if (c.machineGlobal) return { willEmpty: false, emptySkipped: c.machineGlobal };
-  if (!ownsItsDirectory(c)) {
+  if (c.files) {
+    return {
+      willEmpty: false,
+      emptySkipped: 'only the age sweep removes it, an entry unused for maintenance.olderThanDays at a time',
+    };
+  }
+  if (cacheDirRefusal(c.dir)) {
     return { willEmpty: false, emptySkipped: `${c.dir} is not a directory this cache owns` };
   }
   return { willEmpty: true, emptySkipped: null };
@@ -77,11 +83,6 @@ export function markOverCapCompilationCache(caches: GcCache[], env: NodeJS.Proce
       ? { ...cache, ...cache.scopedEmpty }
       : cache,
   );
-}
-
-// Metro file maps share os.tmpdir() with other processes and do not own that directory.
-function ownsItsDirectory(cache: CacheDescriptor): boolean {
-  return !Array.isArray(cache.files) && !cacheDirRefusal(cache.dir);
 }
 
 async function emptyCache(

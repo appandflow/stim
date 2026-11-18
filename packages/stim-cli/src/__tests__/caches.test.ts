@@ -12,7 +12,7 @@ import { cacheUser } from '../cache/cache-claim.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
-import { discoverCaches, pruneCache } from '../cache/caches.ts';
+import { discoverCaches, jestCacheDir, pruneCache, sizeCaches } from '../cache/caches.ts';
 import { emptyCaches } from '../commands/gc/caches.ts';
 import { register } from '../cache/cache-manifest.ts';
 import { makeCacheDescriptor } from './_factories.ts';
@@ -147,6 +147,264 @@ test('pruneCache trims only the listed files when a cache does not own its direc
   } finally {
     rmSync(mine, { force: true });
     rmSync(notMine, { force: true });
+  }
+});
+
+function jestDir() {
+  const dir = jestCacheDir();
+  assert(dir);
+  return dir;
+}
+
+const windows = process.platform === 'win32';
+
+function processTable(table: string | null) {
+  const real = getExecutor();
+  setExecutor({
+    ...real,
+    runFileQuiet: (file, args, options) => (file === 'ps' ? table : real.runFileQuiet(file, args, options)),
+  });
+}
+
+describe.skipIf(windows)("Jest's default cache", () => {
+  test.each([
+    ['no Jest process runs', '10 1 node /usr/lib/node_modules/vitest/vitest.mjs run\n', null],
+    [
+      'Expo runs Metro workers',
+      '10 1 node /w/node_modules/expo/bin/cli start --port 8081\n11 10 node /w/node_modules/.pnpm/jest-worker@29.7.0/node_modules/jest-worker/build/workers/processChild.js\n',
+      null,
+    ],
+    [
+      'the React Native CLI runs Metro workers',
+      '10 1 node /w/node_modules/react-native/cli.js start\n11 10 node /w/node_modules/.pnpm/jest-worker@29.7.0/node_modules/jest-worker/build/workers/processChild.js\n',
+      null,
+    ],
+    [
+      'Metro runs its workers',
+      '10 1 node /w/node_modules/metro/src/cli.js serve\n11 10 node /w/node_modules/.pnpm/jest-worker@29.7.0/node_modules/jest-worker/build/workers/processChild.js\n',
+      null,
+    ],
+    ['a Jest bin runs', '10 1 node /w/node_modules/.bin/jest --watch\n', 'a Jest process is running'],
+    [
+      'a Jest runner runs with its workers',
+      '10 1 node /w/node_modules/jest/bin/jest.js\n11 10 node /w/node_modules/.pnpm/jest-worker@29.7.0/node_modules/jest-worker/build/workers/processChild.js\n',
+      'a Jest process is running',
+    ],
+    [
+      'a wrapper runs Jest with its workers',
+      '10 1 node /w/node_modules/react-scripts/scripts/test.js --watch\n11 10 node /w/node_modules/.pnpm/jest-worker@29.7.0/node_modules/jest-worker/build/workers/processChild.js\n',
+      'a Jest process is running',
+    ],
+    [
+      'a Jest worker has no listed parent',
+      '11 10 node /w/node_modules/.pnpm/jest-worker@29.7.0/node_modules/jest-worker/build/workers/processChild.js\n',
+      'a Jest process is running',
+    ],
+    [
+      'the process list cannot be read',
+      null,
+      'the process list could not be read, so a running Jest cannot be ruled out',
+    ],
+  ] as const)("the age sweep of Jest's default cache when %s", (_label, table, kept) => {
+    processTable(table);
+    const dir = jestDir();
+    const recent = new Date();
+    const entry = (name: string, kind: 'file' | 'dir', atime = LONG_AGO, mtime = LONG_AGO) => {
+      const path = join(dir, name);
+      if (kind === 'dir') {
+        mkdirSync(join(path, '0a'), { recursive: true });
+        writeFileSync(join(path, '0a', 'index_0a1b'), 'transformed');
+      } else writeFileSync(path, 'x');
+      utimesSync(path, atime, mtime);
+      return path;
+    };
+    const written = 'a'.repeat(32);
+    const reading = 'b'.repeat(32);
+    const unused = 'c'.repeat(32);
+    mkdirSync(dir, { recursive: true });
+    try {
+      const writtenTransforms = entry(`jest-transform-cache-${written}-1`, 'dir');
+      entry(`perf-cache-${written}-2`, 'file', recent, recent);
+      const readingTransforms = entry(`jest-transform-cache-${reading}-1`, 'dir');
+      entry(`haste-map-${reading}-root-3`, 'file', recent, LONG_AGO);
+      const unusedTransforms = entry(`jest-transform-cache-${unused}-1`, 'dir', recent, LONG_AGO);
+      const unusedMap = entry(`haste-map-${unused}-root-3`, 'file');
+      const unknown = entry('notes', 'dir');
+      const unparsedId = entry('jest-transform-cache--acme-app-1', 'dir');
+
+      const cache = discoverCaches().find((c) => c.name === 'Jest cache');
+      assert(cache);
+      const r = pruneCache(cache, { olderThanDays: 3, byMtime: true });
+
+      expect(r.skipped).toBe(kept);
+      expect(r.removed).toBe(kept ? 0 : 2);
+      expect(existsSync(unusedTransforms)).toBe(Boolean(kept));
+      expect(existsSync(unusedMap)).toBe(Boolean(kept));
+      expect(existsSync(writtenTransforms)).toBe(true);
+      expect(existsSync(readingTransforms)).toBe(true);
+      expect(existsSync(unknown)).toBe(true);
+      expect(existsSync(unparsedId)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+test.skipIf(windows)('a Jest config used while its transform cache is being sized keeps it', () => {
+  const dir = jestDir();
+  const id = 'e'.repeat(32);
+  const transforms = join(dir, `jest-transform-cache-${id}-1`);
+  const sibling = join(dir, `jest-transform-cache-${id}-2`);
+  mkdirSync(join(transforms, '0a'), { recursive: true });
+  mkdirSync(sibling);
+  age(transforms);
+  age(sibling);
+  const real = getExecutor();
+  setExecutor({
+    ...real,
+    runFileQuiet: (file, args, options) => (file === 'ps' ? '' : real.runFileQuiet(file, args, options)),
+    runFile: (file, args, options) => {
+      const sized = [transforms, sibling].find((path) => args?.includes(path));
+      if (file === 'du' && sized) {
+        const now = new Date();
+        utimesSync(sized === transforms ? sibling : transforms, now, now);
+        return '4\t' + sized;
+      }
+      return real.runFile(file, args, options);
+    },
+  });
+  try {
+    const cache = discoverCaches().find((c) => c.name === 'Jest cache');
+    assert(cache);
+    expect(pruneCache(cache, { olderThanDays: 3, byMtime: true }).removed).toBe(0);
+    expect(existsSync(transforms)).toBe(true);
+    expect(existsSync(sibling)).toBe(true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test.skipIf(windows)('a Jest process that starts while an entry is being sized stops the pass', () => {
+  const dir = jestDir();
+  const first = join(dir, `jest-transform-cache-${'1'.repeat(32)}-1`);
+  const second = join(dir, `jest-transform-cache-${'2'.repeat(32)}-1`);
+  for (const path of [first, second]) {
+    mkdirSync(path, { recursive: true });
+    age(path);
+  }
+  let started = false;
+  const real = getExecutor();
+  setExecutor({
+    ...real,
+    runFileQuiet: (file, args, options) =>
+      file === 'ps' ? (started ? '10 1 node /w/node_modules/.bin/jest\n' : '') : real.runFileQuiet(file, args, options),
+    runFile: (file, args, options) => {
+      if (file === 'du') {
+        started = true;
+        return '4\t' + String(args?.at(-1));
+      }
+      return real.runFile(file, args, options);
+    },
+  });
+  try {
+    const cache = discoverCaches().find((c) => c.name === 'Jest cache');
+    assert(cache);
+    const r = pruneCache(cache, { olderThanDays: 3, byMtime: true });
+    expect(r.removed).toBe(0);
+    expect(r.skipped).toBe('a Jest process is running');
+    expect(existsSync(first)).toBe(true);
+    expect(existsSync(second)).toBe(true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test.skipIf(windows)('a Jest config that writes a new entry while its transform cache is being sized keeps it', () => {
+  const dir = jestDir();
+  const id = 'f'.repeat(32);
+  const transforms = join(dir, `jest-transform-cache-${id}-1`);
+  const fresh = join(dir, `haste-map-${id}-root-4`);
+  mkdirSync(join(transforms, '0a'), { recursive: true });
+  age(transforms);
+  const real = getExecutor();
+  setExecutor({
+    ...real,
+    runFileQuiet: (file, args, options) => (file === 'ps' ? '' : real.runFileQuiet(file, args, options)),
+    runFile: (file, args, options) => {
+      if (file === 'du' && args?.includes(transforms)) {
+        writeFileSync(fresh, 'x');
+        return '4\t' + transforms;
+      }
+      return real.runFile(file, args, options);
+    },
+  });
+  try {
+    const cache = discoverCaches().find((c) => c.name === 'Jest cache');
+    assert(cache);
+    expect(pruneCache(cache, { olderThanDays: 3, byMtime: true }).removed).toBe(0);
+    expect(existsSync(transforms)).toBe(true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test.skipIf(windows)('a symlinked entry in the Jest cache is never removed', () => {
+  processTable('');
+  const dir = jestDir();
+  const target = join(tmpHome, 'linked-transforms');
+  const link = join(dir, `jest-transform-cache-${'a'.repeat(32)}-1`);
+  mkdirSync(target);
+  age(target);
+  mkdirSync(dir);
+  symlinkSync(target, link);
+  try {
+    const cache = discoverCaches().find((c) => c.name === 'Jest cache');
+    assert(cache);
+    expect(pruneCache(cache, { olderThanDays: 3, byMtime: true }).removed).toBe(0);
+    expect(existsSync(link)).toBe(true);
+    expect(existsSync(target)).toBe(true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test.skipIf(!windows)('the Jest cache is not discovered on Windows', () => {
+  expect(jestCacheDir()).toBeNull();
+  expect(discoverCaches().some((c) => c.name === 'Jest cache')).toBe(false);
+});
+
+test('sizeCaches leaves a file-list cache without a known size unmeasured and runs no du', async () => {
+  const real = getExecutor();
+  const du: string[] = [];
+  setExecutor({
+    ...real,
+    runFileAsync: async (file, args, options) => {
+      if (file === 'du') du.push(String(args));
+      return real.runFileAsync(file, args, options);
+    },
+  });
+  const [sized] = await sizeCaches([
+    makeCacheDescriptor({ dir: tmpHome, files: [join(tmpHome, 'entry')], prune: 'entries' }),
+  ]);
+  expect(sized?.bytes).toBeUndefined();
+  expect(sized?.sizeError).toBeUndefined();
+  expect(du).toEqual([]);
+});
+
+test.skipIf(windows)('a Jest cache path that is a symlink is not discovered, so nothing behind it is pruned', () => {
+  const dir = jestDir();
+  const target = join(tmpHome, 'not-jest');
+  const old = [join(target, 'Documents'), join(target, `jest-transform-cache-${'d'.repeat(32)}-1`)];
+  for (const path of old) {
+    mkdirSync(path, { recursive: true });
+    age(path);
+  }
+  symlinkSync(target, dir);
+  try {
+    expect(discoverCaches().some((c) => c.name === 'Jest cache')).toBe(false);
+    for (const path of old) expect(existsSync(path)).toBe(true);
+  } finally {
+    rmSync(dir, { force: true });
   }
 });
 

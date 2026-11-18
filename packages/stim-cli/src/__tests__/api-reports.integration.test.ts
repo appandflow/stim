@@ -325,7 +325,7 @@ test.each(
     'emulator inventory',
     'Gradle project settings',
     'worktree inventory',
-    ...(process.platform !== 'win32' ? ['temporary process inventory', 'Jest cache size'] : []),
+    ...(process.platform !== 'win32' ? ['temporary process inventory'] : []),
     ...(process.platform === 'darwin' ? ['orphaned workspace'] : []),
   ].flatMap((kind) => [false, true].map((unavailable) => ({ kind, unavailable }))),
 )('GC $kind declares its native child and preserves cleanup refusal=$unavailable', async ({ kind, unavailable }) => {
@@ -336,13 +336,12 @@ test.each(
   const workspaceProbe = kind === 'orphaned workspace';
   const gradleProbe = kind === 'Gradle project settings';
   const worktreeProbe = kind === 'worktree inventory';
-  const tempProbe = kind === 'temporary process inventory' || kind === 'Jest cache size';
+  const tempProbe = kind === 'temporary process inventory';
   const temporary = join(item.home, 'tmp');
   if (tempProbe) {
     mkdirSync(temporary);
     Object.assign(item.env, { TMPDIR: temporary, TMP: temporary, TEMP: temporary });
   }
-  const usageDir = join(temporary, `jest_${process.getuid?.().toString(36)}`);
   Object.assign(item.env, {
     AGENT_DEVICE_STATE_DIR: join(item.home, 'agent-device'),
     GRADLE_USER_HOME: join(item.home, 'gradle'),
@@ -373,8 +372,7 @@ test.each(
     writeFileSync(join(item.home, 'config.json'), JSON.stringify(config));
   let preserved = join(item.cache, 'artifact');
   if (tempProbe) {
-    if (kind === 'Jest cache size') mkdirSync(usageDir);
-    preserved = kind === 'Jest cache size' ? join(usageDir, 'original') : join(temporary, 'instruments-test.ktrace');
+    preserved = join(temporary, 'instruments-test.ktrace');
     writeFileSync(preserved, 'native-inventory');
     const old = new Date(Date.now() - 48 * 60 * 60 * 1000);
     utimesSync(preserved, old, old);
@@ -444,9 +442,7 @@ test.each(
     );
   const probe = vi.spyOn(executor, 'runFileAsync').mockImplementation((file, args, options) => {
     const wanted = tempProbe
-      ? kind === 'Jest cache size'
-        ? file === 'du' && args.includes(usageDir)
-        : file === 'ps' && args.includes('comm=')
+      ? file === 'ps' && args.includes('comm=')
       : worktreeProbe
         ? file === 'git' && args.includes('worktree')
         : gradleProbe

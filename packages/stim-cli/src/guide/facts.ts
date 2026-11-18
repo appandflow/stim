@@ -1176,8 +1176,7 @@ RULES
                               stim-fakehome-*, stim-hosted-macos-*,
                               stim-server-*, stim-ws-*, stim-parity-* directories), xctrace
                               (instruments*.ktrace), swiftpm
-                              (TemporaryDirectory.* directories) or jest (Jest's
-                              jest_<uid in base 36> cache, never deleted). deleteCount
+                              (TemporaryDirectory.* directories). deleteCount
                               is what a run removes. null with STIM_HOME
                               set
     trash                   { root, entries: [{ path, worktree, removedAt,
