@@ -152,7 +152,7 @@ maintainer has not ruled on these, and the code keeps them:
   `report`, `metro.idleStopMinutes` or `devices.idleShutdownMinutes` `0`) refuse
   the same commands and `stim doctor` rates them a cost, so they do not become
   the new defaults without notice. While `daemon.mode` is unset, a leftover
-  `maintenance.mode` `off` or `report` also caps the daemon at that value, so a
+  `maintenance.mode` `off` or `report` also caps the daemon at `report` (it observes and acts on nothing), so a
   stimd that Desktop or `stim serve` starts does not act before the refusal shows.
 - `maintenance.idleStopHours`, which is still a live setting for hosted
   sessions.

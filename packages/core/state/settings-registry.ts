@@ -1326,15 +1326,15 @@ export function settingValueAt(settings: unknown, path: string): unknown {
 const DAEMON_MODE_VALUES: readonly unknown[] = ['on', 'report', 'off'];
 
 /**
- * The `off` or `report` a 1.x `maintenance.mode` left in `config`, while neither `daemon.mode` in `config` nor the
+ * `report`, when a 1.x `maintenance.mode` of `off` or `report` is left in `config`, while neither `daemon.mode` in `config` nor the
  * variable of `daemon.mode` in `env` is set to a valid mode; null otherwise.
  */
-export function leftoverDaemonMode(config: unknown, env: NodeJS.ProcessEnv): 'off' | 'report' | null {
+export function leftoverDaemonMode(config: unknown, env: NodeJS.ProcessEnv): 'report' | null {
   const variable = settingDefinition('daemon.mode')?.env;
   if (DAEMON_MODE_VALUES.includes(variable ? env[variable] : undefined)) return null;
   if (DAEMON_MODE_VALUES.includes(settingValueAt(config, 'daemon.mode'))) return null;
   const off = REMOVED_SETTINGS.get('maintenance.mode')?.off?.(settingValueAt(config, 'maintenance.mode'));
-  return off === 'off' || off === 'report' ? off : null;
+  return off === 'off' || off === 'report' ? 'report' : null;
 }
 
 /** Sets a dotted key, or deletes it and empty parents when value is undefined. Returns whether a write occurred. */
