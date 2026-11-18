@@ -16,6 +16,7 @@ import {
   diskUsageWalkClaims,
   readDiskUsage,
   readDiskUsageFailure,
+  readDiskUsageFailureSignature,
   readDiskUsagePartial,
   type DiskMeasure,
 } from '@stim-cli/core/state';
@@ -157,7 +158,8 @@ export async function refreshMeasure(
   const dependency = isDependencyTree(path);
   const failedRecently = () => {
     const failedAt = options.failures ? readDiskUsageFailure(path) : null;
-    return failedAt !== null && now() - Date.parse(failedAt) < maxAgeMs;
+    if (failedAt === null || now() - Date.parse(failedAt) >= maxAgeMs) return false;
+    return !dependency || readDiskUsageFailureSignature(path) === (options.signature ?? treeSignature(path));
   };
   const skip = () => freshMeasure(path, options) !== null || failedRecently();
   const fresh = () => {
@@ -224,7 +226,11 @@ export async function refreshMeasure(
     operation?.signal.throwIfAborted();
     if (!size) {
       if (options.failures)
-        writeCacheFile(diskUsageFailureFile(path), { path, failedAt: new Date(now()).toISOString() });
+        writeCacheFile(diskUsageFailureFile(path), {
+          path,
+          failedAt: new Date(now()).toISOString(),
+          ...(signature ? { signature } : {}),
+        });
       return { outcome: 'failed', measure: null };
     }
     return {

@@ -281,6 +281,12 @@ export function readDiskUsagePrivateUnknown(path: string): 'volume' | 'walk' | n
   return entry.privateUnknown === 'volume' || entry.privateUnknown === 'walk' ? entry.privateUnknown : null;
 }
 
+/** The install signature of the dependency tree whose last walk failed, or null when none is recorded. */
+export function readDiskUsageFailureSignature(path: string): string | null {
+  const entry = readJsonObject(diskUsageFailureFile(path));
+  return entry !== null && entry.path === path && typeof entry.signature === 'string' ? entry.signature : null;
+}
+
 /** When the last walk of `path` failed (an ISO time), or null when none is recorded. */
 export function readDiskUsageFailure(path: string): string | null {
   const entry = readJsonObject(diskUsageFailureFile(path));

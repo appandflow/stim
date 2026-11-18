@@ -670,7 +670,7 @@ test.skipIf(process.platform === 'win32')(
 );
 
 test.skipIf(process.platform === 'win32')(
-  'a source checkout tree gc could not measure says why it stays, and is not walked again until its install changes',
+  'a source checkout tree gc could not measure says why it stays, and is not walked again until its install changes, so the next tree gets the budget',
   async () => {
     const roots = idleRepo([{ name: 'feature', workspace: true }]);
     const source = roots.repo ?? '';
@@ -691,10 +691,10 @@ test.skipIf(process.platform === 'win32')(
     };
     const detail = (payload: LevelPayload, target: string) =>
       payload.actions.find((action) => action.kind === 'delete-dependencies' && action.target === target)?.detail;
-    const slow = () => {
+    const slow = vi.fn<() => null>(() => {
       vi.setSystemTime(Date.now() + 2 * 60_000);
       return null;
-    };
+    });
     const unknownWalk = (bytes: number, privateUnknown: 'volume' | 'walk') =>
       vi.fn<() => { bytes: number; privateBytes: null; privateUnknown: 'volume' | 'walk' }>(() => ({
         bytes,
@@ -730,6 +730,14 @@ test.skipIf(process.platform === 'win32')(
     expect(detail(late, pods)).toBe(
       'stim gc spent its 2 minutes of measuring on other trees first, so its real size is unknown and it stays',
     );
+
+    walks.set(pods, () => ({ bytes: 1024 ** 3, privateBytes: 10 * 1024 ** 2 }));
+    const next: LevelPayload = (await gcJson('normal')).payload;
+    expect(slow).toHaveBeenCalledTimes(1);
+    expect(detail(next, modules)).toBe(
+      'its last size walk did not finish in time and its install has not changed since, so its real size is unknown and it stays',
+    );
+    expect(detail(next, pods)).toMatch(/^10M of its 1\.0G is its own/);
   },
   60_000,
 );

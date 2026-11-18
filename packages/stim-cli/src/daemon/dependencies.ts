@@ -137,6 +137,7 @@ async function measureUnknown(
       timeoutMs: remainingMs,
       operation,
       valid: (cached) => cached.privateBytes !== undefined,
+      failures: true,
     });
     if (measure?.privateBytes !== undefined) {
       dependency.bytes = measure.bytes;
@@ -145,7 +146,9 @@ async function measureUnknown(
       dependency.unknown =
         outcome === 'failed'
           ? `its size walk did not finish within the ${Math.ceil(remainingMs / 1000)} seconds stim gc had left, so its real size is unknown and it stays`
-          : (reason(dependency.candidate.path) ?? WALK_FAILED);
+          : outcome === 'fresh' && !measure
+            ? 'its last size walk did not finish in time and its install has not changed since, so its real size is unknown and it stays'
+            : (reason(dependency.candidate.path) ?? WALK_FAILED);
   }
 }
 
