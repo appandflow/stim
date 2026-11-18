@@ -279,10 +279,14 @@ export function legacyDaemonRefusal(
 
 /** Whether `stim engine install` would accept this copy: no engine is installed and it is not a source checkout. */
 function engineInstallable(): boolean {
-  const root = engineRoot(process.env);
-  if (readRecords(root).current) return false;
-  const self = dirname(dirname(spawnEntry('engine-select')));
-  return installKind(realpathSync(self), existsSync(root) ? realpathSync(root) : root) !== 'development';
+  try {
+    const root = engineRoot(process.env);
+    if (readRecords(root).current) return false;
+    const self = dirname(dirname(spawnEntry('engine-select')));
+    return installKind(realpathSync(self), existsSync(root) ? realpathSync(root) : root) !== 'development';
+  } catch {
+    return false;
+  }
 }
 
 /**
