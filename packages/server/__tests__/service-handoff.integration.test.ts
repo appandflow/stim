@@ -195,15 +195,11 @@ function fixture(label: string, port: number) {
     return started;
   };
 
-  /**
-   * Runs the unit's job on the first build, points the engine at the next one, and returns the successor once the job's
-   * stimd handed the home to it and the restarted job waits on it.
-   */
-  const handOver = async () => {
-    const initial = await runJob();
+  /** Points the engine at the next build and returns the stimd that `initial` hands the home to. */
+  const switchEngine = async (initial: { pid: number; socket: string }) => {
     point(next);
     let polls = 0;
-    const successor = await until('the successor', () => {
+    return until('the successor', () => {
       const current = record();
       if (current && current.pid !== initial.pid && current.build === next) return current;
       if (polls++ % 20 === 0) {
@@ -213,6 +209,14 @@ function fixture(label: string, port: number) {
       }
       return null;
     });
+  };
+
+  /**
+   * Runs the unit's job on the first build, points the engine at the next one, and returns the successor once the job's
+   * stimd handed the home to it and the restarted job waits on it.
+   */
+  const handOver = async () => {
+    const successor = await switchEngine(await runJob());
     const ended = launchd.job;
     if (ended && ended.exitCode === null && ended.signalCode === null) await once(ended, 'exit');
     launchd.start = () => stimd(next);
@@ -296,6 +300,7 @@ function fixture(label: string, port: number) {
     runJob,
     runServe,
     runDesktop,
+    switchEngine,
     setJob,
     stopHome,
     handOver,
@@ -350,6 +355,26 @@ describe.skipIf(process.platform !== 'darwin')('a service after an engine handof
       const events = readFileSync(join(service.home, 'daemon', 'daemon.ndjson'), 'utf8');
       expect(events).toContain('daemon_exited');
       expect(events).not.toContain('daemon_signal_during_shutdown');
+    } finally {
+      await service.cleanup();
+    }
+  }, 240_000);
+
+  it('install leaves running the successor of a plain stim serve after an engine switch', async () => {
+    const label = 'dev.stim.handoff-serve-successor';
+    const port = await freePort();
+    const service = fixture(label, port);
+    try {
+      const successor = await service.switchEngine(await service.runServe());
+      const holder = readClaimSet(stimdClaimRoot(service.home)).live.find(({ mode }) => mode === 'exclusive');
+      expect(holder?.owner.pid).toBe(successor.pid);
+      expect(holder?.details.serviceUnit).toBeUndefined();
+      await service.setJob(true);
+      await installJob(
+        { label, port, env: [], pathPrepend: [], serve: false, stimHome: service.home },
+        { script: service.script, host: null, requestPermissions: false },
+      ).catch(() => undefined);
+      expect(gone(successor.pid)).toBe(false);
     } finally {
       await service.cleanup();
     }
