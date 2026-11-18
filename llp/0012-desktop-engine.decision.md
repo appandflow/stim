@@ -57,7 +57,9 @@ the stimd that gave it. When that stimd goes away under the command, whether or 
 is waiting on stimd at that moment (a crash, a kill, an in-place update, an
 engine switch), the CLI admits the command again with the stimd that replaces it, the way it was first admitted,
 starting one where the command would have started one. A command not waiting
-is admitted again at its next stimd step. It then repeats the step it was
+is admitted again at its next stimd step that takes the command's own admission
+(a lease, a log stream or a readiness check), and prints the same line; a Metro
+or tunnel request takes a request-scoped admission of its own and prints none. It then repeats the step it was
 waiting on and continues, printing one stderr line that stimd
 restarted. It does this once per operation, and the whole resume (every wait in
 it) takes at most 30 seconds. A cancelled operation stops resuming at once and

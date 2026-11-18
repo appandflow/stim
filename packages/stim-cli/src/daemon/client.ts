@@ -437,7 +437,7 @@ async function admitOperation(
   held: Socket[],
 ): Promise<{ opToken: string } | { answer: Record<string, unknown> | null }> {
   const existing = operationToken(operation);
-  if (existing && !admissions.get(existing)?.lost) return { opToken: existing };
+  if (existing && !(existing === lostOpToken && admissions.get(existing)?.lost)) return { opToken: existing };
   const env = operation?.env ?? process.env;
   const context = (await import('../stimd/forwarded.ts')).invocation(root, env);
   if ('code' in context) return { answer: { op: 'error', ...context } };
@@ -1175,6 +1175,17 @@ export function admittedOpToken(held?: Socket[]): string | undefined {
   return held ? undefined : lostOpToken;
 }
 
+/**
+ * Admits the operation again when stimd closed its connection, so a lease can be asked of the successor. False when
+ * that admission is refused; true when none was needed, it was admitted again, or it was cancelled.
+ */
+export async function readmitLostOperation(operation: StimContext): Promise<boolean> {
+  const token = operationToken(operation);
+  if (!token || !admissions.get(token)?.lost) return true;
+  const next = await resumeAdmission(token, operation, false, operation.signal);
+  return !(next && 'error' in next);
+}
+
 export function operationToken(operation?: StimContext): string | undefined {
   const state = operationState(operation);
   return state.stimdOpToken ?? (!operation || state.takesSignals ? admittedOpToken() : undefined);
@@ -1241,7 +1252,7 @@ async function admissionLost(token: string, wait: boolean): Promise<boolean> {
 }
 
 const daemonRestarted = (why: string) =>
-  Object.assign(new Error(`This Stim home's stimd stopped while this command waited on it, and ${why}.`), {
+  Object.assign(new Error(`This Stim home's stimd stopped under this command, and ${why}.`), {
     code: 'STIM_DAEMON_UNAVAILABLE',
     remedy: 'Run the command again; `stim status` shows whether a stimd runs.',
   });
