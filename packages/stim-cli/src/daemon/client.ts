@@ -1,6 +1,6 @@
 import type { Invocation } from '../stimd/forwarded.ts';
 import { createHash, randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import type { SpawnOptions } from 'node:child_process';
 import { connect, type Socket } from 'node:net';
 import { dirname, join } from 'node:path';
@@ -34,6 +34,8 @@ import { ANDROID_LOCATION_VARIABLES } from '../devices/android-locations.ts';
 import { endForSwitch, engineShim, ownStoreEngine, switchedEngine } from './engine-switch.ts';
 import { legacyDaemonHolder, legacyDaemonStop } from './legacy-daemon.ts';
 import { buildClaimRoot } from '../engine-store/claims.ts';
+import { engineRoot, readRecords } from '../engine-store/store.ts';
+import { installKind } from '../../bin/route.mjs';
 import { getExecutor } from '../exec.ts';
 import { spawnEntry, stimBuild } from '../spawn-entry.ts';
 import { daemonMode, spawnsDaemon } from './mode.ts';
@@ -275,6 +277,18 @@ export function legacyDaemonRefusal(
 }
 // compat end
 
+/** Whether `stim engine install` would accept this copy: no engine is installed and it is not a source checkout. */
+function engineInstallable(): boolean {
+  try {
+    const root = engineRoot(process.env);
+    if (readRecords(root).current) return false;
+    const self = dirname(dirname(spawnEntry('engine-select')));
+    return installKind(realpathSync(self), existsSync(root) ? realpathSync(root) : root) !== 'development';
+  } catch {
+    return false;
+  }
+}
+
 /**
  * The refusal of a command that needs this home's stimd when a stimd of another build holds the home and no stimd of
  * this build replaced it: which build runs, and what to do. Null when no stimd refused this process.
@@ -315,7 +329,7 @@ export function otherBuildRefusal(): { code: 'STIM_DAEMON_UNAVAILABLE'; message:
               ]
             : [
                 `${stimd} runs Stim ${version}, not this stim's ${stimBuild().version}, and has not restarted on this build.`,
-                `Run the command with Stim ${version}, or ${kill}; the next stim command starts one of this build.`,
+                `Run the command with Stim ${version}, or ${kill}; the next stim command starts one of this build.${engineInstallable() ? ' To stop this recurring, stop stimd as above, then run `stim engine install`.' : ''}`,
               ];
   return { code: 'STIM_DAEMON_UNAVAILABLE', message: why, remedy };
 }
