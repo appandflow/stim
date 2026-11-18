@@ -170,7 +170,11 @@ export interface StatusSources {
    * shuts down simulators as it writes state.
    */
   simulatorListing(): string | null;
-  stop(): void;
+  /**
+   * Ends the timers and the adb and simctl children, calls `released`, then closes the file watchers. On macOS each
+   * directory watcher's close waits on fseventsd, which can take seconds while the machine is loaded.
+   */
+  stop(released?: () => void): void;
 }
 
 const SIMULATOR_DIR = /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i;
@@ -426,18 +430,19 @@ export function watchStatusSources({
       listing && listing.version === listingVersion && Date.now() - listing.at <= 2 * simctlIntervalMs
         ? listing.json
         : null,
-    stop() {
+    stop(released) {
       stopped = true;
+      clearInterval(processTimer);
+      if (simTimer) clearInterval(simTimer);
+      simctl?.kill('SIGKILL');
+      adb.stop();
+      released?.();
       for (const watcher of watchers.values()) watcher.close();
       watchers.clear();
       for (const watcher of repositories.values()) watcher.close();
       repositories.clear();
-      clearInterval(processTimer);
-      if (simTimer) clearInterval(simTimer);
       for (const { watcher } of deviceWatchers.values()) watcher.close();
       deviceWatchers.clear();
-      simctl?.kill('SIGKILL');
-      adb.stop();
     },
   };
 }

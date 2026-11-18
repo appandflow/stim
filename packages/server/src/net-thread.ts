@@ -1,6 +1,7 @@
 import { Duplex } from 'node:stream';
 import { isMainThread, parentPort, workerData, type MessagePort } from 'node:worker_threads';
 import { NetRefusal, serve, type NetOptions } from './cli.ts';
+import type { StatusWorkerRequest } from './status-feed.ts';
 
 /** What stimd's main thread sends the net thread. */
 export type ToNet =
@@ -20,7 +21,8 @@ export type FromNet =
   | { type: 'end'; id: number }
   | { type: 'idle' }
   | { type: 'update'; why: string }
-  | { type: 'restart'; why: string };
+  | { type: 'restart'; why: string }
+  | { type: 'statusWorker'; request: StatusWorkerRequest };
 
 /** A connection stimd's CLI socket handed over, carried as messages. */
 class Bridged extends Duplex {
@@ -60,6 +62,7 @@ async function run(port: MessagePort, options: NetOptions): Promise<void> {
       () => post({ type: 'idle' }),
       (why) => post({ type: 'update', why }),
       (why) => post({ type: 'restart', why }),
+      (request) => port.postMessage({ type: 'statusWorker', request } satisfies FromNet, [request.port]),
     );
   } catch (error) {
     post({

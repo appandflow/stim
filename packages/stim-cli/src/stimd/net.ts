@@ -1,5 +1,5 @@
 import type { Socket } from 'node:net';
-import { Worker } from 'node:worker_threads';
+import { type MessagePort, Worker } from 'node:worker_threads';
 import { spawnEntry } from '../spawn-entry.ts';
 
 const STOP_WAIT_MS = 15_000;
@@ -33,7 +33,16 @@ type FromNet =
   | { type: 'end'; id: number }
   | { type: 'idle' }
   | { type: 'update'; why: string }
-  | { type: 'restart'; why: string };
+  | { type: 'restart'; why: string }
+  | { type: 'statusWorker'; request: StatusWorkerRequest };
+
+/** A status worker the net thread asks stimd to start, so that its teardown does not hold the net thread's exit. */
+interface StatusWorkerRequest {
+  worker: string;
+  env: NodeJS.ProcessEnv;
+  cwd: string;
+  port: MessagePort;
+}
 
 /** Whether the net thread serves, on which port, or why it does not. */
 type NetAnswer = { listening: true; port: number } | { listening: false; message: string };
@@ -73,6 +82,15 @@ export function createNetThread(
   let nextId = 1;
   const sockets = new Map<number, Socket>();
   const post = (message: ToNet) => worker?.postMessage(message);
+  const startStatusWorker = ({ worker: entry, env, cwd, port: statusPort }: StatusWorkerRequest) => {
+    try {
+      const status = new Worker(entry, { env, workerData: { cwd, port: statusPort }, transferList: [statusPort] });
+      status.on('error', (error: Error) => log('warn', 'status_worker_failed', error.message));
+    } catch (error) {
+      log('warn', 'status_worker_failed', error instanceof Error ? error.message : String(error));
+      statusPort.close();
+    }
+  };
   const unverified = (reason: string, notify = true): Error => {
     if (cleanupFailure) return cleanupFailure;
     cleanupFailure = Object.assign(new Error(`Net thread cleanup could not be verified: ${reason}`), {
@@ -146,6 +164,7 @@ export function createNetThread(
             stop(thread);
           } else if (message.type === 'update') onUpdate(message.why);
           else if (message.type === 'restart') onRestart(message.why);
+          else if (message.type === 'statusWorker') startStatusWorker(message.request);
           else if (message.type === 'data') sockets.get(message.id)?.write(message.chunk);
           else sockets.get(message.id)?.end();
         });
