@@ -198,6 +198,7 @@ describe('service status permissions', () => {
     runs: null,
     lastExitCode: null,
     port: SPEC.port,
+    listener: null,
     health: null,
     serve: null,
     logPath: SPEC.logPath,

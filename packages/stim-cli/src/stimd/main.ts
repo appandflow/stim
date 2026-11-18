@@ -137,6 +137,7 @@ import { createStreams } from './logs/streams.ts';
 import { handleLogRequest } from './logs/protocol.ts';
 import { writeDesktopKey } from './desktop-key.ts';
 import { createNetThread, type NetOptions } from './net.ts';
+import { serviceUnitLabel, unitSuccessorLabel } from './service-unit.ts';
 import { followEngine } from './engine-follow.ts';
 import { takeLock } from '../engine-store/locks.ts';
 import { createStatusSnapshots } from './status-snapshot.ts';
@@ -670,6 +671,12 @@ interface RunStimdOptions {
   /** Whether a service unit or `stim serve` runs this stimd, which turns `engine.autoUpdate`'s `auto` on. */
   service?: boolean;
   /**
+   * The label of the managed service unit that started this stimd, or that started the stimd it took the home over
+   * from; its claim records it as `serviceUnit`, which `stim service install` of that label requires before stopping a
+   * stimd outside the unit's job.
+   */
+  unit?: string;
+  /**
    * Bound to the process that started it (`hostStimd`): it neither follows the engine nor exits idle or under
    * `daemon.mode` off, and ends when its stdin closes or on a signal, through `endAttached`.
    */
@@ -688,6 +695,7 @@ async function runCrashHold(
     startMode,
     serve,
     service,
+    unit,
     checkedAt,
     log,
   }: {
@@ -696,6 +704,7 @@ async function runCrashHold(
     startMode: DaemonMode;
     serve: ServeOptions | null;
     service: boolean;
+    unit: string | undefined;
     checkedAt: number;
     log: (level: Level, event: string, msg: string) => unknown;
   },
@@ -710,7 +719,7 @@ async function runCrashHold(
         startMode,
         process.platform,
         join(store.root, current.dir, 'dist', 'cli.mjs'),
-        serveArgs(serve, service),
+        serveArgs(serve, service, unit),
       );
     return 'rolled-back';
   }
@@ -777,6 +786,7 @@ async function runStimdInner(
     desktopKey,
     onNet,
     service = serve !== undefined,
+    unit,
     attached,
   }: RunStimdOptions,
   startup: StimdStartup,
@@ -813,6 +823,7 @@ async function runStimdInner(
     bootAt,
     updateCheckedAt,
     ...attachedReply(attached !== undefined),
+    ...(unit ? { serviceUnit: unit } : {}),
   };
   const lifetime = stimdLifetime(attached !== undefined, identity.version);
   const instance = randomUUID();
@@ -886,6 +897,7 @@ async function runStimdInner(
       startMode,
       serve: serve ?? null,
       service,
+      unit,
       checkedAt: updateCheckedAt,
       log,
     });
@@ -1290,7 +1302,7 @@ async function runStimdInner(
     };
     if (keepOwn) return missing('its cleanup was not verified, so no successor was started');
     try {
-      launchStimd(process.env, startMode, process.platform, entry, serveArgs(carried, service || serviceNet));
+      launchStimd(process.env, startMode, process.platform, entry, serveArgs(carried, service || serviceNet, unit));
     } catch (error) {
       return missing(`the launch failed: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -1759,7 +1771,7 @@ async function runStimdInner(
       successorArgs: () => {
         const running = net.running();
         const carried = running && netServes ? { ...netServes, shareOnly: running.shareOnly } : null;
-        return serveArgs(carried, service || serviceNet);
+        return serveArgs(carried, service || serviceNet, unit);
       },
       release: (why) => closeAttachedWork(ending === 'stdin' ? why : `${why} (${ending})`),
       log,
@@ -2193,13 +2205,15 @@ function shareWorkPending(): boolean {
  * `serviceArguments`' inverse: the arguments a successor stimd takes to serve as this one's net thread did. A net thread
  * that only serves `stim share` is not carried over by arguments (its successor restores the saved shares at boot, see
  * `shareWorkPending`), and one no service unit or `stim serve` started is marked `--carried`, so its successor does not
- * count as a service.
+ * count as a service. The successor of a service unit's stimd gets `--unit-successor <label>`, so it counts as that
+ * unit's too.
  */
-function serveArgs(serve: ServeOptions | null, service: boolean): string[] {
+function serveArgs(serve: ServeOptions | null, service: boolean, unit: string | undefined): string[] {
   if (!serve || serve.shareOnly) return [];
   return [
     ...(service ? [] : ['--carried']),
     '--service',
+    ...(unit ? ['--unit-successor', unit] : []),
     ...(serve.loopbackOnly ? ['--loopback-only'] : []),
     '--port',
     String(serve.port),
@@ -2276,6 +2290,10 @@ export async function runStimdEntry(argv: readonly string[]): Promise<void> {
       serve,
       onNet: reportNet,
       service,
+      unit:
+        serve === undefined || argv.includes('--carried')
+          ? undefined
+          : (unitSuccessorLabel(argv) ?? serviceUnitLabel(process.env, serve.port) ?? undefined),
       ...(argv.includes(ATTACHED_ARG) ? { attached: { handover: !argv.includes(NO_HANDOVER_ARG) } } : {}),
     });
     if (serve && !served && stimdLive())
