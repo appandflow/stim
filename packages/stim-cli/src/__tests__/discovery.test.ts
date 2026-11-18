@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type Config } from '@stim-cli/core/state';
 import { testContext } from './_context.ts';
+import { answered } from '../workspace/bounded-read.ts';
 import { scanSourceWrites } from '../workspace/discovered-activity.ts';
 import {
   discoverCheckouts,
@@ -129,6 +130,25 @@ describe('discoverCheckouts', () => {
     const found = await discoverCheckouts(config, []);
     expect(found.map(({ path, origin }) => [path, origin])).toEqual([[join(roots, 'app'), 'root']]);
     expect(existsSync(join(base, 'home'))).toBe(false);
+  });
+
+  it('starts no folder read while an earlier read is still pending, and finds the child once it settles', async () => {
+    vi.stubEnv('STIM_HOME', join(base, 'home'));
+    const roots = join(base, 'roots');
+    app(join(roots, 'app'));
+    const config: Config = { maintenance: { discoverRoots: [roots] }, projects: {}, repos: {} };
+    let release: (value: string) => void = () => {};
+    const stuck = answered('/stalled-mount', () => new Promise<string>((resolve) => (release = resolve)), 10).catch(
+      () => 'timed out',
+    );
+    await vi.advanceTimersByTimeAsync(10);
+    expect(await stuck).toBe('timed out');
+
+    expect(await discoverCheckouts(config, [])).toEqual([]);
+
+    release('late');
+    await vi.advanceTimersByTimeAsync(0);
+    expect((await discoverCheckouts(config, [])).map(({ path }) => path)).toEqual([join(roots, 'app')]);
   });
 
   it('finds the linked worktrees and recognised neighbours of a known repository through git worktree list', async () => {
