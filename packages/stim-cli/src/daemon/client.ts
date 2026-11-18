@@ -792,7 +792,7 @@ export const STIMD_THREADPOOL_SIZE = '16';
  * when the pool first starts, so it must be in the environment stimd starts with.
  */
 export function stimdLaunchEnv(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): Record<string, string> {
-  return { ...stimdEnv(env, platform), UV_THREADPOOL_SIZE: env.UV_THREADPOOL_SIZE ?? STIMD_THREADPOOL_SIZE };
+  return { ...stimdEnv(env, platform), UV_THREADPOOL_SIZE: env.UV_THREADPOOL_SIZE || STIMD_THREADPOOL_SIZE };
 }
 
 const xml = (value: string) =>
