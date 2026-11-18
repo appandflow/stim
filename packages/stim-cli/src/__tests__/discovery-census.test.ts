@@ -687,7 +687,7 @@ it('reads the install signature of a dependency tree exactly as treeSignature do
   try {
     for (const dir of [join(root, 'node_modules'), join(root, 'ios', 'Pods')]) mkdirSync(dir, { recursive: true });
     for (const name of INSTALL_MARKERS.slice(0, 2)) writeFileSync(join(root, 'node_modules', name), name);
-    writeFileSync(join(root, 'ios', 'Pods', INSTALL_MARKERS[4] as string), 'lock');
+    writeFileSync(join(root, 'ios', 'Pods', 'Manifest.lock'), 'lock');
     for (const path of [join(root, 'node_modules'), join(root, 'ios', 'Pods')])
       expect(await dependencyTreeSignature(path, new AbortController().signal)).toBe(treeSignature(path));
   } finally {

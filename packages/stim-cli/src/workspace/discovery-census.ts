@@ -331,6 +331,8 @@ export async function dependencyTreeSignature(
   try {
     const info = await reader.info(path);
     if (info?.kind !== 'directory') return null;
+    const root = stamped(info);
+    if (root === null) return null;
     const markers: (string | null)[] = [];
     for (const name of INSTALL_MARKERS) {
       try {
@@ -340,7 +342,7 @@ export async function dependencyTreeSignature(
         markers.push(null);
       }
     }
-    return installSignature(stamped(info) as string, markers);
+    return installSignature(root, markers);
   } catch (error) {
     if (error instanceof Unreadable) return null;
     throw error;
