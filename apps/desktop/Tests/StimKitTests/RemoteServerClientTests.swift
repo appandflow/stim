@@ -81,6 +81,25 @@ import Testing
     }
   }
 
+  @Test(arguments: [(nil, "npm i -g stim@latest"), (0, "stim remote update floco")] as [(Int?, String)])
+  func anOlderRemoteGetsARemedyThatWorksOnIt(api: Int?, remedy: String) async {
+    let server = ScriptedServer()
+    server.desktopApi = api
+    let (client, _) = client(server)
+    client.start()
+    for _ in 0..<400 {
+      if case .refused = client.state { break }
+      try? await Task.sleep(for: .milliseconds(5))
+    }
+    defer { client.stop() }
+    guard case .refused(let error) = client.state else {
+      Issue.record("Expected an API refusal")
+      return
+    }
+    #expect(error.code == "protocol-unsupported")
+    #expect(error.message.contains(remedy))
+  }
+
   @Test func aRemoteServerNeverGetsTheBootstrapOrALocalOnlyMethod() async throws {
     let server = ScriptedServer()
     var bootstrapReads = 0
@@ -137,6 +156,7 @@ import Testing
   private(set) var methods: [String] = []
   private(set) var helloParams: [String: JSONValue] = [:]
   private(set) var closed = false
+  var desktopApi: Int? = 1
 
   func close() { closed = true }
 
@@ -147,13 +167,17 @@ import Testing
     methods.append(method)
     guard method == "hello" else { return }
     if case .object(let params)? = request["params"] { helloParams = params }
-    let hello: JSONValue = .object([
-      "protocol": .number(2), "desktopApi": .number(1),
+    var hello: JSONValue = .object([
+      "protocol": .number(2),
       "server": .object(["id": .string("floco"), "name": .string("floco"), "version": .string("1"), "stim": .string("1")]),
       "capabilities": .array([.string("read")]),
 
       "actions": .array([]),
     ])
+    if case .object(var fields) = hello {
+      fields["desktopApi"] = desktopApi.map { .number(Double($0)) }
+      hello = .object(fields)
+    }
     let reply = String(decoding: try! JSONEncoder().encode(JSONValue.object(["id": id, "result": hello])), as: UTF8.self)
     Task { @MainActor in self.onEvent?(.text(reply)) }
   }

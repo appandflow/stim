@@ -369,9 +369,11 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
           let older = (hello.desktopApi ?? 0) < ServerProtocol.desktopApi
           let message =
             isRemote
-            ? older
-              ? "stim \(hello.server.version) on \(hello.server.name) is older than Stim Desktop; run stim remote update \(hello.server.name)"
-              : "stim \(hello.server.version) on \(hello.server.name) uses a newer Desktop API. Update Stim Desktop (Stim > Check for Updates)."
+            ? hello.desktopApi == nil
+              ? "stim \(hello.server.version) on \(hello.server.name) is a 1.x server. On that machine, run npm i -g stim@latest, then stim service install or stim serve."
+              : older
+                ? "stim \(hello.server.version) on \(hello.server.name) is older than Stim Desktop; run stim remote update \(hello.server.name)"
+                : "stim \(hello.server.version) on \(hello.server.name) uses a newer Desktop API. Update Stim Desktop (Stim > Check for Updates)."
             : older
               ? "The Stim engine \(hello.server.version) is older than Stim Desktop; run stim engine update"
               : "The Stim engine \(hello.server.version) uses a newer Desktop API. Update Stim Desktop (Stim > Check for Updates)."
