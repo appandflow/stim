@@ -198,15 +198,20 @@ function fixture(label: string, port: number) {
     throw new Error(`timed out waiting for ${what} to answer on ${port}`);
   };
 
+  const runJob = async () => {
+    launchd.start = () => stimd(first);
+    launchd.job = launchd.start();
+    const started = await until('the job stimd', () => record());
+    await answers('the job stimd');
+    return started;
+  };
+
   /**
    * Runs the unit's job on the first build, points the engine at the next one, and returns the successor once the job's
    * stimd handed the home to it and the restarted job waits on it.
    */
   const handOver = async () => {
-    launchd.start = () => stimd(first);
-    launchd.job = launchd.start();
-    const initial = await until('the job stimd', () => record());
-    await answers('the job stimd');
+    const initial = await runJob();
     point(next);
     let polls = 0;
     const successor = await until('the successor', () => {
@@ -244,7 +249,7 @@ function fixture(label: string, port: number) {
     rmSync(scratch, { recursive: true, force: true });
   };
 
-  return { home, handOver, health, cleanup, script: join(store, next, 'dist', 'cli.mjs') };
+  return { home, runJob, handOver, health, cleanup, script: join(store, next, 'dist', 'cli.mjs') };
 }
 
 describe.skipIf(process.platform !== 'darwin')('a service after an engine handoff', () => {
@@ -265,7 +270,7 @@ describe.skipIf(process.platform !== 'darwin')('a service after an engine handof
       });
 
       const notes = await installJob(
-        { label, port, env: [], pathPrepend: [], serve: false },
+        { label, port, env: [], pathPrepend: [], serve: false, stimHome: service.home },
         { script: service.script, host: null, requestPermissions: false },
       );
       expect(notes).toContainEqual(expect.stringContaining(`answers on 127.0.0.1:${port}`));
@@ -273,6 +278,25 @@ describe.skipIf(process.platform !== 'darwin')('a service after an engine handof
       const status = await serviceStatus(label);
       expect(status.listener).toMatchObject({ inJob: true, stimd: expect.anything() });
       expect(status.listener?.pid).not.toBe(successor.pid);
+    } finally {
+      await service.cleanup();
+    }
+  }, 240_000);
+
+  it('install signals a stimd that runs inside the job only through the job', async () => {
+    const label = 'dev.stim.handoff-in-job';
+    const port = await freePort();
+    const service = fixture(label, port);
+    try {
+      await service.runJob();
+      expect((await serviceStatus(label)).listener).toMatchObject({ inJob: true, stimd: expect.anything() });
+      await installJob(
+        { label, port, env: [], pathPrepend: [], serve: false, stimHome: service.home },
+        { script: service.script, host: null, requestPermissions: false },
+      );
+      const events = readFileSync(join(service.home, 'daemon', 'daemon.ndjson'), 'utf8');
+      expect(events).toContain('daemon_exited');
+      expect(events).not.toContain('daemon_signal_during_shutdown');
     } finally {
       await service.cleanup();
     }
