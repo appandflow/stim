@@ -177,8 +177,19 @@ describe('serverSetupFindings', () => {
       }),
     );
     expect(legacy?.fix).toBe(
-      'Run `STIM_HOME=/Users/me/.stim stim service install --label worker --port 7788 --path-prepend /opt/homebrew/bin --path-prepend "/Users/me/My Tools"`, adding `--env NAME=<value>` for ANDROID_HOME, SECRET_TOKEN as the service sets them now. The service does not run the engine\'s stimd shim, so `stim engine update` does not move it. Then follow https://stim.appandflow.com/docs/migrate-to-2#for-agents.',
+      'Follow https://stim.appandflow.com/docs/migrate-to-2#for-agents first. At its services step, once active work has drained, run `STIM_HOME=/Users/me/.stim stim service install --label worker --port 7788 --path-prepend /opt/homebrew/bin --path-prepend "/Users/me/My Tools" --env ANDROID_HOME=<value> --env SECRET_TOKEN=<value>`, with each <value> set to what the service sets now. The service does not run the engine\'s stimd shim, so `stim engine update` does not move it.',
     );
+    expect(legacy?.fix).not.toContain('hunter2');
+    const defaultHome = service();
+    defaultHome.installed = { ...defaultHome.installed, stimHome: null };
+    const fromScratchShell = serverSetupFindings(
+      setup({
+        stimHome: '/tmp/scratch-home',
+        services: [defaultHome],
+        servers: [reading({ health: health({ stim: '1.40.0' }) })],
+      }),
+    ).find((each) => each.code === 'server-version');
+    expect(fromScratchShell?.fix).toContain('`env -u STIM_HOME stim service install --port 7788`');
     const shim = service();
     shim.installed = { ...shim.installed, node: null, script: '/Users/me/.stim/engine/bin/stimd' };
     const [engine] = serverSetupFindings(

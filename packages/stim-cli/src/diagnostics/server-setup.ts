@@ -215,15 +215,15 @@ function updateRemedy(server: ServerReading, setup: ServerSetup): string {
     const earlierMajor = majorOf(server.health?.stim) < majorOf(setup.version);
     if (installed?.script?.endsWith('/bin/stimd') && !earlierMajor)
       return `Run \`stim engine update\` there, or \`stim engine use ${setup.version}\` for exactly this version.`;
-    const home = installed?.stimHome ? `STIM_HOME=${shellWord(installed.stimHome)} ` : '';
+    const home = installed?.stimHome ? `STIM_HOME=${shellWord(installed.stimHome)} ` : 'env -u STIM_HOME ';
     const paths = (installed?.pathPrepend ?? []).map((dir) => ` --path-prepend ${shellWord(dir)}`).join('');
-    const command = `${home}stim service install${labelFlag(server.label ?? 'dev.stim.server')} --port ${installed?.port ?? server.port}${paths}`;
-    const names = (installed?.env ?? []).map((entry) => entry.slice(0, entry.indexOf('=')));
-    const env = names.length
-      ? `, adding \`--env NAME=<value>\` for ${names.join(', ')} as the service sets them now`
-      : '';
-    const guide = earlierMajor ? ` Then follow ${UPGRADE_GUIDE_URL}.` : '';
-    return `Run \`${command}\`${env}. The service does not run the engine's stimd shim, so \`stim engine update\` does not move it.${guide}`;
+    const env = (installed?.env ?? []).map((entry) => ` --env ${entry.slice(0, entry.indexOf('='))}=<value>`).join('');
+    const command = `${home}stim service install${labelFlag(server.label ?? 'dev.stim.server')} --port ${installed?.port ?? server.port}${paths}${env}`;
+    const fill = env ? ', with each <value> set to what the service sets now' : '';
+    const run = earlierMajor
+      ? `Follow ${UPGRADE_GUIDE_URL} first. At its services step, once active work has drained, run \`${command}\`${fill}.`
+      : `Run \`${command}\`${fill}.`;
+    return `${run} The service does not run the engine's stimd shim, so \`stim engine update\` does not move it.`;
   }
   if (server.kind === 'desktop')
     return 'Update Stim Desktop; it bundles the server it runs. Or install a server separately with `stim service install` so Desktop adopts it.';
