@@ -571,7 +571,7 @@ async function dependencyTrees(operation: StimContext): Promise<{ path: string; 
   const trees = new Map<string, string>();
   for (const worktree of await artifactWorktreesAsync(operation.signal, operation)) {
     for (const base of new Set([worktree.path, ...worktree.keys])) {
-      const { found } = await dependencyDirsOf(base, operation.signal);
+      const found = await dependencyDirsOf(base, operation.signal);
       for (const { path, signature } of found) trees.set(path, signature);
       if (hungRead() !== null) return [...trees].map(([path, signature]) => ({ path, signature }));
     }

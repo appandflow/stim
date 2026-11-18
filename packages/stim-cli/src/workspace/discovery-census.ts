@@ -304,19 +304,24 @@ export async function buildOutputDirs(
   }
 }
 
+function stamped(info: Awaited<ReturnType<CensusIo['lstat']>> | null): string | null {
+  if (!info) return null;
+  if (info.ino === undefined) throw new Error('the census io returned no inode');
+  return `${info.ino}:${info.mtimeMs}`;
+}
+
 /**
  * The dependency directories (`ARTIFACT_DIRS.dependencies`) under `root` that are real directories, each with its install
- * signature, and the ones whose read failed or did not answer, kept apart so a failed read is never an absent
- * directory and never discards a sibling that was read. Every read goes through the bounded reader; an abort propagates.
+ * signature. A directory whose read failed or did not answer is left out, never reported absent, and never discards a
+ * sibling that was read; a marker that cannot be read counts as missing, as `treeSignature` does. Every read goes through the bounded reader; an abort propagates.
  */
 export async function dependencyDirsOf(
   root: string,
   signal: AbortSignal,
   { io = REAL_IO, timeoutMs = READ_TIMEOUT_MS }: { io?: CensusIo; timeoutMs?: number } = {},
-): Promise<{ found: { path: string; signature: string }[]; unreadable: string[] }> {
+): Promise<{ path: string; signature: string }[]> {
   const reader = boundedReader(io, Infinity, signal, timeoutMs);
   const found: { path: string; signature: string }[] = [];
-  const unreadable: string[] = [];
   for (const dir of ARTIFACT_DIRS.dependencies) {
     const path = join(root, dir);
     try {
@@ -324,16 +329,19 @@ export async function dependencyDirsOf(
       if (info?.kind !== 'directory') continue;
       const markers: (string | null)[] = [];
       for (const name of INSTALL_MARKERS) {
-        const marker = await reader.info(join(path, name));
-        markers.push(marker && `${marker.ino}:${marker.mtimeMs}`);
+        try {
+          markers.push(stamped(await reader.info(join(path, name))));
+        } catch (error) {
+          if (!(error instanceof Unreadable)) throw error;
+          markers.push(null);
+        }
       }
-      found.push({ path, signature: installSignature(`${info.ino}:${info.mtimeMs}`, markers) });
+      found.push({ path, signature: installSignature(stamped(info) as string, markers) });
     } catch (error) {
       if (!(error instanceof Unreadable)) throw error;
-      unreadable.push(path);
     }
   }
-  return { found, unreadable };
+  return found;
 }
 
 type Measurement = Pick<

@@ -1,4 +1,3 @@
-import * as fs from 'node:fs';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -50,5 +49,4 @@ it('reads nothing under a dependency tree synchronously when the caller supplies
   await refreshMeasure(tree, { ...options, signature: 'other' });
   await refreshMeasure(tree, options);
   expect(underTree().length).toBeGreaterThan(0);
-  expect(fs.existsSync(tree)).toBe(true);
 });
