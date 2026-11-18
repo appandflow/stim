@@ -3,7 +3,6 @@ import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { StimContext } from '@stim-cli/core';
 import { stimBuildId } from '@stim-cli/core/state';
-import { stableNode } from '@stim-cli/server/service-plist';
 import { installKind } from '../../bin/route.mjs';
 import { getExecutor } from '../exec.ts';
 import { claimsHeld, readBuildClaims } from './claims.ts';
@@ -159,6 +158,19 @@ async function handOver(promotion: Promotion, build: string): Promise<PromotionR
   return JSON.parse(await getExecutor().runFileAsync(process.execPath, [select, ...args], { timeoutMs: 600_000, env }));
 }
 
+/** The Homebrew `opt` link of a keg's Node, which survives a Node upgrade; any other Node keeps its resolved path. */
+export function shimNodePath(execPath: string): string {
+  const real = realpathSync(execPath);
+  const keg = /^(?<prefix>.*)\/Cellar\/(?<formula>[^/]+)\/[^/]+\/bin\/node$/.exec(real)?.groups;
+  if (!keg) return execPath;
+  const link = join(keg.prefix ?? '', 'opt', keg.formula ?? '', 'bin', 'node');
+  try {
+    return realpathSync(link) === real ? link : execPath;
+  } catch {
+    return execPath;
+  }
+}
+
 async function flip(
   root: string,
   build: string,
@@ -197,7 +209,7 @@ async function flip(
   }
   const router = join(root, build, 'bin', 'stim.mjs');
   mkdirSync(join(root, 'bin'), { recursive: true });
-  const shimNode = stableNode(promotion.ctx.env.PATH);
+  const shimNode = shimNodePath(node.path);
   writeRecord(join(root, 'bin', 'stim'), `#!/bin/sh\nexec "${shimNode}" "${router}" "$@"`, 0o755);
   writeRecord(join(root, 'bin', 'stim.cmd'), `@"${shimNode}" "${router}" %*\r`);
   writeRecord(
