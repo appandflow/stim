@@ -127,9 +127,7 @@ thread or the move holds the service's ownership from that moment, so Stim
 Desktop cannot replace the thread while it starts; a thread that does not
 listen on the service port releases it, and a move that fails puts the
 share-only thread back on its previous options so saved web shares keep
-serving until the next ask retries. Only one service ask starts or moves the
-thread at a time; a service ask that arrives meanwhile gets that ask's answer,
-so one rollback configuration and one ownership reservation exist. Any other ask waits until that ask settles, including its rollback, and is then handled against the settled thread. Once the service's thread runs,
+serving until the next ask retries. stimd handles every `net.ensure` one at a time, in arrival order, against the thread as it is when the ask's turn comes, so one rollback configuration and one ownership reservation exist. A move's rollback restores the share-only options the thread ran on, never a proposal that did not start. A service ask that finds a running thread that is not share-only and whose loopback setting or port differs from the service's is refused without taking ownership. Once the service's thread runs,
 Stim Desktop no longer moves it. A net thread that serves clients on other
 options (Desktop's or `stim serve`'s) is not replaced: the asker exits 1
 naming both ports, and `stim service status` names the holder's port. Which of

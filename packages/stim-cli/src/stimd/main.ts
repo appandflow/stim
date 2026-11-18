@@ -948,7 +948,7 @@ async function runStimdInner(
     },
   );
   let restartingNet = false;
-  let servicePending: Promise<NetAnswer> | null = null;
+  let netTurns: Promise<unknown> = Promise.resolve();
   let updating: Promise<void> | null = null;
   const maybeUpdate = (why: string, everyMs: number) => {
     if (!follower || updating || closing) return;
@@ -1312,7 +1312,6 @@ async function runStimdInner(
       opControllers.delete(socket);
       if (ops.delete(socket)) void checkEngine();
     });
-    // eslint-disable-next-line complexity -- this handler dispatches the existing daemon operations.
     const onData = (chunk: Buffer) => {
       buffer = Buffer.concat([buffer, chunk]);
       for (let end = buffer.indexOf(10); end >= 0; end = buffer.indexOf(10)) {
@@ -1407,110 +1406,125 @@ async function runStimdInner(
           socket.end(`${JSON.stringify({ op: 'presence', forwarded: net.presence(message.params) })}\n`);
         } else if (op === 'net.ensure') {
           admissionRevision++;
-          const params = isJsonObject(message.params) ? message.params : {};
-          const share = params.share === true;
-          const port = Number.isInteger(params.port) ? Number(params.port) : undefined;
-          const options = netOptions({
-            ...(port !== undefined && port >= 0 && port <= 65535 ? { port } : share ? { port: 0 } : {}),
-            loopbackOnly: share || params.loopbackOnly === true,
-            extraEnv: strings(params.extraEnv),
-            pathPrepend: strings(params.pathPrepend),
-            shareOnly: share,
-            ...(kind === 'desktop' ? { owner: 'desktop' } : {}),
-          });
-          const running = net.running();
-          const forService = params.service === true && !share;
-          if (servicePending && !forService) {
-            const replay = () => {
-              if (!socket.destroyed) onData(Buffer.from(`${JSON.stringify(message)}\n`));
-            };
-            void servicePending.then(replay, replay);
-            continue;
-          }
-          const values = forService && isJsonObject(params.envValues) ? params.envValues : {};
-          const resolved = {
-            ...options,
-            extraEnv: options.extraEnv.map((name) =>
-              typeof values[name] === 'string' && !name.includes('=') ? `${name}=${values[name]}` : name,
-            ),
-          };
-          // @ref LLP 0012#a-service-stimd-serves-the-service-port -- a service's ask replaces a share-only thread
-          const joined = forService ? servicePending : null;
-          const serviceMove = forService && !joined && running?.shareOnly === true;
-          const restart =
-            serviceMove ||
-            (kind === 'desktop' &&
-              !serviceNet &&
-              !restartingNet &&
-              !pinned() &&
-              running !== null &&
-              (running.loopbackOnly !== options.loopbackOnly ||
-                (port !== undefined && port !== 0 && running.port !== null && port !== running.port)));
-          const reserved = forService && !joined && (serviceMove || !running);
-          const wasService = serviceNet;
-          const previous = netServes;
-          if (!running) netServes = options;
-          if (reserved) serviceNet = true;
-          const restartNet = () => {
-            netServes = options;
-            log(
-              'info',
-              'net_restart',
-              serviceMove
-                ? `the service asked for port ${options.port}; replacing the share-only net thread`
-                : 'Stim Desktop asked for other net thread options; restarting it',
-            );
-            restartingNet = true;
-            return net
-              .restart(resolved, () => !closing)
-              .then(async (state) => {
-                if (state.listening) recordNet(state.port);
-                if (serviceMove && !(state.listening && state.port === options.port)) {
-                  netServes = previous;
-                  const restored = await net
-                    .restart(netOptions(previous ?? { port: 0, loopbackOnly: true, shareOnly: true }), () => !closing)
-                    .catch(() => null);
-                  if (restored?.listening) recordNet(restored.port);
-                }
-                return state;
-              })
-              .finally(() => {
-                restartingNet = false;
+          netTurns = netTurns
+            .then(() => {
+              if (socket.destroyed) return undefined;
+              if (closing) {
+                socket.destroy();
+                return undefined;
+              }
+              if (sealed) {
+                socket.end(
+                  `${JSON.stringify({ op: 'error', code: 'daemon-ending', message: 'The Stim daemon is ending.' })}\n`,
+                );
+                return undefined;
+              }
+              const params = isJsonObject(message.params) ? message.params : {};
+              const share = params.share === true;
+              const port = Number.isInteger(params.port) ? Number(params.port) : undefined;
+              const options = netOptions({
+                ...(port !== undefined && port >= 0 && port <= 65535 ? { port } : share ? { port: 0 } : {}),
+                loopbackOnly: share || params.loopbackOnly === true,
+                extraEnv: strings(params.extraEnv),
+                pathPrepend: strings(params.pathPrepend),
+                shareOnly: share,
+                ...(kind === 'desktop' ? { owner: 'desktop' } : {}),
               });
-          };
-          const answer = joined
-            ? joined
-            : serviceMove
-              ? pinned()
+              const running = net.running();
+              const forService = params.service === true && !share;
+              const values = forService && isJsonObject(params.envValues) ? params.envValues : {};
+              const resolved = {
+                ...options,
+                extraEnv: options.extraEnv.map((name) =>
+                  typeof values[name] === 'string' && !name.includes('=') ? `${name}=${values[name]}` : name,
+                ),
+              };
+              // @ref LLP 0012#a-service-stimd-serves-the-service-port -- a service's ask replaces a share-only thread
+              const mismatch =
+                forService &&
+                running !== null &&
+                !running.shareOnly &&
+                (running.loopbackOnly !== options.loopbackOnly || (port !== undefined && running.port !== port));
+              const serviceMove = forService && running?.shareOnly === true;
+              const restart =
+                serviceMove ||
+                (kind === 'desktop' &&
+                  !serviceNet &&
+                  !restartingNet &&
+                  !pinned() &&
+                  running !== null &&
+                  (running.loopbackOnly !== options.loopbackOnly ||
+                    (port !== undefined && port !== 0 && running.port !== null && port !== running.port)));
+              const reserved = forService && (serviceMove || !running);
+              const wasService = serviceNet;
+              const previous = netServes?.shareOnly ? netServes : null;
+              if (!running) netServes = options;
+              if (reserved) serviceNet = true;
+              const restartNet = () => {
+                netServes = options;
+                log(
+                  'info',
+                  'net_restart',
+                  serviceMove
+                    ? `the service asked for port ${options.port}; replacing the share-only net thread`
+                    : 'Stim Desktop asked for other net thread options; restarting it',
+                );
+                restartingNet = true;
+                return net
+                  .restart(resolved, () => !closing)
+                  .then(async (state) => {
+                    if (state.listening) recordNet(state.port);
+                    if (serviceMove && !(state.listening && state.port === options.port)) {
+                      netServes = previous;
+                      const restored = await net
+                        .restart(
+                          netOptions(previous ?? { port: 0, loopbackOnly: true, shareOnly: true }),
+                          () => !closing,
+                        )
+                        .catch(() => null);
+                      if (restored?.listening) recordNet(restored.port);
+                    }
+                    return state;
+                  })
+                  .finally(() => {
+                    restartingNet = false;
+                  });
+              };
+              const answer = mismatch
                 ? Promise.resolve({
                     listening: false as const,
-                    message: `the net thread serves web shares on port ${running.port ?? 'unknown'}; the service's next ask replaces it once the work stimd holds ends`,
+                    message: `the net thread serves other options on port ${running.port ?? 'unknown'}; the service needs port ${options.port} ${options.loopbackOnly ? 'on loopback' : 'on every interface'}`,
                   })
-                : restartNet()
-              : restart
-                ? restartNet()
-                : ensureNet(resolved);
-          if (reserved) servicePending = answer;
-          if (forService && !joined)
-            void answer.then(
-              (state) => {
-                if (servicePending === answer) servicePending = null;
-                if (state.listening && state.port === options.port) serviceNet = true;
-                else if (reserved) serviceNet = wasService;
-                return undefined;
-              },
-              () => {
-                if (servicePending === answer) servicePending = null;
-                if (reserved) serviceNet = wasService;
-              },
-            );
-          void answer.then(
-            (state) => {
-              lastContact = Date.now();
-              return reply({ op: 'net', ...state });
-            },
-            (error: unknown) => reply({ op: 'net', listening: false, message: String(error) }),
-          );
+                : serviceMove
+                  ? pinned()
+                    ? Promise.resolve({
+                        listening: false as const,
+                        message: `the net thread serves web shares on port ${running.port ?? 'unknown'}; the service's next ask replaces it once the work stimd holds ends`,
+                      })
+                    : restartNet()
+                  : restart
+                    ? restartNet()
+                    : ensureNet(resolved);
+              if (forService)
+                void answer.then(
+                  (state) => {
+                    if (state.listening && state.port === options.port) serviceNet = true;
+                    else if (reserved) serviceNet = wasService;
+                    return undefined;
+                  },
+                  () => {
+                    if (reserved) serviceNet = wasService;
+                  },
+                );
+              return answer.then(
+                (state) => {
+                  lastContact = Date.now();
+                  return reply({ op: 'net', ...state });
+                },
+                (error: unknown) => reply({ op: 'net', listening: false, message: String(error) }),
+              );
+            })
+            .catch(() => socket.destroy());
         } else if (op === 'net.connect') {
           socket.off('data', onData);
           const head = buffer;

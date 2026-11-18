@@ -531,8 +531,16 @@ test('two overlapping service asks against a held service port restore the share
   }
 }, 120_000);
 
-test('a Desktop ask during a failed service move waits for its rollback and then gets its own port', async () => {
-  const home = mkdtempSync(join(tmpdir(), 'stim-net-service-desktop-'));
+async function withStimd(
+  name: string,
+  body: (context: {
+    socket: string;
+    build: string;
+    holdPort: () => Promise<number>;
+    releasePort: () => Promise<void>;
+  }) => Promise<void>,
+) {
+  const home = mkdtempSync(join(tmpdir(), `stim-net-${name}-`));
   const env = { ...process.env, STIM_HOME: home, HOME: home, USERPROFILE: home, PATH: '' };
   const previousHome = process.env.STIM_HOME;
   process.env.STIM_HOME = home;
@@ -549,23 +557,21 @@ test('a Desktop ask during a failed service move waits for its rollback and then
       await new Promise((done) => setTimeout(done, 50));
     }
     const { socket, build } = JSON.parse(readFileSync(stimdRecordFile(), 'utf8'));
-    const first = { kind: 'cli', build };
-    expect(await ensureAs(socket, first, { share: true })).toMatchObject({ listening: true });
-    holder.listen(0, '127.0.0.1');
-    await once(holder, 'listening');
-    const address = holder.address();
-    assert.ok(address && typeof address === 'object');
-    const port = address.port;
-    const ask = { port, loopbackOnly: false, extraEnv: [], pathPrepend: [], service: true };
-
-    const desktopPort = await freePort();
-    const moving = ensureAs(socket, first, ask);
-    await new Promise((done) => setTimeout(done, 3000));
-    const desktop = ensureAs(socket, { kind: 'desktop' }, { port: desktopPort, loopbackOnly: true });
-    expect(await moving).toMatchObject({ listening: false });
-    expect(await desktop).toMatchObject({ listening: true, port: desktopPort });
-    expect((await fetch(`http://127.0.0.1:${desktopPort}/health`)).status).toBeLessThan(600);
-
+    await body({
+      socket,
+      build,
+      holdPort: async () => {
+        holder.listen(0, '127.0.0.1');
+        await once(holder, 'listening');
+        const address = holder.address();
+        assert.ok(address && typeof address === 'object');
+        return address.port;
+      },
+      releasePort: async () => {
+        holder.close();
+        await once(holder, 'close');
+      },
+    });
     stimd.kill('SIGTERM');
     expect(await stimdExited).toEqual([0, null]);
   } finally {
@@ -575,4 +581,64 @@ test('a Desktop ask during a failed service move waits for its rollback and then
     else process.env.STIM_HOME = previousHome;
     rmSync(home, { recursive: true, force: true });
   }
+}
+
+async function logged(text: string): Promise<void> {
+  const deadline = Date.now() + 30_000;
+  while (!existsSync(daemonNdjsonFile()) || !readFileSync(daemonNdjsonFile(), 'utf8').includes(text)) {
+    if (Date.now() > deadline) throw new Error(`stimd never logged ${text}`);
+    await new Promise((done) => setTimeout(done, 20));
+  }
+}
+
+const serviceAsk = (port: number) => ({ port, loopbackOnly: false, extraEnv: [], pathPrepend: [], service: true });
+
+test('a Desktop ask sent as a service move starts waits for the rollback and then gets its own port', async () => {
+  await withStimd('queue-desktop', async ({ socket, build, holdPort }) => {
+    const cli = { kind: 'cli', build };
+    expect(await ensureAs(socket, cli, { share: true })).toMatchObject({ listening: true });
+    const held = await holdPort();
+    const desktopPort = await freePort();
+    const moving = ensureAs(socket, cli, serviceAsk(held));
+    await logged('"net_restart"');
+    const desktop = ensureAs(socket, { kind: 'desktop' }, { port: desktopPort, loopbackOnly: true });
+    expect(await moving).toMatchObject({ listening: false });
+    expect(await desktop).toMatchObject({ listening: true, port: desktopPort });
+    expect((await fetch(`http://127.0.0.1:${desktopPort}/health`)).status).toBeLessThan(600);
+  });
+}, 120_000);
+
+test('a service ask sent during a Desktop restart is refused and leaves the thread to Desktop', async () => {
+  await withStimd('queue-restart', async ({ socket, build, holdPort }) => {
+    const cli = { kind: 'cli', build };
+    expect(await ensureAs(socket, cli, { share: true })).toMatchObject({ listening: true });
+    const held = await holdPort();
+    const desktopPort = await freePort();
+    const restarting = ensureAs(socket, { kind: 'desktop' }, { port: desktopPort, loopbackOnly: true });
+    await logged('Stim Desktop asked for other net thread options');
+    const service = ensureAs(socket, cli, serviceAsk(held));
+    expect(await restarting).toMatchObject({ listening: true, port: desktopPort });
+    expect(await service).toMatchObject({ listening: false });
+    const otherPort = await freePort();
+    expect(await ensureAs(socket, { kind: 'desktop' }, { port: otherPort, loopbackOnly: true })).toMatchObject({
+      listening: true,
+      port: otherPort,
+    });
+  });
+}, 120_000);
+
+test('a service ask for Desktop loopback thread on the same port is refused and Desktop can still move it', async () => {
+  await withStimd('queue-mismatch', async ({ socket, build }) => {
+    const port = await freePort();
+    expect(await ensureAs(socket, { kind: 'desktop' }, { port, loopbackOnly: true })).toMatchObject({
+      listening: true,
+      port,
+    });
+    expect(await ensureAs(socket, { kind: 'cli', build }, serviceAsk(port))).toMatchObject({ listening: false });
+    const otherPort = await freePort();
+    expect(await ensureAs(socket, { kind: 'desktop' }, { port: otherPort, loopbackOnly: true })).toMatchObject({
+      listening: true,
+      port: otherPort,
+    });
+  });
 }, 120_000);
