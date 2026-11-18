@@ -176,14 +176,15 @@ test('guideStatus sends a home and project an earlier Stim left to the migration
 test.skipIf(process.platform === 'win32')(
   'guideStatus names a service whose job runs a 1.x stim-server script, not one a 2.0 Stim installed without an engine',
   async () => {
+    const runHome = process.env.HOME;
+    process.env.HOME = join(home, 'user');
+    onTestFinished(() => {
+      process.env.HOME = runHome;
+    });
     const launchAgents = join(homedir(), 'Library', 'LaunchAgents');
     const units = join(homedir(), '.config', 'systemd', 'user');
     mkdirSync(launchAgents, { recursive: true });
     mkdirSync(units, { recursive: true });
-    onTestFinished(() => {
-      rmSync(launchAgents, { recursive: true, force: true });
-      rmSync(join(homedir(), '.config', 'systemd'), { recursive: true, force: true });
-    });
     const plist = (label: string, script: string) =>
       `<plist version="1.0"><dict><key>Label</key><string>${label}</string><key>ProgramArguments</key><array><string>/usr/local/bin/node</string><string>${script}</string><string>--port</string><string>7788</string></array><key>StandardOutPath</key><string>/Users/me/Library/Logs/Stim/${label}.log</string></dict></plist>`;
     const unit = (label: string, script: string) =>
