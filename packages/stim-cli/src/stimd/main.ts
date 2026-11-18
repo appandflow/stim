@@ -722,7 +722,7 @@ async function runCrashHold(
     autoUpdateOn(loadConfig()?.engine?.autoUpdate, readRecords(store.root).state.installedBy, service) &&
     updateDue(checked, Date.now(), ASKED_MS)
   ) {
-    const line = await checkForUpdate(store, 'crash hold').catch((error: unknown) => String(error));
+    const line = await checkForUpdate(store, 'crash hold', process.env).catch((error: unknown) => String(error));
     log('info', 'engine_update_check', `crash hold: ${line}`);
     checked = Date.now();
   }
@@ -966,7 +966,7 @@ async function runStimdInner(
       return;
     }
     const engine = follower.engine;
-    updating = checkForUpdate(engine, why)
+    updating = checkForUpdate(engine, why, process.env)
       .then(
         (line) => log('info', 'engine_update_check', `${why}: ${line}`),
         (error: unknown) =>

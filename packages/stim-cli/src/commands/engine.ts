@@ -8,6 +8,7 @@ import { getExecutor } from '../exec.ts';
 import { collectStore } from '../engine-store/gc.ts';
 import { takeLock } from '../engine-store/locks.ts';
 import { migrateHomes, promote, type Promotion } from '../engine-store/promote.ts';
+import { npmEnv } from '../engine-store/npm.ts';
 import { newestBad } from '../engine-store/select.ts';
 import { machineRoot, readSchema, SCHEMA } from '../engine-store/schema.ts';
 import { engineRoot, readManifest, readRecords } from '../engine-store/store.ts';
@@ -18,7 +19,7 @@ function refuse(code: string, message: string, remedy: string): never {
 }
 
 const busy = (root: string) => refuse('STIM_ENGINE_BUSY', `Another process is changing ${root}.`, 'Run it again.');
-const NPM = { timeoutMs: 60_000 };
+const npmOptions = () => ({ timeoutMs: 60_000, env: npmEnv(process.env) });
 const missing = () => refuse('STIM_ENGINE_REFUSED', 'No engine is installed.', 'Run stim engine install first.');
 
 async function run(setBy: string, source: Promotion['source'], more: Partial<Promotion> = {}): Promise<void> {
@@ -106,7 +107,9 @@ const update = defineOp({
     const root = engineRoot(process.env);
     const { current, state } = readRecords(root);
     if (!current) return missing();
-    const view = (await getExecutor().runFileAsync('npm', ['view', `stim@${current.channel}`, 'version'], NPM)).trim();
+    const view = (
+      await getExecutor().runFileAsync('npm', ['view', `stim@${current.channel}`, 'version'], npmOptions())
+    ).trim();
     const bad = newestBad(state.bad);
     if (bad && (compareVersions(view, bad) ?? 1) <= 0)
       refuse(

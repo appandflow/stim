@@ -78,6 +78,19 @@ struct ConnectionsTests {
     #expect(rows[3].revokeCommands.isEmpty)
   }
 
+  @Test func aRefusedPairingMergedIntoARemoteMachineKeepsItsRemedyInTheRowStatus() throws {
+    var mini = pairing(7, name: "mini", capabilities: ["read"], deviceID: nil)
+    mini.connection = .refused(ServerError(code: "desktop-api-1x", message: "1.x"))
+    let listing = try JSONDecoder().decode(
+      RemoteMachineListing.self,
+      from: Data(#"{"machines":[{"machine":"mini","serverKeyFingerprint":"\#(mini.id)","revoke":[]}]}"#.utf8))
+    let rows = Connections.outgoing(entries: ["mini"], statuses: nil, hosts: nil, listing: listing, paired: [mini])
+    let status = try #require(rows.first?.pairing?.status)
+    #expect(status.title == "Install stim 2 on mini")
+    #expect(status.detail?.contains("stim service install") == true)
+    #expect(status.command == "npm i -g stim@latest")
+  }
+
   @Test func neverMergesAPairingIntoARemoteMachineByName() throws {
     let mini = pairing(7, name: "mini", capabilities: ["read"], deviceID: nil)
     let other = try JSONDecoder().decode(
