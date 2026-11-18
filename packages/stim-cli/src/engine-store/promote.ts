@@ -160,11 +160,11 @@ async function handOver(promotion: Promotion, build: string): Promise<PromotionR
 
 /** The Homebrew `opt` link of a keg's Node, which survives a Node upgrade; any other Node keeps its resolved path. */
 export function shimNodePath(execPath: string): string {
-  const real = realpathSync(execPath);
-  const keg = /^(?<prefix>.*)\/Cellar\/(?<formula>[^/]+)\/[^/]+\/bin\/node$/.exec(real)?.groups;
-  if (!keg) return execPath;
-  const link = join(keg.prefix ?? '', 'opt', keg.formula ?? '', 'bin', 'node');
   try {
+    const real = realpathSync(execPath);
+    const keg = /^(?<prefix>.*)\/Cellar\/(?<formula>[^/]+)\/[^/]+\/bin\/node$/.exec(real)?.groups;
+    if (!keg) return execPath;
+    const link = join(keg.prefix ?? '', 'opt', keg.formula ?? '', 'bin', 'node');
     return realpathSync(link) === real ? link : execPath;
   } catch {
     return execPath;

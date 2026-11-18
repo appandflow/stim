@@ -28,8 +28,13 @@ describe('shimNodePath', () => {
   });
 
   it.skipIf(process.platform === 'win32')('keeps a Node outside a keg, and a keg whose opt link is missing', () => {
-    expect(shimNodePath(process.execPath)).toBe(process.execPath);
     const { prefix, keg } = brew();
+    const outside = mkdtempSync(join(tmpdir(), 'stim-shim-out-'));
+    dirs.push(outside);
+    const plain = join(outside, 'node');
+    writeFileSync(plain, '');
+    expect(shimNodePath(plain)).toBe(plain);
+    expect(shimNodePath(join(outside, 'missing'))).toBe(join(outside, 'missing'));
     rmSync(join(prefix, 'opt', 'node@22'));
     expect(shimNodePath(keg)).toBe(keg);
   });
