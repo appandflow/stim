@@ -410,7 +410,7 @@ export async function pair(
   }
   if ((await thisMachineOnly()) && endpoint !== local)
     fail(
-      `refusing to pair: this Stim home's server serves this machine only, so a device cannot reach ${endpoint}. Turn on Allow connections in Stim Desktop, or run stim serve without --loopback-only, then pair again.`,
+      `refusing to pair: this Stim home's server serves this machine only, so a device cannot reach ${endpoint}. Turn on Allow connections in Stim Desktop, or stop this home's stimd (the pid stim status shows, or the stim serve --loopback-only that runs it) and run stim serve as the next stim command, then pair again.`,
     );
   if (tailnet) markTailnet('pair');
   const { token, expiresAt } = createPairingToken(Date.now(), capabilitiesFor(control));
