@@ -71,12 +71,13 @@ public enum PairedServerWording {
     case "desktop-api-1x":
       return PairedServerNotice(
         tone: .warning, title: "Install stim 2 on \(machine)",
-        detail: "It runs stim 1.x. On it, install stim 2, then run stim service install or stim serve.",
+        detail:
+          "It runs stim 1.x. On it, update Stim Desktop, or install stim 2 with the command below and run stim service install or stim serve.",
         command: "npm i -g stim@latest")
     case "desktop-api-older":
       return PairedServerNotice(
         tone: .warning, title: "Update stim on \(machine)",
-        detail: "Its Stim engine is older than Stim Desktop. On it, run the command below.",
+        detail: "Its Stim engine is older than Stim Desktop. On it, use Update Engine in Stim Desktop, or run the command below.",
         command: "stim engine update")
     case "desktop-api-newer":
       return PairedServerNotice(
