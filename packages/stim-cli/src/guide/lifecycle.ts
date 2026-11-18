@@ -2549,7 +2549,8 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   level clears. Each rung measures again before it acts, never touches a
   workspace with a blocker (a build, a driver, a lease or lock, a live web
   share, a hosted placement, unreadable evidence, maintenance.keep), and
-  takes the longest-idle workspace first:
+  takes the longest-idle workspace first. Disk rungs take only what lies on a
+  short volume (stim gc --pressure: every volume):
 
     1. idle stage: every workspace idle 2 minutes or more goes into the idle
        stage now (\`guide metro\`, IDLE STOP), and the regenerable build

@@ -7,6 +7,7 @@ import pairOp from './pair.ts';
 import { log, pairingsOp } from './pairings.ts';
 import serviceOp from './service.ts';
 import { loadServerCli } from '../server-cli.ts';
+import { serviceUnitLabel } from '../stimd/service-unit.ts';
 import setupOp from './setup.ts';
 
 const options = {
@@ -53,6 +54,7 @@ const serveOp = defineOp({
         shareOnly: opts.share === true,
       },
       opts.service === true,
+      opts.service === true ? (serviceUnitLabel(process.env, port) ?? undefined) : undefined,
     );
   },
 });
@@ -70,7 +72,7 @@ function refuse(message: string): void {
   process.exitCode = 1;
 }
 
-async function serveInStimd(serve: ServeOptions, service: boolean): Promise<void> {
+async function serveInStimd(serve: ServeOptions, service: boolean, unit: string | undefined): Promise<void> {
   const bootstrapFd = process.env.STIM_DESKTOP_BOOTSTRAP_FD;
   const lifetimeFd = process.env.STIM_DESKTOP_LIFETIME_FD;
   delete process.env.STIM_DESKTOP_BOOTSTRAP_FD;
@@ -103,6 +105,7 @@ async function serveInStimd(serve: ServeOptions, service: boolean): Promise<void
   const served = await runStimd({
     mode: daemonMode(process.env),
     serve,
+    unit,
     ...(desktop?.key ? { desktopKey: desktop.key } : {}),
     onNet: answered,
   });

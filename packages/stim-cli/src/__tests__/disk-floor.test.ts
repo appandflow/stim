@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { daemonClaimRoot, daemonNdjsonFile, readDormantStage } from '@stim-cli/core/state';
@@ -23,7 +23,8 @@ beforeEach(() => {
   process.env.STIM_DISK_HARD_FLOOR_GB = '5';
   saveConfig({ version: 2, projects: {}, repos: {} });
   free = 100 * GB;
-  vi.spyOn(budget, 'readVolumeSpaceAsync').mockImplementation(async () => [{ volume: '/', freeMb: free }]);
+  const device = statSync(home).dev;
+  vi.spyOn(budget, 'readVolumeSpaceAsync').mockImplementation(async () => [{ volume: '/', freeMb: free, device }]);
 });
 
 afterEach(() => {

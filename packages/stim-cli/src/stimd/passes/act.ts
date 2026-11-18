@@ -92,6 +92,8 @@ export interface ActContext {
   lowPriority?: boolean;
   /** The Cargo target trim leaves what it has not moved yet once this aborts. */
   stop?: AbortSignal;
+  /** In a run scoped to the volumes under pressure, whether a path the dormant stage would delete lies on one. */
+  deletable?: (path: string) => boolean;
 }
 
 const protectWindowMs = (settings: Pick<MaintenanceSettings, 'protectRecentHours'>) =>
@@ -577,7 +579,7 @@ export async function executeAction(action: MaintenanceAction, context: ActConte
     case 'would-delete-expired-archives':
       return deleteExpiredArchivesAction(context);
     case 'would-dormant-stage':
-      return enterDormantStage(action, context.operation);
+      return enterDormantStage(action, context.operation, context.deletable);
     case 'would-delete-runtime':
       return deleteRuntimeAction(action, context.operation);
     case 'would-delete-unavailable-sim':

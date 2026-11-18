@@ -1,5 +1,5 @@
 import { delimiter, isAbsolute } from 'node:path';
-import { isJsonObject, type InstalledService } from '@stim-cli/core/state';
+import { isJsonObject, isServiceLabel, type InstalledService } from '@stim-cli/core/state';
 import type { ServeRecord } from '@stim-cli/transport-tailscale';
 
 export class ServiceError extends Error {}
@@ -8,7 +8,6 @@ export const DEFAULT_LABEL = 'dev.stim.server';
 export const DEFAULT_PORT = 7787;
 export const THROTTLE_SECONDS = 30;
 
-const LABEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const JOB_KEYS = ['STIM_HOME', 'SHELL'];
 
@@ -39,7 +38,7 @@ export interface ServiceSpec {
 }
 
 export function validateLabel(label: string): string | null {
-  return LABEL_PATTERN.test(label) ? null : `--label must be letters, digits, ".", "_" or "-", got "${label}".`;
+  return isServiceLabel(label) ? null : `--label must be letters, digits, ".", "_" or "-", got "${label}".`;
 }
 
 export function validatePort(value: string): number | string {

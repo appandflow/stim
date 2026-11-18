@@ -133,6 +133,11 @@ export function parseLaunchctlPrint(output: string): LaunchdJob {
 /** The variable a systemd unit sets so the server knows its own label; launchd sets `XPC_SERVICE_NAME` itself. */
 export const LABEL_VARIABLE = 'STIM_SERVICE_LABEL';
 
+/** Whether `label` is a service label `stim service install` accepts: letters, digits, `.`, `_` or `-`. */
+export function isServiceLabel(label: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(label);
+}
+
 /** Reads a unit `renderUnit` wrote, or null when it has no `ExecStart=` and label in that form. */
 export function parseUnit(text: string): InstalledService | null {
   const lines = unitLines(text);

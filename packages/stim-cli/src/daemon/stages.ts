@@ -1,5 +1,7 @@
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import { existsSync, readdirSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
 import {
   currentStage,
@@ -18,7 +20,7 @@ import { canonicalPath } from '../commands/gc/paths.ts';
 import { deleteProjectDevices, findStaleProjectDevices, withAndroidAvdSizes } from '../commands/gc/devices.ts';
 import type { OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { workspaceOutputPaths } from '../commands/gc/workspaces.ts';
-import { listAvdsAsync } from '../devices/android.ts';
+import { avdDataDirectories, listAvdsAsync } from '../devices/android.ts';
 import { projectDeviceSlots } from '../devices/device-slots.ts';
 import { listAllIosSimsAsync, type IosSimRecord } from '../devices/ios.ts';
 import { withWorkspaceProcessLock, workspaceProcessLockError } from '../engine/workspace-process-lock.ts';
@@ -359,6 +361,7 @@ export async function clearStoppedOutputs(
   config: Config,
   thresholdMs: number,
   operation?: StimContext,
+  deletable?: (path: string) => boolean,
 ): Promise<StageResult | null> {
   const { path } = candidate;
   const launchers = freshLaunchers(operation, operation?.signal);
@@ -388,6 +391,7 @@ export async function clearStoppedOutputs(
                 operation,
                 operation?.signal,
               ),
+              deletable,
             );
             if (!outputs.paths.length) return null;
             const bytes = await deleteOutputs(
@@ -539,7 +543,24 @@ type DormantOutcome = {
  * simulators and emulators deleted through ledger teardown (the parked pool is untouched), then its logs archived.
  * node_modules and Pods stay; `runDormantDependencies` takes those holding their own bytes.
  */
-export async function enterDormantStage(action: MaintenanceAction, operation?: StimContext): Promise<DormantOutcome> {
+/** Where an owned device keeps its data: the simulator's listed data path or its default device set folder, or the AVD's. */
+export function deviceDataDirs(
+  sims: readonly IosSimRecord[] | null | undefined,
+  kind: 'ios' | 'android',
+  id: string,
+): string[] {
+  if (kind === 'android') return avdDataDirectories(id);
+  return [
+    sims?.find((sim) => sim.udid === id)?.dataPath ??
+      join(homedir(), 'Library', 'Developer', 'CoreSimulator', 'Devices', id),
+  ];
+}
+
+export async function enterDormantStage(
+  action: MaintenanceAction,
+  operation?: StimContext,
+  deletable?: (path: string) => boolean,
+): Promise<DormantOutcome> {
   const path = action.target;
   const thresholdMs = dormantThresholdMs(action);
   if (thresholdMs === null) return { status: 'kept', bytes: 0, detail: 'the action names no idle threshold' };
@@ -579,6 +600,9 @@ export async function enterDormantStage(action: MaintenanceAction, operation?: S
           avds,
           olderThanDays: 0,
           lastTouched: () => 0,
+        }).filter((device) => {
+          const dirs = deletable ? deviceDataDirs(sims, device.kind, device.id) : [];
+          return !deletable || (dirs.length > 0 && dirs.every(deletable));
         }),
       );
       const deleted: string[] = [];

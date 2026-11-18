@@ -665,6 +665,12 @@ and above normal runs one ladder top-down until the level clears:
 | 8    | Nothing                                                                                                            | First the `node_modules` and Pods of source (main) checkouts idle 2 minutes, after every linked worktree's, on a volume still under the critical level; then every device recording not being written (except pinned or in-use workspaces) and archived logs, recordings and agent actions |
 | 9    | Nothing                                                                                                            | Other tools' caches, subject to the rules below                                                                                                                                                                                                                                            |
 
+A rung that frees disk takes only what lies on a volume under `disk.minFreeGb`:
+a full external disk does not clear `node_modules`, outputs or caches on a
+healthy internal one. The ladder a build runs for its headroom takes only what
+lies on the build's volume, and `stim gc --pressure high` or `--pressure critical`
+takes it on every volume.
+
 Rung 9 is the last. It cleans caches Stim does not own, each through the tool's
 own command and only when that tool is installed and no process of that tool
 runs, and lists each with its size before and after: `npm cache clean --force`,

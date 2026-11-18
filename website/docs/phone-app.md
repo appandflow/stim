@@ -120,7 +120,10 @@ npx --yes stim pair --json
 </TabItem>
 </Tabs>
 
-Use its endpoint and pairing token for manual entry. The phone spends the
+Use its endpoint and pairing token for manual entry. While the server serves
+this Mac only (**Allow connections** off in Desktop, or `stim serve
+--loopback-only`), `stim pair` refuses instead of printing an endpoint the phone
+cannot reach. The phone spends the
 token once in the server's authentication handshake, and the server then
 recognizes the phone by its own key, which the phone keeps in its Keychain or
 Keystore. The QR code also carries the server key's fingerprint, which the phone

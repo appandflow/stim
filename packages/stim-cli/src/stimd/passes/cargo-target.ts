@@ -240,7 +240,7 @@ function profilesOutside(dir: string, gone: readonly string[]): string[] {
   );
 }
 
-async function measuredDiskLevel(dir: string, signal?: AbortSignal): Promise<PressureLevel> {
+export async function measuredDiskLevel(dir: string, signal?: AbortSignal): Promise<PressureLevel> {
   const { thresholds } = diskThresholds(loadConfig());
   return diskPressure(await readVolumeSpaceAsync([dir], signal), thresholds).level;
 }

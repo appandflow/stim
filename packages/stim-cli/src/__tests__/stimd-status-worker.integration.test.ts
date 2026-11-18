@@ -111,7 +111,7 @@ it.skipIf(process.platform !== 'darwin')(
     const onExit = vi.fn<(failure?: Error) => void>();
     const net = createNetThread(() => {}, onExit);
     try {
-      expect(await net.ensure(options)).toEqual({ listening: true, port: 1 });
+      expect(await net.ensure(options)).toEqual({ listening: true, port: 1, loopbackOnly: true });
       const [, status] = workers;
       let statusExited = false;
       const statusExit = new Promise<number>((resolve) =>

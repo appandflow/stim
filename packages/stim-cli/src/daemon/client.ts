@@ -1,12 +1,13 @@
 import type { Invocation } from '../stimd/forwarded.ts';
 import { createHash, randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import type { SpawnOptions } from 'node:child_process';
 import { connect, type Socket } from 'node:net';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { StimContext } from '@stim-cli/core';
 import type { StreamSpec } from '../stimd/logs/streams.ts';
+import type { ServeOptions } from '../stimd/main.ts';
 import { releaseRunLease } from '../engine/device-lease.ts';
 import { operationState } from '../engine/operation-state.ts';
 import type { PresencePublishParams } from '@stim-cli/core/protocol';
@@ -35,6 +36,8 @@ import { ANDROID_LOCATION_VARIABLES } from '../devices/android-locations.ts';
 import { endForSwitch, engineShim, ownStoreEngine, switchedEngine } from './engine-switch.ts';
 import { legacyDaemonHolder, legacyDaemonStop } from './legacy-daemon.ts';
 import { buildClaimRoot } from '../engine-store/claims.ts';
+import { engineRoot, readRecords } from '../engine-store/store.ts';
+import { installKind } from '../../bin/route.mjs';
 import { getExecutor } from '../exec.ts';
 import { spawnEntry, stimBuild } from '../spawn-entry.ts';
 import { daemonMode, spawnsDaemon } from './mode.ts';
@@ -276,6 +279,18 @@ export function legacyDaemonRefusal(
 }
 // compat end
 
+/** Whether `stim engine install` would accept this copy: no engine is installed and it is not a source checkout. */
+function engineInstallable(): boolean {
+  try {
+    const root = engineRoot(process.env);
+    if (readRecords(root).current) return false;
+    const self = dirname(dirname(spawnEntry('engine-select')));
+    return installKind(realpathSync(self), existsSync(root) ? realpathSync(root) : root) !== 'development';
+  } catch {
+    return false;
+  }
+}
+
 /**
  * The refusal of a command that needs this home's stimd when a stimd of another build holds the home and no stimd of
  * this build replaced it: which build runs, and what to do. Null when no stimd refused this process.
@@ -316,7 +331,7 @@ export function otherBuildRefusal(): { code: 'STIM_DAEMON_UNAVAILABLE'; message:
               ]
             : [
                 `${stimd} runs Stim ${version}, not this stim's ${stimBuild().version}, and has not restarted on this build.`,
-                `Run the command with Stim ${version}, or ${kill}; the next stim command starts one of this build.`,
+                `Run the command with Stim ${version}, or ${kill}; the next stim command starts one of this build.${engineInstallable() ? ' To stop this recurring, stop stimd as above, then run `stim engine install`.' : ''}`,
               ];
   return { code: 'STIM_DAEMON_UNAVAILABLE', message: why, remedy };
 }
@@ -1874,15 +1889,15 @@ export function drainOwned(root: string, env: NodeJS.ProcessEnv = process.env): 
   return ownedRequest('logs.drain', root, env);
 }
 
-/** Whether the net thread serves, on which port, or why it does not. */
-export type NetAnswer = { listening: true; port: number } | { listening: false; message: string };
+/** Whether the net thread serves, on which port and whether for this machine only, or why it does not. */
+export type NetAnswer = { listening: true; port: number; loopbackOnly?: true } | { listening: false; message: string };
 
 const NET_START_MS = 60_000;
 
 function netAnswer(reply: Record<string, unknown> | null): NetAnswer | null {
   if (reply?.op !== 'net') return null;
   return reply.listening === true && typeof reply.port === 'number'
-    ? { listening: true, port: reply.port }
+    ? { listening: true, port: reply.port, ...(reply.loopbackOnly === true ? { loopbackOnly: true as const } : {}) }
     : { listening: false, message: String(reply.message) };
 }
 
@@ -1895,19 +1910,28 @@ export async function ensureNet(share: boolean, env: NodeJS.ProcessEnv = process
   if (!stimdLive() && (!(share || spawnsDaemon(env)) || !(await claimTaken(launchStimd(env, daemonMode(env))))))
     return null;
   return netAnswer(
-    await askHeldStimd(() => askStimd('net.ensure', NET_START_MS, share ? { params: { share: true } } : {})),
+    await askHeldStimd(() => askStimd('net.ensure', NET_START_MS, { params: netEnsureParams({ shareOnly: share }) })),
   );
+}
+
+/** The `net.ensure` params stimd reads, named field by field so no caller's option names reach the wire. */
+function netEnsureParams(
+  serve: Partial<ServeOptions> & { service?: boolean; envValues?: Record<string, string> },
+): Record<string, unknown> {
+  const { shareOnly, port, loopbackOnly, extraEnv, pathPrepend, service, envValues } = serve;
+  return { share: shareOnly === true, port, loopbackOnly, extraEnv, pathPrepend, service, envValues };
 }
 
 /**
  * Asks the stimd that holds this home to start its net thread on `port`, for a `stim serve` that found one running, and
- * resolves once that stimd closes the connection. A net thread that already runs keeps its own port and options, except
- * for a service (`service`), whose ask moves it to the service's options and sends the values of its bare `--env`
- * names, which the net thread it starts uses and no successor's arguments carry. The connection is closed at once
- * when the answer is not a listening one, or for a service, not on its port.
+ * resolves once that stimd closes the connection, which it does when the net thread ends or stimd exits. A net thread
+ * that already runs keeps its own port and options, except for a service (`service`), whose ask moves it to the
+ * service's options and sends the values of its bare `--env` names, which the net thread it starts uses and no
+ * successor's arguments carry. The connection is closed at once when the answer is not a listening one, or for a
+ * service, not on its port.
  */
 export function serveThroughStimd(
-  params: { port: number; loopbackOnly: boolean; extraEnv: string[]; pathPrepend: string[]; service: boolean },
+  params: ServeOptions & { service: boolean },
   onAnswer: (answer: NetAnswer | null) => void,
 ): Promise<void> {
   const envValues = params.service
@@ -1919,7 +1943,7 @@ export function serveThroughStimd(
       )
     : {};
   return new Promise((done) => {
-    const socket = openStimd([{ op: 'net.ensure', params: { ...params, envValues } }], (reply) => {
+    const socket = openStimd([{ op: 'net.ensure', params: netEnsureParams({ ...params, envValues }) }], (reply) => {
       const answer = netAnswer(reply);
       onAnswer(answer);
       if (!answer?.listening || (params.service && params.port !== 0 && answer.port !== params.port)) socket.destroy();
