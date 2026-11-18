@@ -244,6 +244,7 @@ test('shutdown retains the daemon claim until the net thread and observers close
   const close = vi.fn<() => Promise<void>>(() => closing);
   const net = vi.spyOn(netThread, 'createNetThread').mockReturnValue({
     ensure: async () => ({ listening: false, message: 'unused' }),
+    restart: async () => ({ listening: false, message: 'unused' }),
     running: () => null,
     connect: () => false,
     presence: () => false,
@@ -278,6 +279,7 @@ test.skipIf(process.platform === 'win32')(
       restart = onRestart ?? restart;
       return {
         ensure: async () => ({ listening: false, message: 'unused' }),
+        restart: async () => ({ listening: false, message: 'unused' }),
         running: () => null,
         connect: () => false,
         presence: () => false,
@@ -1266,7 +1268,14 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
     daemons.push({ child, exited });
     await listening();
     const record = JSON.parse(readFileSync(stimdRecordFile(), 'utf8'));
-    expect(record).toEqual({ format: 1, pid: child.pid, socket: stimdSocket(), build, version: expect.any(String) });
+    expect(record).toEqual({
+      format: 1,
+      pid: child.pid,
+      socket: stimdSocket(),
+      build,
+      version: expect.any(String),
+      netPort: null,
+    });
     expect(fs.statSync(stimdSocket()).mode & 0o777).toBe(0o600);
     const ask = (first: Record<string, unknown>) =>
       new Promise<string[]>((done) => {

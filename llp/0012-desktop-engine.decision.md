@@ -109,6 +109,44 @@ implementing agent for [#5587](https://github.com/appandflow/stim/issues/5587)
 and [#5567](https://github.com/appandflow/stim/issues/5567), not by the
 maintainer.
 
+## A service stimd serves the service port
+
+The stimd that holds a home a service unit serves listens on the unit's port.
+Any starter can win the home after a handover: the successor, the unit's own
+restart, or a stimd a command started, which has no service options and, with
+a saved share, runs a share-only net thread on a random loopback port. So the
+unit's process (`--service` without `--carried`), when it finds a stimd holding
+the home, asks `net.ensure` with `service: true` and the values of its bare
+`--env` names, which the holder may not have. When the holder runs a
+share-only net thread, stimd replaces it with one on the service's options and
+those values (the values reach only that thread, never a successor's
+arguments; the new thread restores the saved shares), unless work pins stimd,
+in which case it refuses and the unit's next restart asks again. An ask that
+waits on the stop gets the service's thread. A service's ask that starts the
+thread or the move holds the service's ownership from that moment, so Stim
+Desktop cannot replace the thread while it starts; a thread that does not
+listen on the service port releases it, and a move that fails puts the
+share-only thread back on its previous options so saved web shares keep
+serving until the next ask retries. stimd handles every `net.ensure` one at a time, in arrival order, against the thread as it is when the ask's turn comes, so one rollback configuration and one ownership reservation exist. A move's rollback restores the share-only options the thread ran on, never a proposal that did not start. A matching service ask joins a thread that is still starting. A service ask for port 0 matches any port, on the loopback setting alone. A thread start has no deadline of its own: an ask waits for it as it did before the queue, and the start is bounded by its own steps. The boot start of `stim serve` or of saved shares is the first turn of that queue. A service ask that finds a running thread that is not share-only and whose loopback setting or port differs from the service's is refused without taking ownership. Once the service's thread runs,
+Stim Desktop no longer moves it. A net thread that serves clients on other
+options (Desktop's or `stim serve`'s) is not replaced: the asker exits 1
+naming both ports, and `stim service status` names the holder's port. Which of
+the two owns the home then is the open decision of
+[#5095](https://github.com/appandflow/stim/issues/5095).
+
+stimd records its net thread's port as `netPort` in `run/stimd.json` (null
+while none listens). Once stimd closes its net thread for good, no ask starts
+another.
+
+Maintainer direction: "can u check the update process to make sure this doesnt happen? Can we make sure stimd always uses same port so this wont hjappen", relayed on [#5811](https://github.com/appandflow/stim/issues/5811).
+
+Chosen by the implementing agent, not the maintainer: replacing only a
+share-only thread, refusing while pinned rather than deferring, and leaving a
+unit that names one engine build to `stim service install` (status reports
+it), serving every `net.ensure` one at a time in arrival order, matching a service ask for port 0 on the
+loopback setting alone, and refusing a service ask whose options do not match a
+running non-share thread.
+
 ## Code
 
 - [Home and socket discovery](../apps/desktop/Sources/StimKit/StimHome.swift), [machine engine paths](../apps/desktop/Sources/StimKit/EngineState.swift), [server lifecycle](../apps/desktop/Sources/StimDesktop/ServerController.swift), and [paired endpoint validation](../apps/desktop/Sources/StimKit/PairingPayload.swift).

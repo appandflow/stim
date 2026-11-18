@@ -213,6 +213,8 @@ describe('service status permissions', () => {
     envNames: [],
     pathPrepend: [],
     stimBuild: { service: null, cli: null, match: null },
+    stimd: null,
+    followsEngine: null,
     linger: null,
   };
 
@@ -225,6 +227,21 @@ describe('service status permissions', () => {
     );
     expect(line(lines, 'Screen Recording:')).toContain('unknown');
     expect(line(lines, 'Accessibility:')).toContain('unknown');
+  });
+
+  it("names a stimd that holds the home on another port than the service's, and a unit pinned to one build", () => {
+    const lines = statusLines(
+      { ...status, stimd: { pid: 41, port: 35679 }, followsEngine: false },
+      permissionPanes(27),
+    );
+    expect(line(lines, 'stimd:')).toContain(`pid 41 holds this Stim home and serves port 35679, not port ${SPEC.port}`);
+    expect(line(lines, 'engine:')).toContain('stim service install');
+    const served = statusLines(
+      { ...status, stimd: { pid: 41, port: SPEC.port }, followsEngine: true },
+      permissionPanes(27),
+    );
+    expect(line(served, 'stimd:')).toBe('');
+    expect(line(served, 'engine:')).toBe('');
   });
 
   it('reports a server that listens but cannot read its Stim home as degraded, not ok', () => {

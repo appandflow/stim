@@ -357,6 +357,26 @@ describe.skipIf(process.platform !== 'darwin')('service lifecycle', () => {
     });
   });
 
+  it("reads the port the service home's stimd serves, and a unit that names one engine build instead of the shim", async () => {
+    engineShim();
+    const record = join(home, 'state', 'run', 'stimd.json');
+    mkdirSync(dirname(record), { recursive: true });
+    writeFileSync(record, JSON.stringify({ format: 1, pid: process.pid, socket: 's', build: 'b', version: 'v' }));
+    expect((await serviceStatus(label)).stimd).toBeNull();
+    writeFileSync(
+      record,
+      JSON.stringify({ format: 1, pid: process.pid, socket: 's', build: 'b', version: 'v', netPort: 35679 }),
+    );
+    writeFileSync(
+      plist,
+      launchd.original.replace(join(home, 'old-server.mjs'), join(home, 'engine', 'b0f06f70c508', 'bin', 'stim.mjs')),
+    );
+    expect(await serviceStatus(label)).toMatchObject({
+      stimd: { pid: process.pid, port: 35679 },
+      followsEngine: false,
+    });
+  });
+
   it('rewrites a LaunchAgent that names node and a script to the shim once, keeping its options and environment', async () => {
     const shim = engineShim();
     const before = installedPlist();

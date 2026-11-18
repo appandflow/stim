@@ -47,7 +47,12 @@ export interface NetThread {
   connect(socket: Socket, head: Buffer): boolean;
   /** Forwards one agent action's presence to a listening net thread; false when none listens. */
   presence(params: unknown): boolean;
-  /** Stops the net thread and waits for it. */
+  /**
+   * Stops the net thread and, unless `proceed` says no once it stopped, starts it again with `options`; an ask that
+   * waits on the stop starts a thread with `options` too, not its own.
+   */
+  restart(options: NetOptions, proceed: () => boolean): Promise<NetAnswer>;
+  /** Stops the net thread for good and waits for it; later asks are refused. */
   close(): Promise<void>;
 }
 
@@ -68,6 +73,8 @@ export function createNetThread(
   let shareOnly = false;
   let loopbackOnly = false;
   let port: number | null = null;
+  let replacing: NetOptions | null = null;
+  let ending = false;
   let cleanupFailure: Error | undefined;
   let failureNotified = false;
   let nextId = 1;
@@ -109,9 +116,12 @@ export function createNetThread(
     }
   };
   return {
-    ensure(options): Promise<NetAnswer> {
+    ensure(requested: NetOptions): Promise<NetAnswer> {
       if (cleanupFailure) return Promise.resolve({ listening: false, message: cleanupFailure.message });
-      if (stopping) return stopping.then(() => this.ensure(options));
+      if (ending) return Promise.resolve({ listening: false, message: 'stimd is ending' });
+      if (stopping) return stopping.then(() => this.ensure(requested));
+      const options = replacing ?? requested;
+      replacing = null;
       if (started) {
         if (!options.shareOnly && shareOnly) {
           shareOnly = false;
@@ -127,6 +137,7 @@ export function createNetThread(
       started = new Promise<NetAnswer>((answer) => {
         thread.on('message', (message: FromNet) => {
           if (message.type === 'listening') {
+            if (stopping) return;
             listening = true;
             port = message.port;
             log('info', 'net_started', `the net thread listens on port ${message.port}`);
@@ -180,20 +191,36 @@ export function createNetThread(
       post({ type: 'presence', params });
       return true;
     },
-    async close() {
-      const thread = worker;
-      if (!thread) {
-        if (cleanupFailure) throw cleanupFailure;
-        return;
+    async restart(options, proceed) {
+      replacing = options;
+      try {
+        await stopThread();
+      } catch (error) {
+        replacing = null;
+        throw error;
       }
-      const stopped = stop(thread);
-      const timer = setTimeout(() => {
-        unverified('worker did not exit after shutdown');
-        void thread.terminate();
-      }, STOP_WAIT_MS);
-      await stopped;
-      clearTimeout(timer);
-      if (cleanupFailure) throw cleanupFailure;
+      if (proceed()) return this.ensure(options);
+      replacing = null;
+      return { listening: false, message: 'stimd is ending' };
+    },
+    close() {
+      ending = true;
+      return stopThread();
     },
   };
+  async function stopThread(): Promise<void> {
+    const thread = worker;
+    if (!thread) {
+      if (cleanupFailure) throw cleanupFailure;
+      return;
+    }
+    const stopped = stop(thread);
+    const timer = setTimeout(() => {
+      unverified('worker did not exit after shutdown');
+      void thread.terminate();
+    }, STOP_WAIT_MS);
+    await stopped;
+    clearTimeout(timer);
+    if (cleanupFailure) throw cleanupFailure;
+  }
 }
