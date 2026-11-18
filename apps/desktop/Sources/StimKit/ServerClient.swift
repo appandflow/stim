@@ -378,7 +378,7 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
             } else if older {
               refusal = (
                 "desktop-api-older",
-                "\(server) is older than Stim Desktop. On that machine, use Update Engine in Stim Desktop or run stim engine update. If that says no engine is installed, run npm i -g stim@latest, then stim service install."
+                "\(server) is older than Stim Desktop. On that machine, update Stim Desktop (Stim > Check for Updates) or run stim engine update. If that says no engine is installed, run npm i -g stim@latest, then stim service install."
               )
             } else {
               refusal = (

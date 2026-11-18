@@ -78,7 +78,7 @@ public enum PairedServerWording {
       return PairedServerNotice(
         tone: .warning, title: "Update stim on \(machine)",
         detail:
-          "Its Stim engine is older than Stim Desktop. On it, use Update Engine in Stim Desktop or run the command below. If that says no engine is installed, run npm i -g stim@latest, then stim service install.",
+          "Its Stim engine is older than Stim Desktop. On it, update Stim Desktop (Stim > Check for Updates) or run the command below. If that says no engine is installed, run npm i -g stim@latest, then stim service install.",
         command: "stim engine update")
     case "desktop-api-newer":
       return PairedServerNotice(
