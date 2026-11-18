@@ -373,12 +373,12 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
             if hello.desktopApi == nil {
               refusal = (
                 "desktop-api-1x",
-                "\(server) is a 1.x server. On that machine, update Stim Desktop, or run npm i -g stim@latest and then stim service install or stim serve."
+                "\(server) is a 1.x server. On that machine, update Stim Desktop if it runs the server, otherwise run npm i -g stim@latest, stop the old server, then run stim service install or stim serve."
               )
             } else if older {
               refusal = (
                 "desktop-api-older",
-                "\(server) is older than Stim Desktop. On that machine, use Update Engine in Stim Desktop, or run stim engine update."
+                "\(server) is older than Stim Desktop. On that machine, use Update Engine in Stim Desktop or run stim engine update. If that says no engine is installed, run npm i -g stim@latest, then stim service install."
               )
             } else {
               refusal = (
