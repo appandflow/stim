@@ -30,7 +30,12 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
   usage: active workspaces, the machine's memory used of total (as Activity
   Monitor's "Memory Used" counts it, colored by memory pressure), and the lowest
   free space of the volumes that hold Stim's workspaces, Stim home and the
-  simulators. **+**
+  simulators. A connection attempt that gets no accepted `hello` within 10 seconds
+  counts as lost and retries after the usual backoff; from then on the chip reads
+  **Offline** until the machine answers. When nothing else fills the list, a machine
+  without a cached status shows a spinner during its first attempt, and after a
+  failed one a message naming it, asking to check Tailscale on both devices, with
+  **Retry**. **+**
   pairs another machine. Below, one list of every workspace on every machine,
   grouped by repo. Workspaces marked with `workspace.hidden` stay out of the default
   list; select Hidden in the Home filters to see them. Starting or warming the
