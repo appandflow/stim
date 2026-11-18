@@ -13,10 +13,12 @@ struct PairedMachineSection: View {
   var body: some View {
     VStack(alignment: .leading, spacing: Space.xxl) {
       MachineHeading(icon: "link", title: name, subtitle: subtitle) { EmptyView() }
-      if let detail = entry.status.detail, !detail.isEmpty {
-        Text(detail).font(.stim(.footnote)).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+      if case .refused = entry.connection {
+        if let detail = entry.status.detail, !detail.isEmpty {
+          Text(detail).font(.stim(.footnote)).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+        if let command = entry.status.command { CopyableCommand(command: command, runsOn: name) }
       }
-      if let command = entry.status.command { CopyableCommand(command: command, runsOn: name) }
       if let capacity = status?.payload?.capacity, capacity.load != nil || !capacity.meters.isEmpty {
         VStack(alignment: .leading, spacing: Space.md) {
           SectionLabel(title: "Capacity")
