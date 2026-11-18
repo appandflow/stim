@@ -1176,12 +1176,12 @@ export function admittedOpToken(held?: Socket[]): string | undefined {
 }
 
 /**
- * Admits the operation again when stimd closed its connection, so a lease can be asked of the successor. False when
+ * Admits the CLI's own operation again when stimd closed its connection, so a lease can be asked of the successor. False when
  * that admission is refused; true when none was needed, it was admitted again, or it was cancelled.
  */
 export async function readmitLostOperation(operation: StimContext): Promise<boolean> {
   const token = operationToken(operation);
-  if (!token || !admissions.get(token)?.lost) return true;
+  if (!token || token !== lostOpToken || !admissions.get(token)?.lost) return true;
   const next = await resumeAdmission(token, operation, false, operation.signal);
   return !(next && 'error' in next);
 }
@@ -1252,7 +1252,7 @@ async function admissionLost(token: string, wait: boolean): Promise<boolean> {
 }
 
 const daemonRestarted = (why: string) =>
-  Object.assign(new Error(`This Stim home's stimd stopped under this command, and ${why}.`), {
+  Object.assign(new Error(`This Stim home's stimd stopped while this command was running, and ${why}.`), {
     code: 'STIM_DAEMON_UNAVAILABLE',
     remedy: 'Run the command again; `stim status` shows whether a stimd runs.',
   });

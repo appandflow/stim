@@ -657,6 +657,42 @@ describe.skipIf(process.platform === 'win32')('a command not waiting on stimd wh
     expect(result).toMatchObject({ status: 'leased' });
     expect(listLeaseFiles().map((file) => file.lease?.holder)).toEqual([root]);
   }, 60_000);
+  test('an API-scoped lost token under the crash hold still fails a device lease with the unavailable-daemon error', async () => {
+    const root = workspace('app');
+    const first = await startStimd();
+    await admitCli(root);
+    const token = admittedOpToken();
+    first.kill('SIGKILL');
+    await once(first, 'exit');
+    cancelCliOp();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const now = Date.now();
+    const boots = [3, 2, 1].map((ago) => ({
+      at: now - ago * 1000,
+      build: stimdBuildId(),
+      pid: 1,
+      abnormal: true,
+      cause: 'engine',
+      reason: 'thrown for the test',
+    }));
+    writeFileSync(stimdBootsFile(), JSON.stringify({ format: 1, boots }));
+    const operation = context(root);
+    operationState(operation).takesSignals = false;
+    operationState(operation).stimdOpToken = token;
+    await expect(
+      acquireRunLease({
+        root,
+        platform: 'ios',
+        id: 'SIM-RESUME',
+        idLabel: 'udid',
+        waitSeconds: 0,
+        noWait: true,
+        installBoundMs: 0,
+        operation,
+      }),
+    ).rejects.toMatchObject({ code: 'STIM_DAEMON_UNAVAILABLE' });
+    expect(listLeaseFiles()).toEqual([]);
+  }, 60_000);
 });
 
 function pausedMetroProject() {

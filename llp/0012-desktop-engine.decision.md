@@ -53,24 +53,27 @@ Viewing another server and asking a remote worker to run a local workspace have 
 ## A command continues across a stimd restart
 
 A command's admission (`op.begin` and its token) lives only in the memory of
-the stimd that gave it. When that stimd goes away under the command, whether or not it
-is waiting on stimd at that moment (a crash, a kill, an in-place update, an
-engine switch), the CLI admits the command again with the stimd that replaces it, the way it was first admitted,
-starting one where the command would have started one. A command not waiting
-is admitted again at its next stimd step that takes the command's own admission
-(a lease, a log stream or a readiness check), and prints the same line; a Metro
-or tunnel request takes a request-scoped admission of its own and prints none. It then repeats the step it was
-waiting on and continues, printing one stderr line that stimd
-restarted. It does this once per operation, and the whole resume (every wait in
-it) takes at most 30 seconds. A cancelled operation stops resuming at once and
-is not admitted again. With no stimd admitting it again, or when the stimd that
-replaced the first one also goes away under the repeated step, the command
+the stimd that gave it. When that stimd goes away under the command, whether or
+not it is waiting on stimd at that moment (a crash, a kill, an in-place update,
+an engine switch), the CLI admits the command again with the stimd that
+replaces it, the way it was first admitted, starting one where the command
+would have started one. It then repeats the step it was waiting on and
+continues, printing one stderr line that stimd restarted. A command that was
+not waiting is admitted again at its next stimd step that takes the command's
+own admission (a lease, a log stream or a readiness check), with the same line;
+a Metro or tunnel request takes a request-scoped admission of its own and
+prints none. It does this once per operation, and the whole resume (every wait
+in it) takes at most 30 seconds. A cancelled operation stops resuming at once
+and is not admitted again. With no stimd admitting it again, or when the stimd
+that replaced the first one also goes away under the repeated step, the command
 fails with `STIM_DAEMON_UNAVAILABLE`, a message that says stimd stopped while
-the command waited on it, or with the other-build refusal. When a stimd of
-another build ended the connection, the resume reports that refusal and starts
-no stimd of this build. It never re-runs the whole command on another engine
-mid-way, and it does not continue on an attached stimd, which ends with the
-command that hosts it.
+the command was running, or with the other-build refusal. A command that was
+not waiting meets a refusal at its step: the CLI's device lease falls back to a
+local lease, the log stream reports the refusal with its remedy, and the
+readiness check marks coverage failed. When a stimd of another build ended the
+connection, the resume reports that refusal and starts no stimd of this build.
+It never re-runs the whole command on another engine mid-way, and it does not
+continue on an attached stimd, which ends with the command that hosts it.
 
 Only steps that are safe to repeat are repeated, each within the time left of
 its own budget:
