@@ -183,7 +183,7 @@ async function homeListener(
 
 /**
  * The service stimd of `home` that serves `port` from outside the job whose process is `jobPid`: the successor an
- * engine switch handed the port to, which its claim marks `service`. Null when that cannot be proved.
+ * engine switch handed the port to, which its claim marks `serviceUnit`. Null when that cannot be proved.
  */
 async function outsideStimd(home: string, port: number, jobPid: number | null): Promise<ClaimHolder | null> {
   if (process.platform === 'win32' || jobPid === null) return null;
@@ -193,7 +193,7 @@ async function outsideStimd(home: string, port: number, jobPid: number | null): 
     !stimd ||
     pid === process.pid ||
     pid === jobPid ||
-    stimd.details.service !== true ||
+    stimd.details.serviceUnit !== true ||
     stimd.details.attached === true ||
     !listeners?.includes(String(pid))
   )

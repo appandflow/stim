@@ -44,13 +44,16 @@ const serveOp = defineOp({
       const note = await (await loadServerCli()).rememberTailnet();
       if (note) console.error(`stim: ${note}`);
     }
-    await serveInStimd({
-      port,
-      extraEnv: opts.env,
-      pathPrepend: opts.pathPrepend,
-      loopbackOnly: opts.loopbackOnly === true || opts.share === true,
-      shareOnly: opts.share === true,
-    });
+    await serveInStimd(
+      {
+        port,
+        extraEnv: opts.env,
+        pathPrepend: opts.pathPrepend,
+        loopbackOnly: opts.loopbackOnly === true || opts.share === true,
+        shareOnly: opts.share === true,
+      },
+      opts.service === true,
+    );
   },
 });
 
@@ -67,7 +70,7 @@ function refuse(message: string): void {
   process.exitCode = 1;
 }
 
-async function serveInStimd(serve: ServeOptions): Promise<void> {
+async function serveInStimd(serve: ServeOptions, unit: boolean): Promise<void> {
   const bootstrapFd = process.env.STIM_DESKTOP_BOOTSTRAP_FD;
   const lifetimeFd = process.env.STIM_DESKTOP_LIFETIME_FD;
   delete process.env.STIM_DESKTOP_BOOTSTRAP_FD;
@@ -100,6 +103,7 @@ async function serveInStimd(serve: ServeOptions): Promise<void> {
   const served = await runStimd({
     mode: daemonMode(process.env),
     serve,
+    unit,
     ...(desktop?.key ? { desktopKey: desktop.key } : {}),
     onNet: answered,
   });

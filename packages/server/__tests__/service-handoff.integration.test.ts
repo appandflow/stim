@@ -131,26 +131,14 @@ function fixture(label: string, port: number) {
     PATH: bin,
     TMPDIR: process.env.TMPDIR ?? tmpdir(),
   };
-  const stimd = (build: string, carried = false) =>
-    spawn(
-      '/bin/sh',
-      [
-        '-c',
-        '"$@"; exit $?',
-        'sh',
-        process.execPath,
-        join(store, build, 'dist', 'cli.mjs'),
-        '__stimd',
-        '--mode',
-        'on',
-        ...(carried ? ['--carried'] : []),
-        '--service',
-        '--loopback-only',
-        '--port',
-        String(port),
-      ],
-      { env, stdio: 'ignore', detached: true },
-    );
+  const cli = (build: string, args: string[]) =>
+    spawn('/bin/sh', ['-c', '"$@"; exit $?', 'sh', process.execPath, join(store, build, 'dist', 'cli.mjs'), ...args], {
+      env,
+      stdio: 'ignore',
+      detached: true,
+    });
+  const stimd = (build: string) =>
+    cli(build, ['__stimd', '--mode', 'on', '--service', '--loopback-only', '--port', String(port)]);
   vi.stubEnv('HOME', scratch);
   vi.stubEnv('STIM_HOME', join(scratch, 'caller'));
   vi.stubEnv('STIM_ENGINE_ROOT', store);
@@ -233,7 +221,16 @@ function fixture(label: string, port: number) {
     return successor;
   };
 
-  const cleanup = async () => {
+  const stopHome = async () => {
+    for (let round = 0; round < 3; round++) {
+      const holder = readClaimSet(stimdClaimRoot(home)).live.find(({ mode }) => mode === 'exclusive');
+      if (!holder || inspectProcessIdentity(holder.owner) !== 'same') return;
+      process.kill(holder.owner.pid, 'SIGTERM');
+      await until('the fixture stimd to exit', () => inspectProcessIdentity(holder.owner) !== 'same');
+    }
+  };
+
+  const stopJob = async () => {
     const job = launchd.job;
     launchd.job = null;
     if (job?.pid && job.exitCode === null && job.signalCode === null) {
@@ -241,27 +238,66 @@ function fixture(label: string, port: number) {
       process.kill(-job.pid, 'SIGTERM');
       await exited;
     }
-    for (let round = 0; round < 3; round++) {
-      const holder = readClaimSet(stimdClaimRoot(home)).live.find(({ mode }) => mode === 'exclusive');
-      if (!holder || inspectProcessIdentity(holder.owner) !== 'same') break;
-      process.kill(holder.owner.pid, 'SIGTERM');
-      await until('the fixture stimd to exit', () => inspectProcessIdentity(holder.owner) !== 'same');
-    }
+  };
+
+  /** Replaces the job with one that runs `sleep`, or with one whose process already exited. */
+  const setJob = async (runs: boolean) => {
+    await stopJob();
+    const start = () =>
+      runs
+        ? spawn('/bin/sleep', ['600'], { stdio: 'ignore', detached: true })
+        : spawn('/usr/bin/true', [], { stdio: 'ignore', detached: true });
+    launchd.start = start;
+    const job = start();
+    launchd.job = job;
+    if (!runs) await once(job, 'exit');
+  };
+
+  const cleanup = async () => {
+    await stopJob();
+    await stopHome();
     rmSync(scratch, { recursive: true, force: true });
   };
 
-  /** Starts a stimd that serves the port without being the service's, as one Desktop or a command started. */
-  const runIndependent = async () => {
-    stimd(first, true);
-    const started = await until('the independent stimd', () => record());
-    await answers('the independent stimd');
+  /** Runs a plain `stim serve` on the unit's port, as a person would before installing the service. */
+  const runServe = async () => {
+    cli(first, ['serve', '--loopback-only', '--port', String(port)]);
+    const started = await until('stim serve', () => record());
+    await answers('stim serve');
+    return started;
+  };
+
+  /** Starts a stimd as Stim Desktop does and asks it, as Desktop asks, to serve the unit's port. */
+  const runDesktop = async () => {
+    cli(first, ['__stimd', '--mode', 'on']);
+    const started = await until('the Desktop stimd', () => record());
+    await new Promise<void>((resolve, reject) => {
+      const client = connect(started.socket);
+      let buffer = '';
+      client.setEncoding('utf8');
+      client.on('error', reject);
+      client.on('data', (chunk: string) => {
+        buffer += chunk;
+        if (buffer.includes('"op":"net"')) {
+          client.destroy();
+          resolve();
+        }
+      });
+      client.write(
+        `${JSON.stringify({ kind: 'desktop' })}\n${JSON.stringify({ op: 'net.ensure', params: { port, loopbackOnly: true } })}\n`,
+      );
+    });
+    await answers('the Desktop stimd');
     return started;
   };
 
   return {
     home,
     runJob,
-    runIndependent,
+    runServe,
+    runDesktop,
+    setJob,
+    stopHome,
     handOver,
     health,
     cleanup,
@@ -319,31 +355,29 @@ describe.skipIf(process.platform !== 'darwin')('a service after an engine handof
     }
   }, 240_000);
 
-  it('install leaves a stimd that is not the service, beside a job with or without a process', async () => {
+  it('install leaves running a stim serve or a Desktop stimd that no service unit started', async () => {
     const label = 'dev.stim.handoff-independent';
     const port = await freePort();
     const service = fixture(label, port);
+    const install = () =>
+      installJob(
+        { label, port, env: [], pathPrepend: [], serve: false, stimHome: service.home },
+        { script: service.script, host: null, requestPermissions: false },
+      );
     try {
-      const independent = await service.runIndependent();
-      const install = () =>
-        installJob(
-          { label, port, env: [], pathPrepend: [], serve: false, stimHome: service.home },
-          { script: service.script, host: null, requestPermissions: false },
-        );
+      const served = await service.runServe();
       for (const runs of [false, true]) {
-        const start = () =>
-          runs
-            ? spawn('/bin/sleep', ['600'], { stdio: 'ignore', detached: true })
-            : spawn('/usr/bin/true', [], { stdio: 'ignore', detached: true });
-        launchd.start = start;
-        const job = start();
-        launchd.job = job;
-        if (!runs) await once(job, 'exit');
+        await service.setJob(runs);
         await expect(install()).rejects.toThrow(`did not stop and release port ${port}`);
-        expect(gone(independent.pid)).toBe(false);
+        expect(gone(served.pid)).toBe(false);
       }
+      await service.stopHome();
+      const desktop = await service.runDesktop();
+      await service.setJob(true);
+      await expect(install()).rejects.toThrow(`did not stop and release port ${port}`);
+      expect(gone(desktop.pid)).toBe(false);
     } finally {
       await service.cleanup();
     }
-  }, 240_000);
+  }, 360_000);
 });
