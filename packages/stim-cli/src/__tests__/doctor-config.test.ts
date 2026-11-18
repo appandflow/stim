@@ -8,6 +8,8 @@ import {
   type DoctorInspectionOptions,
   runDoctor as inspectDoctor,
 } from '../diagnostics/doctor.ts';
+import { mergeSettingsLayers } from '../workspace/settings.ts';
+import { loadConfig } from '../workspace/config.ts';
 import { resolveOptimizations } from '../optimizations.ts';
 
 import type { SettingsObject } from '@stim-cli/core/state';
@@ -44,6 +46,101 @@ test('a removed name in the config or the environment is an inert key, with no r
     }),
   ]);
   expect(check({}, [], { STIM_REMOTE_BUILD_MODE: 'force' })).toEqual([]);
+});
+
+test('a removed name in the machine config file is an inert key', () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-doctor-machine-'));
+  const before = process.env.STIM_HOME;
+  process.env.STIM_HOME = home;
+  try {
+    const file = join(home, 'config.json');
+    writeFileSync(
+      file,
+      JSON.stringify({
+        version: 2,
+        projects: {},
+        repos: {},
+        remote: { buildMode: 'force' },
+        concurrency: { maxBuilds: 2 },
+      }),
+    );
+    const machine = readMachineSettings({});
+    expect(
+      checkMachineSettings({
+        settings: machine.settings,
+        layers: machine.layers,
+        projectRoot: '/app',
+        optimizations: resolveOptimizations(machine.settings, {}),
+        exists: () => false,
+        env: {},
+        machineConfig: loadConfig(),
+      }),
+    ).toEqual([
+      expect.objectContaining({ title: 'A key in the config is inert', fix: `Remove remote.buildMode from ${file}.` }),
+    ]);
+  } finally {
+    if (before === undefined) delete process.env.STIM_HOME;
+    else process.env.STIM_HOME = before;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('a literal dotted machine property gives no finding about the project setting it spells', () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-doctor-dotted-'));
+  const before = process.env.STIM_HOME;
+  process.env.STIM_HOME = home;
+  try {
+    writeFileSync(
+      join(home, 'config.json'),
+      JSON.stringify({ version: 2, projects: {}, repos: {}, 'ios.deviceType': 'iPhone 16' }),
+    );
+    const project = { ios: { deviceType: 'iPhone 17' } };
+    const machine = readMachineSettings({});
+    const layers = [{ scope: 'committed' as const, file: '/app/.stim.json', settings: project }, ...machine.layers];
+    expect(
+      checkMachineSettings({
+        settings: mergeSettingsLayers(layers.map((layer) => layer.settings)),
+        layers,
+        projectRoot: '/app',
+        optimizations: resolveOptimizations(project, {}),
+        exists: () => false,
+        env: {},
+        machineConfig: loadConfig(),
+      }),
+    ).toEqual([]);
+  } finally {
+    if (before === undefined) delete process.env.STIM_HOME;
+    else process.env.STIM_HOME = before;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test.each([
+  { homeId: 'live', '': { homeId: 'stale' } },
+  { parked: { ios: [] }, '': { parked: { ios: [] } } },
+])('an empty property name in the machine config gives no doctor finding', (extra) => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-doctor-empty-'));
+  const before = process.env.STIM_HOME;
+  process.env.STIM_HOME = home;
+  try {
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ version: 2, projects: {}, repos: {}, ...extra }));
+    const machine = readMachineSettings({});
+    expect(
+      checkMachineSettings({
+        settings: machine.settings,
+        layers: machine.layers,
+        projectRoot: '/app',
+        optimizations: resolveOptimizations(machine.settings, {}),
+        exists: () => false,
+        env: {},
+        machineConfig: loadConfig(),
+      }),
+    ).toEqual([]);
+  } finally {
+    if (before === undefined) delete process.env.STIM_HOME;
+    else process.env.STIM_HOME = before;
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test('STIM_MAINTENANCE in the environment is reported with daemon.mode and STIM_DAEMON', () => {

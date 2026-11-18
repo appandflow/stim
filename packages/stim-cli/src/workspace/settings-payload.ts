@@ -16,7 +16,12 @@ import {
 import { getConfigPath, getProjectSettings, getRepoSettings, loadConfig, type Config } from './config.ts';
 import { gitPath, killOnAbort } from './git-read.ts';
 import { findCommandWorkspaceAsync } from './project.ts';
-import { readCommittedSettings, removedMachineSettings, unknownSettingKeys } from './settings.ts';
+import {
+  readCommittedSettings,
+  removedMachineSettings,
+  unknownMachineEntries,
+  unknownSettingKeys,
+} from './settings.ts';
 import { settingDefault, stimDesktopInstalled, stimDesktopInstalledAsync } from '../devices/stim-desktop.ts';
 
 const MASK = '********';
@@ -263,14 +268,16 @@ export function unknownEntries(context: SettingsContext): SettingsPayload['unkno
       settings: context.committed.repository,
     });
   }
-  return sources.flatMap(({ scope, file, settings }) =>
-    file === null
-      ? []
-      : unknownSettingKeys(settings).map((key) => {
-          const value = settingValueAt(settings, key);
-          return { key, scope, file, value };
-        }),
-  );
+  return sources.flatMap(({ scope, file, settings }) => {
+    if (file === null) return [];
+    const found = unknownSettingKeys(settings).map((key) => ({ key, value: settingValueAt(settings, key) }));
+    if (scope === 'machine') {
+      for (const entry of unknownMachineEntries(context.machine)) {
+        if (!found.some((known) => known.key === entry.key)) found.push(entry);
+      }
+    }
+    return found.map(({ key, value }) => ({ key, scope, file, value }));
+  });
 }
 
 function settingsPayload(context: SettingsContext): SettingsPayload {

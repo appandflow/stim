@@ -701,6 +701,10 @@ test.each([undefined, 'importer-home'])(
 
 test('GC API matches CLI JSON and ignores mutation options supplied by a JavaScript caller', async () => {
   const item = fixture('parity');
+  writeFileSync(
+    join(item.home, 'config.json'),
+    JSON.stringify({ daemon: { mode: 'off' }, disk: { minFreeGb: 0, criticalFreeGb: 0, hardFloorGb: 0 } }),
+  );
   const ctx: StimContext = {
     home: item.home,
     buildCache: null,
