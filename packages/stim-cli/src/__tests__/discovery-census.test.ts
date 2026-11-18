@@ -8,7 +8,7 @@ import { readDiscoveryCensusFile, readDiscoveryScanFile, readDiskUsage } from '@
 import * as diskUsage from '../disk-usage.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { discoveryLines, discoveryReport, lowDiskLine } from '../workspace/discovery-report.ts';
-import { censusDue, dependencyDirsOf, runDiscoveryCensusIfDue } from '../workspace/discovery-census.ts';
+import { censusDue, dependencyTreeSignature, runDiscoveryCensusIfDue } from '../workspace/discovery-census.ts';
 import { runDiscoveryScanIfDue } from '../workspace/discovery-scan.ts';
 import { hungRead } from '../workspace/bounded-read.ts';
 import { loadConfig, saveConfig } from '../workspace/config.ts';
@@ -688,9 +688,8 @@ it('reads the install signature of a dependency tree exactly as treeSignature do
     for (const dir of [join(root, 'node_modules'), join(root, 'ios', 'Pods')]) mkdirSync(dir, { recursive: true });
     for (const name of INSTALL_MARKERS.slice(0, 2)) writeFileSync(join(root, 'node_modules', name), name);
     writeFileSync(join(root, 'ios', 'Pods', INSTALL_MARKERS[4] as string), 'lock');
-    const found = await dependencyDirsOf(root, new AbortController().signal);
-    expect(found.map((entry) => entry.path)).toEqual([join(root, 'node_modules'), join(root, 'ios', 'Pods')]);
-    for (const { path, signature } of found) expect(signature).toBe(treeSignature(path));
+    for (const path of [join(root, 'node_modules'), join(root, 'ios', 'Pods')])
+      expect(await dependencyTreeSignature(path, new AbortController().signal)).toBe(treeSignature(path));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

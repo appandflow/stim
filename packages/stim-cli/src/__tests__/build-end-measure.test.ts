@@ -1,5 +1,14 @@
 import { lstat, readdir } from 'node:fs/promises';
-import { lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -7,7 +16,7 @@ import { listBuildEndMarkers, newBuildEndMarkerFile } from '@stim-cli/core/state
 import { testContext } from './_context.ts';
 import { markBuildEnded } from '../build-end-marker.ts';
 import { writeCacheFile } from '../cache-file.ts';
-import { INSTALL_MARKERS, installSignature } from '../private-size.ts';
+import { INSTALL_MARKERS, installSignature, treeSignature } from '../private-size.ts';
 import { measureBuildEnds, measureDependencyTrees } from '../daemon/dependencies.ts';
 import { forgetStatusMeasures } from '../status-measures.ts';
 import { startBuildEndTimer } from '../stimd/build-end-timer.ts';
@@ -47,8 +56,8 @@ vi.mock('../workspace/discovery-census.ts', async (original) => {
         ...(state.io ? { io: state.io } : {}),
         ...(state.platform ? { platform: state.platform } : {}),
       }),
-    dependencyDirsOf: (root: string, signal: AbortSignal) =>
-      real.dependencyDirsOf(root, signal, state.io ? { io: state.io } : {}),
+    dependencyTreeSignature: (path: string, signal: AbortSignal) =>
+      real.dependencyTreeSignature(path, signal, state.io ? { io: state.io } : {}),
   };
 });
 
@@ -318,6 +327,49 @@ it('still measures a dependency tree whose install marker cannot be read, with t
         INSTALL_MARKERS.map(() => null),
       ),
     ],
+  ]);
+});
+
+it('leaves a tree alone for this pass when an install marker read does not answer', async () => {
+  const tree = join(app, 'node_modules');
+  mkdirSync(tree);
+  vi.useFakeTimers();
+  const release: (() => void)[] = [];
+  state.io = {
+    readNames: async (path) => readdirSync(path),
+    isDirectory: async (path) => lstatSync(path).isDirectory(),
+    realpath: async (path) => path,
+    head: async () => null,
+    lstat: async (path) => {
+      if (path.endsWith('.package-lock.json'))
+        return new Promise((done) => release.push(() => done({ kind: 'file', mtimeMs: 0, ino: 0 })));
+      const info = lstatSync(path);
+      return { kind: info.isDirectory() ? 'directory' : 'file', mtimeMs: info.mtimeMs, ino: info.ino };
+    },
+  };
+  const pass = measureDependencyTrees(operation());
+  await vi.advanceTimersByTimeAsync(3000);
+  await pass;
+  expect(walked()).toEqual([]);
+  release.forEach((done) => done());
+  await vi.advanceTimersByTimeAsync(0);
+});
+
+it('reads a tree signature when its turn comes, not before an earlier tree is walked', async () => {
+  const modules = join(app, 'node_modules');
+  const pods = join(app, 'ios', 'Pods');
+  mkdirSync(modules);
+  mkdirSync(pods, { recursive: true });
+  const before = treeSignature(pods);
+  state.during = () => {
+    if (state.calls.length === 1) writeFileSync(join(pods, 'Manifest.lock'), 'changed');
+  };
+  await measureDependencyTrees(operation());
+  const after = treeSignature(pods);
+  expect(after).not.toBe(before);
+  expect(state.calls.map((call) => [call.path, call.signature])).toEqual([
+    [modules, treeSignature(modules)],
+    [pods, after],
   ]);
 });
 

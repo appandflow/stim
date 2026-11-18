@@ -15,7 +15,7 @@ import {
 import { listedRoots } from '../commands/gc/worktrees.ts';
 import { refreshMeasure } from '../disk-usage.ts';
 import { INSTALL_MARKERS, installSignature } from '../private-size.ts';
-import { answered, hungRead } from './bounded-read.ts';
+import { answered, hungRead, Unanswered } from './bounded-read.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { loadConfig } from './config.ts';
 import { DISCOVER_ROOTS_KEY, REFRESH_MS, rootsOf } from './discovery-report.ts';
@@ -124,7 +124,13 @@ const REAL_IO: CensusIo = {
 class OutOfBudget extends Error {}
 
 /** A read failed (permission, I/O) or did not answer in time, so the layout of the checkout is not known. */
-class Unreadable extends Error {}
+class Unreadable extends Error {
+  unanswered: boolean;
+  constructor(message: string, unanswered = false) {
+    super(message);
+    this.unanswered = unanswered;
+  }
+}
 
 const absent = (error: unknown): boolean =>
   error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR');
@@ -156,7 +162,7 @@ function boundedReader(io: CensusIo, deadline: number, signal: AbortSignal, time
     } catch (error) {
       signal.throwIfAborted();
       if (absent(error)) return missing;
-      throw new Unreadable(error instanceof Error ? error.message : String(error));
+      throw new Unreadable(error instanceof Error ? error.message : String(error), error instanceof Unanswered);
     }
   };
   const names = (path: string) => read<string[]>(path, [], () => io.readNames(path));
@@ -311,37 +317,34 @@ function stamped(info: Awaited<ReturnType<CensusIo['lstat']>> | null): string | 
 }
 
 /**
- * The dependency directories (`ARTIFACT_DIRS.dependencies`) under `root` that are real directories, each with its install
- * signature. A directory whose read failed or did not answer is left out, never reported absent, and never discards a
- * sibling that was read; a marker that cannot be read counts as missing, as `treeSignature` does. Every read goes through the bounded reader; an abort propagates.
+ * The install signature of the dependency directory at `path`, read through the bounded reader, as `treeSignature` would
+ * compute it: null when `path` is not a real directory, or when a read did not answer or the directory itself could
+ * not be read. A marker whose read answered with an error counts as missing, as `treeSignature` does; one that did not
+ * answer in time leaves the signature unknown (null), never a fabricated one. An abort propagates.
  */
-export async function dependencyDirsOf(
-  root: string,
+export async function dependencyTreeSignature(
+  path: string,
   signal: AbortSignal,
   { io = REAL_IO, timeoutMs = READ_TIMEOUT_MS }: { io?: CensusIo; timeoutMs?: number } = {},
-): Promise<{ path: string; signature: string }[]> {
+): Promise<string | null> {
   const reader = boundedReader(io, Infinity, signal, timeoutMs);
-  const found: { path: string; signature: string }[] = [];
-  for (const dir of ARTIFACT_DIRS.dependencies) {
-    const path = join(root, dir);
-    try {
-      const info = await reader.info(path);
-      if (info?.kind !== 'directory') continue;
-      const markers: (string | null)[] = [];
-      for (const name of INSTALL_MARKERS) {
-        try {
-          markers.push(stamped(await reader.info(join(path, name))));
-        } catch (error) {
-          if (!(error instanceof Unreadable)) throw error;
-          markers.push(null);
-        }
+  try {
+    const info = await reader.info(path);
+    if (info?.kind !== 'directory') return null;
+    const markers: (string | null)[] = [];
+    for (const name of INSTALL_MARKERS) {
+      try {
+        markers.push(stamped(await reader.info(join(path, name))));
+      } catch (error) {
+        if (!(error instanceof Unreadable) || error.unanswered) throw error;
+        markers.push(null);
       }
-      found.push({ path, signature: installSignature(stamped(info) as string, markers) });
-    } catch (error) {
-      if (!(error instanceof Unreadable)) throw error;
     }
+    return installSignature(stamped(info) as string, markers);
+  } catch (error) {
+    if (error instanceof Unreadable) return null;
+    throw error;
   }
-  return found;
 }
 
 type Measurement = Pick<

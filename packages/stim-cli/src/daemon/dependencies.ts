@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { rmSync } from 'node:fs';
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import type { StimContext } from '@stim-cli/core';
@@ -20,7 +21,8 @@ import { workspaceKeys } from '../workspace/lightened.ts';
 import { freshLaunchers } from '../workspace/launchers.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import { hungRead } from '../workspace/bounded-read.ts';
-import { buildOutputDirs, dependencyDirsOf } from '../workspace/discovery-census.ts';
+import { buildOutputDirs, dependencyTreeSignature } from '../workspace/discovery-census.ts';
+import { ARTIFACT_DIRS } from '../workspace/regenerable-dirs.ts';
 import { checkDependencyEdits } from '../workspace/dependency-edits.ts';
 import { writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
 import {
@@ -567,20 +569,21 @@ async function takeIdleDependencies(
   return actions;
 }
 
-async function dependencyTrees(operation: StimContext): Promise<{ path: string; signature: string }[]> {
-  const trees = new Map<string, string>();
-  for (const worktree of await artifactWorktreesAsync(operation.signal, operation)) {
-    for (const base of new Set([worktree.path, ...worktree.keys])) {
-      const found = await dependencyDirsOf(base, operation.signal);
-      for (const { path, signature } of found) trees.set(path, signature);
-      if (hungRead() !== null) return [...trees].map(([path, signature]) => ({ path, signature }));
-    }
-  }
-  return [...trees].map(([path, signature]) => ({ path, signature }));
+function dependencyCandidates(worktrees: readonly { path: string; keys: readonly string[] }[]): string[] {
+  const paths = new Set<string>();
+  for (const worktree of worktrees)
+    for (const base of new Set([worktree.path, ...worktree.keys]))
+      for (const dir of ARTIFACT_DIRS.dependencies) paths.add(join(base, dir));
+  return [...paths];
 }
 
 export async function measureDependencyTrees(operation: StimContext): Promise<void> {
-  for (const { path, signature } of await dependencyTrees(operation)) {
+  for (const path of dependencyCandidates(await artifactWorktreesAsync(operation.signal, operation))) {
+    const signature = await dependencyTreeSignature(path, operation.signal);
+    if (signature === null) {
+      if (hungRead() !== null) return;
+      continue;
+    }
     const { outcome } = await refreshMeasure(path, {
       timeoutMs: WALK_TIMEOUT_MS,
       claim: true,
