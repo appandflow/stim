@@ -33,6 +33,14 @@ The live 1.40-to-2.0 upgrade checks kept the existing Metro process and verified
 
 Update the phone app alongside Desktop if you use it. Upgrades with paired clients and mixed-version app and engine combinations are still being verified. [App and engine compatibility checks](https://github.com/appandflow/stim/issues/5593)
 
+## Let an agent migrate
+
+After the upgrade, `stim guide agent` prints a STATUS line while the home or project still holds something an earlier Stim left: settings or environment variables that 2.0 does not read, a daemon from 1.x, a `stim` 1.x or bundled `@stim-cli/*` dependency in `package.json`, or a doctor check last run with 1.x. The line sends the agent to `stim guide upgrade`, which comes with the installed CLI and lists how to find and migrate each item. The refusals and `stim doctor` findings for leftover settings and the old daemon point there too. The line clears once nothing is left.
+
+```text
+Run stim guide upgrade and migrate this Stim home and project to the installed Stim. Ask me before you change my shell, CI or service environment, keep or change a default, reinstall a service, or stop a process.
+```
+
 ## First native build after the upgrade
 
 - **Native cache.** The 2.0 fingerprint uses new keys. Expect one cold build per distinct native fingerprint whose only cache entry was made by 1.40. Matching 2.0 builds can reuse the new entry across worktrees. If a worktree warmed by 1.40 reports a lockfile newer than its npm install stamp, run `npm install` in the directory named by the warning so future builds can be cached. [Native artifact cache](./build-caches.md#native-artifact-cache)
