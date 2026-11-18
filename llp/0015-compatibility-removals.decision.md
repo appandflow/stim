@@ -168,8 +168,8 @@ lists each item an earlier Stim leaves, how to find it, the commands that
 migrate it and when to ask the user first. It is a website page, not a
 `stim guide` topic. The STATUS block of `stim guide agent`, which the skill
 makes the first output an agent reads, names what is left and links the page.
-It reads only state that is already on disk: keys Stim does not read, the
-exact environment variables 1.x read and 2.0 refuses or ignores, a pre-2.0
+It reads only state that is already on disk: the exact setting keys and
+environment variables 1.x read and 2.0 refuses or ignores, a pre-2.0
 daemon holding the claim, a `stim` range that admits no version of the running
 major or a bundled `@stim-cli/*` dependency in the project's `package.json`,
 and a `doctorRuns` record from an older major. That record, which 1.40 already

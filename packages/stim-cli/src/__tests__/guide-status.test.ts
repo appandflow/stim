@@ -178,6 +178,9 @@ test.each([
   ['^1.40.0', true],
   ['>=1.40.0', false],
   ['^1.40.0 || ^2.0.0', false],
+  ['^1.40.0 || >= 2.0.0', false],
+  ['>= 1.40.0 < 2.0.0', true],
+  ['^1.40.0 || github:org/stim', false],
   ['latest', false],
 ])('guideStatus reads a stim %s pin as left on 1.x: %s', async (range, pinned) => {
   const root = appRoot();
@@ -193,4 +196,18 @@ test('guideStatus names a retired export that 2.0 ignores without a refusal', as
   const status = await guideStatus({ projectRoot: null, cwd: home, running: '2.0.0', env, now: NOW, fetch });
   expect(status).toContain('STIM_REMOTE_BUILD_MODE');
   expect(status).toContain(UPGRADE_GUIDE_URL);
+});
+
+test('guideStatus leaves an unknown key that no Stim 1.x read to stim settings and doctor', async () => {
+  const { fetch } = fakeFetch('2.0.0');
+  writeFileSync(join(home, 'config.json'), JSON.stringify({ web: { viewprt: 'phone' } }));
+  const status = await guideStatus({
+    projectRoot: null,
+    cwd: home,
+    running: '2.0.0',
+    env: process.env,
+    now: NOW,
+    fetch,
+  });
+  expect(status ?? '').not.toContain(UPGRADE_GUIDE_URL);
 });

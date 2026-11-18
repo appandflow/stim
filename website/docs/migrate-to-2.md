@@ -158,9 +158,12 @@ Follow this section when `stim guide agent` prints `Not migrated from an earlier
 
 ### 1. Old processes
 
-**Check:** `stim status`. The line `Daemon: pid <n> from an older stim holds the daemon claim` means a 1.x daemon still runs.
+**Check:** `stim status`. It lists the live workspaces of this Stim home, and the line `Daemon: pid <n> from an older stim holds the daemon claim` means a 1.x daemon still runs.
 
-**Migrate:** when that line says the next command that starts stimd stops it, run `stim start`. Otherwise, **ask first**, then run the stop command it prints (`kill <pid>`, or `taskkill /PID <pid> /F` on Windows). Run `stim stop` in each workspace that a 1.x Stim started before the upgrade.
+**Migrate (ask first):** a shared home can hold other people's or other agents' active work. List the live workspaces and the old daemon to the user, and wait for an answer before you stop anything.
+
+- With the user's go, run `stim stop` in each workspace they name that a 1.x Stim started before the upgrade.
+- When the daemon line says the next command that starts stimd stops it, the next `stim start` takes the old daemon over; run it only after the user agrees. Otherwise, with the user's go, run the stop command the line prints (`kill <pid>`, or `taskkill /PID <pid> /F` on Windows).
 
 ### 2. Settings
 
@@ -168,8 +171,10 @@ Follow this section when `stim guide agent` prints `Not migrated from an earlier
 
 **Migrate:**
 
-- When `start`, `ios`, `android`, `web`, `macos`, `revive` or `gc` refuses, run the printed `stim settings set` and `stim settings unset` commands in order.
-- Otherwise set the replacement first with `stim settings set <key> <value>`, adding `--scope <scope>` of the old key when the replacement accepts that layer, then remove the old key as the table says.
+- When `start`, `ios`, `android`, `web`, `macos`, `revive` or `gc` refuses, run the printed `stim settings set` and `stim settings unset` commands in order. The refusal leaves out the `set` when the replacement is already configured.
+- Otherwise, check the replacement before you touch it: `stim settings get <replacement> --json` shows its `origin`, a layer, `env` for its environment variable, or `default`. A 1.40 home can hold an explicit replacement, such as `daemon.mode` `off`, next to an inert old key, such as `maintenance.mode` `on`.
+  - If the origin is a layer or `env`, keep the replacement as it is and remove only the old key, as the table says.
+  - If the origin is `default`, the old key's value would change what Stim does. **Ask first** whether to carry it over with `stim settings set <replacement> <value>`, adding `--scope <scope>` of the old key when the replacement accepts that layer. Then remove the old key.
 
 | Old key                                                                                                                                                                                                                                                                                                                                                                                                      | Replacement                                                             | Remove the old key with                |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- | -------------------------------------- |
@@ -187,11 +192,17 @@ Follow this section when `stim guide agent` prints `Not migrated from an earlier
 
 - **A file edit:** `stim settings unset` refuses these names, because 2.0 no longer registers them. Remove the property from the file that `stim settings --json` reports for it: `.stim.json` for the `committed` scope, and `~/.stim/config.json` (or `$STIM_HOME/config.json`) for `machine`, under `projects["<path>"].settings` for `workspace` and `repos["<git dir>"].settings` for `repo`. **Ask first** before editing the config file, and edit it only while no Stim command runs. Remove any other unknown key the same way after asking the user what it was for.
 - Keep `maintenance.idleStopHours`: hosted device sessions still read it.
-- While the machine config holds `maintenance.mode` `off` or `report` and neither `STIM_DAEMON` nor a machine `daemon.mode` is set, the daemon stays at `report` and acts on nothing. Setting either one, to any value, ends that hold, so set `daemon.mode` to the value the user wants before you remove `maintenance.mode`.
+- While the machine config holds `maintenance.mode` `off` or `report` and neither `STIM_DAEMON` nor a machine `daemon.mode` is set, the daemon stays at `report` and acts on nothing. Setting either one, to any value, ends that hold, so ask the user which `daemon.mode` they want and set it before you remove `maintenance.mode`.
 
 ### 3. Environment
 
-**Check:** `env | grep '^STIM_'`, and compare the names with the table. STATUS names the ones set in your own shell. The user's shell profile, CI and service definitions can also export them; read those only with the user's permission.
+**Check:** list the names of the `STIM_` variables, never their values, which can hold secrets such as passwords and access tickets:
+
+```bash
+node -e "console.log(Object.keys(process.env).filter((k) => k.startsWith('STIM_')).join('\n'))"
+```
+
+Compare the names with the table. STATUS names the ones set in your own shell. The user's shell profile, CI and service definitions can also export them; read those only with the user's permission, and never print a value.
 
 **Migrate (ask first):** the user changes each export where it is set. Leave other `STIM_` variables alone; for example `STIM_MAINTENANCE_SWEEP_HOURS` and `STIM_MAINTENANCE_IDLE_STOP_HOURS` are still read.
 
@@ -217,18 +228,20 @@ The first five refuse `start`, `ios`, `android`, `web`, `macos`, `revive` and `g
 
 **Migrate:**
 
-| In 1.40                                                                        | In 2.0                                                                                                                                                                                                  |
-| ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `stim gc`, `stim gc --json` (they only previewed)                              | `stim gc --dry-run`, `stim gc --dry-run --json`. Plain `stim gc` now deletes.                                                                                                                           |
-| `stim gc --delete`                                                             | `stim gc`, after reviewing `stim gc --dry-run`.                                                                                                                                                         |
-| `stim gc --cache`, `--older-than`, `--worktrees`                               | No replacement with the same scope: `--pressure normal`, `high` or `critical` runs a whole cleanup pass. Change the script to `stim gc --dry-run`, and **ask first** before any `stim gc` that deletes. |
-| `stim-server`                                                                  | `stim serve`, `stim pair`, `stim pairings`.                                                                                                                                                             |
-| `stim-ci`, GitHub Action `version` below 2.0.0                                 | `stim ci`, and action `version` 2.0.0 or later.                                                                                                                                                         |
-| a `stim` range that admits no 2.x version                                      | A 2.x range, then install.                                                                                                                                                                              |
-| `@stim-cli/metro`                                                              | Remove it and `sharedCacheStores` from `metro.config.js` and the dependencies.                                                                                                                          |
-| `@stim-cli/expo-build-cache`                                                   | Remove it from the dependencies and from the Expo `buildCacheProvider` config.                                                                                                                          |
-| other `@stim-cli/*` imports                                                    | Import from `stim`, `stim/ci` or `stim/plugin`. `@stim-cli/cache-s3` stays.                                                                                                                             |
-| `StimOptions.buildCache`, run option `wait`, `diagnostics({ errors })`, `gc()` | `buildCacheDir`, `waitSeconds`, `diagnostics({ errorsOnly })`, and `previewGarbage()` or `collectGarbage()`. See [JavaScript and TypeScript](#javascript-and-typescript).                               |
+| In 1.40                                                                        | In 2.0                                                                                                                                                                                                        |
+| ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `stim gc`, `stim gc --json` (they only previewed)                              | `stim gc --dry-run`, `stim gc --dry-run --json`. Plain `stim gc` now deletes.                                                                                                                                 |
+| `stim gc --delete`                                                             | `stim gc`, after reviewing `stim gc --dry-run`.                                                                                                                                                               |
+| `stim gc --cache`, `--older-than`, `--worktrees`                               | No replacement with the same scope: `--pressure normal`, `high` or `critical` runs a whole cleanup pass. Change the script to `stim gc --dry-run`, and **ask first** before any `stim gc` that deletes.       |
+| `stim-server`                                                                  | `stim serve`, `stim pair`, `stim pairings`.                                                                                                                                                                   |
+| `stim-ci`                                                                      | `stim ci`.                                                                                                                                                                                                    |
+| the GitHub Action pinned to a 1.x ref, with `version` below 2.0.0              | Move the `uses:` ref to a 2.x release tag or commit and set `version` to 2.0.0 or later in the same change. Only the 2.x action runs `stim ci`; a new `version` under the v1.40.0 action breaks the workflow. |
+| a `stim` range that admits no 2.x version                                      | A 2.x range, then install.                                                                                                                                                                                    |
+| `@stim-cli/metro`                                                              | Remove it and `sharedCacheStores` from `metro.config.js` and the dependencies.                                                                                                                                |
+| `@stim-cli/expo-build-cache`                                                   | Remove it from the dependencies and from the Expo `buildCacheProvider` config.                                                                                                                                |
+| other `@stim-cli/*` imports                                                    | Import from `stim`, `stim/ci` or `stim/plugin`.                                                                                                                                                               |
+| `@stim-cli/cache-s3` 1.x                                                       | Keep the name and upgrade it to a 2.x release: 1.40.0 lacks the plugin manifest 2.0 reads. Then check that `stim plugin list` shows it.                                                                       |
+| `StimOptions.buildCache`, run option `wait`, `diagnostics({ errors })`, `gc()` | `buildCacheDir`, `waitSeconds`, `diagnostics({ errorsOnly })`, and `previewGarbage()` or `collectGarbage()`. See [JavaScript and TypeScript](#javascript-and-typescript).                                     |
 
 ### 6. Services and remote machines
 

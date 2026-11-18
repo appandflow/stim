@@ -6,7 +6,13 @@ import type { DoctorPlatform } from './diagnostics/doctor.ts';
 import { compareStimVersions } from './diagnostics/stim-installations.ts';
 import { legacyDaemonHolder } from './daemon/legacy-daemon.ts';
 import { readSettingsContext, unknownEntries } from './workspace/settings-payload.ts';
-import { isJsonObject, UPGRADE_GUIDE_URL, type DoctorRunRecord, type ProjectRecord } from '@stim-cli/core/state';
+import {
+  isJsonObject,
+  REMOVED_SETTINGS,
+  UPGRADE_GUIDE_URL,
+  type DoctorRunRecord,
+  type ProjectRecord,
+} from '@stim-cli/core/state';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DOCTOR_STALE_MS = 7 * DAY_MS;
@@ -143,6 +149,28 @@ const majorOf = (version: string | undefined): number | null => {
 const listed = (names: string[]): string =>
   names.length > 3 ? `${names.slice(0, 3).join(', ')} and ${names.length - 3} more` : names.join(', ');
 
+/** The setting keys a 1.x Stim read that 2.0 does not; other unknown keys are left to stim settings and doctor. */
+const RETIRED_KEYS = new Set([
+  ...[...REMOVED_SETTINGS].flatMap(([key, entry]) => (entry.kept ? [] : [key])),
+  'remote.buildMode',
+  'daemon.enabled',
+  'caches.injectMetroStore',
+  'devices.reclaimIdleMinutes',
+  'share.webrtc',
+  'budget.maxCommittedMemoryGb',
+  'budget.maxLiveWorkspaces',
+  'maintenance.pressureCheckMinutes',
+  'maintenance.sizeCheckMinutes',
+  'maintenance.maxLoadPerCore',
+  'maintenance.memoryPressureLevel',
+  'maintenance.memoryWarningMinutes',
+  'maintenance.minAvailableMemoryGb',
+  'maintenance.capTargetPercent',
+  'maintenance.idleCheckMinutes',
+  'maintenance.urgentFreeDiskGb',
+  'maintenance.pressureProtectMinutes',
+]);
+
 /** The environment variables a 1.x Stim read that 2.0 refuses or ignores; the migration guide names each one's remedy. */
 const RETIRED_EXPORTS = [
   'STIM_MAINTENANCE',
@@ -192,22 +220,29 @@ function comparatorSpan(comparator: string): [number, number] | null {
   return [from, to];
 }
 
-/** Whether npm range `range` admits a version of major `major`; null when Stim cannot read it. */
+/** Whether npm range `range` admits a version of major `major`; null when Stim cannot read one of its alternatives. */
 function admitsMajor(range: string, major: number): boolean | null {
-  let readable = false;
+  let unreadable = false;
   for (const set of range.split('||')) {
     const hyphen = /^\s*(\S+)\s+-\s+(\S+)\s*$/.exec(set);
     const spans = hyphen
       ? [comparatorSpan(`>=${hyphen[1]}`), comparatorSpan(`<=${hyphen[2]}`)]
-      : set.trim().split(/\s+/).filter(Boolean).map(comparatorSpan);
+      : set
+          .replace(/(\^|~|>=|<=|>|<|=)\s+/g, '$1')
+          .trim()
+          .split(/\s+/)
+          .filter(Boolean)
+          .map(comparatorSpan);
     const read = spans.filter((span): span is [number, number] => span !== null);
-    if (read.length < spans.length) continue;
-    readable = true;
+    if (read.length < spans.length) {
+      unreadable = true;
+      continue;
+    }
     const from = Math.max(at(major), ...read.map(([low]) => low));
     const to = Math.min(at(major + 1), ...read.map(([, high]) => high));
     if (from < to) return true;
   }
-  return readable ? false : null;
+  return unreadable ? null : false;
 }
 
 function projectPins(projectRoot: string, running: number): string[] {
@@ -242,8 +277,14 @@ async function upgradeLeftovers(
 ): Promise<string[]> {
   const found: string[] = [];
   try {
-    const keys = [...new Set(unknownEntries(await readSettingsContext(cwd, env)).map((entry) => entry.key))];
-    if (keys.length) found.push(`settings Stim does not read (${listed(keys)})`);
+    const keys = [
+      ...new Set(
+        unknownEntries(await readSettingsContext(cwd, env))
+          .map((entry) => entry.key)
+          .filter((key) => RETIRED_KEYS.has(key)),
+      ),
+    ];
+    if (keys.length) found.push(`retired settings (${listed(keys)})`);
   } catch {}
   const variables = RETIRED_EXPORTS.filter((name) => env[name]?.trim());
   if (variables.length) found.push(`retired environment variables (${listed(variables)})`);
