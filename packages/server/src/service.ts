@@ -226,30 +226,43 @@ async function stopOutsideStimd(home: string, port: number, stimd: ClaimHolder, 
   await waitForProcessExit(stimd.owner, Math.max(0, deadline - Date.now()));
 }
 
+/**
+ * The stimd of `home` that serves `port` outside the job of `label` and whose claim names `label`, which unloading
+ * that job then stops. Refuses when the outside stimd carries no mark or another unit's.
+ */
+async function unitSuccessor(
+  label: string,
+  home: string,
+  port: number,
+): Promise<{ home: string; port: number; stimd: ClaimHolder } | null> {
+  const job = await loaded(label);
+  const stimd = job ? await outsideStimd(home, port, job.pid) : null;
+  if (!stimd) return null;
+  if (stimd.details.serviceUnit === label) return { home, port, stimd };
+  const pid = stimd.owner.pid;
+  const other = typeof stimd.details.serviceUnit === 'string' ? stimd.details.serviceUnit : null;
+  throw new ServiceError(
+    `Stim daemon PID ${pid} for ${home} serves port ${port} outside the ${label} job, and ${other ? `its claim names the unit ${other}` : 'it carries no service mark: Stim Desktop, `stim serve`, or a Stim build older than this one started it'}, so install cannot prove it belongs to ${label} and left the service as it was. Stop it once its work drains with \`kill ${pid}\`; that also stops what Stim Desktop or the command that started it is using, and its dev servers keep running and the next stimd takes them over. Then run \`stim service install --label ${label}\` again.`,
+  );
+}
+
 async function unload(
   label: string,
   port: number | null,
-  unit: { home: string; port: number } | null = null,
+  successor: { home: string; port: number; stimd: ClaimHolder } | null = null,
 ): Promise<void> {
   const job = await loaded(label);
   if (!job) return;
-  const outside = unit ? await outsideStimd(unit.home, unit.port, job.pid) : null;
-  if (unit && outside && outside.details.serviceUnit !== label) {
-    const other = typeof outside.details.serviceUnit === 'string' ? outside.details.serviceUnit : null;
-    throw new ServiceError(
-      `Stim daemon PID ${outside.owner.pid} for ${unit.home} serves port ${unit.port} outside the ${label} job, and ${other ? `its claim names the unit ${other}` : 'it carries no service mark, as a stimd started before this Stim build does'}, so install cannot prove it belongs to ${label} and left the service as it was. Stop it once its work drains with \`kill ${outside.owner.pid}\`; its dev servers keep running and the next stimd takes them over. Then run \`stim service install --label ${label}\` again.`,
-    );
-  }
   const listeners = port === null ? [] : await listenerPids(port);
   const stopped = await serviceManager().stop(label);
   const deadline = Date.now() + UNLOAD_WAIT_MS;
   let signalled = false;
   while (Date.now() < deadline) {
     const jobGone = !(await loaded(label)) && (job.pid == null || !alive(job.pid));
-    if (jobGone && unit && outside && !signalled) {
+    if (jobGone && successor && !signalled) {
       signalled = true;
       // @ref LLP 0009#service-and-engine-updates -- stop the home's stimd that serves the unit's port outside its job
-      await stopOutsideStimd(unit.home, unit.port, outside, deadline);
+      await stopOutsideStimd(successor.home, successor.port, successor.stimd, deadline);
     }
     if (
       jobGone &&
@@ -515,16 +528,14 @@ export async function installJob(
   mkdirSync(dirname(path), { recursive: true });
   mkdirSync(dirname(spec.logPath), { recursive: true });
 
+  const successor =
+    previous?.port == null ? null : await unitSuccessor(options.label, unitHome(previous.stimHome), previous.port);
   const wasLoaded = (await loaded(options.label)) !== null;
   let routeCreated = false;
   let bootstrapped = false;
   let health: Health | null;
   try {
-    await unload(
-      options.label,
-      previous?.port ?? null,
-      previous?.port == null ? null : { home: unitHome(previous.stimHome), port: previous.port },
-    );
+    await unload(options.label, previous?.port ?? null, successor);
     if (await fetchHealth(options.port)) {
       throw new ServiceError(
         `port ${options.port} already answers as a stim-server that is not ${options.label} (Stim Desktop runs one on 7787). Pass --port to use another.`,

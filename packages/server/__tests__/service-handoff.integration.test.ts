@@ -339,6 +339,9 @@ function fixture(label: string, port: number) {
   };
 }
 
+const unmarkedRefusal = (pid: number, home: string, port: number, label: string) =>
+  `Stim daemon PID ${pid} for ${home} serves port ${port} outside the ${label} job, and it carries no service mark: Stim Desktop, \`stim serve\`, or a Stim build older than this one started it, so install cannot prove it belongs to ${label} and left the service as it was. Stop it once its work drains with \`kill ${pid}\`; that also stops what Stim Desktop or the command that started it is using, and its dev servers keep running and the next stimd takes them over. Then run \`stim service install --label ${label}\` again.`;
+
 const homeClaim = (home: string) => readClaimSet(stimdClaimRoot(home)).live.find(({ mode }) => mode === 'exclusive');
 
 describe.skipIf(process.platform !== 'darwin')('a service after an engine handoff', () => {
@@ -424,7 +427,7 @@ describe.skipIf(process.platform !== 'darwin')('a service after an engine handof
           { label, port, env: [], pathPrepend: [], serve: false, stimHome: service.home },
           { script: service.script, host: null, requestPermissions: false },
         ),
-      ).rejects.toThrow(`Stim daemon PID ${bare.pid} for ${service.home} serves port ${port} outside the ${label} job`);
+      ).rejects.toHaveProperty('message', unmarkedRefusal(bare.pid, service.home, port, label));
       expect(launchd.job).toBe(job);
       expect(job?.exitCode).toBeNull();
       expect(gone(bare.pid)).toBe(false);
@@ -464,17 +467,19 @@ describe.skipIf(process.platform !== 'darwin')('a service after an engine handof
       );
     try {
       const served = await service.runServe();
-      for (const runs of [false, true]) {
-        await service.setJob(runs);
-        await expect(install()).rejects.toThrow(
-          runs ? 'cannot prove it belongs to' : `did not stop and release port ${port}`,
-        );
-        expect(gone(served.pid)).toBe(false);
-      }
+      await service.setJob(false);
+      await expect(install()).rejects.toThrow(`did not stop and release port ${port}`);
+      expect(gone(served.pid)).toBe(false);
+      await service.setJob(true);
+      await expect(install()).rejects.toHaveProperty('message', unmarkedRefusal(served.pid, service.home, port, label));
+      expect(gone(served.pid)).toBe(false);
       await service.stopHome();
       const desktop = await service.runDesktop();
       await service.setJob(true);
-      await expect(install()).rejects.toThrow('cannot prove it belongs to');
+      await expect(install()).rejects.toHaveProperty(
+        'message',
+        unmarkedRefusal(desktop.pid, service.home, port, label),
+      );
       expect(gone(desktop.pid)).toBe(false);
     } finally {
       await service.cleanup();
