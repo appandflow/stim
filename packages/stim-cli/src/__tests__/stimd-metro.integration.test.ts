@@ -114,7 +114,7 @@ async function startStimd(): Promise<number> {
 async function stopStimd(): Promise<void> {
   const child = stimd;
   stimd = null;
-  if (!child || child.exitCode !== null) return;
+  if (!child || child.exitCode !== null || child.signalCode !== null) return;
   const exited = once(child, 'exit');
   child.kill('SIGTERM');
   await exited;
