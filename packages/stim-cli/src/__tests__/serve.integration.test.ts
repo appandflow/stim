@@ -431,7 +431,7 @@ test("a Desktop ask that arrives while the service's thread starts does not repl
   }
 }, 60_000);
 
-test('a service move that cannot bind the service port leaves the share-only thread serving and retries later', async () => {
+test('a service move that cannot bind the service port leaves the share-only thread serving and retries later (flaky under load, see #5864)', async () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-net-service-held-'));
   const env = { ...process.env, STIM_HOME: home, HOME: home, USERPROFILE: home, PATH: '' };
   const previousHome = process.env.STIM_HOME;
@@ -479,7 +479,7 @@ test('a service move that cannot bind the service port leaves the share-only thr
   }
 }, 60_000);
 
-test('two overlapping service asks against a held service port restore the shares and a later ask moves the thread', async () => {
+test('two overlapping service asks against a held service port restore the shares and a later ask moves the thread (flaky under load, see #5864)', async () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-net-service-overlap-'));
   const env = { ...process.env, STIM_HOME: home, HOME: home, USERPROFILE: home, PATH: '' };
   const previousHome = process.env.STIM_HOME;
@@ -661,7 +661,7 @@ async function logged(text: string): Promise<void> {
 
 const serviceAsk = (port: number) => ({ port, loopbackOnly: false, extraEnv: [], pathPrepend: [], service: true });
 
-test('a Desktop ask sent as a service move starts waits for the rollback and then gets its own port', async () => {
+test('a Desktop ask sent as a service move starts waits for the rollback and then gets its own port (flaky under load, see #5864)', async () => {
   await withStimd('queue-desktop', async ({ socket, build, holdPort }) => {
     const cli = { kind: 'cli', build };
     expect(await ensureAs(socket, cli, { share: true })).toMatchObject({ listening: true });
