@@ -2262,9 +2262,7 @@ export async function runStimdEntry(argv: readonly string[]): Promise<void> {
   try {
     const service = serve !== undefined && !argv.includes('--carried');
     const served = await runStimd({
-      mode:
-        parseDaemonMode(at >= 0 ? argv[at + 1] : undefined) ??
-        daemonMode(argv.includes(ATTACHED_ARG) ? process.env : {}),
+      mode: parseDaemonMode(at >= 0 ? argv[at + 1] : undefined) ?? daemonMode(process.env),
       serve,
       onNet: reportNet,
       service,
