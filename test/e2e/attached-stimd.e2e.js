@@ -531,7 +531,7 @@ test(
     agents.push(child);
     child.stdout.resume();
     child.stderr.resume();
-    const exited = new Promise((done) => child.once('exit', (code) => done(code)));
+    const exited = new Promise((done) => child.once('exit', (code, signal) => done({ code, signal })));
     try {
       const info = await until('attached daemon', () => {
         try {
@@ -548,7 +548,10 @@ test(
       await until('maintenance to stall', () => existsSync(marker));
       socket.destroy();
       child.stdin.end();
-      assert.equal(await exited, 1);
+      assert.deepEqual(
+        await exited,
+        process.platform === 'win32' ? { code: 1, signal: null } : { code: null, signal: 'SIGKILL' },
+      );
     } finally {
       child.kill('SIGKILL');
       rmSync(scratch, { recursive: true, force: true });
