@@ -4,7 +4,7 @@ import { configDir } from '../index.ts';
 import { loadConfig } from './config.ts';
 import { isJsonObject } from './json-file.ts';
 import { isTcpPort, MAX_REVERSE_PORTS } from './reverse-ports.ts';
-import { machineSettingValue } from './settings-registry.ts';
+import { leftoverDaemonMode, machineSettingValue } from './settings-registry.ts';
 import {
   hostedMacosAppSlot,
   parseHostedMacosChoice,
@@ -162,7 +162,7 @@ export interface HostedDeviceSession extends HostedDeviceRequest {
 export function hostedIdleStopHours(env: NodeJS.ProcessEnv): { hours: number } | { invalid: string } {
   const mode = machineSettingValue('daemon.mode', { config: loadConfig(), env });
   if (mode.error) return { invalid: mode.error };
-  if (mode.value !== 'on') return { hours: 0 };
+  if (mode.value !== 'on' || leftoverDaemonMode(loadConfig(), env)) return { hours: 0 };
   const hours = machineSettingValue('maintenance.idleStopHours', { config: loadConfig(), env });
   if (hours.error) return { invalid: hours.error };
   return typeof hours.value === 'number'
