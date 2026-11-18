@@ -22,7 +22,7 @@ import {
 import { writeCacheFile } from './cache-file.ts';
 import { debugLog } from './debug-log.ts';
 import { declareSpawnsOn, stopDeclaringSpawnsOn } from './engine/spawn-claims.ts';
-import { measureTree, treeSignature } from './private-size.ts';
+import { measureTree, treeSignature, type TreeSize } from './private-size.ts';
 import { ARTIFACT_DIRS } from './workspace/regenerable-dirs.ts';
 
 const DEPENDENCY_MAX_AGE_MS: number = 6 * 60 * 60_000;
@@ -176,6 +176,7 @@ export async function refreshMeasure(
     at: number,
     walkMs: number | null,
     partial?: true,
+    privateUnknown?: 'volume' | 'walk',
   ): DiskMeasure => {
     const measure: DiskMeasure = {
       bytes,
@@ -188,6 +189,7 @@ export async function refreshMeasure(
       ...measure,
       ...(walkMs !== null ? { walkMs } : {}),
       ...(partial ? { partial } : {}),
+      ...(privateBytes === null && privateUnknown ? { privateUnknown } : {}),
     });
     return measure;
   };
@@ -203,7 +205,7 @@ export async function refreshMeasure(
     const startedAt = now();
     const signature = dependency ? (options.signature ?? treeSignature(path)) : null;
     const targets = options.targets?.();
-    let size: { bytes: number; privateBytes: number | null; partial?: true } | null;
+    let size: TreeSize | null;
     if (targets && !targets.length) size = { bytes: 0, privateBytes: null };
     else {
       if (claim) {
@@ -234,6 +236,7 @@ export async function refreshMeasure(
         startedAt,
         Math.max(0, now() - startedAt),
         size.partial,
+        size.privateUnknown,
       ),
       ...(size.partial ? { partial: true as const } : {}),
     };

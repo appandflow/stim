@@ -57,7 +57,10 @@ vi.mock('../commands/worktree.ts', async (importOriginal) => ({
   },
 }));
 vi.mock('../devices/machine-cache-usage.ts', () => ({ getMachineCacheReport: async () => null }));
-const walks = vi.hoisted(() => new Map<string, () => { bytes: number; privateBytes: number | null } | null>());
+const walks = vi.hoisted(
+  () =>
+    new Map<string, () => { bytes: number; privateBytes: number | null; privateUnknown?: 'volume' | 'walk' } | null>(),
+);
 vi.mock('../private-size.ts', async (importOriginal) => {
   const real = await importOriginal<typeof import('../private-size.ts')>();
   return {
@@ -667,14 +670,13 @@ test.skipIf(process.platform === 'win32')(
 );
 
 test.skipIf(process.platform === 'win32')(
-  'a source checkout tree gc could not measure says why it stays: a volume that cannot tell, a walk that did not finish, no time left',
-  async ({ skip }) => {
+  'a source checkout tree gc could not measure says why it stays, and is not walked again until its install changes',
+  async () => {
     const roots = idleRepo([{ name: 'feature', workspace: true }]);
     const source = roots.repo ?? '';
     const modules = join(source, 'node_modules');
     const pods = join(source, 'ios', 'Pods');
     ageCheckout(source, daysAgo(8));
-    if (!(await privateSizeKnowable(modules, 10_000))) skip('the test volume cannot report shared blocks');
     const unmeasured = () => {
       for (const { path, bytes } of [
         { path: modules, bytes: 2 * 1024 ** 3 },
@@ -693,22 +695,39 @@ test.skipIf(process.platform === 'win32')(
       vi.setSystemTime(Date.now() + 2 * 60_000);
       return null;
     };
+    const unknownWalk = (bytes: number, privateUnknown: 'volume' | 'walk') =>
+      vi.fn<() => { bytes: number; privateBytes: null; privateUnknown: 'volume' | 'walk' }>(() => ({
+        bytes,
+        privateBytes: null,
+        privateUnknown,
+      }));
+    const cannotTell = unknownWalk(2 * 1024 ** 3, 'volume');
+    const countFailed = unknownWalk(1024 ** 3, 'walk');
+    const volume =
+      'its volume cannot report which of its blocks other files share, so its real size is unknown and it stays';
+    const failed =
+      'its private-size walk could not count which of its blocks other files share, so its real size is unknown and it stays';
 
     unmeasured();
-    walks.set(modules, () => ({ bytes: 2 * 1024 ** 3, privateBytes: null }));
-    walks.set(pods, slow);
+    walks.set(modules, cannotTell);
+    walks.set(pods, countFailed);
     const first: LevelPayload = (await gcJson('normal')).payload;
-    expect(detail(first, modules)).toBe(
-      'its volume cannot report which of its blocks other files share, so its real size is unknown and it stays',
-    );
-    expect(detail(first, pods)).toBe(
-      'its size walk did not finish within the 120 seconds stim gc had left, so its real size is unknown and it stays',
-    );
+    expect(detail(first, modules)).toBe(volume);
+    expect(detail(first, pods)).toBe(failed);
+
+    const again: LevelPayload = (await gcJson('normal')).payload;
+    expect(detail(again, modules)).toBe(volume);
+    expect(detail(again, pods)).toBe(failed);
+    expect(cannotTell).toHaveBeenCalledTimes(1);
+    expect(countFailed).toHaveBeenCalledTimes(1);
 
     unmeasured();
     walks.set(modules, slow);
-    const second: LevelPayload = (await gcJson('normal')).payload;
-    expect(detail(second, pods)).toBe(
+    const late: LevelPayload = (await gcJson('normal')).payload;
+    expect(detail(late, modules)).toBe(
+      'its size walk did not finish within the 120 seconds stim gc had left, so its real size is unknown and it stays',
+    );
+    expect(detail(late, pods)).toBe(
       'stim gc spent its 2 minutes of measuring on other trees first, so its real size is unknown and it stays',
     );
   },

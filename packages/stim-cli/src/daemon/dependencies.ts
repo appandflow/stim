@@ -2,7 +2,12 @@ import { join } from 'node:path';
 import { rmSync } from 'node:fs';
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import type { StimContext } from '@stim-cli/core';
-import { listBuildEndMarkers, type DaemonLadderAction, type PressureLevel } from '@stim-cli/core/state';
+import {
+  listBuildEndMarkers,
+  readDiskUsagePrivateUnknown,
+  type DaemonLadderAction,
+  type PressureLevel,
+} from '@stim-cli/core/state';
 import { getProject } from '../workspace/config.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { formatBytes } from '../fs-util.ts';
@@ -16,8 +21,7 @@ import {
   type ArtifactWorktree,
 } from '../stimd/passes/artifacts.ts';
 import { maintenancePinnedReader } from '../stimd/passes/protect.ts';
-import { knownPrivateBytes, refreshMeasure, trustedMeasure } from '../disk-usage.ts';
-import { privateSizeKnowable } from '../private-size.ts';
+import { freshMeasure, knownPrivateBytes, refreshMeasure, trustedMeasure } from '../disk-usage.ts';
 import { workspaceKeys } from '../workspace/lightened.ts';
 import { freshLaunchers } from '../workspace/launchers.ts';
 import { workspaceDir } from '../workspace/paths.ts';
@@ -53,6 +57,8 @@ export const SOURCE_RESTORE = "the project's own install in it, or stim worktree
 const NOT_MEASURED = 'its real size is not measured since its last install, so it stays';
 const VOLUME_CANNOT_TELL =
   'its volume cannot report which of its blocks other files share, so its real size is unknown and it stays';
+const WALK_FAILED =
+  'its private-size walk could not count which of its blocks other files share, so its real size is unknown and it stays';
 const MEASURE_BUDGET_MS = 2 * 60_000;
 const VERBS: Record<DaemonLadderAction['outcome'], string> = {
   would: 'would delete',
@@ -102,29 +108,29 @@ export function selectDependencies(
 }
 
 /**
- * Records why each tree in `ranked` has no private size. With `walk`, as in a `stim gc` pass, it first walks those its
- * volume can size, largest first, one at a time for at most MEASURE_BUDGET_MS in all, and records what each walk found.
+ * Records why each tree in `ranked` has no private size. With `walk`, as in a `stim gc` pass, it first walks those whose
+ * current install no walk tried to count yet, largest first, one at a time for at most MEASURE_BUDGET_MS in all.
  */
 async function measureUnknown(
   ranked: readonly RankedDependency[],
   walk: boolean,
   operation?: StimContext,
 ): Promise<void> {
-  const deadline = Date.now() + MEASURE_BUDGET_MS;
-  const outOfTime = `stim gc spent its ${MEASURE_BUDGET_MS / 60_000} minutes of measuring on other trees first, so its real size is unknown and it stays`;
+  const reason = (path: string): string | null => {
+    const recorded = readDiskUsagePrivateUnknown(path);
+    return recorded === 'walk' ? WALK_FAILED : recorded === 'volume' ? VOLUME_CANNOT_TELL : null;
+  };
   const due: RankedDependency[] = [];
   for (const dependency of ranked.filter(({ privateBytes }) => privateBytes === null)) {
-    const remainingMs = deadline - Date.now();
-    if (remainingMs <= 0) {
-      if (walk) dependency.unknown = outOfTime;
-    } else if (!(await privateSizeKnowable(dependency.candidate.path, remainingMs)))
-      dependency.unknown = VOLUME_CANNOT_TELL;
+    const recorded = freshMeasure(dependency.candidate.path) ? reason(dependency.candidate.path) : null;
+    if (recorded) dependency.unknown = recorded;
     else if (walk) due.push(dependency);
   }
+  const deadline = Date.now() + MEASURE_BUDGET_MS;
   for (const dependency of due.toSorted((a, b) => (b.bytes ?? -1) - (a.bytes ?? -1))) {
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) {
-      dependency.unknown = outOfTime;
+      dependency.unknown = `stim gc spent its ${MEASURE_BUDGET_MS / 60_000} minutes of measuring on other trees first, so its real size is unknown and it stays`;
       continue;
     }
     const { outcome, measure } = await refreshMeasure(dependency.candidate.path, {
@@ -139,7 +145,7 @@ async function measureUnknown(
       dependency.unknown =
         outcome === 'failed'
           ? `its size walk did not finish within the ${Math.ceil(remainingMs / 1000)} seconds stim gc had left, so its real size is unknown and it stays`
-          : VOLUME_CANNOT_TELL;
+          : (reason(dependency.candidate.path) ?? WALK_FAILED);
   }
 }
 

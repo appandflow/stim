@@ -271,6 +271,16 @@ export function readDiskUsagePartial(path: string): boolean {
   return entry !== null && entry.path === path && entry.partial === true;
 }
 
+/**
+ * Why the cached walk of `path` has no private bytes although it tried to count them: its volume cannot report shared
+ * blocks, or the counting walk failed. Null for an entry without the field.
+ */
+export function readDiskUsagePrivateUnknown(path: string): 'volume' | 'walk' | null {
+  const entry = readJsonObject(diskUsageCacheFile(path));
+  if (entry === null || entry.path !== path) return null;
+  return entry.privateUnknown === 'volume' || entry.privateUnknown === 'walk' ? entry.privateUnknown : null;
+}
+
 /** When the last walk of `path` failed (an ISO time), or null when none is recorded. */
 export function readDiskUsageFailure(path: string): string | null {
   const entry = readJsonObject(diskUsageFailureFile(path));
