@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
-import { configCorruptRepair } from '../workspace/config.ts';
+import { configCorruptRepair, getConfigPath } from '../workspace/config.ts';
 import type { Finding } from './doctor.ts';
 import { configSettingRefusal, envSettingRefusal } from '../workspace/settings-payload.ts';
 import { compilerCacheFallbackMessage, type CompilerCacheFallback, type Optimizations } from '../optimizations.ts';
@@ -17,7 +17,6 @@ import {
   unknownSettingKeys,
   type SettingsLayer,
 } from '../workspace/settings.ts';
-import { getConfigPath } from '../workspace/config.ts';
 import { REMOVED_SETTINGS, replacementAdvice, settingDefinition, type SettingsObject } from '@stim-cli/core/state';
 
 export interface MachineSettings {
