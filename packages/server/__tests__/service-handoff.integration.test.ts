@@ -253,7 +253,13 @@ function fixture(label: string, port: number) {
     launchd.job = null;
     if (job?.pid && job.exitCode === null && job.signalCode === null) {
       const exited = once(job, 'exit');
-      process.kill(-job.pid, 'SIGTERM');
+      try {
+        process.kill(-job.pid, 'SIGTERM');
+      } catch (error) {
+        const { code } = error as NodeJS.ErrnoException;
+        if (code !== 'ESRCH' && code !== 'EPERM') throw error;
+        if (job.exitCode !== null || job.signalCode !== null) return;
+      }
       await exited;
     }
   };
