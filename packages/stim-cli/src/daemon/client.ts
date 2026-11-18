@@ -315,7 +315,7 @@ export function otherBuildRefusal(): { code: 'STIM_DAEMON_UNAVAILABLE'; message:
               ]
             : [
                 `${stimd} runs Stim ${version}, not this stim's ${stimBuild().version}, and has not restarted on this build.`,
-                `Run the command with Stim ${version}, or ${kill}; the next stim command starts one of this build.`,
+                `Run the command with Stim ${version}, run \`stim engine install\` so every copy of stim runs one engine, or ${kill}; the next stim command starts one of this build.`,
               ];
   return { code: 'STIM_DAEMON_UNAVAILABLE', message: why, remedy };
 }
