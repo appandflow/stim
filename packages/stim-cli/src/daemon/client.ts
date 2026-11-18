@@ -785,6 +785,16 @@ export function stimdEnv(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): Rec
   return kept;
 }
 
+export const STIMD_THREADPOOL_SIZE = '16';
+
+/**
+ * `stimdEnv` with libuv's threadpool at 16 threads unless `env` sets its size. libuv reads `UV_THREADPOOL_SIZE` once,
+ * when the pool first starts, so it must be in the environment stimd starts with.
+ */
+export function stimdLaunchEnv(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): Record<string, string> {
+  return { ...stimdEnv(env, platform), UV_THREADPOOL_SIZE: env.UV_THREADPOOL_SIZE ?? STIMD_THREADPOOL_SIZE };
+}
+
 const xml = (value: string) =>
   value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
@@ -873,7 +883,7 @@ export function launchStimd(
 ): { settled: Promise<void>; exited: () => boolean } {
   mkdirSync(stimdRunDir(), { recursive: true, mode: 0o700 });
   const args = [entry, '__stimd', '--mode', mode, ...extra];
-  const kept = stimdEnv(env, platform);
+  const kept = stimdLaunchEnv(env, platform);
   const never = { settled: new Promise<void>(() => {}), exited: () => false };
   if (platform === 'darwin') {
     const host = stimHost(env);
