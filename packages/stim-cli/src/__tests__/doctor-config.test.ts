@@ -115,6 +115,34 @@ test('a literal dotted machine property gives no finding about the project setti
   }
 });
 
+test.each([
+  { homeId: 'live', '': { homeId: 'stale' } },
+  { parked: { ios: [] }, '': { parked: { ios: [] } } },
+])('an empty property name in the machine config gives no doctor finding', (extra) => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-doctor-empty-'));
+  const before = process.env.STIM_HOME;
+  process.env.STIM_HOME = home;
+  try {
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ version: 2, projects: {}, repos: {}, ...extra }));
+    const machine = readMachineSettings({});
+    expect(
+      checkMachineSettings({
+        settings: machine.settings,
+        layers: machine.layers,
+        projectRoot: '/app',
+        optimizations: resolveOptimizations(machine.settings, {}),
+        exists: () => false,
+        env: {},
+        machineConfig: loadConfig(),
+      }),
+    ).toEqual([]);
+  } finally {
+    if (before === undefined) delete process.env.STIM_HOME;
+    else process.env.STIM_HOME = before;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test('STIM_MAINTENANCE in the environment is reported with daemon.mode and STIM_DAEMON', () => {
   expect(check({}, [], { STIM_MAINTENANCE: 'off' })).toEqual([
     expect.objectContaining({

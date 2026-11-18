@@ -591,7 +591,7 @@ function unknownScopedEntries(own: SettingsObject, prefix = ''): Array<{ key: st
   for (const [name, value] of Object.entries(own)) {
     const path = prefix ? `${prefix}.${name}` : name;
     if (path === '$schema') continue;
-    if (name.includes('.')) continue;
+    if (name === '' || name.includes('.')) continue;
     const group = [...MACHINE_KNOWN_SETTINGS].some((k) => k.startsWith(`${path}.`));
     if (isPlainObject(value) && (group || !MACHINE_KNOWN_SETTINGS.has(path))) {
       unknown.push(...unknownScopedEntries(value, path));

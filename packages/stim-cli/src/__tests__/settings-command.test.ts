@@ -237,6 +237,23 @@ test('a literal dotted machine property is ignored and never touches a record or
   expect(readFileSync(machine, 'utf-8')).toBe(text);
 });
 
+test.each([
+  ['an empty name beside a live home identity', { homeId: 'live', '': { homeId: 'stale' } }, 'homeId'],
+  [
+    'an empty name above the parked record',
+    { parked: { ios: [{ udid: 'A' }] }, '': { parked: { ios: [] } } },
+    'parked.ios',
+  ],
+])('%s is not an unknown key and unset leaves the file alone', async (_, extra, key) => {
+  const machine = join(home, 'config.json');
+  const text = JSON.stringify({ version: 2, projects: {}, repos: {}, ...extra });
+  writeFileSync(machine, text);
+
+  expect(JSON.parse((await settings(['--json'])).out[0] ?? '').unknown).toEqual([]);
+  expect((await settings(['unset', key, '--scope', 'machine'])).exitCode).toBe(1);
+  expect(readFileSync(machine, 'utf-8')).toBe(text);
+});
+
 test('unset of maintenance.idleStopHours removes the still-active machine setting', async () => {
   saveConfig({ version: 2, projects: {}, repos: {}, maintenance: { idleStopHours: 0 } });
 
