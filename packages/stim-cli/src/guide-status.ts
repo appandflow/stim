@@ -194,10 +194,13 @@ const RETIRED_EXPORTS = [
   'STIM_MAINTENANCE_URGENT_FREE_DISK_GB',
 ];
 
-const PARTIAL = /^v?(\d+|[xX*])(?:\.(\d+|[xX*]))?(?:\.(\d+|[xX*]))?(?:[-+][\w.+-]*)?$/;
+const PARTIAL = /^v?(\d+|[xX*])(?:\.(\d+|[xX*]))?(?:\.(\d+|[xX*]))?(?:\+[\w.-]*)?$/;
 const at = (major: number, minor = 0, patch = 0): number => major * 1e6 + minor * 1e3 + patch;
 
-/** The versions an npm comparator admits, as [from, to): `^1.40.0` is [1.40.0, 2.0.0); null for one it cannot read. */
+/**
+ * The versions an npm comparator admits, as [from, to): `^1.40.0` is [1.40.0, 2.0.0); null for one it cannot read,
+ * including a prerelease bound, whose npm matching rules this does not model.
+ */
 function comparatorSpan(comparator: string): [number, number] | null {
   const [, op = '', text = ''] = /^(\^|~|>=|<=|>|<|=)?(.*)$/.exec(comparator) ?? [];
   const found = PARTIAL.exec(text);
