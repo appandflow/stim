@@ -95,7 +95,13 @@ import {
 } from '../daemon/client.ts';
 import { getExecutor } from '../exec.ts';
 import { resolveTailscaleBinary } from '../engine/metro-reach.ts';
-import { configuredDaemonMode, daemonMode, parseDaemonMode, stricterDaemonMode } from '../daemon/mode.ts';
+import {
+  configuredDaemonMode,
+  daemonMode,
+  leftoverDaemonCap,
+  parseDaemonMode,
+  stricterDaemonMode,
+} from '../daemon/mode.ts';
 import { ownedHere } from '../daemon/idle.ts';
 import { removeStaleHomeJobs } from '../daemon/launchd-jobs.ts';
 import { measureTick, type TickMeasurement } from '../daemon/measure.ts';
@@ -780,7 +786,9 @@ async function runStimdInner(
   const configAtStart = configuredDaemonMode();
   const effectiveMode = () => {
     const configured = configuredDaemonMode();
-    return configured === configAtStart ? startMode : stricterDaemonMode(startMode, configured ?? 'on');
+    const base = configured === configAtStart ? startMode : stricterDaemonMode(startMode, configured ?? 'on');
+    const leftover = leftoverDaemonCap();
+    return leftover ? stricterDaemonMode(base, leftover) : base;
   };
   const started = performance.now();
   const startedAt = new Date().toISOString();

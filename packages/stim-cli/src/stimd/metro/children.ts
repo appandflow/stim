@@ -48,6 +48,7 @@ import { clearSupervisor, loadConfig, setSupervisor } from '../../workspace/conf
 import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../../workspace/paths.ts';
 import {
   idleMinutesSetting,
+  maintenanceKeepSetting,
   metroPortSetting,
   resolveProjectSettings,
   runnableMetroCommand,
@@ -1421,8 +1422,9 @@ export function metroTick(mode: DaemonMode, log: Log): Promise<void> {
       }
       // compat end
       if (mode !== 'off' || !child.observesRequests) continue;
-      const minutes = idleMinutesSetting(resolveProjectSettings(child.root).settings);
-      if (minutes <= 0) continue;
+      const settings = resolveProjectSettings(child.root).settings;
+      const minutes = idleMinutesSetting(settings);
+      if (minutes <= 0 || maintenanceKeepSetting(settings)) continue;
       const idleMs = minutes * 60_000;
       if (await idlePoint(child, Date.now() - idleMs)) {
         if (backgroundStopped) break;
