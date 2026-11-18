@@ -57,6 +57,8 @@ struct PairMachineSheet: View {
     Text("On the machine, run this and paste everything it prints. The code works once, for 5 minutes.")
       .foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
     CopyableCommand(command: "stim pair", runsOn: "the machine")
+    Text("On stim 1.x, run stim-server pair instead.")
+      .font(.stim(.footnote)).foregroundStyle(Palette.tertiary)
     TextEditor(text: $text)
       .font(.stim(.caption, mono: true))
       .frame(height: 110)

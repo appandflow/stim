@@ -17,10 +17,11 @@ public enum PairedServerWording {
   }
 
   /// The local codes only `NoisePairing` and the paired-server list produce, beside `ServerProtocol.refusalCodes`.
-  public static let localCodes = [
-    "already-paired", "unreadable-pairing", "pairing-not-saved", "pairing-unconfirmed", "pairing-in-progress", "own-server",
-    "key-unusable",
-  ]
+  public static let localCodes =
+    [
+      "already-paired", "unreadable-pairing", "pairing-not-saved", "pairing-unconfirmed", "pairing-in-progress", "own-server",
+      "key-unusable",
+    ] + ServerProtocol.desktopApiCodes.sorted()
 
   /// `name` is the pairing's name, or empty when the person has not named it yet.
   public static func notice(for error: ServerError, context: Context, name: String) -> PairedServerNotice {
@@ -67,6 +68,22 @@ public enum PairedServerWording {
       return PairedServerNotice(
         tone: .warning, title: "Update Stim Desktop",
         detail: "\(machine.capitalizedFirst) speaks a newer protocol than this version of Stim Desktop.", command: nil)
+    case "desktop-api-1x":
+      return PairedServerNotice(
+        tone: .warning, title: "Install stim 2 on \(machine)",
+        detail:
+          "It runs stim 1.x. On it, update Stim Desktop if it runs the server. Otherwise run the command below, stop the old server, then run stim service install or stim serve.",
+        command: "npm i -g stim@latest")
+    case "desktop-api-older":
+      return PairedServerNotice(
+        tone: .warning, title: "Update stim on \(machine)",
+        detail:
+          "Its Stim engine is older than Stim Desktop. On it, update Stim Desktop (Stim > Check for Updates) or run the command below. If that says no engine is installed, run npm i -g stim@latest, then stim service install.",
+        command: "stim engine update")
+    case "desktop-api-newer":
+      return PairedServerNotice(
+        tone: .warning, title: "Update Stim Desktop",
+        detail: "\(machine.capitalizedFirst) uses a newer Desktop API than this version of Stim Desktop.", command: nil)
     case "other-server":
       return PairedServerNotice(
         tone: .error, title: "That is a different server",

@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { compareVersions } from '../../bin/route.mjs';
+import { npmEnv } from '../engine-store/npm.ts';
 import { newestBad } from '../engine-store/select.ts';
 import { FORMAT, readRecords, writeRecord } from '../engine-store/store.ts';
 import type { StoreEngine } from '../daemon/engine-switch.ts';
@@ -44,7 +45,7 @@ export function lastUpdateCheck(root: string): number {
  * marked bad, has this build's `engine-select` install it as an unattended promotion, which a person's pin refuses and
  * which is staged while work runs. Returns one line for the log.
  */
-export async function checkForUpdate(engine: StoreEngine, why: string): Promise<string> {
+export async function checkForUpdate(engine: StoreEngine, why: string, env: NodeJS.ProcessEnv): Promise<string> {
   const { root, build } = engine;
   writeRecord(checkFile(root), { format: FORMAT, at: new Date().toISOString(), why });
   const { current, state } = readRecords(root);
@@ -53,6 +54,7 @@ export async function checkForUpdate(engine: StoreEngine, why: string): Promise<
   const view = (
     await getExecutor().runFileAsync('npm', ['view', `stim@${current.channel}`, 'version'], {
       timeoutMs: NPM_TIMEOUT_MS,
+      env: npmEnv(env),
     })
   ).trim();
   if ((compareVersions(view, current.version) ?? 0) <= 0)
