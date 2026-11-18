@@ -10,7 +10,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
-import { rewriteUnitToShim } from '../src/service.ts';
+import { addUnitKillMode, rewriteUnitToShim } from '../src/service.ts';
 import { renderUnit } from '../src/service-unit.ts';
 import type { ServiceSpec } from '../src/service-plist.ts';
 
@@ -121,6 +121,31 @@ esac
     await expect(rewriteUnitToShim(label)).rejects.toThrow(/not one single line/);
     expect(readFileSync(unit, 'utf8')).toBe(continued);
     expect(reloads()).toBe('');
+  });
+
+  it('adds KillMode=process once to a unit written without it, reloading without a restart, and keeps a set one', async () => {
+    const written = `[Unit]
+Description=stim-server (${label})
+
+[Service]
+ExecStart="/usr/bin/node" "/old/stim-server.mjs" "serve" "--service" "--port" "7787"
+Environment="STIM_SERVICE_LABEL=${label}"
+Restart=always
+
+[X-Stim]
+Managed=true
+`;
+    writeFileSync(unit, written);
+    await addUnitKillMode(label);
+    expect(readFileSync(unit, 'utf8')).toBe(written.replace('[Service]\n', '[Service]\nKillMode=process\n'));
+    expect(reloads()).toBe('reload\n');
+    await addUnitKillMode(label);
+    expect(reloads()).toBe('reload\n');
+    const mixed = written.replace('Restart=always', 'Restart=always\nKillMode=mixed');
+    writeFileSync(unit, mixed);
+    await addUnitKillMode(label);
+    expect(readFileSync(unit, 'utf8')).toBe(mixed);
+    expect(reloads()).toBe('reload\n');
   });
 
   it('writes through a symlinked unit instead of replacing the link', async () => {

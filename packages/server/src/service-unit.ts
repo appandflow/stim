@@ -11,6 +11,8 @@ import {
 export { LABEL_VARIABLE, parseSystemctlShow, parseUnit, SHOW_PROPERTIES } from '@stim-cli/core/state';
 
 const STOP_TIMEOUT_SECONDS = 30;
+// @ref LLP 0009#service-and-engine-updates -- a unit stop signals stimd alone, so its dev servers outlive it
+const KILL_MODE = 'KillMode=process';
 
 const execLine = (args: string[]) => `ExecStart=${args.map((arg) => quoteUnitWord(arg, true)).join(' ')}`;
 
@@ -28,6 +30,7 @@ export function renderUnit(spec: ServiceSpec, previousScript: string | null = nu
     `Description=stim-server (${spec.label})`,
     '',
     '[Service]',
+    KILL_MODE,
     execLine(jobArguments(spec)),
     ...[...environment].map(([name, value]) => `Environment=${quoteUnitWord(`${name}=${value}`, false)}`),
     'WorkingDirectory=%h',
@@ -46,6 +49,23 @@ export function renderUnit(spec: ServiceSpec, previousScript: string | null = nu
     'WantedBy=default.target',
     '',
   ];
+  return lines.join('\n');
+}
+
+/** `text` with `KillMode=process` added to its `[Service]` section when that section sets no `KillMode=`. */
+export function withKillMode(text: string): string {
+  const lines = text.split('\n');
+  let section = '';
+  let service = -1;
+  for (const [index, line] of lines.entries()) {
+    const header = /^\[(.+)\]$/.exec(line.trim())?.[1];
+    if (header) {
+      section = header;
+      if (header === 'Service') service = index;
+    } else if (section === 'Service' && /^KillMode\s*=/.test(line.trim())) return text;
+  }
+  if (service < 0) return text;
+  lines.splice(service + 1, 0, KILL_MODE);
   return lines.join('\n');
 }
 

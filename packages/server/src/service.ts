@@ -45,7 +45,7 @@ import {
   type ServiceJob,
   type ServiceManager,
 } from './service-manager.ts';
-import { editUnit } from './service-unit.ts';
+import { editUnit, withKillMode } from './service-unit.ts';
 import { hostPermissionPanes, requestHostPermissions, type HostApp } from './stim-host.ts';
 import { tailscalePackage } from './tailnet-helper.ts';
 import { markTailnet } from './tailnet-marker.ts';
@@ -440,10 +440,7 @@ export async function rewriteUnitToShim(label: string): Promise<boolean> {
     if (rewritten !== text) {
       const problem = manager.name === 'systemd' ? execStartOverride(path, text) : null;
       if (problem) throw new ServiceError(`${problem}; not rewriting ${label} to the engine shim.`);
-      const target = realpathSync(path);
-      const partial = `${target}.${process.pid}.tmp`;
-      writeFileSync(partial, rewritten, { mode: 0o644 });
-      renameSync(partial, target);
+      writeUnitThrough(path, rewritten);
       changed = true;
     }
   } else if (installed.script !== stimd) return false;
@@ -461,6 +458,33 @@ export async function rewriteUnitToShim(label: string): Promise<boolean> {
     }
   }
   return changed;
+}
+
+/** Writes `text` to the unit at `path`, through a symlink to its target. */
+function writeUnitThrough(path: string, text: string): void {
+  const target = realpathSync(path);
+  const partial = `${target}.${process.pid}.tmp`;
+  writeFileSync(partial, text, { mode: 0o644 });
+  renameSync(partial, target);
+}
+
+/**
+ * Adds `KillMode=process` to the systemd unit `label` when install wrote it without one, and reloads systemd so the
+ * next stop of the running unit applies it; no restart is needed.
+ */
+export async function addUnitKillMode(label: string): Promise<void> {
+  const manager = serviceManager();
+  if (manager.name !== 'systemd' || !(await readInstalled(label))?.managed) return;
+  const path = plistPath(label);
+  const text = readFileSync(path, 'utf8');
+  const edited = withKillMode(text);
+  if (edited === text) return;
+  writeUnitThrough(path, edited);
+  const reloaded = await manager.reload?.();
+  if (!reloaded?.ok)
+    throw new ServiceError(
+      `systemd has not loaded KillMode=process for ${label} (${reloaded?.stderr.trim()}); run \`systemctl --user daemon-reload\`.`,
+    );
 }
 
 /** The server directory of the Stim home a service runs with `STIM_HOME` set to `stimHome`. */
