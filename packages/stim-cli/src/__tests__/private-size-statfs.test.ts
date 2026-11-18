@@ -85,21 +85,31 @@ test.runIf(process.platform === 'linux')(
   },
 );
 
-test.runIf(process.platform === 'linux')(
-  'one statfs at most is in flight: a probe beside a stalled one is busy, and only its settling frees the slot',
-  async () => {
-    const first = privateSizeKnowable(tree('first'));
-    expect(await privateSizeKnowable(tree('second'))).toBe('busy');
-    await vi.advanceTimersByTimeAsync(2000);
-    expect(await first).toBe('timeout');
-    expect(await privateSizeKnowable(tree('third'))).toBe('busy');
-    expect(reads).toHaveLength(1);
+const settled = () => new Promise((done) => setImmediate(done));
 
-    reads.splice(0)[0]?.({ type: 0xef53 });
-    await new Promise((done) => setImmediate(done));
-    const fourth = privateSizeKnowable(tree('fourth'));
+test.runIf(process.platform === 'linux')(
+  'concurrent probes on a healthy volume all answer, their native reads strictly one at a time',
+  async () => {
+    const probes = ['a', 'b', 'c', 'd'].map((name) => privateSizeKnowable(tree(name)));
+    for (let read = 0; read < probes.length; read++) {
+      await settled();
+      expect(reads).toHaveLength(1);
+      reads.splice(0)[0]?.({ type: 0xef53 });
+    }
+    expect(await Promise.all(probes)).toEqual(['yes', 'yes', 'yes', 'yes']);
+  },
+);
+
+test.runIf(process.platform === 'linux')(
+  'probes queued behind a stalled read are busy after the probe limit, and no second native read starts',
+  async () => {
+    const probes = ['a', 'b', 'c', 'd'].map((name) => privateSizeKnowable(tree(name)));
+    await settled();
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(await Promise.all(probes)).toEqual(['timeout', 'busy', 'busy', 'busy']);
     expect(reads).toHaveLength(1);
-    reads.splice(0)[0]?.({ type: 0xef53 });
-    expect(await fourth).toBe('yes');
+    expect(await privateSizeKnowable(tree('e'))).toBe('busy');
+    expect(reads).toHaveLength(1);
   },
 );

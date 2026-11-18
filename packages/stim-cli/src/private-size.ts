@@ -28,14 +28,47 @@ export const INSTALL_MARKERS: readonly string[] = [
  */
 const LINK_COUNTED_VOLUMES: ReadonlySet<number> = new Set([0xef53, 0x01021994]);
 const PROBE_TIMEOUT_MS = 2000;
-let probing = false;
+let probeTail: Promise<void> = Promise.resolve();
+
+async function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  let onAbort: (() => void) | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, fail) => {
+        onAbort = () => fail(signal?.reason);
+        signal?.addEventListener('abort', onAbort, { once: true });
+      }),
+    ]);
+  } finally {
+    if (onAbort) signal?.removeEventListener('abort', onAbort);
+  }
+}
+
+/** True once `promise` settled within `timeoutMs`, false when it did not. */
+async function settledWithin(promise: Promise<unknown>, timeoutMs: number): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise.then(
+        () => true,
+        () => true,
+      ),
+      new Promise<boolean>((done) => {
+        timer = setTimeout(() => done(false), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /**
  * Whether a walk may tell what deleting the tree at `path` would free: on macOS the `stim-privsize` helper decides
- * during the walk, on Linux the volume must be link-counted. `timeout` when its statfs did not answer within
- * PROBE_TIMEOUT_MS, `busy` when another probe or an earlier read that did not answer is still pending, so none was
- * started: one native statfs at most is in flight per process, until it settles.
- * An abort of `signal` rejects at once.
+ * during the walk, on Linux the volume must be link-counted. One native statfs at most is in flight per process:
+ * probes queue in arrival order and each waits up to PROBE_TIMEOUT_MS for the ones before it. `busy` when that wait
+ * ran out, or an earlier read that did not answer is still pending, so none was started; `timeout` when its own
+ * statfs did not answer within PROBE_TIMEOUT_MS. An abort of `signal` rejects at once.
  */
 export async function privateSizeKnowable(
   path: string,
@@ -43,27 +76,36 @@ export async function privateSizeKnowable(
 ): Promise<'yes' | 'no' | 'timeout' | 'busy'> {
   if (process.platform === 'darwin') return 'yes';
   if (process.platform !== 'linux') return 'no';
-  if (probing || hungRead() !== null) return 'busy';
+  if (hungRead() !== null) return 'busy';
   signal?.throwIfAborted();
-  probing = true;
-  const read = statfs(path);
-  const release = () => {
-    probing = false;
-  };
-  read.then(release, release);
-  let onAbort: (() => void) | undefined;
-  const aborted = new Promise<never>((_, fail) => {
-    onAbort = () => fail(signal?.reason);
-    signal?.addEventListener('abort', onAbort, { once: true });
+  const before = probeTail;
+  let release: (() => void) | undefined;
+  probeTail = new Promise<void>((done) => {
+    release = done;
   });
+  let held = false;
   try {
-    const volume = await Promise.race([answered(path, () => read, PROBE_TIMEOUT_MS), aborted]);
+    if (!(await abortable(settledWithin(before, PROBE_TIMEOUT_MS), signal)) || hungRead() !== null) return 'busy';
+    held = true;
+    const read = statfs(path);
+    read.then(
+      () => release?.(),
+      () => release?.(),
+    );
+    const volume = await abortable(
+      answered(path, () => read, PROBE_TIMEOUT_MS),
+      signal,
+    );
     return LINK_COUNTED_VOLUMES.has(volume.type) ? 'yes' : 'no';
   } catch (error) {
     signal?.throwIfAborted();
     return error instanceof Unanswered ? 'timeout' : 'no';
   } finally {
-    if (onAbort) signal?.removeEventListener('abort', onAbort);
+    if (!held)
+      void before.then(
+        () => release?.(),
+        () => release?.(),
+      );
   }
 }
 
