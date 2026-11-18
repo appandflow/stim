@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { StimContext } from '@stim-cli/core';
 import type { StreamSpec } from '../stimd/logs/streams.ts';
+import type { ServeOptions } from '../stimd/main.ts';
 import { releaseRunLease } from '../engine/device-lease.ts';
 import { operationState } from '../engine/operation-state.ts';
 import type { PresencePublishParams } from '@stim-cli/core/protocol';
@@ -1908,19 +1909,28 @@ export async function ensureNet(share: boolean, env: NodeJS.ProcessEnv = process
   if (!stimdLive() && (!(share || spawnsDaemon(env)) || !(await claimTaken(launchStimd(env, daemonMode(env))))))
     return null;
   return netAnswer(
-    await askHeldStimd(() => askStimd('net.ensure', NET_START_MS, share ? { params: { share: true } } : {})),
+    await askHeldStimd(() => askStimd('net.ensure', NET_START_MS, { params: netEnsureParams({ shareOnly: share }) })),
   );
+}
+
+/** The `net.ensure` params stimd reads, named field by field so no caller's option names reach the wire. */
+function netEnsureParams(
+  serve: Partial<ServeOptions> & { service?: boolean; envValues?: Record<string, string> },
+): Record<string, unknown> {
+  const { shareOnly, port, loopbackOnly, extraEnv, pathPrepend, service, envValues } = serve;
+  return { share: shareOnly === true, port, loopbackOnly, extraEnv, pathPrepend, service, envValues };
 }
 
 /**
  * Asks the stimd that holds this home to start its net thread on `port`, for a `stim serve` that found one running, and
- * resolves once that stimd closes the connection. A net thread that already runs keeps its own port and options, except
- * for a service (`service`), whose ask moves it to the service's options and sends the values of its bare `--env`
- * names, which the net thread it starts uses and no successor's arguments carry. The connection is closed at once
- * when the answer is not a listening one, or for a service, not on its port.
+ * resolves once that stimd closes the connection, which it does when the net thread ends or stimd exits. A net thread
+ * that already runs keeps its own port and options, except for a service (`service`), whose ask moves it to the
+ * service's options and sends the values of its bare `--env` names, which the net thread it starts uses and no
+ * successor's arguments carry. The connection is closed at once when the answer is not a listening one, or for a
+ * service, not on its port.
  */
 export function serveThroughStimd(
-  params: { port: number; loopbackOnly: boolean; extraEnv: string[]; pathPrepend: string[]; service: boolean },
+  params: ServeOptions & { service: boolean },
   onAnswer: (answer: NetAnswer | null) => void,
 ): Promise<void> {
   const envValues = params.service
@@ -1932,7 +1942,7 @@ export function serveThroughStimd(
       )
     : {};
   return new Promise((done) => {
-    const socket = openStimd([{ op: 'net.ensure', params: { ...params, envValues } }], (reply) => {
+    const socket = openStimd([{ op: 'net.ensure', params: netEnsureParams({ ...params, envValues }) }], (reply) => {
       const answer = netAnswer(reply);
       onAnswer(answer);
       if (!answer?.listening || (params.service && params.port !== 0 && answer.port !== params.port)) socket.destroy();
