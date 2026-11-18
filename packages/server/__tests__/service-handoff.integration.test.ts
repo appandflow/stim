@@ -131,14 +131,14 @@ function fixture(label: string, port: number) {
     PATH: bin,
     TMPDIR: process.env.TMPDIR ?? tmpdir(),
   };
-  const cli = (build: string, args: string[]) =>
+  const cli = (build: string, args: string[], extraEnv: Record<string, string> = {}) =>
     spawn('/bin/sh', ['-c', '"$@"; exit $?', 'sh', process.execPath, join(store, build, 'dist', 'cli.mjs'), ...args], {
-      env,
+      env: { ...env, ...extraEnv },
       stdio: 'ignore',
       detached: true,
     });
-  const stimd = (build: string) =>
-    cli(build, ['__stimd', '--mode', 'on', '--service', '--loopback-only', '--port', String(port)]);
+  const serviceArgs = ['__stimd', '--mode', 'on', '--service', '--loopback-only', '--port', String(port)];
+  const stimd = (build: string) => cli(build, serviceArgs, { XPC_SERVICE_NAME: label });
   vi.stubEnv('HOME', scratch);
   vi.stubEnv('STIM_HOME', join(scratch, 'caller'));
   vi.stubEnv('STIM_ENGINE_ROOT', store);
@@ -263,6 +263,14 @@ function fixture(label: string, port: number) {
     rmSync(scratch, { recursive: true, force: true });
   };
 
+  /** Starts a stimd with the arguments an older build gives its successor: `--service` alone, outside any job. */
+  const runBareService = async () => {
+    cli(next, serviceArgs);
+    const started = await until('the bare --service stimd', () => record());
+    await answers('the bare --service stimd');
+    return started;
+  };
+
   /** Runs a plain `stim serve` on the unit's port, as a person would before installing the service. */
   const runServe = async () => {
     cli(first, ['serve', '--loopback-only', '--port', String(port)]);
@@ -300,6 +308,7 @@ function fixture(label: string, port: number) {
     runJob,
     runServe,
     runDesktop,
+    runBareService,
     switchEngine,
     setJob,
     stopHome,
@@ -309,6 +318,8 @@ function fixture(label: string, port: number) {
     script: join(store, next, 'dist', 'cli.mjs'),
   };
 }
+
+const homeClaim = (home: string) => readClaimSet(stimdClaimRoot(home)).live.find(({ mode }) => mode === 'exclusive');
 
 describe.skipIf(process.platform !== 'darwin')('a service after an engine handoff', () => {
   afterEach(() => {
@@ -321,6 +332,7 @@ describe.skipIf(process.platform !== 'darwin')('a service after an engine handof
     const service = fixture(label, port);
     try {
       const successor = await service.handOver();
+      expect(homeClaim(service.home)?.details.serviceUnit).toBe(true);
       expect((await serviceStatus(label)).listener).toEqual({
         pid: successor.pid,
         stimd: expect.objectContaining({ build: successor.build }),
@@ -360,13 +372,31 @@ describe.skipIf(process.platform !== 'darwin')('a service after an engine handof
     }
   }, 240_000);
 
+  it('install leaves running a stimd started with an older build successor arguments', async () => {
+    const label = 'dev.stim.handoff-bare-service';
+    const port = await freePort();
+    const service = fixture(label, port);
+    try {
+      const bare = await service.runBareService();
+      expect(homeClaim(service.home)?.details.serviceUnit).toBeUndefined();
+      await service.setJob(true);
+      await installJob(
+        { label, port, env: [], pathPrepend: [], serve: false, stimHome: service.home },
+        { script: service.script, host: null, requestPermissions: false },
+      ).catch(() => undefined);
+      expect(gone(bare.pid)).toBe(false);
+    } finally {
+      await service.cleanup();
+    }
+  }, 240_000);
+
   it('install leaves running the successor of a plain stim serve after an engine switch', async () => {
     const label = 'dev.stim.handoff-serve-successor';
     const port = await freePort();
     const service = fixture(label, port);
     try {
       const successor = await service.switchEngine(await service.runServe());
-      const holder = readClaimSet(stimdClaimRoot(service.home)).live.find(({ mode }) => mode === 'exclusive');
+      const holder = homeClaim(service.home);
       expect(holder?.owner.pid).toBe(successor.pid);
       expect(holder?.details.serviceUnit).toBeUndefined();
       await service.setJob(true);

@@ -7,6 +7,7 @@ import pairOp from './pair.ts';
 import { log, pairingsOp } from './pairings.ts';
 import serviceOp from './service.ts';
 import { loadServerCli } from '../server-cli.ts';
+import { startedByServiceUnit } from '../stimd/service-unit.ts';
 import setupOp from './setup.ts';
 
 const options = {
@@ -52,7 +53,7 @@ const serveOp = defineOp({
         loopbackOnly: opts.loopbackOnly === true || opts.share === true,
         shareOnly: opts.share === true,
       },
-      opts.service === true,
+      opts.service === true && startedByServiceUnit(process.env, port),
     );
   },
 });

@@ -131,6 +131,7 @@ import { createStreams } from './logs/streams.ts';
 import { handleLogRequest } from './logs/protocol.ts';
 import { writeDesktopKey } from './desktop-key.ts';
 import { createNetThread, type NetOptions } from './net.ts';
+import { startedByServiceUnit } from './service-unit.ts';
 import { followEngine } from './engine-follow.ts';
 import { takeLock } from '../engine-store/locks.ts';
 import { createStatusSnapshots } from './status-snapshot.ts';
@@ -190,7 +191,7 @@ const OPS: Record<Resource, { wait: string; waiting: string; released: string; c
 
 let launchedByLaunchd = false;
 
-const NOT_UNIT_ARG = '--not-unit';
+const UNIT_SUCCESSOR_ARG = '--unit-successor';
 
 function launcherKind(attached: boolean, service: boolean, desktop: boolean): string {
   if (attached) return 'attached';
@@ -2066,15 +2067,15 @@ function shareWorkPending(): boolean {
  * `serviceArguments`' inverse: the arguments a successor stimd takes to serve as this one's net thread did. A net thread
  * that only serves `stim share` is not carried over by arguments (its successor restores the saved shares at boot, see
  * `shareWorkPending`), and one no service unit or `stim serve` started is marked `--carried`, so its successor does not
- * count as a service. One that `stim serve` started is marked `--not-unit`, so its successor does not count as a
- * service unit's.
+ * count as a service. The successor of a service unit's stimd is marked `--unit-successor`, so it counts as the
+ * unit's too.
  */
 function serveArgs(serve: ServeOptions | null, service: boolean, unit: boolean): string[] {
   if (!serve || serve.shareOnly) return [];
   return [
     ...(service ? [] : ['--carried']),
     '--service',
-    ...(service && !unit ? [NOT_UNIT_ARG] : []),
+    ...(unit ? [UNIT_SUCCESSOR_ARG] : []),
     ...(serve.loopbackOnly ? ['--loopback-only'] : []),
     '--port',
     String(serve.port),
@@ -2152,7 +2153,10 @@ export async function runStimdEntry(argv: readonly string[]): Promise<void> {
       serve,
       onNet: reportNet,
       service: serve !== undefined && !argv.includes('--carried'),
-      unit: serve !== undefined && !argv.includes('--carried') && !argv.includes(NOT_UNIT_ARG),
+      unit:
+        serve !== undefined &&
+        !argv.includes('--carried') &&
+        (argv.includes(UNIT_SUCCESSOR_ARG) || startedByServiceUnit(process.env, serve.port)),
       ...(argv.includes(ATTACHED_ARG) ? { attached: { handover: !argv.includes(NO_HANDOVER_ARG) } } : {}),
     });
     if (serve && !served && stimdLive()) await serveThroughStimd(serve, reportNet);
