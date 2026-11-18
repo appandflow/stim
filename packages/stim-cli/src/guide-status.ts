@@ -1,4 +1,5 @@
-import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { getConfigDir, getProject, upsertProject, withConfigLockAsync } from './workspace/config.ts';
 import { projectRegistry } from './integrations/projects.ts';
@@ -8,6 +9,7 @@ import { legacyDaemonHolder } from './daemon/legacy-daemon.ts';
 import { readSettingsContext, unknownEntries } from './workspace/settings-payload.ts';
 import {
   isJsonObject,
+  parseUnit,
   REMOVED_SETTINGS,
   UPGRADE_GUIDE_URL,
   type DoctorRunRecord,
@@ -270,6 +272,32 @@ function projectPins(projectRoot: string, running: number): string[] {
   return [...names];
 }
 
+const SERVER_SCRIPT = /(?:^|\/)stim-server(?:\.mjs)?$/;
+const PLIST_SERVER_SCRIPT = /<string>[^<]*\/stim-server(?:\.mjs)?<\/string>/;
+
+function earlierServices(): string[] {
+  const launchd = process.platform === 'darwin';
+  if (!launchd && process.platform !== 'linux') return [];
+  const dir = launchd ? join(homedir(), 'Library', 'LaunchAgents') : join(homedir(), '.config', 'systemd', 'user');
+  const extension = launchd ? '.plist' : '.service';
+  let names: string[];
+  try {
+    names = readdirSync(dir).filter((name) => name.endsWith(extension));
+  } catch {
+    return [];
+  }
+  return names.flatMap((name) => {
+    try {
+      const text = readFileSync(join(dir, name), 'utf-8');
+      if (launchd) return PLIST_SERVER_SCRIPT.test(text) ? [name.slice(0, -extension.length)] : [];
+      const unit = parseUnit(text);
+      return unit && SERVER_SCRIPT.test(unit.script ?? '') ? [unit.label] : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
 /** What an earlier Stim left that this one does not read or replaced, each as one short phrase. */
 async function upgradeLeftovers(
   projectRoot: string | null,
@@ -295,6 +323,8 @@ async function upgradeLeftovers(
   const older = legacyDaemonHolder();
   if (older) found.push(`a daemon from an older Stim (pid ${older.owner.pid})`);
   // compat end
+  const services = earlierServices();
+  if (services.length) found.push(`a service installed by an earlier Stim (${listed(services)})`);
   const current = majorOf(running);
   if (projectRoot && current !== null) {
     const pins = projectPins(projectRoot, current);

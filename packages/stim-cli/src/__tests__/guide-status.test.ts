@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { daemonClaimRoot, legacyDaemonSocket, UPGRADE_GUIDE_URL } from '@stim-cli/core/state';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
@@ -172,6 +172,59 @@ test('guideStatus sends a home and project an earlier Stim left to the migration
   const migrated = await guideStatus({ projectRoot: root, running: '2.0.0', env: process.env, now: NOW, fetch });
   expect(migrated ?? '').not.toContain(UPGRADE_GUIDE_URL);
 });
+
+test.skipIf(process.platform === 'win32')(
+  'guideStatus names a service whose job runs a 1.x stim-server script, not one a 2.0 Stim installed without an engine',
+  async () => {
+    const launchAgents = join(homedir(), 'Library', 'LaunchAgents');
+    const units = join(homedir(), '.config', 'systemd', 'user');
+    mkdirSync(launchAgents, { recursive: true });
+    mkdirSync(units, { recursive: true });
+    onTestFinished(() => {
+      rmSync(launchAgents, { recursive: true, force: true });
+      rmSync(join(homedir(), '.config', 'systemd'), { recursive: true, force: true });
+    });
+    const plist = (label: string, script: string) =>
+      `<plist version="1.0"><dict><key>Label</key><string>${label}</string><key>ProgramArguments</key><array><string>/usr/local/bin/node</string><string>${script}</string><string>--port</string><string>7788</string></array><key>StandardOutPath</key><string>/Users/me/Library/Logs/Stim/${label}.log</string></dict></plist>`;
+    const unit = (label: string, script: string) =>
+      `[Service]\nExecStart=/usr/bin/node ${script} --port 7788\nEnvironment=STIM_SERVICE_LABEL=${label}\n`;
+    const old =
+      '/Users/me/Library/Application Support/Stim/services/old/versions/1.40.0/node_modules/@stim-cli/server/dist/stim-server.mjs';
+    writeFileSync(join(launchAgents, 'old.plist'), plist('old', old));
+    writeFileSync(
+      join(launchAgents, 'dev.stim-server.plist'),
+      plist('dev.stim-server', '/usr/local/lib/node_modules/stim/bin/stim.mjs'),
+    );
+    writeFileSync(join(units, 'old.service'), unit('old', '/home/me/.npm-global/bin/stim-server'));
+    writeFileSync(
+      join(units, 'dev.stim-server.service'),
+      unit('dev.stim-server', '/home/me/.npm-global/lib/node_modules/stim/bin/stim.mjs'),
+    );
+    const { fetch } = fakeFetch('2.0.0');
+    const status = await guideStatus({
+      projectRoot: null,
+      cwd: home,
+      running: '2.0.0',
+      env: process.env,
+      now: NOW,
+      fetch,
+    });
+    expect(status).toContain('a service installed by an earlier Stim (old)');
+    expect(status).toContain(UPGRADE_GUIDE_URL);
+
+    rmSync(join(launchAgents, 'old.plist'));
+    rmSync(join(units, 'old.service'));
+    const current = await guideStatus({
+      projectRoot: null,
+      cwd: home,
+      running: '2.0.0',
+      env: process.env,
+      now: NOW,
+      fetch,
+    });
+    expect(current ?? '').not.toContain(UPGRADE_GUIDE_URL);
+  },
+);
 
 test.each([
   ['1', true],
