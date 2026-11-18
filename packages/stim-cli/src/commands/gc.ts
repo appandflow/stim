@@ -66,6 +66,8 @@ interface GcOptions {
   json?: boolean;
   /** False reports worktree build-state sizes only from the disk-usage cache: a stale one is unmeasured (null), and no `du` runs for it. */
   measureBuildState?: boolean;
+  /** False labels the source checkout trees of unknown size without walking them, as every API caller does. */
+  walkUnknown?: false;
 }
 
 interface GcRefusal {
@@ -320,6 +322,7 @@ export async function executeGc(
       level: opts.pressure,
       act,
       operation: deps.operation,
+      ...(opts.walkUnknown === false ? { walkUnknown: opts.walkUnknown } : {}),
       onAction: (action) => {
         if (!act || action.outcome === 'would') return;
         log ??= gcLogOf(opts.pressure ?? 'normal', chosen, deps.operation?.env);

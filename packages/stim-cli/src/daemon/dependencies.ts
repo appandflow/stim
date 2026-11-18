@@ -63,6 +63,7 @@ const VOLUME_CANNOT_TELL =
 const WALK_FAILED =
   'its private-size walk could not count which of its blocks other files share, so its real size is unknown and it stays';
 const MEASURE_BUDGET_MS = 2 * 60_000;
+const MIN_WALK_MS = 10_000;
 const VERBS: Record<DaemonLadderAction['outcome'], string> = {
   would: 'would delete',
   done: 'deleted',
@@ -151,7 +152,7 @@ async function measureUnknown(
     (a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0) || (b.bytes ?? -1) - (a.bytes ?? -1),
   )) {
     const remainingMs = deadline - Date.now();
-    if (remainingMs <= 0) {
+    if (remainingMs < MIN_WALK_MS) {
       dependency.unknown = `stim gc spent its ${MEASURE_BUDGET_MS / 60_000} minutes of measuring on other trees first, so its real size is unknown and it stays`;
       continue;
     }

@@ -57,9 +57,10 @@ describe.runIf(process.platform === 'linux')('measureTree on Linux', () => {
   let root: string;
 
   beforeEach(async () => {
-    root = (await privateSizeKnowable(scratch, 10_000))
-      ? scratch
-      : realpathSync(mkdtempSync(join(process.cwd(), '.stim-private-size-')));
+    root =
+      (await privateSizeKnowable(scratch)) === 'yes'
+        ? scratch
+        : realpathSync(mkdtempSync(join(process.cwd(), '.stim-private-size-')));
   });
 
   afterEach(() => {
@@ -76,7 +77,7 @@ describe.runIf(process.platform === 'linux')('measureTree on Linux', () => {
     linkSync(join(store, 'package.js'), join(tree, '.pnpm', 'package.js'));
     linkSync(join(tree, 'own'), join(tree, '.pnpm', 'own-link'));
     symlinkSync(store, join(tree, 'outside'));
-    expect(await privateSizeKnowable(tree, 10_000)).toBe(true);
+    expect(await privateSizeKnowable(tree)).toBe('yes');
 
     const size = await measureTree(tree, { timeoutMs: 60_000 });
 

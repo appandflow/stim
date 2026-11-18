@@ -2490,8 +2490,8 @@ hard-linked from its store) is kept, and so is one whose own size is unknown at
 the 7-day rule. Before that rule keeps a tree as unknown, `stim gc` and
 `stim gc --dry-run` measure the ones no walk tried since their last install,
 largest first, for up to 2 minutes in all; a tree whose walk failed on the
-same install waits until the others are measured. The API's read-only report
-and the daemon do not walk. One still unknown says why in its kept reason: not
+same install waits until the others are measured. Only the CLI walks: Stim
+Desktop's gc and its report, other API callers and the daemon do not. One still unknown says why in its kept reason: not
 measured since its last install, gc ran out of time, its walk failed or did not
 finish (gc then leaves it for 6 hours or until it is reinstalled), the walk
 could not count its shared blocks (or saw only part of the tree), or its volume

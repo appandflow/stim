@@ -26,6 +26,7 @@ import { writeCacheFile } from '../cache-file.ts';
 import { privateSizeKnowable, treeSignature } from '../private-size.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { readGcReport, runGc } from '../commands/gc.ts';
+import { createStim } from '../api.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
 import { loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceStateFile } from '../workspace/paths.ts';
@@ -658,7 +659,7 @@ test.skipIf(process.platform === 'win32')(
     ageCheckout(source, daysAgo(8));
     rmSync(diskUsageCacheFile(modules), { force: true });
     ageTree(source, daysAgo(8));
-    if (!(await privateSizeKnowable(modules, 10_000))) skip('the test volume cannot report shared blocks');
+    if ((await privateSizeKnowable(modules)) !== 'yes') skip('the test volume cannot report shared blocks');
 
     const { payload } = await gcJson('normal');
 
@@ -695,7 +696,7 @@ test.skipIf(process.platform === 'win32')(
     const detail = (payload: LevelPayload, target: string) =>
       payload.actions.find((action) => action.kind === 'delete-dependencies' && action.target === target)?.detail;
     const slow = vi.fn<() => null>(() => {
-      vi.setSystemTime(Date.now() + 2 * 60_000);
+      vi.setSystemTime(Date.now() + 115_000);
       return null;
     });
     const unknownWalk = (bytes: number, privateUnknown: 'volume' | 'walk') =>
@@ -733,6 +734,7 @@ test.skipIf(process.platform === 'win32')(
     expect(detail(late, pods)).toBe(
       'stim gc spent its 2 minutes of measuring on other trees first, so its real size is unknown and it stays',
     );
+    expect(countFailed).toHaveBeenCalledTimes(1);
 
     const order: string[] = [];
     walks.set(pods, () => {
@@ -759,7 +761,7 @@ test.skipIf(process.platform === 'win32')(
 );
 
 test.skipIf(process.platform === 'win32')(
-  "the API's read-only gc report walks no tree, and a partial count under the threshold stays unknown",
+  "neither the API's read-only gc report nor its acting gc walks a tree, and a partial count under the threshold stays unknown",
   async () => {
     const roots = idleRepo([{ name: 'feature', workspace: true }]);
     const source = roots.repo ?? '';
@@ -776,7 +778,11 @@ test.skipIf(process.platform === 'win32')(
     walks.set(pods, () => null);
 
     await readGcReport({ pressure: 'normal', measureBuildState: false });
+    await quietly(() =>
+      createStim({ projectRoot: source, home, env: process.env }).collectGarbage({ pressure: 'normal' }),
+    );
     expect(partial).not.toHaveBeenCalled();
+    expect(existsSync(modules)).toBe(true);
 
     for (let run = 0; run < 2; run++) {
       const { payload } = await gcJson('normal');

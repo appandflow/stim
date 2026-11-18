@@ -4,7 +4,7 @@ import { statfs } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
 import { privateSizeHelper } from './clonefile.ts';
-import { answered } from './workspace/bounded-read.ts';
+import { answered, hungRead, Unanswered } from './workspace/bounded-read.ts';
 import { runOperationFile } from './engine/operation-exec.ts';
 import { WorkspaceProcessCleanupError } from './engine/workspace-process-lock.ts';
 import { getExecutor } from './exec.ts';
@@ -27,18 +27,35 @@ export const INSTALL_MARKERS: readonly string[] = [
  * (reflinks), which a link count does not show.
  */
 const LINK_COUNTED_VOLUMES: ReadonlySet<number> = new Set([0xef53, 0x01021994]);
+const PROBE_TIMEOUT_MS = 2000;
 
 /**
  * Whether a walk may tell what deleting the tree at `path` would free: on macOS the `stim-privsize` helper decides
- * during the walk, on Linux the volume must be link-counted. A volume that does not answer within `timeoutMs` cannot.
+ * during the walk, on Linux the volume must be link-counted. `timeout` when its statfs did not answer within
+ * PROBE_TIMEOUT_MS, `busy` when an earlier read that did not answer is still pending, so none was started.
+ * An abort of `signal` rejects at once.
  */
-export async function privateSizeKnowable(path: string, timeoutMs: number): Promise<boolean> {
-  if (process.platform === 'darwin') return true;
-  if (process.platform !== 'linux') return false;
+export async function privateSizeKnowable(
+  path: string,
+  signal?: AbortSignal,
+): Promise<'yes' | 'no' | 'timeout' | 'busy'> {
+  if (process.platform === 'darwin') return 'yes';
+  if (process.platform !== 'linux') return 'no';
+  if (hungRead() !== null) return 'busy';
+  signal?.throwIfAborted();
+  let onAbort: (() => void) | undefined;
+  const aborted = new Promise<never>((_, fail) => {
+    onAbort = () => fail(signal?.reason);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
   try {
-    return LINK_COUNTED_VOLUMES.has((await answered(path, () => statfs(path), timeoutMs)).type);
-  } catch {
-    return false;
+    const volume = await Promise.race([answered(path, () => statfs(path), PROBE_TIMEOUT_MS), aborted]);
+    return LINK_COUNTED_VOLUMES.has(volume.type) ? 'yes' : 'no';
+  } catch (error) {
+    signal?.throwIfAborted();
+    return error instanceof Unanswered ? 'timeout' : 'no';
+  } finally {
+    if (onAbort) signal?.removeEventListener('abort', onAbort);
   }
 }
 
@@ -58,14 +75,14 @@ function parseHelper(output: string): TreeSize | null {
 }
 
 /**
- * Sums `find -printf '%n %i %b\\n'` lines: a file counts once per inode, and frees its blocks only when every one of
+ * Sums `find -printf '%n %D:%i %b\\n'` lines: a file counts once per device and inode, and frees its blocks only when every one of
  * its links is in the tree, so a file hard-linked from a package store outside it frees nothing.
  */
 function parseFind(output: string): TreeSize {
   const linked = new Map<string, { links: number; seen: number; bytes: number }>();
   let bytes = 0;
   let privateBytes = 0;
-  for (const [, links = '', inode = '', blocks = ''] of output.matchAll(/^(\d+) (\d+) (\d+)$/gm)) {
+  for (const [, links = '', inode = '', blocks = ''] of output.matchAll(/^(\d+) (\d+:\d+) (\d+)$/gm)) {
     const size = Number(blocks) * 512;
     if (links === '1') {
       bytes += size;
@@ -110,7 +127,7 @@ export async function measureTree(
   const { operation } = options;
   const exec = getExecutor();
   const lowPriority = options.lowPriority ?? !operation;
-  const deadline = Date.now() + options.timeoutMs;
+  let deadline = Date.now() + options.timeoutMs;
   const walk = (file: string, args: string[]): Promise<string> => {
     const command = lowPriority ? 'nice' : file;
     const argv = lowPriority ? ['-n', NICENESS, file, ...args] : args;
@@ -137,10 +154,15 @@ export async function measureTree(
   const counted = !options.targets && options.private !== false;
   const helper = counted ? await privateSizeHelper(operation) : null;
   let privateUnknown: TreeSize['privateUnknown'] = helper || process.platform === 'darwin' ? 'walk' : 'volume';
-  if (!helper && counted && process.platform === 'linux' && (await privateSizeKnowable(path, options.timeoutMs))) {
+  const volume =
+    !helper && counted && process.platform === 'linux' ? await privateSizeKnowable(path, operation?.signal) : 'no';
+  deadline = Date.now() + options.timeoutMs;
+  if (volume === 'timeout') privateUnknown = 'walk';
+  if (volume === 'busy') privateUnknown = undefined;
+  if (volume === 'yes') {
     privateUnknown = 'walk';
     try {
-      return parseFind(await walk('find', [path, '-type', 'f', '-printf', '%n %i %b\\n']));
+      return parseFind(await walk('find', [path, '-type', 'f', '-printf', '%n %D:%i %b\\n']));
     } catch (error) {
       const { status, stdout } = failed(error);
       const overflowed = error instanceof Error && 'code' in error && error.code === 'ENOBUFS';
@@ -161,7 +183,7 @@ export async function measureTree(
       if (size) return { bytes: size.bytes, privateBytes: null, privateUnknown: 'volume' };
     }
   }
-  const unknown = counted ? { privateUnknown } : {};
+  const unknown = counted && privateUnknown ? { privateUnknown } : {};
   try {
     const size = parseDu(await walk('du', ['-sk', ...(options.targets ?? [path])]));
     return size && { ...size, ...unknown };
