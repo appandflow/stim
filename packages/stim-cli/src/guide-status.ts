@@ -6,7 +6,7 @@ import type { DoctorPlatform } from './diagnostics/doctor.ts';
 import { compareStimVersions } from './diagnostics/stim-installations.ts';
 import { legacyDaemonHolder } from './daemon/legacy-daemon.ts';
 import { readSettingsContext, unknownEntries } from './workspace/settings-payload.ts';
-import { isJsonObject, REMOVED_SETTINGS, type DoctorRunRecord, type ProjectRecord } from '@stim-cli/core/state';
+import { isJsonObject, UPGRADE_GUIDE_URL, type DoctorRunRecord, type ProjectRecord } from '@stim-cli/core/state';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DOCTOR_STALE_MS = 7 * DAY_MS;
@@ -135,7 +135,7 @@ interface GuideStatusFacts {
   latest: string | null;
 }
 
-const major = (version: string | undefined): number | null => {
+const majorOf = (version: string | undefined): number | null => {
   const found = /^(\d+)\./.exec(version ?? '');
   return found ? Number(found[1]) : null;
 };
@@ -143,7 +143,74 @@ const major = (version: string | undefined): number | null => {
 const listed = (names: string[]): string =>
   names.length > 3 ? `${names.slice(0, 3).join(', ')} and ${names.length - 3} more` : names.join(', ');
 
-function projectPins(projectRoot: string): string[] {
+/** The environment variables a 1.x Stim read that 2.0 refuses or ignores; the migration guide names each one's remedy. */
+const RETIRED_EXPORTS = [
+  'STIM_MAINTENANCE',
+  'STIM_MAINTENANCE_DEVICE_IDLE_DAYS',
+  'STIM_BUDGET_MIN_FREE_DISK_GB',
+  'STIM_BUDGET_HARD_FLOOR_DISK_GB',
+  'STIM_MAINTENANCE_CRITICAL_FREE_DISK_GB',
+  'STIM_REMOTE_BUILD_MODE',
+  'STIM_WEBRTC_STUN',
+  'STIM_BUDGET_MAX_COMMITTED_MEMORY_GB',
+  'STIM_BUDGET_MAX_LIVE_WORKSPACES',
+  'STIM_MAINTENANCE_CAP_TARGET_PERCENT',
+  'STIM_MAINTENANCE_IDLE_CHECK_MINUTES',
+  'STIM_MAINTENANCE_MAX_LOAD_PER_CORE',
+  'STIM_MAINTENANCE_MEMORY_PRESSURE_LEVEL',
+  'STIM_MAINTENANCE_MEMORY_WARNING_MINUTES',
+  'STIM_MAINTENANCE_MIN_AVAILABLE_MEMORY_GB',
+  'STIM_MAINTENANCE_PRESSURE_CHECK_MINUTES',
+  'STIM_MAINTENANCE_PRESSURE_PROTECT_MINUTES',
+  'STIM_MAINTENANCE_SIZE_CHECK_MINUTES',
+  'STIM_MAINTENANCE_URGENT_FREE_DISK_GB',
+];
+
+const PARTIAL = /^v?(\d+|[xX*])(?:\.(\d+|[xX*]))?(?:\.(\d+|[xX*]))?(?:[-+][\w.+-]*)?$/;
+const at = (major: number, minor = 0, patch = 0): number => major * 1e6 + minor * 1e3 + patch;
+
+/** The versions an npm comparator admits, as [from, to): `^1.40.0` is [1.40.0, 2.0.0); null for one it cannot read. */
+function comparatorSpan(comparator: string): [number, number] | null {
+  const [, op = '', text = ''] = /^(\^|~|>=|<=|>|<|=)?(.*)$/.exec(comparator) ?? [];
+  const found = PARTIAL.exec(text);
+  if (!found) return null;
+  const [major, minor, patch] = found.slice(1, 4).map((part) => (part && /^\d+$/.test(part) ? Number(part) : null));
+  if (major === null || major === undefined) return [0, Infinity];
+  const from = at(major, minor ?? 0, patch ?? 0);
+  const to =
+    minor === null || minor === undefined
+      ? at(major + 1)
+      : patch === null || patch === undefined
+        ? at(major, minor + 1)
+        : from + 1;
+  if (op === '>=') return [from, Infinity];
+  if (op === '>') return [to, Infinity];
+  if (op === '<') return [0, from];
+  if (op === '<=') return [0, to];
+  if (op === '^') return [from, major > 0 ? at(major + 1) : at(0, (minor ?? 0) + 1)];
+  if (op === '~') return [from, minor === null || minor === undefined ? at(major + 1) : at(major, minor + 1)];
+  return [from, to];
+}
+
+/** Whether npm range `range` admits a version of major `major`; null when Stim cannot read it. */
+function admitsMajor(range: string, major: number): boolean | null {
+  let readable = false;
+  for (const set of range.split('||')) {
+    const hyphen = /^\s*(\S+)\s+-\s+(\S+)\s*$/.exec(set);
+    const spans = hyphen
+      ? [comparatorSpan(`>=${hyphen[1]}`), comparatorSpan(`<=${hyphen[2]}`)]
+      : set.trim().split(/\s+/).filter(Boolean).map(comparatorSpan);
+    const read = spans.filter((span): span is [number, number] => span !== null);
+    if (read.length < spans.length) continue;
+    readable = true;
+    const from = Math.max(at(major), ...read.map(([low]) => low));
+    const to = Math.min(at(major + 1), ...read.map(([, high]) => high));
+    if (from < to) return true;
+  }
+  return readable ? false : null;
+}
+
+function projectPins(projectRoot: string, running: number): string[] {
   let manifest: unknown;
   try {
     manifest = JSON.parse(readFileSync(join(projectRoot, 'package.json'), 'utf-8'));
@@ -157,7 +224,8 @@ function projectPins(projectRoot: string): string[] {
     if (!isJsonObject(deps)) continue;
     for (const [name, range] of Object.entries(deps)) {
       if (typeof range !== 'string' || /^(workspace|link|file):/.test(range)) continue;
-      if (name === 'stim' && /^\D*1\./.test(range)) names.add(`stim ${range}`);
+      if (name === 'stim' && admitsMajor(range, running) === false && admitsMajor(range, running - 1))
+        names.add(`stim ${range}`);
       else if (name.startsWith('@stim-cli/') && name !== '@stim-cli/cache-s3') names.add(name);
     }
   }
@@ -177,22 +245,20 @@ async function upgradeLeftovers(
     const keys = [...new Set(unknownEntries(await readSettingsContext(cwd, env)).map((entry) => entry.key))];
     if (keys.length) found.push(`settings Stim does not read (${listed(keys)})`);
   } catch {}
-  const variables = [...REMOVED_SETTINGS.values()].flatMap((entry) =>
-    entry.env && env[entry.env]?.trim() ? [entry.env] : [],
-  );
-  if (variables.length) found.push(`removed environment variables (${listed(variables)})`);
+  const variables = RETIRED_EXPORTS.filter((name) => env[name]?.trim());
+  if (variables.length) found.push(`retired environment variables (${listed(variables)})`);
   // compat C32 until 2.1.0
   const older = legacyDaemonHolder();
   if (older) found.push(`a daemon from an older Stim (pid ${older.owner.pid})`);
   // compat end
-  if (projectRoot) {
-    const pins = projectPins(projectRoot);
+  const current = majorOf(running);
+  if (projectRoot && current !== null) {
+    const pins = projectPins(projectRoot, current);
     if (pins.length) found.push(`package.json names ${listed(pins)}`);
   }
-  const current = major(running);
   const checked = runs.find((run) => {
-    const at = major(run.version);
-    return at !== null && current !== null && at < current;
+    const ran = majorOf(run.version);
+    return ran !== null && current !== null && ran < current;
   });
   if (checked) found.push(`doctor last ran with stim ${checked.version}`);
   return found;
@@ -203,7 +269,7 @@ function renderGuideStatus({ running, leftovers, doctor, latest }: GuideStatusFa
   if (leftovers.length)
     lines.push(
       `  Not migrated from an earlier Stim: ${leftovers.join('; ')}.`,
-      '  Before other work:  stim guide upgrade',
+      `  Before other work, follow:  ${UPGRADE_GUIDE_URL}`,
     );
   if (doctor.length) {
     const named = doctor.map((due) => `${due.platform} (${due.reason})`).join(' and ');

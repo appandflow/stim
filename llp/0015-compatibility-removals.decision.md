@@ -159,24 +159,28 @@ maintainer has not ruled on these, and the code keeps them:
 - `stim settings unset <removed key>`, which edits config files and is the only
   command that clears a leftover key.
 
-## Agents migrate an upgraded home with stim guide upgrade
+## Agents migrate an upgraded home from the website guide
 
-An upgrade is a migration the agent carries out, not one the code bridges.
-`stim guide upgrade` lists each item an earlier Stim leaves, how to find it and
-the commands that migrate it, and it ships with the CLI. The STATUS block of
-`stim guide agent`, which the skill makes the first output an agent reads,
-names what is left and sends the agent there. It reads only state that is
-already on disk: keys and removed environment variables Stim does not read, a
-pre-2.0 daemon holding the claim, a `stim` 1.x or bundled `@stim-cli/*`
-dependency in the project's `package.json`, and a `doctorRuns` record from an
-older major version. That record, which 1.40 already wrote, is the version
-marker; there is no other, and nothing acknowledges the line: it clears when
-the state does. The refusals and doctor findings for leftover settings and the
-old daemon name the topic. When the guide covers a compatibility path, the
-next change removes the path instead of extending it.
+An upgrade is a migration the agent carries out, not one the code bridges. The
+For agents section of the Upgrade to Stim 2.0 page
+(https://stim.appandflow.com/docs/migrate-to-2#for-agents, `UPGRADE_GUIDE_URL`)
+lists each item an earlier Stim leaves, how to find it, the commands that
+migrate it and when to ask the user first. It is a website page, not a
+`stim guide` topic. The STATUS block of `stim guide agent`, which the skill
+makes the first output an agent reads, names what is left and links the page.
+It reads only state that is already on disk: keys Stim does not read, the
+exact environment variables 1.x read and 2.0 refuses or ignores, a pre-2.0
+daemon holding the claim, a `stim` range that admits no version of the running
+major or a bundled `@stim-cli/*` dependency in the project's `package.json`,
+and a `doctorRuns` record from an older major. That record, which 1.40 already
+wrote, is the version marker; there is no other, and nothing acknowledges the
+line: it clears when the state does. The refusals and doctor findings for
+leftover settings and the old daemon link the page too. When the guide covers
+a compatibility path, the next change removes the path instead of extending it.
 
 Maintainer decision: "can u work on a migration guide aimed at agents that maybe can detect upgrade and ask agent to look at it", 2026-11-18
 Maintainer decision: "I would prefer this to keeping too much backwards compat code", 2026-11-18
+Maintainer decision: "I was thinking more have guide on website for agent to go read than in stim command", 2026-11-18
 
 For 2.0 the coordinator, not the maintainer, chose to keep the C32 takeover,
 C29 and the C5 refusals, and to add no version marker beyond `doctorRuns`.
@@ -187,4 +191,4 @@ C29 and the C5 refusals, and to add no version marker beyond `doctorRuns`.
 - Code: `packages/stim-cli/src/daemon/legacy-daemon.ts` (the takeover),
   `packages/stim-cli/src/stimd/main.ts` (`daemonClaimRefusal`),
   `packages/server/src/cli.ts`, `.github/actions/stim-ci/src/action.ts`,
-  `packages/stim-cli/src/guide-status.ts` and `packages/stim-cli/src/guide/upgrade.ts`.
+  `packages/stim-cli/src/guide-status.ts`, `website/docs/migrate-to-2.md`.

@@ -715,7 +715,7 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   while the environment sets a removed setting's variable, such as
   STIM_MAINTENANCE, or a config file still holds a removed setting's old value
   that turned something off; unset it, or set its replacement, such as
-  STIM_DAEMON or daemon.mode (\`stim guide upgrade\`).
+  STIM_DAEMON or daemon.mode (\`guide settings\`, REMOVED SETTINGS).
   A working directory with no supported project above it gets the same
   STIM_NO_PROJECT refusal from \`start\`, \`ios\`, \`android\`, \`stop\`,
   \`reload\`, \`logs\`, \`doctor\` and \`device lock|unlock\`. With \`--json\` the { code, message, remedy } object

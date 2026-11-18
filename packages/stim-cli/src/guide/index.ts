@@ -12,7 +12,6 @@ import web from './web.ts';
 import share from './share.ts';
 import macos from './macos.ts';
 import tutorial from './tutorial.ts';
-import upgrade from './upgrade.ts';
 
 import type { GuideTopic } from './types.ts';
 
@@ -31,7 +30,6 @@ const TOPICS: Record<string, GuideTopic> = {
   share,
   macos,
   tutorial,
-  upgrade,
 };
 
 export default TOPICS;

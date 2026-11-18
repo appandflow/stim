@@ -12,7 +12,7 @@ import { mergeSettingsLayers } from '../workspace/settings.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { resolveOptimizations } from '../optimizations.ts';
 
-import type { SettingsObject } from '@stim-cli/core/state';
+import { UPGRADE_GUIDE_URL, type SettingsObject } from '@stim-cli/core/state';
 import { writeCasToolchain } from './_factories.ts';
 
 vi.mock('../engine/ios-signing.ts', async (importOriginal) => ({
@@ -152,7 +152,7 @@ test('STIM_MAINTENANCE in the environment is reported with daemon.mode and STIM_
   ]);
 });
 
-const UPGRADE = ' `stim guide upgrade` lists the other migration steps.';
+const UPGRADE = ` The other migration steps are at ${UPGRADE_GUIDE_URL}.`;
 
 test.each([
   [

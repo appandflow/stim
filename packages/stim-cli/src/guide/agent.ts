@@ -30,7 +30,6 @@ Choose the guide for the app or task. Read only the matching route.
 | Clean up, park, or reclaim resources | stim guide agent ownership |
 | Report a Stim problem | stim guide agent report |
 | Settings or remote approvals | stim guide settings |
-| Upgraded Stim, or STATUS lists leftovers | stim guide upgrade |
 
 WORKSPACE SETUP
 

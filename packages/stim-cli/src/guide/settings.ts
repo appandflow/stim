@@ -1,5 +1,5 @@
 import { ANDROID_AVD_CONFIG_HELP } from '../workspace/settings.ts';
-import { SETTINGS, SETTINGS_SCHEMA_URL } from '@stim-cli/core/state';
+import { REMOVED_SETTINGS, SETTINGS, SETTINGS_SCHEMA_URL, UPGRADE_GUIDE_URL } from '@stim-cli/core/state';
 
 export default {
   summary: 'Settings Stim reads, and where they can live',
@@ -1929,8 +1929,20 @@ temporary directory, the Stim config directory or a filesystem root, and gc
 never prunes or empties such a directory.
 
 REMOVED SETTINGS
-Get and set refuse a key Stim no longer reads as an unknown setting; unset
-removes it from every layer, or just --scope. stim guide upgrade lists each
-removed key and environment variable with what replaced it.
-maintenance.idleStopHours remains read for hosted sessions; doctor reports 0 until idle.dormantDays is set.`,
+The keys and environment variables below are no longer read. Get and set refuse
+them as unknown settings; unset removes them from every layer, or just --scope.
+start, ios, android, web, macos, revive and gc refuse old environment variables
+marked "refused" and removed config values that turned a mechanism off. Their
+remedies name the set and unset commands that preserve that behavior. Any other
+removed name is an unknown one: Stim ignores it and does not name a replacement.
+${UPGRADE_GUIDE_URL} lists how to migrate each one.
+maintenance.idleStopHours remains read for hosted sessions; doctor reports 0 until idle.dormantDays is set.
+
+${[...REMOVED_SETTINGS]
+  .filter(([, entry]) => !entry.kept)
+  .map(
+    ([key, removed]) =>
+      `  \`${key}\`${removed.env ? ` (${removed.env}${removed.refuses ? ', refused' : ''})` : ''}\n    ${removed.key ? `replaced by ${removed.replacement}` : removed.replacement}; stim settings unset ${key}`,
+  )
+  .join('\n')}`,
 };

@@ -8,6 +8,7 @@ import {
   readDaemonSnapshot,
   readStimdBoots,
   type DaemonStatus,
+  UPGRADE_GUIDE_URL,
 } from '@stim-cli/core/state';
 import { formatBytes } from '../fs-util.ts';
 import { claimRemoveCommand, readClaimSet } from '@stim-cli/core/ownership-claim';
@@ -237,8 +238,8 @@ export function daemonFindings(
       title: 'A stim-daemon from an older Stim holds the daemon claim',
       detail: `pid ${status.older.pid} runs until every workspace in the home has been idle for idle.dormantDays, and while it runs this Stim's stimd cannot start, so no daemon of this version decides idle here.`,
       fix: status.older.verified
-        ? `Run stim start, ios or android: stimd stops this daemon, or stop it yourself with \`${status.older.stop}\`. \`stim guide upgrade\` lists the other migration steps.`
-        : `stimd does not stop this process because Stim cannot verify it as its own older daemon; stop it with \`${status.older.stop}\` if nothing needs it. \`stim guide upgrade\` lists the other migration steps.`,
+        ? `Run stim start, ios or android: stimd stops this daemon, or stop it yourself with \`${status.older.stop}\`. The other migration steps are at ${UPGRADE_GUIDE_URL}.`
+        : `stimd does not stop this process because Stim cannot verify it as its own older daemon; stop it with \`${status.older.stop}\` if nothing needs it. The other migration steps are at ${UPGRADE_GUIDE_URL}.`,
     });
   // compat end
   if (status.claim)

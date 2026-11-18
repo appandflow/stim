@@ -26,6 +26,7 @@ import {
   stimdSocket,
   userHome,
   type DaemonMode,
+  UPGRADE_GUIDE_URL,
 } from '@stim-cli/core/state';
 import { claimRemoveCommand, readClaimSet, type ClaimProblem } from '@stim-cli/core/ownership-claim';
 import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
@@ -270,7 +271,7 @@ export function legacyDaemonRefusal(
   return {
     code: 'STIM_DAEMON_UNAVAILABLE',
     message: `Process ${pid} from an older stim holds this home's daemon claim, so stimd cannot start.`,
-    remedy: `Stop it with \`${legacyDaemonStop(pid)}\`, then retry. If a project pins Stim 1.40-1.42, update it to Stim 2.0.0 or later. \`stim guide upgrade\` lists the other migration steps.`,
+    remedy: `Stop it with \`${legacyDaemonStop(pid)}\`, then retry. If a project pins Stim 1.40-1.42, update it to Stim 2.0.0 or later. The other migration steps are at ${UPGRADE_GUIDE_URL}.`,
   };
 }
 // compat end

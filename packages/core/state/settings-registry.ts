@@ -143,6 +143,9 @@ export function replacementAdvice(key: string, old: unknown): (RemovedSetting & 
 }
 // compat end
 
+/** The migration steps for an agent working in a home or project an earlier Stim used. */
+export const UPGRADE_GUIDE_URL = 'https://stim.appandflow.com/docs/migrate-to-2#for-agents';
+
 export const SHARE_DEFAULT_PORT = 7790;
 
 export const SHARE_EXPOSURES = ['auto', 'tailscale', 'proxy'] as const;
