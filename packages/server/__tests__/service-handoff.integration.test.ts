@@ -239,8 +239,12 @@ function fixture(label: string, port: number) {
     for (let round = 0; round < 3; round++) {
       const holder = readClaimSet(stimdClaimRoot(home)).live.find(({ mode }) => mode === 'exclusive');
       if (!holder || inspectProcessIdentity(holder.owner) !== 'same') return;
-      process.kill(holder.owner.pid, 'SIGTERM');
-      await until('the fixture stimd to exit', () => inspectProcessIdentity(holder.owner) !== 'same');
+      try {
+        process.kill(holder.owner.pid, 'SIGTERM');
+      } catch {
+        return;
+      }
+      await until('the fixture stimd to exit', () => inspectProcessIdentity(holder.owner) !== 'same', 120_000);
     }
   };
 
