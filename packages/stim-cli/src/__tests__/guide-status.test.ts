@@ -211,3 +211,12 @@ test('guideStatus leaves an unknown key that no Stim 1.x read to stim settings a
   });
   expect(status ?? '').not.toContain(UPGRADE_GUIDE_URL);
 });
+
+test('guideStatus leaves a stim range with a prerelease bound unflagged', async () => {
+  const root = appRoot();
+  const range = '>=1.40.0 <2.0.0-rc.2';
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '*', stim: range } }));
+  const { fetch } = fakeFetch('2.0.0-rc.1');
+  const status = await guideStatus({ projectRoot: root, running: '2.0.0-rc.1', env: process.env, now: NOW, fetch });
+  expect(status ?? '').not.toContain(`stim ${range}`);
+});
