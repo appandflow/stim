@@ -6,12 +6,16 @@ import { diskUsageWalkClaims, readDiskUsagePrivateUnknown } from '@stim-cli/core
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { refreshMeasure } from '../disk-usage.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
-import { measureTree } from '../private-size.ts';
+import { measureTree, privateSizeKnowable } from '../private-size.ts';
 import { testContext } from './_context.ts';
 
+const reads = vi.hoisted(() => new Array<(answer: { type: number }) => void>());
 vi.mock('node:fs/promises', async (original) => ({
   ...(await original<typeof import('node:fs/promises')>()),
-  statfs: () => new Promise(() => {}),
+  statfs: () =>
+    new Promise((settle) => {
+      reads.push(settle);
+    }),
 }));
 
 let base: string;
@@ -31,7 +35,9 @@ beforeEach(() => {
   });
 });
 
-afterEach(() => {
+afterEach(async () => {
+  for (const settle of reads.splice(0)) settle({ type: 0 });
+  await new Promise((done) => setImmediate(done));
   resetExecutor();
   vi.unstubAllEnvs();
   rmSync(base, { recursive: true, force: true });
@@ -76,5 +82,24 @@ test.runIf(process.platform === 'linux')(
     const healthy = tree('healthy');
     expect((await refreshMeasure(healthy, { timeoutMs: 30_000 })).outcome).toBe('measured');
     expect(readDiskUsagePrivateUnknown(healthy)).toBeNull();
+  },
+);
+
+test.runIf(process.platform === 'linux')(
+  'one statfs at most is in flight: a probe beside a stalled one is busy, and only its settling frees the slot',
+  async () => {
+    const first = privateSizeKnowable(tree('first'));
+    expect(await privateSizeKnowable(tree('second'))).toBe('busy');
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(await first).toBe('timeout');
+    expect(await privateSizeKnowable(tree('third'))).toBe('busy');
+    expect(reads).toHaveLength(1);
+
+    reads.splice(0)[0]?.({ type: 0xef53 });
+    await new Promise((done) => setImmediate(done));
+    const fourth = privateSizeKnowable(tree('fourth'));
+    expect(reads).toHaveLength(1);
+    reads.splice(0)[0]?.({ type: 0xef53 });
+    expect(await fourth).toBe('yes');
   },
 );

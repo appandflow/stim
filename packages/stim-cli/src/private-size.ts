@@ -28,11 +28,13 @@ export const INSTALL_MARKERS: readonly string[] = [
  */
 const LINK_COUNTED_VOLUMES: ReadonlySet<number> = new Set([0xef53, 0x01021994]);
 const PROBE_TIMEOUT_MS = 2000;
+let probing = false;
 
 /**
  * Whether a walk may tell what deleting the tree at `path` would free: on macOS the `stim-privsize` helper decides
  * during the walk, on Linux the volume must be link-counted. `timeout` when its statfs did not answer within
- * PROBE_TIMEOUT_MS, `busy` when an earlier read that did not answer is still pending, so none was started.
+ * PROBE_TIMEOUT_MS, `busy` when another probe or an earlier read that did not answer is still pending, so none was
+ * started: one native statfs at most is in flight per process, until it settles.
  * An abort of `signal` rejects at once.
  */
 export async function privateSizeKnowable(
@@ -41,15 +43,21 @@ export async function privateSizeKnowable(
 ): Promise<'yes' | 'no' | 'timeout' | 'busy'> {
   if (process.platform === 'darwin') return 'yes';
   if (process.platform !== 'linux') return 'no';
-  if (hungRead() !== null) return 'busy';
+  if (probing || hungRead() !== null) return 'busy';
   signal?.throwIfAborted();
+  probing = true;
+  const read = statfs(path);
+  const release = () => {
+    probing = false;
+  };
+  read.then(release, release);
   let onAbort: (() => void) | undefined;
   const aborted = new Promise<never>((_, fail) => {
     onAbort = () => fail(signal?.reason);
     signal?.addEventListener('abort', onAbort, { once: true });
   });
   try {
-    const volume = await Promise.race([answered(path, () => statfs(path), PROBE_TIMEOUT_MS), aborted]);
+    const volume = await Promise.race([answered(path, () => read, PROBE_TIMEOUT_MS), aborted]);
     return LINK_COUNTED_VOLUMES.has(volume.type) ? 'yes' : 'no';
   } catch (error) {
     signal?.throwIfAborted();
