@@ -1878,14 +1878,17 @@ async function runStimdInner(
   resumeLogStreams(logs, log, attached !== undefined);
   (retention ?? follower)?.record(Boolean(retention), [...workspaceEngineDirs(loadConfig()), ...metroEngineDirs()]);
   if (serve)
-    void ensureNet(netOptions(serve)).then((answer) => {
-      if (!closing) onNet?.(answer);
-    });
+    netTurns = netTurns.then(() =>
+      ensureNet(netOptions(serve)).then((answer) => {
+        if (!closing || backgroundFailure !== undefined) onNet?.(answer);
+        return undefined;
+      }),
+    );
   else if (attached === undefined && shareWorkPending()) {
     // @ref LLP 0011#a-share-only-net-thread-resumes-with-stimd -- a stimd that starts finds the shares the last one served
     const options = netOptions({ port: 0, loopbackOnly: true, shareOnly: true });
     netServes = options;
-    void ensureNet(options);
+    netTurns = netTurns.then(() => ensureNet(options));
   }
   startup.signal.throwIfAborted();
   await logs.ownedSync();

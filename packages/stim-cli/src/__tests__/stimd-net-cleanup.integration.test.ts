@@ -180,29 +180,17 @@ test('close during a restart starts no thread for the restart or an ask waiting 
   expect(current()).toBe(first);
 });
 
-test('a worker that never reports gets a bounded answer and the next ask starts a new one', async () => {
+test('a slow start gets a bounded answer, keeps its worker, and a later ask joins it once it listens', async () => {
   vi.useFakeTimers();
   const net = createNetThread(log, () => {});
   const first = net.ensure(options);
-  const silent = current();
+  const slow = current();
   await vi.advanceTimersByTimeAsync(30_000);
   await expect(first).resolves.toMatchObject({ listening: false });
-  expect(state.messages).toContain('stop');
-  silent.emit('message', { type: 'closed' });
-  silent.emit('exit', 0);
-  const second = net.ensure(options);
-  expect(current()).not.toBe(silent);
-  current().emit('message', { type: 'listening', port: 1234 });
-  await expect(second).resolves.toEqual({ listening: true, port: 1234 });
-});
-
-test('a listening message after the start deadline is ignored', async () => {
-  vi.useFakeTimers();
-  const net = createNetThread(log, () => {});
-  const first = net.ensure(options);
-  await vi.advanceTimersByTimeAsync(30_000);
-  await first;
-  current().emit('message', { type: 'listening', port: 1234 });
-  expect(net.running()).toMatchObject({ port: null });
-  expect(net.presence({})).toBe(false);
+  expect(state.messages).not.toContain('stop');
+  await expect(net.ensure(options)).resolves.toMatchObject({ listening: false });
+  expect(current()).toBe(slow);
+  slow.emit('message', { type: 'listening', port: 1234 });
+  await expect(net.ensure(options)).resolves.toEqual({ listening: true, port: 1234 });
+  expect(current()).toBe(slow);
 });

@@ -69,6 +69,8 @@ export function createNetThread(
 ): NetThread {
   let worker: Worker | null = null;
   let started: Promise<NetAnswer> | null = null;
+  let late: Promise<NetAnswer> | null = null;
+  let lateTimer: ReturnType<typeof setTimeout> | undefined;
   let stopping: Promise<unknown> | null = null;
   let listening = false;
   let shareOnly = false;
@@ -128,30 +130,30 @@ export function createNetThread(
           shareOnly = false;
           post({ type: 'keep' });
         }
-        return started;
+        return Promise.race([started, late ?? started]);
       }
       shareOnly = options.shareOnly;
       loopbackOnly = options.loopbackOnly;
       const thread = new Worker(spawnEntry('net-thread'), { workerData: { net: options } });
       let clean = false;
       worker = thread;
-      started = new Promise<NetAnswer>((settle) => {
-        let timedOut = false;
+      late = new Promise<NetAnswer>((deadline) => {
         const timer = setTimeout(() => {
-          timedOut = true;
           const message = `the net thread did not report within ${START_WAIT_MS / 1000} s`;
           log('warn', 'net_start_timeout', message);
-          settle({ listening: false, message });
-          if (worker === thread) stopThread().catch(() => {});
+          deadline({ listening: false, message });
         }, START_WAIT_MS);
         timer.unref();
+        lateTimer = timer;
+      });
+      started = new Promise<NetAnswer>((settle) => {
         const answer = (reply: NetAnswer) => {
-          clearTimeout(timer);
+          clearTimeout(lateTimer);
           settle(reply);
         };
         thread.on('message', (message: FromNet) => {
           if (message.type === 'listening') {
-            if (timedOut || stopping) return;
+            if (stopping) return;
             listening = true;
             port = message.port;
             log('info', 'net_started', `the net thread listens on port ${message.port}`);
@@ -185,7 +187,7 @@ export function createNetThread(
           if (worker === thread) ended();
         });
       });
-      return started;
+      return Promise.race([started, late]);
     },
     running: () => (worker ? { shareOnly, loopbackOnly, port } : null),
     connect(socket, head) {

@@ -553,7 +553,7 @@ test('a service ask for port 0 moves the share-only thread and keeps its listene
   });
 }, 120_000);
 
-test('stim serve stopped while its net thread starts exits 0', async () => {
+test('stim serve stopped while its net thread starts exits 0 (flaky under load, see #5864)', async () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-serve-stop-start-'));
   const env = { ...process.env, STIM_HOME: home, HOME: home, USERPROFILE: home, PATH: '' };
   const previousHome = process.env.STIM_HOME;
@@ -572,6 +572,42 @@ test('stim serve stopped while its net thread starts exits 0', async () => {
     }
     serve.kill('SIGTERM');
     expect(await exited).toEqual([0, null]);
+  } finally {
+    if (serve.exitCode === null && serve.signalCode === null) serve.kill('SIGKILL');
+    if (previousHome === undefined) delete process.env.STIM_HOME;
+    else process.env.STIM_HOME = previousHome;
+    rmSync(home, { recursive: true, force: true });
+  }
+}, 60_000);
+
+test('a service ask that lands while stim serve --share starts its thread gets an answer and leaves stim serve running', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-serve-share-boot-'));
+  const env = { ...process.env, STIM_HOME: home, HOME: home, USERPROFILE: home, PATH: '' };
+  const previousHome = process.env.STIM_HOME;
+  process.env.STIM_HOME = home;
+  const serve = spawn(
+    process.execPath,
+    [join(root, 'packages/stim-cli/bin/stim.mjs'), 'serve', '--share', '--port', '0'],
+    {
+      env,
+      stdio: 'ignore',
+    },
+  );
+  try {
+    let record: { socket: string; build: string } | undefined;
+    const deadline = Date.now() + 30_000;
+    while (!record) {
+      if (Date.now() > deadline || serve.exitCode !== null) throw new Error('stimd wrote no run/stimd.json');
+      try {
+        record = JSON.parse(readFileSync(stimdRecordFile(), 'utf8'));
+      } catch {
+        await new Promise((done) => setTimeout(done, 2));
+      }
+    }
+    const port = await freePort();
+    const answer = await ensureAs(record.socket, { kind: 'cli', build: record.build }, serviceAsk(port));
+    expect(answer).toMatchObject({ listening: true, port });
+    expect(serve.exitCode).toBeNull();
   } finally {
     if (serve.exitCode === null && serve.signalCode === null) serve.kill('SIGKILL');
     if (previousHome === undefined) delete process.env.STIM_HOME;
