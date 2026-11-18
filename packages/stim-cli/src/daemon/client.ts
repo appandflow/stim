@@ -198,6 +198,7 @@ let refusal: {
   workspaces: string[];
 } | null = null;
 let opSocket: Socket | null = null;
+let lostOpToken: string | undefined;
 const opTokens = new WeakMap<Socket, string>();
 const attachedOps = new WeakSet<Socket>();
 let following: Promise<never> | null = null;
@@ -436,7 +437,7 @@ async function admitOperation(
   held: Socket[],
 ): Promise<{ opToken: string } | { answer: Record<string, unknown> | null }> {
   const existing = operationToken(operation);
-  if (existing) return { opToken: existing };
+  if (existing && !(existing === lostOpToken && admissions.get(existing)?.lost)) return { opToken: existing };
   const env = operation?.env ?? process.env;
   const context = (await import('../stimd/forwarded.ts')).invocation(root, env);
   if ('code' in context) return { answer: { op: 'error', ...context } };
@@ -1129,7 +1130,10 @@ function beginOp(
       signal?.removeEventListener('abort', abort);
       if (begun) {
         if (held) held.push(socket);
-        else opSocket = socket;
+        else {
+          opSocket = socket;
+          lostOpToken = undefined;
+        }
         socket.unref();
       } else socket.destroy();
       resolve(begun);
@@ -1151,15 +1155,35 @@ function beginOp(
     signal?.addEventListener('abort', abort, { once: true });
     if (signal?.aborted) abort();
     socket.once('close', () => {
-      if (opSocket === socket) opSocket = null;
+      releaseOpSocket(socket);
       finish(false);
     });
   });
 }
 
+/** Drops the CLI op socket on close, remembering its token when stimd closed it so the op can be admitted again. */
+function releaseOpSocket(socket: Socket): void {
+  if (opSocket !== socket) return;
+  opSocket = null;
+  const token = opTokens.get(socket);
+  lostOpToken = token && admissions.get(token)?.lost ? token : undefined;
+}
+
 export function admittedOpToken(held?: Socket[]): string | undefined {
   const socket = held?.[0] ?? opSocket;
-  return socket ? opTokens.get(socket) : undefined;
+  if (socket) return opTokens.get(socket);
+  return held ? undefined : lostOpToken;
+}
+
+/**
+ * Admits the CLI's own operation again when stimd closed its connection, so a lease can be asked of the successor. False when
+ * that admission is refused; true when none was needed, it was admitted again, or it was cancelled.
+ */
+export async function readmitLostOperation(operation: StimContext): Promise<boolean> {
+  const token = operationToken(operation);
+  if (!token || token !== lostOpToken || !admissions.get(token)?.lost) return true;
+  const next = await resumeAdmission(token, operation, false, operation.signal);
+  return !(next && 'error' in next);
 }
 
 export function operationToken(operation?: StimContext): string | undefined {
@@ -1168,6 +1192,7 @@ export function operationToken(operation?: StimContext): string | undefined {
 }
 
 export function cancelCliOp(): void {
+  lostOpToken = undefined;
   opSocket?.destroy();
 }
 
@@ -1227,7 +1252,7 @@ async function admissionLost(token: string, wait: boolean): Promise<boolean> {
 }
 
 const daemonRestarted = (why: string) =>
-  Object.assign(new Error(`This Stim home's stimd stopped while this command waited on it, and ${why}.`), {
+  Object.assign(new Error(`This Stim home's stimd stopped while this command was running, and ${why}.`), {
     code: 'STIM_DAEMON_UNAVAILABLE',
     remedy: 'Run the command again; `stim status` shows whether a stimd runs.',
   });
@@ -1314,9 +1339,8 @@ async function readmit(
       if (admission.held) admission.held.push(socket);
       else {
         opSocket = socket;
-        socket.once('close', () => {
-          if (opSocket === socket) opSocket = null;
-        });
+        lostOpToken = undefined;
+        socket.once('close', () => releaseOpSocket(socket));
       }
       const record = admissions.get(token);
       if (record) Object.assign(record, { held: admission.held, resumed: true });
@@ -1353,6 +1377,11 @@ async function resumable(
   opToken: string,
   step: (opToken: string) => Promise<Record<string, unknown> | null>,
 ): Promise<Record<string, unknown> | null> {
+  if (admissions.get(opToken)?.lost) {
+    const readmitted = await resumeAdmission(opToken, operation, false, signal);
+    if (readmitted && 'error' in readmitted) throw readmitted.error;
+    if (readmitted) opToken = readmitted.token;
+  }
   const reply = await step(opToken);
   if ((reply && reply.op !== 'error') || signal?.aborted) return reply;
   const next = await resumeAdmission(opToken, operation, reply === null, signal);
@@ -1482,13 +1511,19 @@ export async function startDeviceLogStream(
 ): Promise<{ streamId: string } | { error: string }> {
   throwIfCancelled(operation?.signal, 'device log startup');
   const opToken = operationToken(operation);
-  if (!opToken) return { error: 'the operation has no stimd connection' };
+  if (!opToken) {
+    const refused = otherBuildRefusal();
+    return { error: refused ? `${refused.message} ${refused.remedy}` : 'the operation has no stimd connection' };
+  }
   // @ref LLP 0012#a-command-continues-across-a-stimd-restart -- a stream start answers the stream that already runs for the slot
   const reply = await resumable(operation, operation?.signal, opToken, (token) =>
     askStimd('logs.start', 10_000, { opToken: token, params: spec }, operation?.signal),
   ).catch((error: unknown): Record<string, unknown> => ({
     op: 'error',
     message: error instanceof Error ? error.message : String(error),
+    ...(error instanceof Error && 'remedy' in error && typeof error.remedy === 'string'
+      ? { remedy: error.remedy }
+      : {}),
   }));
   throwIfCancelled(operation?.signal, 'device log startup');
   if (reply?.op === 'logs.started' && typeof reply.streamId === 'string') return { streamId: reply.streamId };
