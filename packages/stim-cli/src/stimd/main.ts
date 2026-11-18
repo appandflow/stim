@@ -967,7 +967,7 @@ async function runStimdInner(
       const on = autoUpdateOn(
         loadConfig()?.engine?.autoUpdate,
         readRecords(follower.engine.root).state.installedBy,
-        service,
+        service || serviceListening,
       );
       if (!on || !updateDue(lastUpdateCheck(follower.engine.root), Date.now(), everyMs)) return;
     } catch {
@@ -1138,6 +1138,7 @@ async function runStimdInner(
   } catch {}
   let netServes: ServeOptions | null = serve ?? null;
   let serviceNet = service;
+  let serviceListening = false;
   const writeRecord = (netPort: number | null) =>
     writeAtomic(stimdRecordFile(), {
       format: RECORD_FORMAT,
@@ -1520,7 +1521,8 @@ async function runStimdInner(
               if (forService)
                 void answer.then(
                   (state) => {
-                    if (state.listening && (options.port === 0 || state.port === options.port)) serviceNet = true;
+                    if (state.listening && (options.port === 0 || state.port === options.port))
+                      serviceNet = serviceListening = true;
                     else if (reserved) serviceNet = wasService;
                     return undefined;
                   },
