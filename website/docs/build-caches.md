@@ -665,6 +665,12 @@ and above normal runs one ladder top-down until the level clears:
 | 8    | Nothing                                                                                                            | First the `node_modules` and Pods of source (main) checkouts idle 2 minutes, after every linked worktree's, on a volume still under the critical level; then every device recording not being written (except pinned or in-use workspaces) and archived logs, recordings and agent actions |
 | 9    | Nothing                                                                                                            | Other tools' caches, subject to the rules below                                                                                                                                                                                                                                            |
 
+After a ladder pass that freed nothing, the next pass waits four times that
+pass's duration, at most 15 minutes, unless the disk or memory level rose, the
+lowest free disk fell by 1 GB, or a command asked the `stim-daemon` for a tick,
+such as one under `disk.hardFloorGb`. The rest of the tick still runs every
+minute.
+
 A rung that frees disk takes only what lies on a volume under `disk.minFreeGb`:
 a full external disk does not clear `node_modules`, outputs or caches on a
 healthy internal one. The ladder a build runs for its headroom takes only what

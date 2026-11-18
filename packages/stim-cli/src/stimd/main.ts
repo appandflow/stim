@@ -106,7 +106,7 @@ import { ownedHere } from '../daemon/idle.ts';
 import { removeStaleHomeJobs } from '../daemon/launchd-jobs.ts';
 import { measureTick, type TickMeasurement } from '../daemon/measure.ts';
 import { listTestWaiting, listWaiting } from '../engine/wait-queue.ts';
-import { runHomePasses, type HomePasses } from '../daemon/passes.ts';
+import { runHomePasses, type HomePasses, type LadderPass } from '../daemon/passes.ts';
 import { reclaimForBootWaiters } from '../daemon/reclaim.ts';
 import { bootedParkedPending } from '../daemon/booted-parked.ts';
 import { pendingDormant } from '../daemon/stages.ts';
@@ -1953,6 +1953,7 @@ async function runStimdInner(
     },
   );
   let emptyTicks = 0;
+  let lastLadder: LadderPass | null = null;
   let interval = tickMs;
   const kept = new Map<string, string>();
   const syncOwned = () => {
@@ -2031,8 +2032,11 @@ async function runStimdInner(
         log,
         memoryWarningSince: lastSnapshot?.pressure?.memoryWarningSince ?? null,
         signal: foregroundAbort.signal,
+        lastLadder,
+        requested: replying.length > 0,
       });
       const { config, now, measured, workspaces, pressure, actions, operation } = passes;
+      lastLadder = passes.ladder ?? null;
       operation.signal.throwIfAborted();
       syncOwned();
       actions.push(...lane.take());

@@ -108,6 +108,26 @@ ladder runs it once, and leaves its own workspace's `target/` alone), so a
 checkout in use does not lose its `incremental/` data every tick; walks above
 normal are not niced.
 
+## A ladder pass that frees nothing waits
+
+After a daemon ladder pass that took no action, the next pass waits four times
+that pass's duration, at most 15 minutes. A rise of the disk or the memory
+level, a drop of 1 GB in the lowest free disk since that pass, or a command
+that asks the daemon for a tick (the hard floor) runs it at once. The rest of the tick, the idle and dormant
+stages included, still runs every minute. A build's headroom ladder and
+`stim gc` are not paced.
+
+Reason: on a Linux worker held at critical by space Stim cannot free, 615 of
+657 ladder passes in a day freed nothing, and the ladder ran about 53% of the
+wall clock with a git spawn per checkout per rung, so stimd used 30 to 40% of
+a core for days (#5933). The factor keeps a pass that frees nothing under a
+fifth of the time; the cap bounds how late a newly idle tree is taken, and
+the bypasses keep a disk that is filling, or new memory pressure, from waiting.
+
+Maintainer decision: "Good for both points", 2026-11-18, in answer to whether
+a wait of up to 15 minutes after a pass that freed nothing is acceptable, given
+that disk space comes before CPU use (#5933, pull request #5939).
+
 ## Each rung frees only the volumes under pressure
 
 While disk sets the level, a rung deletes an item only when the path it will
@@ -255,7 +275,7 @@ chosen by the coordinator and the reviews of #5540, not by the maintainer.
 
 ## Links
 
-- Issues: #5492, #5512, #5524, #5877. Pull requests: #5514, #5540.
+- Issues: #5492, #5512, #5524, #5877, #5933. Pull requests: #5514, #5540.
 - Code: `packages/stim-cli/src/policy/checkout-order.ts`,
   `packages/stim-cli/src/workspace/source-dependencies.ts`,
   `packages/stim-cli/src/stimd/passes/artifacts.ts`,

@@ -8,6 +8,7 @@ import {
   type DaemonLadderAction,
   type DaemonPressure,
   type DaemonWorkspaceDecision,
+  type PressureLevel,
 } from '@stim-cli/core/state';
 import { processContext } from '../cli-operation.ts';
 import { runMaintenance } from '../stimd/passes/run.ts';
@@ -33,11 +34,29 @@ import {
   stoppedOutputCandidates,
 } from './stages.ts';
 
+const LADDER_PACE_FACTOR = 4;
+const LADDER_PACE_MAX_MS = 15 * 60_000;
+const LADDER_PACE_DISK_DROP_MB = 1024;
+const RANK: Record<PressureLevel, number> = { normal: 0, high: 1, critical: 2 };
+
 interface HomePassPhases {
   measureMs: number;
   idleMs: number;
   dormantMs: number;
   ladderMs: number;
+}
+
+/**
+ * The last pressure ladder pass: the disk and memory levels and the lowest free disk it started at, whether it freed
+ * anything, how long it took and when it ended.
+ */
+export interface LadderPass {
+  disk: PressureLevel;
+  memory: PressureLevel;
+  freeMb: number | null;
+  freed: boolean;
+  durationMs: number;
+  endedAt: number;
 }
 
 export interface HomePasses {
@@ -49,24 +68,42 @@ export interface HomePasses {
   actions: DaemonLadderAction[];
   phases: HomePassPhases;
   operation: StimContext;
+  /** The ladder pass to hand to the next tick as `lastLadder`; null while the level is normal. */
+  ladder: LadderPass | null;
+}
+
+function lowestFreeMb(measurement: TickMeasurement['measurement']): number | null {
+  return measurement.disk.length ? Math.min(...measurement.disk.map((volume) => volume.freeMb)) : null;
+}
+
+function ladderDue(last: LadderPass, pressure: DaemonPressure, freeMb: number | null, now: number): boolean {
+  if (last.freed || RANK[pressure.disk] > RANK[last.disk] || RANK[pressure.memory] > RANK[last.memory]) return true;
+  if (freeMb !== null && last.freeMb !== null && last.freeMb - freeMb >= LADDER_PACE_DISK_DROP_MB) return true;
+  return now - last.endedAt >= Math.min(LADDER_PACE_MAX_MS, LADDER_PACE_FACTOR * last.durationMs);
 }
 
 /**
  * One measurement, the activity pass (the idle stage, taking every workspace idle 2 minutes while the level is high
  * or critical, then the dormant stage) and the pressure ladder while the level stays above normal, in this process, as
  * the daemon runs them each tick. `act: false` decides and logs without acting. `memoryWarningSince` carries the
- * memory warning clock from the last tick.
+ * memory warning clock from the last tick. After a ladder pass that freed nothing (`lastLadder`), the ladder waits
+ * four times that pass's duration, at most 15 minutes, before it runs again, unless the disk or memory level rose, the
+ * lowest free disk fell by 1 GB since that pass, or `requested` says a command asked for this tick.
  */
 export async function runHomePasses({
   act,
   log,
   memoryWarningSince = null,
   signal,
+  lastLadder = null,
+  requested = false,
 }: {
   act: boolean;
   log: IdlePassInput['log'];
   memoryWarningSince?: string | null;
   signal?: AbortSignal;
+  lastLadder?: LadderPass | null;
+  requested?: boolean;
 }): Promise<HomePasses> {
   let mark = performance.now();
   const lap = () => {
@@ -153,7 +190,26 @@ export async function runHomePasses({
   actions.push(...(await runDormantPass({ config, act, log, ...reading })));
   operation.signal.throwIfAborted();
   const dormantMs = lap();
-  if (config && pressure.level !== 'normal') {
+  let ladderPass: LadderPass | null = null;
+  const level = pressure.level;
+  const freeMb = lowestFreeMb(measured.measurement);
+  if (
+    config &&
+    level !== 'normal' &&
+    lastLadder &&
+    !requested &&
+    !ladderDue(lastLadder, pressure, freeMb, Date.now())
+  ) {
+    ladderPass = lastLadder;
+    log(
+      'debug',
+      'pressure_ladder_paced',
+      `the pressure ladder waits: its last pass freed nothing in ${lastLadder.durationMs}ms`,
+      { level, lastDurationMs: lastLadder.durationMs, lastEndedAt: new Date(lastLadder.endedAt).toISOString() },
+    );
+  } else if (config && level !== 'normal') {
+    const before = pressure;
+    const started = Date.now();
     const ladder = await runLadder(
       {
         config,
@@ -179,6 +235,15 @@ export async function runHomePasses({
     );
     actions.push(...ladder.actions);
     pressure = ladder.pressure;
+    const endedAt = Date.now();
+    ladderPass = {
+      disk: before.disk,
+      memory: before.memory,
+      freeMb,
+      freed: ladder.actions.some((action) => action.outcome === 'done'),
+      durationMs: endedAt - started,
+      endedAt,
+    };
   }
   operation.signal.throwIfAborted();
   const ladderMs = lap();
@@ -192,6 +257,7 @@ export async function runHomePasses({
     actions,
     phases: { measureMs, idleMs, dormantMs, ladderMs },
     operation,
+    ladder: ladderPass,
   };
 }
 
