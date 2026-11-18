@@ -438,6 +438,56 @@ test.skipIf(process.platform !== 'darwin').each(['replacement and recreation', '
   },
 );
 
+describe.skipIf(process.platform === 'win32')('stopping the sources', () => {
+  const running = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  test.each([
+    ['exits late after SIGTERM', `trap 'sleep 1; exit 0' TERM`],
+    ['ignores SIGTERM', `trap '' TERM`],
+  ])(
+    'releases only once an adb tracker that %s has exited',
+    async (_, trap) => {
+      const home = mkdtempSync(join(tmpdir(), 'stim-watch-stop-'));
+      vi.stubEnv('STIM_HOME', home);
+      vi.stubEnv('HOME', home);
+      vi.stubEnv('USERPROFILE', home);
+      vi.stubEnv('ANDROID_HOME', join(home, 'sdk'));
+      mkdirSync(join(home, 'sdk', 'platform-tools'), { recursive: true });
+      const pidFile = join(home, 'adb.pid');
+      writeFileSync(
+        join(home, 'sdk', 'platform-tools', 'adb'),
+        `#!/bin/sh\nif [ "$1" = track-devices ]; then ${trap}; echo $$ > '${pidFile}'; while :; do sleep 0.1; done; fi\n`,
+      );
+      chmodSync(join(home, 'sdk', 'platform-tools', 'adb'), 0o755);
+      resetExecutor();
+      const sources = watchStatusSources({ home, deviceSet: null, onChange: () => {} });
+      try {
+        await vi.waitUntil(() => readFileSync(pidFile, { encoding: 'utf8', flag: 'a+' }).endsWith('\n'), {
+          timeout: 20_000,
+        });
+        const tracker = Number(readFileSync(pidFile, 'utf8'));
+        const trackerRanAtRelease = await new Promise<boolean>((resolve) =>
+          sources.stop(() => resolve(running(tracker))),
+        );
+        expect(trackerRanAtRelease).toBe(false);
+      } finally {
+        const tracker = Number(readFileSync(pidFile, { encoding: 'utf8', flag: 'a+' }));
+        if (tracker > 0 && running(tracker)) process.kill(tracker, 'SIGKILL');
+        vi.unstubAllEnvs();
+        rmSync(home, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
+});
+
 test('macOS workspace events refresh state and flat logs but ignore generated trees', () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-watch-workspaces-'));
   vi.stubEnv('STIM_HOME', home);

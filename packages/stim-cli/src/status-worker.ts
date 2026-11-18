@@ -15,9 +15,11 @@ let stopping = false;
 const stop = () => {
   if (stopping) return;
   stopping = true;
-  watch.stop(() => port?.postMessage({ stopped: true }));
-  port?.close();
-  setTimeout(() => process.exit(0), STOP_EXIT_MS);
+  watch.stop(() => {
+    port?.postMessage({ stopped: true });
+    port?.close();
+    setTimeout(() => process.exit(0), STOP_EXIT_MS);
+  });
 };
 port?.on('message', (message: unknown) => {
   if (message === 'stop') stop();

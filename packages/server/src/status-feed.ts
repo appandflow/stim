@@ -43,6 +43,7 @@ export class StatusFeed {
   private restart: ReturnType<typeof setTimeout> | null = null;
   private delay = RESTART_MIN_MS;
   private readonly stopping = new Set<Promise<unknown>>();
+  private unverified: Error | null = null;
   private readonly options: StatusFeedOptions;
 
   constructor(options: StatusFeedOptions) {
@@ -75,6 +76,7 @@ export class StatusFeed {
     this.listeners.clear();
     this.stop();
     await Promise.all(this.stopping);
+    if (this.unverified) throw this.unverified;
   }
 
   private start(): void {
@@ -116,9 +118,10 @@ export class StatusFeed {
 
   /**
    * Asks the worker to stop its watch, which ends the adb and simctl children it started. A child worker counts as
-   * stopped once it exits, and is terminated if it has not exited after a grace period. A worker started through
-   * `spawn` counts as stopped once it posts `{ stopped: true }` or its port closes; the caller's own stop limit bounds
-   * that wait, since this thread cannot terminate it.
+   * stopped once it exits, and is terminated if it has neither exited nor confirmed its children ended after a grace
+   * period. A worker started through `spawn` counts as stopped once it posts `{ stopped: true }`; the caller's own stop
+   * limit bounds that wait, since this thread cannot terminate it. When its port closes first, `close` reports the
+   * cleanup as unverified.
    */
   private stop(): void {
     const worker = this.worker;
@@ -128,16 +131,28 @@ export class StatusFeed {
     const stopped = new Promise<void>((resolve) => {
       if (worker instanceof Worker) {
         const grace = setTimeout(() => void worker.terminate(), STOP_GRACE_MS);
+        worker.on('message', (message: unknown) => {
+          if (isJsonObject(message) && message.stopped === true) clearTimeout(grace);
+        });
         worker.once('exit', () => {
           clearTimeout(grace);
           resolve();
         });
         worker.postMessage('stop');
       } else {
+        let acknowledged = false;
         worker.on('message', (message: unknown) => {
-          if (isJsonObject(message) && message.stopped === true) worker.close();
+          if (!isJsonObject(message) || message.stopped !== true) return;
+          acknowledged = true;
+          worker.close();
         });
-        worker.once('close', resolve);
+        worker.once('close', () => {
+          if (!acknowledged)
+            this.unverified ??= new Error(
+              'The status worker ended before confirming that its adb and simctl children exited.',
+            );
+          resolve();
+        });
         worker.postMessage('stop');
       }
     }).finally(() => this.stopping.delete(stopped));
