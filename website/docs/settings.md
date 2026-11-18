@@ -757,8 +757,9 @@ is false by default:
 stim settings set server.acceptClientBuilds true   # on the remote machine
 ```
 
-Install waits up to 45 seconds for the port. After an engine switch, install
-and uninstall stop the stimd serving it outside the job. If stopping the old job
+Install waits up to 45 seconds for the port. Install and uninstall also stop
+the home's stimd serving it outside the job, as after an engine switch;
+`stim service status` names it on its `listener:` line and in `--json` as `listener`. If stopping the old job
 or starting the new one fails, install restores the previous plist and attempts
 to restart a previously loaded LaunchAgent; if it cannot, it prints the
 launchctl bootout/bootstrap remedy. A running LaunchAgent does not prove server readiness: check its health in

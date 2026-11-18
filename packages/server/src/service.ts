@@ -159,22 +159,23 @@ async function parentPid(pid: number): Promise<number | null> {
 const homeStimd = (home: string) => readClaimSet(stimdClaimRoot(home)).live.find(({ mode }) => mode === 'exclusive');
 
 /**
- * The listeners on `port` (null when it is free) and the live stimd of `home`, whose claim's process identity is
- * proved. The port is read again when the claim changed during the read, so a successor that binds meanwhile is seen.
+ * The listeners `read` finds on `port` (null when it is free) and the live stimd of `home`, whose claim's process
+ * identity is proved. The port is read again when the claim changed during the read, so a successor that binds meanwhile is seen.
  */
 async function homeListener(
   home: string,
   port: number,
+  read: (port: number) => Promise<string[] | null> = portListeners,
 ): Promise<{ listeners: string[] | null; stimd: ClaimHolder | null }> {
   const previous = homeStimd(home);
-  let listeners = await portListeners(port);
+  let listeners = await read(port);
   let holder = homeStimd(home);
   if (
     holder &&
     holder.owner.processToken !== previous?.owner.processToken &&
     !listeners?.includes(String(holder.owner.pid))
   ) {
-    listeners = await portListeners(port);
+    listeners = await read(port);
     holder = homeStimd(home);
   }
   return { listeners, stimd: holder && inspectProcessIdentity(holder.owner) === 'same' ? holder : null };
@@ -182,9 +183,10 @@ async function homeListener(
 
 /**
  * The stimd of `home` that serves `port` from outside the job whose process is `jobPid` (null when no job process
- * runs): after an engine switch, the successor the job's stimd handed the port to. Null when that cannot be proved.
+ * runs), such as the successor an engine switch handed the port to. Null when that cannot be proved.
  */
 async function outsideStimd(home: string, port: number, jobPid: number | null): Promise<ClaimHolder | null> {
+  if (process.platform === 'win32') return null;
   const { listeners, stimd } = await homeListener(home, port);
   const pid = stimd?.owner.pid;
   if (!stimd || pid === process.pid || stimd.details.attached === true || !listeners?.includes(String(pid)))
@@ -221,14 +223,14 @@ async function unload(
   unit: { home: string; port: number } | null = null,
 ): Promise<void> {
   const job = await loaded(label);
-  const outside = unit ? await outsideStimd(unit.home, unit.port, job?.pid ?? null) : null;
-  if (!job && !outside) return;
+  if (!job) return;
+  const outside = unit ? await outsideStimd(unit.home, unit.port, job.pid) : null;
   const listeners = port === null ? [] : await listenerPids(port);
-  const stopped = job ? await serviceManager().stop(label) : null;
+  const stopped = await serviceManager().stop(label);
   const deadline = Date.now() + UNLOAD_WAIT_MS;
   let signalled = false;
   while (Date.now() < deadline) {
-    const jobGone = !(await loaded(label)) && (job?.pid == null || !alive(job.pid));
+    const jobGone = !(await loaded(label)) && (job.pid == null || !alive(job.pid));
     if (jobGone && unit && outside && !signalled) {
       signalled = true;
       // @ref LLP 0009#service-and-engine-updates -- stop the home's stimd that serves the unit's port outside its job
@@ -246,7 +248,7 @@ async function unload(
   }
   const pids = port === null ? [] : await listenerPids(port);
   throw new ServiceError(
-    `${label} did not stop${port === null ? '' : ` and release port ${port}${pids.length ? ` (listening pid ${pids.join(', ')})` : ''}`} within ${UNLOAD_WAIT_MS / 1000} s. ${stopped?.stderr.trim() ?? ''}`.trim(),
+    `${label} did not stop${port === null ? '' : ` and release port ${port}${pids.length ? ` (listening pid ${pids.join(', ')})` : ''}`} within ${UNLOAD_WAIT_MS / 1000} s. ${stopped.stderr.trim()}`.trim(),
   );
 }
 
@@ -776,7 +778,7 @@ export async function serviceStatus(label: string): Promise<ServiceStatus> {
 const stringOrNull = (value: unknown) => (typeof value === 'string' ? value : null);
 
 async function portListener(home: string, port: number, jobPid: number | null): Promise<ServiceStatus['listener']> {
-  const { listeners, stimd } = await homeListener(home, port);
+  const { listeners, stimd } = await homeListener(home, port, listeningPids);
   const owned = stimd && listeners?.includes(String(stimd.owner.pid)) ? stimd : null;
   const pid = owned?.owner.pid ?? Number(listeners?.[0]);
   if (!Number.isInteger(pid) || pid <= 0) return null;
@@ -916,7 +918,7 @@ export async function uninstallService(label: string): Promise<string[]> {
   return notes;
 }
 
-async function portListeners(port: number): Promise<string[] | null> {
+async function listeningPids(port: number): Promise<string[]> {
   let listeners = await listenerPids(port);
   if (listeners.length === 0 && process.platform === 'linux') {
     const listed = await run('ss', ['-H', '-ltnp', `sport = :${port}`]);
@@ -925,6 +927,11 @@ async function portListeners(port: number): Promise<string[] | null> {
         (pid) => pid !== undefined,
       );
   }
+  return listeners;
+}
+
+async function portListeners(port: number): Promise<string[] | null> {
+  const listeners = await listeningPids(port);
   return listeners.length === 0 && (await portFree(port)) ? null : listeners;
 }
 
