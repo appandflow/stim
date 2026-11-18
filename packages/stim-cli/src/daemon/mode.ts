@@ -1,8 +1,8 @@
 import {
   loadConfig,
+  leftoverDaemonMode,
   REMOVED_SETTINGS,
   settingDefinition,
-  settingValueAt,
   type Config,
   type DaemonMode,
 } from '@stim-cli/core/state';
@@ -15,20 +15,24 @@ export function parseDaemonMode(value: unknown): DaemonMode | null {
   return DAEMON_MODES.find((mode) => mode === value) ?? null;
 }
 
-const LEFTOVER = REMOVED_SETTINGS.get('maintenance.mode');
-
 /** `daemon.mode` in `config`, else the `off` or `report` a 1.x `maintenance.mode` left in it, else null. */
 function machineDaemonMode(config: Config | null | undefined): DaemonMode | null {
-  return (
-    parseDaemonMode(config?.daemon?.mode) ??
-    parseDaemonMode(LEFTOVER?.off?.(settingValueAt(config, 'maintenance.mode')))
-  );
+  return parseDaemonMode(config?.daemon?.mode) ?? leftoverDaemonMode(config, {});
 }
 
 /** The machine setting `daemon.mode`, else a leftover `maintenance.mode`, or null when neither is usable. */
 export function configuredDaemonMode(): DaemonMode | null {
   try {
     return machineDaemonMode(loadConfig());
+  } catch {
+    return null;
+  }
+}
+
+/** The cap a leftover `maintenance.mode` puts on a stimd that neither `STIM_DAEMON` nor `daemon.mode` governs. */
+export function leftoverDaemonCap(env: NodeJS.ProcessEnv = process.env): DaemonMode | null {
+  try {
+    return leftoverDaemonMode(loadConfig(), env);
   } catch {
     return null;
   }

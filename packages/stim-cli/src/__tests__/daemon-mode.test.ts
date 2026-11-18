@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { leftoverDaemonMode } from '@stim-cli/core/state';
 import { daemonMode } from '../daemon/mode.ts';
 
 describe('daemonMode with a leftover maintenance.mode', () => {
@@ -13,5 +14,15 @@ describe('daemonMode with a leftover maintenance.mode', () => {
 
   it('lets STIM_DAEMON win', () => {
     expect(daemonMode({ STIM_DAEMON: 'on' }, { projects: {}, repos: {}, maintenance: { mode: 'off' } })).toBe('on');
+  });
+});
+
+describe('leftoverDaemonMode', () => {
+  it.each([
+    ['a leftover off', {}, { maintenance: { mode: 'off' } }, 'off'],
+    ['daemon.mode set', {}, { daemon: { mode: 'on' }, maintenance: { mode: 'off' } }, null],
+    ['STIM_DAEMON set', { STIM_DAEMON: 'on' }, { maintenance: { mode: 'off' } }, null],
+  ])('%s', (_name, env, config, expected) => {
+    expect(leftoverDaemonMode(config, env)).toBe(expected);
   });
 });
