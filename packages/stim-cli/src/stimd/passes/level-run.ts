@@ -120,11 +120,13 @@ export async function runMaintenanceAtLevel({
   act,
   operation,
   onAction,
+  walkUnknown,
 }: {
   level?: PressureLevel;
   act: boolean;
   operation?: StimContext;
   onAction?: (action: LevelRunAction) => void;
+  walkUnknown?: false;
 }): Promise<LevelRun> {
   const env = operation?.env ?? process.env;
   const pressure = await measureLevel(operation);
@@ -225,6 +227,7 @@ export async function runMaintenanceAtLevel({
     trigger: 'gc',
     ...(operation ? { operation } : {}),
     protectedRoot: context.protectedRoot,
+    ...(walkUnknown === false ? { walkUnknown } : {}),
   }))
     take(fromLadder(action, true));
   if (level !== 'normal') {

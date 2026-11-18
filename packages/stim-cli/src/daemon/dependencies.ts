@@ -4,6 +4,8 @@ import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import type { StimContext } from '@stim-cli/core';
 import {
   listBuildEndMarkers,
+  readDiskUsageFailureSignature,
+  readDiskUsagePartial,
   readDiskUsagePrivateUnknown,
   type DaemonLadderAction,
   type PressureLevel,
@@ -22,6 +24,7 @@ import {
 } from '../stimd/passes/artifacts.ts';
 import { maintenancePinnedReader } from '../stimd/passes/protect.ts';
 import { freshMeasure, knownPrivateBytes, refreshMeasure, trustedMeasure } from '../disk-usage.ts';
+import { treeSignature } from '../private-size.ts';
 import { workspaceKeys } from '../workspace/lightened.ts';
 import { freshLaunchers } from '../workspace/launchers.ts';
 import { workspaceDir } from '../workspace/paths.ts';
@@ -107,9 +110,20 @@ export function selectDependencies(
   return { take, kept };
 }
 
+function rankedPrivateBytes(path: string): number | null {
+  const privateBytes = knownPrivateBytes(path);
+  return privateBytes !== null && privateBytes < REAL_BYTES_THRESHOLD && readDiskUsagePartial(path)
+    ? null
+    : privateBytes;
+}
+
+function triedBefore(dependency: RankedDependency): number {
+  return readDiskUsageFailureSignature(dependency.candidate.path) === treeSignature(dependency.candidate.path) ? 1 : 0;
+}
+
 /**
  * Records why each tree in `ranked` has no private size. With `walk`, as in a `stim gc` pass, it first walks those whose
- * current install no walk tried to count yet, largest first, one at a time for at most MEASURE_BUDGET_MS in all.
+ * current install no walk tried to count yet, largest first and those whose last walk failed last, one at a time for at most MEASURE_BUDGET_MS in all.
  */
 async function measureUnknown(
   ranked: readonly RankedDependency[],
@@ -122,33 +136,43 @@ async function measureUnknown(
   };
   const due: RankedDependency[] = [];
   for (const dependency of ranked.filter(({ privateBytes }) => privateBytes === null)) {
-    const recorded = freshMeasure(dependency.candidate.path) ? reason(dependency.candidate.path) : null;
+    const fresh = freshMeasure(dependency.candidate.path);
+    const recorded = !fresh
+      ? null
+      : fresh.privateBytes !== undefined && readDiskUsagePartial(dependency.candidate.path)
+        ? WALK_FAILED
+        : reason(dependency.candidate.path);
     if (recorded) dependency.unknown = recorded;
     else if (walk) due.push(dependency);
   }
+  const order = new Map(due.map((dependency) => [dependency, triedBefore(dependency)]));
   const deadline = Date.now() + MEASURE_BUDGET_MS;
-  for (const dependency of due.toSorted((a, b) => (b.bytes ?? -1) - (a.bytes ?? -1))) {
+  for (const dependency of due.toSorted(
+    (a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0) || (b.bytes ?? -1) - (a.bytes ?? -1),
+  )) {
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) {
       dependency.unknown = `stim gc spent its ${MEASURE_BUDGET_MS / 60_000} minutes of measuring on other trees first, so its real size is unknown and it stays`;
       continue;
     }
-    const { outcome, measure } = await refreshMeasure(dependency.candidate.path, {
+    const { outcome, measure, partial } = await refreshMeasure(dependency.candidate.path, {
       timeoutMs: remainingMs,
       operation,
       valid: (cached) => cached.privateBytes !== undefined,
       failures: true,
     });
-    if (measure?.privateBytes !== undefined) {
+    if (measure?.privateBytes !== undefined && !(partial && measure.privateBytes < REAL_BYTES_THRESHOLD)) {
       dependency.bytes = measure.bytes;
       dependency.privateBytes = measure.privateBytes;
     } else
       dependency.unknown =
-        outcome === 'failed'
-          ? `its size walk did not finish within the ${Math.ceil(remainingMs / 1000)} seconds stim gc had left, so its real size is unknown and it stays`
-          : outcome === 'fresh' && !measure
-            ? 'its last size walk did not finish in time and its install has not changed since, so its real size is unknown and it stays'
-            : (reason(dependency.candidate.path) ?? WALK_FAILED);
+        measure?.privateBytes !== undefined
+          ? WALK_FAILED
+          : outcome === 'failed'
+            ? `its size walk failed or did not finish within the ${Math.ceil(remainingMs / 1000)} seconds stim gc had left, so its real size is unknown and it stays`
+            : outcome === 'fresh' && !measure
+              ? 'its last size walk did not finish in time and its install has not changed since, so its real size is unknown and it stays'
+              : (reason(dependency.candidate.path) ?? WALK_FAILED);
   }
 }
 
@@ -203,7 +227,7 @@ export async function rankDependencies(
         source,
         workspace,
         bytes: trustedMeasure(candidate.path)?.bytes ?? null,
-        privateBytes: knownPrivateBytes(candidate.path),
+        privateBytes: rankedPrivateBytes(candidate.path),
       };
       return [{ dependency, order: rank.get(canonicalOrNull(workspace) ?? '') ?? 0 }];
     })
@@ -306,7 +330,7 @@ export async function rankSourceDependencies(
         source: true,
         workspace,
         bytes: trustedMeasure(candidate.path)?.bytes ?? null,
-        privateBytes: knownPrivateBytes(candidate.path),
+        privateBytes: rankedPrivateBytes(candidate.path),
       },
     });
   }
@@ -470,7 +494,8 @@ export async function wouldDelete(
  * step, those of source checkouts idle `idle.sourceDormantDays`, each recorded in the source checkout's workspace.
  */
 export async function runDormantDependencies(
-  input: Pick<IdlePassInput, 'config' | 'act' | 'log'> & DeviceReading & { force?: boolean; cadence?: BigInt64Array },
+  input: Pick<IdlePassInput, 'config' | 'act' | 'log'> &
+    DeviceReading & { force?: boolean; cadence?: BigInt64Array; walkUnknown?: false },
 ): Promise<DaemonLadderAction[]> {
   const { config, cadence } = input;
   const afterMs = dormantAfterMs(config);
@@ -497,7 +522,7 @@ export async function runDormantDependencies(
 }
 
 async function takeIdleDependencies(
-  input: Pick<IdlePassInput, 'act' | 'log'> & DeviceReading & { force?: boolean },
+  input: Pick<IdlePassInput, 'act' | 'log'> & DeviceReading & { force?: boolean; walkUnknown?: false },
   config: Config,
   afterMs: number,
   source: boolean,
@@ -553,7 +578,8 @@ async function takeIdleDependencies(
           detail: entry.reason,
           setting: 'idle.sourceDormantDays',
         });
-    if (!input.act || input.force) await measureUnknown(ranked, Boolean(input.force), operation);
+    if (!input.act || input.force)
+      await measureUnknown(ranked, Boolean(input.force) && input.walkUnknown !== false, operation);
     const selected = selectDependencies(ranked, 'keep');
     take = selected.take;
     if (!input.act || input.force)

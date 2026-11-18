@@ -202,10 +202,20 @@ export async function refreshMeasure(
   const claim = options.claim ? takeWalkClaim() : null;
   if (options.claim && !claim) return { outcome: 'busy', measure: null };
   let cleanupUnverified = false;
+  let signature: string | null = null;
+  let walking = false;
+  const recordFailure = () => {
+    if (options.failures)
+      writeCacheFile(diskUsageFailureFile(path), {
+        path,
+        failedAt: new Date(now()).toISOString(),
+        ...(signature ? { signature } : {}),
+      });
+  };
   try {
     if (claim && skip()) return fresh();
     const startedAt = now();
-    const signature = dependency ? (options.signature ?? treeSignature(path)) : null;
+    signature = dependency ? (options.signature ?? treeSignature(path)) : null;
     const targets = options.targets?.();
     let size: TreeSize | null;
     if (targets && !targets.length) size = { bytes: 0, privateBytes: null };
@@ -214,6 +224,7 @@ export async function refreshMeasure(
         if (operation) declareSpawnsOn(operation, claim);
         else markClaimChildPending(claim);
       }
+      walking = true;
       size = await measureTree(path, {
         timeoutMs: options.timeoutMs,
         operation,
@@ -225,12 +236,7 @@ export async function refreshMeasure(
     }
     operation?.signal.throwIfAborted();
     if (!size) {
-      if (options.failures)
-        writeCacheFile(diskUsageFailureFile(path), {
-          path,
-          failedAt: new Date(now()).toISOString(),
-          ...(signature ? { signature } : {}),
-        });
+      recordFailure();
       return { outcome: 'failed', measure: null };
     }
     return {
@@ -248,6 +254,7 @@ export async function refreshMeasure(
     };
   } catch (error) {
     cleanupUnverified = error instanceof Error && 'reportCleanup' in error;
+    if (walking && operation?.signal.aborted) recordFailure();
     throw error;
   } finally {
     if (operation) stopDeclaringSpawnsOn(operation, claim);

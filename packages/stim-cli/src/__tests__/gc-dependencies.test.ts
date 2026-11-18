@@ -25,7 +25,7 @@ import { dirname, join } from 'node:path';
 import { writeCacheFile } from '../cache-file.ts';
 import { privateSizeKnowable, treeSignature } from '../private-size.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
-import { runGc } from '../commands/gc.ts';
+import { readGcReport, runGc } from '../commands/gc.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
 import { loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceStateFile } from '../workspace/paths.ts';
@@ -59,7 +59,10 @@ vi.mock('../commands/worktree.ts', async (importOriginal) => ({
 vi.mock('../devices/machine-cache-usage.ts', () => ({ getMachineCacheReport: async () => null }));
 const walks = vi.hoisted(
   () =>
-    new Map<string, () => { bytes: number; privateBytes: number | null; privateUnknown?: 'volume' | 'walk' } | null>(),
+    new Map<
+      string,
+      () => { bytes: number; privateBytes: number | null; privateUnknown?: 'volume' | 'walk'; partial?: true } | null
+    >(),
 );
 vi.mock('../private-size.ts', async (importOriginal) => {
   const real = await importOriginal<typeof import('../private-size.ts')>();
@@ -725,19 +728,66 @@ test.skipIf(process.platform === 'win32')(
     walks.set(modules, slow);
     const late: LevelPayload = (await gcJson('normal')).payload;
     expect(detail(late, modules)).toBe(
-      'its size walk did not finish within the 120 seconds stim gc had left, so its real size is unknown and it stays',
+      'its size walk failed or did not finish within the 120 seconds stim gc had left, so its real size is unknown and it stays',
     );
     expect(detail(late, pods)).toBe(
       'stim gc spent its 2 minutes of measuring on other trees first, so its real size is unknown and it stays',
     );
 
-    walks.set(pods, () => ({ bytes: 1024 ** 3, privateBytes: 10 * 1024 ** 2 }));
+    const order: string[] = [];
+    walks.set(pods, () => {
+      order.push(pods);
+      return { bytes: 1024 ** 3, privateBytes: 10 * 1024 ** 2 };
+    });
+    walks.set(modules, () => {
+      order.push(modules);
+      return slow();
+    });
+    vi.setSystemTime(Date.now() + 24 * 60 * 60_000);
+    const dayLater: LevelPayload = (await gcJson('normal')).payload;
+    expect(order).toEqual([pods, modules]);
+    expect(detail(dayLater, pods)).toMatch(/^10M of its 1\.0G is its own/);
+
+    order.length = 0;
     const next: LevelPayload = (await gcJson('normal')).payload;
-    expect(slow).toHaveBeenCalledTimes(1);
+    expect(order).toEqual([]);
     expect(detail(next, modules)).toBe(
       'its last size walk did not finish in time and its install has not changed since, so its real size is unknown and it stays',
     );
-    expect(detail(next, pods)).toMatch(/^10M of its 1\.0G is its own/);
+  },
+  60_000,
+);
+
+test.skipIf(process.platform === 'win32')(
+  "the API's read-only gc report walks no tree, and a partial count under the threshold stays unknown",
+  async () => {
+    const roots = idleRepo([{ name: 'feature', workspace: true }]);
+    const source = roots.repo ?? '';
+    const modules = join(source, 'node_modules');
+    const pods = join(source, 'ios', 'Pods');
+    ageCheckout(source, daysAgo(8));
+    for (const path of [modules, pods]) rmSync(diskUsageCacheFile(path), { force: true });
+    const partial = vi.fn<() => { bytes: number; privateBytes: number; partial: true }>(() => ({
+      bytes: 2 * 1024 ** 3,
+      privateBytes: 10 * 1024 ** 2,
+      partial: true,
+    }));
+    walks.set(modules, partial);
+    walks.set(pods, () => null);
+
+    await readGcReport({ pressure: 'normal', measureBuildState: false });
+    expect(partial).not.toHaveBeenCalled();
+
+    for (let run = 0; run < 2; run++) {
+      const { payload } = await gcJson('normal');
+      const typed: LevelPayload = payload;
+      expect(
+        typed.actions.find((action) => action.kind === 'delete-dependencies' && action.target === modules)?.detail,
+      ).toBe(
+        'its private-size walk could not count which of its blocks other files share, so its real size is unknown and it stays',
+      );
+    }
+    expect(partial).toHaveBeenCalledTimes(1);
   },
   60_000,
 );
