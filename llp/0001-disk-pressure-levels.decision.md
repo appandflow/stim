@@ -110,18 +110,24 @@ normal are not niced.
 
 ## Each rung frees only the volumes under pressure
 
-A rung that frees disk takes an item only when the item lies on a volume under
-`disk.minFreeGb`, measured at the start of the rung: build outputs and dormant
-workspaces by their checkout and Stim workspace folder, parked devices by their
-device folder, caches by their directory, dependencies and worktrees by their
-path, and rung 6's Gradle versions, TMPDIR leftovers and trash by their root.
-Rung 8's source checkouts and history, the history by the Stim home, and rung 9
-take an item only on a volume under the critical level (LLP 0003). The
-activity pass's 2-minute idle threshold under pressure follows the same rule
-while memory is normal; memory pressure idles every workspace. The ladder a build runs for its
-headroom (LLP 0006) treats only the build's volume as short. The Gradle, Kotlin
-and watchman stops relieve memory and are not gated. `stim gc --pressure`
-treats every volume as short; `stim gc` at the measured level is gated.
+While disk sets the level, a rung deletes an item only when the path it will
+delete lies on a volume under `disk.minFreeGb`, measured at the start of the
+rung; a path or device that cannot be resolved is kept (invariant 8). The path is the one
+deleted, not the workspace it belongs to: each build output, each owned or
+parked device's data folder (the simulator's data path, or the AVD folders under
+the storage roots its deletion searches), each cache and Cargo `target/`, each
+`node_modules` or Pods tree, each worktree, and the roots of rung 6's Gradle
+versions, TMPDIR leftovers and trash. A dormant workspace is taken only when
+its Stim workspace folder, whose logs it archives, or an owned device's data
+lies on such a volume, and loses only the devices there. Rung 8 and rung 9 take an item only on a volume
+under the critical level (LLP 0003). Under pressure from disk alone, the
+activity pass gives the 2-minute idle threshold only to a workspace with its
+checkout or Stim workspace folder on such a volume and deletes only its outputs
+there; memory pressure idles every workspace. The ladder a build runs for its
+headroom (LLP 0006) plans its Cargo trim at high and treats only the build's
+volume as short. The Gradle, Kotlin and watchman stops relieve memory and are
+not gated. `stim gc --pressure` treats every volume as short; `stim gc` at the
+measured level is gated, its idle pass included.
 
 Reason: free disk on any volume sets the level, but deleting on a healthy volume
 frees nothing where space is needed. A project on an external disk under the

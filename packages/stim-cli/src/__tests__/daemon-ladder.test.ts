@@ -18,7 +18,7 @@ import { REAL_BYTES_THRESHOLD, runDormantDependencies } from '../daemon/dependen
 import { runIdlePass } from '../daemon/idle.ts';
 import { runLadder } from '../daemon/ladder.ts';
 import * as cargoTargetPasses from '../stimd/passes/cargo-target.ts';
-import { runLadderToFree } from '../daemon/passes.ts';
+import { runForcedLadder, runLadderToFree } from '../daemon/passes.ts';
 import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { dormantCandidates, pendingDormant, runDormantPass } from '../daemon/stages.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
@@ -560,6 +560,35 @@ describe('the pressure ladder', () => {
     },
   );
 
+  test.skipIf(process.platform === 'win32')(
+    'a build headroom run trims a Cargo target only on the build volume, whatever disk.minFreeGb says',
+    async () => {
+      const { incremental } = cargoApp();
+      vi.stubEnv('STIM_DISK_MIN_FREE_GB', '0');
+      const device = statSync(home).dev;
+      vi.spyOn(daemonMeasure, 'measureDisk').mockResolvedValue([
+        { volume: '/', freeMb: 100 * 1024, device },
+        { volume: '/other', freeMb: 100 * 1024, device: device + 1 },
+      ]);
+      const headroom = (buildDevice: number) =>
+        runLadderToFree({
+          operation: testContext({ env: { ...process.env, CI: undefined, STIM_DAEMON: undefined } }),
+          signal: new AbortController().signal,
+          device: buildDevice,
+          freeMb: 200 * 1024,
+          protectedRoot: join(projects, 'build'),
+        });
+
+      await headroom(device + 1);
+      expect(existsSync(incremental)).toBe(true);
+
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(Date.now() + 11 * MINUTE_MS);
+      await headroom(device);
+      expect(existsSync(incremental)).toBe(false);
+    },
+  );
+
   test('at high disk pressure rung 1 deletes the outputs of a stopped workspace idle 2 minutes, not of one used since', async () => {
     const outputs = (name: string, usedAgoMs: number) => {
       const { root } = workspace(name, usedAgoMs, 'Shutdown');
@@ -691,6 +720,47 @@ describe('the pressure ladder', () => {
     ]);
     expect(shutDown).toHaveBeenCalledTimes(1);
     expect(teardown.teardownOwnedIosSim).not.toHaveBeenCalledWith(udid, expect.anything());
+  });
+
+  test('a measured stim gc with disk short on another volume idles and deletes nothing on this one', async () => {
+    const { root: running } = workspace('running', 5 * MINUTE_MS, 'Booted');
+    const { root: stopped } = workspace('stopped', 5 * MINUTE_MS, 'Shutdown');
+    const outputs = join(workspaceDir(stopped), 'derived-data');
+    mkdirSync(outputs, { recursive: true });
+    writeFileSync(join(outputs, 'Build.o'), 'x');
+    const device = statSync(home).dev;
+    const disk = [
+      { volume: '/', freeMb: 500 * 1024, device },
+      { volume: '/Volumes/X', freeMb: 30 * 1024, device: device + 1 },
+    ];
+    vi.spyOn(daemonMeasure, 'measureDisk').mockResolvedValue(disk);
+    vi.spyOn(daemonMeasure, 'measureTick').mockImplementation(async () => ({
+      measurement: {
+        disk,
+        memory: { level: 'normal', availableBytes: 8 * 1024 ** 3, totalBytes: 16 * 1024 ** 3 },
+        load1: 0,
+        cores: 8,
+        bootedSimulators: 1,
+        runningEmulators: null,
+        interaction: null,
+      },
+      sims,
+      simsError: null,
+      devices: await devicesNow(),
+    }));
+
+    const ladder = await runForcedLadder({
+      levels: ['high'],
+      act: true,
+      why: 'stim gc at high',
+      trigger: 'gc',
+      measured: true,
+    });
+
+    expect(ladder?.pressure.disk).toBe('high');
+    expect(ladder?.levels[0]?.actions.filter((action) => action.outcome === 'done')).toEqual([]);
+    expect(readIdleStage(readWorkspaceState(running))).toBeNull();
+    expect(existsSync(outputs)).toBe(true);
   });
 
   test('at critical on another volume it takes nothing from the volume the workspaces and caches are on', async () => {

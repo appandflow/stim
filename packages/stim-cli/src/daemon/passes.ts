@@ -24,6 +24,7 @@ import { runIdlePass, type IdlePassInput } from './idle.ts';
 import { idleOutputBytes, runLadder } from './ladder.ts';
 import { measureDisk, measureMemory, measureTick, type TickMeasurement } from './measure.ts';
 import { classifyPressure, diskThresholds, shortVolumeDevices } from './pressure.ts';
+import { onShortVolume } from '../stimd/passes/unowned.ts';
 import {
   clearStoppedOutputs,
   dormantAfterMs,
@@ -461,10 +462,18 @@ export async function runForcedLadder({
       log,
     };
     const running = act ? [] : await runIdlePass({ ...reading, act: false });
+    const volumes =
+      atMeasuredLevel && pressure.memory === 'normal'
+        ? shortVolumeDevices(measured.measurement.disk, thresholds, 'high')
+        : undefined;
     const result: ForcedLadder['levels'] = [];
     for (const level of levels) {
       const actions: DaemonLadderAction[] = [];
-      for (const entry of await runIdlePass({ ...reading, act, pressure: { level, reasons: [why] } })) {
+      for (const entry of await runIdlePass({
+        ...reading,
+        act,
+        pressure: { level, reasons: [why], ...(volumes ? { volumes } : {}) },
+      })) {
         if (entry.outcome !== 'idle' && entry.outcome !== 'would-idle' && entry.outcome !== 'failed') continue;
         actions.push({
           rung: 1,
@@ -484,6 +493,7 @@ export async function runForcedLadder({
                     operation,
                     operation?.signal,
                   ),
+                  volumes ? (path) => onShortVolume([path], volumes) : undefined,
                 )
               : 0),
           detail: entry.outcome === 'would-idle' ? 'stim gc would do this' : entry.detail,

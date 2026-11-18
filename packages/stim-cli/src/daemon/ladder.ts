@@ -1,6 +1,5 @@
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import { existsSync, rmSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { join, sep } from 'node:path';
 import { buildCacheRoot, configDir, isScopedHome, metroCacheRoot, withDirLock, type StimContext } from '@stim-cli/core';
 import {
@@ -63,6 +62,7 @@ import {
 import { idleOutputs, PRESSURE_IDLE_MS, writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
 import {
   clearStoppedOutputs,
+  deviceDataDirs,
   dormantAfterMs,
   dormantCandidates,
   idleStageCandidates,
@@ -159,8 +159,13 @@ function recordAction(
 }
 
 /** The bytes of the regenerable build outputs the idle stage would delete in a workspace. */
-export async function idleOutputBytes(path: string, config: Config, launching: Launching): Promise<number> {
-  return pathsBytes((await idleOutputs(path, config, launching)).paths);
+export async function idleOutputBytes(
+  path: string,
+  config: Config,
+  launching: Launching,
+  onVolume?: (path: string) => boolean,
+): Promise<number> {
+  return pathsBytes((await idleOutputs(path, config, launching, onVolume)).paths);
 }
 
 async function pathsBytes(paths: readonly string[]): Promise<number> {
@@ -233,6 +238,7 @@ async function run(
       operation: context.operation,
       ...(context.stop ? { stop: context.stop } : {}),
       ...(worktreeSweep ? { worktreeSweep } : {}),
+      ...(context.short ? { deletable: deletable(context) } : {}),
     });
   } catch (error) {
     if (isClaimUnavailable(error)) throw error;
@@ -260,6 +266,15 @@ function wouldDetail(context: Pick<RungContext, 'force'>): string {
   return context.force ? 'stim gc would do this' : 'daemon.mode report acts on nothing';
 }
 
+/** Whether every path a step would delete, and at least one, lies on a volume this rung frees. */
+function onShort(context: Pick<RungContext, 'short'>, paths: readonly string[]): boolean {
+  return context.short === null || (paths.length > 0 && paths.every((path) => onShortVolume([path], context.short)));
+}
+
+function deletable(context: Pick<RungContext, 'short'>): ((path: string) => boolean) | undefined {
+  return context.short === null ? undefined : (path) => onShort(context, [path]);
+}
+
 /** Rung 0, before the idle stage: the parked simulators kept booted for a later adoption, which hold memory for nothing in use. */
 async function bootedParkedRung(context: RungContext): Promise<void> {
   context.actions.push(
@@ -277,26 +292,32 @@ async function bootedParkedRung(context: RungContext): Promise<void> {
 /** Rung 1's disk half: the regenerable outputs of workspaces with nothing running, idle 2 minutes or more. */
 async function idleOutputsRung(context: RungContext): Promise<void> {
   for (const candidate of await stoppedOutputCandidates(context.config, context, PRESSURE_IDLE_MS)) {
-    if (!onShortVolume([candidate.path, workspaceDir(candidate.path)], context.short)) continue;
     if (!(await context.stillShort())) return;
-    const result = context.act
-      ? await clearStoppedOutputs(candidate, context.config, PRESSURE_IDLE_MS, context.operation)
-      : {
-          outcome: 'would' as const,
-          bytes: context.measure
-            ? await idleOutputBytes(
-                candidate.path,
-                context.config,
-                launchingOf(
-                  candidate.checkout,
-                  () => freshLaunchers(context.operation, context.operation?.signal)(),
-                  context.operation,
-                  context.operation?.signal,
-                ),
-              )
-            : 0,
-          detail: wouldDetail(context),
-        };
+    let result: Awaited<ReturnType<typeof clearStoppedOutputs>>;
+    if (context.act)
+      result = await clearStoppedOutputs(
+        candidate,
+        context.config,
+        PRESSURE_IDLE_MS,
+        context.operation,
+        deletable(context),
+      );
+    else {
+      const { paths } = await idleOutputs(
+        candidate.path,
+        context.config,
+        launchingOf(
+          candidate.checkout,
+          () => freshLaunchers(context.operation, context.operation?.signal)(),
+          context.operation,
+          context.operation?.signal,
+        ),
+        deletable(context),
+      );
+      result = paths.length
+        ? { outcome: 'would', bytes: context.measure ? await pathsBytes(paths) : 0, detail: wouldDetail(context) }
+        : null;
+    }
     if (!result) continue;
     recordAction(
       context,
@@ -333,11 +354,7 @@ async function parkedRung(context: RungContext): Promise<void> {
     })),
   ].toSorted((a, b) => String(a.at).localeCompare(String(b.at)));
   for (const device of parked) {
-    const dir =
-      device.platform === 'ios'
-        ? join(homedir(), 'Library', 'Developer', 'CoreSimulator', 'Devices', device.id)
-        : (ownedAvdDirectory(device.id) ?? homedir());
-    if (!onShortVolume([dir], context.short)) continue;
+    if (!onShort(context, deviceDataDirs(context.sims, device.platform, device.id))) continue;
     if (context.level === 'high' && !(await context.stillShort())) return;
     if (ledger && !ledger[device.platform].has(device.id)) {
       recordAction(
@@ -421,10 +438,12 @@ async function cargoTargetsStep(context: RungContext): Promise<void> {
     now,
     signal: context.operation?.signal,
     ...(context.operation ? { operation: context.operation } : {}),
+    ...(context.volume === undefined ? {} : { level: context.level }),
   });
   for (const action of plan.actions) {
     const workspace = action.workspace ? canonicalOrNull(action.workspace) : null;
     if (protectedRoot && (workspace === protectedRoot || action.target.startsWith(`${protectedRoot}${sep}`))) continue;
+    if (!onShort(context, [action.target])) continue;
     if (!(await context.stillShort())) return;
     await run(context, action);
   }
@@ -446,7 +465,7 @@ async function cachesRung(context: RungContext): Promise<void> {
     { cache: rootCache('Metro transform caches', metroCacheRoot(), 3), capGb: context.settings.metroCacheMaxGb },
   ];
   for (const { cache, capGb } of entries) {
-    if (!existsSync(cache.dir) || !onShortVolume([cache.dir], context.short) || !(await context.stillShort())) continue;
+    if (!existsSync(cache.dir) || !onShort(context, [cache.dir]) || !(await context.stillShort())) continue;
     let evict = Infinity;
     if (!critical) {
       const bytes = await measuredDirectorySizeAsync(cache.dir, { timeoutMs: SIZE_TIMEOUT_MS });
@@ -464,7 +483,7 @@ async function cachesRung(context: RungContext): Promise<void> {
     );
   }
   const compilation = sharedCompilationCache();
-  if (existsSync(compilation) && onShortVolume([compilation], context.short) && (await context.stillShort())) {
+  if (existsSync(compilation) && onShort(context, [compilation]) && (await context.stillShort())) {
     const bytes = await measuredDirectorySizeAsync(compilation, { timeoutMs: SIZE_TIMEOUT_MS });
     const capGb = context.settings.swiftCompilationCacheMaxGb;
     if (bytes !== null && (critical || (capGb > 0 && bytes > (capGb * GIB) / 2))) {
@@ -493,12 +512,7 @@ async function cachesRung(context: RungContext): Promise<void> {
     [fingerprintIndexDir(), fingerprintIndexLock()],
     [join(configDir(), 'fingerprint-memo'), join(configDir(), 'fingerprint-memo.lock')],
   ] as const) {
-    if (
-      !critical ||
-      !existsSync(directory) ||
-      !onShortVolume([directory], context.short) ||
-      !(await context.stillShort())
-    )
+    if (!critical || !existsSync(directory) || !onShort(context, [directory]) || !(await context.stillShort()))
       continue;
     const bytes = (await measuredDirectorySizeAsync(directory, { timeoutMs: SIZE_TIMEOUT_MS })) ?? 0;
     if (context.act) withDirLock(lock, () => rmSync(directory, { recursive: true, force: true }));
@@ -533,7 +547,7 @@ async function emptyRegisteredCaches(context: RungContext, handled: readonly str
   };
   const caches = planCacheEmptying(
     (await discoverCachesAsync(context.operation?.env, context.operation?.cwd)).filter(
-      (cache) => !inside(cache.dir) && !isInsideWorkspaces(cache.dir) && onShortVolume([cache.dir], context.short),
+      (cache) => !inside(cache.dir) && !isInsideWorkspaces(cache.dir) && onShort(context, [cache.dir]),
     ),
     true,
     context.operation?.env,
@@ -575,7 +589,14 @@ async function dormantRung(context: RungContext): Promise<void> {
   if (dormantAfterMs(context.config) <= 0) return;
   const idleMs = context.level === 'critical' ? PRESSURE_IDLE_MS : DORMANT_HIGH_IDLE_MS;
   for (const candidate of await dormantCandidates(context.config, context, idleMs)) {
-    if (!onShortVolume([candidate.path, workspaceDir(candidate.path)], context.short)) continue;
+    const devices: string[][] = [[workspaceDir(candidate.path)]];
+    for (const { platforms } of projectDeviceSlots(candidate.project)) {
+      if (platforms.ios?.owned && platforms.ios.deviceUdid)
+        devices.push(deviceDataDirs(context.sims, 'ios', platforms.ios.deviceUdid));
+      if (platforms.android?.owned && platforms.android.avdName)
+        devices.push(deviceDataDirs(context.sims, 'android', platforms.android.avdName));
+    }
+    if (!devices.some((dirs) => onShort(context, dirs))) continue;
     if (!(await context.stillShort())) return;
     await run(
       { ...context, why: `${context.why}; idle ${Math.floor(candidate.idleMs / MINUTE_MS)} minutes` },
@@ -601,17 +622,17 @@ function canonicalOrNull(path: string): string | null {
  */
 async function dependenciesRung(context: RungContext): Promise<void> {
   const idleMs = context.level === 'critical' ? PRESSURE_IDLE_MS : DEPENDENCIES_HIGH_IDLE_MS;
-  const idle = (await idleStageCandidates(context.config, context, idleMs)).filter((candidate) =>
-    onShortVolume([candidate.path], context.short),
-  );
+  const idle = await idleStageCandidates(context.config, context, idleMs);
   const protectedRoot = context.protectedRoot ? (canonicalOrNull(context.protectedRoot) ?? '') : '';
   const { take, kept } = selectDependencies(
-    await timedStep(
-      context.log,
-      'rank_dependencies',
-      () => rankDependencies(idle, protectedRoot, context.operation, false, context.log),
-      { signal: context.operation?.signal, items: (ranked) => ranked?.length },
-    ),
+    (
+      await timedStep(
+        context.log,
+        'rank_dependencies',
+        () => rankDependencies(idle, protectedRoot, context.operation, false, context.log),
+        { signal: context.operation?.signal, items: (ranked) => ranked?.length },
+      )
+    ).filter((dependency) => onShort(context, [dependency.candidate.path])),
     'take',
   );
   for (const { dependency, detail } of kept)
@@ -716,7 +737,7 @@ async function sweepRung(context: RungContext, causes: readonly Cause[]): Promis
   );
   for (const action of plan.actions) {
     const memory = action.kind === 'would-stop-gradle-daemons' || action.kind === 'would-stop-watchman';
-    if (!memory && !onShortVolume([action.dir ?? action.target], context.short)) continue;
+    if (!memory && !onShort(context, [action.dir ?? action.target])) continue;
     if (!(await context.stillShort())) return;
     await run(context, action);
   }
@@ -771,7 +792,7 @@ async function worktreesRung(context: RungContext): Promise<void> {
       );
   for (const action of planned.actions) {
     if (action.kind !== 'would-remove-worktree' || !clean.some((worktree) => worktree.path === action.target)) continue;
-    if (!onShortVolume([action.target], context.short)) continue;
+    if (!onShort(context, [action.target])) continue;
     if (!(await context.stillShort())) return;
     await run({ ...context, why: `${context.why}; ${action.reason}` }, action, { worktreeSweep: sweep });
   }

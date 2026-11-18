@@ -197,6 +197,7 @@ export async function idleOutputs(
   path: string,
   config: Config,
   launching: Launching,
+  deletable?: (path: string) => boolean,
 ): Promise<{ paths: string[]; kept: string[] }> {
   const paths = workspaceOutputPaths(workspaceDir(path));
   const kept: string[] = [];
@@ -217,7 +218,7 @@ export async function idleOutputs(
     if (sharer) kept.push(`kept the Metro store ${store}: the running dev server of ${sharer[0]} shares it`);
     else paths.push(store);
   }
-  return { paths, kept };
+  return { paths: deletable ? paths.filter(deletable) : paths, kept };
 }
 
 /**
@@ -329,11 +330,13 @@ async function enterIdleStage(
               return outcome?.status === 'shut-down' && booted.has(`${kind}:${slot}`) ? [key] : [];
             });
             const { operation } = input;
+            const volumes = input.pressure?.volumes;
             const checkout = await checkoutRootOf(path, operation?.signal, operation);
             const outputs = await idleOutputs(
               path,
               config,
               launchingOf(checkout, launchersOf(operation, operation?.signal, false), operation, operation?.signal),
+              volumes ? (output) => onShortVolume([output], volumes) : undefined,
             );
             const freed = await deleteOutputs(
               outputs.paths,
