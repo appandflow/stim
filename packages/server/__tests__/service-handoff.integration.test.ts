@@ -256,9 +256,8 @@ function fixture(label: string, port: number) {
       try {
         process.kill(-job.pid, 'SIGTERM');
       } catch (error) {
-        const { code } = error as NodeJS.ErrnoException;
+        const code = error instanceof Error && 'code' in error ? error.code : undefined;
         if (code !== 'ESRCH' && code !== 'EPERM') throw error;
-        if (job.exitCode !== null || job.signalCode !== null) return;
       }
       await exited;
     }
