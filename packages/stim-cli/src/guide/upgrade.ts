@@ -35,7 +35,8 @@ ${[...REMOVED_SETTINGS]
   -> optimizations.metroSharedCache. Unset any other unknown key: the budget.*
   and maintenance.* pressure keys, share.webrtc and devices.reclaimIdleMinutes
   have no replacement. maintenance.idleStopHours still applies to hosted
-  sessions; keep it.
+  sessions; keep it. Until daemon.mode is set, a leftover maintenance.mode off
+  or report holds the daemon at report: it acts on nothing.
 
 3. ENVIRONMENT (ask)
   Detect: env | grep -E '^STIM_(MAINTENANCE|BUDGET_|REMOTE_BUILD_MODE|WEBRTC_STUN)'
