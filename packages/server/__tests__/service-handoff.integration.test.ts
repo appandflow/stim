@@ -14,7 +14,7 @@ import { readClaimSet } from '@stim-cli/core/ownership-claim';
 import { inspectProcessIdentity } from '@stim-cli/core/process-identity';
 import { isJsonObject, stimBuildId, stimdClaimRoot } from '@stim-cli/core/state';
 import { renderPlist } from '../src/service-plist.ts';
-import { installJob, serviceStatus, uninstallService } from '../src/service.ts';
+import { installJob, serviceStatus } from '../src/service.ts';
 
 const launchd = vi.hoisted((): { job: ChildProcess | null; start: (() => ChildProcess) | null } => ({
   job: null,
@@ -131,7 +131,7 @@ function fixture(label: string, port: number) {
     PATH: bin,
     TMPDIR: process.env.TMPDIR ?? tmpdir(),
   };
-  const stimd = (build: string) =>
+  const stimd = (build: string, carried = false) =>
     spawn(
       '/bin/sh',
       [
@@ -143,6 +143,7 @@ function fixture(label: string, port: number) {
         '__stimd',
         '--mode',
         'on',
+        ...(carried ? ['--carried'] : []),
         '--service',
         '--loopback-only',
         '--port',
@@ -249,7 +250,23 @@ function fixture(label: string, port: number) {
     rmSync(scratch, { recursive: true, force: true });
   };
 
-  return { home, runJob, handOver, health, cleanup, script: join(store, next, 'dist', 'cli.mjs') };
+  /** Starts a stimd that serves the port without being the service's, as one Desktop or a command started. */
+  const runIndependent = async () => {
+    stimd(first, true);
+    const started = await until('the independent stimd', () => record());
+    await answers('the independent stimd');
+    return started;
+  };
+
+  return {
+    home,
+    runJob,
+    runIndependent,
+    handOver,
+    health,
+    cleanup,
+    script: join(store, next, 'dist', 'cli.mjs'),
+  };
 }
 
 describe.skipIf(process.platform !== 'darwin')('a service after an engine handoff', () => {
@@ -302,16 +319,29 @@ describe.skipIf(process.platform !== 'darwin')('a service after an engine handof
     }
   }, 240_000);
 
-  it('uninstall stops the successor and removes the unit', async () => {
-    const label = 'dev.stim.handoff-uninstall';
+  it('install leaves a stimd that is not the service, beside a job with or without a process', async () => {
+    const label = 'dev.stim.handoff-independent';
     const port = await freePort();
     const service = fixture(label, port);
     try {
-      const successor = await service.handOver();
-      const notes = await uninstallService(label);
-      expect(notes[0]).toContain(`Uninstalled ${label}`);
-      expect(gone(successor.pid)).toBe(true);
-      expect(await service.health()).toBe(false);
+      const independent = await service.runIndependent();
+      const install = () =>
+        installJob(
+          { label, port, env: [], pathPrepend: [], serve: false, stimHome: service.home },
+          { script: service.script, host: null, requestPermissions: false },
+        );
+      for (const runs of [false, true]) {
+        const start = () =>
+          runs
+            ? spawn('/bin/sleep', ['600'], { stdio: 'ignore', detached: true })
+            : spawn('/usr/bin/true', [], { stdio: 'ignore', detached: true });
+        launchd.start = start;
+        const job = start();
+        launchd.job = job;
+        if (!runs) await once(job, 'exit');
+        await expect(install()).rejects.toThrow(`did not stop and release port ${port}`);
+        expect(gone(independent.pid)).toBe(false);
+      }
     } finally {
       await service.cleanup();
     }

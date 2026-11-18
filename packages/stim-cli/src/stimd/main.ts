@@ -790,6 +790,7 @@ async function runStimdInner(
     bootAt,
     updateCheckedAt,
     ...attachedReply(attached !== undefined),
+    ...(service ? { service: true } : {}),
   };
   const lifetime = stimdLifetime(attached !== undefined, identity.version);
   const instance = randomUUID();

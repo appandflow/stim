@@ -23,7 +23,7 @@ import {
 } from '@stim-cli/core/ownership-claim';
 import { execStartOverride } from '@stim-cli/core';
 import { inspectProcessIdentity, sameProcessRecord, waitForProcessExit } from '@stim-cli/core/process-identity';
-import { stimBuildDigest, stimdClaimRoot, tailscaleEnv } from '@stim-cli/core/state';
+import { readJsonObject, stimBuildDigest, stimdClaimRoot, stimdRecordFile, tailscaleEnv } from '@stim-cli/core/state';
 import type { WorkerRootUsage } from './worker-areas.ts';
 import {
   jobArguments,
@@ -182,24 +182,30 @@ async function homeListener(
 }
 
 /**
- * The stimd of `home` that serves `port` from outside the job whose process is `jobPid` (null when no job process
- * runs), such as the successor an engine switch handed the port to. Null when that cannot be proved.
+ * The service stimd of `home` that serves `port` from outside the job whose process is `jobPid`: the successor an
+ * engine switch handed the port to, which its claim marks `service`. Null when that cannot be proved.
  */
 async function outsideStimd(home: string, port: number, jobPid: number | null): Promise<ClaimHolder | null> {
-  if (process.platform === 'win32') return null;
+  if (process.platform === 'win32' || jobPid === null) return null;
   const { listeners, stimd } = await homeListener(home, port);
   const pid = stimd?.owner.pid;
-  if (!stimd || pid === process.pid || stimd.details.attached === true || !listeners?.includes(String(pid)))
+  if (
+    !stimd ||
+    pid === process.pid ||
+    pid === jobPid ||
+    stimd.details.service !== true ||
+    stimd.details.attached === true ||
+    !listeners?.includes(String(pid))
+  )
     return null;
-  if (jobPid === null) return stimd;
-  if (pid === jobPid) return null;
   const parent = await parentPid(stimd.owner.pid);
   return parent === null || parent === jobPid ? null : stimd;
 }
 
 /**
- * Sends `stimd` one SIGTERM when the claim of `home` still names it and it still listens on `port`, and waits until
- * `deadline` for it to exit.
+ * Sends `stimd` one SIGTERM when the claim of `home` still names it, it still listens on `port` and `run/stimd.json`
+ * still names it, and waits until `deadline` for it to exit. A stimd that removed its record is already shutting down
+ * and takes a second signal as a forced exit, so it is only waited on.
  */
 async function stopOutsideStimd(home: string, port: number, stimd: ClaimHolder, deadline: number): Promise<void> {
   const now = await homeListener(home, port);
@@ -209,6 +215,10 @@ async function stopOutsideStimd(home: string, port: number, stimd: ClaimHolder, 
     !now.listeners?.includes(String(stimd.owner.pid))
   )
     return;
+  if (readJsonObject(stimdRecordFile(home))?.pid !== stimd.owner.pid) {
+    await waitForProcessExit(stimd.owner, Math.max(0, deadline - Date.now()));
+    return;
+  }
   try {
     process.kill(stimd.owner.pid, 'SIGTERM');
   } catch {
@@ -980,11 +990,7 @@ async function uninstallJob(label: string): Promise<string[]> {
     notes.push(`Kept the tailscale serve route on https port ${installed.serve.port}; install did not create it.`);
   }
   if (installed.host) notes.push(`Kept ${dirname(dirname(dirname(installed.host)))}; other service labels may use it.`);
-  await unload(
-    label,
-    null,
-    installed.port === null ? null : { home: unitHome(installed.stimHome), port: installed.port },
-  );
+  await unload(label, null);
   await requireUninstallPortReleased(label, installed, routeOff);
   if (routeOff && tailscale) {
     const removed = await run(tailscale, ['serve', `--https=${routeOff}`, 'off'], tailscaleEnv(process.env));

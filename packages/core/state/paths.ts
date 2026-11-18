@@ -343,8 +343,8 @@ export function stimdSocket(home?: string): string {
 }
 
 /** `{format, pid, socket, build, version}` of the running stimd, written by stimd alone. */
-export function stimdRecordFile(): string {
-  return join(stimdRunDir(), 'stimd.json');
+export function stimdRecordFile(home?: string): string {
+  return join(stimdRunDir(home), 'stimd.json');
 }
 
 /** The 0600 key stimd writes at boot that admits Stim Desktop to the Desktop-only methods. */
