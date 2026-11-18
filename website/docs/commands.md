@@ -2530,6 +2530,9 @@ Everything `gc` deletes, by category (N normal, H high, C critical):
 | npm (`npm cache clean --force`), Yarn (`yarn cache clean`), pnpm (`pnpm store prune`), CocoaPods (`pod cache clean --all`), Gradle `modules-2`, `transforms-N`, `build-cache-N`, the SwiftPM cache                                              | rung 9                     | C, per the rule below | tool not installed, a process of that tool runs, processes cannot be listed, its volume is not under the critical level (unless `--pressure critical`). Gradle and SwiftPM have no command, so Stim removes those directories only while no such build and no Stim build runs                                                                                                                    |
 | Android NDKs (`sdkmanager --uninstall "ndk;<version>"`), Android system images no AVD uses, `~/.cache/exact`                                                                                                                                    | rung 9                     | report only           | never deleted; the command is printed                                                                                                                                                                                                                                                                                                                                                            |
 
+Each rung takes only what lies on a volume under `disk.minFreeGb`; rungs 8 and 9
+take only what lies on a volume under the critical level. `--pressure high` or `--pressure critical` takes it on every volume.
+
 Each rung-9 cache is listed with its size before and after. Rung 9 never runs at
 high, in a `STIM_HOME`-scoped home, or in the in-process ladder a build command
 runs at `disk.hardFloorGb`; only the stim-daemon and `stim gc` run it. The daemon

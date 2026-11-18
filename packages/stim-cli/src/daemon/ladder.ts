@@ -1,5 +1,6 @@
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import { existsSync, rmSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join, sep } from 'node:path';
 import { buildCacheRoot, configDir, isScopedHome, metroCacheRoot, withDirLock, type StimContext } from '@stim-cli/core';
 import {
@@ -21,6 +22,7 @@ import { projectDeviceSlots } from '../devices/device-slots.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
 import { readParked } from '../devices/sim-pool.ts';
 import { restoreProblem } from '../workspace/lightened.ts';
+import { workspaceDir } from '../workspace/paths.ts';
 import { freshLaunchers, launchingOf, type Launching } from '../workspace/launchers.ts';
 import { formatBytes, measuredDirectorySizeAsync } from '../fs-util.ts';
 import { timedStep } from './step-timing.ts';
@@ -40,7 +42,7 @@ import { causesOf, dormantAction, rungDecision, rungsFrom, type Cause, type Rung
 import type { Config, ProjectRecord } from '../workspace/config.ts';
 import { runBootedParkedPass } from './booted-parked.ts';
 import { measureDisk } from './measure.ts';
-import { diskThresholds } from './pressure.ts';
+import { diskThresholds, shortVolumeDevices } from './pressure.ts';
 import { collectInventory } from '../commands/gc/inventory.ts';
 import {
   cleanToolCache,
@@ -105,6 +107,8 @@ export interface LadderInput {
   protectedRoot?: string;
   /** Aborts at a build's headroom deadline; a Cargo target trim in flight stops between units. */
   stop?: AbortSignal;
+  /** The device id of the one volume a build's headroom run frees; without it, the volumes under `disk.minFreeGb`. */
+  volume?: number;
 }
 
 interface RungContext extends LadderInput {
@@ -116,6 +120,8 @@ interface RungContext extends LadderInput {
   /** Measures again; true while the causes this rung relieves are still above normal. */
   stillShort: () => Promise<boolean>;
   why: string;
+  /** The devices of the volumes a disk rung frees, measured at the rung's start; null treats every volume as short. */
+  short: ReadonlySet<number> | null;
 }
 
 /** Logs one ladder action to `daemon.ndjson` and the workspace's `metro.ndjson`, and keeps it for the snapshot. */
@@ -271,6 +277,7 @@ async function bootedParkedRung(context: RungContext): Promise<void> {
 /** Rung 1's disk half: the regenerable outputs of workspaces with nothing running, idle 2 minutes or more. */
 async function idleOutputsRung(context: RungContext): Promise<void> {
   for (const candidate of await stoppedOutputCandidates(context.config, context, PRESSURE_IDLE_MS)) {
+    if (!onShortVolume([candidate.path, workspaceDir(candidate.path)], context.short)) continue;
     if (!(await context.stillShort())) return;
     const result = context.act
       ? await clearStoppedOutputs(candidate, context.config, PRESSURE_IDLE_MS, context.operation)
@@ -326,6 +333,11 @@ async function parkedRung(context: RungContext): Promise<void> {
     })),
   ].toSorted((a, b) => String(a.at).localeCompare(String(b.at)));
   for (const device of parked) {
+    const dir =
+      device.platform === 'ios'
+        ? join(homedir(), 'Library', 'Developer', 'CoreSimulator', 'Devices', device.id)
+        : (ownedAvdDirectory(device.id) ?? homedir());
+    if (!onShortVolume([dir], context.short)) continue;
     if (context.level === 'high' && !(await context.stillShort())) return;
     if (ledger && !ledger[device.platform].has(device.id)) {
       recordAction(
@@ -434,7 +446,7 @@ async function cachesRung(context: RungContext): Promise<void> {
     { cache: rootCache('Metro transform caches', metroCacheRoot(), 3), capGb: context.settings.metroCacheMaxGb },
   ];
   for (const { cache, capGb } of entries) {
-    if (!existsSync(cache.dir) || !(await context.stillShort())) continue;
+    if (!existsSync(cache.dir) || !onShortVolume([cache.dir], context.short) || !(await context.stillShort())) continue;
     let evict = Infinity;
     if (!critical) {
       const bytes = await measuredDirectorySizeAsync(cache.dir, { timeoutMs: SIZE_TIMEOUT_MS });
@@ -452,7 +464,7 @@ async function cachesRung(context: RungContext): Promise<void> {
     );
   }
   const compilation = sharedCompilationCache();
-  if (existsSync(compilation) && (await context.stillShort())) {
+  if (existsSync(compilation) && onShortVolume([compilation], context.short) && (await context.stillShort())) {
     const bytes = await measuredDirectorySizeAsync(compilation, { timeoutMs: SIZE_TIMEOUT_MS });
     const capGb = context.settings.swiftCompilationCacheMaxGb;
     if (bytes !== null && (critical || (capGb > 0 && bytes > (capGb * GIB) / 2))) {
@@ -481,7 +493,13 @@ async function cachesRung(context: RungContext): Promise<void> {
     [fingerprintIndexDir(), fingerprintIndexLock()],
     [join(configDir(), 'fingerprint-memo'), join(configDir(), 'fingerprint-memo.lock')],
   ] as const) {
-    if (!critical || !existsSync(directory) || !(await context.stillShort())) continue;
+    if (
+      !critical ||
+      !existsSync(directory) ||
+      !onShortVolume([directory], context.short) ||
+      !(await context.stillShort())
+    )
+      continue;
     const bytes = (await measuredDirectorySizeAsync(directory, { timeoutMs: SIZE_TIMEOUT_MS })) ?? 0;
     if (context.act) withDirLock(lock, () => rmSync(directory, { recursive: true, force: true }));
     recordAction(
@@ -515,7 +533,7 @@ async function emptyRegisteredCaches(context: RungContext, handled: readonly str
   };
   const caches = planCacheEmptying(
     (await discoverCachesAsync(context.operation?.env, context.operation?.cwd)).filter(
-      (cache) => !inside(cache.dir) && !isInsideWorkspaces(cache.dir),
+      (cache) => !inside(cache.dir) && !isInsideWorkspaces(cache.dir) && onShortVolume([cache.dir], context.short),
     ),
     true,
     context.operation?.env,
@@ -557,6 +575,7 @@ async function dormantRung(context: RungContext): Promise<void> {
   if (dormantAfterMs(context.config) <= 0) return;
   const idleMs = context.level === 'critical' ? PRESSURE_IDLE_MS : DORMANT_HIGH_IDLE_MS;
   for (const candidate of await dormantCandidates(context.config, context, idleMs)) {
+    if (!onShortVolume([candidate.path, workspaceDir(candidate.path)], context.short)) continue;
     if (!(await context.stillShort())) return;
     await run(
       { ...context, why: `${context.why}; idle ${Math.floor(candidate.idleMs / MINUTE_MS)} minutes` },
@@ -582,7 +601,9 @@ function canonicalOrNull(path: string): string | null {
  */
 async function dependenciesRung(context: RungContext): Promise<void> {
   const idleMs = context.level === 'critical' ? PRESSURE_IDLE_MS : DEPENDENCIES_HIGH_IDLE_MS;
-  const idle = await idleStageCandidates(context.config, context, idleMs);
+  const idle = (await idleStageCandidates(context.config, context, idleMs)).filter((candidate) =>
+    onShortVolume([candidate.path], context.short),
+  );
   const protectedRoot = context.protectedRoot ? (canonicalOrNull(context.protectedRoot) ?? '') : '';
   const { take, kept } = selectDependencies(
     await timedStep(
@@ -694,6 +715,8 @@ async function sweepRung(context: RungContext, causes: readonly Cause[]): Promis
     { signal: context.operation?.signal, items: (planned) => planned?.actions.length },
   );
   for (const action of plan.actions) {
+    const memory = action.kind === 'would-stop-gradle-daemons' || action.kind === 'would-stop-watchman';
+    if (!memory && !onShortVolume([action.dir ?? action.target], context.short)) continue;
     if (!(await context.stillShort())) return;
     await run(context, action);
   }
@@ -748,6 +771,7 @@ async function worktreesRung(context: RungContext): Promise<void> {
       );
   for (const action of planned.actions) {
     if (action.kind !== 'would-remove-worktree' || !clean.some((worktree) => worktree.path === action.target)) continue;
+    if (!onShortVolume([action.target], context.short)) continue;
     if (!(await context.stillShort())) return;
     await run({ ...context, why: `${context.why}; ${action.reason}` }, action, { worktreeSweep: sweep });
   }
@@ -821,12 +845,12 @@ async function sourceDependenciesStep(context: RungContext): Promise<void> {
         context.why,
       );
   if (!take.length) return;
-  const shortDevices = context.force && !context.force.measured ? null : await criticalDevices(context);
-  if (shortDevices?.size === 0) return;
+  const critical = context.force && !context.force.measured ? null : await shortDevices(context, 'critical');
+  if (critical?.size === 0) return;
   const worktrees = await artifactWorktreesFor(context.operation);
   const due: typeof take = [];
   for (const dependency of take) {
-    if (!onShortVolume([dependency.candidate.path], shortDevices)) continue;
+    if (!onShortVolume([dependency.candidate.path], critical)) continue;
     if (!(await context.stillShort())) break;
     due.push(dependency);
   }
@@ -880,6 +904,8 @@ async function sourceDependenciesStep(context: RungContext): Promise<void> {
 async function historyRung(context: RungContext): Promise<void> {
   if (context.level !== 'critical') return;
   await sourceDependenciesStep(context);
+  const critical = context.force && !context.force.measured ? null : await shortDevices(context, 'critical');
+  if (!onShortVolume([configDir()], critical)) return;
   const history = await timedStep(context.log, 'plan_history', () => planHistory(context.operation), {
     signal: context.operation?.signal,
     items: (planned) => planned?.length,
@@ -902,12 +928,12 @@ async function unownedRung(context: RungContext): Promise<void> {
   // @ref LLP 0003#rung-9-runs-only-at-critical -- at high it would wipe tool caches on every pass
   if (context.level !== 'critical' || isScopedHome(context.operation?.env ?? process.env)) return;
   if (!context.force && Date.now() - unownedRunAt < UNOWNED_EVERY_MS) return;
-  const shortDevices = context.force && !context.force.measured ? null : await criticalDevices(context);
-  if (shortDevices?.size === 0) return;
+  const critical = context.force && !context.force.measured ? null : await shortDevices(context, 'critical');
+  if (critical?.size === 0) return;
   if (!context.force) unownedRunAt = Date.now();
   for (const plan of await surveyToolCaches(context.operation)) {
     // @ref LLP 0003#only-on-the-short-volume -- a full external disk must not empty another volume
-    const result = onShortVolume(plan.cache.paths, shortDevices)
+    const result = onShortVolume(plan.cache.paths, critical)
       ? await cleanToolCache(plan, context.act, context.operation)
       : {
           outcome: 'kept' as const,
@@ -963,14 +989,13 @@ async function unownedRung(context: RungContext): Promise<void> {
   }
 }
 
-/** The device ids of the volumes Stim uses whose free disk is under the critical level, measured now, per device. */
-async function criticalDevices(context: RungContext): Promise<Set<number>> {
+/** The device ids of the volumes Stim uses whose free disk is under `level`, measured now, per device. */
+async function shortDevices(
+  context: Pick<LadderInput, 'config' | 'operation'>,
+  level: 'high' | 'critical',
+): Promise<Set<number>> {
   const { thresholds } = diskThresholds(context.config, context.operation?.env);
-  const devices = new Set<number>();
-  if (thresholds.criticalMb <= 0) return devices;
-  for (const volume of await measureDisk(context.config, context.operation?.signal))
-    if (volume.device !== undefined && volume.freeMb < thresholds.criticalMb) devices.add(volume.device);
-  return devices;
+  return shortVolumeDevices(await measureDisk(context.config, context.operation?.signal), thresholds, level);
 }
 
 const RUNG_ACTS: Record<Rung, (context: RungContext, causes: Cause[]) => Promise<void>> = {
@@ -1033,6 +1058,7 @@ export async function runLadder(
         actions,
         stillShort: async () => true,
         why: force.why,
+        short: force.measured ? await shortDevices(input, 'high') : null,
       };
       await runRung(rung, context, ['disk', 'memory']);
     }
@@ -1058,6 +1084,8 @@ export async function runLadder(
       actions,
       stillShort,
       why: `pressure level ${current.level}: ${current.reasons.join('; ')}`,
+      // @ref LLP 0001#each-rung-frees-only-the-volumes-under-pressure -- a healthy volume gains nothing
+      short: input.volume === undefined ? await shortDevices(input, 'high') : new Set([input.volume]),
     };
     await runRung(rung, context, decision.causes);
   }

@@ -23,7 +23,7 @@ import { daemonMode } from './mode.ts';
 import { runIdlePass, type IdlePassInput } from './idle.ts';
 import { idleOutputBytes, runLadder } from './ladder.ts';
 import { measureDisk, measureMemory, measureTick, type TickMeasurement } from './measure.ts';
-import { classifyPressure, diskThresholds } from './pressure.ts';
+import { classifyPressure, diskThresholds, shortVolumeDevices } from './pressure.ts';
 import {
   clearStoppedOutputs,
   dormantAfterMs,
@@ -112,7 +112,18 @@ export async function runHomePasses({
     act,
     log,
     operation,
-    ...(pressure.level === 'normal' ? {} : { pressure: { level: pressure.level, reasons: pressure.reasons } }),
+    ...(pressure.level === 'normal'
+      ? {}
+      : {
+          pressure: {
+            level: pressure.level,
+            reasons: pressure.reasons,
+            // @ref LLP 0001#each-rung-frees-only-the-volumes-under-pressure -- memory pressure idles every workspace
+            ...(pressure.memory === 'normal'
+              ? { volumes: shortVolumeDevices(measured.measurement.disk, thresholds, 'high') }
+              : {}),
+          },
+        }),
   });
   operation.signal.throwIfAborted();
   const actions: DaemonLadderAction[] = [
@@ -330,7 +341,7 @@ async function runCommandLadder(
         // @ref LLP 0003#never-from-a-build-command -- the build is about to read those caches
         lastRung: 8,
         ...(protectedRoot ? { protectedRoot } : {}),
-        ...(headroom ? { operation: headroom.operation, stop: headroom.stop } : {}),
+        ...(headroom ? { operation: headroom.operation, stop: headroom.stop, volume: headroom.device } : {}),
       },
       pressure,
     );

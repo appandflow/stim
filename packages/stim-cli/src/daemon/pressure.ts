@@ -62,6 +62,20 @@ export function diskPressure(
   return { level, reasons };
 }
 
+/** The device ids of the volumes in `disk` whose free space is under `level`. */
+export function shortVolumeDevices(
+  disk: DaemonMeasurement['disk'],
+  thresholds: DiskThresholds,
+  level: 'high' | 'critical',
+): Set<number> {
+  const floorMb = level === 'critical' ? thresholds.criticalMb : Math.max(thresholds.highMb, thresholds.criticalMb);
+  return new Set(
+    floorMb > 0
+      ? disk.flatMap((volume) => (volume.device !== undefined && volume.freeMb < floorMb ? [volume.device] : []))
+      : [],
+  );
+}
+
 /**
  * The memory level: critical while macOS reports critical pressure; high after 10 minutes of warning or while
  * available memory is under 10% of RAM. `previousWarningSince` carries the warning clock from the last measurement.

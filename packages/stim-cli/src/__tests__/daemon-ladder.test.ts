@@ -64,6 +64,7 @@ beforeEach(() => {
   deleted = [];
   log.mockReset();
   vi.spyOn(ios, 'listAllIosSimsAsync').mockImplementation(async () => sims);
+  vi.spyOn(daemonMeasure, 'measureDisk').mockResolvedValue([{ volume: '/', freeMb: 1024, device: statSync(home).dev }]);
   vi.spyOn(teardown, 'teardownOwnedIosSim').mockImplementation(async (udid, options) => {
     if (options?.del) deleted.push(udid);
     const sim = sims.find((entry) => entry.udid === udid);
@@ -128,6 +129,22 @@ describe('the idle stage under pressure (rung 1)', () => {
     });
     expect(decisions).toEqual([expect.objectContaining({ path: root, outcome: 'idle' })]);
     expect(readIdleStage(readWorkspaceState(root))).toMatchObject({ idleMinutes: 2 });
+  });
+
+  test('under disk pressure on another volume it keeps the 2-minute threshold away from the workspace', async () => {
+    const { root } = workspace('recent', 5 * MINUTE_MS, 'Booted');
+    const decisions = await runIdlePass({
+      config: loadConfig(),
+      now: Date.now(),
+      sims,
+      simsError: null,
+      act: true,
+      log,
+      devices: await devicesNow(),
+      pressure: { level: 'high', reasons: ['fixture'], volumes: new Set([statSync(home).dev + 1]) },
+    });
+    expect(decisions).toEqual([expect.objectContaining({ path: root, outcome: 'active' })]);
+    expect(readIdleStage(readWorkspaceState(root))).toBeNull();
   });
 });
 
@@ -676,6 +693,29 @@ describe('the pressure ladder', () => {
     expect(teardown.teardownOwnedIosSim).not.toHaveBeenCalledWith(udid, expect.anything());
   });
 
+  test('at critical on another volume it takes nothing from the volume the workspaces and caches are on', async () => {
+    const { root } = workspace('idle-five', 5 * MINUTE_MS, 'Shutdown');
+    const outputs = join(workspaceDir(root), 'derived-data');
+    mkdirSync(outputs, { recursive: true });
+    writeFileSync(join(outputs, 'Build.o'), 'x');
+    caches('kept-key');
+    const device = statSync(home).dev;
+    vi.spyOn(daemonMeasure, 'measureDisk').mockResolvedValue([
+      { volume: '/', freeMb: 500 * 1024, device },
+      { volume: '/Volumes/X', freeMb: 1024, device: device + 1 },
+    ]);
+    const { actions } = await runLadder(
+      { ...input(true, async () => pressure('critical')), lastRung: 8 },
+      pressure('critical'),
+    );
+    expect(existsSync(outputs)).toBe(true);
+    expect(existsSync(join(buildCache(), 'ios', 'unused'))).toBe(true);
+    expect(existsSync(join(metroCache(), 'other-app', 'transform', 'aa'))).toBe(true);
+    expect(existsSync(memo())).toBe(true);
+    expect(actions.filter((action) => action.outcome === 'done')).toEqual([]);
+    expect(deleted).toEqual([]);
+  });
+
   test('daemon.mode report plans each rung and deletes nothing', async () => {
     const { udid } = workspace('idle-hour', 60 * MINUTE_MS, 'Shutdown');
     caches('kept-key');
@@ -892,7 +932,10 @@ describe('the ladder stim gc forces', () => {
 });
 
 describe('the ladder a build runs for its headroom', () => {
-  const DEVICE = 4242;
+  let DEVICE: number;
+  beforeEach(() => {
+    DEVICE = statSync(home).dev;
+  });
 
   function parked(count: number) {
     vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
@@ -925,11 +968,11 @@ describe('the ladder a build runs for its headroom', () => {
     return disk;
   }
 
-  const run = (targetGb: number) =>
+  const run = (targetGb: number, device = DEVICE) =>
     runLadderToFree({
       operation: testContext({ env: { ...process.env, CI: undefined, STIM_DAEMON: undefined } }),
       signal: new AbortController().signal,
-      device: DEVICE,
+      device,
       freeMb: targetGb * 1024,
       protectedRoot: join(projects, 'build'),
     });
@@ -949,6 +992,11 @@ describe('the ladder a build runs for its headroom', () => {
     freeOnBuildDevice(10, 0);
     await run(24);
     expect(deleted).toEqual(['PARKED-0']);
+
+    deleted.length = 0;
+    freeOnBuildDevice(10, 1);
+    await run(24, DEVICE + 1);
+    expect(deleted).toEqual([]);
   });
 
   test('does nothing while another process holds the ladder claim', async () => {

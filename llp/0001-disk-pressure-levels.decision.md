@@ -108,6 +108,29 @@ ladder runs it once, and leaves its own workspace's `target/` alone), so a
 checkout in use does not lose its `incremental/` data every tick; walks above
 normal are not niced.
 
+## Each rung frees only the volumes under pressure
+
+A rung that frees disk takes an item only when the item lies on a volume under
+`disk.minFreeGb`, measured at the start of the rung: build outputs and dormant
+workspaces by their checkout and Stim workspace folder, parked devices by their
+device folder, caches by their directory, dependencies and worktrees by their
+path, and rung 6's Gradle versions, TMPDIR leftovers and trash by their root.
+Rung 8's source checkouts and history, the history by the Stim home, and rung 9
+take an item only on a volume under the critical level (LLP 0003). The
+activity pass's 2-minute idle threshold under pressure follows the same rule
+while memory is normal; memory pressure idles every workspace. The ladder a build runs for its
+headroom (LLP 0006) treats only the build's volume as short. The Gradle, Kotlin
+and watchman stops relieve memory and are not gated. `stim gc --pressure`
+treats every volume as short; `stim gc` at the measured level is gated.
+
+Reason: free disk on any volume sets the level, but deleting on a healthy volume
+frees nothing where space is needed. A project on an external disk under the
+high level made every tick clear the `node_modules`, outputs and caches of the
+internal disk, and the level never cleared (#5877).
+
+Chosen by the 2.0 reliability review and the fix for #5877, not by the
+maintainer, following the reason LLP 0003 gives for rung 9.
+
 ## The folders a build wrote are measured by the daemon
 
 When a local native compile ends, whether it succeeded, failed or was cancelled,
@@ -226,7 +249,7 @@ chosen by the coordinator and the reviews of #5540, not by the maintainer.
 
 ## Links
 
-- Issues: #5492, #5512, #5524. Pull requests: #5514, #5540.
+- Issues: #5492, #5512, #5524, #5877. Pull requests: #5514, #5540.
 - Code: `packages/stim-cli/src/policy/checkout-order.ts`,
   `packages/stim-cli/src/workspace/source-dependencies.ts`,
   `packages/stim-cli/src/stimd/passes/artifacts.ts`,
