@@ -342,7 +342,10 @@ export function stimdSocket(home?: string): string {
   return localSocket(join(stimdRunDir(home), 'stimd.sock'));
 }
 
-/** `{format, pid, socket, build, version}` of the running stimd, written by stimd alone. */
+/**
+ * `{format, pid, socket, build, version, netPort}` of the running stimd, written by stimd alone. `netPort` is the port its
+ * net thread listens on, null while none listens; a stimd that predates it writes no `netPort`.
+ */
 export function stimdRecordFile(home?: string): string {
   return join(stimdRunDir(home), 'stimd.json');
 }

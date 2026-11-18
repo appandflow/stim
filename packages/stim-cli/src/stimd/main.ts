@@ -219,6 +219,21 @@ const strings = (value: unknown): string[] =>
 const reportNet = (answer: NetAnswer | null): void =>
   answer?.listening ? undefined : console.error(`stimd: ${answer?.message ?? 'stimd did not answer'}`);
 
+/** Reports the answer of the stimd a service unit's process asked for its net thread; exit 1 unless it serves `port`. */
+const reportServiceNet =
+  (port: number, service: boolean) =>
+  (answer: NetAnswer | null): void => {
+    if (answer?.listening && (!service || port === 0 || answer.port === port)) return;
+    process.exitCode = 1;
+    console.error(
+      `stimd: ${
+        answer?.listening
+          ? `the stimd of this Stim home serves port ${answer.port}, not the service's port ${port}`
+          : (answer?.message ?? 'stimd did not answer')
+      }`,
+    );
+  };
+
 async function takeClaim(
   root: string,
   mode: 'exclusive' | 'shared',
@@ -935,7 +950,7 @@ async function runStimdInner(
         return;
       }
       if (restartingNet) return;
-      handleNetStop(serve, closing, attached !== undefined, requestEnd, shutdown, requestTick);
+      netGone();
     },
     (why) => maybeUpdate(why, ASKED_MS),
     (why) => {
@@ -944,6 +959,11 @@ async function runStimdInner(
     },
   );
   let restartingNet = false;
+  const netGone = () => {
+    recordNet(null);
+    handleNetStop(serve, closing, attached !== undefined, requestEnd, shutdown, requestTick);
+  };
+  let netTurns: Promise<unknown> = Promise.resolve();
   let updating: Promise<void> | null = null;
   const maybeUpdate = (why: string, everyMs: number) => {
     if (!follower || updating || closing) return;
@@ -1121,6 +1141,26 @@ async function runStimdInner(
     if (follower) engineDirs = workspaceEngineDirs(loadConfig());
   } catch {}
   let netServes: ServeOptions | null = serve ?? null;
+  let serviceNet = service;
+  const writeRecord = (netPort: number | null) =>
+    writeAtomic(stimdRecordFile(), {
+      format: RECORD_FORMAT,
+      pid: process.pid,
+      socket: path,
+      build,
+      version: identity.version,
+      netPort,
+    });
+  const recordNet = (netPort: number | null) => {
+    try {
+      if (!closing && readJsonObject(stimdRecordFile())?.pid === process.pid) writeRecord(netPort);
+    } catch {}
+  };
+  const ensureNet = (options: NetOptions) =>
+    net.ensure(options).then((answer) => {
+      if (answer.listening) recordNet(answer.port);
+      return answer;
+    });
   let restartWhy: string | null = null;
   let switchedTo: { build: string; version: string } | null = null;
   let updatedInPlace: { build: string; version: string } | null = null;
@@ -1250,7 +1290,7 @@ async function runStimdInner(
     };
     if (keepOwn) return missing('its cleanup was not verified, so no successor was started');
     try {
-      launchStimd(process.env, startMode, process.platform, entry, serveArgs(carried, service, unit));
+      launchStimd(process.env, startMode, process.platform, entry, serveArgs(carried, service || serviceNet, unit));
     } catch (error) {
       return missing(`the launch failed: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -1287,7 +1327,6 @@ async function runStimdInner(
       opControllers.delete(socket);
       if (ops.delete(socket)) void checkEngine();
     });
-    // eslint-disable-next-line complexity -- this handler dispatches the existing daemon operations.
     const onData = (chunk: Buffer) => {
       buffer = Buffer.concat([buffer, chunk]);
       for (let end = buffer.indexOf(10); end >= 0; end = buffer.indexOf(10)) {
@@ -1382,43 +1421,126 @@ async function runStimdInner(
           socket.end(`${JSON.stringify({ op: 'presence', forwarded: net.presence(message.params) })}\n`);
         } else if (op === 'net.ensure') {
           admissionRevision++;
-          const params = isJsonObject(message.params) ? message.params : {};
-          const share = params.share === true;
-          const port = Number.isInteger(params.port) ? Number(params.port) : undefined;
-          const options = netOptions({
-            ...(port !== undefined && port >= 0 && port <= 65535 ? { port } : share ? { port: 0 } : {}),
-            loopbackOnly: share || params.loopbackOnly === true,
-            extraEnv: strings(params.extraEnv),
-            pathPrepend: strings(params.pathPrepend),
-            shareOnly: share,
-            ...(kind === 'desktop' ? { owner: 'desktop' } : {}),
-          });
-          const running = net.running();
-          const restart =
-            kind === 'desktop' &&
-            !service &&
-            !pinned() &&
-            running !== null &&
-            (running.loopbackOnly !== options.loopbackOnly ||
-              (port !== undefined && port !== 0 && running.port !== null && port !== running.port));
-          if (!running || restart) netServes = options;
-          const answer = restart
-            ? (() => {
-                log('info', 'net_restart', 'Stim Desktop asked for other net thread options; restarting it');
+          netTurns = netTurns
+            .then(() => {
+              if (socket.destroyed) return undefined;
+              if (closing) {
+                socket.destroy();
+                return undefined;
+              }
+              if (sealed) {
+                socket.end(
+                  `${JSON.stringify({ op: 'error', code: 'daemon-ending', message: 'The Stim daemon is ending.' })}\n`,
+                );
+                return undefined;
+              }
+              const params = isJsonObject(message.params) ? message.params : {};
+              const share = params.share === true;
+              const port = Number.isInteger(params.port) ? Number(params.port) : undefined;
+              const options = netOptions({
+                ...(port !== undefined && port >= 0 && port <= 65535 ? { port } : share ? { port: 0 } : {}),
+                loopbackOnly: share || params.loopbackOnly === true,
+                extraEnv: strings(params.extraEnv),
+                pathPrepend: strings(params.pathPrepend),
+                shareOnly: share,
+                ...(kind === 'desktop' ? { owner: 'desktop' } : {}),
+              });
+              const running = net.running();
+              const forService = params.service === true && !share;
+              const values = forService && isJsonObject(params.envValues) ? params.envValues : {};
+              const resolved = {
+                ...options,
+                extraEnv: options.extraEnv.map((name) =>
+                  typeof values[name] === 'string' && !name.includes('=') ? `${name}=${values[name]}` : name,
+                ),
+              };
+              // @ref LLP 0012#a-service-stimd-serves-the-service-port -- a service's ask replaces a share-only thread
+              const mismatch =
+                forService &&
+                running !== null &&
+                !running.shareOnly &&
+                (running.loopbackOnly !== options.loopbackOnly ||
+                  (port !== undefined && port !== 0 && running.port !== null && running.port !== port));
+              const serviceMove = forService && running?.shareOnly === true;
+              const restart =
+                serviceMove ||
+                (kind === 'desktop' &&
+                  !serviceNet &&
+                  !pinned() &&
+                  running !== null &&
+                  (running.loopbackOnly !== options.loopbackOnly ||
+                    (port !== undefined && port !== 0 && running.port !== null && port !== running.port)));
+              const reserved = forService && (serviceMove || !running);
+              const wasService = serviceNet;
+              const previous = netServes?.shareOnly ? netServes : null;
+              if (!running) netServes = options;
+              if (reserved) serviceNet = true;
+              const restartNet = () => {
+                netServes = options;
+                log(
+                  'info',
+                  'net_restart',
+                  serviceMove
+                    ? `the service asked for port ${options.port}; replacing the share-only net thread`
+                    : 'Stim Desktop asked for other net thread options; restarting it',
+                );
                 restartingNet = true;
-                return net.close().then(() => {
-                  restartingNet = false;
-                  return net.ensure(options);
-                });
-              })()
-            : net.ensure(options);
-          void answer.then(
-            (state) => {
-              lastContact = Date.now();
-              return reply({ op: 'net', ...state });
-            },
-            (error: unknown) => reply({ op: 'net', listening: false, message: String(error) }),
-          );
+                return net
+                  .restart(resolved, () => !closing)
+                  .then(async (state) => {
+                    if (state.listening) recordNet(state.port);
+                    if (serviceMove && !(state.listening && (options.port === 0 || state.port === options.port))) {
+                      netServes = previous;
+                      const restored = await net
+                        .restart(
+                          netOptions(previous ?? { port: 0, loopbackOnly: true, shareOnly: true }),
+                          () => !closing,
+                        )
+                        .catch(() => null);
+                      if (restored?.listening) recordNet(restored.port);
+                    }
+                    return state;
+                  })
+                  .finally(() => {
+                    restartingNet = false;
+                    if (!net.running()) netGone();
+                  });
+              };
+              const answer = mismatch
+                ? Promise.resolve({
+                    listening: false as const,
+                    message: `the net thread serves other options on port ${running.port ?? 'unknown'}; the service needs port ${options.port} ${options.loopbackOnly ? 'on loopback' : 'on every interface'}`,
+                  })
+                : serviceMove
+                  ? pinned()
+                    ? Promise.resolve({
+                        listening: false as const,
+                        message: `the net thread serves web shares on port ${running.port ?? 'unknown'}; the service's next ask replaces it once the work stimd holds ends`,
+                      })
+                    : restartNet()
+                  : restart
+                    ? restartNet()
+                    : ensureNet(resolved);
+              if (forService)
+                void answer.then(
+                  (state) => {
+                    if (state.listening && (options.port === 0 || state.port === options.port)) serviceNet = true;
+                    else if (reserved) serviceNet = wasService;
+                    return undefined;
+                  },
+                  () => {
+                    if (reserved) serviceNet = wasService;
+                  },
+                );
+              return answer.then(
+                (state) => {
+                  lastContact = Date.now();
+                  return reply({ op: 'net', ...state });
+                },
+                (error: unknown) => reply({ op: 'net', listening: false, message: String(error) }),
+              );
+            })
+            .catch(() => socket.destroy());
         } else if (op === 'net.connect') {
           socket.off('data', onData);
           const head = buffer;
@@ -1632,7 +1754,7 @@ async function runStimdInner(
       successorArgs: () => {
         const running = net.running();
         const carried = running && netServes ? { ...netServes, shareOnly: running.shareOnly } : null;
-        return serveArgs(carried, service, unit);
+        return serveArgs(carried, service || serviceNet, unit);
       },
       release: (why) => closeAttachedWork(ending === 'stdin' ? why : `${why} (${ending})`),
       log,
@@ -1749,13 +1871,7 @@ async function runStimdInner(
     await listen(path, server);
     bound = true;
     startup.signal.throwIfAborted();
-    writeAtomic(stimdRecordFile(), {
-      format: RECORD_FORMAT,
-      pid: process.pid,
-      socket: path,
-      build,
-      version: identity.version,
-    });
+    writeRecord(null);
   } catch (error) {
     shutdown(
       `cannot listen on ${path}: ${error instanceof Error ? error.message : String(error)}`,
@@ -1773,12 +1889,18 @@ async function runStimdInner(
   adoptMetroChildren(log);
   resumeLogStreams(logs, log, attached !== undefined);
   (retention ?? follower)?.record(Boolean(retention), [...workspaceEngineDirs(loadConfig()), ...metroEngineDirs()]);
-  if (serve) void net.ensure(netOptions(serve)).then((answer) => onNet?.(answer));
+  if (serve)
+    netTurns = netTurns.then(() =>
+      ensureNet(netOptions(serve)).then((answer) => {
+        if (!closing || backgroundFailure !== undefined) onNet?.(answer);
+        return undefined;
+      }),
+    );
   else if (attached === undefined && shareWorkPending()) {
     // @ref LLP 0011#a-share-only-net-thread-resumes-with-stimd -- a stimd that starts finds the shares the last one served
     const options = netOptions({ port: 0, loopbackOnly: true, shareOnly: true });
     netServes = options;
-    void net.ensure(options);
+    netTurns = netTurns.then(() => ensureNet(options));
   }
   startup.signal.throwIfAborted();
   await logs.ownedSync();
@@ -2145,20 +2267,22 @@ export async function runStimdEntry(argv: readonly string[]): Promise<void> {
     if (code !== 0) markAbnormal?.(`exit code ${code}`);
   });
   try {
+    const service = serve !== undefined && !argv.includes('--carried');
     const served = await runStimd({
       mode:
         parseDaemonMode(at >= 0 ? argv[at + 1] : undefined) ??
         daemonMode(argv.includes(ATTACHED_ARG) ? process.env : {}),
       serve,
       onNet: reportNet,
-      service: serve !== undefined && !argv.includes('--carried'),
+      service,
       unit:
         serve === undefined || argv.includes('--carried')
           ? undefined
           : (unitSuccessorLabel(argv) ?? serviceUnitLabel(process.env, serve.port) ?? undefined),
       ...(argv.includes(ATTACHED_ARG) ? { attached: { handover: !argv.includes(NO_HANDOVER_ARG) } } : {}),
     });
-    if (serve && !served && stimdLive()) await serveThroughStimd(serve, reportNet);
+    if (serve && !served && stimdLive())
+      await serveThroughStimd({ ...serve, service }, reportServiceNet(serve.port, service));
   } catch (error) {
     const message =
       isClaimRefusal(error) || isClaimUnavailable(error)

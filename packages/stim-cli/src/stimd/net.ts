@@ -1,5 +1,5 @@
 import type { Socket } from 'node:net';
-import { Worker } from 'node:worker_threads';
+import { type MessagePort, Worker } from 'node:worker_threads';
 import { spawnEntry } from '../spawn-entry.ts';
 
 const STOP_WAIT_MS = 15_000;
@@ -33,7 +33,16 @@ type FromNet =
   | { type: 'end'; id: number }
   | { type: 'idle' }
   | { type: 'update'; why: string }
-  | { type: 'restart'; why: string };
+  | { type: 'restart'; why: string }
+  | { type: 'statusWorker'; request: StatusWorkerRequest };
+
+/** A status worker the net thread asks stimd to start, so that its teardown does not hold the net thread's exit. */
+interface StatusWorkerRequest {
+  worker: string;
+  env: NodeJS.ProcessEnv;
+  cwd: string;
+  port: MessagePort;
+}
 
 /** Whether the net thread serves, on which port, or why it does not. */
 type NetAnswer = { listening: true; port: number } | { listening: false; message: string };
@@ -47,7 +56,12 @@ export interface NetThread {
   connect(socket: Socket, head: Buffer): boolean;
   /** Forwards one agent action's presence to a listening net thread; false when none listens. */
   presence(params: unknown): boolean;
-  /** Stops the net thread and waits for it. */
+  /**
+   * Stops the net thread and, unless `proceed` says no once it stopped, starts it again with `options`; an ask that
+   * waits on the stop starts a thread with `options` too, not its own.
+   */
+  restart(options: NetOptions, proceed: () => boolean): Promise<NetAnswer>;
+  /** Stops the net thread for good and waits for it; later asks are refused. */
   close(): Promise<void>;
 }
 
@@ -68,11 +82,22 @@ export function createNetThread(
   let shareOnly = false;
   let loopbackOnly = false;
   let port: number | null = null;
+  let replacing: NetOptions | null = null;
+  let ending = false;
   let cleanupFailure: Error | undefined;
   let failureNotified = false;
   let nextId = 1;
   const sockets = new Map<number, Socket>();
   const post = (message: ToNet) => worker?.postMessage(message);
+  const startStatusWorker = ({ worker: entry, env, cwd, port: statusPort }: StatusWorkerRequest) => {
+    try {
+      const status = new Worker(entry, { env, workerData: { cwd, port: statusPort }, transferList: [statusPort] });
+      status.on('error', (error: Error) => log('warn', 'status_worker_failed', error.message));
+    } catch (error) {
+      log('warn', 'status_worker_failed', error instanceof Error ? error.message : String(error));
+      statusPort.close();
+    }
+  };
   const unverified = (reason: string, notify = true): Error => {
     if (cleanupFailure) return cleanupFailure;
     cleanupFailure = Object.assign(new Error(`Net thread cleanup could not be verified: ${reason}`), {
@@ -109,9 +134,12 @@ export function createNetThread(
     }
   };
   return {
-    ensure(options): Promise<NetAnswer> {
+    ensure(requested: NetOptions): Promise<NetAnswer> {
       if (cleanupFailure) return Promise.resolve({ listening: false, message: cleanupFailure.message });
-      if (stopping) return stopping.then(() => this.ensure(options));
+      if (ending) return Promise.resolve({ listening: false, message: 'stimd is ending' });
+      if (stopping) return stopping.then(() => this.ensure(requested));
+      const options = replacing ?? requested;
+      replacing = null;
       if (started) {
         if (!options.shareOnly && shareOnly) {
           shareOnly = false;
@@ -127,6 +155,7 @@ export function createNetThread(
       started = new Promise<NetAnswer>((answer) => {
         thread.on('message', (message: FromNet) => {
           if (message.type === 'listening') {
+            if (stopping) return;
             listening = true;
             port = message.port;
             log('info', 'net_started', `the net thread listens on port ${message.port}`);
@@ -146,6 +175,7 @@ export function createNetThread(
             stop(thread);
           } else if (message.type === 'update') onUpdate(message.why);
           else if (message.type === 'restart') onRestart(message.why);
+          else if (message.type === 'statusWorker') startStatusWorker(message.request);
           else if (message.type === 'data') sockets.get(message.id)?.write(message.chunk);
           else sockets.get(message.id)?.end();
         });
@@ -180,20 +210,36 @@ export function createNetThread(
       post({ type: 'presence', params });
       return true;
     },
-    async close() {
-      const thread = worker;
-      if (!thread) {
-        if (cleanupFailure) throw cleanupFailure;
-        return;
+    async restart(options, proceed) {
+      replacing = options;
+      try {
+        await stopThread();
+      } catch (error) {
+        replacing = null;
+        throw error;
       }
-      const stopped = stop(thread);
-      const timer = setTimeout(() => {
-        unverified('worker did not exit after shutdown');
-        void thread.terminate();
-      }, STOP_WAIT_MS);
-      await stopped;
-      clearTimeout(timer);
-      if (cleanupFailure) throw cleanupFailure;
+      if (proceed()) return this.ensure(options);
+      replacing = null;
+      return { listening: false, message: 'stimd is ending' };
+    },
+    close() {
+      ending = true;
+      return stopThread();
     },
   };
+  async function stopThread(): Promise<void> {
+    const thread = worker;
+    if (!thread) {
+      if (cleanupFailure) throw cleanupFailure;
+      return;
+    }
+    const stopped = stop(thread);
+    const timer = setTimeout(() => {
+      unverified('worker did not exit after shutdown');
+      void thread.terminate();
+    }, STOP_WAIT_MS);
+    await stopped;
+    clearTimeout(timer);
+    if (cleanupFailure) throw cleanupFailure;
+  }
 }

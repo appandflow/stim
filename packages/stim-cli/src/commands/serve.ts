@@ -53,6 +53,7 @@ const serveOp = defineOp({
         loopbackOnly: opts.loopbackOnly === true || opts.share === true,
         shareOnly: opts.share === true,
       },
+      opts.service === true,
       opts.service === true ? (serviceUnitLabel(process.env, port) ?? undefined) : undefined,
     );
   },
@@ -71,7 +72,7 @@ function refuse(message: string): void {
   process.exitCode = 1;
 }
 
-async function serveInStimd(serve: ServeOptions, unit: string | undefined): Promise<void> {
+async function serveInStimd(serve: ServeOptions, service: boolean, unit: string | undefined): Promise<void> {
   const bootstrapFd = process.env.STIM_DESKTOP_BOOTSTRAP_FD;
   const lifetimeFd = process.env.STIM_DESKTOP_LIFETIME_FD;
   delete process.env.STIM_DESKTOP_BOOTSTRAP_FD;
@@ -112,8 +113,10 @@ async function serveInStimd(serve: ServeOptions, unit: string | undefined): Prom
   if (!stimdLive()) return refuse(daemonClaimRefusal());
   console.error('stim: a stimd already serves this Stim home; asking it to start its net thread.');
   let heard = false;
-  await serveThroughStimd(serve, (answer) => {
+  await serveThroughStimd({ ...serve, service }, (answer) => {
     heard = true;
+    if (answer?.listening && service && serve.port !== 0 && answer.port !== serve.port)
+      return refuse(`the stimd of this Stim home serves port ${answer.port}, not the service's port ${serve.port}.`);
     if (answer?.listening)
       console.log(`stimd's net thread listens on port ${answer.port}; this process exits with it.`);
     answered(answer);

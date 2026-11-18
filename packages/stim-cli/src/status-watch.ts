@@ -22,6 +22,7 @@ const WATCH_SIMCTL_INTERVAL_MS = 30_000;
 const ADB_RESTART_MIN_MS = 1_000;
 const ADB_RESTART_MAX_MS = 60_000;
 const SIMCTL_TIMEOUT_MS = 10_000;
+const CHILD_STOP_GRACE_MS = 2_000;
 
 export type RefreshKind = 'full' | 'light';
 
@@ -170,7 +171,12 @@ export interface StatusSources {
    * shuts down simulators as it writes state.
    */
   simulatorListing(): string | null;
-  stop(): void;
+  /**
+   * Ends the timers, signals the adb and simctl children and waits for both to exit, sending SIGKILL to one that still
+   * runs after a grace period, then calls `released` and closes the file watchers. On macOS each directory watcher's
+   * close waits on fseventsd, which can take seconds while the machine is loaded.
+   */
+  stop(released?: () => void): void;
 }
 
 const SIMULATOR_DIR = /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i;
@@ -426,18 +432,23 @@ export function watchStatusSources({
       listing && listing.version === listingVersion && Date.now() - listing.at <= 2 * simctlIntervalMs
         ? listing.json
         : null,
-    stop() {
+    stop(released) {
       stopped = true;
-      for (const watcher of watchers.values()) watcher.close();
-      watchers.clear();
-      for (const watcher of repositories.values()) watcher.close();
-      repositories.clear();
       clearInterval(processTimer);
       if (simTimer) clearInterval(simTimer);
-      for (const { watcher } of deviceWatchers.values()) watcher.close();
-      deviceWatchers.clear();
-      simctl?.kill('SIGKILL');
-      adb.stop();
+      let running = 2;
+      const ended = () => {
+        if (--running > 0) return;
+        released?.();
+        for (const watcher of watchers.values()) watcher.close();
+        watchers.clear();
+        for (const watcher of repositories.values()) watcher.close();
+        repositories.clear();
+        for (const { watcher } of deviceWatchers.values()) watcher.close();
+        deviceWatchers.clear();
+      };
+      endChild(simctl, 'SIGKILL', ended);
+      adb.stop(ended);
     },
   };
 }
@@ -447,11 +458,11 @@ export function watchStatusSources({
  * reports. adb exits when its server restarts, so the tracker restarts with a
  * doubling delay that resets once a run lasts a minute.
  */
-function trackAdbDevices(onChange: () => void): { stop(): void } {
+function trackAdbDevices(onChange: () => void): { stop(ended: () => void): void } {
   const exec = getExecutor();
   const resolved = androidToolPath('adb');
   const adb = resolved === 'adb' ? exec.findExecutable('adb') : resolved;
-  if (!adb) return { stop() {} };
+  if (!adb) return { stop: (ended) => ended() };
 
   let child: ChildProcess | null = null;
   let restart: ReturnType<typeof setTimeout> | null = null;
@@ -477,12 +488,26 @@ function trackAdbDevices(onChange: () => void): { stop(): void } {
   start();
 
   return {
-    stop() {
+    stop(ended) {
       stopped = true;
       if (restart) clearTimeout(restart);
-      child?.kill('SIGTERM');
+      endChild(child, 'SIGTERM', ended);
     },
   };
+}
+
+/** Sends `signal` to `child` and calls `ended` once it has exited, sending SIGKILL if it still runs after a grace period. */
+function endChild(child: ChildProcess | null, signal: NodeJS.Signals, ended: () => void): void {
+  if (!child || child.pid === undefined || child.exitCode !== null || child.signalCode !== null) {
+    ended();
+    return;
+  }
+  const kill = setTimeout(() => child.kill('SIGKILL'), CHILD_STOP_GRACE_MS);
+  child.once('exit', () => {
+    clearTimeout(kill);
+    ended();
+  });
+  child.kill(signal);
 }
 
 function isDirectory(path: string): boolean {
