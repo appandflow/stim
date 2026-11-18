@@ -143,7 +143,10 @@ Maintainer direction: "can u check the update process to make sure this doesnt h
 Chosen by the implementing agent, not the maintainer: replacing only a
 share-only thread, refusing while pinned rather than deferring, and leaving a
 unit that names one engine build to `stim service install` (status reports
-it).
+it), serving every `net.ensure` one at a time in arrival order, the 30-second
+start deadline of a net thread, matching a service ask for port 0 on the
+loopback setting alone, and refusing a service ask whose options do not match a
+running non-share thread.
 
 ## Code
 

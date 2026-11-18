@@ -168,7 +168,7 @@ export function createNetThread(
           } else if (message.type === 'idle') {
             if (!shareOnly) return;
             log('info', 'net_idle', 'no web share is left; stopping the net thread');
-            stopThread().catch(() => {});
+            stop(thread);
           } else if (message.type === 'update') onUpdate(message.why);
           else if (message.type === 'restart') onRestart(message.why);
           else if (message.type === 'data') sockets.get(message.id)?.write(message.chunk);

@@ -344,7 +344,7 @@ test("a service process that finds a stimd serving a share-only net thread on an
   }
 }, 120_000);
 
-test("an ask that arrives while a service's ask moves the net thread gets the service's thread", async () => {
+test("an ask that arrives while a service's ask moves the net thread gets the service's thread (flaky under load, see #5864)", async () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-net-bystander-'));
   const env = { ...process.env, STIM_HOME: home, HOME: home, USERPROFILE: home, PATH: '' };
   const previousHome = process.env.STIM_HOME;
@@ -368,8 +368,9 @@ test("an ask that arrives while a service's ask moves the net thread gets the se
     const moving = ensureAs(socket, first, ask);
     await new Promise((done) => setTimeout(done, 5));
     const bystander = ensureAs(socket, first, { port, loopbackOnly: true });
-    expect(await moving).toMatchObject({ listening: true, port });
-    expect(await bystander).toMatchObject({ listening: true });
+    const [moved, bystood] = await Promise.all([moving, bystander]);
+    expect(moved).toMatchObject({ listening: true, port });
+    expect(bystood).toMatchObject({ listening: true });
     const restarts = () =>
       readFileSync(daemonNdjsonFile(), 'utf8')
         .split('\n')
@@ -510,8 +511,9 @@ test('two overlapping service asks against a held service port restore the share
     const moving = ensureAs(socket, first, ask);
     await new Promise((done) => setTimeout(done, 5));
     const overlapping = ensureAs(socket, second, ask);
-    expect(await moving).toMatchObject({ listening: false });
-    expect(await overlapping).toMatchObject({ listening: false });
+    const [moved, overlapped] = await Promise.all([moving, overlapping]);
+    expect(moved).toMatchObject({ listening: false });
+    expect(overlapped).toMatchObject({ listening: false });
     const record = JSON.parse(readFileSync(stimdRecordFile(), 'utf8'));
     expect(record.netPort).toEqual(expect.any(Number));
     expect(record.netPort).not.toBe(port);
@@ -550,6 +552,33 @@ test('a service ask for port 0 moves the share-only thread and keeps its listene
     expect(desktop).toMatchObject({ listening: true, port });
   });
 }, 120_000);
+
+test('stim serve stopped while its net thread starts exits 0', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-serve-stop-start-'));
+  const env = { ...process.env, STIM_HOME: home, HOME: home, USERPROFILE: home, PATH: '' };
+  const previousHome = process.env.STIM_HOME;
+  process.env.STIM_HOME = home;
+  const serve = spawn(
+    process.execPath,
+    [join(root, 'packages/stim-cli/bin/stim.mjs'), 'serve', '--port', '0', '--loopback-only'],
+    { env, stdio: 'ignore' },
+  );
+  const exited = once(serve, 'exit');
+  try {
+    const deadline = Date.now() + 30_000;
+    while (!existsSync(stimdRecordFile())) {
+      if (Date.now() > deadline || serve.exitCode !== null) throw new Error('stimd wrote no run/stimd.json');
+      await new Promise((done) => setTimeout(done, 2));
+    }
+    serve.kill('SIGTERM');
+    expect(await exited).toEqual([0, null]);
+  } finally {
+    if (serve.exitCode === null && serve.signalCode === null) serve.kill('SIGKILL');
+    if (previousHome === undefined) delete process.env.STIM_HOME;
+    else process.env.STIM_HOME = previousHome;
+    rmSync(home, { recursive: true, force: true });
+  }
+}, 60_000);
 
 test('a matching service ask that lands while the booted thread starts joins it', async () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-net-boot-window-'));
@@ -670,13 +699,14 @@ test('a Desktop ask sent as a service move starts waits for the rollback and the
     const moving = ensureAs(socket, cli, serviceAsk(held));
     await logged('"net_restart"');
     const desktop = ensureAs(socket, { kind: 'desktop' }, { port: desktopPort, loopbackOnly: true });
-    expect(await moving).toMatchObject({ listening: false });
-    expect(await desktop).toMatchObject({ listening: true, port: desktopPort });
+    const [moved, desktopAnswer] = await Promise.all([moving, desktop]);
+    expect(moved).toMatchObject({ listening: false });
+    expect(desktopAnswer).toMatchObject({ listening: true, port: desktopPort });
     expect((await fetch(`http://127.0.0.1:${desktopPort}/health`)).status).toBeLessThan(600);
   });
 }, 120_000);
 
-test('a service ask sent during a Desktop restart is refused and leaves the thread to Desktop', async () => {
+test('a service ask sent during a Desktop restart is refused and leaves the thread to Desktop (flaky under load, see #5864)', async () => {
   await withStimd('queue-restart', async ({ socket, build, holdPort }) => {
     const cli = { kind: 'cli', build };
     expect(await ensureAs(socket, cli, { share: true })).toMatchObject({ listening: true });
@@ -685,8 +715,9 @@ test('a service ask sent during a Desktop restart is refused and leaves the thre
     const restarting = ensureAs(socket, { kind: 'desktop' }, { port: desktopPort, loopbackOnly: true });
     await logged('Stim Desktop asked for other net thread options');
     const service = ensureAs(socket, cli, serviceAsk(held));
-    expect(await restarting).toMatchObject({ listening: true, port: desktopPort });
-    expect(await service).toMatchObject({ listening: false });
+    const [restarted, serviced] = await Promise.all([restarting, service]);
+    expect(restarted).toMatchObject({ listening: true, port: desktopPort });
+    expect(serviced).toMatchObject({ listening: false });
     const otherPort = await freePort();
     expect(await ensureAs(socket, { kind: 'desktop' }, { port: otherPort, loopbackOnly: true })).toMatchObject({
       listening: true,
@@ -695,7 +726,7 @@ test('a service ask sent during a Desktop restart is refused and leaves the thre
   });
 }, 120_000);
 
-test('a service ask for Desktop loopback thread on the same port is refused and Desktop can still move it', async () => {
+test('a service ask for Desktop loopback thread on the same port is refused and Desktop can still move it (flaky under load, see #5864)', async () => {
   await withStimd('queue-mismatch', async ({ socket, build }) => {
     const port = await freePort();
     expect(await ensureAs(socket, { kind: 'desktop' }, { port, loopbackOnly: true })).toMatchObject({

@@ -1877,7 +1877,10 @@ async function runStimdInner(
   adoptMetroChildren(log);
   resumeLogStreams(logs, log, attached !== undefined);
   (retention ?? follower)?.record(Boolean(retention), [...workspaceEngineDirs(loadConfig()), ...metroEngineDirs()]);
-  if (serve) void ensureNet(netOptions(serve)).then((answer) => onNet?.(answer));
+  if (serve)
+    void ensureNet(netOptions(serve)).then((answer) => {
+      if (!closing) onNet?.(answer);
+    });
   else if (attached === undefined && shareWorkPending()) {
     // @ref LLP 0011#a-share-only-net-thread-resumes-with-stimd -- a stimd that starts finds the shares the last one served
     const options = netOptions({ port: 0, loopbackOnly: true, shareOnly: true });
