@@ -571,6 +571,13 @@ private struct BuildMachineRow<Toggles: View>: View {
           if let status = pairing?.status, status.tone != .success {
             Text(verbatim: "Viewing: \(status.title)").font(.stim(.footnote)).foregroundStyle(Color(status.tone))
           }
+          if let pairing, case .refused = pairing.connection {
+            if let detail = pairing.status.detail, !detail.isEmpty {
+              Text(verbatim: detail).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            if let command = pairing.status.command { CopyableCommand(command: command, runsOn: entry) }
+          }
           AccessPills(access: access)
         }
         if update != nil || install != nil {
