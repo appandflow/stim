@@ -10,6 +10,9 @@ public enum ServerProtocol {
     "unauthorized", "protocol-unsupported", "server-key-mismatch", "unknown-secret", "other-server",
   ]
 
+  /// Desktop's own refusals of a paired server whose `desktopApi` differs: missing (stim 1.x), lower, or higher.
+  public static let desktopApiCodes: Set<String> = ["desktop-api-1x", "desktop-api-older", "desktop-api-newer"]
+
   /// The methods stim-server answers only on its Unix socket (`desktopMethod` in `packages/server/src/server.ts`).
   public static func isLocalOnly(_ method: String) -> Bool {
     method.hasPrefix("desktop.") || method == "route.setup" || method.hasPrefix("machines.update.")
@@ -34,7 +37,9 @@ public struct ServerError: Error, Equatable, Sendable, LocalizedError, Decodable
   }
 
   public var errorDescription: String? { message }
-  public var refusesClient: Bool { ServerProtocol.refusalCodes.contains(code) }
+  public var refusesClient: Bool {
+    ServerProtocol.refusalCodes.contains(code) || ServerProtocol.desktopApiCodes.contains(code)
+  }
 }
 
 public struct HelloResult: Decodable, Equatable, Sendable {

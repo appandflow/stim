@@ -81,11 +81,18 @@ import Testing
     }
   }
 
-  @Test(arguments: [(nil, "npm i -g stim@latest"), (0, "stim remote update floco")] as [(Int?, String)])
-  func anOlderRemoteGetsARemedyThatWorksOnIt(api: Int?, remedy: String) async {
+  @Test(
+    arguments: [
+      (nil, "Install stim 2 on floco", "npm i -g stim@latest"),
+      (0, "Update stim on floco", "stim remote update floco"),
+      (2, "Update Stim Desktop", nil),
+    ] as [(Int?, String, String?)])
+  func aRemoteWithADifferentDesktopApiShowsItsOwnRemedyInTheConnectionStatus(
+    api: Int?, title: String, command: String?
+  ) async {
     let server = ScriptedServer()
     server.desktopApi = api
-    let (client, _) = client(server)
+    let (client, retries) = client(server)
     client.start()
     for _ in 0..<400 {
       if case .refused = client.state { break }
@@ -96,8 +103,15 @@ import Testing
       Issue.record("Expected an API refusal")
       return
     }
-    #expect(error.code == "protocol-unsupported")
-    #expect(error.message.contains(remedy))
+    #expect(error.refusesClient)
+    #expect(retries.delays.isEmpty)
+    let paired = PairedServer(
+      endpoint: Self.remote, name: "floco", serverKey: Data(repeating: 1, count: 32),
+      clientKey: Data(repeating: 2, count: 32), serverID: nil, capabilities: ["read"],
+      pairedAt: Date(timeIntervalSince1970: 1))
+    let status = PairedServers.Entry(id: "x", kind: .pairing(paired), connection: .refused(error)).status
+    #expect(status.title == title)
+    #expect(status.command == command)
   }
 
   @Test func aRemoteServerNeverGetsTheBootstrapOrALocalOnlyMethod() async throws {
