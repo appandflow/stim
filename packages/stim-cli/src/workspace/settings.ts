@@ -24,6 +24,7 @@ import {
   settingValueError,
   REMOTE_DEVICE_BACKENDS,
   REMOVED_SETTINGS,
+  MACHINE_RECORD_KEYS,
   SETTING_GROUPS,
   SETTINGS,
   WEB_VIEWPORTS,
@@ -531,6 +532,10 @@ export function iosLanHostSettingError(settings: unknown): string | null {
   return settingError(settings, 'ios.lanHost');
 }
 
+const MACHINE_KNOWN_SETTINGS = new Set(
+  SETTINGS.flatMap((setting) => setting.key.split('.').map((_, index, parts) => parts.slice(0, index + 1).join('.'))),
+);
+
 export function unknownSettingKeys(settings: unknown, prefix = ''): string[] {
   if (!isPlainObject(settings)) return [];
   const unknown: string[] = [];
@@ -579,6 +584,27 @@ export function removedMachineSettings(machine: unknown): SettingsObject {
     if (value !== undefined) setSettingValueAt(settings, key, value);
   }
   return settings;
+}
+
+function unknownScopedEntries(own: SettingsObject, prefix = ''): Array<{ key: string; value: unknown }> {
+  const unknown: Array<{ key: string; value: unknown }> = [];
+  for (const [name, value] of Object.entries(own)) {
+    const path = prefix ? `${prefix}.${name}` : name;
+    if (path === '$schema') continue;
+    if (name === '' || name.includes('.')) continue;
+    const group = [...MACHINE_KNOWN_SETTINGS].some((k) => k.startsWith(`${path}.`));
+    if (isPlainObject(value) && (group || !MACHINE_KNOWN_SETTINGS.has(path))) {
+      unknown.push(...unknownScopedEntries(value, path));
+    } else if (!MACHINE_KNOWN_SETTINGS.has(path)) unknown.push({ key: path, value });
+  }
+  return unknown;
+}
+
+export function unknownMachineEntries(machine: unknown): Array<{ key: string; value: unknown }> {
+  if (!isPlainObject(machine)) return [];
+  return unknownScopedEntries(
+    Object.fromEntries(Object.entries(machine).filter(([key]) => !MACHINE_RECORD_KEYS.has(key))),
+  );
 }
 
 function machineLayerSettings(machine: unknown): SettingsObject | null {

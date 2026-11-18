@@ -126,6 +126,134 @@ test('a name that was removed from the settings is refused and warned about like
   ]);
 });
 
+test('removed names at machine scope are reported with their file and unset refuses them as on main', async () => {
+  const machine = join(home, 'config.json');
+  writeFileSync(
+    machine,
+    JSON.stringify({
+      version: 2,
+      projects: {},
+      repos: {},
+      remote: { buildMode: 'force', machines: [] },
+      daemon: { enabled: true, mode: 'on' },
+      caches: { injectMetroStore: true },
+      budget: { maxLiveWorkspaces: 3 },
+      devices: { reclaimIdleMinutes: 5 },
+      concurrency: { maxBuilds: 2 },
+    }),
+  );
+
+  const { out, note } = await settings(['--json']);
+  expect(JSON.parse(out[0] ?? '').unknown).toEqual(
+    expect.arrayContaining([
+      { key: 'remote.buildMode', scope: 'machine', file: machine, value: 'force' },
+      { key: 'daemon.enabled', scope: 'machine', file: machine, value: true },
+      { key: 'caches.injectMetroStore', scope: 'machine', file: machine, value: true },
+      { key: 'budget.maxLiveWorkspaces', scope: 'machine', file: machine, value: 3 },
+      { key: 'devices.reclaimIdleMinutes', scope: 'machine', file: machine, value: 5 },
+    ]),
+  );
+  expect(JSON.parse(out[0] ?? '').unknown).toHaveLength(5);
+  expect((await settings([])).note).toEqual(
+    expect.arrayContaining([expect.stringContaining(`remote.buildMode in ${machine} is not read by Stim.`)]),
+  );
+  expect(note).toEqual([]);
+
+  const before = readFileSync(machine, 'utf-8');
+  const unset = await settings(['unset', 'remote.buildMode']);
+  expect(unset.exitCode).toBe(1);
+  expect(unset.note.join('\n')).toContain('"remote.buildMode" is not a Stim setting.');
+  expect(readFileSync(machine, 'utf-8')).toBe(before);
+});
+
+test('machine records are not unknown keys and unset refuses to remove them', async () => {
+  const machine = join(home, 'config.json');
+  const text = JSON.stringify({
+    version: 2,
+    projects: {},
+    repos: {},
+    homeId: 'home-1',
+    parked: { ios: [{ udid: 'A' }], android: [{ avd: 'b' }] },
+    iosSimulatorApp: 'stim-desktop',
+    androidEmulatorApp: 'stim-desktop',
+    hosting: { agentDriver: 'agent-device' },
+    server: { acceptClientBuilds: true, workerRoot: 'w', keepAwake: true, buildsPaused: false },
+    concurrency: { maxBuilds: 2, maxDevices: 4 },
+    archive: {
+      maxAgeDays: 30,
+      logs: { maxAgeDays: 7 },
+      recordings: { maxAgeDays: 7 },
+      agentActions: { maxAgeDays: 7 },
+    },
+    debug: { logs: true },
+    ios: { simslim: true },
+    remote: { build: 'auto' },
+  });
+  writeFileSync(machine, text);
+
+  expect(JSON.parse((await settings(['--json'])).out[0] ?? '').unknown).toEqual([]);
+
+  const unset = await settings(['unset', 'parked.ios']);
+  expect(unset.exitCode).toBe(1);
+  expect(readFileSync(machine, 'utf-8')).toBe(text);
+});
+
+test('a machine-only setting in a project layer keeps its group report as on main', async () => {
+  const machine = join(home, 'config.json');
+  writeFileSync(
+    machine,
+    JSON.stringify({
+      version: 2,
+      projects: { [app]: { settings: { concurrency: { maxBuilds: 9 } } } },
+      repos: {},
+      concurrency: { maxBuilds: 2 },
+    }),
+  );
+  const workspaceFile = `${machine} (projects["${app}"].settings)`;
+  expect(JSON.parse((await settings(['--json'])).out[0] ?? '').unknown).toEqual([
+    { key: 'concurrency', scope: 'workspace', file: workspaceFile, value: { maxBuilds: 9 } },
+  ]);
+
+  const before = readFileSync(machine, 'utf-8');
+  expect((await settings(['unset', 'concurrency'])).exitCode).toBe(1);
+  expect(readFileSync(machine, 'utf-8')).toBe(before);
+});
+
+test('a literal dotted machine property is ignored and never touches a record or a project setting', async () => {
+  const machine = join(home, 'config.json');
+  const text = JSON.stringify({
+    version: 2,
+    projects: {},
+    repos: {},
+    parked: { ios: [{ udid: 'A' }] },
+    'parked.ios': 'stale',
+    'ios.deviceType': 'iPhone 16',
+  });
+  writeFileSync(machine, text);
+  writeFileSync(join(app, '.stim.json'), JSON.stringify({ ios: { deviceType: 'iPhone 17' } }));
+
+  expect(JSON.parse((await settings(['--json'])).out[0] ?? '').unknown).toEqual([]);
+  expect((await settings(['unset', 'parked.ios', '--scope', 'machine'])).exitCode).toBe(1);
+  expect(readFileSync(machine, 'utf-8')).toBe(text);
+});
+
+test.each([
+  ['an empty name beside a live home identity', { homeId: 'live', '': { homeId: 'stale' } }, 'homeId'],
+  [
+    'an empty name above the parked record',
+    { parked: { ios: [{ udid: 'A' }] }, '': { parked: { ios: [] } } },
+    'parked.ios',
+  ],
+])('%s is not an unknown key and unset leaves the file alone', async (_, extra, key) => {
+  const machine = join(home, 'config.json');
+  const text = JSON.stringify({ version: 2, projects: {}, repos: {}, ...extra });
+  writeFileSync(machine, text);
+
+  expect(JSON.parse((await settings(['--json'])).out[0] ?? '').unknown).toEqual([]);
+  expect((await settings(['unset', key, '--scope', 'machine'])).exitCode).toBe(1);
+  expect(readFileSync(machine, 'utf-8')).toBe(text);
+});
+
 test('unset of maintenance.idleStopHours removes the still-active machine setting', async () => {
   saveConfig({ version: 2, projects: {}, repos: {}, maintenance: { idleStopHours: 0 } });
 
