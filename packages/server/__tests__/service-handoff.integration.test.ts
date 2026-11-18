@@ -344,7 +344,7 @@ function fixture(label: string, port: number) {
 }
 
 const unmarkedRefusal = (pid: number, home: string, port: number, label: string) =>
-  `Stim daemon PID ${pid} for ${home} serves port ${port} outside the ${label} job, and it carries no service mark: Stim Desktop, \`stim serve\`, or a Stim build older than this one started it, so install cannot prove it belongs to ${label} and left the service as it was. Stop it once its work drains with \`kill ${pid}\`; that also stops what Stim Desktop or the command that started it is using, and its dev servers keep running and the next stimd takes them over. Then run \`stim service install --label ${label}\` again.`;
+  `Stim daemon PID ${pid} for ${home} serves port ${port} outside the ${label} job, and it carries no service mark: Stim Desktop, \`stim serve\`, or a Stim build older than this one started it, so install cannot prove it belongs to ${label} and left the service as it was. Stop it once its work drains with \`kill ${pid}\`; that also stops what Stim Desktop or the command that started it is using, and its dev servers keep running and the next stimd takes them over. Then run the same \`stim service install\` command again.`;
 
 const homeClaim = (home: string) => readClaimSet(stimdClaimRoot(home)).live.find(({ mode }) => mode === 'exclusive');
 
