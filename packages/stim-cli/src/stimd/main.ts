@@ -938,8 +938,7 @@ async function runStimdInner(
         return;
       }
       if (restartingNet) return;
-      recordNet(null);
-      handleNetStop(serve, closing, attached !== undefined, requestEnd, shutdown, requestTick);
+      netGone();
     },
     (why) => maybeUpdate(why, ASKED_MS),
     (why) => {
@@ -948,6 +947,10 @@ async function runStimdInner(
     },
   );
   let restartingNet = false;
+  const netGone = () => {
+    recordNet(null);
+    handleNetStop(serve, closing, attached !== undefined, requestEnd, shutdown, requestTick);
+  };
   let netTurns: Promise<unknown> = Promise.resolve();
   let updating: Promise<void> | null = null;
   const maybeUpdate = (why: string, everyMs: number) => {
@@ -1444,13 +1447,13 @@ async function runStimdInner(
                 forService &&
                 running !== null &&
                 !running.shareOnly &&
-                (running.loopbackOnly !== options.loopbackOnly || (port !== undefined && running.port !== port));
+                (running.loopbackOnly !== options.loopbackOnly ||
+                  (port !== undefined && port !== 0 && running.port !== null && running.port !== port));
               const serviceMove = forService && running?.shareOnly === true;
               const restart =
                 serviceMove ||
                 (kind === 'desktop' &&
                   !serviceNet &&
-                  !restartingNet &&
                   !pinned() &&
                   running !== null &&
                   (running.loopbackOnly !== options.loopbackOnly ||
@@ -1488,6 +1491,7 @@ async function runStimdInner(
                   })
                   .finally(() => {
                     restartingNet = false;
+                    if (!net.running()) netGone();
                   });
               };
               const answer = mismatch

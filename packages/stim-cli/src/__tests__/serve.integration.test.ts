@@ -531,6 +531,54 @@ test('two overlapping service asks against a held service port restore the share
   }
 }, 120_000);
 
+test('a matching service ask that lands while the booted thread starts joins it', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-net-boot-window-'));
+  const env = { ...process.env, STIM_HOME: home, HOME: home, USERPROFILE: home, PATH: '' };
+  const previousHome = process.env.STIM_HOME;
+  process.env.STIM_HOME = home;
+  const port = await freePort();
+  const stimd = spawn(
+    process.execPath,
+    [
+      join(root, 'packages/stim-cli/dist/cli.mjs'),
+      '__stimd',
+      '--mode',
+      'off',
+      '--carried',
+      '--service',
+      '--loopback-only',
+      '--port',
+      String(port),
+    ],
+    { env, stdio: 'ignore' },
+  );
+  const stimdExited = once(stimd, 'exit');
+  try {
+    let record: { socket: string; build: string } | undefined;
+    const deadline = Date.now() + 15_000;
+    while (!record) {
+      if (Date.now() > deadline || stimd.exitCode !== null) throw new Error('stimd wrote no run/stimd.json');
+      try {
+        record = JSON.parse(readFileSync(stimdRecordFile(), 'utf8'));
+      } catch {
+        await new Promise((done) => setTimeout(done, 2));
+      }
+    }
+    const ask = { port, loopbackOnly: true, extraEnv: [], pathPrepend: [], service: true };
+    expect(await ensureAs(record.socket, { kind: 'cli', build: record.build }, ask)).toMatchObject({
+      listening: true,
+      port,
+    });
+    stimd.kill('SIGTERM');
+    expect(await stimdExited).toEqual([0, null]);
+  } finally {
+    if (stimd.exitCode === null && stimd.signalCode === null) stimd.kill('SIGKILL');
+    if (previousHome === undefined) delete process.env.STIM_HOME;
+    else process.env.STIM_HOME = previousHome;
+    rmSync(home, { recursive: true, force: true });
+  }
+}, 60_000);
+
 async function withStimd(
   name: string,
   body: (context: {

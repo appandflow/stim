@@ -179,3 +179,19 @@ test('close during a restart starts no thread for the restart or an ask waiting 
   expect(net.running()).toBeNull();
   expect(current()).toBe(first);
 });
+
+test('a worker that never reports gets a bounded answer and the next ask starts a new one', async () => {
+  vi.useFakeTimers();
+  const net = createNetThread(log, () => {});
+  const first = net.ensure(options);
+  const silent = current();
+  await vi.advanceTimersByTimeAsync(30_000);
+  await expect(first).resolves.toMatchObject({ listening: false });
+  expect(state.messages).toContain('stop');
+  silent.emit('message', { type: 'closed' });
+  silent.emit('exit', 0);
+  const second = net.ensure(options);
+  expect(current()).not.toBe(silent);
+  current().emit('message', { type: 'listening', port: 1234 });
+  await expect(second).resolves.toEqual({ listening: true, port: 1234 });
+});

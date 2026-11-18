@@ -3,6 +3,7 @@ import { Worker } from 'node:worker_threads';
 import { spawnEntry } from '../spawn-entry.ts';
 
 const STOP_WAIT_MS = 15_000;
+const START_WAIT_MS = 2 * STOP_WAIT_MS;
 
 /** The options of `stim serve`, a service unit or a request to stimd, as the net thread takes them. */
 export interface NetOptions {
@@ -134,7 +135,18 @@ export function createNetThread(
       const thread = new Worker(spawnEntry('net-thread'), { workerData: { net: options } });
       let clean = false;
       worker = thread;
-      started = new Promise<NetAnswer>((answer) => {
+      started = new Promise<NetAnswer>((settle) => {
+        const timer = setTimeout(() => {
+          const message = `the net thread did not report within ${START_WAIT_MS / 1000} s`;
+          log('warn', 'net_start_timeout', message);
+          settle({ listening: false, message });
+          if (worker === thread) stopThread().catch(() => {});
+        }, START_WAIT_MS);
+        timer.unref();
+        const answer = (reply: NetAnswer) => {
+          clearTimeout(timer);
+          settle(reply);
+        };
         thread.on('message', (message: FromNet) => {
           if (message.type === 'listening') {
             listening = true;
