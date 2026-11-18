@@ -17,7 +17,7 @@ import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { existsSync, lstatSync, realpathSync, renameSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
-import { getProject, loadConfig, withConfigLockAsync } from '../workspace/config.ts';
+import { getConfigDir, getProject, loadConfig, withConfigLockAsync } from '../workspace/config.ts';
 import { withWorkspaceProcessLock, WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { pidExists, signalProcessTreeAsync } from '../metro.ts';
 import { releaseBrowserPort } from '../named-ports.ts';
@@ -320,10 +320,26 @@ async function parkOwnedIosSim(
   return { record, evicted };
 }
 
+export function withIosDeviceNameLock<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  return withWorkspaceProcessLock(getConfigDir(), 'ios-device-names', async () => fn(), { external: true, signal });
+}
+
+function iosSimReference(udid: string): string | null {
+  const config = loadConfig();
+  if (!config) throw new Error(`Cannot verify references to simulator ${udid} without a Stim config; it was kept.`);
+  for (const [projectPath, project] of Object.entries(config.projects)) {
+    for (const { slot, platforms } of projectDeviceSlots(project)) {
+      if (platforms.ios?.deviceUdid === udid) return `${projectPath} (${slot})`;
+    }
+  }
+  return readParked('ios', { config }).some((entry) => entry.udid === udid) ? 'the simulator pool' : null;
+}
+
 export async function teardownOwnedIosSim(
   udid: string,
   {
     del = false,
+    unreferenced = false,
     label,
     park,
     deferShutdown,
@@ -332,6 +348,8 @@ export async function teardownOwnedIosSim(
     operation,
   }: {
     del?: boolean;
+    /** With `del`, refuses to delete a simulator that a project record or the pool references when the delete runs. */
+    unreferenced?: boolean;
     label?: string;
     park?: ParkRequest;
     /** Leaves a booted simulator booted until `until`, after ending its sessions and its app, and records it for the daemon. */
@@ -344,6 +362,10 @@ export async function teardownOwnedIosSim(
   let parkFallback: string | undefined;
   const reportedBusy = new Set<string>();
   try {
+    if (del && unreferenced) {
+      const holder = await withIosDeviceNameLock(async () => iosSimReference(udid), operation?.signal);
+      if (holder) return { status: 'skipped', kind: 'referenced', reason: `referenced by ${holder}` };
+    }
     const resolved = await resolveOwnedIosSimNow(udid, operation);
     if (resolved.notOwned) {
       return {

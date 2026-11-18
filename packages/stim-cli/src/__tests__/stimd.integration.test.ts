@@ -179,7 +179,10 @@ function daemonLog(): string {
 }
 
 function startDaemonProcess(): SpawnedDaemon {
-  const child = getExecutor().spawn(process.execPath, [entry, '__stimd'], { env: { ...process.env }, stdio: 'ignore' });
+  const child = getExecutor().spawn(process.execPath, [entry, '__stimd'], {
+    env: { ...process.env, STIM_DAEMON: 'on' },
+    stdio: 'ignore',
+  });
   const exited = new Promise<number | null>((done) => child.once('exit', (code) => done(code)));
   daemons.push({ child, exited });
   return { child, exited };
