@@ -380,23 +380,31 @@ const SCOPE_TEXT: Record<Scope, string> = {
   test: 'request managed engine updates',
 };
 
-export async function pair(port: number, json: boolean, control: boolean): Promise<void> {
+/** Prints a pairing payload; `loopbackOnly` says the listener serves this machine only, so only a local endpoint pairs. */
+export async function pair(port: number, json: boolean, control: boolean, loopbackOnly = false): Promise<void> {
   const tailscaleModule = await tailscalePackage();
   const { findTailscale, readTailscaleStatus, serveRoute } = tailscaleModule;
   const binary = findTailscale(process.env);
   const tailscale = await readTailscaleStatus(binary, process.env);
   const [lan] = resolveLanAddresses(await readLanAddresses(), networkInterfaces()).addresses;
-  let endpoint = `ws://${lan ?? '127.0.0.1'}:${port}`;
+  const local = `ws://127.0.0.1:${port}`;
+  let endpoint = lan ? `ws://${lan}:${port}` : local;
   let note = tailscaleNote(tailscale);
   if (note)
     note = `${note} The endpoint above only works ${lan ? 'on this local network, while stim-server listens there (server.lanAddresses)' : 'on this machine'}.`;
+  let tailnet = false;
   if (tailscale.state === 'running' && tailscale.dnsName) {
     const route = await serveRoute(binary, process.env, port, tailscale.ips);
     if (route.state === 'funneled') fail(`refusing to pair. ${routeNote(tailscaleModule, route, port)}`);
     endpoint = pairingEndpoint(tailscaleModule, tailscale.ips, tailscale.dnsName, route, port);
     note = routeNote(tailscaleModule, route, port);
-    markTailnet('pair');
+    tailnet = true;
   }
+  if (loopbackOnly && endpoint !== local)
+    fail(
+      `refusing to pair: this Stim home's server serves this machine only, so a device cannot reach ${endpoint}. Turn on Allow connections in Stim Desktop, or run stim serve without --loopback-only, then pair again.`,
+    );
+  if (tailnet) markTailnet('pair');
   const { token, expiresAt } = createPairingToken(Date.now(), capabilitiesFor(control));
   const fingerprint = keyFingerprint(serverIdentity().publicKey);
   const payload = { v: 2, name: macName(tailscale), endpoint, pairingToken: token, fingerprint };

@@ -44,8 +44,8 @@ interface StatusWorkerRequest {
   port: MessagePort;
 }
 
-/** Whether the net thread serves, on which port, or why it does not. */
-type NetAnswer = { listening: true; port: number } | { listening: false; message: string };
+/** Whether the net thread serves, on which port and whether for this machine only, or why it does not. */
+type NetAnswer = { listening: true; port: number; loopbackOnly?: true } | { listening: false; message: string };
 
 export interface NetThread {
   /** Starts the net thread with `options` unless it runs; resolves once it listens or refuses. */
@@ -159,7 +159,7 @@ export function createNetThread(
             listening = true;
             port = message.port;
             log('info', 'net_started', `the net thread listens on port ${message.port}`);
-            answer({ listening: true, port: message.port });
+            answer({ listening: true, port: message.port, ...(loopbackOnly ? { loopbackOnly: true as const } : {}) });
           } else if (message.type === 'refused') {
             log('warn', 'net_refused', message.message);
             clean = message.clean;

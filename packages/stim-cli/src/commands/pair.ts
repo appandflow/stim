@@ -14,10 +14,15 @@ const pairOp: Op = defineOp({
     const port = Number(opts.port);
     if (!Number.isInteger(port) || port < 0 || port > 65535)
       throw new CliUsageError(`--port must be a port number, got ${opts.port}.`);
-    const { pair } = await loadServerCli();
-    await pair(port, opts.json === true, opts.control === true);
     const { ensureNet, stimdRefused } = await import('../daemon/client.ts');
     const answer = await ensureNet(false);
+    const { pair } = await loadServerCli();
+    await pair(
+      port,
+      opts.json === true,
+      opts.control === true,
+      answer?.listening === true && answer.loopbackOnly === true,
+    );
     if (!answer && stimdRefused())
       console.error(
         "This Stim home's stimd runs another Stim build, so this stim cannot check that its server listens. The pairing is saved, and that server takes it if it listens.",
