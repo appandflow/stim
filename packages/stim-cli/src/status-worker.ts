@@ -5,6 +5,7 @@ const STOP_EXIT_MS = 500;
 
 const cwd: unknown = workerData?.cwd;
 const port: MessagePort | null = workerData?.port ?? parentPort;
+port?.postMessage({ started: true });
 const watch = runStatusWatch({
   json: true,
   ...(typeof cwd === 'string' ? { cwd } : {}),

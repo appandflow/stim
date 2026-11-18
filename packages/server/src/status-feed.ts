@@ -8,8 +8,8 @@ const STOP_GRACE_MS = 2_000;
 
 /**
  * A status worker to start on another thread: the entry, its environment and directory, and the port it reads `stop`
- * from and posts its payloads on. After `stop` it posts `{ stopped: true }` once its children have ended, before its
- * file watchers close.
+ * from and posts its payloads on. It posts `{ started: true }` before it starts any child, and after `stop` it posts
+ * `{ stopped: true }` once its children have ended, before its file watchers close.
  */
 export interface StatusWorkerRequest {
   worker: string;
@@ -44,6 +44,7 @@ export class StatusFeed {
   private delay = RESTART_MIN_MS;
   private readonly stopping = new Set<Promise<unknown>>();
   private unverified: Error | null = null;
+  private readonly started = new WeakSet<MessagePort>();
   private readonly options: StatusFeedOptions;
 
   constructor(options: StatusFeedOptions) {
@@ -85,7 +86,10 @@ export class StatusFeed {
     if (spawn) {
       const { port1, port2 } = new MessageChannel();
       this.worker = port1;
-      port1.on('message', (message: unknown) => this.received(port1, message));
+      port1.on('message', (message: unknown) => {
+        if (isJsonObject(message) && message.started === true) this.started.add(port1);
+        this.received(port1, message);
+      });
       port1.on('close', () => this.ended(port1, 'the status worker exited'));
       spawn({ worker: entry, env, cwd, port: port2 });
       return;
@@ -120,8 +124,8 @@ export class StatusFeed {
    * Asks the worker to stop its watch, which ends the adb and simctl children it started. A child worker counts as
    * stopped once it exits, and is terminated if it has neither exited nor confirmed its children ended after a grace
    * period. A worker started through `spawn` counts as stopped once it posts `{ stopped: true }`; the caller's own stop
-   * limit bounds that wait, since this thread cannot terminate it. When its port closes first, `close` reports the
-   * cleanup as unverified.
+   * limit bounds that wait, since this thread cannot terminate it. When its port closes first after it posted
+   * `{ started: true }`, `close` reports the cleanup as unverified; a worker that never started has no children.
    */
   private stop(): void {
     const worker = this.worker;
@@ -147,7 +151,7 @@ export class StatusFeed {
           worker.close();
         });
         worker.once('close', () => {
-          if (!acknowledged)
+          if (!acknowledged && this.started.has(worker))
             this.unverified ??= new Error(
               'The status worker ended before confirming that its adb and simctl children exited.',
             );
