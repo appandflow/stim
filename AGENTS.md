@@ -18,7 +18,7 @@ git worktree add -> cd -> worktree warm -> start -> ios|android -> logs --errors
 
 The command surface is `doctor`, `worktree warm|remove`, `start`, `stop`,
 `ios`, `android`, `macos`, `web`, `reload`, `revive`, `agent-device`, `share [stop|list]`, `ports [get|stop|release|reverse]`, `device lock|unlock|provision|location|permission|push|network`, `logs`, `remote add|list|remove|update`, `settings [get|set|unset]`,
-`status`, `stats`, `gc`, `guide`, `plugin list|test`, `serve`, `pair`, `pairings`, `service`, `setup`, `ci`, and `engine status|use|install|update|rollback|uninstall`. Do not add commands or flags without an explicit product decision.
+`status`, `stats`, `test`, `gc`, `guide`, `plugin list|test`, `serve`, `pair`, `pairings`, `service`, `setup`, `ci`, and `engine status|use|install|update|rollback|uninstall`. Do not add commands or flags without an explicit product decision.
 Projects can wrap Stim when they need custom behavior.
 
 Runtime state belongs under `$STIM_HOME/workspaces/`, not in the project
@@ -355,7 +355,7 @@ outside it moves to its own issue and pull request.
 - **Build access.** Only a worker-side approval grants build access. Follow
   [LLP 0009](./llp/0009-build-offload.decision.md) for placement, signing, job compatibility and worker cleanup.
   The worker records `test` as a separate approval. [LLP 0020](./llp/0020-test-offload.decision.md)
-  describes the approval and the retired test command proposal.
+  describes the approval and the local `stim test` command.
 - **Shared state reads.** `@stim-cli/core/state` owns the `$STIM_HOME` path
   layout, the state and payload types, and the readers of config, workspace
   state, ledgers, logs, and archives under `archive/`. The CLI owns every write
