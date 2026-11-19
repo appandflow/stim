@@ -6,9 +6,10 @@ WORKSPACE SETUP
 
 WORKTREE: Use a linked worktree by default; create one with Git if needed.
 The clean source checkout is infrastructure, not a workspace. Run stim
-worktree warm first, also when the harness made the worktree; skip it only in
-a SINGLE CHECKOUT. Wait for warm to exit successfully (exit code 0) before edits,
-installs, start, ios or android. Concurrent writes to the destination are unsafe.
+worktree warm first, even if a harness made the worktree; skip it only if the
+user asked to work in place.
+Wait for warm to exit successfully (exit code 0) before edits, installs, start,
+ios or android. Concurrent writes to the destination are unsafe.
 Options: stim guide lifecycle options.
 
 SINGLE CHECKOUT: Work in place when the user asks or the task needs their
@@ -85,7 +86,7 @@ Run stim guide for the full topic index.`,
       summary: 'Expo and bare React Native build, Metro, and verification workflow',
       body: () => `NORMAL WORKFLOW
 
-  stim worktree warm                   # first, unless in a single checkout; wait for exit 0
+  stim worktree warm                   # first, unless told to work in place; wait for exit 0
   stim start
   stim ios                             # or: stim android, or: stim web
 
