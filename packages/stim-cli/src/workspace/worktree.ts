@@ -723,8 +723,8 @@ function normalizePorcelainLine(line: string): string {
 const SAFE_BRANCH_NAME = /^[A-Za-z0-9@._/-]+$/;
 
 export async function unpushedCommitsAsync(dir: string, options: AsyncReadOptions = {}): Promise<string[] | null> {
-  const branch = await removalCheckAsync(dir, ['symbolic-ref', '--quiet', '--short', 'HEAD'], options);
-  const own = branch === null ? '' : branch.trim();
+  const ref = await removalCheckAsync(dir, ['symbolic-ref', '--quiet', 'HEAD'], options);
+  const own = ref?.trim().startsWith('refs/heads/') ? ref.trim().slice('refs/heads/'.length) : '';
   const protection =
     own && SAFE_BRANCH_NAME.test(own) ? ['--remotes', `--exclude=${own}`, '--branches'] : ['--remotes'];
   if (!own && (await removalCheckAsync(dir, ['rev-parse', '--abbrev-ref', 'HEAD'], options)) === 'HEAD') {

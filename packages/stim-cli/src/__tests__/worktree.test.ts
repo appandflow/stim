@@ -92,6 +92,39 @@ test('unpushedCommits against a real repo: commits inherited from a local-only b
   }
 });
 
+test('unpushedCommits against a real repo: reports a branch-only commit when a tag shares the branch name', async () => {
+  resetExecutor();
+  const base = mkdtempSync(join(tmpdir(), 'stim-test-tag-branch-'));
+  const repo = join(base, 'repo');
+  try {
+    const bareRemote = join(base, 'remote.git');
+    mkdirSync(bareRemote, { recursive: true });
+    execSync(`git init -q --bare "${bareRemote}"`);
+    mkdirSync(repo, { recursive: true });
+    const git = (cmd: string) => execSync(cmd, { cwd: repo, encoding: 'utf-8' });
+    git('git init -q -b main');
+    git('git config user.email test@example.com');
+    git('git config user.name test');
+    git(`git remote add origin "${bareRemote}"`);
+    writeFileSync(join(repo, 'README.md'), 'hello');
+    git('git add README.md');
+    git('git commit -q -m init');
+    git('git push -q -u origin main');
+    git('git tag foo');
+    git('git checkout -q -b foo');
+    writeFileSync(join(repo, 'local.txt'), 'local only');
+    git('git add local.txt');
+    git('git commit -q -m "branch-only commit"');
+
+    const unpushed = await unpushedCommitsAsync(repo);
+    assert(unpushed, 'unpushedCommits returned null');
+    expect(unpushed.length).toBe(1);
+    expect(unpushed[0]).toMatch(/branch-only commit/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 describe.each([
   { pm: 'npm', lockfile: 'package-lock.json', state: 'node_modules/.package-lock.json' },
   { pm: 'pnpm', lockfile: 'pnpm-lock.yaml', state: 'node_modules/.pnpm/lock.yaml' },
