@@ -574,9 +574,9 @@ export async function runDormantDependencies(
 }
 
 /**
- * Whether a discovered checkout holds a dependency tree, or with `outputs` the Stim workspace or in-tree build output the
- * dormant pass reclaims, each read of the checkout bounded like the launcher readings by `answered`; false, for this
- * pass, when one does not answer or another read is pending.
+ * Whether a discovered checkout holds a dependency tree, its two probes bounded like the launcher readings by `answered`
+ * (false, for this pass, when one does not answer or another read is pending), or with `outputs` the Stim workspace or
+ * in-tree build output, read as the dormant output pass reads it.
  */
 async function holdsReclaimable(path: string, outputs: boolean, signal?: AbortSignal): Promise<boolean> {
   const exists = (target: string) =>
@@ -593,8 +593,8 @@ async function holdsReclaimable(path: string, outputs: boolean, signal?: AbortSi
   try {
     for (const dir of ARTIFACT_DIRS.dependencies) if (await exists(join(path, dir))) return true;
     if (!outputs) return false;
-    if (workspaceOutputPaths(workspaceDir(path)).length) return true;
-    return (await answered(path, () => existingBuildDirsAsync(path), PROBE_TIMEOUT_MS, signal)).length > 0;
+    signal?.throwIfAborted();
+    return workspaceOutputPaths(workspaceDir(path)).length > 0 || (await existingBuildDirsAsync(path)).length > 0;
   } catch (error) {
     if (error instanceof Unanswered) return false;
     throw error;

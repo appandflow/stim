@@ -512,9 +512,10 @@ checkout (its `.git`, git activity, launchers) starts.
 The hourly dependency and output pass walks a discovered checkout only when it
 holds a `node_modules`, an `ios/Pods` or build output to reclaim, so a large
 idle checkout with nothing left to take costs no walk; deletion still rechecks
-idleness first. Each of those probes is bounded like the launcher readings
-(3 seconds, through `answered`), and a checkout whose probe does not answer is
-left out for that pass. Within one daemon pass or `stim gc` run, a completed walk is reused
+idleness first. The `node_modules` and `ios/Pods` probes are bounded like the
+launcher readings (3 seconds each, through `answered`), and a checkout whose probe
+does not answer is left out for that pass; the build output is read as the
+dormant output pass reads it. The Metro store is never resolved for this check. Within one daemon pass or `stim gc` run, a completed walk is reused
 by every later read of that checkout until the pass acts or takes a workspace
 lock, so the checks made under a claim walk again.
 

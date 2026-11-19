@@ -106,48 +106,65 @@ describe('a discovered checkout in the idle stages', () => {
     expect(evidence).toHaveBeenCalledWith(app, expect.anything());
   });
 
-  it.each([
-    { probe: 'dependency tree', read: 'stat', under: 'node_modules' },
-    { probe: 'build output', read: 'lstat', under: join('android', 'app', 'build') },
-  ] as const)(
-    'skips a discovered checkout for the pass when its $probe probe never answers',
-    async ({ read, under }) => {
-      const roots = join(base, 'roots');
-      const app = join(roots, 'app');
-      mkdirSync(join(app, 'android'), { recursive: true });
-      writeFileSync(join(app, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
-      const config: Config = { maintenance: { discoverRoots: [roots] }, projects: {}, repos: {} };
-      saveConfig(config);
-      const target = join(app, under);
-      const real = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
-      const stalled: (() => void)[] = [];
-      let reached = () => {};
-      const atProbe = new Promise<void>((resolve) => (reached = resolve));
-      const never = () => {
-        reached();
-        return new Promise<never>((_, reject) => {
-          stalled.push(() => reject(new Error('released')));
-        });
-      };
-      const probe = read === 'stat' ? vi.mocked(stat) : vi.mocked(lstat);
-      if (read === 'stat')
-        vi.mocked(stat).mockImplementation((path, options) => (path === target ? never() : real.stat(path, options)));
-      else
-        vi.mocked(lstat).mockImplementation((path, options) => (path === target ? never() : real.lstat(path, options)));
-      const evidence = vi.spyOn(activity, 'discoveredEvidence');
+  const discoveredApp = (...dirs: string[]) => {
+    const roots = join(base, 'roots');
+    const app = join(roots, 'app');
+    for (const dir of ['android', ...dirs]) mkdirSync(join(app, dir), { recursive: true });
+    writeFileSync(join(app, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+    const config: Config = { maintenance: { discoverRoots: [roots] }, projects: {}, repos: {} };
+    saveConfig(config);
+    return { app, config };
+  };
 
-      const run = runDormantDependencies({ config, act: false, log: () => {}, ...reading, operation: testContext() });
-      await atProbe;
-      await vi.advanceTimersByTimeAsync(3000);
-      await run;
+  it('skips a discovered checkout for the pass when its dependency tree probe never answers', async () => {
+    const { app, config } = discoveredApp();
+    const target = join(app, 'node_modules');
+    const real = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    const stalled: (() => void)[] = [];
+    let reached = () => {};
+    const atProbe = new Promise<void>((resolve) => (reached = resolve));
+    vi.mocked(stat).mockImplementation((path, options) => {
+      if (path !== target) return real.stat(path, options);
+      reached();
+      return new Promise<never>((_, reject) => {
+        stalled.push(() => reject(new Error('released')));
+      });
+    });
+    const evidence = vi.spyOn(activity, 'discoveredEvidence');
 
-      expect(probe).toHaveBeenCalledWith(target);
-      expect(evidence).not.toHaveBeenCalled();
-      probe.mockReset();
-      for (const release of stalled) release();
-      await vi.waitUntil(() => hungRead() === null);
-    },
-  );
+    const run = runDormantDependencies({ config, act: false, log: () => {}, ...reading, operation: testContext() });
+    await atProbe;
+    await vi.advanceTimersByTimeAsync(3000);
+    await run;
+
+    expect(vi.mocked(stat)).toHaveBeenCalledWith(target);
+    expect(evidence).not.toHaveBeenCalled();
+    vi.mocked(stat).mockReset();
+    for (const release of stalled) release();
+    await vi.waitUntil(() => hungRead() === null);
+  });
+
+  it('keeps a discovered checkout as a candidate when its build output listing is slow but answers', async () => {
+    const { app, config } = discoveredApp(join('android', 'app', 'build'));
+    const target = join(app, 'android', 'app', 'build');
+    const real = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    let reached = () => {};
+    const atListing = new Promise<void>((resolve) => (reached = resolve));
+    vi.mocked(lstat).mockImplementation((path, options) => {
+      if (path !== target) return real.lstat(path, options);
+      reached();
+      return new Promise((resolve) => setTimeout(() => resolve(real.lstat(path, options)), 5000));
+    });
+    const evidence = vi.spyOn(activity, 'discoveredEvidence');
+
+    const run = runDormantDependencies({ config, act: false, log: () => {}, ...reading, operation: testContext() });
+    await atListing;
+    vi.mocked(lstat).mockReset();
+    await vi.advanceTimersByTimeAsync(5000);
+    await run;
+
+    expect(evidence).toHaveBeenCalledWith(app, expect.anything());
+  });
 
   it('is a candidate once its source is idle, is kept after an edit, and gets no workspace directory', async () => {
     const roots = join(base, 'roots');
