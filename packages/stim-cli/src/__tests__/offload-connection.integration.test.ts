@@ -302,7 +302,7 @@ async function run(names: string[], note: (line: string) => void) {
   });
 }
 
-test('linked checkouts offer separate areas while projects in one checkout reuse their area', async () => {
+test('linked checkouts offer separate areas but one project id, while projects in one checkout reuse their area', async () => {
   execFileSync('git', ['add', 'package.json'], { cwd: repo });
   execFileSync(
     'git',
@@ -339,6 +339,50 @@ test('linked checkouts offer separate areas while projects in one checkout reuse
   const areas = machine.requests.filter(({ method }) => method === 'build.offer').map(({ params }) => params.repo);
   expect(areas[0]).not.toBe(areas[1]);
   expect(areas.slice(1)).toEqual([areas[1], areas[1], areas[1]]);
+  const projects = machine.requests
+    .filter(({ method }) => method === 'build.offer')
+    .map(({ params }) => JSON.stringify(params.warmth));
+  expect(projects[0]).toMatch(/"project":"[0-9a-f]{16}"/);
+  expect(projects[1]).toBe(projects[0]);
+  expect(projects[2]).not.toBe(projects[0]);
+});
+
+test('worktrees of a bare repository share a project id, and two apps in them do not', async () => {
+  const git = (cwd: string, ...args: string[]) =>
+    execFileSync(
+      'git',
+      ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false', ...args],
+      { cwd, stdio: 'pipe' },
+    );
+  mkdirSync(join(repo, 'app'));
+  writeFileSync(join(repo, 'app', 'package.json'), '{}');
+  git(repo, 'add', '.');
+  git(repo, 'commit', '-qm', 'fixture');
+  const bare = join(home, 'repo.git');
+  git(home, 'clone', '-q', '--bare', repo, bare);
+  const first = join(home, 'first');
+  const second = join(home, 'second');
+  git(bare, 'worktree', 'add', '--detach', first, 'HEAD');
+  git(bare, 'worktree', 'add', '--detach', second, 'HEAD');
+  const machine = await fakeMachine('mini', offer(0.1), { result: { job: 'unused' } });
+  machines.push(machine);
+  for (const projectRoot of [first, second, join(first, 'app'), join(second, 'app')]) {
+    const choice = await chooseBuildMachine({
+      projectRoot,
+      target: TARGET,
+      here: HERE,
+      note: () => {},
+      machines: [credential('mini')],
+    });
+    assert(typeof choice !== 'string');
+    choice.connection.close();
+  }
+  const projects = machine.requests
+    .filter(({ method }) => method === 'build.offer')
+    .map(({ params }) => JSON.stringify(params.warmth));
+  expect(projects[1]).toBe(projects[0]);
+  expect(projects[3]).toBe(projects[2]);
+  expect(projects[2]).not.toBe(projects[0]);
 });
 
 describe('offloadBuild', () => {
@@ -687,6 +731,7 @@ describe('macOS artifact transfer', () => {
         repo: choice.identity.repo,
         project: '',
         platform: 'macos',
+        warmthProject: choice.identity.warmthProject,
         macos: {
           product: 'Sample',
           infoPlist: 'Info.plist',

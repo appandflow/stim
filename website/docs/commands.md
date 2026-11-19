@@ -445,7 +445,7 @@ can compile on a paired remote machine instead: see `remote.build` in
 
 - `--configuration <name>` selects an Xcode configuration. The default is Debug.
 - `--remote-build <local|auto|remote|remote-only|name>` overrides `STIM_REMOTE_BUILD` and
-  `remote.build`. `remote` tries the remote machines first, in `remote.machines` order, and builds here only when none takes the build; `remote-only` refuses instead. A name requires that configured, paired worker and fails
+  `remote.build`. `remote` tries the remote machines first, a machine that last built this checkout or project ahead of `remote.machines` order, and builds here only when none takes the build; `remote-only` refuses instead. A name requires that configured, paired worker and fails
   with `STIM_OFFLOAD_REFUSED` without local fallback. Unlisted or unpaired names refuse at setup before checking the cache, without
   a build record or failed-run stats. A listed paired name with a cache hit
   contacts no worker. Prebuild and pod install run on this machine before
@@ -843,7 +843,7 @@ can compile on a paired remote machine instead: see `remote.build` in
 [machine settings](./settings.md#machine-settings).
 
 - `--remote-build <local|auto|remote|remote-only|name>` overrides `STIM_REMOTE_BUILD` and
-  `remote.build`. `remote` tries the remote machines first, in `remote.machines` order, and builds here only when none takes the build; `remote-only` refuses instead. A name requires that configured, paired worker and fails
+  `remote.build`. `remote` tries the remote machines first, a machine that last built this checkout or project ahead of `remote.machines` order, and builds here only when none takes the build; `remote-only` refuses instead. A name requires that configured, paired worker and fails
   with `STIM_OFFLOAD_REFUSED` without local fallback. Unlisted or unpaired names refuse at setup before checking the cache, without
   a build record or failed-run stats. A listed paired name with a cache hit
   contacts no worker. Prebuild and pod install still run on this machine before
@@ -2110,14 +2110,15 @@ Server and Reload, and no Metro section.
 
 In `--json`, an environment with a recorded run carries
 `lastBuilds: { ios?, android? }`, each
-`{ platform, status, cacheHit, cacheSkipped, durationMs, fingerprint, startedAt, finishedAt, errorCode?, missReason?, buildMachine?, builtOn?, offloadedTo?, offloadFallback?, diagnostics? }`.
+`{ platform, status, cacheHit, cacheSkipped, durationMs, fingerprint, startedAt, finishedAt, errorCode?, missReason?, buildMachine?, builtOn?, offloadedTo?, offloadReason?, offloadFallback?, diagnostics? }`.
 `status` is `ok` or `failed`, and `cacheHit` is `local`, `remote`, or `false`
 when the run compiled or failed before finding an app. `buildMachine` records the
 selected `auto`, `local`, or machine name. `builtOn` records `here` or the worker
 name when a build ran; it is absent on a cache hit or a refusal before building.
 Invalid, unlisted or unpaired selections refuse at setup without a build record.
 `offloadedTo` names the
-remote machine that compiled the app; `offloadFallback` is why a run that
+remote machine that compiled the app, and `offloadReason` why it took the build,
+including what it held warm for it; `offloadFallback` is why a run that
 considered offloading built here instead, such as
 `janics-mac-mini: busy (load at or above 2/core; load 8.2/core, 2 builds)`. A failed run whose
 compiler reported errors carries `diagnostics`: up to five

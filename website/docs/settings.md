@@ -589,7 +589,7 @@ architecture and runtime.
 
 In `auto`, an offloaded iOS/Android build runs prebuild (and `pod install` for iOS) here, then asks
 every paired machine what it can build. Stim picks one that, for iOS and macOS, has a CPU architecture matching the target simulator, with at least 10 GB free, that does
-not decline, taking the first in `remote.machines` order. When a machine that offered fails the sync or refuses to start
+not decline. It prefers a machine that last built this checkout, then one that built another checkout of the project or holds this checkout's dependency install, then `remote.machines` order; a warm machine with no free slot or with its load at its limit is skipped like any other. When a machine that offered fails the sync or refuses to start
 the build, for example because it got busy meanwhile, Stim tries the next one
 in that order:
 
@@ -646,7 +646,7 @@ provider. A project whose `xcodebuild` changes its own fingerprinted inputs
 builds on the machine, fails the fingerprint check there; `auto` builds here and a named selection
 refuses, so
 set `remote.build` to `local` for it. The `--json` payload and `lastBuilds` carry
-`offloadedTo`, or `offloadFallback` with the reason it built here,
+`offloadedTo` with `offloadReason`, why that machine took it, or `offloadFallback` with the reason it built here,
 `stim status` shows the machine and its step while a build runs there, and
 `stim stats` counts offloaded runs apart from cold runs and keeps where each
 compiling build ran and why (see [`stats`](./commands.md#stats)). On the

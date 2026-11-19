@@ -28,6 +28,8 @@ export interface MacosBuild {
   builtOn?: string;
   offloadedTo?: string;
   offloadFallback?: string;
+  /** Why `offloadedTo` took the build. */
+  offloadReason?: string;
 }
 
 export interface MacosAppRecord {
@@ -120,6 +122,7 @@ export function parseMacosRecord(value: unknown): MacosAppRecord | null {
       ...(typeof b.errorCode === 'string' ? { errorCode: b.errorCode } : {}),
       ...(typeof b.offloadedTo === 'string' ? { offloadedTo: b.offloadedTo } : {}),
       ...(typeof b.offloadFallback === 'string' ? { offloadFallback: b.offloadFallback } : {}),
+      ...(typeof b.offloadReason === 'string' ? { offloadReason: b.offloadReason } : {}),
     },
     ...(processRecord(supervisor) ? { supervisor: processRecord(supervisor) } : {}),
     ...(processRecord(app) ? { app: processRecord(app) } : {}),
