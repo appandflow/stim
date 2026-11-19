@@ -64,14 +64,17 @@ Under the target's trim claim the Cargo delete then keeps the whole `target/`
 when it is no longer recognised, when it holds a copy a trim could not put back,
 when it shows use within `idle.dormantDays` or that use cannot be told, when
 another filesystem is mounted anywhere in it, when a process executes from or
-holds open a path in it, or when a build holds a `.cargo-lock`,
+holds open a path in it, or when a build holds a lock file: a `.cargo-lock`,
 `.cargo-build-lock` or `.cargo-artifact-lock` in a top-level entry or a
-directory directly in one. Use means a modification time within that time on
-the `target/` itself, on any top-level entry but Stim's own `.stim-*`, on any
-profile directory or its `.fingerprint`, `deps`, `build` and `incremental`, or a
-stamp in Exact's ledger. A `target/` in which no profile can be found counts as
-used, since Cargo's separate build-directory layout keeps its fingerprints
-elsewhere.
+directory directly in one, Exact's `.exact-sweep.json.lock`, or a file under
+`.apple-cargo-locks/` up to two levels down. Use means a modification time
+within that time, or one that cannot be read, on the `target/` itself, on any
+top-level entry but Stim's own `.stim-*`, on each direct child of a top-level
+directory, or on a profile directory and its `.fingerprint`, `deps`, `build` and
+`incremental`; or a unit stamp within that time in Exact's ledger. The times
+are read two levels down and no deeper, so a write deeper inside a folder that
+is not a profile is not seen. A `target/` with no Cargo profile, such as an
+Exact app's, is dated the same way.
 
 Then, as the trims do (Never delete what a build took back, below), it renames
 each top-level entry into `target/.stim-trimmed/` and reads that entry's lock
@@ -95,7 +98,9 @@ Chosen by the coordinator and the reviews of #5996, not by the maintainer: the
 use dating, the move aside with its recheck and roll back, the mount checks,
 and keeping `target/criterion`. Reason for the dating: the idle evidence skips
 writes in a `target/` git ignores, so a build that ran without a source edit
-shows only in the target's own times. Reason for the move aside: the trim claim
+shows only in the target's own times; two levels of times are what a check that
+must not walk a large `target/` can read, and on this Mac most Exact app targets
+hold no Cargo profile at all. Reason for the move aside: the trim claim
 excludes only other Stim processes, and a Cargo build sharing the target can
 take a profile lock while later profiles are checked. Reason for
 `target/criterion`: Criterion keeps saved benchmark baselines there, which
