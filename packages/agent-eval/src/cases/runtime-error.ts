@@ -1,3 +1,4 @@
+import { attemptsCommand } from '../command-text.ts';
 import {
   atMostUnscripted,
   editPosition,
@@ -69,6 +70,17 @@ export const runtimeError: EvalCase = {
     const rebuilt =
       first === undefined ? [] : launches.filter((index) => index > first && (edit === null || index < edit));
     const reloadAfterEdit = edit === null ? undefined : reloads.find((index) => index >= edit);
+    const verified =
+      edit !== null &&
+      commands
+        .slice(edit)
+        .some(
+          (text) =>
+            attemptsCommand(
+              text,
+              (program, rest) => program === 'stim' && rest[0] === 'logs' && rest.includes('--errors'),
+            ) || ['snapshot', 'screenshot'].some((action) => stimAction(text, 'agent-device') && text.includes(action)),
+        );
     const relaunches =
       edit === null
         ? []
@@ -77,9 +89,9 @@ export const runtimeError: EvalCase = {
       ran(input, IOS_LAUNCH),
       { name: 'edited App.tsx', pass: edit !== null, detail: edit === null ? 'no edit seen' : `after command ${edit}` },
       {
-        name: 'reloaded or relaunched through stim after the edit',
-        pass: edit !== null && (reloadAfterEdit !== undefined || relaunches.length > 0),
-        detail: `${reloads.length} reloads, ${launches.length} launches`,
+        name: 'after the edit, checked the app through stim or reloaded or relaunched it',
+        pass: edit !== null && (verified || reloadAfterEdit !== undefined || relaunches.length > 0),
+        detail: `${reloads.length} reloads, ${launches.length} launches, ${verified ? 'checked' : 'not checked'} after the edit`,
       },
       {
         name: 'no stim ios rerun before the fix',

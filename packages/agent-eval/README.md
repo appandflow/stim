@@ -130,7 +130,8 @@ says to ask the user before `gc`, and code cannot judge a question.
 - `runtime-error`: `stim ios` reports a JavaScript error while the native app is still
   running, and its remedy says to fix the code and not rerun `stim ios`. Needs an edit of
   `App.tsx` (a Codex file change, or a shell redirect, `tee`, `sed -i` or `perl -i` on it)
-  followed by `stim reload` or one `stim ios`. Fails on a rerun of `stim ios` before the
+  followed by a check through Stim (`logs --errors`, or an `agent-device` snapshot or
+  screenshot), a `stim reload` or one `stim ios`. Fails on a rerun of `stim ios` before the
   edit, on two after it with no reload between, and on any launch outside Stim
   (`expo run:ios`, `react-native run-ios`, a package `ios` script, `simctl launch` or
   `install`). Order comes from the transcript. The Claude arm has no Edit or Write tool,
