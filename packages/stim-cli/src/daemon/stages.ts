@@ -867,7 +867,7 @@ export function deleteRunningDevices(
     const { deleted, unmeasured, bytes, failures } = removal;
     if (!deleted.length && !failures)
       return { outcome: 'kept', bytes: 0, detail: 'no owned device of it is on a volume under pressure' };
-    const detail = `no activity for ${Math.floor(candidate.idleMs / MINUTE_MS)} minutes: ${deleted.length ? `deleted ${deleted.join(', ')}` : 'deleted no device'}${unmeasured.length ? ` (freed size not counted for ${unmeasured.join(', ')}: its data directory could not be measured)` : ''}${failures ? `; ${failures} could not be deleted and stay recorded` : ''}; its dev server keeps running. The next stim ios or stim android creates a device.`;
+    const detail = `no activity for ${Math.floor(candidate.idleMs / MINUTE_MS)} minutes: ${deleted.length ? `deleted ${deleted.join(', ')}` : 'deleted no device'}${unmeasured.length ? ` (freed size not counted for ${unmeasured.join(', ')}: its data directory could not be measured)` : ''}${failures ? `; ${failures} could not be deleted and stay recorded` : ''}${servesNow(path, project) ? '; its dev server keeps running' : ''}. The next stim ios or stim android creates a device.`;
     return { outcome: failures ? 'failed' : 'done', bytes, detail, restore: 'the next stim ios or stim android' };
   });
 }

@@ -677,7 +677,7 @@ async function dormantRung(context: RungContext): Promise<void> {
         : {
             outcome: 'would' as const,
             bytes: context.measure ? await workspaceDeviceBytes(context, candidate.project) : 0,
-            detail: `${wouldDetail(context)}; its dev server keeps running`,
+            detail: wouldDetail(context),
             restore: 'the next stim ios or stim android',
           };
       recordAction(
