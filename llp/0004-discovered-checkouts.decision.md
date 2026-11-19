@@ -541,7 +541,8 @@ registered worktree does, at every pressure level, critical included:
   holds it (a worktree inside the main checkout).
 
 A dirty discovered worktree is kept, never archived. A checkout whose source
-scan exceeds its bound is never reduced and is listed under "Needs a person".
+scan runs out of time is kept that pass, checked again on a later one, and listed
+under "Needs a person".
 
 Reason: Stim has no record of what it put in a discovered worktree. It did not
 run `pod install` there, did not copy its ignored files with `worktree warm`,

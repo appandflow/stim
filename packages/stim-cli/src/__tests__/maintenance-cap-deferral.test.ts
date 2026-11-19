@@ -11,11 +11,13 @@ import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
 import * as budget from '../stimd/passes/budget.ts';
 import * as fsUtil from '../fs-util.ts';
 import * as daemonPasses from '../daemon/passes.ts';
+import * as stages from '../daemon/stages.ts';
 import { runMaintenanceAtLevel } from '../stimd/passes/level-run.ts';
 import { runMaintenance } from '../stimd/passes/run.ts';
 import * as measurements from '../stimd/passes/measure.ts';
 import { maintenanceStatus } from '../stimd/passes/status.ts';
 import { saveConfig, upsertProject } from '../workspace/config.ts';
+import { scanSourceWrites } from '../workspace/discovered-activity.ts';
 
 let base: string;
 let target: string;
@@ -197,3 +199,23 @@ test.skipIf(process.platform === 'win32')(
     expect(measured).toMatchObject({ status: 'done', bytes: 5 * 1024 * 1024 });
   },
 );
+
+test('a discovered checkout whose source scan ran out of time is listed as kept for this pass', async () => {
+  vi.spyOn(daemonPasses, 'runDormantReduction').mockResolvedValue([]);
+  vi.spyOn(daemonPasses, 'runForcedLadder').mockResolvedValue(null);
+  saveConfig({ version: 2, projects: {}, repos: {}, maintenance: { discoverRoots: [base] } });
+  upsertProject(join(base, 'app'), { metroPort: null });
+  const other = join(base, 'other');
+  mkdirSync(join(other, 'ios', 'App.xcodeproj'), { recursive: true });
+  writeFileSync(join(other, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+  let at = 0;
+  const scan = await scanSourceWrites(other, Date.now() + 86_400_000, undefined, () => (at += 10_000));
+  if (!('unknown' in scan)) throw new Error('the scan did not run out of time');
+  vi.spyOn(stages, 'discoveredKeepReason').mockResolvedValue(scan.unknown);
+
+  const run = await runMaintenanceAtLevel({ act: false });
+
+  expect(run.blocked).toContain(
+    `Discovered checkout ${other}: ${scan.unknown}, so it is kept this pass and checked again on a later one`,
+  );
+});
