@@ -9,7 +9,7 @@ import {
   utimesSync,
   writeFileSync,
 } from 'node:fs';
-import { readdir } from 'node:fs/promises';
+import { lstat, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type Config } from '@stim-cli/core/state';
@@ -17,8 +17,9 @@ import { testContext } from './_context.ts';
 import { collectWorktreeSweep } from '../commands/gc/worktrees.ts';
 import { saveConfig } from '../workspace/config.ts';
 import * as gitCommands from '../workspace/git.ts';
-import { answered } from '../workspace/bounded-read.ts';
-import { scanSourceWrites } from '../workspace/discovered-activity.ts';
+import { answered, hungRead } from '../workspace/bounded-read.ts';
+import { discoveredEvidence, scanSourceWrites } from '../workspace/discovered-activity.ts';
+import { discoveredReads } from '../workspace/discovered-reads.ts';
 import {
   discoverCheckouts,
   discoveredOutside,
@@ -33,7 +34,11 @@ vi.mock('../workspace/protected-locations.ts', () => ({
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
-  return { ...actual, readdir: vi.fn<typeof actual.readdir>(actual.readdir) };
+  return {
+    ...actual,
+    readdir: vi.fn<typeof actual.readdir>(actual.readdir),
+    lstat: vi.fn<typeof actual.lstat>(actual.lstat),
+  };
 });
 
 describe('isBroadFolder', () => {
@@ -169,6 +174,46 @@ describe('scanSourceWrites', () => {
     controller.abort();
     await expect(aborted).rejects.toThrow(/abort/i);
     await release();
+  });
+
+  it('keeps a checkout whose scan ran out of time without reading its .git', async () => {
+    let release = () => {};
+    vi.mocked(readdir).mockImplementationOnce(
+      () =>
+        new Promise((_, fail) => {
+          release = () => fail(new Error('released'));
+        }),
+    );
+    const evidence = discoveredEvidence(base, {
+      now: Date.now(),
+      idleMs: 86_400_000,
+      reads: discoveredReads(),
+      reduceOnly: false,
+    });
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(await evidence).toEqual({ activity: [], keep: [OUT_OF_TIME.unknown] });
+    expect(vi.mocked(lstat)).not.toHaveBeenCalledWith(join(base, '.git'));
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+  });
+
+  it('walks a checkout again on the next pass when another read held the slot, with no cooldown', async () => {
+    let release = () => {};
+    const stuck = answered('/stalled-mount', () => new Promise<void>((resolve) => (release = resolve)), 10).catch(
+      () => 'timed out',
+    );
+    await vi.advanceTimersByTimeAsync(10);
+    expect(await stuck).toBe('timed out');
+    const quiet = Date.now() - 86_400_000;
+
+    expect(await scanSourceWrites(base, quiet)).toEqual({
+      unknown: 'its source cannot be read while a read of /stalled-mount has not answered',
+    });
+
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(hungRead()).toBeNull();
+    expect('newest' in (await scanSourceWrites(base, quiet))).toBe(true);
   });
 });
 

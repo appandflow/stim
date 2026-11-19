@@ -503,12 +503,18 @@ under Needs a person, and Stim reuses that verdict for an hour without walking
 again. Each folder read, entry read and `git check-ignore` probe gets only the time
 left, a read that does not answer counts as running out of time (it takes the
 one pending-read slot of `bounded-read.ts`), and a walk that crossed the deadline
-never reports idle. A recent write ends the scan at once as activity, whatever
-time is left.
+never reports idle. While another read holds that slot, the scan reports unknown
+for this pass without the hour of reuse, so the checkout is walked again next
+pass. A recent write ends the scan at once as activity, whatever time is left.
+A scan that reports unknown is the whole evidence: no further read of that
+checkout (its `.git`, git activity, launchers) starts.
+
 The hourly dependency and output pass walks a discovered checkout only when it
 holds a `node_modules`, an `ios/Pods` or build output to reclaim, so a large
 idle checkout with nothing left to take costs no walk; deletion still rechecks
-idleness first. Within one daemon pass or `stim gc` run, a completed walk is reused
+idleness first. Each of those probes is bounded like the launcher readings
+(3 seconds, through `answered`), and a checkout whose probe does not answer is
+left out for that pass. Within one daemon pass or `stim gc` run, a completed walk is reused
 by every later read of that checkout until the pass acts or takes a workspace
 lock, so the checks made under a claim walk again.
 

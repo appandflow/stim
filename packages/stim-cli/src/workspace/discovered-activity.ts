@@ -5,7 +5,7 @@ import { worktreeActivityOfAsync } from '../commands/gc/worktrees.ts';
 import type { IdleStopEvidence } from '../policy/idle.ts';
 import { gitQuietAsync } from './git.ts';
 import { sharedRead } from './git-reads.ts';
-import { answered, Unanswered } from './bounded-read.ts';
+import { answered, hungRead, Unanswered } from './bounded-read.ts';
 import type { DiscoveredReads } from './discovered-reads.ts';
 import { checkoutRootOf } from './checkout-role.ts';
 import { launcherReason } from './launchers.ts';
@@ -44,6 +44,12 @@ const overBudget = new Map<string, number>();
 
 export type SourceScan = { newest: number } | { unknown: string };
 
+/** Unknown for this pass, with no cooldown, while another read holds the one pending-read slot. */
+function waiting(): SourceScan | null {
+  const pending = hungRead();
+  return pending === null ? null : { unknown: `its source cannot be read while a read of ${pending} has not answered` };
+}
+
 /**
  * The newest modification time of a file or folder under `root`, outside dependency and build folders, never through a
  * link. It stops at once on a write newer than `activeSince`, which proves activity, and reports unknown when it meets
@@ -71,6 +77,8 @@ export async function scanSourceWrites(root: string, activeSince: number, signal
   for (let dir = queue.pop(); dir !== undefined; dir = queue.pop()) {
     signal?.throwIfAborted();
     if (left() < 0) return outOfTime();
+    const blocked = waiting();
+    if (blocked) return blocked;
     let entries;
     try {
       const at = dir;
@@ -89,6 +97,8 @@ export async function scanSourceWrites(root: string, activeSince: number, signal
         });
         if (ignored !== null) continue;
       }
+      const busy = waiting();
+      if (busy) return busy;
       let mtime: number;
       try {
         mtime = (await answered(path, () => lstat(path), Math.max(1, left()), signal)).mtimeMs;
@@ -147,8 +157,8 @@ export async function discoveredEvidence(
   const activity: IdleStopEvidence['activity'] = [];
   const keep: string[] = [];
   const scan = await sharedSourceScan(path, now - idleMs, operation);
-  if ('newest' in scan) activity.push({ basis: 'file edit', at: scan.newest });
-  else keep.push(scan.unknown);
+  if ('unknown' in scan) return { activity, keep: [scan.unknown] };
+  activity.push({ basis: 'file edit', at: scan.newest });
   const isGit = await lstat(join(path, '.git')).then(
     () => true,
     () => false,
