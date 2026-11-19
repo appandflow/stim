@@ -53,19 +53,37 @@ The dormant reduction (`stim gc` and the daemon's hourly step) deletes every
 recognised `target/` whole, tagged, Exact app's and untagged alike, in a
 workspace or discovered checkout that has had no activity for
 `idle.dormantDays` by the full evidence, and whose worktree is not locked with
-`git worktree lock`. It runs the idle stage's checks above, the process check
-included, for all three kinds, then, under the workspace's claims and checked
-again right before the delete: the workspace is still idle, the directory is
-still a recognised `target/`, and no PATH launcher resolves into the checkout.
-Under the target's trim claim (below) it then keeps the `target/` whole when it
-holds a copy a trim could not put back, when a build wrote one of its profiles
-or Exact's ledger stamped one within `idle.dormantDays` or that cannot be told,
-when a process executes from or holds open a path in it, or when a build holds
-a profile's `.cargo-lock`, `.cargo-build-lock` or `.cargo-artifact-lock`.
-Nothing slow runs between that lock check and the delete, but the two are not
-atomic: a build that takes a profile lock in that instant loses its output.
-Report mode runs the checks that need no claim, the profile times among them,
-and reports the whole size.
+`git worktree lock`. Only `target/criterion` stays. It runs the idle stage's
+checks above, the process check included, for all three kinds, then, under the
+workspace's claims and checked again right before the delete: the workspace is
+still idle, the directory is still a recognised `target/`, and no PATH launcher
+resolves into the checkout. A path the plan took as a `target/` goes only
+through the Cargo delete, never through the plain removal of other outputs.
+
+Under the target's trim claim the Cargo delete then keeps the whole `target/`
+when it is no longer recognised, when it holds a copy a trim could not put back,
+when it shows use within `idle.dormantDays` or that use cannot be told, when
+another filesystem is mounted anywhere in it, when a process executes from or
+holds open a path in it, or when a build holds a `.cargo-lock`,
+`.cargo-build-lock` or `.cargo-artifact-lock` in a top-level entry or a
+directory directly in one. Use means a modification time within that time on
+the `target/` itself, on any top-level entry but Stim's own `.stim-*`, on any
+profile directory or its `.fingerprint`, `deps`, `build` and `incremental`, or a
+stamp in Exact's ledger. A `target/` in which no profile can be found counts as
+used, since Cargo's separate build-directory layout keeps its fingerprints
+elsewhere.
+
+Then, as the trims do (Never delete what a build took back, below), it renames
+each top-level entry into `target/.stim-trimmed/` and reads that entry's lock
+files again at the new path. Once every entry is moved it reads the processes
+again. A lock a build took or a path a process opened meanwhile puts every moved
+entry back; one that cannot be put back moves to `.stim-not-restored-*` or
+stays in a `.stim-trimmed` marked `NOT-RESTORED`, for a person. An entry that
+cannot be renamed, such as one on another device (`EXDEV`), stays and the rest
+goes. The moved entries are deleted without entering a directory on another
+device, and the emptied `target/` goes too. Report mode runs the checks that
+need no claim, the use dating among them, and reports the whole size, and gc
+names a `target/` it keeps and why.
 
 Maintainer decision: "lets full delete it instead of trim on idle", 2026-11-19
 (#5979). Reason: a trim by profile left everything that is not a profile, such
@@ -73,11 +91,16 @@ as Exact's `clients/` and `web-js-modules/`, on an idle checkout, and left an
 untagged `target/` at its full size. Reason the size cap and the pressure trims
 stay trims: they also reach a `target/` in use.
 
-The profile-time gate, the trim claim around the delete and the
-non-atomic lock check were chosen by the coordinator and the review of #5979,
-not by the maintainer. Reason for the gate: the idle evidence skips writes in a
-`target/` git ignores, so a build that ran without a source edit is seen only
-in the profile times.
+Chosen by the coordinator and the reviews of #5996, not by the maintainer: the
+use dating, the move aside with its recheck and roll back, the mount checks,
+and keeping `target/criterion`. Reason for the dating: the idle evidence skips
+writes in a `target/` git ignores, so a build that ran without a source edit
+shows only in the target's own times. Reason for the move aside: the trim claim
+excludes only other Stim processes, and a Cargo build sharing the target can
+take a profile lock while later profiles are checked. Reason for
+`target/criterion`: Criterion keeps saved benchmark baselines there, which
+describe old code and no build can recreate. It is a single named exception,
+not a list of what may go; another tool's data in `target/` is deleted with it.
 
 ## The size cap
 
@@ -161,8 +184,10 @@ crate were added by the reviews of #5539. Not decided: whether
 
 ## Never delete what a build took back
 
-Each whole profile or incremental removal renames a directory into `target/.stim-trimmed/` after the lock
-check and checks the locks again at the new path. A build that took a lock in
+Each whole profile or incremental removal, and each top-level entry of a
+`target/` the dormant reduction deletes, renames a directory into
+`target/.stim-trimmed/` after the lock check and checks the locks again at the
+new path. A build that took a lock in
 between gets the directory back. A directory that cannot be put back is never
 deleted: it moves to `target/.stim-not-restored-*`, which later trims skip, for
 a person to merge or delete. If that move fails too, it stays in
