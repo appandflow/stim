@@ -134,47 +134,30 @@ describe('a discovered checkout in the idle stages', () => {
     return root;
   }
 
-  it('clears the untagged target/ of an idle Cargo workspace root and keeps its uncommitted files', async () => {
+  it('never deletes the untagged target/ of an idle Cargo workspace root whole', async () => {
     const root = cargoWorkspace();
     const config: Config = { maintenance: { discoverRoots: [join(base, 'roots')] }, projects: {}, repos: {} };
     saveConfig(config);
 
-    const candidates = await stoppedOutputCandidates(config, reading, day);
-    expect(candidates.map((entry) => entry.path)).toEqual([root]);
-    expect(await clearStoppedOutputs(candidates[0] ?? fail(), config, day)).toMatchObject({ outcome: 'done' });
-    expect(existsSync(join(root, 'target'))).toBe(false);
-    expect(existsSync(join(root, 'notes.md'))).toBe(true);
+    expect(await stoppedOutputCandidates(config, reading, day)).toEqual([]);
+    expect(existsSync(join(root, 'target', 'debug', 'app'))).toBe(true);
   });
 
   it.each([
-    ['an untagged target/ also holding output Cargo does not write', ['bake/out.bin'], false],
-    ['a Cargo trim recovery copy', ['.stim-not-restored-1-debug/.fingerprint/unit'], false],
-    ['a Cargo trim recovery copy beside a root tag', ['.stim-not-restored-1-debug/.fingerprint/unit'], true],
-    ['a stranded .stim-trimmed beside a root tag', ['.stim-trimmed/NOT-RESTORED'], true],
-  ])('dormant gc keeps whole %s', async (_, extras, tagged) => {
+    ['a Cargo trim recovery copy', '.stim-not-restored-1-debug/.fingerprint/unit'],
+    ['a stranded .stim-trimmed', '.stim-trimmed/NOT-RESTORED'],
+  ])('dormant gc keeps a tagged target/ holding %s whole', async (_, extra) => {
     const root = cargoWorkspace();
-    if (tagged) writeFileSync(join(root, 'target', 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55\n');
-    for (const extra of extras) {
-      mkdirSync(join(root, 'target', extra, '..'), { recursive: true });
-      writeFileSync(join(root, 'target', extra), 'x');
-    }
+    writeFileSync(join(root, 'target', 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55\n');
+    mkdirSync(join(root, 'target', extra, '..'), { recursive: true });
+    writeFileSync(join(root, 'target', extra), 'x');
     const config: Config = { maintenance: { discoverRoots: [join(base, 'roots')] }, projects: {}, repos: {} };
     saveConfig(config);
 
     const candidates = await stoppedOutputCandidates(config, reading, day);
     expect(candidates.map((entry) => entry.path)).toEqual([root]);
     expect(await clearStoppedOutputs(candidates[0] ?? fail(), config, day)).toBeNull();
-    for (const extra of extras) expect(existsSync(join(root, 'target', extra))).toBe(true);
-    expect(existsSync(join(root, 'target', 'debug', 'app'))).toBe(true);
-  });
-
-  it('keeps the target/ of a Cargo workspace root edited within idle.dormantDays', async () => {
-    const root = cargoWorkspace();
-    writeFileSync(join(root, 'notes.md'), 'edited now');
-    const config: Config = { maintenance: { discoverRoots: [join(base, 'roots')] }, projects: {}, repos: {} };
-    saveConfig(config);
-
-    expect(await stoppedOutputCandidates(config, reading, day)).toEqual([]);
+    expect(existsSync(join(root, 'target', extra))).toBe(true);
     expect(existsSync(join(root, 'target', 'debug', 'app'))).toBe(true);
   });
 

@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { lstat, realpath } from 'node:fs/promises';
-import { join, sep } from 'node:path';
+import { dirname, join, sep } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
 import { loadConfig, type MaintenanceAction, type MaintenanceSize, type PressureLevel } from '@stim-cli/core/state';
 import { getExecutor } from '../../exec.ts';
@@ -11,7 +11,7 @@ import { listedRoots } from '../../commands/gc/worktrees.ts';
 import { discoverCheckouts } from '../../workspace/discovery.ts';
 import { checkoutRootOf } from '../../workspace/checkout-role.ts';
 import { freshLaunchers, launchersOf, launchingOf, type Checkout } from '../../workspace/launchers.ts';
-import { cargoTargetDirsAsync, isBuildDirPath, regenerableDirProblem } from '../../workspace/regenerable-dirs.ts';
+import { cargoTargetDirsAsync, regenerableDirProblem } from '../../workspace/regenerable-dirs.ts';
 import { appRoots, artifactCheckoutsAsync } from './artifacts.ts';
 import { readVolumeSpaceAsync } from './budget.ts';
 import {
@@ -131,8 +131,9 @@ async function cargoTargetCandidates(
 }
 
 /**
- * One walk of each Cargo `target/` Stim recognises (`cargoTargetDirsAsync`) in a registered workspace or an in-scope discovered checkout, and only of directories that exist and
- * that git ignores whole; none when the cap is 0. A walk that times out leaves no size and is planned from the scan state.
+ * One walk of each Cargo `target/` the trims manage (`cargoTargetDirsAsync`) in a registered workspace or an in-scope
+ * discovered checkout, and only of directories that exist and that git ignores whole; none when the cap is 0. A walk
+ * that times out leaves no size and is planned from the scan state.
  */
 export async function measureCargoTargets(
   now: number,
@@ -453,7 +454,8 @@ export async function trimCargoTargetAction(
   stop?: AbortSignal,
 ): Promise<ActionOutcome> {
   const root = action.workspace;
-  if (!root || !isBuildDirPath(action.target)) return kept('it is no longer a Cargo target/ Stim recognises');
+  if (!root || !(await cargoTargetDirsAsync(dirname(action.target))).includes(action.target))
+    return kept('it is no longer a Cargo target/ Stim recognises');
   const managed = await managedAs(root, operation);
   if (!managed) return kept('its checkout is no longer in a workspace or discovery scope');
   const launching = launchingOf(

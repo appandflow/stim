@@ -11,12 +11,24 @@
 
 Stim recognises three kinds of Cargo `target/`: an Exact app's, beside
 `exact.mjs`; one at a checkout root whose `CACHEDIR.TAG` starts with the
-standard signature line; and one at a checkout root beside `Cargo.toml` that
-holds files only Cargo writes: a `.rustc_info.json` at its root, or a direct
-child profile holding `.fingerprint`. All three
-count in a registered workspace and in a discovered checkout (LLP 0004), and
-each must still have every file ignored by git and pass the process, Cargo lock
-and launcher keeps before anything in it is deleted.
+standard signature line; and one at a checkout root beside `Cargo.toml`, with
+no such tag, that holds files only Cargo writes: a `.rustc_info.json` at its
+root, or a direct child profile holding `.fingerprint`. Stim's own `.stim-*`
+directories never count as that evidence. All three count in a registered
+workspace and in a discovered checkout (LLP 0004), and all three get the size
+cap and the pressure trims below.
+
+Only the first two are ever deleted whole or listed as build output. Before
+deleting one
+whole, the idle stage, the dormant reduction of `stim gc` and the pressure
+ladder's idle rung check that the directory is real, inside its checkout, not
+a mount point, holds no file git tracks and only files git ignores; that no
+PATH launcher resolves into the checkout; that no other process runs from or
+works in the app; and that it holds no copy a trim could not put back
+(`.stim-not-restored-*`, or `.stim-trimmed` marked `NOT-RESTORED`). They read
+no Cargo lock file. The trims run the git, link, mount and launcher checks but
+not the whole-app process check; instead they keep each path a process
+executes from or holds open and each profile whose lock a build holds (below).
 
 Maintainer decision: "Yes leys have same rules for cargo as exact", 2026-11-19
 (#5958). Reason for the third kind: a Cargo `target/` can lack the root tag.
@@ -26,20 +38,10 @@ held `.rustc_info.json` and a profile with `.fingerprint`, and one carried the
 tag only in `target/wasm32-unknown-unknown/`. The check takes only Cargo's own
 files as evidence, so a project's `target/` folder that Cargo never wrote stays
 out. A `CACHEDIR.TAG` in a child is not evidence: it is a generic standard any
-tool may write, and it does not show that the rest of `target/` is Cargo
-output.
-
-The idle and dormant stages clear an idle workspace's `target/` whole. A
-process running from or working in the checkout keeps all of it. So does a copy
-a trim could not put back (`.stim-not-restored-*`, or `.stim-trimmed` marked
-`NOT-RESTORED`), for every kind, and Stim's own `.stim-*` directories never
-count as Cargo's files. A `target/` of the third kind goes whole only when every
-entry in it is one Cargo writes (profiles, target triples holding only
-profiles and Cargo's files, `CACHEDIR.TAG`, `.rustc_info.json`, `tmp`, `doc`,
-`package`, `flycheck*`). Reason: such a `target/` can also hold another tool's
-output, as Exact's `bake/` and `web/` are, and only the tag or an Exact app
-shows the whole directory is build output; the size trims still reach its
-profiles.
+tool may write. Reason the third kind is trimmed and never deleted whole: such
+a `target/` can also hold another tool's output, as Exact's `bake/` and `web/`
+are, and Cargo's files in it do not show the rest is build output; the trims
+remove only Cargo's profiles and keep the rest and any recovery copy.
 
 ## The size cap
 

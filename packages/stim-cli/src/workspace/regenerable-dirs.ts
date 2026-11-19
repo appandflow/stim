@@ -142,17 +142,6 @@ const STIM_OWN = '.stim-';
 const NOT_RESTORED = '.stim-not-restored-';
 const TRIM_ASIDE = '.stim-trimmed';
 const STRANDED = 'NOT-RESTORED';
-const CARGO_ROOT_ENTRIES = new Set([
-  CACHEDIR_TAG,
-  RUSTC_INFO,
-  '.future-incompat-report.json',
-  '.package-cache',
-  'doc',
-  'package',
-  'tmp',
-  TRIM_ASIDE,
-]);
-const CARGO_TRIPLE_ENTRIES = new Set([CACHEDIR_TAG, RUSTC_INFO, '.cargo-lock']);
 
 function* isProfile(path: string, name: string): DirReads<boolean> {
   return (
@@ -162,60 +151,45 @@ function* isProfile(path: string, name: string): DirReads<boolean> {
   );
 }
 
-function* cargoShaped(path: string, names: readonly string[]): DirReads<boolean> {
-  if (names.includes(RUSTC_INFO)) return true;
-  for (const name of names) if (yield* isProfile(path, name)) return true;
-  return false;
-}
-
-function* rootTagged(path: string, names: readonly string[]): DirReads<boolean> {
-  return names.includes(CACHEDIR_TAG) && (yield { signature: join(path, CACHEDIR_TAG) }) === true;
-}
-
-function* cargoRootTargetDirs(root: string): DirReads<string[]> {
+function* taggedRootTargetDirs(root: string): DirReads<string[]> {
   const path = join(root, CARGO_TARGET);
   if (!(yield* realDirectory(path))) return [];
-  const names = yield* namesIn(path);
-  if (yield* rootTagged(path, names)) return [path];
-  return (yield* namesIn(root)).includes(CARGO_MANIFEST) && (yield* cargoShaped(path, names)) ? [path] : [];
+  return (yield* namesIn(path)).includes(CACHEDIR_TAG) && (yield { signature: join(path, CACHEDIR_TAG) }) === true
+    ? [path]
+    : [];
 }
 
-function* cargoOwnEntry(path: string, name: string): DirReads<boolean> {
-  if (CARGO_ROOT_ENTRIES.has(name) || name.startsWith('flycheck')) return true;
-  if (name.startsWith(STIM_OWN) || !(yield* realDirectory(join(path, name)))) return false;
-  if (yield* isProfile(path, name)) return true;
-  const triple = join(path, name);
-  for (const entry of yield* namesIn(triple))
-    if (!CARGO_TRIPLE_ENTRIES.has(entry) && !(yield* isProfile(triple, entry))) return false;
-  return true;
+function* untaggedRootTargetDirs(root: string): DirReads<string[]> {
+  const path = join(root, CARGO_TARGET);
+  if (!(yield* namesIn(root)).includes(CARGO_MANIFEST) || !(yield* realDirectory(path))) return [];
+  const names = yield* namesIn(path);
+  if (names.includes(RUSTC_INFO)) return [path];
+  for (const name of names) if (yield* isProfile(path, name)) return [path];
+  return [];
 }
 
-/**
- * Why the recognised Cargo `target/` at `path` must not be deleted whole, or null. A copy a Cargo trim could not put back
- * (`.stim-not-restored-*`, or `.stim-trimmed` marked NOT-RESTORED) keeps any kind. A `target/` recognised only beside
- * `Cargo.toml`, with no Exact app and no root tag, is deleted whole only when every entry in it is one Cargo writes.
- */
-function* wholeCargoTargetProblem(path: string): DirReads<string | null> {
-  const names = yield* namesIn(path);
-  if (
-    names.some((name) => name.startsWith(NOT_RESTORED)) ||
-    (yield* namesIn(join(path, TRIM_ASIDE))).includes(STRANDED)
-  )
-    return 'it holds a directory a Cargo trim could not put back; a person must merge or delete it';
-  if ((yield* exactTargetDirs(dirname(path))).length || (yield* rootTagged(path, names))) return null;
-  for (const name of names)
-    if (!(yield* cargoOwnEntry(path, name))) return `it holds ${name}, which Cargo does not write`;
-  return null;
+/** The Cargo `target/` directly under `root` that Stim deletes whole: an Exact app's or one with a signed root tag. */
+function* wholeCargoTargetDirsReads(root: string): DirReads<string[]> {
+  return [...new Set([...(yield* exactTargetDirs(root)), ...(yield* taggedRootTargetDirs(root))])];
 }
 
 function* cargoTargetDirsReads(root: string): DirReads<string[]> {
-  return [...new Set([...(yield* exactTargetDirs(root)), ...(yield* cargoRootTargetDirs(root))])];
+  const whole = yield* wholeCargoTargetDirsReads(root);
+  return whole.length ? whole : yield* untaggedRootTargetDirs(root);
+}
+
+/** Why a Cargo `target/` must not be deleted whole: it holds a copy a Cargo trim could not put back. */
+function* recoveryCopyProblem(path: string): DirReads<string | null> {
+  return (yield* namesIn(path)).some((name) => name.startsWith(NOT_RESTORED)) ||
+    (yield* namesIn(join(path, TRIM_ASIDE))).includes(STRANDED)
+    ? 'it holds a directory a Cargo trim could not put back; a person must merge or delete it'
+    : null;
 }
 
 /**
- * The Cargo `target/` directly under `root` that Stim recognises: an Exact app's (beside its `exact.mjs`), one that
- * carries Cargo's `CACHEDIR.TAG` with its signature line, or one beside a `Cargo.toml` that holds Cargo's own files (a
- * `.rustc_info.json`, or a direct child profile holding `.fingerprint`). At most one.
+ * The Cargo `target/` directly under `root` that the Cargo trims manage: an Exact app's (beside its `exact.mjs`), one that
+ * carries Cargo's `CACHEDIR.TAG` with its signature line, or one beside a `Cargo.toml` that holds files only Cargo writes
+ * (a `.rustc_info.json`, or a direct child profile holding `.fingerprint`). Only the first two are ever deleted whole.
  */
 export function cargoTargetDirsAsync(root: string): Promise<string[]> {
   return readAsync(cargoTargetDirsReads(root));
@@ -224,15 +198,16 @@ export function cargoTargetDirsAsync(root: string): Promise<string[]> {
 function* discoveredBuildDirsReads(root: string): DirReads<string[]> {
   const cxx = yield* cxxDirs(root);
   const derived = yield* derivedDataDirs(root);
-  const cargo = yield* cargoTargetDirsReads(root);
+  const cargo = yield* wholeCargoTargetDirsReads(root);
   return [...cxx, ...derived.filter(({ named }) => named).map(({ path }) => path), ...cargo];
 }
 
 /**
  * The directories under `root` that hold only what a build regenerates and that the fixed `ARTIFACT_DIRS.build` names
  * cannot list: the Android CMake directories `android/.cxx` and `android/<module>/.cxx`, a `.dd` directory laid
- * out as DerivedData, and a Cargo `target/` directly under `root` that `cargoTargetDirsAsync` recognises. A `.dd` that
- * is not laid out as DerivedData is not one, nor is a `target/` anywhere else.
+ * out as DerivedData, and a Cargo `target/` directly under `root`: an Exact app's (beside its `exact.mjs`) or one that
+ * carries Cargo's `CACHEDIR.TAG` with its signature line. A `.dd` that is not laid out as DerivedData is not one, nor is
+ * a `target/` anywhere else.
  */
 export function discoveredBuildDirs(root: string): string[] {
   return readSync(discoveredBuildDirsReads(root));
@@ -271,7 +246,7 @@ export function isBuildDirPath(path: string): boolean {
     const parent = dirname(path);
     return basename(parent) === 'android' || basename(dirname(parent)) === 'android';
   }
-  if (name === CARGO_TARGET) return readSync(cargoTargetDirsReads(dirname(path))).includes(path);
+  if (name === CARGO_TARGET) return readSync(wholeCargoTargetDirsReads(dirname(path))).includes(path);
   return name === DERIVED_DATA_NAME && isDerivedDataLayout(path);
 }
 
@@ -280,7 +255,7 @@ export function isBuildDirPath(path: string): boolean {
  * directory inside `root` whose every file git ignores and, for a Cargo `target/` deleted whole (`processes`), no other
  * process runs from or works in that app: Exact's own commands (web, Android, tests) build into the same directory
  * without Stim seeing them. Where the processes cannot be listed (Windows), that `target/` is kept. A whole Cargo
- * `target/` is also kept by `wholeCargoTargetProblem`.
+ * `target/` is also kept by `recoveryCopyProblem`.
  */
 export async function regenerableDirProblem(
   root: string,
@@ -312,10 +287,10 @@ export async function regenerableDirProblem(
   if (
     processes &&
     basename(path) === CARGO_TARGET &&
-    (await readAsync(cargoTargetDirsReads(dirname(path)))).includes(path)
+    (await readAsync(wholeCargoTargetDirsReads(dirname(path)))).includes(path)
   ) {
-    const whole = await readAsync(wholeCargoTargetProblem(path));
-    if (whole) return whole;
+    const recovery = await readAsync(recoveryCopyProblem(path));
+    if (recovery) return recovery;
     const others = await othersRunningAsync(await readRunningProcessesAsync(signal), signal);
     const running = runningFromReason(dirname(path), others);
     if (running) return `its app may be in use: ${running.replace(/ it\b/, ' its app')}`;

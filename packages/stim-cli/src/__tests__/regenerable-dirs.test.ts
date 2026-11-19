@@ -91,22 +91,27 @@ test.each([
   ['only a signed CACHEDIR.TAG in a child, beside other output', ['cache/CACHEDIR.TAG', 'releases/file'], false],
   ['no Cargo files', ['web/index.js'], false],
   ['only a Stim recovery copy holding .fingerprint', ['.stim-not-restored-1-debug/.fingerprint/'], false],
-])('a target/ beside Cargo.toml with %s is a Cargo target: $2', async (_, entries, recognised) => {
-  writeFileSync(join(root, 'Cargo.toml'), '');
-  for (const entry of entries) {
-    if (entry.endsWith('/')) dir('target', entry);
-    else {
-      dir('target', entry.split('/').slice(0, -1).join('/'));
-      writeFileSync(
-        join(root, 'target', entry),
-        entry.endsWith('CACHEDIR.TAG') ? 'Signature: 8a477f597d28d172789f06886806bc55\n' : '',
-      );
+])(
+  'a target/ beside Cargo.toml with %s is trimmed as a Cargo target ($2), never deleted whole',
+  async (_, entries, recognised) => {
+    writeFileSync(join(root, 'Cargo.toml'), '');
+    for (const entry of entries) {
+      if (entry.endsWith('/')) dir('target', entry);
+      else {
+        dir('target', entry.split('/').slice(0, -1).join('/'));
+        writeFileSync(
+          join(root, 'target', entry),
+          entry.endsWith('CACHEDIR.TAG') ? 'Signature: 8a477f597d28d172789f06886806bc55\n' : '',
+        );
+      }
     }
-  }
-  expect(await cargoTargetDirsAsync(root)).toEqual(recognised ? [join(root, 'target')] : []);
-  rmSync(join(root, 'Cargo.toml'));
-  expect(await cargoTargetDirsAsync(root)).toEqual([]);
-});
+    expect(await cargoTargetDirsAsync(root)).toEqual(recognised ? [join(root, 'target')] : []);
+    expect(await existingBuildDirsAsync(root)).toEqual([]);
+    expect(isBuildDirPath(join(root, 'target'))).toBe(false);
+    rmSync(join(root, 'Cargo.toml'));
+    expect(await cargoTargetDirsAsync(root)).toEqual([]);
+  },
+);
 
 test('a Cargo target/ that both the Exact rule and the CACHEDIR.TAG rule recognise is listed once', async () => {
   writeFileSync(join(root, 'exact.mjs'), '');
