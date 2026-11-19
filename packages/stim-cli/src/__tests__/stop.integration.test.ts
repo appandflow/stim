@@ -1049,6 +1049,48 @@ test('the idle stop asks the supervisor to record an idle stop, and keeps its po
   expect(listLeaseFiles().map((entry) => entry.id)).toEqual(['PHONE']);
 });
 
+test('a server-only idle stop records the idle stop and leaves the devices, their collectors and placements', async () => {
+  saveConfig(
+    makeConfig({
+      projects: { [tmpRoot]: { metroPort: 8083, platforms: { ios: { deviceUdid: 'U1', owned: true } } } },
+    }),
+  );
+  const supervisor = { pid: 4242, processToken: 'upid1.supervisor', port: 8083, mode: 'expo-child' };
+  const collectors = { ios: { pid: 111, processToken: 'fixture' } };
+  const placement = { decision: 'local', machine: 'here', reason: 'fixture' };
+  writeFileSync(
+    workspaceStateFile(tmpRoot),
+    JSON.stringify({ supervisor, collectors, ios: { devicePlacement: placement } }),
+  );
+  let request: unknown;
+  const teardownIos = vi.fn(async () => ({ status: 'torn-down' as const, label: 'stim-a' }));
+
+  const r = await runIdleStop({
+    root: tmpRoot,
+    idleMinutes: 2,
+    report: () => {},
+    serverOnly: true,
+    state: supervisor,
+    isAlive: (pid: number) => pid === 4242,
+    inspectIdentity: () => 'same',
+    killGroup: () => {
+      request = readWorkspaceState(tmpRoot)?.devServerStopRequest;
+      return true;
+    },
+    waitForDeath: async () => true,
+    resolveMetro: async () => makeMetroResolution.missing(),
+    teardownIos,
+  });
+
+  expect(r.ok).toBe(true);
+  expect(request).toMatchObject({ by: 'stim daemon', idleMinutes: 2 });
+  expect(teardownIos).not.toHaveBeenCalled();
+  expect(r.outcomes.device).toEqual({ ios: null, android: null, web: null });
+  expect(r.outcomes.port).toMatchObject({ status: 'kept', port: 8083 });
+  expect(readWorkspaceState(tmpRoot)?.collectors).toEqual(collectors);
+  expect(readWorkspaceState(tmpRoot)?.ios).toEqual({ devicePlacement: placement });
+});
+
 test('stopping frees the reserved port in the registry and keeps the device record', async () => {
   saveConfig(
     makeConfig({
