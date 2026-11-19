@@ -249,13 +249,14 @@ export function staleLaunchAgent(
   shim: string | null,
 ): string | null {
   if (installed.port === null || installed.script === null) return null;
-  const stimd = shim ?? (installed.node === null ? installed.script : undefined);
+  if (installed.node === null && !shim)
+    return "its plist starts an engine stimd, and this machine's engine store has no bin/stimd shim to start";
   const spec: ServiceSpec = {
     label: installed.label,
     host: installed.host,
     node: installed.node ?? installed.script,
     script: installed.script,
-    ...(stimd ? { stimd } : {}),
+    ...(shim ? { stimd: shim } : {}),
     port: installed.port,
     env: installed.env,
     pathPrepend: installed.pathPrepend,
@@ -269,11 +270,13 @@ export function staleLaunchAgent(
     return shim && !installed.programArguments.includes(shim)
       ? "its plist does not start the engine's stimd shim"
       : 'its plist starts the server with arguments that `stim service install` no longer writes';
-  const processType = /<key>ProcessType<\/key>\s*<string>([^<]*)<\/string>/.exec(renderPlist(spec))?.[1] ?? null;
+  const processType = /^\t<key>ProcessType<\/key>\n\t<string>([^<]*)<\/string>$/m.exec(renderPlist(spec))?.[1] ?? null;
   if ((installed.processType ?? null) !== processType)
     return `its plist sets ProcessType ${installed.processType ?? '(none)'}, and \`stim service install\` writes ${processType ?? 'none'}`;
-  if (shim && loaded && !loaded.includes(shim))
-    return "launchd still runs the definition it loaded before the plist named the engine's stimd shim, because it reads a plist only at bootstrap";
+  if (loaded && JSON.stringify(loaded) !== JSON.stringify(args))
+    return shim && !loaded.includes(shim)
+      ? "launchd still runs the definition it loaded before the plist named the engine's stimd shim, because it reads a plist only at bootstrap"
+      : 'launchd still runs a definition other than its plist, because it reads a plist only at bootstrap';
   return null;
 }
 

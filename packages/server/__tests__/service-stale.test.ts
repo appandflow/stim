@@ -89,7 +89,21 @@ describe.skipIf(process.platform !== 'darwin')('a LaunchAgent that launchd runs 
       shim,
       /sets ProcessType Background, and `stim service install` writes /,
     ],
+    ['a shim plist after the engine was uninstalled', shimPlist, shimArgs, null, /no bin\/stimd shim/],
+    ['a Stim Host plist whose loaded job skips the host', shimPlist, shimArgs.slice(2), shim, /other than its plist/],
   ])('%s', (_case, text, loaded, engineShim, stale) => {
     expect(staleLaunchAgent(installed(text), loaded, engineShim) ?? '').toMatch(stale ?? /^$/);
+  });
+
+  it('reads the top-level ProcessType, not an --env value of that name, and never prints the value', () => {
+    const withEnv = { ...spec, stimd: shim, env: [...spec.env, 'ProcessType=private-value'] };
+    const current = installed(renderPlist(withEnv));
+    const args = current.programArguments;
+    expect(args).toContain('ProcessType');
+    expect(staleLaunchAgent(current, args, shim)).toBeNull();
+    const old = renderPlist(withEnv).replace(/(\n\t<key>ProcessType<\/key>\n\t<string>)[^<]*/, '$1Background');
+    const reason = staleLaunchAgent(installed(old), args, shim);
+    expect(reason).toMatch(/ProcessType Background/);
+    expect(reason).not.toContain('private-value');
   });
 });

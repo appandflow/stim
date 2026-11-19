@@ -68,10 +68,14 @@ const resolved = (path: string): string => {
   }
 };
 
-/** Whether a service file names the server script: `service install --label` accepts any label, so the file name says nothing. */
-function mentionsServer(file: string): boolean {
+/**
+ * Whether a service file names the server script or carries `marker`: `service install --label` accepts any label, so
+ * the file name says nothing.
+ */
+function mentionsServer(file: string, marker = 'stim-server'): boolean {
   try {
-    return readFileSync(file, 'utf8').includes('stim-server');
+    const text = readFileSync(file, 'utf8');
+    return text.includes('stim-server') || text.includes(marker);
   } catch {
     return false;
   }
@@ -80,7 +84,9 @@ function mentionsServer(file: string): boolean {
 async function readLaunchdServices(): Promise<InstalledServerService[]> {
   const dir = join(homedir(), 'Library', 'LaunchAgents');
   const files = existsSync(dir)
-    ? readdirSync(dir).filter((name) => name.endsWith('.plist') && mentionsServer(join(dir, name)))
+    ? readdirSync(dir).filter(
+        (name) => name.endsWith('.plist') && mentionsServer(join(dir, name), '<key>StimService</key>'),
+      )
     : [];
   const exec = getExecutor();
   const services = await Promise.all(
@@ -92,7 +98,7 @@ async function readLaunchdServices(): Promise<InstalledServerService[]> {
       try {
         installed = json === null ? null : parseInstalledPlist(JSON.parse(json));
       } catch {}
-      if (!isServerService(installed)) return null;
+      if (installed === null || (!installed.managed && !isServerService(installed))) return null;
       const printed = await exec.runFileQuietAsync(
         'launchctl',
         ['print', `gui/${process.getuid?.() ?? 501}/${installed.label}`],

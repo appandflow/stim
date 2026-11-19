@@ -545,10 +545,13 @@ export async function installJob(
   const path = plistPath(options.label);
   const { findTailscale, serveCommand } = await tailscalePackage();
   const tailscale = findTailscale(process.env) ?? 'tailscale';
-  if (setup && sameOptions(previous, spec, stimd ?? script) && !(await launchdStale(previous))) {
+  if (setup && sameOptions(previous, spec, stimd ?? script)) {
     const health = await fetchHealth(options.port);
     if (health && health.startup?.state !== 'pending' && health.startup?.state !== 'degraded') {
-      return [`${options.label} already runs stim-server ${health.version}.`];
+      const stale = await launchdStale(previous);
+      return [
+        `${options.label} already runs stim-server ${health.version}.${stale ? ` It is not current: ${stale.reason}; ${stale.remedy}.` : ''}`,
+      ];
     }
   }
   const oldPlist = previous ? readFileSync(path, 'utf8') : null;
