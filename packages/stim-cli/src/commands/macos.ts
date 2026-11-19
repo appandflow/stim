@@ -379,6 +379,7 @@ function recordMacosBuild(root: string, build: MacosBuild, compileSteps: number 
     builtOn: build.builtOn,
     offloadedTo: build.offloadedTo,
     offloadFallback: build.offloadFallback,
+    offloadReason: build.offloadReason,
     ...(compileSteps === null ? {} : { compileSteps }),
     ...(build.error ? { ledger: { message: build.error, remedy } } : {}),
   });

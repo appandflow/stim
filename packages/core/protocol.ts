@@ -1066,8 +1066,9 @@ export interface BuildOfferParams {
 }
 
 /**
- * What a build is warm for: its platform and `project`, a hash of the client's project key, which is the same across the
- * client's worktrees of one checkout and differs between apps of one repository.
+ * What a build is warm for: its platform and `project`, a hash of the client's canonical git common directory and the
+ * app's path in the repository, which is the same across every worktree of one repository, bare or not, and differs
+ * between apps of one repository.
  */
 export interface BuildWarmth {
   platform: 'ios' | 'android' | 'macos';

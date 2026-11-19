@@ -65,8 +65,12 @@ and the client's pnpm store, CocoaPods and SwiftPM caches and uploaded blobs are
 shared by that client's areas, so a worker that built the checkout or the
 project rebuilds faster than a cold one with the same free slot.
 
-The worker records each successful build's platform and hashed project key in
-`built.json` in the area, and answers `build.offer` from it. The record goes
+The worker records each successful build's platform and project id (a hash of
+the client's canonical git common directory and the app's path in the
+repository, so every worktree of a repository, bare or not, shares it) in
+`built.json` in the area, and answers `build.offer` from it. An offer from an
+area whose exclusive claim another build holds declines a fresh build there,
+which `build.start` would refuse, while an exact artifact is still served. The record goes
 with the area when stim-server evicts it, is deleted when the area's home is
 replaced for another schema, and is deleted when a build fails on a corrupt
 compilation cache, which empties that cache. The worker's own maintenance
@@ -85,7 +89,7 @@ devices and macOS app hosts keep that order.
 
 Recorded in [#5960](https://github.com/appandflow/stim/issues/5960):
 
-Maintainer decision: "can machines have project afinity so it strongly prefers them since they will very likely have cache for that project", 2026-11-19
+Maintainer decision: "can machines have project afinity so it strongly prefers them since they will very likely have cache for that project or machines be able to advert what cache they have", 2026-11-19
 
 The project-level rank, the rule that warmth never overrides the slot and load
 gates, and no waiting for a busy warm worker were chosen by the coordinating

@@ -281,6 +281,7 @@ leased until <time>" for each one.`,
   offloadedTo     only on an app a remote machine compiled: its
                   remote.machines entry (see \`guide settings\`). cacheHit is
                   false for it. The Android payload carries it too
+  offloadReason   with offloadedTo: why that machine took the build
   offloadFallback only on an app compiled here after the run considered
                   offloading it: why it built here -- one reason per
                   machine when none took the build, or why the offload

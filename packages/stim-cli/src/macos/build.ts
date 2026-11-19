@@ -244,7 +244,7 @@ export async function buildMacosBundle({
             delete record.fingerprint;
             delete record.cacheKey;
             record.offloadedTo = outcome.machine;
-            record.offloadReason = chosenReason;
+            record.offloadReason = `${placement.reason}${placementDetail(chosen)}`;
             record.builtOn = outcome.machine;
             record.cacheHit = outcome.cacheHit === true;
             if (outcome.cacheHit) record.cacheSource = 'peer';

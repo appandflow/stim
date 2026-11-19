@@ -8,6 +8,7 @@ import * as artifactQuery from '../job/offload/artifact-query.ts';
 import type { WebSocket } from 'ws';
 import { existsSync, readFileSync } from 'node:fs';
 import { captureProcessIdentity, inspectProcessIdentity } from '@stim-cli/core/process-identity';
+import { releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import { waitForPid } from './_pid-file.ts';
 
 const identity = { fingerprint: 'source', cacheKey: 'source-xcode-sdk-arch-target' };
@@ -612,6 +613,18 @@ if (process.argv[2] !== 'build') {
     expect(await warm('builder', 'app-1')).toEqual({ build: false, project: false });
     await build('app-1');
     expect(await warm('builder', 'app-1')).toEqual({ build: true, project: false });
+    const busy = tryAcquireClaim({
+      root: `${join(host.clientDir('builder'), 'repos', 'app-1')}.claims`,
+      mode: 'exclusive',
+      label: 'build worker',
+    }).acquired;
+    if (!busy) throw new Error('Expected to hold the area claim.');
+    expect(await host.offer('builder', { repo: 'app-1' })).toHaveProperty(
+      'result.capacity.declined',
+      'another build of this repository is running here',
+    );
+    releaseClaim(busy);
+    expect(await host.offer('builder', { repo: 'app-1' })).toHaveProperty('result.capacity.declined', null);
     expect(await warm('builder', 'app-1', { platform: 'android', project })).toEqual({ build: false, project: false });
     expect(await warm('builder', 'app-1', { platform: 'ios', project: 'fedcba9876543210' })).toEqual({
       build: false,

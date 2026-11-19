@@ -2192,7 +2192,7 @@ export function protocolJsonSchema(): JsonSchema {
                 required: ['platform', 'project'],
                 additionalProperties: false,
                 description:
-                  'The build the offer reports warm.build and warm.project for: its platform and the hashed project key of the client.',
+                  'The build the offer reports warm.build and warm.project for: its platform and the hashed project id of the client (its git common directory and app path).',
                 properties: {
                   platform: { enum: ['ios', 'android', 'macos'] },
                   project: warmthProject,
@@ -2247,7 +2247,7 @@ export function protocolJsonSchema(): JsonSchema {
               platform: { enum: ['ios', 'android', 'macos'] },
               warmthProject: {
                 ...warmthProject,
-                description: 'The hashed project key a successful build records for later offers.',
+                description: 'The hashed project id a successful build records for later offers.',
               },
               configuration: { type: ['string', 'null'] },
               scheme: { type: ['string', 'null'] },

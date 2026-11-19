@@ -51,6 +51,7 @@ export function androidFacts({
   builtOn,
   offloadedTo = null,
   offloadFallback = null,
+  offloadReason = null,
   host,
 }: {
   host?: import('@stim-cli/core/state').HostedAndroidStatus;
@@ -58,6 +59,7 @@ export function androidFacts({
   builtOn?: string;
   offloadedTo?: string | null;
   offloadFallback?: string | null;
+  offloadReason?: string | null;
   root?: string;
   slot?: string;
   serial?: string | null;
@@ -104,6 +106,7 @@ export function androidFacts({
     ...(builtOn ? { builtOn } : {}),
     ...(offloadedTo ? { offloadedTo } : {}),
     ...(offloadFallback ? { offloadFallback } : {}),
+    ...(offloadedTo && offloadReason ? { offloadReason } : {}),
     waitedForBuild: waitedForBuild ? { pid: waitedForBuild.pid ?? null, ms: waitedForBuild.ms ?? 0 } : null,
     appPath: appPath ?? null,
     bundleId: bundleId ?? null,
@@ -335,6 +338,7 @@ export function reportAndroidResult({
     builtOn: record.builtOn ?? undefined,
     offloadedTo,
     offloadFallback: record.offloadFallback ?? null,
+    offloadReason: record.offloadReason ?? null,
   });
   writer.close();
 

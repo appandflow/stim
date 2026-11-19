@@ -24,6 +24,7 @@ import {
   claimRemoveCommand,
   markClaimChildPending,
   processGroupAlive,
+  readClaimSet,
   releaseClaim,
   tryAcquireClaim,
   type ClaimHandle,
@@ -653,10 +654,17 @@ export class BuildHost {
     const memory = available === null ? {} : { memoryTotalBytes: total, memoryUsedBytes: total - available };
     const built = warmth ? `${warmth.platform}:${warmth.project}` : null;
     const warmHere = built !== null && areaHomeCurrent(area) && areaBuilt(area).includes(built);
+    const capacity = this.capacity();
     return {
       result: {
         toolchain,
-        capacity: { ...this.capacity(), ...memory },
+        capacity: {
+          ...capacity,
+          ...memory,
+          ...(!capacity.declined && areaBuilding(area)
+            ? { declined: 'another build of this repository is running here' }
+            : {}),
+        },
         warm: {
           checkout: existsSync(join(area, 'src')),
           dependencies:
@@ -1508,6 +1516,15 @@ function areaBuilt(area: string): string[] {
       : [];
   } catch {
     return [];
+  }
+}
+
+/** Whether a build holds the area's exclusive claim, which `build.start` would refuse on. */
+function areaBuilding(area: string): boolean {
+  try {
+    return readClaimSet(`${area}.claims`).live.some((holder) => holder.mode === 'exclusive');
+  } catch {
+    return false;
   }
 }
 

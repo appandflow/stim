@@ -10819,6 +10819,7 @@ describe('strict remote machine selection', () => {
       machine: 'mini',
       offer: { capacity: {}, warm: { checkout: true, dependencies: false, build: true } },
       target: { platform: 'ios' },
+      warmth: 'checkout',
     } as offloadClient.OffloadChoice);
     vi.spyOn(offloadClient, 'offloadBuild').mockResolvedValue({
       ok: true,
@@ -10884,6 +10885,7 @@ describe('strict remote machine selection', () => {
     );
     expect(delivered).toBe(true);
     expect(parseFirst(result.logs).offloadedTo).toBe('mini');
+    expect(parseFirst(result.logs).offloadReason).toContain('this checkout last built ios there');
     expect(readLastBuilds(readWorkspaceState(root)).ios?.offloadReason).toContain('this checkout last built ios there');
   });
 

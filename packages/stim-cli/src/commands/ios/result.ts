@@ -120,11 +120,13 @@ export function iosFacts({
   builtOn,
   offloadedTo = null,
   offloadFallback = null,
+  offloadReason = null,
 }: {
   buildMachine?: string;
   builtOn?: string;
   offloadedTo?: string | null;
   offloadFallback?: string | null;
+  offloadReason?: string | null;
   root?: string;
   slot?: string;
   udid: string | null;
@@ -167,6 +169,7 @@ export function iosFacts({
     ...(builtOn ? { builtOn } : {}),
     ...(offloadedTo ? { offloadedTo } : {}),
     ...(offloadFallback ? { offloadFallback } : {}),
+    ...(offloadedTo && offloadReason ? { offloadReason } : {}),
     compilationCache,
     waitedForBuild: waitedForBuild ? { pid: waitedForBuild.pid ?? null, ms: waitedForBuild.ms ?? 0 } : null,
     appPath,
@@ -387,6 +390,7 @@ export function reportIosResult({
     builtOn,
     offloadedTo,
     offloadFallback,
+    offloadReason,
   });
   if (devicePlacement) facts.devicePlacement = devicePlacement;
   if (host) {

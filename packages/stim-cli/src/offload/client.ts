@@ -26,7 +26,6 @@ import {
   mayRunHere,
   placementWord,
   saturation,
-  statsProjectKey,
   stimBuildId,
   type BuildMachineCredential,
   type MachineCapacity,
@@ -156,17 +155,19 @@ function offerWarmth(offer: BuildOffer): Exclude<Warmth, 'artifact'> | null {
 
 const WARMTH_RANK: Record<Warmth, number> = { artifact: 3, checkout: 2, dependencies: 1, project: 1 };
 
-function warmthText(warmth: Exclude<Warmth, 'artifact'>, platform: BuildTarget['platform']): string {
-  return warmth === 'checkout'
-    ? `this checkout last built ${platform} there`
-    : warmth === 'dependencies'
-      ? "this checkout's dependency install is reusable there"
-      : `another checkout of this project built ${platform} there`;
+function warmthText(warmth: Warmth, platform: BuildTarget['platform']): string {
+  return warmth === 'artifact'
+    ? 'it has the exact completed artifact'
+    : warmth === 'checkout'
+      ? `this checkout last built ${platform} there`
+      : warmth === 'dependencies'
+        ? "this checkout's dependency install is reusable there"
+        : `another checkout of this project built ${platform} there`;
 }
 
-/** What the chosen machine holds warm for this build and how loaded it is, appended to the placement reason. */
-export function placementDetail(choice: { offer: BuildOffer; target: BuildTarget }): string {
-  const warmth = offerWarmth(choice.offer);
+/** What the machine that took the build was ranked by and how loaded it was, appended to the placement reason. */
+export function placementDetail(choice: Pick<OffloadChoice, 'offer' | 'target' | 'warmth'>): string {
+  const { warmth } = choice;
   const { loadPerCore, builds, maxBuilds } = choice.offer.capacity;
   return [
     ...(warmth ? [warmthText(warmth, choice.target.platform)] : []),
@@ -821,7 +822,10 @@ interface RepoIdentity {
   project: string;
   repo: string;
   lockfile: string | null;
-  /** The hashed project key, equal across worktrees of one checkout, that worker warmth is recorded under. */
+  /**
+   * A hash of the canonical git common directory and the app's path in the repository, equal across every worktree of
+   * one repository, bare or not, that worker warmth is recorded under.
+   */
   warmthProject: string;
 }
 
@@ -841,7 +845,7 @@ function repositoryIdentity(projectRoot: string, repoRoot: string, common: strin
     project,
     repo: `${name.slice(0, 60) || 'repo'}-${digest}`,
     warmthProject: createHash('sha256')
-      .update(statsProjectKey({ root: projectRoot, commonDir: common, repoRoot }))
+      .update(`${common}\0${project.split(sep).join('/')}`)
       .digest('hex')
       .slice(0, 16),
     lockfile: lock
@@ -936,6 +940,8 @@ interface OfferingMachine {
   credential: BuildMachineCredential;
   connection: BuildConnection;
   offer: BuildOffer;
+  /** What `pickOffer` ranked this machine by, null when it held nothing for the build. */
+  warmth: Warmth | null;
 }
 
 /**
@@ -1183,6 +1189,7 @@ export async function chooseBuildMachine({
       credential: pick.credential,
       connection: pick.connection,
       offer: pick.offer,
+      warmth: candidates.find(({ machine }) => machine === pick.credential.machine)?.warmth ?? null,
     };
   });
   return {
@@ -1827,7 +1834,7 @@ export async function offloadBuild(
       probe.connection.close();
       return fail(placement.reasons.join('; '));
     }
-    Object.assign(choice, probe, { offer: { ...probe.offer, artifact: null } });
+    Object.assign(choice, probe, { offer: { ...probe.offer, artifact: null }, warmth: offerWarmth(probe.offer) });
     return null;
   };
   const retryAfterLoss = async (reason: string, lost: string): Promise<OffloadOutcome> => {
