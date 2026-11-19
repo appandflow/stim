@@ -170,7 +170,7 @@ export function withProgramArguments(plist: string, programArguments: string[]):
       (_match, open: string, close: string) =>
         `${open}\n${programArguments.map((argument) => string(argument, '\t\t')).join('\n')}${close}`,
     )
-    .replace(/(<key>ProcessType<\/key>\s*<string>)[^<]*(<\/string>)/, '$1Interactive$2');
+    .replace(/^(\t<key>ProcessType<\/key>\n\t<string>)[^<]*(<\/string>)$/m, '$1Interactive$2');
 }
 
 /** The LaunchAgent plist for `spec`. `StimService` is inert to launchd: it marks the job as one `install` wrote, so `install` and `uninstall` never touch another agent, and records the serve route. */
