@@ -5,6 +5,7 @@ import { Worker } from 'node:worker_threads';
 import { isJsonObject } from '@stim-cli/core/state';
 import { spawnEntry } from '../spawn-entry.ts';
 import { STIMD_ENV } from '../daemon/client.ts';
+import { trackWorker } from './workers.ts';
 
 const IDLE_MS = 2 * 60_000;
 const BOOTING_WAIT_MS = 1000;
@@ -61,7 +62,7 @@ export function createStatusSnapshots(log: Log, file: string): StatusSnapshots {
 
   let pending: { thread: Worker; resolve: (json: string) => void; reject: (error: Error) => void } | null = null;
   const start = () => {
-    const thread = new Worker(spawnEntry('stimd-status'));
+    const thread = trackWorker(new Worker(spawnEntry('stimd-status')));
     thread.unref();
     const gone = (error: Error) => {
       if (worker === thread) worker = null;

@@ -131,6 +131,7 @@ import {
 } from './metro/children.ts';
 import { invocation, traceInvocation, withInvocation, type Invocation } from './forwarded.ts';
 import { createPassesLane, createThreadTable } from './threads.ts';
+import { endWorkers } from './workers.ts';
 import { createCleanupWatch, isUnverifiedCleanup } from './cleanup-watch.ts';
 import { setReportChildLog } from '../report-child-log.ts';
 import { createStreams } from './logs/streams.ts';
@@ -654,7 +655,7 @@ interface StimdStartup {
   cleanup?: (error: unknown) => Promise<void>;
   signal: AbortSignal;
   finish?: () => void;
-  shutdownDeadline?: NodeJS.Timeout;
+  endDeadline?: () => void;
 }
 
 interface RunStimdOptions {
@@ -775,7 +776,7 @@ export async function runStimd(options: RunStimdOptions = {}): Promise<boolean> 
     await startup.cleanup?.(error);
     throw error;
   } finally {
-    clearTimeout(startup.shutdownDeadline);
+    startup.endDeadline?.();
     startup.finish?.();
   }
 }
@@ -1205,9 +1206,9 @@ async function runStimdInner(
     [...ops.values()].includes('pinned') ||
     listBuildSlots().some((slot) => slot.alive && slot.client !== null) ||
     (net.running() !== null && readHostedSessions().some(hostedNativeWork));
-  const failBackground = (error: unknown, why: string) => {
+  const failBackground = (error: unknown, why: string, kind?: 'unknown') => {
     backgroundFailure = error;
-    if (attached === undefined) recordBoot(why, error);
+    if (attached === undefined) recordBoot(why, kind ? undefined : error, kind);
     keepClaim();
     keepDaemon = true;
     (retention ?? follower)?.record(true, [...engineDirs, ...metroEngineDirs(), ...logs.engineDirs()]);
@@ -1831,6 +1832,37 @@ async function runStimdInner(
   const shutdown = (why: string, level: Level = 'info', cause?: unknown) => {
     if (closing) return;
     closing = true;
+    const waiting = new Set<string>();
+    let settled = false;
+    let ended = false;
+    // @ref LLP 0021#a-shutdown-has-a-deadline -- a shutdown that outlasts it records what it waits on, then is forced
+    const expire = () => {
+      if (ended) return;
+      const selecting = follower?.selecting();
+      if (selecting) {
+        log(
+          'warn',
+          'daemon_shutdown_waits',
+          'the shutdown deadline passed while the engine selector runs; waiting for it',
+        );
+        void selecting.then(() => setTimeout(expire, SHUTDOWN_DEADLINE_MS).unref());
+        return;
+      }
+      const names = [...waiting];
+      const reason = `shutdown did not finish within ${SHUTDOWN_DEADLINE_MS / 1000} s${names.length ? `; still waiting on ${names.join(', ')}` : ''}`;
+      try {
+        log('error', 'daemon_shutdown_timeout', reason, { waiting: names });
+        if (switchedTo && !settled) successorMissing(switchedTo, reason);
+      } finally {
+        forceExit(`forced exit: ${reason}`);
+      }
+    };
+    const deadline = setTimeout(expire, SHUTDOWN_DEADLINE_MS);
+    deadline.unref();
+    startup.endDeadline = () => {
+      ended = true;
+      clearTimeout(deadline);
+    };
     foregroundAbort.abort();
     markDaemonFailure(level, attached !== undefined, markAbnormal, why, cause);
     if (dependencyWork) log('debug', 'daemon_dependency_scan_cancelled', 'stopping the dependency size scan');
@@ -1846,24 +1878,11 @@ async function runStimdInner(
     if (readJsonObject(stimdRecordFile())?.pid === process.pid) rmSync(stimdRecordFile(), { force: true });
     if (attached) for (const signal of SIGNALS) process.off(signal, onSignal);
     log(level, 'daemon_exited', `exiting: ${why}`);
-    const waiting = new Set<string>();
     const awaited = (name: string, work: Promise<void> | undefined) => {
       if (!work) return work;
       waiting.add(name);
       return work.finally(() => waiting.delete(name));
     };
-    // @ref LLP 0021#a-shutdown-has-a-deadline -- a shutdown that outlasts it records what it waits on, then is forced
-    startup.shutdownDeadline = setTimeout(() => {
-      const names = [...waiting];
-      const reason = `shutdown did not finish within ${SHUTDOWN_DEADLINE_MS / 1000} s${names.length ? `; still waiting on ${names.join(', ')}` : ''}`;
-      try {
-        log('error', 'daemon_shutdown_timeout', reason, { waiting: names });
-        if (switchedTo) successorMissing(switchedTo, reason);
-      } finally {
-        forceExit(`forced exit: ${reason}`);
-      }
-    }, SHUTDOWN_DEADLINE_MS);
-    startup.shutdownDeadline.unref();
     shutdownDone = Promise.allSettled([
       awaited(
         'the tick',
@@ -1898,6 +1917,7 @@ async function runStimdInner(
             'daemon_claims_kept',
             `shutdown kept the ${[keepOwn && 'stimd', keepDaemon && 'daemon'].filter(Boolean).join(' and ')} claim`,
           );
+        settled = true;
         follower?.release();
         if (!keepDaemon) releaseClaim(claim);
         if (!keepOwn) releaseClaim(own);
@@ -1994,10 +2014,10 @@ async function runStimdInner(
       }, homeWatchMs);
   homeWatch?.unref();
   // @ref LLP 0021#a-stalled-tick-or-pass-ends-stimd -- it may hold claims or children, so they stay kept
-  const watchStall = (what: string): (() => void) => {
+  const watchStall = (what: string, ms: number): (() => void) => {
     const timer = setTimeout(() => {
       if (closing) return;
-      const why = `${what} has not ended after ${STALL_MS / 60_000} minutes`;
+      const why = `${what} has not ended within ${Math.round(ms / 60_000)} minutes`;
       failBackground(
         Object.assign(new Error(why), {
           code: 'STIM_CLAIM_UNAVAILABLE',
@@ -2005,8 +2025,9 @@ async function runStimdInner(
           remedy: `Read the daemon_step_running records in ${daemonNdjsonFile()} for the step that did not end.`,
         }),
         why,
+        'unknown',
       );
-    }, STALL_MS);
+    }, ms);
     timer.unref();
     return () => clearTimeout(timer);
   };
@@ -2016,7 +2037,10 @@ async function runStimdInner(
     markers: () => listBuildEndMarkers().map((marker) => marker.file),
     start: () => startMeasureJob({ cwd: process.cwd(), buildEnd: true }, 'daemon_build_end_measure_failed'),
   });
+  let tickStalled: (() => void) | undefined;
   for (;;) {
+    tickStalled?.();
+    tickStalled = watchStall('a daemon tick', interval + STALL_MS);
     if (!tickRequested && !closing) {
       await new Promise<void>((done) => {
         let timer = setTimeout(done, interval);
@@ -2050,13 +2074,13 @@ async function runStimdInner(
       await logs.ownedSync();
       if (hasOffWork()) {
         for (const socket of tickReplies.splice(0)) socket.destroy();
+        log('debug', 'daemon_tick_off', 'daemon.mode is off; stimd stays up for the work it still serves');
         continue;
       }
       shutdown('daemon.mode is off');
       break;
     }
     const tickStarted = performance.now();
-    const tickStalled = watchStall('a daemon tick');
     const contactSince = lastContact;
     const replying = tickReplies;
     tickReplies = [];
@@ -2169,7 +2193,6 @@ async function runStimdInner(
       foregroundFailure = handleForegroundError(error, ending, attached !== undefined, requestEnd, shutdown);
       break;
     } finally {
-      tickStalled();
       settleForeground();
     }
     if (!maintenanceAllowed()) break;
@@ -2202,10 +2225,11 @@ async function runStimdInner(
     }
     if (maintenanceAllowed() && !lane.running()) {
       lane.start(ticked, mode === 'on');
-      const passStalled = watchStall('the maintenance pass');
+      const passStalled = watchStall('the maintenance pass', STALL_MS);
       void lane.settled().then(passStalled, passStalled);
     }
   }
+  tickStalled?.();
   try {
     await attachedEnding;
   } finally {
@@ -2414,6 +2438,22 @@ export async function runStimdEntry(argv: readonly string[]): Promise<void> {
     try {
       getExecutor().runFile('launchctl', ['remove', label], { timeoutMs: LAUNCHCTL_TIMEOUT_MS });
     } catch {}
+  // @ref LLP 0021#a-shutdown-has-a-deadline -- a worker that does not exit cannot hold the process alive
+  await endWorkers(SHUTDOWN_DEADLINE_MS, (count) => {
+    try {
+      const writer = createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES });
+      writer.write({
+        src: 'stimd',
+        level: 'error',
+        event: 'daemon_shutdown_timeout',
+        msg: `${count} worker threads did not exit within ${SHUTDOWN_DEADLINE_MS / 1000} s of stimd's end`,
+        waiting: ['the worker threads'],
+      });
+      writer.close();
+    } finally {
+      process.kill(process.pid, 'SIGKILL');
+    }
+  });
 }
 
 /** Removes the jobs of this home's earlier stimds that exited without removing their own, such as after a crash. */

@@ -7,10 +7,14 @@ import {
   workspaceStateFile,
   readDaemonSnapshot,
   readDormantStage,
+  daemonClaimRoot,
   readMaintenanceState,
   readStimdBoots,
+  stimdClaimRoot,
   type DaemonMode,
 } from '@stim-cli/core/state';
+import { readClaimSet } from '@stim-cli/core/ownership-claim';
+import * as engineFollow from '../stimd/engine-follow.ts';
 import * as dependencies from '../daemon/dependencies.ts';
 import * as idlePass from '../daemon/idle.ts';
 import * as ladder from '../daemon/ladder.ts';
@@ -477,7 +481,7 @@ describe.skipIf(process.platform === 'win32')(
         expect(records('daemon_exited')).toEqual([]);
 
         await vi.advanceTimersByTimeAsync(MINUTE_MS);
-        expect(records('daemon_exited')[0]?.msg).toContain('the maintenance pass has not ended after 180 minutes');
+        expect(records('daemon_exited')[0]?.msg).toContain('the maintenance pass has not ended within 180 minutes');
         await vi.advanceTimersByTimeAsync(2 * MINUTE_MS - 1000);
         expect(selfKills).toBe(0);
         await vi.advanceTimersByTimeAsync(1000);
@@ -512,6 +516,67 @@ describe.skipIf(process.platform === 'win32')(
         await daemon;
       });
 
+      test('a stalled pass that stops on the abort ends stimd within 2 minutes with no kill, keeping the stimd and daemon claims and recording an abnormal boot of unknown cause', async () => {
+        quietWorkspace();
+        vi.spyOn(maintenanceRun, 'runMaintenance').mockImplementation(
+          (_trigger, options) =>
+            new Promise((resolve) =>
+              options?.tick?.operation.signal.addEventListener('abort', () => resolve(undefined), { once: true }),
+            ),
+        );
+        let exited = false;
+        const daemon = (async () => {
+          await runStimd({ mode: 'on' });
+          exited = true;
+        })();
+        await vi.advanceTimersByTimeAsync(MINUTE_MS);
+        await vi.waitFor(() => expect(ticks()).toHaveLength(1));
+
+        await vi.advanceTimersByTimeAsync(180 * MINUTE_MS);
+        await vi.waitFor(() => expect(exited).toBe(true));
+        await daemon;
+        await vi.advanceTimersByTimeAsync(5 * MINUTE_MS);
+        expect(selfKills).toBe(0);
+        expect(readClaimSet(stimdClaimRoot()).live).toEqual([
+          expect.objectContaining({ details: expect.objectContaining({ kept: true }) }),
+        ]);
+        expect(readClaimSet(daemonClaimRoot()).live).toHaveLength(1);
+        expect(readStimdBoots()).toEqual([
+          expect.objectContaining({ pid: process.pid, abnormal: true, cause: 'unknown' }),
+        ]);
+      });
+
+      test('the shutdown deadline does not kill stimd while an engine switch it runs holds the store locks', async () => {
+        quietWorkspace();
+        const flip = never<null>();
+        vi.spyOn(engineFollow, 'followEngine').mockReturnValue({
+          engine: { root: join(home, 'engine'), build: 'b0b0b0b0b0b0' },
+          record: () => {},
+          admit: async () => null,
+          check: () => flip.promise,
+          selecting: () => flip.promise.then(() => undefined),
+          release: () => {},
+        });
+        let exited = false;
+        const daemon = (async () => {
+          await runStimd({ mode: 'on' });
+          exited = true;
+        })();
+        await vi.advanceTimersByTimeAsync(MINUTE_MS + 1000);
+        process.emit('SIGTERM', 'SIGTERM');
+
+        await vi.advanceTimersByTimeAsync(5 * MINUTE_MS);
+        expect(records('daemon_shutdown_waits')).toHaveLength(1);
+        expect(selfKills).toBe(0);
+        expect(exited).toBe(false);
+
+        flip.end(null);
+        await vi.waitFor(() => expect(exited).toBe(true));
+        await daemon;
+        await vi.advanceTimersByTimeAsync(5 * MINUTE_MS);
+        expect(selfKills).toBe(0);
+      });
+
       test('a tick whose measurement never ends is named, ends stimd after 3 hours, and its shutdown is forced while it waits on that tick', async () => {
         quietWorkspace();
         const first = await measure.measureTick(null, Date.now());
@@ -525,8 +590,8 @@ describe.skipIf(process.platform === 'win32')(
         expect(records('daemon_step_running').map((record) => record.step)).toEqual(['measure']);
         expect(ticks()).toHaveLength(1);
 
-        await vi.advanceTimersByTimeAsync(170 * MINUTE_MS);
-        expect(records('daemon_exited')[0]?.msg).toContain('a daemon tick has not ended after 180 minutes');
+        await vi.advanceTimersByTimeAsync(171 * MINUTE_MS);
+        expect(records('daemon_exited')[0]?.msg).toContain('a daemon tick has not ended within 185 minutes');
         await vi.advanceTimersByTimeAsync(2 * MINUTE_MS);
         expect(records('daemon_shutdown_timeout')).toEqual([expect.objectContaining({ waiting: ['the tick'] })]);
         expect(selfKills).toBe(1);

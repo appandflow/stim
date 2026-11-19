@@ -118,36 +118,62 @@ not finished by then, it logs `daemon_shutdown_timeout` with the parts it still
 waits on (the tick, the maintenance pass, the dependency scan, Metro and tunnel
 children, the net thread and device logs, the worker threads) and makes a forced
 exit, as after a second signal: it records its boot and sends itself SIGKILL. A
-stimd that already kept its claims for unverified cleanup records no boot, and
-its claims stay complete, so the next stimd takes the home over as after any
-dead holder. A forced exit during an engine switch also logs `successor_missing`
-and writes the marker below, since no successor was started. The boot carries
-cause `engine`, as for the attached shutdown watchdog. Reason: a shutdown waited
-5.7 hours on work that never settled (#5981), holding the home's claim while a
-new stimd started and was refused every minute; nothing ended it but a person's
-signal. The deadline covers the slow parts of a normal shutdown: the net thread's
-15 s stop, a report's 35 s cleanup, a cancelled child's exit.
+stimd that already kept its claims for unverified cleanup records no boot there,
+and its claims stay complete, so the next stimd takes the home over as after any
+dead holder. A forced exit during an engine switch, before the shutdown's
+cleanup settled, also logs `successor_missing` and writes the marker below,
+since no successor was started. The boot carries cause `engine`, as for the
+attached shutdown watchdog. Reason: a shutdown waited 5.7 hours on work that
+never settled (#5981), holding the home's claim while a new stimd started and was
+refused every minute; nothing ended it but a person's signal. The deadline
+covers the slow parts of a normal shutdown: the net thread's 15 s stop, a
+report's 35 s cleanup, a cancelled child's exit.
+
+Two waits outlast it on purpose:
+
+- While this stimd's engine switch runs, the forced exit waits for it, then
+  gives the shutdown 2 more minutes. The selector child holds the store's
+  `.lock.sock` and `.flip.sock` through this process, and killing the process
+  would free both while the selector still migrates a home or collects the
+  store. The selector has its own 10-minute timeout.
+- Before the process exits, stimd terminates each worker thread it started and
+  waits up to 2 minutes for them to exit, then logs `daemon_shutdown_timeout`
+  and sends itself SIGKILL. `process.exit` joins worker threads, so a worker
+  stuck in a filesystem request would otherwise keep a stimd that kept its
+  claims alive.
+
+Limit: these timers run on stimd's main thread. A main thread blocked in a
+synchronous call, such as a recursive `rmSync`, runs none of them.
 
 ## A stalled tick or pass ends stimd
 
 A step of a tick or of the maintenance pass that runs 10 minutes logs
 `daemon_step_running` with its name every 10 minutes until it ends, so a step
-that never ends is named in the log. A tick or a maintenance pass that runs 3
-hours ends stimd as a failBackground with unverified cleanup: its home and
-daemon claims stay kept, because the work that never ended may hold claims or
-run children, and the shutdown deadline above bounds the exit. The next stimd
-recovers the home once this one is gone. Reason: in #5981 the ticks stopped
-without a record for 3.5 hours while the net thread went on serving, so no
-cleanup ran and the log did not say where.
-An await that never settles cannot be resumed or abandoned without dropping
-claims it may hold (LLP 0007). The bound sits above the longest that ended in
-this machine's log: a tick of 112 minutes and a maintenance pass of 81 minutes
-on 2026-11-15, under heavy load.
+that never ends is named in the log. The loop that runs the ticks has the same
+bound for each of its iterations: from the start of its wait for the next tick,
+through the tick, to the next wait, the bound is the wait's interval plus 3
+hours. A maintenance pass gets 3 hours. A stalled iteration or pass ends stimd
+as a failBackground with unverified cleanup. The home and daemon claims stay
+kept, because the work that never ended may hold claims or run children, and the
+shutdown deadline above bounds the exit. As for any unverified cleanup, the
+engine claim is released at exit: engine cleanup keeps every build a running
+process runs from (#5510). The boot is recorded with cause
+`unknown`: nothing shows the build is at fault, so it never rolls back or marks
+a build bad. The next stimd recovers the home once this one is gone. While
+`daemon.mode` is off and stimd stays up only for work it still serves, each
+iteration logs `daemon_tick_off`, so that loop is visible too.
 
-The deadline, the stall bound, the 10-minute records and the cause class were
-chosen by the implementing lane of #5981, not the maintainer. The forced exit
-ends on SIGKILL, not code 75, for the reason under "Every exit leaves a
-record".
+Reason: in #5981 the ticks stopped without a record for 3.5 hours while the net
+thread went on serving, so no cleanup ran and the log did not say where. An
+await that never settles cannot be resumed or abandoned without dropping claims
+it may hold (LLP 0007). The bound sits above the longest that ended in this
+machine's log: a tick of 112 minutes and a maintenance pass of 81 minutes on
+2026-11-15, under heavy load.
+
+The deadline, the waits past it, the stall bound, the 10-minute records and the
+cause classes were chosen by the implementing lane of #5981, not the
+maintainer. The forced exit ends on SIGKILL, not code 75, for the reason under
+"Every exit leaves a record".
 
 ## A handover with no successor
 

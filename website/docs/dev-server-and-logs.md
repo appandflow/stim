@@ -548,7 +548,9 @@ running after 10 minutes also writes a `daemon_step_running` record (`step`,
 still running after 3 hours ends stimd with its claims kept, for the next
 stimd to take over. A shutdown still running after 2 minutes writes
 `daemon_shutdown_timeout`, whose `waiting` names what it waits on, and stimd
-is forced to exit.
+is forced to exit; an engine switch in progress is waited for first. While
+`daemon.mode` is off and stimd stays up for work it still serves, each pass of
+its loop writes a `daemon_tick_off` record.
 
 When a size walk fails, `daemon.ndjson` gets one `size_failed` record (`warn`,
 or `info` when the walk was aborted),

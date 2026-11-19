@@ -1,6 +1,7 @@
 import type { Socket } from 'node:net';
 import { type MessagePort, Worker } from 'node:worker_threads';
 import { spawnEntry } from '../spawn-entry.ts';
+import { trackWorker } from './workers.ts';
 
 const STOP_WAIT_MS = 15_000;
 
@@ -87,7 +88,9 @@ export function createNetThread(
   const post = (message: ToNet) => worker?.postMessage(message);
   const startStatusWorker = ({ worker: entry, env, cwd, port: statusPort }: StatusWorkerRequest) => {
     try {
-      const status = new Worker(entry, { env, workerData: { cwd, port: statusPort }, transferList: [statusPort] });
+      const status = trackWorker(
+        new Worker(entry, { env, workerData: { cwd, port: statusPort }, transferList: [statusPort] }),
+      );
       status.on('error', (error: Error) => log('warn', 'status_worker_failed', error.message));
     } catch (error) {
       log('warn', 'status_worker_failed', error instanceof Error ? error.message : String(error));
@@ -143,7 +146,7 @@ export function createNetThread(
       }
       shareOnly = options.shareOnly;
       loopbackOnly = options.loopbackOnly;
-      const thread = new Worker(spawnEntry('net-thread'), { workerData: { net: options } });
+      const thread = trackWorker(new Worker(spawnEntry('net-thread'), { workerData: { net: options } }));
       let clean = false;
       worker = thread;
       started = new Promise<NetAnswer>((answer) => {
