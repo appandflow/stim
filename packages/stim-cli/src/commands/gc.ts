@@ -274,7 +274,12 @@ function resultOf(action: LevelRunAction): GcResult {
 
 /** `stim gc --dry-run --json` as the API's read-only `gc()` returns it: the plan and the storage sections. */
 export async function readGcReport(options: GcReadOptions = {}, deps: GcDependencies = {}): Promise<GcPayload> {
-  const run = await runMaintenanceAtLevel({ level: options.pressure, act: false, operation: deps.operation });
+  const run = await runMaintenanceAtLevel({
+    level: options.pressure,
+    act: false,
+    operation: deps.operation,
+    walkUnknown: false,
+  });
   const report = await collectGcReport({ measureBuildState: options.measureBuildState }, deps);
   return {
     ...runPayload(run, false),
@@ -299,7 +304,7 @@ function gcLogOf(level: PressureLevel, chosen: boolean, env?: NodeJS.ProcessEnv)
 
 /** Runs one acting GC, or a dry run, already admitted under the maintenance claim when it acts. */
 export async function executeGc(
-  opts: GcOptions,
+  opts: GcOptions & { walkUnknown?: false },
   deps: GcDependencies,
   write: (stream: 'stdout' | 'stderr', line: string) => void,
   claim?: ClaimHandle,
@@ -315,6 +320,7 @@ export async function executeGc(
       level: opts.pressure,
       act,
       operation: deps.operation,
+      ...(opts.walkUnknown === false ? { walkUnknown: opts.walkUnknown } : {}),
       onAction: (action) => {
         if (!act || action.outcome === 'would') return;
         log ??= gcLogOf(opts.pressure ?? 'normal', chosen, deps.operation?.env);

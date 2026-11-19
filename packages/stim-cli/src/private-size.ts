@@ -1,8 +1,10 @@
 import type { ChildProcess } from 'node:child_process';
 import { lstatSync } from 'node:fs';
+import { statfs } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
 import { privateSizeHelper } from './clonefile.ts';
+import { answered, hungRead, Unanswered } from './workspace/bounded-read.ts';
 import { runOperationFile } from './engine/operation-exec.ts';
 import { WorkspaceProcessCleanupError } from './engine/workspace-process-lock.ts';
 import { getExecutor } from './exec.ts';
@@ -19,17 +21,133 @@ export const INSTALL_MARKERS: readonly string[] = [
   'Manifest.lock',
 ];
 
+/**
+ * statfs(2) `f_type` of the Linux volumes whose files share blocks only through hard links: ext2, ext3 and ext4
+ * (EXT4_SUPER_MAGIC) and tmpfs (TMPFS_MAGIC). Btrfs and XFS can share blocks between files with one link each
+ * (reflinks), which a link count does not show.
+ */
+const LINK_COUNTED_VOLUMES: ReadonlySet<number> = new Set([0xef53, 0x01021994]);
+const PROBE_TIMEOUT_MS = 2000;
+let probeTail: Promise<void> = Promise.resolve();
+
+async function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  let onAbort: (() => void) | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, fail) => {
+        onAbort = () => fail(signal?.reason);
+        signal?.addEventListener('abort', onAbort, { once: true });
+      }),
+    ]);
+  } finally {
+    if (onAbort) signal?.removeEventListener('abort', onAbort);
+  }
+}
+
+/** True once `promise` settled within `timeoutMs`, false when it did not. */
+async function settledWithin(promise: Promise<unknown>, timeoutMs: number): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise.then(
+        () => true,
+        () => true,
+      ),
+      new Promise<boolean>((done) => {
+        timer = setTimeout(() => done(false), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Whether a walk may tell what deleting the tree at `path` would free: on macOS the `stim-privsize` helper decides
+ * during the walk, on Linux the volume must be link-counted. One native statfs at most is in flight per process:
+ * probes queue in arrival order and each waits up to PROBE_TIMEOUT_MS for the ones before it. `busy` when that wait
+ * ran out, or an earlier read that did not answer is still pending, so none was started; `timeout` when its own
+ * statfs did not answer within PROBE_TIMEOUT_MS. An abort of `signal` rejects at once.
+ */
+export async function privateSizeKnowable(
+  path: string,
+  signal?: AbortSignal,
+): Promise<'yes' | 'no' | 'timeout' | 'busy'> {
+  if (process.platform === 'darwin') return 'yes';
+  if (process.platform !== 'linux') return 'no';
+  if (hungRead() !== null) return 'busy';
+  signal?.throwIfAborted();
+  const before = probeTail;
+  let release: (() => void) | undefined;
+  probeTail = new Promise<void>((done) => {
+    release = done;
+  });
+  let held = false;
+  try {
+    if (!(await abortable(settledWithin(before, PROBE_TIMEOUT_MS), signal)) || hungRead() !== null) return 'busy';
+    held = true;
+    const read = statfs(path);
+    read.then(
+      () => release?.(),
+      () => release?.(),
+    );
+    const volume = await abortable(
+      answered(path, () => read, PROBE_TIMEOUT_MS),
+      signal,
+    );
+    return LINK_COUNTED_VOLUMES.has(volume.type) ? 'yes' : 'no';
+  } catch (error) {
+    signal?.throwIfAborted();
+    return error instanceof Unanswered ? 'timeout' : 'no';
+  } finally {
+    if (!held)
+      void before.then(
+        () => release?.(),
+        () => release?.(),
+      );
+  }
+}
+
 export interface TreeSize {
   bytes: number;
   /** What deleting the tree would free; null when the volume or the machine cannot tell. */
   privateBytes: number | null;
-  /** `du` exited with status 1: the bytes are those of what it could read, a lower bound. Absent otherwise. */
+  /** The walk exited with status 1: the bytes are those of what it could read, a lower bound. Absent otherwise. */
   partial?: true;
+  /** Why `privateBytes` is null when the walk tried to count them: the volume cannot tell, or the counting walk failed. */
+  privateUnknown?: 'volume' | 'walk';
 }
 
 function parseHelper(output: string): TreeSize | null {
   const match = /^(\d+) (\d+) \d+$/m.exec(output);
   return match ? { bytes: Number(match[1]), privateBytes: Number(match[2]) } : null;
+}
+
+/**
+ * Sums `find -printf '%n %D:%i %b\\n'` lines: a file counts once per device and inode, and frees its blocks only when every one of
+ * its links is in the tree, so a file hard-linked from a package store outside it frees nothing.
+ */
+function parseFind(output: string): TreeSize {
+  const linked = new Map<string, { links: number; seen: number; bytes: number }>();
+  let bytes = 0;
+  let privateBytes = 0;
+  for (const [, links = '', inode = '', blocks = ''] of output.matchAll(/^(\d+) (\d+:\d+) (\d+)$/gm)) {
+    const size = Number(blocks) * 512;
+    if (links === '1') {
+      bytes += size;
+      privateBytes += size;
+      continue;
+    }
+    const entry = linked.get(inode);
+    if (entry) entry.seen++;
+    else {
+      bytes += size;
+      linked.set(inode, { links: Number(links), seen: 1, bytes: size });
+    }
+  }
+  for (const entry of linked.values()) if (entry.seen >= entry.links) privateBytes += entry.bytes;
+  return { bytes, privateBytes };
 }
 
 function parseDu(output: string): TreeSize | null {
@@ -39,9 +157,10 @@ function parseDu(output: string): TreeSize | null {
 
 /**
  * The size of the tree at `path` in one walk: on macOS with the Command Line Tools, `stim-privsize` gives the allocated
- * and private bytes; elsewhere, or when the helper fails, `du -sk` gives the allocated bytes and the private bytes stay
+ * and private bytes; on a Linux volume `privateSizeKnowable` accepts, GNU `find` lists each file's links and blocks for
+ * the same count; elsewhere, or when that walk fails, `du -sk` gives the allocated bytes and the private bytes stay
  * unknown. With `targets`, or `private: false`, only `du -sk` runs, over the targets' sum. Null when neither could
- * measure it, or when the helper was stopped at the timeout. With an operation the walk is its declared child; without
+ * measure it, or when a walk was stopped at the timeout, which covers every walk of the call together. With an operation the walk is its declared child; without
  * one `onSpawn` sees it and it runs at low priority. Claimed background walks keep their low priority with an operation.
  */
 export async function measureTree(
@@ -58,18 +177,19 @@ export async function measureTree(
   const { operation } = options;
   const exec = getExecutor();
   const lowPriority = options.lowPriority ?? !operation;
+  const deadline = Date.now() + options.timeoutMs;
   const walk = (file: string, args: string[]): Promise<string> => {
     const command = lowPriority ? 'nice' : file;
     const argv = lowPriority ? ['-n', NICENESS, file, ...args] : args;
     return operation
       ? runOperationFile(operation, exec, command, argv, {
-          timeoutMs: options.timeoutMs,
+          timeoutMs: Math.max(1, deadline - Date.now()),
           killSignal: 'SIGKILL',
           cwd: operation.cwd,
           signal: operation.signal,
         })
       : exec.runFileAsync(command, argv, {
-          timeoutMs: options.timeoutMs,
+          timeoutMs: Math.max(1, deadline - Date.now()),
           onSpawn: options.onSpawn,
         });
   };
@@ -81,7 +201,27 @@ export async function measureTree(
     const stdout: unknown = error instanceof Error && 'stdout' in error ? error.stdout : undefined;
     return { status, stdout };
   };
-  const helper = options.targets || options.private === false ? null : await privateSizeHelper(operation);
+  const counted = !options.targets && options.private !== false;
+  const helper = counted ? await privateSizeHelper(operation, options.timeoutMs) : null;
+  let privateUnknown: TreeSize['privateUnknown'] = helper || process.platform === 'darwin' ? 'walk' : 'volume';
+  const volume =
+    !helper && counted && process.platform === 'linux' ? await privateSizeKnowable(path, operation?.signal) : 'no';
+  if (Date.now() >= deadline) return null;
+  if (volume === 'timeout') privateUnknown = 'walk';
+  if (volume === 'busy') privateUnknown = undefined;
+  if (volume === 'yes') {
+    privateUnknown = 'walk';
+    try {
+      return parseFind(await walk('find', [path, '-type', 'f', '-printf', '%n %D:%i %b\\n']));
+    } catch (error) {
+      const { status, stdout } = failed(error);
+      const overflowed = error instanceof Error && 'code' in error && error.code === 'ENOBUFS';
+      if (!overflowed && error instanceof Error && 'signal' in error && error.signal) return null;
+      // GNU find exits 1 after an entry it could not read and still prints the rest. A file whose links were not all
+      // printed counts as shared, so a missed subtree can only lower the private bytes.
+      if (status === 1 && typeof stdout === 'string' && stdout) return { ...parseFind(stdout), partial: true };
+    }
+  }
   if (helper) {
     try {
       const size = parseHelper(await walk(helper, [path]));
@@ -90,15 +230,18 @@ export async function measureTree(
       const { status, stdout } = failed(error);
       if (error instanceof Error && 'signal' in error && error.signal) return null;
       const size = status === UNSUPPORTED_STATUS && typeof stdout === 'string' ? parseHelper(stdout) : null;
-      if (size) return { bytes: size.bytes, privateBytes: null };
+      if (size) return { bytes: size.bytes, privateBytes: null, privateUnknown: 'volume' };
     }
   }
+  const unknown = counted && privateUnknown ? { privateUnknown } : {};
+  if (Date.now() >= deadline) return null;
   try {
-    return parseDu(await walk('du', ['-sk', ...(options.targets ?? [path])]));
+    const size = parseDu(await walk('du', ['-sk', ...(options.targets ?? [path])]));
+    return size && { ...size, ...unknown };
   } catch (error) {
     const { status, stdout } = failed(error);
     const size = status === 1 && typeof stdout === 'string' ? parseDu(stdout) : null;
-    return size ? { ...size, partial: true } : null;
+    return size ? { ...size, partial: true, ...unknown } : null;
   }
 }
 

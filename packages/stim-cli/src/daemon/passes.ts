@@ -535,11 +535,13 @@ export async function runDormantReduction({
   trigger,
   operation,
   protectedRoot,
+  walkUnknown,
 }: {
   act: boolean;
   trigger: string;
   operation?: StimContext;
   protectedRoot?: string;
+  walkUnknown?: false;
 }): Promise<DaemonLadderAction[]> {
   const config = loadConfig();
   const afterMs = dormantAfterMs(config);
@@ -599,6 +601,7 @@ export async function runDormantReduction({
         log,
         ...reading,
         force: true,
+        ...(walkUnknown === false ? { walkUnknown } : {}),
       })),
     );
     return actions;

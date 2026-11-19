@@ -66,6 +66,7 @@ beforeEach(() => {
     findExecutable: (name) => (name === 'gh' ? '/usr/bin/gh' : real.findExecutable(name)),
     runFileAsync: async (file, args = [], opts) => {
       calls.push({ file, args });
+      if (file === 'nice' && args[2] === 'find') throw new Error('find: unknown predicate');
       if (file === 'nice') {
         opts?.onSpawn?.({ pid: duPid } as ChildProcess);
         await gate;
@@ -94,7 +95,7 @@ afterEach(() => {
 });
 
 function duWalks(): string[][] {
-  return calls.filter((call) => call.file === 'nice').map((call) => call.args.slice(4));
+  return calls.filter((call) => call.file === 'nice' && call.args[2] !== 'find').map((call) => call.args.slice(4));
 }
 
 function environment(): EnvironmentState {

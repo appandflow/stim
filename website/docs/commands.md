@@ -1849,8 +1849,9 @@ and each owned simulator and emulator carries `disk: { bytes, measuredAt }` for
 its data folder. `buildBytes` is Stim's own folder for the workspace, with Xcode
 derived data, Gradle outputs and logs. `nodeModulesBytes` counts APFS clones in
 full; `nodeModulesPrivateBytes` is what deleting `node_modules` would free, the
-blocks no copy-on-write clone or outside hard link shares, and is `null` off
-APFS or without the Command Line Tools. Both `node_modules` figures are `null`
+blocks no copy-on-write clone or outside hard link shares, and is `null` on
+macOS off APFS or without the Command Line Tools, on Linux off ext2/3/4 and
+tmpfs (the volumes where a hard link is the only sharing), and on Windows. Both `node_modules` figures are `null`
 again after a reinstall or a fresh clone until the tree is measured, and they
 are the measurement `stim gc` and the daemon's cleanup use. The watcher
 measures off its refresh path, at most every 5 minutes per folder while the
@@ -2486,7 +2487,17 @@ under the critical level, which `stim gc --pressure critical` always does. Then
 dependencies to copy, and since when, until you install them there. `gc` deletes
 only git-ignored regenerable directories: a real directory inside the checkout
 whose files git ignores, with no tracked or unignored file, not reached through a
-link. A tree under 256 MB of its own (a copy-on-write clone) is kept.
+link. A tree under 256 MB of its own (a copy-on-write clone, or a pnpm tree
+hard-linked from its store) is kept, and so is one whose own size is unknown at
+the 7-day rule. Before that rule keeps a tree as unknown, `stim gc` and
+`stim gc --dry-run` measure the ones no walk tried since their last install,
+largest first, for up to 2 minutes in all; a tree whose walk failed on the
+same install waits until the others are measured. Only the CLI walks: Stim
+Desktop's gc and its report, other API callers and the daemon do not. One still unknown says why in its kept reason: not
+measured since its last install, another size walk on this machine was running,
+gc ran out of time, its walk failed or did not finish (gc then leaves it for 6 hours or until it is reinstalled), the walk
+could not count its shared blocks (or saw only part of the tree), or its volume
+cannot report them.
 
 Automatic maintenance and `stim gc` never delete a `node_modules` or
 `ios/Pods` folder in which they detect hand edits, at any pressure level,
@@ -3023,7 +3034,7 @@ laid out as DerivedData under a name other than `.dd`, such as a rn-tester
 Each entry's
 `privateBytes` is what deleting `node_modules`, `ios/Pods`, `.dd`, `android/.cxx` or that output would free, the
 blocks no copy-on-write clone or outside hard link shares, and is `null` for
-other directories, off APFS and without the Command Line Tools. gc reuses a
+other directories, on macOS off APFS or without the Command Line Tools, on Linux off ext2/3/4 and tmpfs, and on Windows. gc reuses a
 size for up to an hour while no entry was added to or removed from the
 directory (for `node_modules` and Pods, for up to six hours while their install
 is unchanged, the measurement `stim status` and the daemon share),

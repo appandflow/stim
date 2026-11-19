@@ -1,6 +1,7 @@
 import {
   currentSourceDependencies,
   diskUsageCacheFile,
+  diskUsageWalkClaims,
   readJsonObject,
   readWorkspaceState,
   workspaceLightenedFile,
@@ -11,6 +12,7 @@ import {
   mkdirSync,
   mkdtempSync,
   chmodSync,
+  linkSync,
   readFileSync,
   readdirSync,
   realpathSync,
@@ -22,9 +24,10 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { writeCacheFile } from '../cache-file.ts';
-import { treeSignature } from '../private-size.ts';
+import { privateSizeKnowable, treeSignature } from '../private-size.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
-import { runGc } from '../commands/gc.ts';
+import { readGcReport, runGc } from '../commands/gc.ts';
+import { createStim } from '../api.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
 import { loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceStateFile } from '../workspace/paths.ts';
@@ -56,6 +59,23 @@ vi.mock('../commands/worktree.ts', async (importOriginal) => ({
   },
 }));
 vi.mock('../devices/machine-cache-usage.ts', () => ({ getMachineCacheReport: async () => null }));
+const walks = vi.hoisted(
+  () =>
+    new Map<
+      string,
+      () => { bytes: number; privateBytes: number | null; privateUnknown?: 'volume' | 'walk'; partial?: true } | null
+    >(),
+);
+vi.mock('../private-size.ts', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../private-size.ts')>();
+  return {
+    ...real,
+    measureTree: async (path: string, options: Parameters<typeof real.measureTree>[1]) => {
+      const walk = walks.get(path);
+      return walk ? walk() : real.measureTree(path, options);
+    },
+  };
+});
 
 let home: string;
 let projects: string;
@@ -84,6 +104,7 @@ beforeEach(() => {
   warm.exitCode = 0;
   warm.calls = [];
   warm.restores = [];
+  walks.clear();
 });
 
 afterEach(() => {
@@ -614,12 +635,207 @@ test.skipIf(process.platform === 'win32')(
     ageCheckout(source, daysAgo(8));
     rmSync(diskUsageCacheFile(modules), { force: true });
     rmSync(diskUsageCacheFile(join(source, 'ios', 'Pods')), { force: true });
+    walks.set(modules, () => null);
+    walks.set(join(source, 'ios', 'Pods'), () => null);
     ageTree(source, daysAgo(8));
     const normal = await quietly(() => runGc({ pressure: 'normal' }));
     expect(normal).toBeDefined();
     expect(existsSync(sourceModules(source))).toBe(true);
     await quietly(() => runGc({ pressure: 'critical' }));
     expect(existsSync(sourceModules(source))).toBe(false);
+  },
+  60_000,
+);
+
+test.skipIf(process.platform === 'win32')(
+  'gc measures a source checkout tree not measured since its install, and keeps one hard-linked from a package store as worth almost nothing',
+  async ({ skip }) => {
+    const roots = idleRepo([{ name: 'feature', workspace: true }]);
+    const source = roots.repo ?? '';
+    const modules = join(source, 'node_modules');
+    const store = join(projects, 'store');
+    mkdirSync(join(store, 'pkg'), { recursive: true });
+    writeFileSync(join(store, 'pkg', 'large.js'), Buffer.alloc(8 * 1024 * 1024, 1));
+    linkSync(join(store, 'pkg', 'large.js'), join(modules, 'pkg', 'large.js'));
+    ageCheckout(source, daysAgo(8));
+    rmSync(diskUsageCacheFile(modules), { force: true });
+    ageTree(source, daysAgo(8));
+    if ((await privateSizeKnowable(modules)) !== 'yes') skip('the test volume cannot report shared blocks');
+
+    const { payload } = await gcJson('normal');
+
+    const typed: LevelPayload = payload;
+    const kept = typed.actions.find((action) => action.kind === 'delete-dependencies' && action.target === modules);
+    expect(kept).toMatchObject({ outcome: 'kept' });
+    expect(kept?.detail).toMatch(
+      /^\d+K of its \d+(\.\d)?M is its own and the rest is shared with copy-on-write clones or hard links/,
+    );
+  },
+  60_000,
+);
+
+test.skipIf(process.platform === 'win32')(
+  'a source checkout tree gc could not measure says why it stays, and is not walked again until its install changes, so the next tree gets the budget',
+  async () => {
+    const roots = idleRepo([{ name: 'feature', workspace: true }]);
+    const source = roots.repo ?? '';
+    const modules = join(source, 'node_modules');
+    const pods = join(source, 'ios', 'Pods');
+    ageCheckout(source, daysAgo(8));
+    const unmeasured = () => {
+      for (const { path, bytes } of [
+        { path: modules, bytes: 2 * 1024 ** 3 },
+        { path: pods, bytes: 1024 ** 3 },
+      ])
+        writeCacheFile(diskUsageCacheFile(path), {
+          path,
+          measuredAt: new Date().toISOString(),
+          bytes,
+          signature: treeSignature(path),
+        });
+    };
+    const detail = (payload: LevelPayload, target: string) =>
+      payload.actions.find((action) => action.kind === 'delete-dependencies' && action.target === target)?.detail;
+    const slow = vi.fn<() => null>(() => {
+      vi.setSystemTime(Date.now() + 115_000);
+      return null;
+    });
+    const unknownWalk = (bytes: number, privateUnknown: 'volume' | 'walk') =>
+      vi.fn<() => { bytes: number; privateBytes: null; privateUnknown: 'volume' | 'walk' }>(() => ({
+        bytes,
+        privateBytes: null,
+        privateUnknown,
+      }));
+    const cannotTell = unknownWalk(2 * 1024 ** 3, 'volume');
+    const countFailed = unknownWalk(1024 ** 3, 'walk');
+    const volume =
+      'its volume cannot report which of its blocks other files share, so its real size is unknown and it stays';
+    const failed =
+      'its private-size walk could not count which of its blocks other files share, so its real size is unknown and it stays';
+
+    unmeasured();
+    walks.set(modules, cannotTell);
+    walks.set(pods, countFailed);
+    const first: LevelPayload = (await gcJson('normal')).payload;
+    expect(detail(first, modules)).toBe(volume);
+    expect(detail(first, pods)).toBe(failed);
+
+    const again: LevelPayload = (await gcJson('normal')).payload;
+    expect(detail(again, modules)).toBe(volume);
+    expect(detail(again, pods)).toBe(failed);
+    expect(cannotTell).toHaveBeenCalledTimes(1);
+    expect(countFailed).toHaveBeenCalledTimes(1);
+
+    unmeasured();
+    walks.set(modules, slow);
+    const late: LevelPayload = (await gcJson('normal')).payload;
+    expect(detail(late, modules)).toBe(
+      'its size walk failed or did not finish within the 120 seconds stim gc had left, so its real size is unknown and it stays',
+    );
+    expect(detail(late, pods)).toBe(
+      'stim gc spent its 2 minutes of measuring on other trees first, so its real size is unknown and it stays',
+    );
+    expect(countFailed).toHaveBeenCalledTimes(1);
+
+    const order: string[] = [];
+    walks.set(pods, () => {
+      order.push(pods);
+      return { bytes: 1024 ** 3, privateBytes: 10 * 1024 ** 2 };
+    });
+    walks.set(modules, () => {
+      order.push(modules);
+      return slow();
+    });
+    vi.setSystemTime(Date.now() + 24 * 60 * 60_000);
+    const dayLater: LevelPayload = (await gcJson('normal')).payload;
+    expect(order).toEqual([pods, modules]);
+    expect(detail(dayLater, pods)).toMatch(/^10M of its 1\.0G is its own/);
+
+    order.length = 0;
+    const next: LevelPayload = (await gcJson('normal')).payload;
+    expect(order).toEqual([]);
+    expect(detail(next, modules)).toBe(
+      'its last size walk did not finish in time and its install has not changed since, so its real size is unknown and it stays',
+    );
+  },
+  60_000,
+);
+
+test.skipIf(process.platform === 'win32')(
+  "neither the API's read-only gc report nor its acting gc walks a tree, and a partial count under the threshold stays unknown",
+  async () => {
+    const roots = idleRepo([{ name: 'feature', workspace: true }]);
+    const source = roots.repo ?? '';
+    const modules = join(source, 'node_modules');
+    const pods = join(source, 'ios', 'Pods');
+    ageCheckout(source, daysAgo(8));
+    for (const path of [modules, pods]) rmSync(diskUsageCacheFile(path), { force: true });
+    const partial = vi.fn<() => { bytes: number; privateBytes: number; partial: true }>(() => ({
+      bytes: 2 * 1024 ** 3,
+      privateBytes: 10 * 1024 ** 2,
+      partial: true,
+    }));
+    walks.set(modules, partial);
+    walks.set(pods, () => null);
+
+    await readGcReport({ pressure: 'normal', measureBuildState: false });
+    await quietly(() =>
+      createStim({ projectRoot: source, home, env: process.env }).collectGarbage({ pressure: 'normal' }),
+    );
+    expect(partial).not.toHaveBeenCalled();
+    expect(existsSync(modules)).toBe(true);
+
+    for (let run = 0; run < 2; run++) {
+      const { payload } = await gcJson('normal');
+      const typed: LevelPayload = payload;
+      expect(
+        typed.actions.find((action) => action.kind === 'delete-dependencies' && action.target === modules)?.detail,
+      ).toBe(
+        'its private-size walk could not count which of its blocks other files share, so its real size is unknown and it stays',
+      );
+    }
+    expect(partial).toHaveBeenCalledTimes(1);
+  },
+  60_000,
+);
+
+test.skipIf(process.platform === 'win32')(
+  'gc starts no size walk while another holds the walk claim, and takes up what that walk recorded on the next run',
+  async () => {
+    const roots = idleRepo([{ name: 'feature', workspace: true }]);
+    const source = roots.repo ?? '';
+    const modules = join(source, 'node_modules');
+    const pods = join(source, 'ios', 'Pods');
+    ageCheckout(source, daysAgo(8));
+    for (const path of [modules, pods]) rmSync(diskUsageCacheFile(path), { force: true });
+    const walk = vi.fn<() => null>(() => null);
+    walks.set(modules, walk);
+    walks.set(pods, walk);
+    const detail = (payload: LevelPayload, target: string) =>
+      payload.actions.find((action) => action.kind === 'delete-dependencies' && action.target === target)?.detail;
+    const held = tryAcquireClaim({ root: diskUsageWalkClaims(), mode: 'exclusive', label: 'disk usage walk' }).acquired;
+    assert(held);
+    try {
+      const { payload } = await gcJson('normal');
+      for (const target of [modules, pods])
+        expect(detail(payload, target)).toBe(
+          'another size walk on this machine was running, so stim gc did not measure it this run and its real size is unknown and it stays',
+        );
+      expect(walk).not.toHaveBeenCalled();
+      writeCacheFile(diskUsageCacheFile(modules), {
+        path: modules,
+        measuredAt: new Date().toISOString(),
+        bytes: 1024 ** 3,
+        privateBytes: 10 * 1024 ** 2,
+        signature: treeSignature(modules),
+      });
+    } finally {
+      releaseClaim(held);
+    }
+
+    const { payload } = await gcJson('normal');
+    expect(detail(payload, modules)).toMatch(/^10M of its 1\.0G is its own/);
+    expect(walk).toHaveBeenCalledTimes(1);
   },
   60_000,
 );

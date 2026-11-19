@@ -985,10 +985,11 @@ RULES
                               clones in full.
                               privateBytes is what deleting node_modules,
                               ios/Pods, .dd, android/.cxx or xcodebuild
-                              output would free on APFS: blocks no
+                              output would free on APFS, ext4 or
+                              tmpfs: blocks no
                               copy-on-write clone or hard link outside it
-                              shares; null for other directories and off
-                              APFS. A bytes is null when it could not be
+                              shares; null for other directories and
+                              volumes. A bytes is null when it could not be
                               measured within 10 seconds; sizes are cached
                               for up to an hour while no entry of the
                               directory was added or removed (for
@@ -1851,7 +1852,7 @@ RULES
                       what deleting that node_modules would free on APFS:
                       blocks no copy-on-write clone (worktree warm clones
                       it) or hard link outside it shares; null off APFS,
-                      without the Command Line Tools, or like
+                      ext4 and tmpfs, without the Command Line Tools, or like
                       nodeModulesBytes until measured. gc's node_modules
                       privateBytes and the daemon's cleanup read the same
                       measurement
