@@ -1,7 +1,9 @@
 import {
+  closeSync,
   copyFileSync,
   existsSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
   realpathSync,
@@ -10,6 +12,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { createServer } from 'node:net';
 import { homedir } from 'node:os';
@@ -23,11 +26,19 @@ import {
 } from '@stim-cli/core/ownership-claim';
 import { execStartOverride } from '@stim-cli/core';
 import { inspectProcessIdentity, sameProcessRecord, waitForProcessExit } from '@stim-cli/core/process-identity';
-import { readJsonObject, stimBuildDigest, stimdClaimRoot, stimdRecordFile, tailscaleEnv } from '@stim-cli/core/state';
+import {
+  isJsonObject,
+  readJsonObject,
+  stimBuildDigest,
+  stimdClaimRoot,
+  stimdRecordFile,
+  tailscaleEnv,
+} from '@stim-cli/core/state';
 import type { WorkerRootUsage } from './worker-areas.ts';
 import {
   jobArguments,
-  withProgramArguments,
+  parseLaunchctlPrint,
+  renderPlist,
   DEFAULT_LABEL,
   DEFAULT_PORT,
   validateLabel,
@@ -38,6 +49,8 @@ import {
   type ServiceSpec,
 } from './service-plist.ts';
 import {
+  launchdReloadCommand,
+  launchdRuns,
   run,
   serviceManager,
   serviceManagerOrNull,
@@ -416,17 +429,23 @@ const unitShim = (): string | null => (serviceManager().name === 'taskscheduler'
  * server must restart to run it, which is when this call changed what the manager will start.
  *
  * A unit that names node and a Stim script (`<node> <copy>/bin/stim.mjs serve --service`, as Stim 1.42 wrote it) is
- * rewritten to name the shim with the same options. launchd reads the file only when the job is bootstrapped. systemd
- * restarts a job from the definition it already loaded, so a unit that names the shim also has to be loaded: this
- * reloads it without restarting the job and checks `systemctl show` for the shim, which a later boot retries when a
- * reload failed. A drop-in or multi-line `ExecStart=` is refused and the file left as written; a symlinked unit is
- * written through.
+ * rewritten to name the shim with the same options. A LaunchAgent is rendered again from its options and environment,
+ * which also refreshes every other key `renderPlist` writes. launchd reads a plist only at bootstrap and restarts a job
+ * from the definition it read then, so when that render changed the plist or `launchctl print` shows the job without the
+ * shim, a detached command boots the job out and in once its process exits (`launchdReloadCommand`). A later boot that
+ * finds the job still without the shim and the plist as that reload left it throws with the remedy instead of asking
+ * for another restart. systemd restarts a job from the definition it already
+ * loaded, so a unit that names the shim also has to be loaded: this reloads it without restarting the job and checks
+ * `systemctl show` for the shim, which a later boot retries when a reload failed. A drop-in or multi-line `ExecStart=` is
+ * refused and the file left as written; a symlinked unit is written through.
  */
 export async function rewriteUnitToShim(label: string): Promise<boolean> {
   const manager = serviceManager();
   const stimd = unitShim();
   const installed = stimd ? await readInstalled(label) : null;
   if (!stimd || !installed?.managed || installed.script === null || installed.port === null) return false;
+  if (installed.node === null && installed.script !== stimd) return false;
+  if (manager.name === 'launchd') return reloadLaunchdOntoShim(label, { ...installed, port: installed.port }, stimd);
   const path = plistPath(label);
   let changed = false;
   if (installed.node !== null) {
@@ -435,18 +454,14 @@ export async function rewriteUnitToShim(label: string): Promise<boolean> {
       ...(installed.host ? [installed.host, 'run'] : []),
       ...jobArguments({ ...installed, node: installed.node, script: installed.script, port: installed.port, stimd }),
     ];
-    const rewritten =
-      manager.name === 'launchd' ? withProgramArguments(text, args) : editUnit(text, { programArguments: args });
+    const rewritten = editUnit(text, { programArguments: args });
     if (rewritten !== text) {
-      const problem = manager.name === 'systemd' ? execStartOverride(path, text) : null;
+      const problem = execStartOverride(path, text);
       if (problem) throw new ServiceError(`${problem}; not rewriting ${label} to the engine shim.`);
-      const target = realpathSync(path);
-      const partial = `${target}.${process.pid}.tmp`;
-      writeFileSync(partial, rewritten, { mode: 0o644 });
-      renameSync(partial, target);
+      writeThrough(path, rewritten);
       changed = true;
     }
-  } else if (installed.script !== stimd) return false;
+  }
   if (manager.loadedCommand) {
     const loadsShim = async () => ((await manager.loadedCommand?.(label)) ?? '').includes(`path=${stimd} ;`);
     if (!(await loadsShim())) {
@@ -461,6 +476,66 @@ export async function rewriteUnitToShim(label: string): Promise<boolean> {
     }
   }
   return changed;
+}
+
+/** Replaces the file `path` resolves to with `text`, so a symlinked service file keeps its link. */
+function writeThrough(path: string, text: string): void {
+  const target = realpathSync(path);
+  const partial = `${target}.${process.pid}.tmp`;
+  writeFileSync(partial, text, { mode: 0o644 });
+  renameSync(partial, target);
+}
+
+async function reloadLaunchdOntoShim(
+  label: string,
+  installed: InstalledService & { port: number },
+  stimd: string,
+): Promise<boolean> {
+  const manager = serviceManager();
+  const definition = await manager.loadedCommand?.(label);
+  const path = plistPath(label);
+  const converted = await run('plutil', ['-convert', 'json', '-o', '-', path]);
+  if (!converted.ok) throw new ServiceError(`Could not read ${path}: ${converted.stderr.trim()}`);
+  const job: unknown = JSON.parse(converted.stdout);
+  const fields = isJsonObject(job) ? job : {};
+  const variables = isJsonObject(fields.EnvironmentVariables) ? fields.EnvironmentVariables : {};
+  const log = installed.logPath ?? logPath(label);
+  const rendered = renderPlist({
+    label,
+    host: installed.host,
+    node: installed.node ?? stimd,
+    script: installed.script ?? stimd,
+    stimd,
+    port: installed.port,
+    env: installed.env,
+    pathPrepend: installed.pathPrepend,
+    environment: Object.fromEntries(
+      Object.entries(variables).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+    ),
+    logPath: log,
+    workingDirectory: typeof fields.WorkingDirectory === 'string' ? fields.WorkingDirectory : homedir(),
+    serve: installed.serve,
+  });
+  const rewritten = rendered !== readFileSync(path, 'utf8');
+  if (rewritten) writeThrough(path, rendered);
+  if (!definition || (!rewritten && launchdRuns(definition, stimd))) return false;
+  const written = join(serviceRoot(label), 'reload.plist');
+  if (!rewritten && existsSync(written) && readFileSync(written, 'utf8') === rendered)
+    throw new ServiceError(
+      `launchd still runs ${label} from its definition before the engine shim after a reload; ${manager.restartRemedy(label)} when no build runs, and see ${log}.`,
+    );
+  mkdirSync(dirname(written), { recursive: true });
+  writeFileSync(written, rendered);
+  const command = launchdReloadCommand(label, parseLaunchctlPrint(definition).pid ?? process.pid, stimd, written);
+  const out = openSync(log, 'a');
+  try {
+    spawn(command.file, command.args, { detached: true, stdio: ['ignore', out, out] })
+      .once('error', (error) => console.error(`stim: could not start the reload of ${label}: ${error.message}`))
+      .unref();
+  } finally {
+    closeSync(out);
+  }
+  return true;
 }
 
 /** The server directory of the Stim home a service runs with `STIM_HOME` set to `stimHome`. */
