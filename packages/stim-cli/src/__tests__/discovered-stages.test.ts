@@ -102,6 +102,65 @@ describe('a discovered checkout in the idle stages', () => {
     );
   });
 
+  function cargoWorkspace(): string {
+    const root = join(base, 'roots', 'framework');
+    mkdirSync(join(root, 'apps', 'demo'), { recursive: true });
+    for (const name of ['exact.mjs', 'app.json']) writeFileSync(join(root, 'apps', 'demo', name), '{}');
+    writeFileSync(join(root, 'Cargo.toml'), '[workspace]\n');
+    writeFileSync(join(root, '.gitignore'), 'target/\n');
+    mkdirSync(join(root, 'target', 'debug', '.fingerprint'), { recursive: true });
+    writeFileSync(join(root, 'target', 'debug', 'app'), 'binary');
+    const when = '2026-01-01T00:00:00Z';
+    for (const args of [
+      ['init', '-q', '-b', 'main'],
+      ['add', '-A'],
+      ['commit', '-q', '-m', 'init'],
+    ])
+      execFileSync('git', ['-C', root, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], {
+        env: { ...process.env, GIT_AUTHOR_DATE: when, GIT_COMMITTER_DATE: when },
+      });
+    writeFileSync(join(root, 'notes.md'), 'uncommitted');
+    const old = new Date(Date.now() - 3 * day);
+    const age = (path: string) => {
+      for (const entry of readdirSync(path, { withFileTypes: true })) {
+        if (entry.name === '.git') continue;
+        if (entry.isDirectory()) age(join(path, entry.name));
+        utimesSync(join(path, entry.name), old, old);
+      }
+      utimesSync(path, old, old);
+    };
+    age(root);
+    for (const name of ['index', 'HEAD', join('logs', 'HEAD')]) utimesSync(join(root, '.git', name), old, old);
+    return root;
+  }
+
+  it('never deletes the untagged target/ of an idle Cargo workspace root whole', async () => {
+    const root = cargoWorkspace();
+    const config: Config = { maintenance: { discoverRoots: [join(base, 'roots')] }, projects: {}, repos: {} };
+    saveConfig(config);
+
+    expect(await stoppedOutputCandidates(config, reading, day)).toEqual([]);
+    expect(existsSync(join(root, 'target', 'debug', 'app'))).toBe(true);
+  });
+
+  it.each([
+    ['a Cargo trim recovery copy', '.stim-not-restored-1-debug/.fingerprint/unit'],
+    ['a stranded .stim-trimmed', '.stim-trimmed/NOT-RESTORED'],
+  ])('dormant gc keeps a tagged target/ holding %s whole', async (_, extra) => {
+    const root = cargoWorkspace();
+    writeFileSync(join(root, 'target', 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55\n');
+    mkdirSync(join(root, 'target', extra, '..'), { recursive: true });
+    writeFileSync(join(root, 'target', extra), 'x');
+    const config: Config = { maintenance: { discoverRoots: [join(base, 'roots')] }, projects: {}, repos: {} };
+    saveConfig(config);
+
+    const candidates = await stoppedOutputCandidates(config, reading, day);
+    expect(candidates.map((entry) => entry.path)).toEqual([root]);
+    expect(await clearStoppedOutputs(candidates[0] ?? fail(), config, day)).toBeNull();
+    expect(existsSync(join(root, 'target', extra))).toBe(true);
+    expect(existsSync(join(root, 'target', 'debug', 'app'))).toBe(true);
+  });
+
   it('clears a Cargo target with CACHEDIR.TAG at a monorepo root and the node_modules of a linked worktree, recording nothing', async () => {
     const roots = join(base, 'roots');
     const mono = join(roots, 'mono');
