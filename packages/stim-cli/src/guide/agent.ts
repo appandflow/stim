@@ -6,11 +6,11 @@ WORKSPACE SETUP
 
 WORKTREE: Use a linked worktree by default; create one with Git if needed.
 The clean source checkout is infrastructure, not a workspace. Run stim
-worktree warm first, even if a harness made the worktree; skip it only if
-told to work in place.
+worktree warm first, even if a harness made the worktree; skip it only if the
+user asked to work in place.
 Wait for warm to exit successfully (exit code 0) before edits, installs, start,
 ios or android. Concurrent writes to the destination are unsafe.
-If warm fails: stim guide lifecycle options.
+Options: stim guide lifecycle options.
 
 SINGLE CHECKOUT: Work in place when the user asks or the task needs their
 uncommitted changes. Run the applicable app command from that checkout.
