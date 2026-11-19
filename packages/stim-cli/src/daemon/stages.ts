@@ -327,7 +327,7 @@ async function readIdleWorkspaces(
   return linkedFirst(candidates);
 }
 
-export async function hasOutputs(path: string): Promise<boolean> {
+async function hasOutputs(path: string): Promise<boolean> {
   return (
     workspaceOutputPaths(workspaceDir(path)).length > 0 ||
     (await existingBuildDirsAsync(path)).length > 0 ||

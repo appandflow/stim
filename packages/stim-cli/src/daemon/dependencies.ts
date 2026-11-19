@@ -30,15 +30,15 @@ import { hardLinkSample } from '../link-sample.ts';
 import { workspaceKeys } from '../workspace/lightened.ts';
 import { freshLaunchers } from '../workspace/launchers.ts';
 import { workspaceDir } from '../workspace/paths.ts';
+import { workspaceOutputPaths } from '../commands/gc/workspaces.ts';
 import { answered, hungRead, Unanswered } from '../workspace/bounded-read.ts';
 import { buildOutputDirs, dependencyTreeSignature } from '../workspace/discovery-census.ts';
-import { ARTIFACT_DIRS } from '../workspace/regenerable-dirs.ts';
+import { ARTIFACT_DIRS, existingBuildDirsAsync } from '../workspace/regenerable-dirs.ts';
 import { checkDependencyEdits } from '../workspace/dependency-edits.ts';
 import { writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
 import { reduceDormantOutputs } from './dormant-outputs.ts';
 import {
   dormantAfterMs,
-  hasOutputs,
   idleStageCandidates,
   sourceCheckoutIdle,
   sourceDormantAfterMs,
@@ -574,8 +574,9 @@ export async function runDormantDependencies(
 }
 
 /**
- * Whether a discovered checkout holds a dependency tree, or with `outputs` build output, each probe bounded like the
- * launcher readings by `answered`; false, for this pass, when a probe does not answer or another read is pending.
+ * Whether a discovered checkout holds a dependency tree, or with `outputs` the Stim workspace or in-tree build output the
+ * dormant pass reclaims, each read of the checkout bounded like the launcher readings by `answered`; false, for this
+ * pass, when one does not answer or another read is pending.
  */
 async function holdsReclaimable(path: string, outputs: boolean, signal?: AbortSignal): Promise<boolean> {
   const exists = (target: string) =>
@@ -591,7 +592,9 @@ async function holdsReclaimable(path: string, outputs: boolean, signal?: AbortSi
     );
   try {
     for (const dir of ARTIFACT_DIRS.dependencies) if (await exists(join(path, dir))) return true;
-    return outputs && (await answered(path, () => hasOutputs(path), PROBE_TIMEOUT_MS, signal));
+    if (!outputs) return false;
+    if (workspaceOutputPaths(workspaceDir(path)).length) return true;
+    return (await answered(path, () => existingBuildDirsAsync(path), PROBE_TIMEOUT_MS, signal)).length > 0;
   } catch (error) {
     if (error instanceof Unanswered) return false;
     throw error;

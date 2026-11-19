@@ -21,6 +21,7 @@ import * as activity from '../workspace/discovered-activity.ts';
 import * as gitCommands from '../workspace/git.ts';
 import { forgetGitReads, openGitReads } from '../workspace/git-reads.ts';
 import { hungRead } from '../workspace/bounded-read.ts';
+import * as metroStore from '../stimd/metro/metro-store.ts';
 
 const fail = (): never => {
   throw new Error('no candidate');
@@ -84,7 +85,7 @@ describe('a discovered checkout in the idle stages', () => {
     }
   });
 
-  it('does not walk the source of a discovered checkout until it holds something the hourly pass reclaims', async () => {
+  it('does not walk the source of a discovered checkout, nor resolve its Metro store, until it holds something the hourly pass reclaims', async () => {
     const roots = join(base, 'roots');
     const app = join(roots, 'app');
     mkdirSync(join(app, 'android'), { recursive: true });
@@ -92,11 +93,13 @@ describe('a discovered checkout in the idle stages', () => {
     const config: Config = { maintenance: { discoverRoots: [roots] }, projects: {}, repos: {} };
     saveConfig(config);
     const evidence = vi.spyOn(activity, 'discoveredEvidence');
+    const store = vi.spyOn(metroStore, 'metroStoreRoot');
     const pass = () =>
       runDormantDependencies({ config, act: false, log: () => {}, ...reading, operation: testContext() });
 
     await pass();
     expect(evidence).not.toHaveBeenCalled();
+    expect(store).not.toHaveBeenCalled();
 
     mkdirSync(join(app, 'node_modules'));
     await pass();
