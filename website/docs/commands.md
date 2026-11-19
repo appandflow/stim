@@ -2566,7 +2566,8 @@ What each level deletes. A level includes the ones below it.
   emulators (the parked pool stays), its logs archived and, for a linked
   worktree, its `node_modules` and `ios/Pods`.
 - **high**: also the [pressure ladder](./build-caches.md#disk-pressure) at high,
-  to its end. Idle dev servers and their build outputs (the idle stage), parked
+  to its end. Idle dev servers and their build outputs (the idle stage, at 2
+  minutes under memory pressure and at `idle.minutes` under disk pressure alone), parked
   devices until the level clears, Build and Metro caches trimmed to half their
   caps, the dormant stage for workspaces idle 10 minutes, the `node_modules` and
   `Pods` of linked worktrees idle 1 hour that `stim worktree warm` can

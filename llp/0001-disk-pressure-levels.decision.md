@@ -141,13 +141,14 @@ the storage roots its deletion searches), each cache and Cargo `target/`, each
 versions, TMPDIR leftovers and trash. A dormant workspace is taken only when
 its Stim workspace folder, whose logs it archives, or an owned device's data
 lies on such a volume, and loses only the devices there. Rung 8 and rung 9 take an item only on a volume
-under the critical level (LLP 0003). Disk pressure alone never gives the
-activity pass the 2-minute idle threshold; memory pressure idles every
-workspace. The ladder a build runs for its
+under the critical level (LLP 0003). Under pressure from disk alone, the
+activity pass, which then stops a workspace at `idle.minutes`, deletes only
+its outputs on such a volume; memory pressure idles every workspace and
+deletes all its outputs. The ladder a build runs for its
 headroom (LLP 0006) plans its Cargo trim at high and treats only the build's
 volume as short. The Gradle, Kotlin and watchman stops relieve memory and are
 not gated. `stim gc --pressure` treats every volume as short; `stim gc` at the
-measured level is gated.
+measured level is gated, its idle pass included.
 
 Reason: free disk on any volume sets the level, but deleting on a healthy volume
 frees nothing where space is needed. A project on an external disk under the
@@ -162,23 +163,13 @@ maintainer, following the reason LLP 0003 gives for rung 9.
 The idle stage stops a workspace's dev server and shuts down its owned devices
 after 2 minutes without activity, instead of `idle.minutes`, only while the
 memory level is high or critical. Disk pressure alone leaves the idle stage at
-`idle.minutes`, in the stim-daemon and in `stim gc` (a forced `--pressure` run
-included: it uses the 2-minute stop only when memory measures above normal).
+`idle.minutes`, in the stim-daemon and in `stim gc`, a forced `--pressure` run
+included: the 2-minute stop needs memory measured above normal, and otherwise
+the idle pass still runs at `idle.minutes`.
 
-- Under disk pressure, at high and critical, rung 1 deletes the regenerable
-  build outputs of a workspace idle 2 minutes or more whether or not its dev
-  server or an owned device runs, and stops nothing. Idle is judged on the same
-  evidence and with the same keeps as the idle stage (a dev server whose
-  requests Stim cannot see, a hosted placement, `maintenance.keep`, and so on),
-  and every other guard of rung 1 holds. The Metro store stays while any dev
-  server that uses it runs, the workspace's own or another workspace's that
-  shares it, read again from the registry under the workspace's claims right
-  before the store is removed; no other output rung 1 deletes is read by a
-  running dev server. A Cargo `target/` is left to the Cargo trim of rung 3.
-- The rungs after rung 1 that need nothing of a workspace running (the dormant
-  stage, `node_modules` and Pods, finished worktrees, a source checkout's
-  dependencies) take a running workspace only once the idle stage has stopped
-  it at `idle.minutes`.
+- The ladder's rungs keep needing nothing of a workspace running. Under disk
+  pressure alone a running workspace reaches them once the idle stage has
+  stopped it at `idle.minutes`.
 - Memory pressure keeps the 2-minute idle stage, rung 0, the end of deferred
   shutdowns and of the booted grace.
 
