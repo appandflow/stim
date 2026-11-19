@@ -205,16 +205,23 @@ judged idle again; the deletion checks everything again after the stop.
   the devices keep running. A tree the dev server's own processes do not keep,
   but something else does (another process working in the worktree, an agent
   session, `maintenance.keep`), keeps the dev server running.
-- Rungs 7 and 8 still keep a workspace whose dev server or owned device runs: a
-  finished worktree's removal and a source checkout's dependencies wait for it
-  to stop.
+- Rungs 7 and 8 still keep a workspace whose dev server or owned device runs.
+  Under disk pressure alone, a finished worktree or a source checkout whose
+  dev server or device runs now waits until the idle stage stops it at
+  `idle.minutes`; before, the 2-minute stop let these rungs take it 2 minutes
+  after its last activity.
 
 Chosen by the implementer of #5998, not by the maintainer: the Metro store goes
 in rung 5, after the parked devices and shared caches of rungs 2 and 3, rather
 than in rung 1; the deletions at rung 4 do not archive logs or mark the
-workspace dormant while its dev server runs; rungs 7 and 8 are left as they
-were, because their removal paths take several workspaces' claims and cannot
-yet tell the dev server's processes from others in the tree.
+workspace dormant while its dev server runs; a booted device is deleted
+without first reaping its log collector, whose end with the device was not
+verified.
+Rungs 7 and 8 were left out of this change: rung 7 removes through the worktree
+check's plan and removal guard, which keep a workspace whose dev server runs or
+whose device is booted, and rung 8 judges a source checkout by its full
+evidence under the claims of every workspace in it; neither takes the dev
+server stop that rung 5 uses yet.
 
 ## The folders a build wrote are measured by the daemon
 

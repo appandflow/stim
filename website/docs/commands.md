@@ -2582,9 +2582,11 @@ What each level deletes. A level includes the ones below it.
   in use, Metro, the macOS artifact cache, and the React Native and Android
   caches), the fingerprint index and memo, the dormant stage and `node_modules`
   and `Pods` for workspaces idle 2 minutes, even while their dev server or
-  devices run (a device is shut down only to be deleted, and the dev server is
-  stopped only to delete its Metro store or `node_modules` and `Pods`; `stim
-revive` resumes it), every unpinned Gradle version, clean
+  devices run (a device is shut down only to be deleted; the dev server is
+  stopped only to delete its Metro store or `node_modules` and `Pods`, and
+  `stim revive` restarts it; a finished worktree or source checkout whose dev
+  server or device runs waits for the idle stage), every unpinned Gradle
+  version, clean
   finished worktrees without the grace period and clean pushed worktrees no Stim
   command used for 7 days (the first only while `maintenance.removeFinishedWorktrees`
   is true, the second only while `maintenance.removeIdleWorktrees` is true),
