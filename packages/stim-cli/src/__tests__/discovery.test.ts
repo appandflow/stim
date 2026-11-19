@@ -13,6 +13,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type Config } from '@stim-cli/core/state';
 import { testContext } from './_context.ts';
+import { collectWorktreeSweep } from '../commands/gc/worktrees.ts';
+import { saveConfig } from '../workspace/config.ts';
 import { answered } from '../workspace/bounded-read.ts';
 import { scanSourceWrites } from '../workspace/discovered-activity.ts';
 import {
@@ -231,6 +233,57 @@ describe('discoverCheckouts', () => {
       [zapp, 'sibling', undefined],
     ]);
     expect(await discoveredOutside(config, [repo])).toEqual([]);
+  });
+
+  it('keeps a Node worktree that is or holds a full-scan find reduce-only, in discovery and in the removal check', async () => {
+    vi.stubEnv('STIM_HOME', '');
+    vi.stubEnv('HOME', join(base, 'home'));
+    vi.stubEnv('USERPROFILE', join(base, 'home'));
+    const dev = join(base, 'home', 'dev');
+    const cli = join(dev, 'cli');
+    mkdirSync(cli, { recursive: true });
+    writeFileSync(join(cli, 'package.json'), JSON.stringify({ name: 'cli' }));
+    git(cli, 'init', '-q', '-b', 'main');
+    git(cli, 'add', '-A');
+    git(cli, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'init');
+    mkdirSync(join(dev, 'wts'));
+    const mobile = join(dev, 'wts', 'mobile');
+    git(cli, 'worktree', 'add', '-q', '-b', 'mobile', mobile);
+    app(mobile);
+    const tool = join(dev, 'wts', 'tool');
+    git(cli, 'worktree', 'add', '-q', '-b', 'tool', tool);
+    app(join(tool, 'mobile'));
+    mkdirSync(join(base, 'home', '.stim', 'maintenance'), { recursive: true });
+    writeFileSync(
+      join(base, 'home', '.stim', 'maintenance', 'discovery-scan.json'),
+      JSON.stringify({
+        version: 2,
+        completedAt: 1,
+        lowScanAt: 0,
+        ranAt: 1,
+        durationMs: 1,
+        trigger: 'weekly',
+        visited: 1,
+        found: [mobile, join(tool, 'mobile')],
+        dotFolderFound: [],
+        unreadable: [],
+        truncated: false,
+        truncation: 'none',
+      }),
+    );
+    const config: Config = { maintenance: { discoverRoots: [dev] }, projects: {}, repos: {} };
+
+    for (const select of [{}, { nodeWorktrees: true }])
+      expect((await discoverCheckouts(config, [], undefined, select)).filter(({ path }) => path === mobile)).toEqual([
+        expect.objectContaining({ origin: 'scan', reduceOnly: true }),
+      ]);
+    saveConfig({ version: 2, ...config });
+    const sweep = await collectWorktreeSweep({ idle: false, olderThan: null, now: Date.now(), refresh: false });
+    for (const path of [mobile, tool])
+      expect(sweep.worktrees.find((entry) => entry.path === path)).toMatchObject({
+        discovered: true,
+        reduceOnly: true,
+      });
   });
 
   it('takes the checkouts of the last full scan as reduce-only in an unscoped home, and none in a scoped one', async () => {

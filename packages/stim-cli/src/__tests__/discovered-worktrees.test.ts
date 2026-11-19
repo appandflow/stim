@@ -176,6 +176,17 @@ describe('a discovered worktree on the removal path', () => {
         reduceOnly: false,
       }),
     ).toContain('managed by another tool');
+    const session = join(main, '.claude', 'worktrees', 'session');
+    mkdirSync(session, { recursive: true });
+    writeFileSync(join(session, '.git'), 'gitdir: elsewhere\n');
+    expect(
+      await discoveredRemovalHold(join(session, '.worktrees', 'task'), {
+        main,
+        idleMs: day,
+        reads: reads.discoveredReads(),
+        reduceOnly: false,
+      }),
+    ).toContain('managed by another tool');
     expect(
       await discoveredRemovalHold(join(main, '.worktrees', 'x'), {
         main,

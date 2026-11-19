@@ -498,9 +498,9 @@ registered worktree does, at every pressure level, critical included:
 - every git-ignored file present byte for byte in the main checkout, except
   inside directories git ignores that are named like build output or
   `node_modules`;
-- not inside a dot-folder other than `.worktrees` of the nearest checkout that
-  holds it, its main checkout or a worktree inside it, such as `.claude/worktrees`,
-  which another tool manages.
+- not inside a dot-folder other than `.worktrees`, such as `.claude/worktrees`,
+  which another tool manages, of its main checkout or of the nearest checkout that
+  holds it (a worktree inside the main checkout).
 
 A dirty discovered worktree is kept, never archived. A checkout whose source
 scan exceeds its bound is never reduced and is listed under "Needs a person".
@@ -535,7 +535,9 @@ log, and their main checkouts are never acted on. `stim gc --dry-run` lists the
 worktrees with the removal verdict, not among the discovered checkouts. The full scan
 does not look for them (it still stops only at an app project), the census ignores
 them when deciding what another route covers, and their worktrees outside the
-managed folders are not listed as outside.
+managed folders are not listed as outside. A Node worktree the full scan also found
+as an app stays that scan find, reduce-only, as before; one that holds a scan find is
+kept by the finished-worktree check, which treats the worktree as reduce-only.
 
 Dormant `node_modules` reduction, the other half of the request, is not done here:
 the review of #5969 found that the linked-worktree route skips the regenerable-folder

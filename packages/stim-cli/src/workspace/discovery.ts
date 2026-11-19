@@ -72,8 +72,9 @@ export function selectDiscovered({
         ...(reduceOnly ? { reduceOnly } : {}),
         ...(node ? { node } : {}),
       });
+  // @ref LLP 0004#plain-node-checkouts -- a scan find keeps its reduce-only entry over a Node one
   for (const { path, origin, from, recognised, node } of children)
-    if ((recognised || node) && !found.has(path) && !covered(path))
+    if ((recognised || node) && (!found.has(path) || (recognised && found.get(path)?.node)) && !covered(path))
       found.set(path, {
         path,
         origin,

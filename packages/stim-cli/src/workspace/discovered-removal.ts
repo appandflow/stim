@@ -136,13 +136,16 @@ export async function discoveredRemovalHold(
   } catch {
     return 'the checkout that holds it cannot be read';
   }
-  const folder = owner
-    ? relative(owner, path)
-        .split(sep)
-        .find((name) => name.startsWith('.') && name !== '.worktrees')
-    : undefined;
+  const toolFolder = (checkout: string | null) =>
+    checkout && (path === checkout || path.startsWith(`${checkout}${sep}`))
+      ? relative(checkout, path)
+          .split(sep)
+          .find((name) => name.startsWith('.') && name !== '.worktrees')
+      : undefined;
+  const inOwner = toolFolder(owner);
+  const folder = inOwner ?? toolFolder(main);
   if (folder)
-    return `it is managed by another tool (inside ${folder} of ${owner === main ? 'its main checkout' : owner})`;
+    return `it is managed by another tool (inside ${folder} of ${inOwner && owner !== main ? owner : 'its main checkout'})`;
   if (!(idleMs > 0)) return 'idle.dormantDays is 0, so its idleness cannot be established';
   const now = Date.now();
   const decision = decideIdleStop(await discoveredEvidence(path, { now, idleMs, reads, operation, reduceOnly }), {
