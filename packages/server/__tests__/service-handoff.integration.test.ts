@@ -135,15 +135,18 @@ function fixture(label: string, port: number, shim = false) {
   const next = makeBuild('next');
   const last = makeBuild('last');
   let current = first;
+  if (shim) mkdirSync(join(store, 'bin'));
   const point = (build: string) => {
     current = build;
     writeFileSync(join(store, 'current.json'), JSON.stringify({ format: 1, dir: build, version: build }));
+    if (shim)
+      writeFileSync(
+        join(store, 'bin', 'stimd'),
+        `#!/bin/sh\nexec "${process.execPath}" "${join(store, build, 'dist', 'cli.mjs')}" __stimd "$@"\n`,
+        { mode: 0o755 },
+      );
   };
   point(first);
-  if (shim) {
-    mkdirSync(join(store, 'bin'));
-    writeFileSync(join(store, 'bin', 'stimd'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
-  }
   const env = {
     HOME: scratch,
     USERPROFILE: scratch,

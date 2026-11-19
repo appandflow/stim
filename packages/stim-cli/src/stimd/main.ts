@@ -276,10 +276,10 @@ interface JobRestartGate {
  * the home. The job of that unit (`job`) waits only while the stimd that left runs; any other stimd waits until
  * `jobRestartUntil`.
  */
-function jobRestartGate(job: string | undefined): JobRestartGate {
+function jobRestartGate(job: string | undefined, held: () => boolean): JobRestartGate {
   const reserved = () => {
     const hold = jobRestartHold();
-    if (!hold || Date.now() >= hold.until || hold.record.pid === process.pid) return false;
+    if (!hold || Date.now() >= hold.until || hold.record.pid === process.pid || held()) return false;
     return hold.record.label !== job || (hold.running && hold.record.left === null);
   };
   return {
@@ -736,6 +736,15 @@ function leaveToJob(
     log('warn', 'job_restart_record_failed', `could not write ${stimdJobRestartFile()}`);
 }
 
+/** Whether the engine's `bin/stimd` shim, which a service job runs, already starts `build`. */
+function shimRuns(root: string, build: string): boolean {
+  try {
+    return readFileSync(join(root, 'bin', 'stimd'), 'utf8').includes(`/${build}/dist/cli.mjs`);
+  } catch {
+    return false;
+  }
+}
+
 /** Renews the job-restart record under this boot's pid when `job`, the unit whose job runs this stimd, wrote it. */
 function takeJobRecord(
   job: string | undefined,
@@ -754,7 +763,7 @@ function endJobRecord(
   record: ReturnType<typeof readJobRestart>,
   log: (level: Level, event: string, msg: string) => unknown,
 ): void {
-  if (staged && job) leaveToJob(job, record?.at ?? Date.now(), record?.left ?? Date.now(), log);
+  if (staged && job) leaveToJob(job, record?.at ?? Date.now(), Date.now(), log);
   else rmSync(stimdJobRestartFile(), { force: true });
 }
 
@@ -916,7 +925,7 @@ async function runStimdInner(
     'stimd',
     details,
     lifetime.retries(CLAIM_TRIES),
-    jobRestartGate(jobUnit),
+    jobRestartGate(jobUnit, () => attached !== undefined && crashLoop(readStimdBoots(), build, Date.now()) !== null),
   );
   if (!own) {
     log('debug', 'stimd_claim_held', 'another stimd holds this Stim home; exiting');
@@ -965,7 +974,7 @@ async function runStimdInner(
     else {
       const recorded =
         attached === undefined && recordBoot(`startup failed: ${errorText(error)}`, error) === 'recorded';
-      if (recorded && inJob && unit) leaveToJob(unit, Date.now(), Date.now(), log);
+      if (recorded && inJob && unit) leaveToJob(unit, readJobRestart()?.at ?? Date.now(), Date.now(), log);
       else if (inJob) rmSync(stimdJobRestartFile(), { force: true });
       releaseClaim(startupClaim);
       releaseClaim(own);
@@ -1388,7 +1397,8 @@ async function runStimdInner(
   const relaunch = async (next: { build: string; version: string }, entry: string) => {
     // @ref LLP 0009#service-and-engine-updates -- a service unit's stimd hands over through the unit's job
     const waiter = [...jobWaiters].find(([socket]) => !socket.destroyed)?.[1];
-    const job = (inJob ? unit : undefined) ?? waiter ?? null;
+    const job =
+      follower && shimRuns(follower.engine.root, next.build) ? ((inJob ? unit : undefined) ?? waiter ?? null) : null;
     const leftAt = Date.now();
     if (job) {
       leaveToJob(job, leftAt, null, log);
@@ -1948,7 +1958,7 @@ async function runStimdInner(
   const shutdown = (why: string, level: Level = 'info', cause?: unknown) => {
     if (closing) return;
     closing = true;
-    if (level === 'error' && inJob && unit && heldHome) leaveToJob(unit, Date.now(), null, log);
+    if (level === 'error' && inJob && unit && heldHome) leaveToJob(unit, readJobRestart()?.at ?? Date.now(), null, log);
     const waiting = new Set<string>();
     let settled = false;
     let ended = false;
@@ -2058,6 +2068,7 @@ async function runStimdInner(
   };
   startup.cleanup = async (error) => {
     if (isUnverifiedCleanup(error)) backgroundFailure = error;
+    if (inJob && classifyFailure(error).kind === 'refusal') rmSync(stimdJobRestartFile(), { force: true });
     shutdown(`daemon startup failed: ${errorText(error)}`, lifetime.failLevel, error);
     await shutdownDone;
     await writerDone;
