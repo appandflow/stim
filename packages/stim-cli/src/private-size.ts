@@ -10,7 +10,6 @@ import { WorkspaceProcessCleanupError } from './engine/workspace-process-lock.ts
 import { getExecutor } from './exec.ts';
 import { noteSizeFailure, sizeFailure } from './size-failures.ts';
 
-const NICENESS = '19';
 /** `stim-privsize` exits 2 when the volume does not report private sizes (not APFS). */
 const UNSUPPORTED_STATUS = 2;
 /** Files a package manager or `pod install` rewrites on every install, so a reinstall changes the signature. */
@@ -194,16 +193,16 @@ async function walkTree(path: string, options: TreeOptions, errors: unknown[]): 
   const lowPriority = options.lowPriority ?? !operation;
   const deadline = Date.now() + options.timeoutMs;
   const walk = (file: string, args: string[]): Promise<string> => {
-    const command = lowPriority ? 'nice' : file;
-    const argv = lowPriority ? ['-n', NICENESS, file, ...args] : args;
     return operation
-      ? runOperationFile(operation, exec, command, argv, {
+      ? runOperationFile(operation, exec, file, args, {
+          lowPriority,
           timeoutMs: Math.max(1, deadline - Date.now()),
           killSignal: 'SIGKILL',
           cwd: operation.cwd,
           signal: operation.signal,
         })
-      : exec.runFileAsync(command, argv, {
+      : exec.runFileAsync(file, args, {
+          lowPriority,
           timeoutMs: Math.max(1, deadline - Date.now()),
           onSpawn: options.onSpawn,
         });

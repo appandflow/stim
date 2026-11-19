@@ -382,8 +382,12 @@ async function measureAllSizes(
   failure: Parameters<typeof measureSizes>[1],
   operation: StimContext | undefined,
   recorded: readonly MaintenanceSize[],
+  lowPriority: boolean,
 ): Promise<MaintenanceSize[]> {
-  return [...(await measureSizes(now, failure, operation)), ...(await measureCargoTargets(now, operation, recorded))];
+  return [
+    ...(await measureSizes(now, failure, operation, undefined, lowPriority)),
+    ...(await measureCargoTargets(now, operation, recorded, { lowPriority })),
+  ];
 }
 
 /**
@@ -515,7 +519,13 @@ export async function runMaintenance(
             });
           };
           state.sizes = [
-            ...(await measureAllSizes(state.lastAt[check]!, measureFailed, tick?.operation, state.sizes)),
+            ...(await measureAllSizes(
+              state.lastAt[check]!,
+              measureFailed,
+              tick?.operation,
+              state.sizes,
+              tick !== undefined,
+            )),
             ...(deviceSweepIsScoped()
               ? []
               : await measureOwnedDevices(state.lastAt[check]!, measureFailed, tick && tickDeviceReads(tick))),
@@ -581,7 +591,7 @@ export async function runMaintenance(
         background,
         protectedRoot: triggeringRoot(),
         worktreeSweep: result.worktreeSweep,
-        lowPriority: cap.ran,
+        lowPriority: cap.ran || tick !== undefined,
         ...(tick ? { operation: tick.operation } : {}),
       };
       const results: { action: MaintenanceAction; outcome: ActionOutcome }[] = [];

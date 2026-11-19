@@ -27,7 +27,7 @@ const BRANCH = 'feat/1688-physical-device-tiles';
 let home: string;
 let app: string;
 let avd: string;
-let calls: { file: string; args: string[] }[];
+let calls: { file: string; args: string[]; lowPriority?: boolean }[];
 let head: string;
 let clock: number;
 let gate: Promise<void> | null;
@@ -72,16 +72,16 @@ beforeEach(() => {
     ...real,
     findExecutable: (name) => (name === 'gh' ? '/usr/bin/gh' : real.findExecutable(name)),
     runFileAsync: async (file, args = [], opts) => {
-      calls.push({ file, args });
-      if (file === 'nice' && args[2] === 'find') throw new Error('find: unknown predicate');
-      if (file === 'nice') {
+      calls.push({ file, args, lowPriority: opts?.lowPriority });
+      if (file === 'find') throw new Error('find: unknown predicate');
+      if (file === 'du') {
         opts?.onSpawn?.({ pid: duPid } as ChildProcess);
         await gate;
-        clock += walkMs(args.slice(4));
-        if (duFails || args.slice(4).some((path: string) => failing.includes(path)))
+        clock += walkMs(args.slice(1));
+        if (duFails || args.slice(1).some((path: string) => failing.includes(path)))
           throw new Error('Command timed out after 120000ms: du');
         return args
-          .slice(4)
+          .slice(1)
           .map((path: string) => `${kilobytes[path] ?? 1}\t${path}\n`)
           .join('');
       }
@@ -104,7 +104,7 @@ afterEach(() => {
 });
 
 function duWalks(): string[][] {
-  return calls.filter((call) => call.file === 'nice' && call.args[2] !== 'find').map((call) => call.args.slice(4));
+  return calls.filter((call) => call.file === 'du' && call.lowPriority).map((call) => call.args.slice(1));
 }
 
 function environment(): EnvironmentState {

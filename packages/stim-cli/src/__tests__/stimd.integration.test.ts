@@ -1375,7 +1375,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
     setExecutor({
       ...real,
       runFileAsync(file, args, options) {
-        if (file !== 'nice' || !args.includes(tree)) return real.runFileAsync(file, args, options);
+        if (!options.lowPriority || !args.includes(tree)) return real.runFileAsync(file, args, options);
         walk = real.runFileAsync(process.execPath, ['-e', 'setTimeout(() => {}, 20000)'], {
           ...options,
           onSpawn(spawned) {

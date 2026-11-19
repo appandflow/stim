@@ -90,6 +90,7 @@ async function runFingerprintChild(
           process.execPath,
           [fileURLToPath(new URL('../dist/fingerprint-precompute.mjs', import.meta.url))],
           {
+            lowPriority: request.task === undefined,
             cwd: request.root,
             env: {
               ...Object.fromEntries(

@@ -2069,7 +2069,7 @@ function countDu(calls: string[][], fail?: (args: string[]) => string | null) {
   setExecutor({
     ...real,
     runFileAsync: async (file, args: string[], opts) => {
-      const walk = file === 'nice' ? args.slice(2) : [file, ...args];
+      const walk = [file, ...args];
       if (walk[0] === 'du') {
         calls.push(walk.slice(1));
         const stdout = fail?.(walk.slice(1));

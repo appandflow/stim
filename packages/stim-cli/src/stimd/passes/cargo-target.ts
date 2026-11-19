@@ -201,9 +201,7 @@ async function bytesOfMany(
     signal?.throwIfAborted();
     const args = ['-sk', ...paths.slice(at, at + DU_CHUNK)];
     try {
-      const out = await (lowPriority
-        ? getExecutor().runFileAsync('nice', ['-n', '19', 'du', ...args], { timeoutMs: SIZE_TIMEOUT_MS, signal })
-        : getExecutor().runFileAsync('du', args, { timeoutMs: SIZE_TIMEOUT_MS, signal }));
+      const out = await getExecutor().runFileAsync('du', args, { timeoutMs: SIZE_TIMEOUT_MS, signal, lowPriority });
       for (const line of out.split('\n')) total += (parseInt(line, 10) || 0) * 1024;
     } catch {
       signal?.throwIfAborted();

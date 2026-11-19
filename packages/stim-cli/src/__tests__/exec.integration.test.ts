@@ -456,3 +456,61 @@ test('a cancelled child whose pipes close after the stalled event loop resumes i
     }),
   ).resolves.toBeUndefined();
 }, 30_000);
+
+describe.skipIf(process.platform === 'win32')('lowPriority', () => {
+  const darwin = process.platform === 'darwin';
+  const field = darwin ? 'pri' : 'ni';
+  let home: string;
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'stim-exec-priority-'));
+    process.env.STIM_HOME = home;
+  });
+  afterEach(() => {
+    delete process.env.STIM_HOME;
+    rmSync(home, { recursive: true, force: true });
+  });
+  const atLevel = (level: 'normal' | 'high' | 'critical') => {
+    mkdirSync(join(home, 'daemon'), { recursive: true });
+    const now = new Date().toISOString();
+    writeFileSync(
+      join(home, 'daemon', 'snapshot.json'),
+      JSON.stringify({
+        version: 1,
+        pid: process.pid,
+        startedAt: now,
+        tickAt: now,
+        intervalMs: 60_000,
+        pressure: { level },
+      }),
+    );
+  };
+  const read = async (lowPriority: boolean) =>
+    (
+      await getExecutor().runFileAsync('/bin/sh', ['-c', `ps -o ${field}= -p $$; /bin/sh -c 'ps -o ${field}= -p $$'`], {
+        timeoutMs: 30_000,
+        lowPriority,
+      })
+    )
+      .split(/\s+/)
+      .map(Number);
+
+  test('runs a discretionary child and its descendants throttled at normal pressure, and at full priority at high or critical pressure or when not asked', async () => {
+    resetExecutor();
+    const own = Number(
+      (
+        await getExecutor().runFileAsync('ps', ['-o', `${field}=`, '-p', String(process.pid)], { timeoutMs: 30_000 })
+      ).trim(),
+    );
+    const throttled = darwin ? Math.min(own, 20) : 19;
+    const unasked = await read(false);
+    const absent = await read(true);
+    atLevel('normal');
+    const normal = await read(true);
+    atLevel('high');
+    const high = await read(true);
+    atLevel('critical');
+    const critical = await read(true);
+    expect({ unasked, high, critical }).toEqual({ unasked: [own, own], high: [own, own], critical: [own, own] });
+    expect([...absent, ...normal].every((value) => (darwin ? value <= throttled : value === throttled))).toBe(true);
+  });
+});

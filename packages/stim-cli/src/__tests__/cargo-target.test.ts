@@ -262,7 +262,7 @@ test('a trim stopped at a deadline keeps every unit it has not moved, finishes t
     setExecutor({
       ...real,
       runFileAsync: async (file, args, options) => {
-        if (file === 'du' || file === 'nice') walked.push(String(args.at(-1)));
+        if (file === 'du') walked.push(String(args.at(-1)));
         if (file === 'lsof' && args.some((arg: string) => arg.includes('.stim-trimmed'))) deadline.abort();
         return file === 'lsof' || file === 'ps' ? '' : real.runFileAsync(file, args, options);
       },

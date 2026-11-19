@@ -12,7 +12,7 @@ import { spawnDeclared } from './engine/spawn-claims.ts';
 import { operationState } from './engine/operation-state.ts';
 import { WorkspaceProcessCleanupError } from './engine/workspace-process-lock.ts';
 import { groupExitBudgetMs, waitForGroupExit } from './process-group-exit.ts';
-import { redactArgv, redactCommandLine, tailscaleEnv, trace } from '@stim-cli/core/state';
+import { readDaemonSnapshot, redactArgv, redactCommandLine, tailscaleEnv, trace } from '@stim-cli/core/state';
 import { debugLog } from './debug-log.ts';
 import { reportSignal, trackReportResource } from './report-runtime.ts';
 import { logReportChild } from './report-child-log.ts';
@@ -57,6 +57,13 @@ export interface ExecOptions {
   detachedSilent?: boolean;
   /** `runFileAsync` only: put the Windows child tree in a kill-on-close Job Object. */
   containProcessTree?: boolean;
+  /**
+   * `runFileAsync` only: work nobody waits on. While the pressure level in this home's daemon snapshot is normal, or
+   * there is none, the child and its descendants run at low priority: on macOS under `taskpolicy -c utility`, a QoS
+   * clamp on CPU and I/O (`nice` lowers only CPU there), on Windows as is, elsewhere under `nice -n 19`. At high or
+   * critical pressure they run at full priority, since freeing disk or memory is then the urgent work.
+   */
+  lowPriority?: boolean;
   /** `runFileAsync` with a cancellation signal: begin verified tree cleanup at leader exit, before inherited pipes close. */
   cleanupOnExit?: boolean;
   /**
@@ -479,6 +486,15 @@ function tailscaleEnvironment(file: string, env?: NodeJS.ProcessEnv): NodeJS.Pro
   return basename(file).toLowerCase() === 'tailscale' ? tailscaleEnv(env ?? ambientEnv()) : env;
 }
 
+// taskpolicy(8): -c runs the program under a QoS clamp, which its descendants inherit.
+// @ref LLP 0021#stimd-runs-at-the-priority-of-an-app -- discretionary children run throttled only at normal pressure
+const lowered = (file: string, args: string[]): [string, string[]] =>
+  process.platform === 'darwin'
+    ? ['/usr/sbin/taskpolicy', ['-c', 'utility', file, ...args]]
+    : process.platform === 'win32'
+      ? [file, args]
+      : ['nice', ['-n', '19', file, ...args]];
+
 const defaultExecutor: Executor = {
   reportSignal: () => reportSignal(ambientContext()),
   run(cmd, { timeoutMs, killSignal, cwd, env }) {
@@ -540,9 +556,10 @@ const defaultExecutor: Executor = {
     return untrimmed ? String(result.stdout) : String(result.stdout).trim();
   },
   runFileAsync(
-    file,
-    args = [],
+    program,
+    programArgs = [],
     {
+      lowPriority,
       timeoutMs,
       killSignal,
       cwd,
@@ -561,6 +578,10 @@ const defaultExecutor: Executor = {
       context: selectedContext,
     },
   ) {
+    const [file, args] =
+      lowPriority && (readDaemonSnapshot()?.pressure?.level ?? 'normal') === 'normal'
+        ? lowered(program, programArgs)
+        : [program, programArgs];
     const command = [file, ...args].join(' ');
     return new Promise((resolve, reject) => {
       const context = selectedContext ?? ambientContext();

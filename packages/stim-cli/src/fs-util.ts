@@ -169,18 +169,13 @@ export async function measuredDirectorySizeAsync(
   let out: string;
   const startedAt = Date.now();
   try {
-    out = await runOperationFile(
-      operation,
-      getExecutor(),
-      lowPriority ? 'nice' : 'du',
-      lowPriority ? ['-n', '19', 'du', '-sk', dir] : ['-sk', dir],
-      {
-        timeoutMs,
-        killSignal: 'SIGKILL',
-        signal,
-        cwd: operation?.cwd,
-      },
-    );
+    out = await runOperationFile(operation, getExecutor(), 'du', ['-sk', dir], {
+      lowPriority,
+      timeoutMs,
+      killSignal: 'SIGKILL',
+      signal,
+      cwd: operation?.cwd,
+    });
   } catch (error) {
     if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
       throw error;
