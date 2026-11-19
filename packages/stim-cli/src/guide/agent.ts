@@ -19,7 +19,7 @@ Choose the guide for the app or task. Read only the matching route.
 | Hosted Android emulator | stim guide lifecycle hosted-android |
 | Physical device | stim guide lifecycle devices |
 | EAS development build | stim guide lifecycle eas |
-| Inspect runtime errors or device output | stim guide logs |
+| Inspect runtime errors or device output | stim guide agent logs |
 | Verify a fix in the UI | stim guide lifecycle verification |
 | App readiness markers | stim guide lifecycle readiness |
 | Shell sandbox | stim guide errors sandbox |
@@ -214,6 +214,27 @@ RULES DURING THE LOOP
   android with the same build options to restore forwarding; stim agent-device
   then targets the new serial (guide lifecycle). Each status issue names a
   remedy to run from its workspace (guide facts status).`,
+    },
+    logs: {
+      summary: 'Query app errors and device output',
+      body: () => `QUERY THE LOGS
+
+Run from the app directory, the one whose package.json depends on react-native
+or expo:
+
+  stim logs --errors                     errors since the last launch
+  stim logs --since 10m --level warn     a time window and a minimum level
+  stim logs --source device --grep <re>  the owned device's output
+  stim logs --help                       every filter
+
+- A clean check needs exit code 0 AND no records. Zero matches print
+  "No matching log records" on stderr; with --json, nothing.
+- STIM_NO_PROJECT means no timeline was captured here; in a monorepo it names
+  the app that has one. Retry from that directory.
+- A native crash with no report: add --source device. An empty query does not
+  prove a crashed app was healthy.
+- Do not read the NDJSON files directly. Capture, record formats and
+  symbolication: stim guide logs.`,
     },
     device: {
       summary: 'Mobile UI automation, slots, hosted sessions, and agent-device state',

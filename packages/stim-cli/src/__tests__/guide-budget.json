@@ -8,7 +8,7 @@
     "topic": 16000
   },
   "topics": {
-    "agent": 3850,
+    "agent": 3875,
     "errors": 5250,
     "api": 24000,
     "metro": 27500,
@@ -24,6 +24,7 @@
     "agent device": 3750,
     "agent ownership": 9500,
     "agent report": 1500,
+    "agent logs": 1000,
     "facts payloads": 37250,
     "facts gc": 26050,
     "facts status": 52100,
