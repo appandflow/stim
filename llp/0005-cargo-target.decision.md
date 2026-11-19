@@ -63,7 +63,9 @@ through the Cargo delete, never through the plain removal of other outputs.
 Under the target's trim claim the Cargo delete then keeps the whole `target/`
 when it is no longer recognised, when it holds a copy a trim could not put back,
 when it shows use within `idle.dormantDays` or that use cannot be told, when
-another filesystem is mounted anywhere in it, when a process executes from or
+another filesystem is mounted anywhere in it (on Linux also any mount point at
+or under it in `/proc/self/mountinfo`, since a bind mount keeps the device
+number; mounts that cannot be read keep it), when a process executes from or
 holds open a path in it, or when a build holds a lock file: a `.cargo-lock`,
 `.cargo-build-lock` or `.cargo-artifact-lock` in a top-level entry or a
 directory directly in one, Exact's `.exact-sweep.json.lock`, or a file under
@@ -79,9 +81,14 @@ Exact app's, is dated the same way.
 Then, as the trims do (Never delete what a build took back, below), it renames
 each top-level entry into `target/.stim-trimmed/` and reads that entry's lock
 files again at the new path. Once every entry is moved it reads the processes
-again. A lock a build took or a path a process opened meanwhile puts every moved
-entry back; one that cannot be put back moves to `.stim-not-restored-*` or
-stays in a `.stim-trimmed` marked `NOT-RESTORED`, for a person. An entry that
+again, matching both an entry's original and its moved path, and dates the
+moved entries again the same way. A lock a build took, a path a process opened
+or a write made meanwhile puts every moved entry back, and so does a
+cancellation or an error before those checks pass. An entry whose original
+name exists again is not put back over it; like one that cannot be put back,
+it moves to `.stim-not-restored-*` or stays in a `.stim-trimmed` marked
+`NOT-RESTORED`, for a person. Node offers no rename that refuses to replace, so
+a name recreated between that check and the rename is still overwritten. An entry that
 cannot be renamed, such as one on another device (`EXDEV`), stays and the rest
 goes. The moved entries are deleted without entering a directory on another
 device, and the emptied `target/` goes too. Report mode runs the checks that
