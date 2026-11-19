@@ -410,7 +410,7 @@ async function runCommandLadder(
         config,
         act: mode === 'on',
         log: (level, event, msg, fields = {}) => {
-          if (headroom && event === 'pressure_action') headroom.acted = true;
+          if (headroom && event === 'pressure_action' && !fields.unsized) headroom.acted = true;
           writer.write({ src: trigger, level, event, msg, ...fields });
         },
         devices: measured.devices,
