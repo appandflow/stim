@@ -59,10 +59,13 @@ Warming a new worktree is the agent's setup step: the guides have the agent run
 edit, install or launch there. The agent skips it when it works in place, and
 for inspection, cleanup or an app already running in its workspace.
 
-Restoring after gc is a separate case. start, ios and android run warm when
-gc's record of the directories it deleted from the worktree (`lightened.json`)
-lists any that are missing, whether or not the worktree was warmed before
+Restoring after gc is a separate case
 ([LLP 0001](./0001-disk-pressure-levels.decision.md#one-idle-day-reduces-a-workspace)).
+start, ios and android read gc's `lightened.json` for directories it deleted
+that are missing, or pending from an interrupted deletion. When the source
+checkout can restore the same dependencies, they remove any partial pending
+directory and run warm. When it cannot, for example because the source lockfile
+changed, they refuse with `STIM_DEPS_FAILED` and an install remedy.
 
 Reason: a project may skip warm and install its own dependencies, so warm stays
 an agent step, and the agent evals (LLP 0025) measure whether the guide text
