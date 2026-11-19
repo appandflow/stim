@@ -1,6 +1,16 @@
 import { launcherDirectories } from '../workspace/launcher-directories.ts';
 import { scanForCheckouts } from '../workspace/discovery-scan.ts';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  lchmodSync,
+  linkSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { launcherReader, launcherReason, launchersOf } from '../workspace/launchers.ts';
@@ -115,6 +125,31 @@ describe('the PATH launcher scan', () => {
     );
     expect(launcherReason('/work/other', inside)).toBeNull();
   });
+
+  it.skipIf(process.platform !== 'darwin')(
+    'resolves an unreadable link through lsof on macOS, but not into a file with another hard link',
+    async () => {
+      const base = realpathSync(mkdtempSync(join(tmpdir(), 'stim-launchers-')));
+      try {
+        mkdirSync(join(base, 'bin'));
+        mkdirSync(join(base, 'app'));
+        for (const name of ['single', 'linked']) {
+          writeFileSync(join(base, 'app', name), 'x');
+          chmodSync(join(base, 'app', name), 0o755);
+          symlinkSync(join(base, 'app', name), join(base, 'bin', name));
+          lchmodSync(join(base, 'bin', name), 0o000);
+        }
+        linkSync(join(base, 'app', 'linked'), join(base, 'app', 'other'));
+        const result = await launcherReader(undefined, { directories: [join(base, 'bin')] })();
+        expect(result).toEqual({
+          targets: [join(base, 'app', 'single')],
+          incomplete: [{ kind: 'entry', path: join(base, 'bin', 'linked'), error: 'EACCES' }],
+        });
+      } finally {
+        rmSync(base, { recursive: true, force: true });
+      }
+    },
+  );
 
   it('matches whole path segments, so a launcher into app-2 does not keep app', () => {
     const scanned = { targets: ['/work/app-2/bin/tool'], incomplete: [] };

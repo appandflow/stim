@@ -42,6 +42,9 @@ async function openedPath(path: string): Promise<string> {
   if (process.platform !== 'darwin') throw new Error('not supported on this platform');
   const file = await open(path, constants.O_RDONLY | constants.O_NONBLOCK);
   try {
+    const reached = await file.stat();
+    // lsof names one of the file's links, not necessarily the one the launcher reaches (#5964).
+    if (reached.nlink > 1) throw new Error('the file has more than one hard link');
     const listed = await getExecutor().runFileAsync(
       '/usr/sbin/lsof',
       ['-a', '-p', String(process.pid), '-d', String(file.fd), '-Fn'],
@@ -53,7 +56,7 @@ async function openedPath(path: string): Promise<string> {
       ?.slice(1);
     if (!name) throw new Error('lsof named no path');
     const resolved = await realpath(name);
-    const [reached, named] = await Promise.all([file.stat(), stat(resolved)]);
+    const named = await stat(resolved);
     if (reached.dev !== named.dev || reached.ino !== named.ino) throw new Error('lsof named another file');
     return resolved;
   } finally {
