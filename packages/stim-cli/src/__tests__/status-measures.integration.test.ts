@@ -287,12 +287,6 @@ test('watchers in separate processes share one walk and one failure', async () =
 
   clock += 5 * 60_000;
   duFails = false;
-  calls = [];
-  second.schedule([state], []);
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  expect(duWalks()).toEqual([]);
-
-  clock += 35 * 60_000;
   second.schedule([state], []);
   await vi.waitFor(() => expect(readDiskUsage(app + sep)?.measuredAt).toBe(new Date(clock).toISOString()));
 });
@@ -331,7 +325,7 @@ test('a slow walk holds every watcher for 4 times its duration and its own folde
   await vi.waitFor(() => expect(checkoutWalks()).toEqual([[src]]));
 });
 
-test('a folder whose walk keeps failing is retried after a hold that doubles, while due folders still get walked', async () => {
+test('a folder whose walk keeps failing is retried once its usual max age passes, while due folders still get walked', async () => {
   failing = [avd];
   walkMs = () => 1000;
   const state = environment();
@@ -347,10 +341,8 @@ test('a folder whose walk keeps failing is retried after a hold that doubles, wh
   }
   expect(failedAt).toHaveLength(3);
   const [first = 0, second = 0, third = 0] = failedAt;
-  expect(second - first).toBeGreaterThanOrEqual(40 * 60_000);
-  expect(second - first).toBeLessThan(47 * 60_000);
-  expect(third - second).toBeGreaterThanOrEqual(80 * 60_000);
-  expect(third - second).toBeLessThan(87 * 60_000);
+  expect(second - first).toBeLessThan(20 * 60_000);
+  expect(third - second).toBe(second - first);
 });
 
 test('a checkout without node_modules is walked by its entries, so one installed before du runs is not counted', async () => {

@@ -16,7 +16,6 @@ import {
   diskUsageWalkClaims,
   readDiskUsage,
   readDiskUsageFailure,
-  readDiskUsageFailureCount,
   readDiskUsageFailureSignature,
   readDiskUsagePartial,
   type DiskMeasure,
@@ -232,20 +231,12 @@ export async function refreshMeasure(
     }
     operation?.signal.throwIfAborted();
     if (!size) {
-      if (options.failures) {
-        const previous = readDiskUsageFailure(path);
-        const last = readDiskUsage(path);
-        const streak =
-          previous !== null &&
-          (!last || Date.parse(previous) > Date.parse(last.measuredAt)) &&
-          (!dependency || readDiskUsageFailureSignature(path) === signature);
+      if (options.failures)
         writeCacheFile(diskUsageFailureFile(path), {
           path,
           failedAt: new Date(now()).toISOString(),
           ...(signature ? { signature } : {}),
-          count: streak ? readDiskUsageFailureCount(path) + 1 : 1,
         });
-      }
       return { outcome: 'failed', measure: null };
     }
     return {

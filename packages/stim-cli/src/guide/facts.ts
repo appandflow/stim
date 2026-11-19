@@ -1868,7 +1868,7 @@ RULES
   walk ended (an hour when its environment is idle), or 20 walk durations if
   longer; all watchers' walks are 4 durations apart. A node_modules is
   measured again when its install changes and after 6 hours. A failed or
-  timed-out walk is retried after 40 minutes, doubled per failure in a row.
+  timed-out walk is retried after the same 5 minutes or hour.
   Sizes are cached under $STIM_HOME/disk-usage, which one-shot status only
   reads, so the fields appear once a watcher has measured.
 

@@ -1862,7 +1862,7 @@ times as long as the previous one took, so a slow disk is walked less often. It 
 `node_modules` when its install changes and at least every 6 hours, and
 `worktreeBytes` counts the checkout's own `node_modules` from that measurement,
 so it is `null` with `nodeModulesBytes` after a reinstall. A walk that fails
-is retried after 40 minutes, doubled for each failure in a row.
+is retried after the same 5 minutes or hour.
 One-shot `stim status` reads the cached sizes.
 
 An environment carries `agents` when a coding-agent session works in it:

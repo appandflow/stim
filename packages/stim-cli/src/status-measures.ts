@@ -13,7 +13,6 @@ import {
   readAgentSessionsCache,
   readDiskUsage,
   readDiskUsageFailure,
-  readDiskUsageFailureCount,
   readDiskUsageFailureSignature,
   readDiskUsageWalkMs,
   readEndedAgentSessions,
@@ -48,7 +47,6 @@ const IDLE_DISK_MAX_AGE_MS = 60 * 60_000;
 const DU_TIMEOUT_MS = 120_000;
 const WALK_SPACING = 20;
 const WALK_REST = 4;
-const MAX_FAILURE_HOLD_MS = 24 * 60 * 60_000;
 const MAX_WALK_MS = DU_TIMEOUT_MS + 5000;
 const PULL_REQUEST_CHECK_MS = 60_000;
 const GIT_TIMEOUT_MS = 5000;
@@ -266,29 +264,26 @@ function nestedFolders(state: EnvironmentState): string[] {
 }
 
 /**
- * When the last walk of `path` failed and how many walks in a row failed, or null when a walk succeeded since, or when
- * the failure was of a dependency tree's earlier install, as `refreshMeasure` reads it.
+ * When the last walk of `path` failed, or null when a walk succeeded since, or when the failure was of a dependency
+ * tree's earlier install, as `refreshMeasure` reads it.
  */
-function lastFailure(path: string): { at: number; count: number } | null {
+function lastFailure(path: string): { at: number } | null {
   const failedAt = readDiskUsageFailure(path);
   if (failedAt === null) return null;
   const at = Date.parse(failedAt);
   const measure = readDiskUsage(path);
   if (measure && Date.parse(measure.measuredAt) >= at) return null;
   if (isDependencyTree(path) && readDiskUsageFailureSignature(path) !== treeSignature(path)) return null;
-  return { at, count: readDiskUsageFailureCount(path) };
+  return { at };
 }
 
 /**
  * How long after its last walk `path` is due again: `maxAgeMs` after that walk ended, or WALK_SPACING times as long as
  * it took when that is longer. A walk counts as MAX_WALK_MS at most, so a machine asleep during it does not stretch
- * the spacing. A failed walk counts as one that ran to the time limit, and each failure in a row doubles the hold after
- * it, up to a day.
+ * the spacing. A failed walk is due `maxAgeMs` after it failed.
  */
 function spacedMaxAgeMs(path: string, maxAgeMs: number): number {
-  const failure = lastFailure(path);
-  if (failure)
-    return Math.min(MAX_FAILURE_HOLD_MS, Math.max(maxAgeMs, WALK_SPACING * DU_TIMEOUT_MS) * 2 ** (failure.count - 1));
+  if (lastFailure(path)) return maxAgeMs;
   const walkMs = Math.min(MAX_WALK_MS, readDiskUsageWalkMs(path) ?? 0);
   return Math.max(maxAgeMs, WALK_SPACING * walkMs) + walkMs;
 }

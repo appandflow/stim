@@ -294,13 +294,6 @@ export function readDiskUsageFailure(path: string): string | null {
   return Number.isFinite(Date.parse(entry.failedAt)) ? entry.failedAt : null;
 }
 
-/** How many walks of `path` in a row failed, as its failure record counts them; 1 for a record without a count. */
-export function readDiskUsageFailureCount(path: string): number {
-  const entry = readJsonObject(diskUsageFailureFile(path));
-  const count = entry?.count;
-  return typeof count === 'number' && Number.isInteger(count) && count >= 1 ? count : 1;
-}
-
 /** How long the cached walk of `path` took, in milliseconds, or null when the entry does not record it. */
 export function readDiskUsageWalkMs(path: string): number | null {
   const entry = readJsonObject(diskUsageCacheFile(path));
