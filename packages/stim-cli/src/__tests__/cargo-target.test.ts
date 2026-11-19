@@ -730,15 +730,15 @@ describe.skipIf(process.platform === 'win32')(
       writeFileSync(join(dir, 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55\n');
       ageTree(dir);
       const controller = new AbortController();
-      const real = getExecutor();
+      const executor = getExecutor();
       setExecutor({
-        ...real,
+        ...executor,
         runFileAsync: async (file, args, options) => {
           if (file === 'du') {
             controller.abort();
             throw new Error('du was cancelled');
           }
-          return file === 'lsof' || file === 'ps' ? '' : real.runFileAsync(file, args, options);
+          return file === 'lsof' || file === 'ps' ? '' : executor.runFileAsync(file, args, options);
         },
       });
 
