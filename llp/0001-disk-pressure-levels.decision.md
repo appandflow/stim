@@ -303,11 +303,14 @@ there, to be retried on the next run);
 every use of a `links` verdict, a recorded one included, then reads the
 `android`, `ios` and `apple` folders of those packages once each (and
 `android/app` when present) for build output folders, and a build output
-folder or a check that does not answer or fails ends it. A read cut short by
-the time left is not left as the pending read unless it has not answered after
-its full 2 seconds, and a sample the step's limit cut short records no verdict.
-The verdict and the listing are written under their file's lock, waited for at
-most 200 ms; without it there is no verdict and nothing is written. Build
+folder or a check that does not answer or fails ends it. No read starts with
+less than 500 ms of its budget left, so a read near the end of the budget does
+not become the pending read that makes the launcher scan incomplete; one that
+does not answer in the time it got is the pending read, as any other, and a
+sample the step's limit cut short records no verdict. The verdict and the
+listing are written under their file's lock, waited for at most 200 ms; when
+the lock or the write fails or times out there is no verdict and nothing is
+written, and the tree stays unknown. Build
 output outside those folders is not seen: a `.build` folder that appears after
 the listing in a package with none of them, `android/<module>/build` or
 `android/<module>/.cxx` of a library with several modules, or

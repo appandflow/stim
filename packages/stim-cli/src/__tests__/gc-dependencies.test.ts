@@ -961,6 +961,27 @@ test.skipIf(process.platform === 'win32')(
   60_000,
 );
 
+test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+  'at high, rung 5 takes a hard-linked tree of unknown size as unknown when its sample records cannot be locked or written',
+  async () => {
+    const roots = idleRepo([{ name: 'linked', workspace: true }]);
+    const modules = join(roots.linked ?? '', 'node_modules');
+    pnpmTree(modules, 'linked', new Date(Date.now() - 60 * 60_000));
+    walks.set(modules, () => null);
+    const records = dirname(diskUsageLinksFile(modules));
+    mkdirSync(records, { recursive: true });
+    chmodSync(records, 0o555);
+    try {
+      const { payload }: { payload: LevelPayload } = await gcJson('high');
+      expect(dependencyAction(payload, modules, 5)?.outcome).toBe('would');
+    } finally {
+      chmodSync(records, 0o755);
+    }
+    expect(existsSync(diskUsageLinksFile(modules))).toBe(false);
+  },
+  60_000,
+);
+
 test.skipIf(process.platform === 'win32')(
   'at normal, the dormant step and the 7-day source rule keep a tree of unknown size whose sample is hard links, and the verdict holds until its install changes',
   async () => {
@@ -1203,7 +1224,7 @@ test.skipIf(process.platform === 'win32')(
 );
 
 test.skipIf(process.platform === 'win32')(
-  "a link sample whose reads take 1.9 s ends within its 2 s budget or the caller's deadline, records no verdict when the deadline cut it, and leaves no pending read",
+  "a link sample whose reads take 1.9 s ends within its 2 s budget or the caller's deadline, starts no read with less than 500 ms left, and records no verdict when the deadline cut it",
   async () => {
     const modules = join(projects, 'budget', 'node_modules');
     mkdirSync(modules, { recursive: true });
@@ -1219,10 +1240,41 @@ test.skipIf(process.platform === 'win32')(
       await vi.advanceTimersByTimeAsync(9000);
       return { result: await result, elapsed: ended - started, pending, after: hungRead() };
     };
-    expect(await timed(Date.now() + 1000)).toEqual({ result: null, elapsed: 1000, pending: null, after: null });
+    expect(await timed(Date.now() + 1000)).toEqual({ result: null, elapsed: 1000, pending: modules, after: null });
     expect(existsSync(diskUsageLinksFile(modules))).toBe(false);
-    expect(await timed()).toEqual({ result: null, elapsed: 2000, pending: null, after: null });
+    expect(await timed()).toEqual({ result: null, elapsed: 1900, pending: null, after: null });
     expect(readJsonObject(diskUsageLinksFile(modules))?.verdict).toBe('timeout');
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'a link sample read cut short by the deadline stays the pending read until it answers, and no other read starts meanwhile',
+  async () => {
+    const modules = join(projects, 'stalled', 'node_modules');
+    mkdirSync(modules, { recursive: true });
+    const answers: (() => void)[] = [];
+    const entries = vi.fn<LinkSampleIo['entries']>(
+      () =>
+        new Promise((done) => {
+          answers.push(() => done([]));
+        }),
+    );
+    const io: LinkSampleIo = {
+      entries,
+      lstat: async () => ({ kind: 'file', nlink: 1, dev: 1, ino: 1 }),
+      ends: async () => '',
+    };
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const result = hardLinkSample(modules, undefined, io, Date.now() + 1000);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(await result).toBeNull();
+      expect(hungRead()).toBe(modules);
+    }
+    expect(entries).toHaveBeenCalledTimes(1);
+    expect(existsSync(diskUsageLinksFile(modules))).toBe(false);
+    for (const answer of answers) answer();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(hungRead()).toBeNull();
   },
 );
 

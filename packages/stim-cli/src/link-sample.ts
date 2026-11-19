@@ -17,6 +17,7 @@ const LINKED_SHARE = 0.9;
 const SAMPLE_TIMEOUT_MS = 2000;
 const VERDICT_MAX_AGE_MS = 6 * 60 * 60_000;
 const LOCK_WAIT_MS = 200;
+const MIN_READ_MS = 500;
 const MODULES_END_BYTES = 64 * 1024;
 /** What a native build writes inside a package it builds in place: its own bytes, never store links. */
 const BUILT_IN_PLACE = [...ARTIFACT_DIRS.build, 'android/.cxx', 'ios/build', 'apple/.DerivedData'];
@@ -66,17 +67,18 @@ type Read = <T>(label: string, start: () => Promise<T>) => Promise<T | null>;
 
 /**
  * Reads through the shared bounded reader until `budgetMs` from now or `until`, whichever is first, each given what is
- * left of that to answer and counted as pending only after SAMPLE_TIMEOUT_MS: null for a read that failed, `Unanswered`
- * thrown for one that did not answer or could not start.
+ * left of that to answer, and none started with less than MIN_READ_MS left, so a read that does not answer in time had
+ * at least that long before it becomes the pending one: null for a read that failed, `Unanswered` thrown for one that
+ * did not answer or could not start.
  */
 function boundedReads(budgetMs: number, until: number, signal?: AbortSignal): Read {
   const deadline = Math.min(Date.now() + budgetMs, until);
   return async (label, start) => {
     signal?.throwIfAborted();
     const left = deadline - Date.now();
-    if (left <= 0) throw new Unanswered('the reads ran out of time');
+    if (left < MIN_READ_MS) throw new Unanswered('the reads ran out of time');
     try {
-      return await answered(label, start, Math.min(left, SAMPLE_TIMEOUT_MS), SAMPLE_TIMEOUT_MS);
+      return await answered(label, start, left);
     } catch (error) {
       signal?.throwIfAborted();
       if (error instanceof Unanswered) throw error;
@@ -192,12 +194,13 @@ async function takeSample(
 
 /**
  * Writes what `next` makes of the record in `file` under the file's lock, waiting at most LOCK_WAIT_MS and never past
- * `until`: the record written, or null when the lock was not had in time.
+ * `until`: the record written, or null when the lock was not had in time or could not be taken. Only an abort throws.
  */
 async function writeLocked<T extends object>(
   file: string,
   next: (current: Record<string, unknown> | null) => T,
   until: number,
+  signal?: AbortSignal,
 ): Promise<T | null> {
   try {
     return await withDirLockAsync(
@@ -210,11 +213,12 @@ async function writeLocked<T extends object>(
       {
         waitMs: Math.max(0, Math.min(LOCK_WAIT_MS, until - Date.now())),
         ensureParent: () => mkdirSync(dirname(file), { recursive: true }),
+        signal,
       },
     );
-  } catch (error) {
-    if (error instanceof Error && 'code' in error && error.code === 'STIM_LOCK_TIMEOUT') return null;
-    throw error;
+  } catch {
+    signal?.throwIfAborted();
+    return null;
   }
 }
 
@@ -273,7 +277,7 @@ async function findNativeRoots(
       last = dir;
     }
   });
-  const mine = { last, roots, complete: last === (dirs.at(-1) ?? null) };
+  const mine = { last, roots, complete: !dirs.some((dir) => last === null || dir > last) };
   const written = await writeLocked(
     diskUsageNativeFile(path),
     (current) => {
@@ -283,13 +287,14 @@ async function findNativeRoots(
       return { path, signature, ...(ahead ? theirs : mine) };
     },
     until,
+    signal,
   );
   return written && { last: written.last, roots: written.roots, complete: written.complete };
 }
 
 /**
  * Whether a native build wrote output (BUILT_IN_PLACE) under any of `roots`, from one listing of each root (and of a
- * folder in it a build output path goes through), within SAMPLE_TIMEOUT_MS: `timeout` when that could not be told, from
+ * folder in it a build output path goes through, or of the package for a `.build` root), within SAMPLE_TIMEOUT_MS: `timeout` when that could not be told, from
  * a read that did not answer or failed other than by the folder being absent.
  */
 async function builtInPlace(
@@ -313,10 +318,10 @@ async function builtInPlace(
   return orTimeout(async () => {
     for (const root of roots) {
       const paths = BUILT_IN_PLACE.map((relative) => relative.split('/')).filter(([first]) => first === basename(root));
-      if (paths.some((parts) => parts.length === 1)) return true;
       const listed = new Map<string, Set<string> | null>();
-      for (const [, ...parts] of paths) {
-        let dir = root;
+      for (const [first = '', ...rest] of paths) {
+        const parts = rest.length ? rest : [first];
+        let dir = rest.length ? root : dirname(root);
         let found = true;
         for (const part of parts) {
           if (!listed.has(dir)) listed.set(dir, await folders(dir));
@@ -380,6 +385,7 @@ export async function hardLinkSample(
       diskUsageLinksFile(path),
       () => ({ path, signature, sampledAt, verdict, ...counts, ...(store ? { store } : {}) }),
       until,
+      signal,
     )) !== null;
   let native = nativeRootsOf(readJsonObject(diskUsageNativeFile(path)), path, signature);
   if (fresh && native?.complete) {
@@ -412,9 +418,9 @@ export async function hardLinkSample(
 
 async function storeStands(store: string, io: LinkSampleIo, until: number): Promise<boolean> {
   const left = Math.min(until - Date.now(), SAMPLE_TIMEOUT_MS);
-  if (hungRead() !== null || left <= 0) return false;
+  if (hungRead() !== null || left < MIN_READ_MS) return false;
   try {
-    return (await answered(store, () => io.lstat(store), left, SAMPLE_TIMEOUT_MS)).kind === 'directory';
+    return (await answered(store, () => io.lstat(store), left)).kind === 'directory';
   } catch {
     return false;
   }
