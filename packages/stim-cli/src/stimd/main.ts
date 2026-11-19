@@ -158,7 +158,7 @@ import {
   updateBoot,
 } from './crash-hold.ts';
 import { ASKED_MS, autoUpdateOn, checkForUpdate, DAILY_MS, lastUpdateCheck, updateDue } from './auto-update.ts';
-import { ownStoreEngine, requireCurrentEngine, type StoreEngine } from '../daemon/engine-switch.ts';
+import { ownStoreEngine, requireCurrentEngine, switchedEngine, type StoreEngine } from '../daemon/engine-switch.ts';
 import { readRecords } from '../engine-store/store.ts';
 import {
   ATTACHED_ARG,
@@ -747,14 +747,14 @@ function takeJobRecord(
   return record;
 }
 
-/** After a crash hold: a staged rollback leaves the home to `job` again; otherwise the record goes. */
+/** After a crash hold: a staged rollback or a newly selected build leaves the home to `job` again; otherwise the record goes. */
 function endJobRecord(
   staged: boolean,
   job: string | undefined,
   record: ReturnType<typeof readJobRestart>,
   log: (level: Level, event: string, msg: string) => unknown,
 ): void {
-  if (staged && job) leaveToJob(job, record?.at ?? Date.now(), Date.now(), log);
+  if (staged && job) leaveToJob(job, record?.at ?? Date.now(), record?.left ?? Date.now(), log);
   else rmSync(stimdJobRestartFile(), { force: true });
 }
 
@@ -966,6 +966,7 @@ async function runStimdInner(
       const recorded =
         attached === undefined && recordBoot(`startup failed: ${errorText(error)}`, error) === 'recorded';
       if (recorded && inJob && unit) leaveToJob(unit, Date.now(), Date.now(), log);
+      else if (inJob) rmSync(stimdJobRestartFile(), { force: true });
       releaseClaim(startupClaim);
       releaseClaim(own);
     }
@@ -1001,7 +1002,7 @@ async function runStimdInner(
       return false;
     }
     own = updateClaimDetails(own, { ...details, kept: true, updateCheckedAt: held.checkedAt }) ?? own;
-    endJobRecord(held.staged, jobUnit, jobRecord, log);
+    endJobRecord(held.staged || switchedEngine() !== null, jobUnit, jobRecord, log);
     writer.close();
     return true;
   }

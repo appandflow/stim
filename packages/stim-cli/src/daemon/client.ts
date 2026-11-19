@@ -954,6 +954,7 @@ export async function awaitJobRestart(signal?: AbortSignal, home?: string): Prom
   for (let said = false; ; said = true) {
     const hold = jobRestartHold(home);
     if (!hold || Date.now() >= hold.until || signal?.aborted) return;
+    if (crashLoop(readStimdBoots(), stimdBuildId(), Date.now())) return;
     if (!said) console.error(`Stim: waiting for the ${hold.record.label} service to start stimd again`);
     await new Promise((done) => setTimeout(done, CLAIM_POLL_MS));
   }
