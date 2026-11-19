@@ -535,10 +535,12 @@ Fields: kind (build or device), platform, settings [{ key, value, from }] with
 from flag, env, setting or default (remote.build for a
 build, ios.remote or android.remote, plus remote.easFallback when it is on, for
 a device), candidates [{ machine, code,
-msg, detail? }], choice { machine, code, msg } with machine local when the run
+msg, detail?, warmth? }], choice { machine, code, msg } with machine local when the run
 stays on this machine, and fallback { code, msg, machine? } when a remote machine that
 was meant to take the run did not (level warn). The msg is the same text the
 placement: and build: phase lines print.
+A build candidate's warmth (artifact, checkout, dependencies or project) is what
+it holds for the build; it ranks ahead of remote.machines order.
 Candidate codes: accepted, unreachable, busy, disk, load, version-mismatch
 (detail lists the toolchain parts: xcode, arch, jdk, ...), no-matching-device,
 declined, memory, no-capacity; with machine eas, why an EAS Simulator was not

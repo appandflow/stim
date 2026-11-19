@@ -40,6 +40,7 @@ export function lastBuildRecord({
   builtOn,
   offloadedTo = null,
   offloadFallback = null,
+  offloadReason = null,
   ledger,
 }: {
   ledger?: BuildLedgerExtras;
@@ -48,6 +49,7 @@ export function lastBuildRecord({
   builtOn?: string;
   offloadedTo?: string | null;
   offloadFallback?: string | null;
+  offloadReason?: string | null;
   configuration?: string | null;
   missReason?: BuildMissReason | null;
   diagnostics?: readonly unknown[] | null;
@@ -81,6 +83,7 @@ export function lastBuildRecord({
   if (builtOn) record.builtOn = builtOn;
   if (offloadedTo) record.offloadedTo = offloadedTo;
   if (offloadFallback) record.offloadFallback = offloadFallback;
+  if (offloadedTo && offloadReason) record.offloadReason = offloadReason;
   if (missReason && !cacheLevel(cacheHit)) record.missReason = missReason;
   const recorded = status === 'failed' ? buildDiagnostics(diagnostics) : [];
   if (recorded.length) record.diagnostics = recorded;
@@ -117,11 +120,13 @@ export function iosFacts({
   builtOn,
   offloadedTo = null,
   offloadFallback = null,
+  offloadReason = null,
 }: {
   buildMachine?: string;
   builtOn?: string;
   offloadedTo?: string | null;
   offloadFallback?: string | null;
+  offloadReason?: string | null;
   root?: string;
   slot?: string;
   udid: string | null;
@@ -164,6 +169,7 @@ export function iosFacts({
     ...(builtOn ? { builtOn } : {}),
     ...(offloadedTo ? { offloadedTo } : {}),
     ...(offloadFallback ? { offloadFallback } : {}),
+    ...(offloadedTo && offloadReason ? { offloadReason } : {}),
     compilationCache,
     waitedForBuild: waitedForBuild ? { pid: waitedForBuild.pid ?? null, ms: waitedForBuild.ms ?? 0 } : null,
     appPath,
@@ -268,6 +274,7 @@ export interface ReportIosResultArgs {
   builtOn?: string;
   offloadedTo?: string | null;
   offloadFallback?: string | null;
+  offloadReason?: string | null;
   closeWriter: () => void;
   webPreviewUrl: string | null;
   lease?: { kind: string; expiresAt: string } | null;
@@ -313,6 +320,7 @@ export function reportIosResult({
   builtOn,
   offloadedTo = null,
   offloadFallback = null,
+  offloadReason = null,
   closeWriter,
   webPreviewUrl,
   lease,
@@ -344,6 +352,7 @@ export function reportIosResult({
         builtOn,
         offloadedTo,
         offloadFallback,
+        offloadReason,
         ledger: {
           scheme: buildScheme,
           device: iosLedgerDevice(device),
@@ -381,6 +390,7 @@ export function reportIosResult({
     builtOn,
     offloadedTo,
     offloadFallback,
+    offloadReason,
   });
   if (devicePlacement) facts.devicePlacement = devicePlacement;
   if (host) {

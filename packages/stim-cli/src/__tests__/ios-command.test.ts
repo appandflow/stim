@@ -10137,7 +10137,10 @@ describe('strict remote machine selection', () => {
   test.each(['sync failed'])('remote %s never falls back to xcodebuild', async (reason) => {
     reserve();
     configureMini();
-    const choice = { machine: 'mini', offer: { capacity: {} } } as offloadClient.OffloadChoice;
+    const choice = {
+      machine: 'mini',
+      offer: { capacity: {}, warm: { checkout: false, dependencies: false, build: false } },
+    } as offloadClient.OffloadChoice;
     vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue(choice);
     vi.spyOn(offloadClient, 'offloadBuild').mockResolvedValue({ ok: false, machine: 'mini', reason });
     const build = vi.fn<() => never>();
@@ -10153,7 +10156,10 @@ describe('strict remote machine selection', () => {
   test('a named machine whose build failed on its corrupt compilation cache fails with that code and a rerun remedy', async () => {
     reserve();
     configureMini();
-    const choice = { machine: 'mini', offer: { capacity: {} } } as offloadClient.OffloadChoice;
+    const choice = {
+      machine: 'mini',
+      offer: { capacity: {}, warm: { checkout: false, dependencies: false, build: false } },
+    } as offloadClient.OffloadChoice;
     vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue(choice);
     const message = 'The shared compilation cache at /w/cas was corrupt. Stim emptied it.';
     vi.spyOn(offloadClient, 'offloadBuild').mockResolvedValue({
@@ -10200,7 +10206,10 @@ describe('strict remote machine selection', () => {
     reserve();
     configureMini();
     vi.spyOn(offloadClient, 'offloadCheck').mockReturnValue(async () => ({ capacity: null, problems: [] }));
-    const choice = { machine: 'mini', offer: { capacity: {} } } as offloadClient.OffloadChoice;
+    const choice = {
+      machine: 'mini',
+      offer: { capacity: {}, warm: { checkout: false, dependencies: false, build: false } },
+    } as offloadClient.OffloadChoice;
     vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue(choice);
     vi.spyOn(offloadClient, 'offloadBuild').mockResolvedValue({
       ok: false,
@@ -10224,7 +10233,7 @@ describe('strict remote machine selection', () => {
     mkdirSync(artifactPath, { recursive: true });
     const choose = vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue({
       machine: 'mini',
-      offer: { capacity: {} },
+      offer: { capacity: {}, warm: { checkout: false, dependencies: false, build: false } },
     } as offloadClient.OffloadChoice);
     vi.spyOn(offloadClient, 'offloadBuild').mockResolvedValue({
       ok: true,
@@ -10674,7 +10683,10 @@ describe('strict remote machine selection', () => {
     async (scenario) => {
       reserve();
       configureMini();
-      const choice = { machine: 'mini', offer: { capacity: {} } } as offloadClient.OffloadChoice;
+      const choice = {
+        machine: 'mini',
+        offer: { capacity: {}, warm: { checkout: false, dependencies: false, build: false } },
+      } as offloadClient.OffloadChoice;
       vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue(choice);
       const artifactPath = join(root, 'fetched.app');
       mkdirSync(artifactPath);
@@ -10753,7 +10765,7 @@ describe('strict remote machine selection', () => {
     const after = 'b'.repeat(40);
     vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue({
       machine: 'mini',
-      offer: { capacity: {} },
+      offer: { capacity: {}, warm: { checkout: false, dependencies: false, build: false } },
     } as offloadClient.OffloadChoice);
     const artifactPath = join(root, 'fetched.app');
     mkdirSync(artifactPath);
@@ -10805,7 +10817,9 @@ describe('strict remote machine selection', () => {
     mkdirSync(artifactPath);
     vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue({
       machine: 'mini',
-      offer: { capacity: {} },
+      offer: { capacity: {}, warm: { checkout: true, dependencies: false, build: true } },
+      target: { platform: 'ios' },
+      warmth: 'checkout',
     } as offloadClient.OffloadChoice);
     vi.spyOn(offloadClient, 'offloadBuild').mockResolvedValue({
       ok: true,
@@ -10871,12 +10885,17 @@ describe('strict remote machine selection', () => {
     );
     expect(delivered).toBe(true);
     expect(parseFirst(result.logs).offloadedTo).toBe('mini');
+    expect(parseFirst(result.logs).offloadReason).toContain('this checkout last built ios there');
+    expect(readLastBuilds(readWorkspaceState(root)).ios?.offloadReason).toContain('this checkout last built ios there');
   });
 
   test('SIGINT requested by stop records cancellation of a strict offload without any local compiler', async () => {
     reserve();
     configureMini();
-    const choice = { machine: 'mini', offer: { capacity: {} } } as offloadClient.OffloadChoice;
+    const choice = {
+      machine: 'mini',
+      offer: { capacity: {}, warm: { checkout: false, dependencies: false, build: false } },
+    } as offloadClient.OffloadChoice;
     vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue(choice);
     vi.spyOn(offloadClient, 'offloadBuild').mockImplementation(async ({ onEnter }) => {
       onEnter('compile');

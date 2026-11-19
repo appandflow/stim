@@ -51,6 +51,7 @@ export function androidFacts({
   builtOn,
   offloadedTo = null,
   offloadFallback = null,
+  offloadReason = null,
   host,
 }: {
   host?: import('@stim-cli/core/state').HostedAndroidStatus;
@@ -58,6 +59,7 @@ export function androidFacts({
   builtOn?: string;
   offloadedTo?: string | null;
   offloadFallback?: string | null;
+  offloadReason?: string | null;
   root?: string;
   slot?: string;
   serial?: string | null;
@@ -104,6 +106,7 @@ export function androidFacts({
     ...(builtOn ? { builtOn } : {}),
     ...(offloadedTo ? { offloadedTo } : {}),
     ...(offloadFallback ? { offloadFallback } : {}),
+    ...(offloadedTo && offloadReason ? { offloadReason } : {}),
     waitedForBuild: waitedForBuild ? { pid: waitedForBuild.pid ?? null, ms: waitedForBuild.ms ?? 0 } : null,
     appPath: appPath ?? null,
     bundleId: bundleId ?? null,
@@ -142,6 +145,7 @@ export function lastBuildRecord({
   builtOn,
   offloadedTo = null,
   offloadFallback = null,
+  offloadReason = null,
   message = null,
   remedy = null,
   deviceSerial = null,
@@ -154,6 +158,7 @@ export function lastBuildRecord({
   builtOn?: string;
   offloadedTo?: string | null;
   offloadFallback?: string | null;
+  offloadReason?: string | null;
   configuration?: string | null;
   missReason?: BuildMissReason | null;
   diagnostics?: readonly unknown[] | null;
@@ -191,6 +196,7 @@ export function lastBuildRecord({
   if (builtOn) record.builtOn = builtOn;
   if (offloadedTo) record.offloadedTo = offloadedTo;
   if (offloadFallback) record.offloadFallback = offloadFallback;
+  if (offloadedTo && offloadReason) record.offloadReason = offloadReason;
   if (missReason && !cacheLevel(cacheHit)) record.missReason = missReason;
   const recorded = status === 'failed' ? buildDiagnostics(diagnostics) : [];
   if (recorded.length) record.diagnostics = recorded;
@@ -332,6 +338,7 @@ export function reportAndroidResult({
     builtOn: record.builtOn ?? undefined,
     offloadedTo,
     offloadFallback: record.offloadFallback ?? null,
+    offloadReason: record.offloadReason ?? null,
   });
   writer.close();
 

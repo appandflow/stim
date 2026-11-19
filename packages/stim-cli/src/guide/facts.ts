@@ -281,6 +281,7 @@ leased until <time>" for each one.`,
   offloadedTo     only on an app a remote machine compiled: its
                   remote.machines entry (see \`guide settings\`). cacheHit is
                   false for it. The Android payload carries it too
+  offloadReason   with offloadedTo: why that machine took the build
   offloadFallback only on an app compiled here after the run considered
                   offloading it: why it built here -- one reason per
                   machine when none took the build, or why the offload
@@ -1747,7 +1748,7 @@ RULES
   lastBuilds   { ios?, android? }, each { platform, status, cacheHit,
                cacheSkipped, durationMs, fingerprint, startedAt, finishedAt,
                errorCode?, missReason?, buildMachine?, builtOn?, offloadedTo?, offloadFallback?,
-               diagnostics?, devicePlacement? }
+               offloadReason?, diagnostics?, devicePlacement? }
 
   status       "ok" or "failed"
   cacheHit     "local" or "remote" for an app from that cache tier; false
@@ -1777,6 +1778,8 @@ RULES
   buildMachine selected auto, local or configured machine entry; always on new build records
   builtOn      here or machine name; absent when no build ran (cache/refusal)
   offloadedTo  only on a run a remote machine compiled: its name
+  offloadReason
+               with offloadedTo: why that machine, what it held warm, its load
   offloadFallback
                only on a run that considered offloading and built here: one
                reason per machine when none took the build, or why the
@@ -1791,7 +1794,8 @@ RULES
     state               running | orphaned | stopped | unverified
     build               { state: running | ok | failed, startedAt,
                           finishedAt?, durationMs?, error?,
-                          buildMachine?, builtOn?, errorCode?, offloadedTo?, offloadFallback? }
+                          buildMachine?, builtOn?, errorCode?, offloadedTo?, offloadFallback?,
+                          offloadReason? }
     host?               { machine, session, appSlot, appAttempt, bundleId,
                           agent } when stim macos --remote placed the app on
                           another Mac; it then has no local app or supervisor
