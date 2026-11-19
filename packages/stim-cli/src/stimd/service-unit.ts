@@ -48,10 +48,20 @@ export function serviceJob(
   try {
     const installed = installedUnit(label, platform);
     if (installed?.managed !== true || installed.label !== label || installed.port !== port) return null;
-    return { label, followsEngine: engineRoot !== null && runsShim(installed.script, engineRoot) };
+    return {
+      label,
+      followsEngine: engineRoot !== null && runsShim(installed.script, engineRoot) && keepsChildren(label, platform),
+    };
   } catch {
     return null;
   }
+}
+
+/** systemd kills a unit's whole cgroup when its main process exits unless the unit sets `KillMode=process`. */
+function keepsChildren(label: string, platform: NodeJS.Platform): boolean {
+  if (platform !== 'linux') return true;
+  const unit = join(homedir(), '.config', 'systemd', 'user', `${label}.service`);
+  return /^KillMode=process$/m.test(readFileSync(unit, 'utf8'));
 }
 
 function runsShim(script: string | null, engineRoot: string): boolean {

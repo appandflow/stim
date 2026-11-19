@@ -276,10 +276,10 @@ interface JobRestartGate {
  * the home. The job of that unit (`job`) waits only while the stimd that left runs; any other stimd waits until
  * `jobRestartUntil`.
  */
-function jobRestartGate(job: string | undefined, held: () => boolean): JobRestartGate {
+function jobRestartGate(job: string | undefined): JobRestartGate {
   const reserved = () => {
     const hold = jobRestartHold();
-    if (!hold || Date.now() >= hold.until || hold.record.pid === process.pid || held()) return false;
+    if (!hold || Date.now() >= hold.until || hold.record.pid === process.pid) return false;
     return hold.record.label !== job || (hold.running && hold.record.left === null);
   };
   return {
@@ -799,7 +799,7 @@ async function runCrashHold(
   if (store && held && ('rolledBack' in held || 'moved' in held)) {
     const current = readRecords(store.root).current;
     log('error', 'engine_rolled_back', `${version} crashed 3 times in 10 minutes; the engine runs ${current?.version}`);
-    if (inJob && unit) leaveToJob(unit, Date.now(), Date.now(), log);
+    if (inJob && unit && current && shimRuns(store.root, current.dir)) leaveToJob(unit, Date.now(), Date.now(), log);
     else if (current)
       launchStimd(
         process.env,
@@ -925,7 +925,7 @@ async function runStimdInner(
     'stimd',
     details,
     lifetime.retries(CLAIM_TRIES),
-    jobRestartGate(jobUnit, () => attached !== undefined && crashLoop(readStimdBoots(), build, Date.now()) !== null),
+    jobRestartGate(jobUnit),
   );
   if (!own) {
     log('debug', 'stimd_claim_held', 'another stimd holds this Stim home; exiting');
@@ -1028,6 +1028,7 @@ async function runStimdInner(
   startupClaim = claim;
   startup.signal.throwIfAborted();
   if (!claim) {
+    if (jobRecord) rmSync(stimdJobRestartFile(), { force: true });
     releaseClaim(own);
     log('warn', 'stimd_claim_held', daemonClaimRefusal());
     writer.close();
@@ -1415,6 +1416,7 @@ async function runStimdInner(
     shutdown(why);
     await shutdownDone;
     if (job) {
+      if (!inJob) leaveToJob(job, leftAt, Date.now(), log);
       log(
         keepOwn ? 'warn' : 'info',
         'successor_job',
@@ -2068,7 +2070,10 @@ async function runStimdInner(
   };
   startup.cleanup = async (error) => {
     if (isUnverifiedCleanup(error)) backgroundFailure = error;
-    if (inJob && classifyFailure(error).kind === 'refusal') rmSync(stimdJobRestartFile(), { force: true });
+    if (inJob && unit && attached === undefined) {
+      if (classifyFailure(error).kind === 'refusal') rmSync(stimdJobRestartFile(), { force: true });
+      else leaveToJob(unit, readJobRestart()?.at ?? Date.now(), Date.now(), log);
+    }
     shutdown(`daemon startup failed: ${errorText(error)}`, lifetime.failLevel, error);
     await shutdownDone;
     await writerDone;

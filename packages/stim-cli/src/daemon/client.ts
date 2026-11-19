@@ -950,11 +950,11 @@ function jobRestartWaitMs(): number {
  * Waits while `run/job-restart.json` holds this home for a service unit's job, which removes it once its stimd has
  * started, so a command neither starts a stimd only to wait behind the job's restart nor asks the one that is leaving.
  */
-export async function awaitJobRestart(signal?: AbortSignal, home?: string): Promise<void> {
+export async function awaitJobRestart(signal?: AbortSignal, home?: string, untilHeld = true): Promise<void> {
   for (let said = false; ; said = true) {
     const hold = jobRestartHold(home);
     if (!hold || Date.now() >= hold.until || signal?.aborted) return;
-    if (crashLoop(readStimdBoots(), stimdBuildId(), Date.now())) return;
+    if (untilHeld && crashLoop(readStimdBoots(home), stimdBuildId(), Date.now())) return;
     if (!said) console.error(`Stim: waiting for the ${hold.record.label} service to start stimd again`);
     await new Promise((done) => setTimeout(done, CLAIM_POLL_MS));
   }

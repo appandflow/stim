@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { renderUnit } from '../../../server/src/service-unit.ts';
@@ -55,5 +55,16 @@ describe('serviceJob on systemd', () => {
       label: 'dev.stim.server',
       followsEngine: expected,
     });
+  });
+
+  it('does not follow the engine in a unit written without KillMode=process, whose exit kills its children', () => {
+    const unit = join(home, '.config', 'systemd', 'user', 'dev.stim.server.service');
+    writeFileSync(unit, readFileSync(unit, 'utf8').replace('KillMode=process\n', ''));
+    expect(serviceJob({ STIM_SERVICE_LABEL: 'dev.stim.server' }, 7787, join(home, '.stim', 'engine'), 'linux')).toEqual(
+      {
+        label: 'dev.stim.server',
+        followsEngine: false,
+      },
+    );
   });
 });
