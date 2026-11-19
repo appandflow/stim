@@ -183,6 +183,29 @@ echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"resul
     expect(existsSync(dirname(workspace ?? ''))).toBe(false);
   }, 30_000);
 
+  test('a leftover-process scan that fails once is retried instead of invalidating the trial', async () => {
+    const tools = join(directory, 'tools');
+    mkdirSync(tools);
+    const marker = join(directory, 'lsof-failed-once');
+    writeFileSync(
+      join(tools, 'lsof'),
+      `#!/bin/sh\nif [ ! -e "${marker}" ]; then touch "${marker}"; exit 1; fi\nexec /usr/sbin/lsof "$@"\n`,
+    );
+    chmodSync(join(tools, 'lsof'), 0o755);
+    const bin = fakeAgent(
+      'echo \'{"type":"result","subtype":"success","is_error":false,"num_turns":1,"result":"","usage":{}}\'',
+    );
+    const path = process.env.PATH;
+    process.env.PATH = `${tools}:${path ?? ''}`;
+    try {
+      const outcome = await runTrial(firstLaunch, withSkill, claudeDriver, options({ bin }));
+      expect(existsSync(marker)).toBe(true);
+      expect(outcome.problems).toEqual([]);
+    } finally {
+      process.env.PATH = path;
+    }
+  }, 30_000);
+
   test('a descendant that outlives the agent is reported and is not signalled', async () => {
     const marker = join(directory, 'leftover.pid');
     const bin = fakeAgent(

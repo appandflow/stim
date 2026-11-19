@@ -1,4 +1,4 @@
-import { execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { execFileSync, spawn, spawnSync, type ChildProcess, type SpawnSyncReturns } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import {
   chmodSync,
@@ -194,9 +194,17 @@ interface AgentResult {
 
 const DRAIN_MS = 1000;
 const GRACE_MS = 2000;
-const SCAN_PS_MS = 5000;
-const SCAN_LSOF_MS = 30_000;
+const SCAN_PS_MS = [5000, 30_000];
+const SCAN_LSOF_MS = [30_000, 120_000];
 const SCAN_BUFFER = 32 * 1024 * 1024;
+
+function scan(command: string, args: string[], timeouts: number[]): SpawnSyncReturns<string> | null {
+  for (const timeout of timeouts) {
+    const child = spawnSync(command, args, { encoding: 'utf8', timeout, maxBuffer: SCAN_BUFFER });
+    if (!child.error && child.status !== null && child.stdout !== '') return child;
+  }
+  return null;
+}
 
 function unexited(child: ChildProcess): child is ChildProcess & { pid: number } {
   return child.pid !== undefined && child.exitCode === null && child.signalCode === null;
@@ -229,12 +237,8 @@ function leftoverProcesses(leader: number | undefined, base: string, secrets: st
   if (process.platform === 'win32') return null;
   const failed = 'could not check for leftover processes';
   const name = basename(base);
-  const ps = spawnSync('ps', ['-axo', 'pid=,pgid=,command='], {
-    encoding: 'utf8',
-    timeout: SCAN_PS_MS,
-    maxBuffer: SCAN_BUFFER,
-  });
-  if (ps.error || ps.status !== 0) return failed;
+  const ps = scan('ps', ['-axo', 'pid=,pgid=,command='], SCAN_PS_MS);
+  if (!ps || ps.status !== 0) return failed;
   const found = new Map<number, string>();
   for (const line of ps.stdout.split('\n')) {
     const match = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line);
@@ -244,12 +248,8 @@ function leftoverProcesses(leader: number | undefined, base: string, secrets: st
     if (pid === process.pid || pid === ps.pid || command.startsWith('ps -axo')) continue;
     if ((leader !== undefined && Number(match[2]) === leader) || command.includes(name)) found.set(pid, command);
   }
-  const lsof = spawnSync('lsof', ['-a', '-d', 'cwd', '-Fpn'], {
-    encoding: 'utf8',
-    timeout: SCAN_LSOF_MS,
-    maxBuffer: SCAN_BUFFER,
-  });
-  if (lsof.error || lsof.status === null || lsof.stdout === '') return failed;
+  const lsof = scan('lsof', ['-a', '-d', 'cwd', '-Fpn'], SCAN_LSOF_MS);
+  if (!lsof) return failed;
   let owner = 0;
   for (const line of lsof.stdout.split('\n')) {
     if (line.startsWith('p')) owner = Number(line.slice(1));

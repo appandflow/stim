@@ -77,7 +77,8 @@ own exit has not been seen and from a `setImmediate` callback (LLP 0007).
 After the agent exits, `ps` and `lsof` (with timeouts) look for processes whose
 command line or working directory names the trial directory, or that are still in the
 agent's group. Each is reported by pid and command, the trial is invalid, and nothing
-is signalled: such a process is left for the operator. If the scan cannot run the trial
+is signalled: such a process is left for the operator. Each scan is retried once with a longer timeout (`ps` 30 s, `lsof` 120 s), because
+a loaded machine can miss the first one. If the scan still cannot run the trial
 is invalid with "could not check for leftover processes". Codex starts its tools in
 separate sessions on macOS, so a tool can outlive a killed CLI; this scan is how it
 is found.
