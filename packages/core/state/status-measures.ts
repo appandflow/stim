@@ -40,6 +40,11 @@ export function diskUsageLinksFile(path: string): string {
   return join(diskUsageCacheDir(), cacheName(path).replace(/\.json$/, '.links.json'));
 }
 
+/** The file that records which packages of the dependency tree at `path` hold a native project folder. */
+export function diskUsageNativeFile(path: string): string {
+  return join(diskUsageCacheDir(), cacheName(path).replace(/\.json$/, '.native.json'));
+}
+
 /**
  * A local native build of the workspace at `path` ended: the folders it wrote are stale. Every mark is its own file, so
  * a consumer removes only the marks it listed before it measured, never one written after.

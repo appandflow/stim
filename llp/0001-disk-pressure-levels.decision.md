@@ -285,12 +285,20 @@ folders otherwise), read without following a symlink, within 2 seconds per tree
 and 10 seconds for all trees of one step. The tree counts as hard links only
 when its `.modules.yaml` records a pnpm `storeDir` that is a directory outside
 the tree, it has no dot directory at its root other than a package manager's
-own (a cache such as `.cache` holds its own bytes), no sampled package holds
-output a native build wrote in place (`android/build`, `android/.cxx`,
+own (a cache such as `.cache` holds its own bytes), at least 20 distinct files
+(by device and inode) from 5 packages were read, at least 90% of them have more
+than one link and sit on the store's device, and no package holds output a
+native build wrote in place (`android/build`, `android/.cxx`,
 `android/.gradle`, `android/app/build`, `.build`, `ios/build`,
-`apple/.DerivedData`), at least 20 distinct files (by device and inode) from 5
-packages were read, and at least 90% of them have more than one link and sit
-on the store's device. Such a tree is kept at normal and high by the 7-day
+`apple/.DerivedData`). For that last check, once a sample finds links, the
+packages holding an `android`, `ios`, `apple` or `.build` folder are listed
+once per install signature, one directory read per package, 2 seconds at a
+time from where the last listing stopped, so a large tree on a slow disk is
+listed over a few runs and has no `links` verdict until the list is complete;
+every use of a `links` verdict, a recorded one included, then stats the build
+output folders of those packages within 2 seconds, and a build output folder
+or a check that does not answer ends it. A `.build` folder that appears after
+the listing in a package with none of those folders is not seen. Such a tree is kept at normal and high by the 7-day
 source rule, the dormant step and rung 5, with a kept reason that gives the
 counts; at critical, rungs 5 and 8 take it after every measured tree and every
 other tree of unknown size. Anything else (no recorded or existing store, as for
@@ -317,7 +325,7 @@ content, so the sample does not do it. The case it leaves is a store that still
 exists but no longer holds these files while copies inside the tree link to
 each other; the 6 hour reuse and the store check bound how long a verdict
 outlives a removed store. A sample sees a few packages, so a package outside it
-can still hold gigabytes of build output; that is why the verdict keeps a tree
+can still hold gigabytes of its own files; that is why the verdict keeps a tree
 only below critical, and at critical only orders it last, so the maintainer's
 rule that everything goes at maximum pressure holds. A tree copied with `cp`,
 as `stim worktree warm` copies where the volume cannot clone, has files with one

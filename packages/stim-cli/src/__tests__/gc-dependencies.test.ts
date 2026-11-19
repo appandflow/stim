@@ -2,6 +2,7 @@ import {
   currentSourceDependencies,
   diskUsageCacheFile,
   diskUsageLinksFile,
+  diskUsageNativeFile,
   diskUsageWalkClaims,
   readJsonObject,
   readWorkspaceState,
@@ -19,6 +20,7 @@ import {
   readdirSync,
   realpathSync,
   rmSync,
+  statSync,
   symlinkSync,
   utimesSync,
   writeFileSync,
@@ -1022,7 +1024,7 @@ test.skipIf(process.platform === 'win32')(
     const io: LinkSampleIo = {
       entries,
       lstat: async () => ({ kind: 'file', nlink: 2, dev: 1, ino: 1 }),
-      head: async () => '',
+      ends: async () => '',
     };
     const sampled = hardLinkSample(modules, undefined, io);
     await vi.advanceTimersByTimeAsync(2000);
@@ -1036,6 +1038,88 @@ test.skipIf(process.platform === 'win32')(
     entries.mockResolvedValue([]);
     expect(await hardLinkSample(modules, undefined, io)).toBeNull();
     expect(entries).toHaveBeenCalledTimes(2);
+    expect(readJsonObject(diskUsageLinksFile(modules))?.verdict).toBe('other');
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'on a disk that takes 1 ms per read, a link sample of a 3,000-package tree lists its native packages over two runs and then checks only their build folders',
+  async () => {
+    const modules = join(projects, 'slow', 'node_modules');
+    mkdirSync(modules, { recursive: true });
+    const store = join(projects, 'slow-store');
+    const pnpm = join(modules, '.pnpm');
+    const packageDir = (index: number) => join(pnpm, `pkg${index}@1.0.0`, 'node_modules', `pkg${index}`);
+    const native = new Set(Array.from({ length: 100 }, (_, index) => packageDir(index * 30)));
+    const inodes = new Map<string, number>();
+    const slow = <T>(value: () => T) =>
+      new Promise<T>((done, fail) =>
+        setTimeout(() => {
+          try {
+            done(value());
+          } catch (error) {
+            fail(error);
+          }
+        }, 1),
+      );
+    const missing = () => Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+    const reads = { entries: 0, lstat: 0 };
+    const io: LinkSampleIo = {
+      entries: (path) => {
+        reads.entries++;
+        return slow(() => {
+          if (path === modules) return [{ name: '.pnpm', kind: 'directory' }];
+          if (path === pnpm)
+            return Array.from({ length: 3000 }, (_, index) => ({ name: `pkg${index}@1.0.0`, kind: 'directory' }));
+          const files = ['package.json', 'index.js', 'main.js'].map((name) => ({ name, kind: 'file' as const }));
+          const folders = native.has(path)
+            ? ['android', 'ios'].map((name) => ({ name, kind: 'directory' as const }))
+            : [];
+          return [...files, ...folders];
+        });
+      },
+      lstat: (path) => {
+        reads.lstat++;
+        return slow(() => {
+          if (path === store || path.endsWith('@1.0.0/node_modules/' + path.split('/').at(-1)))
+            return { kind: 'directory', nlink: 1, dev: 1, ino: 0 };
+          if (/\.(json|js)$/.test(path)) {
+            if (!inodes.has(path)) inodes.set(path, inodes.size + 1);
+            return { kind: 'file', nlink: 2, dev: 1, ino: inodes.get(path) ?? 0 };
+          }
+          throw missing();
+        });
+      },
+      ends: () => slow(() => JSON.stringify({ storeDir: store })),
+    };
+    const run = async () => {
+      const result = hardLinkSample(modules, undefined, io);
+      await vi.advanceTimersByTimeAsync(10_000);
+      return result;
+    };
+
+    expect(await run()).toBeNull();
+    expect(existsSync(diskUsageLinksFile(modules))).toBe(false);
+    const first = readJsonObject(diskUsageNativeFile(modules));
+    expect(first?.complete).toBe(false);
+    expect(first?.checked).toBeGreaterThan(1000);
+    expect(first?.checked).toBeLessThan(3000);
+
+    expect(await run()).toEqual({ linked: 36, sampled: 36 });
+    expect(readJsonObject(diskUsageNativeFile(modules))).toMatchObject({ checked: 3000, complete: true });
+    expect(readJsonObject(diskUsageNativeFile(modules))?.roots).toHaveLength(200);
+
+    reads.entries = 0;
+    reads.lstat = 0;
+    expect(await run()).toEqual({ linked: 36, sampled: 36 });
+    expect(reads).toEqual({ entries: 0, lstat: 100 * 5 + 1 });
+
+    const built = io.lstat;
+    io.lstat = (path) =>
+      path === join(packageDir(30), 'android', 'build')
+        ? slow(() => ({ kind: 'directory', nlink: 1, dev: 1, ino: 0 }))
+        : built(path);
+    expect(await run()).toBeNull();
     expect(readJsonObject(diskUsageLinksFile(modules))?.verdict).toBe('other');
   },
 );
@@ -1075,18 +1159,22 @@ test.skipIf(process.platform === 'win32')(
 );
 
 test.skipIf(process.platform === 'win32')(
-  'a link sample is not links when any package holds native build output or the tree holds a cache, and reads a hoisted tree from its top-level and scoped folders',
+  'a link sample is not links once any package with a native folder holds build output, even after a links verdict, or when the tree holds a cache, and reads a hoisted tree from its top-level and scoped folders and its store from the end of a large .modules.yaml',
   async () => {
     const built = join(projects, 'built', 'node_modules');
     pnpmTree(built, 'linked', new Date(), 60);
-    expect(await hardLinkSample(built)).toEqual({ linked: 36, sampled: 36 });
     const packages = readdirSync(join(built, '.pnpm'))
       .filter((entry) => entry.includes('@1.0.'))
       .toSorted();
     const unsampled = packages[30] ?? '';
     const name = unsampled.slice(0, unsampled.indexOf('@1.0.')).replace('+', '/');
-    mkdirSync(join(built, '.pnpm', unsampled, 'node_modules', name, 'android', 'build'), { recursive: true });
-    rmSync(diskUsageLinksFile(built));
+    const android = join(built, '.pnpm', unsampled, 'node_modules', name, 'android');
+    mkdirSync(android);
+    expect(await hardLinkSample(built)).toEqual({ linked: 36, sampled: 36 });
+    expect(readJsonObject(diskUsageNativeFile(built))).toMatchObject({ roots: [android], complete: true });
+    const signature = treeSignature(built);
+    mkdirSync(join(android, 'build'));
+    expect(treeSignature(built)).toBe(signature);
     expect(await hardLinkSample(built)).toBeNull();
     expect(readJsonObject(diskUsageLinksFile(built))?.verdict).toBe('other');
 
@@ -1108,15 +1196,16 @@ test.skipIf(process.platform === 'win32')(
       Array.from({ length: 50 }, (_, index) => [`dep${index}@1.0.0`, { [`dep${index}`]: 'private' }]),
     );
     const hoistedLocations = Object.fromEntries(
-      Array.from({ length: 3000 }, (_, index) => [`dep${index}@1.0.0`, [`node_modules/dep${index}`]]),
+      Array.from({ length: 30_000 }, (_, index) => [`dep${index}@1.0.0`, [`node_modules/dep${index}`]]),
     );
     writeFileSync(
       join(hoisted, '.modules.yaml'),
-      JSON.stringify({ hoistedDependencies, storeDir: store, nodeLinker: 'hoisted', hoistedLocations }, null, 2),
+      JSON.stringify({ hoistedDependencies, hoistedLocations, nodeLinker: 'hoisted', storeDir: store }, null, 2),
     );
+    expect(statSync(join(hoisted, '.modules.yaml')).size).toBeGreaterThan(1024 * 1024);
+    mkdirSync(join(hoisted, '@scope', 'native', 'ios'), { recursive: true });
     expect(await hardLinkSample(hoisted)).toEqual({ linked: 24, sampled: 24 });
-    mkdirSync(join(hoisted, '@scope', 'native', 'ios', 'build'), { recursive: true });
-    rmSync(diskUsageLinksFile(hoisted));
+    mkdirSync(join(hoisted, '@scope', 'native', 'ios', 'build'));
     expect(await hardLinkSample(hoisted)).toBeNull();
   },
 );

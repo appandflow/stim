@@ -2513,9 +2513,11 @@ within 2 seconds (10 seconds for all trees of one step), keeping the tree when
 at least 20 files from 5 packages were read and 90% of them have more than one
 link on the store's volume. That is a pnpm tree linked from its store on a
 volume without clones, where deleting it frees little. A tree with a cache
-folder such as `node_modules/.cache`, or a sampled package that holds native
-build output (`android/build`, `android/.cxx`, `ios/build` and the like), is
-not counted as links. The kept reason gives the counts. The verdict is reused
+folder such as `node_modules/.cache`, or a package that holds native build
+output (`android/build`, `android/.cxx`, `ios/build` and the like), is not
+counted as links: Stim lists the packages with an `android`, `ios`, `apple` or
+`.build` folder once per install, over several runs on a slow disk, and checks
+their build folders each time it uses the verdict. The kept reason gives the counts. The verdict is reused
 for 6 hours while the tree is not reinstalled and the store still exists. A
 tree pnpm did not install, or one copied by `stim worktree warm` where the
 volume cannot clone, keeps the rules above. The sample never replaces a
