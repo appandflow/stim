@@ -40,20 +40,53 @@ Running a project build grants the client code execution on the worker. A worker
 builds. Use `local`, `auto`, `remote`, `remote-only` or one machine.
 `auto` prefers the eligible local machine while it has capacity. `remote`
 prefers workers. Automatic placement skips members in
-`remote.buildPoolDisabled` and considers the remaining workers in
-`remote.machines` order. A fresh build needs a free slot and, when the worker
+`remote.buildPoolDisabled`. A fresh build needs a free slot and, when the worker
 reports its load, load below `server.maxLoadPerCore`. Use the client's limit
 when the worker does not report a limit. In `auto`, a worker with unknown load
 can take a build when local is disabled or every local slot is busy.
 A matching completed artifact ranks before fresh build offers and skips
-build capacity checks. An explicit machine selects only that worker and
+build capacity checks. The workers that can take a fresh build rank by what
+they hold for it: first one whose area for this checkout completed a build of
+this project and platform, then one with this checkout's dependency install
+reusable or another checkout of the project built there, then the rest;
+`remote.machines` order breaks ties. A warm worker with no free slot or with
+its load at or above its limit is skipped like a cold one, and no build waits
+for a busy warm worker. An explicit machine selects only that worker and
 bypasses the automatic load filter. `auto` and `remote` fall back after an offload
 failure only while local placement is enabled. `remote-only` and named
 placement refuse when remote placement fails. No failure path writes the cache.
 
 Explicit selection fixes where a build may run. Automatic selection can
 keep development moving when workers are busy or unreachable. An existing
-exact artifact saves a build, so it ranks ahead of a cold offer.
+exact artifact saves a build, so it ranks ahead of a cold offer. A worker's
+caches (the Stim home with DerivedData, the compilation cache and ccache, the
+Gradle home, `node_modules` and Pods) live in its area for one client checkout,
+and the client's pnpm store, CocoaPods and SwiftPM caches and uploaded blobs are
+shared by that client's areas, so a worker that built the checkout or the
+project rebuilds faster than a cold one with the same free slot.
+
+The worker records each successful build's platform and hashed project key in
+`built.json` in the area, and answers `build.offer` from it. The record goes
+with the area when stim-server evicts it, is deleted when the area's home is
+replaced for another schema, and is deleted when a build fails on a corrupt
+compilation cache, which empties that cache. The worker's maintenance passes
+do not reach an area (discovery skips `server.workerRoot`, and the
+compilation-cache and Cargo-target caps act on the worker's own home and
+discovered checkouts), and an offloaded build does not run the build headroom
+ladder. A trim that empties part of an area some other way leaves the record in
+place: that worker still ranks warm and the next build there is slower, never
+wrong, since the build is fingerprint-checked.
+
+This ordering supersedes #4321's strict `remote.machines` order for builds;
+devices and macOS app hosts keep that order.
+
+Recorded in [#5960](https://github.com/appandflow/stim/issues/5960):
+
+Maintainer decision: "can machines have project afinity so it strongly prefers them since they will very likely have cache for that project", 2026-11-19
+
+The project-level rank, the rule that warmth never overrides the slot and load
+gates, and no waiting for a busy warm worker were chosen by the coordinating
+session for #5960, not by the maintainer.
 [Placement rules](https://github.com/appandflow/stim/pull/4331),
 [Remote artifact reuse](https://github.com/appandflow/stim/pull/3594).
 

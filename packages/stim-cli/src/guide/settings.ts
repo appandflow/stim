@@ -1258,8 +1258,8 @@ the configured entry.
   auto         (default) here while this machine has capacity, a remote
                machine from remote.machines when it does not; only enabled
                automatic pool members count
-  remote       on the first remote machine in remote.machines order that
-               accepts the build, here only when none does
+  remote       on a remote machine that accepts the build, warm ones first,
+               here only when none does
   remote-only  the same, never here: when no remote machine accepts the build
                it refuses with STIM_OFFLOAD_REFUSED
   name         requires a matching entry in remote.machines, already paired and
@@ -1397,9 +1397,9 @@ verified compile; remote output is not published under an unverified client key.
 An offloaded iOS/Android build first runs prebuild (and \`pod install\` for iOS) here,
 then asks every paired machine what it can build. It takes one whose Stim
 build matches this Mac and, for iOS and macOS, CPU matches the target simulator, with enough disk, that does not decline,
-taking the first in remote.machines order that qualifies,
-and moves to the next one in that order when a machine that offered fails the
-sync or refuses to start the build.
+preferring one that built this checkout, then the project, then
+remote.machines order, and moves to the next one when a machine that offered
+fails the sync or refuses to start the build.
 After a local and configured-provider miss, native Xcode simulator builds can
 reuse an exact completed archive from an enabled paired worker. Its full key
 includes source, Xcode, SDK, architecture and target options. A hit skips sync

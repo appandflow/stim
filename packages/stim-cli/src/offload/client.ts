@@ -26,6 +26,7 @@ import {
   mayRunHere,
   placementWord,
   saturation,
+  statsProjectKey,
   stimBuildId,
   type BuildMachineCredential,
   type MachineCapacity,
@@ -80,6 +81,7 @@ import {
   type BuildGradleArtifactQuery,
   type BuildReactNativeArtifactQuery,
   type BuildSwiftpmArtifactQuery,
+  type BuildWarmth,
   type CachedBuildArtifact,
   type HostCapability,
 } from '@stim-cli/core/protocol';
@@ -140,10 +142,40 @@ function capacityText(capacity: Pick<MachineCapacity, 'loadPerCore' | 'builds' |
   return `load ${capacity.loadPerCore}/core, ${builds}`;
 }
 
-export function placementLoad(choice: { offer: BuildOffer }): string {
+type Warmth = NonNullable<PlacementCandidate['warmth']>;
+
+function offerWarmth(offer: BuildOffer): Exclude<Warmth, 'artifact'> | null {
+  return offer.warm.build
+    ? 'checkout'
+    : offer.warm.dependencies
+      ? 'dependencies'
+      : offer.warm.project
+        ? 'project'
+        : null;
+}
+
+const WARMTH_RANK: Record<Warmth, number> = { artifact: 3, checkout: 2, dependencies: 1, project: 1 };
+
+function warmthText(warmth: Exclude<Warmth, 'artifact'>, platform: BuildTarget['platform']): string {
+  return warmth === 'checkout'
+    ? `this checkout last built ${platform} there`
+    : warmth === 'dependencies'
+      ? "this checkout's dependency install is reusable there"
+      : `another checkout of this project built ${platform} there`;
+}
+
+/** What the chosen machine holds warm for this build and how loaded it is, appended to the placement reason. */
+export function placementDetail(choice: { offer: BuildOffer; target: BuildTarget }): string {
+  const warmth = offerWarmth(choice.offer);
   const { loadPerCore, builds, maxBuilds } = choice.offer.capacity;
-  if (typeof loadPerCore !== 'number' || typeof builds !== 'number') return '';
-  return `; ${capacityText({ loadPerCore, builds, maxBuilds: maxBuilds ?? 0 })} there`;
+  return [
+    ...(warmth ? [warmthText(warmth, choice.target.platform)] : []),
+    ...(typeof loadPerCore === 'number' && typeof builds === 'number'
+      ? [`${capacityText({ loadPerCore, builds, maxBuilds: maxBuilds ?? 0 })} there`]
+      : []),
+  ]
+    .map((part) => `; ${part}`)
+    .join('');
 }
 
 const UNSUPPORTED_OFFLOAD_REMEDY =
@@ -212,7 +244,7 @@ export interface BuildOffer {
     memoryTotalBytes?: number;
     declined?: string | null;
   };
-  warm: { checkout: boolean; dependencies: boolean; build: boolean };
+  warm: { checkout: boolean; dependencies: boolean; build: boolean; project?: boolean };
   artifact?: CachedBuildArtifact | null;
   /** What of Exact's toolchain the machine lacks, when the offer asked for an Exact app's pins. */
   exact?: { missing: ExactToolProblem[] };
@@ -305,10 +337,10 @@ export function offerProblems(offer: BuildOffer, target: BuildTarget, named = fa
  * The asked machines that can take the build, in the order they should be tried, and one reason per machine that
  * cannot. A machine with any `offerProblems` never takes it, nor does one whose load per core is at or above its own
  * `server.maxLoadPerCore` (this machine's setting stands in for a stim-server that does not report it). Machines that
- * can take it keep the order of `remote.machines`, so the first one with a free slot under its load threshold gets
- * the build; only a machine that already holds the exact completed artifact goes ahead of that order. A named
- * selection considers only that machine. In `auto` a machine that reports no load (a stim-server older than capacity)
- * takes the build only while every local slot is busy.
+ * can take it rank by what they hold: the exact completed artifact, then this checkout's last build, then this
+ * checkout's dependency install or another checkout's build of the project, then nothing; `remote.machines` order
+ * breaks ties. A named selection considers only that machine. In `auto` a machine that reports no load (a stim-server
+ * older than capacity) takes the build only while every local slot is busy.
  */
 export function pickOffer({
   here,
@@ -334,7 +366,7 @@ export function pickOffer({
     reasons.push(`${machine}: ${msg}`);
     candidates.push({ machine, code, msg, ...(detail ? { detail } : {}) });
   };
-  const ranked: Array<{ index: number; cached: boolean }> = [];
+  const ranked: Array<{ index: number; rank: number }> = [];
   offers.forEach(({ machine, offer, failure }, index) => {
     if (namedBuildMachine(selected) && machine !== selected) return;
     if (!offer) return skip(machine, 'unreachable', failure ?? 'no offer');
@@ -342,8 +374,8 @@ export function pickOffer({
       matchingArtifact(offer, artifact) &&
       (artifact !== 'swiftpm' || toolchainMismatches(target, offer.toolchain).length === 0)
     ) {
-      ranked.push({ index, cached: true });
-      candidates.push({ machine, code: 'artifact-hit', msg: 'has the exact completed artifact' });
+      ranked.push({ index, rank: WARMTH_RANK.artifact });
+      candidates.push({ machine, code: 'artifact-hit', msg: 'has the exact completed artifact', warmth: 'artifact' });
       return;
     }
     if (cacheOnly) return skip(machine, 'artifact-miss', 'no matching completed artifact');
@@ -364,18 +396,22 @@ export function pickOffer({
     if (selected === 'auto' && localEnabled && !slotsFull && typeof load !== 'number') {
       return skip(machine, 'load', 'capacity unknown (older stim-server) while this machine has a free slot');
     }
-    ranked.push({ index, cached: false });
+    const warmth = offerWarmth(offer);
+    ranked.push({ index, rank: warmth ? WARMTH_RANK[warmth] : 0 });
     const notes = toolchainNotes(target, offer.toolchain).map((each) => each.reason);
     candidates.push({
       machine,
       code: 'accepted',
       msg: [
         typeof load === 'number' ? `can take the build (load ${load}/core there)` : 'can take the build',
+        ...(warmth ? [warmthText(warmth, target.platform)] : []),
         ...notes,
       ].join('; '),
+      ...(warmth ? { warmth } : {}),
     });
   });
-  ranked.sort((a, b) => Number(b.cached) - Number(a.cached));
+  // @ref LLP 0009#placement-and-fallback -- warmth outranks remote.machines order
+  ranked.sort((a, b) => b.rank - a.rank);
   return { order: ranked.map((each) => each.index), reasons, candidates };
 }
 
@@ -785,6 +821,8 @@ interface RepoIdentity {
   project: string;
   repo: string;
   lockfile: string | null;
+  /** The hashed project key, equal across worktrees of one checkout, that worker warmth is recorded under. */
+  warmthProject: string;
 }
 
 function repoIdentity(projectRoot: string): RepoIdentity {
@@ -802,6 +840,10 @@ function repositoryIdentity(projectRoot: string, repoRoot: string, common: strin
     repoRoot,
     project,
     repo: `${name.slice(0, 60) || 'repo'}-${digest}`,
+    warmthProject: createHash('sha256')
+      .update(statsProjectKey({ root: projectRoot, commonDir: common, repoRoot }))
+      .digest('hex')
+      .slice(0, 16),
     lockfile: lock
       ? createHash('sha256')
           .update(readFileSync(join(repoRoot, lock.dir, lock.file)))
@@ -947,6 +989,7 @@ async function probeMachine(
     reactNativeArtifact?: BuildReactNativeArtifactQuery;
     swiftpmArtifact?: BuildSwiftpmArtifactQuery;
     exact?: ExactPins;
+    warmth?: BuildWarmth;
   },
   {
     connectMs = CONNECT_TIMEOUT_MS,
@@ -988,6 +1031,7 @@ async function probeMachine(
       ...(identity.reactNativeArtifact ? { reactNativeArtifact: identity.reactNativeArtifact } : {}),
       ...(native === 'gradle' && identity.gradleArtifact ? { gradleArtifact: identity.gradleArtifact } : {}),
       ...(identity.exact ? { exact: identity.exact } : {}),
+      ...(identity.warmth ? { warmth: identity.warmth } : {}),
     },
     offerMs,
   );
@@ -1101,6 +1145,7 @@ export async function chooseBuildMachine({
           ...(gradleQuery ? { gradleArtifact: gradleQuery } : {}),
           ...(reactNativeQuery ? { reactNativeArtifact: reactNativeQuery } : {}),
           ...(swiftpmQuery ? { swiftpmArtifact: swiftpmQuery } : {}),
+          warmth: { platform: target.platform, project: identity.warmthProject },
         },
         { install: !buildPlacementCandidates(selected).localEnabled },
       ),
@@ -1655,6 +1700,7 @@ function buildStartParams(
     repo: identity.repo,
     project: identity.project,
     platform: request.platform,
+    warmthProject: identity.warmthProject,
     ...startIdentity(request, digest, expectedFingerprint),
     ...fingerprintParams(inputs),
     ...(native

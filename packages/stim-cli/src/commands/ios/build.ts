@@ -191,6 +191,7 @@ export async function buildIosOperation(
                 builtOn: artifact?.cache.builtOn,
                 offloadedTo: artifact?.cache.offloadedTo,
                 offloadFallback: artifact?.cache.offloadFallback,
+                offloadReason: artifact?.cache.offloadReason,
               }),
               { artifactOnly: true },
             );

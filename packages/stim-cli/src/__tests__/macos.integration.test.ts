@@ -814,7 +814,10 @@ describe('macOS build placement and promotion', () => {
   let swiftTmpdirs: Array<string | undefined>;
   let plist: Record<string, unknown>;
   const bundleId = 'dev.sample.stim.test';
-  const choice = { machine: 'mini', offer: { capacity: {} } } as offload.OffloadChoice;
+  const choice = {
+    machine: 'mini',
+    offer: { capacity: {}, warm: { checkout: false, dependencies: false, build: false } },
+  } as offload.OffloadChoice;
   let buildRecord: MacosAppRecord['build'];
 
   beforeEach(() => {
@@ -1406,7 +1409,13 @@ describe('macOS build placement and promotion', () => {
         },
       });
       vi.mocked(offload.chooseBuildMachine).mockResolvedValue(
-        Object.assign({}, choice, { offer: { capacity: {}, toolchain: { arch: workerArch } } }),
+        Object.assign({}, choice, {
+          offer: {
+            capacity: {},
+            warm: { checkout: false, dependencies: false, build: false },
+            toolchain: { arch: workerArch },
+          },
+        }),
       );
       succeeds(remoteBundle(), true);
       await expect(build({ buildMachine: 'mini', hostServerKey: nodeKey })).resolves.toMatchObject({

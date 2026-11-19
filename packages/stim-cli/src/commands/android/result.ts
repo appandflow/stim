@@ -142,6 +142,7 @@ export function lastBuildRecord({
   builtOn,
   offloadedTo = null,
   offloadFallback = null,
+  offloadReason = null,
   message = null,
   remedy = null,
   deviceSerial = null,
@@ -154,6 +155,7 @@ export function lastBuildRecord({
   builtOn?: string;
   offloadedTo?: string | null;
   offloadFallback?: string | null;
+  offloadReason?: string | null;
   configuration?: string | null;
   missReason?: BuildMissReason | null;
   diagnostics?: readonly unknown[] | null;
@@ -191,6 +193,7 @@ export function lastBuildRecord({
   if (builtOn) record.builtOn = builtOn;
   if (offloadedTo) record.offloadedTo = offloadedTo;
   if (offloadFallback) record.offloadFallback = offloadFallback;
+  if (offloadedTo && offloadReason) record.offloadReason = offloadReason;
   if (missReason && !cacheLevel(cacheHit)) record.missReason = missReason;
   const recorded = status === 'failed' ? buildDiagnostics(diagnostics) : [];
   if (recorded.length) record.diagnostics = recorded;

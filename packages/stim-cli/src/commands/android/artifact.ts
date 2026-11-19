@@ -583,7 +583,7 @@ export async function acquireAndroidArtifact(
       queryPeer = Boolean(inputs && !('uncertain' in inputs));
       if (!queryPeer && candidate.cacheOnly) return null;
     }
-    const { chooseBuildMachine, closeOffload, placementLoad } = await import('../../offload/client.ts');
+    const { chooseBuildMachine, closeOffload, placementDetail } = await import('../../offload/client.ts');
     const choice = await chooseBuildMachine({
       projectRoot: root,
       target,
@@ -617,10 +617,10 @@ export async function acquireAndroidArtifact(
         platform: PLATFORM,
         buildMachine,
         candidates: asked,
-        chose: { machine: choice.machine, reason: `${candidate.reason}${placementLoad(choice)}` },
+        chose: { machine: choice.machine, reason: `${candidate.reason}${placementDetail(choice)}` },
       }),
     );
-    phase('build', `placement: ${choice.machine} (${candidate.reason}${placementLoad(choice)})`);
+    phase('build', `placement: ${choice.machine} (${candidate.reason}${placementDetail(choice)})`);
     return choice;
   }
 
@@ -643,7 +643,7 @@ export async function acquireAndroidArtifact(
         );
       return false;
     }
-    const { offloadBuild, remotePhaseText, placementLoad } = await import('../../offload/client.ts');
+    const { offloadBuild, remotePhaseText, placementDetail } = await import('../../offload/client.ts');
     const stagingDir = join(workspaceDir(root), 'offload', PLATFORM);
     const disownStaging = uncached ? run.own(stagingDir) : null;
     const outcome = await offloadBuild({
@@ -745,10 +745,11 @@ export async function acquireAndroidArtifact(
     handoff = signedHere ? null : (outcome.handoff ?? null);
     record.builtOn = outcome.machine;
     record.offloadedTo = outcome.machine;
+    record.offloadReason = `${candidate.reason}${placementDetail(choice)}`;
     stats.setPlacement({
       decision: 'offloaded',
       machine: outcome.machine,
-      reason: `${candidate.reason}${placementLoad(choice)}`,
+      reason: record.offloadReason,
       buildMs: timings.totalMs,
     });
     ccacheActivity = outcome.ccache;

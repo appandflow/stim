@@ -497,6 +497,7 @@ const HISTORY_FIELDS = [
   'builtOn',
   'offloadedTo',
   'offloadFallback',
+  'offloadReason',
   'diagnostics',
   'compileSteps',
 ] as const;

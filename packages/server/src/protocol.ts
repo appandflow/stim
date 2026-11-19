@@ -384,6 +384,8 @@ const presencePoint: JsonSchema = {
   properties: { x: { type: 'number' }, y: { type: 'number' } },
 };
 
+const warmthProject: JsonSchema = { type: 'string', pattern: '^[0-9a-f]{16}$' };
+
 function optionalParams(method: Method, params: JsonSchema): JsonSchema {
   return {
     type: 'object',
@@ -2185,6 +2187,17 @@ export function protocolJsonSchema(): JsonSchema {
                   "An Exact app's pins, its exact2 checkout folder name and a remote URL with the commit; the offer then reports what of Exact's toolchain the machine lacks.",
                 properties: exactPinProperties,
               },
+              warmth: {
+                type: 'object',
+                required: ['platform', 'project'],
+                additionalProperties: false,
+                description:
+                  'The build the offer reports warm.build and warm.project for: its platform and the hashed project key of the client.',
+                properties: {
+                  platform: { enum: ['ios', 'android', 'macos'] },
+                  project: warmthProject,
+                },
+              },
             },
           }),
           request('build.sync', {
@@ -2232,6 +2245,10 @@ export function protocolJsonSchema(): JsonSchema {
               repo: buildRepo,
               project: { type: 'string', description: 'The app directory relative to the repository root.' },
               platform: { enum: ['ios', 'android', 'macos'] },
+              warmthProject: {
+                ...warmthProject,
+                description: 'The hashed project key a successful build records for later offers.',
+              },
               configuration: { type: ['string', 'null'] },
               scheme: { type: ['string', 'null'] },
               iosProjectPath: { type: ['string', 'null'] },

@@ -687,6 +687,7 @@ describe('macOS artifact transfer', () => {
         repo: choice.identity.repo,
         project: '',
         platform: 'macos',
+        warmthProject: choice.identity.warmthProject,
         macos: {
           product: 'Sample',
           infoPlist: 'Info.plist',

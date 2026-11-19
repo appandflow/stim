@@ -445,7 +445,7 @@ can compile on a paired remote machine instead: see `remote.build` in
 
 - `--configuration <name>` selects an Xcode configuration. The default is Debug.
 - `--remote-build <local|auto|remote|remote-only|name>` overrides `STIM_REMOTE_BUILD` and
-  `remote.build`. `remote` tries the remote machines first, in `remote.machines` order, and builds here only when none takes the build; `remote-only` refuses instead. A name requires that configured, paired worker and fails
+  `remote.build`. `remote` tries the remote machines first, a machine that last built this checkout or project ahead of `remote.machines` order, and builds here only when none takes the build; `remote-only` refuses instead. A name requires that configured, paired worker and fails
   with `STIM_OFFLOAD_REFUSED` without local fallback. Unlisted or unpaired names refuse at setup before checking the cache, without
   a build record or failed-run stats. A listed paired name with a cache hit
   contacts no worker. Prebuild and pod install run on this machine before
@@ -843,7 +843,7 @@ can compile on a paired remote machine instead: see `remote.build` in
 [machine settings](./settings.md#machine-settings).
 
 - `--remote-build <local|auto|remote|remote-only|name>` overrides `STIM_REMOTE_BUILD` and
-  `remote.build`. `remote` tries the remote machines first, in `remote.machines` order, and builds here only when none takes the build; `remote-only` refuses instead. A name requires that configured, paired worker and fails
+  `remote.build`. `remote` tries the remote machines first, a machine that last built this checkout or project ahead of `remote.machines` order, and builds here only when none takes the build; `remote-only` refuses instead. A name requires that configured, paired worker and fails
   with `STIM_OFFLOAD_REFUSED` without local fallback. Unlisted or unpaired names refuse at setup before checking the cache, without
   a build record or failed-run stats. A listed paired name with a cache hit
   contacts no worker. Prebuild and pod install still run on this machine before

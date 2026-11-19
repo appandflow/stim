@@ -81,6 +81,8 @@ export interface AndroidRecord {
   offloadedTo?: string | null;
   /** Why the APK was built here after the run considered offloading it. */
   offloadFallback?: string | null;
+  /** Why `offloadedTo` took the build. */
+  offloadReason?: string | null;
 }
 
 export interface RunAndroidResult {
