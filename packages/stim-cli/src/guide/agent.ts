@@ -15,7 +15,7 @@ Choose the guide for the app or task. Read only the matching route.
 | Drive a mobile app, choose a slot, or resume a session | stim guide agent device |
 | Hosted iOS simulator | stim guide lifecycle hosted-ios |
 | Hosted Android emulator | stim guide lifecycle hosted-android |
-| Physical device | stim guide lifecycle devices |
+| Physical device | stim guide agent phone |
 | EAS development build | stim guide lifecycle eas |
 | Inspect runtime errors or device output | stim guide agent logs |
 | Verify a fix in the UI | stim guide lifecycle verification |
@@ -223,6 +223,24 @@ or expo:
   prove a crashed app was healthy.
 - Do not read the NDJSON files directly. Capture, record formats and
   symbolication: stim guide logs.`,
+    },
+    phone: {
+      summary: 'Run on a connected iPhone or Android phone',
+      body: () => `PHYSICAL DEVICES
+
+  stim ios --device [udid]                  a connected iPhone or iPad, cable or Wi-Fi
+  stim android --device [serial]            a connected Android phone
+  stim device lock ios <udid> --for 10m     keep the lease between runs
+  stim device unlock                        give it back
+
+- With several phones connected, pass the UDID or serial of the one the user
+  names (xcrun devicectl list devices, adb devices).
+- A run leases the phone; Stim never boots, shuts down or deletes it. stop
+  releases the lease and, on an iPhone, closes the app.
+- Refusals for pairing, Developer Mode, trust taps, signing and Wi-Fi timeouts
+  print their fix. Never run stim device provision ios without the user's
+  go-ahead: it changes the Apple Developer account.
+- Builds, signing and the device cache: stim guide lifecycle devices.`,
     },
     device: {
       summary: 'Mobile UI automation, slots, hosted sessions, and agent-device state',

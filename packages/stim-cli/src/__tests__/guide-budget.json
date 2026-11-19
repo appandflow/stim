@@ -25,6 +25,7 @@
     "agent ownership": 5500,
     "agent report": 1500,
     "agent logs": 1000,
+    "agent phone": 1000,
     "facts payloads": 37250,
     "facts gc": 26050,
     "facts status": 52100,
