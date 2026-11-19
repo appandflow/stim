@@ -278,45 +278,60 @@ chosen by the coordinator and the reviews of #5540, not by the maintainer.
 
 A `node_modules` or Pods tree whose private size is unknown when it is ranked
 (never measured, its walk failed or timed out, a partial count under 256 MB,
-or a volume that cannot tell) is sampled before it is taken: the link counts
-of up to 36 regular files, at most 3 from each of up to 12 packages spread over
-the sorted package list (`.pnpm/*/node_modules/<name>` for pnpm's isolated
-layout, the top-level folders otherwise), read without following a symlink within 2 seconds in all.
-When at least 20 distinct files (by device and inode) from 5 packages were
-read and at least 90% of them have more than one link, the tree is kept at
-every level, critical included, by the 7-day source rule, the dormant step,
-rung 5 and rung 8, with a kept reason that gives the counts. Any other result,
-too few files, or reads that did not answer leave the tree unknown and the
-rules above unchanged. The verdict is recorded beside the size cache with the
-install signature and reused until the signature changes; a sample whose
-reads did not answer is retried after 6 hours. The sample runs only on a tree
-with no measurement, after `stim gc` tried to measure it, so it never replaces
-a measurement.
+or a volume that cannot tell) is sampled: the link counts of up to 36 regular
+files, at most 3 from each of up to 12 packages spread over the sorted package
+list (`.pnpm/*/node_modules/<name>` for pnpm's isolated layout, the top-level
+folders otherwise), read without following a symlink, within 2 seconds per tree
+and 10 seconds for all trees of one step. The tree counts as hard links only
+when its `.modules.yaml` records a pnpm `storeDir` that is a directory outside
+the tree, it has no dot directory at its root other than a package manager's
+own (a cache such as `.cache` holds its own bytes), no sampled package holds
+output a native build wrote in place (`android/build`, `android/.cxx`,
+`android/.gradle`, `android/app/build`, `.build`, `ios/build`,
+`apple/.DerivedData`), at least 20 distinct files (by device and inode) from 5
+packages were read, and at least 90% of them have more than one link and sit
+on the store's device. Such a tree is kept at normal and high by the 7-day
+source rule, the dormant step and rung 5, with a kept reason that gives the
+counts; at critical, rungs 5 and 8 take it after every measured tree and every
+other tree of unknown size. Anything else (no recorded or existing store, as for
+every tree pnpm did not install, too few files, or reads that did not answer)
+leaves the tree unknown and the rules above unchanged. The verdict is recorded
+beside the size cache with the install signature and the store, and reused for
+6 hours while the signature holds; a `links` verdict is reused only while its
+store is still a directory (one bounded stat). The 6 hours match how long a
+dependency tree's size stays fresh and keep the cost at a few dozen stats per
+unknown tree per 6 hours. Only a tree with no measurement is sampled; at the
+7-day rule `stim gc` first tries to measure it, so the sample never replaces a
+measurement.
 
 Reason: with pnpm on a volume without clones, a tree's files are hard links
-into the package store, so deleting the tree frees almost nothing and costs a
+into the package store, so deleting the tree frees little and costs a
 reinstall, and on a slow disk the walk that would show it is the one that
 fails. A link count proves that another name holds the file's data, not where
-that name is. A file linked twice inside the same tree, such as pnpm peer
-variants of one package, counts once per inode and covers only duplicated
-packages, so a sample spread over many packages should not reach 90% from it;
-a tree that holds its own pnpm store (`.pnpm-store`) is never counted as links.
-A tree copied with `cp`, as `stim worktree warm` copies where the volume
-cannot clone, has files with one link, and the tests check a `cp -R` copy.
-The implementer expects the same of `package-import-method=copy`, a store on
-another volume and APFS clones, and did not verify them; where that holds, the
-sample leaves those trees unknown. A wrong "links" verdict keeps a
-tree that could have been freed, which is why the rule asks for a clear
-majority over several packages. This narrows "make sure all things we can
-delete are actually deleted at max pressure level": deleting a hard-linked tree
-frees little, so keeping it at critical loses almost nothing.
+that name is: copies hard-linked to each other inside the tree, such as pnpm
+peer variants of one package, raise it too, and deleting the tree frees them.
+The recorded store outside the tree, on the same device as the linked files, is
+the evidence that the other name is outside. Matching a sampled file to its
+store entry would mean hashing the file, since the store is addressed by
+content, so the sample does not do it. The case it leaves is a store that still
+exists but no longer holds these files while copies inside the tree link to
+each other; the 6 hour reuse and the store check bound how long a verdict
+outlives a removed store. A sample sees a few packages, so a package outside it
+can still hold gigabytes of build output; that is why the verdict keeps a tree
+only below critical, and at critical only orders it last, so the maintainer's
+rule that everything goes at maximum pressure holds. A tree copied with `cp`,
+as `stim worktree warm` copies where the volume cannot clone, has files with one
+link, and the tests check a `cp -R` copy. The implementer expects the same of
+`package-import-method=copy`, a store on another volume and APFS clones, and
+did not verify them; where that holds, the sample leaves those trees unknown.
 
 Maintainer decision: "Like if wr detect it is links", 2026-11-18, quoted in
 #5942.
 
 The sample size, the per-package spread, the 90% share, the 20 file and 5
-package minimums, the 2 second limit and the 6 hour retry were chosen by the
-implementer of #5942, not by the maintainer.
+package minimums, the store, cache and build output checks, the 2 and 10 second
+limits, the 6 hour reuse and the critical ordering were chosen by the
+implementer of #5942 and its reviews, not by the maintainer.
 
 ## Links
 

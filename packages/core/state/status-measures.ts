@@ -303,6 +303,8 @@ export interface LinkSample {
   verdict: 'links' | 'other' | 'timeout';
   linked: number;
   sampled: number;
+  /** The pnpm store a `links` verdict found outside the tree. */
+  store?: string;
 }
 
 /** The recorded link sample of the dependency tree at `path`, or null when none is recorded. */
@@ -320,6 +322,7 @@ export function readDiskUsageLinks(path: string): LinkSample | null {
     verdict,
     linked: count(linked),
     sampled: count(sampled),
+    ...(typeof entry.store === 'string' ? { store: entry.store } : {}),
   };
 }
 

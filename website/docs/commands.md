@@ -2505,16 +2505,20 @@ gc ran out of time, its walk failed or did not finish (gc then leaves it for 6 h
 could not count its shared blocks (or saw only part of the tree), or its volume
 cannot report them.
 
-A tree whose own size is still unknown is kept at every level, critical
-included, when a sample finds it is mostly hard links: Stim reads the link
-counts of up to 36 files from up to 12 of its packages (under `.pnpm` for pnpm),
-within 2 seconds, and keeps the tree when at least 20 files from 5 packages
-were read and 90% of them have more than one link, as in a pnpm tree linked
-from its store on a volume without clones, where deleting it frees almost
-nothing. The kept reason gives the counts. The verdict is reused until the tree
-is reinstalled, and a sample that did not answer is retried after 6 hours. A
-tree copied by `stim worktree warm` where the volume cannot clone has files
-with one link, so the rules above apply to it. The sample never replaces a
+A tree whose own size is still unknown is kept at normal and high, and taken
+last at critical, when a sample finds it is mostly hard links into a pnpm
+store: its `.modules.yaml` must name a store directory outside the tree, and
+Stim reads the link counts of up to 36 files from up to 12 of its packages
+within 2 seconds (10 seconds for all trees of one step), keeping the tree when
+at least 20 files from 5 packages were read and 90% of them have more than one
+link on the store's volume. That is a pnpm tree linked from its store on a
+volume without clones, where deleting it frees little. A tree with a cache
+folder such as `node_modules/.cache`, or a sampled package that holds native
+build output (`android/build`, `android/.cxx`, `ios/build` and the like), is
+not counted as links. The kept reason gives the counts. The verdict is reused
+for 6 hours while the tree is not reinstalled and the store still exists. A
+tree pnpm did not install, or one copied by `stim worktree warm` where the
+volume cannot clone, keeps the rules above. The sample never replaces a
 measurement.
 
 Automatic maintenance and `stim gc` never delete a `node_modules` or

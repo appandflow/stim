@@ -668,7 +668,8 @@ function canonicalOrNull(path: string): string | null {
  * Rung 5: node_modules and Pods of linked worktrees whose workspace in this Stim home is idle 1 hour at high and 2
  * minutes at critical by the activity definition with nothing running, each recorded for `stim worktree warm`: those holding
  * REAL_BYTES_THRESHOLD or more private bytes, most first, then those of unknown size, longest-idle first. A
- * copy-on-write clone below the threshold, and a tree of unknown size whose sample found mostly hard links, are kept.
+ * copy-on-write clone below the threshold is kept, and so is a tree of unknown size whose sample found mostly hard
+ * links, which at critical goes last instead.
  */
 async function dependenciesRung(context: RungContext): Promise<void> {
   const idleMs = context.level === 'critical' ? PRESSURE_IDLE_MS : DEPENDENCIES_HIGH_IDLE_MS;
@@ -683,7 +684,7 @@ async function dependenciesRung(context: RungContext): Promise<void> {
     )
   ).filter((dependency) => onShort(context, [dependency.candidate.path]));
   await sampleLinks(ranked, context.operation?.signal);
-  const { take, kept } = selectDependencies(ranked, 'take');
+  const { take, kept } = selectDependencies(ranked, 'take', context.level === 'critical' ? 'last' : 'keep');
   for (const { dependency, detail } of kept)
     recordAction(
       context,
@@ -899,7 +900,7 @@ async function sourceDependenciesStep(context: RungContext): Promise<void> {
         context.why,
       );
   await sampleLinks(ranked, context.operation?.signal);
-  const { take, kept: small } = selectDependencies(ranked, 'take');
+  const { take, kept: small } = selectDependencies(ranked, 'take', 'last');
   if (!context.act || context.force)
     for (const { dependency, detail } of small)
       recordAction(

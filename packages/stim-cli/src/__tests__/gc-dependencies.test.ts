@@ -724,9 +724,6 @@ test.skipIf(process.platform === 'win32')(
     expect(detail(first, pods)).toBe(failed);
 
     const again: LevelPayload = (await gcJson('normal')).payload;
-    console.error(
-      'DUMP' + JSON.stringify(again.actions.filter((action) => action.target.startsWith(roots.linked ?? ''))),
-    );
     expect(detail(again, modules)).toBe(volume);
     expect(detail(again, pods)).toBe(failed);
     expect(cannotTell).toHaveBeenCalledTimes(1);
@@ -892,7 +889,7 @@ test.skipIf(process.platform === 'win32')(
 const linkedDetail =
   /^its real size is unknown, but (\d+) of the \1 files sampled from it are hard links another folder such as a package store also holds, so deleting it would free little and it stays$/;
 
-function pnpmTree(modules: string, how: 'linked' | 'copied', at: Date): void {
+function pnpmTree(modules: string, how: 'linked' | 'copied', at: Date): string {
   const built = how === 'linked' ? modules : join(projects, `built-${randomUUID()}`);
   const store = join(projects, `store-${randomUUID()}`);
   for (let index = 0; index < 8; index++) {
@@ -909,6 +906,7 @@ function pnpmTree(modules: string, how: 'linked' | 'copied', at: Date): void {
     mkdirSync(dirname(join(built, name)), { recursive: true });
     symlinkSync(relative(dirname(join(built, name)), dir), join(built, name));
   }
+  writeFileSync(join(built, '.modules.yaml'), JSON.stringify({ storeDir: store, virtualStoreDir: '.pnpm' }));
   if (how === 'copied') {
     rmSync(modules, { recursive: true, force: true });
     execSync(`cp -R "${built}" "${modules}"`);
@@ -917,6 +915,7 @@ function pnpmTree(modules: string, how: 'linked' | 'copied', at: Date): void {
   }
   ageTree(modules, at);
   rmSync(diskUsageCacheFile(modules), { force: true });
+  return store;
 }
 
 function dependencyAction(payload: LevelPayload, target: string, rung: number | null) {
@@ -926,7 +925,7 @@ function dependencyAction(payload: LevelPayload, target: string, rung: number | 
 }
 
 test.skipIf(process.platform === 'win32')(
-  'at critical, rung 5 and rung 8 keep a tree of unknown size whose sample is hard links, delete a copied one, and never sample a measured one',
+  'at high, rung 5 keeps a tree of unknown size whose sample is hard links, deletes a copied one and never samples a measured one; at critical rungs 5 and 8 take it last',
   async () => {
     const roots = idleRepo([
       { name: 'linked', workspace: true },
@@ -940,23 +939,20 @@ test.skipIf(process.platform === 'win32')(
     measureTrees(roots.measured ?? '');
     for (const name of ['repo', 'linked', 'copied']) walks.set(modules(name), () => null);
 
-    const { payload }: { payload: LevelPayload } = await gcJson('critical');
-
-    for (const [name, rung] of [
-      ['linked', 5],
-      ['repo', 8],
-    ] as const) {
-      const action = dependencyAction(payload, modules(name), rung);
-      expect(action?.outcome).toBe('kept');
-      expect(action?.detail).toMatch(linkedDetail);
-    }
+    const { payload }: { payload: LevelPayload } = await gcJson('high');
+    expect(dependencyAction(payload, modules('linked'), 5)?.outcome).toBe('kept');
+    expect(dependencyAction(payload, modules('linked'), 5)?.detail).toMatch(linkedDetail);
     expect(dependencyAction(payload, modules('copied'), 5)?.outcome).toBe('would');
     expect(dependencyAction(payload, modules('measured'), 5)?.outcome).toBe('would');
     expect(existsSync(diskUsageLinksFile(modules('measured')))).toBe(false);
 
-    await quietly(() => runGc({ pressure: 'critical' }));
+    const critical: LevelPayload = (await gcJson('critical')).payload;
+    const planned = criticalDependencies(critical);
+    expect(planned.indexOf(modules('linked'))).toBeGreaterThan(planned.indexOf(modules('copied')));
+    expect(dependencyAction(critical, modules('repo'), 8)?.outcome).toBe('would');
+
+    await quietly(() => runGc({ pressure: 'high' }));
     expect(existsSync(join(modules('linked'), '.pnpm'))).toBe(true);
-    expect(existsSync(join(modules('repo'), '.pnpm'))).toBe(true);
     expect(existsSync(modules('copied'))).toBe(false);
   },
   60_000,
@@ -997,7 +993,7 @@ test.skipIf(process.platform === 'win32')(
     const again: LevelPayload = (await gcJson('normal')).payload;
     expect(dependencyAction(again, linked, null)?.detail).toContain('99 of the 99 files');
 
-    pnpmTree(linked, 'copied', hourAgo);
+    pnpmTree(linked, 'copied', new Date(hourAgo.getTime() - 60_000));
     const reinstalled: LevelPayload = (await gcJson('normal')).payload;
     expect(dependencyAction(reinstalled, linked, null)?.outcome).toBe('would');
   },
@@ -1023,7 +1019,11 @@ test.skipIf(process.platform === 'win32')(
           answer = () => done([]);
         }),
     );
-    const io: LinkSampleIo = { entries, lstat: async () => ({ kind: 'file', nlink: 2, id: '1:1' }) };
+    const io: LinkSampleIo = {
+      entries,
+      lstat: async () => ({ kind: 'file', nlink: 2, dev: 1, ino: 1 }),
+      tail: async () => '',
+    };
     const sampled = hardLinkSample(modules, undefined, io);
     await vi.advanceTimersByTimeAsync(2000);
     expect(await sampled).toBeNull();
@@ -1037,5 +1037,71 @@ test.skipIf(process.platform === 'win32')(
     expect(await hardLinkSample(modules, undefined, io)).toBeNull();
     expect(entries).toHaveBeenCalledTimes(2);
     expect(readJsonObject(diskUsageLinksFile(modules))?.verdict).toBe('other');
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'a link sample counts only hard links that a pnpm store outside the tree still holds',
+  async () => {
+    const peers = (modules: string, storeDir?: string) => {
+      for (let index = 0; index < 8; index++)
+        for (const file of ['package.json', 'index.js', 'main.js']) {
+          const [first, second] = ['18', '19'].map((react) =>
+            join(modules, '.pnpm', `pkg${index}@1.0.0_react@${react}`, 'node_modules', `pkg${index}`),
+          );
+          mkdirSync(first ?? '', { recursive: true });
+          mkdirSync(second ?? '', { recursive: true });
+          writeFileSync(join(first ?? '', file), `pkg${index} ${file}`);
+          linkSync(join(first ?? '', file), join(second ?? '', file));
+        }
+      if (storeDir) writeFileSync(join(modules, '.modules.yaml'), JSON.stringify({ storeDir }));
+    };
+    const inTree = join(projects, 'peers', 'node_modules');
+    peers(inTree);
+    expect(await hardLinkSample(inTree)).toBeNull();
+    const absent = join(projects, 'absent', 'node_modules');
+    peers(absent, join(projects, 'no-store'));
+    expect(await hardLinkSample(absent)).toBeNull();
+
+    const linked = join(projects, 'linked', 'node_modules');
+    const store = pnpmTree(linked, 'linked', new Date());
+    expect(await hardLinkSample(linked)).toEqual({ linked: 24, sampled: 24 });
+    const signature = treeSignature(linked);
+    rmSync(store, { recursive: true });
+    expect(treeSignature(linked)).toBe(signature);
+    expect(await hardLinkSample(linked)).toBeNull();
+    expect(readJsonObject(diskUsageLinksFile(linked))?.verdict).toBe('other');
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'a link sample is not links when a sampled package holds native build output or the tree holds a cache, and reads a hoisted tree from its top-level folders',
+  async () => {
+    const built = join(projects, 'built', 'node_modules');
+    pnpmTree(built, 'linked', new Date());
+    const packages = readdirSync(join(built, '.pnpm')).filter((entry) => entry.includes('@1.0.'));
+    for (const entry of packages.filter((_, index) => index % 4 === 0)) {
+      const name = entry.slice(0, entry.indexOf('@1.0.')).replace('+', '/');
+      mkdirSync(join(built, '.pnpm', entry, 'node_modules', name, 'android', '.cxx'), { recursive: true });
+    }
+    expect(await hardLinkSample(built)).toBeNull();
+    expect(readJsonObject(diskUsageLinksFile(built))?.verdict).toBe('other');
+
+    const cached = join(projects, 'cached', 'node_modules');
+    pnpmTree(cached, 'linked', new Date());
+    mkdirSync(join(cached, '.cache', 'babel'), { recursive: true });
+    expect(await hardLinkSample(cached)).toBeNull();
+
+    const hoisted = join(projects, 'hoisted', 'node_modules');
+    const store = join(projects, 'hoisted-store');
+    for (let index = 0; index < 8; index++)
+      for (const file of ['package.json', 'index.js', 'main.js']) {
+        mkdirSync(join(store, `pkg${index}`), { recursive: true });
+        mkdirSync(join(hoisted, `pkg${index}`), { recursive: true });
+        writeFileSync(join(store, `pkg${index}`, file), `pkg${index} ${file}`);
+        linkSync(join(store, `pkg${index}`, file), join(hoisted, `pkg${index}`, file));
+      }
+    writeFileSync(join(hoisted, '.modules.yaml'), JSON.stringify({ storeDir: store, nodeLinker: 'hoisted' }, null, 2));
+    expect(await hardLinkSample(hoisted)).toEqual({ linked: 24, sampled: 24 });
   },
 );
