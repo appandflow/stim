@@ -443,6 +443,75 @@ describe.skipIf(process.platform === 'win32')(
       expect(maintenance).toHaveBeenCalledTimes(2);
       expect(ticks().map(({ at }) => Math.round((at - started) / MINUTE_MS))).toEqual([1, 6, 11, 16, 21]);
     });
+
+    describe('work that never ends', () => {
+      let selfKills: number;
+
+      beforeEach(() => {
+        selfKills = 0;
+        const kill = process.kill.bind(process);
+        vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+          if (pid !== process.pid || signal !== 'SIGKILL') return kill(pid, signal);
+          selfKills += 1;
+          return true;
+        });
+      });
+
+      function never<T>(): { promise: Promise<T>; end: (value: T) => void } {
+        let end!: (value: T) => void;
+        return { promise: new Promise<T>((resolve) => (end = resolve)), end };
+      }
+
+      test('a maintenance pass that never ends is named every 10 minutes while ticks go on; after 60 minutes stimd ends, and its stuck shutdown is forced at 2 minutes', async () => {
+        quietWorkspace();
+        const pass = never<Awaited<ReturnType<typeof maintenanceRun.runMaintenance>>>();
+        vi.spyOn(maintenanceRun, 'runMaintenance').mockReturnValue(pass.promise);
+        const daemon = runStimd({ mode: 'on' });
+        await vi.advanceTimersByTimeAsync(MINUTE_MS);
+        await vi.waitFor(() => expect(ticks()).toHaveLength(1));
+
+        await vi.advanceTimersByTimeAsync(59 * MINUTE_MS);
+        expect(records('daemon_step_running').map((record) => record.step)).toEqual(Array(5).fill('maintenance'));
+        expect(ticks().length).toBeGreaterThanOrEqual(12);
+        expect(records('daemon_exited')).toEqual([]);
+
+        await vi.advanceTimersByTimeAsync(MINUTE_MS);
+        expect(records('daemon_exited')[0]?.msg).toContain('the maintenance pass has not ended after 60 minutes');
+        await vi.advanceTimersByTimeAsync(2 * MINUTE_MS - 1000);
+        expect(selfKills).toBe(0);
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(records('daemon_shutdown_timeout')).toEqual([
+          expect.objectContaining({ waiting: ['the maintenance pass'] }),
+        ]);
+        expect(selfKills).toBe(1);
+
+        pass.end(undefined);
+        await daemon;
+      });
+
+      test('a tick whose measurement never ends is named, ends stimd after 60 minutes, and its shutdown is forced while it waits on that tick', async () => {
+        quietWorkspace();
+        const first = await measure.measureTick(null, Date.now());
+        const stuck = never<typeof first>();
+        vi.spyOn(measure, 'measureTick').mockResolvedValueOnce(first).mockReturnValue(stuck.promise);
+        const daemon = runStimd({ mode: 'on' });
+        await vi.advanceTimersByTimeAsync(MINUTE_MS);
+        await vi.waitFor(() => expect(ticks()).toHaveLength(1));
+
+        await vi.advanceTimersByTimeAsync(5 * MINUTE_MS + 10 * MINUTE_MS);
+        expect(records('daemon_step_running').map((record) => record.step)).toEqual(['measure']);
+        expect(ticks()).toHaveLength(1);
+
+        await vi.advanceTimersByTimeAsync(50 * MINUTE_MS);
+        expect(records('daemon_exited')[0]?.msg).toContain('a daemon tick has not ended after 60 minutes');
+        await vi.advanceTimersByTimeAsync(2 * MINUTE_MS);
+        expect(records('daemon_shutdown_timeout')).toEqual([expect.objectContaining({ waiting: ['the tick'] })]);
+        expect(selfKills).toBe(1);
+
+        stuck.end(first);
+        await daemon;
+      });
+    });
   },
 );
 

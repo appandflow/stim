@@ -540,7 +540,15 @@ checkout (`idle_stage_candidates`, `stopped_output_candidates`,
 (`finished`, `threw` or `aborted`); a rung adds `rung` and `pressureLevel`, and a step
 that threw adds `error`. A tick at normal writes one, up to 16 at high and up
 to 22 at critical. Use them to see which step a slow tick or maintenance run
-spent its time in. The records change nothing a pass does.
+spent its time in. The records change nothing a pass does. A step still
+running after 10 minutes also writes a `daemon_step_running` record (`step`,
+`startedAt`, `runningMs`) every 10 minutes until it ends, and so do the tick's
+`measure`, `booted_parked` and `idle_stage` phases and the maintenance pass's
+`fingerprint_precompute` and `maintenance` phases. A tick or maintenance pass
+still running after 60 minutes ends stimd with its claims kept, for the next
+stimd to take over. A shutdown still running after 2 minutes writes
+`daemon_shutdown_timeout`, whose `waiting` names what it waits on, and stimd
+is forced to exit.
 
 When a size walk fails, `daemon.ndjson` gets one `size_failed` record (`warn`,
 or `info` when the walk was aborted),

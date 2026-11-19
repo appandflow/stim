@@ -181,6 +181,8 @@ const SUCCESSOR_BIND_MS = 10_000;
 const SIGNALS = ['SIGTERM', 'SIGINT'] as const;
 const DETACHED_SIGNALS = [...SIGNALS, 'SIGHUP'] as const;
 const SECOND_SIGNAL_GRACE_MS = 5000;
+const SHUTDOWN_DEADLINE_MS = 2 * 60_000;
+const STALL_MS = 60 * 60_000;
 
 type Level = 'debug' | 'info' | 'warn' | 'error';
 type Resource = 'build' | 'boot' | 'test';
@@ -652,6 +654,7 @@ interface StimdStartup {
   cleanup?: (error: unknown) => Promise<void>;
   signal: AbortSignal;
   finish?: () => void;
+  shutdownDeadline?: NodeJS.Timeout;
 }
 
 interface RunStimdOptions {
@@ -772,6 +775,7 @@ export async function runStimd(options: RunStimdOptions = {}): Promise<boolean> 
     await startup.cleanup?.(error);
     throw error;
   } finally {
+    clearTimeout(startup.shutdownDeadline);
     startup.finish?.();
   }
 }
@@ -1275,6 +1279,13 @@ async function runStimdInner(
       );
     }
   };
+  // @ref LLP 0021#a-handover-with-no-successor -- log it and leave the marker a client starts a stimd for
+  const successorMissing = (next: { build: string; version: string }, reason: string) => {
+    log('error', 'successor_missing', `no stimd of ${next.version} (${next.build}) took this Stim home: ${reason}`);
+    try {
+      writeAtomic(stimdSuccessorMissingFile(), { at: Date.now(), pid: process.pid, build: next.build, reason });
+    } catch {}
+  };
   const relaunchFailed = (error: unknown): void => {
     log(
       'error',
@@ -1293,13 +1304,7 @@ async function runStimdInner(
     handingOver = true;
     shutdown(why);
     await shutdownDone;
-    // @ref LLP 0021#a-handover-with-no-successor -- log it and leave the marker a client starts a stimd for
-    const missing = (reason: string) => {
-      log('error', 'successor_missing', `no stimd of ${next.version} (${next.build}) took this Stim home: ${reason}`);
-      try {
-        writeAtomic(stimdSuccessorMissingFile(), { at: Date.now(), pid: process.pid, build: next.build, reason });
-      } catch {}
-    };
+    const missing = (reason: string) => successorMissing(next, reason);
     if (keepOwn) return missing('its cleanup was not verified, so no successor was started');
     try {
       launchStimd(process.env, startMode, process.platform, entry, serveArgs(carried, service || serviceNet, unit));
@@ -1841,12 +1846,33 @@ async function runStimdInner(
     if (readJsonObject(stimdRecordFile())?.pid === process.pid) rmSync(stimdRecordFile(), { force: true });
     if (attached) for (const signal of SIGNALS) process.off(signal, onSignal);
     log(level, 'daemon_exited', `exiting: ${why}`);
+    const waiting = new Set<string>();
+    const awaited = (name: string, work: Promise<void> | undefined) => {
+      if (!work) return work;
+      waiting.add(name);
+      return work.finally(() => waiting.delete(name));
+    };
+    // @ref LLP 0021#a-shutdown-has-a-deadline -- a shutdown that outlasts it records what it waits on, then is forced
+    startup.shutdownDeadline = setTimeout(() => {
+      const names = [...waiting];
+      const reason = `shutdown did not finish within ${SHUTDOWN_DEADLINE_MS / 1000} s${names.length ? `; still waiting on ${names.join(', ')}` : ''}`;
+      try {
+        log('error', 'daemon_shutdown_timeout', reason, { waiting: names });
+        if (switchedTo) successorMissing(switchedTo, reason);
+      } finally {
+        forceExit(`forced exit: ${reason}`);
+      }
+    }, SHUTDOWN_DEADLINE_MS);
+    startup.shutdownDeadline.unref();
     shutdownDone = Promise.allSettled([
-      waitForeground(foregroundDone, () => foregroundFailure),
-      lane.settled(),
-      dependencyWork,
-      closeMetroChildren(),
-      closeNetAndLogs(),
+      awaited(
+        'the tick',
+        waitForeground(foregroundDone, () => foregroundFailure),
+      ),
+      awaited('the maintenance pass', lane.settled()),
+      awaited('the dependency scan', dependencyWork),
+      awaited('Metro and tunnel children', closeMetroChildren()),
+      awaited('the net thread and device logs', closeNetAndLogs()),
     ])
       .then(async (results) => {
         cleanups.settle();
@@ -1859,7 +1885,7 @@ async function runStimdInner(
           keepClaim();
           keepDaemon = true;
         }
-        await threads.close();
+        await awaited('the worker threads', threads.close());
         return undefined;
       })
       .catch((error: unknown) =>
@@ -1967,6 +1993,23 @@ async function runStimdInner(
         if (!closing && runDirMisses >= HOME_WATCH_MISSES) shutdown('its run directory was removed');
       }, homeWatchMs);
   homeWatch?.unref();
+  // @ref LLP 0021#a-stalled-tick-or-pass-ends-stimd -- it may hold claims or children, so they stay kept
+  const watchStall = (what: string): (() => void) => {
+    const timer = setTimeout(() => {
+      if (closing) return;
+      const why = `${what} has not ended after ${STALL_MS / 60_000} minutes`;
+      failBackground(
+        Object.assign(new Error(why), {
+          code: 'STIM_CLAIM_UNAVAILABLE',
+          reportCleanup: true,
+          remedy: `Read the daemon_step_running records in ${daemonNdjsonFile()} for the step that did not end.`,
+        }),
+        why,
+      );
+    }, STALL_MS);
+    timer.unref();
+    return () => clearTimeout(timer);
+  };
   const stopBuildEndTimer = startBuildEndTimer({
     allowed: maintenanceAllowed,
     busy: () => dependencyWork !== undefined,
@@ -2013,6 +2056,7 @@ async function runStimdInner(
       break;
     }
     const tickStarted = performance.now();
+    const tickStalled = watchStall('a daemon tick');
     const contactSince = lastContact;
     const replying = tickReplies;
     tickReplies = [];
@@ -2125,6 +2169,7 @@ async function runStimdInner(
       foregroundFailure = handleForegroundError(error, ending, attached !== undefined, requestEnd, shutdown);
       break;
     } finally {
+      tickStalled();
       settleForeground();
     }
     if (!maintenanceAllowed()) break;
@@ -2155,7 +2200,11 @@ async function runStimdInner(
       }
       emptyTicks = 0;
     }
-    if (maintenanceAllowed()) lane.start(ticked, mode === 'on');
+    if (maintenanceAllowed() && !lane.running()) {
+      lane.start(ticked, mode === 'on');
+      const passStalled = watchStall('the maintenance pass');
+      void lane.settled().then(passStalled, passStalled);
+    }
   }
   try {
     await attachedEnding;

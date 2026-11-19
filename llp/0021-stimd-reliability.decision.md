@@ -111,6 +111,42 @@ clears after 10 minutes or with `stim doctor --fix`, and only cause `engine` rol
 a build back. `stim doctor --fix` clears the hold only after its repairs and
 report completed, so an unreadable config leaves the hold in place.
 
+## A shutdown has a deadline
+
+A stimd that has begun to shut down exits within 2 minutes. If its shutdown has
+not finished by then, it logs `daemon_shutdown_timeout` with the parts it still
+waits on (the tick, the maintenance pass, the dependency scan, Metro and tunnel
+children, the net thread and device logs, the worker threads) and makes a forced
+exit, as after a second signal: it records its boot and sends itself SIGKILL. A
+stimd that already kept its claims for unverified cleanup records no boot, and
+its claims stay complete, so the next stimd takes the home over as after any
+dead holder. A forced exit during an engine switch also logs `successor_missing`
+and writes the marker below, since no successor was started. The boot carries
+cause `engine`, as for the attached shutdown watchdog. Reason: a shutdown waited
+5.7 hours on work that never settled (#5981), holding the home's claim while a
+new stimd started and was refused every minute; nothing ended it but a person's
+signal. The deadline covers the slow parts of a normal shutdown: the net thread's
+15 s stop, a report's 35 s cleanup, a cancelled child's exit.
+
+## A stalled tick or pass ends stimd
+
+A step of a tick or of the maintenance pass that runs 10 minutes logs
+`daemon_step_running` with its name every 10 minutes until it ends, so a step
+that never ends is named in the log. A tick or a maintenance pass that runs 60
+minutes ends stimd as a failBackground with unverified cleanup: its home and
+daemon claims stay kept, because the work that never ended may hold claims or
+run children, and the shutdown deadline above bounds the exit. The next stimd
+recovers the home once this one is gone. Reason: in #5981 a tick and a
+maintenance pass stopped without a record for 3.5 hours while the net thread
+went on serving, so no tick ran, no cleanup ran and the log did not say where.
+An await that never settles cannot be resumed or abandoned without dropping
+claims it may hold (LLP 0007). Ticks of 12 minutes and passes of 4 minutes were
+measured under a load average near 500, so 60 minutes leaves a margin.
+
+The deadline, the stall bound, the 10-minute records and the cause class were
+chosen by the implementing lane of #5981 and its coordinating session, not the
+maintainer.
+
 ## A handover with no successor
 
 When a stimd hands the home over and its successor does not bind within 10 s, or the
