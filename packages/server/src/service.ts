@@ -15,6 +15,7 @@ import {
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { createServer } from 'node:net';
+import { isDeepStrictEqual } from 'node:util';
 import { homedir } from 'node:os';
 import { basename, delimiter, dirname, isAbsolute, join, sep } from 'node:path';
 import {
@@ -458,7 +459,10 @@ export async function rewriteUnitToShim(label: string): Promise<boolean> {
     if (rewritten !== text) {
       const problem = execStartOverride(path, text);
       if (problem) throw new ServiceError(`${problem}; not rewriting ${label} to the engine shim.`);
-      writeThrough(path, rewritten);
+      const target = realpathSync(path);
+      const partial = `${target}.${process.pid}.tmp`;
+      writeFileSync(partial, rewritten, { mode: 0o644 });
+      renameSync(partial, target);
       changed = true;
     }
   }
@@ -476,14 +480,6 @@ export async function rewriteUnitToShim(label: string): Promise<boolean> {
     }
   }
   return changed;
-}
-
-/** Replaces the file `path` resolves to with `text`, so a symlinked service file keeps its link. */
-function writeThrough(path: string, text: string): void {
-  const target = realpathSync(path);
-  const partial = `${target}.${process.pid}.tmp`;
-  writeFileSync(partial, text, { mode: 0o644 });
-  renameSync(partial, target);
 }
 
 async function reloadLaunchdOntoShim(
@@ -516,16 +512,26 @@ async function reloadLaunchdOntoShim(
     workingDirectory: typeof fields.WorkingDirectory === 'string' ? fields.WorkingDirectory : homedir(),
     serve: installed.serve,
   });
-  const rewritten = rendered !== readFileSync(path, 'utf8');
-  if (rewritten) writeThrough(path, rendered);
+  const target = realpathSync(path);
+  const partial = `${target}.${process.pid}.tmp`;
+  writeFileSync(partial, rendered, { mode: 0o644 });
+  const parsed = await run('plutil', ['-convert', 'json', '-o', '-', partial]);
+  if (!parsed.ok) {
+    rmSync(partial, { force: true });
+    throw new ServiceError(`Could not read the plist rendered for ${label}: ${parsed.stderr.trim()}`);
+  }
+  const rewritten = !isDeepStrictEqual(JSON.parse(parsed.stdout), job);
+  if (rewritten) renameSync(partial, target);
+  else rmSync(partial, { force: true });
   if (!definition || (!rewritten && launchdRuns(definition, stimd))) return false;
+  const current = readFileSync(path, 'utf8');
   const written = join(serviceRoot(label), 'reload.plist');
-  if (!rewritten && existsSync(written) && readFileSync(written, 'utf8') === rendered)
+  if (!rewritten && existsSync(written) && readFileSync(written, 'utf8') === current)
     throw new ServiceError(
       `launchd still runs ${label} from its definition before the engine shim after a reload; ${manager.restartRemedy(label)} when no build runs, and see ${log}.`,
     );
   mkdirSync(dirname(written), { recursive: true });
-  writeFileSync(written, rendered);
+  writeFileSync(written, current);
   const command = launchdReloadCommand(label, parseLaunchctlPrint(definition).pid ?? process.pid, stimd, written);
   const out = openSync(log, 'a');
   try {
