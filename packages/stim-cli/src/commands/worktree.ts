@@ -1434,7 +1434,7 @@ async function removeOrRefuse(
         output.fail();
         return;
       }
-      const currentSha = await resolveFullRefAsync(mainRoot, branch, options);
+      const currentSha = await resolveFullRefAsync(mainRoot, `refs/heads/${branch}`, options);
       if (currentSha !== pending.worktreePendingBranchSha) {
         output.error(
           chalk.red(

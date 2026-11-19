@@ -97,7 +97,7 @@ test.each([
     if (phase === 'status' || phase === 'dirty paths')
       return args.includes('status') && ++statuses === (phase === 'status' ? 1 : 2);
     if (phase === 'HEAD') return args.includes('HEAD^{commit}') && args.includes('--end-of-options');
-    if (phase === 'unpushed branch') return args.includes('symbolic-ref') && args.includes('--short');
+    if (phase === 'unpushed branch') return args.includes('symbolic-ref') && args.includes('--quiet');
     if (phase === 'unpushed commits') return args.includes('log') && args.includes('--oneline');
     if (phase === 'submodule path') return args.includes('--git-path') && args.includes('modules');
     if (phase === 'submodule index') return args.includes('ls-files') && args.includes('--stage');
