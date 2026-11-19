@@ -211,19 +211,16 @@ export const sameHome = (a: string, b: string): boolean => a.replace(/\/+$/, '')
 
 const majorOf = (version: string | undefined): number => Number(/^(\d+)\./.exec(version ?? '')?.[1] ?? NaN);
 
-const shellWord = (value: string): string => (/^[\w./:@%+=,-]+$/.test(value) ? value : `"${value}"`);
-
 function updateRemedy(server: ServerReading, setup: ServerSetup): string {
   if (server.kind === 'service') {
     const installed = setup.services.find((each) => each.label === server.label)?.installed;
     const earlierMajor = majorOf(server.health?.stim) < majorOf(setup.version);
     if (installed?.script?.endsWith('/bin/stimd') && !earlierMajor)
       return `Run \`stim engine update\` there, or \`stim engine use ${setup.version}\` for exactly this version.`;
-    const home = installed?.stimHome ? `STIM_HOME=${shellWord(installed.stimHome)} ` : 'env -u STIM_HOME ';
-    const paths = (installed?.pathPrepend ?? []).map((dir) => ` --path-prepend ${shellWord(dir)}`).join('');
-    const env = (installed?.env ?? []).map((entry) => ` --env ${entry.slice(0, entry.indexOf('='))}=<value>`).join('');
-    const command = `${home}stim service install${labelFlag(server.label ?? 'dev.stim.server')} --port ${installed?.port ?? server.port}${paths}${env}`;
-    const fill = env ? ', with each <value> set to what the service sets now' : '';
+    const command = installed
+      ? serviceInstallCommand(installed)
+      : `env -u STIM_HOME stim service install${labelFlag(server.label ?? 'dev.stim.server')} --port ${server.port}`;
+    const fill = installed?.env.length ? ', with each <value> set to what the service sets now' : '';
     const run = earlierMajor
       ? `Follow ${UPGRADE_GUIDE_URL} first. At its services step, once active work has drained, run \`${command}\`${fill}.`
       : `Run \`${command}\`${fill}.`;

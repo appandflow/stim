@@ -21,6 +21,7 @@ import {
   installService,
   recordServiceRoute,
   rewriteUnitToShim,
+  serviceStale,
   serviceStatus,
   uninstallService,
 } from '../src/service.ts';
@@ -329,18 +330,19 @@ describe.skipIf(process.platform !== 'darwin')('service lifecycle', () => {
     ).toEqual(['ANDROID_HOME=/sdk']);
   });
 
-  it('setup keeps a healthy service with a stale ProcessType running and prints the install that fixes it', async () => {
+  it.each([
+    ['a stale ProcessType', () => execFileSync('plutil', ['-replace', 'ProcessType', '-string', 'Background', plist])],
+    ['a node unit once the engine shim exists', () => engineShim()],
+  ])('setup keeps a healthy service with %s running and names the install that fixes it', async (_case, change) => {
     const options = { label, port: launchd.port, env: [], pathPrepend: [], serve: false };
     const setup = { script: process.argv[1] ?? '', host: null, requestPermissions: false as const };
     await finish(installJob(options, setup));
     const bootstraps = launchd.bootstraps.length;
-    execFileSync('plutil', ['-replace', 'ProcessType', '-string', 'Background', plist]);
-    const [note] = await finish(installJob(options, setup));
-    expect(note).toMatch(
-      /already runs stim-server .* ProcessType Background.*stim service install --label dev\.stim\.lifecycle/,
-    );
+    change();
+    expect((await finish(installJob(options, setup)))[0]).toMatch(/already runs/);
     expect(launchd.job).toBe('new');
     expect(launchd.bootstraps).toHaveLength(bootstraps);
+    expect((await serviceStale(label))?.remedy).toMatch(/stim service install --label dev\.stim\.lifecycle/);
   });
 
   const installedPlist = () =>

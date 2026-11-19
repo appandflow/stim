@@ -177,7 +177,7 @@ describe('serverSetupFindings', () => {
       }),
     );
     expect(legacy?.fix).toBe(
-      'Follow https://stim.appandflow.com/docs/migrate-to-2#for-agents first. At its services step, once active work has drained, run `STIM_HOME=/Users/me/.stim stim service install --label worker --port 7788 --path-prepend /opt/homebrew/bin --path-prepend "/Users/me/My Tools" --env ANDROID_HOME=<value> --env SECRET_TOKEN=<value>`, with each <value> set to what the service sets now. The service does not run the engine\'s stimd shim, so `stim engine update` does not move it.',
+      "Follow https://stim.appandflow.com/docs/migrate-to-2#for-agents first. At its services step, once active work has drained, run `STIM_HOME=/Users/me/.stim stim service install --label worker --port 7788 --path-prepend /opt/homebrew/bin --path-prepend '/Users/me/My Tools' --env ANDROID_HOME=<value> --env SECRET_TOKEN=<value>`, with each <value> set to what the service sets now. The service does not run the engine's stimd shim, so `stim engine update` does not move it.",
     );
     expect(legacy?.fix).not.toContain('hunter2');
     const defaultHome = service();

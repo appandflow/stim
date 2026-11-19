@@ -1402,6 +1402,7 @@ describe('setup approval in Stim Desktop on this machine', () => {
       adHoc: false,
     }),
     installJob: never,
+    stale: never,
     route: async () => ({ state: 'routed', port: 7443 }),
     prepareRoute: async () => ({
       record: { port: 7443, created: false },

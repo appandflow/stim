@@ -496,6 +496,12 @@ function sameOptions(
   );
 }
 
+/** Why the LaunchAgent `label` is stale and the install that fixes it (`staleLaunchAgent`); null when it is current. */
+export async function serviceStale(label: string): Promise<{ reason: string; remedy: string } | null> {
+  const installed = await readInstalled(label);
+  return installed ? launchdStale(installed) : null;
+}
+
 /** The server directory of the Stim home a service runs with `STIM_HOME` set to `stimHome`. */
 function serviceServerDir(stimHome: string | null | undefined): string {
   return join(stimHome || join(homedir(), '.stim'), 'server');
@@ -545,13 +551,11 @@ export async function installJob(
   const path = plistPath(options.label);
   const { findTailscale, serveCommand } = await tailscalePackage();
   const tailscale = findTailscale(process.env) ?? 'tailscale';
-  if (setup && sameOptions(previous, spec, stimd ?? script)) {
+  const toShim = manager.name === 'launchd' && stimd !== undefined && previous !== null && previous.script !== stimd;
+  if (setup && sameOptions(previous, spec, toShim ? (previous.script ?? '') : (stimd ?? script))) {
     const health = await fetchHealth(options.port);
     if (health && health.startup?.state !== 'pending' && health.startup?.state !== 'degraded') {
-      const stale = await launchdStale(previous);
-      return [
-        `${options.label} already runs stim-server ${health.version}.${stale ? ` It is not current: ${stale.reason}; ${stale.remedy}.` : ''}`,
-      ];
+      return [`${options.label} already runs stim-server ${health.version}.`];
     }
   }
   const oldPlist = previous ? readFileSync(path, 'utf8') : null;
