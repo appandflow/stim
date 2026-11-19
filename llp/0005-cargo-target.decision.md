@@ -89,8 +89,11 @@ or a write made meanwhile puts every moved entry back, and so does a
 cancellation or an error before those checks pass. An entry whose original
 name exists again is not put back over it; like one that cannot be put back,
 it moves to `.stim-not-restored-*` or stays in a `.stim-trimmed` marked
-`NOT-RESTORED`, for a person. Node offers no rename that refuses to replace, so
-a name recreated between that check and the rename is still overwritten. An entry that
+`NOT-RESTORED`, for a person. A file is put back with `link` then `unlink`, which
+fails rather than replace a name a build recreated meanwhile. A directory is put
+back with `rename` after checking its name is free: `rename` fails onto a
+directory that is not empty, but replaces an empty one, so a directory a build
+recreates empty in that instant is replaced. An entry that
 cannot be renamed, such as one on another device (`EXDEV`), stays and the rest
 goes. The moved entries are deleted without entering a directory on another
 device, and the emptied `target/` goes too. Report mode runs the checks that
@@ -117,13 +120,16 @@ regenerable? If not the case lets just delete things we know are", 2026-11-19
   `.metabuild/`.
 - Exact, only in an Exact app's `target/` (beside `exact.mjs`) or one of a
   checkout of Exact itself (`scripts/app.mjs` and `host/web-js/module.mjs` at
-  its root): the entries Exact's tools write there, named in `EXACT_TOP` and
-  `EXACT_TOP_PREFIXES` in `packages/stim-cli/src/workspace/cargo-target.ts`,
-  taken from Exact's `scripts/app.mjs`, `scripts/sweep.mjs`,
-  `scripts/cargo-dep-info.mjs`, `scripts/rust.mjs`, `scripts/web-build.mjs`,
-  `host/apple/build.mjs`, `host/web/build.mjs`, `host/web-js/module.mjs`,
-  `host/web-js/dev.mjs` and the other files listed there. A name an app chooses
-  itself, such as its own web dist folder, is not on it and stays.
+  its root): the build products, caches and build scratch directories Exact's
+  build tools write there, named in `EXACT_TOP` and `EXACT_TOP_PREFIXES` in
+  `packages/stim-cli/src/workspace/cargo-target.ts`, with the Exact source
+  files they come from. Records Exact keeps of runs and sessions (`traces/`
+  from `host/web/serve.mjs` and `scripts/agent-inspect.mjs`, `web-receipts/`
+  and `native-receipts/` from `scripts/evidence.mjs`), its unit ledger, crate
+  claims and lock files, scratch a dev server may still serve from, and
+  `web-dist.*` siblings (Exact reads `web-dist.json` as input and treats an
+  unreceipted sibling as foreign) are not on it. A name an app chooses itself,
+  such as its own web dist folder, is not on it either.
 
 Anything else stays, such as Criterion's and Gungraun's saved benchmark
 baselines (`criterion/`, `gungraun/`, `iai/`) or a Solana program's private key
