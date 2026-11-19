@@ -108,6 +108,7 @@ export async function measureSizes(
   now: number,
   failure: (target: string, workspace?: string) => void,
   operation?: StimContext,
+  discovered?: CacheDescriptor[],
 ): Promise<MaintenanceSize[]> {
   const sizes: MaintenanceSize[] = [];
   const outputs = await collectWorkspaceOutputs({
@@ -155,8 +156,8 @@ export async function measureSizes(
       category: 'compilation-cache',
     },
   ];
-  const discovered = await discoverCachesAsync();
-  for (const cache of discovered) {
+  const caches = discovered ?? (await discoverCachesAsync());
+  for (const cache of caches) {
     if (cache.source !== 'registered' && !canonicalPath(cache.dir).startsWith(`${canonicalPath(configDir())}/`))
       continue;
     if (cache.prune === 'report-only') continue;
@@ -180,7 +181,7 @@ export async function measureSizes(
       failure(entry.dir);
       continue;
     }
-    const blocked = cacheBlocked(entry, discovered);
+    const blocked = cacheBlocked(entry, caches);
     sizes.push({
       ...entry,
       bytes,

@@ -2705,6 +2705,25 @@ dry run ends with `Apply with: stim gc`. An acting run also appends every
 deletion to the machine cleanup log `$STIM_HOME/gc/gc.ndjson`, which
 `stim logs --source gc` reads.
 
+When the measured disk level is high or critical and a volume is still under
+`disk.minFreeGb` (after an acting run, measured again; on a dry run, the disk as
+it is now, before the deletions the dry run lists), plain `gc` then prints "Not
+Stim's to delete": the largest users of the short volume that Stim does not
+manage, which it never deletes. It lists swap files on that volume, Docker
+through `docker system df` (with `docker system prune`, possibly on another
+volume), and the entries of the temporary and home folders when they sit on that
+volume (a memory-backed `/tmp` is skipped), each folder sized by
+one low-priority `du -x`, 5 seconds at most each and 15 seconds for the whole
+scan. It names the folders too slow to size within their 5 seconds and those it
+could not read, and counts what the deadline left unreached. On macOS it names `~/Desktop`, `~/Documents`,
+`~/Downloads`, `~/Library`, `~/Movies`, `~/Music` and `~/Pictures` without
+reading them, so no privacy prompt appears. A cache Stim found but did not
+measure and sweeps by entry, such as Jest's default cache or Metro's file maps
+in the temporary folder, is listed too, marked "Stim sweeps only its unused
+entries". An acting
+run prints its summary and releases the maintenance claim first. The scan does
+not run on Windows or when `STIM_HOME` scopes the home.
+
 An acting `gc` takes the same exclusive maintenance claim as the stim-daemon's
 maintenance pass. While one holds it the other refuses at once with
 `STIM_CLAIM_REFUSED` naming the holder (pid, start, trigger); retry after it

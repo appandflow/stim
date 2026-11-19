@@ -29,9 +29,9 @@ const STIM_PREFIXES = [
   PARITY_PREFIX,
 ];
 const STAGING_PREFIX = '.stim-delete-';
-const TRACE_PATTERN = /^instruments.*\.ktrace$/;
+export const TRACE_PATTERN: RegExp = /^instruments.*\.ktrace$/;
 const TRACE_PROCESSES = new Set(['xctrace', 'Instruments']);
-const SWIFTPM_PATTERN = /^TemporaryDirectory\.[A-Za-z0-9]{6}$/;
+export const SWIFTPM_PATTERN: RegExp = /^TemporaryDirectory\.[A-Za-z0-9]{6}$/;
 const SWIFTPM_PROCESSES = new Set([
   'swift',
   'swift-build',

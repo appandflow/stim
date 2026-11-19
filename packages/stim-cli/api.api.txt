@@ -738,6 +738,8 @@
 [*] interface IosFacts { @@2 pid: number | null;
 [*] interface IosFacts { @@2 stateDir: string;
 [*] interface LevelRun {
+[*] interface LevelRun { @@1 @internal cachePaths: string[];
+[*] interface LevelRun { @@1 @internal sweptCachePaths: string[];
 [*] interface LevelRun { @@1 actions: LevelRunAction[];
 [*] interface LevelRun { @@1 blocked: string[];
 [*] interface LevelRun { @@1 discovered: (DiscoveredCheckout & {
