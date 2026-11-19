@@ -95,25 +95,43 @@ describe('a discovered checkout in the idle stages', () => {
     return { app, config };
   };
   const sourcePassOnly = { dormantDays: 0 };
+  const committedAt = '2026-01-01T00:00:00Z';
+  const gitIn = (cwd: string, ...args: string[]) =>
+    execFileSync('git', ['-C', cwd, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], {
+      env: { ...process.env, GIT_AUTHOR_DATE: committedAt, GIT_COMMITTER_DATE: committedAt },
+    });
+  const repo = (path: string) => {
+    mkdirSync(join(path, 'android'), { recursive: true });
+    writeFileSync(join(path, 'android', 'build.gradle'), '');
+    writeFileSync(join(path, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+    writeFileSync(join(path, '.gitignore'), 'node_modules\n');
+    gitIn(path, 'init', '-q', '-b', 'main');
+    gitIn(path, 'add', '-A');
+    gitIn(path, 'commit', '-q', '-m', 'init');
+  };
+  const treeProbes = (app: string) =>
+    vi
+      .mocked(lstat)
+      .mock.calls.filter(([path]) => [join(app, 'node_modules'), join(app, 'ios', 'Pods')].includes(String(path)));
 
-  it('does not walk the source of a discovered checkout in the source-checkout pass until it holds node_modules or Pods', async () => {
-    const { app, config } = discoveredApp(sourcePassOnly);
+  it('starts no dependency read for a discovered folder git does not list, in the source-checkout pass', async () => {
+    const { app, config } = discoveredApp(sourcePassOnly, 'node_modules');
     const evidence = vi.spyOn(activity, 'discoveredEvidence');
     const store = vi.spyOn(metroStore, 'metroStoreRoot');
-    const pass = () =>
-      runDormantDependencies({ config, act: false, log: () => {}, ...reading, operation: testContext() });
 
-    await pass();
+    await runDormantDependencies({ config, act: false, log: () => {}, ...reading, operation: testContext() });
+
+    expect(treeProbes(app)).toEqual([]);
     expect(evidence).not.toHaveBeenCalled();
     expect(store).not.toHaveBeenCalled();
-
-    mkdirSync(join(app, 'node_modules'));
-    await pass();
-    expect(evidence).toHaveBeenCalledWith(app, expect.anything());
   });
 
   it('skips a discovered checkout for the source-checkout pass when its dependency tree probe never answers', async () => {
-    const { app, config } = discoveredApp(sourcePassOnly);
+    const roots = join(base, 'roots');
+    const app = join(roots, 'app');
+    repo(app);
+    const config: Config = { maintenance: { discoverRoots: [roots] }, projects: {}, repos: {}, idle: sourcePassOnly };
+    saveConfig(config);
     const target = join(app, 'node_modules');
     const real = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
     const stalled: (() => void)[] = [];
@@ -142,24 +160,10 @@ describe('a discovered checkout in the idle stages', () => {
 
   it('probes no dependency tree of a linked worktree in the source-checkout pass, and still selects a source checkout', async () => {
     const roots = join(base, 'roots');
-    const old = '2026-01-01T00:00:00Z';
-    const git = (cwd: string, ...args: string[]) =>
-      execFileSync('git', ['-C', cwd, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], {
-        env: { ...process.env, GIT_AUTHOR_DATE: old, GIT_COMMITTER_DATE: old },
-      });
-    const repo = (path: string) => {
-      mkdirSync(join(path, 'android'), { recursive: true });
-      writeFileSync(join(path, 'android', 'build.gradle'), '');
-      writeFileSync(join(path, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
-      writeFileSync(join(path, '.gitignore'), 'node_modules\n');
-      git(path, 'init', '-q', '-b', 'main');
-      git(path, 'add', '-A');
-      git(path, 'commit', '-q', '-m', 'init');
-    };
     const main = join(roots, 'main');
     repo(main);
     const linked = join(roots, 'main-wt');
-    git(main, 'worktree', 'add', '-q', '-b', 'feature', linked);
+    gitIn(main, 'worktree', 'add', '-q', '-b', 'feature', linked);
     const elsewhere = join(base, 'elsewhere', 'node_modules');
     mkdirSync(elsewhere, { recursive: true });
     symlinkSync(elsewhere, join(linked, 'node_modules'));

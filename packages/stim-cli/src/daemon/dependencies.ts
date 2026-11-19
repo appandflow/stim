@@ -30,7 +30,7 @@ import { hardLinkSample } from '../link-sample.ts';
 import { workspaceKeys } from '../workspace/lightened.ts';
 import { freshLaunchers } from '../workspace/launchers.ts';
 import { workspaceDir } from '../workspace/paths.ts';
-import { checkoutRoleOf } from '../workspace/checkout-role.ts';
+import { matchWorktreeEntry, resolveSourceCheckoutAsync } from '../workspace/worktree.ts';
 import { answered, hungRead, Unanswered } from '../workspace/bounded-read.ts';
 import { buildOutputDirs, dependencyTreeSignature } from '../workspace/discovery-census.ts';
 import { ARTIFACT_DIRS } from '../workspace/regenerable-dirs.ts';
@@ -574,21 +574,29 @@ export async function runDormantDependencies(
 }
 
 /**
- * Whether a discovered source checkout holds a `node_modules` or `ios/Pods` the source collection could take: a real
- * directory, never followed through a link (the collection keeps a linked tree). Each probe is one `lstat` bounded like
- * the launcher readings by `answered`; 'unanswered' when one does not answer or another read is pending. A linked
- * worktree is answered false before any dependency read, since the source collection skips linked worktrees.
+ * Whether a discovered checkout holds a `node_modules` or `ios/Pods` the source collection could take. It is eligible
+ * only as `collectArtifactsAsync` finds it: git lists a non-bare worktree for it, its source checkout resolves, and that
+ * worktree is the source checkout; anything else, a linked worktree or a folder git does not list, is answered false
+ * before any dependency read. A tree counts only as a real directory, never followed through a link (the collection
+ * keeps a linked tree). Each probe is one `lstat` bounded like the launcher readings by `answered`; 'unanswered' when
+ * one does not answer or another read is pending.
  */
 async function sourceTreesOf(path: string, operation?: StimContext): Promise<boolean | 'unanswered'> {
-  if ((await checkoutRoleOf(path, operation)) !== 'source') return false;
+  const { entries, ...source } = await resolveSourceCheckoutAsync(path, {
+    env: operation?.env,
+    signal: operation?.signal,
+    declareFor: operation,
+  });
+  const entry = 'refusal' in source ? null : matchWorktreeEntry(entries, path);
+  if (!entry || entry.bare || 'refusal' in source || entry.path !== source.path) return false;
   try {
     for (const dir of ARTIFACT_DIRS.dependencies) {
-      const target = join(path, dir);
+      const target = join(entry.path, dir);
       const found = await answered(
         target,
         () =>
           lstat(target).then(
-            (entry) => entry.isDirectory(),
+            (info) => info.isDirectory(),
             () => false,
           ),
         PROBE_TIMEOUT_MS,

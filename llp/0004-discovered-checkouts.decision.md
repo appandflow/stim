@@ -510,8 +510,10 @@ A scan that reports unknown is the whole evidence: no further read of that
 checkout (its `.git`, git activity, launchers) starts.
 
 The hourly pass over source checkouts' dependencies (`idle.sourceDormantDays`)
-walks a discovered checkout only when it is a source checkout (a linked worktree
-is left out before any dependency read, as the source collection skips it) and
+walks a discovered checkout only when the source collection would read its
+trees: git lists a non-bare worktree for it, its source checkout resolves, and
+that worktree is the source checkout (a linked worktree or a folder git does not
+list is left out before any dependency read), and
 holds a `node_modules` or an `ios/Pods` that is a real directory, not a link,
 which the source collection would keep. Each of those two probes is one `lstat`
 bounded like the launcher readings (3 seconds, through `answered`); a checkout
