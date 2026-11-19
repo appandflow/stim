@@ -394,6 +394,7 @@ export async function verifyLaunch({
         (record) =>
           (!requireBundleResponse || String(record.event).startsWith('bundle_response_')) && delivered(record),
       );
+      const coveredWhenRead = sleep.coverage?.() === 'covered';
       const deviceRecords = readDevice().filter(
         (record) =>
           after(record, since) &&
@@ -552,7 +553,8 @@ export async function verifyLaunch({
             coverageCandidate = candidate;
             sleep.coverThrough?.(now());
           }
-          const coverage = sleep.coverage?.();
+          const proven = sleep.coverage?.();
+          const coverage = proven === 'covered' && !coveredWhenRead ? 'pending' : proven;
           const coverageDeadline = pendingAt !== null ? readinessDeadline : bundleDeadline;
           if (
             deviceStreamId === null ||

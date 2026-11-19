@@ -1,4 +1,5 @@
 import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 
@@ -27,7 +28,7 @@ vi.mock('../stimd/logs/writer.ts', async (original) => {
   };
 });
 
-describe.skipIf(process.platform === 'win32')('readiness coverage behind a slow log writer', () => {
+describe.skipIf(process.platform === 'win32')('readiness waits in stimd', () => {
   test('stimd proves coverage within the wait budget it is given, not within one poll', async () => {
     const { createStreams } = await import('../stimd/logs/streams.ts');
     const home = mkdtempSync(join(tmpdir(), 'stim-sync-home-'));
@@ -56,6 +57,69 @@ describe.skipIf(process.platform === 'win32')('readiness coverage behind a slow 
       expect((await ask(reply.revision, 2000, since)).coverage).toBe('covered');
     } finally {
       writer.syncDelayMs = 0;
+      await streams.close().catch(() => {});
+      vi.unstubAllEnvs();
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+  test('a readiness wait ends when its request connection closes, before its budget', async () => {
+    const { createStreams } = await import('../stimd/logs/streams.ts');
+    const { handleLogRequest } = await import('../stimd/logs/protocol.ts');
+    const home = mkdtempSync(join(tmpdir(), 'stim-sync-home-'));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-sync-app-')));
+    const bin = join(home, 'bin');
+    mkdirSync(bin);
+    vi.stubEnv('STIM_HOME', home);
+    writeFileSync(join(bin, 'xcrun'), '#!/bin/sh\nexec sleep 600\n');
+    chmodSync(join(bin, 'xcrun'), 0o755);
+    const env = { ...process.env, STIM_HOME: home, PATH: [bin, process.env.PATH].join(delimiter) };
+    const streams = createStreams(() => {});
+    const operation = new Socket();
+    const request = new Socket();
+    let waiting: Promise<unknown> | undefined;
+    try {
+      const { streamId } = await streams.start(
+        { root, platform: 'ios', udid: 'U1', bundleId: 'com.test.app', appName: 'Test' },
+        env,
+      );
+      const signal = new AbortController().signal;
+      let quiet = await streams.wait(root, 'ios', 'default', streamId, 1, 0, 0, signal);
+      for (let settled = false; !settled;) {
+        const next = await streams.wait(root, 'ios', 'default', streamId, 1, quiet.revision, 300, signal);
+        settled = next.revision === quiet.revision;
+        quiet = next;
+      }
+      handleLogRequest({
+        message: {
+          op: 'readiness.wait',
+          opToken: 'token',
+          params: {
+            root,
+            platform: 'ios',
+            slot: 'default',
+            streamId,
+            since: 1,
+            after: quiet.revision,
+            timeoutMs: 30_000,
+          },
+        },
+        socket: request,
+        streams: {
+          ...streams,
+          wait: (...args: Parameters<typeof streams.wait>) => (waiting = streams.wait(...args)),
+        },
+        operations: new Map([[operation, { workspace: root, forwarded: { cwd: root, env }, overrides: {} }]]),
+        controllers: new Map([[operation, new AbortController()]]),
+        tokens: new Map([['token', operation]]),
+        attached: false,
+      });
+      await vi.waitFor(() => expect(waiting).toBeDefined());
+      const started = Date.now();
+      request.destroy();
+      await expect(waiting).rejects.toMatchObject({ name: 'AbortError' });
+      expect(Date.now() - started).toBeLessThan(1000);
+    } finally {
       await streams.close().catch(() => {});
       vi.unstubAllEnvs();
       rmSync(home, { recursive: true, force: true });

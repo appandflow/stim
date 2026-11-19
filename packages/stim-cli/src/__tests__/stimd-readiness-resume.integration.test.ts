@@ -10,6 +10,7 @@ import {
   deviceLogReadinessWait,
   ensureStimd,
   ensureTunnelThroughStimd,
+  releaseHeldAdmission,
   startDeviceLogStream,
 } from '../daemon/client.ts';
 import { operationState } from '../engine/operation-state.ts';
@@ -119,7 +120,7 @@ describe.skipIf(process.platform === 'win32')('readiness across a lost daemon co
 
 async function readinessAfterLoss(
   respond: (request: Record<string, unknown>, socket: Socket, reply: (message: object) => void) => void,
-  run: (wait: ReturnType<typeof deviceLogReadinessWait>) => Promise<void>,
+  run: (wait: ReturnType<typeof deviceLogReadinessWait>, held: Socket[]) => Promise<void>,
 ): Promise<string> {
   return withSocketPeer(respond, async (root) => {
     const sockets: Socket[] = [];
@@ -129,7 +130,7 @@ async function readinessAfterLoss(
     const wait = deviceLogReadinessWait(root, 'ios', 'default', 'stream', 1, operation);
     wait.coverThrough(25);
     try {
-      await run(wait);
+      await run(wait, sockets);
     } finally {
       wait.close();
     }
@@ -204,6 +205,74 @@ describe.skipIf(process.platform === 'win32')('readiness after a lost daemon con
       expect(successorAsks).toBe(successor === 'late' ? 1 : 2);
     },
   );
+  test('a successor still restoring its stream keeps its window when the horizon moves', async () => {
+    let first: Socket | undefined;
+    let admissions = 0;
+    let movedAsks = 0;
+    const seen: string[] = [];
+    const coverage = await readinessAfterLoss(
+      (request, socket, reply) => {
+        if (request.op === 'op.begin') {
+          admissions++;
+          if (admissions === 1) first = socket;
+          reply({ op: 'op.begun', opToken: `admission-${admissions}` });
+        } else if (request.op === 'readiness.wait') {
+          const params = isJsonObject(request.params) ? request.params : {};
+          if (request.opToken === 'admission-1') {
+            first?.end();
+            socket.end();
+          } else if (params.through === 25 || ++movedAsks === 1) {
+            reply({ op: 'readiness.changed', revision: 0, gone: true });
+          } else reply({ op: 'readiness.changed', revision: 4, coverage: 'covered' });
+        }
+      },
+      async (wait) => {
+        await wait(500);
+        seen.push(wait.coverage());
+        wait.coverThrough(50);
+        for (let poll = 0; poll < 20; poll++) {
+          await wait(500);
+          seen.push(wait.coverage());
+          if (wait.coverage() === 'covered') break;
+        }
+      },
+    );
+    expect(coverage).toBe('covered');
+    expect(seen).not.toContain('failed');
+    expect(movedAsks).toBe(2);
+  });
+
+  test('an admission that arrives after the operation ended is closed at once', async () => {
+    let first: Socket | undefined;
+    let late: Socket | undefined;
+    let lateClosed = false;
+    let admissions = 0;
+    await readinessAfterLoss(
+      (request, socket, reply) => {
+        if (request.op === 'op.begin') {
+          admissions++;
+          if (admissions === 1) {
+            first = socket;
+            reply({ op: 'op.begun', opToken: 'admission-1' });
+            return;
+          }
+          late = socket;
+          socket.once('close', () => (lateClosed = true));
+          setTimeout(() => reply({ op: 'op.begun', opToken: 'admission-2' }), 600);
+        } else if (request.op === 'readiness.wait') {
+          first?.end();
+          socket.end();
+        }
+      },
+      async (wait, held) => {
+        await wait(200);
+        await vi.waitFor(() => expect(late).toBeDefined(), { timeout: 3000 });
+        wait.close();
+        releaseHeldAdmission(held);
+        await vi.waitFor(() => expect(lateClosed).toBe(true), { timeout: 3000 });
+      },
+    );
+  });
 });
 
 describe.skipIf(process.platform === 'win32')('local requests after a lost daemon connection', () => {

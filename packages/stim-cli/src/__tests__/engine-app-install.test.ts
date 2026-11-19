@@ -677,6 +677,45 @@ describe('verifyLaunch: the stability window ends on evidence that the app JavaS
     expect(clock.at()).toBeLessThanOrEqual(since + 6000);
   });
 
+  test('history proven during the process probe is read before it counts', async () => {
+    const clock = fakeClock();
+    let coverage: 'pending' | 'covered' = 'pending';
+    let through = 0;
+    const records: NdjsonRecord[] = [];
+    const sleep = Object.assign(clock.sleep, {
+      coverage: () => coverage,
+      coverThrough: (at: number) => {
+        if (at > through) {
+          through = at;
+          coverage = 'pending';
+        }
+      },
+    });
+    let probes = 0;
+    const result = await verifyLaunch({
+      since,
+      platform: 'android',
+      timeoutMs: 8000,
+      now: clock.now,
+      sleep,
+      readRecords: () => metro('android').filter((r) => Number(r.ts) <= clock.at()),
+      readDeviceRecords: () => [...records],
+      readClientRecords: () => [],
+      processAlive: () => {
+        if (++probes === 2) {
+          records.push({
+            ...device('android', 2500, 'ReactHost{0}.getOrCreateReactInstanceTask(): Loading JS Bundle'),
+            proc: 'BridgelessReact(1)',
+          });
+          coverage = 'covered';
+        }
+        return true;
+      },
+    });
+    expect(probes).toBeGreaterThanOrEqual(2);
+    expect(result.verified).toBe(false);
+  });
+
   test('Android: a Running line from before the JavaScript bundle began loading is not evidence', async () => {
     const result = await run('android', {
       device: [
