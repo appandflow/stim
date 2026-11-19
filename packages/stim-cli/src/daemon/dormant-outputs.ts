@@ -132,11 +132,7 @@ async function reduceWorkspace(
   if (!input.act) {
     const bytes = [...sizes.values()].reduce((sum, size) => sum + size, 0);
     const detail = input.force ? 'stim gc would do this' : 'daemon.mode report acts on nothing';
-    const unknown = [...plan.targets].flatMap((output) => {
-      const left = targetEntries(output)?.kept ?? [];
-      return left.length ? [`kept in ${output}, not recognised as build output: ${left.join(', ')}`] : [];
-    });
-    return { outcome: 'would', bytes, detail: [detail, ...plan.kept, ...unknown].join('; ') };
+    return { outcome: 'would', bytes, detail: [detail, ...plan.kept].join('; ') };
   }
   const kept = [...plan.kept];
   const removed: string[] = [];
@@ -208,7 +204,7 @@ async function eligible(
     const target = targets.includes(output);
     const recent = target
       ? (recentTargetUse(output, Date.now(), afterMs) ??
-        (targetEntries(output)?.output.length ? null : 'nothing in it is build output Stim recognises'))
+        (targetEntries(output)?.output.length ? null : 'it holds nothing the dormant delete removes'))
       : null;
     if (recent) {
       plan.kept.push(`kept ${output}: ${recent}`);

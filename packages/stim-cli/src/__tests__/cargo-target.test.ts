@@ -426,7 +426,7 @@ describe.skipIf(process.platform === 'win32')(
     });
     const remove = () => deleteCargoTarget(dir, { idleMs: DAY, launching: noLaunchers(target) });
 
-    test('only what Cargo writes goes, after the move aside: baselines, a Solana keypair folder and an unknown folder stay', async () => {
+    test('everything goes after the move aside but a deploy/ folder holding a Solana keypair', async () => {
       for (const name of ['criterion', 'gungraun', 'iai']) {
         mkdirSync(join(dir, name, 'base'), { recursive: true });
         writeFileSync(join(dir, name, 'base', 'summary.json'), '{}');
@@ -442,12 +442,32 @@ describe.skipIf(process.platform === 'win32')(
 
       const result = await remove();
 
-      expect(result.removed.toSorted()).toEqual(['.rustc_info.json', 'debug', 'doc']);
-      const kept = ['.future-incompat-report.json', 'cargo-timings', 'criterion', 'deploy', 'gungraun', 'iai', 'notes'];
-      expect(result.kept).toEqual([`not recognised as build output: ${kept.join(', ')}`]);
-      expect(readdirSync(dir).toSorted()).toEqual(kept);
+      expect(result.removed.toSorted()).toEqual([
+        '.future-incompat-report.json',
+        '.rustc_info.json',
+        'cargo-timings',
+        'criterion',
+        'debug',
+        'doc',
+        'gungraun',
+        'iai',
+        'notes',
+      ]);
+      expect(result.kept).toEqual([]);
+      expect(readdirSync(dir)).toEqual(['deploy']);
       expect(readFileSync(join(dir, 'deploy', 'app-keypair.json'), 'utf8')).toBe('[1,2,3]');
-      expect(existsSync(join(dir, 'criterion', 'base', 'summary.json'))).toBe(true);
+      expect(readFileSync(join(dir, 'deploy', 'app.so'), 'utf8')).toBe('program');
+    });
+
+    test('a deploy/ folder without a keypair goes, and so does the emptied target/', async () => {
+      mkdirSync(join(dir, 'deploy'));
+      writeFileSync(join(dir, 'deploy', 'app.so'), 'program');
+      ageTree(dir);
+
+      const result = await remove();
+
+      expect(result.removed).toContain('deploy');
+      expect(existsSync(dir)).toBe(false);
     });
 
     test('a symbolic link named like a Cargo file stays, and so does what it points at', async () => {
@@ -574,7 +594,7 @@ describe.skipIf(process.platform === 'win32')(
         'a process uses',
       ],
       [
-        'a process holds a file in an entry that stays',
+        'a process holds a file in a folder the delete would remove',
         () => {
           mkdirSync(join(dir, 'notes'));
           writeFileSync(join(dir, 'notes', 'open.txt'), 'x');
@@ -584,7 +604,7 @@ describe.skipIf(process.platform === 'win32')(
         'a process uses',
       ],
       [
-        'a process opens a file in an entry that stays during the move',
+        "a process opens a file under a moved folder's original path during the move",
         () => {
           mkdirSync(join(dir, 'notes'));
           ageTree(dir);
@@ -736,7 +756,7 @@ describe.skipIf(process.platform === 'win32')(
     });
     const remove = () => deleteCargoTarget(dir, { idleMs: DAY, launching: noLaunchers(target) });
 
-    test('only its Cargo output goes when old; every folder Exact writes stays', async () => {
+    test('it goes whole when old: Exact folders, records and receipts included', async () => {
       mkdirSync(join(dir, 'traces'));
       writeFileSync(join(dir, 'traces', 'trace-1.json'), '{"session":1}');
       writeFileSync(join(dir, 'web-dist.json'), '{}');
@@ -752,26 +772,9 @@ describe.skipIf(process.platform === 'win32')(
 
       const result = await remove();
 
-      expect(result.removed).toEqual(['.rustc_info.json', 'debug']);
-      expect(readdirSync(dir).toSorted()).toEqual([
-        '.apple-cargo-locks',
-        '.exact-sweep.json',
-        '.exact-sweep.json.lock',
-        'apple-modules',
-        'apple-swift',
-        'bake',
-        'clients',
-        'push-ts-Xy9Z01',
-        'traces',
-        'web-check-AbC123',
-        'web-check-failure.json',
-        'web-dist.json',
-        'web-dist.previous',
-      ]);
-      expect(readFileSync(join(dir, 'traces', 'trace-1.json'), 'utf8')).toBe('{"session":1}');
-      expect(readFileSync(join(dir, 'web-dist.previous', 'notes.md'), 'utf8')).toBe('mine');
-      expect(readFileSync(join(dir, 'apple-modules', '.exact-sweep.json'), 'utf8')).toBe('{"units":{"debug#00":1}}');
-      expect(readFileSync(join(dir, 'clients', 'app', 'receipt.json'), 'utf8')).toBe('{"development":{"token":"abc"}}');
+      expect(result.kept).toEqual([]);
+      expect(result.removed).toEqual(expect.arrayContaining(['apple-modules', 'bake', 'clients', 'traces']));
+      expect(existsSync(dir)).toBe(false);
     });
 
     test.each([
@@ -800,13 +803,17 @@ describe.skipIf(process.platform === 'win32')(
       expect(result.kept).toContainEqual(expect.stringContaining(why));
       expect(existsSync(join(dir, 'clients', 'app', 'client.js'))).toBe(true);
     });
-    test('a held lock keeps the target and still names the entries that are not build output', async () => {
-      stubProcesses({ lsof: (args) => (args.at(-1)?.endsWith('libapp.lock.flock') ? '4242\n' : '') });
+    test('an Apple Cargo lock a build takes during the move puts everything back', async () => {
+      stubProcesses({
+        lsof: (args) =>
+          args.at(-1)?.includes('.stim-trimmed') && args.at(-1)?.endsWith('libapp.lock.flock') ? '4242\n' : '',
+      });
 
-      expect((await remove()).kept).toEqual([
-        'not recognised as build output: .apple-cargo-locks, .exact-sweep.json, .exact-sweep.json.lock, apple-swift, bake, clients',
-        expect.stringContaining('libapp.lock.flock'),
-      ]);
+      const result = await remove();
+
+      expect(result.kept).toEqual([expect.stringContaining('during the move')]);
+      expect(existsSync(lock)).toBe(true);
+      expect(existsSync(join(dir, 'clients', 'app', 'client.js'))).toBe(true);
     });
 
     test.skipIf(process.getuid?.() === 0)('it stays whole when an entry cannot be listed', async () => {

@@ -4,6 +4,7 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   readdirSync,
   realpathSync,
   rmSync,
@@ -296,21 +297,16 @@ describe.skipIf(process.platform === 'win32')(
       },
     );
 
-    test('a dry run names the entries of an idle target that are not build output, and gc keeps exactly those', async () => {
+    test('gc deletes all of an idle target but a deploy/ folder holding a Solana keypair', async () => {
       const root = onlyTarget(cargo('app', 'untagged'));
-      mkdirSync(join(root, 'target', 'criterion'));
-      writeFileSync(join(root, 'target', 'criterion', 'estimates.json'), '{}');
+      mkdirSync(join(root, 'target', 'deploy'));
+      writeFileSync(join(root, 'target', 'deploy', 'app-keypair.json'), '[1,2,3]');
       idleFor(3, root);
 
-      expect(await gc(false)).toEqual([
-        expect.objectContaining({
-          target: root,
-          outcome: 'would',
-          detail: expect.stringContaining('not recognised as build output: criterion'),
-        }),
-      ]);
+      expect(await gc(false)).toEqual([expect.objectContaining({ target: root, outcome: 'would' })]);
       expect(await gc()).toEqual([expect.objectContaining({ target: root, outcome: 'done' })]);
-      expect(readdirSync(join(root, 'target'))).toEqual(['criterion']);
+      expect(readdirSync(join(root, 'target'))).toEqual(['deploy']);
+      expect(readFileSync(join(root, 'target', 'deploy', 'app-keypair.json'), 'utf8')).toBe('[1,2,3]');
     });
 
     test.each([

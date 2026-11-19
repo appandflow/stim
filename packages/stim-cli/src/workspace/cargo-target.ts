@@ -26,53 +26,26 @@ const STRANDED = 'NOT-RESTORED';
 const CANNOT_READ = 'the files processes hold open or the executables on PATH cannot be read';
 const DEADLINE_KEPT = 'the rest was left at the build headroom deadline';
 const NOT_RESTORED = `${OWN_PREFIX}not-restored-`;
-/**
- * The entries Cargo itself creates at the top of a target besides its profile and target triple directories, per
- * rust-lang/cargo's `src/compiler/layout.rs`. Its saved build timings (`cargo-timings/`) and future-incompatibility
- * report (`.future-incompat-report.json`, which `cargo report` reads back) are records, not build output.
- */
-const CARGO_TOP_FILES = new Set(['.rustc_info.json', 'CACHEDIR.TAG', ...PROFILE_LOCKS]);
-const CARGO_TOP_DIRS = new Set(['doc', 'package', 'tmp', '.metabuild']);
-/** Whether `path` is a Cargo profile directory: one holding `.fingerprint/` or a lock file Cargo takes there. */
-function cargoProfile(path: string): boolean {
-  return fingerprintDir(path) || PROFILE_LOCKS.some((name) => existsSync(join(path, name)));
-}
+/** Solana's `cargo build-sbf` and Anchor keep each program's private key in `deploy/<program>-keypair.json`. */
+const KEYPAIR_DIR = 'deploy';
 
 /**
- * Whether the top-level entry `name` of `target` is Cargo build output: Cargo's own files and folders, a Cargo profile,
- * or a target triple directory holding only profiles, Cargo's files and `doc/`. A symbolic link never is: deleting
- * through it reaches what it points at.
- */
-function buildOutputEntry(target: string, name: string): boolean {
-  const path = join(target, name);
-  const stat = lstatSync(path, { throwIfNoEntry: false });
-  if (!stat || stat.isSymbolicLink()) return false;
-  if (!stat.isDirectory()) return CARGO_TOP_FILES.has(name);
-  if (CARGO_TOP_DIRS.has(name) || cargoProfile(path)) return true;
-  const inner = entriesOf(path);
-  return (
-    !!inner?.length &&
-    inner.some((entry) => entry.isDirectory() && cargoProfile(join(path, entry.name))) &&
-    inner.every((entry) =>
-      entry.isDirectory()
-        ? entry.name === 'doc' || cargoProfile(join(path, entry.name))
-        : CARGO_TRIPLE_FILES.has(entry.name),
-    )
-  );
-}
-
-/**
- * The top-level entries of `target` the dormant delete removes (`output`), and the rest, which it keeps (`kept`); Stim's
- * own `.stim-*` entries are in neither. Null when `target` cannot be listed.
+ * The top-level entries of `target` the dormant delete removes (`output`), and those it keeps (`kept`): a symbolic link,
+ * which a delete must not go through, and a `deploy/` directory holding a `*-keypair.json`. Stim's own `.stim-*`
+ * entries are in neither. Null when `target` cannot be listed.
  */
 export function targetEntries(target: string): { output: string[]; kept: string[] } | null {
   const entries = entriesOf(target);
   if (!entries) return null;
   const output: string[] = [];
   const kept: string[] = [];
-  for (const { name } of entries.toSorted((a, b) => a.name.localeCompare(b.name))) {
-    if (name.startsWith(OWN_PREFIX)) continue;
-    (buildOutputEntry(target, name) ? output : kept).push(name);
+  for (const entry of entries.toSorted((a, b) => a.name.localeCompare(b.name))) {
+    if (entry.name.startsWith(OWN_PREFIX)) continue;
+    const keypairs =
+      entry.name === KEYPAIR_DIR &&
+      entry.isDirectory() &&
+      (entriesOf(join(target, entry.name)) ?? []).some((inner) => inner.name.endsWith('-keypair.json'));
+    (entry.isSymbolicLink() || keypairs ? kept : output).push(entry.name);
   }
   return { output, kept };
 }
@@ -519,13 +492,13 @@ function recentEntryUse(path: string, name: string, now: number, idleMs: number)
 }
 
 /**
- * Deletes the top-level entries of `target` that are Cargo build output (`targetEntries`) under its trim claim, and
- * keeps every other entry, once it is still a Cargo `target/` Stim recognises, holds no copy a trim could not put
- * back, shows no use within `idleMs` (`recentTargetUse`), has no other filesystem mounted inside, no process uses any
- * path in it and no build holds a Cargo lock file or an Exact lock file in it. Each Cargo entry is renamed into
- * `target/.stim-trimmed`, its locks are read again at the new path, and once all are moved the processes are read
- * again: a lock taken or any path in the target used meanwhile puts every entry back. The moved entries are then
- * deleted without crossing into another filesystem, and the `target/` goes too when nothing is left in it.
+ * Deletes `target` under its trim claim, every top-level entry but a Solana keypair folder and a symbolic link
+ * (`targetEntries`), once it is still a Cargo `target/` Stim recognises, holds no copy a trim could not put back, shows
+ * no use within `idleMs` (`recentTargetUse`), has no other filesystem mounted inside, no process uses any path in it
+ * and no build holds a Cargo or Exact lock file in it. Each entry is renamed into `target/.stim-trimmed`, its locks are
+ * read again at the new path, and once all are moved the processes are read again: a lock taken or any path in the
+ * target used meanwhile puts every entry back. The moved entries are then deleted without crossing into another
+ * filesystem, and the `target/` goes too when nothing is left in it.
  */
 export async function deleteCargoTarget(registeredTarget: string, options: DeleteOptions): Promise<CargoTrimResult> {
   const claimed = await withTrimClaim(registeredTarget, async (target): Promise<CargoTrimResult> =>
@@ -583,9 +556,8 @@ async function deleteClaimed(
   if (leftover.length) return keep(`${leftover[0]} is another filesystem`);
   const entries = targetEntries(target);
   if (!entries) return keep(`${target} cannot be listed`);
-  // @ref LLP 0005#the-dormant-reduction-deletes-an-idle-target-whole -- only entries Stim knows as build output go
+  // @ref LLP 0005#the-dormant-reduction-deletes-an-idle-target-whole -- everything goes but a Solana keypair folder
   const names = entries.output;
-  if (entries.kept.length) result.kept.push(`not recognised as build output: ${entries.kept.join(', ')}`);
   if (!names.length) return result;
   const mount = await otherDevice(
     names.map((name) => join(target, name)),
@@ -598,7 +570,7 @@ async function deleteClaimed(
   for (const name of names) {
     signal?.throwIfAborted();
     const dir = join(target, name);
-    const held = await heldLock(dir, signal);
+    const held = await heldLock(dir, name, signal);
     if (held) return keep(`a build holds ${held}`);
   }
   const exactHeld = await heldExactLock(target, signal);
@@ -640,7 +612,7 @@ async function deleteClaimed(
         continue;
       }
       moved.push(entry);
-      const took = await heldLock(entry.there);
+      const took = await heldLock(entry.there, name);
       if (took) return await putBackAll(`a build took ${took} during the move`);
     }
     const exactTook = await heldExactLock(target);
@@ -684,12 +656,16 @@ function exactLockFiles(path: string, name: string): string[] {
   return files;
 }
 
-/** The Cargo lock a build holds in the top-level entry at `path` or a directory directly in it. */
-async function heldLock(path: string, signal?: AbortSignal): Promise<string | null> {
+/**
+ * The lock a build holds in the top-level entry `name` at `path`: a Cargo lock in it or a directory directly in it, or
+ * one of Exact's lock files.
+ */
+async function heldLock(path: string, name: string, signal?: AbortSignal): Promise<string | null> {
   for (const dir of [path, ...(await childProfiles(path))]) {
     const held = await lockOutcome(dir, signal);
     if (lockHeld(held)) return join(dir, held.file ?? '.cargo-lock');
   }
+  for (const file of exactLockFiles(path, name)) if (await fileHeld(file, signal)) return file;
   return null;
 }
 
