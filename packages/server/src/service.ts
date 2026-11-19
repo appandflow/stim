@@ -32,6 +32,8 @@ import {
   DEFAULT_PORT,
   validateLabel,
   normalizeEnv,
+  serviceInstallCommand,
+  staleLaunchAgent,
   ServiceError,
   type InstalledService,
   type ServeRecord,
@@ -463,6 +465,37 @@ export async function rewriteUnitToShim(label: string): Promise<boolean> {
   return changed;
 }
 
+/**
+ * Why the LaunchAgent `installed` describes is stale (`staleLaunchAgent`), with the install that writes and loads it
+ * again; null when it is current or the service is not a LaunchAgent. Reads only.
+ */
+async function launchdStale(
+  installed: InstalledService,
+  job?: ServiceJob | null,
+): Promise<{ reason: string; remedy: string } | null> {
+  if (serviceManager().name !== 'launchd') return null;
+  const loadedJob = job === undefined ? await loaded(installed.label) : job;
+  const reason = staleLaunchAgent(installed, loadedJob?.arguments ?? null, unitShim());
+  if (!reason) return null;
+  const fill = installed.env.length ? ', with each <value> set to what the service sets now' : '';
+  return { reason, remedy: `run \`${serviceInstallCommand(installed)}\` once when no build runs${fill}` };
+}
+
+/** Whether `previous` runs `script` with the port, launcher and options `spec` names. */
+function sameOptions(
+  previous: InstalledService | null,
+  spec: ServiceSpec,
+  script: string,
+): previous is InstalledService {
+  return (
+    previous?.script === script &&
+    previous.port === spec.port &&
+    previous.host === spec.host &&
+    JSON.stringify(normalizeEnv(previous.env)) === JSON.stringify(normalizeEnv(spec.env)) &&
+    JSON.stringify(previous.pathPrepend) === JSON.stringify(spec.pathPrepend)
+  );
+}
+
 /** The server directory of the Stim home a service runs with `STIM_HOME` set to `stimHome`. */
 function serviceServerDir(stimHome: string | null | undefined): string {
   return join(stimHome || join(homedir(), '.stim'), 'server');
@@ -512,14 +545,7 @@ export async function installJob(
   const path = plistPath(options.label);
   const { findTailscale, serveCommand } = await tailscalePackage();
   const tailscale = findTailscale(process.env) ?? 'tailscale';
-  if (
-    setup &&
-    previous?.script === (stimd ?? script) &&
-    previous.port === options.port &&
-    previous.host === spec.host &&
-    JSON.stringify(normalizeEnv(previous.env)) === JSON.stringify(normalizeEnv(spec.env)) &&
-    JSON.stringify(previous.pathPrepend) === JSON.stringify(spec.pathPrepend)
-  ) {
+  if (setup && sameOptions(previous, spec, stimd ?? script) && !(await launchdStale(previous))) {
     const health = await fetchHealth(options.port);
     if (health && health.startup?.state !== 'pending' && health.startup?.state !== 'degraded') {
       return [`${options.label} already runs stim-server ${health.version}.`];
@@ -724,6 +750,8 @@ export interface ServiceStatus {
    * build's launcher, null without an engine store or when it names a copy outside it.
    */
   followsEngine: boolean | null;
+  /** Why the LaunchAgent does not run what `stim service install` writes now, and the install that fixes it; null otherwise. */
+  stale: { reason: string; remedy: string } | null;
   /** Whether systemd keeps this user's services running without a login; null under launchd. */
   linger: boolean | null;
 }
@@ -837,6 +865,7 @@ export async function serviceStatus(label: string): Promise<ServiceStatus> {
     stimBuild: { service, cli, match: service && cli ? service === cli : null },
     stimd: installed ? homeStimd(home) : null,
     followsEngine: installed?.script ? followsEngine(installed.script) : null,
+    stale: installed ? await launchdStale(installed, job) : null,
     linger: await manager.linger(),
   };
 }
@@ -958,6 +987,7 @@ export function statusLines(status: ServiceStatus, panes: { screen: string; cont
     lines.push(
       '  engine: the unit starts one engine build, not the engine shim, so it restarts that build after every engine switch; run `stim service install` again',
     );
+  if (status.stale) lines.push(`  stale: ${status.stale.reason}; ${status.stale.remedy}`);
   lines.push(`  log: ${status.logPath}`);
   if (status.pathPrepend.length) lines.push(`  path-prepend: ${status.pathPrepend.join(delimiter)}`);
   if (status.envNames.length) lines.push(`  env: ${status.envNames.join(', ')}`);

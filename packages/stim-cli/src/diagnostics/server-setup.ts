@@ -1,5 +1,6 @@
 import { DESKTOP_API } from '@stim-cli/core/protocol';
 import { UPGRADE_GUIDE_URL, type InstalledService, type LaunchdJob, type UnitJob } from '@stim-cli/core/state';
+import { serviceInstallCommand } from '@stim-cli/server/service-plist';
 import type { Finding } from './doctor.ts';
 import { compareStimVersions } from './stim-installations.ts';
 
@@ -8,6 +9,7 @@ export const SERVER_FINDING_CODES = [
   'server-multiple',
   'server-service-crash',
   'server-service-override',
+  'server-service-stale',
   'server-desktop-authority',
   'server-version',
   'server-home',
@@ -66,6 +68,8 @@ export interface InstalledServerService {
   job: LaunchdJob | UnitJob | null;
   /** The systemd drop-in that sets `ExecStart=`, which the unit's own command never runs under. */
   override?: string | undefined;
+  /** Why the LaunchAgent does not run what `stim service install` writes now (`staleLaunchAgent`). */
+  stale?: string | null;
 }
 
 export interface ServerReading extends ServerProcess {
@@ -302,9 +306,24 @@ function overrideFindings(service: InstalledServerService): Finding[] {
   ];
 }
 
+function staleFindings(service: InstalledServerService): Finding[] {
+  if (!service.stale) return [];
+  const fill = service.installed.env.length ? ', with each <value> set to what the service sets now' : '';
+  return [
+    {
+      code: 'server-service-stale',
+      level: 'note',
+      title: `The ${service.label} service does not run what \`stim service install\` writes now`,
+      detail: `${service.stale[0]?.toUpperCase()}${service.stale.slice(1)}.`,
+      fix: `Run \`${serviceInstallCommand(service.installed)}\` once when no build runs${fill}.`,
+    },
+  ];
+}
+
 function serviceStateFindings(setup: ServerSetup): Finding[] {
   return setup.services.flatMap((service): Finding[] => [
     ...overrideFindings(service),
+    ...staleFindings(service),
     ...crashFindings(setup, service),
   ]);
 }

@@ -329,6 +329,18 @@ describe.skipIf(process.platform !== 'darwin')('service lifecycle', () => {
     ).toEqual(['ANDROID_HOME=/sdk']);
   });
 
+  it('setup installs again instead of reporting it already runs when the plist has a stale ProcessType', async () => {
+    const options = { label, port: launchd.port, env: [], pathPrepend: [], serve: false };
+    const setup = { script: process.argv[1] ?? '', host: null, requestPermissions: false as const };
+    await finish(installJob(options, setup));
+    const bootstraps = launchd.bootstraps.length;
+    expect((await finish(installJob(options, setup)))[0]).toMatch(/already runs/);
+    execFileSync('plutil', ['-replace', 'ProcessType', '-string', 'Background', plist]);
+    launchd.job = 'old';
+    expect((await finish(installJob(options, setup)))[0]).not.toMatch(/already runs/);
+    expect(launchd.bootstraps).toHaveLength(bootstraps + 1);
+  });
+
   const installedPlist = () =>
     parseInstalledPlist(
       JSON.parse(execFileSync('plutil', ['-convert', 'json', '-o', '-', plist], { encoding: 'utf8' })),

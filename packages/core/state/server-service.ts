@@ -26,6 +26,8 @@ export interface InstalledService {
   /** The server script the job ran before `service update` or `service rollback` switched it. */
   previousScript: string | null;
   programArguments: string[];
+  /** A LaunchAgent's `ProcessType`, null when it sets none; absent for other units. */
+  processType?: string | null;
 }
 
 function strings(value: unknown): string[] {
@@ -96,7 +98,7 @@ export function installedService(job: JobFields): InstalledService {
 export function parseInstalledPlist(value: unknown): InstalledService | null {
   if (!isJsonObject(value) || typeof value.Label !== 'string') return null;
   const meta = isJsonObject(value.StimService) ? value.StimService : {};
-  return installedService({
+  const service = installedService({
     label: value.Label,
     programArguments: strings(value.ProgramArguments),
     environment: isJsonObject(value.EnvironmentVariables) ? value.EnvironmentVariables : {},
@@ -106,6 +108,7 @@ export function parseInstalledPlist(value: unknown): InstalledService | null {
     serveCreated: meta.ServeCreated === true,
     previousScript: meta.PreviousScript,
   });
+  return { ...service, processType: typeof value.ProcessType === 'string' ? value.ProcessType : null };
 }
 
 export interface LaunchdJob {
@@ -113,6 +116,8 @@ export interface LaunchdJob {
   pid: number | null;
   runs: number | null;
   lastExitCode: string | null;
+  /** The program arguments of the definition launchd loaded at bootstrap, one per line of the `arguments` block. */
+  arguments: string[] | null;
 }
 
 /** Reads the top-level fields of `launchctl print gui/<uid>/<label>`; nested `state =` lines are indented further. */
@@ -127,6 +132,12 @@ export function parseLaunchctlPrint(output: string): LaunchdJob {
     pid: number('pid'),
     runs: number('runs'),
     lastExitCode: field('last exit code'),
+    arguments:
+      /^\targuments = \{\n((?:\t\t.*\n)*)\t\}$/m
+        .exec(output)?.[1]
+        ?.split('\n')
+        .slice(0, -1)
+        .map((line) => line.slice(2)) ?? null,
   };
 }
 

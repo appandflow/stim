@@ -14,6 +14,7 @@ import { homedir, userInfo } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { configDir, dropInExecStart } from '@stim-cli/core';
+import { staleLaunchAgent } from '@stim-cli/server/service-plist';
 import {
   isJsonObject,
   parseInstalledPlist,
@@ -30,6 +31,7 @@ import {
   type InstalledService,
 } from '@stim-cli/core/state';
 import { androidHome, avdStorageRoots } from '../devices/android.ts';
+import { engineRoot } from '../engine-store/store.ts';
 import { getExecutor } from '../exec.ts';
 import { readLocalHello, readWebShares } from '../local-server.ts';
 import { localMachineName } from '../offload/diagnosis.ts';
@@ -96,11 +98,14 @@ async function readLaunchdServices(): Promise<InstalledServerService[]> {
         ['print', `gui/${process.getuid?.() ?? 501}/${installed.label}`],
         { timeoutMs: PROBE_TIMEOUT_MS },
       );
+      const job = printed === null ? null : parseLaunchctlPrint(printed);
+      const shim = join(engineRoot(process.env), 'bin', 'stimd');
       return {
         manager: 'launchd',
         label: installed.label,
         installed,
-        job: printed === null ? null : parseLaunchctlPrint(printed),
+        job,
+        stale: staleLaunchAgent(installed, job?.arguments ?? null, existsSync(shim) ? shim : null),
       };
     }),
   );
