@@ -370,7 +370,8 @@ Ask the user before these actions:
   idle.dormantDays (1) holds that regenerates: build outputs, owned devices,
   and in a linked worktree node_modules and ios/Pods (worktree warm restores
   them). Above normal it runs the pressure ladder: at high every workspace
-  idle 2 minutes or more goes idle (stim revive resumes it), parked devices
+  idle 2 minutes or more goes idle under memory pressure (stim revive
+  resumes it), parked devices
   are deleted, shared caches are trimmed, and workspaces idle 10 minutes or
   more go dormant, losing their owned devices, and linked worktrees idle an
   hour lose node_modules and Pods. At critical it also empties every shared

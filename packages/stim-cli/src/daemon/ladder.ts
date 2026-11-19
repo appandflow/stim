@@ -1087,9 +1087,9 @@ const RUNG_ACTS: Record<Rung, (context: RungContext, causes: Cause[]) => Promise
 };
 
 /**
- * The pressure ladder after the activity pass, whose idle stage at 2 minutes is rung 1: rungs 1 to 8 top-down while
- * the level stays above normal, each measuring again before it acts and running only for the causes it relieves (a
- * memory level runs the Gradle daemons of rung 6; the devices of rung 1 are the activity pass's). Each rung skips
+ * The pressure ladder after the activity pass, whose idle stage at 2 minutes under memory pressure is rung 1: rungs 1
+ * to 8 top-down while the level stays above normal, each measuring again before it acts and running only for the
+ * causes it relieves (a memory level runs the Gradle daemons of rung 6; the devices of rung 1 are the activity pass's). Each rung skips
  * every workspace with a blocker and takes the longest-idle first. Returns the actions and the last measurement.
  */
 export async function runLadder(

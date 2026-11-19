@@ -509,8 +509,8 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
             simulator runtimes, finished linked worktrees past
             gc.worktreeGraceMinutes
   high      plus the pressure ladder at high (\`guide lifecycle budget\`):
-            idle stage at 2 minutes, parked devices until the level clears,
-            shared caches trimmed to half their caps, the dormant stage and
+            idle stage at 2 minutes (memory pressure), parked devices until
+            the level clears, shared caches trimmed to half their caps, the dormant stage and
             node_modules and Pods of idle linked worktrees at 10 minutes, idle
             daemons, clean finished worktrees without the grace period, and,
             while free disk stays under disk.minFreeGb, other tools' caches
@@ -566,7 +566,7 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
     dormant reduction, N. Kept: source checkout, under 256 MB of its own (a
     copy-on-write clone), in use, a running process inside, pinned.
   Idle dev servers and their outputs (idle 2 minutes)
-    idle stage and rung 1, H. Kept: as above; rung 1 keeps a Cargo target/
+    idle stage (memory pressure) and rung 1, H. Kept: as above; rung 1 keeps a Cargo target/
     for rung 3.
   Parked devices
     rung 2, H until the level clears, C all.
@@ -1122,6 +1122,7 @@ THE PRESSURE LADDER
   rung to its end:
     0  booted parked simulators
     1  idle outputs: the idle stage for every workspace idle 2 minutes or more
+       under memory pressure (at idle.minutes under disk pressure alone)
     2  parked devices (high until the level clears, critical all)
     3  shared caches: trimmed to half their caps at high; at critical emptied
        (compilation cache, ccache, build cache except entries in use, Metro
@@ -1876,7 +1877,7 @@ WORKSPACE BUILD OUTPUTS
   other macOS files, locks and device records stay. The workspace keeps its
   devices, ports and running dev server. The pressure ladder's idle stage
   (stim guide lifecycle budget) clears them for a workspace idle 2 minutes
-  under disk pressure. A running, building, unverified or hosted macOS app
+  under memory pressure. A running, building, unverified or hosted macOS app
   keeps its workspace untouched.
   Last use is the newest of the lastUsedAt that start, ios, android, reload,
   logs and worktree warm record in state.json, lastBuild.startedAt,

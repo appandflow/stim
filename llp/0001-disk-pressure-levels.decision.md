@@ -142,9 +142,10 @@ versions, TMPDIR leftovers and trash. A dormant workspace is taken only when
 its Stim workspace folder, whose logs it archives, or an owned device's data
 lies on such a volume, and loses only the devices there. Rung 8 and rung 9 take an item only on a volume
 under the critical level (LLP 0003). Under pressure from disk alone, the
-activity pass gives the 2-minute idle threshold only to a workspace with its
-checkout or Stim workspace folder on such a volume and deletes only its outputs
-there; memory pressure idles every workspace. The ladder a build runs for its
+activity pass, which then stops a workspace at `idle.minutes`, deletes only
+the outputs on such a volume of a workspace with its checkout or Stim
+workspace folder there, and all outputs of any other; memory pressure idles
+every workspace and deletes all its outputs. The ladder a build runs for its
 headroom (LLP 0006) plans its Cargo trim at high and treats only the build's
 volume as short. The Gradle, Kotlin and watchman stops relieve memory and are
 not gated. `stim gc --pressure` treats every volume as short; `stim gc` at the
@@ -157,6 +158,36 @@ internal disk, and the level never cleared (#5877).
 
 Chosen by the 2.0 reliability review and the fix for #5877, not by the
 maintainer, following the reason LLP 0003 gives for rung 9.
+
+## The 2-minute idle stop is for memory
+
+The idle stage stops a workspace's dev server and shuts down its owned devices
+after 2 minutes without activity, instead of `idle.minutes`, only while the
+memory level is high or critical. Disk pressure alone leaves the idle stage at
+`idle.minutes`, in the stim-daemon and in `stim gc`, a forced `--pressure` run
+included: the 2-minute stop needs memory measured above normal, and otherwise
+the idle pass still runs at `idle.minutes`.
+
+- Disk pressure keeps the 10-minute activity window of an agent-device command,
+  in the stim-daemon and a measured `stim gc` for a workspace on a short
+  volume, in a forced `--pressure` run for every workspace. Only the threshold
+  for other inactivity stays `idle.minutes`.
+- The ladder's rungs keep needing nothing of a workspace running. Under disk
+  pressure alone a running workspace reaches them once the idle stage has
+  stopped it at `idle.minutes`.
+- Memory pressure keeps the 2-minute idle stage, rung 0, the end of deferred
+  shutdowns and of the booted grace.
+
+Reason: a stop frees memory, not disk. Over three days on the maintainer's
+MacBook, 50 stops ran on the 2-minute clock, all from disk pressure alone; 31
+freed nothing, 3 freed build outputs whose deletion did not need the stop, and
+16 let a later rung delete the simulator a few minutes before the 15-minute
+stop would have (#5998).
+
+Maintainer decision: "I feel like we maybe too agressively stop metro / sims
+on low disk, those are more RAM based I think no? Unless we need to stop the
+worktree in order to free disk space maybe we should only stop fast on low
+RAM?", then "lets do all 4", 2026-11-19.
 
 ## The folders a build wrote are measured by the daemon
 
@@ -385,7 +416,7 @@ implementer of #5942 and its reviews, not by the maintainer.
 
 ## Links
 
-- Issues: #5492, #5512, #5524, #5877, #5933, #5942. Pull requests: #5514, #5540.
+- Issues: #5492, #5512, #5524, #5877, #5933, #5942, #5998. Pull requests: #5514, #5540.
 - Code: `packages/stim-cli/src/policy/checkout-order.ts`,
   `packages/stim-cli/src/workspace/source-dependencies.ts`,
   `packages/stim-cli/src/stimd/passes/artifacts.ts`,
