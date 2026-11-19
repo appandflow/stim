@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { rmSync } from 'node:fs';
-import { stat } from 'node:fs/promises';
+import { lstat } from 'node:fs/promises';
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import type { StimContext } from '@stim-cli/core';
 import {
@@ -30,6 +30,7 @@ import { hardLinkSample } from '../link-sample.ts';
 import { workspaceKeys } from '../workspace/lightened.ts';
 import { freshLaunchers } from '../workspace/launchers.ts';
 import { workspaceDir } from '../workspace/paths.ts';
+import { checkoutRoleOf } from '../workspace/checkout-role.ts';
 import { answered, hungRead, Unanswered } from '../workspace/bounded-read.ts';
 import { buildOutputDirs, dependencyTreeSignature } from '../workspace/discovery-census.ts';
 import { ARTIFACT_DIRS } from '../workspace/regenerable-dirs.ts';
@@ -573,28 +574,31 @@ export async function runDormantDependencies(
 }
 
 /**
- * Whether a discovered checkout holds a `node_modules` or `ios/Pods`, each probe bounded like the launcher readings by
- * `answered`; false, for this pass, when one does not answer or another read is pending.
+ * Whether a discovered source checkout holds a `node_modules` or `ios/Pods` the source collection could take: a real
+ * directory, never followed through a link (the collection keeps a linked tree). Each probe is one `lstat` bounded like
+ * the launcher readings by `answered`; 'unanswered' when one does not answer or another read is pending. A linked
+ * worktree is answered false before any dependency read, since the source collection skips linked worktrees.
  */
-async function holdsDependencyTrees(path: string, signal?: AbortSignal): Promise<boolean> {
+async function sourceTreesOf(path: string, operation?: StimContext): Promise<boolean | 'unanswered'> {
+  if ((await checkoutRoleOf(path, operation)) !== 'source') return false;
   try {
     for (const dir of ARTIFACT_DIRS.dependencies) {
       const target = join(path, dir);
       const found = await answered(
         target,
         () =>
-          stat(target).then(
-            () => true,
+          lstat(target).then(
+            (entry) => entry.isDirectory(),
             () => false,
           ),
         PROBE_TIMEOUT_MS,
-        signal,
+        operation?.signal,
       );
       if (found) return true;
     }
     return false;
   } catch (error) {
-    if (error instanceof Unanswered) return false;
+    if (error instanceof Unanswered) return 'unanswered';
     throw error;
   }
 }
@@ -615,7 +619,12 @@ async function takeIdleDependencies(
           full: true,
           setting: 'idle.sourceDormantDays',
           onKept: (path, reason) => keeps.set(canonicalOrNull(path) ?? path, reason),
-          reclaimable: (path) => holdsDependencyTrees(path, input.operation?.signal),
+          reclaimable: async (path) => {
+            const trees = await sourceTreesOf(path, input.operation);
+            if (trees === 'unanswered')
+              keeps.set(canonicalOrNull(path) ?? path, 'its node_modules or ios/Pods did not answer this pass');
+            return trees === true;
+          },
         }
       : {},
   );

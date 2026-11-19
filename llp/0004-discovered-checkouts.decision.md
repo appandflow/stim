@@ -510,10 +510,13 @@ A scan that reports unknown is the whole evidence: no further read of that
 checkout (its `.git`, git activity, launchers) starts.
 
 The hourly pass over source checkouts' dependencies (`idle.sourceDormantDays`)
-walks a discovered checkout only when it holds a `node_modules` or an `ios/Pods`.
-Each of those two probes is bounded like the launcher readings (3 seconds,
-through `answered`), and a checkout whose probe does not answer is left out for
-that pass; deletion still rechecks idleness first. The pass over linked
+walks a discovered checkout only when it is a source checkout (a linked worktree
+is left out before any dependency read, as the source collection skips it) and
+holds a `node_modules` or an `ios/Pods` that is a real directory, not a link,
+which the source collection would keep. Each of those two probes is one `lstat`
+bounded like the launcher readings (3 seconds, through `answered`); a checkout
+whose probe does not answer is left out for that pass, and its trees are listed
+as kept with that reason. Deletion still rechecks idleness first. The pass over linked
 worktrees' dependencies and every checkout's build outputs (`idle.dormantDays`)
 reads every discovered checkout before it lists what it would reclaim, so a
 large idle checkout costs one full walk there each hourly pass, even with
