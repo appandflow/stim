@@ -88,7 +88,8 @@ RUNNERS THAT REAP BACKGROUND PROCESSES, for the user-systemd service recipe.
 
 For a project using EAS development builds, read stim guide lifecycle eas
 before building: it covers choosing a profile and the approval a billable
-build needs.
+build needs. Ask the user before registering a device with npx eas-cli
+device:create.
 
 To learn whether the next build is a cache hit and how long it should take,
 without building, run stim ios --plan (or stim android --plan); see stim guide
@@ -239,8 +240,8 @@ Expo, the directory whose package.json depends on react-native or expo):
 - A run leases the phone; Stim never boots, shuts down or deletes it. stop
   releases the lease and, on an iPhone, closes the app.
 - Refusals for pairing, Developer Mode, trust taps, signing and Wi-Fi timeouts
-  print their fix. Never run stim device provision ios without the user's
-  go-ahead: it changes the Apple Developer account.
+  print their fix. Ask the user before stim device provision ios or
+  npx eas-cli device:create: both change the Apple Developer account.
 - Builds, signing and the device cache: stim guide lifecycle devices.`,
     },
     device: {

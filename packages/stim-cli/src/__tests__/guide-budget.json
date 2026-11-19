@@ -20,11 +20,11 @@
     "macos": 35750
   },
   "sections": {
-    "agent react-native": 8000,
+    "agent react-native": 8050,
     "agent device": 3750,
     "agent ownership": 5500,
     "agent report": 1500,
-    "agent logs": 1000,
+    "agent logs": 1050,
     "agent phone": 1000,
     "facts payloads": 37250,
     "facts gc": 26050,
