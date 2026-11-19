@@ -38,7 +38,7 @@
     "lifecycle budget": 17650,
     "lifecycle options": 25000,
     "lifecycle devices": 11000,
-    "cleanup gc": 72950,
+    "cleanup gc": 73300,
     "cleanup disk": 16250
   }
 }

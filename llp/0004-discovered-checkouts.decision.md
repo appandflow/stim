@@ -15,7 +15,8 @@ projects (`git worktree list`), direct children of the folders that hold
 registered checkouts, and direct children of the folders in
 `maintenance.discoverRoots`. A child counts only when Stim's project detection
 recognises it, itself or through a direct child of its `apps`, `examples` or
-`packages` folder. Discovery registers nothing, writes nothing, recomputes each
+`packages` folder, or as a plain Node checkout for one rule only (see "Plain Node
+checkouts"). Discovery registers nothing, writes nothing, recomputes each
 run and never runs `git fetch`. Two more sources, the common tool folders and the
 full scan (see "Tool folders and the full scan"), add checkouts that are only
 reduced.
@@ -505,11 +506,14 @@ registered worktree does, at every pressure level, critical included:
   discovered one gets no such exclusion;
 - no tracked file marked `assume-unchanged`, or `skip-worktree` with the file
   on disk;
+- no entry in `node_modules/.pnpm_patches`, where `pnpm patch` keeps an edit until
+  `pnpm patch-commit`;
 - every git-ignored file present byte for byte in the main checkout, except
   inside directories git ignores that are named like build output or
   `node_modules`;
-- not inside a dot-folder of its main checkout other than `.worktrees`, such
-  as `.claude/worktrees`, which another tool manages.
+- not inside a dot-folder other than `.worktrees`, such as `.claude/worktrees`,
+  which another tool manages, of its main checkout or of the nearest checkout that
+  holds it (a worktree inside the main checkout).
 
 A dirty discovered worktree is kept, never archived. A checkout whose source
 scan exceeds its bound is never reduced and is listed under "Needs a person".
@@ -521,6 +525,53 @@ person's work: a hand-written `.env`, a project file edited by hand, an edit
 hidden from `git status`.
 
 Chosen by the coordinator and the reviews of #5519, not by the maintainer.
+
+## Plain Node checkouts
+
+Maintainer decision, 2026-11-19 (#5957), verbatim: "Could stim support cleaning
+up these create app kind or projects, i guess just node, like have very basic
+support so we can cleanup their deps / finished worktrees"
+
+A sibling or `maintenance.discoverRoots` child that project detection does not
+recognise is a plain Node checkout when it has a `.git` entry and a regular
+`package.json` at its own root (two `lstat`s; packages inside a monorepo are never
+children). The linked worktrees of its repository are plain Node checkouts too,
+unless an app child or a registered project leads to the same repository, which
+keeps the full rules.
+
+One rule applies: finished linked worktree removal (`collectWorktreeSweep`, which
+`stim gc` and rung 7 run), with the evidence and keeps of every discovered worktree,
+the extra evidence of the section above included. Discovery returns only those
+linked worktrees, and only to that check (`nodeWorktrees`). Nothing else of theirs
+is touched: no `node_modules`, build or `dist` output, Cargo target, device, Metro or
+log, and their main checkouts are never acted on. `stim gc --dry-run` lists the
+worktrees with the removal verdict, not among the discovered checkouts. The full scan
+does not look for them (it still stops only at an app project), the census ignores
+them when deciding what another route covers, and their worktrees outside the
+managed folders are not listed as outside. A Node worktree the full scan also found
+as an app stays that scan find, reduce-only, as before; one that holds a scan find is
+kept by the finished-worktree check, which treats the worktree as reduce-only. So is a
+Node worktree that is or holds a scan find whose revalidation did not settle.
+
+Dormant `node_modules` reduction, the other half of the request, is not done here:
+the review of #5969 found that the linked-worktree route skips the regenerable-folder
+check, and that deleting a source checkout's `node_modules` can break a sibling
+worktree whose `node_modules` links into it. It waits for a follow-up issue.
+
+Cost, measured 2026-11-19 on the maintainer's MacBook with `~/Developer` (131
+folders) as the folder holding a registered checkout, in a scratch Stim home, two
+runs each: discovery found 32 plain Node checkouts and ran 41 git processes instead
+of 60, because a child that is a worktree of a repository already read is no longer
+read again; the finished-worktree check inspected 23 more worktrees (111 instead
+of 88) and ran about 2,050 git processes instead of 1,550, about 21 per worktree,
+in 32 and 35 seconds against 33 and 26 before, within run-to-run noise on a loaded
+machine. In that run, 20 of the 23 `appandflow-create-app-*` worktrees had no keep
+reason without a fetch or a pull request lookup, and 3 were kept for a git index
+write half an hour old.
+
+Chosen by the implementing lane and the coordinator, not by the maintainer: the
+recognition rule, leaving out the dependency rule, and leaving the scan and the
+listing unchanged.
 
 ## Known limits of the listing
 
@@ -648,7 +699,7 @@ level short, as for every other keep reason.
 
 ## Links
 
-- Issues: #5512, #5515, #5757, #5762, #5765, #5775, #5896. Pull request: #5519.
+- Issues: #5512, #5515, #5757, #5762, #5765, #5775, #5896, #5957. Pull request: #5519.
 - Code: `packages/stim-cli/src/workspace/discovery.ts`,
   `packages/stim-cli/src/workspace/discovery-scan.ts`,
   `packages/stim-cli/src/workspace/discovery-census.ts`,
