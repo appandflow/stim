@@ -795,11 +795,12 @@ const SAFE_BRANCH_NAME = /^[A-Za-z0-9@._/-]+$/;
 export async function unpushedCommitsAsync(
   dir: string,
   options: AsyncReadOptions = {},
-  status?: BranchStatus,
+  read?: BranchStatus,
 ): Promise<string[] | null> {
+  const status = read?.branch ? read : undefined;
   const ref = status ? null : await removalCheckAsync(dir, ['symbolic-ref', '--quiet', 'HEAD'], options);
   const own = status
-    ? (status.branch ?? '')
+    ? status.branch
     : ref?.trim().startsWith('refs/heads/')
       ? ref.trim().slice('refs/heads/'.length)
       : '';
