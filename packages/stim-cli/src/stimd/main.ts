@@ -1403,7 +1403,10 @@ async function runStimdInner(
     const leftAt = Date.now();
     if (job) {
       leaveToJob(job, leftAt, null, log);
-      process.once('exit', () => writeJobRestart({ at: leftAt, pid: process.pid, label: job, left: Date.now() }));
+      process.once('exit', () => {
+        if (readJobRestart()?.pid === process.pid)
+          writeJobRestart({ at: leftAt, pid: process.pid, label: job, left: Date.now() });
+      });
     }
     switchedTo = next;
     const changed = `${JSON.stringify({ op: 'engine-changed', ...next, pid: process.pid })}\n`;

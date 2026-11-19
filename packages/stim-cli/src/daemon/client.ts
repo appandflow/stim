@@ -950,11 +950,11 @@ function jobRestartWaitMs(): number {
  * Waits while `run/job-restart.json` holds this home for a service unit's job, which removes it once its stimd has
  * started, so a command neither starts a stimd only to wait behind the job's restart nor asks the one that is leaving.
  */
-export async function awaitJobRestart(signal?: AbortSignal, home?: string, untilHeld = true): Promise<void> {
+export async function awaitJobRestart(signal?: AbortSignal, home?: string): Promise<void> {
   for (let said = false; ; said = true) {
     const hold = jobRestartHold(home);
     if (!hold || Date.now() >= hold.until || signal?.aborted) return;
-    if (untilHeld && crashLoop(readStimdBoots(home), stimdBuildId(), Date.now())) return;
+    if (crashLoop(readStimdBoots(home), stimdBuildId(), Date.now())) return;
     if (!said) console.error(`Stim: waiting for the ${hold.record.label} service to start stimd again`);
     await new Promise((done) => setTimeout(done, CLAIM_POLL_MS));
   }
@@ -1022,13 +1022,17 @@ export async function ensureStimd(
       return true;
     }
     let launched: ReturnType<typeof launchStimd>;
-    const hold = currentCrashHold();
+    // @ref LLP 0009#service-and-engine-updates -- a build the job holds meets the hold, not the job's wait
+    const jobHold = jobRestartHold();
+    const jobHeld =
+      jobHold && Date.now() < jobHold.until ? crashLoop(readStimdBoots(), stimdBuildId(), Date.now()) : null;
+    const hold = currentCrashHold() ?? jobHeld;
     try {
       if (hold) {
         if (!holdAnnounced) {
           holdAnnounced = true;
           const { crashHoldRemedy } = await import('../stimd/crash-hold.ts');
-          console.error(`Stim: ${crashHoldRemedy(hold, false)}`);
+          console.error(`Stim: ${crashHoldRemedy(hold, jobHeld !== null && ownStoreEngine() !== null)}`);
         }
         launched = { settled: Promise.resolve(), exited: () => true };
       } else launched = launchStimd(env, daemonMode(env), platform);
@@ -1039,7 +1043,7 @@ export async function ensureStimd(
     }
     let taken = await claimTaken(launched, within(ATTACH_AFTER_MS, limit), limit?.signal);
     let attachedAttempt = false;
-    if (!taken && !held && allowAttached && Reflect.get(globalThis, Symbol.for('stim.cli'))) {
+    if (!taken && !held && !jobHeld && allowAttached && Reflect.get(globalThis, Symbol.for('stim.cli'))) {
       attachedAttempt = true;
       const { hostStimd } = await import('../stimd/attached.ts');
       const host = await hostStimd(env);
