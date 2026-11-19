@@ -593,8 +593,8 @@ test('gc at high reports what it removed apart from what it kept', async () => {
   );
   expect(
     preview.actions.find(
-      (action: { kind: string; target: string }) =>
-        action.kind === 'delete-build-outputs' && action.target === stale.root,
+      (action: { rung: number | null; kind: string; target: string }) =>
+        action.rung === 1 && action.kind === 'delete-build-outputs' && action.target === stale.root,
     ).bytes,
   ).toBeGreaterThan(0);
   for (const output of OUTPUTS) expect(existsSync(join(stale.dir, output))).toBe(true);

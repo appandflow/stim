@@ -209,17 +209,24 @@ export async function idleOutputs(
   }
   const store = metroStoreRoot(path);
   if (existsSync(store)) {
-    const sharer = Object.entries(config.projects).find(
-      ([other, project]) =>
-        canonicalPath(other) !== canonicalPath(path) &&
-        canonicalPath(metroStoreRoot(other)) === canonicalPath(store) &&
-        supervisorOf(other, project).status !== 'none' &&
-        supervisorOf(other, project).status !== 'stale',
-    );
-    if (sharer) kept.push(`kept the Metro store ${store}: the running dev server of ${sharer[0]} shares it`);
+    const shared = sharedStoreReason(path, config);
+    if (shared) kept.push(`kept the Metro store ${store}: ${shared}`);
     else paths.push(store);
   }
   return { paths: deletable ? paths.filter(deletable) : paths, kept };
+}
+
+/** Why the workspace's Metro store stays: the running dev server of another workspace shares it; null when none does. */
+export function sharedStoreReason(path: string, config: Config): string | null {
+  const store = metroStoreRoot(path);
+  const sharer = Object.entries(config.projects).find(
+    ([other, project]) =>
+      canonicalPath(other) !== canonicalPath(path) &&
+      canonicalPath(metroStoreRoot(other)) === canonicalPath(store) &&
+      supervisorOf(other, project).status !== 'none' &&
+      supervisorOf(other, project).status !== 'stale',
+  );
+  return sharer ? `the running dev server of ${sharer[0]} shares it` : null;
 }
 
 /**

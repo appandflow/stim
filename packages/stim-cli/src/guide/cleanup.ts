@@ -555,9 +555,10 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
     unpushed work, in use, leased, locked, pinned, cannot prove finished.
   Workspace idle idle.dormantDays (default 1): build outputs (android/build,
   android/.gradle, .build, .cxx, .dd DerivedData, an Exact app's target/ beside
-  exact.mjs), owned devices, logs archived
-    dormant reduction, N. Kept: running dev server or build, booted device,
-    leased, driven, locked, hosted, pinned, idle.minutes 0.
+  exact.mjs trimmed by profile), owned devices, logs archived
+    dormant reduction, N. Kept: running dev server or build, a process in
+    the checkout, booted device, leased, driven, locked, hosted, pinned,
+    idle.minutes 0.
   The same: node_modules and ios/Pods of a linked worktree, recorded so the next
   Stim command restores them with worktree warm, or asks for an install
     dormant reduction, N. Kept: source checkout, under 256 MB of its own (a
@@ -640,8 +641,7 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
   same relative path or in its top two directory levels, up to 2000 entries,
   resolving into the tree; past the bound or at an unreadable directory the
   tree is kept; unlisted worktrees are not scanned), nor a tree of unknown size at the 7-day
-  rule (gc tries to measure it first; critical takes it, even when a
-  sample of its files finds mostly hard links), or that is not a real
+  rule (gc tries to measure it first; critical takes it), or that is not a real
   git-ignored directory with no tracked or unignored file and on its own volume. The deletion is
   recorded in the checkout's workspace; \`stim worktree warm\` in a linked
   worktree then says on stderr that the source has no installed dependencies
@@ -1269,11 +1269,10 @@ to manage one. A checkout that an executable on PATH (a symlink in a
 PATH directory, ~/.local/bin, ~/bin, ~/.cargo/bin, ~/.bun/bin, ~/.volta/bin,
 ~/Library/pnpm, the active nvm bin, /usr/local/bin or /opt/homebrew/bin)
 resolves into is kept whole, by every pass that deletes its outputs,
-dependencies or Cargo target. A link this user can run but not read is
-followed through the file it opens (macOS). A directory or entry still unread
-counts as no launcher: cleanup goes ahead, and the pass log and stim doctor
-(launcher-evidence-incomplete) name it. A read with no answer in 3 seconds
-keeps every checkout. Each read of the processes using a path is paired with a
+dependencies or Cargo target. A directory or entry that cannot be read (not one
+that is missing, or one that does not answer within 3 seconds) keeps every
+checkout for that pass; the reason and stim doctor (launcher-evidence-incomplete)
+name it and the fix. Each read of the processes using a path is paired with a
 launcher read of its own, never the planning reading; a
 directory that hangs ends the reading as incomplete at once, and while that read
 is pending (at most one per thread: the daemon's main thread and passes thread
@@ -1844,7 +1843,8 @@ WORKSPACE BUILD OUTPUTS
   detected cache, "Workspace build outputs", with a per-workspace size, last
   use and verdict. An acting \`gc\` clears them for a workspace over
   maintenance.workspaceOutputsMaxGb or unused for maintenance.olderThanDays,
-  for a workspace idle for idle.dormantDays (1) at every level, and through the
+  for a workspace idle for idle.dormantDays (1) at every level (so does the
+  stim-daemon, hourly; stim guide lifecycle budget), and through the
   pressure ladder at high or critical: for a workspace with
   nothing running idle 2 minutes or more, and in the idle stage of a running
   one. It prints the bytes freed per category.

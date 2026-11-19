@@ -14,8 +14,16 @@ Stim recognises two kinds of Cargo `target/`: an Exact app's, beside
 `CACHEDIR.TAG` starts with the standard signature line. Both count in a
 registered workspace and in a discovered checkout (LLP 0004).
 
-The idle and dormant stages clear an idle workspace's `target/` whole. A
-process running from or working in the checkout keeps all of it.
+The idle stage clears an idle workspace's `target/` whole. The dormant
+reduction (`stim gc` and the daemon's hourly step) never does: it runs the
+trim below on every profile no build wrote for `idle.dormantDays`, under the
+trim claim and the profile lock checks, and leaves `.stim-trimmed`,
+`.stim-not-restored-*` and everything that is not a profile in place. A process
+running from or working in the checkout keeps all of it.
+
+Reason: a whole delete took the recovery data of a trim that could not put a
+directory back, and raced a Cargo build that holds a profile lock. Chosen by
+the coordinator and the review of #5966 (#5968), not by the maintainer.
 
 ## The size cap
 

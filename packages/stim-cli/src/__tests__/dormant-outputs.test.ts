@@ -1,0 +1,253 @@
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { diskUsageCacheFile, type DaemonLadderAction } from '@stim-cli/core/state';
+import { writeCacheFile } from '../cache-file.ts';
+import { REAL_BYTES_THRESHOLD } from '../daemon/dependencies.ts';
+import { treeSignature } from '../private-size.ts';
+import { createMaintenanceLane, runDormantReduction, type HomePasses } from '../daemon/passes.ts';
+import * as measure from '../daemon/measure.ts';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import * as maintenanceRun from '../stimd/passes/run.ts';
+import { loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
+import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
+import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
+import { testContext } from './_context.ts';
+
+const DAY_MS = 86_400_000;
+const BUILD = join('android', 'app', 'build');
+const EXTERNAL_PID = 4242;
+
+let base: string;
+let externalCwd: string | null;
+
+const measured: HomePasses['measured'] = {
+  measurement: {
+    disk: [{ volume: '/', freeMb: 500_000 }],
+    memory: { level: 'normal', availableBytes: 8 * 1024 ** 3, totalBytes: 16 * 1024 ** 3 },
+    load1: 0,
+    cores: 8,
+    bootedSimulators: 0,
+    runningEmulators: null,
+    interaction: null,
+  },
+  sims: [],
+  simsError: null,
+  devices: [],
+};
+
+beforeEach(() => {
+  base = realpathSync(mkdtempSync(join(tmpdir(), 'stim-dormant-outputs-')));
+  vi.stubEnv('STIM_HOME', join(base, 'home'));
+  vi.stubEnv('HOME', join(base, 'user'));
+  mkdirSync(join(base, 'user'), { recursive: true });
+  saveConfig({ version: 2, projects: {}, repos: {} });
+  externalCwd = null;
+  const real = getExecutor();
+  setExecutor({
+    ...real,
+    runFileQuietAsync: async (file, args, opts) => {
+      const external = externalCwd !== null;
+      if (file === 'ps' && args.includes('pid=,ppid='))
+        return `${process.pid} 1\n${external ? `${EXTERNAL_PID} 1\n` : ''}`;
+      if (file === 'ps') return `${process.pid} node\n${external ? `${EXTERNAL_PID} java GradleDaemon\n` : ''}`;
+      if (file === 'lsof') return `p${process.pid}\nn/\n${external ? `p${EXTERNAL_PID}\nn${externalCwd}\n` : ''}`;
+      return real.runFileQuietAsync(file, args, opts);
+    },
+    runFileAsync: async (file, args, opts) =>
+      file === 'lsof' || file === 'ps' ? '' : real.runFileAsync(file, args, opts),
+  });
+  vi.spyOn(maintenanceRun, 'runMaintenance').mockResolvedValue(undefined);
+  vi.spyOn(measure, 'measureTick').mockResolvedValue(measured);
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
+  resetExecutor();
+  rmSync(base, { recursive: true, force: true });
+});
+
+const git = (cwd: string, ...args: string[]) => {
+  const when = new Date(Date.now() - 3 * DAY_MS).toISOString();
+  execFileSync('git', ['-C', cwd, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], {
+    env: { ...process.env, GIT_AUTHOR_DATE: when, GIT_COMMITTER_DATE: when },
+  });
+};
+
+function repo(name: string): string {
+  const root = join(base, name);
+  mkdirSync(join(root, BUILD), { recursive: true });
+  writeFileSync(join(root, 'package.json'), '{}');
+  writeFileSync(join(root, '.gitignore'), 'build/\ntarget/\nnode_modules/\n');
+  git(root, 'init', '-q', '-b', 'main');
+  git(root, 'add', '-A');
+  git(root, 'commit', '-q', '-m', 'init');
+  writeFileSync(join(root, BUILD, 'app.apk'), 'artifact');
+  return root;
+}
+
+function register(root: string): string {
+  upsertProject(root, {});
+  ensureWorkspaceStorage(root);
+  mkdirSync(join(workspaceDir(root), 'derived-data'), { recursive: true });
+  writeFileSync(join(workspaceDir(root), 'derived-data', 'build.db'), 'x');
+  return root;
+}
+
+function age(path: string, when: Date) {
+  if (lstatSync(path).isDirectory()) for (const name of readdirSync(path)) age(join(path, name), when);
+  utimesSync(path, when, when);
+}
+
+function idleFor(days: number, ...roots: string[]) {
+  age(base, new Date(Date.now() - 3 * DAY_MS));
+  for (const root of roots) recordWorkspaceUse(root, new Date(Date.now() - days * DAY_MS));
+}
+
+async function hourlyStep(act: boolean): Promise<DaemonLadderAction[]> {
+  const lane = createMaintenanceLane(() => {}, { run: async () => {} }, new BigInt64Array(1));
+  lane.start(
+    {
+      config: loadConfig(),
+      measured,
+      operation: testContext(),
+      workspaces: [],
+      pressure: { level: 'normal', disk: 'normal', memory: 'normal', reasons: [], memoryWarningSince: null },
+    },
+    act,
+  );
+  await lane.settled();
+  return lane.take().filter((action) => action.kind === 'delete-build-outputs');
+}
+
+const gc = async () =>
+  (await runDormantReduction({ act: true, trigger: 'gc', operation: testContext() })).filter(
+    (action) => action.kind === 'delete-build-outputs',
+  );
+
+describe.skipIf(process.platform === 'win32')(
+  'the dormant build-output step (skipped on win32, where Stim cannot list the running processes)',
+  () => {
+    test("the daemon's hourly step deletes the build outputs of a registered workspace idle a day at normal pressure, and its own deletions do not keep the next step", async () => {
+      saveConfig({ version: 2, projects: {}, repos: {}, idle: { sourceDormantDays: 1 } });
+      const root = register(repo('app'));
+      mkdirSync(join(root, 'android', 'build'));
+      mkdirSync(join(root, 'node_modules', 'dep'), { recursive: true });
+      writeFileSync(join(root, 'node_modules', 'dep', 'index.js'), 'x');
+      idleFor(3, root);
+      const modules = join(root, 'node_modules');
+      writeCacheFile(diskUsageCacheFile(modules), {
+        path: modules,
+        measuredAt: new Date().toISOString(),
+        bytes: 2 * REAL_BYTES_THRESHOLD,
+        privateBytes: 2 * REAL_BYTES_THRESHOLD,
+        signature: treeSignature(modules),
+      });
+
+      const actions = await hourlyStep(true);
+
+      expect(actions).toEqual([expect.objectContaining({ target: root, outcome: 'done' })]);
+      expect(existsSync(join(root, BUILD))).toBe(false);
+      expect(existsSync(join(root, 'android', 'build'))).toBe(false);
+      expect(existsSync(join(workspaceDir(root), 'derived-data'))).toBe(false);
+      expect(existsSync(join(root, 'node_modules'))).toBe(false);
+      expect(existsSync(join(root, 'package.json'))).toBe(true);
+    });
+
+    test('a Gradle build working in the checkout keeps its outputs, whatever Stim last saw', async () => {
+      const root = register(repo('app'));
+      idleFor(3, root);
+      externalCwd = join(root, 'android');
+
+      expect(await gc()).toEqual([
+        expect.objectContaining({ outcome: 'kept', detail: expect.stringContaining(`process ${EXTERNAL_PID}`) }),
+      ]);
+      expect(existsSync(join(root, BUILD, 'app.apk'))).toBe(true);
+      expect(existsSync(join(workspaceDir(root), 'derived-data'))).toBe(true);
+    });
+
+    test('a worktree locked with git worktree lock keeps its outputs', async () => {
+      const main = repo('main');
+      const linked = join(base, 'linked');
+      git(main, 'worktree', 'add', '-q', '-b', 'feature', linked);
+      mkdirSync(join(linked, BUILD), { recursive: true });
+      writeFileSync(join(linked, BUILD, 'app.apk'), 'artifact');
+      git(main, 'worktree', 'lock', linked);
+      register(linked);
+      idleFor(3, linked);
+
+      expect(await gc()).toEqual([
+        expect.objectContaining({ target: linked, outcome: 'kept', detail: 'locked with git worktree lock' }),
+      ]);
+      expect(existsSync(join(linked, BUILD, 'app.apk'))).toBe(true);
+    });
+
+    test('a Cargo target/ goes through the Cargo trim: a stranded .stim-trimmed stays, a stale profile goes', async () => {
+      const cargo = (name: string) => {
+        const root = repo(name);
+        writeFileSync(join(root, 'exact.mjs'), '');
+        mkdirSync(join(root, 'target', 'debug', '.fingerprint'), { recursive: true });
+        writeFileSync(join(root, 'target', 'debug', '.fingerprint', 'unit'), 'x');
+        return register(root);
+      };
+      const stranded = cargo('stranded');
+      mkdirSync(join(stranded, 'target', '.stim-trimmed', '0'), { recursive: true });
+      writeFileSync(join(stranded, 'target', '.stim-trimmed', 'NOT-RESTORED'), '');
+      const trimmed = cargo('trimmed');
+      idleFor(3, stranded, trimmed);
+
+      await gc();
+
+      expect(existsSync(join(stranded, 'target', '.stim-trimmed', 'NOT-RESTORED'))).toBe(true);
+      expect(existsSync(join(stranded, 'target', '.stim-trimmed', '0'))).toBe(true);
+      expect(existsSync(join(stranded, 'target', 'debug'))).toBe(true);
+      expect(existsSync(join(trimmed, 'target', 'debug'))).toBe(false);
+      expect(existsSync(join(trimmed, 'target'))).toBe(true);
+    });
+
+    test('report mode predicts the workspace acting mode would reduce, and not the one it would keep', async () => {
+      const idle = register(repo('idle'));
+      const main = repo('main');
+      const locked = join(base, 'locked');
+      git(main, 'worktree', 'add', '-q', '-b', 'feature', locked);
+      mkdirSync(join(locked, BUILD), { recursive: true });
+      git(main, 'worktree', 'lock', locked);
+      register(locked);
+      idleFor(3, idle, locked);
+
+      expect(await hourlyStep(false)).toEqual([expect.objectContaining({ target: idle, outcome: 'would', bytes: 0 })]);
+      expect(existsSync(join(idle, BUILD))).toBe(true);
+    });
+
+    test('a workspace whose outputs cannot be deleted is reported failed and the next one is still reduced', async () => {
+      const stuck = register(repo('stuck'));
+      const free = register(repo('free'));
+      const sealed = join(stuck, BUILD, 'sealed');
+      mkdirSync(sealed);
+      writeFileSync(join(sealed, 'unit'), 'x');
+      idleFor(5, stuck);
+      recordWorkspaceUse(free, new Date(Date.now() - 3 * DAY_MS));
+      chmodSync(sealed, 0o555);
+
+      const actions = await hourlyStep(true).finally(() => chmodSync(sealed, 0o755));
+      expect(actions).toEqual([
+        expect.objectContaining({ target: stuck, outcome: 'failed' }),
+        expect.objectContaining({ target: free, outcome: 'done' }),
+      ]);
+      expect(existsSync(join(free, BUILD))).toBe(false);
+    });
+  },
+);

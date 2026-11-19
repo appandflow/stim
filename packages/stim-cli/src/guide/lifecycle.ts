@@ -2581,10 +2581,7 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
        first; a copy-on-write clone holding less frees almost nothing and is
        kept, logged as kept. A tree whose private size is unknown (off APFS,
        ext4 and tmpfs, without the Command Line Tools, or not measured since
-       its last install) goes after the measured ones, longest-idle first,
-       unless a sample of its files finds mostly hard links (a pnpm store on a
-       volume without clones): that one stays at high and goes last at
-       critical. The daemon
+       its last install) goes after the measured ones, longest-idle first. The daemon
        measures each tree in the background, one walk at a time on the
        machine, after its install changes and at least every 6 hours
     6. idle Gradle and Kotlin daemons, an unused watchman (over 2 GiB, or over
@@ -2716,8 +2713,7 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   whose command line names a path in it; reading files in an editor with no
   process there is not activity. A tree of unknown size is not taken at the
   7-day rule (stim gc measures them first, up to 2 minutes, and says why one
-  stays unknown), and is at critical, even when a sample of its files
-  finds mostly hard links. A
+  stays unknown), and is at critical. A
   linked worktree listed by git with a symlink at the same relative path, or in
   its top two directory levels (up to 2000 entries, not entering node_modules or
   .git), that resolves into the tree keeps it; past 2000 entries or at a
@@ -2743,7 +2739,13 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   as freed are the data directories of the devices it
   deleted, measured before deletion; a device whose size cannot be measured is
   named in the action's detail and left out of the total. A tree under 256 MB
-  of its own (private) bytes, a clone or store hard links, and trees whose private size is unknown stay. The dependency step is logged as dormant_dependencies.
+  of its own (private) bytes, a clone or store hard links, and trees whose private size is unknown stay.
+  The stim-daemon runs the output step, then the dependency step, hourly
+  (dormant_outputs, dormant_dependencies). Outputs need the full evidence for
+  every workspace: no Stim command, source or git write, and no process in the
+  checkout (such as a Gradle or cargo build) for idle.dormantDays; git
+  worktree lock keeps them. Each is measured, then rechecked and removed under
+  the workspace's claims; a Cargo target/ is only trimmed by profile.
   Still kept: a workspace in use, with a running dev server or build, leased,
   locked, driven, hosted, pinned by maintenance.keep or with idle.minutes 0,
   and a path that cannot be proven. \`stim status\` shows a dormant

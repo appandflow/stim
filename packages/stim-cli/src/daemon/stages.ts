@@ -205,9 +205,20 @@ export function sourceCheckoutIdle(
   path: string,
   thresholdMs: number,
   setting: string,
-  { operation, locked = false, reduceOnly }: { operation?: StimContext; locked?: boolean; reduceOnly: boolean },
+  {
+    operation,
+    locked = false,
+    reduceOnly,
+    reads,
+  }: { operation?: StimContext; locked?: boolean; reduceOnly: boolean; reads?: DiscoveredReads },
 ): Promise<{ idleMs: number } | { kept: string }> {
-  return idleVerdict(path, thresholdMs, setting, { operation, full: true, locked, reduceOnly });
+  return idleVerdict(path, thresholdMs, setting, {
+    operation,
+    full: true,
+    locked,
+    reduceOnly,
+    ...(reads ? { reads } : {}),
+  });
 }
 
 /** Why a discovered checkout is not idle `thresholdMs` by the activity definition, or null when it is. */
@@ -303,7 +314,7 @@ async function readIdleWorkspaces(
   return linkedFirst(candidates);
 }
 
-async function hasOutputs(path: string): Promise<boolean> {
+export async function hasOutputs(path: string): Promise<boolean> {
   return (
     workspaceOutputPaths(workspaceDir(path)).length > 0 ||
     (await existingBuildDirsAsync(path)).length > 0 ||

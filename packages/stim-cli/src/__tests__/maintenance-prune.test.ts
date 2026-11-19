@@ -15,8 +15,6 @@ import {
   archiveDir,
   buildSlotPath,
   diskUsageCacheFile,
-  diskUsageLinksFile,
-  diskUsageNativeFile,
   gitMergeCacheFile,
   gcLogFile,
   maintenanceStateFile,
@@ -182,17 +180,6 @@ describe('status caches', () => {
       }),
     );
     for (const file of [present, unmounted, foreign, ...stale]) expect(existsSync(file)).toBe(true);
-  });
-
-  test('the link sample and native package records of a dependency tree whose checkout is gone are deleted', async () => {
-    const modules = join(projects, 'gone', 'node_modules');
-    const files = [diskUsageLinksFile(modules), diskUsageNativeFile(modules)].map((file) =>
-      seedStatusCache(file, modules),
-    );
-    const { actions } = await plan();
-
-    expect((await executeAction(only(actions), context)).status).toBe('done');
-    for (const file of files) expect(existsSync(file)).toBe(false);
   });
 
   test('the action keeps a file whose folder came back after the plan, and deletes the rest', async () => {

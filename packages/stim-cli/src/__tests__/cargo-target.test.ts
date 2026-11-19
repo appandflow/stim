@@ -317,7 +317,7 @@ test.skipIf(process.platform !== 'darwin' && process.platform !== 'win32')(
   },
 );
 
-test('a launcher on PATH that appears after the first reading keeps what it points into at the later reading, and a reading that has not answered keeps everything', async () => {
+test('a launcher on PATH that appears after the first reading keeps what it points into at the later reading, and an incomplete reading keeps everything', async () => {
   try {
     makeProfile('release', 0);
     mkdirSync(join(target, 'release', 'incremental', 'x'), { recursive: true });
@@ -341,14 +341,14 @@ test('a launcher on PATH that appears after the first reading keeps what it poin
     expect(existsSync(join(target, 'release', 'incremental', 'x'))).toBe(true);
 
     makeProfile('debug', 3 * DAY);
-    const unanswered = await trimCargoTarget(target, {
+    const unreadable = await trimCargoTarget(target, {
       needBytes: 0,
       launching: launchingWith(target, {
         targets: [],
-        incomplete: [{ kind: 'pending', path: '/hung', error: 'timed out' }],
+        incomplete: [{ kind: 'directory', path: '/locked', error: 'EACCES' }],
       }),
     });
-    expect(unanswered.removed).toEqual([]);
+    expect(unreadable.removed).toEqual([]);
     expect(existsSync(join(target, 'debug', 'deps', 'libx.rlib'))).toBe(true);
   } finally {
     resetExecutor();

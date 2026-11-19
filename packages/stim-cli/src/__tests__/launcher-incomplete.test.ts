@@ -37,7 +37,7 @@ describe.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
         detail: expect.stringContaining(`the directory ${locked} could not be read (EACCES)`),
         fix: expect.stringContaining('fix its permissions'),
       });
-      expect(found?.detail).toMatch(/cleanup goes ahead/i);
+      expect(found?.detail).toContain('keep every checkout');
 
       chmodSync(locked, 0o755);
       expect(await launcherFindings({})).toEqual([]);
@@ -56,7 +56,6 @@ describe.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
         expect.stringContaining(`the directory ${locked} could not be read (EACCES)`),
         expect.anything(),
       );
-      expect(log.mock.calls[0]?.[2]).toMatch(/cleanup goes ahead/i);
 
       logLauncherProblems(operation, log);
       expect(log).toHaveBeenCalledTimes(1);

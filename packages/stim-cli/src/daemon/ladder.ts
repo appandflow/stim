@@ -57,7 +57,6 @@ import {
   clearSourceCheckouts,
   rankDependencies,
   rankSourceDependencies,
-  sampleLinks,
   wouldDelete,
   selectDependencies,
   SOURCE_RESTORE,
@@ -668,23 +667,23 @@ function canonicalOrNull(path: string): string | null {
  * Rung 5: node_modules and Pods of linked worktrees whose workspace in this Stim home is idle 1 hour at high and 2
  * minutes at critical by the activity definition with nothing running, each recorded for `stim worktree warm`: those holding
  * REAL_BYTES_THRESHOLD or more private bytes, most first, then those of unknown size, longest-idle first. A
- * copy-on-write clone below the threshold is kept, and so is a tree of unknown size whose sample found mostly hard
- * links, which at critical goes last instead.
+ * copy-on-write clone below the threshold is kept.
  */
 async function dependenciesRung(context: RungContext): Promise<void> {
   const idleMs = context.level === 'critical' ? PRESSURE_IDLE_MS : DEPENDENCIES_HIGH_IDLE_MS;
   const idle = await idleStageCandidates(context.config, context, idleMs);
   const protectedRoot = context.protectedRoot ? (canonicalOrNull(context.protectedRoot) ?? '') : '';
-  const ranked = (
-    await timedStep(
-      context.log,
-      'rank_dependencies',
-      () => rankDependencies(idle, protectedRoot, context.operation, false, context.log),
-      { signal: context.operation?.signal, items: (found) => found?.length },
-    )
-  ).filter((dependency) => onShort(context, [dependency.candidate.path]));
-  await sampleLinks(ranked, context.operation?.signal);
-  const { take, kept } = selectDependencies(ranked, 'take', context.level === 'critical' ? 'last' : 'keep');
+  const { take, kept } = selectDependencies(
+    (
+      await timedStep(
+        context.log,
+        'rank_dependencies',
+        () => rankDependencies(idle, protectedRoot, context.operation, false, context.log),
+        { signal: context.operation?.signal, items: (ranked) => ranked?.length },
+      )
+    ).filter((dependency) => onShort(context, [dependency.candidate.path])),
+    'take',
+  );
   for (const { dependency, detail } of kept)
     recordAction(
       context,
@@ -899,8 +898,7 @@ async function sourceDependenciesStep(context: RungContext): Promise<void> {
         },
         context.why,
       );
-  await sampleLinks(ranked, context.operation?.signal);
-  const { take, kept: small } = selectDependencies(ranked, 'take', 'last');
+  const { take, kept: small } = selectDependencies(ranked, 'take');
   if (!context.act || context.force)
     for (const { dependency, detail } of small)
       recordAction(

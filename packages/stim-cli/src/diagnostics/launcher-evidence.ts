@@ -1,11 +1,6 @@
 import { checkoutRootOf } from '../workspace/checkout-role.ts';
 import { launcherDirectories } from '../workspace/launcher-directories.ts';
-import {
-  describeLauncherProblems,
-  launcherProblemsOutcome,
-  launcherReader,
-  type LauncherProblem,
-} from '../workspace/launchers.ts';
+import { describeLauncherProblems, launcherReader, type LauncherProblem } from '../workspace/launchers.ts';
 import type { Finding } from './doctor.ts';
 
 const READ_BUDGET_MS = 10_000;
@@ -18,8 +13,8 @@ const FIX: Record<LauncherProblem['kind'], string> = {
 };
 
 /**
- * A finding when the executables on PATH cannot all be inspected: cleanup goes ahead past a directory or entry that
- * could not be read, and keeps every checkout while a read has not answered. The whole read, queue time included, ends at the deadline of `signal`, 10
+ * A finding when the executables on PATH cannot all be inspected: cleanup then keeps every checkout, because any of
+ * the unread ones could point into one. The whole read, queue time included, ends at the deadline of `signal`, 10
  * seconds by default, and a read that ends there reports incomplete evidence, never a complete result.
  */
 export async function launcherFindings(
@@ -52,10 +47,8 @@ export async function launcherFindings(
     {
       code: 'launcher-evidence-incomplete',
       level: 'cost',
-      title: problems.some(({ kind }) => kind === 'pending')
-        ? 'Cleanup keeps every checkout because the executables on PATH cannot all be inspected'
-        : 'Some executables on PATH, or checkout owners, could not be inspected',
-      detail: `${describeLauncherProblems(problems)}. ${launcherProblemsOutcome(problems)}.`,
+      title: 'Cleanup keeps every checkout because the executables on PATH cannot all be inspected',
+      detail: `${describeLauncherProblems(problems)}. An executable there could point into any checkout, so stim gc and the daemon keep every checkout, registered or discovered, until it can be read in full.`,
       fix: `${fixes.join('; ')}.`.replace(/^./, (first) => first.toUpperCase()),
     },
   ];

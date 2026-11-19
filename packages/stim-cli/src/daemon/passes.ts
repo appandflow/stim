@@ -15,7 +15,7 @@ import { runMaintenance } from '../stimd/passes/run.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { checkoutRootOf } from '../workspace/checkout-role.ts';
 import { forgetGitReads, openGitReads } from '../workspace/git-reads.ts';
-import { freshLaunchers, launchersOf, launchingOf, logLauncherProblems } from '../workspace/launchers.ts';
+import { launchersOf, launchingOf, logLauncherProblems } from '../workspace/launchers.ts';
 import { loadConfig, type Config } from '../workspace/config.ts';
 import { requestDaemonTick, stimdRefused } from './client.ts';
 import { runBootedParkedPass } from './booted-parked.ts';
@@ -27,13 +27,7 @@ import { idleOutputBytes, runLadder } from './ladder.ts';
 import { measureDisk, measureMemory, measureTick, type TickMeasurement } from './measure.ts';
 import { classifyPressure, diskPressure, diskThresholds, shortVolumeDevices, type DiskThresholds } from './pressure.ts';
 import { onShortVolume } from '../stimd/passes/unowned.ts';
-import {
-  clearStoppedOutputs,
-  dormantAfterMs,
-  runDormantPass,
-  sourceDormantAfterMs,
-  stoppedOutputCandidates,
-} from './stages.ts';
+import { dormantAfterMs, runDormantPass, sourceDormantAfterMs } from './stages.ts';
 
 const LADDER_PACE_FACTOR = 4;
 const LADDER_PACE_MAX_MS = 15 * 60_000;
@@ -613,9 +607,9 @@ export async function runForcedLadder({
 }
 
 /**
- * What `stim gc` runs at every level for each workspace with no activity for `idle.dormantDays`: its regenerable build
- * outputs deleted, then the dormant stage (its owned devices deleted, its logs archived), then the node_modules and
- * Pods of linked worktrees. Logs to `daemon.ndjson` under `trigger` when acting. Empty without a Stim config or
+ * What `stim gc` runs at every level for each workspace with no activity for `idle.dormantDays`: the dormant stage (its
+ * owned devices deleted, its logs archived), then the dormant step the daemon runs hourly: its regenerable build
+ * outputs, then the node_modules and Pods of linked worktrees. Logs to `daemon.ndjson` under `trigger` when acting. Empty without a Stim config or
  * with the stage off.
  */
 export async function runDormantReduction({
@@ -650,37 +644,6 @@ export async function runDormantReduction({
   };
   try {
     const actions: DaemonLadderAction[] = [];
-    for (const candidate of afterMs > 0 ? await stoppedOutputCandidates(config, reading, afterMs) : []) {
-      const result = act
-        ? await clearStoppedOutputs(candidate, config, afterMs, operation)
-        : {
-            outcome: 'would' as const,
-            bytes: await idleOutputBytes(
-              candidate.path,
-              config,
-              launchingOf(
-                candidate.checkout,
-                () => freshLaunchers(operation, operation?.signal)(),
-                operation,
-                operation?.signal,
-              ),
-            ),
-            detail: 'stim gc would do this',
-          };
-      if (result)
-        actions.push({
-          rung: 4,
-          kind: 'delete-build-outputs',
-          target: candidate.path,
-          workspace: candidate.path,
-          ...result,
-          ...(result.outcome === 'done'
-            ? {
-                restore: 'the next stim ios or stim android, from the build cache when nothing changed',
-              }
-            : {}),
-        });
-    }
     if (afterMs > 0) actions.push(...(await runDormantPass({ config, act, log, ...reading })));
     actions.push(
       ...(await runDormantDependencies({

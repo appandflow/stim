@@ -302,8 +302,8 @@ function inUse(used: readonly string[], dir: string): boolean {
 
 /**
  * The paths under `target` a running process executes from or holds open, from one `lsof` and one `ps` read, with the
- * launcher reading taken at the same moment: an executable on PATH that resolves into the owning checkout, a launcher
- * read that has not answered, or process evidence that cannot be read, keeps everything.
+ * launcher reading taken at the same moment: an executable on PATH that resolves into the owning checkout, or evidence
+ * that cannot be read, keeps everything.
  */
 async function readTargetUse(
   target: string,
@@ -392,6 +392,8 @@ interface CargoTrimOptions {
   needBytes: number;
   incremental?: 'toNeed' | 'all';
   units?: 'none' | 'toNeed' | 'all';
+  /** A profile no build wrote for this long goes whole; default a day. */
+  profileIdleMs?: number;
   lowPriority?: boolean;
   now?: number;
   signal?: AbortSignal;
@@ -406,12 +408,21 @@ interface CargoTrimOptions {
   launching: Launching;
 }
 
+/** Why no trim of `target` runs until a person acts: its `.stim-trimmed` holds a directory that could not be put back. */
+export function strandedReason(target: string): string | null {
+  const aside = join(target, ASIDE);
+  return existsSync(join(aside, STRANDED))
+    ? `${aside} holds a directory that could not be put back; a person must merge or delete it`
+    : null;
+}
+
 async function trimClaimed(
   target: string,
   {
     needBytes,
     incremental = 'toNeed',
     units = 'none',
+    profileIdleMs = CARGO_PROFILE_IDLE_MS,
     lowPriority = false,
     now = Date.now(),
     signal,
@@ -426,11 +437,8 @@ async function trimClaimed(
     measure ? sizeOf(path, signal, lowPriority) : Promise.resolve(0);
   const aside = join(target, ASIDE);
   let keepAside = false;
-  if (existsSync(join(aside, STRANDED)))
-    return {
-      ...result,
-      kept: [`${aside} holds a directory that could not be put back; a person must merge or delete it`],
-    };
+  const blocked = strandedReason(target);
+  if (blocked) return { ...result, kept: [blocked] };
   try {
     await rm(aside, { recursive: true, force: true });
   } catch (error) {
@@ -442,7 +450,7 @@ async function trimClaimed(
   const first = await readTargetUse(target, launching, signal, lowPriority);
   if ('kept' in first) return { ...result, kept: [first.kept] };
   let used: string[] = first.used;
-  const stale = staleCargoTargetPaths(target, now);
+  const stale = staleCargoTargetPaths(target, now, profileIdleMs);
   if ('refusal' in stale) return { ...result, kept: [stale.refusal] };
   let moved = 0;
   const profilesAt = async (dir: string) => (existsSync(join(dir, '.fingerprint')) ? [dir] : await childProfiles(dir));

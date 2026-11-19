@@ -21,7 +21,7 @@ import { clearDependency } from '../daemon/dependencies.ts';
 import * as runningFrom from '../workspace/running-from.ts';
 import { answered } from '../workspace/bounded-read.ts';
 import { testContext } from './_context.ts';
-import { freshLaunchers, logLauncherProblems } from '../workspace/launchers.ts';
+import { freshLaunchers } from '../workspace/launchers.ts';
 import { noLaunchers } from './fixtures/launching.ts';
 import * as fsUtil from '../fs-util.ts';
 import { deleteOutputs } from '../daemon/idle.ts';
@@ -581,7 +581,7 @@ describe('checkouts found through a tool folder or the full scan', () => {
     });
 
     test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
-      'clears it when a launcher directory becomes unreadable after the plan, and logs the directory',
+      'keeps it when a launcher directory becomes unreadable after the plan, naming the directory',
       async () => {
         const { modules } = scanFoundWorktree();
         const locked = join(base, 'home', 'locked-bin');
@@ -592,16 +592,8 @@ describe('checkouts found through a tool folder or the full scan', () => {
           expect(planned.candidates.map((entry) => entry.path)).toEqual([modules]);
           launcherDirs.list = [...launcherDirs.list, locked];
           const outcome = await clear(modules, shared);
-          expect(outcome).toMatchObject({ status: 'done' });
-          expect(existsSync(modules)).toBe(false);
-          const log = vi.fn<(level: string, event: string, msg: string, fields?: unknown) => void>();
-          logLauncherProblems(shared, log);
-          expect(log).toHaveBeenCalledWith(
-            'warn',
-            'launcher_evidence_incomplete',
-            expect.stringContaining(`the directory ${locked} could not be read (EACCES)`),
-            expect.anything(),
-          );
+          expect(outcome).toMatchObject({ status: 'kept', detail: expect.stringContaining(locked) });
+          expect(existsSync(modules)).toBe(true);
         } finally {
           chmodSync(locked, 0o700);
         }
