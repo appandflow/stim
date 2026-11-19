@@ -557,7 +557,7 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
     unpushed work, in use, leased, locked, pinned, cannot prove finished.
   Workspace idle idle.dormantDays (default 1): build outputs (android/build,
   android/.gradle, .build, .cxx, .dd DerivedData, a recognised Cargo target/
-  but its criterion/, untagged too), owned devices, logs archived
+  but its benchmark baselines, untagged too), owned devices, logs archived
     dormant reduction, N. Kept: running dev server or build, a process in
     the checkout, booted device, leased, driven, locked, hosted, pinned,
     idle.minutes 0; a target/ used in that time, locked, open, holding a
@@ -1858,7 +1858,7 @@ WORKSPACE BUILD OUTPUTS
   pressure ladder at high or critical: for a workspace with
   nothing running idle 2 minutes or more, and in the idle stage of a running
   one. It prints the bytes freed per category.
-  Idle idle.dormantDays, any Cargo target/ goes but criterion/ (\`stim guide
+  Idle idle.dormantDays, a target/ goes but benchmark baselines (\`stim guide
   cleanup gc\`).
   A workspace whose worktree is locked with git worktree lock is never
   lightened: not its outputs, not its project's build directories, at any

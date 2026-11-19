@@ -26,8 +26,11 @@ const STRANDED = 'NOT-RESTORED';
 const CANNOT_READ = 'the files processes hold open or the executables on PATH cannot be read';
 const DEADLINE_KEPT = 'the rest was left at the build headroom deadline';
 const NOT_RESTORED = `${OWN_PREFIX}not-restored-`;
-/** Criterion's saved benchmark baselines describe code that may be gone, so no build can recreate them. */
-const KEPT_WHOLE = new Set(['criterion']);
+/**
+ * Benchmark baseline folders: Criterion's `criterion/` and Gungraun's `gungraun/` (`iai/` before it was renamed from
+ * iai-callgrind) hold saved baselines that describe code that may be gone, so no build can recreate them.
+ */
+const KEPT_WHOLE = new Set(['criterion', 'gungraun', 'iai']);
 const FOLD_CASE = process.platform === 'darwin' || process.platform === 'win32';
 
 export interface CargoProfile {

@@ -413,12 +413,18 @@ describe.skipIf(process.platform === 'win32')(
     });
     const remove = () => deleteCargoTarget(dir, { idleMs: DAY, launching: noLaunchers(target) });
 
-    test('everything but Criterion baselines goes, after the move aside, and nothing is left aside', async () => {
+    test('everything but the Criterion and Gungraun baselines goes, after the move aside, and nothing is left aside', async () => {
+      for (const name of ['gungraun', 'iai']) {
+        mkdirSync(join(dir, name, 'base'), { recursive: true });
+        writeFileSync(join(dir, name, 'base', 'summary.json'), '{}');
+      }
+      ageTree(dir);
+
       const result = await remove();
 
       expect(result.removed.toSorted()).toEqual(['.rustc_info.json', 'bake', 'debug']);
       expect(result.kept).toEqual([]);
-      expect(readdirSync(dir)).toEqual(['criterion']);
+      expect(readdirSync(dir).toSorted()).toEqual(['criterion', 'gungraun', 'iai']);
       expect(existsSync(join(dir, 'criterion', 'base', 'estimates.json'))).toBe(true);
     });
 
