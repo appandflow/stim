@@ -26,6 +26,8 @@ import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
 import { recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import * as fsUtil from '../fs-util.ts';
 import { metroStoreRoot } from '../stimd/metro/metro-store.ts';
+import * as runningFrom from '../workspace/running-from.ts';
+import type { RunningProcesses } from '../workspace/running-from.ts';
 import { testContext } from './_context.ts';
 
 const DAY_MS = 86_400_000;
@@ -59,18 +61,26 @@ beforeEach(() => {
   saveConfig({ version: 2, projects: {}, repos: {} });
   externalCwd = null;
   processesListed = true;
+  const table = (): RunningProcesses | null => {
+    if (!processesListed) return null;
+    const external = externalCwd === null ? [] : [{ pid: EXTERNAL_PID, line: 'java GradleDaemon' }];
+    return {
+      commands: [{ pid: process.pid, line: 'node' }, ...external],
+      cwds: [
+        { pid: process.pid, path: '/' },
+        ...(externalCwd === null ? [] : [{ pid: EXTERNAL_PID, path: externalCwd }]),
+      ],
+    };
+  };
+  vi.spyOn(runningFrom, 'readRunningProcessesAsync').mockImplementation(async () => table());
+  vi.spyOn(runningFrom, 'processReader').mockImplementation(() => async () => runningFrom.othersRunningAsync(table()));
   const real = getExecutor();
   setExecutor({
     ...real,
-    runFileQuietAsync: async (file, args, opts) => {
-      const external = externalCwd !== null;
-      if (!processesListed && (file === 'ps' || file === 'lsof')) return null;
-      if (file === 'ps' && args.includes('pid=,ppid='))
-        return `${process.pid} 1\n${external ? `${EXTERNAL_PID} 1\n` : ''}`;
-      if (file === 'ps') return `${process.pid} node\n${external ? `${EXTERNAL_PID} java GradleDaemon\n` : ''}`;
-      if (file === 'lsof') return `p${process.pid}\nn/\n${external ? `p${EXTERNAL_PID}\nn${externalCwd}\n` : ''}`;
-      return real.runFileQuietAsync(file, args, opts);
-    },
+    runFileQuietAsync: async (file, args, opts) =>
+      file === 'ps' && args.includes('pid=,ppid=')
+        ? `${process.pid} 1\n${externalCwd === null ? '' : `${EXTERNAL_PID} 1\n`}`
+        : real.runFileQuietAsync(file, args, opts),
     runFileAsync: async (file, args, opts) =>
       file === 'lsof' || file === 'ps' ? '' : real.runFileAsync(file, args, opts),
   });
