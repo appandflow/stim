@@ -335,8 +335,7 @@ export interface StatusMeasurer {
  * do not repeat it), at low priority, the folder whose last walk or failed walk is oldest first, a checkout without the
  * linked worktrees nested in it and without its own node_modules, each folder other than node_modules again 5 minutes
  * after its last walk ended while its environment is live and an hour after otherwise, or 20 times as long as that walk
- * took when that is longer (a failed walk counts as 2 minutes, and each failure in a row doubles the hold, up to a
- * day), no walk by any status measurer on the machine sooner after the previous one ended than 4 times as long as it
+ * took when that is longer (a failed walk is retried after the same 5 minutes or hour), no walk by any status measurer on the machine sooner after the previous one ended than 4 times as long as it
  * took, and one `gh api graphql` per repository for worktrees whose lookup is over 5 minutes old or whose branch or
  * HEAD moved. It runs git only in the repository, never in a worktree, and only for worktrees whose git state status
  * read. It rechecks a folder's cache right before measuring, so two watchers rarely measure the same folder. A session
