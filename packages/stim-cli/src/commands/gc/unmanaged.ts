@@ -237,8 +237,9 @@ async function swapFiles(scan: Scan): Promise<UnmanagedEntry[]> {
 }
 
 async function docker(scan: Scan): Promise<UnmanagedEntry[]> {
-  if (getExecutor().findExecutable('docker', { env: scan.operation?.env ?? process.env }) === null) return [];
   const label = 'Docker (docker system df)';
+  // Spawned without a PATH search first: a synchronous search on this event loop could block on a stalled mount in
+  // PATH, past the deadline. A missing docker fails to spawn with ENOENT, which reads as not installed.
   const result = await scan.run(label, 'docker', ['system', 'df', '--format', '{{json .}}'], DOCKER_TIMEOUT_MS);
   if ('slow' in result) scan.slow.push(label);
   else if ('unreached' in result) scan.unreached += 1;

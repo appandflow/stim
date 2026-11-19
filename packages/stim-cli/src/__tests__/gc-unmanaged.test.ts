@@ -48,7 +48,8 @@ let temp: string;
 let calls: string[][];
 let docker: string | null;
 let slow: string | null;
-let dockerOutput: string | Error;
+let dockerOutput: string | Error | 'hang';
+let releaseDocker = () => {};
 
 const DOCKER_DF = [
   '{"Active":"2","Reclaimable":"1.5GB (60%)","Size":"2.5GB","TotalCount":"4","Type":"Images"}',
@@ -104,6 +105,11 @@ beforeEach(() => {
     runFileAsync: async (file: string, args: string[]) => {
       calls.push([file, ...args]);
       if (file === 'docker') {
+        if (docker === null) throw Object.assign(new Error('spawn docker ENOENT'), { code: 'ENOENT' });
+        if (dockerOutput === 'hang')
+          return new Promise<string>((resolve) => {
+            releaseDocker = () => resolve('');
+          });
         if (dockerOutput instanceof Error) throw dockerOutput;
         return dockerOutput;
       }
@@ -128,75 +134,108 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-test.each([
-  ['the disk level is normal', () => levelRun({ level: 'high', disk: 'normal', memory: 'high' }), ''],
-  ['STIM_HOME scopes the home', () => levelRun({}), 'scoped'],
-])('scans nothing when %s', async (_case, run, scoped) => {
-  if (scoped) vi.stubEnv('STIM_HOME', join(root, scoped));
-  mkdirSync(join(home, 'big'));
-  docker = '/usr/bin/docker';
-  expect(await unmanagedUsage(run(), false)).toBeNull();
-  expect(calls).toEqual([]);
-});
-
-test('names the largest users Stim does not manage, skips its own, and tells slow walks from failed ones', async () => {
-  for (const dir of [
-    'big',
-    'broken',
-    'cache',
-    'Developer/app',
-    '.stim/build-cache',
-    'data-unreadable',
-    'huge',
-    'later',
-  ])
-    mkdirSync(join(home, dir), { recursive: true });
-  upsertProject(join(home, 'Developer', 'app'), {});
-  writeFileSync(join(home, 'notes.txt'), 'x'.repeat(8192));
-  symlinkSync(join(home, 'big'), join(home, 'link'));
-  for (const dir of ['scratch', 'stim-ws-1', '.stim-delete-old', 'TemporaryDirectory.Ab12Cd'])
-    mkdirSync(join(temp, dir));
-  writeFileSync(join(temp, 'instruments1.ktrace'), 'trace');
-  slow = join(home, 'huge');
-
-  const usage = await unmanagedUsage(levelRun({}), false);
-
-  const ours = usage?.entries.filter((entry) => entry.label.startsWith(root));
-  expect(ours).toEqual([
-    { label: join(home, 'big'), bytes: 4_294_967_296 },
-    { label: join(temp, 'scratch'), bytes: 1_048_576 },
-    { label: join(home, 'Developer'), bytes: 1_048_576, holdsStim: true },
-    { label: join(home, 'cache'), bytes: 1_048_576 },
-    { label: join(home, 'data-unreadable'), bytes: 524_288, partial: true },
-    { label: join(home, 'notes.txt'), bytes: expect.any(Number) },
-  ]);
-  expect(usage).toMatchObject({ slow: [join(home, 'huge')], failed: [join(home, 'broken')], unreached: 1 });
-  expect(calls.every(([file, ...args]) => file === 'nice' && args.slice(0, 5).join(' ') === '-n 19 du -x -sk')).toBe(
-    true,
-  );
-  const lines = usage ? formatUnmanagedUsage({ ...usage, entries: ours?.slice(3) ?? [] }) : [];
-  expect(lines).toContain("Not Stim's to delete, the largest other users of the short volume:");
-  expect(lines).toContain(`  too slow to size, likely large: ${join(home, 'huge')}`);
-  expect(lines).toContain(`  could not be sized: ${join(home, 'broken')}`);
-  expect(lines).toContain(`  512K or more  ${join(home, 'data-unreadable')}, partly unreadable`);
-  expect(lines).toContain('  1 more entry not reached within the time budget');
-});
-
-test('asks Docker for its usage only when it is installed, with its own cleanup command', async () => {
-  expect((await unmanagedUsage(levelRun({}), false))?.entries.some((entry) => entry.label.startsWith('Docker'))).toBe(
-    false,
-  );
-  expect(calls).toEqual([]);
-  docker = '/usr/bin/docker';
-  const usage = await unmanagedUsage(levelRun({}), true);
-  expect(usage?.entries).toContainEqual({
-    label: 'Docker images, containers, volumes and build cache, possibly on another volume, 1.4G reclaimable',
-    bytes: 3_000_000_000,
-    command: 'docker system prune',
+describe.skipIf(process.platform === 'win32')('the gate', () => {
+  test.each([
+    ['the disk level is normal', () => levelRun({ level: 'high', disk: 'normal', memory: 'high' }), ''],
+    ['STIM_HOME scopes the home', () => levelRun({}), 'scoped'],
+  ])('scans nothing when %s', async (_case, run, scoped) => {
+    if (scoped) vi.stubEnv('STIM_HOME', join(root, scoped));
+    mkdirSync(join(home, 'big'));
+    docker = '/usr/bin/docker';
+    expect(await unmanagedUsage(run(), false)).toBeNull();
+    expect(calls).toEqual([]);
   });
-  dockerOutput = Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' });
-  expect((await unmanagedUsage(levelRun({}), false))?.slow).toEqual(['Docker (docker system df)']);
 });
+
+test.skipIf(process.platform === 'win32')(
+  'names the largest users Stim does not manage, skips its own, and tells slow walks from failed ones',
+  async () => {
+    for (const dir of [
+      'big',
+      'broken',
+      'cache',
+      'Developer/app',
+      '.stim/build-cache',
+      'data-unreadable',
+      'huge',
+      'later',
+    ])
+      mkdirSync(join(home, dir), { recursive: true });
+    upsertProject(join(home, 'Developer', 'app'), {});
+    writeFileSync(join(home, 'notes.txt'), 'x'.repeat(8192));
+    symlinkSync(join(home, 'big'), join(home, 'link'));
+    for (const dir of ['scratch', 'stim-ws-1', '.stim-delete-old', 'TemporaryDirectory.Ab12Cd'])
+      mkdirSync(join(temp, dir));
+    writeFileSync(join(temp, 'instruments1.ktrace'), 'trace');
+    slow = join(home, 'huge');
+
+    const usage = await unmanagedUsage(levelRun({}), false);
+
+    const ours = usage?.entries.filter((entry) => entry.label.startsWith(root));
+    expect(ours).toEqual([
+      { label: join(home, 'big'), bytes: 4_294_967_296 },
+      { label: join(temp, 'scratch'), bytes: 1_048_576 },
+      { label: join(home, 'Developer'), bytes: 1_048_576, holdsStim: true },
+      { label: join(home, 'cache'), bytes: 1_048_576 },
+      { label: join(home, 'data-unreadable'), bytes: 524_288, partial: true },
+      { label: join(home, 'notes.txt'), bytes: expect.any(Number) },
+    ]);
+    expect(usage).toMatchObject({ slow: [join(home, 'huge')], failed: [join(home, 'broken')], unreached: 1 });
+    expect(
+      calls
+        .filter(([file]) => file !== 'docker')
+        .every(([file, ...args]) => file === 'nice' && args.slice(0, 5).join(' ') === '-n 19 du -x -sk'),
+    ).toBe(true);
+    const lines = usage ? formatUnmanagedUsage({ ...usage, entries: ours?.slice(3) ?? [] }) : [];
+    expect(lines).toContain("Not Stim's to delete, the largest other users of the short volume:");
+    expect(lines).toContain(`  too slow to size, likely large: ${join(home, 'huge')}`);
+    expect(lines).toContain(`  could not be sized: ${join(home, 'broken')}`);
+    expect(lines).toContain(`  512K or more  ${join(home, 'data-unreadable')}, partly unreadable`);
+    expect(lines).toContain('  1 more entry not reached within the time budget');
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'reads a missing docker as not installed, and asks an installed one with its own cleanup command',
+  async () => {
+    const absent = await unmanagedUsage(levelRun({}), false);
+    expect(calls.filter(([file]) => file === 'docker')).toHaveLength(1);
+    expect([...(absent?.entries ?? []), ...(absent?.slow ?? []), ...(absent?.failed ?? [])].join()).not.toMatch(
+      /Docker/,
+    );
+    docker = '/usr/bin/docker';
+    const usage = await unmanagedUsage(levelRun({}), true);
+    expect(usage?.entries).toContainEqual({
+      label: 'Docker images, containers, volumes and build cache, possibly on another volume, 1.4G reclaimable',
+      bytes: 3_000_000_000,
+      command: 'docker system prune',
+    });
+    dockerOutput = Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' });
+    expect((await unmanagedUsage(levelRun({}), false))?.slow).toEqual(['Docker (docker system df)']);
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'a docker call that never returns ends at its cap and stays the pending read',
+  async () => {
+    docker = '/usr/bin/docker';
+    dockerOutput = 'hang';
+    mkdirSync(join(home, 'later'));
+    try {
+      const pending = unmanagedUsage(levelRun({}), false);
+      await vi.waitFor(() => expect(calls.some(([file]) => file === 'docker')).toBe(true));
+      await vi.advanceTimersByTimeAsync(6_000);
+      const usage = await pending;
+
+      expect(usage?.slow).toEqual(['Docker (docker system df)']);
+      expect(hungRead()).toBe('Docker (docker system df)');
+      expect(calls.filter(([file]) => file === 'nice')).toEqual([]);
+    } finally {
+      releaseDocker();
+      await vi.advanceTimersByTimeAsync(0);
+    }
+  },
+);
 
 test('reads swap files, not swap partitions, from /proc/swaps', () => {
   expect(
@@ -214,18 +253,21 @@ test('reads swap files, not swap partitions, from /proc/swaps', () => {
   ]);
 });
 
-test('a dry run that would free a lot still lists the disk as it is now', async () => {
-  mkdirSync(join(home, 'big'));
+test.skipIf(process.platform === 'win32')(
+  'a dry run that would free a lot still lists the disk as it is now',
+  async () => {
+    mkdirSync(join(home, 'big'));
 
-  const usage = await unmanagedUsage(levelRun({}, Number.MAX_SAFE_INTEGER), false);
+    const usage = await unmanagedUsage(levelRun({}, Number.MAX_SAFE_INTEGER), false);
 
-  expect(usage?.entries).toContainEqual({ label: join(home, 'big'), bytes: 4_294_967_296 });
-  expect(usage ? formatUnmanagedUsage(usage) : []).toContain(
-    '  This is the disk as it is now, before the deletions this dry run lists.',
-  );
-});
+    expect(usage?.entries).toContainEqual({ label: join(home, 'big'), bytes: 4_294_967_296 });
+    expect(usage ? formatUnmanagedUsage(usage) : []).toContain(
+      '  This is the disk as it is now, before the deletions this dry run lists.',
+    );
+  },
+);
 
-test('stops listing a folder once the time budget is spent', async () => {
+test.skipIf(process.platform === 'win32')('stops listing a folder once the time budget is spent', async () => {
   for (let index = 0; index < 10; index += 1) mkdirSync(join(home, `dir-${index}`));
   const started = Date.now();
   hooks.lstat = (path) => {
@@ -236,10 +278,10 @@ test('stops listing a folder once the time budget is spent', async () => {
 
   expect(Date.now() - started).toBeLessThanOrEqual(17_000);
   expect(usage?.unreached).toBe(10);
-  expect(calls).toEqual([]);
+  expect(calls.filter(([file]) => file === 'nice')).toEqual([]);
 });
 
-test('a cancelled gc stops the listing', async () => {
+test.skipIf(process.platform === 'win32')('a cancelled gc stops the listing', async () => {
   for (let index = 0; index < 10; index += 1) mkdirSync(join(home, `dir-${index}`));
   const controller = new AbortController();
   let reads = 0;
@@ -253,10 +295,10 @@ test('a cancelled gc stops the listing', async () => {
     /abort/i,
   );
   expect(reads).toBe(1);
-  expect(calls).toEqual([]);
+  expect(calls.filter(([file]) => file === 'nice')).toEqual([]);
 });
 
-test('leaves out a cache Stim manages before it is measured', async () => {
+test.skipIf(process.platform === 'win32')('leaves out a cache Stim manages before it is measured', async () => {
   const uid = process.getuid?.();
   if (uid === undefined) return;
   mkdirSync(join(temp, `jest_${uid.toString(36)}`, 'haste-map-abc123-app'), { recursive: true });
@@ -274,7 +316,7 @@ test('leaves out a cache Stim manages before it is measured', async () => {
   ]);
 });
 
-describe('a path Stim manages that does not resolve in time', () => {
+describe.skipIf(process.platform === 'win32')('a path Stim manages that does not resolve in time', () => {
   let release: (() => void) | null = null;
   let reached: Promise<void>;
 
@@ -306,7 +348,7 @@ describe('a path Stim manages that does not resolve in time', () => {
     const usage = await pending;
 
     expect(usage?.entries.some((entry) => entry.label.startsWith(root))).toBe(false);
-    expect(calls).toEqual([]);
+    expect(calls.filter(([file]) => file === 'nice')).toEqual([]);
   });
 
   test('stops at once when gc is cancelled, and records the read it left pending', async () => {
@@ -320,103 +362,124 @@ describe('a path Stim manages that does not resolve in time', () => {
     controller.abort();
     expect(await outcome).toMatch(/abort/i);
     expect(hungRead()).toBe(home);
-    expect(calls).toEqual([]);
+    expect(calls.filter(([file]) => file === 'nice')).toEqual([]);
     release?.();
     await vi.advanceTimersByTimeAsync(0);
     expect(hungRead()).toBeNull();
   });
 });
 
-test('lists a home folder named like a Stim temp leftover, and skips that name only in the temp folder', async () => {
-  mkdirSync(join(home, 'stim-demo'));
-  mkdirSync(join(temp, 'stim-ws-1'));
+test.skipIf(process.platform === 'win32')(
+  'lists a home folder named like a Stim temp leftover, and skips that name only in the temp folder',
+  async () => {
+    mkdirSync(join(home, 'stim-demo'));
+    mkdirSync(join(temp, 'stim-ws-1'));
 
-  const labels = (await unmanagedUsage(levelRun({}), false))?.entries.map((entry) => entry.label) ?? [];
+    const labels = (await unmanagedUsage(levelRun({}), false))?.entries.map((entry) => entry.label) ?? [];
 
-  expect(labels).toContain(join(home, 'stim-demo'));
-  expect(labels).not.toContain(join(temp, 'stim-ws-1'));
-});
+    expect(labels).toContain(join(home, 'stim-demo'));
+    expect(labels).not.toContain(join(temp, 'stim-ws-1'));
+  },
+);
 
-test('on macOS names the home folders macOS protects and never reads them', async () => {
-  const platform = process.platform;
-  Object.defineProperty(process, 'platform', { value: 'darwin' });
-  onTestFinished(() => {
-    Object.defineProperty(process, 'platform', { value: platform });
-  });
-  for (const dir of ['Documents', 'Library', 'projects']) mkdirSync(join(home, dir));
-  const read: string[] = [];
-  hooks.lstat = (path) => {
-    read.push(path);
-  };
-
-  const usage = await unmanagedUsage(levelRun({}), false);
-
-  expect(usage?.guarded).toEqual([join(home, 'Documents'), join(home, 'Library')]);
-  expect(read).not.toContain(join(home, 'Documents'));
-  expect(calls.map((call) => call.at(-1))).not.toContain(join(home, 'Library'));
-  expect(usage ? formatUnmanagedUsage(usage) : []).toContain(
-    `  not sized, macOS protects these: ${join(home, 'Documents')}, ${join(home, 'Library')}`,
-  );
-});
-
-test('a walk the deadline cut short counts as not reached, not as slow', async () => {
-  for (const dir of ['a-first', 'b-second']) mkdirSync(join(home, dir));
-  hooks.du = (dir) => {
-    if (dir.endsWith('a-first')) vi.setSystemTime(Date.now() + 12_000);
-    else if (dir.endsWith('b-second'))
-      return Promise.reject(Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' }));
-    return null;
-  };
-
-  const usage = await unmanagedUsage(levelRun({}), false);
-
-  expect(usage?.slow).toEqual([]);
-  expect(usage?.unreached).toBe(1);
-});
-
-test('a walk that never closes ends at its cap, stays the pending read, and leaves the rest unreached', async () => {
-  for (const dir of ['a-stuck', 'b-after']) mkdirSync(join(home, dir));
-  let arrive = () => {};
-  const reached = new Promise<void>((resolve) => {
-    arrive = resolve;
-  });
-  let release = () => {};
-  hooks.du = (dir) => {
-    if (!dir.endsWith('a-stuck')) return null;
-    arrive();
-    return new Promise<string>((resolve) => {
-      release = () => resolve(`1\t${dir}\n`);
+test.skipIf(process.platform === 'win32')(
+  'on macOS names the home folders macOS protects and never reads them',
+  async () => {
+    const platform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    onTestFinished(() => {
+      Object.defineProperty(process, 'platform', { value: platform });
     });
-  };
-  try {
-    const pending = unmanagedUsage(levelRun({}), false);
-    await reached;
-    await vi.advanceTimersByTimeAsync(6_000);
-    const usage = await pending;
+    for (const dir of ['Documents', 'Library', 'projects']) mkdirSync(join(home, dir));
+    const read: string[] = [];
+    hooks.lstat = (path) => {
+      read.push(path);
+    };
 
-    expect(usage?.slow).toEqual([join(home, 'a-stuck')]);
+    const usage = await unmanagedUsage(levelRun({}), false);
+
+    expect(usage?.guarded).toEqual([join(home, 'Documents'), join(home, 'Library')]);
+    expect(read).not.toContain(join(home, 'Documents'));
+    expect(calls.map((call) => call.at(-1))).not.toContain(join(home, 'Library'));
+    expect(usage ? formatUnmanagedUsage(usage) : []).toContain(
+      `  not sized, macOS protects these: ${join(home, 'Documents')}, ${join(home, 'Library')}`,
+    );
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'a walk the deadline cut short counts as not reached, not as slow',
+  async () => {
+    for (const dir of ['a-first', 'b-second']) mkdirSync(join(home, dir));
+    hooks.du = (dir) => {
+      if (dir.endsWith('a-first')) vi.setSystemTime(Date.now() + 12_000);
+      else if (dir.endsWith('b-second'))
+        return Promise.reject(Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' }));
+      return null;
+    };
+
+    const usage = await unmanagedUsage(levelRun({}), false);
+
+    expect(usage?.slow).toEqual([]);
     expect(usage?.unreached).toBe(1);
-    expect(hungRead()).toBe(join(home, 'a-stuck'));
-  } finally {
-    release();
-    await vi.advanceTimersByTimeAsync(0);
-  }
-});
+  },
+);
 
-test('lists only volumes the pressure measurement found short, and APFS volumes sharing their free space', async () => {
-  mkdirSync(join(home, 'big'));
-  mkdirSync(join(temp, 'scratch'));
-  hooks.volume = (path) => (path === temp ? { volume: '/tmp', freeMb: 512, device: 424_242 } : null);
+test.skipIf(process.platform === 'win32')(
+  'a walk that never closes ends at its cap, stays the pending read, and leaves the rest unreached',
+  async () => {
+    for (const dir of ['a-stuck', 'b-after']) mkdirSync(join(home, dir));
+    let arrive = () => {};
+    const reached = new Promise<void>((resolve) => {
+      arrive = resolve;
+    });
+    let release = () => {};
+    hooks.du = (dir) => {
+      if (!dir.endsWith('a-stuck')) return null;
+      arrive();
+      return new Promise<string>((resolve) => {
+        release = () => resolve(`1\t${dir}\n`);
+      });
+    };
+    try {
+      const pending = unmanagedUsage(levelRun({}), false);
+      await reached;
+      await vi.advanceTimersByTimeAsync(6_000);
+      const usage = await pending;
 
-  const labels = (await unmanagedUsage(levelRun({}), false))?.entries.map((entry) => entry.label) ?? [];
-  expect(labels).toContain(join(home, 'big'));
-  expect(labels).not.toContain(join(temp, 'scratch'));
+      expect(usage?.slow).toEqual([join(home, 'a-stuck')]);
+      expect(usage?.unreached).toBe(1);
+      expect(hungRead()).toBe(join(home, 'a-stuck'));
+    } finally {
+      release();
+      await vi.advanceTimersByTimeAsync(0);
+    }
+  },
+);
 
-  const { readVolumeSpaceAsync } =
-    await vi.importActual<typeof import('../stimd/passes/budget.ts')>('../stimd/passes/budget.ts');
-  const [measured] = await readVolumeSpaceAsync([home]);
-  hooks.volume = (path) =>
-    path === temp && measured ? { volume: '/System/Volumes/VM', freeMb: measured.freeMb, device: 424_242 } : null;
-  const sibling = (await unmanagedUsage(levelRun({}), false))?.entries.map((entry) => entry.label) ?? [];
-  expect(sibling).toContain(join(temp, 'scratch'));
+test.skipIf(process.platform === 'win32')(
+  'lists only volumes the pressure measurement found short, and APFS volumes sharing their free space',
+  async () => {
+    mkdirSync(join(home, 'big'));
+    mkdirSync(join(temp, 'scratch'));
+    hooks.volume = (path) => (path === temp ? { volume: '/tmp', freeMb: 512, device: 424_242 } : null);
+
+    const labels = (await unmanagedUsage(levelRun({}), false))?.entries.map((entry) => entry.label) ?? [];
+    expect(labels).toContain(join(home, 'big'));
+    expect(labels).not.toContain(join(temp, 'scratch'));
+
+    const { readVolumeSpaceAsync } =
+      await vi.importActual<typeof import('../stimd/passes/budget.ts')>('../stimd/passes/budget.ts');
+    const [measured] = await readVolumeSpaceAsync([home]);
+    hooks.volume = (path) =>
+      path === temp && measured ? { volume: '/System/Volumes/VM', freeMb: measured.freeMb, device: 424_242 } : null;
+    const sibling = (await unmanagedUsage(levelRun({}), false))?.entries.map((entry) => entry.label) ?? [];
+    expect(sibling).toContain(join(temp, 'scratch'));
+  },
+);
+
+test.skipIf(process.platform !== 'win32')('on Windows the scan does nothing and runs no command', async () => {
+  docker = '/usr/bin/docker';
+  expect(await unmanagedUsage(levelRun({}), false)).toBeNull();
+  expect(calls).toEqual([]);
 });
