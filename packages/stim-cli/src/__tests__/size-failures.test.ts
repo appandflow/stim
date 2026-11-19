@@ -1,7 +1,7 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { daemonNdjsonFile } from '@stim-cli/core/state';
+import { daemonNdjsonFile, sizeFailuresFile } from '@stim-cli/core/state';
 
 let home: string;
 
@@ -37,4 +37,14 @@ test('a size failure another thread already recorded is not recorded again withi
   vi.setSystemTime(Date.now() + 6 * 60 * 60_000);
   (await freshInstance()).noteSizeFailure(path, timeout, 1000);
   expect(records()).toHaveLength(2);
+});
+
+test('a size failure whose record time cannot be saved is not logged, so it cannot repeat on every failure', async () => {
+  mkdirSync(sizeFailuresFile(), { recursive: true });
+  const timeout = { reason: 'timeout', limitMs: 1000 } as const;
+
+  (await freshInstance()).noteSizeFailure(join(home, 'cache'), timeout, 1000);
+  (await freshInstance()).noteSizeFailure(join(home, 'cache'), timeout, 1000);
+
+  expect(existsSync(daemonNdjsonFile())).toBe(false);
 });

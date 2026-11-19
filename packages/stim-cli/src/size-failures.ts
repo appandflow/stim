@@ -122,6 +122,7 @@ export function noteSizeFailure(path: string, failure: SizeFailure, ms: number, 
     for (const [stale, { at }] of failures) if (expired(at, now)) failures.delete(stale);
     recorded[slot] = now;
     writeCacheFile(sizeFailuresFile(), recorded);
+    if (readRecorded()[slot] !== now) return;
     const caller = sizeCaller();
     const writer = createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES });
     try {
