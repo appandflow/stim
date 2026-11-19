@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   readdirSync,
   realpathSync,
   rmSync,
@@ -500,6 +501,24 @@ describe.skipIf(process.platform === 'win32')(
         'a process took',
       ],
       [
+        'a process names a moved file by its original path during the move',
+        () => {
+          let reads = 0;
+          stubProcesses({
+            lsof: (args) => (args.includes('-Fn') && reads++ > 0 ? `p100\nn${real}/bake/out.js\n` : ''),
+          });
+        },
+        'a process took',
+      ],
+      [
+        'a build writes an entry staged later during the move',
+        () =>
+          (fsHooks.rename = (from) => {
+            if (from.endsWith('/bake')) utimesSync(join(dir, 'debug', 'deps'), new Date(), new Date());
+          }),
+        'was used during the move',
+      ],
+      [
         'another filesystem is mounted in it',
         () => (fsHooks.dev = (path) => (path.endsWith('/bake') ? -1 : undefined)),
         'another filesystem',
@@ -515,6 +534,55 @@ describe.skipIf(process.platform === 'win32')(
       expect(existsSync(join(dir, 'debug', 'app'))).toBe(true);
       expect(existsSync(join(dir, 'bake', 'out.js'))).toBe(true);
       expect(existsSync(join(dir, '.stim-trimmed'))).toBe(false);
+    });
+
+    test.each([
+      ['a bind mount lies under it', () => `36 35 0:1 / ${real}/bake rw - ext4 /dev/x rw\n`, 'is a mount point'],
+      [
+        'the mounts cannot be read',
+        () => {
+          throw new Error('EACCES');
+        },
+        'the mounts cannot be read',
+      ],
+    ])('it stays whole when %s', async (_, mountInfo, why) => {
+      const result = await deleteCargoTarget(dir, { idleMs: DAY, launching: noLaunchers(target), mountInfo });
+
+      expect(result.kept).toEqual([expect.stringContaining(why)]);
+      expect(existsSync(join(dir, 'bake', 'out.js'))).toBe(true);
+    });
+
+    test('a cancelled delete puts every moved entry back and leaves nothing staged', async () => {
+      const controller = new AbortController();
+      fsHooks.rename = (from) => {
+        if (from.endsWith('/bake')) controller.abort();
+      };
+
+      await expect(
+        deleteCargoTarget(dir, { idleMs: DAY, launching: noLaunchers(target), signal: controller.signal }),
+      ).rejects.toThrow('aborted');
+
+      expect(readdirSync(dir).toSorted()).toEqual(['.rustc_info.json', 'bake', 'criterion', 'debug']);
+      expect(existsSync(join(dir, 'bake', 'out.js'))).toBe(true);
+    });
+
+    test('a roll back keeps a file a build recreated and leaves the staged copy for a person', async () => {
+      stubProcesses({
+        lsof: (args) => {
+          const lock = args.at(-1) ?? '';
+          if (!lock.includes('.stim-trimmed') || !lock.endsWith('.cargo-lock')) return '';
+          writeFileSync(join(dir, '.rustc_info.json'), 'new');
+          return '4242\n';
+        },
+      });
+
+      const result = await remove();
+
+      expect(result.kept).toEqual([expect.stringContaining('could not be put back')]);
+      expect(readFileSync(join(dir, '.rustc_info.json'), 'utf8')).toBe('new');
+      const kept = readdirSync(dir).find((name) => name.startsWith('.stim-not-restored-')) ?? '';
+      expect(readFileSync(join(dir, kept), 'utf8')).toBe('{}');
+      expect(existsSync(join(dir, 'debug', 'app'))).toBe(true);
     });
   },
 );

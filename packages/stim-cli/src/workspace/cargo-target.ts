@@ -172,7 +172,10 @@ function ledgerShowsUse(ledger: Ledger | { refusal: string }, now: number): bool
 }
 
 function readLedger(target: string): Ledger | { refusal: string } {
-  const ledgerPath = join(target, EXACT_LEDGER);
+  return readLedgerAt(join(target, EXACT_LEDGER));
+}
+
+function readLedgerAt(ledgerPath: string): Ledger | { refusal: string } {
   if (!existsSync(ledgerPath)) return EMPTY_LEDGER;
   let text: string;
   try {
@@ -409,23 +412,22 @@ async function withTrimClaim<T>(
 
 /**
  * Why `target` shows use within `idleMs`: a modification time that recent, or one that cannot be read, on the `target/`
- * itself, a top-level entry other than Stim's own, a direct child of a top-level directory, or a profile and its
- * `.fingerprint`, `deps`, `build` and `incremental`; or a stamp that recent in Exact's ledger. Null when all of it went
- * unwritten that long.
+ * itself or in a top-level entry other than Stim's own (`recentEntryUse`). Null when all of it went unwritten that long.
  */
 export function recentTargetUse(target: string, now: number, idleMs: number): string | null {
   const entries = entriesOf(target);
   if (!entries) return `${target} cannot be listed`;
-  const paths = [target];
-  for (const entry of entries) {
-    if (entry.name.startsWith(OWN_PREFIX)) continue;
-    const path = join(target, entry.name);
-    paths.push(path);
-    if (!entry.isDirectory()) continue;
-    const inner = entriesOf(path);
-    if (!inner) return `${path} cannot be listed`;
-    paths.push(...inner.map(({ name }) => join(path, name)));
+  const root = recentWrite([target], now, idleMs);
+  if (root) return root;
+  for (const { name } of entries) {
+    if (name.startsWith(OWN_PREFIX)) continue;
+    const why = recentEntryUse(join(target, name), name, now, idleMs);
+    if (why) return why;
   }
+  return null;
+}
+
+function recentWrite(paths: readonly string[], now: number, idleMs: number): string | null {
   for (const path of paths) {
     let written: number;
     try {
@@ -435,15 +437,34 @@ export function recentTargetUse(target: string, now: number, idleMs: number): st
     }
     if (now - written <= idleMs) return `${path} was written in that time`;
   }
-  const ledger = readLedger(target);
-  if ('refusal' in ledger) return ledger.refusal;
-  if ([...ledger.newest.values()].some((at) => now - at <= idleMs)) return "Exact's ledger stamps a unit in that time";
-  const listed = profilePaths(target);
-  if (!listed) return `${target} cannot be listed`;
-  for (const profile of listed.profiles) {
-    const written = newestMtime(join(target, profile));
-    if (written === null) return `the last use of its ${profile} profile cannot be read`;
-    if (now - written <= idleMs) return `a build used its ${profile} profile in that time`;
+  return null;
+}
+
+/**
+ * Why the top-level entry `name` of a target, now at `path`, shows use within `idleMs`: its own modification time, each
+ * of its direct children's, a profile in it or directly inside it with its `.fingerprint`, `deps`, `build` and
+ * `incremental`, or, for Exact's ledger, a unit stamp that recent.
+ */
+function recentEntryUse(path: string, name: string, now: number, idleMs: number): string | null {
+  const inner = lstatSync(path, { throwIfNoEntry: false })?.isDirectory() ? entriesOf(path) : [];
+  if (!inner) return `${path} cannot be listed`;
+  const written = recentWrite([path, ...inner.map((entry) => join(path, entry.name))], now, idleMs);
+  if (written) return written;
+  if (name === EXACT_LEDGER) {
+    const ledger = readLedgerAt(path);
+    if ('refusal' in ledger) return ledger.refusal;
+    if ([...ledger.newest.values()].some((at) => now - at <= idleMs))
+      return "Exact's ledger stamps a unit in that time";
+  }
+  const profiles = fingerprintDir(path)
+    ? [name]
+    : inner
+        .filter((entry) => entry.isDirectory() && fingerprintDir(join(path, entry.name)))
+        .map((entry) => `${name}/${entry.name}`);
+  for (const profile of profiles) {
+    const used = newestMtime(profile === name ? path : join(path, profile.slice(name.length + 1)));
+    if (used === null) return `the last use of its ${profile} profile cannot be read`;
+    if (now - used <= idleMs) return `a build used its ${profile} profile in that time`;
   }
   return null;
 }
@@ -456,10 +477,7 @@ export function recentTargetUse(target: string, now: number, idleMs: number): st
  * are moved the processes are read again: an entry a build or process took meanwhile is put back. The moved entries
  * are then deleted without crossing into another filesystem, and the emptied `target/` goes too.
  */
-export async function deleteCargoTarget(
-  registeredTarget: string,
-  options: { idleMs: number; launching: Launching; signal?: AbortSignal },
-): Promise<CargoTrimResult> {
+export async function deleteCargoTarget(registeredTarget: string, options: DeleteOptions): Promise<CargoTrimResult> {
   const claimed = await withTrimClaim(registeredTarget, async (target): Promise<CargoTrimResult> =>
     (await cargoTargetDirsAsync(dirname(registeredTarget))).includes(registeredTarget)
       ? deleteClaimed(target, options)
@@ -468,13 +486,46 @@ export async function deleteCargoTarget(
   return 'kept' in claimed ? { bytes: 0, removed: [], kept: [claimed.kept] } : claimed.value;
 }
 
+interface DeleteOptions {
+  idleMs: number;
+  launching: Launching;
+  signal?: AbortSignal;
+  /**
+   * Reads Linux's `/proc/self/mountinfo`, where a bind mount keeps the device number of the volume it exposes, so the
+   * `st_dev` checks cannot see it; null where there is no such file. Defaults to the real file on Linux.
+   */
+  mountInfo?: (() => string) | null;
+}
+
+const LINUX_MOUNT_INFO = process.platform === 'linux' ? () => readFileSync('/proc/self/mountinfo', 'utf8') : null;
+
+/** Why a mount point lies at or under `target` by `mountInfo`, or null when none does. */
+function mountedUnder(target: string, mountInfo: (() => string) | null): string | null {
+  if (!mountInfo) return null;
+  let text: string;
+  try {
+    text = mountInfo();
+  } catch (error) {
+    return `the mounts cannot be read: ${error instanceof Error ? error.message : error}`;
+  }
+  for (const line of text.split('\n')) {
+    const field = line.split(' ')[4];
+    if (!field) continue;
+    const point = field.replace(/\\([0-7]{3})/g, (_, octal: string) => String.fromCharCode(Number.parseInt(octal, 8)));
+    if (point === target || point.startsWith(`${target}/`)) return `${point} is a mount point`;
+  }
+  return null;
+}
+
 async function deleteClaimed(
   target: string,
-  { idleMs, launching, signal }: { idleMs: number; launching: Launching; signal?: AbortSignal },
+  { idleMs, launching, signal, mountInfo = LINUX_MOUNT_INFO }: DeleteOptions,
 ): Promise<CargoTrimResult> {
   const result: CargoTrimResult = { bytes: 0, removed: [], kept: [] };
   const keep = (why: string): CargoTrimResult => ({ ...result, kept: [why] });
-  const blocked = recoveryReason(target) ?? recentTargetUse(target, Date.now(), idleMs);
+  // @ref LLP 0005#the-dormant-reduction-deletes-an-idle-target-whole -- never into another filesystem or a bind mount
+  const blocked =
+    recoveryReason(target) ?? recentTargetUse(target, Date.now(), idleMs) ?? mountedUnder(target, mountInfo);
   if (blocked) return keep(blocked);
   const { dev } = await lstat(target);
   const aside = join(target, ASIDE);
@@ -499,8 +550,8 @@ async function deleteClaimed(
   const moved: Entry[] = [];
   const putBackAll = async (why: string): Promise<CargoTrimResult> => {
     const stranded: string[] = [];
-    for (const entry of moved.toReversed()) {
-      const back = await restoreOrStrand(target, entry.there, entry.dir, moved.indexOf(entry));
+    for (let entry = moved.pop(); entry !== undefined; entry = moved.pop()) {
+      const back = await restoreOrStrand(target, entry.there, entry.dir, moved.length);
       if (back.home !== entry.dir) stranded.push(back.home);
     }
     const left = stranded.length
@@ -509,25 +560,35 @@ async function deleteClaimed(
     await rmdir(aside).catch(() => {});
     return { ...result, kept: [...result.kept, `${why}${left}`] };
   };
-  for (const name of names) {
-    signal?.throwIfAborted();
-    await mkdir(aside, { recursive: true });
-    const entry = { dir: join(target, name), there: join(aside, String(moved.length)), name };
-    try {
-      await rename(entry.dir, entry.there);
-    } catch (error) {
-      result.kept.push(`${name}: it could not be moved aside: ${error instanceof Error ? error.message : error}`);
-      continue;
+  // @ref LLP 0005#never-delete-what-a-build-took-back -- nothing stays staged unless the final checks pass
+  try {
+    for (const name of names) {
+      signal?.throwIfAborted();
+      await mkdir(aside, { recursive: true });
+      const entry = { dir: join(target, name), there: join(aside, String(moved.length)), name };
+      try {
+        await rename(entry.dir, entry.there);
+      } catch (error) {
+        result.kept.push(`${name}: it could not be moved aside: ${error instanceof Error ? error.message : error}`);
+        continue;
+      }
+      moved.push(entry);
+      const took = await heldLock(entry.there, name);
+      if (took) return await putBackAll(`a build took ${took} during the move`);
     }
-    moved.push(entry);
-    const took = await heldLock(entry.there, name);
-    // @ref LLP 0005#never-delete-what-a-build-took-back -- a build locked it during the move
-    if (took) return putBackAll(`a build took ${took} during the move`);
+    const after = moved.length ? await readTargetUse(target, launching, signal) : { used: [] };
+    if ('kept' in after) return await putBackAll(after.kept);
+    const taken = moved.find(({ dir, there }) => inUse(after.used, dir) || inUse(after.used, there));
+    if (taken) return await putBackAll(`a process took ${taken.dir} during the move`);
+    const now = Date.now();
+    for (const entry of moved) {
+      const used = recentEntryUse(entry.there, entry.name, now, idleMs);
+      if (used) return await putBackAll(`${entry.dir} was used during the move: ${used}`);
+    }
+  } catch (error) {
+    await putBackAll('the delete was interrupted');
+    throw error;
   }
-  const after = moved.length ? await readTargetUse(target, launching, signal) : { used: [] };
-  if ('kept' in after) return putBackAll(after.kept);
-  const taken = moved.find(({ there }) => inUse(after.used, there));
-  if (taken) return putBackAll(`a process took ${taken.dir} during the move`);
   for (const entry of moved) {
     result.bytes += await sizeOf(entry.there, signal);
     result.removed.push(entry.name);
@@ -621,8 +682,11 @@ async function restoreOrStrand(
   n: number,
 ): Promise<{ home: string; marked: boolean }> {
   try {
-    await rename(there, dir);
-    return { home: dir, marked: false };
+    // Node has no rename that refuses to replace, so a name recreated after this check is still overwritten.
+    if (!lstatSync(dir, { throwIfNoEntry: false })) {
+      await rename(there, dir);
+      return { home: dir, marked: false };
+    }
   } catch {}
   const stranded = join(target, `${NOT_RESTORED}${Date.now()}-${n}`);
   try {
