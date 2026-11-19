@@ -431,9 +431,37 @@ export async function clearStoppedOutputs(
 
 /**
  * The dormant reduction's build-output step for `candidates` already read idle `thresholdMs`: each one holding
- * regenerable build outputs goes through `clearStoppedOutputs`, as in `stim gc`.
+ * regenerable build outputs goes through `clearStoppedOutputs`, as in `stim gc`. A candidate that fails is reported
+ * failed and the rest still run.
  */
-export async function clearDormantOutputs(
+export function clearDormantOutputs(
+  candidates: readonly StageCandidate[],
+  config: Config,
+  thresholdMs: number,
+  input: Pick<IdlePassInput, 'act' | 'log'> & { operation?: StimContext },
+): Promise<DaemonLadderAction[]> {
+  return timedStep(input.log, 'dormant_outputs', () => dormantOutputActions(candidates, config, thresholdMs, input), {
+    signal: input.operation?.signal,
+    items: (actions) => actions?.length,
+  });
+}
+
+async function dormantOutputResult(
+  candidate: StageCandidate,
+  config: Config,
+  thresholdMs: number,
+  operation: StimContext | undefined,
+): Promise<StageResult | null> {
+  try {
+    return await clearStoppedOutputs(candidate, config, thresholdMs, operation);
+  } catch (error) {
+    if (isClaimUnavailable(error) || (error instanceof Error && 'reportCleanup' in error)) throw error;
+    operation?.signal.throwIfAborted();
+    return { outcome: 'failed', bytes: 0, detail: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+async function dormantOutputActions(
   candidates: readonly StageCandidate[],
   config: Config,
   thresholdMs: number,
@@ -443,7 +471,7 @@ export async function clearDormantOutputs(
   for (const candidate of candidates) {
     if (!(await hasOutputs(candidate.path))) continue;
     const result = input.act
-      ? await clearStoppedOutputs(candidate, config, thresholdMs, input.operation)
+      ? await dormantOutputResult(candidate, config, thresholdMs, input.operation)
       : { outcome: 'would' as const, bytes: 0, detail: 'daemon.mode report acts on nothing' };
     if (!result) continue;
     const restore =

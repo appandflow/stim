@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -102,8 +103,8 @@ describe('a discovered checkout in the idle stages', () => {
     );
   });
 
-  function cargoWorkspace(): string {
-    const root = join(base, 'roots', 'framework');
+  function cargoWorkspace(folder = 'framework', idleDays = 3): string {
+    const root = join(base, 'roots', folder);
     mkdirSync(join(root, 'apps', 'demo'), { recursive: true });
     for (const name of ['exact.mjs', 'app.json']) writeFileSync(join(root, 'apps', 'demo', name), '{}');
     writeFileSync(join(root, 'Cargo.toml'), '[workspace]\n');
@@ -120,7 +121,7 @@ describe('a discovered checkout in the idle stages', () => {
         env: { ...process.env, GIT_AUTHOR_DATE: when, GIT_COMMITTER_DATE: when },
       });
     writeFileSync(join(root, 'notes.md'), 'uncommitted');
-    const old = new Date(Date.now() - 3 * day);
+    const old = new Date(Date.now() - idleDays * day);
     const age = (path: string) => {
       for (const entry of readdirSync(path, { withFileTypes: true })) {
         if (entry.name === '.git') continue;
@@ -165,6 +166,34 @@ describe('a discovered checkout in the idle stages', () => {
     );
     expect(existsSync(join(root, 'target'))).toBe(false);
     expect(existsSync(join(root, 'notes.md'))).toBe(true);
+  });
+
+  it("the daemon's dormant pass reports a target/ it cannot delete as failed and still clears the next checkout", async () => {
+    const stuck = cargoWorkspace('stuck', 5);
+    const locked = join(stuck, 'target', 'debug', 'locked');
+    mkdirSync(locked);
+    writeFileSync(join(locked, 'unit'), 'x');
+    chmodSync(locked, 0o555);
+    const free = cargoWorkspace('free', 3);
+    for (const path of [locked, join(stuck, 'target', 'debug'), join(stuck, 'target'), stuck])
+      utimesSync(path, new Date(Date.now() - 5 * day), new Date(Date.now() - 5 * day));
+    const config: Config = { maintenance: { discoverRoots: [join(base, 'roots')] }, projects: {}, repos: {} };
+    saveConfig(config);
+
+    const actions = await runDormantDependencies({
+      config,
+      act: true,
+      log: () => {},
+      ...reading,
+      operation: testContext(),
+      cadence: new BigInt64Array(1),
+      outputs: true,
+    }).finally(() => chmodSync(locked, 0o755));
+    expect(actions.filter((action) => action.kind === 'delete-build-outputs')).toEqual([
+      expect.objectContaining({ target: stuck, outcome: 'failed' }),
+      expect.objectContaining({ target: free, outcome: 'done' }),
+    ]);
+    expect(existsSync(join(free, 'target'))).toBe(false);
   });
 
   it('keeps the target/ of a Cargo workspace root edited within idle.dormantDays', async () => {

@@ -91,7 +91,7 @@ test.each([
   ['a target triple with a signed CACHEDIR.TAG', ['wasm32-unknown-unknown/CACHEDIR.TAG'], true],
   ['an unsigned CACHEDIR.TAG in a child', ['web/CACHEDIR.TAG'], false],
   ['no Cargo files', ['web/index.js'], false],
-])('a target/ beside Cargo.toml with %s is a Cargo target: %s', async (_, entries, recognised) => {
+])('a target/ beside Cargo.toml with %s is a Cargo target: $2', async (_, entries, recognised) => {
   writeFileSync(join(root, 'Cargo.toml'), '');
   for (const entry of entries) {
     const path = join(root, 'target', entry);
