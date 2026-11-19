@@ -266,14 +266,15 @@ level stimd reads later cannot change it. A snapshot that a stopped stimd left
 at high or critical keeps these children at full priority until a stimd ticks
 again.
 
-The children that pass it: the maintenance pass's size scans and Cargo target
-trims in the daemon tick, the dependency and checkout measurements through
-their walk claim, and the fingerprint precompute's child. The size scans and
-trims a maintenance pass runs in a command, such as `stim gc`, are not lowered,
-since the person waits for them. The walks and trims that ran under
-`nice -n 19` before pass the option in a command too. Worker threads cannot lower themselves: Node's
-`os.setPriority` acts on a whole process, so the policy goes on the child
-tools.
+The children that pass it in the daemon: the maintenance pass's size scans,
+owned emulator sizes, Cargo target planning and trims, the dormant stage's
+build-output sizes and Cargo trims, the dependency and checkout measurements
+through their walk claim, and the fingerprint precompute's child. A fingerprint
+a build reads runs at the caller's priority. The same scans and trims in a
+command, such as `stim gc`, are not lowered, since the person waits for them;
+the walks and trims that ran under `nice -n 19` before pass the option in a
+command too. Worker threads cannot lower themselves: Node's `os.setPriority`
+acts on a whole process, so the policy goes on the child tools.
 
 Maintainer decision: "yea stim itself is fine at interactive I am good with", 2026-11-19.
 [Decision on #5925](https://github.com/appandflow/stim/issues/5925#issuecomment-7023460880).
