@@ -235,6 +235,7 @@ Expo, the directory whose package.json depends on react-native or expo):
       summary: 'Run on a connected iPhone or Android phone',
       body: () => `PHYSICAL DEVICES
 
+  stim worktree warm   # first, unless working in place
   stim ios --device [udid]                  a connected iPhone or iPad, cable or Wi-Fi
   stim android --device [serial]            a connected Android phone
   stim device lock ios <udid> --for 10m     keep the lease between runs
