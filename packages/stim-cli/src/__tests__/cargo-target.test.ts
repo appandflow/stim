@@ -728,6 +728,15 @@ describe.skipIf(process.platform === 'win32')(
       expect(result.kept).toContainEqual(expect.stringContaining(why));
       expect(existsSync(join(dir, 'clients', 'app', 'client.js'))).toBe(true);
     });
+    test('a held lock keeps the target and still names the entries that are not build output', async () => {
+      stubProcesses({ lsof: (args) => (args.at(-1)?.endsWith('libapp.lock.flock') ? '4242\n' : '') });
+
+      expect((await remove()).kept).toEqual([
+        'not recognised as build output: .apple-cargo-locks, .exact-sweep.json, .exact-sweep.json.lock',
+        expect.stringContaining('libapp.lock.flock'),
+      ]);
+    });
+
     test.skipIf(process.getuid?.() === 0)('it stays whole when an entry cannot be listed', async () => {
       chmodSync(join(dir, 'bake'), 0o000);
 

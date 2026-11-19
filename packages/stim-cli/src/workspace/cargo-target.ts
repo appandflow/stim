@@ -576,12 +576,13 @@ function recentEntryUse(path: string, name: string, now: number, idleMs: number)
 }
 
 /**
- * Deletes `target` whole under its trim claim, except a Criterion `criterion/` directory, once it is still a Cargo
- * `target/` Stim recognises, holds no copy a trim could not put back, shows no use within `idleMs`
- * (`recentTargetUse`) and has no other filesystem mounted inside. Each top-level entry no process uses and whose lock
- * files no build holds is renamed into `target/.stim-trimmed`, its locks are read again at the new path, and once all
- * are moved the processes are read again: an entry a build or process took meanwhile is put back. The moved entries
- * are then deleted without crossing into another filesystem, and the emptied `target/` goes too.
+ * Deletes the top-level entries of `target` that Stim recognises as build output (`targetEntries`) under its trim
+ * claim, and keeps every other entry, once it is still a Cargo `target/` Stim recognises, holds no copy a trim could
+ * not put back, shows no use within `idleMs` (`recentTargetUse`) and has no other filesystem mounted inside. Each
+ * recognised entry no process uses and whose lock files no build holds is renamed into `target/.stim-trimmed`, its
+ * locks are read again at the new path, and once all are moved the processes are read again: an entry a build or
+ * process took meanwhile is put back. The moved entries are then deleted without crossing into another filesystem,
+ * and the `target/` goes too when nothing is left in it.
  */
 export async function deleteCargoTarget(registeredTarget: string, options: DeleteOptions): Promise<CargoTrimResult> {
   const claimed = await withTrimClaim(registeredTarget, async (target): Promise<CargoTrimResult> =>
@@ -628,7 +629,7 @@ async function deleteClaimed(
   { idleMs, launching, signal, mountInfo = LINUX_MOUNT_INFO }: DeleteOptions,
 ): Promise<CargoTrimResult> {
   const result: CargoTrimResult = { bytes: 0, removed: [], kept: [] };
-  const keep = (why: string): CargoTrimResult => ({ ...result, kept: [why] });
+  const keep = (why: string): CargoTrimResult => ({ ...result, kept: [...result.kept, why] });
   // @ref LLP 0005#the-dormant-reduction-deletes-an-idle-target-whole -- never into another filesystem or a bind mount
   const blocked =
     recoveryReason(target) ?? recentTargetUse(target, Date.now(), idleMs) ?? mountedUnder(target, mountInfo);
