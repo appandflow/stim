@@ -583,6 +583,7 @@ export function runStatusWatch({
   return {
     stop(released) {
       stopped = true;
+      measurer.stop();
       clearInterval(fallback);
       clearInterval(machine);
       scheduler.stop();

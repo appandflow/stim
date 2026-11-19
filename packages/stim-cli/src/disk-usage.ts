@@ -127,6 +127,13 @@ export interface RefreshOptions {
   /** Records a failed walk, and leaves the folder alone for `maxAgeMs` after it. */
   failures?: boolean;
   /**
+   * Asked under the walk claim, right before a walk would start: false leaves the folder unwalked with the outcome
+   * `busy`.
+   */
+  admit?: () => boolean;
+  /** Called once the walk is over, whatever its outcome, before the walk claim is released. */
+  settled?: () => void;
+  /**
    * The caller has established, through a bounded read, that `path` exists: do not probe it. Without it the folder is
    * probed with a synchronous `existsSync`, which a stalled mount can block.
    */
@@ -204,6 +211,7 @@ export async function refreshMeasure(
   let cleanupUnverified = false;
   try {
     if (claim && skip()) return fresh();
+    if (options.admit && !options.admit()) return { outcome: 'busy', measure: null };
     const startedAt = now();
     const signature = dependency ? (options.signature ?? treeSignature(path)) : null;
     const targets = options.targets?.();
@@ -251,6 +259,7 @@ export async function refreshMeasure(
     throw error;
   } finally {
     if (operation) stopDeclaringSpawnsOn(operation, claim);
+    options.settled?.();
     if (!cleanupUnverified) releaseClaim(claim);
   }
 }

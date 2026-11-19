@@ -1,15 +1,17 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { readClaimSet } from '@stim-cli/core/ownership-claim';
 import {
   ENDED_AGENT_RETENTION_MS,
+  diskUsageCacheFile,
   diskUsageWalkClaims,
   readAgentSessionsCache,
   readDiskUsage,
   readEndedAgentSessions,
   readPullRequestCache,
+  readStatusWalkRest,
   type EnvironmentState,
 } from '@stim-cli/core/state';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
@@ -30,8 +32,10 @@ let head: string;
 let clock: number;
 let gate: Promise<void> | null;
 let duFails: boolean;
+let failing: string[];
 let duPid: number;
 let kilobytes: Record<string, number>;
+let walkMs: (targets: string[]) => number;
 const realHome = process.env.HOME;
 const realUserProfile = process.env.USERPROFILE;
 
@@ -44,6 +48,7 @@ beforeEach(() => {
   app = join(home, 'app');
   avd = join(home, 'avd', 'stim-t.avd');
   mkdirSync(join(app, 'node_modules'), { recursive: true });
+  mkdirSync(join(app, 'src'));
   mkdirSync(avd, { recursive: true });
   avd = realpathSync(avd);
   writeFileSync(join(home, 'avd', 'stim-t.ini'), `path=${avd}\n`);
@@ -53,9 +58,11 @@ beforeEach(() => {
   clock = Date.parse('2026-09-27T10:00:00.000Z');
   gate = null;
   duFails = false;
+  failing = [];
   duPid = process.pid;
+  walkMs = () => 0;
   kilobytes = {
-    [app]: 1000,
+    [join(realpathSync(app), 'src')]: 600,
     [join(app, 'node_modules')]: 400,
     [workspaceDir(app)]: 200,
     [avd]: 3000,
@@ -70,7 +77,9 @@ beforeEach(() => {
       if (file === 'nice') {
         opts?.onSpawn?.({ pid: duPid } as ChildProcess);
         await gate;
-        if (duFails) throw new Error('Command timed out after 120000ms: du');
+        clock += walkMs(args.slice(4));
+        if (duFails || args.slice(4).some((path: string) => failing.includes(path)))
+          throw new Error('Command timed out after 120000ms: du');
         return args
           .slice(4)
           .map((path: string) => `${kilobytes[path] ?? 1}\t${path}\n`)
@@ -169,7 +178,7 @@ test('status reports node_modules only while its install is the one that was mea
   const state = environment();
   createStatusMeasurer({ updated: () => {}, now: () => clock }).schedule([state], []);
   await vi.waitFor(() => expect(readDiskUsage(join(app, 'node_modules'))?.signature).toBeDefined());
-  await vi.waitFor(() => expect(readDiskUsage(app)).not.toBeNull());
+  await vi.waitFor(() => expect(readDiskUsage(app + sep)).not.toBeNull());
 
   const measured = environment();
   applyStatusMeasures([measured], []);
@@ -179,7 +188,7 @@ test('status reports node_modules only while its install is the one that was mea
   const reinstalled = environment();
   applyStatusMeasures([reinstalled], []);
   expect(reinstalled.disk).toMatchObject({
-    worktreeBytes: 1000 * 1024,
+    worktreeBytes: null,
     nodeModulesBytes: null,
     nodeModulesPrivateBytes: null,
   });
@@ -192,7 +201,6 @@ test('a checkout is measured without the linked worktrees nested under it', asyn
   mkdirSync(join(common, 'worktrees', 'feature'), { recursive: true });
   mkdirSync(nested, { recursive: true });
   mkdirSync(join(app, '.worktrees', 'plain'));
-  mkdirSync(join(app, 'src'));
   writeFileSync(join(common, 'HEAD'), 'ref: refs/heads/main\n');
   writeFileSync(join(common, 'worktrees', 'feature', 'HEAD'), 'ref: refs/heads/feature\n');
   writeFileSync(join(common, 'worktrees', 'feature', 'gitdir'), `${join(nested, '.git')}\n`);
@@ -200,20 +208,21 @@ test('a checkout is measured without the linked worktrees nested under it', asyn
   const state = environment();
   const measurer = createStatusMeasurer({ updated: () => {}, now: () => clock });
   measurer.schedule([state], []);
-  await vi.waitFor(() => expect(readDiskUsage(app)).not.toBeNull());
+  await vi.waitFor(() => expect(readDiskUsage(app + sep)).not.toBeNull());
 
   const checkoutWalk = duWalks().find((targets) => targets.some((path) => path.startsWith(root)))!;
   expect(checkoutWalk.toSorted()).toEqual(
-    [join(root, '.git'), join(root, '.worktrees', 'plain'), join(root, 'node_modules'), join(root, 'src')].toSorted(),
+    [join(root, '.git'), join(root, '.worktrees', 'plain'), join(root, 'src')].toSorted(),
   );
-  expect(readDiskUsage(app)?.bytes).toBe(4 * 1024);
+  expect(readDiskUsage(app + sep)?.bytes).toBe(3 * 1024);
 
   const checkout = join(home, 'separate-checkout');
   const metadata = join(home, 'separate-metadata');
   mkdirSync(metadata);
   mkdirSync(checkout);
   writeFileSync(join(checkout, '.git'), `gitdir: ${metadata}\n`);
-  kilobytes[checkout] = 3000;
+  const apps = join(realpathSync(checkout), 'apps');
+  kilobytes[apps] = 2999;
   const siblings = ['one', 'two'].map((name, index) => {
     const path = join(checkout, 'apps', name);
     mkdirSync(path, { recursive: true });
@@ -230,7 +239,7 @@ test('a checkout is measured without the linked worktrees nested under it', asyn
     applyStatusMeasures(siblings, []);
     expect(siblings.map((sibling) => sibling.disk?.worktreeBytes)).toEqual([3000 * 1024, 3000 * 1024]);
   });
-  expect(duWalks().filter((targets) => targets.includes(checkout))).toHaveLength(1);
+  expect(duWalks().filter((targets) => targets.includes(apps))).toHaveLength(1);
 });
 
 test('the walk claim records the du process while it runs and drops it afterwards', async () => {
@@ -279,7 +288,134 @@ test('watchers in separate processes share one walk and one failure', async () =
   clock += 5 * 60_000;
   duFails = false;
   second.schedule([state], []);
-  await vi.waitFor(() => expect(readDiskUsage(app)?.measuredAt).toBe(new Date(clock).toISOString()));
+  await vi.waitFor(() => expect(readDiskUsage(app + sep)?.measuredAt).toBe(new Date(clock).toISOString()));
+});
+
+test('a slow walk holds every watcher for 4 times its duration and its own folder for 20 times', async () => {
+  const src = join(realpathSync(app), 'src');
+  const walk = 120_000;
+  walkMs = (targets) => (targets.includes(src) ? walk : 0);
+  const start = clock;
+  const state = environment();
+  const first = createStatusMeasurer({ updated: () => {}, now: () => clock });
+  const measurer = createStatusMeasurer({ updated: () => {}, now: () => clock });
+  const idle = async () => {
+    measurer.schedule([state], []);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  };
+  const checkoutWalks = () => duWalks().filter((targets) => targets.includes(src));
+  first.schedule([state], []);
+  await vi.waitFor(() => expect(duWalks()).toEqual([[src]]));
+  await idle();
+  expect(duWalks()).toEqual([[src]]);
+
+  clock = start + walk + 4 * walk - 1;
+  await idle();
+  expect(duWalks()).toHaveLength(1);
+  clock += 1;
+  measurer.schedule([state], []);
+  await vi.waitFor(() => expect(duWalks()).toHaveLength(4));
+
+  calls = [];
+  clock = start + 21 * walk - 1;
+  await idle();
+  expect(checkoutWalks()).toEqual([]);
+  clock += 1;
+  measurer.schedule([state], []);
+  await vi.waitFor(() => expect(checkoutWalks()).toEqual([[src]]));
+});
+
+test('a folder whose walk keeps failing is retried once its usual max age passes, while due folders still get walked', async () => {
+  failing = [avd];
+  walkMs = () => 1000;
+  const state = environment();
+  const measurer = createStatusMeasurer({ updated: () => {}, now: () => clock });
+  const failedAt: number[] = [];
+  for (let step = 0; step < 40 && failedAt.length < 3; step++) {
+    const before = duWalks().length;
+    clock += 6 * 60_000;
+    measurer.schedule([state], []);
+    await vi.waitFor(() => expect(duWalks()).toHaveLength(before + 1));
+    await vi.waitFor(() => expect(readStatusWalkRest()?.writtenAt).toBe(clock));
+    if (duWalks().at(-1)?.includes(avd)) failedAt.push(clock);
+  }
+  expect(failedAt).toHaveLength(3);
+  const [first = 0, second = 0, third = 0] = failedAt;
+  expect(second - first).toBeLessThan(20 * 60_000);
+  expect(third - second).toBe(second - first);
+});
+
+test('a checkout without node_modules is walked by its entries, so one installed before du runs is not counted', async () => {
+  rmSync(join(app, 'node_modules'), { recursive: true });
+  const src = join(realpathSync(app), 'src');
+  createStatusMeasurer({ updated: () => {}, now: () => clock }).schedule([environment()], []);
+  await vi.waitFor(() => expect(readDiskUsage(app + sep)).not.toBeNull());
+  expect(duWalks().filter((targets) => targets.includes(src))).toEqual([[src]]);
+});
+
+test('a walk the machine slept through counts as 125 seconds for the rest and the spacing', async () => {
+  const src = join(realpathSync(app), 'src');
+  const asleep = 8 * 60 * 60_000;
+  walkMs = (targets) => (targets.includes(src) ? asleep : 0);
+  const state = environment();
+  const measurer = createStatusMeasurer({ updated: () => {}, now: () => clock });
+  measurer.schedule([state], []);
+  await vi.waitFor(() => expect(readDiskUsage(app + sep)).not.toBeNull());
+  await vi.waitFor(() => expect(readStatusWalkRest()?.writtenAt).toBe(clock));
+  const walkedAt = clock;
+  expect(readStatusWalkRest()?.until).toBe(walkedAt + 4 * 125_000);
+
+  walkMs = () => 0;
+  calls = [];
+  clock = walkedAt - asleep + 21 * 125_000 - 1;
+  measurer.schedule([state], []);
+  await vi.waitFor(() => expect(duWalks()).toHaveLength(3));
+  expect(duWalks().filter((targets) => targets.includes(src))).toEqual([]);
+  clock += 1;
+  measurer.schedule([state], []);
+  await vi.waitFor(() => expect(duWalks().filter((targets) => targets.includes(src))).toEqual([[src]]));
+});
+
+test('a whole-checkout entry an older Stim wrote is read as is, and the newer of the two entries wins', async () => {
+  const at = (minutes: number) => new Date(clock + minutes * 60_000).toISOString();
+  const legacy = (bytes: number, measuredAt: string) =>
+    writeFileSync(diskUsageCacheFile(app), JSON.stringify({ path: app, bytes, measuredAt }));
+  const read = () => {
+    const state = environment();
+    applyStatusMeasures([state], []);
+    return state.disk?.worktreeBytes;
+  };
+  mkdirSync(join(home, 'disk-usage'), { recursive: true });
+  legacy(1400 * 1024, at(0));
+  writeFileSync(
+    diskUsageCacheFile(join(app, 'node_modules')),
+    JSON.stringify({ path: join(app, 'node_modules'), bytes: 400 * 1024, measuredAt: at(0) }),
+  );
+  expect(read()).toBe(1400 * 1024);
+
+  clock += 60_000;
+  createStatusMeasurer({ updated: () => {}, now: () => clock }).schedule([environment()], []);
+  await vi.waitFor(() => expect(readDiskUsage(app + sep)).not.toBeNull());
+  expect(read()).toBe(1000 * 1024);
+
+  legacy(1500 * 1024, at(1));
+  expect(read()).toBe(1500 * 1024);
+});
+
+test('a reinstalled node_modules is walked before a checkout that is due again', async () => {
+  const state = environment();
+  const measurer = createStatusMeasurer({ updated: () => {}, now: () => clock });
+  measurer.schedule([state], []);
+  await vi.waitFor(() => expect(readDiskUsage(avd)).not.toBeNull());
+
+  writeFileSync(join(app, 'node_modules', '.modules.yaml'), 'layoutVersion: 5\n');
+  walkMs = () => 1000;
+  calls = [];
+  clock += 6 * 60_000;
+  measurer.schedule([state], []);
+  await vi.waitFor(() => expect(duWalks()).toHaveLength(1));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(duWalks()).toEqual([[join(app, 'node_modules')]]);
 });
 
 test('a session that stops running stays listed as ended with its links for 3 days, and running again wins', async () => {

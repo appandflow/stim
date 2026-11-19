@@ -1854,10 +1854,16 @@ macOS off APFS or without the Command Line Tools, on Linux off ext2/3/4 and
 tmpfs (the volumes where a hard link is the only sharing), and on Windows. Both `node_modules` figures are `null`
 again after a reinstall or a fresh clone until the tree is measured, and they
 are the measurement `stim gc` and the daemon's cleanup use. The watcher
-measures off its refresh path, at most every 5 minutes per folder while the
-environment is active and every hour otherwise, and measures `node_modules`
-when its install changes and at least every 6 hours. One-shot `stim status`
-reads the cached sizes.
+measures off its refresh path, one folder at a time, least recently measured
+first: a folder again 5 minutes after its last walk ended while the environment
+is active and an hour after otherwise, or 20 times as long as that walk took
+when that is longer. No watcher on the machine starts a walk sooner than 4
+times as long as the previous one took, so a slow disk is walked less often. It measures
+`node_modules` when its install changes and at least every 6 hours, and
+`worktreeBytes` counts the checkout's own `node_modules` from that measurement,
+so it is `null` with `nodeModulesBytes` after a reinstall. A walk that fails
+is retried after the same 5 minutes or hour.
+One-shot `stim status` reads the cached sizes.
 
 An environment carries `agents` when a coding-agent session works in it:
 `[{ tool, sessionId, title?, cwd, startedAt?, lastActiveAt?, pid?, openUrl?, webUrl? }]`,
