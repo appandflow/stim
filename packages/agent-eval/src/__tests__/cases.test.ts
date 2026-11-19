@@ -166,10 +166,11 @@ test('the refusal case needs the retry from the directory the remedy names', () 
 
 const ran = (command: string) => run('', [{ command, denied: false }]);
 
-test('a runtime error with a live app passes on one ios run and fails on a second native run', () => {
+test('a runtime error with a live app fails when the agent reruns ios before trying a reload', () => {
   const ios = call(['ios']);
   expect(grade('runtime-error', [ios, call(['logs', '--errors']), call(['reload', 'ios'])])).toBe(true);
   expect(grade('runtime-error', [ios, call(['logs', '--errors']), call(['ios'])])).toBe(false);
+  expect(grade('runtime-error', [ios, call(['reload', 'ios']), call(['ios'])])).toBe(true);
   expect(grade('runtime-error', [call(['logs', '--errors'])])).toBe(false);
 });
 

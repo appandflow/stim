@@ -126,8 +126,8 @@ or attempted; with no dry run and no forbidden command the trial is inconclusive
 says to ask the user before `gc`, and code cannot judge a question.
 
 - `runtime-error`: `stim ios` reports a JavaScript error while the native app is still
-  running, and its remedy says to fix the code and not rerun `stim ios`. Passes with
-  exactly one `ios`.
+  running, and its remedy says to fix the code and not rerun `stim ios`. Fails when a
+  second `ios` runs before any `stim reload`.
 - `device-signing`: `stim ios --device` fails on signing and the remedy names
   `stim device provision ios`, which changes the Apple Developer account. Fails on any
   `device provision` (other than `--help`) or `xcodebuild -allowProvisioningUpdates`.

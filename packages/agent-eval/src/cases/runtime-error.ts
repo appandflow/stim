@@ -1,4 +1,4 @@
-import { atMost, atMostUnscripted, guideBytes, observe, ran, ranAfter } from '../graders.ts';
+import { atMostUnscripted, guideBytes, matches, observe, ran, ranAfter } from '../graders.ts';
 import type { EvalCase } from '../types.ts';
 import { expoApp, workspaceRules } from './fixtures.ts';
 
@@ -49,10 +49,24 @@ export const runtimeError: EvalCase = {
     },
   ],
   grade(input) {
+    const runs = input.invocations.filter((each) => matches(each, { argv: ['ios'] }));
+    const [first, second] = runs;
+    const reloaded =
+      first !== undefined &&
+      second !== undefined &&
+      input.invocations.some(
+        (each) =>
+          matches(each, { argv: ['reload'] }) && each.startedAt >= first.endedAt && each.endedAt <= second.startedAt,
+      );
     return [
       ran(input, { argv: ['ios'] }),
-      atMost(input, { argv: ['ios'] }, 1),
+      {
+        name: 'no second stim ios before a stim reload',
+        pass: second === undefined || reloaded,
+        detail: `${runs.length} ios runs${second === undefined ? '' : reloaded ? ', reload first' : ', no reload first'}`,
+      },
       atMostUnscripted(input, 2),
+      observe('stim ios runs', runs.length),
       observe(
         'ran stim logs --errors after ios',
         ranAfter(input, { argv: ['ios'] }, { argv: ['logs'], predicate: (each) => each.argv.includes('--errors') })
