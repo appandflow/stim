@@ -276,7 +276,7 @@ export async function idleStopEvidence(
     platform?: NodeJS.Platform;
     locked?: boolean;
     serving?: boolean;
-    /** Disk pressure shortened the threshold: an agent-device command then still holds for 10 minutes. */
+    /** The threshold is the 2-minute pressure one: an agent-device command then still holds for 10 minutes. */
     pressured?: boolean;
     operation?: StimContext;
   },

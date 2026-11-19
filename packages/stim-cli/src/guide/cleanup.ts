@@ -509,8 +509,8 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
             simulator runtimes, finished linked worktrees past
             gc.worktreeGraceMinutes
   high      plus the pressure ladder at high (\`guide lifecycle budget\`):
-            idle stage at 2 minutes, parked devices until the level clears,
-            shared caches trimmed to half their caps, the dormant stage and
+            idle stage at 2 minutes (memory pressure), parked devices until
+            the level clears, shared caches trimmed to half their caps, the dormant stage and
             node_modules and Pods of idle linked worktrees at 10 minutes, idle
             daemons, clean finished worktrees without the grace period, and,
             while free disk stays under disk.minFreeGb, other tools' caches
