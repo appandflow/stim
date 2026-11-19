@@ -950,6 +950,14 @@ const processRuns = (pid: number) => {
   }
 };
 
+/** How much longer `run/job-restart.json` holds this home for a service unit's job, at least the job's restart window while its stimd still leaves; 0 without a record. */
+function jobRestartWaitMs(): number {
+  const record = readJobRestart();
+  if (!record) return 0;
+  const now = Date.now();
+  return Math.max(0, jobRestartUntil(record, false, record.left ?? now) - now);
+}
+
 /**
  * Waits while `run/job-restart.json` holds this home for a service unit's job (`jobRestartUntil`) and no stimd holds it,
  * so a command does not start a stimd only to wait behind the job's restart.
@@ -1341,7 +1349,7 @@ async function readmit(
 ): Promise<{ token: string } | { error: Error } | null> {
   if (admission.resumed) return { error: daemonRestarted('it had already continued after one restart') };
   if (admission.attached) return { error: daemonRestarted('it was an attached stimd, which ends with its command') };
-  const limit: ResumeLimit = { signal, deadline: Date.now() + RESUME_WAIT_MS };
+  const limit: ResumeLimit = { signal, deadline: Date.now() + Math.max(RESUME_WAIT_MS, jobRestartWaitMs()) };
   if (refusalSeq === admission.refusalSeq) {
     refusedBuild = null;
     refusal = null;
@@ -1783,7 +1791,7 @@ function successorExpected(): boolean {
  */
 async function successorBound(limit?: ResumeLimit): Promise<boolean> {
   if (successorMissed) return false;
-  const waitMs = within(refusal?.handover ? HANDOVER_WAIT_MS : CLAIM_WAIT_MS, limit);
+  const waitMs = within(Math.max(refusal?.handover ? HANDOVER_WAIT_MS : CLAIM_WAIT_MS, jobRestartWaitMs()), limit);
   let started = false;
   for (const deadline = Date.now() + waitMs; Date.now() < deadline && !limit?.signal?.aborted;) {
     if (readJsonObject(stimdRecordFile())?.build === stimdBuildId()) {

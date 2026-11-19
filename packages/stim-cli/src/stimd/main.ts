@@ -291,8 +291,9 @@ function jobRestartGate(job: string | undefined): JobRestartGate {
     if (!record) return false;
     const running = processRuns(record.pid);
     if (!running && !gone.has(record.pid)) gone.set(record.pid, Date.now());
-    if (record.label === job) return running && record.left === null;
-    return Date.now() < jobRestartUntil(record, running, gone.get(record.pid) ?? Date.now());
+    const until = jobRestartUntil(record, running, gone.get(record.pid) ?? Date.now());
+    if (record.label === job) return running && record.left === null && Date.now() < until;
+    return Date.now() < until;
   };
   return {
     reserved,
@@ -1371,6 +1372,10 @@ async function runStimdInner(
     );
   };
   const relaunch = async (next: { build: string; version: string }, entry: string) => {
+    // @ref LLP 0009#service-and-engine-updates -- a service unit's stimd hands over through the unit's job
+    const job = unit !== undefined && (inJob || [...jobWaiters].some((socket) => !socket.destroyed)) ? unit : null;
+    const leftAt = Date.now();
+    if (job) leaveToJob(job, leftAt, null, log);
     switchedTo = next;
     const changed = `${JSON.stringify({ op: 'engine-changed', ...next, pid: process.pid })}\n`;
     for (const list of [waiters.build, waiters.boot, waiters.test, tickReplies]) list.length = 0;
@@ -1378,16 +1383,16 @@ async function runStimdInner(
     const running = net.running();
     const carried = running && netServes ? { ...netServes, shareOnly: running.shareOnly } : null;
     const why = `the engine switched to ${next.version} (${next.build})`;
-    // @ref LLP 0009#service-and-engine-updates -- a service unit's stimd hands over through the unit's job
-    const job = unit !== undefined && (inJob || [...jobWaiters].some((socket) => !socket.destroyed)) ? unit : null;
-    const leftAt = Date.now();
-    if (job) leaveToJob(job, leftAt, null, log);
     handingOver = true;
     shutdown(why);
     await shutdownDone;
     if (job) {
       leaveToJob(job, leftAt, Date.now(), log);
-      log('info', 'successor_job', `the ${job} job starts the stimd of ${next.version} (${next.build})`);
+      log(
+        keepOwn ? 'warn' : 'info',
+        'successor_job',
+        `the ${job} job starts the stimd of ${next.version} (${next.build})${keepOwn ? '; this stimd kept its claim because its cleanup was not verified' : ''}`,
+      );
       return;
     }
     const missing = (reason: string) => successorMissing(next, reason);

@@ -147,13 +147,18 @@ export function readJobRestart(home?: string): JobRestart | null {
     : null;
 }
 
+/** The longest a record holds the home after it was written: a stimd's 10-minute shutdown deadline and the job's restart. */
+const JOB_RESTART_MAX_MS = 15 * 60_000;
+
 /**
  * Until when `record` holds the home for its job: `JOB_RESTART_WAIT_MS` after its stimd left, or after `goneAt`, when
- * this process first saw that stimd gone without a `left`; Infinity while it still runs.
+ * this process first saw that stimd gone without a `left`, and while it still runs; never past `JOB_RESTART_MAX_MS`
+ * after the record was written, so a reused pid does not hold the home.
  */
 export function jobRestartUntil(record: JobRestart, running: boolean, goneAt: number): number {
-  if (record.left !== null) return record.left + JOB_RESTART_WAIT_MS;
-  return running ? Infinity : goneAt + JOB_RESTART_WAIT_MS;
+  const until =
+    record.left !== null ? record.left + JOB_RESTART_WAIT_MS : running ? Infinity : goneAt + JOB_RESTART_WAIT_MS;
+  return Math.min(until, record.at + JOB_RESTART_MAX_MS);
 }
 
 export type SuccessorMissing = { at: number; pid: number; build: string; reason: string };

@@ -563,7 +563,8 @@ describe.skipIf(process.platform === 'win32')("an engine switch under a service 
     const holder = homeClaim(service.home);
     expect(holder?.owner.pid).toBe(held?.pid);
     expect(holder?.details.serviceUnit).toBe(label);
-    expect(parentOf(held!.pid)).toBe(service.jobPid());
+    assert(held);
+    expect(parentOf(held.pid)).toBe(service.jobPid());
     const events = readFileSync(join(service.home, 'daemon', 'daemon.ndjson'), 'utf8');
     expect(events).toContain('"event":"successor_job"');
     expect(events).not.toContain('"event":"successor_bound"');
