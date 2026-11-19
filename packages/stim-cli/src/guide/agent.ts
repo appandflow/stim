@@ -20,7 +20,6 @@ Choose the guide for the app or task. Read only the matching route.
 | Inspect runtime errors or device output | stim guide agent logs |
 | Verify a fix in the UI | stim guide lifecycle verification |
 | App readiness markers | stim guide lifecycle readiness |
-| Shell sandbox | stim guide errors sandbox |
 | Build cache or unexpected rebuild | stim guide lifecycle builds |
 | Queued build or device | stim guide lifecycle concurrency |
 | Named ports | stim guide ports |
