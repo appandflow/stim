@@ -1,7 +1,10 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runGc } from '../commands/gc.ts';
+import { executeAction } from '../stimd/passes/act.ts';
+import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
+import { ensureWorkspaceStorage } from '../workspace/paths.ts';
 import { runHomePasses } from '../daemon/passes.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { upsertProject } from '../workspace/config.ts';
@@ -243,6 +246,45 @@ describe('answers match the separate reads', () => {
       expect((await resolveSourceCheckoutAsync(main, { declareFor: operation })).entries).toHaveLength(2);
       forgetGitReads(operation);
       expect((await resolveSourceCheckoutAsync(main, { declareFor: operation })).entries).toHaveLength(1);
+    } finally {
+      close();
+    }
+  });
+});
+
+describe('an acting run asks git again under the claim', () => {
+  test.each([
+    ['kept when the worktree is locked between the plan and the claim', true, 'kept'],
+    ['cleared when nothing changed', false, 'done'],
+  ])('build outputs are %s', async (_, lockInBetween, status) => {
+    const linked = linkedWorktree(repo('main'), 'feature');
+    const old = new Date(Date.now() - 40 * 86_400_000);
+    const outputs = join(ensureWorkspaceStorage(linked), 'derived-data');
+    mkdirSync(outputs, { recursive: true });
+    writeFileSync(join(outputs, 'blob'), 'x');
+    utimesSync(join(outputs, 'blob'), old, old);
+    recordWorkspaceUse(linked, old);
+    upsertProject(linked, { metroPort: null });
+    const executor = getExecutor();
+    let lists = 0;
+    setExecutor({
+      ...executor,
+      async runFileAsync(file, args, options) {
+        const output = await executor.runFileAsync(file, args, options);
+        if (lockInBetween && file === 'git' && args.includes('list') && args.includes(linked) && ++lists === 1)
+          git(['-C', linked, 'worktree', 'lock', linked]);
+        return output;
+      },
+    });
+    const operation = testContext({ home });
+    const close = openGitReads(operation);
+    try {
+      const outcome = await executeAction(
+        { kind: 'would-clear-outputs', target: linked, workspace: linked, bytes: 0, reason: 'test' },
+        { settings: resolveMaintenanceSettings(), protectedRoot: '/nowhere', operation },
+      );
+      expect(outcome.status).toBe(status);
+      expect(existsSync(outputs)).toBe(status === 'kept');
     } finally {
       close();
     }

@@ -10,7 +10,7 @@ import { warmTrash } from './worktree-trash.ts';
 import { childEnvironment } from './git-read.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { clonefileHelper } from '../clonefile.ts';
-import { gitReadsOpen, shareAnswer, sharedRead } from './git-reads.ts';
+import { gitReadsOpen, sharedRead } from './git-reads.ts';
 
 const CARRY_SKIP_BASENAMES = new Set(['.DerivedData', '.DS_Store', '.idea', '.jj', '.pnpm-store']);
 
@@ -1036,13 +1036,13 @@ export async function listWorktreesAsync(cwd: string, options: AsyncReadOptions 
     const out = await gitReadAsync(cwd, LIST_WORKTREES, options);
     return out ? parseWorktrees(out) : [];
   }
-  const entries = await sharedRead(options.declareFor, readKey(cwd, LIST_WORKTREES, options), async () => {
+  const entries = await sharedRead(options.declareFor, readKey(cwd, LIST_WORKTREES, options), async (share) => {
     const out = await gitReadAsync(cwd, LIST_WORKTREES, options);
     const listed = out ? parseWorktrees(out) : [];
     const common = listed[0] ? commonDirOf(listed[0]) : null;
     for (const entry of listed)
       if (common && !entry.prunable && commonDirOf(entry) === common)
-        shareAnswer(options.declareFor, readKey(entry.path, LIST_WORKTREES, options), Promise.resolve(listed));
+        share(readKey(entry.path, LIST_WORKTREES, options), Promise.resolve(listed));
     return listed;
   });
   return [...entries];
