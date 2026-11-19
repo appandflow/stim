@@ -1337,9 +1337,10 @@ stim test -- pnpm exec vitest run --project unit
   that is 3; on a 14-core Mac with two slots it is 6.
 - Jest and Vitest get `--maxWorkers=<n>` only when Stim can establish that
   nothing else sets workers or a serial run. The command must run `jest` or
-  `vitest` directly (also behind `npx`, `bunx`, `pnpm exec`, `yarn exec`, or
-  `pnpm` or `yarn` when the package has no script of that name), with the flag
-  placed before any `--`; or the `test` script, run by `stim test` or `stim test
+  `vitest` directly (also behind `npx`, `bunx`, `pnpm exec`, or `pnpm` or
+  `yarn` when the package has no script of that name), with the flag placed
+  before any `--`. Yarn 1 drops the options after `yarn exec <bin>` and the
+  words before a `--`, so `yarn exec` and a `yarn` run with a `--` get nothing; or the `test` script, run by `stim test` or `stim test
 -- npm test` (or `pnpm`, `yarn`, `bun run`), must be a plain `jest` or
   `vitest` command with no `--` of its own. Vitest applies
   `fileParallelism: false` after the flag, in Vitest 2 through 5.

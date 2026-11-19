@@ -2446,9 +2446,9 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
 
   Jest and Vitest get --maxWorkers=<n> only when Stim can tell nothing else
   sets workers or a serial run: the command runs jest or vitest directly (also
-  behind npx, bunx, pnpm exec, yarn exec, or pnpm or yarn with no script of
-  that name; the flag goes before any --), or the test script is a plain jest
-  or vitest command with no --. The command must name no worker, config,
+  behind npx, bunx, pnpm exec, or pnpm or yarn with no script of that name,
+  yarn without --; the flag goes before any --), or the test script is a
+  plain jest or vitest command with no --. The command must name no worker, config,
   preset, project, workspace, --pool, --poolOptions.* or file-parallelism
   option, and no jest, vitest or vite config up to package.json (or its jest
   key) may name workers, pools, serial runs or projects, spread an object,

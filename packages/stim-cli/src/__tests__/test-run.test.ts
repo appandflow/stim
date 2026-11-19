@@ -85,6 +85,17 @@ test.each([
   },
   { name: 'an unrecognised command runs unchanged', argv: ['turbo', 'run', 'test'], expected: null },
   {
+    name: 'yarn exec drops the options after the binary, so it runs unchanged',
+    argv: ['yarn', 'exec', 'jest'],
+    expected: null,
+  },
+  { name: 'yarn drops the words before a --, so it runs unchanged', argv: ['yarn', 'jest', '--', 'a'], expected: null },
+  {
+    name: 'yarn without a -- forwards the flag',
+    argv: ['yarn', 'jest', '--ci'],
+    expected: ['yarn', 'jest', '--ci', '--maxWorkers=3'],
+  },
+  {
     name: 'a Vitest --minWorkers keeps the count out',
     argv: ['npx', 'vitest', 'run', '--minWorkers=4'],
     expected: null,

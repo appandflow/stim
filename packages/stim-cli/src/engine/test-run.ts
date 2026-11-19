@@ -137,15 +137,7 @@ export function testScriptRun(argv: readonly string[]): PackageManager | null {
   return argv.length === 2 && argv[1] === 'test' && manager !== 'bun' ? manager : null;
 }
 
-const LAUNCHERS: readonly (readonly string[])[] = [
-  [],
-  ['npx'],
-  ['bunx'],
-  ['pnpm'],
-  ['pnpm', 'exec'],
-  ['yarn'],
-  ['yarn', 'exec'],
-];
+const LAUNCHERS: readonly (readonly string[])[] = [[], ['npx'], ['bunx'], ['pnpm'], ['pnpm', 'exec'], ['yarn']];
 
 const runnerName = (word: string) => basename(word).replace(/\.(cmd|js|mjs|cjs)$/i, '');
 
@@ -160,6 +152,8 @@ function runnerAt(
     if (name !== 'jest' && name !== 'vitest') continue;
     if (launcher.length === 1 && (launcher[0] === 'pnpm' || launcher[0] === 'yarn') && scripts.includes(name))
       return null;
+    // Yarn 1.22 forwards only the words after a `--` to the binary, and drops every option after `yarn exec <bin>`.
+    if (launcher[0] === 'yarn' && argv.includes('--')) return null;
     return { runner: name, index: launcher.length };
   }
   return null;

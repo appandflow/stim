@@ -14,6 +14,16 @@ import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { listTestSlots, tryAcquireTestSlot } from '../engine/test-slots.ts';
 import { listTestWaiting } from '../engine/wait-queue.ts';
+import { stopGroupLeftovers } from '../process-group-exit.ts';
+import { captureProcessIdentity, inspectProcessIdentity } from '../process-identity.ts';
+
+vi.mock('../process-identity.ts', async (load) => {
+  const actual = await load<typeof import('../process-identity.ts')>();
+  return {
+    ...actual,
+    inspectProcessIdentity: vi.fn<typeof actual.inspectProcessIdentity>(actual.inspectProcessIdentity),
+  };
+});
 
 const cli = fileURLToPath(new URL('../../bin/cli.ts', import.meta.url));
 
@@ -351,4 +361,32 @@ describe.skipIf(process.platform === 'win32')('stim test', () => {
     expect(code).toBe(0);
     expect(ran(stdout).argv).toEqual(['--ci', `--maxWorkers=${announced(stderr)}`]);
   }, 60_000);
+
+  test.each([
+    {
+      identity: 'different' as const,
+      stopped: false,
+      why: 'signals nothing when the leader pid names another process',
+    },
+    { identity: null, stopped: true, why: 'stops the group while the leader is still the recorded process' },
+  ])(
+    'leftover cleanup $why',
+    async ({ identity, stopped }) => {
+      const child = spawn('sleep', ['30'], { detached: true, stdio: 'ignore' });
+      const pid = child.pid ?? 0;
+      onTestFinished(() => {
+        try {
+          process.kill(-pid, 'SIGKILL');
+        } catch {}
+      });
+      const captured = captureProcessIdentity(pid);
+      expect(captured.ok).toBe(true);
+      if (identity) vi.mocked(inspectProcessIdentity).mockReturnValue(identity);
+      onTestFinished(() => vi.mocked(inspectProcessIdentity).mockRestore());
+      const record = { pid, processToken: captured.ok ? captured.token : null };
+      expect(await stopGroupLeftovers(record, 5_000)).toBe(stopped);
+      expect(alive(pid)).toBe(!stopped);
+    },
+    60_000,
+  );
 });

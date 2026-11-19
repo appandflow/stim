@@ -22,7 +22,8 @@ import {
 import { acquireTestSlot, listTestSlots, releaseTestSlot, type TestSlotHandle } from '../engine/test-slots.ts';
 import { getExecutor } from '../exec.ts';
 import { readClaimSet } from '../ownership-claim.ts';
-import { groupExitBudgetMs, waitForGroupExit } from '../process-group-exit.ts';
+import { groupExitBudgetMs, stopGroupLeftovers, waitForGroupExit } from '../process-group-exit.ts';
+import { captureProcessIdentity } from '../process-identity.ts';
 
 const note = (context: StimContext, text: string) => context.output('stderr', `${phaseLine('test', text)}\n`);
 
@@ -77,6 +78,7 @@ async function runCommand(
     { until: emptied },
   );
   const pid = group ? child.pid : undefined;
+  const captured = pid === undefined ? null : captureProcessIdentity(pid);
   const send = (signal: NodeJS.Signals) => {
     if (pid !== undefined) signalGroup(pid, signal);
     else if (child.exitCode === null && child.signalCode === null) child.kill(signal);
@@ -102,10 +104,8 @@ async function runCommand(
     let gone =
       pid === undefined || (await waitForGroupExit(pid, groupExitBudgetMs(cancelled ? KILL_GRACE_CAP_MS : undefined)));
     if (!gone && pid !== undefined && !context.signal.aborted) {
-      signalGroup(pid, 'SIGTERM');
-      gone = await waitForGroupExit(pid, groupExitBudgetMs(KILL_GRACE_CAP_MS));
-      if (!gone) killGroup();
-      gone ||= await waitForGroupExit(pid, groupExitBudgetMs());
+      const record = { pid, processToken: captured?.ok ? captured.token : null };
+      gone = await stopGroupLeftovers(record, groupExitBudgetMs(KILL_GRACE_CAP_MS));
       if (gone) note(context, `stopped the processes the test command left running in its process group ${pid}`);
     } else if (!gone && pid !== undefined) {
       killGroup();
