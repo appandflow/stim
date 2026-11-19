@@ -308,27 +308,13 @@ names the feature and the category to keep:
   stim logs --source device --level warn --grep "slimming turned off"
 
 worktree remove parks the workspace's simulator or emulator for later adoption.
-A parked device is Stim-owned: never delete or erase one by hand. First launch
-on a physical iPhone can need the one-time taps named by the remedy.
+A parked device is Stim-owned: never delete or erase one by hand.
 
-stim android --device [serial] and stim ios --device [udid] install on a
-connected physical device. Stim never creates, boots, shuts down, or deletes
-hardware. It records a temporary lease, not an owned-device registry entry.
-
-A --device run leases that device for the run. stim device lock ios --for 10m
-holds it across runs; stim device unlock gives it back. Never delete another
-workspace's lease file under ~/.stim/device-locks; gc removes expired
-ones.
-
-stim device provision ios [udid] registers a phone with the project's Apple
-Developer team and creates or refreshes its Development profile. It changes
-the team's developer account, so never run it, and never pass it --yes,
-without the user's explicit go-ahead for that step. When ios --device fails
-on signing, report the remedy and ask the user.
-
-stop and worktree remove release this workspace's leases. On a physical
-iPhone, stop also closes the app by ending its log collector; it does not
-shut down the phone or uninstall the app.
+A physical device (--device) is leased for the run, never owned: Stim never
+boots, shuts down or deletes it. Never delete another workspace's lease file
+under ~/.stim/device-locks; gc removes expired ones. Never run stim device
+provision ios, or pass it --yes, without the user's explicit go-ahead: it
+changes the team's Apple Developer account.
 
 A build or boot past the machine's caps waits in a queue and prints its
 position; do not start replacement runs while one is queued (guide lifecycle
