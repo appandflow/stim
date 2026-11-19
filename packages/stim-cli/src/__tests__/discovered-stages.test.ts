@@ -8,6 +8,7 @@ import {
   utimesSync,
   writeFileSync,
 } from 'node:fs';
+import { lstat, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Config } from '@stim-cli/core/state';
@@ -19,10 +20,20 @@ import { loadConfig, saveConfig } from '../workspace/config.ts';
 import * as activity from '../workspace/discovered-activity.ts';
 import * as gitCommands from '../workspace/git.ts';
 import { forgetGitReads, openGitReads } from '../workspace/git-reads.ts';
+import { hungRead } from '../workspace/bounded-read.ts';
 
 const fail = (): never => {
   throw new Error('no candidate');
 };
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...actual,
+    stat: vi.fn<typeof actual.stat>(actual.stat),
+    lstat: vi.fn<typeof actual.lstat>(actual.lstat),
+  };
+});
 
 vi.mock('../workspace/protected-locations.ts', () => ({
   isProtectedLocation: () => false,
@@ -76,7 +87,7 @@ describe('a discovered checkout in the idle stages', () => {
   it('does not walk the source of a discovered checkout until it holds something the hourly pass reclaims', async () => {
     const roots = join(base, 'roots');
     const app = join(roots, 'app');
-    mkdirSync(app, { recursive: true });
+    mkdirSync(join(app, 'android'), { recursive: true });
     writeFileSync(join(app, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
     const config: Config = { maintenance: { discoverRoots: [roots] }, projects: {}, repos: {} };
     saveConfig(config);
@@ -91,6 +102,49 @@ describe('a discovered checkout in the idle stages', () => {
     await pass();
     expect(evidence).toHaveBeenCalledWith(app, expect.anything());
   });
+
+  it.each([
+    { probe: 'dependency tree', read: 'stat', under: 'node_modules' },
+    { probe: 'build output', read: 'lstat', under: join('android', 'app', 'build') },
+  ] as const)(
+    'skips a discovered checkout for the pass when its $probe probe never answers',
+    async ({ read, under }) => {
+      const roots = join(base, 'roots');
+      const app = join(roots, 'app');
+      mkdirSync(join(app, 'android'), { recursive: true });
+      writeFileSync(join(app, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+      const config: Config = { maintenance: { discoverRoots: [roots] }, projects: {}, repos: {} };
+      saveConfig(config);
+      const target = join(app, under);
+      const real = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+      const stalled: (() => void)[] = [];
+      let reached = () => {};
+      const atProbe = new Promise<void>((resolve) => (reached = resolve));
+      const never = () => {
+        reached();
+        return new Promise<never>((_, reject) => {
+          stalled.push(() => reject(new Error('released')));
+        });
+      };
+      const probe = read === 'stat' ? vi.mocked(stat) : vi.mocked(lstat);
+      if (read === 'stat')
+        vi.mocked(stat).mockImplementation((path, options) => (path === target ? never() : real.stat(path, options)));
+      else
+        vi.mocked(lstat).mockImplementation((path, options) => (path === target ? never() : real.lstat(path, options)));
+      const evidence = vi.spyOn(activity, 'discoveredEvidence');
+
+      const run = runDormantDependencies({ config, act: false, log: () => {}, ...reading, operation: testContext() });
+      await atProbe;
+      await vi.advanceTimersByTimeAsync(3000);
+      await run;
+
+      expect(probe).toHaveBeenCalledWith(target);
+      expect(evidence).not.toHaveBeenCalled();
+      probe.mockReset();
+      for (const release of stalled) release();
+      await vi.waitUntil(() => hungRead() === null);
+    },
+  );
 
   it('is a candidate once its source is idle, is kept after an edit, and gets no workspace directory', async () => {
     const roots = join(base, 'roots');

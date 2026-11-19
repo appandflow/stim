@@ -1,5 +1,6 @@
 import { join } from 'node:path';
-import { existsSync, rmSync } from 'node:fs';
+import { rmSync } from 'node:fs';
+import { stat } from 'node:fs/promises';
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import type { StimContext } from '@stim-cli/core';
 import {
@@ -29,7 +30,7 @@ import { hardLinkSample } from '../link-sample.ts';
 import { workspaceKeys } from '../workspace/lightened.ts';
 import { freshLaunchers } from '../workspace/launchers.ts';
 import { workspaceDir } from '../workspace/paths.ts';
-import { hungRead } from '../workspace/bounded-read.ts';
+import { answered, hungRead, Unanswered } from '../workspace/bounded-read.ts';
 import { buildOutputDirs, dependencyTreeSignature } from '../workspace/discovery-census.ts';
 import { ARTIFACT_DIRS } from '../workspace/regenerable-dirs.ts';
 import { checkDependencyEdits } from '../workspace/dependency-edits.ts';
@@ -59,6 +60,7 @@ import { forgetGitReads } from '../workspace/git-reads.ts';
 export const REAL_BYTES_THRESHOLD: number = 256 * 1024 ** 2;
 const HOUR_MS = 60 * 60_000;
 const WALK_TIMEOUT_MS = 10 * 60_000;
+const PROBE_TIMEOUT_MS = 3000;
 const RESTORE = 'stim worktree warm';
 export const SOURCE_RESTORE = "the project's own install in it, or stim worktree warm --refresh in a linked worktree";
 const NOT_MEASURED = 'its real size is not measured since its last install, so it stays';
@@ -571,8 +573,29 @@ export async function runDormantDependencies(
   );
 }
 
-function hasTrees(path: string): boolean {
-  return ARTIFACT_DIRS.dependencies.some((dir) => existsSync(join(path, dir)));
+/**
+ * Whether a discovered checkout holds a dependency tree, or with `outputs` build output, each probe bounded like the
+ * launcher readings by `answered`; false, for this pass, when a probe does not answer or another read is pending.
+ */
+async function holdsReclaimable(path: string, outputs: boolean, signal?: AbortSignal): Promise<boolean> {
+  const exists = (target: string) =>
+    answered(
+      target,
+      () =>
+        stat(target).then(
+          () => true,
+          () => false,
+        ),
+      PROBE_TIMEOUT_MS,
+      signal,
+    );
+  try {
+    for (const dir of ARTIFACT_DIRS.dependencies) if (await exists(join(path, dir))) return true;
+    return outputs && (await answered(path, () => hasOutputs(path), PROBE_TIMEOUT_MS, signal));
+  } catch (error) {
+    if (error instanceof Unanswered) return false;
+    throw error;
+  }
 }
 
 async function takeIdleDependencies(
@@ -591,9 +614,9 @@ async function takeIdleDependencies(
           full: true,
           setting: 'idle.sourceDormantDays',
           onKept: (path, reason) => keeps.set(canonicalOrNull(path) ?? path, reason),
-          reclaimable: hasTrees,
+          reclaimable: (path) => holdsReclaimable(path, false, input.operation?.signal),
         }
-      : { reclaimable: async (path) => hasTrees(path) || (await hasOutputs(path)) },
+      : { reclaimable: (path) => holdsReclaimable(path, true, input.operation?.signal) },
   );
   const { operation } = input;
   const actions: DaemonLadderAction[] = source
