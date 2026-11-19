@@ -189,7 +189,7 @@ const launchd: ServiceManager = {
 export const launchdRuns = (printed: string, path: string): boolean => printed.includes(`\n\t\t${path}\n`);
 
 const RELOAD_SCRIPT = `domain=$1 label=$2 plist=$3 shim=$4 pid=$5 written=$6
-while ps -p "$pid" >/dev/null 2>&1; do sleep 0.1; done
+while kill -0 "$pid" 2>/dev/null; do sleep 0.1; done
 launchctl print "$domain/$label" >/dev/null 2>&1 || exit 0
 cmp -s "$plist" "$written" || exit 0
 remedy="run \\\`launchctl bootout $domain/$label\\\` and \\\`launchctl bootstrap $domain $plist\\\` when no build runs"
