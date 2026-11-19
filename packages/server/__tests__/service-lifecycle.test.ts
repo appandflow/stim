@@ -402,6 +402,7 @@ describe.skipIf(process.platform !== 'darwin')('service lifecycle', () => {
 
   it('rewrites a LaunchAgent that names node and a script to the shim once, keeping its options and environment', async () => {
     const shim = engineShim();
+    writeFileSync(plist, launchd.original.replace('<string>Interactive</string>', '<string>Standard</string>'));
     const before = installedPlist();
     expect(before?.node).toBe(process.execPath);
     expect(await rewriteUnitToShim(label)).toBe(true);
@@ -413,6 +414,9 @@ describe.skipIf(process.platform !== 'darwin')('service lifecycle', () => {
       stimHome: before?.stimHome,
       programArguments: [before?.host, 'run', shim, '--service', '--port', String(before?.port)],
     });
+    expect(
+      JSON.parse(execFileSync('plutil', ['-convert', 'json', '-o', '-', plist], { encoding: 'utf8' })),
+    ).toMatchObject({ ProcessType: 'Interactive' });
     expect(launchd.bootstraps).toEqual([]);
     expect(await rewriteUnitToShim(label)).toBe(false);
   });
