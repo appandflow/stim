@@ -279,7 +279,7 @@ interface JobRestartGate {
 function jobRestartGate(job: string | undefined): JobRestartGate {
   const reserved = () => {
     const hold = jobRestartHold();
-    if (!hold || Date.now() >= hold.until) return false;
+    if (!hold || Date.now() >= hold.until || hold.record.pid === process.pid) return false;
     return hold.record.label !== job || (hold.running && hold.record.left === null);
   };
   return {
