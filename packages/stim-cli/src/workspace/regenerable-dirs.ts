@@ -195,11 +195,15 @@ export function cargoTargetDirsAsync(root: string): Promise<string[]> {
   return readAsync(cargoTargetDirsReads(root));
 }
 
-function* discoveredBuildDirsReads(root: string): DirReads<string[]> {
+function* discoveredBuildDirKindsReads(root: string): DirReads<{ dirs: string[]; cargo: string[] }> {
   const cxx = yield* cxxDirs(root);
   const derived = yield* derivedDataDirs(root);
   const cargo = yield* wholeCargoTargetDirsReads(root);
-  return [...cxx, ...derived.filter(({ named }) => named).map(({ path }) => path), ...cargo];
+  return { dirs: [...cxx, ...derived.filter(({ named }) => named).map(({ path }) => path), ...cargo], cargo };
+}
+
+function* discoveredBuildDirsReads(root: string): DirReads<string[]> {
+  return (yield* discoveredBuildDirKindsReads(root)).dirs;
 }
 
 /**
@@ -218,14 +222,24 @@ export function discoveredBuildDirsAsync(root: string): Promise<string[]> {
   return readAsync(discoveredBuildDirsReads(root));
 }
 
-export function* existingBuildDirsReads(root: string): DirReads<string[]> {
+function* buildDirKindsReads(root: string): DirReads<{ dirs: string[]; cargo: string[] }> {
   const fixed = yield* existingDirsReads(root, ARTIFACT_DIRS.build);
-  return [...fixed, ...(yield* discoveredBuildDirsReads(root))];
+  const discovered = yield* discoveredBuildDirKindsReads(root);
+  return { dirs: [...fixed, ...discovered.dirs], cargo: discovered.cargo };
+}
+
+export function* existingBuildDirsReads(root: string): DirReads<string[]> {
+  return (yield* buildDirKindsReads(root)).dirs;
 }
 
 /** Every existing regenerable build directory under `root`: the fixed names and the discovered ones. */
 export function existingBuildDirsAsync(root: string): Promise<string[]> {
   return readAsync(existingBuildDirsReads(root));
+}
+
+/** `existingBuildDirsAsync`, with the Cargo `target/` among them named from the same reads. */
+export function existingBuildDirKindsAsync(root: string): Promise<{ dirs: string[]; cargo: string[] }> {
+  return readAsync(buildDirKindsReads(root));
 }
 
 /**

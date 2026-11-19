@@ -34,6 +34,7 @@ import { buildOutputDirs, dependencyTreeSignature } from '../workspace/discovery
 import { ARTIFACT_DIRS } from '../workspace/regenerable-dirs.ts';
 import { checkDependencyEdits } from '../workspace/dependency-edits.ts';
 import { writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
+import { reduceDormantOutputs } from './dormant-outputs.ts';
 import {
   dormantAfterMs,
   idleStageCandidates,
@@ -534,7 +535,8 @@ export async function wouldDelete(
 }
 
 /**
- * The dormant stage's dependency step, at most hourly with a cadence clock: the node_modules and Pods of linked worktrees
+ * The dormant stage's step, at most hourly with a cadence clock: first the regenerable build outputs of every
+ * workspace idle `idle.dormantDays` (`reduceDormantOutputs`), then the node_modules and Pods of linked worktrees
  * idle `idle.dormantDays` whose private bytes reach REAL_BYTES_THRESHOLD or are not measured yet, most first, each
  * recorded so the next Stim command restores it. A tree is taken even when `stim worktree warm` could not put the
  * same versions back, since a reinstall does; copy-on-write clones below the threshold stay. Then, as the last
@@ -575,22 +577,26 @@ async function takeIdleDependencies(
   source: boolean,
 ): Promise<DaemonLadderAction[]> {
   const keeps = new Map<string, string>();
-  const idle = (
-    await idleStageCandidates(
-      config,
-      input,
-      afterMs,
-      source
-        ? {
-            full: true,
-            setting: 'idle.sourceDormantDays',
-            onKept: (path, reason) => keeps.set(canonicalOrNull(path) ?? path, reason),
-          }
-        : {},
-    )
-  ).filter((candidate) => source || candidate.role === 'linked');
+  const candidates = await idleStageCandidates(
+    config,
+    input,
+    afterMs,
+    source
+      ? {
+          full: true,
+          setting: 'idle.sourceDormantDays',
+          onKept: (path, reason) => keeps.set(canonicalOrNull(path) ?? path, reason),
+        }
+      : {},
+  );
   const { operation } = input;
-  const actions: DaemonLadderAction[] = [];
+  const actions: DaemonLadderAction[] = source
+    ? []
+    : await timedStep(input.log, 'dormant_outputs', () => reduceDormantOutputs(candidates, config, afterMs, input), {
+        signal: operation?.signal,
+        items: (taken) => taken?.length,
+      });
+  const idle = candidates.filter((candidate) => source || candidate.role === 'linked');
   let take: RankedDependency[];
   if (source) {
     const { ranked, kept } = await timedStep(
@@ -643,7 +649,7 @@ async function takeIdleDependencies(
           setting: 'idle.sourceDormantDays',
         });
   } else {
-    if (!idle.length) return [];
+    if (!idle.length) return actions;
     const ranked = await timedStep(
       input.log,
       'rank_dependencies',

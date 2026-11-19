@@ -2731,8 +2731,7 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
 
   DORMANT STAGE: a workspace with nothing running and no activity for
   idle.dormantDays (1; fractions allowed; 0 never) goes dormant and is
-  reduced to its minimal size, at every level, by \`stim gc\` and, except
-  build outputs (its idle stage deletes those after a run goes idle), by the
+  reduced to its minimal size, at every level, by \`stim gc\` and by the
   stim-daemon: its regenerable build outputs are deleted (WORKSPACE BUILD
   OUTPUTS in \`guide cleanup disk\`), its owned simulators and emulators are
   deleted through centralized teardown (the parked pool is untouched), its
@@ -2782,7 +2781,16 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   as freed are the data directories of the devices it
   deleted, measured before deletion; a device whose size cannot be measured is
   named in the action's detail and left out of the total. A tree under 256 MB
-  of its own (private) bytes, a clone or store hard links, and trees whose private size is unknown stay. The dependency step is logged as dormant_dependencies.
+  of its own (private) bytes, a clone or store hard links, and trees whose private size is unknown stay.
+  The stim-daemon runs the output step, then the dependency step, hourly
+  (dormant_outputs, dormant_dependencies). Outputs need the full evidence for
+  every workspace: no Stim command, source or git write, and no process in the
+  checkout (such as a Gradle or cargo build) for idle.dormantDays; git
+  worktree lock keeps them. Each is measured, then rechecked and removed under
+  the workspace's claims; a Cargo target/ is only trimmed by profile, and the
+  Metro store every worktree of the app shares stays. For an
+  app inside a larger checkout, activity anywhere in that checkout counts.
+  Where processes cannot be listed (always on Windows) nothing goes.
   Still kept: a workspace in use, with a running dev server or build, leased,
   locked, driven, hosted, pinned by maintenance.keep or with idle.minutes 0,
   and a path that cannot be proven. \`stim status\` shows a dormant

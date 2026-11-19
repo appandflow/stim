@@ -18,17 +18,27 @@ directories never count as that evidence. All three count in a registered
 workspace and in a discovered checkout (LLP 0004), and all three get the size
 cap and the pressure trims below.
 
-Only the first two are ever deleted whole or listed as build output. Before
-deleting one
-whole, the idle stage, the dormant reduction of `stim gc` and the pressure
-ladder's idle rung check that the directory is real, inside its checkout, not
-a mount point, holds no file git tracks and only files git ignores; that no
-PATH launcher resolves into the checkout; that no other process runs from or
-works in the app; and that it holds no copy a trim could not put back
-(`.stim-not-restored-*`, or `.stim-trimmed` marked `NOT-RESTORED`). They read
+Only the first two are ever listed as build output, and only the idle stage,
+for an idle workspace whose dev server or devices it stops, deletes one whole.
+Before that it checks that the directory is real, inside its checkout, not a
+mount point, holds no file git tracks and only files git ignores; that no PATH
+launcher resolves into the checkout; that no other process runs from or works
+in the app; and that it holds no copy a trim could not put back
+(`.stim-not-restored-*`, or `.stim-trimmed` marked `NOT-RESTORED`). It reads
 no Cargo lock file. The trims run the git, link, mount and launcher checks but
 not the whole-app process check; instead they keep each path a process
 executes from or holds open and each profile whose lock a build holds (below).
+
+Ladder rung 1, for a workspace with nothing running, leaves a `target/` to the
+trim of rung 3. The dormant reduction (`stim gc` and the daemon's hourly step)
+runs the trim below on every profile no build wrote for `idle.dormantDays`,
+under the trim claim and the profile lock checks, and leaves `.stim-trimmed`,
+`.stim-not-restored-*` and everything that is not a profile in place. A process
+running from or working in the checkout keeps all of it.
+
+Reason: a whole delete took the recovery data of a trim that could not put a
+directory back, and raced a Cargo build that holds a profile lock. Chosen by
+the coordinator and the review of #5966 (#5968), not by the maintainer.
 
 Maintainer decision: "Yes leys have same rules for cargo as exact", 2026-11-19
 (#5958). Reason for the third kind: a Cargo `target/` can lack the root tag.

@@ -210,6 +210,28 @@ A workspace with no activity for `idle.dormantDays` (default 1) is reduced to
 its minimal size at every level: build outputs, owned devices, logs archived,
 and in a linked worktree `node_modules` and Pods.
 
+The stim-daemon runs the build output step and then the dependency step at most
+hourly at every level, and `stim gc` on each run. Build outputs go only by the
+full evidence, for a registered workspace as for a discovered checkout: Stim
+activity, source and git writes, and processes running from or working in the
+checkout, its git checkout as a whole for an app nested in one. A locked
+worktree, or one git cannot list, keeps them. Where the running processes
+cannot be listed, always on Windows, that evidence cannot be read, so no
+output goes for dormancy there; ladder rung 1 still takes them under
+pressure, except a Cargo `target/` and a locked worktree's. Each output is
+measured before the workspace's native-run and metro-start claims are taken,
+checked again under them, and removed one at a time. A removal puts its parent
+directory's modification time back, so the next output and the dependency step
+do not read Stim's own removal as a source write. The Metro transform cache is
+not a dormant output: every worktree of the app shares it, so one idle
+worktree would empty it for the one in use. Report mode runs the same
+checks and acts on nothing.
+
+Reason: until #5968 a machine that relied on the daemon kept idle build outputs
+until the disk reached high, and the first daemon version of this step (#5966)
+took outputs an external Gradle build was using. Chosen by the coordinator and
+the review of #5966, not by the maintainer.
+
 Maintainer decision: "I think projects not touched for like 1 day should be
 reduced to minimal size", 2026-11-11.
 

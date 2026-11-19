@@ -557,15 +557,17 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
     unpushed work, in use, leased, locked, pinned, cannot prove finished.
   Workspace idle idle.dormantDays (default 1): build outputs (android/build,
   android/.gradle, .build, .cxx, .dd DerivedData, an Exact app's target/ beside
-  exact.mjs), owned devices, logs archived
-    dormant reduction, N. Kept: running dev server or build, booted device,
-    leased, driven, locked, hosted, pinned, idle.minutes 0.
+  exact.mjs trimmed by profile), owned devices, logs archived
+    dormant reduction, N. Kept: running dev server or build, a process in
+    the checkout, booted device, leased, driven, locked, hosted, pinned,
+    idle.minutes 0.
   The same: node_modules and ios/Pods of a linked worktree, recorded so the next
   Stim command restores them with worktree warm, or asks for an install
     dormant reduction, N. Kept: source checkout, under 256 MB of its own (a
     copy-on-write clone), in use, a running process inside, pinned.
   Idle dev servers and their outputs (idle 2 minutes)
-    idle stage and rung 1, H. Kept: as above.
+    idle stage and rung 1, H. Kept: as above; rung 1 keeps a Cargo target/
+    for rung 3.
   Parked devices
     rung 2, H until the level clears, C all.
   Cargo target/ stale profiles and incremental/ data (at C also idle units), first in rung 3
@@ -619,8 +621,8 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
 
   The dormant reduction and the dormant stage are the same work: a workspace
   with no activity for idle.dormantDays is reduced to its minimal size, by
-  stim gc at every level and, except build outputs, by the stim-daemon (its
-  idle stage deletes those after a run goes idle). Its node_modules and
+  stim gc at every level and by the stim-daemon (hourly for build outputs
+  and dependencies). Its node_modules and
   ios/Pods go only in a linked worktree, are recorded, and the next Stim
   command in it restores them with \`stim worktree warm\`, or, when warm cannot
   restore the same versions (its lockfile differs from the source checkout's,
@@ -1850,7 +1852,8 @@ WORKSPACE BUILD OUTPUTS
   detected cache, "Workspace build outputs", with a per-workspace size, last
   use and verdict. An acting \`gc\` clears them for a workspace over
   maintenance.workspaceOutputsMaxGb or unused for maintenance.olderThanDays,
-  for a workspace idle for idle.dormantDays (1) at every level, and through the
+  for a workspace idle for idle.dormantDays (1) at every level (the
+  stim-daemon too, hourly), and through the
   pressure ladder at high or critical: for a workspace with
   nothing running idle 2 minutes or more, and in the idle stage of a running
   one. It prints the bytes freed per category.

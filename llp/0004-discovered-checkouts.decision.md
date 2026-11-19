@@ -218,7 +218,9 @@ per check); a directory check that reads the processes itself (a Cargo `target/`
 `deleteOutputs`, for a registered workspace and a discovered checkout alike, takes
 a new launcher reading before each removal, after that path's size measurement,
 so none is older than the removal before it, and no reading is carried from the idleness check across a later process
-read; `clearArtifact` and `clearSourceTrees` read the launchers once after their
+read; the dormant reduction's output step (`reduceDormantOutputs`) takes a new
+launcher reading under the workspace's claims for each output, after its
+idleness recheck and before the removal; `clearArtifact` and `clearSourceTrees` read the launchers once after their
 last recheck, before the removal; the Cargo trim takes a new launcher reading at
 each of its three process reads and checks the whole owning checkout against it
 before trimming anything; the worktree removal guard reads the processes and the
