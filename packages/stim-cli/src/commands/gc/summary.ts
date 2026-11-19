@@ -1,5 +1,6 @@
 import { formatBytes } from '../../fs-util.ts';
 import type { LevelRun, LevelRunAction } from '../../stimd/passes/level-run.ts';
+import type { UnmanagedUsage } from './unmanaged.ts';
 
 const CATEGORIES: Record<string, string> = {
   'clear-outputs': 'Workspace build outputs',
@@ -137,5 +138,26 @@ export function formatGcSummary(
   }
   lines.push(`Full detail, kept entries with their reasons included: ${detail}`);
   if (!act) lines.push(`Apply with: stim gc${chosen ? ` --pressure ${run.level}` : ''}`);
+  return lines;
+}
+
+/** The users of the short volume that Stim does not manage, printed after the summary once the run has ended. */
+export function formatUnmanagedUsage(usage: UnmanagedUsage): string[] {
+  const shown = usage.entries.slice(0, LARGEST_SHOWN + 2);
+  if (!shown.length && !usage.slow.length && !usage.failed.length && !usage.unreached && !usage.guarded.length)
+    return [];
+  const names = (paths: string[]) =>
+    `${paths.slice(0, LARGEST_SHOWN + 2).join(', ')}${paths.length > LARGEST_SHOWN + 2 ? `, and ${paths.length - LARGEST_SHOWN - 2} more` : ''}`;
+  const lines = ["Not Stim's to delete, the largest other users of the short volume:"];
+  for (const entry of shown)
+    lines.push(
+      `  ${formatBytes(entry.bytes)}${entry.partial ? ' or more' : ''}  ${entry.label}${entry.partial ? ', partly unreadable' : ''}${entry.holdsStim ? ', holds folders Stim manages' : ''}${entry.command ? `: ${entry.command}` : ''}`,
+    );
+  if (usage.slow.length) lines.push(`  too slow to size, likely large: ${names(usage.slow)}`);
+  if (usage.failed.length) lines.push(`  could not be sized: ${names(usage.failed)}`);
+  if (usage.guarded.length) lines.push(`  not sized, macOS protects these: ${names(usage.guarded)}`);
+  if (usage.beforeDeletions) lines.push('  This is the disk as it is now, before the deletions this dry run lists.');
+  if (usage.unreached)
+    lines.push(`  ${plural(usage.unreached, 'more entry', 'more entries')} not reached within the time budget`);
   return lines;
 }

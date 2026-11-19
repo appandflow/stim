@@ -20,6 +20,7 @@ import { executedActionName } from '../../maintenance-kind.ts';
 import { measureCargoTargets, planCargoTargetsAtPressure } from './cargo-target.ts';
 import { maintenancePinnedReader } from './protect.ts';
 import { measureSizes } from './measure.ts';
+import { discoverCachesAsync } from '../../cache/caches.ts';
 import { measureOwnedDevices } from './devices.ts';
 import { plannedMaintenance, triggeringRoot } from './preview.ts';
 import { executionRank } from './run.ts';
@@ -62,6 +63,8 @@ export interface LevelRun {
   outside: { path: string; from: string }[];
   /** The largest things Stim keeps on disk and can reclaim, from the sizes the run measured, largest first. */
   usage: { name: string; dir: string; bytes: number }[];
+  /** @internal Carries no compatibility: the folders and files of every cache the run discovered, measured or not. */
+  cachePaths: string[];
 }
 
 /** Measures disk and memory once and classifies them as the daemon would. */
@@ -182,8 +185,9 @@ export async function runMaintenanceAtLevel({
     }
   }
   const measureFailed = (target: string) => blocked.push(`Could not measure ${target}`);
+  const caches = await discoverCachesAsync();
   const sizes = [
-    ...(await measureSizes(now, measureFailed, operation)),
+    ...(await measureSizes(now, measureFailed, operation, caches)),
     ...(await measureCargoTargets(now, operation)),
     ...(deviceSweepIsScoped(env) ? [] : await measureOwnedDevices(now, measureFailed)),
   ];
@@ -267,5 +271,14 @@ export async function runMaintenanceAtLevel({
     .toSorted((a, b) => b.bytes - a.bytes)
     .slice(0, 10)
     .map(({ name, dir, bytes }) => ({ name, dir, bytes }));
-  return { pressure, level, actions, blocked, discovered, outside, usage };
+  return {
+    pressure,
+    level,
+    actions,
+    blocked,
+    discovered,
+    outside,
+    usage,
+    cachePaths: [...caches.map((cache) => cache.dir), ...caches.flatMap((cache) => cache.files ?? [])],
+  };
 }

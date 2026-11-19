@@ -497,6 +497,8 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
       target and reasons
     - on a dry run, "Apply with: stim gc" (plus --pressure <level> when you
       gave one)
+    - then, while a volume stays under disk.minFreeGb, "Not Stim's to
+      delete" with the largest other users of the short volume
   An acting run appends each item to $STIM_HOME/gc/gc.ndjson (WHAT WAS
   CLEARED).
 

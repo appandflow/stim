@@ -1,5 +1,6 @@
 import { throwIfCancelled } from '../cancellation.ts';
-import { runProcessOperation } from '../cli-operation.ts';
+import { exitCli, runProcessOperation } from '../cli-operation.ts';
+import { hungRead } from '../workspace/bounded-read.ts';
 import { withDrainingCancellation } from '../engine/operation-state.ts';
 import { configDir, ensurePrivateDir, isScopedHome } from '@stim-cli/core';
 import { realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
@@ -23,7 +24,8 @@ import { phase } from './gc/progress.ts';
 import { markOverCapCompilationCache, previewScopedEmptying } from './gc/caches.ts';
 import { collectParkedAvds, collectParkedSims, collectDeviceLeases } from './gc/devices.ts';
 import { gcReportSections, type GcJsonSections, type GcReport } from './gc/report.ts';
-import { formatGcSummary, gcDetailLines } from './gc/summary.ts';
+import { formatGcSummary, formatUnmanagedUsage, gcDetailLines } from './gc/summary.ts';
+import { unmanagedUsage } from './gc/unmanaged.ts';
 import { collectOrphanedWorkspaces, collectWorkspaceOutputs, isInsideWorkspaces } from './gc/workspaces.ts';
 import { collectWorktreeSweep } from './gc/worktrees.ts';
 import { measureWorktreeSweep } from './gc/worktree-sizes.ts';
@@ -107,6 +109,8 @@ type GcDependencies = RecordDependencies;
 export interface GcExecutionResult {
   payload: GcPayload;
   exitCode: 0 | 1;
+  /** The maintenance run a plain run printed, for what follows once the claim is released. */
+  run?: LevelRun;
 }
 
 export type GcReadOptions = Pick<GcOptions, 'pressure' | 'measureBuildState'>;
@@ -349,6 +353,7 @@ export async function executeGc(
     if (!opts.json) {
       const detail = saveGcDetail(gcDetailLines(run));
       for (const line of formatGcSummary(run, { act, chosen, detail })) write('stdout', line);
+      return { payload, exitCode: payload.failures ? 1 : 0, run };
     }
     return { payload, exitCode: payload.failures ? 1 : 0 };
   } finally {
@@ -408,6 +413,18 @@ export async function runGc(opts: GcOptions = {}, deps: GcDependencies = {}): Pr
   }
   if (result.exitCode) process.exitCode = result.exitCode;
   if (opts.json) console.log(JSON.stringify(result.payload));
+  if (result.run) {
+    const unmanaged = await unmanagedUsage(result.run, !opts.dryRun, deps.operation).catch((error: unknown) => {
+      if (
+        !deps.operation?.signal.aborted ||
+        error instanceof WorkspaceProcessCleanupError ||
+        (error instanceof Error && 'reportCleanup' in error)
+      )
+        throw error;
+      return null;
+    });
+    for (const line of unmanaged ? formatUnmanagedUsage(unmanaged) : []) console.log(line);
+  }
 }
 
 /**
@@ -504,6 +521,8 @@ const gc: Op = defineOp({
       withDrainingCancellation(operation, operation.signal, () => runGc(opts, { operation })),
     );
     if (interrupted !== null) process.exitCode = interrupted;
+    // A Node filesystem read that never answers, on a dead network or FUSE mount, keeps the event loop alive.
+    if (hungRead() !== null) exitCli(typeof process.exitCode === 'number' ? process.exitCode : 0);
   },
 });
 
