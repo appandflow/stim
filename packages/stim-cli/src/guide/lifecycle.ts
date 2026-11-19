@@ -2605,9 +2605,10 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   takes the longest-idle workspace first. Disk rungs take only what lies on a
   short volume (stim gc --pressure: every volume):
 
-    1. idle stage: every workspace idle 2 minutes or more goes into the idle
-       stage now (\`guide metro\`, IDLE STOP), and the regenerable build
-       outputs of workspaces with nothing running are deleted
+    1. idle stage: under memory pressure every workspace idle 2 minutes or
+       more goes into the idle stage now (\`guide metro\`, IDLE STOP); under
+       disk pressure only the build outputs of each are deleted, nothing
+       stopped
     2. parked devices: at high the oldest deleted until the level clears, at
        critical all of them
     3. shared caches: at high the build and Metro caches trimmed least
@@ -2624,10 +2625,12 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
        compilation at high and critical
     4. dormant stage now: at high for workspaces idle 10 minutes, at critical
        for workspaces idle 2 minutes (the same reduction a day of idleness
-       causes, DORMANT STAGE below)
+       causes, DORMANT STAGE below); a running one loses only its devices
     5. node_modules and Pods of idle linked worktrees, now at high (idle 1
        hour) and at critical (idle 2 minutes), only those \`stim worktree
        warm\` can restore, recorded so the next start, ios or android runs it.
+       At critical a running workspace's dev server is stopped (stim revive
+       resumes it) only to delete these or its unshared Metro store.
        Each one holding 256 MB or more of its own (private) bytes goes, most
        first; a copy-on-write clone holding less frees almost nothing and is
        kept, logged as kept. A tree whose private size is unknown (off APFS,
