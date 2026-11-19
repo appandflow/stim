@@ -1697,11 +1697,15 @@ describe("the daemon tick's ladder pacing", () => {
   const FULL = 512;
   const OTHER = 10 * GB;
 
-  function measuredAt(free: [number, number] = [FULL, OTHER], memory: 'normal' | 'critical' = 'normal') {
+  function measuredAt(free: [number, number] = [FULL, OTHER], memory: 'normal' | 'high' | 'critical' = 'normal') {
     vi.spyOn(daemonMeasure, 'measureTick').mockResolvedValue({
       measurement: {
         disk: free.map((freeMb, i) => ({ volume: `/volume${i + 1}`, freeMb, device: i + 1 })),
-        memory: { level: memory, availableBytes: null, totalBytes: 1 },
+        memory: {
+          level: memory === 'critical' ? memory : 'normal',
+          availableBytes: memory === 'high' ? 0 : null,
+          totalBytes: 1,
+        },
         load1: 0,
         cores: 1,
         bootedSimulators: 0,
@@ -1761,17 +1765,20 @@ describe("the daemon tick's ladder pacing", () => {
     expect((await runHomePasses({ act: true, log, lastLadder: freed.ladder })).ladder).toBeNull();
   });
 
+  const SHORT = 30 * GB;
+  const ROOMY = 100 * GB;
   const fruitless: Omit<LadderPass, 'endedAt'> = {
-    disk: 'critical',
+    disk: 'high',
     memory: 'normal',
-    volumes: { 1: { freeMb: FULL, level: 'critical' }, 2: { freeMb: OTHER, level: 'critical' } },
+    volumes: { 1: { freeMb: SHORT, level: 'high' }, 2: { freeMb: ROOMY, level: 'normal' } },
     freed: false,
     durationMs: MINUTE,
   };
-  const other = (freeMb: number, level: PressureLevel = 'critical') => ({
+  const atCritical: Omit<LadderPass, 'endedAt'> = {
     ...fruitless,
-    volumes: { ...fruitless.volumes, 2: { freeMb, level } },
-  });
+    disk: 'critical',
+    volumes: { 1: { freeMb: FULL, level: 'critical' }, 2: { freeMb: ROOMY, level: 'normal' } },
+  };
   test.each<[string, Omit<LadderPass, 'endedAt'>, Parameters<typeof measuredAt>, number, boolean, boolean]>([
     ['runs after a pass that took an action', { ...fruitless, freed: true }, [], 0, false, true],
     ['waits under four times a fruitless pass', fruitless, [], 4 * MINUTE - 1, false, false],
@@ -1784,23 +1791,39 @@ describe("the daemon tick's ladder pacing", () => {
       false,
       true,
     ],
-    ['runs when disk rose to critical', { ...fruitless, disk: 'high' }, [], 0, false, true],
-    ['runs when memory pressure rose', fruitless, [undefined, 'critical'], 0, false, true],
-    ['waits while every volume lost under 1 GB', other(OTHER + GB - 1), [], 0, false, false],
-    ['runs once a volume other than the fullest lost 1 GB', other(OTHER + GB), [], 0, false, true],
+    ['runs when disk rose to high', { ...fruitless, disk: 'normal' }, [], 0, false, true],
+    ['runs when memory pressure rose', fruitless, [undefined, 'high'], 0, false, true],
+    ['runs at critical after a fruitless pass at critical', atCritical, [[FULL, ROOMY]], 0, false, true],
+    [
+      'waits at high while the short volume lost under 256 MB and another under 1 GB',
+      fruitless,
+      [[SHORT - 255, ROOMY - GB + 1]],
+      0,
+      false,
+      false,
+    ],
+    ['runs at high once the short volume lost 256 MB', fruitless, [[SHORT - 256, ROOMY]], 0, false, true],
+    ['runs once a volume with room lost 1 GB', fruitless, [[SHORT, ROOMY - GB]], 0, false, true],
     [
       'runs when a volume was not measured before',
-      { ...fruitless, volumes: { 1: { freeMb: FULL, level: 'critical' } } },
+      { ...fruitless, volumes: { 1: { freeMb: SHORT, level: 'high' } } },
       [],
       0,
       false,
       true,
     ],
-    ['runs when a volume reached a higher level', other(20 * GB + 500, 'high'), [[FULL, 20 * GB - 1]], 0, false, true],
+    [
+      'runs when a volume reached a higher level',
+      { ...fruitless, volumes: { ...fruitless.volumes, 2: { freeMb: 40 * GB - 1, level: 'normal' } } },
+      [[SHORT, 40 * GB - 1]],
+      0,
+      false,
+      true,
+    ],
     ['runs when a command asked for the tick', fruitless, [], 0, true, true],
-    ['waits at high after a fruitless pass at critical', fruitless, [[30 * GB, 30 * GB]], MINUTE, false, false],
+    ['waits at high after a fruitless pass at critical', atCritical, [], MINUTE, false, false],
   ])('%s', async (_name, last, measurement, elapsedMs, requested, runs) => {
-    measuredAt(...measurement);
+    measuredAt(measurement[0] ?? [SHORT, ROOMY], measurement[1]);
     const lastLadder = { ...last, endedAt: Date.now() - elapsedMs };
 
     const passes = await runHomePasses({ act: true, log, lastLadder, requested });
