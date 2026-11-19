@@ -7,7 +7,12 @@ import { workspaceOutputPaths } from '../commands/gc/workspaces.ts';
 import { withWorkspaceProcessLock, workspaceProcessLockError } from '../engine/workspace-process-lock.ts';
 import { formatBytes, measuredDirectorySizeAsync } from '../fs-util.ts';
 import { metroStoreRoot } from '../stimd/metro/metro-store.ts';
-import { deleteCargoTarget, recentTargetUse, targetEntries, type CargoTrimResult } from '../workspace/cargo-target.ts';
+import {
+  deleteCargoTarget,
+  recentTargetUse,
+  removableEntries,
+  type CargoTrimResult,
+} from '../workspace/cargo-target.ts';
 import type { Config } from '../workspace/config.ts';
 import { discoveredReads, type DiscoveredReads } from '../workspace/discovered-reads.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
@@ -126,7 +131,7 @@ async function reduceWorkspace(
     for (const output of plan.paths) {
       if (!plan.targets.has(output)) sizes.set(output, await sizeOf(output));
       else if (!input.act)
-        for (const name of targetEntries(output)?.output ?? [])
+        for (const name of removableEntries(output) ?? [])
           sizes.set(join(output, name), await sizeOf(join(output, name)));
     }
   if (!input.act) {
@@ -204,7 +209,7 @@ async function eligible(
     const target = targets.includes(output);
     const recent = target
       ? (recentTargetUse(output, Date.now(), afterMs) ??
-        (targetEntries(output)?.output.length ? null : 'it holds nothing the dormant delete removes'))
+        (removableEntries(output)?.length ? null : 'it holds nothing the dormant delete removes'))
       : null;
     if (recent) {
       plan.kept.push(`kept ${output}: ${recent}`);
