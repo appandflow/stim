@@ -254,10 +254,11 @@ function terminate(child: ChildProcess): void {
   });
 }
 
-function leftoverProcesses(leader: number | undefined, base: string, secrets: string[]): string | null {
+function leftoverProcesses(leader: number | undefined, roots: string[], secrets: string[]): string | null {
   if (process.platform === 'win32') return null;
   const failed = 'could not check for leftover processes';
-  const name = basename(base);
+  const names = roots.map((root) => basename(root));
+  const inside = (path: string): boolean => roots.some((root) => path === root || path.startsWith(`${root}/`));
   const ps = scan('ps', ['-axo', 'pid=,pgid=,command='], SCAN_PS_MS);
   if (!ps || ps.status !== 0) return failed;
   const found = new Map<number, string>();
@@ -267,14 +268,15 @@ function leftoverProcesses(leader: number | undefined, base: string, secrets: st
     const pid = Number(match[1]);
     const command = match[3] ?? '';
     if (pid === process.pid || pid === ps.pid || command.startsWith('ps -axo')) continue;
-    if ((leader !== undefined && Number(match[2]) === leader) || command.includes(name)) found.set(pid, command);
+    if ((leader !== undefined && Number(match[2]) === leader) || names.some((name) => command.includes(name)))
+      found.set(pid, command);
   }
   const lsof = scan('lsof', ['-a', '-d', 'cwd', '-Fpn'], SCAN_LSOF_MS);
   if (!lsof) return failed;
   let owner = 0;
   for (const line of lsof.stdout.split('\n')) {
     if (line.startsWith('p')) owner = Number(line.slice(1));
-    else if (line.startsWith('n') && line.slice(1).startsWith(base) && owner !== process.pid && owner !== lsof.pid)
+    else if (line.startsWith('n') && inside(line.slice(1)) && owner !== process.pid && owner !== lsof.pid)
       found.set(owner, found.get(owner) ?? `working directory ${line.slice(1)}`);
   }
   if (found.size === 0) return null;
@@ -317,7 +319,7 @@ function runAgent(
       signal?.removeEventListener('abort', onAbort);
       child.stdout.destroy();
       child.stderr.destroy();
-      const leftover = leftoverProcesses(child.pid, paths.base, secrets);
+      const leftover = leftoverProcesses(child.pid, [paths.base, paths.harness], secrets);
       resolve({ stdout, stderr: `${stderr}${extra}`, code, timedOut, interrupted, leftover });
     };
     const onAbort = (): void => {

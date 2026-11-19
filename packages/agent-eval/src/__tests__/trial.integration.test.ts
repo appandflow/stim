@@ -206,6 +206,20 @@ echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"resul
     }
   }, 30_000);
 
+  test('a process in another group whose working directory is the log folder is reported', async () => {
+    const marker = join(directory, 'log-dir.pid');
+    const bin = fakeAgent(
+      `${FIND_LOG}\n/usr/bin/perl -e 'setpgrp(0, 0); chdir $ARGV[0] or die; open(my $f, ">", $ARGV[1]); print $f $$; close $f; exec "/bin/sleep", "28"' "$(dirname "$log")" "${marker}" >/dev/null 2>&1 &\nwhile [ ! -s "${marker}" ]; do sleep 0.1; done\necho '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"result":"","usage":{}}'`,
+    );
+    const outcome = await runTrial(firstLaunch, withSkill, claudeDriver, options({ bin }));
+    const pid = Number(readFileSync(marker, 'utf8'));
+    try {
+      expect(outcome.problems.join(' ')).toMatch(new RegExp(`left for the operator and not signalled: .*${pid} `));
+    } finally {
+      process.kill(pid, 'SIGKILL');
+    }
+  }, 30_000);
+
   test('a descendant that outlives the agent is reported and is not signalled', async () => {
     const marker = join(directory, 'leftover.pid');
     const bin = fakeAgent(
