@@ -889,10 +889,10 @@ test.skipIf(process.platform === 'win32')(
 const linkedDetail =
   /^its real size is unknown, but (\d+) of the \1 files sampled from it are hard links another folder such as a package store also holds, so deleting it would free little and it stays$/;
 
-function pnpmTree(modules: string, how: 'linked' | 'copied', at: Date): string {
+function pnpmTree(modules: string, how: 'linked' | 'copied', at: Date, count = 8): string {
   const built = how === 'linked' ? modules : join(projects, `built-${randomUUID()}`);
   const store = join(projects, `store-${randomUUID()}`);
-  for (let index = 0; index < 8; index++) {
+  for (let index = 0; index < count; index++) {
     const name = index % 2 ? `pkg${index}` : `@scope/pkg${index}`;
     const entry = `${name.replace('/', '+')}@1.0.${index}`;
     const dir = join(built, '.pnpm', entry, 'node_modules', name);
@@ -1022,7 +1022,7 @@ test.skipIf(process.platform === 'win32')(
     const io: LinkSampleIo = {
       entries,
       lstat: async () => ({ kind: 'file', nlink: 2, dev: 1, ino: 1 }),
-      tail: async () => '',
+      head: async () => '',
     };
     const sampled = hardLinkSample(modules, undefined, io);
     await vi.advanceTimersByTimeAsync(2000);
@@ -1075,15 +1075,18 @@ test.skipIf(process.platform === 'win32')(
 );
 
 test.skipIf(process.platform === 'win32')(
-  'a link sample is not links when a sampled package holds native build output or the tree holds a cache, and reads a hoisted tree from its top-level folders',
+  'a link sample is not links when any package holds native build output or the tree holds a cache, and reads a hoisted tree from its top-level and scoped folders',
   async () => {
     const built = join(projects, 'built', 'node_modules');
-    pnpmTree(built, 'linked', new Date());
-    const packages = readdirSync(join(built, '.pnpm')).filter((entry) => entry.includes('@1.0.'));
-    for (const entry of packages.filter((_, index) => index % 4 === 0)) {
-      const name = entry.slice(0, entry.indexOf('@1.0.')).replace('+', '/');
-      mkdirSync(join(built, '.pnpm', entry, 'node_modules', name, 'android', '.cxx'), { recursive: true });
-    }
+    pnpmTree(built, 'linked', new Date(), 60);
+    expect(await hardLinkSample(built)).toEqual({ linked: 36, sampled: 36 });
+    const packages = readdirSync(join(built, '.pnpm'))
+      .filter((entry) => entry.includes('@1.0.'))
+      .toSorted();
+    const unsampled = packages[30] ?? '';
+    const name = unsampled.slice(0, unsampled.indexOf('@1.0.')).replace('+', '/');
+    mkdirSync(join(built, '.pnpm', unsampled, 'node_modules', name, 'android', 'build'), { recursive: true });
+    rmSync(diskUsageLinksFile(built));
     expect(await hardLinkSample(built)).toBeNull();
     expect(readJsonObject(diskUsageLinksFile(built))?.verdict).toBe('other');
 
@@ -1101,7 +1104,19 @@ test.skipIf(process.platform === 'win32')(
         writeFileSync(join(store, `pkg${index}`, file), `pkg${index} ${file}`);
         linkSync(join(store, `pkg${index}`, file), join(hoisted, `pkg${index}`, file));
       }
-    writeFileSync(join(hoisted, '.modules.yaml'), JSON.stringify({ storeDir: store, nodeLinker: 'hoisted' }, null, 2));
+    const hoistedDependencies = Object.fromEntries(
+      Array.from({ length: 50 }, (_, index) => [`dep${index}@1.0.0`, { [`dep${index}`]: 'private' }]),
+    );
+    const hoistedLocations = Object.fromEntries(
+      Array.from({ length: 3000 }, (_, index) => [`dep${index}@1.0.0`, [`node_modules/dep${index}`]]),
+    );
+    writeFileSync(
+      join(hoisted, '.modules.yaml'),
+      JSON.stringify({ hoistedDependencies, storeDir: store, nodeLinker: 'hoisted', hoistedLocations }, null, 2),
+    );
     expect(await hardLinkSample(hoisted)).toEqual({ linked: 24, sampled: 24 });
+    mkdirSync(join(hoisted, '@scope', 'native', 'ios', 'build'), { recursive: true });
+    rmSync(diskUsageLinksFile(hoisted));
+    expect(await hardLinkSample(hoisted)).toBeNull();
   },
 );

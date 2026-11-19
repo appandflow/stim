@@ -14,9 +14,10 @@ const MIN_PACKAGES = 5;
 const LINKED_SHARE = 0.9;
 const SAMPLE_TIMEOUT_MS = 2000;
 const VERDICT_MAX_AGE_MS = 6 * 60 * 60_000;
-const MODULES_TAIL_BYTES = 64 * 1024;
+const MODULES_MAX_BYTES = 1024 * 1024;
 /** What a native build writes inside a package it builds in place: its own bytes, never store links. */
 const BUILT_IN_PLACE = [...ARTIFACT_DIRS.build, 'android/.cxx', 'ios/build', 'apple/.DerivedData'];
+const NATIVE_ROOTS = [...new Set(BUILT_IN_PLACE.map((relative) => relative.split('/')[0] ?? ''))];
 
 type Kind = 'directory' | 'file' | 'other';
 
@@ -25,8 +26,8 @@ export interface LinkSampleIo {
   entries: (path: string) => Promise<{ name: string; kind: Kind }[]>;
   /** Without following a symlink: what it is, its link count, and its device and inode. */
   lstat: (path: string) => Promise<{ kind: Kind; nlink: number; dev: number; ino: number }>;
-  /** The last `bytes` bytes of a file as text. */
-  tail: (path: string, bytes: number) => Promise<string>;
+  /** The first `bytes` bytes of a file as text. */
+  head: (path: string, bytes: number) => Promise<string>;
 }
 
 const kindOf = (entry: { isDirectory: () => boolean; isFile: () => boolean }): Kind =>
@@ -39,12 +40,12 @@ const REAL_IO: LinkSampleIo = {
     const info = await lstat(path);
     return { kind: kindOf(info), nlink: info.nlink, dev: info.dev, ino: info.ino };
   },
-  tail: async (path, bytes) => {
+  head: async (path, bytes) => {
     const file = await open(path, 'r');
     try {
       const { size } = await file.stat();
       const buffer = Buffer.alloc(Math.min(size, bytes));
-      const { bytesRead } = await file.read(buffer, 0, buffer.length, size - buffer.length);
+      const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
       return buffer.toString('utf8', 0, bytesRead);
     } finally {
       await file.close();
@@ -54,7 +55,7 @@ const REAL_IO: LinkSampleIo = {
 
 /**
  * The pnpm store `.modules.yaml` in the tree at `path` records (`storeDir`, written as JSON by recent pnpm and as YAML by
- * older ones, near the end of the file), when it is a directory outside the tree: its path and device.
+ * older ones), when it is a directory outside the tree: its path and device.
  */
 async function pnpmStore(
   path: string,
@@ -62,7 +63,7 @@ async function pnpmStore(
   io: LinkSampleIo,
 ): Promise<{ dir: string; dev: number } | null> {
   const modules = join(path, '.modules.yaml');
-  const text = await read(modules, () => io.tail(modules, MODULES_TAIL_BYTES));
+  const text = await read(modules, () => io.head(modules, MODULES_MAX_BYTES));
   const recorded = text && /(?:^|[{,\s])"?storeDir"?\s*:\s*"?([^",\n]+?)"?\s*(?:,|\n|}|$)/.exec(text)?.[1];
   if (!recorded) return null;
   const dir = resolve(path, recorded);
@@ -104,12 +105,12 @@ async function takeSample(
     }
   };
   const entries = async (dir: string) => (await read(dir, () => io.entries(dir))) ?? [];
-  const builtInPlace = async (dir: string, found: readonly { name: string }[]): Promise<boolean> => {
-    const names = new Set(found.map(({ name }) => name));
-    for (const relative of BUILT_IN_PLACE) {
-      if (!names.has(relative.split('/')[0] ?? '')) continue;
-      const target = join(dir, relative);
-      if ((await read(target, () => io.lstat(target)))?.kind === 'directory') return true;
+  const isDir = async (target: string) => (await read(target, () => io.lstat(target)))?.kind === 'directory';
+  const builtInPlace = async (dir: string): Promise<boolean> => {
+    for (const root of NATIVE_ROOTS) {
+      if (!(await isDir(join(dir, root)))) continue;
+      for (const relative of BUILT_IN_PLACE.filter((candidate) => candidate.split('/')[0] === root))
+        if (relative === root || (await isDir(join(dir, relative)))) return true;
     }
     return false;
   };
@@ -138,18 +139,21 @@ async function takeSample(
         })
       : [];
     const pnpm = virtual.length > 0;
-    const dirs = pnpm
-      ? virtual
-      : top
-          .filter(({ name, kind }) => kind === 'directory' && !name.startsWith('.'))
-          .map(({ name }) => join(path, name));
+    const dirs = pnpm ? virtual : [];
+    for (const { name, kind } of pnpm ? [] : top) {
+      if (kind !== 'directory' || name.startsWith('.')) continue;
+      if (!name.startsWith('@')) dirs.push(join(path, name));
+      else
+        for (const scoped of await entries(join(path, name)))
+          if (scoped.kind === 'directory') dirs.push(join(path, name, scoped.name));
+    }
+    for (const dir of dirs) if (await builtInPlace(dir)) return { ...none, store: store.dir };
     const seen = new Set<string>();
     let linked = 0;
     let packages = 0;
     for (const dir of spread(dirs.toSorted(), PACKAGES)) {
       if (pnpm && (await read(dir, () => io.lstat(dir)))?.kind !== 'directory') continue;
       const found = await entries(dir);
-      if (await builtInPlace(dir, found)) return { ...none, store: store.dir };
       let counted = false;
       for (const file of await filesOf(dir, found)) {
         const info = await read(file, () => io.lstat(file));
@@ -171,11 +175,11 @@ async function takeSample(
 /**
  * Whether the dependency tree at `path` is mostly hard links into a pnpm store outside it, from the link counts of a few
  * dozen regular files spread over its packages (under `.pnpm/*\/node_modules/*` for pnpm's isolated layout, its
- * top-level folders otherwise), read without following a symlink and within SAMPLE_TIMEOUT_MS in all: the counts when
- * `.modules.yaml` names a store directory outside the tree, at least MIN_FILES distinct files from MIN_PACKAGES packages
- * were read, and LINKED_SHARE of them have more than one link on the store's device, else null. A tree with a dot
- * directory at its root other than a package manager's own (a cache such as `.cache`), or a sampled package that holds
- * output a native build wrote in place (BUILT_IN_PLACE), is not links. A link count shows that
+ * top-level and scoped folders otherwise), read without following a symlink and within SAMPLE_TIMEOUT_MS in all: the
+ * counts when `.modules.yaml` names a store directory outside the tree, at least MIN_FILES distinct files from
+ * MIN_PACKAGES packages were read, and LINKED_SHARE of them have more than one link on the store's device, else null. A
+ * tree with a dot directory at its root other than a package manager's own (a cache such as `.cache`), or with any
+ * package that holds output a native build wrote in place (BUILT_IN_PLACE), is not links. A link count shows that
  * another name holds the file's data, not where that name is, so the store is the evidence that the other name is
  * outside the tree, and this is never a measurement. A verdict is recorded with the install signature and reused for
  * VERDICT_MAX_AGE_MS while the signature holds; a `links` verdict also needs its store to still be a directory.
