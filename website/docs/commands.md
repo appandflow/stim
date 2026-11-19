@@ -1344,7 +1344,12 @@ stim test -- pnpm exec vitest run --project unit
   Otherwise the `test` script, run by `stim test` or by `stim test -- npm test`
   (or `pnpm`, `yarn`, `bun run`), must be a plain `jest` or `vitest` command
   with no `--` of its own. Vitest applies `fileParallelism: false` after the
-  flag, in Vitest 2 through 5.
+  flag, in Vitest 2 through 5. Vitest 1.5 to 3.2.3 also get `--minWorkers=1`:
+  they default `minWorkers` to the cores but one and refuse a lower
+  `--maxWorkers` ([vitest#7974](https://github.com/vitest-dev/vitest/issues/7974),
+  fixed in 3.2.4), and Vitest 5 refuses `--minWorkers` as unknown. Stim reads
+  the version from `node_modules/vitest`; an older or unreadable one gets
+  nothing.
 - Nothing is passed when the command names a worker option (Jest
   `--maxWorkers`, `-w`, `--runInBand`, `-i`; Vitest `--maxWorkers`,
   `--minWorkers`), another config, preset, project or workspace (`-c`,

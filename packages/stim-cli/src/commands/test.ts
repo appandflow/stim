@@ -11,6 +11,7 @@ import { operationState } from '../engine/operation-state.ts';
 import { spawnDeclared } from '../engine/spawn-claims.ts';
 import {
   configuredWorkers,
+  installedVitestVersion,
   nearestPackageDir,
   packageScripts,
   packageManagerFor,
@@ -199,6 +200,7 @@ async function runTest(
       manager,
       configured: configuredWorkers(dir),
       scripts: packageScripts(dir),
+      vitestVersion: installedVitestVersion(dir),
     });
     debugLog.log('test_workers', { workers, cores, slots, load1, applied: plan.applied, skipped: plan.skipped });
     const basis = `${cores} cores, ${slots} test slot${slots === 1 ? '' : 's'}, load ${load1}`;

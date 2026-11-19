@@ -118,6 +118,33 @@ export function configuredWorkers(cwd: string): { jest: boolean; vitest: boolean
   }
 }
 
+/** The version of the `vitest` package in the nearest node_modules at or above `dir`, or null when none is readable. */
+export function installedVitestVersion(dir: string): string | null {
+  for (let at = dir; ; at = dirname(at)) {
+    const file = join(at, 'node_modules', 'vitest', 'package.json');
+    if (existsSync(file)) {
+      const version = readPackage(dirname(file))?.version;
+      return typeof version === 'string' ? version : null;
+    }
+    if (dirname(at) === at) return null;
+  }
+}
+
+/**
+ * The flags that give Vitest `version` `workers`, or null when Stim cannot tell. Vitest 1.5 to 3.2.3 default
+ * `minWorkers` to the cores but one and refuse a lower `--maxWorkers` (vitest-dev/vitest#7974, fixed in 3.2.4), so they
+ * also get `--minWorkers=1`; Vitest 4 removed `minWorkers`, and 5 refuses the flag as an unknown option.
+ */
+export function vitestWorkerFlags(version: string | null, workers: number): string[] | null {
+  const match = /^(\d+)\.(\d+)\.(\d+)/.exec(version ?? '');
+  if (!match) return null;
+  const [major = 0, minor = 0, patch = 0] = match.slice(1).map(Number);
+  const atLeast = (a: number, b: number, c: number) => (major !== a ? major > a : minor !== b ? minor > b : patch >= c);
+  if (atLeast(3, 2, 4)) return [`--maxWorkers=${workers}`];
+  if (atLeast(1, 5, 0)) return [`--maxWorkers=${workers}`, '--minWorkers=1'];
+  return null;
+}
+
 /**
  * Workers for one test run: the cores but one, shared between the `concurrency.maxTests` slots, and scaled down by
  * `cores / load1` when the 1-minute load is already past the core count, never under 1.
@@ -186,6 +213,7 @@ export function planTestRun({
   manager,
   configured = { jest: false, vitest: false },
   scripts = [],
+  vitestVersion = null,
 }: {
   argv: string[];
   workers: number;
@@ -195,6 +223,8 @@ export function planTestRun({
   configured?: { jest: boolean; vitest: boolean };
   /** The package's script names: `pnpm jest` and `yarn jest` run a script of that name before the binary. */
   scripts?: readonly string[];
+  /** The installed Vitest version, which decides its worker flags. */
+  vitestVersion?: string | null;
 }): TestPlan {
   const plain = script ? PLAIN_SCRIPT.exec(script.trim()) : null;
   const direct = script ? null : runnerAt(argv, scripts);
@@ -211,11 +241,18 @@ export function planTestRun({
   const words = script ? script.trim().split(/\s+/) : argv.slice((direct?.index ?? 0) + 1);
   if (words.some((word) => (runner === 'jest' ? JEST_SET : VITEST_SET).test(word)))
     return unchanged(`the command already sets ${name} workers or names another config`);
-  const flag = `--maxWorkers=${workers}`;
+  const flags = runner === 'jest' ? [`--maxWorkers=${workers}`] : vitestWorkerFlags(vitestVersion, workers);
+  if (!flags)
+    return unchanged(
+      vitestVersion
+        ? `Stim does not know the worker flags of Vitest ${vitestVersion}`
+        : 'Stim cannot read the installed Vitest version, which decides its worker flags',
+    );
+  const applied = flags.join(' ');
   if (direct) {
     const end = argv.indexOf('--', direct.index + 1);
     const at = end < 0 ? argv.length : end;
-    return { argv: [...argv.slice(0, at), flag, ...argv.slice(at)], applied: flag, skipped: null };
+    return { argv: [...argv.slice(0, at), ...flags, ...argv.slice(at)], applied, skipped: null };
   }
-  return { argv: [...argv, ...(manager === 'npm' ? ['--', flag] : [flag])], applied: flag, skipped: null };
+  return { argv: [...argv, ...(manager === 'npm' ? ['--', ...flags] : flags)], applied, skipped: null };
 }

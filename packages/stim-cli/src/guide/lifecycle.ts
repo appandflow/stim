@@ -2447,14 +2447,16 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   Jest and Vitest get --maxWorkers=<n> only when Stim can tell nothing else
   sets workers or a serial run: the command runs jest or vitest directly (also
   behind npx, bunx, pnpm exec, or pnpm or yarn with no script of that name,
-  yarn without --; the flag goes before any --), or the test script is a
-  plain jest or vitest command with no --. The command must name no worker, config,
+  yarn without --; the flag goes before any --), or the test script is a plain
+  jest or vitest command with no --. The command must name no worker, config,
   preset, project, workspace, --pool, --poolOptions.* or file-parallelism
   option, and no jest, vitest or vite config up to package.json (or its jest
   key) may name workers, pools, serial runs or projects, spread an object,
   import a module other than Node's, vite's or vitest's (jest's as types), or
-  set a preset other than React Native's or jest-expo's. Otherwise the command
-  runs unchanged, with no variables added; one stderr line says which.
+  set a preset other than React Native's or jest-expo's. Vitest 1.5 to 3.2.3
+  also get --minWorkers=1; older or unknown versions get nothing. Otherwise
+  the command runs unchanged, with no variables added; one stderr line says
+  which.
 
   The command runs in its own process group, with no stdin, so a watch run has
   no prompt and holds its slot until stopped. SIGINT, SIGTERM and SIGHUP reach

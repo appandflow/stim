@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   configuredWorkers,
+  installedVitestVersion,
   packageManagerFor,
   planTestRun,
   testScriptFor,
@@ -106,10 +107,54 @@ test.each([
     scripts: ['jest', 'test'],
     expected: null,
   },
-])('$name', ({ argv, script, manager, configured, scripts, expected }) => {
-  const plan = planTestRun({ argv, workers: 3, script, manager, configured, scripts });
+  {
+    name: 'Vitest 3.2.3 and earlier also get --minWorkers=1, since they default it to the cores but one',
+    argv: ['vitest', 'run'],
+    vitestVersion: '3.2.3',
+    expected: ['vitest', 'run', '--maxWorkers=3', '--minWorkers=1'],
+    applied: '--maxWorkers=3 --minWorkers=1',
+  },
+  {
+    name: 'a Vitest 2 test script gets both flags through npm',
+    argv: ['npm', 'run', 'test'],
+    script: 'vitest run',
+    manager: 'npm' as const,
+    vitestVersion: '2.1.9',
+    expected: ['npm', 'run', 'test', '--', '--maxWorkers=3', '--minWorkers=1'],
+    applied: '--maxWorkers=3 --minWorkers=1',
+  },
+  {
+    name: 'Vitest 3.2.4 gets only --maxWorkers',
+    argv: ['vitest'],
+    vitestVersion: '3.2.4',
+    expected: ['vitest', '--maxWorkers=3'],
+  },
+  {
+    name: 'Vitest 4 gets only --maxWorkers',
+    argv: ['vitest'],
+    vitestVersion: '4.0.0',
+    expected: ['vitest', '--maxWorkers=3'],
+  },
+  { name: 'Vitest before 1.5 runs unchanged', argv: ['vitest'], vitestVersion: '1.4.0', expected: null },
+  { name: 'Vitest with no readable version runs unchanged', argv: ['vitest'], vitestVersion: null, expected: null },
+  {
+    name: 'Jest needs no Vitest version',
+    argv: ['jest'],
+    vitestVersion: null,
+    expected: ['jest', '--maxWorkers=3'],
+  },
+])('$name', ({ argv, script, manager, configured, scripts, vitestVersion, expected, applied }) => {
+  const plan = planTestRun({
+    argv,
+    workers: 3,
+    script,
+    manager,
+    configured,
+    scripts,
+    vitestVersion: vitestVersion === undefined ? '5.0.4' : vitestVersion,
+  });
   expect(plan.argv).toEqual(expected ?? argv);
-  expect(plan.applied).toBe(expected ? '--maxWorkers=3' : null);
+  expect(plan.applied).toBe(expected ? (applied ?? '--maxWorkers=3') : null);
   expect(plan.applied === null).toBe(plan.skipped !== null);
 });
 
@@ -221,4 +266,18 @@ test('finds the nearest lockfile, package.json and runner config above the worki
   writeFileSync(join(pkg, 'package.json'), JSON.stringify({ scripts: {}, jest: { maxWorkers: '50%' } }));
   expect(testScriptFor(pkg)).toBeNull();
   expect(configuredWorkers(join(pkg, 'src'))).toEqual({ jest: true, vitest: true });
+});
+
+test('reads the Vitest version from the nearest node_modules above the package', () => {
+  const root = mkdtempSync(join(tmpdir(), 'stim-test-run-'));
+  onTestFinished(() => rmSync(root, { recursive: true, force: true }));
+  const pkg = join(root, 'packages', 'app');
+  mkdirSync(pkg, { recursive: true });
+  expect(installedVitestVersion(pkg)).toBeNull();
+  mkdirSync(join(root, 'node_modules', 'vitest'), { recursive: true });
+  writeFileSync(join(root, 'node_modules', 'vitest', 'package.json'), JSON.stringify({ version: '3.1.4' }));
+  expect(installedVitestVersion(pkg)).toBe('3.1.4');
+  mkdirSync(join(pkg, 'node_modules', 'vitest'), { recursive: true });
+  writeFileSync(join(pkg, 'node_modules', 'vitest', 'package.json'), JSON.stringify({ version: '5.0.4' }));
+  expect(installedVitestVersion(pkg)).toBe('5.0.4');
 });

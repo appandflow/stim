@@ -71,6 +71,8 @@ beforeEach(() => {
   }
   writeFileSync(join(app, 'package.json'), JSON.stringify({ name: 'app', scripts: { test: 'jest --ci' } }));
   writeFileSync(join(app, 'package-lock.json'), '{}');
+  mkdirSync(join(app, 'node_modules', 'vitest'));
+  writeFileSync(join(app, 'node_modules', 'vitest', 'package.json'), JSON.stringify({ version: '5.0.4' }));
   vi.stubEnv('STIM_HOME', home);
 });
 
@@ -127,7 +129,7 @@ describe.skipIf(process.platform === 'win32')('stim test', () => {
     expect(ran(stdout).argv).toEqual(['--ci', `--maxWorkers=${announced(stderr)}`]);
   }, 60_000);
 
-  test('Vitest gets the flag, and a serial Vitest config or a caller -w is kept', async () => {
+  test('Vitest gets the flag, with --minWorkers=1 before 3.2.4, and a serial Vitest config or a caller -w is kept', async () => {
     const vitest = await start(['--', 'vitest', 'run']).done;
     expect(ran(vitest.stdout)).toEqual({
       argv: ['run', `--maxWorkers=${announced(vitest.stderr)}`],
@@ -138,6 +140,10 @@ describe.skipIf(process.platform === 'win32')('stim test', () => {
     const serial = await start(['--', 'vitest', 'run']).done;
     expect(ran(serial.stdout).argv).toEqual(['run']);
     expect(serial.stderr).toContain('no worker count passed: a Vitest config here may set its workers or run serially');
+    rmSync(join(app, 'vitest.config.ts'));
+    writeFileSync(join(app, 'node_modules', 'vitest', 'package.json'), JSON.stringify({ version: '2.1.9' }));
+    const old = await start(['--', 'vitest', 'run']).done;
+    expect(ran(old.stdout).argv).toEqual(['run', `--maxWorkers=${announced(old.stderr)}`, '--minWorkers=1']);
     const jest = await start(['--', 'jest', '-w', '2']).done;
     expect(ran(jest.stdout).argv).toEqual(['-w', '2']);
     expect(jest.stderr).toContain('no worker count passed: the command already sets Jest workers');
