@@ -264,8 +264,10 @@ export async function runMaintenanceAtLevel({
       taken || idleMs <= 0 || !existsSync(checkout.path)
         ? null
         : await discoveredKeepReason(checkout.path, idleMs, checkout.reduceOnly === true, operation, reads);
-    if (kept && /source entries to check|cannot be read/.test(kept))
-      blocked.push(`Discovered checkout ${checkout.path}: ${kept}, so it is never reduced`);
+    if (kept && /every source entry within|cannot be read/.test(kept))
+      blocked.push(
+        `Discovered checkout ${checkout.path}: ${kept}, so it is kept this pass and checked again on a later one`,
+      );
     discovered.push({ ...checkout, actions: mine, ...(kept ? { kept } : {}) });
   }
   const measuredCaches = caches.filter((cache) => sizes.some((size) => size.dir === cache.dir));

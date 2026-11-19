@@ -1,16 +1,21 @@
 /**
- * The one filesystem read, of the launcher directories or the home scan, that timed out and has not settled. A timed-out
- * native read cannot be cancelled, so while one is pending no further read of either kind starts: a hung mount holds
+ * The one filesystem read, of the launcher directories, the home scan or a checkout's source scan, that timed out and
+ * has not settled. A timed-out native read cannot be cancelled, so while one is pending no further read of any kind starts: a hung mount holds
  * exactly one libuv thread however many readings and scans are asked for. Module state, so the bound is one outstanding
  * read per JavaScript isolate: the daemon's main thread and its passes thread each have their own.
  */
-let hung: { label: string } | null = null;
+let hung: { label: string; settled?: Promise<void> } | null = null;
 
 export class Unanswered extends Error {}
 
 /** The folder whose read timed out and is still pending, or null when none is. */
 export function hungRead(): string | null {
   return hung?.label ?? null;
+}
+
+/** Settles once the pending read has settled and freed the slot, or null when no read is pending. */
+export function pendingRead(): Promise<void> | null {
+  return hung?.settled ?? null;
 }
 
 /**
@@ -47,12 +52,12 @@ export async function answered<T>(
     ]);
   } catch (error) {
     if (error instanceof Unanswered || (signal?.aborted && !settled)) {
-      const mine = { label };
+      const mine: { label: string; settled?: Promise<void> } = { label };
       hung = mine;
       const release = () => {
         if (hung === mine) hung = null;
       };
-      read.then(release, release);
+      mine.settled = read.then(release, release);
     }
     throw error;
   } finally {

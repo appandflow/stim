@@ -9,14 +9,17 @@ import {
   utimesSync,
   writeFileSync,
 } from 'node:fs';
+import { lstat, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type Config } from '@stim-cli/core/state';
 import { testContext } from './_context.ts';
 import { collectWorktreeSweep } from '../commands/gc/worktrees.ts';
 import { saveConfig } from '../workspace/config.ts';
-import { answered } from '../workspace/bounded-read.ts';
-import { scanSourceWrites } from '../workspace/discovered-activity.ts';
+import * as gitCommands from '../workspace/git.ts';
+import { answered, hungRead } from '../workspace/bounded-read.ts';
+import { discoveredEvidence, scanSourceWrites } from '../workspace/discovered-activity.ts';
+import { discoveredReads } from '../workspace/discovered-reads.ts';
 import {
   discoverCheckouts,
   discoveredOutside,
@@ -28,6 +31,15 @@ import {
 vi.mock('../workspace/protected-locations.ts', () => ({
   isProtectedLocation: () => false,
 }));
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...actual,
+    readdir: vi.fn<typeof actual.readdir>(actual.readdir),
+    lstat: vi.fn<typeof actual.lstat>(actual.lstat),
+  };
+});
 
 describe('isBroadFolder', () => {
   it('refuses the home folder, a folder holding it and the filesystem root, and accepts a folder below it', () => {
@@ -81,7 +93,10 @@ describe('scanSourceWrites', () => {
     age(base);
   });
 
-  afterEach(() => rmSync(base, { recursive: true, force: true }));
+  afterEach(() => {
+    vi.restoreAllMocks();
+    rmSync(base, { recursive: true, force: true });
+  });
 
   it('ignores writes in dependency folders and sees one in source', async () => {
     const quiet = Date.now() - 86_400_000;
@@ -97,10 +112,151 @@ describe('scanSourceWrites', () => {
     await expect(scanSourceWrites(base, Date.now(), AbortSignal.abort())).rejects.toThrow(/abort/i);
   });
 
-  it('reports unknown, never idle, when the bound stops it', async () => {
-    expect(await scanSourceWrites(base, Date.now() - 86_400_000, undefined, 1)).toMatchObject({
-      unknown: expect.stringContaining('more than 1'),
+  const OUT_OF_TIME = { unknown: 'it could not check every source entry within 15 s' };
+  const tree = (...names: string[]) => {
+    const root = join(base, `tree-${names.join('-')}`);
+    mkdirSync(root);
+    for (const name of names) mkdirSync(join(root, name));
+    for (const name of names) age(join(root, name));
+    age(root);
+    return root;
+  };
+  const slowIgnoreProbe = () =>
+    vi.spyOn(gitCommands, 'gitQuietAsync').mockImplementation(async () => {
+      vi.advanceTimersByTime(20_000);
+      return '';
     });
+
+  it('reports unknown, never idle, when its time runs out on entries git ignores, and probes none after', async () => {
+    const quiet = Date.now() - 86_400_000;
+    const probe = slowIgnoreProbe();
+    expect(await scanSourceWrites(tree('build'), quiet)).toEqual(OUT_OF_TIME);
+    probe.mockClear();
+    expect(await scanSourceWrites(tree('build', 'dist'), quiet)).toEqual(OUT_OF_TIME);
+    expect(probe).toHaveBeenCalledTimes(1);
+  });
+
+  it('still reports a recent write that it reaches after its time ran out', async () => {
+    writeFileSync(join(base, 'src', 'edit.ts'), '');
+    const { readdir: real } = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    vi.mocked(readdir).mockImplementationOnce(async (path, options) => {
+      vi.advanceTimersByTime(20_000);
+      return real(path, options);
+    });
+    const quiet = Date.now() - 86_400_000;
+    const scan = await scanSourceWrites(base, quiet);
+    expect('newest' in scan && scan.newest > quiet).toBe(true);
+  });
+
+  it('gives up on a read that never answers when its time runs out, and on abort', async () => {
+    const stall = () => {
+      let release = () => {};
+      vi.mocked(readdir).mockImplementationOnce(
+        () =>
+          new Promise((_, fail) => {
+            release = () => fail(new Error('released'));
+          }),
+      );
+      return async () => {
+        release();
+        await Promise.resolve();
+      };
+    };
+    let release = stall();
+    const scan = scanSourceWrites(base, Date.now() - 86_400_000);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(await scan).toEqual(OUT_OF_TIME);
+    await release();
+
+    release = stall();
+    const controller = new AbortController();
+    const aborted = scanSourceWrites(join(base, 'src'), Date.now() - 86_400_000, controller.signal);
+    controller.abort();
+    await expect(aborted).rejects.toThrow(/abort/i);
+    await release();
+  });
+
+  it('keeps a checkout whose scan ran out of time without reading its .git', async () => {
+    let release = () => {};
+    vi.mocked(readdir).mockImplementationOnce(
+      () =>
+        new Promise((_, fail) => {
+          release = () => fail(new Error('released'));
+        }),
+    );
+    const evidence = discoveredEvidence(base, {
+      now: Date.now(),
+      idleMs: 86_400_000,
+      reads: discoveredReads(),
+      reduceOnly: false,
+    });
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(await evidence).toEqual({ activity: [], keep: [OUT_OF_TIME.unknown] });
+    expect(vi.mocked(lstat)).not.toHaveBeenCalledWith(join(base, '.git'));
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+  });
+
+  const holdSlot = async () => {
+    let release = () => {};
+    const stuck = answered('/stalled-mount', () => new Promise<void>((resolve) => (release = resolve)), 10).catch(
+      () => 'timed out',
+    );
+    await vi.advanceTimersByTimeAsync(10);
+    expect(await stuck).toBe('timed out');
+    return release;
+  };
+
+  it('waits within its budget for another read to free the slot, then walks', async () => {
+    const release = await holdSlot();
+    const quiet = Date.now() - 86_400_000;
+    const scan = scanSourceWrites(base, quiet);
+    await vi.advanceTimersByTimeAsync(5000);
+    release();
+    expect('newest' in (await scan)).toBe(true);
+  });
+
+  it('waits out a pending read once per pass: later scans of that pass give up at once, and the next pass walks', async () => {
+    const release = await holdSlot();
+    const other = join(base, 'other');
+    mkdirSync(other);
+    const busy = 'its source cannot be read while a read of /stalled-mount has not answered';
+    const evidenceOf = (root: string, operation: ReturnType<typeof testContext>) =>
+      discoveredEvidence(root, {
+        now: Date.now(),
+        idleMs: 86_400_000,
+        reads: discoveredReads(operation.signal, operation),
+        operation,
+        reduceOnly: false,
+      });
+
+    const pass = testContext();
+    const first = evidenceOf(base, pass);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect((await first).keep).toEqual([busy]);
+    expect((await evidenceOf(other, pass)).keep).toEqual([busy]);
+
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+    const next = testContext();
+    for (const root of [base, other])
+      expect((await evidenceOf(root, next)).activity).toContainEqual(expect.objectContaining({ basis: 'file edit' }));
+  });
+
+  it('walks a checkout again on the next pass when another read held the slot past its budget, with no cooldown', async () => {
+    const release = await holdSlot();
+    const quiet = Date.now() - 86_400_000;
+
+    const scan = scanSourceWrites(base, quiet);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(await scan).toEqual({
+      unknown: 'its source cannot be read while a read of /stalled-mount has not answered',
+    });
+
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(hungRead()).toBeNull();
+    expect('newest' in (await scanSourceWrites(base, quiet))).toBe(true);
   });
 });
 

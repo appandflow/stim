@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { rmSync } from 'node:fs';
+import { lstat } from 'node:fs/promises';
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import type { StimContext } from '@stim-cli/core';
 import {
@@ -29,7 +30,8 @@ import { hardLinkSample } from '../link-sample.ts';
 import { workspaceKeys } from '../workspace/lightened.ts';
 import { freshLaunchers } from '../workspace/launchers.ts';
 import { workspaceDir } from '../workspace/paths.ts';
-import { hungRead } from '../workspace/bounded-read.ts';
+import { matchWorktreeEntry, resolveSourceCheckoutAsync } from '../workspace/worktree.ts';
+import { answered, hungRead, Unanswered } from '../workspace/bounded-read.ts';
 import { buildOutputDirs, dependencyTreeSignature } from '../workspace/discovery-census.ts';
 import { ARTIFACT_DIRS } from '../workspace/regenerable-dirs.ts';
 import { checkDependencyEdits } from '../workspace/dependency-edits.ts';
@@ -58,6 +60,7 @@ import { forgetGitReads } from '../workspace/git-reads.ts';
 export const REAL_BYTES_THRESHOLD: number = 256 * 1024 ** 2;
 const HOUR_MS = 60 * 60_000;
 const WALK_TIMEOUT_MS = 10 * 60_000;
+const PROBE_TIMEOUT_MS = 3000;
 const RESTORE = 'stim worktree warm';
 export const SOURCE_RESTORE = "the project's own install in it, or stim worktree warm --refresh in a linked worktree";
 const NOT_MEASURED = 'its real size is not measured since its last install, so it stays';
@@ -570,6 +573,46 @@ export async function runDormantDependencies(
   );
 }
 
+/**
+ * Whether a discovered checkout holds a `node_modules` or `ios/Pods` the source collection could take. It is eligible
+ * only as `collectArtifactsAsync` finds it: git lists a non-bare worktree for it, its source checkout resolves, and that
+ * worktree is the source checkout; anything else, a linked worktree or a folder git does not list, is answered false
+ * before any dependency read. A tree counts only as a real directory, never followed through a link (the collection
+ * keeps a linked tree). Each probe is one `lstat` bounded like the launcher readings by `answered`; 'unanswered' when
+ * its own probe does not answer. While another read holds the pending slot no probe starts and the answer is true, so
+ * the checkout goes through the idle checks and the collection as it would on main.
+ */
+async function sourceTreesOf(path: string, operation?: StimContext): Promise<boolean | 'unanswered'> {
+  const { entries, ...source } = await resolveSourceCheckoutAsync(path, {
+    env: operation?.env,
+    signal: operation?.signal,
+    declareFor: operation,
+  });
+  const entry = 'refusal' in source ? null : matchWorktreeEntry(entries, path);
+  if (!entry || entry.bare || 'refusal' in source || entry.path !== source.path) return false;
+  try {
+    for (const dir of ARTIFACT_DIRS.dependencies) {
+      if (hungRead() !== null) return true;
+      const target = join(entry.path, dir);
+      const found = await answered(
+        target,
+        () =>
+          lstat(target).then(
+            (info) => info.isDirectory(),
+            () => false,
+          ),
+        PROBE_TIMEOUT_MS,
+        operation?.signal,
+      );
+      if (found) return true;
+    }
+    return false;
+  } catch (error) {
+    if (error instanceof Unanswered) return 'unanswered';
+    throw error;
+  }
+}
+
 async function takeIdleDependencies(
   input: Pick<IdlePassInput, 'act' | 'log'> & DeviceReading & { force?: boolean; walkUnknown?: false },
   config: Config,
@@ -586,6 +629,12 @@ async function takeIdleDependencies(
           full: true,
           setting: 'idle.sourceDormantDays',
           onKept: (path, reason) => keeps.set(canonicalOrNull(path) ?? path, reason),
+          reclaimable: async (path) => {
+            const trees = await sourceTreesOf(path, input.operation);
+            if (trees === 'unanswered')
+              keeps.set(canonicalOrNull(path) ?? path, 'its node_modules or ios/Pods did not answer this pass');
+            return trees === true;
+          },
         }
       : {},
   );
