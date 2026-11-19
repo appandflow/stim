@@ -26,8 +26,8 @@ At every level, maintenance, the pressure ladder and `stim gc` never delete:
 Only git-ignored regenerable directories go: a real directory inside the
 checkout whose files git ignores, with no tracked or unignored file, not reached
 through a link, and not a mount point. When the dormant reduction deletes a
-recognised Cargo `target/`, only the top-level entries Stim recognises as Cargo
-or Exact build output go; every other entry stays (LLP 0005).
+recognised Cargo `target/`, only the top-level entries that are Cargo's build
+output go; every other entry stays (LLP 0005).
 
 Reason: everything Stim deletes must come back by rebuilding or reinstalling.
 Work a person made cannot.

@@ -53,9 +53,9 @@ The dormant reduction (`stim gc` and the daemon's hourly step) deletes every
 recognised `target/` whole, tagged, Exact app's and untagged alike, in a
 workspace or discovered checkout that has had no activity for
 `idle.dormantDays` by the full evidence, and whose worktree is not locked with
-`git worktree lock`, but only the top-level entries Stim recognises as build
+`git worktree lock`, but only the top-level entries that are Cargo's build
 output; every other entry stays, so the `target/` goes whole only when all of it
-is recognised. It runs the idle stage's
+is Cargo's. It runs the idle stage's
 checks above, the process check included, for all three kinds, then, under the
 workspace's claims and checked again right before the delete: the workspace is
 still idle, the directory is still a recognised `target/`, and no PATH launcher
@@ -67,8 +67,9 @@ when it is no longer recognised, when it holds a copy a trim could not put back,
 when it shows use within `idle.dormantDays` or that use cannot be told, when
 another filesystem is mounted anywhere in it (on Linux also any mount point at
 or under it in `/proc/self/mountinfo`, since a bind mount keeps the device
-number; mounts that cannot be read keep it), when a process executes from or
-holds open a path in it, or when a build holds a lock file: a `.cargo-lock`,
+number; mounts that cannot be read keep it), when a process executes from,
+works in or holds open any path in it, the `target/` itself and the entries
+that stay included, or when a build holds a lock file: a `.cargo-lock`,
 `.cargo-build-lock` or `.cargo-artifact-lock` in a top-level entry or a
 directory directly in one, Exact's `.exact-sweep.json.lock`, or a file under
 `.apple-cargo-locks/` up to two levels down. Use means a modification time
@@ -81,11 +82,10 @@ is not a profile is not seen. A `target/` with no Cargo profile, such as an
 Exact app's, is dated the same way.
 
 Then, as the trims do (Never delete what a build took back, below), it renames
-each top-level entry into `target/.stim-trimmed/` and reads that entry's lock
+each Cargo entry into `target/.stim-trimmed/` and reads that entry's lock
 files again at the new path. Once every entry is moved it reads the processes
-again, matching both an entry's original and its moved path, and dates the
-moved entries again the same way. A lock a build took, a path a process opened
-or a write made meanwhile puts every moved entry back, and so does a
+again and dates the moved entries again the same way. A lock a build took, any
+path in the `target/` a process used or a write made meanwhile puts every moved entry back, and so does a
 cancellation or an error before those checks pass. An entry whose original
 name exists again is not put back over it; like one that cannot be put back,
 it moves to `.stim-not-restored-*` or stays in a `.stim-trimmed` marked
@@ -109,7 +109,8 @@ stay trims: they also reach a `target/` in use.
 
 Maintainer decision: "I thought cargo target would all be built output that is
 regenerable? If not the case lets just delete things we know are", 2026-11-19
-(#5979). Recognised build output at the top of a `target/`:
+(#5979). Recognised build output at the top of a `target/`, the same in every
+recognised `target/`, an Exact app's included:
 
 - Cargo, per rust-lang/cargo's `src/compiler/layout.rs`: a profile directory
   (one holding `.fingerprint/` or a `.cargo-lock`, `.cargo-build-lock` or
@@ -120,34 +121,19 @@ regenerable? If not the case lets just delete things we know are", 2026-11-19
   (`cargo-timings/`) and its future-incompatibility report
   (`.future-incompat-report.json`, read back by `cargo report`) are records and
   stay.
-- Exact, only in an Exact app's `target/` (beside `exact.mjs`) or one of a
-  checkout of Exact itself (`scripts/app.mjs` and `host/web-js/module.mjs` at
-  its root): the folders Exact's build tools write there that hold only build
-  products, caches or build scratch, named in `EXACT_TOP` in
-  `packages/stim-cli/src/workspace/cargo-target.ts` with the Exact source files
-  they come from, and the scratch directories `mkdtempSync` makes from
-  `web-check-` and `push-ts-` (a directory named by the prefix and six random
-  letters or digits; a file such as `web-check-failure.json` stays). A folder
-  that also holds a ledger, a build receipt, a lock file Exact takes or a token
-  is not on it: `apple-modules/` keeps its own sweep ledger; `clients/`,
-  `native-runs/` and `native-reuse/` hold Apple bundle receipts with the
-  development token Exact's `developmentLinks()` reads; `apple-swift/`,
-  `web-js-gpu/` and `web-js-modules/` hold Exact's locks and claims; and the web
-  dists (`web-dist/`, `web-loops/`, `web-runs/`, `web-dist-resident/`,
-  `web-dist-stages/`, `web-js-dev-stage/`) carry `.exact-build.json` receipts.
-  Records Exact keeps of runs and sessions (`traces/` from
-  `host/web/serve.mjs` and `scripts/agent-inspect.mjs`, `web-receipts/` and
-  `native-receipts/` from `scripts/evidence.mjs`), its unit ledger, crate
-  claims and lock files at the top of the target, scratch a dev server may still
-  serve from, and `web-dist.*` siblings (Exact reads `web-dist.json` as input and
-  treats an unreceipted sibling as foreign) are not on it either, nor is a name
-  an app chooses itself, such as its own web dist folder.
 - A symbolic link is never build output, whatever its name: deleting through it
   would reach what it points at.
 
 Anything else stays, such as Criterion's and Gungraun's saved benchmark
-baselines (`criterion/`, `gungraun/`, `iai/`) or a Solana program's private key
-in `deploy/<program>-keypair.json`, which no build can recreate. `gc` names the
+baselines (`criterion/`, `gungraun/`, `iai/`), a Solana program's private key
+in `deploy/<program>-keypair.json`, which no build can recreate, and every
+folder Exact writes into `target/`. Reason for keeping Exact's folders: they mix
+build products with records Stim cannot rebuild (sweep ledgers in
+`apple-modules/`, Apple bundle receipts with a development token in `clients/`,
+web build receipts in `web-dist/` and `proof-web/`, the Android production
+receipt a deploy reads in `bake/`, session traces, and Cargo's own records in
+the nested Cargo targets `rust-modules/` and `push-tools/`), so their cleanup
+waits until Exact owns it. `gc` names the
 entries it keeps, in report mode too, and a `target/` with nothing recognised in
 it is kept and named.
 
