@@ -152,7 +152,7 @@ describe('an executable on PATH that links into a checkout keeps it, whichever w
   });
 
   test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
-    'keeps a checkout while a launcher directory cannot be read',
+    'does not keep a checkout for a launcher directory that cannot be read',
     async () => {
       const roots = join(base, 'roots');
       const config: Config = { version: 2, projects: {}, repos: {}, maintenance: { discoverRoots: [roots] } };
@@ -164,7 +164,9 @@ describe('an executable on PATH that links into a checkout keeps it, whichever w
 
       chmodSync(bin, 0o000);
       try {
-        expect(await stoppedOutputCandidates(config, reading, day)).toEqual([]);
+        expect((await stoppedOutputCandidates(config, reading, day)).map((entry) => entry.path)).toEqual([
+          join(roots, 'app'),
+        ]);
       } finally {
         chmodSync(bin, 0o755);
       }
