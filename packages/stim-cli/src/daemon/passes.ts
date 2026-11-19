@@ -334,14 +334,7 @@ export function createMaintenanceLane(
           log('warn', 'daemon_fingerprint_precompute', error instanceof Error ? error.message : String(error));
         });
         const fingerprintMs = lap();
-        const deleted = await runDormantDependencies({
-          config,
-          act,
-          log,
-          ...reading,
-          cadence: dependencyCadence,
-          outputs: true,
-        });
+        const deleted = await runDormantDependencies({ config, act, log, ...reading, cadence: dependencyCadence });
         taken.push(...deleted);
         const dependenciesMs = lap();
         const skipped = await runMaintenance('daemon', { report: !act, tick: { operation, measured } });

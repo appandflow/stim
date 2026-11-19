@@ -2739,7 +2739,7 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   as freed are the data directories of the devices it
   deleted, measured before deletion; a device whose size cannot be measured is
   named in the action's detail and left out of the total. A tree under 256 MB
-  of its own (private) bytes, a clone or store hard links, and trees whose private size is unknown stay. The daemon runs the output and dependency steps hourly (dormant_outputs, dormant_dependencies).
+  of its own (private) bytes, a clone or store hard links, and trees whose private size is unknown stay. The dependency step is logged as dormant_dependencies.
   Still kept: a workspace in use, with a running dev server or build, leased,
   locked, driven, hosted, pinned by maintenance.keep or with idle.minutes 0,
   and a path that cannot be proven. \`stim status\` shows a dormant

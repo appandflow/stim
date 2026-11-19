@@ -34,7 +34,6 @@ import { ARTIFACT_DIRS } from '../workspace/regenerable-dirs.ts';
 import { checkDependencyEdits } from '../workspace/dependency-edits.ts';
 import { writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
 import {
-  clearDormantOutputs,
   dormantAfterMs,
   idleStageCandidates,
   sourceCheckoutIdle,
@@ -512,7 +511,7 @@ export async function wouldDelete(
  */
 export async function runDormantDependencies(
   input: Pick<IdlePassInput, 'config' | 'act' | 'log'> &
-    DeviceReading & { force?: boolean; cadence?: BigInt64Array; walkUnknown?: false; outputs?: true },
+    DeviceReading & { force?: boolean; cadence?: BigInt64Array; walkUnknown?: false },
 ): Promise<DaemonLadderAction[]> {
   const { config, cadence } = input;
   const afterMs = dormantAfterMs(config);
@@ -539,28 +538,28 @@ export async function runDormantDependencies(
 }
 
 async function takeIdleDependencies(
-  input: Pick<IdlePassInput, 'act' | 'log'> & DeviceReading & { force?: boolean; walkUnknown?: false; outputs?: true },
+  input: Pick<IdlePassInput, 'act' | 'log'> & DeviceReading & { force?: boolean; walkUnknown?: false },
   config: Config,
   afterMs: number,
   source: boolean,
 ): Promise<DaemonLadderAction[]> {
   const keeps = new Map<string, string>();
-  const candidates = await idleStageCandidates(
-    config,
-    input,
-    afterMs,
-    source
-      ? {
-          full: true,
-          setting: 'idle.sourceDormantDays',
-          onKept: (path, reason) => keeps.set(canonicalOrNull(path) ?? path, reason),
-        }
-      : {},
-  );
+  const idle = (
+    await idleStageCandidates(
+      config,
+      input,
+      afterMs,
+      source
+        ? {
+            full: true,
+            setting: 'idle.sourceDormantDays',
+            onKept: (path, reason) => keeps.set(canonicalOrNull(path) ?? path, reason),
+          }
+        : {},
+    )
+  ).filter((candidate) => source || candidate.role === 'linked');
   const { operation } = input;
-  const actions: DaemonLadderAction[] =
-    input.outputs && !source ? await clearDormantOutputs(candidates, config, afterMs, input) : [];
-  const idle = candidates.filter((candidate) => source || candidate.role === 'linked');
+  const actions: DaemonLadderAction[] = [];
   let take: RankedDependency[];
   if (source) {
     const { ranked, kept } = await timedStep(
@@ -612,7 +611,7 @@ async function takeIdleDependencies(
           setting: 'idle.sourceDormantDays',
         });
   } else {
-    if (!idle.length) return actions;
+    if (!idle.length) return [];
     take = selectDependencies(
       await timedStep(
         input.log,
