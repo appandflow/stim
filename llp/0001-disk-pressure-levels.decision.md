@@ -274,9 +274,53 @@ The setting name, the placement at the start of rung 8, the definition of
 activity, the 7-day floor on the runtime keep and the mount-point rule were
 chosen by the coordinator and the reviews of #5540, not by the maintainer.
 
+## A tree of hard links stays
+
+A `node_modules` or Pods tree whose private size is unknown when it is ranked
+(never measured, its walk failed or timed out, a partial count under 256 MB,
+or a volume that cannot tell) is sampled before it is taken: the link counts
+of up to 36 regular files, at most 3 from each of up to 12 packages spread over
+the sorted package list (`.pnpm/*/node_modules/<name>` for pnpm's isolated
+layout, the top-level folders otherwise), read without following a symlink within 2 seconds in all.
+When at least 20 distinct files (by device and inode) from 5 packages were
+read and at least 90% of them have more than one link, the tree is kept at
+every level, critical included, by the 7-day source rule, the dormant step,
+rung 5 and rung 8, with a kept reason that gives the counts. Any other result,
+too few files, or reads that did not answer leave the tree unknown and the
+rules above unchanged. The verdict is recorded beside the size cache with the
+install signature and reused until the signature changes; a sample whose
+reads did not answer is retried after 6 hours. The sample runs only on a tree
+with no measurement, after `stim gc` tried to measure it, so it never replaces
+a measurement.
+
+Reason: with pnpm on a volume without clones, a tree's files are hard links
+into the package store, so deleting the tree frees almost nothing and costs a
+reinstall, and on a slow disk the walk that would show it is the one that
+fails. A link count proves that another name holds the file's data, not where
+that name is. A file linked twice inside the same tree, such as pnpm peer
+variants of one package, counts once per inode and covers only duplicated
+packages, so a sample spread over many packages should not reach 90% from it;
+a tree that holds its own pnpm store (`.pnpm-store`) is never counted as links.
+A tree copied with `cp`, as `stim worktree warm` copies where the volume
+cannot clone, has files with one link, and the tests check a `cp -R` copy.
+The implementer expects the same of `package-import-method=copy`, a store on
+another volume and APFS clones, and did not verify them; where that holds, the
+sample leaves those trees unknown. A wrong "links" verdict keeps a
+tree that could have been freed, which is why the rule asks for a clear
+majority over several packages. This narrows "make sure all things we can
+delete are actually deleted at max pressure level": deleting a hard-linked tree
+frees little, so keeping it at critical loses almost nothing.
+
+Maintainer decision: "Like if wr detect it is links", 2026-11-18, quoted in
+#5942.
+
+The sample size, the per-package spread, the 90% share, the 20 file and 5
+package minimums, the 2 second limit and the 6 hour retry were chosen by the
+implementer of #5942, not by the maintainer.
+
 ## Links
 
-- Issues: #5492, #5512, #5524, #5877, #5933. Pull requests: #5514, #5540.
+- Issues: #5492, #5512, #5524, #5877, #5933, #5942. Pull requests: #5514, #5540.
 - Code: `packages/stim-cli/src/policy/checkout-order.ts`,
   `packages/stim-cli/src/workspace/source-dependencies.ts`,
   `packages/stim-cli/src/stimd/passes/artifacts.ts`,

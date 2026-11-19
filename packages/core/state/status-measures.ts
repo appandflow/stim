@@ -35,6 +35,11 @@ export function diskUsageFailureFile(path: string): string {
   return join(diskUsageCacheDir(), cacheName(path).replace(/\.json$/, '.failed.json'));
 }
 
+/** The file that records whether a sample of the dependency tree at `path` found mostly hard links. */
+export function diskUsageLinksFile(path: string): string {
+  return join(diskUsageCacheDir(), cacheName(path).replace(/\.json$/, '.links.json'));
+}
+
 /**
  * A local native build of the workspace at `path` ended: the folders it wrote are stale. Every mark is its own file, so
  * a consumer removes only the marks it listed before it measured, never one written after.
@@ -285,6 +290,37 @@ export function readDiskUsagePrivateUnknown(path: string): 'volume' | 'walk' | n
 export function readDiskUsageFailureSignature(path: string): string | null {
   const entry = readJsonObject(diskUsageFailureFile(path));
   return entry !== null && entry.path === path && typeof entry.signature === 'string' ? entry.signature : null;
+}
+
+/**
+ * The last link sample of the dependency tree at `path`: the install signature it was taken under, when, and its
+ * verdict (`links` when most sampled files are hard links, `other` when not or too few files were found, `timeout`
+ * when the reads did not answer in time), with the counts.
+ */
+export interface LinkSample {
+  signature: string;
+  sampledAt: string;
+  verdict: 'links' | 'other' | 'timeout';
+  linked: number;
+  sampled: number;
+}
+
+/** The recorded link sample of the dependency tree at `path`, or null when none is recorded. */
+export function readDiskUsageLinks(path: string): LinkSample | null {
+  const entry = readJsonObject(diskUsageLinksFile(path));
+  if (!entry || entry.path !== path || typeof entry.signature !== 'string' || typeof entry.sampledAt !== 'string')
+    return null;
+  const { verdict, linked, sampled } = entry;
+  if (verdict !== 'links' && verdict !== 'other' && verdict !== 'timeout') return null;
+  if (!Number.isFinite(Date.parse(entry.sampledAt))) return null;
+  const count = (value: unknown) => countOrNull(value) ?? 0;
+  return {
+    signature: entry.signature,
+    sampledAt: entry.sampledAt,
+    verdict,
+    linked: count(linked),
+    sampled: count(sampled),
+  };
 }
 
 /** When the last walk of `path` failed (an ISO time), or null when none is recorded. */

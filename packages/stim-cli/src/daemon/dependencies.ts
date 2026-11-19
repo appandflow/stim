@@ -25,6 +25,7 @@ import {
 import { maintenancePinnedReader } from '../stimd/passes/protect.ts';
 import { freshMeasure, knownPrivateBytes, refreshMeasure, trustedMeasure } from '../disk-usage.ts';
 import { treeSignature } from '../private-size.ts';
+import { hardLinkSample } from '../link-sample.ts';
 import { workspaceKeys } from '../workspace/lightened.ts';
 import { freshLaunchers } from '../workspace/launchers.ts';
 import { workspaceDir } from '../workspace/paths.ts';
@@ -84,6 +85,8 @@ export interface RankedDependency {
   privateBytes: number | null;
   /** Why `privateBytes` is null. */
   unknown?: string;
+  /** Set when `privateBytes` is null and a sample of its files found mostly hard links. */
+  links?: { linked: number; sampled: number };
 }
 
 type Measured = RankedDependency & { privateBytes: number };
@@ -92,26 +95,44 @@ function sharedDetail({ bytes, privateBytes }: Measured): string {
   return `${formatBytes(privateBytes)} of its ${bytes === null ? 'size' : formatBytes(bytes)} is its own and the rest is shared with copy-on-write clones or hard links, under the ${formatBytes(REAL_BYTES_THRESHOLD)} worth deleting`;
 }
 
+function linkedDetail({ linked, sampled }: { linked: number; sampled: number }): string {
+  return `its real size is unknown, but ${linked} of the ${sampled} files sampled from it are hard links another folder such as a package store also holds, so deleting it would free little and it stays`;
+}
+
 /**
  * Which dependency trees to delete, given in the order their workspaces went idle: those whose private bytes reach
- * REAL_BYTES_THRESHOLD, most private bytes first; trees below it are kept. A tree of unknown size is taken after the
- * measured ones in the given order (`unknown: 'take'`) or kept (`'keep'`).
+ * REAL_BYTES_THRESHOLD, most private bytes first; trees below it are kept. A tree of unknown size is kept when a sample
+ * found it mostly hard links, and otherwise taken after the measured ones in the given order (`unknown: 'take'`) or
+ * kept (`'keep'`).
  */
 export function selectDependencies(
   ranked: readonly RankedDependency[],
   unknown: 'take' | 'keep',
 ): { take: RankedDependency[]; kept: { dependency: RankedDependency; detail: string }[] } {
   const known = ranked.filter((dependency): dependency is Measured => dependency.privateBytes !== null);
-  const unmeasured = ranked.filter((dependency) => dependency.privateBytes === null);
+  const unmeasured = ranked.filter((dependency) => dependency.privateBytes === null && !dependency.links);
   const take: RankedDependency[] = known
     .filter((dependency) => dependency.privateBytes >= REAL_BYTES_THRESHOLD)
     .toSorted((a, b) => b.privateBytes - a.privateBytes);
   const kept: { dependency: RankedDependency; detail: string }[] = known
     .filter((dependency) => dependency.privateBytes < REAL_BYTES_THRESHOLD)
     .map((dependency) => ({ dependency, detail: sharedDetail(dependency) }));
+  for (const dependency of ranked)
+    if (dependency.privateBytes === null && dependency.links)
+      kept.push({ dependency, detail: linkedDetail(dependency.links) });
   if (unknown === 'take') take.push(...unmeasured);
   else kept.push(...unmeasured.map((dependency) => ({ dependency, detail: dependency.unknown ?? NOT_MEASURED })));
   return { take, kept };
+}
+
+// @ref LLP 0001#a-tree-of-hard-links-stays -- only a tree with no measurement is sampled, after any walk
+/** Samples the link counts of each tree in `ranked` whose private size is still unknown; see `hardLinkSample`. */
+export async function sampleLinks(ranked: readonly RankedDependency[], signal?: AbortSignal): Promise<void> {
+  for (const dependency of ranked) {
+    if (dependency.privateBytes !== null) continue;
+    const links = await hardLinkSample(dependency.candidate.path, signal);
+    if (links) dependency.links = links;
+  }
 }
 
 function rankedPrivateBytes(path: string): number | null {
@@ -596,6 +617,7 @@ async function takeIdleDependencies(
         });
     if (!input.act || input.force)
       await measureUnknown(ranked, Boolean(input.force) && input.walkUnknown !== false, operation);
+    await sampleLinks(ranked, operation?.signal);
     const selected = selectDependencies(ranked, 'keep');
     take = selected.take;
     if (!input.act || input.force)
@@ -612,15 +634,27 @@ async function takeIdleDependencies(
         });
   } else {
     if (!idle.length) return [];
-    take = selectDependencies(
-      await timedStep(
-        input.log,
-        'rank_dependencies',
-        () => rankDependencies(idle, input.protectedRoot ?? '', operation, false, input.log),
-        { signal: operation?.signal, items: (ranked) => ranked?.length },
-      ),
-      'take',
-    ).take;
+    const ranked = await timedStep(
+      input.log,
+      'rank_dependencies',
+      () => rankDependencies(idle, input.protectedRoot ?? '', operation, false, input.log),
+      { signal: operation?.signal, items: (found) => found?.length },
+    );
+    await sampleLinks(ranked, operation?.signal);
+    const selected = selectDependencies(ranked, 'take');
+    take = selected.take;
+    if (!input.act || input.force)
+      for (const { dependency, detail } of selected.kept)
+        if (dependency.links)
+          actions.push({
+            rung: 4,
+            kind: 'delete-dependencies',
+            target: dependency.candidate.path,
+            workspace: dependency.workspace,
+            outcome: 'kept',
+            bytes: 0,
+            detail,
+          });
   }
   const worktrees = take.length ? await artifactWorktreesFor(operation) : [];
   const why = `${source ? 'idle.sourceDormantDays' : 'idle.dormantDays'} is ${afterMs / (24 * HOUR_MS)}`;

@@ -2505,6 +2505,18 @@ gc ran out of time, its walk failed or did not finish (gc then leaves it for 6 h
 could not count its shared blocks (or saw only part of the tree), or its volume
 cannot report them.
 
+A tree whose own size is still unknown is kept at every level, critical
+included, when a sample finds it is mostly hard links: Stim reads the link
+counts of up to 36 files from up to 12 of its packages (under `.pnpm` for pnpm),
+within 2 seconds, and keeps the tree when at least 20 files from 5 packages
+were read and 90% of them have more than one link, as in a pnpm tree linked
+from its store on a volume without clones, where deleting it frees almost
+nothing. The kept reason gives the counts. The verdict is reused until the tree
+is reinstalled, and a sample that did not answer is retried after 6 hours. A
+tree copied by `stim worktree warm` where the volume cannot clone has files
+with one link, so the rules above apply to it. The sample never replaces a
+measurement.
+
 Automatic maintenance and `stim gc` never delete a `node_modules` or
 `ios/Pods` folder in which they detect hand edits, at any pressure level,
 critical included, so its disk is not freed; `gc --dry-run`, `stim status` and

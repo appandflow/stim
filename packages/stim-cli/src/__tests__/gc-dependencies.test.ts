@@ -1,12 +1,14 @@
 import {
   currentSourceDependencies,
   diskUsageCacheFile,
+  diskUsageLinksFile,
   diskUsageWalkClaims,
   readJsonObject,
   readWorkspaceState,
   workspaceLightenedFile,
 } from '@stim-cli/core/state';
 import { execSync, spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import {
   existsSync,
   mkdirSync,
@@ -22,9 +24,10 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { writeCacheFile } from '../cache-file.ts';
 import { privateSizeKnowable, treeSignature } from '../private-size.ts';
+import { hardLinkSample, type LinkSampleIo } from '../link-sample.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { readGcReport, runGc } from '../commands/gc.ts';
 import { createStim } from '../api.ts';
@@ -721,6 +724,9 @@ test.skipIf(process.platform === 'win32')(
     expect(detail(first, pods)).toBe(failed);
 
     const again: LevelPayload = (await gcJson('normal')).payload;
+    console.error(
+      'DUMP' + JSON.stringify(again.actions.filter((action) => action.target.startsWith(roots.linked ?? ''))),
+    );
     expect(detail(again, modules)).toBe(volume);
     expect(detail(again, pods)).toBe(failed);
     expect(cannotTell).toHaveBeenCalledTimes(1);
@@ -881,4 +887,155 @@ test.skipIf(process.platform === 'win32')(
     expect(existsSync(sourceModules(source))).toBe(false);
   },
   60_000,
+);
+
+const linkedDetail =
+  /^its real size is unknown, but (\d+) of the \1 files sampled from it are hard links another folder such as a package store also holds, so deleting it would free little and it stays$/;
+
+function pnpmTree(modules: string, how: 'linked' | 'copied', at: Date): void {
+  const built = how === 'linked' ? modules : join(projects, `built-${randomUUID()}`);
+  const store = join(projects, `store-${randomUUID()}`);
+  for (let index = 0; index < 8; index++) {
+    const name = index % 2 ? `pkg${index}` : `@scope/pkg${index}`;
+    const entry = `${name.replace('/', '+')}@1.0.${index}`;
+    const dir = join(built, '.pnpm', entry, 'node_modules', name);
+    mkdirSync(join(dir, 'lib'), { recursive: true });
+    for (const file of ['package.json', 'index.js', join('lib', 'main.js')]) {
+      const stored = join(store, entry, file);
+      mkdirSync(dirname(stored), { recursive: true });
+      writeFileSync(stored, `${entry} ${file}`);
+      linkSync(stored, join(dir, file));
+    }
+    mkdirSync(dirname(join(built, name)), { recursive: true });
+    symlinkSync(relative(dirname(join(built, name)), dir), join(built, name));
+  }
+  if (how === 'copied') {
+    rmSync(modules, { recursive: true, force: true });
+    execSync(`cp -R "${built}" "${modules}"`);
+    rmSync(built, { recursive: true, force: true });
+    rmSync(store, { recursive: true, force: true });
+  }
+  ageTree(modules, at);
+  rmSync(diskUsageCacheFile(modules), { force: true });
+}
+
+function dependencyAction(payload: LevelPayload, target: string, rung: number | null) {
+  return payload.actions.find(
+    (action) => action.kind === 'delete-dependencies' && action.target === target && action.rung === rung,
+  );
+}
+
+test.skipIf(process.platform === 'win32')(
+  'at critical, rung 5 and rung 8 keep a tree of unknown size whose sample is hard links, delete a copied one, and never sample a measured one',
+  async () => {
+    const roots = idleRepo([
+      { name: 'linked', workspace: true },
+      { name: 'copied', workspace: true },
+      { name: 'measured', workspace: true },
+    ]);
+    const hourAgo = new Date(Date.now() - 60 * 60_000);
+    const modules = (name: string) => join(roots[name] ?? '', 'node_modules');
+    for (const name of ['repo', 'linked', 'measured']) pnpmTree(modules(name), 'linked', hourAgo);
+    pnpmTree(modules('copied'), 'copied', hourAgo);
+    measureTrees(roots.measured ?? '');
+    for (const name of ['repo', 'linked', 'copied']) walks.set(modules(name), () => null);
+
+    const { payload }: { payload: LevelPayload } = await gcJson('critical');
+
+    for (const [name, rung] of [
+      ['linked', 5],
+      ['repo', 8],
+    ] as const) {
+      const action = dependencyAction(payload, modules(name), rung);
+      expect(action?.outcome).toBe('kept');
+      expect(action?.detail).toMatch(linkedDetail);
+    }
+    expect(dependencyAction(payload, modules('copied'), 5)?.outcome).toBe('would');
+    expect(dependencyAction(payload, modules('measured'), 5)?.outcome).toBe('would');
+    expect(existsSync(diskUsageLinksFile(modules('measured')))).toBe(false);
+
+    await quietly(() => runGc({ pressure: 'critical' }));
+    expect(existsSync(join(modules('linked'), '.pnpm'))).toBe(true);
+    expect(existsSync(join(modules('repo'), '.pnpm'))).toBe(true);
+    expect(existsSync(modules('copied'))).toBe(false);
+  },
+  60_000,
+);
+
+test.skipIf(process.platform === 'win32')(
+  'at normal, the dormant step and the 7-day source rule keep a tree of unknown size whose sample is hard links, and the verdict holds until its install changes',
+  async () => {
+    const roots = idleRepo([
+      { name: 'linked', workspace: true },
+      { name: 'copied', workspace: true },
+    ]);
+    const source = roots.repo ?? '';
+    const config = loadConfig();
+    if (!config) throw new Error('no config');
+    saveConfig({ ...config, idle: { dormantDays: 0.01 } });
+    ageCheckout(source, daysAgo(8));
+    const modules = (name: string) => join(roots[name] ?? '', 'node_modules');
+    const hourAgo = new Date(Date.now() - 60 * 60_000);
+    pnpmTree(modules('repo'), 'linked', daysAgo(8));
+    pnpmTree(modules('linked'), 'linked', hourAgo);
+    pnpmTree(modules('copied'), 'copied', hourAgo);
+    for (const name of ['repo', 'linked', 'copied']) walks.set(modules(name), () => null);
+
+    const first: LevelPayload = (await gcJson('normal')).payload;
+    for (const name of ['repo', 'linked']) {
+      expect(dependencyAction(first, modules(name), null)?.outcome).toBe('kept');
+      expect(dependencyAction(first, modules(name), null)?.detail).toMatch(linkedDetail);
+    }
+    expect(dependencyAction(first, modules('copied'), null)?.outcome).toBe('would');
+
+    const linked = modules('linked');
+    writeCacheFile(diskUsageLinksFile(linked), {
+      ...readJsonObject(diskUsageLinksFile(linked)),
+      linked: 99,
+      sampled: 99,
+    });
+    const again: LevelPayload = (await gcJson('normal')).payload;
+    expect(dependencyAction(again, linked, null)?.detail).toContain('99 of the 99 files');
+
+    pnpmTree(linked, 'copied', hourAgo);
+    const reinstalled: LevelPayload = (await gcJson('normal')).payload;
+    expect(dependencyAction(reinstalled, linked, null)?.outcome).toBe('would');
+  },
+  60_000,
+);
+
+test.skipIf(process.platform === 'win32')(
+  'a link sample that finds too few files or does not answer in time leaves the tree unknown, and one that timed out is retried after 6 hours',
+  async () => {
+    const few = join(projects, 'few', 'node_modules');
+    pnpmTree(few, 'linked', new Date());
+    for (const entry of readdirSync(join(few, '.pnpm')).slice(4))
+      rmSync(join(few, '.pnpm', entry), { recursive: true });
+    expect(await hardLinkSample(few)).toBeNull();
+    expect(readJsonObject(diskUsageLinksFile(few))?.verdict).toBe('other');
+
+    const modules = join(projects, 'slow', 'node_modules');
+    mkdirSync(modules, { recursive: true });
+    let answer: () => void = () => {};
+    const entries = vi.fn<LinkSampleIo['entries']>(
+      () =>
+        new Promise((done) => {
+          answer = () => done([]);
+        }),
+    );
+    const io: LinkSampleIo = { entries, lstat: async () => ({ kind: 'file', nlink: 2, id: '1:1' }) };
+    const sampled = hardLinkSample(modules, undefined, io);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(await sampled).toBeNull();
+    answer();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(readJsonObject(diskUsageLinksFile(modules))?.verdict).toBe('timeout');
+    expect(await hardLinkSample(modules, undefined, io)).toBeNull();
+    expect(entries).toHaveBeenCalledTimes(1);
+    vi.setSystemTime(Date.now() + 6 * 60 * 60_000);
+    entries.mockResolvedValue([]);
+    expect(await hardLinkSample(modules, undefined, io)).toBeNull();
+    expect(entries).toHaveBeenCalledTimes(2);
+    expect(readJsonObject(diskUsageLinksFile(modules))?.verdict).toBe('other');
+  },
 );
