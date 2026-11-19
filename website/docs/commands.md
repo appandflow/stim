@@ -1331,32 +1331,38 @@ stim test -- pnpm exec vitest run --project unit
   scaled by `cores / load` when the 1-minute load average is already past the
   core count, and never under 1. On an idle 4-core machine with one test slot
   that is 3; on a 14-core Mac with two slots it is 6.
-- Jest has no environment variable for its workers, so a command that runs
-  `jest` directly (also behind `npx`, `bunx`, `pnpm`, `pnpm exec`, `yarn` or
-  `yarn exec`) gets `--maxWorkers=<n>` after the `jest` word. A `test` script
-  that is a plain `jest` command gets it through the package manager, both for
-  `stim test` and `stim test -- npm test` (or `pnpm`, `yarn`, `bun run`).
-  Vitest gets `VITEST_MAX_WORKERS=<n>` (Vitest 4 and later) and
-  `VITEST_MAX_THREADS` and `VITEST_MAX_FORKS` (Vitest 2 and 3).
-- A worker count the caller set is kept: Jest's `--maxWorkers`, `-w`,
-  `--runInBand` or `-i`, Vitest's `--maxWorkers`, one of those variables in the
-  environment, or `maxWorkers` in the `jest`, `vitest` or `vite` config next to
-  `package.json` or in its `jest` key, which the flag and the variables would
-  override. Any other command runs unchanged under the slot. One stderr line
-  says which.
-- The command runs in its own process group with no stdin. `SIGINT` and
-  `SIGTERM` reach the whole group. The slot is freed only once every process in
-  the group has exited: a cancelled run's group gets `SIGKILL` after a grace
-  period, and processes still running after that, or after `stim` itself is
-  killed, keep holding the slot until they exit. A watch-mode
-  run holds its slot until you stop it.
-- The command gets `STIM_TEST_RUN=1`; a `stim test` started inside it runs
-  without taking another slot.
+- Jest and Vitest get `--maxWorkers=<n>`, and only where Stim sees the whole
+  run: the command runs `jest` or `vitest` directly (also behind `npx`, `bunx`,
+  `pnpm`, `pnpm exec`, `yarn` or `yarn exec`), with the flag placed before any
+  `--`; or the `test` script, run by `stim test` or `stim test -- npm test` (or
+  `pnpm`, `yarn`, `bun run`), is a plain `jest` or `vitest` command with no `--`
+  of its own. Vitest applies `fileParallelism: false` after the flag, in
+  Vitest 2 through 5, so a serial config stays serial.
+- Nothing is passed when the command sets workers or names another config
+  (Jest `--maxWorkers`, `-w`, `--runInBand`, `-i`, `-c`, `--config`; Vitest
+  `--maxWorkers`, `--config`, `--root`, `--project`, file-parallelism or pool
+  flags), or when a `jest`, `vitest` or `vite` config between the working
+  directory and `package.json`, or its `jest` key, mentions workers, serial
+  runs, projects or another config. Any other command, such as `turbo run
+test` or `pnpm -r test`, runs unchanged under the slot, with no variables
+  added. One stderr line says which.
+- The command runs in its own process group with no stdin. `SIGINT`, `SIGTERM`
+  and `SIGHUP` reach the whole group. The group gets `SIGKILL` after a grace
+  period of at most 10 seconds, and at once on a second interrupt. The slot is
+  freed only once every process in the group has exited; processes still
+  running after that, or after `stim` itself is killed, keep holding it. A
+  watch-mode run holds its slot until you stop it.
+- The command gets `STIM_TEST_RUN`, naming its slot claim. A `stim test`
+  started inside it while that claim is held takes no slot and runs in the
+  caller's process group, so the outer run waits for anything it leaves
+  behind. Stim does not check that the inner run really descends from the
+  outer one: a process that inherited the value runs without a slot until the
+  outer run ends.
 - Windows refuses `stim test`.
 - A queued run shows in `stim status` and in `daemon.testWaiting`, a running one
   as a `tests 1/2 (concurrency.maxTests)` line and `capacity.tests`.
 
-> Run this project's tests with stim test, or stim test -- <the test command>
+> Run this project's tests with `stim test`, or `stim test -- <the test command>`
 > for a single file, instead of calling the test runner directly.
 
 ## `logs`

@@ -2443,20 +2443,27 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
     workers = floor((cores - 1) / concurrency.maxTests), times cores / load1
               when the 1-minute load is past the core count, at least 1
 
-  Jest gets --maxWorkers=<n> after the jest word when the command runs jest
-  directly (also behind npx, bunx, pnpm, pnpm exec, yarn or yarn exec), or
-  through the package manager when the test script (stim test, or -- <pm>
-  test) is a plain jest command. Vitest gets VITEST_MAX_WORKERS (Vitest 4+)
-  and VITEST_MAX_THREADS and VITEST_MAX_FORKS (Vitest 2 and 3). A count the
-  caller set is kept: a Jest or Vitest worker flag, one of those variables, or
-  maxWorkers in the jest, vitest or vite config beside package.json (or its
-  jest key), which the flag and variables would override. Any other command
-  runs unchanged under the slot; one stderr line says which. The command runs
-  in its own process group, and SIGINT and SIGTERM reach all of it. The slot
-  frees only once every process of the group has exited: a cancelled group
-  gets SIGKILL after a grace period, and processes still running after that,
-  or after stim itself is killed, keep holding the slot until they exit. It gets STIM_TEST_RUN=1, and a stim test inside it takes no
-  slot. A watch-mode run holds its slot until it is stopped. Windows refuses.
+  Jest and Vitest get --maxWorkers=<n>, and only where Stim sees the whole
+  run: the command runs jest or vitest directly (also behind npx, bunx, pnpm,
+  pnpm exec, yarn or yarn exec; the flag goes before any --), or the test
+  script (stim test, or -- <pm> test) is a plain jest or vitest command with
+  no -- of its own. Nothing is passed when the command sets workers or names
+  another config (Jest --maxWorkers, -w, --runInBand, -i, -c, --config; Vitest
+  --maxWorkers, --config, --root, --project, file parallelism or pool
+  flags), or when a jest, vitest or vite config between here and package.json
+  (or its jest key) mentions workers, serial runs, projects or another config.
+  Vitest still applies fileParallelism: false after the flag. Any other
+  command runs unchanged under the slot, with no variables added; one stderr
+  line says which.
+
+  The command runs in its own process group. SIGINT, SIGTERM and SIGHUP reach
+  all of it; the group gets SIGKILL after a grace period (at most 10s), and on
+  a second interrupt. The slot frees only once every process of the group has
+  exited; processes still running after that, or after stim itself is killed,
+  keep holding it. A watch-mode run holds its slot until it is stopped. The
+  command gets STIM_TEST_RUN naming its slot claim: a stim test inside it,
+  while that claim is held, takes no slot and runs in the caller's process
+  group, which the outer run waits for. Windows refuses stim test.
 
   Beyond the caps, at most 2 boots run at once in a Stim home, and no boot
   starts while the stim-daemon's last tick measured macOS memory pressure

@@ -44,32 +44,39 @@ export function testScriptFor(cwd: string): string | null {
   return typeof script === 'string' && script.trim() ? script : null;
 }
 
-const CONFIG_FILE = /^(jest|vitest|vite)\.config\.[cm]?[jt]s$|^jest\.config\.json$/;
+const CONFIG_FILE = /^(jest|vitest|vite)\.(?:config|workspace)\.[cm]?[jt]s$|^jest\.config\.json$/;
+const JEST_CONFIG_SETS = /maxWorkers|runInBand/;
+const VITEST_CONFIG_SETS =
+  /maxWorkers|maxThreads|maxForks|fileParallelism|singleFork|singleThread|poolOptions|projects|mergeConfig|extends\b/;
 
 /**
- * Whether the Jest or Vitest config beside the nearest package.json, or its `jest` key, sets `maxWorkers`. A text match
- * is enough: the flag and the variable Stim would pass override the config.
+ * Whether a Jest or Vitest config Stim can see may set the run's workers itself: a `jest`, `vitest` or `vite` config in
+ * the working directory or a parent up to the nearest package.json, or that package.json's `jest` key, naming a worker,
+ * serial-run or project setting, or extending another config Stim does not read. A text match is enough to keep out:
+ * a `--maxWorkers` flag would override `maxWorkers`, and serial settings must stay serial.
  */
 export function configuredWorkers(cwd: string): { jest: boolean; vitest: boolean } {
   const found = { jest: false, vitest: false };
-  const dir = nearestPackageDir(cwd);
-  if (!dir) return found;
-  const jestKey = readPackage(dir)?.jest;
-  if (jestKey && typeof jestKey === 'object' && 'maxWorkers' in jestKey) found.jest = true;
-  let names: string[] = [];
-  try {
-    names = readdirSync(dir);
-  } catch {}
-  for (const name of names) {
-    const match = CONFIG_FILE.exec(name);
-    if (!match) continue;
-    let text = '';
+  const top = nearestPackageDir(cwd);
+  const jestKey = top ? readPackage(top)?.jest : null;
+  if (jestKey && typeof jestKey === 'object' && JEST_CONFIG_SETS.test(JSON.stringify(jestKey))) found.jest = true;
+  for (let dir = cwd; ; dir = dirname(dir)) {
+    let names: string[] = [];
     try {
-      text = readFileSync(join(dir, name), 'utf8');
+      names = readdirSync(dir);
     } catch {}
-    if (/maxWorkers|max(Threads|Forks)/.test(text)) found[match[1] === 'jest' ? 'jest' : 'vitest'] = true;
+    for (const name of names) {
+      const match = CONFIG_FILE.exec(name);
+      if (!match) continue;
+      let text = '';
+      try {
+        text = readFileSync(join(dir, name), 'utf8');
+      } catch {}
+      if (match[1] === 'jest') found.jest ||= JEST_CONFIG_SETS.test(text);
+      else found.vitest ||= VITEST_CONFIG_SETS.test(text);
+    }
+    if (dir === top || dirname(dir) === dir || top === null) return found;
   }
-  return found;
 }
 
 /**
@@ -113,78 +120,60 @@ function runnerAt(argv: readonly string[]): { runner: 'jest' | 'vitest'; index: 
   return null;
 }
 
-const JEST_SET = /^(?:--maxWorkers|--max-workers|-w)(?:=.*|\d+)?$|^(?:--runInBand|--run-in-band|-i)$/;
-const VITEST_SET = /^(?:--maxWorkers|--max-workers)(?:=.*)?$|^--(?:no-)?file-?[pP]arallelism(?:=.*)?$|^--poolOptions\./;
-const PLAIN_JEST = /^jest(?:\s+[\w@%=.:/,+-]+)*$/;
-const VITEST_VARIABLES = ['VITEST_MAX_WORKERS', 'VITEST_MAX_THREADS', 'VITEST_MAX_FORKS'] as const;
+const JEST_SET =
+  /^(?:--maxWorkers|--max-workers|-w)(?:=.*|\d+)?$|^(?:--runInBand|--run-in-band|-i|-c|--config)(?:=.*)?$/;
+const VITEST_SET =
+  /^(?:--maxWorkers|--max-workers|-c|--config|-r|--root|--dir|--project)(?:=.*)?$|^--(?:no-)?file-?[pP]arallelism(?:=.*)?$|^--poolOptions\./;
+const PLAIN_SCRIPT = /^(jest|vitest)(?:\s+(?!--(?:\s|$))[\w@%=.:/,+-]+)*$/;
 
 export interface TestPlan {
   argv: string[];
-  env: Record<string, string>;
   /** How the worker count reaches the runner, or why it does not. */
   applied: string | null;
   skipped: string | null;
 }
 
 /**
- * How a run of `argv` gets `workers`: Jest reads only its `--maxWorkers` flag, so a direct Jest invocation gets it after
- * the `jest` word, and the project's `test` script gets it through the package manager only when that script is a plain
- * `jest` call. Vitest 4 and later read `VITEST_MAX_WORKERS`, Vitest 2 and 3 `VITEST_MAX_THREADS` and `VITEST_MAX_FORKS`;
- * all three are set unless the caller set one, a worker flag, or `configured` says the project's config sets workers,
- * since each variable overrides both. A count the caller set is never replaced.
+ * How a run of `argv` gets `workers`. Both runners take a `--maxWorkers` flag, which Stim passes only where it can see
+ * the whole command: Jest or Vitest run directly, where the flag goes before any `--`, or the project's `test` script
+ * through the package manager when that script is a plain `jest` or `vitest` command. Vitest applies its
+ * `fileParallelism: false` after the flag, so a serial config stays serial. Nothing is passed when the command or a
+ * config Stim can see sets workers or names another config, and any other command runs unchanged.
  */
 export function planTestRun({
   argv,
   workers,
-  env,
   script,
   manager,
   configured = { jest: false, vitest: false },
 }: {
   argv: string[];
   workers: number;
-  env: NodeJS.ProcessEnv;
   /** The project's `test` script, when `argv` is the package manager running it. */
   script?: string | null;
   manager?: PackageManager;
   configured?: { jest: boolean; vitest: boolean };
 }): TestPlan {
-  const words = script ? script.trim().split(/\s+/) : argv;
+  const plain = script ? PLAIN_SCRIPT.exec(script.trim()) : null;
   const direct = script ? null : runnerAt(argv);
-  const mentions = (name: string) => words.some((word) => runnerName(word) === name);
-  const vitestSet =
-    configured.vitest ||
-    VITEST_VARIABLES.some((name) => env[name] !== undefined) ||
-    words.some((word) => VITEST_SET.test(word));
-  const vitestEnv: Record<string, string> = vitestSet
-    ? {}
-    : Object.fromEntries(VITEST_VARIABLES.map((name) => [name, String(workers)]));
-  const plan = (applied: string | null, skipped: string | null, next = argv): TestPlan => ({
-    argv: next,
-    env: vitestEnv,
-    applied,
-    skipped,
-  });
+  const runner = direct?.runner ?? (plain?.[1] === 'jest' || plain?.[1] === 'vitest' ? plain[1] : null);
+  const unchanged = (skipped: string): TestPlan => ({ argv, applied: null, skipped });
+  if (!runner)
+    return unchanged(
+      script
+        ? 'the test script is not a plain jest or vitest command, so Stim cannot pass it --maxWorkers'
+        : 'Stim recognises no direct Jest or Vitest run in it',
+    );
+  const name = runner === 'jest' ? 'Jest' : 'Vitest';
+  if (configured[runner]) return unchanged(`a ${name} config here may set its workers or run serially`);
+  const words = script ? script.trim().split(/\s+/) : argv.slice((direct?.index ?? 0) + 1);
+  if (words.some((word) => (runner === 'jest' ? JEST_SET : VITEST_SET).test(word)))
+    return unchanged(`the command already sets ${name} workers or names another config`);
   const flag = `--maxWorkers=${workers}`;
-  if (direct?.runner === 'jest' || (script && mentions('jest'))) {
-    if (configured.jest) return plan(null, "the project's Jest config sets maxWorkers");
-    if (words.some((word) => JEST_SET.test(word))) return plan(null, 'the command already sets Jest workers');
-    if (direct) {
-      const index = direct.index + 1;
-      return plan(flag, null, [...argv.slice(0, index), flag, ...argv.slice(index)]);
-    }
-    if (!script || !PLAIN_JEST.test(script.trim()))
-      return plan(null, 'the test script is not a plain jest command, so Stim cannot pass it --maxWorkers');
-    return plan(flag, null, [...argv, ...(manager === 'npm' ? ['--', flag] : [flag])]);
+  if (direct) {
+    const end = argv.indexOf('--', direct.index + 1);
+    const at = end < 0 ? argv.length : end;
+    return { argv: [...argv.slice(0, at), flag, ...argv.slice(at)], applied: flag, skipped: null };
   }
-  if (direct?.runner === 'vitest' || mentions('vitest')) {
-    if (configured.vitest) return plan(null, "the project's Vitest config sets its workers");
-    return vitestSet
-      ? plan(null, 'the command already sets Vitest workers')
-      : plan(`VITEST_MAX_WORKERS=${workers}`, null);
-  }
-  return plan(
-    null,
-    `Stim recognises no Jest or Vitest in it${vitestSet ? '' : `; VITEST_MAX_WORKERS=${workers} is set for a Vitest it starts`}`,
-  );
+  return { argv: [...argv, ...(manager === 'npm' ? ['--', flag] : [flag])], applied: flag, skipped: null };
 }

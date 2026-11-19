@@ -78,23 +78,38 @@ name decided there, "Test".
 - The command takes a test slot before it starts the runner, so runs past
   `concurrency.maxTests` wait in arrival order instead of competing for cores.
 - It passes a worker count, `floor((cores - 1) / concurrency.maxTests)` scaled
-  down by `cores / load1` past the core count, only where the runner reads one:
-  Jest's `--maxWorkers` flag, which Jest has no environment variable for, and
-  Vitest's `VITEST_MAX_WORKERS`, `VITEST_MAX_THREADS` and `VITEST_MAX_FORKS`. A
-  count the caller set, in the command, the environment or the runner's config,
-  is kept, and any other command runs unchanged under the slot.
+  down by `cores / load1` past the core count, as a `--maxWorkers` flag, and
+  only to a Jest or Vitest run Stim can see whole: one run directly, or a test
+  script that is a plain `jest` or `vitest` command. Jest has no environment
+  variable for it. Vitest's variables are not used: `VITEST_MAX_WORKERS`
+  overrides `fileParallelism: false`, while the flag is applied before it, so
+  a serial suite stays serial. A count the command or a visible config sets is
+  kept, and any other command runs unchanged under the slot.
 - The command runs in its own process group, so a signal reaches the runner
   under a package manager, and the slot is released only once that group is
   empty: a launcher can exit while its workers still run, and a queued run
-  must not start beside them. Windows refuses the command, since Stim cannot
+  must not start beside them. A run nested in another stays in the outer
+  group for the same reason. Windows refuses the command, since Stim cannot
   stop that tree there.
-- Without a command it runs the project's `test` script through the package
-  manager whose lockfile is nearest. It reads that script only to tell whether
-  it is a plain `jest` command; Stim never rewrites it.
 
-The no-command form, the script and config checks, `--wait`, `--no-wait`, the
-`STIM_TEST_RUN` marker with its nested run that takes no slot, the worker
-formula, `capacity.tests` and the Windows refusal are proposals in the pull request, not quoted decisions.
+## The plain form reads the test script
+
+Without a command, `stim test` runs the project's `test` script through the
+package manager whose lockfile is nearest, and reads that script only to tell
+whether it is a plain `jest` or `vitest` command that can take the flag. Stim
+never rewrites or replaces the script. This is an exception to the rule that
+Stim does not infer commands from project scripts
+([LLP 0014](./0014-native-builds.decision.md#use-fixed-invocations)): the user
+asked for the project's own tests, and the script is how the project names them.
+
+Maintainer decision: "Sounds ok for plain form", 2026-11-18, in answer to
+whether to keep the plain form or always require `stim test -- <command>`
+([#5944](https://github.com/appandflow/stim/pull/5944)).
+
+The script and config checks, `--wait`, `--no-wait`, the `STIM_TEST_RUN`
+marker with its nested run that takes no slot, the worker formula,
+`capacity.tests`, opt-in `SIGHUP` routing and the Windows refusal are proposals
+in the pull request, not quoted decisions.
 
 ## Code
 
