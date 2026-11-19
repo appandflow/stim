@@ -249,6 +249,7 @@
 [*] interface MacosBuild { @@1 fingerprint?: string;
 [*] interface MacosBuild { @@1 finishedAt?: string;
 [*] interface MacosBuild { @@1 offloadFallback?: string;
+[*] interface MacosBuild { @@1 offloadReason?: string;
 [*] interface MacosBuild { @@1 offloadedTo?: string;
 [*] interface MacosBuild { @@1 startedAt: string;
 [*] interface MacosBuild { @@1 state: "running" | "ok" | "failed";
