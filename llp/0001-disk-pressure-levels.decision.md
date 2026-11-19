@@ -112,9 +112,10 @@ normal are not niced.
 
 After a daemon ladder pass that took no action, the next pass waits four times
 that pass's duration, at most 15 minutes. A rise of the disk or the memory
-level, a drop of 1 GB in the lowest free disk since that pass, or a command
-that asks the daemon for a tick (the hard floor) runs it at once. The rest of the tick, the idle and dormant
-stages included, still runs every minute. A build's headroom ladder and
+level, any measured volume that is new, lost 1 GB or reached a higher level
+since that pass, or a command that asks the daemon for a tick (the hard floor)
+runs it at once. The rest of the tick, the idle and dormant stages included,
+still runs every minute. A build's headroom ladder and
 `stim gc` are not paced.
 
 Reason: on a Linux worker held at critical by space Stim cannot free, 615 of

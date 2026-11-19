@@ -666,9 +666,9 @@ and above normal runs one ladder top-down until the level clears:
 | 9    | Nothing                                                                                                            | Other tools' caches, subject to the rules below                                                                                                                                                                                                                                            |
 
 After a ladder pass that freed nothing, the next pass waits four times that
-pass's duration, at most 15 minutes, unless the disk or memory level rose, the
-lowest free disk fell by 1 GB, or a command asked the `stim-daemon` for a tick,
-such as one under `disk.hardFloorGb`. The rest of the tick still runs every
+pass's duration, at most 15 minutes, unless the disk or memory level rose, any
+measured volume is new, lost 1 GB or reached a higher level, or a command asked
+the `stim-daemon` for a tick, such as one under `disk.hardFloorGb`. The rest of the tick still runs every
 minute.
 
 A rung that frees disk takes only what lies on a volume under `disk.minFreeGb`:

@@ -24,7 +24,7 @@ import { daemonMode } from './mode.ts';
 import { runIdlePass, type IdlePassInput } from './idle.ts';
 import { idleOutputBytes, runLadder } from './ladder.ts';
 import { measureDisk, measureMemory, measureTick, type TickMeasurement } from './measure.ts';
-import { classifyPressure, diskThresholds, shortVolumeDevices } from './pressure.ts';
+import { classifyPressure, diskPressure, diskThresholds, shortVolumeDevices, type DiskThresholds } from './pressure.ts';
 import { onShortVolume } from '../stimd/passes/unowned.ts';
 import {
   clearStoppedOutputs,
@@ -47,13 +47,13 @@ interface HomePassPhases {
 }
 
 /**
- * The last pressure ladder pass: the disk and memory levels and the lowest free disk it started at, whether it freed
- * anything, how long it took and when it ended.
+ * The last pressure ladder pass: the disk and memory levels and each measured volume's free disk and level it started
+ * at, keyed by device id, whether it freed anything, how long it took and when it ended.
  */
 export interface LadderPass {
   disk: PressureLevel;
   memory: PressureLevel;
-  freeMb: number | null;
+  volumes: Record<string, { freeMb: number; level: PressureLevel }>;
   freed: boolean;
   durationMs: number;
   endedAt: number;
@@ -72,13 +72,25 @@ export interface HomePasses {
   ladder: LadderPass | null;
 }
 
-function lowestFreeMb(measurement: TickMeasurement['measurement']): number | null {
-  return measurement.disk.length ? Math.min(...measurement.disk.map((volume) => volume.freeMb)) : null;
+function volumeReadings(
+  measurement: TickMeasurement['measurement'],
+  thresholds: DiskThresholds,
+): LadderPass['volumes'] {
+  return Object.fromEntries(
+    measurement.disk.map((volume) => [
+      String(volume.device ?? volume.volume),
+      { freeMb: volume.freeMb, level: diskPressure([volume], thresholds).level },
+    ]),
+  );
 }
 
-function ladderDue(last: LadderPass, pressure: DaemonPressure, freeMb: number | null, now: number): boolean {
+function ladderDue(last: LadderPass, pressure: DaemonPressure, volumes: LadderPass['volumes'], now: number): boolean {
   if (last.freed || RANK[pressure.disk] > RANK[last.disk] || RANK[pressure.memory] > RANK[last.memory]) return true;
-  if (freeMb !== null && last.freeMb !== null && last.freeMb - freeMb >= LADDER_PACE_DISK_DROP_MB) return true;
+  for (const [key, volume] of Object.entries(volumes)) {
+    const before = last.volumes[key];
+    if (!before || before.freeMb - volume.freeMb >= LADDER_PACE_DISK_DROP_MB || RANK[volume.level] > RANK[before.level])
+      return true;
+  }
   return now - last.endedAt >= Math.min(LADDER_PACE_MAX_MS, LADDER_PACE_FACTOR * last.durationMs);
 }
 
@@ -87,8 +99,9 @@ function ladderDue(last: LadderPass, pressure: DaemonPressure, freeMb: number | 
  * or critical, then the dormant stage) and the pressure ladder while the level stays above normal, in this process, as
  * the daemon runs them each tick. `act: false` decides and logs without acting. `memoryWarningSince` carries the
  * memory warning clock from the last tick. After a ladder pass that freed nothing (`lastLadder`), the ladder waits
- * four times that pass's duration, at most 15 minutes, before it runs again, unless the disk or memory level rose, the
- * lowest free disk fell by 1 GB since that pass, or `requested` says a command asked for this tick.
+ * four times that pass's duration, at most 15 minutes, before it runs again, unless the disk or memory level rose, a
+ * measured volume is new, lost 1 GB or reached a higher level since that pass, or `requested` says a command asked for
+ * this tick.
  */
 export async function runHomePasses({
   act,
@@ -192,13 +205,13 @@ export async function runHomePasses({
   const dormantMs = lap();
   let ladderPass: LadderPass | null = null;
   const level = pressure.level;
-  const freeMb = lowestFreeMb(measured.measurement);
+  const volumes = volumeReadings(measured.measurement, thresholds);
   if (
     config &&
     level !== 'normal' &&
     lastLadder &&
     !requested &&
-    !ladderDue(lastLadder, pressure, freeMb, Date.now())
+    !ladderDue(lastLadder, pressure, volumes, Date.now())
   ) {
     ladderPass = lastLadder;
     log(
@@ -239,7 +252,7 @@ export async function runHomePasses({
     ladderPass = {
       disk: before.disk,
       memory: before.memory,
-      freeMb,
+      volumes,
       freed: ladder.actions.some((action) => action.outcome === 'done'),
       durationMs: endedAt - started,
       endedAt,
