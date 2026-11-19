@@ -357,7 +357,7 @@ Run from the directory containing the .xcodeproj or .xcworkspace. A Node
 package.json is not required. React Native and Expo apps keep their existing
 integration.
 
-  stim worktree warm   # first, unless told to work in place
+  stim worktree warm   # first, unless working in place
   stim ios --scheme MyApp --configuration Debug
   stim agent-device open <bundle-id> --platform ios
   stim stop
@@ -434,7 +434,7 @@ Copyable agent request:
 An Exact app (https://github.com/expo/exact) has exact.mjs next to app.json.
 Run from that directory:
 
-  stim worktree warm   # first, unless told to work in place
+  stim worktree warm   # first, unless working in place
   stim ios --json
   EXACT_SIM=<udid from stim ios> ./exact.mjs agent ios tree "screenshot out.png"
   EXACT_SIM=<udid> ./exact.mjs test ios
@@ -539,7 +539,7 @@ density/split APK sets and EAS/proxy targets are unsupported. Set
 org.gradle.configureondemand=false; configuration cache remains supported.
 Stim verifies the existing APK signature; it does not sign it.
 
-  stim worktree warm   # first, unless told to work in place
+  stim worktree warm   # first, unless working in place
   stim android
   stim agent-device open <package-id> --platform android
   stim stop

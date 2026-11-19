@@ -14,7 +14,7 @@ stim web never starts a web server, for any framework. It opens, reuses or
 reloads the owned Chrome at the page URL. Every web project follows the same
 two steps: start your dev server, then run stim web.
 
-  stim worktree warm       # first, unless told to work in place
+  stim worktree warm       # first, unless working in place
   stim web                 # headless, the default
   stim web --headed        # show the Chrome window
   stim web --json          # one payload on stdout; progress on stderr
