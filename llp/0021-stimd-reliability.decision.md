@@ -214,6 +214,39 @@ probe beside the rest of their read, so a healthy stimd adds no measurable time 
 a silent one adds the 3 s. Through the `status --json` shortcut that asks stimd
 first, which already waits 5 s, a silent stimd takes about 8 s.
 
+## stimd runs at the priority of an app
+
+On macOS every launchd job that runs stimd sets `ProcessType` to `Interactive`:
+the transient job a command starts and the LaunchAgent `stim service install`
+writes. launchd.plist(5) gives a job without `ProcessType`, or with `Standard`,
+light CPU and I/O throttling, and stimd's children inherit it: Metro, the
+builds it runs, the offload probes and the tools it starts. On a loaded worker
+that throttling made stimd miss `build.offer` and health deadlines (#5925).
+`Adaptive` moves a job between Background and Interactive by its XPC
+transactions, and stimd's clients reach it over a Unix socket and HTTP, never
+XPC, so an Adaptive stimd stays in Background. The man page reserves
+`Interactive` for a job that an app's responsiveness depends on and that cannot
+be made Adaptive, which is stimd's case.
+
+Measured on macOS 27 with throwaway jobs in the user's domain, each running a
+shell and a child, read with `ps -o pri` and `launchctl print`:
+
+| `ProcessType` | spawn type  | priority, job and child |
+| ------------- | ----------- | ----------------------- |
+| unset         | daemon      | 20                      |
+| `Standard`    | daemon      | 20                      |
+| `Adaptive`    | adaptive    | 4                       |
+| `Background`  | background  | 4                       |
+| `Interactive` | interactive | 31                      |
+
+31 is the priority of a process started from a shell. A stimd that Desktop
+starts as its child, or that a command hosts attached, already runs at its
+parent's priority. A unit installed before this change keeps `Standard` until
+it is installed again, because launchd reads a job's plist only at bootstrap.
+Background work stimd starts, such as size scans and cache trims, runs at the
+same priority; lowering it explicitly is separate work. Chosen by the
+implementing lane of #5925 and its coordinating session, not the maintainer.
+
 ## Collect diagnostics with the existing reports
 
 The [diagnostic procedure](../website/docs/dev-server-and-logs.md#collect-diagnostics-for-a-stimd-problem)
