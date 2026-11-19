@@ -173,6 +173,73 @@ describe('discoverCheckouts', () => {
     expect((await discoveredOutside(config, [repo])).map(({ path }) => path)).toEqual([elsewhere]);
   });
 
+  it('lists a plain Node checkout and its worktree only when asked, and no folder without git or package in a monorepo', async () => {
+    vi.stubEnv('STIM_HOME', join(base, 'home'));
+    const roots = join(base, 'roots');
+    const cli = join(roots, 'cli');
+    mkdirSync(join(cli, 'packages', 'core'), { recursive: true });
+    writeFileSync(join(cli, 'package.json'), JSON.stringify({ name: 'cli' }));
+    writeFileSync(join(cli, 'packages', 'core', 'package.json'), JSON.stringify({ name: 'core' }));
+    git(cli, 'init', '-q', '-b', 'main');
+    git(cli, 'add', '-A');
+    git(cli, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'init');
+    git(cli, 'worktree', 'add', '-q', '-b', 'feature', join(roots, 'cli-feature'));
+    mkdirSync(join(roots, 'lib'));
+    writeFileSync(join(roots, 'lib', 'package.json'), '{}');
+    const config: Config = {
+      maintenance: { discoverRoots: [roots, join(cli, 'packages')] },
+      projects: {},
+      repos: {},
+    };
+
+    expect(await discoverCheckouts(config, [])).toEqual([]);
+    expect(
+      (await discoverCheckouts(config, [], undefined, { node: 'all' })).map(({ path, node }) => [path, node]),
+    ).toEqual([
+      [cli, 'source'],
+      [join(roots, 'cli-feature'), 'linked'],
+    ]);
+    expect((await discoverCheckouts(config, [], undefined, { node: 'linked' })).map(({ path }) => path)).toEqual([
+      join(roots, 'cli-feature'),
+    ]);
+  });
+
+  it('marks the worktrees of a Node repository through git, and never those of a repository an app leads to', async () => {
+    vi.stubEnv('STIM_HOME', '');
+    const commit = (cwd: string) => {
+      git(cwd, 'init', '-q', '-b', 'main');
+      git(cwd, 'add', '-A');
+      git(cwd, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'init');
+    };
+    const repo = join(base, 'dev', 'repo');
+    app(repo);
+    commit(repo);
+    const cli = join(base, 'dev', 'cli');
+    mkdirSync(cli, { recursive: true });
+    writeFileSync(join(cli, 'package.json'), JSON.stringify({ name: 'cli' }));
+    commit(cli);
+    const nested = join(cli, '.worktrees', 'fix');
+    git(cli, 'worktree', 'add', '-q', '-b', 'fix', nested);
+    mkdirSync(join(base, 'wt'));
+    git(cli, 'worktree', 'add', '-q', '--detach', join(base, 'wt', 'pin'));
+    const zapp = join(base, 'dev', 'zapp');
+    app(zapp);
+    commit(zapp);
+    const old = join(base, 'dev', 'a-old');
+    git(zapp, 'worktree', 'add', '-q', '-b', 'old', old);
+    writeFileSync(join(old, 'package.json'), '{}');
+    const config: Config = { projects: { [repo]: {} }, repos: {} };
+
+    const found = await discoverCheckouts(config, [repo], undefined, { node: 'all' });
+    expect(found.map(({ path, origin, node }) => [path, origin, node])).toEqual([
+      [old, 'worktree', undefined],
+      [cli, 'sibling', 'source'],
+      [nested, 'worktree', 'linked'],
+      [zapp, 'sibling', undefined],
+    ]);
+    expect(await discoveredOutside(config, [repo])).toEqual([]);
+  });
+
   it('takes the checkouts of the last full scan as reduce-only in an unscoped home, and none in a scoped one', async () => {
     vi.stubEnv('STIM_HOME', '');
     vi.stubEnv('HOME', join(base, 'home'));

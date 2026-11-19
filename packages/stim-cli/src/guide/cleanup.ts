@@ -1207,7 +1207,9 @@ registered projects, direct children of the folders in maintenance.discoverRoots
 the home folder and / are refused, and doctor reports one that is not a folder), and linked worktrees (git worktree list) of their
 repositories. A child counts only when Stim's project detection recognises it as
 a project it handles, itself or through a direct child of its apps, examples or
-packages folder; any other folder is ignored. A linked worktree is acted on only
+packages folder; a plain Node checkout (git, a root package.json) and its
+worktrees get only finished-worktree removal and the dormant node_modules step;
+any other folder is ignored. A linked worktree is acted on only
 inside its repository's main checkout folder, a folder holding a known project,
 or a maintenance.discoverRoots folder; every other worktree (another tool's
 home, a pin checkout) is listed by stim gc --dry-run as outside the folders Stim

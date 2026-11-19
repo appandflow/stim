@@ -208,6 +208,7 @@ export async function rankDependencies(
   operation?: StimContext,
   source = false,
   log?: DaemonLog,
+  node = false,
 ): Promise<RankedDependency[]> {
   const rank = new Map(
     idle.flatMap((candidate, index) => {
@@ -222,7 +223,7 @@ export async function rankDependencies(
     () =>
       collectArtifactsAsync(
         'dependencies',
-        { now: Date.now(), windowMs: 0, protectedRoot, pinned: maintenancePinnedReader(operation), source },
+        { now: Date.now(), windowMs: 0, protectedRoot, pinned: maintenancePinnedReader(operation), source, node },
         operation?.signal ?? new AbortController().signal,
         operation,
       ),
@@ -257,6 +258,8 @@ export interface SourceRule {
   /** The idle time the workspaces in `idle` were selected by. */
   thresholdMs: number;
   setting: string;
+  /** Plain Node checkouts too, as the dormant stage selects them. */
+  node?: boolean;
 }
 
 /**
@@ -285,7 +288,14 @@ export async function rankSourceDependencies(
     () =>
       collectArtifactsAsync(
         'dependencies',
-        { now: Date.now(), windowMs: 0, protectedRoot, pinned: maintenancePinnedReader(operation), source: true },
+        {
+          now: Date.now(),
+          windowMs: 0,
+          protectedRoot,
+          pinned: maintenancePinnedReader(operation),
+          source: true,
+          node: rule.node,
+        },
         operation?.signal ?? new AbortController().signal,
         operation,
       ),
@@ -550,8 +560,9 @@ async function takeIdleDependencies(
             full: true,
             setting: 'idle.sourceDormantDays',
             onKept: (path, reason) => keeps.set(canonicalOrNull(path) ?? path, reason),
+            node: true,
           }
-        : {},
+        : { node: true },
     )
   ).filter((candidate) => source || candidate.role === 'linked');
   const { operation } = input;
@@ -572,6 +583,7 @@ async function takeIdleDependencies(
             criticalIdleMs: Infinity,
             thresholdMs: afterMs,
             setting: 'idle.sourceDormantDays',
+            node: true,
           },
           operation,
           input.log,
@@ -612,13 +624,13 @@ async function takeIdleDependencies(
       await timedStep(
         input.log,
         'rank_dependencies',
-        () => rankDependencies(idle, input.protectedRoot ?? '', operation, false, input.log),
+        () => rankDependencies(idle, input.protectedRoot ?? '', operation, false, input.log, true),
         { signal: operation?.signal, items: (ranked) => ranked?.length },
       ),
       'take',
     ).take;
   }
-  const worktrees = take.length ? await artifactWorktreesFor(operation) : [];
+  const worktrees = take.length ? await artifactWorktreesFor(operation, { node: 'all' }) : [];
   const why = `${source ? 'idle.sourceDormantDays' : 'idle.dormantDays'} is ${afterMs / (24 * HOUR_MS)}`;
   const sourceResults =
     source && input.act
@@ -674,7 +686,7 @@ function dependencyCandidates(worktrees: readonly { path: string; keys: readonly
 }
 
 export async function measureDependencyTrees(operation: StimContext): Promise<void> {
-  for (const path of dependencyCandidates(await artifactWorktreesAsync(operation.signal, operation))) {
+  for (const path of dependencyCandidates(await artifactWorktreesAsync(operation.signal, operation, { node: 'all' }))) {
     const signature = await dependencyTreeSignature(path, operation.signal);
     if (signature === null) {
       if (hungRead() !== null) return;

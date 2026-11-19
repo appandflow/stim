@@ -119,6 +119,28 @@ describe('runDiscoveryCensusIfDue', () => {
     expect(census?.pending).toBe(false);
   });
 
+  it('still lists an app the scan found under a home dot-folder inside a plain Node checkout that a root leads to', async () => {
+    const cli = join(home, '.tools', 'cli');
+    mkdirSync(join(cli, '.git'), { recursive: true });
+    writeFileSync(join(cli, 'package.json'), JSON.stringify({ name: 'cli' }));
+    checkout(join(cli, 'mobile'));
+    saveConfig({
+      version: 2,
+      projects: {},
+      repos: {},
+      maintenance: { discoverRoots: [join(home, 'dev', 'tools'), join(home, '.tools')] },
+    });
+    await runDiscoveryScanIfDue(tick(), { home, now: t0 + 8 * day, attempted: { at: 0 } });
+    expect(
+      (await discoverCheckouts(loadConfig(), [], testContext(), { node: 'all' })).map(({ path }) => path),
+    ).toContain(cli);
+    const { census } = await run(t0 + 8 * day);
+    expect(census?.finds.map(({ path, kind }) => [path.slice(home.length), kind])).toContainEqual([
+      '/.tools/cli/mobile',
+      'dot-folder',
+    ]);
+  });
+
   it('never reports a walk that failed as zero bytes, and a walk that waits as not measured yet', async () => {
     vi.spyOn(diskUsage, 'refreshMeasure').mockImplementation(async (path) =>
       path.includes('/old/') ? { outcome: 'failed', measure: null } : { outcome: 'busy', measure: null },

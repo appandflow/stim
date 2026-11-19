@@ -1,5 +1,5 @@
 import { readdir } from 'node:fs/promises';
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, parse, resolve, sep } from 'node:path';
 import { isScopedHome, type StimContext } from '@stim-cli/core';
@@ -30,7 +30,11 @@ export interface DiscoveredCheckout {
   from: string;
   /** Found through a tool folder or the full scan: Stim reduces its outputs and never removes it. */
   reduceOnly?: boolean;
+  /** A plain Node checkout, a source checkout or a linked worktree: only finished worktree removal and idle node_modules apply. */
+  node?: NodeCheckout;
 }
+
+type NodeCheckout = 'source' | 'linked';
 
 export interface DiscoveryChild {
   path: string;
@@ -38,6 +42,8 @@ export interface DiscoveryChild {
   from: string;
   /** Stim's project detection recognises it as a project it handles. */
   recognised: boolean;
+  /** Not recognised, but a git checkout root with a package.json. */
+  node?: NodeCheckout;
 }
 
 /**
@@ -51,17 +57,30 @@ export function selectDiscovered({
   children,
 }: {
   known: readonly string[];
-  worktrees: readonly { path: string; from: string; reduceOnly?: boolean }[];
+  worktrees: readonly { path: string; from: string; reduceOnly?: boolean; node?: NodeCheckout }[];
   children: readonly DiscoveryChild[];
 }): DiscoveredCheckout[] {
   const found = new Map<string, DiscoveredCheckout>();
   const covered = (path: string) =>
     known.some((root) => path === root || path.startsWith(`${root}${sep}`) || root.startsWith(`${path}${sep}`));
-  for (const { path, from, reduceOnly } of worktrees)
-    if (!covered(path)) found.set(path, { path, origin: 'worktree', from, ...(reduceOnly ? { reduceOnly } : {}) });
-  for (const { path, origin, from, recognised } of children)
-    if (recognised && !found.has(path) && !covered(path))
-      found.set(path, { path, origin, from, ...(origin === 'scan' ? { reduceOnly: true } : {}) });
+  for (const { path, from, reduceOnly, node } of worktrees)
+    if (!covered(path))
+      found.set(path, {
+        path,
+        origin: 'worktree',
+        from,
+        ...(reduceOnly ? { reduceOnly } : {}),
+        ...(node ? { node } : {}),
+      });
+  for (const { path, origin, from, recognised, node } of children)
+    if ((recognised || node) && !found.has(path) && !covered(path))
+      found.set(path, {
+        path,
+        origin,
+        from,
+        ...(origin === 'scan' ? { reduceOnly: true } : {}),
+        ...(node ? { node } : {}),
+      });
   return [...found.values()].toSorted((a, b) => a.path.localeCompare(b.path));
 }
 
@@ -114,6 +133,18 @@ function recognises(path: string): boolean {
   return recognition(path) === true;
 }
 
+// @ref LLP 0004#plain-node-checkouts -- a git checkout root with a package.json
+/** Whether the folder is a git checkout with a regular `package.json` at its root, and which kind: `.git` a directory or a file. */
+function nodeCheckout(path: string): NodeCheckout | undefined {
+  try {
+    if (!lstatSync(join(path, 'package.json')).isFile()) return undefined;
+    const git = lstatSync(join(path, '.git'));
+    return git.isDirectory() ? 'source' : git.isFile() ? 'linked' : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** `read`'s result, or null when it fails, has not answered within the timeout, or waits on another hung read. */
 async function within<T>(path: string, read: () => Promise<T>): Promise<T | null> {
   try {
@@ -137,7 +168,9 @@ async function childrenOf(
     if (!entry.isDirectory() || entry.isSymbolicLink() || entry.name.startsWith('.')) continue;
     const path = canonicalPath(join(folder, entry.name));
     const listed = (await within(path, () => readdir(path))) !== null;
-    children.push({ path, origin, from, recognised: listed && recognises(path) });
+    const recognised = listed && recognises(path);
+    const node = listed && !recognised ? nodeCheckout(path) : undefined;
+    children.push({ path, origin, from, recognised, ...(node ? { node } : {}) });
   }
   return children;
 }
@@ -224,14 +257,24 @@ interface Discovery {
  * directory or a dot-folder of the home directory is included unless it lies inside a `maintenance.discoverRoots`
  * folder, or is a worktree in a tool folder or a checkout of the last full scan, which are reduce-only. A scoped
  * STIM_HOME discovers only from that setting, so a scratch home never reaches the repositories of another. Discovery
- * registers and writes nothing; the full scan's result is read from the file the daemon wrote.
+ * registers and writes nothing; the full scan's result is read from the file the daemon wrote. A child that is a plain
+ * Node checkout, and each linked worktree of its repository, is returned only when `node` selects it.
  */
 export async function discoverCheckouts(
   config: Config | null,
   known: readonly string[],
   operation?: StimContext,
+  { node }: NodeSelection = {},
 ): Promise<DiscoveredCheckout[]> {
-  return (await discovery(config, known, operation)).found;
+  return (await discovery(config, known, operation)).found.filter(
+    (checkout) => !checkout.node || node === 'all' || (node === 'linked' && checkout.node === 'linked'),
+  );
+}
+
+// @ref LLP 0004#plain-node-checkouts -- left out unless the caller applies one of their two rules
+/** Which plain Node checkouts a caller of `discoverCheckouts` gets besides the others: none by default. */
+export interface NodeSelection {
+  node?: 'linked' | 'all';
 }
 
 /** What discovery reached outside the folders Stim manages. */
@@ -277,7 +320,7 @@ async function computeDiscovered(
   const env = operation?.env ?? {};
   const scoped = isScopedHome(operation?.env);
   const canonicalRoots = canonicalDiscoverRoots(config, env);
-  const repositories: { entries: { path: string }[]; main: string }[] = [];
+  const repositories: { entries: { path: string }[]; main: string; node?: true }[] = [];
   const folders = new Map<string, string>();
   const children: DiscoveryChild[] = [];
   const options = { env, signal: operation?.signal, declareFor: operation };
@@ -312,24 +355,29 @@ async function computeDiscovered(
   for (const root of canonicalRoots) children.push(...(await childrenOf(root, 'root', root, operation)));
   if (!scoped) {
     const seen = new Set(repositories.map(({ main }) => main));
-    for (const child of children) {
-      if (!child.recognised) continue;
+    const reached = new Set(repositories.flatMap(({ entries }) => entries.map(({ path }) => canonicalPath(path))));
+    const byKind = (node?: NodeCheckout) => children.filter((child) => (node ? child.node === node : child.recognised));
+    for (const child of [...byKind(), ...byKind('source'), ...byKind('linked')]) {
+      if (reached.has(child.path)) continue;
       const repository = await read(child.path);
       if (!repository || seen.has(repository.main)) continue;
       seen.add(repository.main);
-      repositories.push(repository);
+      for (const { path } of repository.entries) reached.add(canonicalPath(path));
+      repositories.push(child.node ? { ...repository, node: true } : repository);
     }
   }
-  const worktrees: { path: string; from: string; reduceOnly?: boolean }[] = [];
+  const worktrees: { path: string; from: string; reduceOnly?: boolean; node?: NodeCheckout }[] = [];
   const outside: Discovery['outside'] = [];
-  for (const { entries, main } of repositories) {
+  for (const { entries, main, node } of repositories) {
+    const kind = node ? { node: 'linked' as const } : {};
     for (const entry of entries) {
       const path = canonicalPath(entry.path);
       if (path === canonicalPath(main)) continue;
       if (worktreeInScope(path, { main: canonicalPath(main), folders: [...folders.keys()], roots: canonicalRoots }))
-        worktrees.push({ path, from: main });
-      else if (inToolFolder(path, canonicalPath(homedir()))) worktrees.push({ path, from: main, reduceOnly: true });
-      else outside.push({ path, from: main });
+        worktrees.push({ path, from: main, ...kind });
+      else if (inToolFolder(path, canonicalPath(homedir())))
+        worktrees.push({ path, from: main, reduceOnly: true, ...kind });
+      else if (!node) outside.push({ path, from: main });
     }
   }
   const { valid: scanned, pending: scanPending } = scoped ? { valid: [], pending: [] } : await revalidatedScan(scan);
@@ -385,7 +433,8 @@ export async function unmanagedScanFinds(
 ): Promise<UnmanagedScanFinds | null> {
   const scan = readDiscoveryScan();
   if (!scan) return null;
-  const { found, scanPending } = await computeDiscovered(config, known, scan, operation);
+  const { found: all, scanPending } = await computeDiscovered(config, known, scan, operation);
+  const found = all.filter((checkout) => !checkout.node);
   const reduceOnly = found.filter(({ origin }) => origin === 'scan').map(({ path }) => path);
   if (isScopedHome(operation.env))
     return { scanRanAt: scan.ranAt, reduceOnly, dotFolder: [], unchecked: [], canonicalRoots: [] };
