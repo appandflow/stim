@@ -4,7 +4,7 @@ export default {
 
 WORKSPACE SETUP
 
-Skip this for inspection or cleanup (logs, status, gc).
+Skip this for inspection, cleanup or a running app.
 
 WORKTREE: Use a linked worktree by default; create one with Git if needed.
 The clean source checkout is infrastructure, not a workspace. Unless you
