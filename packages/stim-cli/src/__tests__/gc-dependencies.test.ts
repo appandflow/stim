@@ -30,6 +30,7 @@ import { dirname, join, relative } from 'node:path';
 import { writeCacheFile } from '../cache-file.ts';
 import { privateSizeKnowable, treeSignature } from '../private-size.ts';
 import { hardLinkSample, type LinkSampleIo } from '../link-sample.ts';
+import { hungRead } from '../workspace/bounded-read.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { readGcReport, runGc } from '../commands/gc.ts';
 import { createStim } from '../api.ts';
@@ -1064,10 +1065,13 @@ test.skipIf(process.platform === 'win32')(
       );
     const missing = () => Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
     const reads = { entries: 0, lstat: 0 };
+    const built = new Set<string>();
     const io: LinkSampleIo = {
       entries: (path) => {
         reads.entries++;
         return slow(() => {
+          if (/\/(android|ios)$/.test(path))
+            return built.has(path) ? [{ name: 'build', kind: 'directory' as const }] : [];
           if (path === modules) return [{ name: '.pnpm', kind: 'directory' }];
           if (path === pnpm)
             return Array.from({ length: 3000 }, (_, index) => ({ name: `pkg${index}@1.0.0`, kind: 'directory' }));
@@ -1102,25 +1106,123 @@ test.skipIf(process.platform === 'win32')(
     expect(existsSync(diskUsageLinksFile(modules))).toBe(false);
     const first = readJsonObject(diskUsageNativeFile(modules));
     expect(first?.complete).toBe(false);
-    expect(first?.checked).toBeGreaterThan(1000);
-    expect(first?.checked).toBeLessThan(3000);
+    expect(first?.last).toEqual(expect.any(String));
 
     expect(await run()).toEqual({ linked: 36, sampled: 36 });
-    expect(readJsonObject(diskUsageNativeFile(modules))).toMatchObject({ checked: 3000, complete: true });
+    expect(readJsonObject(diskUsageNativeFile(modules))).toMatchObject({ complete: true });
     expect(readJsonObject(diskUsageNativeFile(modules))?.roots).toHaveLength(200);
 
     reads.entries = 0;
     reads.lstat = 0;
     expect(await run()).toEqual({ linked: 36, sampled: 36 });
-    expect(reads).toEqual({ entries: 0, lstat: 100 * 5 + 1 });
+    expect(reads).toEqual({ entries: 100 * 2, lstat: 1 });
 
-    const built = io.lstat;
-    io.lstat = (path) =>
-      path === join(packageDir(30), 'android', 'build')
-        ? slow(() => ({ kind: 'directory', nlink: 1, dev: 1, ino: 0 }))
-        : built(path);
+    built.add(join(packageDir(30), 'android'));
     expect(await run()).toBeNull();
     expect(readJsonObject(diskUsageLinksFile(modules))?.verdict).toBe('other');
+  },
+);
+
+function memoryTree(modules: string, delayMs = 0) {
+  const store = join(modules, '..', 'memory-store');
+  const pnpm = join(modules, '.pnpm');
+  const packageDir = (index: number) =>
+    join(pnpm, `pkg${String(index).padStart(2, '0')}@1.0.0`, 'node_modules', `pkg${String(index).padStart(2, '0')}`);
+  const failing = new Set<string>();
+  const inodes = new Map<string, number>();
+  const built = new Set<string>();
+  const missing = () => Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+  const answer = <T>(value: () => T) =>
+    new Promise<T>((done, fail) =>
+      setTimeout(() => {
+        try {
+          done(value());
+        } catch (error) {
+          fail(error);
+        }
+      }, delayMs),
+    );
+  const io: LinkSampleIo = {
+    entries: (path) =>
+      answer(() => {
+        if (failing.delete(path)) throw Object.assign(new Error('EIO'), { code: 'EIO' });
+        if (path.endsWith('/android'))
+          return built.has(join(path, 'build')) ? [{ name: 'build', kind: 'directory' as const }] : [];
+        if (path === modules) return [{ name: '.pnpm', kind: 'directory' }];
+        if (path === pnpm)
+          return Array.from({ length: 20 }, (_, index) => ({
+            name: `pkg${String(index).padStart(2, '0')}@1.0.0`,
+            kind: 'directory',
+          }));
+        return [
+          ...['package.json', 'index.js', 'main.js'].map((name) => ({ name, kind: 'file' as const })),
+          ...(path === packageDir(3) ? [{ name: 'android', kind: 'directory' as const }] : []),
+        ];
+      }),
+    lstat: (path) =>
+      answer(() => {
+        if (path === store || built.has(path) || /@1\.0\.0\/node_modules\/pkg\d+$/.test(path))
+          return { kind: 'directory', nlink: 1, dev: 1, ino: 0 };
+        if (/\.(json|js)$/.test(path)) {
+          if (!inodes.has(path)) inodes.set(path, inodes.size + 1);
+          return { kind: 'file', nlink: 2, dev: 1, ino: inodes.get(path) ?? 0 };
+        }
+        throw missing();
+      }),
+    ends: () => answer(() => JSON.stringify({ storeDir: store })),
+  };
+  return { io, packageDir, failing, built };
+}
+
+test.skipIf(process.platform === 'win32')(
+  'a package whose listing fails leaves the native listing incomplete with no verdict, and the next run lists it and finds its build output',
+  async () => {
+    const modules = join(projects, 'flaky', 'node_modules');
+    mkdirSync(modules, { recursive: true });
+    const { io, packageDir, failing, built } = memoryTree(modules);
+    const run = async () => {
+      const result = hardLinkSample(modules, undefined, io);
+      await vi.advanceTimersByTimeAsync(100);
+      return result;
+    };
+    failing.add(packageDir(3));
+    expect(await run()).toBeNull();
+    expect(readJsonObject(diskUsageNativeFile(modules))).toMatchObject({ last: packageDir(2), complete: false });
+    expect(existsSync(diskUsageLinksFile(modules))).toBe(false);
+    built.add(join(packageDir(3), 'android', 'build'));
+    expect(await run()).toBeNull();
+    expect(readJsonObject(diskUsageNativeFile(modules))).toMatchObject({
+      roots: [join(packageDir(3), 'android')],
+      complete: true,
+    });
+    expect(readJsonObject(diskUsageLinksFile(modules))?.verdict).toBe('other');
+    built.clear();
+    rmSync(diskUsageLinksFile(modules));
+    expect(await run()).not.toBeNull();
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  "a link sample whose reads take 1.9 s ends within its 2 s budget or the caller's deadline, records no verdict when the deadline cut it, and leaves no pending read",
+  async () => {
+    const modules = join(projects, 'budget', 'node_modules');
+    mkdirSync(modules, { recursive: true });
+    const { io } = memoryTree(modules, 1900);
+    const timed = async (until?: number) => {
+      const started = Date.now();
+      let ended = 0;
+      const result = hardLinkSample(modules, undefined, io, until).finally(() => {
+        ended = Date.now();
+      });
+      await vi.advanceTimersByTimeAsync(1000);
+      const pending = hungRead();
+      await vi.advanceTimersByTimeAsync(9000);
+      return { result: await result, elapsed: ended - started, pending, after: hungRead() };
+    };
+    expect(await timed(Date.now() + 1000)).toEqual({ result: null, elapsed: 1000, pending: null, after: null });
+    expect(existsSync(diskUsageLinksFile(modules))).toBe(false);
+    expect(await timed()).toEqual({ result: null, elapsed: 2000, pending: null, after: null });
+    expect(readJsonObject(diskUsageLinksFile(modules))?.verdict).toBe('timeout');
   },
 );
 

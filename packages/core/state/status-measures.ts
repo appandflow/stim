@@ -120,7 +120,7 @@ const statusCacheDirs = (): readonly (readonly [StatusCacheEntry['kind'], string
   ['git-merge', gitMergeCacheDir()],
 ];
 
-const isCacheFileName = (name: string) => /^[0-9a-f]{32}\.json$/.test(name);
+const isCacheFileName = (name: string) => /^[0-9a-f]{32}(\.links|\.native)?\.json$/.test(name);
 
 function statusCacheEntry(
   kind: StatusCacheEntry['kind'],
@@ -129,7 +129,12 @@ function statusCacheEntry(
   bytes: number,
   recorded: unknown,
 ): StatusCacheEntry {
-  const path = typeof recorded === 'string' && isAbsolute(recorded) && cacheName(recorded) === name ? recorded : null;
+  const path =
+    typeof recorded === 'string' &&
+    isAbsolute(recorded) &&
+    cacheName(recorded) === name.replace(/\.(links|native)\.json$/, '.json')
+      ? recorded
+      : null;
   return { kind, file, path, bytes };
 }
 

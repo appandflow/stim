@@ -15,9 +15,15 @@ export function hungRead(): string | null {
 
 /**
  * `start()`'s result, or an `Unanswered` rejection when it has not answered in `timeoutMs`; the read keeps running, and
- * is the pending one until it settles. It starts no read at all while one is pending, so the slot is never overwritten.
+ * is the pending one until it settles once it has not answered in `hungAfterMs` (`timeoutMs` by default) from its start.
+ * It starts no read at all while one is pending, so the slot is never overwritten.
  */
-export async function answered<T>(label: string, start: () => Promise<T>, timeoutMs: number): Promise<T> {
+export async function answered<T>(
+  label: string,
+  start: () => Promise<T>,
+  timeoutMs: number,
+  hungAfterMs: number = timeoutMs,
+): Promise<T> {
   if (hung) throw new Unanswered(`a read of ${hung.label} is still pending`);
   const read = start();
   let timer: NodeJS.Timeout | undefined;
@@ -31,8 +37,16 @@ export async function answered<T>(label: string, start: () => Promise<T>, timeou
   } catch (error) {
     if (error instanceof Unanswered) {
       const mine = { label };
-      hung = mine;
+      let done = false;
+      const park = () => {
+        if (!done && !hung) hung = mine;
+      };
+      const parking = hungAfterMs > timeoutMs ? setTimeout(park, hungAfterMs - timeoutMs) : undefined;
+      if (parking) parking.unref();
+      else park();
       const settled = () => {
+        done = true;
+        clearTimeout(parking);
         if (hung === mine) hung = null;
       };
       read.then(settled, settled);

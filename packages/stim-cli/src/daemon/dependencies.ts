@@ -140,7 +140,7 @@ export async function sampleLinks(ranked: readonly RankedDependency[], signal?: 
   for (const dependency of ranked) {
     if (dependency.privateBytes !== null) continue;
     if (Date.now() >= deadline) return;
-    const links = await hardLinkSample(dependency.candidate.path, signal);
+    const links = await hardLinkSample(dependency.candidate.path, signal, undefined, deadline);
     if (links) dependency.links = links;
   }
 }

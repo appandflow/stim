@@ -2509,7 +2509,7 @@ A tree whose own size is still unknown is kept at normal and high, and taken
 last at critical, when a sample finds it is mostly hard links into a pnpm
 store: its `.modules.yaml` must name a store directory outside the tree, and
 Stim reads the link counts of up to 36 files from up to 12 of its packages
-within 2 seconds (10 seconds for all trees of one step), keeping the tree when
+within 10 seconds for all trees of one step, keeping the tree when
 at least 20 files from 5 packages were read and 90% of them have more than one
 link on the store's volume. That is a pnpm tree linked from its store on a
 volume without clones, where deleting it frees little. A tree with a cache

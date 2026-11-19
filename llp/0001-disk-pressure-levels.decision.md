@@ -281,8 +281,11 @@ A `node_modules` or Pods tree whose private size is unknown when it is ranked
 or a volume that cannot tell) is sampled: the link counts of up to 36 regular
 files, at most 3 from each of up to 12 packages spread over the sorted package
 list (`.pnpm/*/node_modules/<name>` for pnpm's isolated layout, the top-level
-folders otherwise), read without following a symlink, within 2 seconds per tree
-and 10 seconds for all trees of one step. The tree counts as hard links only
+folders otherwise), read without following a symlink. The sample, the listing
+and the build output check below each have 2 seconds, so one tree can take up
+to about 6 seconds and a stat of the store, but no read starts once the 10
+seconds of the whole step are spent and each read gets only what is left of
+them, so all trees of one step take at most about 10 seconds. The tree counts as hard links only
 when its `.modules.yaml` records a pnpm `storeDir` that is a directory outside
 the tree, it has no dot directory at its root other than a package manager's
 own (a cache such as `.cache` holds its own bytes), at least 20 distinct files
@@ -293,12 +296,23 @@ native build wrote in place (`android/build`, `android/.cxx`,
 `apple/.DerivedData`). For that last check, once a sample finds links, the
 packages holding an `android`, `ios`, `apple` or `.build` folder are listed
 once per install signature, one directory read per package, 2 seconds at a
-time from where the last listing stopped, so a large tree on a slow disk is
-listed over a few runs and has no `links` verdict until the list is complete;
-every use of a `links` verdict, a recorded one included, then stats the build
-output folders of those packages within 2 seconds, and a build output folder
-or a check that does not answer ends it. A `.build` folder that appears after
-the listing in a package with none of those folders is not seen. Such a tree is kept at normal and high by the 7-day
+time from after the last package listed (by path, in sorted order), so a large tree on a slow disk is
+listed over a few runs and has no `links` verdict until the list is complete
+(a package whose listing fails other than by being absent stops the listing
+there, to be retried on the next run);
+every use of a `links` verdict, a recorded one included, then reads the
+`android`, `ios` and `apple` folders of those packages once each (and
+`android/app` when present) for build output folders, and a build output
+folder or a check that does not answer or fails ends it. A read cut short by
+the time left is not left as the pending read unless it has not answered after
+its full 2 seconds, and a sample the step's limit cut short records no verdict.
+The verdict and the listing are written under their file's lock, waited for at
+most 200 ms; without it there is no verdict and nothing is written. Build
+output outside those folders is not seen: a `.build` folder that appears after
+the listing in a package with none of them, `android/<module>/build` or
+`android/<module>/.cxx` of a library with several modules, or
+`node_modules/react-native/ReactAndroid/build` and `.cxx` when React Native is
+built from source. Such a tree is kept at normal and high by the 7-day
 source rule, the dormant step and rung 5, with a kept reason that gives the
 counts; at critical, rungs 5 and 8 take it after every measured tree and every
 other tree of unknown size. Anything else (no recorded or existing store, as for
