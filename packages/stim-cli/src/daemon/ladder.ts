@@ -166,13 +166,8 @@ function recordAction(
 }
 
 /** The bytes of the regenerable build outputs the idle stage would delete in a workspace. */
-export async function idleOutputBytes(
-  path: string,
-  config: Config,
-  launching: Launching,
-  onVolume?: (path: string) => boolean,
-): Promise<number> {
-  return pathsBytes((await idleOutputs(path, config, launching, onVolume)).paths);
+export async function idleOutputBytes(path: string, config: Config, launching: Launching): Promise<number> {
+  return pathsBytes((await idleOutputs(path, config, launching)).paths);
 }
 
 async function pathsBytes(paths: readonly string[]): Promise<number> {
@@ -296,9 +291,14 @@ async function bootedParkedRung(context: RungContext): Promise<void> {
   );
 }
 
-/** Rung 1's disk half: the regenerable outputs of workspaces with nothing running, idle 2 minutes or more. */
+/**
+ * Rung 1's disk half: the regenerable outputs of workspaces idle 2 minutes or more, whether or not their dev server or
+ * an owned device runs, which keep running.
+ */
 async function idleOutputsRung(context: RungContext): Promise<void> {
-  for (const candidate of await stoppedOutputCandidates(context.config, context, PRESSURE_IDLE_MS)) {
+  const level = context.level === 'critical' ? 'critical' : 'high';
+  // @ref LLP 0001#the-2-minute-idle-stop-is-for-memory -- outputs go without stopping what runs
+  for (const candidate of await stoppedOutputCandidates(context.config, context, PRESSURE_IDLE_MS, level)) {
     if (!(await context.stillShort())) return;
     let result: Awaited<ReturnType<typeof clearStoppedOutputs>>;
     if (context.act)
@@ -308,6 +308,7 @@ async function idleOutputsRung(context: RungContext): Promise<void> {
         PRESSURE_IDLE_MS,
         context.operation,
         deletable(context),
+        { reading: context, level },
       );
     else {
       const outputs = await stoppedOutputs(
@@ -1087,9 +1088,9 @@ const RUNG_ACTS: Record<Rung, (context: RungContext, causes: Cause[]) => Promise
 };
 
 /**
- * The pressure ladder after the activity pass, whose idle stage at 2 minutes is rung 1: rungs 1 to 8 top-down while
- * the level stays above normal, each measuring again before it acts and running only for the causes it relieves (a
- * memory level runs the Gradle daemons of rung 6; the devices of rung 1 are the activity pass's). Each rung skips
+ * The pressure ladder after the activity pass, whose idle stage at 2 minutes under memory pressure is rung 1: rungs 1
+ * to 8 top-down while the level stays above normal, each measuring again before it acts and running only for the
+ * causes it relieves (a memory level runs the Gradle daemons of rung 6; the devices of rung 1 are the activity pass's). Each rung skips
  * every workspace with a blocker and takes the longest-idle first. Returns the actions and the last measurement.
  */
 export async function runLadder(

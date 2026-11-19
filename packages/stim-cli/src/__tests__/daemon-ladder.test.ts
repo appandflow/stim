@@ -25,6 +25,7 @@ import {
   workspaceLightenedFile,
 } from '@stim-cli/core/state';
 import * as gcDevices from '../commands/gc/devices.ts';
+import * as stopCommand from '../commands/stop.ts';
 import { collectOwnedDeviceActivityAsync } from '../commands/gc/idle.ts';
 import { REAL_BYTES_THRESHOLD, runDormantDependencies } from '../daemon/dependencies.ts';
 import { runIdlePass } from '../daemon/idle.ts';
@@ -53,6 +54,7 @@ import * as lightened from '../workspace/lightened.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState, recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { serveShareList, shareRow } from './_share-list-server.ts';
+import { liveClaimOwner } from './_factories.ts';
 import * as archive from '../archive.ts';
 import { testContext } from './_context.ts';
 import * as settings from '../workspace/settings.ts';
@@ -132,6 +134,18 @@ const pressure = (level: DaemonPressure['level'], cause: 'disk' | 'memory' = 'di
 
 const devicesNow = () => collectOwnedDeviceActivityAsync(loadConfig(), sims, Date.now());
 
+function serve(root: string, bundledAgoMs: number) {
+  writeWorkspaceState(root, {
+    ...readWorkspaceState(root),
+    supervisor: { ...liveClaimOwner(), port: 59123, mode: 'expo-child', hmrUpdates: true },
+  });
+  const ts = Date.now() - bundledAgoMs;
+  writeFileSync(
+    join(workspaceLogsDir(root), 'metro.ndjson'),
+    `${JSON.stringify({ ts, src: 'metro', event: 'bundle_response_finished', platform: 'ios', requestId: 'r1' })}\n`,
+  );
+}
+
 describe('the idle stage under pressure (rung 1)', () => {
   test('takes a workspace idle 2 minutes at high pressure, which idle.minutes keeps running at normal', async () => {
     const { root } = workspace('recent', 5 * MINUTE_MS, 'Booted');
@@ -148,21 +162,51 @@ describe('the idle stage under pressure (rung 1)', () => {
     expect(readIdleStage(readWorkspaceState(root))).toMatchObject({ idleMinutes: 2 });
   });
 
-  test('under disk pressure on another volume it keeps the 2-minute threshold away from the workspace', async () => {
-    const { root } = workspace('recent', 5 * MINUTE_MS, 'Booted');
-    const decisions = await runIdlePass({
-      config: loadConfig(),
-      now: Date.now(),
+  function tick(cause: 'disk' | 'memory') {
+    const disk = [{ volume: '/', freeMb: (cause === 'disk' ? 30 : 500) * 1024, device: statSync(home).dev }];
+    const memory = {
+      level: 'normal' as const,
+      availableBytes: (cause === 'memory' ? 1 : 8) * 1024 ** 3,
+      totalBytes: 16 * 1024 ** 3,
+    };
+    vi.spyOn(daemonMeasure, 'measureDisk').mockResolvedValue(disk);
+    vi.spyOn(daemonMeasure, 'measureMemory').mockResolvedValue(memory);
+    vi.spyOn(daemonMeasure, 'measureTick').mockImplementation(async () => ({
+      measurement: {
+        disk,
+        memory,
+        load1: 0,
+        cores: 8,
+        bootedSimulators: 1,
+        runningEmulators: null,
+        interaction: null,
+      },
       sims,
       simsError: null,
-      act: true,
-      log,
       devices: await devicesNow(),
-      pressure: { level: 'high', reasons: ['fixture'], volumes: new Set([statSync(home).dev + 1]) },
-    });
-    expect(decisions).toEqual([expect.objectContaining({ path: root, outcome: 'active' })]);
-    expect(readIdleStage(readWorkspaceState(root))).toBeNull();
-  });
+    }));
+  }
+
+  test.each([
+    { cause: 'disk' as const, outcome: 'active', state: 'Booted', idleMinutes: null },
+    { cause: 'memory' as const, outcome: 'idle', state: 'Shutdown', idleMinutes: 2 },
+  ])(
+    'at high $cause pressure a workspace idle 3 minutes is stopped only for memory, and its outputs go either way',
+    async ({ cause, outcome, state, idleMinutes }) => {
+      const { root, udid } = workspace('running', 3 * MINUTE_MS, 'Booted');
+      const outputs = join(workspaceDir(root), 'derived-data');
+      mkdirSync(outputs, { recursive: true });
+      writeFileSync(join(outputs, 'Build.o'), 'x'.repeat(4096));
+      tick(cause);
+
+      const passes = await runHomePasses({ act: true, log });
+
+      expect(passes.workspaces).toEqual([expect.objectContaining({ path: root, outcome })]);
+      expect(readIdleStage(readWorkspaceState(root))?.idleMinutes ?? null).toBe(idleMinutes);
+      expect(sims.find((sim) => sim.udid === udid)?.state).toBe(state);
+      expect(existsSync(outputs)).toBe(false);
+    },
+  );
 });
 
 describe('the dormant stage', () => {
@@ -664,6 +708,31 @@ describe('the pressure ladder', () => {
       expect.objectContaining({ rung: 1, kind: 'delete-build-outputs', outcome: 'done', bytes: expect.any(Number) }),
     );
     expect(deleted).toEqual([]);
+  });
+
+  test('at high disk pressure rung 1 deletes the outputs of a serving workspace idle 2 minutes and keeps it running with its Metro store', async () => {
+    const { root, udid } = workspace('serving', 3 * MINUTE_MS, 'Booted');
+    serve(root, 3 * MINUTE_MS);
+    const outputs = join(workspaceDir(root), 'derived-data');
+    mkdirSync(outputs, { recursive: true });
+    writeFileSync(join(outputs, 'Build.o'), 'x'.repeat(4096));
+    const store = join(metroCache(), 'app');
+    mkdirSync(store, { recursive: true });
+    const stop = vi.spyOn(stopCommand, 'runIdleStop').mockRejectedValue(new Error('unexpected idle stop'));
+
+    const { actions } = await runLadder(
+      { ...input(true, async () => pressure('high')), devices: await devicesNow(), sims, lastRung: 1 },
+      pressure('high'),
+    );
+
+    expect(actions).toEqual([
+      expect.objectContaining({ rung: 1, kind: 'delete-build-outputs', target: root, outcome: 'done' }),
+    ]);
+    expect(actions[0]?.detail).toContain(`kept the Metro store ${store}: its own dev server runs`);
+    expect(existsSync(outputs)).toBe(false);
+    expect(existsSync(store)).toBe(true);
+    expect(stop).not.toHaveBeenCalled();
+    expect(sims.find((sim) => sim.udid === udid)?.state).toBe('Booted');
   });
 
   test('rung 1 records nothing for a stopped workspace whose only output is a Metro store a running dev server shares', async () => {

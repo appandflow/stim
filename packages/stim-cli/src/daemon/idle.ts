@@ -37,7 +37,6 @@ import {
 import { createNdjsonWriter } from '../ndjson.ts';
 import { IDLE_SETTING, idleKeep, idleScope, PRESSURE_IDLE_MS, type IdleKeepFacts } from '../policy/idle.ts';
 import { metroStoreRoot } from '../stimd/metro/metro-store.ts';
-import { onShortVolume } from '../stimd/passes/unowned.ts';
 import { resolveSupervisorTarget } from '../stimd/metro/ownership.ts';
 import { MODE_COMMAND, readWorkspaceLaunches, launchWithoutMetro } from '../stimd/metro/state.ts';
 import { getProject, type Config, type ProjectRecord } from '../workspace/config.ts';
@@ -67,11 +66,8 @@ export interface IdlePassInput {
   devices: OwnedDeviceActivity[];
   /** False in `daemon.mode report`: decide and log, act on nothing. */
   act: boolean;
-  /**
-   * Set while the pressure level is high or critical: the idle stage then takes every workspace idle 2 minutes, or with
-   * `volumes`, set when disk alone raised the level, only those on one of those devices.
-   */
-  pressure?: { level: 'high' | 'critical'; reasons: string[]; volumes?: ReadonlySet<number> };
+  /** Set while the memory level is high or critical: the idle stage then takes every workspace idle 2 minutes. */
+  pressure?: { level: 'high' | 'critical'; reasons: string[] };
   /** A workspace the pass never takes: the one the running command belongs to. */
   protectedRoot?: string;
   /** The daemon tick's context, whose reads run without blocking its event loop. */
@@ -194,6 +190,38 @@ async function decide(
 }
 
 /**
+ * How long a workspace whose dev server or owned device runs has had no activity, by the evidence and keeps of the idle
+ * stage at the pressure idle threshold, or why it is kept; null when nothing of it runs that the idle stage judges.
+ */
+export async function runningIdle(
+  path: string,
+  project: ProjectRecord,
+  reading: Pick<IdlePassInput, 'sims' | 'simsError' | 'devices' | 'operation'> & { level: 'high' | 'critical' },
+  locked: boolean,
+): Promise<{ idleMs: number; serving: boolean } | { kept: string } | null> {
+  const { level, ...rest } = reading;
+  const input: IdlePassInput = {
+    ...rest,
+    config: null,
+    now: Date.now(),
+    act: true,
+    log: () => {},
+    pressure: { level, reasons: [] },
+  };
+  const { candidate: found, decision } = await decide(path, project, input, locked);
+  if (!found.runs) return null;
+  if ('kept' in found) return { kept: found.kept };
+  if (!decision?.stop) return { kept: decision?.reason ?? 'its activity cannot be read' };
+  return { idleMs: decision.idleMs, serving: found.serving };
+}
+
+/** Whether the workspace's dev server runs, or cannot be shown not to. */
+export function servesNow(path: string, project: ProjectRecord): boolean {
+  const { status } = supervisorOf(path, project);
+  return status !== 'none' && status !== 'stale';
+}
+
+/**
  * The regenerable outputs the idle stage deletes, and why each other one stays. `targets` names the Cargo `target/`
  * among `paths`, recognised by the same reads that listed it.
  */
@@ -221,8 +249,7 @@ export async function idleOutputs(
       ([other, project]) =>
         canonicalPath(other) !== canonicalPath(path) &&
         canonicalPath(metroStoreRoot(other)) === canonicalPath(store) &&
-        supervisorOf(other, project).status !== 'none' &&
-        supervisorOf(other, project).status !== 'stale',
+        servesNow(other, project),
     );
     if (sharer) kept.push(`kept the Metro store ${store}: the running dev server of ${sharer[0]} shares it`);
     else paths.push(store);
@@ -342,13 +369,11 @@ async function enterIdleStage(
               return outcome?.status === 'shut-down' && booted.has(`${kind}:${slot}`) ? [key] : [];
             });
             const { operation } = input;
-            const volumes = input.pressure?.volumes;
             const checkout = await checkoutRootOf(path, operation?.signal, operation);
             const outputs = await idleOutputs(
               path,
               config,
               launchingOf(checkout, launchersOf(operation, operation?.signal, false), operation, operation?.signal),
-              volumes ? (output) => onShortVolume([output], volumes) : undefined,
             );
             const freed = await deleteOutputs(
               outputs.paths,
@@ -389,13 +414,10 @@ export async function runIdlePass(input: IdlePassInput): Promise<DaemonWorkspace
   const decisions: DaemonWorkspaceDecision[] = [];
   const config = input.config;
   if (!config) return decisions;
-  const { pressure, ...unpressured } = input;
   for (const [path, project] of Object.entries(config.projects)) {
     let entry: DaemonWorkspaceDecision;
-    const here =
-      pressure?.volumes && !onShortVolume([path, workspaceDir(path)], pressure.volumes) ? unpressured : input;
     try {
-      const { candidate: found, decision } = await decide(path, project, here, false);
+      const { candidate: found, decision } = await decide(path, project, input, false);
       if (!found.runs) continue;
       const last = decision?.last ? { basis: decision.last.basis, at: new Date(decision.last.at).toISOString() } : null;
       if (!decision) entry = { path, lastActivity: last, outcome: 'kept', detail: 'kept' in found ? found.kept : '' };
@@ -409,7 +431,7 @@ export async function runIdlePass(input: IdlePassInput): Promise<DaemonWorkspace
           detail: `no activity for ${Math.floor(decision.idleMs / MINUTE_MS)} minutes; daemon.mode report acts on nothing`,
         };
       } else {
-        const result = await enterIdleStage(path, project, config, here);
+        const result = await enterIdleStage(path, project, config, input);
         entry = { path, lastActivity: last, ...result };
       }
     } catch (error) {
