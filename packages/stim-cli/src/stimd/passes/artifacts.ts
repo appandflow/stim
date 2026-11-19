@@ -12,6 +12,7 @@ import {
   worktreeActivityOfAsync,
 } from '../../commands/gc/worktrees.ts';
 import { canonicalPath } from '../../commands/gc/paths.ts';
+import { isAbsentPath } from '../../fs-util.ts';
 import {
   recentNativeUseReason,
   workspaceBuildReasons,
@@ -824,7 +825,7 @@ export async function clearSourceTrees(
     if (!listed.some((entry) => canonicalPath(entry.path) === root))
       return keepAll(selected, 'git could not list the worktrees that may link into it');
     const linked = listed
-      .filter((entry) => !entry.bare && canonicalPath(entry.path) !== root && pathExists(entry.path))
+      .filter((entry) => !entry.bare && canonicalPath(entry.path) !== root && !isAbsentPath(entry.path))
       .map((entry) => ({ path: entry.path, linked: true, source: worktree.path }));
     const stillSelected: string[] = [];
     for (const path of selected) {

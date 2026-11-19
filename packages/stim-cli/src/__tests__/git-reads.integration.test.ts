@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -336,6 +337,38 @@ describe('an acting run asks git again under the claim', () => {
       expect(results.get(target)?.detail).toContain(detail);
       expect(existsSync(target)).toBe(status === 'kept');
     } finally {
+      close();
+    }
+  });
+
+  test('source checkout dependencies are kept when a listed worktree cannot be inspected', async () => {
+    const main = repo('main');
+    upsertProject(main, { metroPort: null });
+    recordWorkspaceUse(main, new Date(Date.now() - 40 * 86_400_000));
+    const operation = testContext({ home });
+    const close = openGitReads(operation);
+    const sealed = join(home, 'sealed');
+    try {
+      const worktrees = await artifactWorktreesFor(operation);
+      const linked = join(sealed, 'feature-worktree');
+      git(['-C', main, 'worktree', 'add', '-q', '-b', 'feature', linked]);
+      symlinkSync(join(main, 'node_modules'), join(linked, 'node_modules'));
+      chmodSync(sealed, 0o000);
+      const target = join(main, 'node_modules');
+      const results = await clearSourceTrees([target], {
+        protectedRoot: '/nowhere',
+        pinned: () => false,
+        worktrees,
+        recheck: async () => null,
+        level: 'critical',
+        launchers: freshLaunchers(operation, operation.signal),
+        operation,
+      });
+      expect(results.get(target)?.status).toBe('kept');
+      expect(results.get(target)?.detail).toContain(linked);
+      expect(existsSync(target)).toBe(true);
+    } finally {
+      chmodSync(sealed, 0o755);
       close();
     }
   });
