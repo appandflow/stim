@@ -725,7 +725,7 @@ describe('the pressure ladder', () => {
     expect(existsSync(join(buildCache(), 'ios', 'kept-key'))).toBe(true);
   });
 
-  test('rung 3 at high keeps a cache whose size walk timed out with a kept action, and logs the failure once per 6 hours', async () => {
+  test('rung 3 at high keeps a cache or the Swift compilation cache whose size walk timed out with a kept action, and logs the failure once per 6 hours', async () => {
     workspace('idle-hour', 60 * MINUTE_MS, 'Shutdown');
     mkdirSync(join(buildCache(), 'ios'), { recursive: true });
     vi.stubEnv('STIM_CACHES_BUILD_CACHE_MAX_GB', '12');
@@ -746,6 +746,7 @@ describe('the pressure ladder', () => {
     const kept = (actions: { rung: number | null; kind: string; target: string; outcome: string }[]) =>
       actions.find((action) => action.rung === 3 && action.kind === 'trim-cache' && action.target === buildCache());
 
+    const startedAt = Date.now();
     const first = await runLadder(
       input(true, async () => pressure('high')),
       pressure('high'),
@@ -777,6 +778,54 @@ describe('the pressure ladder', () => {
       pressure('high'),
     );
     expect(sizeRecords()).toHaveLength(2);
+
+    const compilation = join(home, 'compilation-cache');
+    mkdirSync(compilation);
+    vi.stubEnv('STIM_CACHES_SWIFT_COMPILATION_CACHE_MAX_GB', '1');
+    const swift = await runLadder(
+      input(true, async () => pressure('high')),
+      pressure('high'),
+    );
+    expect(swift.actions.find((action) => action.rung === 3 && action.target === compilation)).toMatchObject({
+      kind: 'empty-cache',
+      outcome: 'kept',
+      detail: 'its size walk did not finish within 120 seconds, so it was left alone',
+    });
+    vi.setSystemTime(startedAt);
+  });
+
+  test('a build headroom run goes on to the Metro cache after the build cache could not be sized and was kept', async () => {
+    caches('kept-key');
+    vi.stubEnv('STIM_CACHES_BUILD_CACHE_MAX_GB', '12');
+    vi.stubEnv('STIM_CACHES_METRO_CACHE_MAX_GB', '1');
+    const device = statSync(home).dev;
+    vi.spyOn(daemonMeasure, 'measureDisk').mockResolvedValue([{ volume: '/', freeMb: 100 * 1024, device }]);
+    const real = getExecutor();
+    setExecutor({
+      ...getExecutor(),
+      runFileAsync: async (file, args, options) => {
+        if (file === 'du' && args.at(-1) === buildCache()) throw Object.assign(new Error('du: denied'), { status: 1 });
+        if (file === 'du' && args.at(-1) === metroCache()) return `${4 * 1024 * 1024}\t${metroCache()}\n`;
+        return real.runFileAsync(file, args, options);
+      },
+    });
+
+    await runLadderToFree({
+      operation: testContext({ env: { ...process.env, CI: undefined, STIM_DAEMON: undefined } }),
+      signal: new AbortController().signal,
+      device,
+      freeMb: 200 * 1024,
+      protectedRoot: join(projects, 'build'),
+    });
+
+    const reached = readFileSync(daemonNdjsonFile(), 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((line): { event?: unknown; target?: unknown } => JSON.parse(line))
+      .filter((record) => record.event === 'pressure_action')
+      .map((record) => record.target);
+    expect(reached).toEqual([buildCache(), metroCache()]);
+    expect(existsSync(join(buildCache(), 'ios', 'unused'))).toBe(true);
   });
 
   test('a memory-only level never trims a cache or deletes a device', async () => {

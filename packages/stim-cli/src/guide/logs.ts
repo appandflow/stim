@@ -379,7 +379,8 @@ between its rung's startedAt and its end. Steps and what items counts:
 A step writes one record. A normal tick writes one (dormant_candidates), a high
 one up to 16, a critical one up to 22; the dormant step adds ~7/hour,
 build_end_measure one a pass. None alter a pass.
-A size walk that fails or times out adds one warn record, event size_failed,
+A size walk that fails or times out adds one record, event size_failed (warn,
+info when aborted),
 from whichever process ran it, at most once per folder and reason every 6
 hours per process; du failing on a folder that does not exist is not one. Fields: path, caller (the function that asked), reason (timeout with
 limitMs, exit with status, signal with signal, aborted, error with code, or

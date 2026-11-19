@@ -90,20 +90,24 @@ function absent(path: string): boolean {
  */
 export function noteSizeFailure(path: string, failure: SizeFailure, ms: number): void {
   try {
-    if (failure.reason === 'exit' && absent(path)) return;
     const key = `${configDir()}\0${path}`;
-    failures.set(key, failure);
     const slot = `${key}\0${failure.reason}`;
     const now = Date.now();
     const last = recorded.get(slot);
-    if (last !== undefined && now - last < RECORD_EVERY_MS && now >= last) return;
+    const due = last === undefined || now - last >= RECORD_EVERY_MS || now < last;
+    if (due && failure.reason === 'exit' && absent(path)) {
+      failures.delete(key);
+      return;
+    }
+    failures.set(key, failure);
+    if (!due) return;
     recorded.set(slot, now);
     const caller = sizeCaller();
     const writer = createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES });
     try {
       writer.write({
         src: 'size',
-        level: 'warn',
+        level: failure.reason === 'aborted' ? 'info' : 'warn',
         event: 'size_failed',
         msg: `could not size ${path} for ${caller}: the walk ${describeSizeFailure(failure)} (ran ${Math.round(ms / 1000)} seconds)`,
         path,

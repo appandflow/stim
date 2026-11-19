@@ -170,7 +170,8 @@ export async function measureTree(path: string, options: TreeOptions): Promise<T
   try {
     const size = await walkTree(path, options, errors);
     const ms = Date.now() - startedAt;
-    if (!size) noteSizeFailure(path, sizeFailure(errors.at(-1), options.timeoutMs, ms >= options.timeoutMs), ms);
+    const overran = ms >= options.timeoutMs;
+    if (!size) noteSizeFailure(path, sizeFailure(overran ? undefined : errors.at(-1), options.timeoutMs, overran), ms);
     return size;
   } catch (error) {
     if (options.operation?.signal.aborted) noteSizeFailure(path, { reason: 'aborted' }, Date.now() - startedAt);

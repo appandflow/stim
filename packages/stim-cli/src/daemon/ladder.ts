@@ -110,6 +110,8 @@ export interface LadderInput {
   stop?: AbortSignal;
   /** The device id of the one volume a build's headroom run frees; without it, the volumes under `disk.minFreeGb`. */
   volume?: number;
+  /** Called before each action the ladder executes, whatever its outcome. */
+  attempting?: () => void;
 }
 
 interface RungContext extends LadderInput {
@@ -231,6 +233,7 @@ async function run(
     return;
   }
   context.operation?.signal.throwIfAborted();
+  context.attempting?.();
   let outcome: ActionOutcome;
   try {
     outcome = await executeAction(plan, {
