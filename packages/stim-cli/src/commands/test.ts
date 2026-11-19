@@ -42,7 +42,8 @@ const signalGroup = (pid: number, signal: NodeJS.Signals) => {
  * reaches the whole group, the group gets SIGKILL when it outlives a grace period, whether or not its leader exited,
  * and the run resolves only once the group is empty. `survivors` is true when processes of the group still run after
  * that; the declaration then keeps recording the child, so the slot claim stays held by the group. Without `group`
- * (a run nested in another stim test), the command stays in the caller's group, which the outer run waits for.
+ * (a run nested in another stim test), the command stays in the caller's group, which the outer run waits for, and a
+ * cancellation, its grace and SIGKILL reach only the direct child, not the outer group's other members.
  */
 async function runCommand(
   context: StimContext,
@@ -71,14 +72,15 @@ async function runCommand(
     { until: emptied },
   );
   const pid = group ? child.pid : undefined;
-  let killTimer: ReturnType<typeof setTimeout> | undefined;
-  const killGroup = () => {
-    if (pid !== undefined) signalGroup(pid, 'SIGKILL');
+  const send = (signal: NodeJS.Signals) => {
+    if (pid !== undefined) signalGroup(pid, signal);
+    else if (child.exitCode === null && child.signalCode === null) child.kill(signal);
   };
+  let killTimer: ReturnType<typeof setTimeout> | undefined;
+  const killGroup = () => send('SIGKILL');
   const forward = () => {
-    if (pid === undefined) return;
     const reason = context.signal.reason;
-    signalGroup(pid, reason === 'SIGINT' ? 'SIGINT' : reason === 'SIGHUP' ? 'SIGHUP' : 'SIGTERM');
+    send(reason === 'SIGINT' ? 'SIGINT' : reason === 'SIGHUP' ? 'SIGHUP' : 'SIGTERM');
     killTimer ??= setTimeout(killGroup, groupExitBudgetMs(KILL_GRACE_CAP_MS));
   };
   context.signal.addEventListener('abort', forward);

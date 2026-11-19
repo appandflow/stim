@@ -29,6 +29,11 @@ if (hold && process.env.FAKE_WORKER) {
   worker.unref();
 }
 if (process.env.FAKE_IGNORE_TERM) process.on('SIGTERM', () => {});
+if (process.env.FAKE_NESTED_HOLD) {
+  const inner = require('node:child_process').spawn(process.execPath, [process.env.FAKE_NESTED_HOLD, 'test', '--', 'jest'], { env: { ...process.env, FAKE_NESTED_HOLD: '', FAKE_HOLD: hold + '-inner' }, stdio: 'ignore' });
+  writeFileSync(hold + '.inner-stim', String(inner.pid));
+  inner.on('exit', (code, signal) => writeFileSync(hold + '.inner-exit', String(code ?? signal)));
+}
 if (process.env.FAKE_NESTED) {
   const r = require('node:child_process').spawnSync(process.execPath, [process.env.FAKE_NESTED, 'test', '--', 'jest'], { env: { ...process.env, FAKE_NESTED: '', FAKE_WORKER: 'ignore', FAKE_HOLD: hold + '-inner', FAKE_EXIT_AFTER_START: '1' }, stdio: 'inherit' });
   process.exit(r.status ?? 1);
@@ -281,6 +286,22 @@ describe.skipIf(process.platform === 'win32')('stim test', () => {
     await vi.waitFor(() => expect(liveSlots()).toEqual([]), { timeout: 20_000 });
     await run.done;
   }, 180_000);
+
+  test('a signal to a nested stim alone stops its runner and leaves the outer run going', async () => {
+    const hold = join(home, 'nest');
+    const run = start(['--', 'jest'], { FAKE_HOLD: hold, FAKE_NESTED_HOLD: cli });
+    await vi.waitFor(() => expect(existsSync(`${hold}-inner.started`)).toBe(true), { timeout: 30_000 });
+    const innerRunner = runnerPid(`${hold}-inner`);
+    process.kill(Number(readFileSync(`${hold}.inner-stim`, 'utf8')), 'SIGTERM');
+    await vi.waitFor(() => expect(existsSync(`${hold}.inner-exit`)).toBe(true), { timeout: 30_000 });
+    expect(readFileSync(`${hold}.inner-exit`, 'utf8')).toBe('143');
+    expect(alive(innerRunner)).toBe(false);
+    expect(alive(runnerPid(hold))).toBe(true);
+    expect(liveSlots()).toHaveLength(1);
+    writeFileSync(`${hold}.go`, '');
+    expect((await run.done).code).toBe(0);
+    expect(liveSlots()).toEqual([]);
+  }, 120_000);
 
   test('stim test -- npm test is the script form and gets the count too', async () => {
     const { code, stdout, stderr } = await start(['--', 'npm', 'test']).done;
