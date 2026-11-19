@@ -45,7 +45,7 @@ async function openedPath(path: string): Promise<string> {
     const listed = await getExecutor().runFileAsync(
       '/usr/sbin/lsof',
       ['-a', '-p', String(process.pid), '-d', String(file.fd), '-Fn'],
-      { timeoutMs: LSOF_TIMEOUT_MS },
+      { timeoutMs: LSOF_TIMEOUT_MS, env: { LC_ALL: 'en_US.UTF-8' } },
     );
     const name = listed
       .split('\n')
