@@ -122,18 +122,28 @@ regenerable? If not the case lets just delete things we know are", 2026-11-19
   stay.
 - Exact, only in an Exact app's `target/` (beside `exact.mjs`) or one of a
   checkout of Exact itself (`scripts/app.mjs` and `host/web-js/module.mjs` at
-  its root): the build products, caches and build scratch directories Exact's
-  build tools write there, named in `EXACT_TOP` in
+  its root): the folders Exact's build tools write there that hold only build
+  products, caches or build scratch, named in `EXACT_TOP` in
   `packages/stim-cli/src/workspace/cargo-target.ts` with the Exact source files
   they come from, and the scratch directories `mkdtempSync` makes from
   `web-check-` and `push-ts-` (a directory named by the prefix and six random
-  letters or digits; a file such as `web-check-failure.json` stays). Records Exact keeps of runs and sessions (`traces/`
-  from `host/web/serve.mjs` and `scripts/agent-inspect.mjs`, `web-receipts/`
-  and `native-receipts/` from `scripts/evidence.mjs`), its unit ledger, crate
-  claims and lock files, scratch a dev server may still serve from, and
-  `web-dist.*` siblings (Exact reads `web-dist.json` as input and treats an
-  unreceipted sibling as foreign) are not on it. A name an app chooses itself,
-  such as its own web dist folder, is not on it either.
+  letters or digits; a file such as `web-check-failure.json` stays). A folder
+  that also holds a ledger, a build receipt, a lock file Exact takes or a token
+  is not on it: `apple-modules/` keeps its own sweep ledger; `clients/`,
+  `native-runs/` and `native-reuse/` hold Apple bundle receipts with the
+  development token Exact's `developmentLinks()` reads; `apple-swift/`,
+  `web-js-gpu/` and `web-js-modules/` hold Exact's locks and claims; and the web
+  dists (`web-dist/`, `web-loops/`, `web-runs/`, `web-dist-resident/`,
+  `web-dist-stages/`, `web-js-dev-stage/`) carry `.exact-build.json` receipts.
+  Records Exact keeps of runs and sessions (`traces/` from
+  `host/web/serve.mjs` and `scripts/agent-inspect.mjs`, `web-receipts/` and
+  `native-receipts/` from `scripts/evidence.mjs`), its unit ledger, crate
+  claims and lock files at the top of the target, scratch a dev server may still
+  serve from, and `web-dist.*` siblings (Exact reads `web-dist.json` as input and
+  treats an unreceipted sibling as foreign) are not on it either, nor is a name
+  an app chooses itself, such as its own web dist folder.
+- A symbolic link is never build output, whatever its name: deleting through it
+  would reach what it points at.
 
 Anything else stays, such as Criterion's and Gungraun's saved benchmark
 baselines (`criterion/`, `gungraun/`, `iai/`) or a Solana program's private key
