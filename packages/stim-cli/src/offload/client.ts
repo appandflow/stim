@@ -1802,6 +1802,7 @@ export async function offloadBuild(
         dependencies: dependencySelection(identity, choice.target),
         ...(native ? { native: native.provider } : {}),
         ...(choice.target.platform === 'ios' && choice.target.exact ? { exact: choice.target.exact } : {}),
+        warmth: { platform: choice.target.platform, project: identity.warmthProject },
       });
     const deadline = Date.now() + RESUME_WINDOW_MS;
     let delay = RESUME_DELAY_MS;

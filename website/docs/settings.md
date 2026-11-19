@@ -646,7 +646,7 @@ provider. A project whose `xcodebuild` changes its own fingerprinted inputs
 builds on the machine, fails the fingerprint check there; `auto` builds here and a named selection
 refuses, so
 set `remote.build` to `local` for it. The `--json` payload and `lastBuilds` carry
-`offloadedTo`, or `offloadFallback` with the reason it built here,
+`offloadedTo` with `offloadReason`, why that machine took it, or `offloadFallback` with the reason it built here,
 `stim status` shows the machine and its step while a build runs there, and
 `stim stats` counts offloaded runs apart from cold runs and keeps where each
 compiling build ran and why (see [`stats`](./commands.md#stats)). On the

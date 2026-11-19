@@ -302,7 +302,7 @@ async function run(names: string[], note: (line: string) => void) {
   });
 }
 
-test('linked checkouts offer separate areas while projects in one checkout reuse their area', async () => {
+test('linked checkouts offer separate areas but one project id, while projects in one checkout reuse their area', async () => {
   execFileSync('git', ['add', 'package.json'], { cwd: repo });
   execFileSync(
     'git',
@@ -339,6 +339,12 @@ test('linked checkouts offer separate areas while projects in one checkout reuse
   const areas = machine.requests.filter(({ method }) => method === 'build.offer').map(({ params }) => params.repo);
   expect(areas[0]).not.toBe(areas[1]);
   expect(areas.slice(1)).toEqual([areas[1], areas[1], areas[1]]);
+  const projects = machine.requests
+    .filter(({ method }) => method === 'build.offer')
+    .map(({ params }) => JSON.stringify(params.warmth));
+  expect(projects[0]).toMatch(/"project":"[0-9a-f]{16}"/);
+  expect(projects[1]).toBe(projects[0]);
+  expect(projects[2]).not.toBe(projects[0]);
 });
 
 describe('offloadBuild', () => {

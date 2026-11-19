@@ -69,13 +69,16 @@ The worker records each successful build's platform and hashed project key in
 `built.json` in the area, and answers `build.offer` from it. The record goes
 with the area when stim-server evicts it, is deleted when the area's home is
 replaced for another schema, and is deleted when a build fails on a corrupt
-compilation cache, which empties that cache. The worker's maintenance passes
-do not reach an area (discovery skips `server.workerRoot`, and the
-compilation-cache and Cargo-target caps act on the worker's own home and
-discovered checkouts), and an offloaded build does not run the build headroom
-ladder. A trim that empties part of an area some other way leaves the record in
-place: that worker still ranks warm and the next build there is slower, never
-wrong, since the build is fingerprint-checked.
+compilation cache, which empties that cache. The worker's own maintenance
+passes do not reach an area: discovery skips `server.workerRoot`, and the
+compilation-cache and Cargo-target caps act on the worker's home and on
+discovered checkouts. A native Xcode or Gradle build on the worker runs the
+build headroom ladder (LLP 0006) in its area's home when the volume is short,
+and that ladder can empty the home's shared caches, such as the Swift
+compilation cache, while it keeps the build's own workspace. That trim, and any
+other that empties part of an area, leaves the record in place: the worker
+still reports the area warm, and the next build there is slower, never wrong,
+since the build is fingerprint-checked.
 
 This ordering supersedes #4321's strict `remote.machines` order for builds;
 devices and macOS app hosts keep that order.

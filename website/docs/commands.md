@@ -2110,14 +2110,15 @@ Server and Reload, and no Metro section.
 
 In `--json`, an environment with a recorded run carries
 `lastBuilds: { ios?, android? }`, each
-`{ platform, status, cacheHit, cacheSkipped, durationMs, fingerprint, startedAt, finishedAt, errorCode?, missReason?, buildMachine?, builtOn?, offloadedTo?, offloadFallback?, diagnostics? }`.
+`{ platform, status, cacheHit, cacheSkipped, durationMs, fingerprint, startedAt, finishedAt, errorCode?, missReason?, buildMachine?, builtOn?, offloadedTo?, offloadReason?, offloadFallback?, diagnostics? }`.
 `status` is `ok` or `failed`, and `cacheHit` is `local`, `remote`, or `false`
 when the run compiled or failed before finding an app. `buildMachine` records the
 selected `auto`, `local`, or machine name. `builtOn` records `here` or the worker
 name when a build ran; it is absent on a cache hit or a refusal before building.
 Invalid, unlisted or unpaired selections refuse at setup without a build record.
 `offloadedTo` names the
-remote machine that compiled the app; `offloadFallback` is why a run that
+remote machine that compiled the app, and `offloadReason` why it took the build,
+including what it held warm for it; `offloadFallback` is why a run that
 considered offloading built here instead, such as
 `janics-mac-mini: busy (load at or above 2/core; load 8.2/core, 2 builds)`. A failed run whose
 compiler reported errors carries `diagnostics`: up to five
