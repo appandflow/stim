@@ -498,8 +498,9 @@ registered worktree does, at every pressure level, critical included:
 - every git-ignored file present byte for byte in the main checkout, except
   inside directories git ignores that are named like build output or
   `node_modules`;
-- not inside a dot-folder of its main checkout other than `.worktrees`, such
-  as `.claude/worktrees`, which another tool manages.
+- not inside a dot-folder other than `.worktrees` of the nearest checkout that
+  holds it, its main checkout or a worktree inside it, such as `.claude/worktrees`,
+  which another tool manages.
 
 A dirty discovered worktree is kept, never archived. A checkout whose source
 scan exceeds its bound is never reduced and is listed under "Needs a person".

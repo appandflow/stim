@@ -157,7 +157,7 @@ describe('a discovered worktree on the removal path', () => {
     expect((await sweep()).hidden?.skipped).toContain('package.json');
   });
 
-  it('never removes a worktree another tool keeps in a dot-folder of the main checkout', async () => {
+  it('never removes a worktree another tool keeps in a dot-folder of the main checkout or of a worktree inside it', async () => {
     const hold = await discoveredRemovalHold(join(main, '.claude', 'worktrees', 'x'), {
       main,
       idleMs: day,
@@ -165,6 +165,17 @@ describe('a discovered worktree on the removal path', () => {
       reduceOnly: false,
     });
     expect(hold).toContain('managed by another tool');
+    const feature = join(main, '.worktrees', 'feature');
+    mkdirSync(feature, { recursive: true });
+    writeFileSync(join(feature, '.git'), 'gitdir: elsewhere\n');
+    expect(
+      await discoveredRemovalHold(join(feature, '.claude', 'worktrees', 'task'), {
+        main,
+        idleMs: day,
+        reads: reads.discoveredReads(),
+        reduceOnly: false,
+      }),
+    ).toContain('managed by another tool');
     expect(
       await discoveredRemovalHold(join(main, '.worktrees', 'x'), {
         main,
