@@ -115,7 +115,7 @@ test('dependency warmth requires the requested install; directories and pruned s
     assert('result' in reply);
     return reply.result.warm;
   };
-  expect(await warmth()).toEqual({ checkout: true, dependencies: true, build: false });
+  expect(await warmth()).toEqual({ checkout: true, dependencies: true, build: false, project: false });
   mkdirSync(join(checkout, 'apps', 'other'), { recursive: true });
   expect(await warmth({ ...params, dependencies: { project: 'apps/other', packageName: 'other' } })).toHaveProperty(
     'dependencies',
@@ -155,7 +155,7 @@ test('dependency warmth requires the requested install; directories and pruned s
   expect(await warmth({ ...params, dependencies: standalone })).toHaveProperty('dependencies', false);
   expect(await warmth()).toHaveProperty('dependencies', true);
   rmSync(checkout, { recursive: true });
-  expect(await warmth()).toEqual({ checkout: false, dependencies: false, build: false });
+  expect(await warmth()).toEqual({ checkout: false, dependencies: false, build: false, project: false });
 });
 
 test('older offers without Ruby context work and each context keeps its report for the existing 60 seconds', async () => {

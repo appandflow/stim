@@ -42,6 +42,7 @@ const firstLaunch = CASES.find((each) => each.id === 'first-launch');
 if (!firstLaunch) throw new Error('first-launch case is missing');
 
 const FIND_LOG = `log="$(grep -o '"log":"[^"]*"' "$(dirname "$(command -v stim)")/stim-eval.json" | cut -d'"' -f4)"`;
+const realLsof = ['/usr/sbin/lsof', '/usr/bin/lsof'].find((path) => existsSync(path));
 
 function fakeAgent(body: string): string {
   const file = join(directory, 'fake-claude');
@@ -183,13 +184,13 @@ echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"resul
     expect(existsSync(dirname(workspace ?? ''))).toBe(false);
   }, 30_000);
 
-  test('a leftover-process scan that fails once is retried instead of invalidating the trial', async () => {
+  test.skipIf(!realLsof)('a leftover-process scan that fails once is retried instead of invalidating the trial', async () => {
     const tools = join(directory, 'tools');
     mkdirSync(tools);
     const marker = join(directory, 'lsof-failed-once');
     writeFileSync(
       join(tools, 'lsof'),
-      `#!/bin/sh\nif [ ! -e "${marker}" ]; then touch "${marker}"; exit 1; fi\nexec /usr/sbin/lsof "$@"\n`,
+      `#!/bin/sh\nif [ ! -e "${marker}" ]; then touch "${marker}"; exit 1; fi\nexec ${realLsof} "$@"\n`,
     );
     chmodSync(join(tools, 'lsof'), 0o755);
     const bin = fakeAgent(
