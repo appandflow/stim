@@ -207,8 +207,8 @@ RULES DURING THE LOOP
       summary: 'Query app errors and device output',
       body: () => `QUERY THE LOGS
 
-Run from the app directory, the one whose package.json depends on react-native
-or expo:
+Run from the workspace that launched the affected app (for React Native or
+Expo, the directory whose package.json depends on react-native or expo):
 
   stim logs --errors                     errors since the last launch
   stim logs --since 10m --level warn     a time window and a minimum level
