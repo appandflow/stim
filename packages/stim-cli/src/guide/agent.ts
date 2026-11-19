@@ -5,14 +5,14 @@ export default {
 WORKSPACE SETUP
 
 WORKTREE: Use a linked worktree by default; create one with Git if needed.
-The clean source checkout is infrastructure, not a workspace. Unless you work
-in place, run stim worktree warm in a new worktree, even one a harness made.
-Wait for warm to exit successfully (exit code 0) before the first edit, install,
-start, ios or android there. Concurrent writes to the destination are unsafe.
-Options: stim guide lifecycle options.
+The clean source checkout is infrastructure, not a workspace. Unless you
+work in place, run stim worktree warm once in your worktree, even one a harness
+made. Wait for warm to exit successfully (exit code 0) before the first edit,
+install, start, ios or android there.
+Concurrent writes to the destination are unsafe. Options: stim guide lifecycle options.
 
 SINGLE CHECKOUT: Work in place, without warm, only when the user asks or the
-task needs their uncommitted changes. Run the app command from that checkout.
+task needs their uncommitted changes. Run app commands from that checkout.
 
 Run doctor before native work only when STATUS says it is due for the
 requested platform, or when diagnosing a toolchain problem. A worktree check
