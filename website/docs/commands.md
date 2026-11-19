@@ -2568,7 +2568,8 @@ What each level deletes. A level includes the ones below it.
 - **high**: also the [pressure ladder](./build-caches.md#disk-pressure) at high,
   to its end. Under memory pressure, idle dev servers and their build outputs
   (the idle stage); under disk pressure, the build outputs of workspaces idle 2
-  minutes, their dev server and devices left running. Parked
+  minutes, their dev server and devices left running (later rungs take a
+  running workspace once the idle stage stops it at `idle.minutes`). Parked
   devices until the level clears, Build and Metro caches trimmed to half their
   caps, the dormant stage for workspaces idle 10 minutes, the `node_modules` and
   `Pods` of linked worktrees idle 1 hour that `stim worktree warm` can
@@ -2581,12 +2582,7 @@ What each level deletes. A level includes the ones below it.
   emptied whole (the compilation cache, ccache, the build cache except entries
   in use, Metro, the macOS artifact cache, and the React Native and Android
   caches), the fingerprint index and memo, the dormant stage and `node_modules`
-  and `Pods` for workspaces idle 2 minutes, even while their dev server or
-  devices run (a device is shut down only to be deleted; the dev server is
-  stopped only to delete its Metro store or `node_modules` and `Pods`, and
-  `stim revive` restarts it; a finished worktree or source checkout whose dev
-  server or device runs waits for the idle stage), every unpinned Gradle
-  version, clean
+  and `Pods` for workspaces idle 2 minutes, every unpinned Gradle version, clean
   finished worktrees without the grace period and clean pushed worktrees no Stim
   command used for 7 days (the first only while `maintenance.removeFinishedWorktrees`
   is true, the second only while `maintenance.removeIdleWorktrees` is true),

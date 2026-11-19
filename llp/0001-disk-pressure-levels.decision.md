@@ -170,9 +170,15 @@ included: it uses the 2-minute stop only when memory measures above normal).
   server or an owned device runs, and stops nothing. Idle is judged on the same
   evidence and with the same keeps as the idle stage (a dev server whose
   requests Stim cannot see, a hosted placement, `maintenance.keep`, and so on),
-  and every other guard of rung 1 holds. The workspace's Metro store stays
-  while its own dev server runs, as it does while another workspace's server
-  shares it; a Cargo `target/` is left to the Cargo trim of rung 3.
+  and every other guard of rung 1 holds. The Metro store stays while any dev
+  server that uses it runs, the workspace's own or another workspace's that
+  shares it, read again from the registry under the workspace's claims right
+  before the store is removed; no other output rung 1 deletes is read by a
+  running dev server. A Cargo `target/` is left to the Cargo trim of rung 3.
+- The rungs after rung 1 that need nothing of a workspace running (the dormant
+  stage, `node_modules` and Pods, finished worktrees, a source checkout's
+  dependencies) take a running workspace only once the idle stage has stopped
+  it at `idle.minutes`.
 - Memory pressure keeps the 2-minute idle stage, rung 0, the end of deferred
   shutdowns and of the booted grace.
 
@@ -186,42 +192,6 @@ Maintainer decision: "I feel like we maybe too agressively stop metro / sims
 on low disk, those are more RAM based I think no? Unless we need to stop the
 worktree in order to free disk space maybe we should only stop fast on low
 RAM?", then "lets do all 4", 2026-11-19.
-
-## At critical a deletion stops only what it needs
-
-At critical disk pressure a workspace idle 2 minutes or more is taken even
-while its dev server or an owned device runs, judged as the idle stage judges
-it. Something is stopped only as part of a deletion on a volume under pressure
-that needs it, in one action under the workspace's native-run and metro-start
-claims, after every other check of that deletion passed and the workspace was
-judged idle again; the deletion checks everything again after the stop.
-
-- Rung 4 shuts down each owned device to delete it, through teardown, and only
-  a device whose data lies on a volume under pressure. The dev server keeps
-  running, the logs stay and the workspace is not marked dormant.
-- Rung 5 stops the dev server to delete the workspace's Metro store, when no
-  other running dev server shares it, and to delete the `node_modules` and Pods
-  of a linked worktree. The stop is an idle stop that `stim revive` resumes;
-  the devices keep running. A tree the dev server's own processes do not keep,
-  but something else does (another process working in the worktree, an agent
-  session, `maintenance.keep`), keeps the dev server running.
-- Rungs 7 and 8 still keep a workspace whose dev server or owned device runs.
-  Under disk pressure alone, a finished worktree or a source checkout whose
-  dev server or device runs now waits until the idle stage stops it at
-  `idle.minutes`; before, the 2-minute stop let these rungs take it 2 minutes
-  after its last activity.
-
-Chosen by the implementer of #5998, not by the maintainer: the Metro store goes
-in rung 5, after the parked devices and shared caches of rungs 2 and 3, rather
-than in rung 1; the deletions at rung 4 do not archive logs or mark the
-workspace dormant while its dev server runs; a booted device is deleted
-without first reaping its log collector, whose end with the device was not
-verified.
-Rungs 7 and 8 were left out of this change: rung 7 removes through the worktree
-check's plan and removal guard, which keep a workspace whose dev server runs or
-whose device is booted, and rung 8 judges a source checkout by its full
-evidence under the claims of every workspace in it; neither takes the dev
-server stop that rung 5 uses yet.
 
 ## The folders a build wrote are measured by the daemon
 

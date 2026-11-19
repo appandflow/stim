@@ -569,7 +569,7 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
     idle stage under memory pressure, H. Kept: as above.
   Outputs of workspaces idle 2 minutes, running or not (nothing stopped)
     rung 1 under disk pressure, H. Kept: as above; a Cargo target/ for rung 3,
-    the Metro store while its dev server runs.
+    the Metro store while a dev server using it runs.
   Parked devices
     rung 2, H until the level clears, C all.
   Cargo target/ stale profiles and incremental/ data (at C also idle units), first in rung 3
@@ -1131,11 +1131,10 @@ THE PRESSURE LADDER
        cache, macOS artifacts, React Native and Android caches), with the
        fingerprint index and memo
     4  the dormant stage: workspaces idle 10 minutes (high) or 2 minutes
-       (critical); a running one loses only its devices
+       (critical)
     5  node_modules and Pods of idle linked worktrees, at high (idle 1 hour)
        and critical (idle 2 minutes), only those worktree warm can
-       restore; at critical a running dev server stops only for these or
-       its Metro store
+       restore
     6  idle Gradle and Kotlin daemons, an unused watchman, unpinned Gradle
        versions (critical: all unpinned), TMPDIR leftovers, the worktree trash
     7  worktrees, only while maintenance.removeFinishedWorktrees is true:
@@ -1901,8 +1900,7 @@ WORKTREE DEPENDENCIES
   ios/Pods, at the root or a project root, never the source checkout's, in
   two ways: the dormant reduction at every level once its workspace has been
   idle for idle.dormantDays (1 day), and pressure ladder rung 5 at high (idle
-  1 hour) and at critical (idle 2 minutes, its dev server stopped for it when
-  nothing else keeps them). A worktree
+  1 hour) and at critical (idle 2 minutes). A worktree
   locked with git worktree lock keeps them always, so a rollback checkout
   stays runnable. Otherwise a worktree keeps them while it is in use (its
   dev server runs, a native run or build holds it), while it was used within
