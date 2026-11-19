@@ -33,69 +33,20 @@ const NOT_RESTORED = `${OWN_PREFIX}not-restored-`;
  */
 const CARGO_TOP_FILES = new Set(['.rustc_info.json', 'CACHEDIR.TAG', ...PROFILE_LOCKS]);
 const CARGO_TOP_DIRS = new Set(['doc', 'package', 'tmp', '.metabuild']);
-/**
- * The entries Exact's build tools write at the top of a target that hold only build products, caches or build scratch
- * (Exact's `scripts/app.mjs`, `scripts/sweep.mjs`, `scripts/cargo-dep-info.mjs`, `scripts/filesystem.mjs`,
- * `scripts/rust.mjs`, `scripts/publisher.mjs`, `host/apple/compose.mjs`, `host/apple/extensions.mjs`,
- * `host/apple/svg-filter.mjs`, `host/apple/shader-libraries.mjs`, `host/web/build.mjs`, `host/web/dev.mjs` and
- * `host/web-js/module.mjs`). A folder that also holds a ledger, a build receipt, a lock file Exact takes or a token is
- * not on it: `apple-modules/` (its own sweep ledger), `clients/`, `native-runs/` and `native-reuse/` (Apple bundle
- * receipts carrying the development token), `apple-swift/`, `web-js-gpu/` and `web-js-modules/` (Exact's locks and
- * claims), and the web dists `web-dist/`, `web-loops/`, `web-runs/`, `web-dist-resident/`, `web-dist-stages/` and
- * `web-js-dev-stage/` (their `.exact-build.json` receipts). Nor are Exact's records of runs and sessions (`traces/`,
- * `web-receipts/`, `native-receipts/`), its ledgers, claims and locks at the top of the target, or dev-server scratch.
- */
-const EXACT_TOP = new Set([
-  '.exact-swept',
-  'apple-extension-module-cache',
-  'bake',
-  'bake-compiled',
-  'bake-input-hashes.json',
-  'bake-inputs',
-  'bake-metadata',
-  'dev-gpu',
-  'exact-filesystem-tool',
-  'metal-kept',
-  'proof-web',
-  'push-tools',
-  'rust-bake',
-  'rust-dev',
-  'rust-modules',
-  'rust-sign',
-  'rust-tools',
-  'swift-packages',
-  'web-bakes',
-  'web-opt',
-]);
-/**
- * Exact's build scratch directories, made by `mkdtempSync` from `web-check-` (`host/web/build.mjs`) and `push-ts-`
- * (`scripts/publisher.mjs`), which appends six random letters or digits.
- */
-const EXACT_SCRATCH = /^(?:web-check-|push-ts-)[A-Za-z0-9]{6}$/;
-
-/** Whether `root` is an Exact app (beside its `exact.mjs`) or a checkout of Exact itself. */
-function exactRoot(root: string): boolean {
-  return (
-    existsSync(join(root, 'exact.mjs')) ||
-    (existsSync(join(root, 'scripts', 'app.mjs')) && existsSync(join(root, 'host', 'web-js', 'module.mjs')))
-  );
-}
-
 /** Whether `path` is a Cargo profile directory: one holding `.fingerprint/` or a lock file Cargo takes there. */
 function cargoProfile(path: string): boolean {
   return fingerprintDir(path) || PROFILE_LOCKS.some((name) => existsSync(join(path, name)));
 }
 
 /**
- * Whether the top-level entry `name` of `target` is build output Stim knows: Cargo's own files and folders, a Cargo
- * profile, a target triple directory holding only profiles, Cargo's files and `doc/`, and, in an Exact app's or Exact's
- * own target (`exact`), what Exact writes there. A symbolic link never is: deleting through it reaches what it points at.
+ * Whether the top-level entry `name` of `target` is Cargo build output: Cargo's own files and folders, a Cargo profile,
+ * or a target triple directory holding only profiles, Cargo's files and `doc/`. A symbolic link never is: deleting
+ * through it reaches what it points at.
  */
-function buildOutputEntry(target: string, name: string, exact: boolean): boolean {
+function buildOutputEntry(target: string, name: string): boolean {
   const path = join(target, name);
   const stat = lstatSync(path, { throwIfNoEntry: false });
   if (!stat || stat.isSymbolicLink()) return false;
-  if (exact && (EXACT_TOP.has(name) || (stat.isDirectory() && EXACT_SCRATCH.test(name)))) return true;
   if (!stat.isDirectory()) return CARGO_TOP_FILES.has(name);
   if (CARGO_TOP_DIRS.has(name) || cargoProfile(path)) return true;
   const inner = entriesOf(path);
@@ -117,12 +68,11 @@ function buildOutputEntry(target: string, name: string, exact: boolean): boolean
 export function targetEntries(target: string): { output: string[]; kept: string[] } | null {
   const entries = entriesOf(target);
   if (!entries) return null;
-  const exact = exactRoot(dirname(target));
   const output: string[] = [];
   const kept: string[] = [];
   for (const { name } of entries.toSorted((a, b) => a.name.localeCompare(b.name))) {
     if (name.startsWith(OWN_PREFIX)) continue;
-    (buildOutputEntry(target, name, exact) ? output : kept).push(name);
+    (buildOutputEntry(target, name) ? output : kept).push(name);
   }
   return { output, kept };
 }
@@ -569,13 +519,13 @@ function recentEntryUse(path: string, name: string, now: number, idleMs: number)
 }
 
 /**
- * Deletes the top-level entries of `target` that Stim recognises as build output (`targetEntries`) under its trim
- * claim, and keeps every other entry, once it is still a Cargo `target/` Stim recognises, holds no copy a trim could
- * not put back, shows no use within `idleMs` (`recentTargetUse`) and has no other filesystem mounted inside. Each
- * recognised entry no process uses and whose lock files no build holds is renamed into `target/.stim-trimmed`, its
- * locks are read again at the new path, and once all are moved the processes are read again: an entry a build or
- * process took meanwhile is put back. The moved entries are then deleted without crossing into another filesystem,
- * and the `target/` goes too when nothing is left in it.
+ * Deletes the top-level entries of `target` that are Cargo build output (`targetEntries`) under its trim claim, and
+ * keeps every other entry, once it is still a Cargo `target/` Stim recognises, holds no copy a trim could not put
+ * back, shows no use within `idleMs` (`recentTargetUse`), has no other filesystem mounted inside, no process uses any
+ * path in it and no build holds a Cargo lock file or an Exact lock file in it. Each Cargo entry is renamed into
+ * `target/.stim-trimmed`, its locks are read again at the new path, and once all are moved the processes are read
+ * again: a lock taken or any path in the target used meanwhile puts every entry back. The moved entries are then
+ * deleted without crossing into another filesystem, and the `target/` goes too when nothing is left in it.
  */
 export async function deleteCargoTarget(registeredTarget: string, options: DeleteOptions): Promise<CargoTrimResult> {
   const claimed = await withTrimClaim(registeredTarget, async (target): Promise<CargoTrimResult> =>
@@ -644,10 +594,10 @@ async function deleteClaimed(
   if (mount) return keep(`${mount} is another filesystem`);
   const first = await readTargetUse(target, launching, signal);
   if ('kept' in first) return keep(first.kept);
+  if (first.used.length) return keep(`a process uses ${first.used[0]}`);
   for (const name of names) {
     signal?.throwIfAborted();
     const dir = join(target, name);
-    if (inUse(first.used, dir)) return keep(`a process uses ${dir}`);
     const held = await heldLock(dir, signal);
     if (held) return keep(`a build holds ${held}`);
   }
@@ -697,8 +647,7 @@ async function deleteClaimed(
     if (exactTook) return await putBackAll(`a build took ${exactTook} during the move`);
     const after = moved.length ? await readTargetUse(target, launching, signal) : { used: [] };
     if ('kept' in after) return await putBackAll(after.kept);
-    const taken = moved.find(({ dir, there }) => inUse(after.used, dir) || inUse(after.used, there));
-    if (taken) return await putBackAll(`a process took ${taken.dir} during the move`);
+    if (after.used.length) return await putBackAll(`a process took ${after.used[0]} during the move`);
     const now = Date.now();
     for (const entry of moved) {
       const used = recentEntryUse(entry.there, entry.name, now, idleMs);

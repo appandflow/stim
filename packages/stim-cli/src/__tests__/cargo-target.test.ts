@@ -568,13 +568,40 @@ describe.skipIf(process.platform === 'win32')(
         'another filesystem',
       ],
       ['it is no longer a Cargo target', () => rmSync(join(target, 'Cargo.toml')), 'no longer a Cargo target'],
+      [
+        'a process works in the target itself',
+        () => stubProcesses({ lsof: (args) => (args.includes('-Fn') ? `p100\nn${real}\n` : '') }),
+        'a process uses',
+      ],
+      [
+        'a process holds a file in an entry that stays',
+        () => {
+          mkdirSync(join(dir, 'notes'));
+          writeFileSync(join(dir, 'notes', 'open.txt'), 'x');
+          ageTree(dir);
+          stubProcesses({ lsof: (args) => (args.includes('-Fn') ? `p100\nn${real}/notes/open.txt\n` : '') });
+        },
+        'a process uses',
+      ],
+      [
+        'a process opens a file in an entry that stays during the move',
+        () => {
+          mkdirSync(join(dir, 'notes'));
+          ageTree(dir);
+          let reads = 0;
+          stubProcesses({
+            lsof: (args) => (args.includes('-Fn') && reads++ > 0 ? `p100\nn${real}/notes/new.txt\n` : ''),
+          });
+        },
+        'a process took',
+      ],
     ])('it stays whole when %s', async (_, arrange, why) => {
       arrange();
 
       const result = await remove();
 
       expect(result.removed).toEqual([]);
-      expect(result.kept).toEqual([expect.stringContaining(why)]);
+      expect(result.kept).toContainEqual(expect.stringContaining(why));
       expect(existsSync(join(dir, 'debug', 'app'))).toBe(true);
       expect(existsSync(join(dir, 'doc', 'index.html'))).toBe(true);
       expect(existsSync(join(dir, '.stim-trimmed'))).toBe(false);
@@ -680,15 +707,22 @@ describe.skipIf(process.platform === 'win32')(
 );
 
 describe.skipIf(process.platform === 'win32')(
-  "deleting an idle Exact app's target, which holds no Cargo profile (skipped on win32, as above)",
+  "deleting an idle Exact app's target, whose Exact folders all stay (skipped on win32, as above)",
   () => {
     let dir: string;
     let lock: string;
     beforeEach(() => {
       dir = join(target, 'target');
       writeFileSync(join(target, 'exact.mjs'), '');
-      for (const path of ['.apple-cargo-locks/aarch64-apple-ios', 'bake/app', 'clients/app', 'apple-swift/ios-17.0'])
+      for (const path of [
+        '.apple-cargo-locks/aarch64-apple-ios',
+        'bake/app',
+        'clients/app',
+        'apple-swift/ios-17.0',
+        'debug/.fingerprint',
+      ])
         mkdirSync(join(dir, path), { recursive: true });
+      writeFileSync(join(dir, '.rustc_info.json'), '{}');
       lock = join(dir, '.apple-cargo-locks', 'aarch64-apple-ios', 'libapp.lock.flock');
       for (const file of [lock, join(dir, '.exact-sweep.json.lock'), join(dir, 'clients', 'app', 'client.js')])
         writeFileSync(file, '');
@@ -702,7 +736,7 @@ describe.skipIf(process.platform === 'win32')(
     });
     const remove = () => deleteCargoTarget(dir, { idleMs: DAY, launching: noLaunchers(target) });
 
-    test('its build output goes when old, while its traces, web-dist inputs, ledgers, receipts and locks stay', async () => {
+    test('only its Cargo output goes when old; every folder Exact writes stays', async () => {
       mkdirSync(join(dir, 'traces'));
       writeFileSync(join(dir, 'traces', 'trace-1.json'), '{"session":1}');
       writeFileSync(join(dir, 'web-dist.json'), '{}');
@@ -718,15 +752,18 @@ describe.skipIf(process.platform === 'win32')(
 
       const result = await remove();
 
-      expect(result.removed).toEqual(['bake', 'push-ts-Xy9Z01', 'web-check-AbC123']);
+      expect(result.removed).toEqual(['.rustc_info.json', 'debug']);
       expect(readdirSync(dir).toSorted()).toEqual([
         '.apple-cargo-locks',
         '.exact-sweep.json',
         '.exact-sweep.json.lock',
         'apple-modules',
         'apple-swift',
+        'bake',
         'clients',
+        'push-ts-Xy9Z01',
         'traces',
+        'web-check-AbC123',
         'web-check-failure.json',
         'web-dist.json',
         'web-dist.previous',
@@ -767,7 +804,7 @@ describe.skipIf(process.platform === 'win32')(
       stubProcesses({ lsof: (args) => (args.at(-1)?.endsWith('libapp.lock.flock') ? '4242\n' : '') });
 
       expect((await remove()).kept).toEqual([
-        'not recognised as build output: .apple-cargo-locks, .exact-sweep.json, .exact-sweep.json.lock, apple-swift, clients',
+        'not recognised as build output: .apple-cargo-locks, .exact-sweep.json, .exact-sweep.json.lock, apple-swift, bake, clients',
         expect.stringContaining('libapp.lock.flock'),
       ]);
     });
