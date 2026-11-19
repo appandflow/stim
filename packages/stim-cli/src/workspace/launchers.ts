@@ -1,8 +1,9 @@
 import { constants } from 'node:fs';
-import { access, lstat, readdir, realpath } from 'node:fs/promises';
+import { access, lstat, open, readdir, realpath, stat } from 'node:fs/promises';
 import { join, sep } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
 import { canonicalPath } from '../commands/gc/paths.ts';
+import { getExecutor } from '../exec.ts';
 import { answered, hungRead, Unanswered } from './bounded-read.ts';
 import { launcherDirectories } from './launcher-directories.ts';
 
@@ -31,6 +32,33 @@ interface LauncherIo {
   realpath: (path: string) => Promise<string>;
   /** False when this user may not execute the path (EACCES); any other failure throws. */
   executable: (path: string) => Promise<boolean>;
+  /** The real path of the file that opening `path` reaches, for a link this user may execute but not resolve; any failure throws. */
+  opened: (path: string) => Promise<string>;
+}
+
+const LSOF_TIMEOUT_MS = 2000;
+
+async function openedPath(path: string): Promise<string> {
+  if (process.platform !== 'darwin') throw new Error('not supported on this platform');
+  const file = await open(path, constants.O_RDONLY | constants.O_NONBLOCK);
+  try {
+    const listed = await getExecutor().runFileAsync(
+      '/usr/sbin/lsof',
+      ['-a', '-p', String(process.pid), '-d', String(file.fd), '-Fn'],
+      { timeoutMs: LSOF_TIMEOUT_MS },
+    );
+    const name = listed
+      .split('\n')
+      .find((line) => line.startsWith('n/'))
+      ?.slice(1);
+    if (!name) throw new Error('lsof named no path');
+    const resolved = await realpath(name);
+    const [reached, named] = await Promise.all([file.stat(), stat(resolved)]);
+    if (reached.dev !== named.dev || reached.ino !== named.ino) throw new Error('lsof named another file');
+    return resolved;
+  } finally {
+    await file.close();
+  }
 }
 
 const REAL_IO: LauncherIo = {
@@ -45,6 +73,7 @@ const REAL_IO: LauncherIo = {
         throw error;
       },
     ),
+  opened: openedPath,
 };
 
 const ABSENT = ['ENOENT', 'ENOTDIR'];
@@ -109,9 +138,10 @@ export function launcherReader(
             signal?.throwIfAborted();
             if (absent(error)) continue;
             if (denied(error)) {
-              // access(2) follows the link the way execve(2) does, without readlink(2): macOS denies resolving
+              // access(2) and open(2) follow the link the way execve(2) does, without readlink(2): macOS denies resolving
               // `/usr/sbin/weakpass_edit`, whose target is in root-only `authserver`, and this user cannot run it either,
-              // while a mode 0700 root link such as a 1Password `/usr/local/bin` entry cannot be read but still runs.
+              // while a mode 0700 root link such as a 1Password `/usr/local/bin` entry cannot be read but still runs, and
+              // opens to its target.
               try {
                 if (!(await answered(directory, () => io.executable(entry), timeoutMs))) continue;
               } catch (gone) {
@@ -120,6 +150,13 @@ export function launcherReader(
                 if (absent(gone)) continue;
                 found.incomplete.push({ kind: 'entry', path: entry, error: describe(gone) });
                 continue;
+              }
+              try {
+                found.targets.push(await answered(directory, () => io.opened(entry), timeoutMs));
+                continue;
+              } catch (unopened) {
+                if (unopened instanceof Unanswered) throw unopened;
+                signal?.throwIfAborted();
               }
             }
             found.incomplete.push({ kind: 'entry', path: entry, error: describe(error) });

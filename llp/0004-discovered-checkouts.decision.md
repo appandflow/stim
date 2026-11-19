@@ -255,8 +255,16 @@ That includes every entry of a directory this user can list but not search.
 `/usr/sbin/authserver`, and reading it as a failure kept every checkout on
 every pass.) A link this user cannot resolve but can execute, such
 as a root link with mode 0700 (macOS denies `readlink` on it, not the path
-lookup), stays a failure. Not seen, as a result: a launcher that only root or
-another user can run, pointing into one of this user's checkouts. Any other
+lookup), is resolved through the file it opens to: on macOS the entry is opened
+read-only and non-blocking, `lsof` names the opened file, and that path counts
+as the link's target when its `realpath` is the same file (device and inode) as
+the open one. Any failure of that (open denied, `lsof` failing, timing out or
+naming no path or another file, any other platform) leaves the entry a
+failure; the open and `lsof` together are one call under the 3 second bound
+above. (#5896: a root 0700 `/usr/local/bin/1password-mcp` kept every checkout
+for days, through a critical disk level.) Not seen, as a result: a launcher
+that only root or another user can run, pointing into one of this user's
+checkouts. Any other
 failure to inspect a directory (permission, I/O, a timeout) keeps every
 checkout for that operation, with a reason naming the
 directory. A wrapper script that only names a path is not followed.
@@ -583,7 +591,8 @@ become a `LauncherProblem` naming the path and the error; ENOENT and ENOTDIR are
 no launcher. A single unreadable entry is not ruled out by its link text: a
 textual target outside every checkout can still pass through a directory link
 into one, and the resolution is what failed, so no rule narrows the keep without
-risking a missed launcher. The pending-read slot is shared with the home scan, so
+risking a missed launcher. Resolving through the opened file, above, reads where
+the link leads, not its text, so it is not such a rule. The pending-read slot is shared with the home scan, so
 a pending read of a folder that is not a launcher directory is reported as a read
 outside PATH, not as a PATH directory. `stim doctor` reports the finding
 `launcher-evidence-incomplete` with the path, the error and the fix, from a read

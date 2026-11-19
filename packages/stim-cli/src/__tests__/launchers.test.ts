@@ -16,6 +16,7 @@ const io = (
   links: Record<string, string | Error> = {},
   unrunnable: readonly string[] = [],
   gone: Record<string, string> = {},
+  opens: Record<string, string> = {},
 ) => ({
   readdir: async (path: string) => {
     const entry = listing[path];
@@ -33,6 +34,11 @@ const io = (
   executable: async (path: string) => {
     if (gone[path]) throw missing(gone[path]);
     return !unrunnable.includes(path);
+  },
+  opened: async (path: string) => {
+    const target = opens[path];
+    if (!target) throw missing('ENOENT');
+    return target;
   },
 });
 
@@ -89,6 +95,25 @@ describe('the PATH launcher scan', () => {
     expect(vanished).toEqual({ targets: ['/work/app/.build/release/tool'], incomplete: [] });
     const unchecked = await scan(['/usr/sbin'], io(entries, links, [], { '/usr/sbin/weakpass_edit': 'EIO' }));
     expect(unchecked.incomplete).toEqual([{ kind: 'entry', path: '/usr/sbin/weakpass_edit', error: 'EIO' }]);
+  });
+
+  it('resolves a link it may execute but not resolve through the file it opens to, keeping only that checkout', async () => {
+    const entries = { '/usr/local/bin': ['1password-mcp'] };
+    const links = { '/usr/local/bin/1password-mcp': missing('EACCES') };
+    const outside = await scan(
+      ['/usr/local/bin'],
+      io(entries, links, [], {}, { '/usr/local/bin/1password-mcp': '/Applications/1Password.app/Contents/MacOS/mcp' }),
+    );
+    expect(outside).toEqual({ targets: ['/Applications/1Password.app/Contents/MacOS/mcp'], incomplete: [] });
+    expect(launcherReason('/work/app', outside)).toBeNull();
+    const inside = await scan(
+      ['/usr/local/bin'],
+      io(entries, links, [], {}, { '/usr/local/bin/1password-mcp': '/work/app/target/release/mcp' }),
+    );
+    expect(launcherReason('/work/app', inside)).toBe(
+      'an executable on PATH runs from it (/work/app/target/release/mcp)',
+    );
+    expect(launcherReason('/work/other', inside)).toBeNull();
   });
 
   it('matches whole path segments, so a launcher into app-2 does not keep app', () => {
