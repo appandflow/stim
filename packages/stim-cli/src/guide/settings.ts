@@ -1556,7 +1556,7 @@ build only while \`server.acceptClientBuilds\` is true on that machine
 rollback\` or \`use\` pins the engine, for a version at or below a build that
 crash-looped, and for a service that does not run the engine.
 Install waits up to 45 seconds for the port, and first stops the
-service's stimd an older Stim's engine switch left outside the job. If stopping the old job
+service's stimd an engine switch left serving it outside the job. If stopping the old job
 or starting the new one fails, install restores the previous plist or unit and attempts
 to restart a previously running service; if it cannot, it prints the
 launchctl bootout/bootstrap or systemctl --user daemon-reload/restart remedy. A running service does not prove readiness; check \`stim service status\`

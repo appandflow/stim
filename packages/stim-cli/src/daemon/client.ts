@@ -1779,7 +1779,8 @@ function successorExpected(): boolean {
 async function successorBound(limit?: ResumeLimit): Promise<boolean> {
   if (successorMissed) return false;
   const base = Date.now() + (refusal?.handover ? HANDOVER_WAIT_MS : CLAIM_WAIT_MS);
-  const deadline = () => Math.min(Math.max(base, Date.now() + jobRestartWaitMs()), limit?.deadline ?? Infinity);
+  const job = () => (refusedBuild === stimdBuildId() ? jobRestartWaitMs() : 0);
+  const deadline = () => Math.min(Math.max(base, Date.now() + job()), limit?.deadline ?? Infinity);
   let started = false;
   while (Date.now() < deadline() && !limit?.signal?.aborted) {
     if (readJsonObject(stimdRecordFile())?.build === stimdBuildId()) {

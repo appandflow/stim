@@ -761,7 +761,7 @@ stim settings set server.acceptClientBuilds true   # on the remote machine
 ```
 
 Install waits up to 45 seconds for the port, and first stops the
-service's stimd an earlier Stim's engine switch left serving it outside the job; uninstall
+service's stimd an engine switch left serving it outside the job; uninstall
 refuses while it listens. `stim service status` names it on its `listener:` line
 and in `--json` as `listener`. If stopping the old job
 or starting the new one fails, install restores the previous plist and attempts
