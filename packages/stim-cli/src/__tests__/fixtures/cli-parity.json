@@ -2726,7 +2726,7 @@
     "error": "error: unknown option '--service=x'"
   },
   "[\"test\",\"--help\"]": {
-    "out": "Usage: stim test [options] [command...]\n\nRun a test command under a machine-wide test slot (concurrency.maxTests), with\nJest's or Vitest's worker count sized to this machine. Without a command, run\nthe project's test script through its package manager. Output and exit status\nare the command's own.\n\nOptions:\n  --wait <seconds>  How long to wait for a test slot before refusing with\n                    STIM_AT_CAPACITY (0 refuses at once); without it, a queued\n                    run waits until a slot frees.\n  --no-wait         Refuse with STIM_AT_CAPACITY instead of queueing when every\n                    test slot is taken.\n  -h, --help        display help for command\n",
+    "out": "Usage: stim test [options] [command...]\n\nRun a test command under a machine-wide test slot (concurrency.maxTests), with\nJest's or Vitest's worker count sized to this machine. Without a command, run\nthe project's test script through its package manager. Output and exit status\nare the command's own.\n\nOptions:\n  --wait <seconds>  How long to wait for a test slot before refusing with\n                    STIM_AT_CAPACITY (0 refuses at once); without it, a queued\n                    run waits up to 90 minutes.\n  --no-wait         Refuse with STIM_AT_CAPACITY instead of queueing when every\n                    test slot is taken.\n  -h, --help        display help for command\n",
     "err": "",
     "exitCode": 0
   },
@@ -2770,6 +2770,17 @@
     "err": "",
     "exitCode": 1,
     "error": "error: unknown option '--ci'"
+  },
+  "[\"test\",\"echo\",\"hi\"]": {
+    "out": "",
+    "err": "",
+    "exitCode": 0,
+    "ran": {
+      "path": ["test"],
+      "args": ["echo", "hi"],
+      "options": {},
+      "parent": {}
+    }
   },
   "[\"test\",\"--wait\"]": {
     "out": "",

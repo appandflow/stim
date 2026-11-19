@@ -74,7 +74,7 @@ interface Run {
   done: Promise<{ code: number | null; stdout: string; stderr: string }>;
 }
 
-function start(args: string[], env: NodeJS.ProcessEnv = {}): Run {
+function start(args: string[], env: NodeJS.ProcessEnv = {}, cwd = app): Run {
   const childEnv: NodeJS.ProcessEnv = { ...process.env };
   delete childEnv.STIM_TEST_RUN;
   delete childEnv.VITEST_MAX_WORKERS;
@@ -85,7 +85,7 @@ function start(args: string[], env: NodeJS.ProcessEnv = {}): Run {
     PATH: `${bin}${delimiter}${process.env.PATH ?? ''}`,
     ...env,
   });
-  const child = spawn(process.execPath, [cli, 'test', ...args], { cwd: app, env: childEnv });
+  const child = spawn(process.execPath, [cli, 'test', ...args], { cwd, env: childEnv });
   let stdout = '';
   let stderr = '';
   child.stdout.on('data', (chunk) => (stdout += chunk));
@@ -281,21 +281,54 @@ describe.skipIf(process.platform === 'win32')('stim test', () => {
     expect(liveSlots()).toEqual([]);
   }, 120_000);
 
-  test("a nested run's surviving worker keeps the outer slot held", async () => {
+  test("the outer run stops a nested run's worker left in its group, then frees the slot", async () => {
     const hold = join(home, 'outer');
     const run = start(['--', 'jest'], { FAKE_HOLD: hold, FAKE_NESTED: cli, STIM_HOME: home });
     await vi.waitFor(() => expect(existsSync(`${hold}-inner.worker`)).toBe(true), { timeout: 30_000 });
     const workerPid = Number(readFileSync(`${hold}-inner.worker`, 'utf8'));
-    const exited = new Promise((resolve) => run.child.once('exit', resolve));
-    await exited;
-    expect(alive(workerPid)).toBe(true);
-    expect(liveSlots()).toHaveLength(1);
-    const blocked = await start(['--no-wait', '--', 'jest']).done;
-    expect(blocked.stderr).toContain('STIM_AT_CAPACITY');
-    process.kill(workerPid, 'SIGKILL');
-    await vi.waitFor(() => expect(liveSlots()).toEqual([]), { timeout: 20_000 });
-    await run.done;
+    const { code, stderr } = await run.done;
+    expect(code).toBe(0);
+    expect(stderr).toContain('stopped the processes the test command left running in its process group');
+    expect(alive(workerPid)).toBe(false);
+    expect(liveSlots()).toEqual([]);
   }, 180_000);
+
+  test('a process the command left in its group is stopped after the grace period and the slot is freed', async () => {
+    const pidFile = join(home, 'leftover');
+    const { code, stderr } = await start(['--', 'sh', '-c', `sleep 600 & echo $! > ${JSON.stringify(pidFile)}; exit 0`])
+      .done;
+    expect(code).toBe(0);
+    expect(stderr).toContain('stopped the processes the test command left running in its process group');
+    expect(alive(Number(readFileSync(pidFile, 'utf8')))).toBe(false);
+    expect(liveSlots()).toEqual([]);
+  }, 180_000);
+
+  test('a bare operand before -- is refused with the -- form as the remedy', async () => {
+    const { code, stdout, stderr } = await start(['echo', 'hi']).done;
+    expect(code).toBe(1);
+    expect(stdout).toBe('');
+    expect(stderr).toContain('STIM_BAD_ARG');
+    expect(stderr).toContain('stim test -- echo hi');
+    expect(liveSlots()).toEqual([]);
+  }, 60_000);
+
+  test('the plain form runs the test script from its package directory when started in a subdirectory', async () => {
+    const pnpm = join(bin, 'pnpm');
+    writeFileSync(
+      pnpm,
+      '#!/usr/bin/env node\nconsole.log(JSON.stringify({ cwd: process.cwd(), argv: process.argv.slice(2) }));\n',
+    );
+    chmodSync(pnpm, 0o755);
+    rmSync(join(app, 'package-lock.json'));
+    writeFileSync(join(app, 'pnpm-lock.yaml'), '');
+    mkdirSync(join(app, 'src'));
+    const { code, stdout, stderr } = await start([], {}, join(app, 'src')).done;
+    expect(code).toBe(0);
+    expect(JSON.parse(stdout.trim().split('\n').at(-1) ?? '')).toEqual({
+      cwd: app,
+      argv: ['run', 'test', `--maxWorkers=${announced(stderr)}`],
+    });
+  }, 60_000);
 
   test('a signal to a nested stim alone stops its runner and leaves the outer run going', async () => {
     const hold = join(home, 'nest');

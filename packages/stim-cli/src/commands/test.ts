@@ -11,6 +11,7 @@ import { operationState } from '../engine/operation-state.ts';
 import { spawnDeclared } from '../engine/spawn-claims.ts';
 import {
   configuredWorkers,
+  nearestPackageDir,
   packageScripts,
   packageManagerFor,
   planTestRun,
@@ -39,16 +40,19 @@ const signalGroup = (pid: number, signal: NodeJS.Signals) => {
 };
 
 /**
- * Runs `argv` and resolves once it exited. With `group`, the command leads its own process group: a cancellation
- * reaches the whole group, the group gets SIGKILL when it outlives a grace period, whether or not its leader exited,
- * and the run resolves only once the group is empty. `survivors` is true when processes of the group still run after
- * that; the declaration then keeps recording the child, so the slot claim stays held by the group. Without `group`
- * (a run nested in another stim test), the command stays in the caller's group, which the outer run waits for, and a
- * cancellation, its grace and SIGKILL reach only the direct child, not the outer group's other members.
+ * Runs `argv` in `cwd` and resolves once it exited. With `group`, the command leads its own process group: a
+ * cancellation reaches the whole group, the group gets SIGKILL when it outlives a grace period, whether or not its
+ * leader exited, processes the command left in the group after it exited get SIGTERM after a grace period and SIGKILL
+ * after another, and the run resolves only once the group is empty. `survivors` is true when processes of the group
+ * still run after that; the declaration then keeps recording the child, so the slot claim stays held by the group.
+ * Without `group` (a run nested in another stim test), the command stays in the caller's group, which the outer run
+ * waits for and stops, and a cancellation, its grace and SIGKILL reach only the direct child, not the outer group's
+ * other members.
  */
 async function runCommand(
   context: StimContext,
   argv: string[],
+  cwd: string,
   env: NodeJS.ProcessEnv,
   group: boolean,
 ): Promise<{ code: number | null; signal: NodeJS.Signals | null; survivors: boolean }> {
@@ -66,7 +70,7 @@ async function runCommand(
     () =>
       getExecutor().spawn(file, args, {
         stdio: ['ignore', 'inherit', 'inherit'],
-        cwd: context.cwd,
+        cwd,
         env,
         detached: group,
       }),
@@ -97,7 +101,13 @@ async function runCommand(
     const cancelled = context.signal.aborted;
     let gone =
       pid === undefined || (await waitForGroupExit(pid, groupExitBudgetMs(cancelled ? KILL_GRACE_CAP_MS : undefined)));
-    if (!gone && pid !== undefined && context.signal.aborted) {
+    if (!gone && pid !== undefined && !context.signal.aborted) {
+      signalGroup(pid, 'SIGTERM');
+      gone = await waitForGroupExit(pid, groupExitBudgetMs(KILL_GRACE_CAP_MS));
+      if (!gone) killGroup();
+      gone ||= await waitForGroupExit(pid, groupExitBudgetMs());
+      if (gone) note(context, `stopped the processes the test command left running in its process group ${pid}`);
+    } else if (!gone && pid !== undefined) {
       killGroup();
       gone = await waitForGroupExit(pid, groupExitBudgetMs());
     }
@@ -127,7 +137,12 @@ function heldTestRun(marker: string): boolean {
   );
 }
 
-async function runTest(context: StimContext, command: string[], ceilingMs: number | undefined): Promise<number> {
+async function runTest(
+  context: StimContext,
+  command: string[],
+  bare: boolean,
+  ceilingMs: number | undefined,
+): Promise<number> {
   const { cwd, env } = context;
   if (process.platform === 'win32')
     return refusal(
@@ -137,6 +152,13 @@ async function runTest(context: StimContext, command: string[], ceilingMs: numbe
       'Run the test command directly on Windows, or run stim test on macOS or Linux.',
     );
   const started = Date.now();
+  if (bare)
+    return refusal(
+      context,
+      'STIM_BAD_ARG',
+      `stim test takes its command after --; got ${command.join(' ')}.`,
+      `stim test -- ${command.join(' ')}`,
+    );
   const scriptRun = testScriptRun(command);
   const manager = scriptRun ?? packageManagerFor(cwd);
   const script = command.length && !scriptRun ? null : testScriptFor(cwd);
@@ -148,6 +170,7 @@ async function runTest(context: StimContext, command: string[], ceilingMs: numbe
       'Pass the test command after --, for example: stim test -- npx jest',
     );
   const argv = command.length ? command : [manager, 'run', 'test'];
+  const dir = command.length ? cwd : (nearestPackageDir(cwd) ?? cwd);
   const program = basename(argv[0] ?? '');
   debugLog.log('test_start', { program, script: script !== null, manager });
   let slot: TestSlotHandle | undefined;
@@ -179,8 +202,8 @@ async function runTest(context: StimContext, command: string[], ceilingMs: numbe
       workers,
       script,
       manager,
-      configured: configuredWorkers(cwd),
-      scripts: packageScripts(cwd),
+      configured: configuredWorkers(dir),
+      scripts: packageScripts(dir),
     });
     debugLog.log('test_workers', { workers, cores, slots, load1, applied: plan.applied, skipped: plan.skipped });
     const basis = `${cores} cores, ${slots} test slot${slots === 1 ? '' : 's'}, load ${load1}`;
@@ -190,7 +213,7 @@ async function runTest(context: StimContext, command: string[], ceilingMs: numbe
         ? `${workers} workers (${basis}) through ${plan.applied}`
         : `no worker count passed: ${plan.skipped} (${basis})`,
     );
-    const result = await runCommand(context, plan.argv, { ...env, STIM_TEST_RUN: marker }, slot !== undefined);
+    const result = await runCommand(context, plan.argv, dir, { ...env, STIM_TEST_RUN: marker }, slot !== undefined);
     retain = result.survivors;
     signal = result.signal;
     exit = signal ? 128 + (constants.signals[signal] ?? 0) : (result.code ?? 1);
@@ -217,7 +240,7 @@ const test: Op = defineOp({
     wait: {
       flags: '--wait <seconds>',
       description:
-        'How long to wait for a test slot before refusing with STIM_AT_CAPACITY (0 refuses at once); without it, a queued run waits until a slot frees.',
+        'How long to wait for a test slot before refusing with STIM_AT_CAPACITY (0 refuses at once); without it, a queued run waits up to 90 minutes.',
       parse: (value: string) => {
         const seconds = Number(value);
         if (!value.trim() || !Number.isFinite(seconds) || seconds < 0)
@@ -230,11 +253,11 @@ const test: Op = defineOp({
       description: 'Refuse with STIM_AT_CAPACITY instead of queueing when every test slot is taken.',
     },
   },
-  run: async ({ args, options }) => {
+  run: async ({ args, options, bare }) => {
     const ceilingMs = options.wait === undefined ? undefined : options.wait === false ? 0 : options.wait * 1000;
     const { value, interrupted } = await runProcessOperation(
       processContext('').cwd,
-      (context) => runTest(context, [...args], ceilingMs),
+      (context) => runTest(context, [...args], bare === true, ceilingMs),
       { hangup: true },
     );
     const code = interrupted ?? value;

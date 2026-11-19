@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { builtinModules } from 'node:module';
 import { basename, dirname, join } from 'node:path';
 
 export type PackageManager = 'pnpm' | 'yarn' | 'bun' | 'npm';
@@ -20,7 +21,8 @@ export function packageManagerFor(cwd: string): PackageManager {
   }
 }
 
-function nearestPackageDir(cwd: string): string | null {
+/** The directory of the package.json nearest to `cwd`, walking up. */
+export function nearestPackageDir(cwd: string): string | null {
   for (let dir = cwd; ; dir = dirname(dir)) {
     if (existsSync(join(dir, 'package.json'))) return dir;
     if (dirname(dir) === dir) return null;
@@ -46,10 +48,36 @@ export function testScriptFor(cwd: string): string | null {
 
 const JEST_CONFIG = /^jest\.config\.(?:[cm]?[jt]s|json)$/;
 const VITEST_CONFIG = /^(?:vitest|vite)\.(?:config|workspace)\.(?:[cm]?[jt]s|json)$/;
-const JEST_CONFIG_SETS = /maxWorkers|minWorkers|runInBand|preset|projects/;
+const JEST_CONFIG_SETS = /maxWorkers|minWorkers|runInBand|projects/;
 const VITEST_CONFIG_SETS =
   /(?:max|min)(?:Workers|Threads|Forks)|fileParallelism|singleFork|singleThread|poolOptions|\bpool\b|projects|workspace|mergeConfig|\bextends\b/;
-const SHARED_CONFIG = /\bfrom\s+['"]\.|\b(?:require|import)\(\s*['"]\.|\.\.\.\s*[\w(]/;
+const KNOWN_PRESET =
+  /["']?\bpreset["']?\s*:\s*["'](?:react-native|@react-native\/jest-preset|jest-expo(?:\/(?:ios|android|web|node))?)["']/g;
+const MODULE =
+  /\bfrom\s*['"]([^'"]*)['"]|\bimport\s*['"]([^'"]*)['"]|\b(?:require|import)\s*\(\s*(?:['"]([^'"]*)['"])?/g;
+const NEUTRAL_MODULES = new Set(['vite', 'vitest', 'vitest/config']);
+const TYPE_MODULES = new Set(['jest', '@jest/types']);
+const ARRAY = /\[[^[\]]*\]/g;
+
+/**
+ * Whether config text may take its settings from somewhere Stim does not read: a Jest preset other than the React
+ * Native and Expo ones, a module other than Node's own, Vite's and Vitest's (Jest's only as types), or an object
+ * spread.
+ */
+function borrowsConfig(text: string): boolean {
+  if (/\bpreset\b/.test(text.replace(KNOWN_PRESET, ''))) return true;
+  for (const match of text.matchAll(MODULE)) {
+    const specifier = match[1] ?? match[2] ?? match[3];
+    if (specifier === undefined) return true;
+    if (NEUTRAL_MODULES.has(specifier) || builtinModules.includes(specifier.replace(/^node:/, ''))) continue;
+    if (TYPE_MODULES.has(specifier) && new RegExp(`\\bimport\\s+type\\b[^;]*?from\\s*['"]${specifier}['"]`).test(text))
+      continue;
+    return true;
+  }
+  let flat = text;
+  for (let last = ''; last !== flat;) [last, flat] = [flat, flat.replace(ARRAY, '')];
+  return /\.\.\.\s*[\w(]/.test(flat);
+}
 
 /** The script names of the package.json nearest to `cwd`. */
 export function packageScripts(cwd: string): string[] {
@@ -61,15 +89,16 @@ export function packageScripts(cwd: string): string[] {
 /**
  * Whether a Jest or Vitest config Stim can see may set the run's workers itself, so that Stim passes no count: a
  * `jest`, `vitest` or `vite` config in the working directory or a parent up to the nearest package.json, or that
- * package.json's `jest` key, that names a worker, serial-run, pool, preset or project setting, imports or spreads
- * another file, or cannot be read. A `--maxWorkers` flag would override `maxWorkers`, a lower `--maxWorkers` than a set
+ * package.json's `jest` key, that names a worker, serial-run, pool or project setting, takes settings from elsewhere
+ * (see `borrowsConfig`), or cannot be read. A `--maxWorkers` flag would override `maxWorkers`, a lower `--maxWorkers` than a set
  * `minWorkers` crashes Vitest 2 and 3, and serial settings must stay serial.
  */
 export function configuredWorkers(cwd: string): { jest: boolean; vitest: boolean } {
   const found = { jest: false, vitest: false };
   const top = nearestPackageDir(cwd);
   const jestKey = top ? readPackage(top)?.jest : undefined;
-  if (jestKey !== undefined && JEST_CONFIG_SETS.test(JSON.stringify(jestKey) ?? '')) found.jest = true;
+  const jestText = JSON.stringify(jestKey) ?? '';
+  if (jestKey !== undefined && (JEST_CONFIG_SETS.test(jestText) || borrowsConfig(jestText))) found.jest = true;
   for (let dir = cwd; ; dir = dirname(dir)) {
     let names: string[] = [];
     try {
@@ -83,8 +112,7 @@ export function configuredWorkers(cwd: string): { jest: boolean; vitest: boolean
         text = readFileSync(join(dir, name), 'utf8');
       } catch {}
       const sets = runner === 'jest' ? JEST_CONFIG_SETS : VITEST_CONFIG_SETS;
-      if (text === null || name.includes('.workspace.') || sets.test(text) || SHARED_CONFIG.test(text))
-        found[runner] = true;
+      if (text === null || name.includes('.workspace.') || sets.test(text) || borrowsConfig(text)) found[runner] = true;
     }
     if (dir === top || dirname(dir) === dir || top === null) return found;
   }
@@ -141,7 +169,7 @@ const JEST_SET =
   /^(?:--maxWorkers|--max-workers|-w)(?:=.*|\d+)?$|^(?:--runInBand|--run-in-band|-i|-c|--config|--preset|--projects)(?:=.*)?$/;
 const VITEST_SET =
   /^(?:--(?:max|min)-?[wW]orkers|-c|--config|-r|--root|--dir|--project|--workspace|--pool)(?:=.*)?$|^--(?:no-)?file-?[pP]arallelism(?:=.*)?$|^--poolOptions\./;
-const PLAIN_SCRIPT = /^(jest|vitest)(?:\s+(?!--(?:\s|$))[\w@%=.:/,+-]+)*$/;
+const PLAIN_SCRIPT = /^(jest|vitest)(?:[ \t]+(?!--(?:[ \t]|$))[\w@%=.:/,+-]+)*$/;
 
 export interface TestPlan {
   argv: string[];

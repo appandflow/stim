@@ -63,6 +63,13 @@ test.each([
     manager: pnpm,
     expected: null,
   },
+  ...['jest\nnode --version', 'jest; node --version', 'jest && node --version'].map((script) => ({
+    name: `a multi-command script ${JSON.stringify(script)} runs unchanged`,
+    argv: ['pnpm', 'run', 'test'],
+    script,
+    manager: pnpm,
+    expected: null,
+  })),
   {
     name: 'a monorepo script runs unchanged',
     argv: ['pnpm', 'run', 'test'],
@@ -101,6 +108,51 @@ test.each([
   { file: 'jest.config.js', text: 'module.exports = { maxWorkers: 2 };', expected: { jest: true, vitest: false } },
   { file: 'jest.config.cjs', text: "module.exports = { preset: 'ts-jest' };", expected: { jest: true, vitest: false } },
   {
+    file: 'jest.config.js',
+    text: "module.exports = { preset: 'react-native', setupFiles: [require.resolve('./setup.js')] };",
+    expected: { jest: false, vitest: false },
+  },
+  {
+    file: 'jest.config.js',
+    text: "module.exports = { preset: 'jest-expo' };",
+    expected: { jest: false, vitest: false },
+  },
+  {
+    file: 'jest.config.js',
+    text: "module.exports = { preset: 'jest-expo/universal' };",
+    expected: { jest: true, vitest: false },
+  },
+  {
+    file: 'jest.config.js',
+    text: "module.exports = require('@acme/jest-config');",
+    expected: { jest: true, vitest: false },
+  },
+  {
+    file: 'jest.config.js',
+    text: 'module.exports = require(process.env.JEST_CONFIG);',
+    expected: { jest: true, vitest: false },
+  },
+  {
+    file: 'jest.config.ts',
+    text: "import type { Config } from 'jest'; const config: Config = { verbose: true }; export default config;",
+    expected: { jest: false, vitest: false },
+  },
+  {
+    file: 'jest.config.ts',
+    text: "import { createDefaultPreset } from 'ts-jest'; export default { ...createDefaultPreset() };",
+    expected: { jest: true, vitest: false },
+  },
+  {
+    file: 'vitest.config.ts',
+    text: "import shared from '@acme/vitest-config'; export default shared;",
+    expected: { jest: false, vitest: true },
+  },
+  {
+    file: 'vitest.config.ts',
+    text: "import { configDefaults, defineConfig } from 'vitest/config'; import { resolve } from 'node:path'; export default defineConfig({ test: { exclude: [...configDefaults.exclude, 'e2e/**'], root: resolve('.') } });",
+    expected: { jest: false, vitest: false },
+  },
+  {
     file: 'jest.config.mjs',
     text: "import base from './base.mjs'; export default base;",
     expected: { jest: true, vitest: false },
@@ -116,6 +168,11 @@ test.each([
     text: "import { defineConfig } from 'vite'; export default defineConfig({ test: { globals: true } });",
     expected: { jest: false, vitest: false },
   },
+  {
+    file: 'vite.config.js',
+    text: "import shared from './shared.js'; export default { ...shared, test: {} };",
+    expected: { jest: false, vitest: true },
+  },
   { file: 'vite.config.js', text: 'export default { ...shared, test: {} };', expected: { jest: false, vitest: true } },
   { file: 'vitest.workspace.ts', text: "export default ['packages/*'];", expected: { jest: false, vitest: true } },
 ])('$file with $text', ({ file, text, expected }) => {
@@ -126,12 +183,14 @@ test.each([
   expect(configuredWorkers(root)).toEqual(expected);
 });
 
-test('a package.json jest key that sets a preset or workers counts as set, an unrelated one does not', () => {
+test('a package.json jest key with an unknown preset counts as set, a React Native preset or an unrelated key does not', () => {
   const root = mkdtempSync(join(tmpdir(), 'stim-test-run-'));
   onTestFinished(() => rmSync(root, { recursive: true, force: true }));
   writeFileSync(join(root, 'package.json'), JSON.stringify({ jest: { testEnvironment: 'node' } }));
   expect(configuredWorkers(root).jest).toBe(false);
   writeFileSync(join(root, 'package.json'), JSON.stringify({ jest: { preset: 'react-native' } }));
+  expect(configuredWorkers(root).jest).toBe(false);
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ jest: { preset: 'ts-jest' } }));
   expect(configuredWorkers(root).jest).toBe(true);
 });
 

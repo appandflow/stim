@@ -2435,10 +2435,11 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
                             capacity.tests and a "tests" status line.
 
   STIM TEST: stim test runs the project's test script through the package
-  manager whose lockfile is nearest (pnpm, yarn, bun, else npm); stim test --
-  <command> runs that command, with no shell and no stdin. It takes a test
-  slot first (--wait <seconds> bounds the wait, --no-wait refuses a full cap
-  with STIM_AT_CAPACITY), then picks a worker count:
+  manager whose lockfile is nearest (pnpm, yarn, bun, else npm), from its
+  package.json's directory; stim test -- <command> runs that command, with no
+  shell and no stdin. A word before -- is refused. It takes a test slot first
+  (--wait <seconds> bounds the wait, else at most 90 minutes; --no-wait
+  refuses a full cap with STIM_AT_CAPACITY), then picks a worker count:
 
     workers = floor((cores - 1) / concurrency.maxTests), times cores / load1
               when the 1-minute load is past the core count, at least 1
@@ -2450,19 +2451,22 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   or vitest command with no --. The command must name no worker, config,
   preset, project, workspace, --pool, --poolOptions.* or file-parallelism
   option, and no jest, vitest or vite config up to package.json (or its jest
-  key) may name workers, pools, serial runs, presets or projects, or import
-  another file. Otherwise the command runs unchanged, with no variables
-  added; one stderr line says which.
+  key) may name workers, pools, serial runs or projects, spread an object,
+  import a module other than Node's, vite's or vitest's (jest's as types), or
+  set a preset other than React Native's or jest-expo's. Otherwise the command
+  runs unchanged, with no variables added; one stderr line says which.
 
-  The command runs in its own process group, with no stdin, so a watch run
-  has no prompt and holds its slot until stopped. SIGINT, SIGTERM and SIGHUP
-  reach the group, which gets SIGKILL after a grace of at most 10s, or on a
-  second interrupt; a cancelled run exits with the signal's code. The slot
-  frees once the group is empty; survivors, or a killed stim, keep it held. A
-  process that leaves the group (its own session, a detached server, a
-  simulator the system starts) does not count. STIM_TEST_RUN names the slot
-  claim: a stim test inside it takes no slot while that claim is held, and
-  runs in the caller's group. Windows refuses stim test.
+  The command runs in its own process group, with no stdin, so a watch run has
+  no prompt and holds its slot until stopped. SIGINT, SIGTERM and SIGHUP reach
+  the group, which gets SIGKILL after a grace of at most 10s, or on a second
+  interrupt; a cancelled run exits with the signal's code. The slot frees once
+  the group is empty; what the command leaves there gets SIGTERM, then
+  SIGKILL, and a killed stim keeps the slot held. A process that leaves the
+  group (its own session, a detached server, a simulator the system starts)
+  does not count. STIM_TEST_RUN names the slot claim: a stim test inside it
+  takes no slot while that claim is held, and runs in the caller's group;
+  under env -i it loses the claim and queues behind its outer run. Windows
+  refuses stim test.
 
   Beyond the caps, at most 2 boots run at once in a Stim home, and no boot
   starts while the stim-daemon's last tick measured macOS memory pressure

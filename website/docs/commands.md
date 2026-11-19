@@ -1313,9 +1313,11 @@ stim test [--wait <seconds> | --no-wait] [-- <command...>]
 Runs a project's tests under a machine-wide test slot, so agents in parallel
 worktrees queue instead of each starting one test worker per core. Without a
 command it runs the project's `test` script through the package manager whose
-lockfile is nearest (`pnpm`, `yarn`, `bun`, else `npm`). With one it runs that
-command as given, with no shell. The output and exit status are the command's
-own; Stim's own lines go to stderr.
+lockfile is nearest (`pnpm`, `yarn`, `bun`, else `npm`), from the directory of
+the nearest `package.json`. With one after `--` it runs that command as given,
+in the working directory, with no shell; a word before `--`, as in
+`stim test echo hi`, is refused with `STIM_BAD_ARG`. The output and exit status
+are the command's own; Stim's own lines go to stderr.
 
 ```bash
 stim test
@@ -1327,6 +1329,8 @@ stim test -- pnpm exec vitest run --project unit
   [settings](./settings.md)). A run past the cap waits in arrival order and
   prints its queue position every 10 seconds. `--wait <seconds>` bounds that
   wait, and `--no-wait` or `--wait 0` refuses at once with `STIM_AT_CAPACITY`.
+  Without either, a run refuses with `STIM_AT_CAPACITY` after 90 minutes, or
+  earlier once the runs ahead of it cannot be shown to be alive.
 - It then picks a worker count: `floor((cores - 1) / concurrency.maxTests)`,
   scaled by `cores / load` when the 1-minute load average is already past the
   core count, and never under 1. On an idle 4-core machine with one test slot
@@ -1346,8 +1350,12 @@ stim test -- pnpm exec vitest run --project unit
   the `--pool` or `--poolOptions.*` flags, or a file-parallelism flag. Nothing
   is passed either when a `jest`, `vitest` or `vite` config between the working
   directory and `package.json`, or its `jest` key, names workers, pools, serial
-  runs, presets, projects or a workspace, imports or spreads another file, or
-  cannot be read. Any other command, such as `turbo run test` or `pnpm -r test`,
+  runs, projects or a workspace, spreads an object, imports or requires any
+  module other than Node's own, `vite`, `vitest` and `vitest/config` (`jest`
+  and `@jest/types` only as types), names a Jest preset other than
+  `react-native`, `@react-native/jest-preset` and `jest-expo` (or its `ios`,
+  `android`, `web` and `node` presets), which set no workers, or cannot be
+  read. Any other command, such as `turbo run test` or `pnpm -r test`,
   runs unchanged under the slot, with no variables added. One stderr line says
   which.
 - The command runs in its own process group with no stdin, so a watch-mode run
@@ -1355,16 +1363,20 @@ stim test -- pnpm exec vitest run --project unit
   `SIGHUP` reach the whole group. The group gets `SIGKILL` after a grace period
   of at most 10 seconds, and at once on a second interrupt, and a cancelled run
   exits with the signal's code. The slot is freed only once every process in
-  the group has exited; processes still running after that, or after `stim`
-  itself is killed, keep holding it. A process that leaves the group, such as
+  the group has exited. Processes the command leaves in its group after it
+  exits, such as a server a Jest `globalSetup` never stopped, get `SIGTERM`
+  after a grace period and `SIGKILL` after another, and one stderr line says
+  so. A process that survives `SIGKILL`, or one left after `stim` itself is
+  killed, keeps holding the slot. A process that leaves the group, such as
   one in its own session, a detached dev server or a simulator the system
   starts, is not counted and does not hold the slot.
 - The command gets `STIM_TEST_RUN`, naming its slot claim. A `stim test`
   started inside it while that claim is held takes no slot and runs in the
-  caller's process group, so the outer run waits for anything it leaves
-  behind. Stim does not check that the inner run really descends from the
+  caller's process group, so the outer run stops anything it leaves behind. Stim does not check that the inner run really descends from the
   outer one: a process that inherited the value runs without a slot until the
-  outer run ends.
+  outer run ends. A nested `stim test` started with a cleared environment, as
+  with `env -i`, has no `STIM_TEST_RUN` and queues for a slot its own outer
+  run holds.
 - Windows refuses `stim test`.
 - A queued run shows in `stim status` and in `daemon.testWaiting`, a running one
   as a `tests 1/2 (concurrency.maxTests)` line and `capacity.tests`.

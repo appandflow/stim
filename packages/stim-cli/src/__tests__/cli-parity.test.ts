@@ -471,6 +471,7 @@ test.each(
     ['test', '--', 'npx', 'jest', '--ci'],
     ['test', '--no-wait', '--wait', '30', '--', 'vitest', 'run'],
     ['test', 'jest', '--ci'],
+    ['test', 'echo', 'hi'],
     ['test', '--wait'],
   ].map((argv) => [argv]),
 )('%j parses as commander parsed it', async ([name = '', ...args]) => {

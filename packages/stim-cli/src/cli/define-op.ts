@@ -67,6 +67,8 @@ export interface OpInput<Options, Args> {
   /** The parent's options: those before the subcommand's name, or anywhere when the parent has no `positionalOptions`. */
   readonly parent: Readonly<Record<string, unknown>>;
   readonly version: string;
+  /** An operand came before `--`, or with no `--` at all. */
+  readonly bare?: boolean;
 }
 
 /** A command: its argv and help derive from `arguments` and `options`. */
@@ -521,7 +523,8 @@ export async function runCli(op: Op, args: string[], context: CliContext): Promi
     if (!current.run) return help(path, current, true);
     checkArity(current, parsed.operands, context.root === true && current === op);
     await context.before?.(path.slice(context.root ? 1 : 0).map((each) => each.name));
-    await current.run({ args: parsed.operands, options: parsed.options, parent, version: context.version });
+    const bare = parsed.leading !== undefined && parsed.leading < end(rest);
+    await current.run({ args: parsed.operands, options: parsed.options, parent, version: context.version, bare });
     return 0;
   }
 }
