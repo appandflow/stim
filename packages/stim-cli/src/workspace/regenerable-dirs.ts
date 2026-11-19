@@ -147,7 +147,7 @@ function* isProfile(path: string, name: string): DirReads<boolean> {
   return (
     !name.startsWith(STIM_OWN) &&
     (yield* realDirectory(join(path, name))) &&
-    (yield* namesIn(join(path, name))).includes(FINGERPRINT)
+    (yield* realDirectory(join(path, name, FINGERPRINT)))
   );
 }
 

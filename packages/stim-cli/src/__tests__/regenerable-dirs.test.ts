@@ -91,6 +91,7 @@ test.each([
   ['only a signed CACHEDIR.TAG in a child, beside other output', ['cache/CACHEDIR.TAG', 'releases/file'], false],
   ['no Cargo files', ['web/index.js'], false],
   ['only a Stim recovery copy holding .fingerprint', ['.stim-not-restored-1-debug/.fingerprint/'], false],
+  ['only a regular file named .fingerprint', ['exports/.fingerprint'], false],
 ])(
   'a target/ beside Cargo.toml with %s is trimmed as a Cargo target ($2), never deleted whole',
   async (_, entries, recognised) => {

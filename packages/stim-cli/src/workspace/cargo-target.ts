@@ -109,6 +109,14 @@ function subdirectories(path: string): Dirent[] | null {
   return entriesOf(path)?.filter((entry) => entry.isDirectory()) ?? null;
 }
 
+function fingerprintDir(profile: string): boolean {
+  try {
+    return lstatSync(join(profile, '.fingerprint')).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 function profilePaths(target: string): { profiles: string[]; extras: Set<string> } | null {
   const profiles: string[] = [];
   const extras = new Set<string>();
@@ -116,14 +124,14 @@ function profilePaths(target: string): { profiles: string[]; extras: Set<string>
   if (!top) return null;
   for (const first of top) {
     if (NOT_PROFILES.has(first.name) || first.name.startsWith(OWN_PREFIX)) continue;
-    if (existsSync(join(target, first.name, '.fingerprint'))) {
+    if (fingerprintDir(join(target, first.name))) {
       profiles.push(first.name);
       continue;
     }
     const inner = entriesOf(join(target, first.name));
     if (!inner) return null;
     for (const second of inner) {
-      if (second.isDirectory() && existsSync(join(target, first.name, second.name, '.fingerprint')))
+      if (second.isDirectory() && fingerprintDir(join(target, first.name, second.name)))
         profiles.push(`${first.name}/${second.name}`);
       else if (second.isDirectory() || !CARGO_TRIPLE_FILES.has(second.name)) extras.add(first.name);
     }
@@ -445,7 +453,7 @@ async function trimClaimed(
   const stale = staleCargoTargetPaths(target, now);
   if ('refusal' in stale) return { ...result, kept: [stale.refusal] };
   let moved = 0;
-  const profilesAt = async (dir: string) => (existsSync(join(dir, '.fingerprint')) ? [dir] : await childProfiles(dir));
+  const profilesAt = async (dir: string) => (fingerprintDir(dir) ? [dir] : await childProfiles(dir));
   const move = async (
     dir: string,
     label: string,
