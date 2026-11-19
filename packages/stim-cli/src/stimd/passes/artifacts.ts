@@ -20,7 +20,7 @@ import {
 } from '../../commands/gc/workspaces.ts';
 import { reclaimKeys } from '../../commands/worktree.ts';
 import { loadConfig } from '../../workspace/config.ts';
-import { discoverCheckouts, type NodeSelection } from '../../workspace/discovery.ts';
+import { discoverCheckouts } from '../../workspace/discovery.ts';
 import {
   freshLaunchers,
   launcherReason,
@@ -144,19 +144,17 @@ function artifactWorktree(
 /** The worktrees whose artifacts maintenance may clear, read without blocking when an operation is given. */
 export function artifactWorktreesFor(
   operation: StimContext | undefined,
-  select: NodeSelection = {},
 ): ArtifactWorktree[] | Promise<ArtifactWorktree[]> {
   forgetGitReads(operation);
-  return operation ? artifactWorktreesAsync(operation.signal, operation, select) : artifactWorktrees();
+  return operation ? artifactWorktreesAsync(operation.signal, operation) : artifactWorktrees();
 }
 
 export async function artifactCheckoutsAsync(
   signal: AbortSignal,
   operation?: StimContext,
-  select: NodeSelection = {},
 ): Promise<ArtifactWorktree[]> {
   const found = new Map<string, ArtifactWorktree>();
-  const discovered = await discoverCheckouts(loadConfig(), listedRoots(), operation, select);
+  const discovered = await discoverCheckouts(loadConfig(), listedRoots(), operation);
   const known = new Set([...listedRoots(), ...discovered.map(({ path }) => path)]);
   const reduceOnly = new Set(discovered.filter((entry) => entry.reduceOnly).map(({ path }) => path));
   for (const root of (await candidateRootsAsync(operation, discovered)).filter((entry) => known.has(entry))) {
@@ -175,9 +173,8 @@ export async function artifactCheckoutsAsync(
 export async function artifactWorktreesAsync(
   signal: AbortSignal,
   operation?: StimContext,
-  select: NodeSelection = {},
 ): Promise<ArtifactWorktree[]> {
-  const found = new Map((await artifactCheckoutsAsync(signal, operation, select)).map((entry) => [entry.path, entry]));
+  const found = new Map((await artifactCheckoutsAsync(signal, operation)).map((entry) => [entry.path, entry]));
   const checkouts = [...found.values()];
   if (checkouts.length) {
     const agents = await agentSessionUse(
@@ -425,8 +422,6 @@ export async function collectArtifactsAsync(
     pinned: (workspace: string) => boolean | Promise<boolean>;
     /** Dependencies of source checkouts, instead of those of linked worktrees. */
     source?: boolean;
-    /** Plain Node checkouts too, for the dormant stage's dependency step. */
-    node?: boolean;
   },
   signal: AbortSignal,
   operation?: StimContext,
@@ -442,7 +437,7 @@ export async function collectArtifactsAsync(
       : null;
   const launchersFor = (reduceOnly: boolean) =>
     operation ? launchersOf(operation, signal, reduceOnly) : () => launchersOf(undefined, signal, reduceOnly)();
-  const all = await artifactWorktreesAsync(signal, operation, options.node ? { node: 'all' } : {});
+  const all = await artifactWorktreesAsync(signal, operation);
   for (const worktree of all) {
     if (kind === 'dependencies' && worktree.linked === Boolean(options.source)) continue;
     const root = canonicalPath(worktree.path);

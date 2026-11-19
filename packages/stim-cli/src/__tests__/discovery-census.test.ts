@@ -131,9 +131,6 @@ describe('runDiscoveryCensusIfDue', () => {
       maintenance: { discoverRoots: [join(home, 'dev', 'tools'), join(home, '.tools')] },
     });
     await runDiscoveryScanIfDue(tick(), { home, now: t0 + 8 * day, attempted: { at: 0 } });
-    expect(
-      (await discoverCheckouts(loadConfig(), [], testContext(), { node: 'all' })).map(({ path }) => path),
-    ).toContain(cli);
     const { census } = await run(t0 + 8 * day);
     expect(census?.finds.map(({ path, kind }) => [path.slice(home.length), kind])).toContainEqual([
       '/.tools/cli/mobile',

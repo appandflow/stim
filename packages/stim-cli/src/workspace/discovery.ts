@@ -30,7 +30,7 @@ export interface DiscoveredCheckout {
   from: string;
   /** Found through a tool folder or the full scan: Stim reduces its outputs and never removes it. */
   reduceOnly?: boolean;
-  /** A plain Node checkout, a source checkout or a linked worktree: only finished worktree removal and idle node_modules apply. */
+  /** A plain Node checkout, a source checkout or a linked worktree: only finished worktree removal applies, to a linked one. */
   node?: NodeCheckout;
 }
 
@@ -257,24 +257,19 @@ interface Discovery {
  * directory or a dot-folder of the home directory is included unless it lies inside a `maintenance.discoverRoots`
  * folder, or is a worktree in a tool folder or a checkout of the last full scan, which are reduce-only. A scoped
  * STIM_HOME discovers only from that setting, so a scratch home never reaches the repositories of another. Discovery
- * registers and writes nothing; the full scan's result is read from the file the daemon wrote. A child that is a plain
- * Node checkout, and each linked worktree of its repository, is returned only when `node` selects it.
+ * registers and writes nothing; the full scan's result is read from the file the daemon wrote. A plain Node checkout
+ * is never returned, except a linked worktree of a Node repository with `nodeWorktrees`.
  */
 export async function discoverCheckouts(
   config: Config | null,
   known: readonly string[],
   operation?: StimContext,
-  { node }: NodeSelection = {},
+  { nodeWorktrees = false }: { nodeWorktrees?: boolean } = {},
 ): Promise<DiscoveredCheckout[]> {
+  // @ref LLP 0004#plain-node-checkouts -- only the finished-worktree check asks for them
   return (await discovery(config, known, operation)).found.filter(
-    (checkout) => !checkout.node || node === 'all' || (node === 'linked' && checkout.node === 'linked'),
+    (checkout) => !checkout.node || (nodeWorktrees && checkout.node === 'linked'),
   );
-}
-
-// @ref LLP 0004#plain-node-checkouts -- left out unless the caller applies one of their two rules
-/** Which plain Node checkouts a caller of `discoverCheckouts` gets besides the others: none by default. */
-export interface NodeSelection {
-  node?: 'linked' | 'all';
 }
 
 /** What discovery reached outside the folders Stim manages. */

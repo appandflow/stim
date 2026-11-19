@@ -838,7 +838,7 @@ export async function collectWorktreeSweep({
   operation?.signal.throwIfAborted();
   const read = { env: operation?.env, signal: operation?.signal, declareFor: operation };
   const outside: WorktreeCandidate[] = [];
-  const discovered = await discoverCheckouts(loadConfig(), listedRoots(), operation, { node: 'linked' });
+  const discovered = await discoverCheckouts(loadConfig(), listedRoots(), operation, { nodeWorktrees: true });
   const discoveredPaths = new Set(discovered.map(({ path }) => path));
   const reduceOnlyPaths = new Set(discovered.filter((entry) => entry.reduceOnly).map(({ path }) => path));
   const candidates = await candidateRootsAsync(operation, discovered);

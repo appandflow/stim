@@ -209,7 +209,6 @@ export async function rankDependencies(
   operation?: StimContext,
   source = false,
   log?: DaemonLog,
-  node = false,
 ): Promise<RankedDependency[]> {
   const rank = new Map(
     idle.flatMap((candidate, index) => {
@@ -224,7 +223,7 @@ export async function rankDependencies(
     () =>
       collectArtifactsAsync(
         'dependencies',
-        { now: Date.now(), windowMs: 0, protectedRoot, pinned: maintenancePinnedReader(operation), source, node },
+        { now: Date.now(), windowMs: 0, protectedRoot, pinned: maintenancePinnedReader(operation), source },
         operation?.signal ?? new AbortController().signal,
         operation,
       ),
@@ -259,8 +258,6 @@ export interface SourceRule {
   /** The idle time the workspaces in `idle` were selected by. */
   thresholdMs: number;
   setting: string;
-  /** Plain Node checkouts too, as the dormant stage selects them. */
-  node?: boolean;
 }
 
 /**
@@ -289,14 +286,7 @@ export async function rankSourceDependencies(
     () =>
       collectArtifactsAsync(
         'dependencies',
-        {
-          now: Date.now(),
-          windowMs: 0,
-          protectedRoot,
-          pinned: maintenancePinnedReader(operation),
-          source: true,
-          node: rule.node,
-        },
+        { now: Date.now(), windowMs: 0, protectedRoot, pinned: maintenancePinnedReader(operation), source: true },
         operation?.signal ?? new AbortController().signal,
         operation,
       ),
@@ -378,8 +368,10 @@ async function stillUnused(
   const [first] = keys;
   if (!source)
     return first && !(await stillIdle(first, idleMs, { operation, setting })) ? 'it is no longer idle' : null;
-  for (const key of new Set([...workspaceKeys(keys), worktree]))
-    if (!(await stillIdle(key, idleMs, { operation, full: true, setting }))) return `${key} is no longer idle`;
+  const held = new Set(workspaceKeys(keys));
+  for (const key of new Set([...held, worktree]))
+    if (!(await stillIdle(key, idleMs, { operation, full: true, locked: held.has(key), setting })))
+      return `${key} is no longer idle`;
   return Date.now() - warmedFromAt(keys) < idleMs ? 'a worktree warm copied from it since' : null;
 }
 
@@ -562,9 +554,8 @@ async function takeIdleDependencies(
             full: true,
             setting: 'idle.sourceDormantDays',
             onKept: (path, reason) => keeps.set(canonicalOrNull(path) ?? path, reason),
-            node: true,
           }
-        : { node: true },
+        : {},
     )
   ).filter((candidate) => source || candidate.role === 'linked');
   const { operation } = input;
@@ -585,7 +576,6 @@ async function takeIdleDependencies(
             criticalIdleMs: Infinity,
             thresholdMs: afterMs,
             setting: 'idle.sourceDormantDays',
-            node: true,
           },
           operation,
           input.log,
@@ -626,13 +616,13 @@ async function takeIdleDependencies(
       await timedStep(
         input.log,
         'rank_dependencies',
-        () => rankDependencies(idle, input.protectedRoot ?? '', operation, false, input.log, true),
+        () => rankDependencies(idle, input.protectedRoot ?? '', operation, false, input.log),
         { signal: operation?.signal, items: (ranked) => ranked?.length },
       ),
       'take',
     ).take;
   }
-  const worktrees = take.length ? await artifactWorktreesFor(operation, { node: 'all' }) : [];
+  const worktrees = take.length ? await artifactWorktreesFor(operation) : [];
   const why = `${source ? 'idle.sourceDormantDays' : 'idle.dormantDays'} is ${afterMs / (24 * HOUR_MS)}`;
   const sourceResults =
     source && input.act
@@ -688,7 +678,7 @@ function dependencyCandidates(worktrees: readonly { path: string; keys: readonly
 }
 
 export async function measureDependencyTrees(operation: StimContext): Promise<void> {
-  for (const path of dependencyCandidates(await artifactWorktreesAsync(operation.signal, operation, { node: 'all' }))) {
+  for (const path of dependencyCandidates(await artifactWorktreesAsync(operation.signal, operation))) {
     const signature = await dependencyTreeSignature(path, operation.signal);
     if (signature === null) {
       if (hungRead() !== null) return;

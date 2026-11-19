@@ -236,8 +236,6 @@ interface IdleSelection {
   /** The setting the threshold comes from, named in the reason a workspace is kept; default the pressure threshold. */
   setting?: string;
   onKept?: (path: string, reason: string) => void;
-  /** Plain Node checkouts that still hold a node_modules too, for the dormant stage's dependency step. */
-  node?: boolean;
 }
 
 function idleWorkspaces(
@@ -264,21 +262,12 @@ async function readIdleWorkspaces(
   thresholdMs: number,
   setting: string,
   worthIt: (path: string, project: ProjectRecord) => boolean | Promise<boolean>,
-  {
-    discover = false,
-    full = false,
-    onKept,
-    node = false,
-  }: Omit<IdleSelection, 'setting'> & { discover?: boolean } = {},
+  { discover = false, full = false, onKept }: Omit<IdleSelection, 'setting'> & { discover?: boolean } = {},
 ): Promise<StageCandidate[]> {
   const readings: (Omit<StageCandidate, 'idleMs' | 'role' | 'checkout'> & { idleMs: number | null })[] = [];
   const reads = discoveredReads(reading.operation?.signal, reading.operation);
-  const found = discover
-    ? await discoverCheckouts(config, listedRoots(), reading.operation, node ? { node: 'all' } : {})
-    : [];
-  const discovered = found
-    .filter((entry) => !entry.node || existsSync(join(entry.path, 'node_modules')))
-    .map(({ path }): [string, ProjectRecord] => [path, {}]);
+  const found = discover ? await discoverCheckouts(config, listedRoots(), reading.operation) : [];
+  const discovered = found.map(({ path }): [string, ProjectRecord] => [path, {}]);
   const reduceOnly = new Set(found.filter((entry) => entry.reduceOnly).map(({ path }) => path));
   const checkouts = [...Object.entries(config.projects), ...discovered];
   tally.items = checkouts.length;

@@ -15,7 +15,7 @@ projects (`git worktree list`), direct children of the folders that hold
 registered checkouts, and direct children of the folders in
 `maintenance.discoverRoots`. A child counts only when Stim's project detection
 recognises it, itself or through a direct child of its `apps`, `examples` or
-`packages` folder, or as a plain Node checkout for two rules only (see "Plain Node
+`packages` folder, or as a plain Node checkout for one rule only (see "Plain Node
 checkouts"). Discovery registers nothing, writes nothing, recomputes each
 run and never runs `git fetch`. Two more sources, the common tool folders and the
 full scan (see "Tool folders and the full scan"), add checkouts that are only
@@ -524,26 +524,23 @@ recognise is a plain Node checkout when it has a `.git` entry and a regular
 `package.json` at its own root (two `lstat`s; packages inside a monorepo are never
 children). The linked worktrees of its repository are plain Node checkouts too,
 unless an app child or a registered project leads to the same repository, which
-keeps the full rules. Two rules apply, with the evidence, windows and keeps of every
-discovered checkout:
+keeps the full rules.
 
-- finished linked worktree removal (`collectWorktreeSweep`, which `stim gc` and
-  rung 7 run), with the extra evidence of the section above;
-- the dormant stage's dependency step: `node_modules` (and `ios/Pods`, were there
-  one) of a linked worktree idle `idle.dormantDays` and of a source checkout idle
-  `idle.sourceDormantDays`. Only a checkout that still holds a root `node_modules`
-  is read for idleness. As for every discovered checkout, nothing is recorded
-  under the Stim home; the action and log name `stim worktree warm` (linked) or
-  the project's own install (source) as the restore.
+One rule applies: finished linked worktree removal (`collectWorktreeSweep`, which
+`stim gc` and rung 7 run), with the evidence and keeps of every discovered worktree,
+the extra evidence of the section above included. Discovery returns only those
+linked worktrees, and only to that check (`nodeWorktrees`). Nothing else of theirs
+is touched: no `node_modules`, build or `dist` output, Cargo target, device, Metro or
+log, and their main checkouts are never acted on. `stim gc --dry-run` lists the
+worktrees with the removal verdict, not among the discovered checkouts. The full scan
+does not look for them (it still stops only at an app project), the census ignores
+them when deciding what another route covers, and their worktrees outside the
+managed folders are not listed as outside.
 
-Nothing else of theirs is touched: build or `dist` output, Cargo targets, devices,
-Metro, logs, the pressure rungs 5 and 8. Discovery returns them only to the callers
-of the two rules (`NodeSelection`); `stim gc --dry-run` lists their linked worktrees
-with the removal verdict, but not among the discovered checkouts. The full scan does not look for them
-(it still stops only at an app project), the census ignores them when deciding what
-another route covers, and their worktrees outside the managed folders are not listed
-as outside. A worktree of theirs in `~/.codex/worktrees` is reduce-only like any
-tool-folder worktree.
+Dormant `node_modules` reduction, the other half of the request, is not done here:
+the review of #5969 found that the linked-worktree route skips the regenerable-folder
+check, and that deleting a source checkout's `node_modules` can break a sibling
+worktree whose `node_modules` links into it. It waits for a follow-up issue.
 
 Cost, measured 2026-11-19 on the maintainer's MacBook with `~/Developer` (131
 folders) as the folder holding a registered checkout, in a scratch Stim home, two
@@ -552,14 +549,13 @@ of 60, because a child that is a worktree of a repository already read is no lon
 read again; the finished-worktree check inspected 23 more worktrees (111 instead
 of 88) and ran about 2,050 git processes instead of 1,550, about 21 per worktree,
 in 32 and 35 seconds against 33 and 26 before, within run-to-run noise on a loaded
-machine. Without a fetch or a pull request lookup, 20 of the 23
-`appandflow-create-app-*` worktrees came out removable and 3 were kept for a git
-index write half an hour old.
+machine. In that run, 20 of the 23 `appandflow-create-app-*` worktrees had no keep
+reason without a fetch or a pull request lookup, and 3 were kept for a git index
+write half an hour old.
 
-Chosen by the implementing lane and the coordinator's brief, not by the maintainer:
-the recognition rule, the two rules applying only in the dormant stage and the
-finished-worktree check (not at the pressure rungs 5 and 8), and leaving the scan
-and the listing unchanged.
+Chosen by the implementing lane and the coordinator, not by the maintainer: the
+recognition rule, leaving out the dependency rule, and leaving the scan and the
+listing unchanged.
 
 ## Known limits of the listing
 

@@ -173,7 +173,7 @@ describe('discoverCheckouts', () => {
     expect((await discoveredOutside(config, [repo])).map(({ path }) => path)).toEqual([elsewhere]);
   });
 
-  it('lists a plain Node checkout and its worktree only when asked, and no folder without git or package in a monorepo', async () => {
+  it('lists the worktree of a plain Node checkout only when asked, and no folder without git or package in a monorepo', async () => {
     vi.stubEnv('STIM_HOME', join(base, 'home'));
     const roots = join(base, 'roots');
     const cli = join(roots, 'cli');
@@ -194,14 +194,8 @@ describe('discoverCheckouts', () => {
 
     expect(await discoverCheckouts(config, [])).toEqual([]);
     expect(
-      (await discoverCheckouts(config, [], undefined, { node: 'all' })).map(({ path, node }) => [path, node]),
-    ).toEqual([
-      [cli, 'source'],
-      [join(roots, 'cli-feature'), 'linked'],
-    ]);
-    expect((await discoverCheckouts(config, [], undefined, { node: 'linked' })).map(({ path }) => path)).toEqual([
-      join(roots, 'cli-feature'),
-    ]);
+      (await discoverCheckouts(config, [], undefined, { nodeWorktrees: true })).map(({ path, node }) => [path, node]),
+    ).toEqual([[join(roots, 'cli-feature'), 'linked']]);
   });
 
   it('marks the worktrees of a Node repository through git, and never those of a repository an app leads to', async () => {
@@ -230,10 +224,9 @@ describe('discoverCheckouts', () => {
     writeFileSync(join(old, 'package.json'), '{}');
     const config: Config = { projects: { [repo]: {} }, repos: {} };
 
-    const found = await discoverCheckouts(config, [repo], undefined, { node: 'all' });
+    const found = await discoverCheckouts(config, [repo], undefined, { nodeWorktrees: true });
     expect(found.map(({ path, origin, node }) => [path, origin, node])).toEqual([
       [old, 'worktree', undefined],
-      [cli, 'sibling', 'source'],
       [nested, 'worktree', 'linked'],
       [zapp, 'sibling', undefined],
     ]);
