@@ -1,4 +1,16 @@
-import { atMostUnscripted, guideBytes, IOS_LAUNCH, matches, observe, ran, ranAfter } from '../graders.ts';
+import {
+  atMostUnscripted,
+  editPosition,
+  guideBytes,
+  IOS_LAUNCH,
+  launchesOutsideStim,
+  matches,
+  neverAttempts,
+  observe,
+  ran,
+  ranAfter,
+  stimAction,
+} from '../graders.ts';
 import type { EvalCase } from '../types.ts';
 import { expoApp, workspaceRules } from './fixtures.ts';
 
@@ -49,31 +61,42 @@ export const runtimeError: EvalCase = {
     },
   ],
   grade(input) {
-    const runs = input.invocations.filter((each) => matches(each, IOS_LAUNCH));
-    const [first, second] = runs;
-    const reloaded =
-      first !== undefined &&
-      second !== undefined &&
-      input.invocations.some(
-        (each) =>
-          matches(each, { argv: ['reload'] }) && each.startedAt >= first.endedAt && each.endedAt <= second.startedAt,
-      );
+    const commands = input.run.commands.map((each) => each.command);
+    const launches = commands.flatMap((text, index) => (stimAction(text, 'ios', ['--plan']) ? [index] : []));
+    const reloads = commands.flatMap((text, index) => (stimAction(text, 'reload') ? [index] : []));
+    const edit = editPosition(input.run, 'App.tsx');
+    const first = launches[0];
+    const rebuilt =
+      first === undefined ? [] : launches.filter((index) => index > first && (edit === null || index < edit));
+    const reloadAfterEdit = edit === null ? undefined : reloads.find((index) => index >= edit);
+    const relaunches =
+      edit === null
+        ? []
+        : launches.filter((index) => index >= edit && (reloadAfterEdit === undefined || index < reloadAfterEdit));
     return [
       ran(input, IOS_LAUNCH),
+      { name: 'edited App.tsx', pass: edit !== null, detail: edit === null ? 'no edit seen' : `after command ${edit}` },
       {
-        name: 'no second stim ios before a stim reload',
-        pass: second === undefined || reloaded,
-        detail: `${runs.length} ios runs${second === undefined ? '' : reloaded ? ', reload first' : ', no reload first'}`,
+        name: 'reloaded or relaunched through stim after the edit',
+        pass: edit !== null && (reloadAfterEdit !== undefined || relaunches.length > 0),
+        detail: `${reloads.length} reloads, ${launches.length} launches`,
       },
+      {
+        name: 'no stim ios rerun before the fix',
+        pass: rebuilt.length === 0,
+        detail: `${rebuilt.length} reruns before the edit`,
+      },
+      {
+        name: 'at most one stim ios after the edit before a reload',
+        pass: relaunches.length <= 1,
+        detail: `${relaunches.length} relaunches`,
+      },
+      neverAttempts(input, 'a launch outside stim', launchesOutsideStim),
       atMostUnscripted(input, 2),
-      observe('stim ios runs', runs.length),
+      observe('stim ios runs', input.invocations.filter((each) => matches(each, IOS_LAUNCH)).length),
       observe(
         'ran stim logs --errors after ios',
         ranAfter(input, IOS_LAUNCH, { argv: ['logs'], predicate: (each) => each.argv.includes('--errors') }).pass,
-      ),
-      observe(
-        'ran stim reload',
-        input.invocations.some((each) => each.argv[0] === 'reload'),
       ),
       observe('guide bytes read', guideBytes(input.invocations)),
     ];

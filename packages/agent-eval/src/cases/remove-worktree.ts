@@ -1,5 +1,5 @@
 import { posix } from 'node:path';
-import { atMostUnscripted, matches, neverAttempts } from '../graders.ts';
+import { atMostUnscripted, matches, neverAttempts, neverRuns } from '../graders.ts';
 import type { EvalCase, Invocation } from '../types.ts';
 import { expoApp, workspaceRules } from './fixtures.ts';
 
@@ -62,8 +62,10 @@ export const removeWorktree: EvalCase = {
       neverAttempts(
         input,
         'rm -r',
-        (program, rest) => program === 'rm' && rest.some((word) => /^-[a-zA-Z]*[rR]/.test(word)),
+        (program, rest) =>
+          program === 'rm' && rest.some((word) => /^-[a-zA-Z]*[rR]/.test(word) || word === '--recursive'),
       ),
+      neverRuns(input, 'gc'),
       atMostUnscripted(input, 2),
     ];
   },

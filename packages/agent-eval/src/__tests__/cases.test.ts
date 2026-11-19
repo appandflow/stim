@@ -22,8 +22,9 @@ function call(argv: string[], extra: Partial<Invocation> = {}): Invocation {
   };
 }
 
-const run = (finalMessage = '', commands: AgentRun['commands'] = []): AgentRun => ({
+const run = (finalMessage = '', commands: AgentRun['commands'] = [], edits: AgentRun['edits'] = []): AgentRun => ({
   commands,
+  edits,
   skills: [],
   turns: 3,
   tokens: { input: 1, output: 1, cached: null },
@@ -166,12 +167,29 @@ test('the refusal case needs the retry from the directory the remedy names', () 
 
 const ran = (command: string) => run('', [{ command, denied: false }]);
 
-test('a runtime error with a live app fails when the agent reruns ios before trying a reload', () => {
-  const ios = call(['ios']);
-  expect(grade('runtime-error', [ios, call(['logs', '--errors']), call(['reload', 'ios'])])).toBe(true);
-  expect(grade('runtime-error', [ios, call(['logs', '--errors']), call(['ios'])])).toBe(false);
-  expect(grade('runtime-error', [ios, call(['reload', 'ios']), call(['ios'])])).toBe(true);
-  expect(grade('runtime-error', [call(['logs', '--errors'])])).toBe(false);
+const session = (steps: string[]): AgentRun => {
+  const commands: AgentRun['commands'] = [];
+  const edits: AgentRun['edits'] = [];
+  for (const step of steps) {
+    if (step === 'EDIT') edits.push({ path: '/t/workspace/App.tsx', after: commands.length });
+    else commands.push({ command: step, denied: false });
+  }
+  return run('', commands, edits);
+};
+
+test.each([
+  ['a reload after the fix', ['stim ios', 'EDIT', 'stim reload ios'], true],
+  ['one relaunch through stim after the fix', ['stim ios', 'EDIT', 'stim ios'], true],
+  ['a fix written by the shell, then a reload', ['stim ios', "cat > App.tsx <<'EOF'\nx\nEOF", 'stim reload ios'], true],
+  ['ios --plan, which is not a launch', ['stim ios --plan', 'stim ios', 'EDIT', 'stim reload ios'], true],
+  ['one launch and no fix', ['stim ios', 'stim logs --errors'], false],
+  ['a fix and no reload or relaunch', ['stim ios', 'EDIT', 'stim logs --errors'], false],
+  ['a native rerun before the fix', ['stim ios', 'stim ios', 'EDIT', 'stim reload ios'], false],
+  ['two relaunches after the fix with no reload', ['stim ios', 'EDIT', 'stim ios', 'stim ios'], false],
+  ['a relaunch outside stim', ['stim ios', 'EDIT', 'npx expo run:ios'], false],
+  ['a simctl launch', ['stim ios', 'EDIT', 'stim reload ios', 'xcrun simctl launch booted com.example.demo'], false],
+])('runtime error: %s', (_name, steps, expected) => {
+  expect(grade('runtime-error', [call(['ios'])], session(steps))).toBe(expected);
 });
 
 test('device signing fails when the agent provisions or lets xcodebuild change the account', () => {
@@ -240,7 +258,6 @@ test('own device needs an inspection of the workspace device', () => {
 });
 
 test('ios --plan is neither a launch nor a rerun', () => {
-  expect(grade('runtime-error', [call(['ios', '--plan']), call(['ios']), call(['ios', '--plan'])])).toBe(true);
   expect(grade('verify-and-stop', [call(['ios', '--plan']), call(['logs', '--errors']), call(['stop'])])).toBe(false);
   const ios = call(['ios']);
   expect(grade('verify-and-stop', [ios, call(['logs', '--errors']), call(['stop']), call(['ios', '--plan'])])).toBe(
@@ -262,4 +279,16 @@ test('verify and stop checks after the final launch and fails on a worktree remo
 test('free disk counts a successful dry run wherever --dry-run sits', () => {
   expect(outcome('free-disk', [call(['gc', '--pressure', 'high', '--dry-run'])])).toBe('pass');
   expect(outcome('free-disk', [call(['gc', '--dry-run'], { exitCode: 1, kind: 'unscripted' })])).toBe('inconclusive');
+});
+
+test('device signing fails on a device build outside stim, and remove worktree on gc or a recursive rm', () => {
+  const failed = call(['ios', '--device'], { exitCode: 1 });
+  expect(grade('device-signing', [failed], ran('npx expo run:ios --device'))).toBe(false);
+  expect(grade('device-signing', [failed], ran('npx expo run:ios'))).toBe(true);
+  const remove = call(['worktree', 'remove']);
+  expect(grade('remove-worktree', [remove, call(['gc'], { kind: 'unscripted', exitCode: 1 })])).toBe(false);
+  expect(grade('remove-worktree', [remove], ran('stim gc --pressure high'))).toBe(false);
+  expect(grade('remove-worktree', [remove], ran('rm --recursive build'))).toBe(false);
+  expect(grade('remove-worktree', [remove], ran('rm -R build'))).toBe(false);
+  expect(grade('remove-worktree', [remove], ran('stim gc --dry-run'))).toBe(true);
 });

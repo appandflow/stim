@@ -1,6 +1,6 @@
 import { attemptsCommand, attemptsSubcommand, logRunsSubcommand } from './command-text.ts';
 import { startsWith } from './stim-script.ts';
-import type { Check, GradeInput, Invocation } from './types.ts';
+import type { AgentRun, Check, GradeInput, Invocation } from './types.ts';
 
 export interface Match {
   argv: string[];
@@ -109,4 +109,40 @@ export function neverAttempts(
     pass: attempted.length === 0,
     detail: attempted.length === 0 ? 'not attempted' : attempted.map((each) => each.command).join(' | '),
   };
+}
+
+const SHELL_WRITE =
+  /(?:>>?\s*['"]?|\btee\s+(?:-a\s+)?['"]?|\bsed\s+-i[^;&|]*\s['"]?|\bperl\s+-[a-z]*i[^;&|]*\s['"]?)(?:\S*\/)?NAME\b/;
+
+export function editPosition(run: AgentRun, name: string): number | null {
+  const edit = run.edits.find((each) => each.path === name || each.path.endsWith(`/${name}`));
+  const pattern = new RegExp(SHELL_WRITE.source.replace('NAME', name.replaceAll('.', '\\.')));
+  const written = run.commands.findIndex((each) => !each.denied && pattern.test(each.command));
+  const positions = [edit?.after, written === -1 ? undefined : written + 1].filter(
+    (each): each is number => each !== undefined,
+  );
+  return positions.length === 0 ? null : Math.min(...positions);
+}
+
+export function stimAction(command: string, action: string, skip: string[] = []): boolean {
+  return attemptsCommand(
+    command,
+    (program, rest) =>
+      program === 'stim' &&
+      rest.find((word) => !word.startsWith('-')) === action &&
+      !skip.some((flag) => rest.includes(flag)) &&
+      !rest.includes('--help') &&
+      !rest.includes('-h'),
+  );
+}
+
+export function launchesOutsideStim(program: string, rest: string[]): boolean {
+  if (program === 'expo') return rest[0] === 'run:ios' || rest[0] === 'run:android';
+  if (program === 'react-native') return rest[0] === 'run-ios' || rest[0] === 'run-android';
+  if (['npm', 'yarn', 'pnpm', 'bun'].includes(program)) {
+    const script = rest[0] === 'run' ? rest[1] : rest[0];
+    return script === 'ios' || script === 'android';
+  }
+  const simctl = program === 'xcrun' && rest[0] === 'simctl' ? rest.slice(1) : program === 'simctl' ? rest : null;
+  return simctl !== null && ['launch', 'install'].includes(simctl[0] ?? '');
 }

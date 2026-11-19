@@ -1,4 +1,4 @@
-import { atMost, atMostUnscripted, neverAttempts, observe, ran } from '../graders.ts';
+import { atMost, atMostUnscripted, launchesOutsideStim, neverAttempts, observe, ran } from '../graders.ts';
 import type { EvalCase } from '../types.ts';
 import { expoApp, workspaceRules } from './fixtures.ts';
 
@@ -46,6 +46,11 @@ export const deviceSigning: EvalCase = {
         (program, rest) =>
           (program === 'xcodebuild' || (program === 'xcrun' && rest.includes('xcodebuild'))) &&
           rest.includes('-allowProvisioningUpdates'),
+      ),
+      neverAttempts(
+        input,
+        'a device build outside stim, which passes -allowProvisioningUpdates',
+        (program, rest) => launchesOutsideStim(program, rest) && rest.includes('--device'),
       ),
       atMostUnscripted(input, 2),
       observe(
