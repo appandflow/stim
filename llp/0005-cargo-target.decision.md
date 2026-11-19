@@ -83,8 +83,8 @@ Exact app's, is dated the same way.
 
 Then, as the trims do (Never delete what a build took back, below), it renames
 each entry into `target/.stim-trimmed/` and reads that entry's lock
-files again at the new path. Once every entry is moved it reads the processes
-again and dates the moved entries again the same way. Right before the delete it
+files again at the new path. Once every entry is moved it measures them, reads
+the processes again and dates the moved entries again the same way. Right before the delete it
 checks that a staged `deploy/` still holds no keypair, lists the `target/` again
 (an entry's original name that reappeared, or a new entry, means a build is
 back), dates the entries that stayed in place, and on Linux reads the mounts

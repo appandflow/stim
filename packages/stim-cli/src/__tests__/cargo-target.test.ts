@@ -725,6 +725,34 @@ describe.skipIf(process.platform === 'win32')(
       expect(existsSync(join(dir, 'debug', 'app'))).toBe(true);
     });
 
+    test('a tagged target whose staged size scan is cancelled gets its names back and goes on the next run', async () => {
+      rmSync(join(target, 'Cargo.toml'));
+      writeFileSync(join(dir, 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55\n');
+      ageTree(dir);
+      const controller = new AbortController();
+      const real = getExecutor();
+      setExecutor({
+        ...real,
+        runFileAsync: async (file, args, options) => {
+          if (file === 'du') {
+            controller.abort();
+            throw new Error('du was cancelled');
+          }
+          return file === 'lsof' || file === 'ps' ? '' : real.runFileAsync(file, args, options);
+        },
+      });
+
+      await expect(
+        deleteCargoTarget(dir, { idleMs: DAY, launching: noLaunchers(target), signal: controller.signal }),
+      ).rejects.toThrow('aborted');
+
+      expect(readdirSync(dir).toSorted()).toEqual(['.rustc_info.json', 'CACHEDIR.TAG', 'debug', 'doc']);
+      stubProcesses({});
+      ageTree(dir);
+      expect((await remove()).kept).toEqual([]);
+      expect(existsSync(dir)).toBe(false);
+    });
+
     test('a cancelled delete puts every moved entry back and leaves nothing staged', async () => {
       const controller = new AbortController();
       fsHooks.rename = (from) => {

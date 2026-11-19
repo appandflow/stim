@@ -597,7 +597,7 @@ async function deleteClaimed(
       await rm(marker, { force: true });
       await rmdir(aside).catch(() => {});
     }
-    return { ...result, kept: [...result.kept, `${why}${left}`] };
+    return { ...result, bytes: 0, kept: [...result.kept, `${why}${left}`] };
   };
   // @ref LLP 0005#never-delete-what-a-build-took-back -- staged entries carry the NOT-RESTORED marker until the checks pass
   await mkdir(aside, { recursive: true });
@@ -620,6 +620,7 @@ async function deleteClaimed(
       const took = await heldLock(entry.there, name);
       if (took) return await putBackAll(`a build took ${took} during the move`);
     }
+    for (const entry of moved) result.bytes += await sizeOf(entry.there, signal);
     const exactTook = await heldExactLock(target);
     if (exactTook) return await putBackAll(`a build took ${exactTook} during the move`);
     const after = moved.length ? await readTargetUse(target, launching, signal) : { used: [] };
@@ -647,10 +648,7 @@ async function deleteClaimed(
     await putBackAll('the delete was interrupted');
     throw error;
   }
-  for (const entry of moved) {
-    result.bytes += await sizeOf(entry.there, signal);
-    result.removed.push(entry.name);
-  }
+  result.removed.push(...moved.map(({ name }) => name));
   const stuck = await removeOnDevice(aside, dev);
   if (stuck.length) {
     await writeFile(join(aside, STRANDED), '').catch(() => {});
