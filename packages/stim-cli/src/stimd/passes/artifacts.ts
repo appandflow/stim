@@ -50,6 +50,7 @@ import { checkDependencyEdits, forgetDependencyInstall } from '../../workspace/d
 import { recordSourceDependencies, takeWarmClaim, warmCopyingFrom } from '../../workspace/source-dependencies.ts';
 import {
   listWorktrees,
+  listWorktreesAsync,
   LOCKED_REASON,
   lockReason,
   matchWorktreeEntry,
@@ -143,6 +144,7 @@ function artifactWorktree(
 export function artifactWorktreesFor(
   operation: StimContext | undefined,
 ): ArtifactWorktree[] | Promise<ArtifactWorktree[]> {
+  forgetGitReads(operation);
   return operation ? artifactWorktreesAsync(operation.signal, operation) : artifactWorktrees();
 }
 
@@ -514,7 +516,10 @@ const LINK_SCAN_DEPTH = 2;
  * entries or at a directory it cannot read, the check is incomplete and the tree is kept. A worktree git does not
  * list is not scanned.
  */
-function linkedWorktreeUsing(candidate: ArtifactCandidate, worktrees: readonly ArtifactWorktree[]): string | null {
+function linkedWorktreeUsing(
+  candidate: ArtifactCandidate,
+  worktrees: readonly Pick<ArtifactWorktree, 'path' | 'linked' | 'source'>[],
+): string | null {
   const real = canonicalPath(candidate.path);
   const rel = relative(candidate.worktree, candidate.path);
   const into = (path: string): boolean => {
@@ -773,7 +778,11 @@ export async function clearSourceTrees(
     source: true,
     reduceOnly: worktree.reduceOnly,
   };
-  const checkTree = async (path: string, held?: readonly string[]): Promise<string | null> => {
+  const checkTree = async (
+    path: string,
+    held?: readonly string[],
+    linked: readonly Pick<ArtifactWorktree, 'path' | 'linked' | 'source'>[] = options.worktrees,
+  ): Promise<string | null> => {
     const candidate = { ...base, path, ...(held ? { source: false } : {}) };
     const pinned = await pinsOf(candidate.keys, options.pinned);
     return (
@@ -793,7 +802,7 @@ export async function clearSourceTrees(
       (await regenerableDirProblem(worktree.path, path, signal, {
         launching: launchingOf(worktree.path, freshLaunchers(operation, signal), operation, signal),
       })) ??
-      linkedWorktreeUsing(candidate, options.worktrees)
+      linkedWorktreeUsing(candidate, linked)
     );
   };
   let selected: string[] = [];
@@ -811,9 +820,15 @@ export async function clearSourceTrees(
     if (lock) return keepAll(selected, lockReason(lock));
     const late = await options.recheck(worktree.keys, worktree.path);
     if (late) return keepAll(selected, late);
+    const listed = await listWorktreesAsync(worktree.path, { env: operation?.env, signal });
+    if (!listed.some((entry) => canonicalPath(entry.path) === root))
+      return keepAll(selected, 'git could not list the worktrees that may link into it');
+    const linked = listed
+      .filter((entry) => !entry.bare && canonicalPath(entry.path) !== root && pathExists(entry.path))
+      .map((entry) => ({ path: entry.path, linked: true, source: worktree.path }));
     const stillSelected: string[] = [];
     for (const path of selected) {
-      const problem = await checkTree(path, heldKeys);
+      const problem = await checkTree(path, heldKeys, linked);
       if (problem) {
         keepAll([path], problem);
         continue;

@@ -1,8 +1,19 @@
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runGc } from '../commands/gc.ts';
 import { executeAction } from '../stimd/passes/act.ts';
+import { artifactWorktreesFor, clearSourceTrees } from '../stimd/passes/artifacts.ts';
+import { freshLaunchers } from '../workspace/launchers.ts';
 import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
 import { ensureWorkspaceStorage } from '../workspace/paths.ts';
 import { runHomePasses } from '../daemon/passes.ts';
@@ -285,6 +296,45 @@ describe('an acting run asks git again under the claim', () => {
       );
       expect(outcome.status).toBe(status);
       expect(existsSync(outputs)).toBe(status === 'kept');
+    } finally {
+      close();
+    }
+  });
+
+  test.each([
+    [
+      'kept when a linked worktree linking into them is added after the inventory was read',
+      true,
+      'kept',
+      'feature-worktree',
+    ],
+    ['deleted when no worktree links into them', false, 'done', 'node_modules'],
+  ])('source checkout dependencies are %s', async (_, addLinked, status, detail) => {
+    const main = repo('main');
+    upsertProject(main, { metroPort: null });
+    recordWorkspaceUse(main, new Date(Date.now() - 40 * 86_400_000));
+    const operation = testContext({ home });
+    const close = openGitReads(operation);
+    try {
+      const worktrees = await artifactWorktreesFor(operation);
+      if (addLinked) {
+        const linked = linkedWorktree(main, 'feature');
+        symlinkSync(join(main, 'node_modules'), join(linked, 'node_modules'));
+        upsertProject(linked, { metroPort: null });
+      }
+      const target = join(main, 'node_modules');
+      const results = await clearSourceTrees([target], {
+        protectedRoot: '/nowhere',
+        pinned: () => false,
+        worktrees,
+        recheck: async () => null,
+        level: 'critical',
+        launchers: freshLaunchers(operation, operation.signal),
+        operation,
+      });
+      expect(results.get(target)?.status).toBe(status);
+      expect(results.get(target)?.detail).toContain(detail);
+      expect(existsSync(target)).toBe(status === 'kept');
     } finally {
       close();
     }
