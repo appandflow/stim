@@ -1102,18 +1102,28 @@ export async function finishIosRun({
           };
         }
         deviceStreamId = collector.streamId;
-        const started = await d.awaitIosDeviceLaunch({
-          udid,
-          bundleId: bundleId!,
-          appName: appName ?? bundleId!,
-          collectorStreamId: collector.streamId,
-          sleep: deviceLogReadinessWait(root, 'ios', slot ?? 'default', collector.streamId, launchedAt, operation),
-          wireless: overWifi,
-          readRecords: () =>
-            readCollectorRecords(logsDir).filter(
-              (entry) => Number(entry.ts) >= launchedAt && (entry.slot ?? 'default') === (slot ?? 'default'),
-            ),
-        });
+        const readiness = deviceLogReadinessWait(
+          root,
+          'ios',
+          slot ?? 'default',
+          collector.streamId,
+          launchedAt,
+          operation,
+        );
+        const started = await d
+          .awaitIosDeviceLaunch({
+            udid,
+            bundleId: bundleId!,
+            appName: appName ?? bundleId!,
+            collectorStreamId: collector.streamId,
+            sleep: readiness,
+            wireless: overWifi,
+            readRecords: () =>
+              readCollectorRecords(logsDir).filter(
+                (entry) => Number(entry.ts) >= launchedAt && (entry.slot ?? 'default') === (slot ?? 'default'),
+              ),
+          })
+          .finally(readiness.close);
         if (started.failed || !started.pid) {
           return {
             error: {

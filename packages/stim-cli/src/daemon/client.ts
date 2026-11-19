@@ -66,6 +66,7 @@ interface ResumeLimit {
 const within = (ms: number, limit?: ResumeLimit): number =>
   limit ? Math.max(0, Math.min(ms, limit.deadline - Date.now())) : ms;
 const LOSS_GRACE_MS = 1000;
+const READINESS_REPLY_CAP_MS = 30_000;
 /** The label of the launchd job that runs a stimd, which it removes as it exits. */
 export const LAUNCHD_LABEL_ENV = 'STIMD_LAUNCHD_LABEL';
 
@@ -414,13 +415,25 @@ function askStimd(
   onProgress?: (line: string) => void,
   home?: string,
 ): Promise<Record<string, unknown> | null> {
+  return requestStimd(op, timeoutMs, fields, signal, onProgress, home).then(({ reply }) => reply);
+}
+
+/** {@link askStimd}, also saying whether the connection closed before a reply, as against a timeout or a cancel. */
+function requestStimd(
+  op: string,
+  timeoutMs: number,
+  fields: Record<string, unknown> = {},
+  signal?: AbortSignal,
+  onProgress?: (line: string) => void,
+  home?: string,
+): Promise<{ reply: Record<string, unknown> | null; closed: boolean }> {
   return new Promise((resolve) => {
     let socket: Socket | null = null;
-    const finish = (reply: Record<string, unknown> | null) => {
+    const finish = (reply: Record<string, unknown> | null, closed = false) => {
       clearTimeout(timer);
       signal?.removeEventListener('abort', cancel);
       socket?.destroy();
-      if (!following) resolve(reply);
+      if (!following) resolve({ reply, closed });
     };
     const cancel = () => finish(null);
     const timer = setTimeout(() => finish(null), timeoutMs);
@@ -438,7 +451,7 @@ function askStimd(
       false,
       home,
     );
-    socket.once('close', () => finish(null));
+    socket.once('close', () => finish(null, true));
   });
 }
 
@@ -1595,50 +1608,87 @@ export function deviceLogReadinessWait(
 ): ((ms: number) => Promise<void>) & {
   coverage: () => 'pending' | 'covered' | 'failed';
   coverThrough: (at: number) => void;
+  close: () => void;
 } {
   let revision = 0;
   let through = 0;
   let coverage: 'pending' | 'covered' | 'failed' = 'pending';
   let sequence = 0;
+  let inflight: {
+    id: number;
+    token: string;
+    through: number;
+    controller: AbortController;
+    result: Promise<{ reply: Record<string, unknown> | null; closed: boolean }>;
+  } | null = null;
+  const request = (token: string, requestThrough: number, timeoutMs: number, capMs: number, signal?: AbortSignal) =>
+    requestStimd(
+      'readiness.wait',
+      capMs,
+      {
+        opToken: token,
+        params: {
+          root,
+          platform,
+          slot,
+          streamId,
+          since,
+          through: requestThrough,
+          checkCoverage: coverage === 'pending',
+          after: revision,
+          timeoutMs,
+        },
+      },
+      signal,
+    );
+  const close = () => {
+    inflight?.controller.abort();
+    inflight = null;
+  };
   const wait = async (ms: number) => {
     const started = Date.now();
-    const requestSequence = ++sequence;
-    const requestThrough = through;
     const opToken = operationToken(operation);
-    const ask = (token: string) => {
-      const timeoutMs = Math.min(30_000, Math.max(0, Math.ceil(ms - (Date.now() - started))));
-      return askStimd(
-        'readiness.wait',
-        timeoutMs + 1000,
-        {
-          opToken: token,
-          params: {
-            root,
-            platform,
-            slot,
-            streamId,
-            since,
-            through: requestThrough,
-            checkCoverage: coverage === 'pending',
-            after: revision,
-            timeoutMs,
-          },
-        },
-        operation?.signal,
-      );
-    };
-    let reply = opToken ? await ask(opToken) : null;
+    const remaining = () => Math.max(0, Math.ceil(ms - (Date.now() - started)));
+    if (!opToken) {
+      close();
+      coverage = 'failed';
+      await cancellableSleep(remaining(), { signal: operation?.signal, what: 'launch readiness check' });
+      return;
+    }
+    if (!inflight || inflight.token !== opToken || inflight.through !== through) {
+      close();
+      const controller = new AbortController();
+      const signal = operation?.signal ? AbortSignal.any([operation.signal, controller.signal]) : controller.signal;
+      inflight = {
+        id: ++sequence,
+        token: opToken,
+        through,
+        controller,
+        result: request(opToken, through, Math.min(30_000, remaining()), READINESS_REPLY_CAP_MS, signal),
+      };
+    }
+    const current = inflight;
+    let timer: NodeJS.Timeout | undefined;
+    const answer = await Promise.race([
+      current.result,
+      new Promise<null>((done) => (timer = setTimeout(() => done(null), remaining()))),
+    ]);
+    clearTimeout(timer);
     throwIfCancelled(operation?.signal, 'launch readiness check');
-    const next = opToken && (!reply || reply.op === 'error') ? await resumeAdmission(opToken, operation, !reply) : null;
+    if (!answer || current.controller.signal.aborted) return;
+    if (inflight === current) inflight = null;
+    const latest = () => current.id === sequence && current.through === through;
+    let { reply } = answer;
+    const next = !reply || reply.op === 'error' ? await resumeAdmission(opToken, operation, answer.closed) : null;
     if (next && 'token' in next) {
       // @ref LLP 0012#a-command-continues-across-a-stimd-restart -- the successor proves coverage again and resumes the stream after it boots
       revision = 0;
-      if (requestSequence === sequence) coverage = 'pending';
+      if (latest()) coverage = 'pending';
       for (;;) {
-        reply = await ask(next.token);
+        ({ reply } = await request(next.token, current.through, remaining(), remaining() + 1000, operation?.signal));
         throwIfCancelled(operation?.signal, 'launch readiness check');
         if (reply?.op !== 'readiness.changed' || reply.gone !== true || Date.now() - started >= ms) break;
-        await cancellableSleep(Math.min(CLAIM_POLL_MS * 4, Math.max(0, ms - (Date.now() - started))), {
+        await cancellableSleep(Math.min(CLAIM_POLL_MS * 4, remaining()), {
           signal: operation?.signal,
           what: 'launch readiness check',
         });
@@ -1646,20 +1696,13 @@ export function deviceLogReadinessWait(
     }
     if (reply?.op === 'readiness.changed' && typeof reply.revision === 'number') {
       revision = Math.max(revision, reply.revision);
-      if (
-        requestSequence === sequence &&
-        requestThrough === through &&
-        (reply.coverage === 'pending' || reply.coverage === 'covered' || reply.coverage === 'failed')
-      )
+      if (latest() && (reply.coverage === 'pending' || reply.coverage === 'covered' || reply.coverage === 'failed'))
         coverage = reply.coverage;
       if (reply.gone !== true) return;
     }
-    const unanswered = reply === null && opToken !== undefined && !(next && 'error' in next);
-    if (!unanswered && requestSequence === sequence && requestThrough === through) coverage = 'failed';
-    await cancellableSleep(Math.max(0, ms - (Date.now() - started)), {
-      signal: operation?.signal,
-      what: 'launch readiness check',
-    });
+    const unanswered = reply === null && !answer.closed && !next;
+    if (!unanswered && latest()) coverage = 'failed';
+    await cancellableSleep(remaining(), { signal: operation?.signal, what: 'launch readiness check' });
   };
   return Object.assign(wait, {
     coverage: () => coverage,
@@ -1669,6 +1712,7 @@ export function deviceLogReadinessWait(
         if (coverage === 'covered') coverage = 'pending';
       }
     },
+    close,
   });
 }
 

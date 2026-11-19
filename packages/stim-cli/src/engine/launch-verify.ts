@@ -347,6 +347,7 @@ export async function verifyLaunch({
   sleep?: ((ms: number) => Promise<unknown>) & {
     coverage?: () => 'pending' | 'covered' | 'failed';
     coverThrough?: (at: number) => void;
+    close?: () => void;
   };
 } = {}): Promise<VerifyLaunchResult> {
   const delivered = (record: NdjsonRecord) => deliveryOwner(record, { slot, appPid, platformShared }) === 'this';
@@ -630,6 +631,8 @@ export async function verifyLaunch({
   } catch (error) {
     await crashProbe.settle().catch(() => {});
     throw error;
+  } finally {
+    sleep.close?.();
   }
   const probed = crashProbe.pending !== null;
   const late = await crashProbe.settle();
