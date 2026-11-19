@@ -179,11 +179,11 @@ function* stagedTargetDirs(root: string): DirReads<string[]> {
   return (yield* realDirectory(path)) && (yield* realDirectory(join(path, TRIM_ASIDE))) ? [path] : [];
 }
 
-function* cargoTargetDirsReads(root: string): DirReads<string[]> {
+function* cargoTargetDirsReads(root: string, staged: boolean): DirReads<string[]> {
   const whole = yield* wholeCargoTargetDirsReads(root);
   if (whole.length) return whole;
   const untagged = yield* untaggedRootTargetDirs(root);
-  return untagged.length ? untagged : yield* stagedTargetDirs(root);
+  return untagged.length || !staged ? untagged : yield* stagedTargetDirs(root);
 }
 
 /** Why a Cargo `target/` must not be deleted whole: it holds a copy a Cargo trim could not put back. */
@@ -197,12 +197,12 @@ function* recoveryCopyProblem(path: string): DirReads<string | null> {
 /**
  * The Cargo `target/` directly under `root` that the Cargo trims manage: an Exact app's (beside its `exact.mjs`), one that
  * carries Cargo's `CACHEDIR.TAG` with its signature line, or one beside a `Cargo.toml` that holds files only Cargo writes
- * (a `.rustc_info.json`, or a direct child profile holding `.fingerprint`), or one holding the `.stim-trimmed` staging
- * directory an earlier trim or delete left. Only the first two are build output; the dormant reduction deletes any of
- * them whole but a Solana keypair folder.
+ * (a `.rustc_info.json`, or a direct child profile holding `.fingerprint`), and with `staged`, for the dormant
+ * reduction only, one holding the `.stim-trimmed` staging directory an earlier delete left. Only the first two are
+ * build output; the dormant reduction deletes any of them whole but a Solana keypair folder.
  */
-export function cargoTargetDirsAsync(root: string): Promise<string[]> {
-  return readAsync(cargoTargetDirsReads(root));
+export function cargoTargetDirsAsync(root: string, { staged = false }: { staged?: boolean } = {}): Promise<string[]> {
+  return readAsync(cargoTargetDirsReads(root, staged));
 }
 
 function* discoveredBuildDirKindsReads(root: string): DirReads<{ dirs: string[]; cargo: string[] }> {
@@ -311,7 +311,7 @@ export async function regenerableDirProblem(
   if (
     processes &&
     basename(path) === CARGO_TARGET &&
-    (await readAsync(cargoTargetDirsReads(dirname(path)))).includes(path)
+    (await readAsync(cargoTargetDirsReads(dirname(path), true))).includes(path)
   ) {
     const recovery = await readAsync(recoveryCopyProblem(path));
     if (recovery) return recovery;

@@ -106,8 +106,9 @@ go, and gc names a `target/` it keeps and why. Putting entries back after a
 cancellation, an error, a lock or a process, and a delete that ends with entries
 left, give the `target/` its own modification time back, so Stim's own moves
 do not count as use on the next run; a rollback caused by a write or a new
-entry does not. A `target/` holding a `.stim-trimmed` directory counts as a
-recognised `target/` even when its Cargo files were staged: a staging tree
+entry does not. For the dormant reduction only, a `target/` holding a `.stim-trimmed` directory
+counts as a recognised `target/` even when its Cargo files were staged; the
+size cap and the pressure trims do not see such a `target/`, as before: a staging tree
 whose marker is cleared was committed for deletion, and the next run removes
 it after the same idle, process, lock and mount checks.
 
@@ -124,7 +125,10 @@ benchmark baselines and Cargo's reports. A `deploy/` directory holding a
 `*-keypair.json`, or one that cannot be read to tell, stays because Solana's `cargo build-sbf` and Anchor keep a
 program's private key there, and a new key is a new program ID. Everything else
 in an idle `target/` goes, Exact's folders and records included. A symbolic
-link stays because deleting through it would reach what it points at. An
+link stays because deleting through it would reach what it points at, and a
+`deploy` that is itself a symbolic link keeps the whole `target/`, since its
+keys may live anywhere in it. A `.stim-trimmed` that is not a real directory
+keeps the `target/` too: the staging directory is made fresh, never reused. An
 earlier version deleted only entries recognised as Cargo or Exact build
 output; it freed almost nothing from Exact app targets, whose size sits in
 folders that also hold records.

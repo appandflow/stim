@@ -106,7 +106,7 @@ async function reduceWorkspace(
   if (
     !workspaceOutputPaths(workspaceDir(path)).length &&
     !(await existingBuildDirsAsync(path)).length &&
-    !(await cargoTargetDirsAsync(path)).length
+    !(await cargoTargetDirsAsync(path, { staged: true })).length
   )
     return null;
   const keep = (detail: string): Result | null => (input.force ? { outcome: 'kept', bytes: 0, detail } : null);
@@ -196,7 +196,7 @@ async function eligible(
   const plan: Plan = { paths: [], targets: new Set(), kept, keptTarget: false };
   const targets = [...outputs.targets];
   // @ref LLP 0005#the-dormant-reduction-deletes-an-idle-target-whole -- untagged too, never build output
-  for (const dir of await cargoTargetDirsAsync(candidate.path)) {
+  for (const dir of await cargoTargetDirsAsync(candidate.path, { staged: true })) {
     if (isBuildDirPath(dir)) continue;
     const problem = await regenerableDirProblem(candidate.path, dir, undefined, { launching });
     if (problem) {
@@ -231,7 +231,7 @@ async function outputProblem(
   signal: AbortSignal | undefined,
 ): Promise<string | null> {
   if (output === metroStoreRoot(path)) return 'the shared Metro store is not a dormant output';
-  if (cargo && !(await cargoTargetDirsAsync(path)).includes(output))
+  if (cargo && !(await cargoTargetDirsAsync(path, { staged: true })).includes(output))
     return 'it is no longer a Cargo target/ Stim recognises';
   if (!cargo && basename(output) === 'target') return 'a Cargo target/ goes only through the Cargo delete';
   if (workspaceOutputPaths(workspaceDir(path)).includes(output)) return null;

@@ -776,6 +776,37 @@ describe.skipIf(process.platform === 'win32')(
       expect(existsSync(dir)).toBe(false);
     });
 
+    test('a staging directory that is a symbolic link keeps the target, and what it points at', async () => {
+      const outside = join(target, 'outside');
+      mkdirSync(outside);
+      writeFileSync(join(outside, 'mine.txt'), 'mine');
+      symlinkSync(outside, join(dir, '.stim-trimmed'));
+      const old = new Date(Date.now() - 3 * DAY);
+      lutimesSync(join(dir, '.stim-trimmed'), old, old);
+      utimesSync(dir, old, old);
+
+      const result = await remove();
+
+      expect(result.removed).toEqual([]);
+      expect(result.kept).toEqual([expect.stringContaining('cannot be made')]);
+      expect(readdirSync(outside)).toEqual(['mine.txt']);
+      expect(existsSync(join(dir, 'debug', 'app'))).toBe(true);
+    });
+
+    test('a deploy that is a symbolic link keeps the whole target', async () => {
+      mkdirSync(join(dir, 'sbf-output'));
+      writeFileSync(join(dir, 'sbf-output', 'app-keypair.json'), '[1,2,3]');
+      symlinkSync(join(dir, 'sbf-output'), join(dir, 'deploy'));
+      ageTree(dir);
+      lutimesSync(join(dir, 'deploy'), new Date(Date.now() - 3 * DAY), new Date(Date.now() - 3 * DAY));
+
+      const result = await remove();
+
+      expect(result.removed).toEqual([]);
+      expect(readFileSync(join(dir, 'sbf-output', 'app-keypair.json'), 'utf8')).toBe('[1,2,3]');
+      expect(existsSync(join(dir, 'debug', 'app'))).toBe(true);
+    });
+
     test('a cancelled delete puts every moved entry back and leaves nothing staged', async () => {
       const controller = new AbortController();
       fsHooks.rename = (from) => {

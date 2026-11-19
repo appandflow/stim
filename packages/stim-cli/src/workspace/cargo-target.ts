@@ -31,7 +31,8 @@ const KEYPAIR_DIR = 'deploy';
 
 /**
  * The top-level entries of `target` the dormant delete removes (`output`), and those it keeps (`kept`): a symbolic link,
- * which a delete must not go through, and a `deploy/` directory holding a `*-keypair.json`. Stim's own `.stim-*`
+ * which a delete must not go through, and a `deploy/` directory holding a `*-keypair.json`. A `deploy` that is a
+ * symbolic link keeps every entry, since Stim cannot tell what of the target holds the keys it points at. Stim's own `.stim-*`
  * entries are in neither. Null when `target` cannot be listed.
  */
 export function targetEntries(target: string): { output: string[]; kept: string[] } | null {
@@ -39,8 +40,13 @@ export function targetEntries(target: string): { output: string[]; kept: string[
   if (!entries) return null;
   const output: string[] = [];
   const kept: string[] = [];
+  const linkedKeypairs = entries.some((entry) => entry.name === KEYPAIR_DIR && entry.isSymbolicLink());
   for (const entry of entries.toSorted((a, b) => a.name.localeCompare(b.name))) {
     if (entry.name.startsWith(OWN_PREFIX)) continue;
+    if (linkedKeypairs) {
+      kept.push(entry.name);
+      continue;
+    }
     const keypairs = entry.name === KEYPAIR_DIR && entry.isDirectory() && holdsKeypair(join(target, entry.name));
     (entry.isSymbolicLink() || keypairs ? kept : output).push(entry.name);
   }
@@ -517,7 +523,7 @@ function recentEntryUse(path: string, name: string, now: number, idleMs: number)
  */
 export async function deleteCargoTarget(registeredTarget: string, options: DeleteOptions): Promise<CargoTrimResult> {
   const claimed = await withTrimClaim(registeredTarget, async (target): Promise<CargoTrimResult> =>
-    (await cargoTargetDirsAsync(dirname(registeredTarget))).includes(registeredTarget)
+    (await cargoTargetDirsAsync(dirname(registeredTarget), { staged: true })).includes(registeredTarget)
       ? deleteClaimed(target, options)
       : { bytes: 0, removed: [], kept: ['it is no longer a Cargo target/ Stim recognises'] },
   );
@@ -618,8 +624,12 @@ async function deleteClaimed(
     }
     return { ...result, bytes: 0, kept: [...result.kept, `${why}${left}`] };
   };
+  try {
+    await mkdir(aside);
+  } catch (error) {
+    return keep(`${aside} cannot be made: ${error instanceof Error ? error.message : error}`);
+  }
   // @ref LLP 0005#never-delete-what-a-build-took-back -- staged entries carry the NOT-RESTORED marker until the checks pass
-  await mkdir(aside, { recursive: true });
   await writeFile(
     marker,
     `${JSON.stringify(Object.fromEntries(names.map((name, n) => [String(n), name])), null, 2)}\n`,
