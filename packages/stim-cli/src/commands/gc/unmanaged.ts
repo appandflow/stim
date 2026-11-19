@@ -18,6 +18,7 @@ import { SWIFTPM_PATTERN, TRACE_PATTERN } from './temp-leftovers.ts';
 const BUDGET_MS = 15_000;
 const ENTRY_TIMEOUT_MS = 5_000;
 const DOCKER_TIMEOUT_MS = 5_000;
+const KILL_GRACE_MS = 1_000;
 const MAX_WALKS_PER_ROOT = 100;
 
 /** Something on a short volume that Stim does not manage, with the owning tool's cleanup command when it has one. */
@@ -147,29 +148,60 @@ class Scan {
     return volume !== undefined && this.isShort(volume);
   }
 
-  /** The folder's allocated bytes on its own filesystem, through one low-priority `du`, a lower bound when `du` could not read part of it. */
-  async size(path: string): Promise<{ bytes: number; partial: boolean } | null> {
-    const timeoutMs = Math.min(ENTRY_TIMEOUT_MS, this.left());
-    if (timeoutMs <= 0) {
-      this.unreached += 1;
-      return null;
-    }
+  /**
+   * Runs one child under the scan's deadline: `ok` with its output, `slow` when it hit a full-length cap of `capMs`,
+   * `unreached` when the deadline cut it short or another read is still pending, or `failed` with the error. The
+   * executor kills it at its timeout but waits for it to close, which a process stuck on a dead mount never does, so
+   * it is also raced through the bounded read slot a little past its timeout; one that never closes stays the pending
+   * read, which makes the command exit explicitly.
+   */
+  async run(
+    label: string,
+    file: string,
+    args: string[],
+    capMs: number,
+  ): Promise<{ ok: string } | { slow: true } | { unreached: true } | { failed: unknown }> {
+    const timeoutMs = Math.min(capMs, this.left());
+    if (timeoutMs <= 0) return { unreached: true };
+    const shortened = timeoutMs < capMs;
+    const signal = this.operation?.signal;
     try {
-      const bytes = duBytes(
-        await runOperationFile(this.operation, getExecutor(), 'nice', ['-n', '19', 'du', '-x', '-sk', path], {
-          timeoutMs,
-          killSignal: 'SIGKILL',
-          signal: this.operation?.signal,
-          cwd: this.operation?.cwd,
-        }),
-      );
-      if (bytes !== null) return { bytes, partial: false };
+      return {
+        ok: await answered(
+          label,
+          () =>
+            runOperationFile(this.operation, getExecutor(), file, args, {
+              timeoutMs,
+              killSignal: 'SIGKILL',
+              signal,
+              cwd: this.operation?.cwd,
+            }),
+          timeoutMs + KILL_GRACE_MS,
+          signal,
+        ),
+      };
     } catch (error) {
       rethrowCleanup(error, this.operation);
-      if (isTimeoutError(error)) {
-        this.slow.push(path);
-        return null;
-      }
+      if (error instanceof Unanswered && hungRead() !== label) return { unreached: true };
+      if (error instanceof Unanswered || isTimeoutError(error)) return shortened ? { unreached: true } : { slow: true };
+      return { failed: error };
+    }
+  }
+
+  /** The folder's allocated bytes on its own filesystem, through one low-priority `du`, a lower bound when `du` could not read part of it. */
+  async size(path: string): Promise<{ bytes: number; partial: boolean } | null> {
+    const result = await this.run(path, 'nice', ['-n', '19', 'du', '-x', '-sk', path], ENTRY_TIMEOUT_MS);
+    if ('ok' in result) {
+      const bytes = duBytes(result.ok);
+      if (bytes !== null) return { bytes, partial: false };
+    } else if ('slow' in result) {
+      this.slow.push(path);
+      return null;
+    } else if ('unreached' in result) {
+      this.unreached += 1;
+      return null;
+    } else {
+      const error = result.failed;
       // `du` exits 1 when it cannot read part of the tree, after printing the total of what it read.
       const bytes =
         error instanceof Error && 'status' in error && error.status === 1 && 'stdout' in error
@@ -205,24 +237,13 @@ async function swapFiles(scan: Scan): Promise<UnmanagedEntry[]> {
 }
 
 async function docker(scan: Scan): Promise<UnmanagedEntry[]> {
-  const { operation } = scan;
-  const exec = getExecutor();
-  if (exec.findExecutable('docker', { env: operation?.env ?? process.env }) === null) return [];
-  const timeoutMs = Math.min(DOCKER_TIMEOUT_MS, scan.left());
-  if (timeoutMs <= 0) return [];
-  let output: string;
-  try {
-    output = await runOperationFile(operation, exec, 'docker', ['system', 'df', '--format', '{{json .}}'], {
-      timeoutMs,
-      killSignal: 'SIGKILL',
-      signal: operation?.signal,
-      cwd: operation?.cwd,
-    });
-  } catch (error) {
-    rethrowCleanup(error, operation);
-    if (isTimeoutError(error)) scan.slow.push('Docker (docker system df)');
-    return [];
-  }
+  if (getExecutor().findExecutable('docker', { env: scan.operation?.env ?? process.env }) === null) return [];
+  const label = 'Docker (docker system df)';
+  const result = await scan.run(label, 'docker', ['system', 'df', '--format', '{{json .}}'], DOCKER_TIMEOUT_MS);
+  if ('slow' in result) scan.slow.push(label);
+  else if ('unreached' in result) scan.unreached += 1;
+  if (!('ok' in result)) return [];
+  const output = result.ok;
   const { bytes, reclaimable } = parseDockerDf(output);
   return bytes
     ? [
@@ -240,7 +261,7 @@ interface RootListing {
   folders: { path: string; holdsStim: boolean }[];
 }
 
-// @ref LLP 0004#tool-folders-and-the-full-scan -- these home folders are never read
+// @ref LLP 0004#tool-folders-and-the-full-scan -- the discovery scan leaves these home folders unread too
 /** Home folders macOS guards with a privacy prompt for the reading app, compared case-insensitively. */
 const MACOS_PROTECTED = new Set(['desktop', 'documents', 'downloads', 'library', 'movies', 'music', 'pictures']);
 
@@ -304,18 +325,22 @@ export async function unmanagedUsage(
   const { thresholds } = diskThresholds(config, env);
   let short = new Set<number>();
   const measured = new Set<number>();
+  let shortFree: number[] = [];
   const scan = new Scan(
     Date.now() + BUDGET_MS,
     (volume) =>
       volume.device !== undefined && measured.has(volume.device)
         ? short.has(volume.device)
-        : shortVolumeDevices([volume], thresholds, 'high').size > 0,
+        : // APFS volumes of one container, such as macOS's VM volume beside the Data volume, report the container's
+          // free space; any other unmeasured volume, a tmpfs /tmp among them, is not the one under pressure.
+          shortFree.some((free) => Math.abs(free - volume.freeMb) < 1),
     operation,
   );
   const disk = await scan.read('disk', () => measureDisk(config, operation?.signal));
   if (!disk) return null;
   for (const volume of disk) if (volume.device !== undefined) measured.add(volume.device);
   short = shortVolumeDevices(disk, thresholds, 'high');
+  shortFree = disk.filter((volume) => volume.device !== undefined && short.has(volume.device)).map((v) => v.freeMb);
   if (!short.size) return null;
   const entries = [...(await swapFiles(scan)), ...(await docker(scan))];
   const resolved = async (paths: readonly string[]): Promise<string[] | null> => {

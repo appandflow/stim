@@ -15,7 +15,9 @@ import { testContext } from './_context.ts';
 const hooks: {
   lstat: ((path: string) => void | Partial<Stats>) | null;
   realpath: ((path: string) => Promise<string> | null) | null;
-} = vi.hoisted(() => ({ lstat: null, realpath: null }));
+  volume: ((path: string) => { volume: string; freeMb: number; device: number } | null) | null;
+  du: ((dir: string) => Promise<string> | null) | null;
+} = vi.hoisted(() => ({ lstat: null, realpath: null, volume: null, du: null }));
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
@@ -26,6 +28,17 @@ vi.mock('node:fs/promises', async (importOriginal) => {
       return Object.assign(stats, hooks.lstat?.(path) ?? {});
     },
     realpath: (path: string) => hooks.realpath?.(path) ?? actual.realpath(path),
+  };
+});
+
+vi.mock('../stimd/passes/budget.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../stimd/passes/budget.ts')>();
+  return {
+    ...actual,
+    readVolumeSpaceAsync: async (paths: readonly string[], signal?: AbortSignal) => {
+      const replaced = paths.length === 1 && paths[0] !== undefined ? hooks.volume?.(paths[0]) : null;
+      return replaced ? [replaced] : actual.readVolumeSpaceAsync(paths, signal);
+    },
   };
 });
 
@@ -81,6 +94,8 @@ beforeEach(() => {
   calls = [];
   hooks.lstat = null;
   hooks.realpath = null;
+  hooks.volume = null;
+  hooks.du = null;
   docker = null;
   slow = null;
   dockerOutput = DOCKER_DF;
@@ -93,6 +108,8 @@ beforeEach(() => {
         return dockerOutput;
       }
       const dir = args.at(-1) ?? '';
+      const hooked = hooks.du?.(dir);
+      if (hooked) return hooked;
       if (dir === slow) {
         vi.setSystemTime(Date.now() + 60_000);
         throw Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' });
@@ -340,4 +357,66 @@ test('on macOS names the home folders macOS protects and never reads them', asyn
   expect(usage ? formatUnmanagedUsage(usage) : []).toContain(
     `  not sized, macOS protects these: ${join(home, 'Documents')}, ${join(home, 'Library')}`,
   );
+});
+
+test('a walk the deadline cut short counts as not reached, not as slow', async () => {
+  for (const dir of ['a-first', 'b-second']) mkdirSync(join(home, dir));
+  hooks.du = (dir) => {
+    if (dir.endsWith('a-first')) vi.setSystemTime(Date.now() + 12_000);
+    else if (dir.endsWith('b-second'))
+      return Promise.reject(Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' }));
+    return null;
+  };
+
+  const usage = await unmanagedUsage(levelRun({}), false);
+
+  expect(usage?.slow).toEqual([]);
+  expect(usage?.unreached).toBe(1);
+});
+
+test('a walk that never closes ends at its cap, stays the pending read, and leaves the rest unreached', async () => {
+  for (const dir of ['a-stuck', 'b-after']) mkdirSync(join(home, dir));
+  let arrive = () => {};
+  const reached = new Promise<void>((resolve) => {
+    arrive = resolve;
+  });
+  let release = () => {};
+  hooks.du = (dir) => {
+    if (!dir.endsWith('a-stuck')) return null;
+    arrive();
+    return new Promise<string>((resolve) => {
+      release = () => resolve(`1\t${dir}\n`);
+    });
+  };
+  try {
+    const pending = unmanagedUsage(levelRun({}), false);
+    await reached;
+    await vi.advanceTimersByTimeAsync(6_000);
+    const usage = await pending;
+
+    expect(usage?.slow).toEqual([join(home, 'a-stuck')]);
+    expect(usage?.unreached).toBe(1);
+    expect(hungRead()).toBe(join(home, 'a-stuck'));
+  } finally {
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+  }
+});
+
+test('lists only volumes the pressure measurement found short, and APFS volumes sharing their free space', async () => {
+  mkdirSync(join(home, 'big'));
+  mkdirSync(join(temp, 'scratch'));
+  hooks.volume = (path) => (path === temp ? { volume: '/tmp', freeMb: 512, device: 424_242 } : null);
+
+  const labels = (await unmanagedUsage(levelRun({}), false))?.entries.map((entry) => entry.label) ?? [];
+  expect(labels).toContain(join(home, 'big'));
+  expect(labels).not.toContain(join(temp, 'scratch'));
+
+  const { readVolumeSpaceAsync } =
+    await vi.importActual<typeof import('../stimd/passes/budget.ts')>('../stimd/passes/budget.ts');
+  const [measured] = await readVolumeSpaceAsync([home]);
+  hooks.volume = (path) =>
+    path === temp && measured ? { volume: '/System/Volumes/VM', freeMb: measured.freeMb, device: 424_242 } : null;
+  const sibling = (await unmanagedUsage(levelRun({}), false))?.entries.map((entry) => entry.label) ?? [];
+  expect(sibling).toContain(join(temp, 'scratch'));
 });
