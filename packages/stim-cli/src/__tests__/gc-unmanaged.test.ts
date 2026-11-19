@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import type { Stats } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -17,7 +17,8 @@ const hooks: {
   realpath: ((path: string) => Promise<string> | null) | null;
   volume: ((path: string) => { volume: string; freeMb: number; device: number } | null) | null;
   du: ((dir: string, signal?: AbortSignal) => Promise<string> | null) | null;
-} = vi.hoisted(() => ({ lstat: null, realpath: null, volume: null, du: null }));
+  dev: Record<string, number> | null;
+} = vi.hoisted(() => ({ lstat: null, realpath: null, volume: null, du: null, dev: null }));
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
@@ -28,6 +29,12 @@ vi.mock('node:fs/promises', async (importOriginal) => {
       return Object.assign(stats, hooks.lstat?.(path) ?? {});
     },
     realpath: (path: string) => hooks.realpath?.(path) ?? actual.realpath(path),
+    readdir: (path: string, ...rest: []) =>
+      path === '/dev' && hooks.dev ? Promise.resolve(Object.keys(hooks.dev)) : actual.readdir(path, ...rest),
+    stat: (path: string) => {
+      const rdev = path.startsWith('/dev/') ? hooks.dev?.[path.slice(5)] : undefined;
+      return rdev === undefined ? actual.stat(path) : Promise.resolve({ rdev });
+    },
   };
 });
 
@@ -103,6 +110,7 @@ beforeEach(() => {
   hooks.realpath = null;
   hooks.volume = null;
   hooks.du = null;
+  hooks.dev = null;
   docker = null;
   slow = null;
   dockerOutput = DOCKER_DF;
@@ -339,6 +347,43 @@ test.skipIf(process.platform === 'win32')(
   },
 );
 
+describe.skipIf(process.platform === 'win32')('a walk whose timeout cleanup outlasts its grace', () => {
+  const refusal = Object.assign(new Error('Report child 42 did not close within the cleanup budget.'), {
+    reportCleanup: true,
+  });
+  test.each([
+    [
+      'is slow once the cleanup ends',
+      Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' }),
+      (): unknown => expect.objectContaining({ slow: [join(home, 'a-walk')] }),
+    ],
+    ['rejects with the cleanup refusal', refusal, (): unknown => refusal],
+  ])('%s', async (_case, failure, expected) => {
+    mkdirSync(join(home, 'a-walk'));
+    let arrive = () => {};
+    const reached = new Promise<void>((resolve) => {
+      arrive = resolve;
+    });
+    hooks.du = (dir) => {
+      if (!dir.endsWith('a-walk')) return null;
+      arrive();
+      return new Promise<string>((_, reject) => {
+        setTimeout(() => reject(failure), 5_000 + 3_000);
+      });
+    };
+    const outcome = unmanagedUsage(levelRun({}), false, testContext()).then(
+      (usage) => usage,
+      (error: unknown) => error,
+    );
+    await reached;
+    await vi.advanceTimersByTimeAsync(9_000);
+    const result = await outcome;
+
+    expect(result).toEqual(expected());
+    expect(hungRead()).toBeNull();
+  });
+});
+
 describe.skipIf(process.platform === 'win32')('a gc cancelled during a walk', () => {
   test.each([
     ['the cancellation', null],
@@ -530,7 +575,7 @@ test.skipIf(process.platform === 'win32')(
 );
 
 test.skipIf(process.platform === 'win32')(
-  'lists only volumes the pressure measurement found short, and APFS volumes sharing their free space',
+  'lists only volumes the pressure measurement found short, and on macOS the APFS volumes of their container',
   async () => {
     mkdirSync(join(home, 'big'));
     mkdirSync(join(temp, 'scratch'));
@@ -540,13 +585,22 @@ test.skipIf(process.platform === 'win32')(
     expect(labels).toContain(join(home, 'big'));
     expect(labels).not.toContain(join(temp, 'scratch'));
 
+    const platform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    onTestFinished(() => {
+      Object.defineProperty(process, 'platform', { value: platform });
+    });
+    hooks.dev = { disk3s5: statSync(home).dev, disk3s1s1: 424_240, disk3s6: 424_242, disk9s1: 515_151, disk3: 1 };
     const { readVolumeSpaceAsync } =
       await vi.importActual<typeof import('../stimd/passes/budget.ts')>('../stimd/passes/budget.ts');
     const [measured] = await readVolumeSpaceAsync([home]);
-    hooks.volume = (path) =>
-      path === temp && measured ? { volume: '/System/Volumes/VM', freeMb: measured.freeMb, device: 424_242 } : null;
-    const sibling = (await unmanagedUsage(levelRun({}), false))?.entries.map((entry) => entry.label) ?? [];
-    expect(sibling).toContain(join(temp, 'scratch'));
+    const tempOn = async (device: number) => {
+      hooks.volume = (path) =>
+        path === temp && measured ? { volume: '/System/Volumes/VM', freeMb: measured.freeMb + 2, device } : null;
+      return (await unmanagedUsage(levelRun({}), false))?.entries.map((entry) => entry.label) ?? [];
+    };
+    expect(await tempOn(424_242)).toContain(join(temp, 'scratch'));
+    expect(await tempOn(515_151)).not.toContain(join(temp, 'scratch'));
   },
 );
 

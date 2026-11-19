@@ -2625,8 +2625,9 @@ scan. It names the folders too slow to size within their 5 seconds and those it
 could not read, and counts what the deadline left unreached. On macOS it names `~/Desktop`, `~/Documents`,
 `~/Downloads`, `~/Library`, `~/Movies`, `~/Music` and `~/Pictures` without
 reading them, so no privacy prompt appears. A cache Stim found but did not
-measure, such as Jest's default cache or Metro's file maps in the temporary
-folder, is listed too, marked "Stim sweeps only its unused entries". An acting
+measure and sweeps by entry, such as Jest's default cache or Metro's file maps
+in the temporary folder, is listed too, marked "Stim sweeps only its unused
+entries". An acting
 run prints its summary and releases the maintenance claim first. The scan does
 not run on Windows or when `STIM_HOME` scopes the home.
 

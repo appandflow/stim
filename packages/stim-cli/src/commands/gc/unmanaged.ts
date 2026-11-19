@@ -155,8 +155,9 @@ class Scan {
    * `unreached` when the deadline cut it short or another read is still pending, or `failed` with the error. The
    * executor kills it at its timeout but waits for it to close, which a process stuck on a dead mount never does, so
    * it is also raced through the bounded read slot a little past its timeout; one that never closes stays the pending
-   * read, which makes the command exit explicitly. A cancelled run waits for the executor to kill the child and
-   * finish its cleanup, so a cleanup refusal reaches the caller.
+   * read, which makes the command exit explicitly. Under an operation, whose executor always settles a child within its
+   * cleanup budget, a run that timed out or was cancelled waits for that cleanup, so a cleanup refusal reaches the
+   * caller.
    */
   async run(
     label: string,
@@ -185,7 +186,7 @@ class Scan {
       };
     } catch (error) {
       rethrowCleanup(
-        signal?.aborted && child
+        signal && child
           ? await child.then(
               () => error,
               (cause: unknown) => cause,
@@ -193,7 +194,7 @@ class Scan {
           : error,
         this.operation,
       );
-      if (error instanceof Unanswered && hungRead() !== label) return { unreached: true };
+      if (error instanceof Unanswered && (!child || (!signal && hungRead() !== label))) return { unreached: true };
       if (error instanceof Unanswered || isTimeoutError(error)) return shortened ? { unreached: true } : { slow: true };
       return { failed: error };
     }
@@ -223,6 +224,20 @@ class Scan {
     this.failed.push(path);
     return null;
   }
+}
+
+/** The APFS container of each macOS volume device, by device number; empty elsewhere. */
+async function apfsContainers(scan: Scan): Promise<Map<number, string>> {
+  const containers = new Map<number, string>();
+  if (process.platform !== 'darwin') return containers;
+  for (const name of (await scan.read('/dev', () => readdir('/dev'))) ?? []) {
+    // APFS names volume M of the synthesized container diskN `diskNsM`, and a snapshot of it `diskNsMsK`.
+    const container = /^(disk\d+)s\d+(?:s\d+)?$/.exec(name)?.[1];
+    if (!container) continue;
+    const device = (await scan.read(`/dev/${name}`, () => stat(`/dev/${name}`)))?.rdev;
+    if (device !== undefined) containers.set(device, container);
+  }
+  return containers;
 }
 
 async function swapFiles(scan: Scan): Promise<UnmanagedEntry[]> {
@@ -340,23 +355,27 @@ export async function unmanagedUsage(
   const { thresholds } = diskThresholds(config, env);
   let short = new Set<number>();
   const measured = new Set<number>();
-  let shortFree: number[] = [];
+  let containers = new Map<number, string>();
+  let shortContainers = new Set<string>();
   const scan = new Scan(
     Date.now() + BUDGET_MS,
-    (volume) =>
-      volume.device !== undefined && measured.has(volume.device)
-        ? short.has(volume.device)
-        : // APFS volumes of one container, such as macOS's VM volume beside the Data volume, report the container's
-          // free space; any other unmeasured volume, a tmpfs /tmp among them, is not the one under pressure.
-          shortFree.some((free) => Math.abs(free - volume.freeMb) < 1),
+    (volume) => {
+      if (volume.device === undefined) return false;
+      if (measured.has(volume.device)) return short.has(volume.device);
+      // APFS volumes of one container, such as macOS's VM volume beside the Data volume, share its free space; any
+      // other unmeasured volume, a tmpfs /tmp among them, is not the one under pressure.
+      const container = containers.get(volume.device);
+      return container !== undefined && shortContainers.has(container);
+    },
     operation,
   );
   const disk = await scan.read('disk', () => measureDisk(config, operation?.signal));
   if (!disk) return null;
   for (const volume of disk) if (volume.device !== undefined) measured.add(volume.device);
   short = shortVolumeDevices(disk, thresholds, 'high');
-  shortFree = disk.filter((volume) => volume.device !== undefined && short.has(volume.device)).map((v) => v.freeMb);
   if (!short.size) return null;
+  containers = await apfsContainers(scan);
+  shortContainers = new Set([...short].flatMap((device) => containers.get(device) ?? []));
   const entries = [...(await swapFiles(scan)), ...(await docker(scan))];
   const resolved = async (paths: readonly string[]): Promise<string[] | null> => {
     const out: string[] = [];
