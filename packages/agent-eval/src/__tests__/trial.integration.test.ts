@@ -395,6 +395,22 @@ echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"resul
     expect(outcome.invocations).toEqual([]);
   }, 40_000);
 
+  test.each([
+    ['a link', 'rm "$log"; ln -s /etc/hosts "$log"'],
+    ['a FIFO', 'rm "$log"; mkfifo "$log"'],
+    ['an oversized file', 'head -c 5000000 /dev/zero | tr "\\000" a >> "$log"'],
+  ])(
+    'an invocation log replaced by %s invalidates the trial without hanging the runner',
+    async (_kind, swap) => {
+      const bin = fakeAgent(`${FIND_LOG}\nstim ios\n${swap}\nsleep 30`);
+      const started = Date.now();
+      const outcome = await runTrial(firstLaunch, withSkill, claudeDriver, options({ bin }));
+      expect(Date.now() - started).toBeLessThan(25_000);
+      expect(outcome.problems).toContain('the invocation log could not be read');
+    },
+    40_000,
+  );
+
   test('a transcript that only names the log folder, as Codex lists it among writable roots, stays valid', async () => {
     const bin = fakeAgent(`${FIND_LOG}
 stim ios

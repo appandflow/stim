@@ -1,6 +1,12 @@
 import { execFileSync, spawn, spawnSync, type ChildProcess, type SpawnSyncReturns } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import {
+  closeSync,
+  constants,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readSync,
   chmodSync,
   copyFileSync,
   mkdirSync,
@@ -9,7 +15,6 @@ import {
   realpathSync,
   rmSync,
   writeFileSync,
-  existsSync,
   readdirSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -157,11 +162,27 @@ function isInvocation(value: unknown): value is Invocation {
   );
 }
 
+const MAX_LOG_BYTES = 4 * 1024 * 1024;
+
+function readLog(path: string): string {
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile()) throw new Error('not a regular file');
+    if (stat.size > MAX_LOG_BYTES) throw new Error('too large');
+    const buffer = Buffer.alloc(stat.size);
+    const read = readSync(fd, buffer, 0, stat.size, 0);
+    return buffer.subarray(0, read).toString('utf8');
+  } finally {
+    closeSync(fd);
+  }
+}
+
 function readInvocations(paths: TrialPaths, final: boolean): { invocations: Invocation[]; error: string | null } {
   const log = join(paths.harness, 'invocations.jsonl');
-  if (!existsSync(log)) return { invocations: [], error: null };
+  if (!lstatSync(log, { throwIfNoEntry: false })) return { invocations: [], error: null };
   try {
-    const text = readFileSync(log, 'utf8');
+    const text = readLog(log);
     const lines = text.split('\n');
     const tail = lines.pop() ?? '';
     if (final && tail !== '') throw new Error('incomplete');
