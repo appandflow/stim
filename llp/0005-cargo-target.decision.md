@@ -84,9 +84,13 @@ Exact app's, is dated the same way.
 Then, as the trims do (Never delete what a build took back, below), it renames
 each entry into `target/.stim-trimmed/` and reads that entry's lock
 files again at the new path. Once every entry is moved it reads the processes
-again and dates the moved entries again the same way. A lock a build took, any
-path in the `target/` a process used or a write made meanwhile puts every moved entry back, and so does a
-cancellation or an error before those checks pass. An entry whose original
+again and dates the moved entries again the same way. Right before the delete it
+checks that a staged `deploy/` still holds no keypair, lists the `target/` again
+(an entry's original name that reappeared, or a new entry, means a build is
+back), dates the entries that stayed in place, and on Linux reads the mounts
+again. A lock a build took, any path in the `target/` a process used, a write
+made meanwhile or any of those findings puts every moved entry back, and so does
+a cancellation or an error before those checks pass. An entry whose original
 name exists again is not put back over it; like one that cannot be put back,
 it moves to `.stim-not-restored-*` or stays in a `.stim-trimmed` marked
 `NOT-RESTORED`, for a person. A file is put back with `link` then `unlink`, which
@@ -110,13 +114,20 @@ Maintainer decision: "yea lets do that", 2026-11-19 (#5979), in reply to
 "switch #5996 to that, full delete except Solana keypairs", after the worst
 cases were listed: Solana keypairs, Exact's receipts and development tokens,
 benchmark baselines and Cargo's reports. A `deploy/` directory holding a
-`*-keypair.json` stays because Solana's `cargo build-sbf` and Anchor keep a
+`*-keypair.json`, or one that cannot be read to tell, stays because Solana's `cargo build-sbf` and Anchor keep a
 program's private key there, and a new key is a new program ID. Everything else
 in an idle `target/` goes, Exact's folders and records included. A symbolic
 link stays because deleting through it would reach what it points at. An
 earlier version deleted only entries recognised as Cargo or Exact build
 output; it freed almost nothing from Exact app targets, whose size sits in
 folders that also hold records.
+
+Known limit: the process checks see a path in the `target/` only when a process
+runs from it, works in it, holds a file in it open or names it absolutely on
+its command line. A process whose working directory is outside the checkout
+and that names the `target/` only by a relative path, such as a static file
+server for `target/doc` started from elsewhere, is not seen, and its files can
+go while it serves them.
 
 Chosen by the coordinator and the reviews of #5996, not by the maintainer: the
 use dating, the move aside with its recheck and roll back, the mount checks and
