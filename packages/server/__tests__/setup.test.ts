@@ -226,6 +226,15 @@ test('plain setup prints the install that fixes a stale LaunchAgent it keeps run
   expect(f.stdout.join('\n')).toContain(remedy);
 });
 
+test('setup finishes when the stale check cannot read launchd', async () => {
+  const f = fixture({
+    stale: async () => {
+      throw new Error('launchctl print dev.stim.server failed: Operation not permitted');
+    },
+  });
+  expect(await runSetup([...args, '--yes'], '1.16.0', f.deps)).toBe(0);
+});
+
 test('build and device-host are offered through one stored secret and a rerun never offers either again', async () => {
   const f = fixture();
   const both = [...args, '--device-host', '--yes', '--json'];

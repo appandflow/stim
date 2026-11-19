@@ -991,7 +991,7 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
           deps.installJob({ ...opts, serve: false }, { script, host, requestPermissions: false }),
         ))
           chatter(note);
-        const stale = await wait(deps.stale(opts.label));
+        const stale = await wait(deps.stale(opts.label).catch(() => null));
         if (stale) {
           const warning = `${opts.label} runs a stale ${serviceNoun}: ${stale.reason}; ${stale.remedy}.`;
           output.warnings.push(warning);
