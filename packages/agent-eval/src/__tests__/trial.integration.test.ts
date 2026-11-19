@@ -41,6 +41,8 @@ const withSkill: Arm = { name: 'with skill', skill: true, blank: [] };
 const firstLaunch = CASES.find((each) => each.id === 'first-launch');
 if (!firstLaunch) throw new Error('first-launch case is missing');
 
+const FIND_LOG = `log="$(grep -o '"log":"[^"]*"' "$(dirname "$(command -v stim)")/stim-eval.json" | cut -d'"' -f4)"`;
+
 function fakeAgent(body: string): string {
   const file = join(directory, 'fake-claude');
   writeFileSync(file, `#!/bin/sh\n${body}\n`);
@@ -76,6 +78,17 @@ printf '{"type":"result","subtype":"success","is_error":false,"num_turns":2,"res
     const guide = outcome.invocations[0];
     expect(guide?.stdoutBytes).toBeGreaterThan(1000);
     expect(outcome.run.finalMessage).toMatch(/^stim=\/.*\/bin\/stim secret=\[\] skill=yes git=1$/);
+  }, 30_000);
+
+  test('the invocation log is not in the folder around the workspace', async () => {
+    const bin = fakeAgent(`
+stim guide agent > /dev/null
+printf '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"result":"%s","usage":{}}\\n' "$(ls -A .. | tr '\\n' ' ')"
+`);
+    const outcome = await runTrial(firstLaunch, withSkill, claudeDriver, options({ bin }));
+    expect(outcome.invocations.map((each) => each.argv.join(' '))).toEqual(['guide agent']);
+    expect(outcome.run.finalMessage).toContain('workspace');
+    expect(outcome.run.finalMessage).not.toMatch(/harness|invocations/);
   }, 30_000);
 
   test('the without arms drop the skill and blank a guide command', async () => {
@@ -344,9 +357,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"resul
   }, 30_000);
 
   test('a malformed line in the agent-writable log invalidates the trial, stops the agent and does not crash the runner', async () => {
-    const bin = fakeAgent(
-      'stim ios\necho "this is not json" >> "$(dirname "$(command -v stim)")/../harness/invocations.jsonl"\nsleep 30',
-    );
+    const bin = fakeAgent(`${FIND_LOG}\nstim ios\necho "this is not json" >> "$log"\nsleep 30`);
     const started = Date.now();
     const outcome = await runTrial(firstLaunch, withSkill, claudeDriver, options({ bin }));
     expect(Date.now() - started).toBeLessThan(25_000);
@@ -375,9 +386,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"resul
   ])(
     '%s in the log makes the trial invalid before any grader sees it',
     async (_, line) => {
-      const bin = fakeAgent(
-        `echo '${line}' >> "$(dirname "$(command -v stim)" 2>/dev/null)/../harness/invocations.jsonl"\nstim ios\nsleep 30`,
-      );
+      const bin = fakeAgent(`${FIND_LOG}\necho '${line}' >> "$log"\nstim ios\nsleep 30`);
       const outcome = await runTrial(firstLaunch, withSkill, claudeDriver, options({ bin }));
       expect(outcome.problems).toContain('the invocation log could not be read');
     },
@@ -418,7 +427,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"resul
     const head = '{"argv":["ios"],"cwd":"/w","cwdRelative":".","kind":"scripted","startedAt":1,';
     const tail = '"endedAt":2,"exitCode":0,"stdoutBytes":0,"stderrBytes":0,"path":"","self":""}';
     const bin = fakeAgent(
-      `log="$(dirname "$(command -v stim)")/../harness/invocations.jsonl"\nstim ios\nprintf '%s' '${head}' >> "$log"\nsleep 2\nprintf '%s\\n' '${tail}' >> "$log"\necho '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"result":"","usage":{}}'`,
+      `${FIND_LOG}\nstim ios\nprintf '%s' '${head}' >> "$log"\nsleep 2\nprintf '%s\\n' '${tail}' >> "$log"\necho '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"result":"","usage":{}}'`,
     );
     const outcome = await runTrial(firstLaunch, withSkill, claudeDriver, options({ bin }));
     expect(outcome.problems).toEqual([]);
@@ -426,9 +435,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"resul
   }, 40_000);
 
   test('a log that ends in a cut record after the agent has exited is the invalid result', async () => {
-    const bin = fakeAgent(
-      `log="$(dirname "$(command -v stim)")/../harness/invocations.jsonl"\nstim ios\nprintf '%s' '{"argv":["ios"' >> "$log"`,
-    );
+    const bin = fakeAgent(`${FIND_LOG}\nstim ios\nprintf '%s' '{"argv":["ios"' >> "$log"`);
     const outcome = await runTrial(firstLaunch, withSkill, claudeDriver, options({ bin }));
     expect(outcome.problems).toContain('the invocation log could not be read');
   }, 40_000);

@@ -183,7 +183,10 @@ The scripted `stim` runs inside the same sandbox as the agent, so anything it ca
 write the agent can write, including `invocations.jsonl` and the case script in
 `<trial>/bin/stim-eval.json` (the scripted outputs and their `real` or `synthetic`
 markers; readable by the agent). This harness measures whether an agent follows the
-guides; it is not a defence against an agent trying to cheat the measurement. A
+guides; it is not a defence against an agent trying to cheat the measurement. The log
+and the guide's scratch Stim home sit in their own temporary folder (`stim-eval-log-*`),
+not next to the workspace, so an agent that lists `..` does not find them; the path is in
+`stim-eval.json`. A
 malformed log line makes the trial invalid, and a transcript that names
 `invocations.jsonl` or the harness directory makes it invalid, but a careful forgery
 would not be noticed.

@@ -69,19 +69,12 @@ function createPaths(roots: Roots): TrialPaths {
     base,
     workspace: join(base, 'workspace'),
     bin: join(base, 'bin'),
-    harness: join(base, 'harness'),
+    harness: realpathSync(mkdtempSync(join(tmpdir(), 'stim-eval-log-'))),
     stimHome: join(base, 'stim-home'),
     home: join(base, 'home'),
     codexHome: join(base, 'codex-home'),
   };
-  for (const dir of [
-    paths.bin,
-    paths.harness,
-    paths.stimHome,
-    paths.home,
-    paths.codexHome,
-    join(paths.harness, 'guide-home'),
-  ])
+  for (const dir of [paths.bin, paths.stimHome, paths.home, paths.codexHome, join(paths.harness, 'guide-home')])
     mkdirSync(dir, { recursive: true });
   return paths;
 }
@@ -401,5 +394,6 @@ export async function runTrial(
   } finally {
     rmSync(probe, { force: true });
     rmSync(paths.base, { recursive: true, force: true });
+    rmSync(paths.harness, { recursive: true, force: true });
   }
 }
