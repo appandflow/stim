@@ -53,7 +53,8 @@ The dormant reduction (`stim gc` and the daemon's hourly step) deletes every
 recognised `target/` whole, tagged, Exact app's and untagged alike, in a
 workspace or discovered checkout that has had no activity for
 `idle.dormantDays` by the full evidence, and whose worktree is not locked with
-`git worktree lock`. Only `target/criterion` stays. It runs the idle stage's
+`git worktree lock`. Only the benchmark baseline folders `target/criterion`,
+`target/gungraun` and `target/iai` stay. It runs the idle stage's
 checks above, the process check included, for all three kinds, then, under the
 workspace's claims and checked again right before the delete: the workspace is
 still idle, the directory is still a recognised `target/`, and no PATH launcher
@@ -103,16 +104,18 @@ stay trims: they also reach a `target/` in use.
 
 Chosen by the coordinator and the reviews of #5996, not by the maintainer: the
 use dating, the move aside with its recheck and roll back, the mount checks,
-and keeping `target/criterion`. Reason for the dating: the idle evidence skips
+and keeping the benchmark baseline folders. Reason for the dating: the idle evidence skips
 writes in a `target/` git ignores, so a build that ran without a source edit
 shows only in the target's own times; two levels of times are what a check that
 must not walk a large `target/` can read, and on this Mac most Exact app targets
 hold no Cargo profile at all. Reason for the move aside: the trim claim
 excludes only other Stim processes, and a Cargo build sharing the target can
 take a profile lock while later profiles are checked. Reason for
-`target/criterion`: Criterion keeps saved benchmark baselines there, which
-describe old code and no build can recreate. It is a single named exception,
-not a list of what may go; another tool's data in `target/` is deleted with it.
+the benchmark baseline folders: Criterion keeps saved baselines in `criterion/`
+and Gungraun (formerly iai-callgrind) in `gungraun/` or `iai/`; they describe
+old code and no build can recreate them. These named folders are the only
+exceptions, not a list of what may go; another tool's data in `target/` is
+deleted with it.
 
 ## The size cap
 
