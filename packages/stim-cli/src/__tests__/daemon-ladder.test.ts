@@ -207,6 +207,24 @@ describe('the idle stage under pressure (rung 1)', () => {
       expect(existsSync(outputs)).toBe(false);
     },
   );
+
+  test('a forced stim gc --pressure high with memory normal stops nothing and deletes the outputs of a running workspace', async () => {
+    const { root, udid } = workspace('running', 3 * MINUTE_MS, 'Booted');
+    const outputs = join(workspaceDir(root), 'derived-data');
+    mkdirSync(outputs, { recursive: true });
+    writeFileSync(join(outputs, 'Build.o'), 'x'.repeat(4096));
+    tick('disk');
+
+    const ladder = await runForcedLadder({ levels: ['high'], act: true, why: 'stim gc at high', trigger: 'gc' });
+
+    expect(ladder?.levels[0]?.actions.filter((action) => action.kind === 'idle-stage')).toEqual([]);
+    expect(ladder?.levels[0]?.actions).toContainEqual(
+      expect.objectContaining({ rung: 1, kind: 'delete-build-outputs', target: root, outcome: 'done' }),
+    );
+    expect(readIdleStage(readWorkspaceState(root))).toBeNull();
+    expect(sims.find((sim) => sim.udid === udid)?.state).toBe('Booted');
+    expect(existsSync(outputs)).toBe(false);
+  });
 });
 
 describe('the dormant stage', () => {
@@ -733,6 +751,31 @@ describe('the pressure ladder', () => {
     expect(existsSync(store)).toBe(true);
     expect(stop).not.toHaveBeenCalled();
     expect(sims.find((sim) => sim.udid === udid)?.state).toBe('Booted');
+  });
+
+  test('rung 1 keeps a Metro store that a sibling started serving after the store was selected for deletion', async () => {
+    const { root } = workspace('serving', 3 * MINUTE_MS, 'Booted');
+    const outputs = join(workspaceDir(root), 'derived-data');
+    mkdirSync(outputs, { recursive: true });
+    writeFileSync(join(outputs, 'Build.o'), 'x'.repeat(4096));
+    const store = join(metroCache(), 'app');
+    mkdirSync(store, { recursive: true });
+    const sibling = join(projects, 'sibling');
+    mkdirSync(sibling);
+    const measured = fsUtil.measuredDirectorySizeAsync;
+    vi.spyOn(fsUtil, 'measuredDirectorySizeAsync').mockImplementation(async (path, options) => {
+      if (path === store) upsertProject(sibling, { metroPort: 59124, supervisor: { pid: process.pid, port: 59999 } });
+      return measured(path, options);
+    });
+
+    const { actions } = await runLadder(
+      { ...input(true, async () => pressure('high')), devices: await devicesNow(), sims, lastRung: 1 },
+      pressure('high'),
+    );
+
+    expect(existsSync(outputs)).toBe(false);
+    expect(existsSync(store)).toBe(true);
+    expect(actions[0]?.detail).toContain(`kept ${store}: the running dev server of ${sibling} shares it`);
   });
 
   test('rung 1 records nothing for a stopped workspace whose only output is a Metro store a running dev server shares', async () => {
