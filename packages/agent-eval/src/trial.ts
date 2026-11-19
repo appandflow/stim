@@ -1,6 +1,12 @@
-import { execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { execFileSync, spawn, spawnSync, type ChildProcess, type SpawnSyncReturns } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import {
+  closeSync,
+  constants,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readSync,
   chmodSync,
   copyFileSync,
   mkdirSync,
@@ -9,7 +15,6 @@ import {
   realpathSync,
   rmSync,
   writeFileSync,
-  existsSync,
   readdirSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -32,6 +37,24 @@ export const REPO_ROOT: string = join(PACKAGE_ROOT, '..', '..');
 const SKILL_PATH = join(REPO_ROOT, 'packages', 'stim-cli', 'skill', 'SKILL.md');
 const GUIDE_CLI = join(REPO_ROOT, 'packages', 'stim-cli', 'bin', 'cli.ts');
 const RUNTIME_FILES = ['scripted-stim.ts', 'stim-script.ts'];
+
+export function checkGuide(cli: string = GUIDE_CLI): void {
+  const home = mkdtempSync(join(tmpdir(), 'stim-eval-guide-'));
+  try {
+    const child = spawnSync(process.execPath, [cli, 'guide', 'agent'], {
+      env: { PATH: process.env.PATH ?? '', HOME: home, STIM_HOME: home },
+      encoding: 'utf8',
+      timeout: 60_000,
+    });
+    if (child.status === 0 && child.stdout.trim() !== '') return;
+    const reason = (child.stderr || child.error?.message || `exit ${child.status}`).trim().split('\n')[0];
+    throw new Error(
+      `stim guide agent fails in this checkout, so every trial would read a broken guide: ${reason}. Run pnpm run build first.`,
+    );
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+}
 
 export interface Arm {
   name: string;
@@ -69,19 +92,12 @@ function createPaths(roots: Roots): TrialPaths {
     base,
     workspace: join(base, 'workspace'),
     bin: join(base, 'bin'),
-    harness: join(base, 'harness'),
+    harness: realpathSync(mkdtempSync(join(tmpdir(), 'stim-eval-log-'))),
     stimHome: join(base, 'stim-home'),
     home: join(base, 'home'),
     codexHome: join(base, 'codex-home'),
   };
-  for (const dir of [
-    paths.bin,
-    paths.harness,
-    paths.stimHome,
-    paths.home,
-    paths.codexHome,
-    join(paths.harness, 'guide-home'),
-  ])
+  for (const dir of [paths.bin, paths.stimHome, paths.home, paths.codexHome, join(paths.harness, 'guide-home')])
     mkdirSync(dir, { recursive: true });
   return paths;
 }
@@ -146,11 +162,27 @@ function isInvocation(value: unknown): value is Invocation {
   );
 }
 
+const MAX_LOG_BYTES = 4 * 1024 * 1024;
+
+function readLog(path: string): string {
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile()) throw new Error('not a regular file');
+    if (stat.size > MAX_LOG_BYTES) throw new Error('too large');
+    const buffer = Buffer.alloc(stat.size);
+    const read = readSync(fd, buffer, 0, stat.size, 0);
+    return buffer.subarray(0, read).toString('utf8');
+  } finally {
+    closeSync(fd);
+  }
+}
+
 function readInvocations(paths: TrialPaths, final: boolean): { invocations: Invocation[]; error: string | null } {
   const log = join(paths.harness, 'invocations.jsonl');
-  if (!existsSync(log)) return { invocations: [], error: null };
+  if (!lstatSync(log, { throwIfNoEntry: false })) return { invocations: [], error: null };
   try {
-    const text = readFileSync(log, 'utf8');
+    const text = readLog(log);
     const lines = text.split('\n');
     const tail = lines.pop() ?? '';
     if (final && tail !== '') throw new Error('incomplete');
@@ -183,9 +215,17 @@ interface AgentResult {
 
 const DRAIN_MS = 1000;
 const GRACE_MS = 2000;
-const SCAN_PS_MS = 5000;
-const SCAN_LSOF_MS = 30_000;
+const SCAN_PS_MS = [5000, 30_000];
+const SCAN_LSOF_MS = [30_000, 120_000];
 const SCAN_BUFFER = 32 * 1024 * 1024;
+
+function scan(command: string, args: string[], timeouts: number[]): SpawnSyncReturns<string> | null {
+  for (const timeout of timeouts) {
+    const child = spawnSync(command, args, { encoding: 'utf8', timeout, maxBuffer: SCAN_BUFFER });
+    if (!child.error && child.status !== null && child.stdout !== '') return child;
+  }
+  return null;
+}
 
 function unexited(child: ChildProcess): child is ChildProcess & { pid: number } {
   return child.pid !== undefined && child.exitCode === null && child.signalCode === null;
@@ -214,16 +254,13 @@ function terminate(child: ChildProcess): void {
   });
 }
 
-function leftoverProcesses(leader: number | undefined, base: string, secrets: string[]): string | null {
+function leftoverProcesses(leader: number | undefined, roots: string[], secrets: string[]): string | null {
   if (process.platform === 'win32') return null;
   const failed = 'could not check for leftover processes';
-  const name = basename(base);
-  const ps = spawnSync('ps', ['-axo', 'pid=,pgid=,command='], {
-    encoding: 'utf8',
-    timeout: SCAN_PS_MS,
-    maxBuffer: SCAN_BUFFER,
-  });
-  if (ps.error || ps.status !== 0) return failed;
+  const names = roots.map((root) => basename(root));
+  const inside = (path: string): boolean => roots.some((root) => path === root || path.startsWith(`${root}/`));
+  const ps = scan('ps', ['-axo', 'pid=,pgid=,command='], SCAN_PS_MS);
+  if (!ps || ps.status !== 0) return failed;
   const found = new Map<number, string>();
   for (const line of ps.stdout.split('\n')) {
     const match = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line);
@@ -231,18 +268,15 @@ function leftoverProcesses(leader: number | undefined, base: string, secrets: st
     const pid = Number(match[1]);
     const command = match[3] ?? '';
     if (pid === process.pid || pid === ps.pid || command.startsWith('ps -axo')) continue;
-    if ((leader !== undefined && Number(match[2]) === leader) || command.includes(name)) found.set(pid, command);
+    if ((leader !== undefined && Number(match[2]) === leader) || names.some((name) => command.includes(name)))
+      found.set(pid, command);
   }
-  const lsof = spawnSync('lsof', ['-a', '-d', 'cwd', '-Fpn'], {
-    encoding: 'utf8',
-    timeout: SCAN_LSOF_MS,
-    maxBuffer: SCAN_BUFFER,
-  });
-  if (lsof.error || lsof.status === null || lsof.stdout === '') return failed;
+  const lsof = scan('lsof', ['-a', '-d', 'cwd', '-Fpn'], SCAN_LSOF_MS);
+  if (!lsof) return failed;
   let owner = 0;
   for (const line of lsof.stdout.split('\n')) {
     if (line.startsWith('p')) owner = Number(line.slice(1));
-    else if (line.startsWith('n') && line.slice(1).startsWith(base) && owner !== process.pid && owner !== lsof.pid)
+    else if (line.startsWith('n') && inside(line.slice(1)) && owner !== process.pid && owner !== lsof.pid)
       found.set(owner, found.get(owner) ?? `working directory ${line.slice(1)}`);
   }
   if (found.size === 0) return null;
@@ -285,7 +319,7 @@ function runAgent(
       signal?.removeEventListener('abort', onAbort);
       child.stdout.destroy();
       child.stderr.destroy();
-      const leftover = leftoverProcesses(child.pid, paths.base, secrets);
+      const leftover = leftoverProcesses(child.pid, [paths.base, paths.harness], secrets);
       resolve({ stdout, stderr: `${stderr}${extra}`, code, timedOut, interrupted, leftover });
     };
     const onAbort = (): void => {
@@ -383,7 +417,7 @@ export async function runTrial(
     if (read.error ?? logError) problems.push(read.error ?? logError ?? '');
     const confinement = confine && !read.error ? probeResult(invocations) : null;
     if (confinement) problems.push(confinement);
-    if (result.stdout.includes('invocations.jsonl') || result.stdout.includes(paths.harness))
+    if (result.stdout.includes('invocations.jsonl'))
       problems.push('the transcript names the harness log file: the agent may have touched the measurement');
     const transcript = redact(result.stdout, secrets);
     const run = driver.parse(transcript);
@@ -401,5 +435,6 @@ export async function runTrial(
   } finally {
     rmSync(probe, { force: true });
     rmSync(paths.base, { recursive: true, force: true });
+    rmSync(paths.harness, { recursive: true, force: true });
   }
 }

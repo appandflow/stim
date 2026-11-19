@@ -43,8 +43,14 @@ export interface AttemptedCommand {
   denied: boolean;
 }
 
+interface FileEdit {
+  path: string;
+  after: number;
+}
+
 export interface AgentRun {
   commands: AttemptedCommand[];
+  edits: FileEdit[];
   skills: string[];
   turns: number | null;
   tokens: { input: number; output: number; cached: number | null };

@@ -72,7 +72,7 @@ function skipOptions(list: string[], from: number, name: string): number {
   return index;
 }
 
-function commandPosition(list: string[]): { rest: string[] } | { inner: string } | null {
+function commandPosition(list: string[]): { program: string; rest: string[] } | { inner: string } | null {
   let index = 0;
   for (;;) {
     const word = list[index];
@@ -91,7 +91,7 @@ function commandPosition(list: string[]): { rest: string[] } | { inner: string }
     } else if (SHELLS.includes(name) && list[index + 1] === '<<<') {
       const inner = list[index + 2];
       return inner === undefined ? null : { inner };
-    } else return /^stim(@[^/]+)?$/.test(name) ? { rest: list.slice(index + 1) } : null;
+    } else return { program: name.replace(/@[^/]*$/, ''), rest: list.slice(index + 1) };
   }
 }
 
@@ -100,12 +100,19 @@ export function logRunsSubcommand(argv: string[], subcommand: string): boolean {
   return argv.find((word) => !word.startsWith('-')) === subcommand;
 }
 
-export function attemptsSubcommand(text: string, subcommand: string): boolean {
+export function attemptsCommand(text: string, test: (program: string, rest: string[]) => boolean): boolean {
   return splitSimple(withoutHeredocs(text), true).some((simple) => {
-    const list = words(simple);
-    const position = commandPosition(list);
+    const position = commandPosition(words(simple));
     if (!position) return false;
-    if ('inner' in position) return attemptsSubcommand(position.inner, subcommand);
-    return !list.some((word) => SAFE_FLAGS.includes(word)) && logRunsSubcommand(position.rest, subcommand);
+    if ('inner' in position) return attemptsCommand(position.inner, test);
+    return test(position.program, position.rest);
   });
+}
+
+export function attemptsSubcommand(text: string, subcommand: string): boolean {
+  return attemptsCommand(
+    text,
+    (program, rest) =>
+      program === 'stim' && !rest.some((word) => SAFE_FLAGS.includes(word)) && logRunsSubcommand(rest, subcommand),
+  );
 }

@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import {
   chmodSync,
   existsSync,
@@ -16,7 +16,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { CASES } from '../cases/index.ts';
 import { claudeDriver } from '../drivers/claude.ts';
 import { runEvals } from '../run.ts';
-import { runTrial, type Arm } from '../trial.ts';
+import { checkGuide, runTrial, type Arm } from '../trial.ts';
 import type { Roots } from '../types.ts';
 
 let directory: string;
@@ -40,6 +40,8 @@ afterEach(() => {
 const withSkill: Arm = { name: 'with skill', skill: true, blank: [] };
 const firstLaunch = CASES.find((each) => each.id === 'first-launch');
 if (!firstLaunch) throw new Error('first-launch case is missing');
+
+const FIND_LOG = `log="$(grep -o '"log":"[^"]*"' "$(dirname "$(command -v stim)")/stim-eval.json" | cut -d'"' -f4)"`;
 
 function fakeAgent(body: string): string {
   const file = join(directory, 'fake-claude');
@@ -76,6 +78,24 @@ printf '{"type":"result","subtype":"success","is_error":false,"num_turns":2,"res
     const guide = outcome.invocations[0];
     expect(guide?.stdoutBytes).toBeGreaterThan(1000);
     expect(outcome.run.finalMessage).toMatch(/^stim=\/.*\/bin\/stim secret=\[\] skill=yes git=1$/);
+  }, 30_000);
+
+  test('the guide preflight passes on this checkout and refuses a guide CLI that fails', () => {
+    expect(() => checkGuide()).not.toThrow();
+    const broken = join(directory, 'broken-cli.mjs');
+    writeFileSync(broken, "throw new Error('Cannot find module dist/state.mjs');\n");
+    expect(() => checkGuide(broken)).toThrow(/stim guide agent fails in this checkout/);
+  }, 60_000);
+
+  test('the invocation log is not in the folder around the workspace', async () => {
+    const bin = fakeAgent(`
+stim guide agent > /dev/null
+printf '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"result":"%s","usage":{}}\\n' "$(ls -A .. | tr '\\n' ' ')"
+`);
+    const outcome = await runTrial(firstLaunch, withSkill, claudeDriver, options({ bin }));
+    expect(outcome.invocations.map((each) => each.argv.join(' '))).toEqual(['guide agent']);
+    expect(outcome.run.finalMessage).toContain('workspace');
+    expect(outcome.run.finalMessage).not.toMatch(/harness|invocations/);
   }, 30_000);
 
   test('the without arms drop the skill and blank a guide command', async () => {
@@ -163,6 +183,43 @@ echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"resul
     expect(existsSync(dirname(workspace ?? ''))).toBe(false);
   }, 30_000);
 
+  test('a leftover-process scan that fails once is retried instead of invalidating the trial', async () => {
+    const tools = join(directory, 'tools');
+    mkdirSync(tools);
+    const marker = join(directory, 'lsof-failed-once');
+    writeFileSync(
+      join(tools, 'lsof'),
+      `#!/bin/sh\nif [ ! -e "${marker}" ]; then touch "${marker}"; exit 1; fi\nexec /usr/sbin/lsof "$@"\n`,
+    );
+    chmodSync(join(tools, 'lsof'), 0o755);
+    const bin = fakeAgent(
+      'echo \'{"type":"result","subtype":"success","is_error":false,"num_turns":1,"result":"","usage":{}}\'',
+    );
+    const path = process.env.PATH;
+    process.env.PATH = `${tools}:${path ?? ''}`;
+    try {
+      const outcome = await runTrial(firstLaunch, withSkill, claudeDriver, options({ bin }));
+      expect(existsSync(marker)).toBe(true);
+      expect(outcome.problems).toEqual([]);
+    } finally {
+      process.env.PATH = path;
+    }
+  }, 30_000);
+
+  test('a process in another group whose working directory is the log folder is reported', async () => {
+    const marker = join(directory, 'log-dir.pid');
+    const bin = fakeAgent(
+      `${FIND_LOG}\n/usr/bin/perl -e 'setpgrp(0, 0); chdir $ARGV[0] or die; open(my $f, ">", $ARGV[1]); print $f $$; close $f; exec "/bin/sleep", "28"' "$(dirname "$log")" "${marker}" >/dev/null 2>&1 &\nwhile [ ! -s "${marker}" ]; do sleep 0.1; done\necho '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"result":"","usage":{}}'`,
+    );
+    const outcome = await runTrial(firstLaunch, withSkill, claudeDriver, options({ bin }));
+    const pid = Number(readFileSync(marker, 'utf8'));
+    try {
+      expect(outcome.problems.join(' ')).toMatch(new RegExp(`left for the operator and not signalled: .*${pid} `));
+    } finally {
+      process.kill(pid, 'SIGKILL');
+    }
+  }, 30_000);
+
   test('a descendant that outlives the agent is reported and is not signalled', async () => {
     const marker = join(directory, 'leftover.pid');
     const bin = fakeAgent(
@@ -237,6 +294,48 @@ echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"resul
     expect(existsSync(join(results, run ?? '', 'results.json'))).toBe(true);
   }, 60_000);
 
+  test('the CLI --without guide:<words> arm blanks that guide command for the agent', () => {
+    const bin = fakeAgent(`
+stim guide errors > /dev/null
+stim guide agent > /dev/null
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"result":"","usage":{}}'
+`);
+    mkdirSync(join(directory, 'tmp'));
+    const entry = fileURLToPath(new URL('./entry.ts', import.meta.url));
+    const args = [
+      '--agent',
+      'claude',
+      '--bin',
+      bin,
+      '--case',
+      'first-launch',
+      '--trials',
+      '1',
+      '--without',
+      'guide:errors',
+    ];
+    const child = spawnSync(process.execPath, [entry, ...args], {
+      stdio: 'ignore',
+      timeout: 60_000,
+      env: { ...process.env, NODE_NO_WARNINGS: '1', TEST_ROOTS: JSON.stringify(roots), TMPDIR: join(directory, 'tmp') },
+    });
+    expect(child.status).toBe(0);
+    const results = join(roots.home, '.stim-agent-eval', 'results');
+    const [run] = readdirSync(results);
+    const log = join(results, run ?? '', 'claude', 'first-launch', 'without-guide-errors-1', 'invocations.jsonl');
+    const kinds = readFileSync(log, 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => {
+        const each = JSON.parse(line) as { kind: string; argv: string[] };
+        return [each.kind, each.argv.join(' ')];
+      });
+    expect(kinds).toEqual([
+      ['blanked', 'guide errors'],
+      ['guide', 'guide agent'],
+    ]);
+  }, 90_000);
+
   test('a trial is invalid, and the agent is stopped, when the home marker is readable from the scripted stim', async () => {
     const bin = fakeAgent('stim ios\nsleep 30');
     const started = Date.now();
@@ -302,15 +401,38 @@ echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"resul
   }, 30_000);
 
   test('a malformed line in the agent-writable log invalidates the trial, stops the agent and does not crash the runner', async () => {
-    const bin = fakeAgent(
-      'stim ios\necho "this is not json" >> "$(dirname "$(command -v stim)")/../harness/invocations.jsonl"\nsleep 30',
-    );
+    const bin = fakeAgent(`${FIND_LOG}\nstim ios\necho "this is not json" >> "$log"\nsleep 30`);
     const started = Date.now();
     const outcome = await runTrial(firstLaunch, withSkill, claudeDriver, options({ bin }));
     expect(Date.now() - started).toBeLessThan(25_000);
     expect(outcome.problems).toContain('the invocation log could not be read');
     expect(outcome.invocations).toEqual([]);
   }, 40_000);
+
+  test.each([
+    ['a link', 'rm "$log"; ln -s /etc/hosts "$log"'],
+    ['a FIFO', 'rm "$log"; mkfifo "$log"'],
+    ['an oversized file', 'head -c 5000000 /dev/zero | tr "\\000" a >> "$log"'],
+  ])(
+    'an invocation log replaced by %s invalidates the trial without hanging the runner',
+    async (_kind, swap) => {
+      const bin = fakeAgent(`${FIND_LOG}\nstim ios\n${swap}\nsleep 30`);
+      const started = Date.now();
+      const outcome = await runTrial(firstLaunch, withSkill, claudeDriver, options({ bin }));
+      expect(Date.now() - started).toBeLessThan(25_000);
+      expect(outcome.problems).toContain('the invocation log could not be read');
+    },
+    40_000,
+  );
+
+  test('a transcript that only names the log folder, as Codex lists it among writable roots, stays valid', async () => {
+    const bin = fakeAgent(`${FIND_LOG}
+stim ios
+printf '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"result":"saved %s/shot.png","usage":{}}\\n' "$(dirname "$log")"`);
+    const outcome = await runTrial(firstLaunch, withSkill, claudeDriver, options({ bin }));
+    expect(outcome.run.finalMessage).toMatch(/stim-eval-log-/);
+    expect(outcome.problems).toEqual([]);
+  }, 30_000);
 
   test('a transcript that names the harness log makes the trial invalid', async () => {
     const bin = fakeAgent(
@@ -333,9 +455,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"resul
   ])(
     '%s in the log makes the trial invalid before any grader sees it',
     async (_, line) => {
-      const bin = fakeAgent(
-        `echo '${line}' >> "$(dirname "$(command -v stim)" 2>/dev/null)/../harness/invocations.jsonl"\nstim ios\nsleep 30`,
-      );
+      const bin = fakeAgent(`${FIND_LOG}\necho '${line}' >> "$log"\nstim ios\nsleep 30`);
       const outcome = await runTrial(firstLaunch, withSkill, claudeDriver, options({ bin }));
       expect(outcome.problems).toContain('the invocation log could not be read');
     },
@@ -376,7 +496,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"resul
     const head = '{"argv":["ios"],"cwd":"/w","cwdRelative":".","kind":"scripted","startedAt":1,';
     const tail = '"endedAt":2,"exitCode":0,"stdoutBytes":0,"stderrBytes":0,"path":"","self":""}';
     const bin = fakeAgent(
-      `log="$(dirname "$(command -v stim)")/../harness/invocations.jsonl"\nstim ios\nprintf '%s' '${head}' >> "$log"\nsleep 2\nprintf '%s\\n' '${tail}' >> "$log"\necho '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"result":"","usage":{}}'`,
+      `${FIND_LOG}\nstim ios\nprintf '%s' '${head}' >> "$log"\nsleep 2\nprintf '%s\\n' '${tail}' >> "$log"\necho '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"result":"","usage":{}}'`,
     );
     const outcome = await runTrial(firstLaunch, withSkill, claudeDriver, options({ bin }));
     expect(outcome.problems).toEqual([]);
@@ -384,9 +504,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"resul
   }, 40_000);
 
   test('a log that ends in a cut record after the agent has exited is the invalid result', async () => {
-    const bin = fakeAgent(
-      `log="$(dirname "$(command -v stim)")/../harness/invocations.jsonl"\nstim ios\nprintf '%s' '{"argv":["ios"' >> "$log"`,
-    );
+    const bin = fakeAgent(`${FIND_LOG}\nstim ios\nprintf '%s' '{"argv":["ios"' >> "$log"`);
     const outcome = await runTrial(firstLaunch, withSkill, claudeDriver, options({ bin }));
     expect(outcome.problems).toContain('the invocation log could not be read');
   }, 40_000);
