@@ -12,8 +12,9 @@ stim doctor reports a missing Chrome.
 
 stim web never starts a web server, for any framework. It opens, reuses or
 reloads the owned Chrome at the page URL. Every web project follows the same
-two steps: start your dev server, then run stim web.
+steps: warm a new worktree, start your dev server, then run stim web.
 
+  stim worktree warm       # once in a new worktree
   stim web                 # headless, the default
   stim web --headed        # show the Chrome window
   stim web --json          # one payload on stdout; progress on stderr
@@ -26,6 +27,7 @@ WHICH PAGE AND WHICH DEV SERVER
 Expo web runs on the workspace's Metro. With web.url unset, an Expo app
 opens http://localhost:<metroPort>/. Its dev server is stim start:
 
+  stim worktree warm   # once in a new worktree
   npx expo install react-dom react-native-web @expo/metro-runtime   # once
   stim start
   stim web
@@ -35,6 +37,7 @@ Reserve its port with stim ports get, start it with strict-port behavior, and
 point web.url at it. {port:<label>} in web.url becomes that named port,
 {port:metro} the Metro port:
 
+  stim worktree warm   # once in a new worktree
   pnpm exec vite --port "$(stim ports get web)" --strictPort
   stim settings set web.url 'http://localhost:{port:web}/' --scope workspace
   stim web
@@ -71,9 +74,11 @@ MONOREPO RECIPE: A VITE PACKAGE WITH A BASE PATH AND HTTPS
 
 apps/web runs Vite through its dev script, serves the app under /apps/groups/,
 and uses @vitejs/plugin-basic-ssl; apps/mobile is the Stim app. The flow is
-the same as for any web project: start the dev server, then run stim web.
+the same as for any web project.
 
-  cd apps/mobile && stim ports get web     # registers the app; no Metro
+  cd apps/mobile
+  stim worktree warm                       # once in a new worktree
+  stim ports get web                       # registers the app; no Metro
   cd ../web
   stim settings set web.url 'https://localhost:{port:web}/apps/groups/' --scope repo
   stim settings set web.ignoreCertificateErrors true --scope repo

@@ -48,6 +48,7 @@ symbolic links. Sources can use ../ to reach other files
 inside that repository. Custom packaging scripts are not run and extra
 executables, including Stim Desktop's sim-fold helper, are not built.
 
+  stim worktree warm      # once in a new worktree
   stim macos              # fixed SwiftPM Debug build, then launch
   stim macos --json       # one launch record; progress goes to stderr
   stim macos --plan --json # validate the next build without running it

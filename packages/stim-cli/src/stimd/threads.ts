@@ -5,6 +5,7 @@ import { spawnEntry } from '../spawn-entry.ts';
 import { childKey } from './cleanup-watch.ts';
 import { setReportChildLog } from '../report-child-log.ts';
 import { serveThreadJobs } from './thread-jobs.ts';
+import { trackWorker } from './workers.ts';
 
 type ThreadName = 'passes' | 'measure';
 type PassesInput = Omit<Parameters<MaintenanceLane['start']>[0], 'operation'> & { act: boolean; cwd: string };
@@ -86,9 +87,11 @@ export function createThreadTable(log: Log, onLost: (error: Error) => void = () 
     void thread.worker.terminate();
   };
   const start = (name: ThreadName): Thread => {
-    const worker = new Worker(spawnEntry('stimd-thread'), {
-      workerData: { stimdThread: name, ...(name === 'passes' ? { dependencyCadence } : {}) },
-    });
+    const worker = trackWorker(
+      new Worker(spawnEntry('stimd-thread'), {
+        workerData: { stimdThread: name, ...(name === 'passes' ? { dependencyCadence } : {}) },
+      }),
+    );
     const thread: Thread = { worker, pending: null, idle: null, unsettled: new Set(), reading: false, lost: false };
     worker.on('message', (message: FromThread) => {
       if (message.type === 'log') return log(message.level, message.event, message.msg, message.fields);

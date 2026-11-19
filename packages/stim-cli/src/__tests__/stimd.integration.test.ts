@@ -582,6 +582,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
       record: () => {},
       admit: async () => null,
       check: async () => null,
+      selecting: () => null,
       release: releaseEngine,
     });
     let entered = () => {};
@@ -635,6 +636,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
       record: () => {},
       admit: async () => null,
       check: async () => null,
+      selecting: () => null,
       release: releaseEngine,
     });
     const original = measure.measureTick;
@@ -1226,6 +1228,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
       record,
       admit: async () => null,
       check: async () => null,
+      selecting: () => null,
       release: () => {},
     });
     let running: Promise<boolean> | undefined;

@@ -3,6 +3,7 @@ import { Worker } from 'node:worker_threads';
 import { spawnEntry } from '../../spawn-entry.ts';
 import type { NdjsonWriter } from '../../ndjson.ts';
 import { workspaceLogsDir } from '../../workspace/paths.ts';
+import { trackWorker } from '../workers.ts';
 
 export interface LogSink {
   writer: NdjsonWriter;
@@ -43,7 +44,7 @@ export function createLogWriters(
   onObserved: (streamId: string, generation: number) => void = () => {},
   onWriteFailure: (streamId: string, generation: number) => void = () => {},
 ): LogWriters {
-  const worker = new Worker(spawnEntry('stimd-thread'), { workerData: { stimdThread: 'logs' } });
+  const worker = trackWorker(new Worker(spawnEntry('stimd-thread'), { workerData: { stimdThread: 'logs' } }));
   let next = 0;
   let failed: Error | null = null;
   let closing = false;

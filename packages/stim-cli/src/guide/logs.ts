@@ -379,6 +379,12 @@ between its rung's startedAt and its end. Steps and what items counts:
 A step writes one record. A normal tick writes one (dormant_candidates), a high
 one up to 16, a critical one up to 22; the dormant step adds ~7/hour,
 build_end_measure one a pass. None alter a pass.
+A step running 10 minutes writes daemon_step_running (warn; step, startedAt,
+runningMs) every 10 minutes until it ends, as do the measure, booted_parked,
+idle_stage, fingerprint_precompute and maintenance phases; they only log. A
+shutdown past 10 awake minutes writes daemon_shutdown_timeout (waiting names what it
+waits on) and is forced. With daemon.mode off, each loop while stimd stays up
+writes daemon_tick_off.
 A size walk that fails or times out adds one record, event size_failed (warn,
 info when aborted),
 from whichever process ran it, at most once per folder and reason every 6

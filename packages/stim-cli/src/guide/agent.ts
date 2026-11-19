@@ -2,7 +2,26 @@ export default {
   summary: 'Choose the coding-agent workflow for this app or task',
   body: () => `AGENT WORKFLOW
 
-Choose the guide for the app or task. Read only the matching route.
+WORKSPACE SETUP
+
+Skip this for inspection, cleanup or an app already running.
+
+WORKTREE: Use a linked worktree by default; create one with Git if needed.
+The clean source checkout is infrastructure, not a workspace. Unless you
+work in place, run stim worktree warm once in your worktree, even one a harness
+made. Wait for warm to exit successfully (exit code 0) before anything else
+there. Concurrent writes to the destination are unsafe.
+Options: stim guide lifecycle options.
+
+SINGLE CHECKOUT: Work in place, without warm, only when the user asks or the
+task needs their uncommitted changes. Run app commands there.
+
+Run doctor before native work only when STATUS says it is due for the
+requested platform, or when diagnosing a toolchain problem. A worktree check
+belongs in the linked worktree. Warm, start, and native builds run project code.
+Fix the PATH if it points to a different installation than the one you intend to use.
+
+Then choose the guide for the app or task. Read only the matching route.
 
 | App or task | Read |
 | --- | --- |
@@ -37,23 +56,6 @@ and slots; leftover worktrees fill the disk. If you finish before the pull
 request merges, end your final report with the worktree path and that command so
 whoever merges can run it. Stim's cleanup is the safety net, not the plan.
 
-WORKSPACE SETUP
-
-WORKTREE: Use a linked worktree by default. The clean source checkout
-is infrastructure, not a workspace. Create the worktree with Git if the harness
-has not already created one, then run stim worktree warm in it.
-Wait for warm to exit successfully (exit code 0) before edits, dependency
-installation, or launch. Concurrent writes to the destination are unsafe.
-See stim guide lifecycle options for warm exclusions and recovery.
-
-SINGLE CHECKOUT: Work in place when the user asks or the task needs their
-uncommitted changes. Run the applicable app command from that checkout.
-
-Run doctor before native work only when STATUS says it is due for the
-requested platform, or when diagnosing a toolchain problem. A worktree check
-belongs in the linked worktree. Warm, start, and native builds run project code.
-Fix the PATH if it points to a different installation than the one you intend to use.
-
 OWNERSHIP
 
 Use only the device or app Stim reports for the workspace. Stop only devices
@@ -85,6 +87,7 @@ Run stim guide for the full topic index.`,
       summary: 'Expo and bare React Native build, Metro, and verification workflow',
       body: () => `NORMAL WORKFLOW
 
+  stim worktree warm                   # once in a new worktree; wait for exit 0
   stim start
   stim ios                             # or: stim android, or: stim web
 
@@ -129,8 +132,6 @@ waiting times out.
 
 RULES DURING THE LOOP
 
-- Agents never run stim setup and never approve access requests.
-  A person on the worker approves builds and device hosting (guide settings).
 - Run Stim from the app directory: the one whose package.json depends on
   react-native or expo. Anywhere else -- a monorepo root, a tools package --
   start, ios and android refuse with STIM_NO_PROJECT naming that package.json,
@@ -236,6 +237,7 @@ Expo, the directory whose package.json depends on react-native or expo):
       summary: 'Run on a connected iPhone or Android phone',
       body: () => `PHYSICAL DEVICES
 
+  stim worktree warm   # once in a new worktree
   stim ios --device [udid]                  a connected iPhone or iPad, cable or Wi-Fi
   stim android --device [serial]            a connected Android phone
   stim device lock ios <udid> --for 10m     keep the lease between runs
