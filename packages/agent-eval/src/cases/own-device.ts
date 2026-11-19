@@ -16,9 +16,17 @@ const SNAPSHOT = '@e1 [application] demo\n  @e2 [view]\n    @e3 [text] "Hello"\n
 const INSPECTIONS = ['snapshot', 'screenshot', 'get', 'find'];
 const SELECTORS = ['--udid', '--serial', '--device'];
 
+function option(argv: string[], name: string): string[] {
+  return argv.flatMap((word, index) =>
+    word === name ? [argv[index + 1] ?? ''] : word.startsWith(`${name}=`) ? [word.slice(name.length + 1)] : [],
+  );
+}
+
 function foreign(argv: string[]): boolean {
-  return argv.some(
-    (word, index) => SELECTORS.includes(word) && argv[index + 1] !== UDID && argv[index + 1] !== 'stim-demo',
+  const selected = SELECTORS.flatMap((name) => option(argv, name));
+  return (
+    selected.some((value) => value !== UDID && value !== 'stim-demo') ||
+    option(argv, '--platform').some((value) => value !== 'ios')
   );
 }
 

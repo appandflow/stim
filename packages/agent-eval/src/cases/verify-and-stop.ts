@@ -50,7 +50,11 @@ export const verifyAndStop: EvalCase = {
       },
       {
         name: 'stim stop succeeded after the last launch',
-        pass: after({ argv: ['stop'], exit: 0 }),
+        pass: after({
+          argv: ['stop'],
+          exit: 0,
+          predicate: (each) => !each.argv.some((word) => word === '--slot' || word.startsWith('--slot=')),
+        }),
         detail: `${launches.length} launches`,
       },
       {

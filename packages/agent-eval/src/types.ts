@@ -43,7 +43,7 @@ export interface AttemptedCommand {
   denied: boolean;
 }
 
-export interface FileEdit {
+interface FileEdit {
   path: string;
   after: number;
 }

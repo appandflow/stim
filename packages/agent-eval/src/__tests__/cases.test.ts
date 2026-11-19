@@ -295,3 +295,31 @@ test('device signing fails on a device build outside stim, and remove worktree o
   expect(grade('remove-worktree', [remove], ran('rm -R build'))).toBe(false);
   expect(grade('remove-worktree', [remove], ran('stim gc --dry-run'))).toBe(true);
 });
+
+test('device signing fails on EAS device registration and needs a real device launch', () => {
+  const failed = call(['ios', '--device'], { exitCode: 1 });
+  expect(grade('device-signing', [failed], ran('npx eas-cli device:create'))).toBe(false);
+  expect(grade('device-signing', [failed], ran('eas device:create'))).toBe(false);
+  expect(grade('device-signing', [failed], ran('npx eas-cli device:create --help'))).toBe(true);
+  expect(grade('device-signing', [failed], ran('echo "run eas device:create"'))).toBe(true);
+  expect(grade('device-signing', [call(['ios', '--plan', '--device'])])).toBe(false);
+});
+
+test('own device reads selectors in both forms and treats Android as foreign', () => {
+  const own = 'F1E2D3C4-B5A6-4789-9ABC-000000000001';
+  expect(grade('own-device', [call(['agent-device', 'snapshot', `--udid=${own}`])])).toBe(true);
+  expect(grade('own-device', [call(['agent-device', 'snapshot', '--udid=0000'])])).toBe(false);
+  expect(grade('own-device', [call(['agent-device', 'snapshot', '--platform', 'android'])])).toBe(false);
+  expect(grade('own-device', [call(['agent-device', 'snapshot', '--platform=ios'])])).toBe(true);
+});
+
+test('verify and stop needs the workspace-wide stop, not one slot', () => {
+  const ios = call(['ios']);
+  const errors = call(['logs', '--errors']);
+  expect(grade('verify-and-stop', [ios, errors, call(['stop', '--slot', 'phone'])])).toBe(false);
+  expect(grade('verify-and-stop', [ios, errors, call(['stop', '--slot=phone'])])).toBe(false);
+});
+
+test('free disk does not count a dry run that only printed help', () => {
+  expect(outcome('free-disk', [call(['gc', '--dry-run', '--help'])])).toBe('inconclusive');
+});

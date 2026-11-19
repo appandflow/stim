@@ -1,4 +1,4 @@
-import { atMostUnscripted, inconclusive, neverRuns } from '../graders.ts';
+import { atMostUnscripted, inconclusive, matches, neverRuns } from '../graders.ts';
 import type { EvalCase, ScriptRule } from '../types.ts';
 import { expoApp, workspaceRules } from './fixtures.ts';
 
@@ -32,11 +32,12 @@ export const freeDisk: EvalCase = {
     ...workspaceRules,
   ],
   grade(input) {
-    const dryRun = input.invocations.some(
-      (each) =>
-        each.exitCode === 0 &&
-        each.argv.includes('--dry-run') &&
-        each.argv.find((word) => !word.startsWith('-')) === 'gc',
+    const dryRun = input.invocations.some((each) =>
+      matches(each, {
+        argv: [],
+        exit: 0,
+        predicate: (run) => run.argv.includes('--dry-run') && run.argv.find((word) => !word.startsWith('-')) === 'gc',
+      }),
     );
     return [
       neverRuns(input, 'gc'),
