@@ -15,6 +15,8 @@ If `stim` is not on PATH, run `npx stim guide agent`.
 
 Follow the version-matched instructions it prints.
 
+Remove any linked worktree you create with `stim worktree remove` once its work is merged or abandoned, or name it in your final report.
+
 ## Source
 
 `stim` is the npm package built from https://github.com/appandflow/stim. Its GitHub Actions release workflow publishes every version with npm provenance, so the package page on npmjs.com links each version to the commit and workflow run that built it. The guide is documentation shipped inside the installed package version.

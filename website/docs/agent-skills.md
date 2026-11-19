@@ -41,6 +41,15 @@ An agent works in a separate worktree by default. Ask it to work in the current
 checkout when you want that; it also does so when the task depends on your
 uncommitted changes there, and says so.
 
+An agent that creates a linked worktree removes it with `stim worktree remove`
+from the worktree root once its work is merged or abandoned. That also releases
+its simulator, Metro and slots, and leftover worktrees fill the disk. An agent
+that finishes before its pull request merges names the worktree path and the
+command in its final report, so whoever merges can remove it. Stim's own
+[cleanup of finished worktrees](./worktrees.md#remove-finished-worktrees-in-bulk)
+is the safety net, not the plan. The agent never removes a worktree it did not
+create and asks before `--force`.
+
 Upgrading Stim also upgrades the guidance. The static skill does not need to be
 reinstalled when commands or behavior change.
 
