@@ -12,7 +12,7 @@ import {
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { listTestSlots } from '../engine/test-slots.ts';
+import { listTestSlots, tryAcquireTestSlot } from '../engine/test-slots.ts';
 import { listTestWaiting } from '../engine/wait-queue.ts';
 
 const cli = fileURLToPath(new URL('../../bin/cli.ts', import.meta.url));
@@ -24,11 +24,12 @@ const line = JSON.stringify({ argv: process.argv.slice(2), vitest: process.env.V
 console.log(line);
 if (hold) writeFileSync(hold + '.out', line);
 if (hold && process.env.FAKE_WORKER) {
-  const onTerm = process.env.FAKE_WORKER === 'slow' ? 'setTimeout(() => process.exit(0), 3000)' : '';
+  const onTerm = process.env.FAKE_WORKER === 'slow' ? \`setInterval(() => require('node:fs').existsSync(\${JSON.stringify(hold + '.release')}) && process.exit(0), 20)\` : '';
   const worker = require('node:child_process').spawn(process.execPath, ['-e', \`require('node:fs').writeFileSync(\${JSON.stringify(hold + '.worker')}, String(process.pid)); process.on('SIGTERM', () => { \${onTerm} }); setInterval(() => {}, 1000);\`], { stdio: 'ignore' });
   worker.unref();
 }
 if (process.env.FAKE_IGNORE_TERM) process.on('SIGTERM', () => {});
+if (process.env.FAKE_TERM_EXIT_0) process.on('SIGTERM', () => process.exit(0));
 if (process.env.FAKE_NESTED_HOLD) {
   const inner = require('node:child_process').spawn(process.execPath, [process.env.FAKE_NESTED_HOLD, 'test', '--', 'jest'], { env: { ...process.env, FAKE_NESTED_HOLD: '', FAKE_HOLD: hold + '-inner' }, stdio: 'ignore' });
   writeFileSync(hold + '.inner-stim', String(inner.pid));
@@ -227,7 +228,7 @@ describe.skipIf(process.platform === 'win32')('stim test', () => {
   }, 60_000);
 
   test.each([
-    { worker: 'slow', why: 'stops 3 s after SIGTERM' },
+    { worker: 'slow', why: 'keeps stopping after SIGTERM' },
     { worker: 'ignore', why: 'ignores SIGTERM' },
   ])(
     'the slot stays taken while a worker that $why outlives the runner',
@@ -239,14 +240,23 @@ describe.skipIf(process.platform === 'win32')('stim test', () => {
       run.child.kill('SIGTERM');
       await vi.waitFor(() => expect(alive(runnerPid(hold))).toBe(false), { timeout: 20_000 });
       expect(alive(workerPid)).toBe(true);
-      const second = await start(['--no-wait', '--', 'jest']).done;
-      expect(second.stderr).toContain('STIM_AT_CAPACITY');
+      expect(tryAcquireTestSlot({ max: 1 })).toBeNull();
+      writeFileSync(`${hold}.release`, '');
       await run.done;
       expect(alive(workerPid)).toBe(false);
       expect(liveSlots()).toEqual([]);
     },
     60_000,
   );
+
+  test('a cancelled run exits with the signal code even when its runner exits 0', async () => {
+    const hold = join(home, 'trap');
+    const run = start(['--', 'jest'], { FAKE_HOLD: hold, FAKE_TERM_EXIT_0: '1' });
+    await vi.waitFor(() => expect(existsSync(`${hold}.started`)).toBe(true), { timeout: 20_000 });
+    run.child.kill('SIGTERM');
+    expect((await run.done).code).toBe(143);
+    expect(liveSlots()).toEqual([]);
+  }, 60_000);
 
   test('a second interrupt kills the whole group before stim exits', async () => {
     const hold = join(home, 'twice');
@@ -266,7 +276,7 @@ describe.skipIf(process.platform === 'win32')('stim test', () => {
     const run = start(['--', 'jest'], { FAKE_HOLD: hold, FAKE_IGNORE_TERM: '1' });
     await vi.waitFor(() => expect(existsSync(`${hold}.started`)).toBe(true), { timeout: 20_000 });
     run.child.kill('SIGTERM');
-    expect((await run.done).code).toBe(137);
+    expect((await run.done).code).toBe(143);
     expect(alive(runnerPid(hold))).toBe(false);
     expect(liveSlots()).toEqual([]);
   }, 120_000);

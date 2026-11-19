@@ -44,36 +44,47 @@ export function testScriptFor(cwd: string): string | null {
   return typeof script === 'string' && script.trim() ? script : null;
 }
 
-const CONFIG_FILE = /^(jest|vitest|vite)\.(?:config|workspace)\.[cm]?[jt]s$|^jest\.config\.json$/;
-const JEST_CONFIG_SETS = /maxWorkers|runInBand/;
+const JEST_CONFIG = /^jest\.config\.(?:[cm]?[jt]s|json)$/;
+const VITEST_CONFIG = /^(?:vitest|vite)\.(?:config|workspace)\.(?:[cm]?[jt]s|json)$/;
+const JEST_CONFIG_SETS = /maxWorkers|minWorkers|runInBand|preset|projects/;
 const VITEST_CONFIG_SETS =
-  /maxWorkers|maxThreads|maxForks|fileParallelism|singleFork|singleThread|poolOptions|projects|mergeConfig|extends\b/;
+  /(?:max|min)(?:Workers|Threads|Forks)|fileParallelism|singleFork|singleThread|poolOptions|\bpool\b|projects|workspace|mergeConfig|\bextends\b/;
+const SHARED_CONFIG = /\bfrom\s+['"]\.|\b(?:require|import)\(\s*['"]\.|\.\.\.\s*[\w(]/;
+
+/** The script names of the package.json nearest to `cwd`. */
+export function packageScripts(cwd: string): string[] {
+  const dir = nearestPackageDir(cwd);
+  const scripts = dir ? readPackage(dir)?.scripts : null;
+  return scripts && typeof scripts === 'object' ? Object.keys(scripts) : [];
+}
 
 /**
- * Whether a Jest or Vitest config Stim can see may set the run's workers itself: a `jest`, `vitest` or `vite` config in
- * the working directory or a parent up to the nearest package.json, or that package.json's `jest` key, naming a worker,
- * serial-run or project setting, or extending another config Stim does not read. A text match is enough to keep out:
- * a `--maxWorkers` flag would override `maxWorkers`, and serial settings must stay serial.
+ * Whether a Jest or Vitest config Stim can see may set the run's workers itself, so that Stim passes no count: a
+ * `jest`, `vitest` or `vite` config in the working directory or a parent up to the nearest package.json, or that
+ * package.json's `jest` key, that names a worker, serial-run, pool, preset or project setting, imports or spreads
+ * another file, or cannot be read. A `--maxWorkers` flag would override `maxWorkers`, a lower `--maxWorkers` than a set
+ * `minWorkers` crashes Vitest 2 and 3, and serial settings must stay serial.
  */
 export function configuredWorkers(cwd: string): { jest: boolean; vitest: boolean } {
   const found = { jest: false, vitest: false };
   const top = nearestPackageDir(cwd);
-  const jestKey = top ? readPackage(top)?.jest : null;
-  if (jestKey && typeof jestKey === 'object' && JEST_CONFIG_SETS.test(JSON.stringify(jestKey))) found.jest = true;
+  const jestKey = top ? readPackage(top)?.jest : undefined;
+  if (jestKey !== undefined && JEST_CONFIG_SETS.test(JSON.stringify(jestKey) ?? '')) found.jest = true;
   for (let dir = cwd; ; dir = dirname(dir)) {
     let names: string[] = [];
     try {
       names = readdirSync(dir);
     } catch {}
     for (const name of names) {
-      const match = CONFIG_FILE.exec(name);
-      if (!match) continue;
-      let text = '';
+      const runner = JEST_CONFIG.test(name) ? 'jest' : VITEST_CONFIG.test(name) ? 'vitest' : null;
+      if (!runner) continue;
+      let text: string | null = null;
       try {
         text = readFileSync(join(dir, name), 'utf8');
       } catch {}
-      if (match[1] === 'jest') found.jest ||= JEST_CONFIG_SETS.test(text);
-      else found.vitest ||= VITEST_CONFIG_SETS.test(text);
+      const sets = runner === 'jest' ? JEST_CONFIG_SETS : VITEST_CONFIG_SETS;
+      if (text === null || name.includes('.workspace.') || sets.test(text) || SHARED_CONFIG.test(text))
+        found[runner] = true;
     }
     if (dir === top || dirname(dir) === dir || top === null) return found;
   }
@@ -111,19 +122,25 @@ const LAUNCHERS: readonly (readonly string[])[] = [
 const runnerName = (word: string) => basename(word).replace(/\.(cmd|js|mjs|cjs)$/i, '');
 
 /** The index of the `jest` or `vitest` word an argv runs directly, behind at most one of the launchers above. */
-function runnerAt(argv: readonly string[]): { runner: 'jest' | 'vitest'; index: number } | null {
+function runnerAt(
+  argv: readonly string[],
+  scripts: readonly string[],
+): { runner: 'jest' | 'vitest'; index: number } | null {
   for (const launcher of LAUNCHERS) {
     if (!launcher.every((word, index) => runnerName(argv[index] ?? '') === word)) continue;
     const name = runnerName(argv[launcher.length] ?? '');
-    if (name === 'jest' || name === 'vitest') return { runner: name, index: launcher.length };
+    if (name !== 'jest' && name !== 'vitest') continue;
+    if (launcher.length === 1 && (launcher[0] === 'pnpm' || launcher[0] === 'yarn') && scripts.includes(name))
+      return null;
+    return { runner: name, index: launcher.length };
   }
   return null;
 }
 
 const JEST_SET =
-  /^(?:--maxWorkers|--max-workers|-w)(?:=.*|\d+)?$|^(?:--runInBand|--run-in-band|-i|-c|--config)(?:=.*)?$/;
+  /^(?:--maxWorkers|--max-workers|-w)(?:=.*|\d+)?$|^(?:--runInBand|--run-in-band|-i|-c|--config|--preset|--projects)(?:=.*)?$/;
 const VITEST_SET =
-  /^(?:--maxWorkers|--max-workers|-c|--config|-r|--root|--dir|--project)(?:=.*)?$|^--(?:no-)?file-?[pP]arallelism(?:=.*)?$|^--poolOptions\./;
+  /^(?:--(?:max|min)-?[wW]orkers|-c|--config|-r|--root|--dir|--project|--workspace|--pool)(?:=.*)?$|^--(?:no-)?file-?[pP]arallelism(?:=.*)?$|^--poolOptions\./;
 const PLAIN_SCRIPT = /^(jest|vitest)(?:\s+(?!--(?:\s|$))[\w@%=.:/,+-]+)*$/;
 
 export interface TestPlan {
@@ -146,6 +163,7 @@ export function planTestRun({
   script,
   manager,
   configured = { jest: false, vitest: false },
+  scripts = [],
 }: {
   argv: string[];
   workers: number;
@@ -153,9 +171,11 @@ export function planTestRun({
   script?: string | null;
   manager?: PackageManager;
   configured?: { jest: boolean; vitest: boolean };
+  /** The package's script names: `pnpm jest` and `yarn jest` run a script of that name before the binary. */
+  scripts?: readonly string[];
 }): TestPlan {
   const plain = script ? PLAIN_SCRIPT.exec(script.trim()) : null;
-  const direct = script ? null : runnerAt(argv);
+  const direct = script ? null : runnerAt(argv, scripts);
   const runner = direct?.runner ?? (plain?.[1] === 'jest' || plain?.[1] === 'vitest' ? plain[1] : null);
   const unchanged = (skipped: string): TestPlan => ({ argv, applied: null, skipped });
   if (!runner)

@@ -104,7 +104,7 @@ asked for the project's own tests, and the script is how the project names them.
 
 Maintainer decision: "Sounds ok for plain form", 2026-11-18, in answer to
 whether to keep the plain form or always require `stim test -- <command>`
-([#5944](https://github.com/appandflow/stim/pull/5944)).
+([#5944](https://github.com/appandflow/stim/pull/5944#issuecomment-6996607122)).
 
 The script and config checks, `--wait`, `--no-wait`, the `STIM_TEST_RUN`
 marker with its nested run that takes no slot, the worker formula,

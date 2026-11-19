@@ -11,6 +11,7 @@ import { operationState } from '../engine/operation-state.ts';
 import { spawnDeclared } from '../engine/spawn-claims.ts';
 import {
   configuredWorkers,
+  packageScripts,
   packageManagerFor,
   planTestRun,
   testScriptFor,
@@ -173,7 +174,14 @@ async function runTest(context: StimContext, command: string[], ceilingMs: numbe
     const slots = testSlotLimit({ env }).max;
     const load1 = Math.round((loadavg()[0] ?? 0) * 10) / 10;
     const workers = testWorkerCount({ cores, slots, load1 });
-    const plan = planTestRun({ argv, workers, script, manager, configured: configuredWorkers(cwd) });
+    const plan = planTestRun({
+      argv,
+      workers,
+      script,
+      manager,
+      configured: configuredWorkers(cwd),
+      scripts: packageScripts(cwd),
+    });
     debugLog.log('test_workers', { workers, cores, slots, load1, applied: plan.applied, skipped: plan.skipped });
     const basis = `${cores} cores, ${slots} test slot${slots === 1 ? '' : 's'}, load ${load1}`;
     note(
@@ -224,12 +232,13 @@ const test: Op = defineOp({
   },
   run: async ({ args, options }) => {
     const ceilingMs = options.wait === undefined ? undefined : options.wait === false ? 0 : options.wait * 1000;
-    const { value } = await runProcessOperation(
+    const { value, interrupted } = await runProcessOperation(
       processContext('').cwd,
       (context) => runTest(context, [...args], ceilingMs),
       { hangup: true },
     );
-    if (value !== 0) exitCli(value);
+    const code = interrupted ?? value;
+    if (code !== 0) exitCli(code);
   },
 });
 

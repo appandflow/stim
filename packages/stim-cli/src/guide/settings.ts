@@ -1145,8 +1145,8 @@ include no read, control or build capability.
 
 TEST ACCESS
 \`stim setup --test\` records a separate test approval for the machine holding
-the ticket. Its Y/n question describes the authority intended for running
-tests on a worker, which stim test does not do yet. The record lives in test-clients.json and never
+the ticket. Its Y/n question describes the authority meant for worker test
+runs, which stim test lacks. The record lives in test-clients.json and never
 comes with read, control, build or device-host, and \`stim pairings grant\`
 never grants it. Approval is terminal-only: Stim Desktop's in-app approval
 refuses --test. A Linux worker may approve it; a Windows worker refuses it.

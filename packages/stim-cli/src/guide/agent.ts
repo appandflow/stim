@@ -68,7 +68,7 @@ TESTS
 
 Run tests through stim test (the project's test script) or stim test --
 <command>. It queues for a machine-wide test slot and sizes Jest or Vitest
-workers to the machine; see stim guide lifecycle concurrency.
+workers; see stim guide lifecycle concurrency.
 
 NEXT STEP
 

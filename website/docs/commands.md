@@ -1331,27 +1331,34 @@ stim test -- pnpm exec vitest run --project unit
   scaled by `cores / load` when the 1-minute load average is already past the
   core count, and never under 1. On an idle 4-core machine with one test slot
   that is 3; on a 14-core Mac with two slots it is 6.
-- Jest and Vitest get `--maxWorkers=<n>`, and only where Stim sees the whole
-  run: the command runs `jest` or `vitest` directly (also behind `npx`, `bunx`,
-  `pnpm`, `pnpm exec`, `yarn` or `yarn exec`), with the flag placed before any
-  `--`; or the `test` script, run by `stim test` or `stim test -- npm test` (or
-  `pnpm`, `yarn`, `bun run`), is a plain `jest` or `vitest` command with no `--`
-  of its own. Vitest applies `fileParallelism: false` after the flag, in
-  Vitest 2 through 5, so a serial config stays serial.
-- Nothing is passed when the command sets workers or names another config
-  (Jest `--maxWorkers`, `-w`, `--runInBand`, `-i`, `-c`, `--config`; Vitest
-  `--maxWorkers`, `--config`, `--root`, `--project`, file-parallelism or pool
-  flags), or when a `jest`, `vitest` or `vite` config between the working
-  directory and `package.json`, or its `jest` key, mentions workers, serial
-  runs, projects or another config. Any other command, such as `turbo run
-test` or `pnpm -r test`, runs unchanged under the slot, with no variables
-  added. One stderr line says which.
-- The command runs in its own process group with no stdin. `SIGINT`, `SIGTERM`
-  and `SIGHUP` reach the whole group. The group gets `SIGKILL` after a grace
-  period of at most 10 seconds, and at once on a second interrupt. The slot is
-  freed only once every process in the group has exited; processes still
-  running after that, or after `stim` itself is killed, keep holding it. A
-  watch-mode run holds its slot until you stop it.
+- Jest and Vitest get `--maxWorkers=<n>` only when Stim can establish that
+  nothing else sets workers or a serial run. The command must run `jest` or
+  `vitest` directly (also behind `npx`, `bunx`, `pnpm exec`, `yarn exec`, or
+  `pnpm` or `yarn` when the package has no script of that name), with the flag
+  placed before any `--`; or the `test` script, run by `stim test` or `stim test
+-- npm test` (or `pnpm`, `yarn`, `bun run`), must be a plain `jest` or
+  `vitest` command with no `--` of its own. Vitest applies
+  `fileParallelism: false` after the flag, in Vitest 2 through 5.
+- Nothing is passed when the command names a worker option (Jest
+  `--maxWorkers`, `-w`, `--runInBand`, `-i`; Vitest `--maxWorkers`,
+  `--minWorkers`), another config, preset, project or workspace (`-c`,
+  `--config`, `--preset`, `--projects`, `--root`, `--project`, `--workspace`),
+  the `--pool` or `--poolOptions.*` flags, or a file-parallelism flag. Nothing
+  is passed either when a `jest`, `vitest` or `vite` config between the working
+  directory and `package.json`, or its `jest` key, names workers, pools, serial
+  runs, presets, projects or a workspace, imports or spreads another file, or
+  cannot be read. Any other command, such as `turbo run test` or `pnpm -r test`,
+  runs unchanged under the slot, with no variables added. One stderr line says
+  which.
+- The command runs in its own process group with no stdin, so a watch-mode run
+  has no prompt and holds its slot until you stop it. `SIGINT`, `SIGTERM` and
+  `SIGHUP` reach the whole group. The group gets `SIGKILL` after a grace period
+  of at most 10 seconds, and at once on a second interrupt, and a cancelled run
+  exits with the signal's code. The slot is freed only once every process in
+  the group has exited; processes still running after that, or after `stim`
+  itself is killed, keep holding it. A process that leaves the group, such as
+  one in its own session, a detached dev server or a simulator the system
+  starts, is not counted and does not hold the slot.
 - The command gets `STIM_TEST_RUN`, naming its slot claim. A `stim test`
   started inside it while that claim is held takes no slot and runs in the
   caller's process group, so the outer run waits for anything it leaves

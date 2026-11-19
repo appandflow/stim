@@ -77,11 +77,62 @@ test.each([
     expected: null,
   },
   { name: 'an unrecognised command runs unchanged', argv: ['turbo', 'run', 'test'], expected: null },
-])('$name', ({ argv, script, manager, configured, expected }) => {
-  const plan = planTestRun({ argv, workers: 3, script, manager, configured });
+  {
+    name: 'a Vitest --minWorkers keeps the count out',
+    argv: ['npx', 'vitest', 'run', '--minWorkers=4'],
+    expected: null,
+  },
+  {
+    name: 'pnpm jest runs a script named jest when there is one, so it is not a direct run',
+    argv: ['pnpm', 'jest'],
+    scripts: ['jest', 'test'],
+    expected: null,
+  },
+])('$name', ({ argv, script, manager, configured, scripts, expected }) => {
+  const plan = planTestRun({ argv, workers: 3, script, manager, configured, scripts });
   expect(plan.argv).toEqual(expected ?? argv);
   expect(plan.applied).toBe(expected ? '--maxWorkers=3' : null);
   expect(plan.applied === null).toBe(plan.skipped !== null);
+});
+
+test.each([
+  { file: 'jest.config.json', text: '{"maxWorkers":1}', expected: { jest: true, vitest: false } },
+  { file: 'jest.config.json', text: '{"testEnvironment":"node"}', expected: { jest: false, vitest: false } },
+  { file: 'jest.config.js', text: 'module.exports = { maxWorkers: 2 };', expected: { jest: true, vitest: false } },
+  { file: 'jest.config.cjs', text: "module.exports = { preset: 'ts-jest' };", expected: { jest: true, vitest: false } },
+  {
+    file: 'jest.config.mjs',
+    text: "import base from './base.mjs'; export default base;",
+    expected: { jest: true, vitest: false },
+  },
+  { file: 'jest.config.ts', text: 'export default { verbose: true };', expected: { jest: false, vitest: false } },
+  {
+    file: 'vitest.config.ts',
+    text: "import { defineConfig } from 'vitest/config'; export default defineConfig({ test: { minWorkers: 4 } });",
+    expected: { jest: false, vitest: true },
+  },
+  {
+    file: 'vite.config.mts',
+    text: "import { defineConfig } from 'vite'; export default defineConfig({ test: { globals: true } });",
+    expected: { jest: false, vitest: false },
+  },
+  { file: 'vite.config.js', text: 'export default { ...shared, test: {} };', expected: { jest: false, vitest: true } },
+  { file: 'vitest.workspace.ts', text: "export default ['packages/*'];", expected: { jest: false, vitest: true } },
+])('$file with $text', ({ file, text, expected }) => {
+  const root = mkdtempSync(join(tmpdir(), 'stim-test-run-'));
+  onTestFinished(() => rmSync(root, { recursive: true, force: true }));
+  writeFileSync(join(root, 'package.json'), '{}');
+  writeFileSync(join(root, file), text);
+  expect(configuredWorkers(root)).toEqual(expected);
+});
+
+test('a package.json jest key that sets a preset or workers counts as set, an unrelated one does not', () => {
+  const root = mkdtempSync(join(tmpdir(), 'stim-test-run-'));
+  onTestFinished(() => rmSync(root, { recursive: true, force: true }));
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ jest: { testEnvironment: 'node' } }));
+  expect(configuredWorkers(root).jest).toBe(false);
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ jest: { preset: 'react-native' } }));
+  expect(configuredWorkers(root).jest).toBe(true);
 });
 
 test('finds the nearest lockfile, package.json and runner config above the working directory', () => {
