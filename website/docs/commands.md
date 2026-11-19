@@ -1307,22 +1307,51 @@ is saved, and `stop --forget` also deletes the saved links. See
 ## `test`
 
 ```text
-stim test [--wait <seconds> | --no-wait] [-- <command...>]
+stim test [<kind>...] [--wait <seconds> | --no-wait] [-- <args...>]
+stim test [--wait <seconds> | --no-wait] -- <command...>
+stim test --list [--json]
 ```
 
 Runs a project's tests under a machine-wide test slot, so agents in parallel
-worktrees queue instead of each starting one test worker per core. Without a
-command it runs the project's `test` script through the package manager whose
-lockfile is nearest (`pnpm`, `yarn`, `bun`, else `npm`), from the directory of
-the nearest `package.json`. With one after `--` it runs that command as given,
-in the working directory, with no shell; a word before `--`, as in
-`stim test echo hi`, is refused with `STIM_BAD_ARG`. The output and exit status
-are the command's own; Stim's own lines go to stderr.
+worktrees queue instead of each starting one test worker per core. The output
+and exit status are the test command's own; Stim's own lines go to stderr.
+
+Tests are grouped by kind. The kind names are `js`, `rust`, `android`, `macos`,
+`web`, `ios`, `android-device`, `e2e-ios` and `e2e-android`, and `e2e` stands
+for both `e2e-*` kinds. This version runs only `js`; naming another kind is
+refused with `STIM_BAD_ARG`.
+
+- `stim test` runs every kind the project has. A project has `js` when the
+  nearest `package.json` has a `test` script.
+- `stim test js` runs that `test` script through the package manager whose
+  lockfile is nearest (`pnpm`, `yarn`, `bun`, else `npm`), from the directory
+  of the nearest `package.json`. Words after `--` are passed to the script,
+  after any worker flag: `stim test js -- src/cart.test.ts`. Words after `--`
+  with several kinds named are refused.
+- `stim test -- <command>`, with no kind, runs that command as given, in the
+  working directory, with no shell. A word before `--` that is not a kind, as
+  in `stim test echo hi`, is refused with `STIM_BAD_ARG` and the `--` form as
+  the remedy.
+- When the `test` script names another kind's runner (`cargo`, `gradlew`,
+  `playwright`, `cypress`, `xcodebuild`, `detox` or `maestro`), plain
+  `stim test` skips that kind, so it does not run twice, and prints
+  `<kind>: skipped, the test script runs <runner>`.
+- `stim test --list` prints the kinds the project has and the command each
+  runs, and runs nothing. With `--json` it prints one payload:
+  `{ kinds: [{ kind, origin, command, cwd, script, runner, needs, runnable,
+scriptRuns }], skipped: [{ kind, reason }] }`. `origin` is `detected`,
+  `command` is the argv before Stim adds a worker count, `runner` is `jest`,
+  `vitest`, `node` or `null` when Stim cannot size the script, `needs` lists
+  the slots the kind takes (`test-slot`), and `scriptRuns` lists the other
+  kinds whose runner the `test` script names. `--json` without `--list` is
+  refused.
 
 ```bash
 stim test
+stim test js -- src/cart.test.ts
 stim test -- npx jest src/cart.test.ts
 stim test -- pnpm exec vitest run --project unit
+stim test --list --json
 ```
 
 - The run first takes one of the `concurrency.maxTests` slots (see
@@ -1343,7 +1372,8 @@ stim test -- pnpm exec vitest run --project unit
   words before a `--`, so `yarn exec` and a `yarn` run with a `--` get nothing.
   Otherwise the `test` script, run by `stim test` or by `stim test -- npm test`
   (or `pnpm`, `yarn`, `bun run`), must be a plain `jest` or `vitest` command
-  with no `--` of its own. Vitest applies `fileParallelism: false` after the
+  with no `--` of its own, and the words after `stim test js --` must not set
+  workers either. Vitest applies `fileParallelism: false` after the
   flag, in Vitest 2 through 5. Vitest 1.3 to 3.2.3 also get `--minWorkers=1`:
   they default `minWorkers` to the cores but one and refuse a lower
   `--maxWorkers` ([vitest#7974](https://github.com/vitest-dev/vitest/issues/7974),
@@ -1369,6 +1399,12 @@ stim test -- pnpm exec vitest run --project unit
   read. Any other command, such as `turbo run test` or `pnpm -r test`,
   runs unchanged under the slot, with no variables added. One stderr line says
   which.
+- Node's test runner gets `--test-concurrency=<n>` when `node --test` runs
+  directly, where the flag goes right after `--test` (node reads no option
+  after the first test file), or when the `test` script is `node --test` with
+  options and no test file. Nothing is passed when the command, the words
+  after `--` or `NODE_OPTIONS` set `--test-concurrency` or name a node config
+  file.
 - The command runs in its own process group with no stdin, so a watch-mode run
   has no prompt and holds its slot until you stop it. `SIGINT`, `SIGTERM` and
   `SIGHUP` reach the whole group. The group gets `SIGKILL` after a grace period
@@ -1392,8 +1428,8 @@ stim test -- pnpm exec vitest run --project unit
 - A queued run shows in `stim status` and in `daemon.testWaiting`, a running one
   as a `tests 1/2 (concurrency.maxTests)` line and `capacity.tests`.
 
-> Run this project's tests with `stim test`, or `stim test -- <the test command>`
-> for a single file, instead of calling the test runner directly.
+> Run this project's tests with `stim test`, or `stim test js -- <file>` for a
+> single file, instead of calling the test runner directly.
 
 ## `logs`
 

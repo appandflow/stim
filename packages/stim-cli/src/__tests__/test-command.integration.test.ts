@@ -164,7 +164,7 @@ describe.skipIf(process.platform === 'win32')('stim test', () => {
     const { code, stdout, stderr } = await start([]).done;
     expect(code).toBe(0);
     expect(stdout.trim().split('\n').at(-1)).toBe('0');
-    expect(stderr).toContain('the test script is not a plain jest or vitest command');
+    expect(stderr).toContain('the test script is not a plain jest, vitest or node --test command');
   }, 60_000);
 
   test('runs an unrecognised command unchanged under the slot and says so', async () => {
@@ -177,7 +177,7 @@ describe.skipIf(process.platform === 'win32')('stim test', () => {
     ]).done;
     expect(code).toBe(0);
     expect(stdout.trim()).toBe('2');
-    expect(stderr).toContain('no worker count passed: Stim recognises no direct Jest or Vitest run in it');
+    expect(stderr).toContain('no worker count passed: Stim recognises no direct Jest, Vitest or node --test run in it');
   }, 60_000);
 
   test('a second run waits for the slot, then runs once the first exits', async () => {
@@ -330,9 +330,68 @@ describe.skipIf(process.platform === 'win32')('stim test', () => {
     const { code, stdout, stderr } = await start(['echo', 'hi']).done;
     expect(code).toBe(1);
     expect(stdout).toBe('');
-    expect(stderr).toContain('STIM_BAD_ARG');
+    expect(stderr).toContain('STIM_BAD_ARG: echo is not a test kind');
     expect(stderr).toContain('stim test -- echo hi');
     expect(liveSlots()).toEqual([]);
+  }, 60_000);
+
+  test('stim test js runs the test script with the arguments after -- behind the worker count', async () => {
+    const { code, stdout, stderr } = await start(['js', '--', 'src/a.test.ts']).done;
+    expect(code).toBe(0);
+    expect(ran(stdout).argv).toEqual(['--ci', `--maxWorkers=${announced(stderr)}`, 'src/a.test.ts']);
+  }, 60_000);
+
+  test.each([
+    { args: ['android'], message: 'Stim cannot run the android test kind yet' },
+    { args: ['e2e'], message: 'Stim cannot run the e2e-ios, e2e-android test kinds yet' },
+    { args: ['js', 'rust', '--', 'x'], message: 'Arguments after -- go to one kind' },
+    { args: ['--json'], message: '--json applies only to --list' },
+    { args: ['--list', 'js'], message: 'stim test --list takes no kind or command' },
+  ])(
+    'stim test $args is refused before it takes a slot',
+    async ({ args, message }) => {
+      const { code, stdout, stderr } = await start(args).done;
+      expect(code).toBe(1);
+      expect(stdout).toBe('');
+      expect(stderr).toContain(`STIM_BAD_ARG: ${message}`);
+      expect(liveSlots()).toEqual([]);
+    },
+    60_000,
+  );
+
+  test('--list --json prints the detected kinds and runs nothing', async () => {
+    writeFileSync(join(app, 'package.json'), JSON.stringify({ scripts: { test: 'jest && detox test' } }));
+    const { code, stdout } = await start(['--list', '--json']).done;
+    expect(code).toBe(0);
+    expect(JSON.parse(stdout)).toEqual({
+      kinds: [
+        {
+          kind: 'js',
+          origin: 'detected',
+          command: ['npm', 'run', 'test'],
+          cwd: app,
+          script: 'jest && detox test',
+          runner: null,
+          needs: ['test-slot'],
+          runnable: true,
+          scriptRuns: ['e2e-ios', 'e2e-android'],
+        },
+      ],
+      skipped: [],
+    });
+    rmSync(join(app, 'package.json'));
+    const none = await start(['--list', '--json']).done;
+    expect(JSON.parse(none.stdout)).toEqual({ kinds: [], skipped: [] });
+  }, 60_000);
+
+  test('node --test gets its concurrency before the test files', async () => {
+    writeFileSync(
+      join(app, 'a.test.mjs'),
+      "import test from 'node:test'; test('a', () => console.log('execArgv', JSON.stringify(process.execArgv)));",
+    );
+    const { code, stdout, stderr } = await start(['--', process.execPath, '--test', 'a.test.mjs']).done;
+    expect(code).toBe(0);
+    expect(stdout).toContain(`--test-concurrency=${/test\s+(\d+) workers \(/.exec(stderr)?.[1]}`);
   }, 60_000);
 
   test('the plain form runs the test script from its package directory when started in a subdirectory', async () => {

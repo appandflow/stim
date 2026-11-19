@@ -111,7 +111,38 @@ marker with its nested run that takes no slot, the worker formula,
 `capacity.tests`, opt-in `SIGHUP` routing and the Windows refusal are proposals
 in the pull request, not quoted decisions.
 
+## Test kinds
+
+`stim test` groups a project's tests by kind: `js`, `rust`, `android`,
+`macos`, `web`, `ios`, `android-device`, `e2e-ios` and `e2e-android`, with
+`e2e` standing for the `e2e-*` kinds. `stim test <kind>` runs the named kinds,
+and plain `stim test` runs every kind the project has, in that order. A word
+before `--` must be a kind, so an arbitrary command always goes after `--`.
+When the `test` script already names another kind's runner (`cargo`,
+`gradlew`, `playwright`, `cypress`, `xcodebuild`, `detox`, `maestro`), plain
+`stim test` skips that kind, so it does not run twice.
+
+Maintainer decision: "Can do all the kinds yea, lets do stim test js, stim test no args default to all kinds project has", 2026-11-18
+([#5951](https://github.com/appandflow/stim/issues/5951)).
+
+Maintainer decision: "For test go with all ur recs", 2026-11-18, accepting
+the recommendations D1 to D10 of the plan on
+[#5951](https://github.com/appandflow/stim/issues/5951#issuecomment-6996808445),
+among them that a bare operand must be a kind and that a kind the test script
+already runs is skipped.
+
+Only `js` runs so far: a project has it when the nearest `package.json` has a
+`test` script, so plain `stim test` on such a project runs what it ran before
+kinds. Naming any other kind is refused with `STIM_BAD_ARG`. The other kinds
+arrive one pull request at a time, as the plan's phasing on #5951 lists.
+`stim test js -- <args>` passes the words to the script after the worker
+flag, `stim test --list [--json]` prints the detected kinds without running
+them, and node's test runner gets `--test-concurrency`, from the same formula,
+where Stim sees the whole `node --test` command. The refusal of other kinds,
+the `--list` payload and the `node --test` rules are proposals in the pull
+request, not quoted decisions.
+
 ## Code
 
-- [The test command](../packages/stim-cli/src/commands/test.ts) and [its runner plan](../packages/stim-cli/src/engine/test-run.ts).
+- [The test command](../packages/stim-cli/src/commands/test.ts), [its kinds](../packages/stim-cli/src/engine/test-kinds.ts) and [its runner plan](../packages/stim-cli/src/engine/test-run.ts).
 - [Test records](../packages/server/src/registry.ts), [approval](../packages/server/src/setup.ts), [hello](../packages/server/src/handlers/hello.ts) and [listing](../packages/server/src/cli.ts).
