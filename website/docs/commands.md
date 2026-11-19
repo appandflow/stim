@@ -1340,10 +1340,11 @@ stim test -- pnpm exec vitest run --project unit
   `vitest` directly (also behind `npx`, `bunx`, `pnpm exec`, or `pnpm` or
   `yarn` when the package has no script of that name), with the flag placed
   before any `--`. Yarn 1 drops the options after `yarn exec <bin>` and the
-  words before a `--`, so `yarn exec` and a `yarn` run with a `--` get nothing; or the `test` script, run by `stim test` or `stim test
--- npm test` (or `pnpm`, `yarn`, `bun run`), must be a plain `jest` or
-  `vitest` command with no `--` of its own. Vitest applies
-  `fileParallelism: false` after the flag, in Vitest 2 through 5.
+  words before a `--`, so `yarn exec` and a `yarn` run with a `--` get nothing.
+  Otherwise the `test` script, run by `stim test` or by `stim test -- npm test`
+  (or `pnpm`, `yarn`, `bun run`), must be a plain `jest` or `vitest` command
+  with no `--` of its own. Vitest applies `fileParallelism: false` after the
+  flag, in Vitest 2 through 5.
 - Nothing is passed when the command names a worker option (Jest
   `--maxWorkers`, `-w`, `--runInBand`, `-i`; Vitest `--maxWorkers`,
   `--minWorkers`), another config, preset, project or workspace (`-c`,

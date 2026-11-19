@@ -14,7 +14,7 @@ import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { listTestSlots, tryAcquireTestSlot } from '../engine/test-slots.ts';
 import { listTestWaiting } from '../engine/wait-queue.ts';
-import { stopGroupLeftovers } from '../process-group-exit.ts';
+import { signalLedGroup, stopGroupLeftovers } from '../process-group-exit.ts';
 import { captureProcessIdentity, inspectProcessIdentity } from '../process-identity.ts';
 
 vi.mock('../process-identity.ts', async (load) => {
@@ -389,4 +389,39 @@ describe.skipIf(process.platform === 'win32')('stim test', () => {
     },
     60_000,
   );
+
+  test('a cancel signal reaches no group while the leader pid names another process, even before the leader is reaped', async () => {
+    const child = spawn('sleep', ['30'], { detached: true, stdio: 'ignore' });
+    const pid = child.pid ?? 0;
+    onTestFinished(() => {
+      try {
+        process.kill(-pid, 'SIGKILL');
+      } catch {}
+    });
+    const captured = captureProcessIdentity(pid);
+    vi.mocked(inspectProcessIdentity).mockReturnValue('different');
+    onTestFinished(() => vi.mocked(inspectProcessIdentity).mockRestore());
+    expect(signalLedGroup({ pid, processToken: captured.ok ? captured.token : null }, 'SIGKILL', true)).toBe(false);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(alive(pid)).toBe(true);
+  }, 60_000);
+
+  test('leftovers of a leader that exited before its identity was captured are still stopped', async () => {
+    const child = spawn('sh', ['-c', 'sleep 600 & echo $!'], { detached: true, stdio: ['ignore', 'pipe', 'ignore'] });
+    const pid = child.pid ?? 0;
+    onTestFinished(() => {
+      try {
+        process.kill(-pid, 'SIGKILL');
+      } catch {}
+    });
+    let out = '';
+    child.stdout?.on('data', (chunk) => (out += chunk));
+    await new Promise((resolve) => child.once('exit', resolve));
+    const captured = captureProcessIdentity(pid);
+    expect(captured.ok).toBe(false);
+    const sleeper = Number(out.trim());
+    expect(alive(sleeper)).toBe(true);
+    expect(await stopGroupLeftovers({ pid, processToken: null }, 5_000)).toBe(true);
+    expect(alive(sleeper)).toBe(false);
+  }, 60_000);
 });

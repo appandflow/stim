@@ -28,25 +28,48 @@ export async function waitForTreeExit(record: ProcessRecord, ms: number, signal?
   return (await waitForProcessExit(record, ms, signal)) && (await waitForGroupExit(Number(record.pid), ms));
 }
 
+export interface GroupLeader {
+  pid: number;
+  /** The leader's identity captured at spawn, or null when the capture failed. */
+  processToken: string | null;
+}
+
+function pidInUse(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return !(error instanceof Error && 'code' in error && error.code === 'ESRCH');
+  }
+}
+
 /**
- * Stops what is left in the process group that `record`'s process led: SIGTERM, then SIGKILL after `graceMs`. Each
- * signal goes out only while the leader's pid is gone or still names that process, since POSIX does not reuse a pid
- * while a process group with that id exists. Resolves to whether the group emptied.
+ * Sends `signal` to the process group `leader` led, only while that group id provably still belongs to it, since POSIX
+ * does not reuse a pid while a process group with that id exists: the leader is still the recorded process, or no
+ * process has its pid. Without a recorded identity, `running` (the leader is the caller's child and not reaped yet)
+ * also keeps the pid reserved. Returns whether the signal went out.
  */
-export async function stopGroupLeftovers(
-  record: { pid: number; processToken: string | null },
-  graceMs: number,
-): Promise<boolean> {
+export function signalLedGroup(leader: GroupLeader, signal: NodeJS.Signals, running = false): boolean {
+  const identity = leader.processToken === null ? 'unknown' : inspectProcessIdentity(leader);
+  if (identity === 'different') return false;
+  if (identity === 'unknown' && !running && pidInUse(leader.pid)) return false;
+  try {
+    process.kill(-leader.pid, signal);
+  } catch {}
+  return true;
+}
+
+/**
+ * Stops what is left in the process group `leader` led once the leader exited: SIGTERM, then SIGKILL after `graceMs`,
+ * each through {@link signalLedGroup}. Resolves to whether the group emptied.
+ */
+export async function stopGroupLeftovers(leader: GroupLeader, graceMs: number): Promise<boolean> {
   for (const [signal, waitMs] of [
     ['SIGTERM', graceMs],
     ['SIGKILL', groupExitBudgetMs()],
   ] as const) {
-    const identity = inspectProcessIdentity(record);
-    if (identity !== 'gone' && identity !== 'same') return false;
-    try {
-      process.kill(-record.pid, signal);
-    } catch {}
-    if (await waitForGroupExit(record.pid, waitMs)) return true;
+    if (!signalLedGroup(leader, signal)) return false;
+    if (await waitForGroupExit(leader.pid, waitMs)) return true;
   }
   return false;
 }

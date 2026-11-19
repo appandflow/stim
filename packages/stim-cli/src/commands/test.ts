@@ -22,7 +22,7 @@ import {
 import { acquireTestSlot, listTestSlots, releaseTestSlot, type TestSlotHandle } from '../engine/test-slots.ts';
 import { getExecutor } from '../exec.ts';
 import { readClaimSet } from '../ownership-claim.ts';
-import { groupExitBudgetMs, stopGroupLeftovers, waitForGroupExit } from '../process-group-exit.ts';
+import { groupExitBudgetMs, signalLedGroup, stopGroupLeftovers, waitForGroupExit } from '../process-group-exit.ts';
 import { captureProcessIdentity } from '../process-identity.ts';
 
 const note = (context: StimContext, text: string) => context.output('stderr', `${phaseLine('test', text)}\n`);
@@ -34,21 +34,15 @@ function refusal(context: StimContext, code: string, message: string, remedy: st
 
 const KILL_GRACE_CAP_MS = 10_000;
 
-const signalGroup = (pid: number, signal: NodeJS.Signals) => {
-  try {
-    process.kill(-pid, signal);
-  } catch {}
-};
-
 /**
  * Runs `argv` in `cwd` and resolves once it exited. With `group`, the command leads its own process group: a
  * cancellation reaches the whole group, the group gets SIGKILL when it outlives a grace period, whether or not its
  * leader exited, processes the command left in the group after it exited get SIGTERM after a grace period and SIGKILL
- * after another, and the run resolves only once the group is empty. `survivors` is true when processes of the group
- * still run after that; the declaration then keeps recording the child, so the slot claim stays held by the group.
- * Without `group` (a run nested in another stim test), the command stays in the caller's group, which the outer run
- * waits for and stops, and a cancellation, its grace and SIGKILL reach only the direct child, not the outer group's
- * other members.
+ * after another, and the run resolves only once the group is empty. Every group signal goes through `signalLedGroup`.
+ * `survivors` is true when processes of the group still run after that; the declaration then keeps recording the child,
+ * so the slot claim stays held by the group. Without `group` (a run nested in another stim test), the command stays in
+ * the caller's group, which the outer run waits for and stops, and a cancellation, its grace and SIGKILL reach only the
+ * direct child, not the outer group's other members.
  */
 async function runCommand(
   context: StimContext,
@@ -79,9 +73,11 @@ async function runCommand(
   );
   const pid = group ? child.pid : undefined;
   const captured = pid === undefined ? null : captureProcessIdentity(pid);
+  const leader = pid === undefined ? null : { pid, processToken: captured?.ok ? captured.token : null };
+  const running = () => child.exitCode === null && child.signalCode === null;
   const send = (signal: NodeJS.Signals) => {
-    if (pid !== undefined) signalGroup(pid, signal);
-    else if (child.exitCode === null && child.signalCode === null) child.kill(signal);
+    if (leader) signalLedGroup(leader, signal, running());
+    else if (running()) child.kill(signal);
   };
   let killTimer: ReturnType<typeof setTimeout> | undefined;
   const killGroup = () => send('SIGKILL');
@@ -103,9 +99,8 @@ async function runCommand(
     const cancelled = context.signal.aborted;
     let gone =
       pid === undefined || (await waitForGroupExit(pid, groupExitBudgetMs(cancelled ? KILL_GRACE_CAP_MS : undefined)));
-    if (!gone && pid !== undefined && !context.signal.aborted) {
-      const record = { pid, processToken: captured?.ok ? captured.token : null };
-      gone = await stopGroupLeftovers(record, groupExitBudgetMs(KILL_GRACE_CAP_MS));
+    if (!gone && leader && !context.signal.aborted) {
+      gone = await stopGroupLeftovers(leader, groupExitBudgetMs(KILL_GRACE_CAP_MS));
       if (gone) note(context, `stopped the processes the test command left running in its process group ${pid}`);
     } else if (!gone && pid !== undefined) {
       killGroup();
