@@ -10,8 +10,15 @@ import { debugLog } from '../debug-log.ts';
 import { operationState } from '../engine/operation-state.ts';
 import { spawnDeclared } from '../engine/spawn-claims.ts';
 import {
+  AVAILABLE_KINDS,
+  detectKinds,
+  namedKinds,
+  scriptRunsKinds,
+  skipScriptKinds,
+  TEST_KINDS,
+} from '../engine/test-kinds.ts';
+import {
   configuredWorkers,
-  nearestPackageDir,
   packageScripts,
   packageManagerFor,
   planTestRun,
@@ -19,6 +26,7 @@ import {
   testScriptRun,
   testWorkerCount,
   vitestVersionFor,
+  type PackageManager,
 } from '../engine/test-run.ts';
 import { acquireTestSlot, listTestSlots, releaseTestSlot, type TestSlotHandle } from '../engine/test-slots.ts';
 import { getExecutor } from '../exec.ts';
@@ -179,11 +187,96 @@ function heldTestRun(marker: string): boolean {
   );
 }
 
+interface TestRun {
+  argv: string[];
+  dir: string;
+  script: string | null;
+  manager: PackageManager;
+  extra: string[];
+}
+
+/**
+ * The run that `stim test` asked for: the operands before `--` name kinds, and with no kind named, the words after `--`
+ * are the whole command. Without either, the project's detected kinds run.
+ */
+function resolveRun(
+  context: StimContext,
+  kindWords: string[],
+  after: string[],
+): { run: TestRun } | { refused: number } {
+  const { cwd } = context;
+  const refuse = (message: string, remedy: string) => ({ refused: refusal(context, 'STIM_BAD_ARG', message, remedy) });
+  const named = namedKinds(kindWords);
+  if ('unknown' in named)
+    return refuse(
+      `${named.unknown} is not a test kind; the kinds are ${TEST_KINDS.join(', ')}, and e2e for every e2e kind. A command goes after --.`,
+      `stim test -- ${[...kindWords, ...after].join(' ')}`,
+    );
+  const missing = named.kinds.filter((kind) => !AVAILABLE_KINDS.includes(kind));
+  if (missing.length)
+    return refuse(
+      `Stim cannot run the ${missing.join(', ')} test kind${missing.length === 1 ? '' : 's'} yet; it runs only ${AVAILABLE_KINDS.join(', ')}.`,
+      'Run those tests with their own command after --: stim test -- <command>',
+    );
+  if (!named.kinds.length && after.length) {
+    const scriptRun = testScriptRun(after);
+    const script = scriptRun ? testScriptFor(cwd) : null;
+    if (scriptRun && !script)
+      return refuse(
+        `No package.json with a test script was found from ${cwd}.`,
+        'Pass the test command after --, for example: stim test -- npx jest',
+      );
+    return { run: { argv: after, dir: cwd, script, manager: scriptRun ?? packageManagerFor(cwd), extra: [] } };
+  }
+  const { run, skipped } = skipScriptKinds(detectKinds(cwd));
+  for (const each of skipped) note(context, `${each.kind}: skipped, ${each.reason}`);
+  const js = run.find((each) => each.kind === 'js');
+  if (!js)
+    return refuse(
+      `No package.json with a test script was found from ${cwd}.`,
+      'Pass the test command after --, for example: stim test -- npx jest',
+    );
+  return { run: { argv: js.argv, dir: js.cwd, script: js.script, manager: js.manager, extra: after } };
+}
+
+/** `stim test --list`: the kinds the project has, with the command each runs, on stdout. */
+function listKinds(context: StimContext, json: boolean): number {
+  const { run, skipped } = skipScriptKinds(detectKinds(context.cwd));
+  const kinds = run.map((each) => ({
+    kind: each.kind,
+    origin: 'detected' as const,
+    command: each.argv,
+    cwd: each.cwd,
+    script: each.script,
+    runner: each.runner,
+    needs: ['test-slot'],
+    runnable: true,
+    scriptRuns: [...scriptRunsKinds(each.script).keys()],
+  }));
+  if (json) {
+    context.output('stdout', `${JSON.stringify({ kinds, skipped }, null, 2)}\n`);
+    return 0;
+  }
+  if (!kinds.length && !skipped.length) context.output('stdout', `No test kinds found from ${context.cwd}.\n`);
+  for (const each of kinds) {
+    const runner = each.runner ? `${each.runner}, sized` : 'not sized';
+    context.output(
+      'stdout',
+      `${each.kind}  ${each.command.join(' ')}  (${runner}; in ${each.cwd}; takes a test slot)\n`,
+    );
+    if (each.scriptRuns.length)
+      context.output('stdout', `    the test script also runs ${each.scriptRuns.join(', ')}\n`);
+  }
+  for (const each of skipped) context.output('stdout', `${each.kind}  skipped: ${each.reason}\n`);
+  return 0;
+}
+
 async function runTest(
   context: StimContext,
-  command: string[],
-  bare: boolean,
+  operands: string[],
+  beforeDash: number,
   ceilingMs: number | undefined,
+  list: { json: boolean } | null,
 ): Promise<number> {
   const { cwd, env } = context;
   if (process.platform === 'win32')
@@ -194,25 +287,23 @@ async function runTest(
       'Run the test command directly on Windows, or run stim test on macOS or Linux.',
     );
   const started = Date.now();
-  if (bare)
+  const kindWords = operands.slice(0, beforeDash);
+  const after = operands.slice(beforeDash);
+  if (list) {
+    if (operands.length)
+      return refusal(context, 'STIM_BAD_ARG', 'stim test --list takes no kind or command.', 'stim test --list');
+    return listKinds(context, list.json);
+  }
+  if (kindWords.length > 1 && after.length)
     return refusal(
       context,
       'STIM_BAD_ARG',
-      `stim test takes its command after --; got ${command.join(' ')}.`,
-      `stim test -- ${command.join(' ')}`,
+      'Arguments after -- go to one kind; several kinds were named.',
+      `stim test ${kindWords[0] ?? 'js'} -- ${after.join(' ')}`,
     );
-  const scriptRun = testScriptRun(command);
-  const manager = scriptRun ?? packageManagerFor(cwd);
-  const script = command.length && !scriptRun ? null : testScriptFor(cwd);
-  if ((!command.length || scriptRun) && !script)
-    return refusal(
-      context,
-      'STIM_BAD_ARG',
-      `No package.json with a test script was found from ${cwd}.`,
-      'Pass the test command after --, for example: stim test -- npx jest',
-    );
-  const argv = command.length ? command : [manager, 'run', 'test'];
-  const dir = command.length ? cwd : (nearestPackageDir(cwd) ?? cwd);
+  const resolved = resolveRun(context, kindWords, after);
+  if ('refused' in resolved) return resolved.refused;
+  const { argv, dir, script, manager, extra } = resolved.run;
   const program = basename(argv[0] ?? '');
   debugLog.log('test_start', { program, script: script !== null, manager });
   let slot: TestSlotHandle | undefined;
@@ -244,9 +335,11 @@ async function runTest(
       workers,
       script,
       manager,
+      extra,
       configured: configuredWorkers(dir),
       scripts: packageScripts(dir),
       vitestVersion: vitestVersionFor(argv, dir, (file) => getExecutor().findExecutable(file, { env, cwd: dir })),
+      nodeOptions: env.NODE_OPTIONS,
     });
     debugLog.log('test_workers', { workers, cores, slots, load1, applied: plan.applied, skipped: plan.skipped });
     const basis = `${cores} cores, ${slots} test slot${slots === 1 ? '' : 's'}, load ${load1}`;
@@ -276,9 +369,12 @@ async function runTest(
 
 const test: Op = defineOp({
   name: 'test',
-  arguments: '[command...]',
+  arguments: '[kind...]',
+  argumentDescriptions: {
+    'kind...': `the test kinds to run (${TEST_KINDS.join(', ')}, or e2e); without one, every kind the project has. A command to run instead goes after --.`,
+  },
   description:
-    "Run a test command under a machine-wide test slot (concurrency.maxTests), with Jest's or Vitest's worker count sized to this machine. Without a command, run the project's test script through its package manager. Output and exit status are the command's own.",
+    "Run a project's tests by kind, or a test command after --, under a machine-wide test slot (concurrency.maxTests), with Jest's, Vitest's or node --test's worker count sized to this machine. The js kind runs the project's test script through its package manager. Output and exit status are the test command's own.",
   options: {
     wait: {
       flags: '--wait <seconds>',
@@ -295,12 +391,24 @@ const test: Op = defineOp({
       flags: '--no-wait',
       description: 'Refuse with STIM_AT_CAPACITY instead of queueing when every test slot is taken.',
     },
+    list: {
+      flags: '--list',
+      description: 'List the test kinds this project has and the command each runs, and run nothing.',
+    },
+    json: {
+      flags: '--json',
+      description: 'With --list, print the list as JSON on stdout.',
+    },
   },
-  run: async ({ args, options, bare }) => {
+  run: async ({ args, options, beforeDash }) => {
     const ceilingMs = options.wait === undefined ? undefined : options.wait === false ? 0 : options.wait * 1000;
+    const list = options.list ? { json: options.json === true } : null;
     const { value, interrupted } = await runProcessOperation(
       processContext('').cwd,
-      (context) => runTest(context, [...args], bare === true, ceilingMs),
+      async (context) =>
+        options.json && !list
+          ? refusal(context, 'STIM_BAD_ARG', '--json applies only to --list.', 'stim test --list --json')
+          : runTest(context, [...args], beforeDash ?? args.length, ceilingMs, list),
       { hangup: true },
     );
     const code = interrupted ?? value;

@@ -2434,10 +2434,17 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
                             daemon.testWaiting entry; a running one shows as
                             capacity.tests and a "tests" status line.
 
-  STIM TEST: stim test runs the project's test script through the package
-  manager whose lockfile is nearest (pnpm, yarn, bun, else npm), from its
-  package.json's directory; stim test -- <command> runs that command, with no
-  shell and no stdin. A word before -- is refused. It takes a test slot first
+  STIM TEST: stim test runs every test kind the project has; stim test <kind>
+  runs one (js, rust, android, macos, web, ios, android-device, e2e-ios,
+  e2e-android, or e2e for both e2e kinds). Only js runs so far; another kind
+  is refused. js is the project's test script, through the package manager
+  whose lockfile is nearest (pnpm, yarn, bun, else npm), from its
+  package.json's directory; stim test js -- <args> passes the args to it.
+  stim test -- <command> runs that command, with no shell and no stdin. A word
+  before -- that is not a kind is refused. A kind whose runner the test script
+  already names (cargo, gradlew, playwright, cypress, xcodebuild, detox,
+  maestro) is skipped. stim test --list [--json] prints the kinds and their
+  commands and runs nothing. It takes a test slot first
   (--wait <seconds> bounds the wait, else at most 90 minutes; --no-wait
   refuses a full cap with STIM_AT_CAPACITY), then picks a worker count:
 
@@ -2454,7 +2461,10 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   key) may name workers, pools, serial runs or projects, spread an object,
   import a module other than Node's, vite's or vitest's (jest's as types), or
   set a preset other than React Native's or jest-expo's. Vitest 1.3 to 3.2.3
-  also get --minWorkers=1; older or unknown versions get nothing. Otherwise
+  also get --minWorkers=1; older or unknown versions get nothing. node --test
+  gets --test-concurrency=<n> right after --test, or appended to a test script
+  that is node --test with no test file, unless the command or NODE_OPTIONS
+  sets it. Otherwise
   the command runs unchanged, with no variables added; one stderr line says
   which.
 

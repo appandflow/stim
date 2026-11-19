@@ -66,8 +66,8 @@ STIM_ACCESS_TICKET or edit remote.*, server.* or hosting.* for the user.
 
 TESTS
 
-Run tests through stim test (the project's test script) or stim test --
-<command>. It queues for a machine-wide test slot and sizes Jest or Vitest
+Run tests through stim test (every test kind), stim test js -- <file>, or
+stim test -- <command>. It queues for a machine-wide test slot and sizes test
 workers; see stim guide lifecycle concurrency.
 
 NEXT STEP

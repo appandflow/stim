@@ -155,18 +155,70 @@ test.each([
     vitestVersion: null,
     expected: ['jest', '--maxWorkers=3'],
   },
-])('$name', ({ argv, script, manager, configured, scripts, vitestVersion, expected, applied }) => {
+  {
+    name: 'node --test gets --test-concurrency right after --test, since node ignores options after a test file',
+    argv: ['node', '--import', 'tsx', '--test', 'src/'],
+    expected: ['node', '--import', 'tsx', '--test', '--test-concurrency=3', 'src/'],
+    applied: '--test-concurrency=3',
+  },
+  { name: 'a --test after the script is the script argument', argv: ['node', 'run.js', '--test'], expected: null },
+  {
+    name: 'node --test with its own concurrency is left alone',
+    argv: ['node', '--test', '--test-concurrency=1'],
+    expected: null,
+  },
+  {
+    name: 'NODE_OPTIONS setting the concurrency keeps the count out',
+    argv: ['node', '--test'],
+    nodeOptions: '--test-concurrency=2',
+    expected: null,
+  },
+  {
+    name: 'a node --test script with no test file gets the flag appended',
+    argv: ['npm', 'run', 'test'],
+    script: 'node --test --test-reporter spec',
+    manager: 'npm' as const,
+    expected: ['npm', 'run', 'test', '--', '--test-concurrency=3'],
+    applied: '--test-concurrency=3',
+  },
+  {
+    name: 'a node --test script naming test files runs unchanged, since an appended option would come after them',
+    argv: ['pnpm', 'run', 'test'],
+    script: 'node --test src/',
+    manager: pnpm,
+    expected: null,
+  },
+  {
+    name: 'script arguments follow the flag, with one separator for npm',
+    argv: ['npm', 'run', 'test'],
+    script: 'jest --ci',
+    manager: 'npm' as const,
+    extra: ['src/a.test.ts', '--', 'x'],
+    expected: ['npm', 'run', 'test', '--', '--maxWorkers=3', 'src/a.test.ts', '--', 'x'],
+  },
+  {
+    name: 'script arguments that set the workers keep the count out, and still reach the script',
+    argv: ['npm', 'run', 'test'],
+    script: 'jest --ci',
+    manager: 'npm' as const,
+    extra: ['-i'],
+    expected: ['npm', 'run', 'test', '--', '-i'],
+    applied: null,
+  },
+])('$name', ({ argv, script, manager, configured, scripts, vitestVersion, extra, nodeOptions, expected, applied }) => {
   const plan = planTestRun({
     argv,
     workers: 3,
     script,
     manager,
+    extra,
     configured,
     scripts,
+    nodeOptions,
     vitestVersion: vitestVersion === undefined ? '5.0.4' : vitestVersion,
   });
   expect(plan.argv).toEqual(expected ?? argv);
-  expect(plan.applied).toBe(expected ? (applied ?? '--maxWorkers=3') : null);
+  expect(plan.applied).toBe(applied !== undefined ? applied : expected ? '--maxWorkers=3' : null);
   expect(plan.applied === null).toBe(plan.skipped !== null);
 });
 

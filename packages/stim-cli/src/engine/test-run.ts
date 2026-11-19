@@ -225,7 +225,42 @@ const JEST_SET =
   /^(?:--maxWorkers|--max-workers)(?:=.*)?$|^(?:--runInBand|--run-in-band|--config|--preset|--projects)(?:=.*)?$|^-[A-Za-z]*[ciw]/;
 const VITEST_SET =
   /^(?:--(?:max|min)-?[wW]orkers|--config|--root|--dir|--project|--workspace|--pool)(?:=.*)?$|^--(?:no-)?file-?[pP]arallelism(?:=.*)?$|^--poolOptions\.|^-[A-Za-z]*[cr]/;
+const NODE_SET = /^--(?:test-concurrency|experimental-config-file|experimental-default-config-file)(?:=.*)?$/;
 const PLAIN_SCRIPT = /^(jest|vitest)(?:[ \t]+(?!--(?:[ \t]|$))[\w@%=.:/,+-]+)*$/;
+const NODE_SCRIPT = /^node(?:[ \t]+(?!--(?:[ \t]|$))[\w@%=.:/,+-]+)*$/;
+const NODE_VALUE_OPTIONS = new Set([
+  '-r',
+  '--require',
+  '--import',
+  '--loader',
+  '--experimental-loader',
+  '--env-file',
+  '-C',
+  '--conditions',
+  '--test-reporter',
+  '--test-reporter-destination',
+  '--test-name-pattern',
+  '--test-skip-pattern',
+  '--test-shard',
+  '--test-timeout',
+]);
+
+/**
+ * Where `--test` sits in a `node` argv, when it is one of node's own options: before the first word that is neither an
+ * option nor the value of one, which starts the script or the test file patterns. `whole` also requires that no such
+ * word follows, so that options appended to the argv still reach node and not the script.
+ */
+function nodeTestAt(words: readonly string[], whole: boolean): number | null {
+  if (runnerName(words[0] ?? '') !== 'node') return null;
+  let at: number | null = null;
+  for (let index = 1; index < words.length; index++) {
+    const word = words[index] ?? '';
+    if (word === '--test') at ??= index;
+    else if (NODE_VALUE_OPTIONS.has(word)) index++;
+    else if (word === '--' || !word.startsWith('-')) return whole ? null : at;
+  }
+  return at;
+}
 
 export interface TestPlan {
   argv: string[];
@@ -234,49 +269,77 @@ export interface TestPlan {
   skipped: string | null;
 }
 
+export type Runner = 'jest' | 'vitest' | 'node';
+
+/** The runner the project's `test` script runs, when it is a plain command Stim can pass a worker count to. */
+export function scriptRunner(script: string): Runner | null {
+  const plain = PLAIN_SCRIPT.exec(script.trim());
+  if (plain?.[1] === 'jest' || plain?.[1] === 'vitest') return plain[1];
+  return NODE_SCRIPT.test(script.trim()) && nodeTestAt(script.trim().split(/\s+/), true) !== null ? 'node' : null;
+}
+
 /**
- * How a run of `argv` gets `workers`. Both runners take a `--maxWorkers` flag, which Stim passes only where it can see
- * the whole command: Jest or Vitest run directly, where the flag goes before any `--`, or the project's `test` script
- * through the package manager when that script is a plain `jest` or `vitest` command. Vitest applies its
- * `fileParallelism: false` after the flag, so a serial config stays serial. Nothing is passed when the command or a
- * config Stim can see sets workers or names another config, and any other command runs unchanged.
+ * How a run of `argv` gets `workers`. Jest and Vitest take a `--maxWorkers` flag, and node's test runner
+ * `--test-concurrency`, which Stim passes only where it can see the whole command: the runner run directly, where the
+ * flag goes before any `--` (for node, right after `--test`, since node reads no option after the first test file), or
+ * the project's `test` script through the package manager when that script is a plain `jest`, `vitest` or `node --test`
+ * command, with `extra` arguments after the flag. Vitest applies its `fileParallelism: false` after the flag, so a
+ * serial config stays serial. Nothing is passed when the command, `extra`, `NODE_OPTIONS` or a config Stim can see sets
+ * workers or names another config, and any other command runs unchanged.
  */
 export function planTestRun({
   argv,
   workers,
   script,
   manager,
+  extra = [],
   configured = { jest: false, vitest: false },
   scripts = [],
   vitestVersion = null,
+  nodeOptions = '',
 }: {
   argv: string[];
   workers: number;
   /** The project's `test` script, when `argv` is the package manager running it. */
   script?: string | null;
   manager?: PackageManager;
+  /** Arguments for the `test` script, passed after the worker flag. */
+  extra?: readonly string[];
   configured?: { jest: boolean; vitest: boolean };
   /** The package's script names: `pnpm jest` and `yarn jest` run a script of that name before the binary. */
   scripts?: readonly string[];
   /** The installed Vitest version, which decides its worker flags. */
   vitestVersion?: string | null;
+  /** The run's `NODE_OPTIONS`, which node reads before its command line. */
+  nodeOptions?: string;
 }): TestPlan {
-  const plain = script ? PLAIN_SCRIPT.exec(script.trim()) : null;
+  const withScript = (flags: string[]) =>
+    flags.length + extra.length && manager === 'npm'
+      ? [...argv, '--', ...flags, ...extra]
+      : [...argv, ...flags, ...extra];
+  const unchanged = (skipped: string): TestPlan => ({ argv: withScript([]), applied: null, skipped });
   const direct = script ? null : runnerAt(argv, scripts);
-  const runner = direct?.runner ?? (plain?.[1] === 'jest' || plain?.[1] === 'vitest' ? plain[1] : null);
-  const unchanged = (skipped: string): TestPlan => ({ argv, applied: null, skipped });
+  const nodeAt = script ? null : nodeTestAt(argv, false);
+  const runner: Runner | null = script ? scriptRunner(script) : (direct?.runner ?? (nodeAt === null ? null : 'node'));
   if (!runner)
     return unchanged(
       script
-        ? 'the test script is not a plain jest or vitest command, so Stim cannot pass it --maxWorkers'
-        : 'Stim recognises no direct Jest or Vitest run in it',
+        ? 'the test script is not a plain jest, vitest or node --test command, so Stim cannot pass it a worker count'
+        : 'Stim recognises no direct Jest, Vitest or node --test run in it',
     );
-  const name = runner === 'jest' ? 'Jest' : 'Vitest';
-  if (configured[runner]) return unchanged(`a ${name} config here may set its workers or run serially`);
-  const words = script ? script.trim().split(/\s+/) : argv.slice((direct?.index ?? 0) + 1);
-  if (words.some((word) => (runner === 'jest' ? JEST_SET : VITEST_SET).test(word)))
+  const name = runner === 'jest' ? 'Jest' : runner === 'vitest' ? 'Vitest' : 'node --test';
+  if (runner !== 'node' && configured[runner])
+    return unchanged(`a ${name} config here may set its workers or run serially`);
+  const words = [...(script ? script.trim().split(/\s+/) : argv.slice((direct?.index ?? 0) + 1)), ...extra];
+  if (runner === 'node') words.push(...nodeOptions.split(/\s+/));
+  if (words.some((word) => (runner === 'jest' ? JEST_SET : runner === 'vitest' ? VITEST_SET : NODE_SET).test(word)))
     return unchanged(`the command already sets ${name} workers or names another config`);
-  const flags = runner === 'jest' ? [`--maxWorkers=${workers}`] : vitestWorkerFlags(vitestVersion, workers);
+  const flags =
+    runner === 'jest'
+      ? [`--maxWorkers=${workers}`]
+      : runner === 'node'
+        ? [`--test-concurrency=${workers}`]
+        : vitestWorkerFlags(vitestVersion, workers);
   if (!flags)
     return unchanged(
       vitestVersion
@@ -284,10 +347,8 @@ export function planTestRun({
         : 'Stim cannot read the installed Vitest version, which decides its worker flags',
     );
   const applied = flags.join(' ');
-  if (direct) {
-    const end = argv.indexOf('--', direct.index + 1);
-    const at = end < 0 ? argv.length : end;
-    return { argv: [...argv.slice(0, at), ...flags, ...argv.slice(at)], applied, skipped: null };
-  }
-  return { argv: [...argv, ...(manager === 'npm' ? ['--', ...flags] : flags)], applied, skipped: null };
+  if (script) return { argv: withScript(flags), applied, skipped: null };
+  const end = direct ? argv.indexOf('--', direct.index + 1) : -1;
+  const at = direct ? (end < 0 ? argv.length : end) : (nodeAt ?? 0) + 1;
+  return { argv: [...argv.slice(0, at), ...flags, ...argv.slice(at)], applied, skipped: null };
 }
