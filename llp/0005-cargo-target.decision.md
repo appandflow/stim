@@ -53,8 +53,9 @@ The dormant reduction (`stim gc` and the daemon's hourly step) deletes every
 recognised `target/` whole, tagged, Exact app's and untagged alike, in a
 workspace or discovered checkout that has had no activity for
 `idle.dormantDays` by the full evidence, and whose worktree is not locked with
-`git worktree lock`. Only the benchmark baseline folders `target/criterion`,
-`target/gungraun` and `target/iai` stay. It runs the idle stage's
+`git worktree lock`, but only the top-level entries Stim recognises as build
+output; every other entry stays, so the `target/` goes whole only when all of it
+is recognised. It runs the idle stage's
 checks above, the process check included, for all three kinds, then, under the
 workspace's claims and checked again right before the delete: the workspace is
 still idle, the directory is still a recognised `target/`, and no PATH launcher
@@ -102,20 +103,48 @@ as Exact's `clients/` and `web-js-modules/`, on an idle checkout, and left an
 untagged `target/` at its full size. Reason the size cap and the pressure trims
 stay trims: they also reach a `target/` in use.
 
+Maintainer decision: "I thought cargo target would all be built output that is
+regenerable? If not the case lets just delete things we know are", 2026-11-19
+(#5979). Recognised build output at the top of a `target/`:
+
+- Cargo, per rust-lang/cargo's `src/compiler/layout.rs` and
+  `src/compiler/future_incompat.rs`: a profile directory (one holding
+  `.fingerprint/` or a `.cargo-lock`, `.cargo-build-lock` or
+  `.cargo-artifact-lock`), a target triple directory that holds only profiles,
+  `doc/` and Cargo's own files, Cargo's own files `.rustc_info.json`,
+  `CACHEDIR.TAG`, `.future-incompat-report.json` and those lock files, and
+  Cargo's own folders `doc/`, `package/`, `tmp/`, `cargo-timings/` and
+  `.metabuild/`.
+- Exact, only in an Exact app's `target/` (beside `exact.mjs`) or one of a
+  checkout of Exact itself (`scripts/app.mjs` and `host/web-js/module.mjs` at
+  its root): the entries Exact's tools write there, named in `EXACT_TOP` and
+  `EXACT_TOP_PREFIXES` in `packages/stim-cli/src/workspace/cargo-target.ts`,
+  taken from Exact's `scripts/app.mjs`, `scripts/sweep.mjs`,
+  `scripts/cargo-dep-info.mjs`, `scripts/rust.mjs`, `scripts/web-build.mjs`,
+  `host/apple/build.mjs`, `host/web/build.mjs`, `host/web-js/module.mjs`,
+  `host/web-js/dev.mjs` and the other files listed there. A name an app chooses
+  itself, such as its own web dist folder, is not on it and stays.
+
+Anything else stays, such as Criterion's and Gungraun's saved benchmark
+baselines (`criterion/`, `gungraun/`, `iai/`) or a Solana program's private key
+in `deploy/<program>-keypair.json`, which no build can recreate. `gc` names the
+entries it keeps, in report mode too, and a `target/` with nothing recognised in
+it is kept and named.
+
 Chosen by the coordinator and the reviews of #5996, not by the maintainer: the
-use dating, the move aside with its recheck and roll back, the mount checks,
-and keeping the benchmark baseline folders. Reason for the dating: the idle evidence skips
+use dating, the move aside with its recheck and roll back, the mount checks and
+the NOT-RESTORED marker written before the first move. Reason for the dating: the idle evidence skips
 writes in a `target/` git ignores, so a build that ran without a source edit
 shows only in the target's own times; two levels of times are what a check that
 must not walk a large `target/` can read, and on this Mac most Exact app targets
 hold no Cargo profile at all. Reason for the move aside: the trim claim
 excludes only other Stim processes, and a Cargo build sharing the target can
-take a profile lock while later profiles are checked. Reason for
-the benchmark baseline folders: Criterion keeps saved baselines in `criterion/`
-and Gungraun (formerly iai-callgrind) in `gungraun/` or `iai/`; they describe
-old code and no build can recreate them. These named folders are the only
-exceptions, not a list of what may go; another tool's data in `target/` is
-deleted with it.
+take a profile lock while later profiles are checked. Reason for the marker:
+it records each staged entry's original name in `.stim-trimmed/NOT-RESTORED`
+before the first move and is cleared only once the final checks pass or every
+entry is back, so a delete that dies midway leaves a `target/` that later trims
+and deletes refuse until a person acts, instead of one whose staged entries the
+next trim deletes unchecked.
 
 ## The size cap
 
