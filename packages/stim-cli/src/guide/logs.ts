@@ -382,7 +382,7 @@ build_end_measure one a pass. None alter a pass.
 A step running 10 minutes writes daemon_step_running (warn; step, startedAt,
 runningMs) every 10 minutes until it ends, as do the measure, booted_parked,
 idle_stage, fingerprint_precompute and maintenance phases. A tick or pass
-running 60 minutes ends stimd, claims kept; a shutdown past 2 minutes writes
+running 3 hours ends stimd, claims kept; a shutdown past 2 minutes writes
 daemon_shutdown_timeout (waiting names what it waits on) and is forced.
 A size walk that fails or times out adds one record, event size_failed (warn,
 info when aborted),

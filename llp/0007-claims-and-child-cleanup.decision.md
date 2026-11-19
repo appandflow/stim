@@ -70,8 +70,8 @@ tunnel stop, or a job on the passes or measure thread. stimd logs
 `daemon_cleanup_unverified`, holds idle exit and engine switches, and checks
 the child again on every tick; once it has stopped, the claims only that
 failure retained are released. Any other unverified cleanup, a thread that
-crashes, a net thread failure, and a tick or maintenance pass that runs 60
-minutes (LLP 0021) end stimd; its home, daemon and engine claims stay complete,
+crashes, a net thread failure, and a tick or maintenance pass that runs 3
+hours (LLP 0021) end stimd; its home, daemon and engine claims stay complete,
 so the next start recovers them once that stimd is gone.
 
 A thread job's refusal is watched only when no other child its operation

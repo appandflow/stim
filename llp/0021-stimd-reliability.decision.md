@@ -132,20 +132,22 @@ signal. The deadline covers the slow parts of a normal shutdown: the net thread'
 
 A step of a tick or of the maintenance pass that runs 10 minutes logs
 `daemon_step_running` with its name every 10 minutes until it ends, so a step
-that never ends is named in the log. A tick or a maintenance pass that runs 60
-minutes ends stimd as a failBackground with unverified cleanup: its home and
+that never ends is named in the log. A tick or a maintenance pass that runs 3
+hours ends stimd as a failBackground with unverified cleanup: its home and
 daemon claims stay kept, because the work that never ended may hold claims or
 run children, and the shutdown deadline above bounds the exit. The next stimd
-recovers the home once this one is gone. Reason: in #5981 a tick and a
-maintenance pass stopped without a record for 3.5 hours while the net thread
-went on serving, so no tick ran, no cleanup ran and the log did not say where.
+recovers the home once this one is gone. Reason: in #5981 the ticks stopped
+without a record for 3.5 hours while the net thread went on serving, so no
+cleanup ran and the log did not say where.
 An await that never settles cannot be resumed or abandoned without dropping
-claims it may hold (LLP 0007). Ticks of 12 minutes and passes of 4 minutes were
-measured under a load average near 500, so 60 minutes leaves a margin.
+claims it may hold (LLP 0007). The bound sits above the longest that ended in
+this machine's log: a tick of 112 minutes and a maintenance pass of 81 minutes
+on 2026-11-15, under heavy load.
 
 The deadline, the stall bound, the 10-minute records and the cause class were
-chosen by the implementing lane of #5981 and its coordinating session, not the
-maintainer.
+chosen by the implementing lane of #5981, not the maintainer. The forced exit
+ends on SIGKILL, not code 75, for the reason under "Every exit leaves a
+record".
 
 ## A handover with no successor
 

@@ -182,7 +182,7 @@ const SIGNALS = ['SIGTERM', 'SIGINT'] as const;
 const DETACHED_SIGNALS = [...SIGNALS, 'SIGHUP'] as const;
 const SECOND_SIGNAL_GRACE_MS = 5000;
 const SHUTDOWN_DEADLINE_MS = 2 * 60_000;
-const STALL_MS = 60 * 60_000;
+const STALL_MS = 3 * 60 * 60_000;
 
 type Level = 'debug' | 'info' | 'warn' | 'error';
 type Resource = 'build' | 'boot' | 'test';
