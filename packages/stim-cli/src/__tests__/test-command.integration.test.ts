@@ -14,7 +14,7 @@ import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { listTestSlots, tryAcquireTestSlot } from '../engine/test-slots.ts';
 import { listTestWaiting } from '../engine/wait-queue.ts';
-import { signalLedGroup, stopGroupLeftovers } from '../process-group-exit.ts';
+import { signalLedGroup, stopGroupLeftovers } from '../commands/test.ts';
 import { captureProcessIdentity, inspectProcessIdentity } from '../process-identity.ts';
 
 vi.mock('../process-identity.ts', async (load) => {
