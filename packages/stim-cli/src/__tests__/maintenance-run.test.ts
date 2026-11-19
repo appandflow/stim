@@ -580,9 +580,11 @@ test('an unverified child cleanup from the census reaches the caller even when t
   await expect(runMaintenance('daemon', { tick: quietTick(controller.signal) })).rejects.toBe(failure);
 });
 
-test('a pass in the daemon tick measures sizes at low priority, and a pass a command runs does not', async () => {
+test('a pass in the daemon tick measures sizes and plans Cargo trims at low priority, and a pass a command runs does not', async () => {
+  const planned = vi.spyOn(preview, 'plannedMaintenance');
   await runMaintenance('daemon', { tick: quietTick() });
   writeFileSync(maintenanceStateFile(), JSON.stringify({ ...readMaintenanceState(), lastAt: {} }));
   await runMaintenance('daemon');
   expect(vi.mocked(measurements.measureSizes).mock.calls.map((call) => call[4])).toEqual([true, false]);
+  expect(planned.mock.calls.map((call) => call[2]?.lowPriority)).toEqual([true, false]);
 });

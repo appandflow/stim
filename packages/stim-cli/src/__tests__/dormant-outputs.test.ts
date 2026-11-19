@@ -184,6 +184,27 @@ describe.skipIf(process.platform === 'win32')(
       expect(existsSync(join(metroStoreRoot(root), 'shared'))).toBe(true);
     });
 
+    test('the hourly step measures the outputs it removes at low priority, and gc at the priority of the command', async () => {
+      const walks: { dir: string; lowPriority: boolean }[] = [];
+      const current = getExecutor();
+      setExecutor({
+        ...current,
+        runFileAsync: async (file, args, opts) => {
+          if (file === 'du') walks.push({ dir: String(args.at(-1)), lowPriority: opts.lowPriority === true });
+          return current.runFileAsync(file, args, opts);
+        },
+      });
+      const daemon = register(repo('daemon'));
+      idleFor(3, daemon);
+      await hourlyStep(true);
+      const command = register(repo('command'));
+      idleFor(3, command);
+      await gc();
+
+      expect(walks.filter(({ dir }) => dir.startsWith(daemon)).map(({ lowPriority }) => lowPriority)).toEqual([true]);
+      expect(walks.filter(({ dir }) => dir.startsWith(command)).map(({ lowPriority }) => lowPriority)).toEqual([false]);
+    });
+
     test('a Gradle build working in the checkout keeps its outputs, whatever Stim last saw', async () => {
       const root = register(repo('app'));
       idleFor(3, root);
