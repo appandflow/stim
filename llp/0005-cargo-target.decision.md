@@ -111,20 +111,23 @@ Maintainer decision: "I thought cargo target would all be built output that is
 regenerable? If not the case lets just delete things we know are", 2026-11-19
 (#5979). Recognised build output at the top of a `target/`:
 
-- Cargo, per rust-lang/cargo's `src/compiler/layout.rs` and
-  `src/compiler/future_incompat.rs`: a profile directory (one holding
-  `.fingerprint/` or a `.cargo-lock`, `.cargo-build-lock` or
+- Cargo, per rust-lang/cargo's `src/compiler/layout.rs`: a profile directory
+  (one holding `.fingerprint/` or a `.cargo-lock`, `.cargo-build-lock` or
   `.cargo-artifact-lock`), a target triple directory that holds only profiles,
   `doc/` and Cargo's own files, Cargo's own files `.rustc_info.json`,
-  `CACHEDIR.TAG`, `.future-incompat-report.json` and those lock files, and
-  Cargo's own folders `doc/`, `package/`, `tmp/`, `cargo-timings/` and
-  `.metabuild/`.
+  `CACHEDIR.TAG` and those lock files, and Cargo's own folders `doc/`,
+  `package/`, `tmp/` and `.metabuild/`. Cargo's saved build timings
+  (`cargo-timings/`) and its future-incompatibility report
+  (`.future-incompat-report.json`, read back by `cargo report`) are records and
+  stay.
 - Exact, only in an Exact app's `target/` (beside `exact.mjs`) or one of a
   checkout of Exact itself (`scripts/app.mjs` and `host/web-js/module.mjs` at
   its root): the build products, caches and build scratch directories Exact's
-  build tools write there, named in `EXACT_TOP` and `EXACT_TOP_PREFIXES` in
-  `packages/stim-cli/src/workspace/cargo-target.ts`, with the Exact source
-  files they come from. Records Exact keeps of runs and sessions (`traces/`
+  build tools write there, named in `EXACT_TOP` in
+  `packages/stim-cli/src/workspace/cargo-target.ts` with the Exact source files
+  they come from, and the scratch directories `mkdtempSync` makes from
+  `web-check-` and `push-ts-` (a directory named by the prefix and six random
+  letters or digits; a file such as `web-check-failure.json` stays). Records Exact keeps of runs and sessions (`traces/`
   from `host/web/serve.mjs` and `scripts/agent-inspect.mjs`, `web-receipts/`
   and `native-receipts/` from `scripts/evidence.mjs`), its unit ledger, crate
   claims and lock files, scratch a dev server may still serve from, and
