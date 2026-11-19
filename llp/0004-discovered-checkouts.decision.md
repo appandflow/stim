@@ -517,8 +517,10 @@ list is left out before any dependency read), and
 holds a `node_modules` or an `ios/Pods` that is a real directory, not a link,
 which the source collection would keep. Each of those two probes is one `lstat`
 bounded like the launcher readings (3 seconds, through `answered`); a checkout
-whose probe does not answer is left out for that pass, and its trees are listed
-as kept with that reason. Deletion still rechecks idleness first. The pass over linked
+whose own probe does not answer is left out for that pass, and its trees are
+listed as kept with that reason. While another read holds the pending slot no
+probe starts, and the checkout goes through the idle checks and the collection
+as it would without the gate. Deletion still rechecks idleness first. The pass over linked
 worktrees' dependencies and every checkout's build outputs (`idle.dormantDays`)
 reads every discovered checkout before it lists what it would reclaim, so a
 large idle checkout costs one full walk there each hourly pass, even with

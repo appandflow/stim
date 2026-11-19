@@ -579,7 +579,8 @@ export async function runDormantDependencies(
  * worktree is the source checkout; anything else, a linked worktree or a folder git does not list, is answered false
  * before any dependency read. A tree counts only as a real directory, never followed through a link (the collection
  * keeps a linked tree). Each probe is one `lstat` bounded like the launcher readings by `answered`; 'unanswered' when
- * one does not answer or another read is pending.
+ * its own probe does not answer. While another read holds the pending slot no probe starts and the answer is true, so
+ * the checkout goes through the idle checks and the collection as it would on main.
  */
 async function sourceTreesOf(path: string, operation?: StimContext): Promise<boolean | 'unanswered'> {
   const { entries, ...source } = await resolveSourceCheckoutAsync(path, {
@@ -591,6 +592,7 @@ async function sourceTreesOf(path: string, operation?: StimContext): Promise<boo
   if (!entry || entry.bare || 'refusal' in source || entry.path !== source.path) return false;
   try {
     for (const dir of ARTIFACT_DIRS.dependencies) {
+      if (hungRead() !== null) return true;
       const target = join(entry.path, dir);
       const found = await answered(
         target,

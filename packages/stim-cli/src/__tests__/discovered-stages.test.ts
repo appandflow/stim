@@ -158,6 +158,67 @@ describe('a discovered checkout in the idle stages', () => {
     await vi.waitUntil(() => hungRead() === null);
   });
 
+  it('lets a source checkout through the gate while another checkout holds the read slot, and ranks it', async () => {
+    const roots = join(base, 'roots');
+    const stalledApp = join(roots, 'a-stalled');
+    const app = join(roots, 'b-app');
+    const aged = new Date(Date.now() - 30 * day);
+    for (const path of [stalledApp, app]) {
+      repo(path);
+      mkdirSync(join(path, 'node_modules', 'dep'), { recursive: true });
+      for (const entry of [
+        join(path, 'node_modules', 'dep'),
+        join(path, 'node_modules'),
+        join(path, 'android', 'build.gradle'),
+        join(path, 'android'),
+        join(path, 'package.json'),
+        join(path, '.gitignore'),
+        path,
+        join(path, '.git', 'index'),
+        join(path, '.git', 'HEAD'),
+        join(path, '.git', 'logs', 'HEAD'),
+      ])
+        utimesSync(entry, aged, aged);
+    }
+    const config: Config = { maintenance: { discoverRoots: [roots] }, projects: {}, repos: {}, idle: sourcePassOnly };
+    saveConfig(config);
+    const real = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    const target = join(stalledApp, 'node_modules');
+    let release = () => {};
+    let released = false;
+    let reached = () => {};
+    const atProbe = new Promise<void>((resolve) => (reached = resolve));
+    vi.mocked(lstat).mockImplementation((path, options) => {
+      if (path !== target || released) return real.lstat(path, options);
+      reached();
+      return new Promise<never>((_, reject) => {
+        release = () => reject(new Error('released'));
+      });
+    });
+    const readEvidence = activity.discoveredEvidence;
+    let slotBusyAtApp = false;
+    const evidence = vi.spyOn(activity, 'discoveredEvidence').mockImplementation(async (path, options) => {
+      if (path === app && hungRead() !== null) {
+        slotBusyAtApp = true;
+        released = true;
+        release();
+        while (hungRead() !== null) await new Promise((resolve) => setImmediate(resolve));
+      }
+      return readEvidence(path, options);
+    });
+
+    const run = runDormantDependencies({ config, act: false, log: () => {}, ...reading, operation: testContext() });
+    await atProbe;
+    await vi.advanceTimersByTimeAsync(3000);
+    const actions = await run;
+
+    expect(slotBusyAtApp).toBe(true);
+    expect(evidence).toHaveBeenCalledWith(app, expect.anything());
+    expect(actions.find((action) => action.target === join(app, 'node_modules'))?.detail).not.toMatch(/is not idle/);
+    expect(actions.find((action) => action.target === target)?.detail).toMatch(/did not answer/);
+    vi.mocked(lstat).mockReset();
+  });
+
   it('probes no dependency tree of a linked worktree in the source-checkout pass, and still selects a source checkout', async () => {
     const roots = join(base, 'roots');
     const main = join(roots, 'main');
