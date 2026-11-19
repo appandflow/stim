@@ -414,11 +414,12 @@ async function trim(
           : ((await measuredDirectorySizeAsync(cache.dir, { timeoutMs: SIZE_TIMEOUT_MS })) ?? 0),
       detail: wouldDetail(context),
     };
-  const result = pruneCache(cache, {
+  const result = await pruneCache(cache, {
     olderThanDays: recentDays,
     byMtime: true,
     protect: await cacheEntryProtectionFor(context.config, context.operation),
     evictBytes,
+    ...(context.operation ? { signal: context.operation.signal } : {}),
   });
   if (result.skipped) return { outcome: 'kept', bytes: 0, detail: result.skipped };
   const kept = result.protectedEntries ? `; ${result.protectedEntries} protected entries kept` : '';

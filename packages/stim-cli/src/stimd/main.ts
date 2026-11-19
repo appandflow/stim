@@ -182,8 +182,7 @@ const SUCCESSOR_BIND_MS = 10_000;
 const SIGNALS = ['SIGTERM', 'SIGINT'] as const;
 const DETACHED_SIGNALS = [...SIGNALS, 'SIGHUP'] as const;
 const SECOND_SIGNAL_GRACE_MS = 5000;
-const SHUTDOWN_DEADLINE_MS = 2 * 60_000;
-const STALL_MS = 3 * 60 * 60_000;
+const SHUTDOWN_DEADLINE_MS = 10 * 60_000;
 
 type Level = 'debug' | 'info' | 'warn' | 'error';
 type Resource = 'build' | 'boot' | 'test';
@@ -1206,9 +1205,9 @@ async function runStimdInner(
     [...ops.values()].includes('pinned') ||
     listBuildSlots().some((slot) => slot.alive && slot.client !== null) ||
     (net.running() !== null && readHostedSessions().some(hostedNativeWork));
-  const failBackground = (error: unknown, why: string, kind?: 'unknown') => {
+  const failBackground = (error: unknown, why: string) => {
     backgroundFailure = error;
-    if (attached === undefined) recordBoot(why, kind ? undefined : error, kind);
+    if (attached === undefined) recordBoot(why, error);
     keepClaim();
     keepDaemon = true;
     (retention ?? follower)?.record(true, [...engineDirs, ...metroEngineDirs(), ...logs.engineDirs()]);
@@ -2013,34 +2012,13 @@ async function runStimdInner(
         if (!closing && runDirMisses >= HOME_WATCH_MISSES) shutdown('its run directory was removed');
       }, homeWatchMs);
   homeWatch?.unref();
-  // @ref LLP 0021#a-stalled-tick-or-pass-ends-stimd -- it may hold claims or children, so they stay kept
-  const watchStall = (what: string, ms: number): (() => void) => {
-    const timer = setTimeout(() => {
-      if (closing) return;
-      const why = `${what} has not ended within ${Math.round(ms / 60_000)} minutes`;
-      failBackground(
-        Object.assign(new Error(why), {
-          code: 'STIM_CLAIM_UNAVAILABLE',
-          reportCleanup: true,
-          remedy: `Read the daemon_step_running records in ${daemonNdjsonFile()} for the step that did not end.`,
-        }),
-        why,
-        'unknown',
-      );
-    }, ms);
-    timer.unref();
-    return () => clearTimeout(timer);
-  };
   const stopBuildEndTimer = startBuildEndTimer({
     allowed: maintenanceAllowed,
     busy: () => dependencyWork !== undefined,
     markers: () => listBuildEndMarkers().map((marker) => marker.file),
     start: () => startMeasureJob({ cwd: process.cwd(), buildEnd: true }, 'daemon_build_end_measure_failed'),
   });
-  let tickStalled: (() => void) | undefined;
   for (;;) {
-    tickStalled?.();
-    tickStalled = watchStall('a daemon tick', interval + STALL_MS);
     if (!tickRequested && !closing) {
       await new Promise<void>((done) => {
         let timer = setTimeout(done, interval);
@@ -2223,13 +2201,8 @@ async function runStimdInner(
       }
       emptyTicks = 0;
     }
-    if (maintenanceAllowed() && !lane.running()) {
-      lane.start(ticked, mode === 'on');
-      const passStalled = watchStall('the maintenance pass', STALL_MS);
-      void lane.settled().then(passStalled, passStalled);
-    }
+    if (maintenanceAllowed()) lane.start(ticked, mode === 'on');
   }
-  tickStalled?.();
   try {
     await attachedEnding;
   } finally {

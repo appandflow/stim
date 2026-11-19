@@ -171,11 +171,12 @@ async function trimCache(action: MaintenanceAction, context: ActContext): Promis
   const [planned] = planCacheEmptying([cache], false);
   if (!planned || planned.machineGlobal) return kept(planned?.machineGlobal ?? 'it is no longer a cache Stim may trim');
   const aged = action.olderThanDays !== undefined;
-  const result = pruneCache(cache, {
+  const result = await pruneCache(cache, {
     olderThanDays: Math.max(action.olderThanDays ?? 0, context.settings.protectRecentHours / 24),
     byMtime: true,
     protect: (context.protect ??= await cacheEntryProtectionFor(loadConfig(), context.operation)),
     ...(aged ? {} : { evictBytes: action.bytes }),
+    ...(context.operation ? { signal: context.operation.signal } : {}),
   });
   if (result.skipped) return kept(result.skipped);
   if (result.failed)
