@@ -646,7 +646,7 @@ level short, as for every other keep reason.
 
 ## Links
 
-- Issues: #5512, #5515, #5757, #5762, #5765, #5775. Pull request: #5519.
+- Issues: #5512, #5515, #5757, #5762, #5765, #5775, #5896. Pull request: #5519.
 - Code: `packages/stim-cli/src/workspace/discovery.ts`,
   `packages/stim-cli/src/workspace/discovery-scan.ts`,
   `packages/stim-cli/src/workspace/discovery-census.ts`,

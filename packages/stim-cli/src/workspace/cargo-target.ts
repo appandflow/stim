@@ -302,8 +302,8 @@ function inUse(used: readonly string[], dir: string): boolean {
 
 /**
  * The paths under `target` a running process executes from or holds open, from one `lsof` and one `ps` read, with the
- * launcher reading taken at the same moment: an executable on PATH that resolves into the owning checkout, or evidence
- * that cannot be read, keeps everything.
+ * launcher reading taken at the same moment: an executable on PATH that resolves into the owning checkout, a launcher
+ * read that has not answered, or process evidence that cannot be read, keeps everything.
  */
 async function readTargetUse(
   target: string,
