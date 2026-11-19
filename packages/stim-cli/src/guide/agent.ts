@@ -1,5 +1,3 @@
-import { slimmedFeatureNames } from '../engine/simslim.ts';
-
 export default {
   summary: 'Choose the coding-agent workflow for this app or task',
   body: () => `AGENT WORKFLOW
@@ -17,9 +15,9 @@ Choose the guide for the app or task. Read only the matching route.
 | Drive a mobile app, choose a slot, or resume a session | stim guide agent device |
 | Hosted iOS simulator | stim guide lifecycle hosted-ios |
 | Hosted Android emulator | stim guide lifecycle hosted-android |
-| Physical device | stim guide lifecycle devices |
+| Physical device | stim guide agent phone |
 | EAS development build | stim guide lifecycle eas |
-| Inspect runtime errors or device output | stim guide logs |
+| Inspect runtime errors or device output | stim guide agent logs |
 | Verify a fix in the UI | stim guide lifecycle verification |
 | App readiness markers | stim guide lifecycle readiness |
 | Shell sandbox | stim guide errors sandbox |
@@ -88,15 +86,10 @@ Some Linux command runners reap detached descendants when a call ends, killing
 Metro after stim start succeeds. If that happens, read guide metro, LINUX
 RUNNERS THAT REAP BACKGROUND PROCESSES, for the user-systemd service recipe.
 
-For a project using EAS development builds, read stim guide lifecycle eas to
-select a profile from eas.json for the requested target, then run
-stim ios --eas-profile <name> or stim android --eas-profile <name>.
-Ask the user if the profile choice is ambiguous. A miss stops with
-STIM_EAS_BUILD_MISSING and an EAS build command. Run that command only when the
-session authorizes the potentially billable build, then retry Stim. The
-presence of eas.json does not select EAS or authorize building.
-Physical --device targets are supported. Follow EAS device-registration and
-rebuild remedies only when the session authorizes those account changes.
+For a project using EAS development builds, read stim guide lifecycle eas
+before building: it covers choosing a profile and the approval a billable
+build needs. Ask the user before registering a device with npx eas-cli
+device:create.
 
 To learn whether the next build is a cache hit and how long it should take,
 without building, run stim ios --plan (or stim android --plan); see stim guide
@@ -178,11 +171,8 @@ RULES DURING THE LOOP
 - A successful stim reload confirms that the request was sent, not that new
   JavaScript loaded or the screen recovered. Verify the expected UI on the
   reported device and inspect stim logs --errors before claiming recovery.
-- If launch reports an app error but also says the native process is alive,
-  the app did not crash. Fix JavaScript or TypeScript and use Fast Refresh. If
-  the error screen remains, follow the printed reload remedy instead of
-  running ios or android again. If launch says FATAL because the app process exited,
-  fix the crash and run the platform command again; Metro cannot restart it.
+- If launch says FATAL because the app process exited, fix the crash and run
+  the platform command again; Metro cannot restart it.
 - ios and android install the app, launch it, and check readiness. A running
   copy of the app is stopped and launched fresh, so in-app state does not
   survive the run. Trust the exact device, app, Metro, and launch facts in the
@@ -214,6 +204,45 @@ RULES DURING THE LOOP
   android with the same build options to restore forwarding; stim agent-device
   then targets the new serial (guide lifecycle). Each status issue names a
   remedy to run from its workspace (guide facts status).`,
+    },
+    logs: {
+      summary: 'Query app errors and device output',
+      body: () => `QUERY THE LOGS
+
+Run from the workspace that launched the affected app (for React Native or
+Expo, the directory whose package.json depends on react-native or expo):
+
+  stim logs --errors                     errors since the last launch
+  stim logs --since 10m --level warn     a time window and a minimum level
+  stim logs --source device --grep <re>  the owned device's output
+  stim logs --help                       every filter
+
+- A clean check needs exit code 0 AND no records. Zero matches print
+  "No matching log records" on stderr; with --json, nothing.
+- STIM_NO_PROJECT means no timeline was captured here; in a monorepo it names
+  the app that has one. Retry from that directory.
+- A native crash with no report: add --source device. An empty query does not
+  prove a crashed app was healthy.
+- Do not read the NDJSON files directly. Capture, record formats and
+  symbolication: stim guide logs.`,
+    },
+    phone: {
+      summary: 'Run on a connected iPhone or Android phone',
+      body: () => `PHYSICAL DEVICES
+
+  stim ios --device [udid]                  a connected iPhone or iPad, cable or Wi-Fi
+  stim android --device [serial]            a connected Android phone
+  stim device lock ios <udid> --for 10m     keep the lease between runs
+  stim device unlock                        give it back
+
+- With several phones connected, pass the UDID or serial of the one the user
+  names (xcrun devicectl list devices, adb devices).
+- A run leases the phone; Stim never boots, shuts down or deletes it. stop
+  releases the lease and, on an iPhone, closes the app.
+- Refusals for pairing, Developer Mode, trust taps, signing and Wi-Fi timeouts
+  print their fix. Ask the user before stim device provision ios or
+  npx eas-cli device:create: both change the Apple Developer account.
+- Builds, signing and the device cache: stim guide lifecycle devices.`,
     },
     device: {
       summary: 'Mobile UI automation, slots, hosted sessions, and agent-device state',
@@ -280,20 +309,11 @@ AGENT_DEVICE_IOS_RUNNER_DERIVED_PATH or AGENT_DEVICE_CLAIMS_DIR.`,
       summary: 'Workspace ownership, cleanup, device leases, and actions requiring consent',
       body: () => `DISPOSABLE STATE
 
-In every workspace, node_modules, ios/Pods, Xcode DerivedData and the build
-directories (android/app/build, android/build, android/.gradle, .build,
-android/.cxx, android/<module>/.cxx, a .dd directory laid out as DerivedData,
-and an Exact app's Cargo target/) are disposable. The stim-daemon deletes a
-workspace's build outputs when it goes idle, and node_modules and Pods of
-linked worktrees idle for idle.dormantDays (1 day) or under disk pressure, and
-those of a source (main) checkout idle for idle.sourceDormantDays (7 days) or,
-last, at critical; the
-next start, ios or android
-restores them from the build cache or with worktree warm, except an Exact
-app's target/, which its next build recompiles in full. Never fix a
-dependency by editing files inside them: the change is lost. Put dependency changes in the project's own patch
-mechanism, such as patch-package, pnpm patch, yarn patch or a Podfile
-post_install hook, and commit them.
+node_modules, ios/Pods, DerivedData and the build directories are disposable:
+Stim deletes them in idle workspaces and the next start, ios or android
+restores them. Never fix a dependency by editing files inside them: the change
+is lost. Use the project's patch mechanism, such as patch-package, pnpm patch,
+yarn patch or a Podfile post_install hook, and commit it.
 
 OWNERSHIP AND DELETION
 
@@ -301,63 +321,25 @@ Stim creates, boots, and deletes only devices it created. Owned simulators use
 the stim-<label> (<model> <runtime>) name. Never point Stim at a user-created
 emulator or simulator.
 
-Owned iOS simulators run slim by default: Stim turns off background system
-services before the first boot, which cuts memory several times over. That
-turns off these features on the simulator: ${slimmedFeatureNames().join(', ')}. An app
-that needs one keeps it with ios.simslimProfile, or opts out with
-ios.simslim off (guide lifecycle simslim). When a system feature misbehaves on
-the simulator, a warning names the feature the app asked for and the category
-to keep:
+Owned iOS simulators run slim, with background system services off (guide
+lifecycle simslim). When a system feature misbehaves on the simulator, this
+names the feature and the category to keep:
   stim logs --source device --level warn --grep "slimming turned off"
 
 worktree remove parks the workspace's simulator or emulator for later adoption.
-During owned-device teardown, Stim best-effort closes local agent-device sessions
-on that exact device; failures warn and teardown continues (guide cleanup).
-A parked device is Stim-owned: never delete or erase one by hand. gc at high or
-critical deletes verified entries and keeps failures; see guide lifecycle pool. First launch on a
-physical iPhone can need the one-time taps named by the remedy.
+A parked device is Stim-owned: never delete or erase one by hand.
 
-stim android --device [serial] and stim ios --device [udid] install on a
-connected physical device. Stim never creates, boots, shuts down, or deletes
-hardware. It records a temporary lease, not an owned-device registry entry.
+A physical device (--device) is leased for the run, never owned: Stim never
+boots, shuts down or deletes it. Never delete another workspace's lease file
+under ~/.stim/device-locks; gc removes expired ones. Never run stim device
+provision ios, or pass it --yes, without the user's explicit go-ahead: it
+changes the team's Apple Developer account.
 
-A --device run leases that device for the run. stim device lock ios --for 10m
-holds it across runs; stim device unlock gives it back. Never delete another
-workspace's lease file under ~/.stim/device-locks; gc removes expired
-ones.
-
-stim device provision ios [udid] registers a phone with the project's Apple
-Developer team and creates or refreshes its Development profile. It changes
-the team's developer account, so never run it, and never pass it --yes,
-without the user's explicit go-ahead for that step. When ios --device fails
-on signing, report the remedy and ask the user.
-
-stop and worktree remove release this workspace's leases. On a physical
-iPhone, stop also closes the app by ending its log collector; it does not
-shut down the phone or uninstall the app.
-
-Builds and boots of owned devices take a slot under caps derived from the
-machine (concurrency.* overrides them). A run past a cap waits in arrival
-order and prints its queue position every 10s. It keeps waiting while the
-holders ahead are alive; it refuses with STIM_AT_CAPACITY only after 90m, or
-when a holder cannot be verified (or devices cannot be counted) for
-max(10m, position x 5m). Use --wait <seconds> to bound a device wait or
---no-wait to refuse at once.
-While a run waits to boot, the stim-daemon shuts down one idle device (2m) of
-another workspace per tick; it never deletes devices or touches this
-workspace, physical, hosted, remote, parked or other homes' devices.
-Read the holder names in progress and build.waitingFor in status; do not start
-replacement runs while one is queued. See \`stim guide lifecycle concurrency\`.
-
-After idle.minutes (default 15) with no Stim command, native run, Metro
-request, agent-device action or input to its devices, the stim-daemon puts the
-workspace in the idle stage: Metro stops with its port kept, its owned devices
-shut down and its regenerable build outputs are deleted. Device and app logs do
-not count. stim status shows the stage; after a pause, run stim revive to
-restart Metro, boot the device and relaunch the app before driving it. A device
-hosted on a remote Mac keeps its workspace out of the idle stage, and
-stim-server stops a hosted session whose client has been gone for
-maintenance.idleStopHours; see \`stim guide cleanup\`.
+A build or boot past the machine's caps waits in a queue and prints its
+position; do not start replacement runs while one is queued (guide lifecycle
+concurrency). After idle.minutes (default 15) with no use, Stim stops the
+workspace's Metro and devices; stim status shows the stage. Run stim revive
+before driving the app again.
 
 Treat a refusal as an ownership or state mismatch: read its code and remedy.
 Never reach for --force first.
@@ -369,9 +351,7 @@ reserved named ports, even outside the workspace. Read guide ports before use.
 Ask the user before these actions:
 
 - worktree remove of a worktree you did not create, because it deletes the
-  worktree and gives up its owned device. It works with any linked worktree, warmed or not, without requiring
-  a Stim registry entry. Git-created branches are kept; a branch with an
-  existing Stim ownership record is deleted only when it has no unique commits.
+  worktree and gives up its owned device.
 - worktree remove --force, because it also discards uncommitted and untracked
   files.
 - gc, because it deletes: it runs one maintenance pass at the measured
@@ -398,10 +378,8 @@ Ask the user before these actions:
   picks the level. The CLI has no flag that picks one cache or item; Stim
   Desktop does.
 - settings set daemon.mode on in a home where it is off or report, because
-  it lets Stim itself stop idle workspaces, delete their build outputs and
-  devices, trim caches and remove finished worktrees later, with no command
-  from you. It is on by default outside CI. maintenance.keep true pins a
-  workspace against that; daemon.mode report or off stops it.
+  it lets Stim itself stop idle workspaces and delete their outputs, devices
+  and finished worktrees later, with no command from you.
 - stop when the workspace owns an EAS session, because it irreversibly ends
   that remote session. For a local device, stop shuts it down but does not
   delete it. An explicit stop shuts down a Stim-owned simulator even when
@@ -414,14 +392,11 @@ LEAVE THE MACHINE CLEAN
 Run stim stop when you pause or finish a task, and stim worktree remove on
 the worktree you created once its work is merged or abandoned. Keep scratch
 files, test output and downloads outside the worktree: a stray untracked file
-blocks that removal, and automatic cleanup then has to archive it. Never create a simulator or emulator by hand;
+blocks that removal. Never create a simulator or emulator by hand;
 every device comes from Stim. Before starting a new workspace, check stim
-status for an idle workspace to reuse and confirm capacity headroom instead of
-adding another. Never quit Device Hub or Simulator.app: on Xcode 27
-(confirmed on 27A266a), quitting Device Hub by default shuts down every booted
-simulator on the machine, including ones it never opened a window for and
-ones other workspaces or agents are using. Use stim stop on workspaces you
-own instead.`,
+status for an idle workspace to reuse. Never quit Device Hub or Simulator.app:
+on Xcode 27 that shuts down every booted simulator on the machine, including
+other workspaces' and agents'. Use stim stop on workspaces you own instead.`,
     },
     report: {
       summary: 'Capture evidence and report a Stim problem',

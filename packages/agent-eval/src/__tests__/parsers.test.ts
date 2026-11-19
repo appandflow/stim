@@ -52,3 +52,16 @@ test('a Codex transcript without turn.completed is an error', () => {
   const cut = fixture('codex-first-launch.jsonl').split('\n').slice(0, 6).join('\n');
   expect(parseCodex(cut).error).toMatch(/no turn.completed/);
 });
+
+test('a Codex file change is recorded once, when it completes, with the commands that ran before it', () => {
+  const item = (fields: object) => JSON.stringify({ type: 'item.completed', item: fields });
+  const change = { type: 'file_change', changes: [{ path: '/w/App.tsx', kind: 'update' }] };
+  const transcript = [
+    item({ type: 'command_execution', command: 'stim ios', aggregated_output: '' }),
+    JSON.stringify({ type: 'item.started', item: { ...change, status: 'in_progress' } }),
+    item({ ...change, status: 'completed' }),
+    item({ type: 'command_execution', command: 'stim reload ios', aggregated_output: '' }),
+    JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, output_tokens: 1 } }),
+  ].join('\n');
+  expect(parseCodex(transcript).edits).toEqual([{ path: '/w/App.tsx', after: 1 }]);
+});

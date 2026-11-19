@@ -10,7 +10,7 @@ import { runEvals } from './run.ts';
 import { trapSignals } from './interrupt.ts';
 import { prepareResultsRoot, requireConfined } from './roots.ts';
 import { readablePaths } from './drivers/shared.ts';
-import { REPO_ROOT, type Arm } from './trial.ts';
+import { checkGuide, REPO_ROOT, type Arm } from './trial.ts';
 import type { AgentDriver, Roots } from './types.ts';
 
 const USAGE = `usage: pnpm --filter @stim-cli/agent-eval run eval [options]
@@ -74,10 +74,11 @@ export async function main(argv: string[], roots: Roots): Promise<number> {
     arms.push({
       name: `without ${values.without}`,
       skill: true,
-      blank: [values.without.slice('guide:'.length).split(/\s+/)],
+      blank: [['guide', ...values.without.slice('guide:'.length).split(/\s+/)]],
     });
   else if (values.without !== undefined) throw new Error('--without is skill or guide:<words>');
 
+  checkGuide();
   const sha = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: REPO_ROOT, encoding: 'utf8' }).trim();
   const startedAt = new Date().toISOString();
   const readable = readablePaths();

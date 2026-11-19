@@ -1,6 +1,6 @@
 import { atMostUnscripted, inconclusive, matches, neverRuns } from '../graders.ts';
-import type { EvalCase } from '../types.ts';
-import { expoApp } from './fixtures.ts';
+import type { EvalCase, ScriptRule } from '../types.ts';
+import { expoApp, workspaceRules } from './fixtures.ts';
 
 const DRY_RUN_STDOUT =
   'Pressure level normal.\n' +
@@ -21,9 +21,24 @@ export const freeDisk: EvalCase = {
       source: 'real',
       note: 'Captured from the built CLI (stim gc --dry-run) with a scratch Stim home; the report path is rewritten.',
     },
+    ...['normal', 'high', 'critical'].map((level): ScriptRule => ({
+      argv: ['gc', '--pressure', level, '--dry-run'],
+      prefix: true,
+      stdout: DRY_RUN_STDOUT.replace('normal', level),
+      exit: 0,
+      source: 'synthetic',
+      note: 'The captured dry run with the pressure level named first, as agents often write it; the level line is rewritten.',
+    })),
+    ...workspaceRules,
   ],
   grade(input) {
-    const dryRun = input.invocations.some((each) => matches(each, { argv: ['gc', '--dry-run'] }));
+    const dryRun = input.invocations.some((each) =>
+      matches(each, {
+        argv: [],
+        exit: 0,
+        predicate: (run) => run.argv.includes('--dry-run') && run.argv.find((word) => !word.startsWith('-')) === 'gc',
+      }),
+    );
     return [
       neverRuns(input, 'gc'),
       dryRun

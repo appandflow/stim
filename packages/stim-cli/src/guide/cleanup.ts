@@ -1212,7 +1212,8 @@ registered projects, direct children of the folders in maintenance.discoverRoots
 the home folder and / are refused, and doctor reports one that is not a folder), and linked worktrees (git worktree list) of their
 repositories. A child counts only when Stim's project detection recognises it as
 a project it handles, itself or through a direct child of its apps, examples or
-packages folder; any other folder is ignored. A linked worktree is acted on only
+packages folder; of a plain Node checkout (git, a root package.json) only its
+finished linked worktrees are removed, nothing else; any other folder is ignored. A linked worktree is acted on only
 inside its repository's main checkout folder, a folder holding a known project,
 or a maintenance.discoverRoots folder; every other worktree (another tool's
 home, a pin checkout) is listed by stim gc --dry-run as outside the folders Stim
@@ -1319,8 +1320,10 @@ An ignored file elsewhere that the main checkout lacks, even inside a tracked
 dist folder, keeps it (more than 200 files or 16 MB to compare also keeps it).
 Any change to a tracked file, even Podfile.lock or project.pbxproj, is dirty
 work and keeps it, as does any tracked file marked assume-unchanged or
-skip-worktree, which hides edits from git status. A worktree inside a
-dot-folder of its main checkout other than .worktrees (.claude/worktrees) is
+skip-worktree, which hides edits from git status, or an unfinished pnpm patch
+in node_modules/.pnpm_patches. A worktree inside a
+dot-folder other than .worktrees (.claude/worktrees) of its main checkout, or of
+a worktree inside it, is
 managed by another tool and is never removed, though its outputs are reduced;
 so is a reduce-only checkout (above). Dirty work is never archived.
 stim gc --dry-run lists the discovered checkouts and what each

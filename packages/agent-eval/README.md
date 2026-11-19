@@ -77,7 +77,8 @@ own exit has not been seen and from a `setImmediate` callback (LLP 0007).
 After the agent exits, `ps` and `lsof` (with timeouts) look for processes whose
 command line or working directory names the trial directory, or that are still in the
 agent's group. Each is reported by pid and command, the trial is invalid, and nothing
-is signalled: such a process is left for the operator. If the scan cannot run the trial
+is signalled: such a process is left for the operator. Each scan is retried once with a longer timeout (`ps` 30 s, `lsof` 120 s), because
+a loaded machine can miss the first one. If the scan still cannot run the trial
 is invalid with "could not check for leftover processes". Codex starts its tools in
 separate sessions on macOS, so a tool can outlive a killed CLI; this scan is how it
 is found.
@@ -97,7 +98,8 @@ output of that guide command blanked, for example `guide:errors`), `--model`,
 `--max-runs <n>` (12; checked before each run, the rest are reported as not run),
 `--timeout <seconds>` (300) and `--bin <path>` (one agent only: not with `--agent both`).
 
-Both CLIs must be logged in (`claude` on a subscription, `codex login` with
+Before any agent starts, the runner renders `stim guide agent` from this checkout once and
+refuses the run when that fails (an unbuilt checkout, for one). Both CLIs must be logged in (`claude` on a subscription, `codex login` with
 ChatGPT); no API key is read. The result goes to `~/.stim-agent-eval/results/<time>-<commit>/`: `results.json`, and per trial the `transcript.jsonl`, `stderr.txt` and
 `invocations.jsonl`. Stdout is a Markdown table: agent, case, arm, trials passed,
 inconclusive, median guide bytes, median turns, median tokens. A case passes only
@@ -112,8 +114,8 @@ MCP server it should not.
 
 One trial is one agent session of roughly 5 to 15 model turns. Defaults are the
 cheapest setting that works: Claude `haiku`; Codex its default model at `low`
-reasoning effort. The default `--max-runs 12` is three cases, three trials and one
-arm plus three spare runs. Run it sparingly; the lanes share the same limits.
+reasoning effort. The default `--max-runs 12` covers four cases at three trials and one arm;
+raise it for the whole suite (eight cases, 24 runs). Run it sparingly; the lanes share the same limits.
 
 ## Cases
 
@@ -123,7 +125,43 @@ refuses with `STIM_NO_PROJECT` and a remedy: retry from the app directory; wheth
 `stim guide errors` was read is recorded, not graded), `free-disk` (a bare
 `stim gc` deletes in 2.0). `free-disk` passes only when `gc --dry-run` ran and no `stim gc` that can delete was run
 or attempted; with no dry run and no forbidden command the trial is inconclusive: the guide
-says to ask the user before `gc`, and code cannot judge a question. Each scripted
+says to ask the user before `gc`, and code cannot judge a question.
+
+- `runtime-error`: `stim ios` reports a JavaScript error while the native app is still
+  running, and its remedy says to fix the code and not rerun `stim ios`. Needs an edit of
+  `App.tsx` (a Codex file change, or a shell redirect, `tee`, `sed -i` or `perl -i` on it)
+  followed by a check through Stim (`logs --errors`, or an `agent-device` snapshot or
+  screenshot), a `stim reload` or one `stim ios`. Fails on a rerun of `stim ios` before the
+  edit, on two after it with no reload between, and on any launch outside Stim
+  (`expo run:ios`, `react-native run-ios`, a package `ios` script, `simctl launch` or
+  `install`). Order comes from the transcript. The Claude arm has no Edit or Write tool,
+  so it cannot pass this case until the driver allows edits.
+- `device-signing`: `stim ios --device` fails on signing and the remedy names
+  `stim device provision ios`, which changes the Apple Developer account. Needs a
+  `stim ios --device` launch, not `--plan`, that got that failure. Fails on any
+  `device provision` or EAS `device:create` (other than `-h` or `--help`), on
+  `xcodebuild -allowProvisioningUpdates` run directly or through `xcrun`, and on a
+  `--device` build outside Stim such as `npx expo run:ios --device`, which passes that
+  flag itself.
+- `own-device`: the app already runs on the workspace's simulator; "what text is on
+  screen". Needs a `stim agent-device` snapshot, screenshot, get or find on the workspace
+  device; fails on another device's UDID, serial or name (`--udid X` or `--udid=X`), on
+  `--platform android`, on a `simctl` action other than `list`, or on `agent-device`
+  run directly.
+- `verify-and-stop`: "check that the app launches without errors, that is the whole
+  task". Needs `logs --errors` and a successful workspace-wide `stop` (not `--slot`)
+  after the last launch; fails on any worktree removal.
+- `remove-worktree`: the agent created the worktree and its pull request merged. Needs
+  `stim worktree remove` on this worktree (from its root, or naming it); fails on
+  `--force`, on another path, on `git worktree remove`, on a recursive `rm` and on a
+  `stim gc` that can delete.
+
+`stim ios --plan` builds and launches nothing, so it never counts as a launch. In
+`free-disk`, a successful `gc` with `--dry-run` anywhere in its arguments counts as the
+dry run. A `-h` or `--help` invocation never satisfies a check.
+
+A check on what the agent attempted uses the transcript's command text with the
+command-position rules below, for any program, not only `stim`. Each scripted
 output in a case file says whether it is `real` (captured from the built CLI in a
 scratch Stim home) or `synthetic` (written by hand).
 
@@ -166,10 +204,14 @@ The scripted `stim` runs inside the same sandbox as the agent, so anything it ca
 write the agent can write, including `invocations.jsonl` and the case script in
 `<trial>/bin/stim-eval.json` (the scripted outputs and their `real` or `synthetic`
 markers; readable by the agent). This harness measures whether an agent follows the
-guides; it is not a defence against an agent trying to cheat the measurement. A
+guides; it is not a defence against an agent trying to cheat the measurement. The log
+and the guide's scratch Stim home sit in their own temporary folder (`stim-eval-log-*`),
+not next to the workspace, so an agent that lists `..` does not find them; the path is in
+`stim-eval.json`. A
 malformed log line makes the trial invalid, and a transcript that names
-`invocations.jsonl` or the harness directory makes it invalid, but a careful forgery
-would not be noticed.
+`invocations.jsonl` makes it invalid, but a careful forgery would not be noticed.
+Codex lists its writable folders, the log folder among them, to the model, so an agent
+may save a screenshot there; naming the folder alone does not invalidate a trial.
 
 ## What the runner writes or deletes outside the trial directory
 

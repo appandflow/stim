@@ -13,6 +13,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type Config } from '@stim-cli/core/state';
 import { testContext } from './_context.ts';
+import { collectWorktreeSweep } from '../commands/gc/worktrees.ts';
+import { saveConfig } from '../workspace/config.ts';
 import { answered } from '../workspace/bounded-read.ts';
 import { scanSourceWrites } from '../workspace/discovered-activity.ts';
 import {
@@ -171,6 +173,132 @@ describe('discoverCheckouts', () => {
       [join(base, 'dev', 'neighbour'), 'sibling'],
     ]);
     expect((await discoveredOutside(config, [repo])).map(({ path }) => path)).toEqual([elsewhere]);
+  });
+
+  it('lists the worktree of a plain Node checkout only when asked, and no folder without git or package in a monorepo', async () => {
+    vi.stubEnv('STIM_HOME', join(base, 'home'));
+    const roots = join(base, 'roots');
+    const cli = join(roots, 'cli');
+    mkdirSync(join(cli, 'packages', 'core'), { recursive: true });
+    writeFileSync(join(cli, 'package.json'), JSON.stringify({ name: 'cli' }));
+    writeFileSync(join(cli, 'packages', 'core', 'package.json'), JSON.stringify({ name: 'core' }));
+    git(cli, 'init', '-q', '-b', 'main');
+    git(cli, 'add', '-A');
+    git(cli, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'init');
+    git(cli, 'worktree', 'add', '-q', '-b', 'feature', join(roots, 'cli-feature'));
+    mkdirSync(join(roots, 'lib'));
+    writeFileSync(join(roots, 'lib', 'package.json'), '{}');
+    const config: Config = {
+      maintenance: { discoverRoots: [roots, join(cli, 'packages')] },
+      projects: {},
+      repos: {},
+    };
+
+    expect(await discoverCheckouts(config, [])).toEqual([]);
+    expect(
+      (await discoverCheckouts(config, [], undefined, { nodeWorktrees: true })).map(({ path, node }) => [path, node]),
+    ).toEqual([[join(roots, 'cli-feature'), 'linked']]);
+  });
+
+  it('marks the worktrees of a Node repository through git, and never those of a repository an app leads to', async () => {
+    vi.stubEnv('STIM_HOME', '');
+    const commit = (cwd: string) => {
+      git(cwd, 'init', '-q', '-b', 'main');
+      git(cwd, 'add', '-A');
+      git(cwd, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'init');
+    };
+    const repo = join(base, 'dev', 'repo');
+    app(repo);
+    commit(repo);
+    const cli = join(base, 'dev', 'cli');
+    mkdirSync(cli, { recursive: true });
+    writeFileSync(join(cli, 'package.json'), JSON.stringify({ name: 'cli' }));
+    commit(cli);
+    const nested = join(cli, '.worktrees', 'fix');
+    git(cli, 'worktree', 'add', '-q', '-b', 'fix', nested);
+    mkdirSync(join(base, 'wt'));
+    git(cli, 'worktree', 'add', '-q', '--detach', join(base, 'wt', 'pin'));
+    const zapp = join(base, 'dev', 'zapp');
+    app(zapp);
+    commit(zapp);
+    const old = join(base, 'dev', 'a-old');
+    git(zapp, 'worktree', 'add', '-q', '-b', 'old', old);
+    writeFileSync(join(old, 'package.json'), '{}');
+    const config: Config = { projects: { [repo]: {} }, repos: {} };
+
+    const found = await discoverCheckouts(config, [repo], undefined, { nodeWorktrees: true });
+    expect(found.map(({ path, origin, node }) => [path, origin, node])).toEqual([
+      [old, 'worktree', undefined],
+      [nested, 'worktree', 'linked'],
+      [zapp, 'sibling', undefined],
+    ]);
+    expect(await discoveredOutside(config, [repo])).toEqual([]);
+  });
+
+  it('keeps a Node worktree that is or holds a full-scan find, checked or pending, reduce-only in discovery and in the removal check', async () => {
+    vi.stubEnv('STIM_HOME', '');
+    vi.stubEnv('HOME', join(base, 'home'));
+    vi.stubEnv('USERPROFILE', join(base, 'home'));
+    const dev = join(base, 'home', 'dev');
+    const cli = join(dev, 'cli');
+    mkdirSync(cli, { recursive: true });
+    writeFileSync(join(cli, 'package.json'), JSON.stringify({ name: 'cli' }));
+    git(cli, 'init', '-q', '-b', 'main');
+    git(cli, 'add', '-A');
+    git(cli, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'init');
+    mkdirSync(join(dev, 'wts'));
+    const mobile = join(dev, 'wts', 'mobile');
+    git(cli, 'worktree', 'add', '-q', '-b', 'mobile', mobile);
+    app(mobile);
+    const tool = join(dev, 'wts', 'tool');
+    git(cli, 'worktree', 'add', '-q', '-b', 'tool', tool);
+    app(join(tool, 'mobile'));
+    const broken = join(dev, 'wts', 'broken');
+    git(cli, 'worktree', 'add', '-q', '-b', 'broken', broken);
+    writeFileSync(join(broken, 'package.json'), '{ not json');
+    const holder = join(dev, 'wts', 'holder');
+    git(cli, 'worktree', 'add', '-q', '-b', 'holder', holder);
+    mkdirSync(join(holder, 'mobile'));
+    writeFileSync(join(holder, 'mobile', 'package.json'), '{ not json');
+    mkdirSync(join(base, 'home', '.stim', 'maintenance'), { recursive: true });
+    writeFileSync(
+      join(base, 'home', '.stim', 'maintenance', 'discovery-scan.json'),
+      JSON.stringify({
+        version: 2,
+        completedAt: 1,
+        lowScanAt: 0,
+        ranAt: 1,
+        durationMs: 1,
+        trigger: 'weekly',
+        visited: 1,
+        found: [mobile, join(tool, 'mobile'), broken, join(holder, 'mobile')],
+        dotFolderFound: [],
+        unreadable: [],
+        truncated: false,
+        truncation: 'none',
+      }),
+    );
+    const config: Config = { maintenance: { discoverRoots: [dev] }, projects: {}, repos: {} };
+
+    for (const select of [{}, { nodeWorktrees: true }])
+      expect((await discoverCheckouts(config, [], undefined, select)).filter(({ path }) => path === mobile)).toEqual([
+        expect.objectContaining({ origin: 'scan', reduceOnly: true }),
+      ]);
+    saveConfig({ version: 2, ...config });
+    const sweep = await collectWorktreeSweep({ idle: false, olderThan: null, now: Date.now(), refresh: false });
+    expect(
+      (await discoverCheckouts(config, [], undefined, { nodeWorktrees: true }))
+        .filter(({ path }) => path === broken || path === holder)
+        .map(({ path, reduceOnly }) => [path, reduceOnly]),
+    ).toEqual([
+      [broken, true],
+      [holder, true],
+    ]);
+    for (const path of [mobile, tool, broken, holder])
+      expect(sweep.worktrees.find((entry) => entry.path === path)).toMatchObject({
+        discovered: true,
+        reduceOnly: true,
+      });
   });
 
   it('takes the checkouts of the last full scan as reduce-only in an unscoped home, and none in a scoped one', async () => {
