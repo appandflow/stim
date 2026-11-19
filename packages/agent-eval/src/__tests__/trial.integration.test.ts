@@ -16,7 +16,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { CASES } from '../cases/index.ts';
 import { claudeDriver } from '../drivers/claude.ts';
 import { runEvals } from '../run.ts';
-import { runTrial, type Arm } from '../trial.ts';
+import { checkGuide, runTrial, type Arm } from '../trial.ts';
 import type { Roots } from '../types.ts';
 
 let directory: string;
@@ -79,6 +79,13 @@ printf '{"type":"result","subtype":"success","is_error":false,"num_turns":2,"res
     expect(guide?.stdoutBytes).toBeGreaterThan(1000);
     expect(outcome.run.finalMessage).toMatch(/^stim=\/.*\/bin\/stim secret=\[\] skill=yes git=1$/);
   }, 30_000);
+
+  test('the guide preflight passes on this checkout and refuses a guide CLI that fails', () => {
+    expect(() => checkGuide()).not.toThrow();
+    const broken = join(directory, 'broken-cli.mjs');
+    writeFileSync(broken, "throw new Error('Cannot find module dist/state.mjs');\n");
+    expect(() => checkGuide(broken)).toThrow(/stim guide agent fails in this checkout/);
+  }, 60_000);
 
   test('the invocation log is not in the folder around the workspace', async () => {
     const bin = fakeAgent(`

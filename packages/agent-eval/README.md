@@ -97,7 +97,8 @@ output of that guide command blanked, for example `guide:errors`), `--model`,
 `--max-runs <n>` (12; checked before each run, the rest are reported as not run),
 `--timeout <seconds>` (300) and `--bin <path>` (one agent only: not with `--agent both`).
 
-Both CLIs must be logged in (`claude` on a subscription, `codex login` with
+Before any agent starts, the runner renders `stim guide agent` from this checkout once and
+refuses the run when that fails (an unbuilt checkout, for one). Both CLIs must be logged in (`claude` on a subscription, `codex login` with
 ChatGPT); no API key is read. The result goes to `~/.stim-agent-eval/results/<time>-<commit>/`: `results.json`, and per trial the `transcript.jsonl`, `stderr.txt` and
 `invocations.jsonl`. Stdout is a Markdown table: agent, case, arm, trials passed,
 inconclusive, median guide bytes, median turns, median tokens. A case passes only

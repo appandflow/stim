@@ -33,6 +33,24 @@ const SKILL_PATH = join(REPO_ROOT, 'packages', 'stim-cli', 'skill', 'SKILL.md');
 const GUIDE_CLI = join(REPO_ROOT, 'packages', 'stim-cli', 'bin', 'cli.ts');
 const RUNTIME_FILES = ['scripted-stim.ts', 'stim-script.ts'];
 
+export function checkGuide(cli: string = GUIDE_CLI): void {
+  const home = mkdtempSync(join(tmpdir(), 'stim-eval-guide-'));
+  try {
+    const child = spawnSync(process.execPath, [cli, 'guide', 'agent'], {
+      env: { PATH: process.env.PATH ?? '', HOME: home, STIM_HOME: home },
+      encoding: 'utf8',
+      timeout: 60_000,
+    });
+    if (child.status === 0 && child.stdout.trim() !== '') return;
+    const reason = (child.stderr || child.error?.message || `exit ${child.status}`).trim().split('\n')[0];
+    throw new Error(
+      `stim guide agent fails in this checkout, so every trial would read a broken guide: ${reason}. Run pnpm run build first.`,
+    );
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+}
+
 export interface Arm {
   name: string;
   skill: boolean;
