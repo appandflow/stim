@@ -34,31 +34,28 @@ const NOT_RESTORED = `${OWN_PREFIX}not-restored-`;
 const CARGO_TOP_FILES = new Set(['.rustc_info.json', 'CACHEDIR.TAG', ...PROFILE_LOCKS]);
 const CARGO_TOP_DIRS = new Set(['doc', 'package', 'tmp', '.metabuild']);
 /**
- * The entries Exact's build tools write at the top of a target, each a build product, cache or scratch directory a
- * build recreates (Exact's `scripts/app.mjs`, `scripts/sweep.mjs`, `scripts/cargo-dep-info.mjs`,
- * `scripts/filesystem.mjs`, `scripts/rust.mjs`, `scripts/web-build.mjs`, `scripts/publisher.mjs`,
- * `host/apple/build.mjs`, `host/apple/modules.mjs`, `host/apple/compose.mjs`, `host/apple/extensions.mjs`,
- * `host/apple/svg-filter.mjs`, `host/apple/shader-libraries.mjs`, `host/web/build.mjs`, `host/web/dev.mjs`,
- * `host/web-js/module.mjs`, `host/web-js/build.mjs` and `host/web-js/dev.mjs`). Records Exact keeps of runs and
- * sessions (`traces/`, `web-receipts/`, `native-receipts/`), its ledgers, claims and locks, and scratch a dev server
- * may still serve from are not on it.
+ * The entries Exact's build tools write at the top of a target that hold only build products, caches or build scratch
+ * (Exact's `scripts/app.mjs`, `scripts/sweep.mjs`, `scripts/cargo-dep-info.mjs`, `scripts/filesystem.mjs`,
+ * `scripts/rust.mjs`, `scripts/publisher.mjs`, `host/apple/compose.mjs`, `host/apple/extensions.mjs`,
+ * `host/apple/svg-filter.mjs`, `host/apple/shader-libraries.mjs`, `host/web/build.mjs`, `host/web/dev.mjs` and
+ * `host/web-js/module.mjs`). A folder that also holds a ledger, a build receipt, a lock file Exact takes or a token is
+ * not on it: `apple-modules/` (its own sweep ledger), `clients/`, `native-runs/` and `native-reuse/` (Apple bundle
+ * receipts carrying the development token), `apple-swift/`, `web-js-gpu/` and `web-js-modules/` (Exact's locks and
+ * claims), and the web dists `web-dist/`, `web-loops/`, `web-runs/`, `web-dist-resident/`, `web-dist-stages/` and
+ * `web-js-dev-stage/` (their `.exact-build.json` receipts). Nor are Exact's records of runs and sessions (`traces/`,
+ * `web-receipts/`, `native-receipts/`), its ledgers, claims and locks at the top of the target, or dev-server scratch.
  */
 const EXACT_TOP = new Set([
   '.exact-swept',
   'apple-extension-module-cache',
-  'apple-modules',
-  'apple-swift',
   'bake',
   'bake-compiled',
   'bake-input-hashes.json',
   'bake-inputs',
   'bake-metadata',
-  'clients',
   'dev-gpu',
   'exact-filesystem-tool',
   'metal-kept',
-  'native-reuse',
-  'native-runs',
   'proof-web',
   'push-tools',
   'rust-bake',
@@ -68,15 +65,7 @@ const EXACT_TOP = new Set([
   'rust-tools',
   'swift-packages',
   'web-bakes',
-  'web-dist',
-  'web-dist-resident',
-  'web-dist-stages',
-  'web-js-dev-stage',
-  'web-js-gpu',
-  'web-js-modules',
-  'web-loops',
   'web-opt',
-  'web-runs',
 ]);
 /**
  * Exact's build scratch directories, made by `mkdtempSync` from `web-check-` (`host/web/build.mjs`) and `push-ts-`
@@ -100,12 +89,12 @@ function cargoProfile(path: string): boolean {
 /**
  * Whether the top-level entry `name` of `target` is build output Stim knows: Cargo's own files and folders, a Cargo
  * profile, a target triple directory holding only profiles, Cargo's files and `doc/`, and, in an Exact app's or Exact's
- * own target (`exact`), what Exact writes there.
+ * own target (`exact`), what Exact writes there. A symbolic link never is: deleting through it reaches what it points at.
  */
 function buildOutputEntry(target: string, name: string, exact: boolean): boolean {
   const path = join(target, name);
   const stat = lstatSync(path, { throwIfNoEntry: false });
-  if (!stat) return false;
+  if (!stat || stat.isSymbolicLink()) return false;
   if (exact && (EXACT_TOP.has(name) || (stat.isDirectory() && EXACT_SCRATCH.test(name)))) return true;
   if (!stat.isDirectory()) return CARGO_TOP_FILES.has(name);
   if (CARGO_TOP_DIRS.has(name) || cargoProfile(path)) return true;
@@ -816,14 +805,15 @@ async function restoreOrStrand(
   n: number,
 ): Promise<{ home: string; marked: boolean }> {
   try {
-    if (lstatSync(there).isFile()) {
+    const staged = lstatSync(there);
+    if (staged.isFile()) {
       await link(there, dir);
       await unlink(there);
       return { home: dir, marked: false };
     }
     // Node has no rename that refuses to replace, and rename(2) replaces an empty directory, so a directory recreated
     // empty between this check and the rename is still replaced.
-    if (!lstatSync(dir, { throwIfNoEntry: false })) {
+    if (staged.isDirectory() && !lstatSync(dir, { throwIfNoEntry: false })) {
       await rename(there, dir);
       return { home: dir, marked: false };
     }

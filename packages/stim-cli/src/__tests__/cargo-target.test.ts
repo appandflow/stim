@@ -1,12 +1,15 @@
 import {
   chmodSync,
   existsSync,
+  lstatSync,
+  lutimesSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs';
@@ -447,6 +450,22 @@ describe.skipIf(process.platform === 'win32')(
       expect(existsSync(join(dir, 'criterion', 'base', 'summary.json'))).toBe(true);
     });
 
+    test('a symbolic link named like a Cargo file stays, and so does what it points at', async () => {
+      const outside = join(target, 'outside.json');
+      writeFileSync(outside, 'theirs');
+      rmSync(join(dir, '.rustc_info.json'));
+      symlinkSync(outside, join(dir, '.rustc_info.json'));
+      const old = new Date(Date.now() - 3 * DAY);
+      lutimesSync(join(dir, '.rustc_info.json'), old, old);
+      utimesSync(dir, old, old);
+
+      const result = await remove();
+
+      expect(result.removed.toSorted()).toEqual(['debug', 'doc']);
+      expect(lstatSync(join(dir, '.rustc_info.json')).isSymbolicLink()).toBe(true);
+      expect(readFileSync(outside, 'utf8')).toBe('theirs');
+    });
+
     test('an entry on another device that cannot be renamed stays, and the rest goes', async () => {
       fsHooks.rename = (from) => {
         if (from.endsWith('/doc'))
@@ -683,7 +702,7 @@ describe.skipIf(process.platform === 'win32')(
     });
     const remove = () => deleteCargoTarget(dir, { idleMs: DAY, launching: noLaunchers(target) });
 
-    test('its build output goes when old, while its traces, web-dist inputs, ledger and locks stay', async () => {
+    test('its build output goes when old, while its traces, web-dist inputs, ledgers, receipts and locks stay', async () => {
       mkdirSync(join(dir, 'traces'));
       writeFileSync(join(dir, 'traces', 'trace-1.json'), '{"session":1}');
       writeFileSync(join(dir, 'web-dist.json'), '{}');
@@ -691,15 +710,22 @@ describe.skipIf(process.platform === 'win32')(
       writeFileSync(join(dir, 'web-dist.previous', 'notes.md'), 'mine');
       for (const scratch of ['web-check-AbC123', 'push-ts-Xy9Z01']) mkdirSync(join(dir, scratch));
       writeFileSync(join(dir, 'web-check-failure.json'), '{}');
+      mkdirSync(join(dir, 'apple-modules'));
+      writeFileSync(join(dir, 'apple-modules', '.exact-sweep.json'), '{"units":{"debug#00":1}}');
+      writeFileSync(join(dir, 'apple-modules', '.exact-sweep.json.lock'), '');
+      writeFileSync(join(dir, 'clients', 'app', 'receipt.json'), '{"development":{"token":"abc"}}');
       ageTree(dir);
 
       const result = await remove();
 
-      expect(result.removed).toEqual(['apple-swift', 'bake', 'clients', 'push-ts-Xy9Z01', 'web-check-AbC123']);
+      expect(result.removed).toEqual(['bake', 'push-ts-Xy9Z01', 'web-check-AbC123']);
       expect(readdirSync(dir).toSorted()).toEqual([
         '.apple-cargo-locks',
         '.exact-sweep.json',
         '.exact-sweep.json.lock',
+        'apple-modules',
+        'apple-swift',
+        'clients',
         'traces',
         'web-check-failure.json',
         'web-dist.json',
@@ -707,6 +733,8 @@ describe.skipIf(process.platform === 'win32')(
       ]);
       expect(readFileSync(join(dir, 'traces', 'trace-1.json'), 'utf8')).toBe('{"session":1}');
       expect(readFileSync(join(dir, 'web-dist.previous', 'notes.md'), 'utf8')).toBe('mine');
+      expect(readFileSync(join(dir, 'apple-modules', '.exact-sweep.json'), 'utf8')).toBe('{"units":{"debug#00":1}}');
+      expect(readFileSync(join(dir, 'clients', 'app', 'receipt.json'), 'utf8')).toBe('{"development":{"token":"abc"}}');
     });
 
     test.each([
@@ -739,7 +767,7 @@ describe.skipIf(process.platform === 'win32')(
       stubProcesses({ lsof: (args) => (args.at(-1)?.endsWith('libapp.lock.flock') ? '4242\n' : '') });
 
       expect((await remove()).kept).toEqual([
-        'not recognised as build output: .apple-cargo-locks, .exact-sweep.json, .exact-sweep.json.lock',
+        'not recognised as build output: .apple-cargo-locks, .exact-sweep.json, .exact-sweep.json.lock, apple-swift, clients',
         expect.stringContaining('libapp.lock.flock'),
       ]);
     });
