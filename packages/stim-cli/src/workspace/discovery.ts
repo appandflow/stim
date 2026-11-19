@@ -382,6 +382,9 @@ async function computeDiscovered(
   );
   const knownRoots = known.map(canonicalPath);
   const everything = selectDiscovered({ known: knownRoots, worktrees, children: allowed });
+  // @ref LLP 0004#plain-node-checkouts -- a scan find not yet revalidated keeps the Node worktree that holds it
+  for (const checkout of everything)
+    if (checkout.node && scanPending.some((path) => inside(path, checkout.path))) checkout.reduceOnly = true;
   const listed = new Set(everything.map(({ path }) => path));
   const coveredByKnown = (path: string) => knownRoots.some((root) => inside(path, root) || inside(root, path));
   return {

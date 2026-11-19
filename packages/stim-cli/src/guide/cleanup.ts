@@ -1316,7 +1316,8 @@ An ignored file elsewhere that the main checkout lacks, even inside a tracked
 dist folder, keeps it (more than 200 files or 16 MB to compare also keeps it).
 Any change to a tracked file, even Podfile.lock or project.pbxproj, is dirty
 work and keeps it, as does any tracked file marked assume-unchanged or
-skip-worktree, which hides edits from git status. A worktree inside a
+skip-worktree, which hides edits from git status, or an unfinished pnpm patch
+in node_modules/.pnpm_patches. A worktree inside a
 dot-folder other than .worktrees (.claude/worktrees) of its main checkout, or of
 a worktree inside it, is
 managed by another tool and is never removed, though its outputs are reduced;

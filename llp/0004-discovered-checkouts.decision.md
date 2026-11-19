@@ -506,6 +506,8 @@ registered worktree does, at every pressure level, critical included:
   discovered one gets no such exclusion;
 - no tracked file marked `assume-unchanged`, or `skip-worktree` with the file
   on disk;
+- no entry in `node_modules/.pnpm_patches`, where `pnpm patch` keeps an edit until
+  `pnpm patch-commit`;
 - every git-ignored file present byte for byte in the main checkout, except
   inside directories git ignores that are named like build output or
   `node_modules`;
@@ -548,7 +550,8 @@ does not look for them (it still stops only at an app project), the census ignor
 them when deciding what another route covers, and their worktrees outside the
 managed folders are not listed as outside. A Node worktree the full scan also found
 as an app stays that scan find, reduce-only, as before; one that holds a scan find is
-kept by the finished-worktree check, which treats the worktree as reduce-only.
+kept by the finished-worktree check, which treats the worktree as reduce-only. So is a
+Node worktree that is or holds a scan find whose revalidation did not settle.
 
 Dormant `node_modules` reduction, the other half of the request, is not done here:
 the review of #5969 found that the linked-worktree route skips the regenerable-folder

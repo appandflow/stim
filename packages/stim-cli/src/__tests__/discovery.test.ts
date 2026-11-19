@@ -235,7 +235,7 @@ describe('discoverCheckouts', () => {
     expect(await discoveredOutside(config, [repo])).toEqual([]);
   });
 
-  it('keeps a Node worktree that is or holds a full-scan find reduce-only, in discovery and in the removal check', async () => {
+  it('keeps a Node worktree that is or holds a full-scan find, checked or pending, reduce-only in discovery and in the removal check', async () => {
     vi.stubEnv('STIM_HOME', '');
     vi.stubEnv('HOME', join(base, 'home'));
     vi.stubEnv('USERPROFILE', join(base, 'home'));
@@ -253,6 +253,13 @@ describe('discoverCheckouts', () => {
     const tool = join(dev, 'wts', 'tool');
     git(cli, 'worktree', 'add', '-q', '-b', 'tool', tool);
     app(join(tool, 'mobile'));
+    const broken = join(dev, 'wts', 'broken');
+    git(cli, 'worktree', 'add', '-q', '-b', 'broken', broken);
+    writeFileSync(join(broken, 'package.json'), '{ not json');
+    const holder = join(dev, 'wts', 'holder');
+    git(cli, 'worktree', 'add', '-q', '-b', 'holder', holder);
+    mkdirSync(join(holder, 'mobile'));
+    writeFileSync(join(holder, 'mobile', 'package.json'), '{ not json');
     mkdirSync(join(base, 'home', '.stim', 'maintenance'), { recursive: true });
     writeFileSync(
       join(base, 'home', '.stim', 'maintenance', 'discovery-scan.json'),
@@ -264,7 +271,7 @@ describe('discoverCheckouts', () => {
         durationMs: 1,
         trigger: 'weekly',
         visited: 1,
-        found: [mobile, join(tool, 'mobile')],
+        found: [mobile, join(tool, 'mobile'), broken, join(holder, 'mobile')],
         dotFolderFound: [],
         unreadable: [],
         truncated: false,
@@ -279,7 +286,15 @@ describe('discoverCheckouts', () => {
       ]);
     saveConfig({ version: 2, ...config });
     const sweep = await collectWorktreeSweep({ idle: false, olderThan: null, now: Date.now(), refresh: false });
-    for (const path of [mobile, tool])
+    expect(
+      (await discoverCheckouts(config, [], undefined, { nodeWorktrees: true }))
+        .filter(({ path }) => path === broken || path === holder)
+        .map(({ path, reduceOnly }) => [path, reduceOnly]),
+    ).toEqual([
+      [broken, true],
+      [holder, true],
+    ]);
+    for (const path of [mobile, tool, broken, holder])
       expect(sweep.worktrees.find((entry) => entry.path === path)).toMatchObject({
         discovered: true,
         reduceOnly: true,

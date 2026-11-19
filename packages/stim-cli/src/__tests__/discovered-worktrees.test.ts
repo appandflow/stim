@@ -286,19 +286,25 @@ describe('a worktree of a plain Node repository on the removal path', () => {
     rmSync(base, { recursive: true, force: true });
   });
 
-  it('removes a finished one with its node_modules and keeps a dirty one', async () => {
+  it('removes a finished one with its node_modules and keeps a dirty one or one with an unfinished pnpm patch', async () => {
     const done = worktree('done');
     const dirty = worktree('dirty');
     writeFileSync(join(dirty, 'notes.txt'), 'untracked');
+    const patched = worktree('patched');
+    mkdirSync(join(patched, 'node_modules', '.pnpm_patches', 'dep@1.0.0'), { recursive: true });
+    writeFileSync(join(patched, 'node_modules', '.pnpm_patches', 'dep@1.0.0', 'index.js'), 'edited');
+    age(patched);
     const planned = await collectWorktreeSweep({ idle: false, olderThan: null, now: Date.now(), refresh: false });
     const of = (path: string) => planned.worktrees.find((entry) => entry.path === path);
     expect(of(done)).toMatchObject({ discovered: true, skipped: null });
     expect(of(dirty)).toMatchObject({ skipCode: 'dirty' });
+    expect(of(patched)?.skipped).toContain('unfinished pnpm patch');
     expect(of(main)).toBeUndefined();
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
     await removeWorktrees(planned, { now: Date.now() });
     expect(existsSync(done)).toBe(false);
     expect(existsSync(join(dirty, 'notes.txt'))).toBe(true);
+    expect(existsSync(patched)).toBe(true);
   });
 });
