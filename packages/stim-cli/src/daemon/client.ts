@@ -22,6 +22,8 @@ import {
   stimdClaimRoot,
   readStimdBoots,
   readSuccessorMissing,
+  readJobRestart,
+  jobRestartUntil,
   stimdRecordFile,
   stimdRunDir,
   stimdSocket,
@@ -939,6 +941,29 @@ export function launchStimd(
   return { settled, exited: () => exited };
 }
 
+const processRuns = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error instanceof Error && 'code' in error && error.code === 'EPERM';
+  }
+};
+
+/**
+ * Waits while `run/job-restart.json` holds this home for a service unit's job (`jobRestartUntil`) and no stimd holds it,
+ * so a command does not start a stimd only to wait behind the job's restart.
+ */
+async function awaitJobRestart(signal?: AbortSignal): Promise<void> {
+  const seen = Date.now();
+  for (;;) {
+    const record = readJobRestart();
+    if (!record || stimdLive() || signal?.aborted) return;
+    if (Date.now() >= jobRestartUntil(record, processRuns(record.pid), seen)) return;
+    await new Promise((done) => setTimeout(done, CLAIM_POLL_MS));
+  }
+}
+
 /** Whether a live stimd claim shows up within `waitMs`, checking again as soon as the started stimd exits. */
 async function claimTaken(
   { settled, exited }: ReturnType<typeof launchStimd>,
@@ -993,6 +1018,8 @@ export async function ensureStimd(
     }
     // compat end
     admitting = pin && !held;
+    // @ref LLP 0009#service-and-engine-updates -- a home a service stimd left to its job waits for that job
+    await awaitJobRestart(limit?.signal);
     if (stimdLive()) {
       if (!pin) await askStimd('hello', CONTACT_TIMEOUT_MS);
       else await admitExisting(held, command, false, invocation, { env, required }, limit);
@@ -1917,6 +1944,7 @@ function netAnswer(reply: Record<string, unknown> | null): NetAnswer | null {
  * `daemon.mode` lets commands start one. Null when no stimd answers.
  */
 export async function ensureNet(share: boolean, env: NodeJS.ProcessEnv = process.env): Promise<NetAnswer | null> {
+  await awaitJobRestart();
   if (!stimdLive() && (!(share || spawnsDaemon(env)) || !(await claimTaken(launchStimd(env, daemonMode(env))))))
     return null;
   return netAnswer(

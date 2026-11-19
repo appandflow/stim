@@ -123,20 +123,37 @@ export function stimdSuccessorMissingFile(home?: string): string {
 }
 
 /**
- * `run/job-restart.json`: a service unit's stimd left the home for the unit's job to take back, so other stimds wait for
- * that job instead of taking the home first.
+ * `run/job-restart.json`: a service unit's stimd left the home for the unit's job to take back, so other stimds and
+ * commands wait for that job instead of taking the home first. `left` is when that stimd finished its shutdown.
  */
 export function stimdJobRestartFile(home?: string): string {
   return join(stimdRunDir(home), 'job-restart.json');
 }
 
-export type JobRestart = { at: number; pid: number; label: string };
+export type JobRestart = { at: number; pid: number; label: string; left: number | null };
+
+/** How long after the stimd left the job has to take the home: a systemd unit's 30 s `RestartSec` and its boot. */
+export const JOB_RESTART_WAIT_MS = 75_000;
 
 export function readJobRestart(home?: string): JobRestart | null {
   const record = readJsonObject(stimdJobRestartFile(home));
   return record && typeof record.at === 'number' && typeof record.pid === 'number' && typeof record.label === 'string'
-    ? { at: record.at, pid: record.pid, label: record.label }
+    ? {
+        at: record.at,
+        pid: record.pid,
+        label: record.label,
+        left: typeof record.left === 'number' ? record.left : null,
+      }
     : null;
+}
+
+/**
+ * Until when `record` holds the home for its job: `JOB_RESTART_WAIT_MS` after its stimd left, or after `goneAt`, when
+ * this process first saw that stimd gone without a `left`; Infinity while it still runs.
+ */
+export function jobRestartUntil(record: JobRestart, running: boolean, goneAt: number): number {
+  if (record.left !== null) return record.left + JOB_RESTART_WAIT_MS;
+  return running ? Infinity : goneAt + JOB_RESTART_WAIT_MS;
 }
 
 export type SuccessorMissing = { at: number; pid: number; build: string; reason: string };

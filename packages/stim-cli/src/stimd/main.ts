@@ -37,6 +37,7 @@ import {
   stimdSuccessorMissingFile,
   stimdJobRestartFile,
   readJobRestart,
+  jobRestartUntil,
   stimdSocket,
   stimBuildId,
   macosAppState,
@@ -182,7 +183,6 @@ const WAKE_GRACE_MS = 2000;
 const RECORD_FORMAT = 1;
 const LAUNCHCTL_TIMEOUT_MS = 5000;
 const SUCCESSOR_BIND_MS = 10_000;
-const JOB_RESTART_WAIT_MS = 60_000;
 const SIGNALS = ['SIGTERM', 'SIGINT'] as const;
 const DETACHED_SIGNALS = [...SIGNALS, 'SIGHUP'] as const;
 const SECOND_SIGNAL_GRACE_MS = 5000;
@@ -252,13 +252,14 @@ async function takeClaim(
   label: string,
   details: Record<string, unknown>,
   retries = CLAIM_TRIES,
-  before?: () => Promise<void>,
+  gate?: JobRestartGate,
 ): Promise<ClaimHandle | null> {
   for (let tries = 0; ; tries++) {
-    await before?.();
+    await gate?.wait();
     const attempt = tryAcquireClaim({ root, mode, label, details });
     if (attempt.pending) releaseClaim(attempt.pending);
-    if (attempt.acquired) return attempt.acquired;
+    if (attempt.acquired && !gate?.reserved()) return attempt.acquired;
+    if (attempt.acquired) releaseClaim(attempt.acquired);
     if (tries >= retries) return null;
     await new Promise((done) => setTimeout(done, CLAIM_RETRY_MS));
   }
@@ -273,25 +274,32 @@ const processRuns = (pid: number) => {
   }
 };
 
+interface JobRestartGate {
+  wait(): Promise<void>;
+  reserved(): boolean;
+}
+
 /**
- * Waits while `run/job-restart.json` says a service unit's stimd left this home to its unit's job: as long as that stimd
- * still runs, and, for any stimd but one that unit's job runs (`job`), up to `JOB_RESTART_WAIT_MS` more for the job's
- * restart to take the home.
+ * Whether `run/job-restart.json` holds this home for a service unit's job, which a stimd checks before and after it takes
+ * the home. The job of that unit (`job`) waits only while the stimd that left runs; any other stimd also waits until
+ * `jobRestartUntil`.
  */
-async function waitForJobRestart(job: string | undefined): Promise<void> {
-  const first = readJobRestart();
-  if (!first) return;
-  let goneAt: number | null = null;
-  for (const limit = first.at + SHUTDOWN_DEADLINE_MS + JOB_RESTART_WAIT_MS; Date.now() < limit;) {
-    const marker = readJobRestart();
-    if (!marker || marker.pid !== first.pid) return;
-    if (!processRuns(marker.pid)) {
-      if (marker.label === job) return;
-      goneAt ??= Date.now();
-      if (Date.now() - goneAt >= JOB_RESTART_WAIT_MS) return;
-    }
-    await new Promise((done) => setTimeout(done, CLAIM_RETRY_MS));
-  }
+function jobRestartGate(job: string | undefined): JobRestartGate {
+  const gone = new Map<number, number>();
+  const reserved = () => {
+    const record = readJobRestart();
+    if (!record) return false;
+    const running = processRuns(record.pid);
+    if (!running && !gone.has(record.pid)) gone.set(record.pid, Date.now());
+    if (record.label === job) return running && record.left === null;
+    return Date.now() < jobRestartUntil(record, running, gone.get(record.pid) ?? Date.now());
+  };
+  return {
+    reserved,
+    wait: async () => {
+      while (reserved()) await new Promise((done) => setTimeout(done, CLAIM_RETRY_MS));
+    },
+  };
 }
 
 /** Why stimd cannot start while a stim-daemon from before Stim 2.0 holds the daemon claim exclusively. */
@@ -727,9 +735,18 @@ interface RunStimdOptions {
   attached?: { handover: boolean };
 }
 
-/** Records that this stimd leaves its home to the job of `unit`, which `waitForJobRestart` reads. */
-function leaveToJob(unit: string): void {
-  writeAtomic(stimdJobRestartFile(), { at: Date.now(), pid: process.pid, label: unit });
+/** Records that this stimd leaves its home to the job of `unit` (`left` once its shutdown ended), which `jobRestartGate` reads. */
+function leaveToJob(
+  unit: string,
+  at: number,
+  left: number | null,
+  log: (level: Level, event: string, msg: string) => unknown,
+): void {
+  try {
+    writeAtomic(stimdJobRestartFile(), { at, pid: process.pid, label: unit, left });
+  } catch (error) {
+    log('warn', 'job_restart_record_failed', `${stimdJobRestartFile()}: ${errorText(error)}`);
+  }
 }
 
 /**
@@ -764,7 +781,7 @@ async function runCrashHold(
   if (store && held && ('rolledBack' in held || 'moved' in held)) {
     const current = readRecords(store.root).current;
     log('error', 'engine_rolled_back', `${version} crashed 3 times in 10 minutes; the engine runs ${current?.version}`);
-    if (inJob && unit) leaveToJob(unit);
+    if (inJob && unit) leaveToJob(unit, Date.now(), Date.now(), log);
     else if (current)
       launchStimd(
         process.env,
@@ -883,8 +900,13 @@ async function runStimdInner(
   const instance = randomUUID();
   refuseUnresolvedDaemonClaims(writer);
   // @ref LLP 0009#service-and-engine-updates -- a home a service stimd left to its job waits for that job
-  let own = await takeClaim(stimdClaimRoot(), 'exclusive', 'stimd', details, lifetime.retries(CLAIM_TRIES), () =>
-    waitForJobRestart(inJob ? unit : undefined),
+  let own = await takeClaim(
+    stimdClaimRoot(),
+    'exclusive',
+    'stimd',
+    details,
+    lifetime.retries(CLAIM_TRIES),
+    jobRestartGate(inJob ? unit : undefined),
   );
   if (!own) {
     log('debug', 'stimd_claim_held', 'another stimd holds this Stim home; exiting');
@@ -944,7 +966,6 @@ async function runStimdInner(
     keepClaim();
   };
   rmSync(stimdSuccessorMissingFile(), { force: true });
-  rmSync(stimdJobRestartFile(), { force: true });
   recordLostPredecessors(leftover, log);
   const history = readStimdBoots();
   const loop = crashLoop(history, build, bootAt);
@@ -1359,11 +1380,13 @@ async function runStimdInner(
     const why = `the engine switched to ${next.version} (${next.build})`;
     // @ref LLP 0009#service-and-engine-updates -- a service unit's stimd hands over through the unit's job
     const job = unit !== undefined && (inJob || [...jobWaiters].some((socket) => !socket.destroyed)) ? unit : null;
-    if (job) leaveToJob(job);
+    const leftAt = Date.now();
+    if (job) leaveToJob(job, leftAt, null, log);
     handingOver = true;
     shutdown(why);
     await shutdownDone;
     if (job) {
+      leaveToJob(job, leftAt, Date.now(), log);
       log('info', 'successor_job', `the ${job} job starts the stimd of ${next.version} (${next.build})`);
       return;
     }
@@ -2054,6 +2077,7 @@ async function runStimdInner(
   startup.finish?.();
   startup.finish = undefined;
   startup.cleanup = undefined;
+  rmSync(stimdJobRestartFile(), { force: true });
   log(
     'info',
     'daemon_started',
