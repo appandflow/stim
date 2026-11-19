@@ -53,13 +53,16 @@ standard error and exit code 1.
 
 ## Warm is the agent's step, not the launch command's
 
-start, ios, android, macos and web do not run `stim worktree warm` in a linked
-worktree that was never warmed. The guides make warm the agent's first Stim
-command in a new worktree, including one a harness created, before the first
-edit, install or launch there, and skip it only when the agent works in place.
-The only warm a launch runs restores what gc deleted from a lightened worktree
-([LLP 0001](./0001-disk-pressure-levels.decision.md#one-idle-day-reduces-a-workspace)):
-start, ios and android call it.
+start, ios, android, macos and web never warm a worktree because it is new.
+Warming a new worktree is the agent's setup step: the guides have the agent run
+`stim worktree warm` in it, including one a harness created, before the first
+edit, install or launch there. The agent skips it when it works in place, and
+for inspection, cleanup or an app already running in its workspace.
+
+Restoring after gc is a separate case. start, ios and android run warm when
+gc's record of the directories it deleted from the worktree (`lightened.json`)
+lists any that are missing, whether or not the worktree was warmed before
+([LLP 0001](./0001-disk-pressure-levels.decision.md#one-idle-day-reduces-a-workspace)).
 
 Reason: a project may skip warm and install its own dependencies, so warm stays
 an agent step, and the agent evals (LLP 0025) measure whether the guide text
