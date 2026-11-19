@@ -640,7 +640,8 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
   same relative path or in its top two directory levels, up to 2000 entries,
   resolving into the tree; past the bound or at an unreadable directory the
   tree is kept; unlisted worktrees are not scanned), nor a tree of unknown size at the 7-day
-  rule (gc tries to measure it first; critical takes it), or that is not a real
+  rule (gc tries to measure it first; critical takes it, even when a
+  sample of its files finds mostly hard links), or that is not a real
   git-ignored directory with no tracked or unignored file and on its own volume. The deletion is
   recorded in the checkout's workspace; \`stim worktree warm\` in a linked
   worktree then says on stderr that the source has no installed dependencies

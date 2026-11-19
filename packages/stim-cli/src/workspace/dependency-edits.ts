@@ -50,7 +50,7 @@ const STAMPS: Record<TreeKind, readonly string[]> = {
 /** What `pod install` generates afresh for every pod, rather than a pod's own sources. */
 const POD_GENERATED = ['Pods.xcodeproj', 'Target Support Files', 'Headers', 'Local Podspecs'];
 /** The dot-directories at a node_modules root that hold packages; every other one is a tool's cache (`.cache`, `.vite`). */
-const TREE_DOT_DIRS = ['.pnpm', '.bun', '.deno'];
+export const TREE_DOT_DIRS: readonly string[] = ['.pnpm', '.bun', '.deno'];
 const GRADLE_SCRIPTS = ['build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts'];
 /** What Gradle writes inside its `build` directory; a JS `build` directory holds none of them. */
 const GRADLE_BUILD_ENTRIES = ['intermediates', 'generated', 'outputs', 'tmp', '.transforms', 'kotlin', 'classes'];
