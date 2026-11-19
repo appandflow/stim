@@ -19,6 +19,7 @@ import {
 } from '../engine/test-run.ts';
 import { acquireTestSlot, releaseTestSlot, type TestSlotHandle } from '../engine/test-slots.ts';
 import { getExecutor } from '../exec.ts';
+import { groupExitBudgetMs, waitForGroupExit } from '../process-group-exit.ts';
 
 const note = (context: StimContext, text: string) => context.output('stderr', `${phaseLine('test', text)}\n`);
 
@@ -27,33 +28,71 @@ function refusal(context: StimContext, code: string, message: string, remedy: st
   return 1;
 }
 
+const KILL_GRACE_CAP_MS = 10_000;
+
+const signalGroup = (pid: number, signal: NodeJS.Signals) => {
+  try {
+    process.kill(-pid, signal);
+  } catch {}
+};
+
+/**
+ * Runs `argv` in its own process group and resolves once the leader exited and the group is empty. A cancelled run's
+ * group gets SIGKILL when it outlives the exit budget; `survivors` is true when processes of the group still run after
+ * that, and the declaration then keeps recording the child, so the slot claim stays held by the group.
+ */
 async function runCommand(
   context: StimContext,
   argv: string[],
   env: NodeJS.ProcessEnv,
-): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
+): Promise<{ code: number | null; signal: NodeJS.Signals | null; survivors: boolean }> {
   const state = operationState(context);
   state.handled = true;
   state.draining = true;
   const [file = '', ...args] = argv;
-  const child = spawnDeclared(context, () =>
-    getExecutor().spawn(file, args, { stdio: ['ignore', 'inherit', 'inherit'], cwd: context.cwd, env, detached: true }),
+  let settleGroup!: (gone: boolean) => void;
+  const group = new Promise<void>((resolve, reject) => {
+    settleGroup = (gone) => (gone ? resolve() : reject(new Error('the test command left processes running')));
+  });
+  void group.catch(() => {});
+  const child = spawnDeclared(
+    context,
+    () =>
+      getExecutor().spawn(file, args, {
+        stdio: ['ignore', 'inherit', 'inherit'],
+        cwd: context.cwd,
+        env,
+        detached: true,
+      }),
+    { until: group },
   );
   const forward = () => {
-    if (!child.pid) return;
-    try {
-      process.kill(-child.pid, context.signal.reason === 'SIGINT' ? 'SIGINT' : 'SIGTERM');
-    } catch {}
+    if (child.pid) signalGroup(child.pid, context.signal.reason === 'SIGINT' ? 'SIGINT' : 'SIGTERM');
   };
   context.signal.addEventListener('abort', forward);
   try {
-    return await new Promise((resolve) => {
+    const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
       child.once('error', (error) => {
         note(context, `${basename(file)} could not start: ${error.message}`);
         resolve({ code: 127, signal: null });
       });
-      child.once('close', (code, signal) => resolve({ code, signal }));
+      child.once('exit', (code, signal) => resolve({ code, signal }));
     });
+    const pid = child.pid;
+    const cancelled = context.signal.aborted;
+    let gone =
+      pid === undefined || (await waitForGroupExit(pid, groupExitBudgetMs(cancelled ? KILL_GRACE_CAP_MS : undefined)));
+    if (!gone && pid !== undefined && context.signal.aborted) {
+      signalGroup(pid, 'SIGKILL');
+      gone = await waitForGroupExit(pid, groupExitBudgetMs());
+    }
+    if (!gone)
+      note(
+        context,
+        `processes the test command started still run in its process group ${pid}; the test slot stays held until they exit`,
+      );
+    settleGroup(gone);
+    return { ...exit, survivors: !gone };
   } finally {
     context.signal.removeEventListener('abort', forward);
   }
@@ -85,6 +124,7 @@ async function runTest(context: StimContext, command: string[], ceilingMs: numbe
   let slot: TestSlotHandle | undefined;
   let exit: number;
   let signal: NodeJS.Signals | null;
+  let retain = false;
   try {
     if (env.STIM_TEST_RUN)
       note(context, 'inside another stim test run, which holds the test slot; running without one');
@@ -111,6 +151,7 @@ async function runTest(context: StimContext, command: string[], ceilingMs: numbe
         : `no worker count passed: ${plan.skipped} (${basis})`,
     );
     const result = await runCommand(context, plan.argv, { ...env, ...plan.env, STIM_TEST_RUN: '1' });
+    retain = result.survivors;
     signal = result.signal;
     exit = signal ? 128 + (constants.signals[signal] ?? 0) : (result.code ?? 1);
   } catch (error) {
@@ -120,7 +161,7 @@ async function runTest(context: StimContext, command: string[], ceilingMs: numbe
       'remedy' in error && typeof error.remedy === 'string' ? error.remedy : 'stim guide lifecycle concurrency';
     return refusal(context, error.code, error.message, remedy);
   } finally {
-    releaseTestSlot(slot);
+    releaseTestSlot(slot, retain);
   }
   debugLog.log('test_exit', { exit, signal, ms: Date.now() - started });
   note(context, `${program} exited ${signal ?? exit} after ${formatElapsed(Date.now() - started)}`);

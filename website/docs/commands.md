@@ -1345,8 +1345,10 @@ stim test -- pnpm exec vitest run --project unit
   override. Any other command runs unchanged under the slot. One stderr line
   says which.
 - The command runs in its own process group with no stdin. `SIGINT` and
-  `SIGTERM` reach the whole group and the slot is freed when it exits; if `stim`
-  itself is killed, the slot stays held until the command exits. A watch-mode
+  `SIGTERM` reach the whole group. The slot is freed only once every process in
+  the group has exited: a cancelled run's group gets `SIGKILL` after a grace
+  period, and processes still running after that, or after `stim` itself is
+  killed, keep holding the slot until they exit. A watch-mode
   run holds its slot until you stop it.
 - The command gets `STIM_TEST_RUN=1`; a `stim test` started inside it runs
   without taking another slot.

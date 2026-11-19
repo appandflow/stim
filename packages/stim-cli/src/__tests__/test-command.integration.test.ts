@@ -21,6 +21,11 @@ const FAKE_RUNNER = `#!/usr/bin/env node
 const { existsSync, writeFileSync } = require('node:fs');
 const [hold] = (process.env.FAKE_HOLD ?? '').split(',').filter(Boolean);
 console.log(JSON.stringify({ argv: process.argv.slice(2), vitest: process.env.VITEST_MAX_WORKERS ?? null, run: process.env.STIM_TEST_RUN ?? null }));
+if (hold && process.env.FAKE_WORKER) {
+  const onTerm = process.env.FAKE_WORKER === 'slow' ? 'setTimeout(() => process.exit(0), 3000)' : '';
+  const worker = require('node:child_process').spawn(process.execPath, ['-e', \`require('node:fs').writeFileSync(\${JSON.stringify(hold + '.worker')}, String(process.pid)); process.on('SIGTERM', () => { \${onTerm} }); setInterval(() => {}, 1000);\`], { stdio: 'ignore' });
+  worker.unref();
+}
 if (hold) {
   writeFileSync(hold + '.started', String(process.pid));
   const wait = setInterval(() => { if (existsSync(hold + '.go')) { clearInterval(wait); process.exit(0); } }, 20);
@@ -188,6 +193,28 @@ describe.skipIf(process.platform === 'win32')('stim test', () => {
     expect(liveSlots()).toEqual([]);
     await run.done;
   }, 60_000);
+
+  test.each([
+    { worker: 'slow', why: 'stops 3 s after SIGTERM' },
+    { worker: 'ignore', why: 'ignores SIGTERM' },
+  ])(
+    'the slot stays taken while a worker that $why outlives the runner',
+    async ({ worker }) => {
+      const hold = join(home, `worker-${worker}`);
+      const run = start(['--', 'jest'], { FAKE_HOLD: hold, FAKE_WORKER: worker });
+      await vi.waitFor(() => expect(existsSync(`${hold}.worker`)).toBe(true), { timeout: 20_000 });
+      const workerPid = Number(readFileSync(`${hold}.worker`, 'utf8'));
+      run.child.kill('SIGTERM');
+      await vi.waitFor(() => expect(alive(runnerPid(hold))).toBe(false), { timeout: 20_000 });
+      expect(alive(workerPid)).toBe(true);
+      const second = await start(['--no-wait', '--', 'jest']).done;
+      expect(second.stderr).toContain('STIM_AT_CAPACITY');
+      await run.done;
+      expect(alive(workerPid)).toBe(false);
+      expect(liveSlots()).toEqual([]);
+    },
+    60_000,
+  );
 
   test('stim test -- npm test is the script form and gets the count too', async () => {
     const { code, stdout, stderr } = await start(['--', 'npm', 'test']).done;

@@ -2452,9 +2452,10 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   maxWorkers in the jest, vitest or vite config beside package.json (or its
   jest key), which the flag and variables would override. Any other command
   runs unchanged under the slot; one stderr line says which. The command runs
-  in its own process group: SIGINT and SIGTERM reach all of it, the slot frees
-  when it exits, and if stim itself is killed the slot stays held until the
-  command exits. It gets STIM_TEST_RUN=1, and a stim test inside it takes no
+  in its own process group, and SIGINT and SIGTERM reach all of it. The slot
+  frees only once every process of the group has exited: a cancelled group
+  gets SIGKILL after a grace period, and processes still running after that,
+  or after stim itself is killed, keep holding the slot until they exit. It gets STIM_TEST_RUN=1, and a stim test inside it takes no
   slot. A watch-mode run holds its slot until it is stopped. Windows refuses.
 
   Beyond the caps, at most 2 boots run at once in a Stim home, and no boot

@@ -84,8 +84,10 @@ name decided there, "Test".
   count the caller set, in the command, the environment or the runner's config,
   is kept, and any other command runs unchanged under the slot.
 - The command runs in its own process group, so a signal reaches the runner
-  under a package manager; Windows refuses it, since Stim cannot stop that
-  tree there.
+  under a package manager, and the slot is released only once that group is
+  empty: a launcher can exit while its workers still run, and a queued run
+  must not start beside them. Windows refuses the command, since Stim cannot
+  stop that tree there.
 - Without a command it runs the project's `test` script through the package
   manager whose lockfile is nearest. It reads that script only to tell whether
   it is a plain `jest` command; Stim never rewrites it.

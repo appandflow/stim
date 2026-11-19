@@ -38,8 +38,9 @@ export function acquireTestSlot(options: AcquireSlotOptions): Promise<TestSlotHa
   return acquireSlot(TEST_SLOTS, options);
 }
 
-export function releaseTestSlot(handle?: TestSlotHandle | null): boolean {
-  return releaseSlot(TEST_SLOTS, handle);
+/** Releases the slot, or with `retain` leaves the claim to the child it records, which holds it until it exits. */
+export function releaseTestSlot(handle?: TestSlotHandle | null, retain = false): boolean {
+  return releaseSlot(TEST_SLOTS, handle, retain);
 }
 
 export function listTestSlots(): TestSlotInfo[] {
