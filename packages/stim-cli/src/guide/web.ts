@@ -12,7 +12,7 @@ stim doctor reports a missing Chrome.
 
 stim web never starts a web server, for any framework. It opens, reuses or
 reloads the owned Chrome at the page URL. Every web project follows the same
-steps: warm the worktree, start your dev server, then run stim web.
+steps: warm a new worktree, start your dev server, then run stim web.
 
   stim worktree warm       # once in a new worktree
   stim web                 # headless, the default
