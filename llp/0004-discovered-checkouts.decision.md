@@ -537,8 +537,8 @@ discovered checkout:
 
 Nothing else of theirs is touched: build or `dist` output, Cargo targets, devices,
 Metro, logs, the pressure rungs 5 and 8. Discovery returns them only to the callers
-of the two rules (`NodeSelection`); `stim gc --dry-run` shows their actions but does
-not list them among the discovered checkouts. The full scan does not look for them
+of the two rules (`NodeSelection`); `stim gc --dry-run` lists their linked worktrees
+with the removal verdict, but not among the discovered checkouts. The full scan does not look for them
 (it still stops only at an app project), the census ignores them when deciding what
 another route covers, and their worktrees outside the managed folders are not listed
 as outside. A worktree of theirs in `~/.codex/worktrees` is reduce-only like any
