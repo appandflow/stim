@@ -380,9 +380,7 @@ export function createStatusMeasurer({
           writeCacheFile(statusWalkRestFile(), { writtenAt: startedAt, until: startedAt + 2 * DU_TIMEOUT_MS });
           return true;
         },
-      }).catch((error: unknown) => {
-        rest();
-        throw error;
+        settled: rest,
       });
       if (outcome === 'busy') {
         wakeAfterRest();
@@ -390,7 +388,6 @@ export function createStatusMeasurer({
       }
       if (outcome === 'measured') updated();
       if (startedAt === null) continue;
-      rest();
       if (now() > startedAt) {
         wakeAfterRest();
         return;

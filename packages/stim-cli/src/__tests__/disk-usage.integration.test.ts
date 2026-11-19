@@ -118,6 +118,33 @@ test('a walk claim held elsewhere leaves the folder unmeasured, and the walk run
   expect((await refreshMeasure(tree, { ...options, claim: true })).outcome).toBe('measured');
 }, 120_000);
 
+test('settled runs while the walk claim is still held, after a walk and after a failed one', async () => {
+  const heldDuringSettled: boolean[] = [];
+  const settled = () => {
+    const attempt = tryAcquireClaim({ root: diskUsageWalkClaims(), mode: 'exclusive', label: 'test walk' });
+    heldDuringSettled.push(!attempt.acquired);
+    if (attempt.acquired) releaseClaim(attempt.acquired);
+  };
+
+  expect((await refreshMeasure(tree, { ...options, claim: true, settled })).outcome).toBe('measured');
+  expect(
+    (
+      await refreshMeasure(join(tree, 'missing'), {
+        ...options,
+        claim: true,
+        knownToExist: true,
+        failures: true,
+        settled,
+      })
+    ).outcome,
+  ).toBe('failed');
+
+  expect(heldDuringSettled).toEqual([true, true]);
+  const after = tryAcquireClaim({ root: diskUsageWalkClaims(), mode: 'exclusive', label: 'test walk' }).acquired;
+  expect(after).toBeTruthy();
+  if (after) releaseClaim(after);
+}, 120_000);
+
 test('a claimed walk whose child exits before its identity can be recorded is still measured', async () => {
   const real = getExecutor();
   setExecutor({

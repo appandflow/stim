@@ -131,6 +131,8 @@ export interface RefreshOptions {
    * `busy`.
    */
   admit?: () => boolean;
+  /** Called once the walk is over, whatever its outcome, before the walk claim is released. */
+  settled?: () => void;
   /**
    * The caller has established, through a bounded read, that `path` exists: do not probe it. Without it the folder is
    * probed with a synchronous `existsSync`, which a stalled mount can block.
@@ -257,6 +259,7 @@ export async function refreshMeasure(
     throw error;
   } finally {
     if (operation) stopDeclaringSpawnsOn(operation, claim);
+    options.settled?.();
     if (!cleanupUnverified) releaseClaim(claim);
   }
 }
