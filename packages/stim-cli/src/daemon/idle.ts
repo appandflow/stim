@@ -37,9 +37,10 @@ import {
 import { createNdjsonWriter } from '../ndjson.ts';
 import { IDLE_SETTING, idleKeep, idleScope, PRESSURE_IDLE_MS, type IdleKeepFacts } from '../policy/idle.ts';
 import { metroStoreRoot } from '../stimd/metro/metro-store.ts';
+import { onShortVolume } from '../stimd/passes/unowned.ts';
 import { resolveSupervisorTarget } from '../stimd/metro/ownership.ts';
 import { MODE_COMMAND, readWorkspaceLaunches, launchWithoutMetro } from '../stimd/metro/state.ts';
-import { getProject, loadConfig, type Config, type ProjectRecord } from '../workspace/config.ts';
+import { getProject, type Config, type ProjectRecord } from '../workspace/config.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { existingBuildDirKindsAsync, regenerableDirProblem } from '../workspace/regenerable-dirs.ts';
@@ -68,6 +69,8 @@ export interface IdlePassInput {
   act: boolean;
   /** Set while the memory level is high or critical: the idle stage then takes every workspace idle 2 minutes. */
   pressure?: { level: 'high' | 'critical'; reasons: string[] };
+  /** Set when disk alone raised the level: the idle stage deletes only the outputs on one of those devices. */
+  volumes?: ReadonlySet<number>;
   /** A workspace the pass never takes: the one the running command belongs to. */
   protectedRoot?: string;
   /** The daemon tick's context, whose reads run without blocking its event loop. */
@@ -190,56 +193,6 @@ async function decide(
 }
 
 /**
- * How long a workspace whose dev server or owned device runs has had no activity, by the evidence and keeps of the idle
- * stage at the pressure idle threshold, or why it is kept; null when nothing of it runs that the idle stage judges.
- */
-export async function runningIdle(
-  path: string,
-  project: ProjectRecord,
-  reading: Pick<IdlePassInput, 'sims' | 'simsError' | 'devices' | 'operation'> & { level: 'high' | 'critical' },
-  locked: boolean,
-): Promise<{ idleMs: number; serving: boolean } | { kept: string } | null> {
-  const { level, ...rest } = reading;
-  const input: IdlePassInput = {
-    ...rest,
-    config: null,
-    now: Date.now(),
-    act: true,
-    log: () => {},
-    pressure: { level, reasons: [] },
-  };
-  const { candidate: found, decision } = await decide(path, project, input, locked);
-  if (!found.runs) return null;
-  if ('kept' in found) return { kept: found.kept };
-  if (!decision?.stop) return { kept: decision?.reason ?? 'its activity cannot be read' };
-  return { idleMs: decision.idleMs, serving: found.serving };
-}
-
-/** Whether the workspace's dev server runs, or cannot be shown not to, its supervisor gone or not. */
-export function servesNow(path: string, project: ProjectRecord): boolean {
-  const { status } = supervisorOf(path, project);
-  if (status === 'stale') return survivingServer(readWorkspaceState(path)?.supervisor) !== null;
-  return status !== 'none';
-}
-
-/**
- * Why the workspace's Metro store stays, read from the registry now: its own dev server or another workspace's that
- * shares the store runs; null when none does.
- */
-export function storeInUse(path: string): string | null {
-  const config = loadConfig();
-  if (!config) return null;
-  const store = canonicalPath(metroStoreRoot(path));
-  for (const [other, project] of Object.entries(config.projects)) {
-    if (canonicalPath(metroStoreRoot(other)) !== store || !servesNow(other, project)) continue;
-    return canonicalPath(other) === canonicalPath(path)
-      ? 'its own dev server runs'
-      : `the running dev server of ${other} shares it`;
-  }
-  return null;
-}
-
-/**
  * The regenerable outputs the idle stage deletes, and why each other one stays. `targets` names the Cargo `target/`
  * among `paths`, recognised by the same reads that listed it.
  */
@@ -267,7 +220,8 @@ export async function idleOutputs(
       ([other, project]) =>
         canonicalPath(other) !== canonicalPath(path) &&
         canonicalPath(metroStoreRoot(other)) === canonicalPath(store) &&
-        servesNow(other, project),
+        supervisorOf(other, project).status !== 'none' &&
+        supervisorOf(other, project).status !== 'stale',
     );
     if (sharer) kept.push(`kept the Metro store ${store}: the running dev server of ${sharer[0]} shares it`);
     else paths.push(store);
@@ -279,23 +233,16 @@ export async function idleOutputs(
 
 /**
  * Deletes `paths` one at a time: it measures a path, reads the executables on PATH anew (`launching.anew`) and removes
- * the path, or keeps it and says so in `kept` when one resolves into the checkout or `keep`, asked last, names why.
- * Each removal has a reading of its own, taken after the size walk and every process read before it, so none is older
- * than the removal before it.
+ * the path, or keeps it and says so in `kept` when one resolves into the checkout. Each removal has a reading of its
+ * own, taken after the size walk and every process read before it, so none is older than the removal before it.
  */
-export async function deleteOutputs(
-  paths: readonly string[],
-  launching: Launching,
-  kept: string[],
-  keep?: (path: string) => string | null,
-): Promise<number> {
+export async function deleteOutputs(paths: readonly string[], launching: Launching, kept: string[]): Promise<number> {
   let freed = 0;
   for (const path of paths) {
     const bytes = (await measuredDirectorySizeAsync(path, { timeoutMs: SIZE_TIMEOUT_MS })) ?? 0;
     const launcher = launcherReason(launching.checkout, await launching.anew());
-    const why = launcher ?? keep?.(path) ?? null;
-    if (why) {
-      kept.push(`kept ${path}: ${why}`);
+    if (launcher) {
+      kept.push(`kept ${path}: ${launcher}`);
       continue;
     }
     freed += bytes;
@@ -394,11 +341,13 @@ async function enterIdleStage(
               return outcome?.status === 'shut-down' && booted.has(`${kind}:${slot}`) ? [key] : [];
             });
             const { operation } = input;
+            const { volumes } = input;
             const checkout = await checkoutRootOf(path, operation?.signal, operation);
             const outputs = await idleOutputs(
               path,
               config,
               launchingOf(checkout, launchersOf(operation, operation?.signal, false), operation, operation?.signal),
+              volumes ? (output) => onShortVolume([output], volumes) : undefined,
             );
             const freed = await deleteOutputs(
               outputs.paths,

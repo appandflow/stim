@@ -26,6 +26,18 @@ import { serveShareList, shareRow, type ShareListAnswer } from './_share-list-se
 
 const MINUTE_MS = 60_000;
 
+const volume = vi.hoisted((): { short: { root: string; dev: number } | null } => ({ short: null }));
+vi.mock('node:fs', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs')>();
+  const statSync = ((path: Parameters<typeof fs.statSync>[0], options?: Parameters<typeof fs.statSync>[1]) => {
+    const stat = fs.statSync(path, options);
+    const short = volume.short;
+    if (!stat || !short || !String(path).startsWith(short.root)) return stat;
+    return Object.assign(Object.create(Object.getPrototypeOf(stat)), stat, { dev: short.dev });
+  }) as typeof fs.statSync;
+  return { ...fs, statSync };
+});
+
 let home: string;
 let projects: string;
 let sims: IosSimRecord[];
@@ -48,6 +60,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  volume.short = null;
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
   resetExecutor();
@@ -131,6 +144,33 @@ test('the idle stage deletes the git-ignored .dd and CMake output of a workspace
   expect(existsSync(join(root, '.dd'))).toBe(false);
   expect(existsSync(join(root, 'android', 'app', '.cxx'))).toBe(false);
   expect(existsSync(join(root, 'build-device', 'Build'))).toBe(true);
+});
+
+test('under disk pressure alone a workspace stopped at idle.minutes loses only the outputs on the short volume', async () => {
+  const { root, udid, derivedData } = bootedWorkspace('split', 20 * MINUTE_MS);
+  execSync('git init -q', { cwd: root });
+  writeFileSync(join(root, '.gitignore'), '.dd/\n');
+  writeDerivedData(join(root, '.dd'));
+  volume.short = { root, dev: 4_242_424 };
+  const config = loadConfig();
+  const devices = await collectOwnedDeviceActivityAsync(config, sims, Date.now());
+
+  const decisions = await runIdlePass({
+    config,
+    now: Date.now(),
+    sims,
+    simsError: null,
+    devices,
+    act: true,
+    log: () => {},
+    volumes: new Set([4_242_424]),
+  });
+
+  expect(decisions).toEqual([expect.objectContaining({ path: root, outcome: 'idle' })]);
+  expect(tornDown).toEqual([udid]);
+  expect(readIdleStage(readWorkspaceState(root))).toMatchObject({ idleMinutes: 15 });
+  expect(existsSync(join(root, '.dd'))).toBe(false);
+  expect(existsSync(derivedData)).toBe(true);
 });
 
 test.skipIf(process.platform === 'win32')(

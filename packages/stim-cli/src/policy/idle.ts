@@ -3,8 +3,8 @@ import { formatLongDuration } from '../command-output.ts';
 const MINUTE_MS = 60_000;
 export const IDLE_SETTING = 'idle.minutes';
 /**
- * The pressure idle threshold: under high or critical memory pressure the idle stage stops every workspace idle this
- * long; under disk pressure the ladder's rungs delete from workspaces idle this long.
+ * The pressure idle threshold: under high or critical memory pressure the idle stage takes every workspace idle this
+ * long; under disk pressure the ladder's rungs take workspaces with nothing running idle this long.
  */
 export const PRESSURE_IDLE_MS: number = 2 * MINUTE_MS;
 
@@ -16,7 +16,7 @@ const AGENT_DEVICE_IDLE_MS: number = 10 * MINUTE_MS;
 
 /**
  * The window within which an activity of `basis` keeps a workspace under an `idleMs` threshold. Only at the pressure
- * idle threshold, for memory or disk, does an agent-device command hold longer than `idleMs`.
+ * idle threshold, the memory idle stage's or the ladder's, does an agent-device command hold longer than `idleMs`.
  */
 export function activityWindowMs(basis: string, idleMs: number, pressured: boolean): number {
   return pressured && basis === 'agent-device command' ? Math.max(idleMs, AGENT_DEVICE_IDLE_MS) : idleMs;
@@ -118,13 +118,14 @@ export interface IdleKeepFacts {
   /** Why a dev server may still run after its supervisor exited; null otherwise. */
   orphan: string | null;
   hosted: { placements: readonly { label: string; machine: string }[]; unreadable: readonly string[] };
-  /** The memory level is high or critical, or a ladder rung judges the workspace at the pressure idle threshold. */
+  /** The memory level is high or critical. */
   pressured: boolean;
 }
 
 /**
  * What keeps a running workspace out of the idle stage whatever its activity, the first in this order, else its idle
- * threshold: `idle.minutes`, shortened to `PRESSURE_IDLE_MS` when `pressured`, and that threshold in whole minutes.
+ * threshold: `idle.minutes`, shortened to `PRESSURE_IDLE_MS` under memory pressure, and that threshold in whole
+ * minutes.
  */
 export function idleKeep(facts: IdleKeepFacts): { kept: string } | { idleMs: number; minutes: number } {
   const { settings, supervisor, hosted } = facts;

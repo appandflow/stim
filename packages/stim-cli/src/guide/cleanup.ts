@@ -566,10 +566,8 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
     dormant reduction, N. Kept: source checkout, under 256 MB of its own (a
     copy-on-write clone), in use, a running process inside, pinned.
   Idle dev servers and their outputs (idle 2 minutes)
-    idle stage under memory pressure, H. Kept: as above.
-  Outputs of workspaces idle 2 minutes, running or not (nothing stopped)
-    rung 1 under disk pressure, H. Kept: as above; a Cargo target/ for rung 3,
-    the Metro store while a dev server using it runs.
+    idle stage and rung 1, H. Kept: as above; rung 1 keeps a Cargo target/
+    for rung 3.
   Parked devices
     rung 2, H until the level clears, C all.
   Cargo target/ stale profiles and incremental/ data (at C also idle units), first in rung 3
@@ -1123,8 +1121,7 @@ THE PRESSURE LADDER
   Above normal it forces the ladder (\`guide lifecycle budget\`) to the level, every
   rung to its end:
     0  booted parked simulators
-    1  idle outputs: the idle stage for every workspace idle 2 minutes or
-       more (memory), or only their outputs (disk)
+    1  idle outputs: the idle stage for every workspace idle 2 minutes or more
     2  parked devices (high until the level clears, critical all)
     3  shared caches: trimmed to half their caps at high; at critical emptied
        (compilation cache, ccache, build cache except entries in use, Metro
@@ -1756,8 +1753,7 @@ THE ONE CASE GC WILL NOT REAP
       body: () => `DISK
   Logs, state, pidfiles and Xcode DerivedData are under the global workspace
   directory, and \`worktree remove\` reclaims them. \`gc\` clears
-  the build outputs of workspaces idle 2 minutes or more at high or critical
-  disk pressure,
+  the build outputs of workspaces idle 2 minutes or more at high or critical,
   and, at every level, those of every
   workspace over its cap or past the age sweep that is not building and did
   not run a native command in the
@@ -1858,9 +1854,9 @@ WORKSPACE BUILD OUTPUTS
   maintenance.workspaceOutputsMaxGb or unused for maintenance.olderThanDays,
   for a workspace idle for idle.dormantDays (1) at every level (the
   stim-daemon too, hourly), and through the
-  pressure ladder at high or critical: for a workspace idle 2 minutes or
-  more, its dev server and devices left running. It prints the bytes freed
-  per category.
+  pressure ladder at high or critical: for a workspace with
+  nothing running idle 2 minutes or more, and in the idle stage of a running
+  one. It prints the bytes freed per category.
   A workspace whose worktree is locked with git worktree lock is never
   lightened: not its outputs, not its project's build directories, at any
   disk pressure level, including the age sweep and the pressure ladder, and gc and
@@ -1878,7 +1874,9 @@ WORKSPACE BUILD OUTPUTS
   unknown. macos/ itself,
   macos/runtime.lock and its claim set, workspace.json, state.json, logs/,
   other macOS files, locks and device records stay. The workspace keeps its
-  devices, ports and running dev server. A running, building, unverified or hosted macOS app
+  devices, ports and running dev server. The pressure ladder's idle stage
+  (stim guide lifecycle budget) clears them for a workspace idle 2 minutes
+  under disk pressure. A running, building, unverified or hosted macOS app
   keeps its workspace untouched.
   Last use is the newest of the lastUsedAt that start, ios, android, reload,
   logs and worktree warm record in state.json, lastBuild.startedAt,

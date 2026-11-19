@@ -18,7 +18,7 @@ import {
 import { archiveWorkspace } from '../archive.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { deleteProjectDevices, findStaleProjectDevices, withAndroidAvdSizes } from '../commands/gc/devices.ts';
-import { collectOwnedDeviceActivityAsync, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
+import type { OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { workspaceOutputPaths } from '../commands/gc/workspaces.ts';
 import { avdDataDirectories, listAvdsAsync } from '../devices/android.ts';
 import { projectDeviceSlots } from '../devices/device-slots.ts';
@@ -55,15 +55,7 @@ import {
   resolveProjectSettingsAsync,
 } from '../workspace/settings.ts';
 import { readWorkspaceState, updateWorkspaceStateAsync } from '../workspace/workspace-state.ts';
-import {
-  deleteOutputs,
-  idleOutputs,
-  revivable,
-  runningIdle,
-  storeInUse,
-  writeWorkspaceEvent,
-  type IdlePassInput,
-} from './idle.ts';
+import { deleteOutputs, idleOutputs, revivable, writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
 import { timedStep, type DaemonLog, type StepTally } from './step-timing.ts';
 import { forgetGitReads } from '../workspace/git-reads.ts';
 
@@ -78,8 +70,6 @@ export interface StageCandidate {
   idleMs: number;
   /** A source checkout is taken after every linked worktree. */
   role: CheckoutRole;
-  /** Its dev server or an owned device runs, and the idle stage's evidence shows it idle. */
-  running?: true;
   /** The git worktree root that owns the workspace, which an executable on PATH can point anywhere into. */
   checkout: Checkout;
 }
@@ -100,8 +90,6 @@ export function sourceDormantAfterMs(config: Config | null, env: NodeJS.ProcessE
 export interface DeviceReading {
   devices: readonly OwnedDeviceActivity[];
   simsFailed: boolean;
-  /** The tick's `simctl list`, which a running workspace's devices are read again from under its claims. */
-  sims?: readonly IosSimRecord[] | null;
   /** The workspace of the command that runs this pass, which no stage takes. */
   protectedRoot?: string;
   /** The context whose reads run without blocking the event loop: the daemon tick's or a command's. */
@@ -262,14 +250,9 @@ function mergeEvidence<T extends { activity: unknown[]; keep: string[] }>(a: T, 
   return { ...a, activity: [...a.activity, ...b.activity], keep: [...a.keep, ...b.keep] };
 }
 
-/**
- * `full` reads source and git evidence even for a registered workspace; `onKept` hears why a workspace is not idle;
- * `running` at `level` also takes a workspace whose dev server or owned device runs, judged as the idle stage judges it
- * at the pressure idle threshold.
- */
+/** `full` reads source and git evidence even for a registered workspace; `onKept` hears why a workspace is not idle. */
 interface IdleSelection {
   full?: boolean;
-  running?: 'high' | 'critical';
   /** The setting the threshold comes from, named in the reason a workspace is kept; default the pressure threshold. */
   setting?: string;
   onKept?: (path: string, reason: string) => void;
@@ -299,7 +282,7 @@ async function readIdleWorkspaces(
   thresholdMs: number,
   setting: string,
   worthIt: (path: string, project: ProjectRecord) => boolean | Promise<boolean>,
-  { discover = false, full = false, onKept, running }: Omit<IdleSelection, 'setting'> & { discover?: boolean } = {},
+  { discover = false, full = false, onKept }: Omit<IdleSelection, 'setting'> & { discover?: boolean } = {},
 ): Promise<StageCandidate[]> {
   const readings: (Omit<StageCandidate, 'idleMs' | 'role' | 'checkout'> & { idleMs: number | null })[] = [];
   const reads = discoveredReads(reading.operation?.signal, reading.operation);
@@ -317,14 +300,8 @@ async function readIdleWorkspaces(
     }
     try {
       let idleMs: number | null = null;
-      if (await runsSomething(path, project, reading)) {
-        const verdict = running ? await runningIdle(path, project, idleStageReading(reading, running), false) : null;
-        if (verdict && 'idleMs' in verdict) {
-          readings.push({ path, project, idleMs: verdict.idleMs, running: true });
-          continue;
-        }
-        onKept?.(path, verdict?.kept ?? 'something of it runs');
-      } else {
+      if (await runsSomething(path, project, reading)) onKept?.(path, 'something of it runs');
+      else {
         const verdict = await idleVerdict(path, thresholdMs, setting, {
           operation: reading.operation,
           reads,
@@ -344,51 +321,6 @@ async function readIdleWorkspaces(
   const candidates: StageCandidate[] = [];
   for (const entry of idle) candidates.push(Object.assign(entry, await checkoutOwnerOf(entry.path, reading.operation)));
   return linkedFirst(candidates);
-}
-
-function idleStageReading(reading: DeviceReading, level: 'high' | 'critical') {
-  return {
-    sims: reading.simsFailed ? null : [...(reading.sims ?? [])],
-    simsError: reading.simsFailed ? 'simctl list failed' : null,
-    devices: [...reading.devices],
-    ...(reading.operation ? { operation: reading.operation } : {}),
-    level,
-  };
-}
-
-/**
- * Why a candidate is no longer idle, asked again by a caller that holds its native-run claim: a running one by the idle
- * stage's evidence, its devices read again; null when it still is.
- */
-async function stillIdleUnderClaim(
-  candidate: StageCandidate,
-  thresholdMs: number,
-  reading: DeviceReading,
-  level: 'high' | 'critical',
-): Promise<string | null> {
-  const { operation } = reading;
-  const config = loadConfig();
-  if (candidate.running && config) {
-    const devices = await collectOwnedDeviceActivityAsync(
-      { ...config, projects: { [candidate.path]: candidate.project } },
-      reading.sims ?? [],
-      Date.now(),
-    );
-    const verdict = await runningIdle(
-      candidate.path,
-      candidate.project,
-      idleStageReading({ ...reading, devices }, level),
-      true,
-    );
-    if (verdict) return 'idleMs' in verdict ? null : verdict.kept;
-  }
-  const idleMs = await idleFor(candidate.path, thresholdMs, PRESSURE_THRESHOLD, {
-    locked: true,
-    operation,
-    reads: discoveredReads(operation?.signal, operation, freshLaunchers(operation, operation?.signal)),
-    reduceOnly: false,
-  });
-  return idleMs === null ? 'it is no longer idle' : null;
 }
 
 async function hasOutputs(path: string): Promise<boolean> {
@@ -438,28 +370,23 @@ export function idleStageCandidates(
   });
 }
 
-/**
- * Workspaces with regenerable build outputs on disk, idle `thresholdMs`, longest-idle first: those with nothing running,
- * and with `running`, those whose dev server or owned device runs, judged as the idle stage judges them at that level.
- */
+/** Workspaces with nothing running and regenerable build outputs on disk, idle `thresholdMs`, longest-idle first. */
 export function stoppedOutputCandidates(
   config: Config,
   reading: DeviceReading,
   thresholdMs: number,
-  running?: 'high' | 'critical',
 ): Promise<StageCandidate[]> {
   return idleWorkspaces('stopped_output_candidates', config, reading, thresholdMs, PRESSURE_THRESHOLD, hasOutputs, {
     discover: true,
-    ...(running ? { running } : {}),
   });
 }
 
 type StageResult = Pick<DaemonLadderAction, 'outcome' | 'bytes' | 'detail'>;
 
 /**
- * The outputs rung 1 deletes for a workspace, and why each other one stays: none while its worktree is locked with git
- * worktree lock or git cannot list it, never a Cargo `target/`, which only the Cargo trim of rung 3 reduces, and not
- * its Metro store while its own dev server runs.
+ * The outputs rung 1 deletes for a stopped workspace, and why each other one stays: none while its worktree is
+ * locked with git worktree lock or git cannot list it, and never a Cargo `target/`, which only the Cargo trim of rung
+ * 3 reduces.
  */
 export async function stoppedOutputs(
   candidate: StageCandidate,
@@ -475,22 +402,18 @@ export async function stoppedOutputs(
   });
   if (lock) return { locked: lockReason(lock) };
   const outputs = await idleOutputs(candidate.path, config, launching, deletable);
-  const store = metroStoreRoot(candidate.path);
-  const used = outputs.paths.includes(store) ? storeInUse(candidate.path) : null;
   return {
-    paths: outputs.paths.filter((path) => !outputs.targets.includes(path) && !(used && path === store)),
+    paths: outputs.paths.filter((path) => !outputs.targets.includes(path)),
     kept: [
       ...outputs.kept,
       ...outputs.targets.map((target) => `kept ${target}: a Cargo target/ is left to the Cargo trim of rung 3`),
-      ...(used ? [`kept the Metro store ${store}: ${used}`] : []),
     ],
   };
 }
 
 /**
- * Deletes a workspace's regenerable build outputs under its native-run and metro-start locks, leaving a running dev
- * server and devices running. Null when every output it has is kept, such as a Metro store a running dev server uses.
- * A running candidate is judged again with `reading` at `level`.
+ * Deletes a stopped workspace's regenerable build outputs under its native-run and metro-start locks. Null when every
+ * output it has is kept, such as a Metro store a running dev server shares.
  */
 export async function clearStoppedOutputs(
   candidate: StageCandidate,
@@ -498,9 +421,9 @@ export async function clearStoppedOutputs(
   thresholdMs: number,
   operation?: StimContext,
   deletable?: (path: string) => boolean,
-  running?: { reading: DeviceReading; level: 'high' | 'critical' },
 ): Promise<StageResult | null> {
   const { path } = candidate;
+  const launchers = freshLaunchers(operation, operation?.signal);
   const run = await withIdleWorkspace(
     path,
     async (): Promise<StageResult | null> => {
@@ -509,13 +432,15 @@ export async function clearStoppedOutputs(
           workspaceDir(path),
           'metro-start',
           async (): Promise<StageResult | null> => {
-            const busy = await stillIdleUnderClaim(
-              candidate,
-              thresholdMs,
-              running?.reading ?? { devices: [], simsFailed: false, ...(operation ? { operation } : {}) },
-              running?.level ?? 'high',
-            );
-            if (busy) return { outcome: 'kept', bytes: 0, detail: busy };
+            if (
+              (await idleFor(path, thresholdMs, PRESSURE_THRESHOLD, {
+                locked: true,
+                operation,
+                reads: discoveredReads(operation?.signal, operation, launchers),
+                reduceOnly: false,
+              })) === null
+            )
+              return { outcome: 'kept', bytes: 0, detail: 'it is no longer idle' };
             const outputs = await stoppedOutputs(
               candidate,
               config,
@@ -539,7 +464,6 @@ export async function clearStoppedOutputs(
                 operation?.signal,
               ),
               outputs.kept,
-              (output) => (output === metroStoreRoot(path) ? storeInUse(path) : null),
             );
             return {
               outcome: 'done',

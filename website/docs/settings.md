@@ -792,8 +792,7 @@ writes to and from memory: **high** under `disk.minFreeGb` (40 GB), after
 available; **critical** under `disk.criticalFreeGb` (20 GB), or under
 `disk.hardFloorGb` when that is higher, or with critical memory pressure.
 Above normal it runs one pressure ladder until the level
-clears: idle stage for every workspace idle 2 minutes under memory pressure
-(under disk pressure only their build outputs go), parked devices, the
+clears: idle stage for every workspace idle 2 minutes, parked devices, the
 shared caches, the dormant stage, the `node_modules` and Pods of idle worktrees
 that `stim worktree warm` can restore (idle 1 hour at high, 2 minutes at critical),
 then Gradle daemons, unpinned Gradle versions, TMPDIR leftovers and the worktree

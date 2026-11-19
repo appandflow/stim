@@ -2605,9 +2605,9 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   takes the longest-idle workspace first. Disk rungs take only what lies on a
   short volume (stim gc --pressure: every volume):
 
-    1. idle stage: memory pressure idles every workspace idle 2 minutes or
-       more now (\`guide metro\`, IDLE STOP); disk pressure only deletes their
-       build outputs, and later rungs wait for the idle stop at idle.minutes
+    1. idle stage: every workspace idle 2 minutes or more goes into the idle
+       stage now (\`guide metro\`, IDLE STOP), and the regenerable build
+       outputs of workspaces with nothing running are deleted
     2. parked devices: at high the oldest deleted until the level clears, at
        critical all of them
     3. shared caches: at high the build and Metro caches trimmed least

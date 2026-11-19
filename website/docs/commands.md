@@ -2566,10 +2566,7 @@ What each level deletes. A level includes the ones below it.
   emulators (the parked pool stays), its logs archived and, for a linked
   worktree, its `node_modules` and `ios/Pods`.
 - **high**: also the [pressure ladder](./build-caches.md#disk-pressure) at high,
-  to its end. Under memory pressure, idle dev servers and their build outputs
-  (the idle stage); under disk pressure, the build outputs of workspaces idle 2
-  minutes, their dev server and devices left running (later rungs take a
-  running workspace once the idle stage stops it at `idle.minutes`). Parked
+  to its end. Idle dev servers and their build outputs (the idle stage), parked
   devices until the level clears, Build and Metro caches trimmed to half their
   caps, the dormant stage for workspaces idle 10 minutes, the `node_modules` and
   `Pods` of linked worktrees idle 1 hour that `stim worktree warm` can
@@ -2841,8 +2838,8 @@ and interrupted-build `macos/staging-*` directories, and the project's
 git-ignored `android/app/build`, `android/build`, `android/.gradle`, `.build`,
 `android/.cxx`, `android/<module>/.cxx`, `.dd` (a directory laid out as
 Xcode DerivedData) and an Exact app's Cargo `target/`. At high or critical it
-also clears them through the pressure ladder, for a workspace idle 2 minutes or
-more, running or not. A running, building, unverified or hosted
+also clears them through the pressure ladder, for a workspace with nothing
+running idle 2 minutes or more and in the idle stage of a running one. A running, building, unverified or hosted
 macOS app keeps its workspace untouched. The workspace keeps its state, logs,
 devices, ports, `macos/runtime.lock` and its claim set. See
 [workspace build outputs](./build-caches.md#workspace-build-outputs).

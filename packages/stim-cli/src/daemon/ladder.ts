@@ -166,8 +166,13 @@ function recordAction(
 }
 
 /** The bytes of the regenerable build outputs the idle stage would delete in a workspace. */
-export async function idleOutputBytes(path: string, config: Config, launching: Launching): Promise<number> {
-  return pathsBytes((await idleOutputs(path, config, launching)).paths);
+export async function idleOutputBytes(
+  path: string,
+  config: Config,
+  launching: Launching,
+  onVolume?: (path: string) => boolean,
+): Promise<number> {
+  return pathsBytes((await idleOutputs(path, config, launching, onVolume)).paths);
 }
 
 async function pathsBytes(paths: readonly string[]): Promise<number> {
@@ -291,14 +296,9 @@ async function bootedParkedRung(context: RungContext): Promise<void> {
   );
 }
 
-/**
- * Rung 1's disk half: the regenerable outputs of workspaces idle 2 minutes or more, whether or not their dev server or
- * an owned device runs, which keep running.
- */
+/** Rung 1's disk half: the regenerable outputs of workspaces with nothing running, idle 2 minutes or more. */
 async function idleOutputsRung(context: RungContext): Promise<void> {
-  const level = context.level === 'critical' ? 'critical' : 'high';
-  // @ref LLP 0001#the-2-minute-idle-stop-is-for-memory -- outputs go without stopping what runs
-  for (const candidate of await stoppedOutputCandidates(context.config, context, PRESSURE_IDLE_MS, level)) {
+  for (const candidate of await stoppedOutputCandidates(context.config, context, PRESSURE_IDLE_MS)) {
     if (!(await context.stillShort())) return;
     let result: Awaited<ReturnType<typeof clearStoppedOutputs>>;
     if (context.act)
@@ -308,7 +308,6 @@ async function idleOutputsRung(context: RungContext): Promise<void> {
         PRESSURE_IDLE_MS,
         context.operation,
         deletable(context),
-        { reading: context, level },
       );
     else {
       const outputs = await stoppedOutputs(
