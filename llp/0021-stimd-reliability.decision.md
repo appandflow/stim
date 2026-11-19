@@ -252,30 +252,37 @@ shim; one already on the shim keeps `Standard` until `stim service install`
 runs again, and launchd reads a plist only at bootstrap, so after a reboot or a
 login such a unit starts stimd at 20 again.
 
-Work nobody waits on runs its child tools through the `lowPriority` option of
-`runFileAsync`. While the pressure level in the home's daemon snapshot, the
-disk or memory level the ladder uses, is normal, or there is no snapshot, such
-a child runs at low priority: on macOS under `taskpolicy -c utility`
+Maintenance work runs its child tools at low priority by default. Maintenance
+work is the daemon's slow passes lane (the fingerprint precompute and queued
+verification, the dormant stage's dependency step and the maintenance pass),
+the measure thread, and the tick's idle and dormant stages. A child that
+`runFileAsync` starts inside it, at any depth, runs at low priority while the
+pressure level is normal: on macOS under `taskpolicy -c utility`
 (taskpolicy(8)), a QoS clamp on CPU and I/O that its descendants inherit,
-priority 20, the class stimd had before; on Windows as it is; elsewhere under
-`nice -n 19`. On macOS `nice -n 19` lowers only CPU and leaves the child at 31. At high or critical
-pressure the same children run at full priority, since freeing disk or memory
-is then the urgent work. stimd's own job stays `Interactive` at every level:
-launchd sets a job's class from its plist when it bootstraps the job, so the
-level stimd reads later cannot change it. A snapshot that a stopped stimd left
-at high or critical keeps these children at full priority until a stimd ticks
-again.
+priority 20, the class stimd had before; on Linux under `nice -n 19`; on
+Windows at below-normal priority, set on the child after it starts. On macOS
+`nice -n 19` lowers only CPU and leaves the child at 31. The level is the one
+the ladder uses: the level the work started at, or for the measure thread the
+one in the home's daemon snapshot. At high or critical pressure the same
+children run at full priority, since freeing disk or memory is then the urgent
+work.
 
-The children that pass it in the daemon: the maintenance pass's size scans,
-owned emulator sizes, Cargo target planning and trims, the dormant stage's
-build-output sizes and Cargo trims, the dependency and checkout measurements
-through their walk claim, and the fingerprint precompute's and queued
-verification's children. A fingerprint a build reads runs at the caller's
-priority. The same scans and trims in a
-command, such as `stim gc`, are not lowered, since the person waits for them;
-the walks and trims that ran under `nice -n 19` before pass the option in a
-command too. Worker threads cannot lower themselves: Node's `os.setPriority`
-acts on a whole process, so the policy goes on the child tools.
+Inside maintenance work, a stop or a device teardown keeps full priority: the
+idle stage's workspace stop and the maintenance actions that stop a workspace,
+Gradle or watchman or delete a device or runtime run as control path. `adb` is
+never lowered, because a client that finds no server starts the shared adb
+server, which would keep the client's priority for every later install.
+Commands keep the caller's priority, `stim gc` included; a call that passes
+`lowPriority`, such as a size walk under a walk claim, is lowered there too.
+Only `runFileAsync` applies the rule; a child started with `spawn` or the
+synchronous runners keeps the caller's priority.
+
+stimd's own job stays `Interactive` at every level: launchd sets a job's class
+from its plist when it bootstraps the job, so a level stimd reads later cannot
+change it. A snapshot that a stopped stimd left at high or critical keeps the
+measure thread's children at full priority until a stimd ticks again. Worker
+threads cannot lower themselves: Node's `os.setPriority` acts on a whole
+process, so the rule goes on the child tools.
 
 Maintainer decision: "yea stim itself is fine at interactive I am good with", 2026-11-19.
 [Decision on #5925](https://github.com/appandflow/stim/issues/5925#issuecomment-7023460880).
@@ -284,8 +291,8 @@ Maintainer decision: "Can priority be based on disk / ram load, so if high/criti
 [Decision on #5925](https://github.com/appandflow/stim/issues/5925#issuecomment-7023456720).
 
 The implementing lane and its coordinating session chose `taskpolicy -c
-utility` as the low priority, reading the level from the daemon snapshot, and
-which children pass the option.
+utility` as the low priority, the maintenance scope as the default, and the
+control-path exceptions.
 
 ## Collect diagnostics with the existing reports
 
