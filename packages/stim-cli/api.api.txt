@@ -361,6 +361,7 @@
 [*] interface DevicePlacement { @@1 reason: string;
 [*] interface DiscoveredCheckout {
 [*] interface DiscoveredCheckout { @@1 from: string;
+[*] interface DiscoveredCheckout { @@1 node?: NodeCheckout;
 [*] interface DiscoveredCheckout { @@1 origin: DiscoveryOrigin;
 [*] interface DiscoveredCheckout { @@1 path: string;
 [*] interface DiscoveredCheckout { @@1 reduceOnly?: boolean;
@@ -1638,6 +1639,7 @@
 [*] type MaintenanceMode = "off" | "report" | "on";
 [*] type MemoryCacheKind = typeof WATCHMAN_KIND | typeof GRADLE_DAEMONS_KIND;
 [*] type MemoryKeptCode = "in-use" | "busy" | "unknown" | "build-running" | "stim-server";
+[*] type NodeCheckout = "source" | "linked";
 [*] type OffloadCheck = (credential: BuildMachineCredential) => Promise<{
 [*] type OffloadCheck = (credential: BuildMachineCredential) => Promise<{ @@1 capacity: Record<string, unknown> | null;
 [*] type OffloadCheck = (credential: BuildMachineCredential) => Promise<{ @@1 notes?: OffloadProblem[];
