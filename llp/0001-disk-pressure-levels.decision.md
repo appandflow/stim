@@ -167,6 +167,10 @@ memory level is high or critical. Disk pressure alone leaves the idle stage at
 included: the 2-minute stop needs memory measured above normal, and otherwise
 the idle pass still runs at `idle.minutes`.
 
+- Disk pressure keeps the 10-minute activity window of an agent-device command,
+  in the stim-daemon and a measured `stim gc` for a workspace on a short
+  volume, in a forced `--pressure` run for every workspace. Only the threshold
+  for other inactivity stays `idle.minutes`.
 - The ladder's rungs keep needing nothing of a workspace running. Under disk
   pressure alone a running workspace reaches them once the idle stage has
   stopped it at `idle.minutes`.
