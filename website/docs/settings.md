@@ -727,7 +727,8 @@ stim engine rollback        # back to the previous build, pinned until stim engi
 
 The engine fetches a release from the public npm registry, runs its self-test,
 and switches once running builds and hosted native steps have drained; the
-service's stimd restarts on the new build. It never changes pairings,
+service's stimd exits and the service starts it again on the new build, inside
+the service's job (on Linux after systemd's 30 s restart delay). It never changes pairings,
 approvals, Stim Host, the pinned `--env` and `--path-prepend` values or the
 serve route. A client approved for builds or device hosting can ask for the
 same update from its machine with `stim remote update <mac>`. A build whose
@@ -760,7 +761,7 @@ stim settings set server.acceptClientBuilds true   # on the remote machine
 ```
 
 Install waits up to 45 seconds for the port, and first stops the
-service's stimd an engine switch left serving it outside the job; uninstall
+service's stimd an earlier Stim's engine switch left serving it outside the job; uninstall
 refuses while it listens. `stim service status` names it on its `listener:` line
 and in `--json` as `listener`. If stopping the old job
 or starting the new one fails, install restores the previous plist and attempts

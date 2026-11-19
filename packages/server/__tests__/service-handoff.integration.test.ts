@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {
+  execFileSync,
   spawn,
   type ChildProcess,
   type ExecFileException,
@@ -12,8 +13,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readClaimSet } from '@stim-cli/core/ownership-claim';
 import { inspectProcessIdentity } from '@stim-cli/core/process-identity';
-import { isJsonObject, stimBuildId, stimdClaimRoot } from '@stim-cli/core/state';
+import { isJsonObject, LABEL_VARIABLE, stimBuildId, stimdClaimRoot } from '@stim-cli/core/state';
 import { renderPlist } from '../src/service-plist.ts';
+import { renderUnit } from '../src/service-unit.ts';
 import { installJob, serviceStatus } from '../src/service.ts';
 
 const launchd = vi.hoisted((): { job: ChildProcess | null; start: (() => ChildProcess) | null } => ({
@@ -98,12 +100,17 @@ const HOST = `const child = require('node:child_process').spawn(process.argv[1],
 process.on('SIGTERM', () => {});
 child.on('exit', (code) => process.exit(code ?? 1));`;
 
+const parentOf = (pid: number) =>
+  Number(execFileSync('ps', ['-o', 'ppid=', '-p', String(pid)], { encoding: 'utf8' }).trim());
+
 /**
- * A Stim home, an engine store with two builds of this checkout's `stim` dist, and a LaunchAgent for `label`. The
- * launchctl mock runs its job as `HOST <stimd>` in its own process group with `XPC_SERVICE_NAME` set to the label, so
- * the stimd is the child of the job's process as under Stim Host.
+ * A Stim home, an engine store with three builds of this checkout's `stim` dist (and its `bin/stimd` shim with `shim`), and a
+ * LaunchAgent (macOS) or systemd user unit (Linux) for `label` that runs the shim. The mock runs the job as
+ * `HOST <stimd of the current build>` in its own process group with `XPC_SERVICE_NAME` or `STIM_SERVICE_LABEL` set to
+ * the label, so the stimd is the child of the job's process as under Stim Host, and `runJob` starts it again when it
+ * exits, as KeepAlive and `Restart=always` do.
  */
-function fixture(label: string, port: number) {
+function fixture(label: string, port: number, shim = false) {
   const scratch = mkdtempSync(join(tmpdir(), 'stim-service-handoff-'));
   const home = join(scratch, 'home');
   const store = join(scratch, 'engine');
@@ -126,9 +133,17 @@ function fixture(label: string, port: number) {
   };
   const first = makeBuild('first');
   const next = makeBuild('next');
-  const point = (build: string) =>
+  const last = makeBuild('last');
+  let current = first;
+  const point = (build: string) => {
+    current = build;
     writeFileSync(join(store, 'current.json'), JSON.stringify({ format: 1, dir: build, version: build }));
+  };
   point(first);
+  if (shim) {
+    mkdirSync(join(store, 'bin'));
+    writeFileSync(join(store, 'bin', 'stimd'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  }
   const env = {
     HOME: scratch,
     USERPROFILE: scratch,
@@ -146,28 +161,31 @@ function fixture(label: string, port: number) {
       detached: true,
     });
   const serviceArgs = ['__stimd', '--mode', 'on', '--service', '--loopback-only', '--port', String(port)];
-  const stimd = (build: string) => cli(build, serviceArgs, { XPC_SERVICE_NAME: label });
+  const jobEnv = { [process.platform === 'darwin' ? 'XPC_SERVICE_NAME' : LABEL_VARIABLE]: label };
+  const stimd = (build: string) => cli(build, serviceArgs, jobEnv);
   vi.stubEnv('HOME', scratch);
   vi.stubEnv('STIM_HOME', join(scratch, 'caller'));
   vi.stubEnv('STIM_ENGINE_ROOT', store);
   mkdirSync(join(scratch, 'Library', 'LaunchAgents'), { recursive: true });
-  const writeUnit = (unitLabel: string) =>
-    writeFileSync(
-      join(scratch, 'Library', 'LaunchAgents', `${unitLabel}.plist`),
-      renderPlist({
-        label: unitLabel,
-        host: null,
-        node: process.execPath,
-        script: join(store, 'bin', 'stimd'),
-        port,
-        env: [],
-        pathPrepend: [],
-        environment: { STIM_HOME: home },
-        logPath: join(scratch, `${unitLabel}.log`),
-        workingDirectory: scratch,
-        serve: null,
-      }),
-    );
+  mkdirSync(join(scratch, '.config', 'systemd', 'user'), { recursive: true });
+  const writeUnit = (unitLabel: string) => {
+    const spec = {
+      label: unitLabel,
+      host: null,
+      node: process.execPath,
+      script: join(store, 'bin', 'stimd'),
+      port,
+      env: [],
+      pathPrepend: [],
+      environment: { STIM_HOME: home },
+      logPath: join(scratch, `${unitLabel}.log`),
+      workingDirectory: scratch,
+      serve: null,
+    };
+    if (process.platform === 'darwin')
+      writeFileSync(join(scratch, 'Library', 'LaunchAgents', `${unitLabel}.plist`), renderPlist(spec));
+    else writeFileSync(join(scratch, '.config', 'systemd', 'user', `${unitLabel}.service`), renderUnit(spec));
+  };
   writeUnit(label);
   const record = () => {
     try {
@@ -197,21 +215,44 @@ function fixture(label: string, port: number) {
     throw new Error(`timed out waiting for ${what} to answer on ${port}`);
   };
 
-  const runJob = async () => {
-    launchd.start = () => stimd(first);
-    launchd.job = launchd.start();
+  /**
+   * Starts the job on the current build, and again `restartMs` after its process exits until the job is stopped, as
+   * KeepAlive and `Restart=always` with `RestartSec` do.
+   */
+  const keepJob = (restartMs = 0) => {
+    const start = () => {
+      const job = stimd(current);
+      job.once('exit', () =>
+        setTimeout(() => {
+          if (launchd.job === job) launchd.job = start();
+        }, restartMs),
+      );
+      return job;
+    };
+    launchd.start = start;
+    launchd.job = start();
+  };
+
+  const runJob = async (restartMs = 0) => {
+    keepJob(restartMs);
     const started = await until('the job stimd', () => record());
     await answers('the job stimd');
     return started;
   };
 
-  /** Points the engine at the next build and returns the stimd that `initial` hands the home to. */
-  const switchEngine = async (initial: { pid: number; socket: string }) => {
-    point(next);
+  /** The process the job runs now, while it runs. */
+  const jobPid = () => {
+    const job = launchd.job;
+    return job?.pid && job.exitCode === null && job.signalCode === null ? job.pid : null;
+  };
+
+  /** Points the engine at `build` (the next one by default) and returns the stimd that holds the home after `initial`. */
+  const switchEngine = async (initial: { pid: number; socket: string }, build = next) => {
+    point(build);
     let polls = 0;
     return until('the successor', () => {
-      const current = record();
-      if (current && current.pid !== initial.pid && current.build === next) return current;
+      const held = record();
+      if (held && held.pid !== initial.pid && held.build === build) return held;
       if (polls++ % 20 === 0) {
         const nudge = connect(initial.socket);
         nudge.on('error', () => {});
@@ -222,16 +263,20 @@ function fixture(label: string, port: number) {
   };
 
   /**
-   * Runs the unit's job on the first build, points the engine at the next one, and returns the successor once the job's
-   * stimd handed the home to it and the restarted job waits on it.
+   * Leaves the home as an engine switch on an earlier build did: the next build's stimd, started with
+   * `--unit-successor <label>` outside the job, holds the home, and the unit's job waits on it. Returns that stimd once
+   * the job's process has had time to find the home held and attach.
    */
   const handOver = async () => {
-    const successor = await switchEngine(await runJob());
-    const ended = launchd.job;
-    if (ended && ended.exitCode === null && ended.signalCode === null) await once(ended, 'exit');
-    launchd.start = () => stimd(next);
-    launchd.job = launchd.start();
+    point(next);
+    cli(next, [...serviceArgs, '--unit-successor', label]);
+    const successor = await until('the successor outside the job', () => record());
     await answers('the successor');
+    keepJob();
+    const waiter = await until('the job process', () => jobPid());
+    await new Promise((done) => setTimeout(done, 8000));
+    assert.equal(jobPid(), waiter, 'the job process exited instead of waiting on the successor');
+    assert.equal(record()?.pid, successor.pid);
     return successor;
   };
 
@@ -333,6 +378,11 @@ function fixture(label: string, port: number) {
 
   return {
     home,
+    last,
+    answers,
+    command: () => cli(next, ['__stimd', '--mode', 'on']),
+    jobPid,
+    record,
     runJob,
     runServe,
     runDesktop,
@@ -494,4 +544,80 @@ describe.skipIf(process.platform !== 'darwin')('a service after an engine handof
       await service.cleanup();
     }
   }, 360_000);
+});
+
+describe.skipIf(process.platform === 'win32')("an engine switch under a service unit's job", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  const expectServedInJob = (
+    service: ReturnType<typeof fixture>,
+    replaced: { pid: number },
+    build: string,
+    label: string,
+  ) => {
+    const held = service.record();
+    expect(held?.build).toBe(build);
+    expect(gone(replaced.pid)).toBe(true);
+    const holder = homeClaim(service.home);
+    expect(holder?.owner.pid).toBe(held?.pid);
+    expect(holder?.details.serviceUnit).toBe(label);
+    expect(parentOf(held!.pid)).toBe(service.jobPid());
+    const events = readFileSync(join(service.home, 'daemon', 'daemon.ndjson'), 'utf8');
+    expect(events).toContain('"event":"successor_job"');
+    expect(events).not.toContain('"event":"successor_bound"');
+  };
+
+  it('restarts the job on the new build instead of starting a successor outside it', async () => {
+    const label = 'dev.stim.handoff-job-switch';
+    const port = await freePort();
+    const service = fixture(label, port, true);
+    try {
+      const initial = await service.runJob();
+      const job = service.jobPid();
+      const successor = await service.switchEngine(initial);
+      await service.answers('the restarted job');
+      expect(service.jobPid()).not.toBe(job);
+      expect(successor.pid).toBe(service.record()?.pid);
+      expectServedInJob(service, initial, successor.build, label);
+    } finally {
+      await service.cleanup();
+    }
+  }, 240_000);
+
+  it('a successor an earlier build started outside the job leaves the home to the job at its own switch', async () => {
+    const label = 'dev.stim.handoff-job-heal';
+    const port = await freePort();
+    const service = fixture(label, port, true);
+    try {
+      const outside = await service.handOver();
+      expect(parentOf(outside.pid)).not.toBe(service.jobPid());
+      const successor = await service.switchEngine(outside, service.last);
+      await service.answers('the restarted job');
+      expectServedInJob(service, outside, successor.build, label);
+    } finally {
+      await service.cleanup();
+    }
+  }, 240_000);
+
+  it('a stimd a command starts while the job restarts leaves the home to the job', async () => {
+    const label = 'dev.stim.handoff-job-gap';
+    const port = await freePort();
+    const service = fixture(label, port, true);
+    try {
+      const initial = await service.runJob(3000);
+      const switched = service.switchEngine(initial);
+      await until('the job stimd to exit', () => gone(initial.pid));
+      const command = service.command();
+      const exited = once(command, 'exit');
+      const successor = await switched;
+      await service.answers('the restarted job');
+      expectServedInJob(service, initial, successor.build, label);
+      await exited;
+      expect(homeClaim(service.home)?.owner.pid).toBe(successor.pid);
+    } finally {
+      await service.cleanup();
+    }
+  }, 240_000);
 });

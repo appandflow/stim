@@ -122,6 +122,23 @@ export function stimdSuccessorMissingFile(home?: string): string {
   return join(stimdRunDir(home), 'successor-missing.json');
 }
 
+/**
+ * `run/job-restart.json`: a service unit's stimd left the home for the unit's job to take back, so other stimds wait for
+ * that job instead of taking the home first.
+ */
+export function stimdJobRestartFile(home?: string): string {
+  return join(stimdRunDir(home), 'job-restart.json');
+}
+
+export type JobRestart = { at: number; pid: number; label: string };
+
+export function readJobRestart(home?: string): JobRestart | null {
+  const record = readJsonObject(stimdJobRestartFile(home));
+  return record && typeof record.at === 'number' && typeof record.pid === 'number' && typeof record.label === 'string'
+    ? { at: record.at, pid: record.pid, label: record.label }
+    : null;
+}
+
 export type SuccessorMissing = { at: number; pid: number; build: string; reason: string };
 
 export function readSuccessorMissing(home?: string): SuccessorMissing | null {

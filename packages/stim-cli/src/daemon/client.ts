@@ -1926,10 +1926,10 @@ export async function ensureNet(share: boolean, env: NodeJS.ProcessEnv = process
 
 /** The `net.ensure` params stimd reads, named field by field so no caller's option names reach the wire. */
 function netEnsureParams(
-  serve: Partial<ServeOptions> & { service?: boolean; envValues?: Record<string, string> },
+  serve: Partial<ServeOptions> & { service?: boolean; unit?: string; envValues?: Record<string, string> },
 ): Record<string, unknown> {
-  const { shareOnly, port, loopbackOnly, extraEnv, pathPrepend, service, envValues } = serve;
-  return { share: shareOnly === true, port, loopbackOnly, extraEnv, pathPrepend, service, envValues };
+  const { shareOnly, port, loopbackOnly, extraEnv, pathPrepend, service, unit, envValues } = serve;
+  return { share: shareOnly === true, port, loopbackOnly, extraEnv, pathPrepend, service, unit, envValues };
 }
 
 /**
@@ -1938,10 +1938,11 @@ function netEnsureParams(
  * that already runs keeps its own port and options, except for a service (`service`), whose ask moves it to the
  * service's options and sends the values of its bare `--env` names, which the net thread it starts uses and no
  * successor's arguments carry. The connection is closed at once when the answer is not a listening one, or for a
- * service, not on its port.
+ * service, not on its port. `unit` names the service unit whose job runs this process and the engine's shim, so a
+ * stimd outside that job leaves the home to the job at its engine switch.
  */
 export function serveThroughStimd(
-  params: ServeOptions & { service: boolean },
+  params: ServeOptions & { service: boolean; unit?: string },
   onAnswer: (answer: NetAnswer | null) => void,
 ): Promise<void> {
   const envValues = params.service
