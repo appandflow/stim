@@ -86,15 +86,9 @@ Some Linux command runners reap detached descendants when a call ends, killing
 Metro after stim start succeeds. If that happens, read guide metro, LINUX
 RUNNERS THAT REAP BACKGROUND PROCESSES, for the user-systemd service recipe.
 
-For a project using EAS development builds, read stim guide lifecycle eas to
-select a profile from eas.json for the requested target, then run
-stim ios --eas-profile <name> or stim android --eas-profile <name>.
-Ask the user if the profile choice is ambiguous. A miss stops with
-STIM_EAS_BUILD_MISSING and an EAS build command. Run that command only when the
-session authorizes the potentially billable build, then retry Stim. The
-presence of eas.json does not select EAS or authorize building.
-Physical --device targets are supported. Follow EAS device-registration and
-rebuild remedies only when the session authorizes those account changes.
+For a project using EAS development builds, read stim guide lifecycle eas
+before building: it covers choosing a profile and the approval a billable
+build needs.
 
 To learn whether the next build is a cache hit and how long it should take,
 without building, run stim ios --plan (or stim android --plan); see stim guide
@@ -176,11 +170,8 @@ RULES DURING THE LOOP
 - A successful stim reload confirms that the request was sent, not that new
   JavaScript loaded or the screen recovered. Verify the expected UI on the
   reported device and inspect stim logs --errors before claiming recovery.
-- If launch reports an app error but also says the native process is alive,
-  the app did not crash. Fix JavaScript or TypeScript and use Fast Refresh. If
-  the error screen remains, follow the printed reload remedy instead of
-  running ios or android again. If launch says FATAL because the app process exited,
-  fix the crash and run the platform command again; Metro cannot restart it.
+- If launch says FATAL because the app process exited, fix the crash and run
+  the platform command again; Metro cannot restart it.
 - ios and android install the app, launch it, and check readiness. A running
   copy of the app is stopped and launched fresh, so in-app state does not
   survive the run. Trust the exact device, app, Metro, and launch facts in the

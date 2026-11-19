@@ -2,7 +2,7 @@
   "unit": "bytes of UTF-8 text printed by stim guide without the status block; the skill is the file size",
   "skill": 1000,
   "index": 2000,
-  "reactNativePath": 13550,
+  "reactNativePath": 12750,
   "defaults": {
     "section": 10000,
     "topic": 16000
@@ -20,7 +20,7 @@
     "macos": 35750
   },
   "sections": {
-    "agent react-native": 8750,
+    "agent react-native": 8000,
     "agent device": 3750,
     "agent ownership": 5300,
     "agent report": 1500,
