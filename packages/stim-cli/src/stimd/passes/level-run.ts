@@ -32,6 +32,7 @@ import {
   type DiscoveredCheckout,
 } from '../../workspace/discovery.ts';
 import { listedRoots } from '../../commands/gc/worktrees.ts';
+import { forgetGitReads } from '../../workspace/git-reads.ts';
 
 /** One thing a maintenance run at a level did, would do, or kept, with what it freed or would free. */
 export interface LevelRunAction {
@@ -136,6 +137,7 @@ export async function runMaintenanceAtLevel({
   const blocked: string[] = [];
   const take = (action: LevelRunAction) => {
     actions.push(action);
+    if (action.outcome === 'done' || action.outcome === 'failed') forgetGitReads(operation);
     onAction?.(action);
   };
   const found = await discoverCheckouts(loadConfig(), listedRoots(), operation);

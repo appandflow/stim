@@ -56,6 +56,7 @@ import {
 import { readWorkspaceState, updateWorkspaceStateAsync } from '../workspace/workspace-state.ts';
 import { deleteOutputs, idleOutputs, revivable, writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
 import { timedStep, type DaemonLog, type StepTally } from './step-timing.ts';
+import { forgetGitReads } from '../workspace/git-reads.ts';
 
 const DAY_MS = 86_400_000;
 const MINUTE_MS = 60_000;
@@ -572,6 +573,7 @@ export async function enterDormantStage(
   operation?: StimContext,
   deletable?: (path: string) => boolean,
 ): Promise<DormantOutcome> {
+  forgetGitReads(operation);
   const path = action.target;
   const thresholdMs = dormantThresholdMs(action);
   if (thresholdMs === null) return { status: 'kept', bytes: 0, detail: 'the action names no idle threshold' };

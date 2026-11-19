@@ -10,7 +10,7 @@ import { listAllIosSimsAsync, type IosSimRecord } from '../../devices/ios.ts';
 import { leaseIsExpired, listLeaseFiles } from '../../engine/device-lease.ts';
 import { isTimeoutError, type ExecOptions } from '../../exec.ts';
 import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
-import { gitQuiet, gitQuietAsync } from '../../workspace/git.ts';
+import { gitQuiet } from '../../workspace/git.ts';
 import { childEnvironment } from '../../workspace/git-read.ts';
 import { MAINTENANCE_LOG_NAME, settingDefinition } from '@stim-cli/core/state';
 import { getProject, loadConfig } from '../../workspace/config.ts';
@@ -35,9 +35,10 @@ import {
   type PullRequestLookup,
 } from '../../workspace/pull-request.ts';
 import {
+  branchStatusAsync,
   dirtyPathsAsync,
+  gitDirAsync,
   hasPopulatedSubmodulesAsync,
-  hasUncommittedWorkAsync,
   listWorktrees,
   listWorktreesAsync,
   LOCKED_REASON,
@@ -71,6 +72,7 @@ import { listWorkspaceDirs } from './workspaces.ts';
 import { eachLimited, readConcurrency } from './limited.ts';
 import { phase } from './progress.ts';
 import { GC_OUTPUT, type GcOutput } from './results.ts';
+import { sharedRead } from '../../workspace/git-reads.ts';
 
 export const DEFAULT_WORKTREE_IDLE_DAYS = 7;
 const DIRTY_PATHS_SHOWN = 3;
@@ -559,15 +561,8 @@ export async function worktreeActivityOfAsync(
   keys: readonly string[],
   operation?: StimContext,
 ): Promise<WorktreeActivity | null> {
-  const gitDir = (
-    await gitQuietAsync(path, ['rev-parse', '--path-format=absolute', '--git-dir'], {
-      ...(operation ? childEnvironment(operation.env) : {}),
-      signal: operation?.signal,
-      declareFor: operation,
-      cwd: operation?.cwd,
-      killSignal: 'SIGKILL',
-    })
-  )?.trim();
+  const gitDir =
+    (await gitDirAsync(path, { env: operation?.env, signal: operation?.signal, declareFor: operation })) ?? undefined;
   return activityFromGitDir(gitDir, keys);
 }
 
@@ -884,11 +879,17 @@ export async function collectWorktreeSweep({
     const linked = !('refusal' in source) && entry !== null && source.path !== entry.path;
     const managed = roots.some((root) => registry.has(root));
     const discoveredOnly = !managed && roots.some((root) => discoveredPaths.has(root));
-    const gitAnswered = linked ? await unlessTimedOut(() => hasUncommittedWorkAsync(path, read), null) : null;
-    const porcelain = await porcelainOf(path, gitAnswered, operation);
+    const fact = <T>(name: string, readFact: () => Promise<T>) =>
+      sharedRead(operation, `sweep\0${name}\0${path}`, readFact);
+    const status = linked
+      ? await fact('status', () => unlessTimedOut(() => branchStatusAsync(path, read), null))
+      : null;
+    const gitAnswered = linked ? (status?.dirty ?? null) : null;
+    const porcelain = await fact('porcelain', () => porcelainOf(path, gitAnswered, operation));
     // @ref LLP 0004#removing-a-discovered-worktree-needs-more-evidence -- no pod churn exclusion
     const podChurn = linked && !discoveredOnly ? provenPodChurn(path, porcelain, [], keys) : [];
-    const hiddenEdit = linked && !discoveredOnly ? await hiddenEditHold(path, operation?.signal) : null;
+    const hiddenEdit =
+      linked && !discoveredOnly ? await fact('hidden-edit', () => hiddenEditHold(path, operation?.signal)) : null;
     const dirty = linked ? dirtyLines(porcelain, podChurn).length : 0;
     const archiveDirty = dirty > 0 && managed && !('refusal' in worktreeArchiveLimits(path, operation?.env));
     let activity = linked ? await worktreeActivityOfAsync(path, keys, operation) : null;
@@ -896,7 +897,7 @@ export async function collectWorktreeSweep({
       const edited = await uncommittedActivityOf(path, operation);
       activity = edited === 'unreadable' ? null : newerActivity(activity, edited);
     }
-    const head = linked ? await resolveFullRefAsync(path, 'HEAD', read) : null;
+    const head = linked ? (status ? status.head : await resolveFullRefAsync(path, 'HEAD', read)) : null;
     const facts: WorktreeFacts = {
       source: 'refusal' in source ? source : linked ? 'linked' : 'source',
       bare: Boolean(entry?.bare),
@@ -908,8 +909,14 @@ export async function collectWorktreeSweep({
       porcelain,
       podChurn,
       hiddenEdit,
-      unpushed: linked ? await unlessTimedOut(() => unpushedCommitsAsync(path, read), null) : null,
-      submodules: linked ? await unlessTimedOut(() => hasPopulatedSubmodulesAsync(path, read), null) : false,
+      unpushed: linked
+        ? await fact('unpushed', () =>
+            unlessTimedOut(() => unpushedCommitsAsync(path, read, status ?? undefined), null),
+          )
+        : null,
+      submodules: linked
+        ? await fact('submodules', () => unlessTimedOut(() => hasPopulatedSubmodulesAsync(path, read), null))
+        : false,
       inUse: linked ? stimCliUseOf(path, canonicalPath, cli) : [],
       idleDays,
       merge: null,
