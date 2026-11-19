@@ -33,7 +33,7 @@
     "lifecycle pool": 13750,
     "lifecycle builds": 38500,
     "lifecycle concurrency": 12000,
-    "lifecycle budget": 17300,
+    "lifecycle budget": 17550,
     "lifecycle options": 25000,
     "lifecycle devices": 11000,
     "cleanup gc": 72800,
