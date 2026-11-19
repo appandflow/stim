@@ -300,12 +300,14 @@ describe.skipIf(process.platform === 'win32')(
       [
         'a build wrote a profile in that time',
         (target: string) => utimesSync(join(target, 'debug'), new Date(), new Date()),
+        [],
       ],
       [
         'a build holds a profile lock',
         (target: string) => {
           heldLock = join(target, 'debug', '.cargo-lock');
         },
+        [expect.objectContaining({ outcome: 'kept', detail: expect.stringContaining('.cargo-lock') })],
       ],
       [
         'a trim left a directory marked not restored',
@@ -313,23 +315,19 @@ describe.skipIf(process.platform === 'win32')(
           mkdirSync(join(target, '.stim-trimmed', '0'), { recursive: true });
           writeFileSync(join(target, '.stim-trimmed', 'NOT-RESTORED'), '');
         },
+        [],
       ],
       [
         'a trim moved a directory aside for a person',
         (target: string) => mkdirSync(join(target, '.stim-not-restored-1-0')),
+        [],
       ],
-    ])('an idle untagged Cargo target/ stays whole when %s', async (_, arrange) => {
+    ])('an idle untagged Cargo target/ stays whole when %s', async (_, arrange, expected) => {
       const root = onlyTarget(cargo('app', 'untagged'));
       idleFor(3, root);
       arrange(join(root, 'target'));
 
-      const actions = await gc();
-
-      if (heldLock !== null)
-        expect(actions).toEqual([
-          expect.objectContaining({ outcome: 'kept', detail: expect.stringContaining('.cargo-lock') }),
-        ]);
-      else expect(actions).toEqual([]);
+      expect(await gc()).toEqual(expected);
       expect(existsSync(join(root, 'target', 'debug', '.fingerprint', 'unit'))).toBe(true);
     });
 
