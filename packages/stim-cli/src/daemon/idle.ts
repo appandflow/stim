@@ -71,8 +71,8 @@ export interface IdlePassInput {
   pressure?: { level: 'high' | 'critical'; reasons: string[] };
   /**
    * Set while disk alone raises the level, the threshold staying `idle.minutes`: an agent-device command holds a
-   * workspace for 10 minutes, and the idle stage deletes only outputs on `volumes`; with `volumes`, both apply only to a
-   * workspace on one of those devices. Without `volumes` every volume counts as short.
+   * workspace for 10 minutes, and the idle stage deletes only outputs on `volumes`. With `volumes`, both apply only to a
+   * workspace whose checkout or Stim workspace folder is on one of them; without, every volume counts as short.
    */
   disk?: { volumes?: ReadonlySet<number> };
   /** A workspace the pass never takes: the one the running command belongs to. */
@@ -97,6 +97,11 @@ function thresholdWhy(input: Pick<IdlePassInput, 'pressure'>, minutes: number): 
   return input.pressure
     ? `pressure level ${input.pressure.level}: ${input.pressure.reasons.join('; ')}`
     : `${IDLE_SETTING} is ${minutes}`;
+}
+
+/** Whether the workspace's checkout or its Stim workspace folder lies on one of `volumes`. */
+export function onDiskVolumes(path: string, volumes: ReadonlySet<number>): boolean {
+  return onShortVolume([path, workspaceDir(path)], volumes);
 }
 
 /** Whether this Stim home owns the device: config records alone do not prove it in a scoped home. */
@@ -177,11 +182,8 @@ async function decide(
   const found = await candidate(path, project, input);
   if (!found.runs || 'kept' in found) return { candidate: found, decision: null };
   const now = Date.now();
-  const { disk } = input;
   // @ref LLP 0001#the-2-minute-idle-stop-is-for-memory -- disk pressure keeps the agent-device window, not the threshold
-  const pressured =
-    Boolean(input.pressure) ||
-    (disk !== undefined && (!disk.volumes || onShortVolume([path, workspaceDir(path)], disk.volumes)));
+  const pressured = Boolean(input.pressure) || input.disk !== undefined;
   const evidence = await idleStopEvidence(path, found.booted, {
     now,
     idleMs: found.idleMs,
@@ -392,10 +394,12 @@ export async function runIdlePass(input: IdlePassInput): Promise<DaemonWorkspace
   const decisions: DaemonWorkspaceDecision[] = [];
   const config = input.config;
   if (!config) return decisions;
+  const { disk, ...elsewhere } = input;
   for (const [path, project] of Object.entries(config.projects)) {
     let entry: DaemonWorkspaceDecision;
+    const here = disk?.volumes && !onDiskVolumes(path, disk.volumes) ? elsewhere : input;
     try {
-      const { candidate: found, decision } = await decide(path, project, input, false);
+      const { candidate: found, decision } = await decide(path, project, here, false);
       if (!found.runs) continue;
       const last = decision?.last ? { basis: decision.last.basis, at: new Date(decision.last.at).toISOString() } : null;
       if (!decision) entry = { path, lastActivity: last, outcome: 'kept', detail: 'kept' in found ? found.kept : '' };
@@ -409,7 +413,7 @@ export async function runIdlePass(input: IdlePassInput): Promise<DaemonWorkspace
           detail: `no activity for ${Math.floor(decision.idleMs / MINUTE_MS)} minutes; daemon.mode report acts on nothing`,
         };
       } else {
-        const result = await enterIdleStage(path, project, config, input);
+        const result = await enterIdleStage(path, project, config, here);
         entry = { path, lastActivity: last, ...result };
       }
     } catch (error) {

@@ -149,6 +149,32 @@ test('the idle stage deletes the git-ignored .dd and CMake output of a workspace
   expect(existsSync(join(root, 'build-device', 'Build'))).toBe(true);
 });
 
+test('under disk pressure on another volume only, a workspace stopped at idle.minutes loses all its outputs', async () => {
+  const { root, udid, derivedData } = bootedWorkspace('elsewhere', 20 * MINUTE_MS);
+  execSync('git init -q', { cwd: root });
+  writeFileSync(join(root, '.gitignore'), '.dd/\n');
+  writeDerivedData(join(root, '.dd'));
+  const config = loadConfig();
+  const devices = await collectOwnedDeviceActivityAsync(config, sims, Date.now());
+
+  const decisions = await runIdlePass({
+    config,
+    now: Date.now(),
+    sims,
+    simsError: null,
+    devices,
+    act: true,
+    log: () => {},
+    disk: { volumes: new Set([4_242_424]) },
+  });
+
+  expect(decisions).toEqual([expect.objectContaining({ path: root, outcome: 'idle' })]);
+  expect(tornDown).toEqual([udid]);
+  expect(readIdleStage(readWorkspaceState(root))).toMatchObject({ idleMinutes: 15 });
+  expect(existsSync(join(root, '.dd'))).toBe(false);
+  expect(existsSync(derivedData)).toBe(false);
+});
+
 test('under disk pressure alone a workspace stopped at idle.minutes loses only the outputs on the short volume', async () => {
   const { root, udid, derivedData } = bootedWorkspace('split', 20 * MINUTE_MS);
   execSync('git init -q', { cwd: root });

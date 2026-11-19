@@ -22,7 +22,7 @@ import { runBootedParkedPass } from './booted-parked.ts';
 import { runDormantDependencies } from './dependencies.ts';
 import { createFingerprintPrecompute, type PrecomputeInput } from './fingerprint-precompute.ts';
 import { daemonMode } from './mode.ts';
-import { runIdlePass, type IdlePassInput } from './idle.ts';
+import { onDiskVolumes, runIdlePass, type IdlePassInput } from './idle.ts';
 import { watchedStep } from './step-timing.ts';
 import { idleOutputBytes, runLadder } from './ladder.ts';
 import { measureDisk, measureMemory, measureTick, type TickMeasurement } from './measure.ts';
@@ -585,7 +585,7 @@ export async function runForcedLadder({
                     operation,
                     operation?.signal,
                   ),
-                  volumes ? (path) => onShortVolume([path], volumes) : undefined,
+                  volumes && onDiskVolumes(entry.path, volumes) ? (path) => onShortVolume([path], volumes) : undefined,
                 )
               : 0),
           detail: entry.outcome === 'would-idle' ? 'stim gc would do this' : entry.detail,

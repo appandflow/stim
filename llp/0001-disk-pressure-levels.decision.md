@@ -143,8 +143,9 @@ its Stim workspace folder, whose logs it archives, or an owned device's data
 lies on such a volume, and loses only the devices there. Rung 8 and rung 9 take an item only on a volume
 under the critical level (LLP 0003). Under pressure from disk alone, the
 activity pass, which then stops a workspace at `idle.minutes`, deletes only
-its outputs on such a volume; memory pressure idles every workspace and
-deletes all its outputs. The ladder a build runs for its
+the outputs on such a volume of a workspace with its checkout or Stim
+workspace folder there, and all outputs of any other; memory pressure idles
+every workspace and deletes all its outputs. The ladder a build runs for its
 headroom (LLP 0006) plans its Cargo trim at high and treats only the build's
 volume as short. The Gradle, Kotlin and watchman stops relieve memory and are
 not gated. `stim gc --pressure` treats every volume as short; `stim gc` at the
