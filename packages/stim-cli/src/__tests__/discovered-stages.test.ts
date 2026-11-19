@@ -146,6 +146,27 @@ describe('a discovered checkout in the idle stages', () => {
     expect(existsSync(join(root, 'notes.md'))).toBe(true);
   });
 
+  it("the daemon's hourly dormant pass clears the build outputs of an idle checkout at normal pressure", async () => {
+    const root = cargoWorkspace();
+    const config: Config = { maintenance: { discoverRoots: [join(base, 'roots')] }, projects: {}, repos: {} };
+    saveConfig(config);
+
+    const actions = await runDormantDependencies({
+      config,
+      act: true,
+      log: () => {},
+      ...reading,
+      operation: testContext(),
+      cadence: new BigInt64Array(1),
+      outputs: true,
+    });
+    expect(actions).toContainEqual(
+      expect.objectContaining({ kind: 'delete-build-outputs', target: root, outcome: 'done' }),
+    );
+    expect(existsSync(join(root, 'target'))).toBe(false);
+    expect(existsSync(join(root, 'notes.md'))).toBe(true);
+  });
+
   it('keeps the target/ of a Cargo workspace root edited within idle.dormantDays', async () => {
     const root = cargoWorkspace();
     writeFileSync(join(root, 'notes.md'), 'edited now');

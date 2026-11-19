@@ -429,6 +429,45 @@ export async function clearStoppedOutputs(
   return run.ran ? run.value : { outcome: 'kept', bytes: 0, detail: `in use: ${run.reasons.join('; ')}` };
 }
 
+/**
+ * The dormant reduction's build-output step for `candidates` already read idle `thresholdMs`: each one holding
+ * regenerable build outputs goes through `clearStoppedOutputs`, as in `stim gc`.
+ */
+export async function clearDormantOutputs(
+  candidates: readonly StageCandidate[],
+  config: Config,
+  thresholdMs: number,
+  input: Pick<IdlePassInput, 'act' | 'log'> & { operation?: StimContext },
+): Promise<DaemonLadderAction[]> {
+  const actions: DaemonLadderAction[] = [];
+  for (const candidate of candidates) {
+    if (!(await hasOutputs(candidate.path))) continue;
+    const result = input.act
+      ? await clearStoppedOutputs(candidate, config, thresholdMs, input.operation)
+      : { outcome: 'would' as const, bytes: 0, detail: 'daemon.mode report acts on nothing' };
+    if (!result) continue;
+    const restore =
+      result.outcome === 'done'
+        ? { restore: 'the next stim ios or stim android, from the build cache when nothing changed' }
+        : {};
+    actions.push({
+      rung: 4,
+      kind: 'delete-build-outputs',
+      target: candidate.path,
+      workspace: candidate.path,
+      ...result,
+      ...restore,
+    });
+    input.log(
+      result.outcome === 'failed' ? 'warn' : 'info',
+      'dormant_outputs',
+      `dormant stage: ${result.outcome} ${candidate.path} (${formatBytes(result.bytes)} freed): ${result.detail}`,
+      { workspace: candidate.path, outcome: result.outcome, bytes: result.bytes, ...restore },
+    );
+  }
+  return actions;
+}
+
 function ownsDevice(project: ProjectRecord): boolean {
   return projectDeviceSlots(project).some(({ platforms }) => platforms.ios?.owned || platforms.android?.owned);
 }
