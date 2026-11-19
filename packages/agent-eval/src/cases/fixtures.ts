@@ -58,10 +58,19 @@ export const workspaceRules: ScriptRule[] = [
   {
     argv: ['status'],
     prefix: true,
-    stdout: 'demo (feature/eval)  active\n  metro       port 8082, running\n  ios         no device yet\n',
+    stdout:
+      'demo (feature/eval)  active\n  metro       port 8082, running\n  ios         stim-demo (iPhone 17 / iOS 26.5) BF2A3C4D-B5A6-4789-9ABC-000000000001, booted\n',
     exit: 0,
     source: 'synthetic',
     note: 'Written by hand; agents often run status first, and the baseline logged it as unscripted in most trials.',
+  },
+  {
+    argv: ['agent-device'],
+    prefix: true,
+    stdout: '@e1 [application] demo\n  @e2 [view]\n    @e3 [text] "Hello"\n',
+    exit: 0,
+    source: 'synthetic',
+    note: 'Every agent-device action answers with the same short accessibility snapshot of a healthy screen, written by hand.',
   },
   {
     argv: ['stop'],
