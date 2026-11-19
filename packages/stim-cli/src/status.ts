@@ -602,11 +602,11 @@ export const unresolvedBuildSlotLine = (
 ): string => `build slot ${slot ?? '?'} is unresolved: ${unresolved}. If nothing is using it, run: ${removeCommand}`;
 
 /**
- * The plain status lines for the build and device caps, naming `concurrency.maxBuilds` and `concurrency.maxDevices`
+ * The plain status lines for the build, test and device caps, naming `concurrency.maxBuilds`, `concurrency.maxTests` and `concurrency.maxDevices`
  * or, for a cap `derived` marks, that Stim derived it and which setting overrides it.
  */
 export function slotUsageLines(
-  { builds, devices, platformDevices }: Pick<StatusCapacity, 'builds' | 'devices' | 'platformDevices'>,
+  { builds, devices, platformDevices, tests }: Pick<StatusCapacity, 'builds' | 'devices' | 'platformDevices' | 'tests'>,
   derived: { builds: boolean; devices: boolean } = { builds: false, devices: false },
 ): string[] {
   const buildCap = derived.builds ? 'derived; set concurrency.maxBuilds to override' : 'concurrency.maxBuilds';
@@ -625,6 +625,16 @@ export function slotUsageLines(
     lines.push(`builds ${builds.inUse}/${builds.max} (${buildCap})${holders.length ? `: ${holders.join(', ')}` : ''}`);
     for (const holder of builds.holders)
       if (holder.claim) lines.push(unresolvedBuildSlotLine(holder.slot, holder.claim));
+  }
+  if (tests) {
+    const holders = tests.holders.map((holder) =>
+      holder.unresolved
+        ? `slot ${holder.slot} unresolved`
+        : holder.workspace
+          ? basename(holder.workspace)
+          : `slot ${holder.slot}`,
+    );
+    lines.push(`tests ${tests.inUse}/${tests.max} (concurrency.maxTests): ${holders.join(', ')}`);
   }
   if (devices) {
     if (devices.inUse === null) {

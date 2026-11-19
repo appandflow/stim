@@ -2,7 +2,7 @@
 
 **Type:** Decision
 **Status:** Active
-**Systems:** Server, Transport, Builds
+**Systems:** Server, Transport, Builds, Tests
 **Author:** Janic Duplessis / Claude
 **Date:** 2026-11-12
 **Related:** LLP 0008, LLP 0009
@@ -53,16 +53,48 @@ approval and Windows refusal, `busy.tests` with the setup refusal, the
 refusal over the local socket, and terminal-only approval are coordinator proposals from the plan on
 #5529, not quoted decisions.
 
-## Test slots and retired command proposal
+## Test slots and the local test command
 
 The test slot class, `concurrency.maxTests`, and the test wait queue shipped
 in #5573. Worker-side test approval shipped in #5576 and follows the rules
 above.
 
-The 2.0 backlog triage retired the proposal for a `stim test` command with
-automatic placement. The original proposal and decisions remain in
-[#5529](https://github.com/appandflow/stim/issues/5529).
+`stim test` runs a test command on this machine under one of those slots, and
+sizes the test runner's workers to the machine. Each agent's test run used to
+start one worker per core, so runs from parallel worktrees overloaded the
+machine and failed from CPU starvation, and nothing admitted them the way
+native builds and boots are admitted.
+
+Maintainer decision: "Can we implement a test command that would try to run tests in most optimal way? Maybe pass flags to jest to handle parallelism and avoid overloading the machine? Also support for offloading tests to othrr machine", 2026-11-18
+([#5940](https://github.com/appandflow/stim/issues/5940)). The offload half is
+[#5941](https://github.com/appandflow/stim/issues/5941).
+
+This reverses the 2.0 backlog triage, which retired the earlier proposal for a
+`stim test` command with automatic placement. The original proposal and the
+2026-11-12 answers remain in
+[#5529](https://github.com/appandflow/stim/issues/5529); the command keeps the
+name decided there, "Test".
+
+- The command takes a test slot before it starts the runner, so runs past
+  `concurrency.maxTests` wait in arrival order instead of competing for cores.
+- It passes a worker count, `floor((cores - 1) / concurrency.maxTests)` scaled
+  down by `cores / load1` past the core count, only where the runner reads one:
+  Jest's `--maxWorkers` flag, which Jest has no environment variable for, and
+  Vitest's `VITEST_MAX_WORKERS`, `VITEST_MAX_THREADS` and `VITEST_MAX_FORKS`. A
+  count the caller set, in the command, the environment or the runner's config,
+  is kept, and any other command runs unchanged under the slot.
+- The command runs in its own process group, so a signal reaches the runner
+  under a package manager; Windows refuses it, since Stim cannot stop that
+  tree there.
+- Without a command it runs the project's `test` script through the package
+  manager whose lockfile is nearest. It reads that script only to tell whether
+  it is a plain `jest` command; Stim never rewrites it.
+
+The no-command form, the script and config checks, `--wait`, `--no-wait`, the
+`STIM_TEST_RUN` marker with its nested run that takes no slot, the worker
+formula, `capacity.tests` and the Windows refusal are proposals in the pull request, not quoted decisions.
 
 ## Code
 
+- [The test command](../packages/stim-cli/src/commands/test.ts) and [its runner plan](../packages/stim-cli/src/engine/test-run.ts).
 - [Test records](../packages/server/src/registry.ts), [approval](../packages/server/src/setup.ts), [hello](../packages/server/src/handlers/hello.ts) and [listing](../packages/server/src/cli.ts).

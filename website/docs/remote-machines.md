@@ -752,8 +752,9 @@ access, and `stim pairings grant` never grants `build`, `device-host` or
 
 ### Test approval
 
-The `stim test` command proposal was retired before 2.0. A person on the
-worker can still record a test approval using a setup ticket and `--test`.
+[`stim test`](./commands.md#test) runs tests on this machine only; it does not
+offload them yet. A person on the worker can still record a test approval using
+a setup ticket and `--test`.
 
 <Tabs groupId="stim-invocation" defaultValue="global">
 <TabItem value="global" label="Global">

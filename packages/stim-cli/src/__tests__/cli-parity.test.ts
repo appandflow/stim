@@ -28,6 +28,7 @@ import pairingsCommand from '../commands/pairings.ts';
 import serveOp from '../commands/serve.ts';
 import serviceOp from '../commands/service.ts';
 import setupOp from '../commands/setup.ts';
+import testOp from '../commands/test.ts';
 
 const OPS = [
   statusOp,
@@ -56,6 +57,7 @@ const OPS = [
   serveOp,
   serviceOp,
   setupOp,
+  testOp,
 ];
 
 interface Outcome {
@@ -108,7 +110,8 @@ afterEach(() => {
 
 /**
  * commander 15.0.0's outcome for each row, recorded at 7a95812da by declaring each op through commander's own API; the gc
- * rows are recorded from defineOp since gc's options changed in 2.0.
+ * rows are recorded from defineOp since gc's options changed in 2.0, and the test rows from defineOp, whose variadic
+ * argument arrives as flat operands.
  */
 const recorded: Record<string, Outcome> = JSON.parse(
   readFileSync(new URL('fixtures/cli-parity.json', import.meta.url), 'utf8'),
@@ -464,6 +467,11 @@ test.each(
     ['serve', 'x'],
     ['serve', '-V'],
     ['serve', '--service=x'],
+    ['test'],
+    ['test', '--', 'npx', 'jest', '--ci'],
+    ['test', '--no-wait', '--wait', '30', '--', 'vitest', 'run'],
+    ['test', 'jest', '--ci'],
+    ['test', '--wait'],
   ].map((argv) => [argv]),
 )('%j parses as commander parsed it', async ([name = '', ...args]) => {
   const op = OPS.find((each) => each.name === name);

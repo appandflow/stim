@@ -2353,7 +2353,8 @@ WHAT MAKES THE CACHE ACTUALLY HIT: .FINGERPRINTIGNORE
   move the key on one machine and not another.`,
     },
     concurrency: {
-      summary: "waiting on another workspace's build, --no-build-cache, concurrency.maxBuilds and maxDevices",
+      summary:
+        "waiting on another workspace's build, --no-build-cache, concurrency.maxBuilds, maxDevices and maxTests, stim test",
       body: () => `ONE COMPILE PER FINGERPRINT, ACROSS EVERY WORKSPACE
   The cache makes the SECOND workspace on a commit free -- but only once the
   first has finished. Three agents starting within the same minute all miss it,
@@ -2424,13 +2425,37 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
                             A workspace's own booted or booting device
                             bypasses the queue.
 
-    concurrency.maxTests    how many test commands run at once on this
+    concurrency.maxTests    how many stim test runs run at once on this
                             machine; derived max(1, floor(CPU cores / 6)).
                             It is a semaphore of N slots (~/.stim/test-slots)
                             that never counts against concurrency.maxBuilds.
                             A run past it waits in arrival order in
                             ~/.stim/test-waits and shows in status as a
-                            daemon.testWaiting entry.
+                            daemon.testWaiting entry; a running one shows as
+                            capacity.tests and a "tests" status line.
+
+  STIM TEST: stim test runs the project's test script through the package
+  manager whose lockfile is nearest (pnpm, yarn, bun, else npm); stim test --
+  <command> runs that command, with no shell and no stdin. It takes a test
+  slot first (--wait <seconds> bounds the wait, --no-wait refuses a full cap
+  with STIM_AT_CAPACITY), then picks a worker count:
+
+    workers = floor((cores - 1) / concurrency.maxTests), times cores / load1
+              when the 1-minute load is past the core count, at least 1
+
+  Jest gets --maxWorkers=<n> after the jest word when the command runs jest
+  directly (also behind npx, bunx, pnpm, pnpm exec, yarn or yarn exec), or
+  through the package manager when the test script (stim test, or -- <pm>
+  test) is a plain jest command. Vitest gets VITEST_MAX_WORKERS (Vitest 4+)
+  and VITEST_MAX_THREADS and VITEST_MAX_FORKS (Vitest 2 and 3). A count the
+  caller set is kept: a Jest or Vitest worker flag, one of those variables, or
+  maxWorkers in the jest, vitest or vite config beside package.json (or its
+  jest key), which the flag and variables would override. Any other command
+  runs unchanged under the slot; one stderr line says which. The command runs
+  in its own process group: SIGINT and SIGTERM reach all of it, the slot frees
+  when it exits, and if stim itself is killed the slot stays held until the
+  command exits. It gets STIM_TEST_RUN=1, and a stim test inside it takes no
+  slot. A watch-mode run holds its slot until it is stopped. Windows refuses.
 
   Beyond the caps, at most 2 boots run at once in a Stim home, and no boot
   starts while the stim-daemon's last tick measured macOS memory pressure
@@ -2804,6 +2829,7 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   stop            --slot <name> --json
   status          --json --watch  (already machine-wide)
   stats           --json          (this project and machine-wide)
+  test            --wait <seconds> --no-wait [-- <command...>]
   settings        --json; get <key> --scope <layer> --json;
                   set <key> <value> --scope <layer> --json; unset <key> --scope <layer> --json
   doctor          --json --fix --platform <ios|android>

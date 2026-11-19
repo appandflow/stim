@@ -1942,8 +1942,9 @@ RULES
 
   capacity.load, capacity.builds and capacity.devices are always present:
   builds and devices carry the derived caps when concurrency.maxBuilds and
-  concurrency.maxDevices are 0. capacity.platformDevices lists only the
-  platforms whose cap is set (see \`guide lifecycle concurrency\`):
+  concurrency.maxDevices are 0. capacity.tests, the same shape as builds, is
+  present only while a stim test run holds a test slot. capacity.platformDevices
+  lists only the platforms whose cap is set (see \`guide lifecycle concurrency\`):
 
   load     { cpus, loadPerCore, busyAt, limit, state }. loadPerCore is the
            5-minute load average divided by cpus, to one decimal. busyAt is

@@ -438,13 +438,15 @@ function showHelp(usage: string[], op: Op, error: boolean): number {
   return error ? 1 : 0;
 }
 
+const variadicArgument = (op: Op): boolean => /\.\.\.[\]>]$/.test(op.arguments);
+
 function checkArity(op: Op, operands: string[], program: boolean): void {
   const declared = op.arguments ? op.arguments.split(' ') : [];
   declared.forEach((arg, index) => {
     if (arg.startsWith('<') && operands[index] === undefined)
       throw new CliUsageError(`error: missing required argument '${arg.slice(1, -1)}'`);
   });
-  if (operands.length > declared.length) {
+  if (operands.length > declared.length && !variadicArgument(op)) {
     const s = declared.length === 1 ? '' : 's';
     const name = program ? '' : ` for '${op.name}'`;
     throw new CliUsageError(

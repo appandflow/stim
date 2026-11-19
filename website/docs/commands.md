@@ -1304,6 +1304,59 @@ that target again, until it expires, or a new share with a warning when nothing
 is saved, and `stop --forget` also deletes the saved links. See
 [Share a running app](./share.md) for the requirements and the security model.
 
+## `test`
+
+```text
+stim test [--wait <seconds> | --no-wait] [-- <command...>]
+```
+
+Runs a project's tests under a machine-wide test slot, so agents in parallel
+worktrees queue instead of each starting one test worker per core. Without a
+command it runs the project's `test` script through the package manager whose
+lockfile is nearest (`pnpm`, `yarn`, `bun`, else `npm`). With one it runs that
+command as given, with no shell. The output and exit status are the command's
+own; Stim's own lines go to stderr.
+
+```bash
+stim test
+stim test -- npx jest src/cart.test.ts
+stim test -- pnpm exec vitest run --project unit
+```
+
+- The run first takes one of the `concurrency.maxTests` slots (see
+  [settings](./settings.md)). A run past the cap waits in arrival order and
+  prints its queue position every 10 seconds. `--wait <seconds>` bounds that
+  wait, and `--no-wait` or `--wait 0` refuses at once with `STIM_AT_CAPACITY`.
+- It then picks a worker count: `floor((cores - 1) / concurrency.maxTests)`,
+  scaled by `cores / load` when the 1-minute load average is already past the
+  core count, and never under 1. On an idle 4-core machine with one test slot
+  that is 3; on a 14-core Mac with two slots it is 6.
+- Jest has no environment variable for its workers, so a command that runs
+  `jest` directly (also behind `npx`, `bunx`, `pnpm`, `pnpm exec`, `yarn` or
+  `yarn exec`) gets `--maxWorkers=<n>` after the `jest` word. A `test` script
+  that is a plain `jest` command gets it through the package manager, both for
+  `stim test` and `stim test -- npm test` (or `pnpm`, `yarn`, `bun run`).
+  Vitest gets `VITEST_MAX_WORKERS=<n>` (Vitest 4 and later) and
+  `VITEST_MAX_THREADS` and `VITEST_MAX_FORKS` (Vitest 2 and 3).
+- A worker count the caller set is kept: Jest's `--maxWorkers`, `-w`,
+  `--runInBand` or `-i`, Vitest's `--maxWorkers`, one of those variables in the
+  environment, or `maxWorkers` in the `jest`, `vitest` or `vite` config next to
+  `package.json` or in its `jest` key, which the flag and the variables would
+  override. Any other command runs unchanged under the slot. One stderr line
+  says which.
+- The command runs in its own process group with no stdin. `SIGINT` and
+  `SIGTERM` reach the whole group and the slot is freed when it exits; if `stim`
+  itself is killed, the slot stays held until the command exits. A watch-mode
+  run holds its slot until you stop it.
+- The command gets `STIM_TEST_RUN=1`; a `stim test` started inside it runs
+  without taking another slot.
+- Windows refuses `stim test`.
+- A queued run shows in `stim status` and in `daemon.testWaiting`, a running one
+  as a `tests 1/2 (concurrency.maxTests)` line and `capacity.tests`.
+
+> Run this project's tests with stim test, or stim test -- <the test command>
+> for a single file, instead of calling the test runner directly.
+
 ## `logs`
 
 ```text
@@ -1923,7 +1976,9 @@ Status shows how many build and device slots are in use and who holds them,
 as a `builds 1/2 (concurrency.maxBuilds)` or
 `devices 6/8 (derived; set concurrency.maxDevices to override)` line, the second
 form while Stim derives the cap because the setting is unset, and in `--json` as
-`capacity.builds` and `capacity.devices`: `max`, `inUse` and `holders`. A build slot's holder names
+`capacity.builds` and `capacity.devices`: `max`, `inUse` and `holders`. While a
+`stim test` run holds a test slot, a `tests 1/2 (concurrency.maxTests)` line
+and `capacity.tests` show it the same way. A build slot's holder names
 the workspace building in it, or the client whose offloaded build this Mac
 runs; a device's holder names the workspace label and device slot that record
 it. An unresolved build slot, one whose claim Stim cannot settle, such as an
