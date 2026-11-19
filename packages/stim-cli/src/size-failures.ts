@@ -1,11 +1,13 @@
-import { readFileSync, statSync } from 'node:fs';
-import { configDir, LOG_ROTATE_BYTES } from '@stim-cli/core';
+import { mkdirSync, readFileSync, statSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { configDir, LOG_ROTATE_BYTES, withDirLock } from '@stim-cli/core';
 import { daemonNdjsonFile, sizeFailuresFile } from '@stim-cli/core/state';
 import { writeCacheFile } from './cache-file.ts';
 import { isTimeoutError } from './exec.ts';
 import { createNdjsonWriter } from './ndjson.ts';
 
 const RECORD_EVERY_MS = 6 * 60 * 60_000;
+const RECORD_LOCK_WAIT_MS = 200;
 const SIZERS = new Set([
   'measureTree',
   'walkTree',
@@ -101,9 +103,10 @@ function readRecorded(): Record<string, number> {
 
 /**
  * Notes that sizing `path` failed after `ms`, and appends one `size_failed` record to the daemon log, at most once per
- * RECORD_EVERY_MS per path and reason across the home's processes and threads, naming the function that asked for the size. For an entry of a
- * cache, `root` names the cache: its entries share one record per reason, and their failures are not kept. A `du` that
- * exited non-zero on a folder that does not exist is no failure. Never throws.
+ * RECORD_EVERY_MS per path and reason across the home's processes and threads, naming the function that asked for the
+ * size. A failure whose record file stays locked for RECORD_LOCK_WAIT_MS is not recorded. For an entry of a cache,
+ * `root` names the cache: its entries share one record per reason, and their failures are not kept. A `du` that exited
+ * non-zero on a folder that does not exist is no failure. Never throws.
  */
 export function noteSizeFailure(path: string, failure: SizeFailure, ms: number, root?: string): void {
   try {
@@ -112,17 +115,25 @@ export function noteSizeFailure(path: string, failure: SizeFailure, ms: number, 
       failures.delete(key);
       return;
     }
-    const now = Date.now();
     const slot = root ? `${failure.reason} entries of ${root}` : `${failure.reason} ${path}`;
-    if (!root) failures.set(key, { failure, at: now });
-    const recorded = readRecorded();
-    const last = recorded[slot];
-    if (last !== undefined && !expired(last, now)) return;
-    for (const [stale, at] of Object.entries(recorded)) if (expired(at, now)) delete recorded[stale];
-    for (const [stale, { at }] of failures) if (expired(at, now)) failures.delete(stale);
-    recorded[slot] = now;
-    writeCacheFile(sizeFailuresFile(), recorded);
-    if (readRecorded()[slot] !== now) return;
+    if (!root) failures.set(key, { failure, at: Date.now() });
+    const file = sizeFailuresFile();
+    const claimed = withDirLock(
+      `${file}.lock`,
+      () => {
+        const now = Date.now();
+        const recorded = readRecorded();
+        const last = recorded[slot];
+        if (last !== undefined && !expired(last, now)) return false;
+        for (const [stale, at] of Object.entries(recorded)) if (expired(at, now)) delete recorded[stale];
+        for (const [stale, { at }] of failures) if (expired(at, now)) failures.delete(stale);
+        recorded[slot] = now;
+        writeCacheFile(file, recorded);
+        return readRecorded()[slot] === now;
+      },
+      { waitMs: RECORD_LOCK_WAIT_MS, ensureParent: () => mkdirSync(dirname(file), { recursive: true }) },
+    );
+    if (!claimed) return;
     const caller = sizeCaller();
     const writer = createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES });
     try {

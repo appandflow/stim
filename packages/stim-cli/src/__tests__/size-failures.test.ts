@@ -1,6 +1,8 @@
+import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 import { daemonNdjsonFile, sizeFailuresFile } from '@stim-cli/core/state';
 
 let home: string;
@@ -47,4 +49,45 @@ test('a size failure whose record time cannot be saved is not logged, so it cann
   (await freshInstance()).noteSizeFailure(join(home, 'cache'), timeout, 1000);
 
   expect(existsSync(daemonNdjsonFile())).toBe(false);
+});
+
+test('processes noting failures at once record each slot once and keep every path', async () => {
+  const writers = 4;
+  const paths = 15;
+  const startAt = Date.now() + 3000;
+  const script = `
+    const { noteSizeFailure } = await import(${JSON.stringify(join(import.meta.dirname, '..', 'size-failures.ts'))});
+    const [writer, startAt, paths] = process.argv.slice(1).map(Number);
+    while (Date.now() < startAt);
+    for (let index = 0; index < paths; index++) {
+      noteSizeFailure('/shared', { reason: 'timeout', limitMs: 1000 }, 1000);
+      noteSizeFailure('/writer-' + writer + '-' + index, { reason: 'timeout', limitMs: 1000 }, 1000);
+    }
+  `;
+  await Promise.all(
+    Array.from({ length: writers }, (_, writer) =>
+      promisify(execFile)(
+        process.execPath,
+        [
+          '--experimental-strip-types',
+          '--input-type=module',
+          '-e',
+          script,
+          String(writer),
+          String(startAt),
+          String(paths),
+        ],
+        { env: { ...process.env, STIM_HOME: home }, timeout: 30_000 },
+      ),
+    ),
+  );
+
+  const records = readFileSync(daemonNdjsonFile(), 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map((line): { event?: unknown; path?: unknown } => JSON.parse(line))
+    .filter((record) => record.event === 'size_failed');
+  expect(records.filter((record) => record.path === '/shared')).toHaveLength(1);
+  expect(records).toHaveLength(1 + writers * paths);
+  expect(Object.keys(JSON.parse(readFileSync(sizeFailuresFile(), 'utf8')))).toHaveLength(1 + writers * paths);
 });
