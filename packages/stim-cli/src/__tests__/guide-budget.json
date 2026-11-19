@@ -14,7 +14,7 @@
     "metro": 27500,
     "logs": 50950,
     "lifecycle": 20750,
-    "cleanup": 29150,
+    "cleanup": 29200,
     "settings": 135850,
     "share": 29250,
     "macos": 35750
@@ -36,7 +36,7 @@
     "lifecycle budget": 18150,
     "lifecycle options": 25000,
     "lifecycle devices": 11000,
-    "cleanup gc": 72950,
+    "cleanup gc": 73000,
     "cleanup disk": 16250
   }
 }
