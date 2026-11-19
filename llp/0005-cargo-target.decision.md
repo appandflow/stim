@@ -285,11 +285,11 @@ deleted. Where Stim cannot take the locks (Linux NFS, Windows) the directory
 stays. Stim creates no missing lock file, since that needs space too. What goes
 is regenerable output the checks found unused.
 
-Two writes stay ahead of any of this. The trim claim
-(`~/.stim/machine/cargo-trim/`) creates a directory and a file, so on a disk
-with no room at all the trim and the delete keep everything with "its trim
-claim cannot be taken". The unit sweep stages only, and keeps its units when
-staging fails.
+Claim writes still come first. The trim claim (`~/.stim/machine/cargo-trim/`)
+creates a directory and a file, and the dormant delete also takes the
+workspace's `native-run` and `metro-start` claims, so on a disk with no room at
+all the trim and the delete keep everything because a claim cannot be taken.
+The unit sweep stages only, and keeps its units when staging fails.
 
 Reason: on 2026-11-19 at 23:01 UTC, with the maintainer's disk full, a rung 3
 trim failed with `ENOSPC` creating `.stim-trimmed` and freed nothing (#6012).
