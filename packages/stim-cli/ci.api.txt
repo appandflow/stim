@@ -60,6 +60,7 @@
 [*] interface AndroidFacts { @@1 logs: string | null;
 [*] interface AndroidFacts { @@1 metroPort: number | null;
 [*] interface AndroidFacts { @@1 offloadFallback?: string;
+[*] interface AndroidFacts { @@1 offloadReason?: string;
 [*] interface AndroidFacts { @@1 offloadedTo?: string;
 [*] interface AndroidFacts { @@1 platform: string;
 [*] interface AndroidFacts { @@1 serial: string | null;
@@ -223,6 +224,7 @@
 [*] interface IosFacts { @@1 logs: LogsInfo;
 [*] interface IosFacts { @@1 metroPort?: number | null;
 [*] interface IosFacts { @@1 offloadFallback?: string;
+[*] interface IosFacts { @@1 offloadReason?: string;
 [*] interface IosFacts { @@1 offloadedTo?: string;
 [*] interface IosFacts { @@1 platform: string;
 [*] interface IosFacts { @@1 runtime: string | null;
