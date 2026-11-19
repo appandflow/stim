@@ -11,8 +11,8 @@ import { launcherDirectories } from './launcher-directories.ts';
  * One thing the inspection of the launcher directories could not settle: a directory that could not be read, an entry
  * that could not be resolved, or a read that has not answered. A directory or entry that does not exist, and a
  * dangling symlink, is no launcher. Neither is an entry that this user may neither inspect or resolve nor execute
- * (EACCES from both). Anything else that fails (permission, I/O, a loop, a timeout) is a problem, and nothing is
- * known about what it covers.
+ * (EACCES from both). Anything else that fails (permission, I/O, a loop, a timeout) is a problem. A directory or entry
+ * that failed is treated as pointing into no checkout; a read that has not answered (`pending`) keeps every checkout.
  */
 export interface LauncherProblem {
   kind: 'directory' | 'entry' | 'pending' | 'owner';
@@ -168,7 +168,7 @@ export function launcherReader(
         if (error instanceof Unanswered) {
           found.incomplete.push(
             hungRead() === directory || !hungRead()
-              ? { kind: 'directory', path: directory, error: error.message }
+              ? { kind: 'pending', path: directory, error: error.message }
               : pendingProblem(hungRead() ?? directory, directories),
           );
           return found;
@@ -276,7 +276,18 @@ function takeLauncherProblems(operation: StimContext): LauncherProblem[] {
   return problems;
 }
 
-/** Writes one record when a pass met launcher evidence it could not settle, which keeps every checkout. */
+/** What cleanup did about `problems`: went ahead past a failed directory or entry, kept what the rest cannot rule out. */
+export function launcherProblemsOutcome(problems: readonly LauncherProblem[]): string {
+  const outcome = [];
+  if (problems.some(({ kind }) => kind === 'directory' || kind === 'entry'))
+    outcome.push('cleanup went ahead as if what could not be read points into no checkout');
+  if (problems.some(({ kind }) => kind === 'pending'))
+    outcome.push('cleanup keeps every checkout while a read has not answered');
+  if (problems.some(({ kind }) => kind === 'owner')) outcome.push('cleanup keeps a checkout whose owner is unknown');
+  return outcome.join('; ').replace(/^./, (first) => first.toUpperCase());
+}
+
+/** Writes one record when a pass met launcher evidence it could not settle, and what cleanup did about it. */
 export function logLauncherProblems(
   operation: StimContext,
   log: (level: 'warn', event: string, msg: string, fields?: Record<string, unknown>) => void,
@@ -287,7 +298,7 @@ export function logLauncherProblems(
   log(
     'warn',
     'launcher_evidence_incomplete',
-    `Launcher evidence is incomplete, so cleanup keeps what it cannot rule out (${problems.length} found${problems.length > first.length ? `, first ${first.length}` : ''}): ${describeLauncherProblems(first)}. Run stim doctor for the fix.`,
+    `Launcher evidence is incomplete (${problems.length} found${problems.length > first.length ? `, first ${first.length}` : ''}): ${describeLauncherProblems(first)}. ${launcherProblemsOutcome(problems)}. Run stim doctor for the fix.`,
     { count: problems.length, problems: first },
   );
 }
@@ -308,8 +319,8 @@ export function describeLauncherProblems(problems: readonly LauncherProblem[]): 
 }
 
 /**
- * Why `folder` is kept for an executable on PATH: one resolves to a path inside it, or a launcher directory or entry
- * could not be inspected, so none can be ruled out. Null when every directory was read and none points into it.
+ * Why `folder` is kept for an executable on PATH: one resolves to a path inside it, or a launcher read has not
+ * answered, so none can be ruled out. Null otherwise, also when a directory or entry could not be read.
  */
 export function launcherReason(folder: Checkout, scan: LauncherScan): string | null {
   if (typeof folder !== 'string')
@@ -317,7 +328,8 @@ export function launcherReason(folder: Checkout, scan: LauncherScan): string | n
   const root = canonicalPath(folder);
   const target = scan.targets.find((path) => path.startsWith(`${root}${sep}`));
   if (target) return `an executable on PATH runs from it (${target})`;
-  if (scan.incomplete.length)
-    return `an executable on PATH cannot be ruled out: ${describeLauncherProblems(scan.incomplete)}; Stim keeps every checkout until that is fixed (stim doctor names the fix)`;
+  const unanswered = scan.incomplete.filter(({ kind }) => kind === 'pending');
+  if (unanswered.length)
+    return `an executable on PATH cannot be ruled out: ${describeLauncherProblems(unanswered)}; Stim keeps every checkout until that is fixed (stim doctor names the fix)`;
   return null;
 }

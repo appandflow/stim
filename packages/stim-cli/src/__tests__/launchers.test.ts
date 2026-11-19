@@ -62,13 +62,13 @@ describe('the PATH launcher scan', () => {
     expect(launcherReason('/work/app', result)).toBeNull();
   });
 
-  it('keeps every checkout when a directory or an entry could not be inspected, naming the directory', async () => {
+  it('reports a directory or an entry that could not be inspected, and keeps no checkout for it', async () => {
     const unreadable = await scan(['/locked', '/bin1'], io({ '/locked': missing('EACCES'), '/bin1': [] }));
     expect(unreadable.incomplete).toEqual([{ kind: 'directory', path: '/locked', error: 'EACCES' }]);
-    expect(launcherReason('/work/app', unreadable)).toContain('the directory /locked could not be read (EACCES)');
+    expect(launcherReason('/work/app', unreadable)).toBeNull();
     const unresolved = await scan(['/bin1'], io({ '/bin1': ['tool'] }, { '/bin1/tool': missing('EIO') }));
     expect(unresolved.incomplete).toEqual([{ kind: 'entry', path: '/bin1/tool', error: 'EIO' }]);
-    expect(launcherReason('/work/app', unresolved)).toContain('/bin1/tool could not be resolved (EIO)');
+    expect(launcherReason('/work/app', unresolved)).toBeNull();
   });
 
   it('reads on past one entry that cannot be resolved, and still finds a launcher among the others', async () => {
@@ -140,8 +140,8 @@ describe('the PATH launcher scan', () => {
     const first = reading();
     await vi.advanceTimersByTimeAsync(10);
     const result = await first;
-    expect(result.incomplete).toEqual([{ kind: 'directory', path: '/hung', error: 'timed out' }]);
-    expect(launcherReason('/work/app', result)).toContain('the directory /hung could not be read (timed out)');
+    expect(result.incomplete).toEqual([{ kind: 'pending', path: '/hung', error: 'timed out' }]);
+    expect(launcherReason('/work/app', result)).toContain('/hung: timed out; Stim keeps every checkout');
 
     const pending = { kind: 'pending', path: '/hung', error: 'an earlier read of it has not answered' };
     const later = await Promise.all([reading(), reading(), reading()]);
