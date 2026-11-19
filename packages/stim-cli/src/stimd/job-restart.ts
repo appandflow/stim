@@ -1,4 +1,5 @@
 import { renameSync, rmSync, writeFileSync } from 'node:fs';
+import { threadId } from 'node:worker_threads';
 import { jobRestartUntil, readJobRestart, stimdJobRestartFile, type JobRestart } from '@stim-cli/core/state';
 
 function processRuns(pid: number): boolean {
@@ -13,7 +14,7 @@ function processRuns(pid: number): boolean {
 /** Writes `run/job-restart.json`; false when it cannot be written. */
 export function writeJobRestart(record: JobRestart, home?: string): boolean {
   const file = stimdJobRestartFile(home);
-  const tmp = `${file}.${process.pid}.tmp`;
+  const tmp = `${file}.${process.pid}.${threadId}.tmp`;
   try {
     writeFileSync(tmp, `${JSON.stringify(record)}\n`, { mode: 0o600 });
     renameSync(tmp, file);

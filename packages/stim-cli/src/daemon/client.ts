@@ -996,6 +996,7 @@ export async function ensureStimd(
 ): Promise<boolean> {
   if (pin) requireResolvedStimdHome();
   if (!spawnsDaemon(env) && !required) {
+    if (pin) await awaitJobRestart(limit?.signal);
     if (pin && stimdLive()) await admitExisting(held, command, false, invocation, { env, required }, limit);
     return false;
   }
@@ -1789,7 +1790,7 @@ async function successorBound(limit?: ResumeLimit): Promise<boolean> {
   const deadline = () => Math.min(Math.max(base, Date.now() + job()), limit?.deadline ?? Infinity);
   let started = false;
   for (;;) {
-    if (limit?.signal?.aborted) break;
+    if (limit?.signal?.aborted || (limit !== undefined && Date.now() >= limit.deadline)) break;
     if (readJsonObject(stimdRecordFile())?.build === stimdBuildId()) {
       refusedBuild = null;
       refusal = null;
@@ -2003,11 +2004,11 @@ export function serveThroughStimd(
  */
 export async function connectNet(timeoutMs: number): Promise<Socket | null> {
   const hold = jobRestartHold();
-  const restarting = hold !== null && hold.record.pid !== process.pid;
+  const restarting = hold !== null && hold.record.pid !== process.pid && Date.now() < hold.until;
   await awaitJobRestart();
   let socket = await openNet(timeoutMs);
   const deadline = restarting ? Date.now() + NET_START_MS : 0;
-  while (!socket && Date.now() < deadline) {
+  while (!socket && stimdLive() && Date.now() < deadline) {
     await new Promise((done) => setTimeout(done, CLAIM_POLL_MS * 5));
     socket = await openNet(timeoutMs);
   }
