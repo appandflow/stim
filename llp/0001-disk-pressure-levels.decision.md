@@ -131,11 +131,11 @@ on 2026-11-19 a MacBook went from 29 GB free to a full disk while native builds
 grew Cargo targets past 20 GB. stimd paced the ladder at high after a pass that
 took 335 seconds and freed nothing; the next pass started one tick later and was
 still in rung 3 when a trim failed with ENOSPC at 23:01 UTC (#6011). 256 MB is
-above the drift that machine's ladder readings showed in a quiet stretch
-(0.2 GB in 27 minutes) and a quarter of the 1 GB a volume with room needs; a
-falling volume gets at most one fruitless pass per 256 MB it loses. A worker
-held at critical, the #5933 case, runs the ladder every tick again; pacing
-covers a volume held at high.
+a quarter of the 1 GB a volume with room needs, and a falling volume gets at
+most one fruitless pass per 256 MB it loses. A slow drift ends a long wait
+early: the same machine's readings fell 0.4 GB in the 30 minutes before it
+dropped to critical. A worker held at critical, the #5933 case, runs the
+ladder every tick again; pacing covers a volume held at high.
 
 Maintainer decisions: "Good for both points", 2026-11-18, in answer to whether
 a wait of up to 15 minutes after a pass that freed nothing is acceptable, given
