@@ -382,7 +382,8 @@ build_end_measure one a pass. None alter a pass.
 A size walk that fails or times out adds one record, event size_failed (warn,
 info when aborted),
 from whichever process ran it, at most once per folder and reason every 6
-hours per process; du failing on a folder that does not exist is not one. Fields: path, caller (the function that asked), reason (timeout with
+hours per process, and once per cache and reason for the entries of a cache
+being trimmed (with root, the cache); du failing on a folder that does not exist is not one. Fields: path, caller (the function that asked), reason (timeout with
 limitMs, exit with status, signal with signal, aborted, error with code, or
 no-output) and ms. A walk the walk claim kept from starting is not a failure.
 A disk-usage failure record (*.failed.json) carries the same reason fields.

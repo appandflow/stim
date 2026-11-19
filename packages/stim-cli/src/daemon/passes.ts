@@ -410,14 +410,13 @@ async function runCommandLadder(
         config,
         act: mode === 'on',
         log: (level, event, msg, fields = {}) => {
-          if (headroom && event === 'pressure_action' && fields.outcome !== 'kept') headroom.acted = true;
+          if (headroom && event === 'pressure_action' && !fields.unsized) headroom.acted = true;
           writer.write({ src: trigger, level, event, msg, ...fields });
         },
         devices: measured.devices,
         sims: measured.sims,
         simsFailed: measured.sims === null,
         remeasure: classify,
-        ...(headroom ? { attempting: () => void (headroom.acted = true) } : {}),
         fromRung: 2,
         // @ref LLP 0003#never-from-a-build-command -- the build is about to read those caches
         lastRung: 8,
@@ -438,7 +437,7 @@ interface HeadroomRun {
   operation: StimContext;
   /** Aborts when the build is cancelled or the run's deadline passes. */
   stop: AbortSignal;
-  /** An action was executed, or one other than a kept one logged, since the build device was last measured. */
+  /** An action has been logged since the build device was last measured. */
   acted: boolean;
   /** The build device's free space at the last measurement. */
   lastFreeMb: number | null;

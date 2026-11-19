@@ -139,8 +139,8 @@ export function isOnMountedVolume(
   return mounted.has(volume) || uncShareIsReachable(volume, statFn);
 }
 
-export function directorySize(dir: string, { timeoutMs }: { timeoutMs: number | 'unbounded' }): number {
-  return measuredDirectorySize(dir, { timeoutMs }) ?? 0;
+export function directorySize(dir: string, options: { timeoutMs: number | 'unbounded'; root?: string }): number {
+  return measuredDirectorySize(dir, options) ?? 0;
 }
 
 export async function directorySizeAsync(
@@ -157,7 +157,14 @@ export async function measuredDirectorySizeAsync(
     signal,
     operation,
     lowPriority = false,
-  }: { timeoutMs: number | 'unbounded'; signal?: AbortSignal; operation?: StimContext; lowPriority?: boolean },
+    root,
+  }: {
+    timeoutMs: number | 'unbounded';
+    signal?: AbortSignal;
+    operation?: StimContext;
+    lowPriority?: boolean;
+    root?: string;
+  },
 ): Promise<number | null> {
   let out: string;
   const startedAt = Date.now();
@@ -181,6 +188,7 @@ export async function measuredDirectorySizeAsync(
       dir,
       signal?.aborted || operation?.signal.aborted ? { reason: 'aborted' } : sizeFailure(error, timeoutMs, false),
       Date.now() - startedAt,
+      root,
     );
     signal?.throwIfAborted();
     operation?.signal.throwIfAborted();
@@ -191,13 +199,16 @@ export async function measuredDirectorySizeAsync(
   return isNaN(kb) ? 0 : kb * 1024;
 }
 
-function measuredDirectorySize(dir: string, { timeoutMs }: { timeoutMs: number | 'unbounded' }): number | null {
+function measuredDirectorySize(
+  dir: string,
+  { timeoutMs, root }: { timeoutMs: number | 'unbounded'; root?: string },
+): number | null {
   let out: string;
   const startedAt = Date.now();
   try {
     out = getExecutor().runFile('du', ['-sk', dir], { timeoutMs });
   } catch (error) {
-    noteSizeFailure(dir, sizeFailure(error, timeoutMs, false), Date.now() - startedAt);
+    noteSizeFailure(dir, sizeFailure(error, timeoutMs, false), Date.now() - startedAt, root);
     return null;
   }
   if (!out) return 0;

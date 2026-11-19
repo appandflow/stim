@@ -26,7 +26,7 @@ export type SizeFailure =
   | { reason: 'error'; code: string }
   | { reason: 'no-output' };
 
-const failures = new Map<string, SizeFailure>();
+const failures = new Map<string, { failure: SizeFailure; at: number }>();
 const recorded = new Map<string, number>();
 
 /** The failure of a walk from the error it threw, or none; `overran` when it ended at or past `limitMs`. */
@@ -71,7 +71,7 @@ function sizeCaller(): string {
 
 /** The last failure noted for `path` in this process. */
 export function lastSizeFailure(path: string): SizeFailure | null {
-  return failures.get(`${configDir()}\0${path}`) ?? null;
+  return failures.get(`${configDir()}\0${path}`)?.failure ?? null;
 }
 
 function absent(path: string): boolean {
@@ -83,24 +83,30 @@ function absent(path: string): boolean {
   }
 }
 
+function expired(at: number, now: number): boolean {
+  return now - at >= RECORD_EVERY_MS || now < at;
+}
+
 /**
  * Notes that sizing `path` failed after `ms`, and appends one `size_failed` record to the daemon log, at most once per
- * RECORD_EVERY_MS per path and reason in this process, naming the function that asked for the size. A `du` that exited
- * non-zero on a folder that does not exist is no failure. Never throws.
+ * RECORD_EVERY_MS per path and reason in this process, naming the function that asked for the size. For an entry of a
+ * cache, `root` names the cache: its entries share one record per reason, and their failures are not kept. A `du` that
+ * exited non-zero on a folder that does not exist is no failure. Never throws.
  */
-export function noteSizeFailure(path: string, failure: SizeFailure, ms: number): void {
+export function noteSizeFailure(path: string, failure: SizeFailure, ms: number, root?: string): void {
   try {
     const key = `${configDir()}\0${path}`;
-    const slot = `${key}\0${failure.reason}`;
-    const now = Date.now();
-    const last = recorded.get(slot);
-    const due = last === undefined || now - last >= RECORD_EVERY_MS || now < last;
-    if (due && failure.reason === 'exit' && absent(path)) {
+    if (failure.reason === 'exit' && absent(path)) {
       failures.delete(key);
       return;
     }
-    failures.set(key, failure);
-    if (!due) return;
+    const now = Date.now();
+    const slot = root ? `${configDir()}\0${root}\0entries\0${failure.reason}` : `${key}\0${failure.reason}`;
+    if (!root) failures.set(key, { failure, at: now });
+    const last = recorded.get(slot);
+    if (last !== undefined && !expired(last, now)) return;
+    for (const [stale, at] of recorded) if (expired(at, now)) recorded.delete(stale);
+    for (const [stale, { at }] of failures) if (expired(at, now)) failures.delete(stale);
     recorded.set(slot, now);
     const caller = sizeCaller();
     const writer = createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES });
@@ -111,6 +117,7 @@ export function noteSizeFailure(path: string, failure: SizeFailure, ms: number):
         event: 'size_failed',
         msg: `could not size ${path} for ${caller}: the walk ${describeSizeFailure(failure)} (ran ${Math.round(ms / 1000)} seconds)`,
         path,
+        ...(root ? { root } : {}),
         caller,
         ...failure,
         ms: Math.round(ms),

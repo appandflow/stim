@@ -110,8 +110,6 @@ export interface LadderInput {
   stop?: AbortSignal;
   /** The device id of the one volume a build's headroom run frees; without it, the volumes under `disk.minFreeGb`. */
   volume?: number;
-  /** Called before each action the ladder executes, whatever its outcome. */
-  attempting?: () => void;
 }
 
 interface RungContext extends LadderInput {
@@ -132,6 +130,7 @@ function recordAction(
   context: Pick<RungContext, 'log' | 'actions' | 'force'>,
   action: DaemonLadderAction,
   reason: string,
+  unsized?: true,
 ): void {
   context.actions.push(action);
   const verb =
@@ -153,6 +152,7 @@ function recordAction(
     reason,
     ...(action.restore ? { restore: action.restore } : {}),
     ...(action.workspace ? { workspace: action.workspace } : {}),
+    ...(unsized ? { unsized } : {}),
   };
   context.log(level, 'pressure_action', msg, fields);
   if (action.workspace && action.outcome !== 'kept' && !(context.force && action.outcome === 'would'))
@@ -233,7 +233,6 @@ async function run(
     return;
   }
   context.operation?.signal.throwIfAborted();
-  context.attempting?.();
   let outcome: ActionOutcome;
   try {
     outcome = await executeAction(plan, {
@@ -461,7 +460,7 @@ async function cargoTargetsStep(context: RungContext): Promise<void> {
   cargoTrimmedAt.set(key, now);
 }
 
-function unsized(dir: string): string {
+function unsizedDetail(dir: string): string {
   const failure = lastSizeFailure(dir);
   return `its size walk ${failure ? describeSizeFailure(failure) : 'failed'}, so it was left alone`;
 }
@@ -490,8 +489,16 @@ async function cachesRung(context: RungContext): Promise<void> {
       if (bytes === null) {
         recordAction(
           context,
-          { rung: 3, kind: 'trim-cache', target: cache.dir, outcome: 'kept', bytes: 0, detail: unsized(cache.dir) },
+          {
+            rung: 3,
+            kind: 'trim-cache',
+            target: cache.dir,
+            outcome: 'kept',
+            bytes: 0,
+            detail: unsizedDetail(cache.dir),
+          },
           context.why,
+          true,
         );
         continue;
       }
@@ -521,9 +528,10 @@ async function cachesRung(context: RungContext): Promise<void> {
             target: compilation,
             outcome: 'kept',
             bytes: 0,
-            detail: unsized(compilation),
+            detail: unsizedDetail(compilation),
           },
           context.why,
+          true,
         );
     } else if (critical || (capGb > 0 && bytes > (capGb * GIB) / 2)) {
       const blocked = cacheBlocked(

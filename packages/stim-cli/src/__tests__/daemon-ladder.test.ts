@@ -828,6 +828,42 @@ describe('the pressure ladder', () => {
     expect(existsSync(join(buildCache(), 'ios', 'unused'))).toBe(true);
   });
 
+  test('a build headroom run ends after a build cache trim that evicted nothing left the free space no higher', async () => {
+    mkdirSync(join(buildCache(), 'ios', 'recent'), { recursive: true });
+    const transform = join(metroCache(), 'other-app', 'transform', 'aa');
+    mkdirSync(transform, { recursive: true });
+    old(transform);
+    vi.stubEnv('STIM_CACHES_BUILD_CACHE_MAX_GB', '12');
+    vi.stubEnv('STIM_CACHES_METRO_CACHE_MAX_GB', '1');
+    const device = statSync(home).dev;
+    vi.spyOn(daemonMeasure, 'measureDisk').mockResolvedValue([{ volume: '/', freeMb: 100 * 1024, device }]);
+    const real = getExecutor();
+    setExecutor({
+      ...getExecutor(),
+      runFileAsync: async (file, args, options) => {
+        if (file === 'du' && args.at(-1) === buildCache()) return `${20 * 1024 * 1024}\t${buildCache()}\n`;
+        if (file === 'du' && args.at(-1) === metroCache()) return `${4 * 1024 * 1024}\t${metroCache()}\n`;
+        return real.runFileAsync(file, args, options);
+      },
+    });
+
+    await runLadderToFree({
+      operation: testContext({ env: { ...process.env, CI: undefined, STIM_DAEMON: undefined } }),
+      signal: new AbortController().signal,
+      device,
+      freeMb: 200 * 1024,
+      protectedRoot: join(projects, 'build'),
+    });
+
+    const reached = readFileSync(daemonNdjsonFile(), 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((line): { event?: unknown; target?: unknown; outcome?: unknown } => JSON.parse(line))
+      .filter((record) => record.event === 'pressure_action');
+    expect(reached).toEqual([expect.objectContaining({ target: buildCache(), outcome: 'kept' })]);
+    expect(existsSync(transform)).toBe(true);
+  });
+
   test('a memory-only level never trims a cache or deletes a device', async () => {
     workspace('idle-hour', 60 * MINUTE_MS, 'Shutdown');
     caches('kept-key');
