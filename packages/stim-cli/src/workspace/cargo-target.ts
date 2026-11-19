@@ -1,5 +1,5 @@
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync, type Dirent } from 'node:fs';
-import { lstat, mkdir, readdir, rename, rm, rmdir, unlink, writeFile } from 'node:fs/promises';
+import { link, lstat, mkdir, readdir, rename, rm, rmdir, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { cargoTargetTrimClaims } from '@stim-cli/core/state';
 import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-claim.ts';
@@ -33,20 +33,17 @@ const NOT_RESTORED = `${OWN_PREFIX}not-restored-`;
 const CARGO_TOP_FILES = new Set(['.rustc_info.json', 'CACHEDIR.TAG', '.future-incompat-report.json', ...PROFILE_LOCKS]);
 const CARGO_TOP_DIRS = new Set(['doc', 'package', 'tmp', 'cargo-timings', '.metabuild']);
 /**
- * The entries Exact's own tools write at the top of a target (Exact's `scripts/app.mjs`, `scripts/sweep.mjs`,
- * `scripts/cargo-dep-info.mjs`, `scripts/cargo-check.mjs`, `scripts/filesystem.mjs`, `scripts/rust.mjs`,
- * `scripts/web-build.mjs`, `scripts/evidence.mjs`, `scripts/publisher.mjs`, `scripts/agent.mjs`,
+ * The entries Exact's build tools write at the top of a target, each a build product, cache or scratch directory a
+ * build recreates (Exact's `scripts/app.mjs`, `scripts/sweep.mjs`, `scripts/cargo-dep-info.mjs`,
+ * `scripts/filesystem.mjs`, `scripts/rust.mjs`, `scripts/web-build.mjs`, `scripts/publisher.mjs`,
  * `host/apple/build.mjs`, `host/apple/modules.mjs`, `host/apple/compose.mjs`, `host/apple/extensions.mjs`,
- * `host/apple/svg-filter.mjs`, `host/web/build.mjs`, `host/web/dev.mjs`, `host/web-js/module.mjs`,
- * `host/web-js/build.mjs`, `host/web-js/dev.mjs` and `host/windows/build.mjs`).
+ * `host/apple/svg-filter.mjs`, `host/apple/shader-libraries.mjs`, `host/web/build.mjs`, `host/web/dev.mjs`,
+ * `host/web-js/module.mjs`, `host/web-js/build.mjs` and `host/web-js/dev.mjs`). Records Exact keeps of runs and
+ * sessions (`traces/`, `web-receipts/`, `native-receipts/`), its ledgers, claims and locks, and scratch a dev server
+ * may still serve from are not on it.
  */
 const EXACT_TOP = new Set([
-  '.exact-sweep.json',
-  '.exact-sweep.json.lock',
-  '.exact-sweep.log',
-  '.exact-crates',
   '.exact-swept',
-  '.apple-cargo-locks',
   'apple-extension-module-cache',
   'apple-modules',
   'apple-swift',
@@ -58,10 +55,7 @@ const EXACT_TOP = new Set([
   'clients',
   'dev-gpu',
   'exact-filesystem-tool',
-  'gpu-dev',
   'metal-kept',
-  'module-dev',
-  'native-receipts',
   'native-reuse',
   'native-runs',
   'proof-web',
@@ -72,7 +66,6 @@ const EXACT_TOP = new Set([
   'rust-sign',
   'rust-tools',
   'swift-packages',
-  'traces',
   'web-bakes',
   'web-dist',
   'web-dist-resident',
@@ -82,11 +75,10 @@ const EXACT_TOP = new Set([
   'web-js-modules',
   'web-loops',
   'web-opt',
-  'web-receipts',
   'web-runs',
 ]);
-/** Exact's entries named from a fixed prefix and a key, and `web-dist`'s generation, lease and lock siblings. */
-const EXACT_TOP_PREFIXES = ['kept-crates-', 'web-js-dev-compiler-', 'web-check-', 'push-ts-', 'inspect-', 'web-dist.'];
+/** Exact's build scratch directories, made with `mkdtemp` from these prefixes. */
+const EXACT_TOP_PREFIXES = ['web-check-', 'push-ts-'];
 
 /** Whether `root` is an Exact app (beside its `exact.mjs`) or a checkout of Exact itself. */
 function exactRoot(root: string): boolean {
@@ -662,9 +654,11 @@ async function deleteClaimed(
     signal?.throwIfAborted();
     const dir = join(target, name);
     if (inUse(first.used, dir)) return keep(`a process uses ${dir}`);
-    const held = await heldLock(dir, name, signal);
+    const held = await heldLock(dir, signal);
     if (held) return keep(`a build holds ${held}`);
   }
+  const exactHeld = await heldExactLock(target, signal);
+  if (exactHeld) return keep(`a build holds ${exactHeld}`);
   type Entry = { dir: string; there: string; name: string };
   const moved: Entry[] = [];
   const marker = join(aside, STRANDED);
@@ -702,9 +696,11 @@ async function deleteClaimed(
         continue;
       }
       moved.push(entry);
-      const took = await heldLock(entry.there, name);
+      const took = await heldLock(entry.there);
       if (took) return await putBackAll(`a build took ${took} during the move`);
     }
+    const exactTook = await heldExactLock(target);
+    if (exactTook) return await putBackAll(`a build took ${exactTook} during the move`);
     const after = moved.length ? await readTargetUse(target, launching, signal) : { used: [] };
     if ('kept' in after) return await putBackAll(after.kept);
     const taken = moved.find(({ dir, there }) => inUse(after.used, dir) || inUse(after.used, there));
@@ -745,16 +741,19 @@ function exactLockFiles(path: string, name: string): string[] {
   return files;
 }
 
-/**
- * The lock a build holds in the top-level entry `name` at `path`: a Cargo lock in it or a directory directly in it, or
- * one of Exact's lock files.
- */
-async function heldLock(path: string, name: string, signal?: AbortSignal): Promise<string | null> {
+/** The Cargo lock a build holds in the top-level entry at `path` or a directory directly in it. */
+async function heldLock(path: string, signal?: AbortSignal): Promise<string | null> {
   for (const dir of [path, ...(await childProfiles(path))]) {
     const held = await lockOutcome(dir, signal);
     if (lockHeld(held)) return join(dir, held.file ?? '.cargo-lock');
   }
-  for (const file of exactLockFiles(path, name)) if (await fileHeld(file, signal)) return file;
+  return null;
+}
+
+/** The lock file of Exact's at the top of `target` a process holds, which keeps the whole target. */
+async function heldExactLock(target: string, signal?: AbortSignal): Promise<string | null> {
+  for (const name of [`${EXACT_LEDGER}.lock`, EXACT_APPLE_LOCKS])
+    for (const file of exactLockFiles(join(target, name), name)) if (await fileHeld(file, signal)) return file;
   return null;
 }
 
@@ -812,7 +811,13 @@ async function restoreOrStrand(
   n: number,
 ): Promise<{ home: string; marked: boolean }> {
   try {
-    // Node has no rename that refuses to replace, so a name recreated after this check is still overwritten.
+    if (lstatSync(there).isFile()) {
+      await link(there, dir);
+      await unlink(there);
+      return { home: dir, marked: false };
+    }
+    // Node has no rename that refuses to replace, and rename(2) replaces an empty directory, so a directory recreated
+    // empty between this check and the rename is still replaced.
     if (!lstatSync(dir, { throwIfNoEntry: false })) {
       await rename(there, dir);
       return { home: dir, marked: false };

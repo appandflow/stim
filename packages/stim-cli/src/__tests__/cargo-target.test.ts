@@ -24,7 +24,11 @@ import {
 import { launchingWith, noLaunchers } from './fixtures/launching.ts';
 
 const fsHooks = vi.hoisted(
-  (): { rename?: (from: string) => void | Promise<void>; dev?: (path: string) => number | undefined } => ({}),
+  (): {
+    rename?: (from: string) => void | Promise<void>;
+    link?: (to: string) => void;
+    dev?: (path: string) => number | undefined;
+  } => ({}),
 );
 vi.mock('node:fs/promises', async (importOriginal) => {
   const fs = await importOriginal<typeof import('node:fs/promises')>();
@@ -33,6 +37,10 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     rename: async (...args: Parameters<typeof fs.rename>) => {
       await fsHooks.rename?.(String(args[0]));
       return fs.rename(...args);
+    },
+    link: async (...args: Parameters<typeof fs.link>) => {
+      fsHooks.link?.(String(args[1]));
+      return fs.link(...args);
     },
     lstat: async (...args: Parameters<typeof fs.lstat>) => {
       const stat = await fs.lstat(...args);
@@ -411,6 +419,7 @@ describe.skipIf(process.platform === 'win32')(
       resetExecutor();
       delete fsHooks.rename;
       delete fsHooks.dev;
+      delete fsHooks.link;
     });
     const remove = () => deleteCargoTarget(dir, { idleMs: DAY, launching: noLaunchers(target) });
 
@@ -603,6 +612,29 @@ describe.skipIf(process.platform === 'win32')(
       expect(existsSync(join(dir, 'doc', 'index.html'))).toBe(true);
     });
 
+    test('a roll back keeps a file a build recreates between the check and the restore', async () => {
+      stubProcesses({
+        lsof: (args) => {
+          const lock = args.at(-1) ?? '';
+          return lock.includes('.stim-trimmed') && lock.endsWith('.cargo-lock') ? '4242\n' : '';
+        },
+      });
+      const recreate = () => writeFileSync(join(dir, '.rustc_info.json'), 'new');
+      fsHooks.link = (to) => {
+        if (to.endsWith('/.rustc_info.json')) recreate();
+      };
+      fsHooks.rename = (from) => {
+        if (from.endsWith('/.stim-trimmed/0')) recreate();
+      };
+
+      const result = await remove();
+
+      expect(result.kept).toEqual([expect.stringContaining('could not be put back')]);
+      expect(readFileSync(join(dir, '.rustc_info.json'), 'utf8')).toBe('new');
+      const kept = readdirSync(dir).find((name) => name.startsWith('.stim-not-restored-')) ?? '';
+      expect(readFileSync(join(dir, kept), 'utf8')).toBe('{}');
+    });
+
     test('a roll back keeps a file a build recreated and leaves the staged copy for a person', async () => {
       stubProcesses({
         lsof: (args) => {
@@ -647,11 +679,27 @@ describe.skipIf(process.platform === 'win32')(
     });
     const remove = () => deleteCargoTarget(dir, { idleMs: DAY, launching: noLaunchers(target) });
 
-    test('it goes whole when every entry and its direct children are old', async () => {
+    test('its build output goes when old, while its traces, web-dist inputs, ledger and locks stay', async () => {
+      mkdirSync(join(dir, 'traces'));
+      writeFileSync(join(dir, 'traces', 'trace-1.json'), '{"session":1}');
+      writeFileSync(join(dir, 'web-dist.json'), '{}');
+      mkdirSync(join(dir, 'web-dist.previous'));
+      writeFileSync(join(dir, 'web-dist.previous', 'notes.md'), 'mine');
+      ageTree(dir);
+
       const result = await remove();
 
-      expect(result.kept).toEqual([]);
-      expect(existsSync(dir)).toBe(false);
+      expect(result.removed).toEqual(['apple-swift', 'bake', 'clients']);
+      expect(readdirSync(dir).toSorted()).toEqual([
+        '.apple-cargo-locks',
+        '.exact-sweep.json',
+        '.exact-sweep.json.lock',
+        'traces',
+        'web-dist.json',
+        'web-dist.previous',
+      ]);
+      expect(readFileSync(join(dir, 'traces', 'trace-1.json'), 'utf8')).toBe('{"session":1}');
+      expect(readFileSync(join(dir, 'web-dist.previous', 'notes.md'), 'utf8')).toBe('mine');
     });
 
     test.each([
@@ -677,7 +725,7 @@ describe.skipIf(process.platform === 'win32')(
       const result = await remove();
 
       expect(result.removed).toEqual([]);
-      expect(result.kept).toEqual([expect.stringContaining(why)]);
+      expect(result.kept).toContainEqual(expect.stringContaining(why));
       expect(existsSync(join(dir, 'clients', 'app', 'client.js'))).toBe(true);
     });
     test.skipIf(process.getuid?.() === 0)('it stays whole when an entry cannot be listed', async () => {
@@ -685,7 +733,7 @@ describe.skipIf(process.platform === 'win32')(
 
       const result = await remove();
 
-      expect(result.kept).toEqual([expect.stringContaining('bake cannot be listed')]);
+      expect(result.kept).toContainEqual(expect.stringContaining('bake cannot be listed'));
       expect(existsSync(join(dir, 'clients', 'app', 'client.js'))).toBe(true);
     });
   },
