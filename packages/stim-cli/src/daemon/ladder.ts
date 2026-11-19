@@ -25,6 +25,7 @@ import { workspaceDir } from '../workspace/paths.ts';
 import { freshLaunchers, launchingOf, type Launching } from '../workspace/launchers.ts';
 import { formatBytes, measuredDirectorySizeAsync } from '../fs-util.ts';
 import { timedStep } from './step-timing.ts';
+import { forgetGitReads } from '../workspace/git-reads.ts';
 import { executeAction, type ActContext, type ActionOutcome } from '../stimd/passes/act.ts';
 import { artifactWorktreesFor } from '../stimd/passes/artifacts.ts';
 import { cacheBlocked } from '../stimd/passes/measure.ts';
@@ -126,11 +127,12 @@ interface RungContext extends LadderInput {
 
 /** Logs one ladder action to `daemon.ndjson` and the workspace's `metro.ndjson`, and keeps it for the snapshot. */
 function recordAction(
-  context: Pick<RungContext, 'log' | 'actions' | 'force'>,
+  context: Pick<RungContext, 'log' | 'actions' | 'force' | 'operation'>,
   action: DaemonLadderAction,
   reason: string,
 ): void {
   context.actions.push(action);
+  if (action.outcome === 'done' || action.outcome === 'failed') forgetGitReads(context.operation);
   const verb =
     action.outcome === 'would'
       ? 'would'
@@ -1052,6 +1054,7 @@ export async function runLadder(
   const actions: DaemonLadderAction[] = [];
   const settings = resolveMaintenanceSettings(input.config);
   const { force } = input;
+  if (input.act) forgetGitReads(input.operation);
   const runRung = async (rung: Rung, context: RungContext, causes: Cause[]) => {
     const before = actions.length;
     try {

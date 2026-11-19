@@ -14,6 +14,7 @@ import { processContext } from '../cli-operation.ts';
 import { runMaintenance } from '../stimd/passes/run.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { checkoutRootOf } from '../workspace/checkout-role.ts';
+import { forgetGitReads, openGitReads } from '../workspace/git-reads.ts';
 import { freshLaunchers, launchersOf, launchingOf, logLauncherProblems } from '../workspace/launchers.ts';
 import { loadConfig, type Config } from '../workspace/config.ts';
 import { requestDaemonTick, stimdRefused } from './client.ts';
@@ -128,6 +129,7 @@ export async function runHomePasses({
   const config = loadConfig();
   const now = Date.now();
   const operation = processContext(process.cwd(), signal ?? new AbortController().signal);
+  const closeGitReads = openGitReads(operation);
   const measured = await measureTick(config, now, { signal: operation.signal, operation });
   operation.signal.throwIfAborted();
   const measureMs = lap();
@@ -199,6 +201,7 @@ export async function runHomePasses({
         )),
   ];
   const idleMs = lap();
+  if (act) forgetGitReads(operation);
   const reading = { devices: measured.devices, simsFailed: measured.sims === null, operation };
   actions.push(...(await runDormantPass({ config, act, log, ...reading })));
   operation.signal.throwIfAborted();
@@ -261,6 +264,7 @@ export async function runHomePasses({
   operation.signal.throwIfAborted();
   const ladderMs = lap();
   logLauncherProblems(operation, log);
+  closeGitReads();
   return {
     config,
     now,

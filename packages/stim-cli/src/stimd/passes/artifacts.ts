@@ -60,6 +60,7 @@ import {
   type WorktreeEntry,
 } from '../../workspace/worktree.ts';
 import { lowestFree, measureDisk } from './measure.ts';
+import { forgetGitReads } from '../../workspace/git-reads.ts';
 
 const PACKAGE_PARENTS = ['apps', 'packages'];
 const SCAN_DEPTH: Record<ArtifactKind, number> = { build: 3, dependencies: 1 };
@@ -623,6 +624,7 @@ export async function clearArtifact(
   },
 ): Promise<{ status: 'done' | 'kept'; bytes: number; detail: string }> {
   const { operation } = options;
+  forgetGitReads(operation);
   const signal = operation?.signal ?? new AbortController().signal;
   const worktree = containing(options.worktrees, action.target);
   if (kind === 'dependencies' && worktree && !worktree.linked)
