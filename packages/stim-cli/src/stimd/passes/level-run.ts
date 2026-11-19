@@ -63,8 +63,10 @@ export interface LevelRun {
   outside: { path: string; from: string }[];
   /** The largest things Stim keeps on disk and can reclaim, from the sizes the run measured, largest first. */
   usage: { name: string; dir: string; bytes: number }[];
-  /** @internal Carries no compatibility: the folders and files of every cache the run discovered, measured or not. */
+  /** @internal Carries no compatibility: the folders and files of every cache the run discovered and measured. */
   cachePaths: string[];
+  /** @internal Carries no compatibility: the folders and files of every cache the run discovered, did not measure, and sweeps by entry. */
+  sweptCachePaths: string[];
 }
 
 /** Measures disk and memory once and classifies them as the daemon would. */
@@ -266,6 +268,8 @@ export async function runMaintenanceAtLevel({
       blocked.push(`Discovered checkout ${checkout.path}: ${kept}, so it is never reduced`);
     discovered.push({ ...checkout, actions: mine, ...(kept ? { kept } : {}) });
   }
+  const measuredCaches = caches.filter((cache) => sizes.some((size) => size.dir === cache.dir));
+  const sweptCaches = caches.filter((cache) => cache.prune === 'entries' && !measuredCaches.includes(cache));
   const usage = sizes
     .filter((size) => size.bytes > 0)
     .toSorted((a, b) => b.bytes - a.bytes)
@@ -279,6 +283,7 @@ export async function runMaintenanceAtLevel({
     discovered,
     outside,
     usage,
-    cachePaths: [...caches.map((cache) => cache.dir), ...caches.flatMap((cache) => cache.files ?? [])],
+    cachePaths: [...measuredCaches.map((cache) => cache.dir), ...measuredCaches.flatMap((cache) => cache.files ?? [])],
+    sweptCachePaths: [...sweptCaches.map((cache) => cache.dir), ...sweptCaches.flatMap((cache) => cache.files ?? [])],
   };
 }

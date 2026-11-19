@@ -25,7 +25,7 @@ import { markOverCapCompilationCache, previewScopedEmptying } from './gc/caches.
 import { collectParkedAvds, collectParkedSims, collectDeviceLeases } from './gc/devices.ts';
 import { gcReportSections, type GcJsonSections, type GcReport } from './gc/report.ts';
 import { formatGcSummary, formatUnmanagedUsage, gcDetailLines } from './gc/summary.ts';
-import { unmanagedUsage } from './gc/unmanaged.ts';
+import { unmanagedUsage, type UnmanagedUsage } from './gc/unmanaged.ts';
 import { collectOrphanedWorkspaces, collectWorkspaceOutputs, isInsideWorkspaces } from './gc/workspaces.ts';
 import { collectWorktreeSweep } from './gc/worktrees.ts';
 import { measureWorktreeSweep } from './gc/worktree-sizes.ts';
@@ -414,15 +414,13 @@ export async function runGc(opts: GcOptions = {}, deps: GcDependencies = {}): Pr
   if (result.exitCode) process.exitCode = result.exitCode;
   if (opts.json) console.log(JSON.stringify(result.payload));
   if (result.run) {
-    const unmanaged = await unmanagedUsage(result.run, !opts.dryRun, deps.operation).catch((error: unknown) => {
-      if (
-        !deps.operation?.signal.aborted ||
-        error instanceof WorkspaceProcessCleanupError ||
-        (error instanceof Error && 'reportCleanup' in error)
-      )
+    let unmanaged: UnmanagedUsage | null = null;
+    try {
+      unmanaged = await unmanagedUsage(result.run, !opts.dryRun, deps.operation);
+    } catch (error) {
+      if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
         throw error;
-      return null;
-    });
+    }
     for (const line of unmanaged ? formatUnmanagedUsage(unmanaged) : []) console.log(line);
   }
 }

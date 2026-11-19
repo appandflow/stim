@@ -16,7 +16,7 @@ const hooks: {
   lstat: ((path: string) => void | Partial<Stats>) | null;
   realpath: ((path: string) => Promise<string> | null) | null;
   volume: ((path: string) => { volume: string; freeMb: number; device: number } | null) | null;
-  du: ((dir: string) => Promise<string> | null) | null;
+  du: ((dir: string, signal?: AbortSignal) => Promise<string> | null) | null;
 } = vi.hoisted(() => ({ lstat: null, realpath: null, volume: null, du: null }));
 
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -57,7 +57,12 @@ const DOCKER_DF = [
   '{"Active":"1","Reclaimable":"0B","Size":"500MB","TotalCount":"1","Type":"Local Volumes"}',
 ].join('\n');
 
-function levelRun(pressure: Partial<DaemonPressure>, wouldBytes = 0, cachePaths: string[] = []): LevelRun {
+function levelRun(
+  pressure: Partial<DaemonPressure>,
+  wouldBytes = 0,
+  cachePaths: string[] = [],
+  sweptCachePaths: string[] = [],
+): LevelRun {
   return {
     pressure: { level: 'high', disk: 'high', memory: 'normal', reasons: [], memoryWarningSince: null, ...pressure },
     level: 'high',
@@ -79,6 +84,7 @@ function levelRun(pressure: Partial<DaemonPressure>, wouldBytes = 0, cachePaths:
     outside: [],
     usage: [],
     cachePaths,
+    sweptCachePaths,
   };
 }
 
@@ -102,7 +108,7 @@ beforeEach(() => {
   dockerOutput = DOCKER_DF;
   setExecutor({
     findExecutable: (name: string) => (name === 'docker' ? docker : null),
-    runFileAsync: async (file: string, args: string[]) => {
+    runFileAsync: async (file: string, args: string[], options?: { signal?: AbortSignal }) => {
       calls.push([file, ...args]);
       if (file === 'docker') {
         if (docker === null) throw Object.assign(new Error('spawn docker ENOENT'), { code: 'ENOENT' });
@@ -114,7 +120,7 @@ beforeEach(() => {
         return dockerOutput;
       }
       const dir = args.at(-1) ?? '';
-      const hooked = hooks.du?.(dir);
+      const hooked = hooks.du?.(dir, options?.signal);
       if (hooked) return hooked;
       if (dir === slow) {
         vi.setSystemTime(Date.now() + 60_000);
@@ -298,22 +304,88 @@ test.skipIf(process.platform === 'win32')('a cancelled gc stops the listing', as
   expect(calls.filter(([file]) => file === 'nice')).toEqual([]);
 });
 
-test.skipIf(process.platform === 'win32')('leaves out a cache Stim manages before it is measured', async () => {
-  const uid = process.getuid?.();
-  if (uid === undefined) return;
-  mkdirSync(join(temp, `jest_${uid.toString(36)}`, 'haste-map-abc123-app'), { recursive: true });
-  writeFileSync(join(temp, 'metro-file-map-abc123'), 'map');
-  mkdirSync(join(temp, 'scratch'));
+test.skipIf(process.platform === 'win32')(
+  'leaves out a cache Stim measured, and marks one it sweeps without measuring',
+  async () => {
+    const uid = process.getuid?.();
+    if (uid === undefined) return;
+    const jest = join(temp, `jest_${uid.toString(36)}`);
+    const metro = join(temp, 'metro-file-map-abc123');
+    mkdirSync(join(jest, 'haste-map-abc123-app'), { recursive: true });
+    writeFileSync(metro, 'map');
+    mkdirSync(join(temp, 'scratch'));
+    const caches = (await discoverCachesAsync()).filter((cache) => cache.prune === 'entries');
+    const paths = [...caches.map((cache) => cache.dir), ...caches.flatMap((cache) => cache.files ?? [])];
+    const ours = (usage: Awaited<ReturnType<typeof unmanagedUsage>>) =>
+      usage?.entries
+        .filter((entry) => entry.label.startsWith(temp))
+        .map((entry) => ({ label: entry.label, swept: entry.swept }));
 
-  const caches = await discoverCachesAsync();
-  const usage = await unmanagedUsage(
-    levelRun({}, 0, [...caches.map((cache) => cache.dir), ...caches.flatMap((cache) => cache.files ?? [])]),
-    false,
-  );
+    const swept = await unmanagedUsage(levelRun({}, 0, [], paths), false);
+    expect(ours(swept)).toEqual(
+      expect.arrayContaining([
+        { label: jest, swept: true },
+        { label: metro, swept: true },
+        { label: join(temp, 'scratch') },
+      ]),
+    );
+    expect(ours(swept)).toHaveLength(3);
+    expect(swept ? formatUnmanagedUsage(swept) : []).toContainEqual(
+      expect.stringMatching(new RegExp(`  \\S+  ${jest}, Stim sweeps only its unused entries$`)),
+    );
 
-  expect(usage?.entries.map((entry) => entry.label).filter((label) => label.startsWith(temp))).toEqual([
-    join(temp, 'scratch'),
-  ]);
+    const measured = await unmanagedUsage(levelRun({}, 0, paths), false);
+    expect(ours(measured)).toEqual([{ label: join(temp, 'scratch') }]);
+  },
+);
+
+describe.skipIf(process.platform === 'win32')('a gc cancelled during a walk', () => {
+  test.each([
+    ['the cancellation', null],
+    [
+      'a cleanup refusal',
+      Object.assign(new Error('Cannot verify cleanup for report child 42'), { reportCleanup: true }),
+    ],
+  ])('a cancelled gc waits for its walk to be killed and cleaned up, then rejects with %s', async (_case, refusal) => {
+    mkdirSync(join(home, 'a-walk'));
+    const controller = new AbortController();
+    const steps: string[] = [];
+    let arrive = () => {};
+    const reached = new Promise<void>((resolve) => {
+      arrive = resolve;
+    });
+    hooks.du = (dir, signal) => {
+      if (!dir.endsWith('a-walk')) return null;
+      arrive();
+      return new Promise<string>((_, reject) => {
+        signal?.addEventListener(
+          'abort',
+          () => {
+            steps.push('killed');
+            setImmediate(() => {
+              steps.push('cleaned up');
+              reject(refusal ?? signal.reason);
+            });
+          },
+          { once: true },
+        );
+      });
+    };
+    const outcome = unmanagedUsage(levelRun({}), false, testContext({ signal: controller.signal })).then(
+      () => null,
+      (error: unknown) => {
+        steps.push('scan returned');
+        return error;
+      },
+    );
+    await reached;
+    controller.abort();
+    const error = await outcome;
+
+    expect(steps).toEqual(['killed', 'cleaned up', 'scan returned']);
+    expect(error).toBe(refusal ?? controller.signal.reason);
+    expect(hungRead()).toBeNull();
+  });
 });
 
 describe.skipIf(process.platform === 'win32')('a path Stim manages that does not resolve in time', () => {

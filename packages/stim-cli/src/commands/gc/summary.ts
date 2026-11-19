@@ -151,7 +151,7 @@ export function formatUnmanagedUsage(usage: UnmanagedUsage): string[] {
   const lines = ["Not Stim's to delete, the largest other users of the short volume:"];
   for (const entry of shown)
     lines.push(
-      `  ${formatBytes(entry.bytes)}${entry.partial ? ' or more' : ''}  ${entry.label}${entry.partial ? ', partly unreadable' : ''}${entry.holdsStim ? ', holds folders Stim manages' : ''}${entry.command ? `: ${entry.command}` : ''}`,
+      `  ${formatBytes(entry.bytes)}${entry.partial ? ' or more' : ''}  ${entry.label}${entry.partial ? ', partly unreadable' : ''}${entry.holdsStim ? ', holds folders Stim manages' : ''}${entry.swept ? ', Stim sweeps only its unused entries' : ''}${entry.command ? `: ${entry.command}` : ''}`,
     );
   if (usage.slow.length) lines.push(`  too slow to size, likely large: ${names(usage.slow)}`);
   if (usage.failed.length) lines.push(`  could not be sized: ${names(usage.failed)}`);

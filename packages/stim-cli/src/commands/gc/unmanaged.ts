@@ -30,6 +30,8 @@ interface UnmanagedEntry {
   holdsStim?: true;
   /** Set when `du` could not read part of the folder, so `bytes` is a lower bound. */
   partial?: true;
+  /** Set on a cache Stim found and did not measure, of which it deletes only the unused entries. */
+  swept?: true;
 }
 
 export interface UnmanagedUsage {
@@ -153,7 +155,8 @@ class Scan {
    * `unreached` when the deadline cut it short or another read is still pending, or `failed` with the error. The
    * executor kills it at its timeout but waits for it to close, which a process stuck on a dead mount never does, so
    * it is also raced through the bounded read slot a little past its timeout; one that never closes stays the pending
-   * read, which makes the command exit explicitly.
+   * read, which makes the command exit explicitly. A cancelled run waits for the executor to kill the child and
+   * finish its cleanup, so a cleanup refusal reaches the caller.
    */
   async run(
     label: string,
@@ -165,23 +168,31 @@ class Scan {
     if (timeoutMs <= 0) return { unreached: true };
     const shortened = timeoutMs < capMs;
     const signal = this.operation?.signal;
+    let child: Promise<string> | undefined;
     try {
       return {
         ok: await answered(
           label,
           () =>
-            runOperationFile(this.operation, getExecutor(), file, args, {
+            (child = runOperationFile(this.operation, getExecutor(), file, args, {
               timeoutMs,
               killSignal: 'SIGKILL',
               signal,
               cwd: this.operation?.cwd,
-            }),
+            })),
           timeoutMs + KILL_GRACE_MS,
-          signal,
         ),
       };
     } catch (error) {
-      rethrowCleanup(error, this.operation);
+      rethrowCleanup(
+        signal?.aborted && child
+          ? await child.then(
+              () => error,
+              (cause: unknown) => cause,
+            )
+          : error,
+        this.operation,
+      );
       if (error instanceof Unanswered && hungRead() !== label) return { unreached: true };
       if (error instanceof Unanswered || isTimeoutError(error)) return shortened ? { unreached: true } : { slow: true };
       return { failed: error };
@@ -259,7 +270,7 @@ async function docker(scan: Scan): Promise<UnmanagedEntry[]> {
 
 interface RootListing {
   files: UnmanagedEntry[];
-  folders: { path: string; holdsStim: boolean }[];
+  folders: { path: string; holdsStim: boolean; swept: boolean }[];
 }
 
 // @ref LLP 0004#tool-folders-and-the-full-scan -- the discovery scan leaves these home folders unread too
@@ -274,6 +285,7 @@ async function listRoot(
   scan: Scan,
   root: string,
   managed: readonly string[],
+  swept: readonly string[],
   kind: 'temp' | 'home',
 ): Promise<RootListing> {
   const listing: RootListing = { files: [], folders: [] };
@@ -298,8 +310,10 @@ async function listRoot(
     if (managed.some((dir) => inside(path, dir))) continue;
     const entry = await scan.read(path, () => lstat(path));
     if (!entry || entry.isSymbolicLink() || entry.dev !== info.dev) continue;
-    if (entry.isDirectory()) listing.folders.push({ path, holdsStim: managed.some((dir) => inside(dir, path)) });
-    else if (entry.blocks) listing.files.push({ label: path, bytes: entry.blocks * 512 });
+    if (entry.isDirectory())
+      listing.folders.push({ path, holdsStim: managed.some((dir) => inside(dir, path)), swept: swept.includes(path) });
+    else if (entry.blocks)
+      listing.files.push({ label: path, bytes: entry.blocks * 512, ...(swept.includes(path) ? { swept: true } : {}) });
   }
   return listing;
 }
@@ -307,8 +321,8 @@ async function listRoot(
 /**
  * The largest users of a short volume that Stim does not manage, for the plain `stim gc` report. It runs only when the
  * measured disk level is high or critical and a volume is under `disk.minFreeGb`: after an acting run the disk is
- * measured again, a dry run reads it as it is, before its deletions. Never on Windows or from
- * a home STIM_HOME scopes, since what it reads is machine-wide. It reads swap files on a short volume, asks
+ * measured again, a dry run reads it as it is, before its deletions. Never on Windows or
+ * when STIM_HOME scopes the home, since what it reads is machine-wide. It reads swap files on a short volume, asks
  * `docker system df` when Docker is installed, and sizes the entries of the temporary directory and the home directory
  * on a short volume, taking the two in turn, one low-priority `du` at a time that stays on one filesystem. Every read
  * and walk shares one time budget; when the paths Stim manages cannot be resolved in time, the two folders are not
@@ -363,12 +377,13 @@ export async function unmanagedUsage(
         ...run.cachePaths,
       ])
     : null;
+  const swept = managed ? await resolved(run.sweptCachePaths) : null;
   const listings: RootListing[] = [];
-  if (roots && managed) {
+  if (roots && managed && swept) {
     const own = managed.filter((path) => !roots.some((root) => inside(root, path)));
     const [temp, home] = roots;
-    if (temp) listings.push(await listRoot(scan, temp, own, 'temp'));
-    if (home && home !== temp) listings.push(await listRoot(scan, home, own, 'home'));
+    if (temp) listings.push(await listRoot(scan, temp, own, swept, 'temp'));
+    if (home && home !== temp) listings.push(await listRoot(scan, home, own, swept, 'home'));
   }
   for (const listing of listings) entries.push(...listing.files);
   const queue = Array.from({ length: MAX_WALKS_PER_ROOT }, (_, index) =>
@@ -382,6 +397,7 @@ export async function unmanagedUsage(
         bytes: size.bytes,
         ...(folder.holdsStim ? { holdsStim: true } : {}),
         ...(size.partial ? { partial: true } : {}),
+        ...(folder.swept ? { swept: true } : {}),
       });
   }
   for (const listing of listings) scan.unreached += Math.max(0, listing.folders.length - MAX_WALKS_PER_ROOT);
