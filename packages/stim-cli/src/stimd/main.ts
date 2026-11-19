@@ -37,6 +37,7 @@ import {
   stimdSuccessorMissingFile,
   stimdJobRestartFile,
   readJobRestart,
+  isServiceLabel,
   stimdSocket,
   stimBuildId,
   macosAppState,
@@ -1035,7 +1036,7 @@ async function runStimdInner(
   );
   let restartingNet = false;
   const netAskers = new Set<Socket>();
-  const jobWaiters = new Set<Socket>();
+  const jobWaiters = new Map<Socket, string>();
   const netGone = () => {
     recordNet(null);
     for (const socket of netAskers) socket.end();
@@ -1359,7 +1360,8 @@ async function runStimdInner(
   };
   const relaunch = async (next: { build: string; version: string }, entry: string) => {
     // @ref LLP 0009#service-and-engine-updates -- a service unit's stimd hands over through the unit's job
-    const job = unit !== undefined && (inJob || [...jobWaiters].some((socket) => !socket.destroyed)) ? unit : null;
+    const waiter = [...jobWaiters].find(([socket]) => !socket.destroyed)?.[1];
+    const job = (inJob ? unit : undefined) ?? waiter ?? null;
     const leftAt = Date.now();
     if (job) {
       leaveToJob(job, leftAt, null, log);
@@ -1635,8 +1637,13 @@ async function runStimdInner(
                   if (state.listening && !socket.destroyed) {
                     netAskers.add(socket);
                     socket.once('close', () => netAskers.delete(socket));
-                    if (forService && unit !== undefined && params.unit === unit) {
-                      jobWaiters.add(socket);
+                    if (
+                      forService &&
+                      typeof params.unit === 'string' &&
+                      isServiceLabel(params.unit) &&
+                      (unit === undefined || params.unit === unit)
+                    ) {
+                      jobWaiters.set(socket, params.unit);
                       socket.once('close', () => jobWaiters.delete(socket));
                     }
                   }
@@ -2438,6 +2445,13 @@ export async function runStimdEntry(argv: readonly string[]): Promise<void> {
     const successor = service ? unitSuccessorLabel(argv) : undefined;
     const job =
       serve && service && !successor ? serviceJob(process.env, serve.port, ownStoreEngine()?.root ?? null) : null;
+    const jobLabel = job?.followsEngine ? job.label : null;
+    // @ref LLP 0009#service-and-engine-updates -- a job's stimd that crashes leaves the home to the job's restart
+    if (jobLabel)
+      process.once('exit', (code) => {
+        if (code !== 0 && readJsonObject(stimdRecordFile())?.pid === process.pid)
+          writeJobRestart({ at: Date.now(), pid: process.pid, label: jobLabel, left: Date.now() });
+      });
     const served = await runStimd({
       mode: parseDaemonMode(at >= 0 ? argv[at + 1] : undefined) ?? daemonMode(process.env),
       serve,

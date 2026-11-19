@@ -950,7 +950,7 @@ function jobRestartWaitMs(): number {
  * Waits while `run/job-restart.json` holds this home for a service unit's job, which removes it once its stimd has
  * started, so a command neither starts a stimd only to wait behind the job's restart nor asks the one that is leaving.
  */
-async function awaitJobRestart(signal?: AbortSignal): Promise<void> {
+export async function awaitJobRestart(signal?: AbortSignal): Promise<void> {
   for (let said = false; ; said = true) {
     const hold = jobRestartHold();
     if (!hold || Date.now() >= hold.until || signal?.aborted) return;
@@ -1778,9 +1778,10 @@ function successorExpected(): boolean {
  */
 async function successorBound(limit?: ResumeLimit): Promise<boolean> {
   if (successorMissed) return false;
-  const waitMs = within(Math.max(refusal?.handover ? HANDOVER_WAIT_MS : CLAIM_WAIT_MS, jobRestartWaitMs()), limit);
+  const base = Date.now() + (refusal?.handover ? HANDOVER_WAIT_MS : CLAIM_WAIT_MS);
+  const deadline = () => Math.min(Math.max(base, Date.now() + jobRestartWaitMs()), limit?.deadline ?? Infinity);
   let started = false;
-  for (const deadline = Date.now() + waitMs; Date.now() < deadline && !limit?.signal?.aborted;) {
+  while (Date.now() < deadline() && !limit?.signal?.aborted) {
     if (readJsonObject(stimdRecordFile())?.build === stimdBuildId()) {
       refusedBuild = null;
       refusal = null;

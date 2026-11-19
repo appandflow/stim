@@ -217,6 +217,8 @@ export async function hostStimd(
   | null
 > {
   signal?.throwIfAborted();
+  // @ref LLP 0009#service-and-engine-updates -- a home a service stimd left to its job waits for that job
+  await (await import('../daemon/client.ts')).awaitJobRestart(signal);
   const { ownStoreEngine, requireCurrentEngine } = await import('../daemon/engine-switch.ts');
   const engine = ownStoreEngine();
   if (engine) {

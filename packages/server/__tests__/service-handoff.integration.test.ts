@@ -263,20 +263,21 @@ function fixture(label: string, port: number, shim = false) {
   };
 
   /**
-   * Leaves the home as an engine switch on an earlier build did: the next build's stimd, started with
-   * `--unit-successor <label>` outside the job, holds the home, and the unit's job waits on it. Returns that stimd once
-   * the job's process has had time to find the home held and attach.
+   * Leaves the home as an engine switch on an earlier build did, or as a command that started stimd before the unit
+   * (`commandFirst`): the next build's stimd outside the job holds the home, and the unit's job waits on it. Returns that
+   * stimd once the job's process has had time to find the home held and attach.
    */
-  const handOver = async () => {
+  const handOver = async (commandFirst = false) => {
     point(next);
-    cli(next, [...serviceArgs, '--unit-successor', label]);
-    const successor = await until('the successor outside the job', () => record());
-    await answers('the successor');
+    cli(next, commandFirst ? ['__stimd', '--mode', 'on'] : [...serviceArgs, '--unit-successor', label]);
+    const successor = await until('the stimd outside the job', () => record());
+    if (!commandFirst) await answers('the successor');
     keepJob();
     const waiter = await until('the job process', () => jobPid());
     await new Promise((done) => setTimeout(done, 8000));
     assert.equal(jobPid(), waiter, 'the job process exited instead of waiting on the successor');
     assert.equal(record()?.pid, successor.pid);
+    await answers('the stimd outside the job');
     return successor;
   };
 
@@ -593,6 +594,21 @@ describe.skipIf(process.platform === 'win32')("an engine switch under a service 
     const service = fixture(label, port, true);
     try {
       const outside = await service.handOver();
+      expect(parentOf(outside.pid)).not.toBe(service.jobPid());
+      const successor = await service.switchEngine(outside, service.last);
+      await service.answers('the restarted job');
+      expectServedInJob(service, outside, successor.build, label);
+    } finally {
+      await service.cleanup();
+    }
+  }, 240_000);
+
+  it('a stimd a command started before the unit leaves the home to the job at its switch', async () => {
+    const label = 'dev.stim.handoff-job-command-first';
+    const port = await freePort();
+    const service = fixture(label, port, true);
+    try {
+      const outside = await service.handOver(true);
       expect(parentOf(outside.pid)).not.toBe(service.jobPid());
       const successor = await service.switchEngine(outside, service.last);
       await service.answers('the restarted job');
