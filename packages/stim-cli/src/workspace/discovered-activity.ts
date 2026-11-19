@@ -4,6 +4,7 @@ import type { StimContext } from '@stim-cli/core';
 import { worktreeActivityOfAsync } from '../commands/gc/worktrees.ts';
 import type { IdleStopEvidence } from '../policy/idle.ts';
 import { gitQuietAsync } from './git.ts';
+import { sharedRead } from './git-reads.ts';
 import type { DiscoveredReads } from './discovered-reads.ts';
 import { checkoutRootOf } from './checkout-role.ts';
 import { launcherReason } from './launchers.ts';
@@ -135,7 +136,11 @@ export async function discoveredEvidence(
   if (git) activity.push({ basis: 'git write', at: git.at });
   else if (isGit) keep.push('its git activity cannot be read');
   const committed = Number(
-    (await gitQuietAsync(path, ['log', '-1', '--format=%ct', 'HEAD'], { signal, cwd: operation?.cwd }))?.trim(),
+    (
+      await sharedRead(operation, `last-commit\0${path}`, () =>
+        gitQuietAsync(path, ['log', '-1', '--format=%ct', 'HEAD'], { signal, cwd: operation?.cwd }),
+      )
+    )?.trim(),
   );
   if (Number.isFinite(committed) && committed > 0) activity.push({ basis: 'git commit', at: committed * 1000 });
   else if (isGit) keep.push('its last commit cannot be read');

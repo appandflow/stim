@@ -24,6 +24,7 @@ import { writeCacheFile } from './cache-file.ts';
 import { debugLog } from './debug-log.ts';
 import { declareSpawnsOn, stopDeclaringSpawnsOn } from './engine/spawn-claims.ts';
 import { measureTree, treeSignature, type TreeSize } from './private-size.ts';
+import { lastSizeFailure } from './size-failures.ts';
 import { ARTIFACT_DIRS } from './workspace/regenerable-dirs.ts';
 
 const DEPENDENCY_MAX_AGE_MS: number = 6 * 60 * 60_000;
@@ -238,6 +239,7 @@ export async function refreshMeasure(
           path,
           failedAt: new Date(now()).toISOString(),
           ...(signature ? { signature } : {}),
+          ...lastSizeFailure(path),
         });
       return { outcome: 'failed', measure: null };
     }

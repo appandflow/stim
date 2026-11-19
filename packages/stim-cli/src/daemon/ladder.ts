@@ -24,7 +24,9 @@ import { restoreProblem } from '../workspace/lightened.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import { freshLaunchers, launchingOf, type Launching } from '../workspace/launchers.ts';
 import { formatBytes, measuredDirectorySizeAsync } from '../fs-util.ts';
+import { describeSizeFailure, lastSizeFailure } from '../size-failures.ts';
 import { timedStep } from './step-timing.ts';
+import { forgetGitReads } from '../workspace/git-reads.ts';
 import { executeAction, type ActContext, type ActionOutcome } from '../stimd/passes/act.ts';
 import { artifactWorktreesFor } from '../stimd/passes/artifacts.ts';
 import { cacheBlocked } from '../stimd/passes/measure.ts';
@@ -55,6 +57,7 @@ import {
   clearSourceCheckouts,
   rankDependencies,
   rankSourceDependencies,
+  sampleLinks,
   wouldDelete,
   selectDependencies,
   SOURCE_RESTORE,
@@ -126,11 +129,13 @@ interface RungContext extends LadderInput {
 
 /** Logs one ladder action to `daemon.ndjson` and the workspace's `metro.ndjson`, and keeps it for the snapshot. */
 function recordAction(
-  context: Pick<RungContext, 'log' | 'actions' | 'force'>,
+  context: Pick<RungContext, 'log' | 'actions' | 'force' | 'operation'>,
   action: DaemonLadderAction,
   reason: string,
+  unsized?: true,
 ): void {
   context.actions.push(action);
+  if (action.outcome === 'done' || action.outcome === 'failed') forgetGitReads(context.operation);
   const verb =
     action.outcome === 'would'
       ? 'would'
@@ -150,6 +155,7 @@ function recordAction(
     reason,
     ...(action.restore ? { restore: action.restore } : {}),
     ...(action.workspace ? { workspace: action.workspace } : {}),
+    ...(unsized ? { unsized } : {}),
   };
   context.log(level, 'pressure_action', msg, fields);
   if (action.workspace && action.outcome !== 'kept' && !(context.force && action.outcome === 'would'))
@@ -457,6 +463,11 @@ async function cargoTargetsStep(context: RungContext): Promise<void> {
   cargoTrimmedAt.set(key, now);
 }
 
+function unsizedDetail(dir: string): string {
+  const failure = lastSizeFailure(dir);
+  return `its size walk ${failure ? describeSizeFailure(failure) : 'failed'}, so it was left alone`;
+}
+
 /**
  * Rung 3, the shared caches: at high, each trimmed least recently used first to half its cap (the compilation cache,
  * which can only be emptied whole, emptied once over half its cap); at critical, the Metro cache and the compilation
@@ -475,9 +486,26 @@ async function cachesRung(context: RungContext): Promise<void> {
     if (!existsSync(cache.dir) || !onShort(context, [cache.dir]) || !(await context.stillShort())) continue;
     let evict = Infinity;
     if (!critical) {
+      if (capGb === 0) continue;
       const bytes = await measuredDirectorySizeAsync(cache.dir, { timeoutMs: SIZE_TIMEOUT_MS });
       const target = (capGb * GIB) / 2;
-      if (capGb === 0 || bytes === null || bytes <= target) continue;
+      if (bytes === null) {
+        recordAction(
+          context,
+          {
+            rung: 3,
+            kind: 'trim-cache',
+            target: cache.dir,
+            outcome: 'kept',
+            bytes: 0,
+            detail: unsizedDetail(cache.dir),
+          },
+          context.why,
+          true,
+        );
+        continue;
+      }
+      if (bytes <= target) continue;
       evict = bytes - target;
     }
     const result = await trim(context, cache, evict, recentDays);
@@ -493,7 +521,22 @@ async function cachesRung(context: RungContext): Promise<void> {
   if (existsSync(compilation) && onShort(context, [compilation]) && (await context.stillShort())) {
     const bytes = await measuredDirectorySizeAsync(compilation, { timeoutMs: SIZE_TIMEOUT_MS });
     const capGb = context.settings.swiftCompilationCacheMaxGb;
-    if (bytes !== null && (critical || (capGb > 0 && bytes > (capGb * GIB) / 2))) {
+    if (bytes === null) {
+      if (critical || capGb > 0)
+        recordAction(
+          context,
+          {
+            rung: 3,
+            kind: 'empty-cache',
+            target: compilation,
+            outcome: 'kept',
+            bytes: 0,
+            detail: unsizedDetail(compilation),
+          },
+          context.why,
+          true,
+        );
+    } else if (critical || (capGb > 0 && bytes > (capGb * GIB) / 2)) {
       const blocked = cacheBlocked(
         { name: 'Swift compilation cache', dir: compilation, category: 'compilation-cache' },
         await discoverCachesAsync(),
@@ -625,23 +668,23 @@ function canonicalOrNull(path: string): string | null {
  * Rung 5: node_modules and Pods of linked worktrees whose workspace in this Stim home is idle 1 hour at high and 2
  * minutes at critical by the activity definition with nothing running, each recorded for `stim worktree warm`: those holding
  * REAL_BYTES_THRESHOLD or more private bytes, most first, then those of unknown size, longest-idle first. A
- * copy-on-write clone below the threshold is kept.
+ * copy-on-write clone below the threshold is kept, and so is a tree of unknown size whose sample found mostly hard
+ * links, which at critical goes last instead.
  */
 async function dependenciesRung(context: RungContext): Promise<void> {
   const idleMs = context.level === 'critical' ? PRESSURE_IDLE_MS : DEPENDENCIES_HIGH_IDLE_MS;
   const idle = await idleStageCandidates(context.config, context, idleMs);
   const protectedRoot = context.protectedRoot ? (canonicalOrNull(context.protectedRoot) ?? '') : '';
-  const { take, kept } = selectDependencies(
-    (
-      await timedStep(
-        context.log,
-        'rank_dependencies',
-        () => rankDependencies(idle, protectedRoot, context.operation, false, context.log),
-        { signal: context.operation?.signal, items: (ranked) => ranked?.length },
-      )
-    ).filter((dependency) => onShort(context, [dependency.candidate.path])),
-    'take',
-  );
+  const ranked = (
+    await timedStep(
+      context.log,
+      'rank_dependencies',
+      () => rankDependencies(idle, protectedRoot, context.operation, false, context.log),
+      { signal: context.operation?.signal, items: (found) => found?.length },
+    )
+  ).filter((dependency) => onShort(context, [dependency.candidate.path]));
+  await sampleLinks(ranked, context.operation?.signal);
+  const { take, kept } = selectDependencies(ranked, 'take', context.level === 'critical' ? 'last' : 'keep');
   for (const { dependency, detail } of kept)
     recordAction(
       context,
@@ -856,7 +899,8 @@ async function sourceDependenciesStep(context: RungContext): Promise<void> {
         },
         context.why,
       );
-  const { take, kept: small } = selectDependencies(ranked, 'take');
+  await sampleLinks(ranked, context.operation?.signal);
+  const { take, kept: small } = selectDependencies(ranked, 'take', 'last');
   if (!context.act || context.force)
     for (const { dependency, detail } of small)
       recordAction(
@@ -1052,6 +1096,7 @@ export async function runLadder(
   const actions: DaemonLadderAction[] = [];
   const settings = resolveMaintenanceSettings(input.config);
   const { force } = input;
+  if (input.act) forgetGitReads(input.operation);
   const runRung = async (rung: Rung, context: RungContext, causes: Cause[]) => {
     const before = actions.length;
     try {

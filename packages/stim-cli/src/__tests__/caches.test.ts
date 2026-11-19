@@ -5,9 +5,11 @@ import {
   rmSync,
   utimesSync,
   existsSync,
+  readFileSync,
   realpathSync,
   symlinkSync,
 } from 'node:fs';
+import { daemonNdjsonFile } from '@stim-cli/core/state';
 import { cacheUser } from '../cache/cache-claim.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -126,6 +128,36 @@ test('a registration cannot make the shared Gradle build cache deletable', () =>
     if (previous === undefined) delete process.env.GRADLE_USER_HOME;
     else process.env.GRADLE_USER_HOME = previous;
     rmSync(gradleHome, { recursive: true, force: true });
+  }
+});
+
+test('pruneCache writes one size_failed record for a cache whose entries all fail to size', () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-prune-size-'));
+  vi.stubEnv('STIM_HOME', home);
+  const dir = join(home, 'cache');
+  const longAgo = new Date(Date.now() - 90 * 24 * 3600 * 1000);
+  for (const name of ['a', 'b', 'c']) {
+    mkdirSync(join(dir, name), { recursive: true });
+    utimesSync(join(dir, name), longAgo, longAgo);
+  }
+  setExecutor({
+    ...getExecutor(),
+    runFile: () => {
+      throw Object.assign(new Error('du: denied'), { status: 1 });
+    },
+  });
+  try {
+    expect(pruneCache(makeCacheDescriptor({ dir, prune: 'entries' }), { olderThanDays: 30 }).removed).toBe(3);
+    const records = readFileSync(daemonNdjsonFile(), 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((line): { event?: unknown } => JSON.parse(line))
+      .filter((record) => record.event === 'size_failed');
+    expect(records).toEqual([expect.objectContaining({ root: dir, reason: 'exit', status: 1 })]);
+  } finally {
+    resetExecutor();
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
   }
 });
 

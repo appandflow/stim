@@ -1,6 +1,16 @@
 import { launcherDirectories } from '../workspace/launcher-directories.ts';
 import { scanForCheckouts } from '../workspace/discovery-scan.ts';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  lchmodSync,
+  linkSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { launcherReader, launcherReason, launchersOf } from '../workspace/launchers.ts';
@@ -16,6 +26,7 @@ const io = (
   links: Record<string, string | Error> = {},
   unrunnable: readonly string[] = [],
   gone: Record<string, string> = {},
+  opens: Record<string, string> = {},
 ) => ({
   readdir: async (path: string) => {
     const entry = listing[path];
@@ -33,6 +44,11 @@ const io = (
   executable: async (path: string) => {
     if (gone[path]) throw missing(gone[path]);
     return !unrunnable.includes(path);
+  },
+  opened: async (path: string) => {
+    const target = opens[path];
+    if (!target) throw missing('ENOENT');
+    return target;
   },
 });
 
@@ -56,13 +72,13 @@ describe('the PATH launcher scan', () => {
     expect(launcherReason('/work/app', result)).toBeNull();
   });
 
-  it('keeps every checkout when a directory or an entry could not be inspected, naming the directory', async () => {
+  it('reports a directory or an entry that could not be inspected, and keeps no checkout for it', async () => {
     const unreadable = await scan(['/locked', '/bin1'], io({ '/locked': missing('EACCES'), '/bin1': [] }));
     expect(unreadable.incomplete).toEqual([{ kind: 'directory', path: '/locked', error: 'EACCES' }]);
-    expect(launcherReason('/work/app', unreadable)).toContain('the directory /locked could not be read (EACCES)');
+    expect(launcherReason('/work/app', unreadable)).toBeNull();
     const unresolved = await scan(['/bin1'], io({ '/bin1': ['tool'] }, { '/bin1/tool': missing('EIO') }));
     expect(unresolved.incomplete).toEqual([{ kind: 'entry', path: '/bin1/tool', error: 'EIO' }]);
-    expect(launcherReason('/work/app', unresolved)).toContain('/bin1/tool could not be resolved (EIO)');
+    expect(launcherReason('/work/app', unresolved)).toBeNull();
   });
 
   it('reads on past one entry that cannot be resolved, and still finds a launcher among the others', async () => {
@@ -84,12 +100,64 @@ describe('the PATH launcher scan', () => {
     expect(unrunnable).toEqual({ targets: ['/work/app/.build/release/tool'], incomplete: [] });
     expect(launcherReason('/work/other', unrunnable)).toBeNull();
     const runnable = await scan(['/usr/sbin'], io(entries, links));
-    expect(runnable.incomplete).toEqual([{ kind: 'entry', path: '/usr/sbin/weakpass_edit', error: 'EACCES' }]);
+    expect(runnable.incomplete).toEqual([
+      { kind: 'entry', path: '/usr/sbin/weakpass_edit', error: 'EACCES; fallback: ENOENT' },
+    ]);
     const vanished = await scan(['/usr/sbin'], io(entries, links, [], { '/usr/sbin/weakpass_edit': 'ENOENT' }));
     expect(vanished).toEqual({ targets: ['/work/app/.build/release/tool'], incomplete: [] });
     const unchecked = await scan(['/usr/sbin'], io(entries, links, [], { '/usr/sbin/weakpass_edit': 'EIO' }));
     expect(unchecked.incomplete).toEqual([{ kind: 'entry', path: '/usr/sbin/weakpass_edit', error: 'EIO' }]);
   });
+
+  it('resolves a link it may execute but not resolve through the file it opens to, keeping only that checkout', async () => {
+    const entries = { '/usr/local/bin': ['1password-mcp'] };
+    const links = { '/usr/local/bin/1password-mcp': missing('EACCES') };
+    const outside = await scan(
+      ['/usr/local/bin'],
+      io(entries, links, [], {}, { '/usr/local/bin/1password-mcp': '/Applications/1Password.app/Contents/MacOS/mcp' }),
+    );
+    expect(outside).toEqual({ targets: ['/Applications/1Password.app/Contents/MacOS/mcp'], incomplete: [] });
+    expect(launcherReason('/work/app', outside)).toBeNull();
+    const inside = await scan(
+      ['/usr/local/bin'],
+      io(entries, links, [], {}, { '/usr/local/bin/1password-mcp': '/work/app/target/release/mcp' }),
+    );
+    expect(launcherReason('/work/app', inside)).toBe(
+      'an executable on PATH runs from it (/work/app/target/release/mcp)',
+    );
+    expect(launcherReason('/work/other', inside)).toBeNull();
+  });
+
+  test.skipIf(process.platform !== 'darwin')(
+    'resolves an unreadable link through lsof on macOS, but not into a file with another hard link',
+    async () => {
+      const base = realpathSync(mkdtempSync(join(tmpdir(), 'stim-launchers-')));
+      try {
+        mkdirSync(join(base, 'bin'));
+        mkdirSync(join(base, 'app'));
+        for (const name of ['single', 'linked']) {
+          writeFileSync(join(base, 'app', name), 'x');
+          chmodSync(join(base, 'app', name), 0o755);
+          symlinkSync(join(base, 'app', name), join(base, 'bin', name));
+          lchmodSync(join(base, 'bin', name), 0o000);
+        }
+        linkSync(join(base, 'app', 'linked'), join(base, 'app', 'other'));
+        const result = await launcherReader(undefined, { directories: [join(base, 'bin')] })();
+        expect(result).toEqual({
+          targets: [join(base, 'app', 'single')],
+          incomplete: [
+            {
+              kind: 'entry',
+              path: join(base, 'bin', 'linked'),
+              error: 'EACCES; fallback: the file has more than one hard link',
+            },
+          ],
+        });
+      } finally {
+        rmSync(base, { recursive: true, force: true });
+      }
+    },
+  );
 
   it('matches whole path segments, so a launcher into app-2 does not keep app', () => {
     const scanned = { targets: ['/work/app-2/bin/tool'], incomplete: [] };
@@ -115,8 +183,8 @@ describe('the PATH launcher scan', () => {
     const first = reading();
     await vi.advanceTimersByTimeAsync(10);
     const result = await first;
-    expect(result.incomplete).toEqual([{ kind: 'directory', path: '/hung', error: 'timed out' }]);
-    expect(launcherReason('/work/app', result)).toContain('the directory /hung could not be read (timed out)');
+    expect(result.incomplete).toEqual([{ kind: 'pending', path: '/hung', error: 'timed out' }]);
+    expect(launcherReason('/work/app', result)).toContain('/hung: timed out; Stim keeps every checkout');
 
     const pending = { kind: 'pending', path: '/hung', error: 'an earlier read of it has not answered' };
     const later = await Promise.all([reading(), reading(), reading()]);

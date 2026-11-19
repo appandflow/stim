@@ -382,6 +382,11 @@ export function daemonNdjsonFile(): string {
   return join(daemonDir(), 'daemon.ndjson');
 }
 
+/** When each size_failed record was last written, by path or cache and reason, shared by every process and thread. */
+export function sizeFailuresFile(): string {
+  return join(daemonDir(), 'size-failures.json');
+}
+
 /** What the daemon's last tick measured and decided, written atomically each tick. */
 export function daemonSnapshotFile(): string {
   return join(daemonDir(), 'snapshot.json');

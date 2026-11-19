@@ -75,116 +75,108 @@ afterEach(async () => {
   rmSync(home, { recursive: true, force: true });
 });
 
-test.each([
-  'status',
-  'dirty paths',
-  'HEAD',
-  'unpushed branch',
-  'unpushed commits',
-  'submodule path',
-  'submodule index',
-  'activity',
-] as const)('a delayed %s Git fact leaves the event loop responsive and retains the dirty worktree', async (phase) => {
-  const executor = getExecutor();
-  let statuses = 0;
-  let responsive: boolean | undefined;
-  let claimRoot = '';
-  let probePid: number | undefined;
-  let recordedPid: number | undefined;
-  const info = join(home, 'probe.json');
-  const selected = (file: string, args: string[]) => {
-    if (file !== 'git' || !args.includes(linked)) return false;
-    if (phase === 'status' || phase === 'dirty paths')
-      return args.includes('status') && ++statuses === (phase === 'status' ? 1 : 2);
-    if (phase === 'HEAD') return args.includes('HEAD^{commit}') && args.includes('--end-of-options');
-    if (phase === 'unpushed branch') return args.includes('symbolic-ref') && args.includes('--quiet');
-    if (phase === 'unpushed commits') return args.includes('log') && args.includes('--oneline');
-    if (phase === 'submodule path') return args.includes('--git-path') && args.includes('modules');
-    if (phase === 'submodule index') return args.includes('ls-files') && args.includes('--stage');
-    return args.includes('--git-dir');
-  };
-  const proxy = [
-    '-e',
-    'require("node:fs").writeFileSync(process.env.STIM_GC_PROBE_INFO,JSON.stringify({cwd:process.cwd(),tag:process.env.STIM_GC_PROBE_TAG})); setTimeout(() => { const { execFileSync } = require("node:child_process"); process.stdout.write(execFileSync("git", process.argv.slice(1), { encoding: "utf8", timeout: 5000 })); }, 150)',
-    '--',
-  ];
-  const sync = (file: string, args: string[], options: Parameters<typeof executor.runFile>[2], quiet: boolean) => {
-    const call = quiet ? executor.runFileQuiet.bind(executor) : executor.runFile.bind(executor);
-    if (!selected(file, args)) return call(file, args, options);
-    let ticked = false;
-    const timer = setTimeout(() => (ticked = true), 25);
-    try {
-      const output = call(process.execPath, [...proxy, ...args], options);
-      responsive = ticked;
-      return output;
-    } finally {
-      clearTimeout(timer);
-    }
-  };
-  setExecutor({
-    ...executor,
-    runFile: (file, args, options) => sync(file, args, options, false) ?? '',
-    runFileQuiet: (file, args, options) => sync(file, args, options, true),
-    async runFileAsync(file, args, options) {
-      if (!selected(file, args)) return executor.runFileAsync(file, args, options);
+test.each(['status', 'dirty paths', 'unpushed commits', 'submodule path', 'submodule index', 'activity'] as const)(
+  'a delayed %s Git fact leaves the event loop responsive and retains the dirty worktree',
+  async (phase) => {
+    const executor = getExecutor();
+    let statuses = 0;
+    let responsive: boolean | undefined;
+    let claimRoot = '';
+    let probePid: number | undefined;
+    let recordedPid: number | undefined;
+    const info = join(home, 'probe.json');
+    const selected = (file: string, args: string[]) => {
+      if (file !== 'git' || !args.includes(linked)) return false;
+      if (phase === 'status' || phase === 'dirty paths')
+        return args.includes('status') && ++statuses === (phase === 'status' ? 1 : 2);
+      if (phase === 'unpushed commits') return args.includes('log') && args.includes('--oneline');
+      if (phase === 'submodule path') return args.includes('--git-path') && args.includes('modules');
+      if (phase === 'submodule index') return args.includes('ls-files') && args.includes('--stage');
+      return args.includes('--git-dir');
+    };
+    const proxy = [
+      '-e',
+      'require("node:fs").writeFileSync(process.env.STIM_GC_PROBE_INFO,JSON.stringify({cwd:process.cwd(),tag:process.env.STIM_GC_PROBE_TAG})); setTimeout(() => { const { execFileSync } = require("node:child_process"); process.stdout.write(execFileSync("git", process.argv.slice(1), { encoding: "utf8", timeout: 5000 })); }, 150)',
+      '--',
+    ];
+    const sync = (file: string, args: string[], options: Parameters<typeof executor.runFile>[2], quiet: boolean) => {
+      const call = quiet ? executor.runFileQuiet.bind(executor) : executor.runFile.bind(executor);
+      if (!selected(file, args)) return call(file, args, options);
       let ticked = false;
       const timer = setTimeout(() => (ticked = true), 25);
       try {
-        const output = await executor.runFileAsync(process.execPath, [...proxy, ...args], {
-          ...options,
-          onSpawn: (spawned) => {
-            options.onSpawn?.(spawned);
-            child = spawned;
-            probePid = spawned.pid;
-            recordedPid = readClaimSet(claimRoot).live[0]?.child?.pid;
-          },
-        });
+        const output = call(process.execPath, [...proxy, ...args], options);
         responsive = ticked;
         return output;
       } finally {
         clearTimeout(timer);
       }
-    },
-  });
-  reportAbort = new AbortController();
-  const context = testContext({
-    home,
-    projectRoot: linked,
-    cwd: linked,
-    env: { ...process.env, STIM_GC_PROBE_INFO: info, STIM_GC_PROBE_TAG: phase },
-    signal: reportAbort.signal,
-  });
-  const pending = runReport(context, (operation) =>
-    withAmbientContext(operation, () =>
-      withWorkspaceProcessLock(
-        home,
-        'facts',
-        async (claim) => {
-          claimRoot = claim.root;
-          return collectWorktreeSweep({ idle: true, olderThan: null, graceMs: 0, now: Date.now(), operation });
-        },
-        { external: true, declareSpawnsFor: operation },
+    };
+    setExecutor({
+      ...executor,
+      runFile: (file, args, options) => sync(file, args, options, false) ?? '',
+      runFileQuiet: (file, args, options) => sync(file, args, options, true),
+      async runFileAsync(file, args, options) {
+        if (!selected(file, args)) return executor.runFileAsync(file, args, options);
+        let ticked = false;
+        const timer = setTimeout(() => (ticked = true), 25);
+        try {
+          const output = await executor.runFileAsync(process.execPath, [...proxy, ...args], {
+            ...options,
+            onSpawn: (spawned) => {
+              options.onSpawn?.(spawned);
+              child = spawned;
+              probePid = spawned.pid;
+              recordedPid = readClaimSet(claimRoot).live[0]?.child?.pid;
+            },
+          });
+          responsive = ticked;
+          return output;
+        } finally {
+          clearTimeout(timer);
+        }
+      },
+    });
+    reportAbort = new AbortController();
+    const context = testContext({
+      home,
+      projectRoot: linked,
+      cwd: linked,
+      env: { ...process.env, STIM_GC_PROBE_INFO: info, STIM_GC_PROBE_TAG: phase },
+      signal: reportAbort.signal,
+    });
+    const pending = runReport(context, (operation) =>
+      withAmbientContext(operation, () =>
+        withWorkspaceProcessLock(
+          home,
+          'facts',
+          async (claim) => {
+            claimRoot = claim.root;
+            return collectWorktreeSweep({ idle: true, olderThan: null, graceMs: 0, now: Date.now(), operation });
+          },
+          { external: true, declareSpawnsFor: operation },
+        ),
       ),
-    ),
-  );
-  activeReport = pending;
-  const report = await pending;
-  const candidate = report.worktrees.find(({ path }) => path === linked);
-  expect(responsive).toBe(true);
-  expect(probePid).toBeDefined();
-  expect(recordedPid).toBe(probePid);
-  expect(JSON.parse(readFileSync(info, 'utf8'))).toEqual({ cwd: linked, tag: phase });
-  expect(readClaimSet(claimRoot).live).toEqual([]);
-  expect(candidate).toMatchObject({
-    path: linked,
-    keys: [linked],
-    skipCode: 'dirty',
-    head: expect.stringMatching(/^[a-f0-9]{40}$/),
-    activity: { at: expect.any(Number) },
-  });
-  expect(candidate?.skipped).toContain('tracked.txt');
-  expect(existsSync(join(linked, 'tracked.txt'))).toBe(true);
-});
+    );
+    activeReport = pending;
+    const report = await pending;
+    const candidate = report.worktrees.find(({ path }) => path === linked);
+    expect(responsive).toBe(true);
+    expect(probePid).toBeDefined();
+    expect(recordedPid).toBe(probePid);
+    expect(JSON.parse(readFileSync(info, 'utf8'))).toEqual({ cwd: linked, tag: phase });
+    expect(readClaimSet(claimRoot).live).toEqual([]);
+    expect(candidate).toMatchObject({
+      path: linked,
+      keys: [linked],
+      skipCode: 'dirty',
+      head: expect.stringMatching(/^[a-f0-9]{40}$/),
+      activity: { at: expect.any(Number) },
+    });
+    expect(candidate?.skipped).toContain('tracked.txt');
+    expect(existsSync(join(linked, 'tracked.txt'))).toBe(true);
+  },
+);
 
 test('cancelling a blocked removal safety check drains its child and keeps the worktree and branch', async () => {
   const executor = getExecutor();

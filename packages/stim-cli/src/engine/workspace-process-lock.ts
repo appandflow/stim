@@ -9,6 +9,7 @@ import {
   type ClaimHolder,
 } from '../ownership-claim.ts';
 import { declareSpawnsOn, stopDeclaringSpawnsOn } from './spawn-claims.ts';
+import { forgetGitReads } from '../workspace/git-reads.ts';
 import { WorkspaceProcessCleanupError } from './workspace-process-error.ts';
 
 export { WorkspaceProcessCleanupError };
@@ -73,6 +74,7 @@ export async function withWorkspaceProcessLock<T>(
     if (attempt.pending) releaseClaim(attempt.pending);
     if (attempt.acquired) {
       if (declareSpawnsFor) declareSpawnsOn(declareSpawnsFor, attempt.acquired);
+      forgetGitReads(declareSpawnsFor);
       let retained = false;
       try {
         return await fn(attempt.acquired);
