@@ -432,13 +432,17 @@ describe.skipIf(process.platform === 'win32')(
       writeFileSync(join(dir, 'deploy', 'app-keypair.json'), '[1,2,3]');
       writeFileSync(join(dir, 'deploy', 'app.so'), 'program');
       mkdirSync(join(dir, 'notes'));
+      mkdirSync(join(dir, 'cargo-timings'));
+      writeFileSync(join(dir, 'cargo-timings', 'cargo-timing.html'), '<html>');
+      writeFileSync(join(dir, '.future-incompat-report.json'), '{}');
       ageTree(dir);
 
       const result = await remove();
 
       expect(result.removed.toSorted()).toEqual(['.rustc_info.json', 'debug', 'doc']);
-      expect(result.kept).toEqual(['not recognised as build output: criterion, deploy, gungraun, iai, notes']);
-      expect(readdirSync(dir).toSorted()).toEqual(['criterion', 'deploy', 'gungraun', 'iai', 'notes']);
+      const kept = ['.future-incompat-report.json', 'cargo-timings', 'criterion', 'deploy', 'gungraun', 'iai', 'notes'];
+      expect(result.kept).toEqual([`not recognised as build output: ${kept.join(', ')}`]);
+      expect(readdirSync(dir).toSorted()).toEqual(kept);
       expect(readFileSync(join(dir, 'deploy', 'app-keypair.json'), 'utf8')).toBe('[1,2,3]');
       expect(existsSync(join(dir, 'criterion', 'base', 'summary.json'))).toBe(true);
     });
@@ -685,16 +689,19 @@ describe.skipIf(process.platform === 'win32')(
       writeFileSync(join(dir, 'web-dist.json'), '{}');
       mkdirSync(join(dir, 'web-dist.previous'));
       writeFileSync(join(dir, 'web-dist.previous', 'notes.md'), 'mine');
+      for (const scratch of ['web-check-AbC123', 'push-ts-Xy9Z01']) mkdirSync(join(dir, scratch));
+      writeFileSync(join(dir, 'web-check-failure.json'), '{}');
       ageTree(dir);
 
       const result = await remove();
 
-      expect(result.removed).toEqual(['apple-swift', 'bake', 'clients']);
+      expect(result.removed).toEqual(['apple-swift', 'bake', 'clients', 'push-ts-Xy9Z01', 'web-check-AbC123']);
       expect(readdirSync(dir).toSorted()).toEqual([
         '.apple-cargo-locks',
         '.exact-sweep.json',
         '.exact-sweep.json.lock',
         'traces',
+        'web-check-failure.json',
         'web-dist.json',
         'web-dist.previous',
       ]);

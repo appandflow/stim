@@ -28,10 +28,11 @@ const DEADLINE_KEPT = 'the rest was left at the build headroom deadline';
 const NOT_RESTORED = `${OWN_PREFIX}not-restored-`;
 /**
  * The entries Cargo itself creates at the top of a target besides its profile and target triple directories, per
- * rust-lang/cargo's `src/compiler/layout.rs` and `src/compiler/future_incompat.rs`.
+ * rust-lang/cargo's `src/compiler/layout.rs`. Its saved build timings (`cargo-timings/`) and future-incompatibility
+ * report (`.future-incompat-report.json`, which `cargo report` reads back) are records, not build output.
  */
-const CARGO_TOP_FILES = new Set(['.rustc_info.json', 'CACHEDIR.TAG', '.future-incompat-report.json', ...PROFILE_LOCKS]);
-const CARGO_TOP_DIRS = new Set(['doc', 'package', 'tmp', 'cargo-timings', '.metabuild']);
+const CARGO_TOP_FILES = new Set(['.rustc_info.json', 'CACHEDIR.TAG', ...PROFILE_LOCKS]);
+const CARGO_TOP_DIRS = new Set(['doc', 'package', 'tmp', '.metabuild']);
 /**
  * The entries Exact's build tools write at the top of a target, each a build product, cache or scratch directory a
  * build recreates (Exact's `scripts/app.mjs`, `scripts/sweep.mjs`, `scripts/cargo-dep-info.mjs`,
@@ -77,8 +78,11 @@ const EXACT_TOP = new Set([
   'web-opt',
   'web-runs',
 ]);
-/** Exact's build scratch directories, made with `mkdtemp` from these prefixes. */
-const EXACT_TOP_PREFIXES = ['web-check-', 'push-ts-'];
+/**
+ * Exact's build scratch directories, made by `mkdtempSync` from `web-check-` (`host/web/build.mjs`) and `push-ts-`
+ * (`scripts/publisher.mjs`), which appends six random letters or digits.
+ */
+const EXACT_SCRATCH = /^(?:web-check-|push-ts-)[A-Za-z0-9]{6}$/;
 
 /** Whether `root` is an Exact app (beside its `exact.mjs`) or a checkout of Exact itself. */
 function exactRoot(root: string): boolean {
@@ -102,7 +106,7 @@ function buildOutputEntry(target: string, name: string, exact: boolean): boolean
   const path = join(target, name);
   const stat = lstatSync(path, { throwIfNoEntry: false });
   if (!stat) return false;
-  if (exact && (EXACT_TOP.has(name) || EXACT_TOP_PREFIXES.some((prefix) => name.startsWith(prefix)))) return true;
+  if (exact && (EXACT_TOP.has(name) || (stat.isDirectory() && EXACT_SCRATCH.test(name)))) return true;
   if (!stat.isDirectory()) return CARGO_TOP_FILES.has(name);
   if (CARGO_TOP_DIRS.has(name) || cargoProfile(path)) return true;
   const inner = entriesOf(path);
