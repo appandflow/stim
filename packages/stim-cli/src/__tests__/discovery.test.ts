@@ -216,6 +216,33 @@ describe('scanSourceWrites', () => {
     expect('newest' in (await scan)).toBe(true);
   });
 
+  it('waits out a pending read once per pass: later scans of that pass give up at once, and the next pass walks', async () => {
+    const release = await holdSlot();
+    const other = join(base, 'other');
+    mkdirSync(other);
+    const busy = 'its source cannot be read while a read of /stalled-mount has not answered';
+    const evidenceOf = (root: string, operation: ReturnType<typeof testContext>) =>
+      discoveredEvidence(root, {
+        now: Date.now(),
+        idleMs: 86_400_000,
+        reads: discoveredReads(operation.signal, operation),
+        operation,
+        reduceOnly: false,
+      });
+
+    const pass = testContext();
+    const first = evidenceOf(base, pass);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect((await first).keep).toEqual([busy]);
+    expect((await evidenceOf(other, pass)).keep).toEqual([busy]);
+
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+    const next = testContext();
+    for (const root of [base, other])
+      expect((await evidenceOf(root, next)).activity).toContainEqual(expect.objectContaining({ basis: 'file edit' }));
+  });
+
   it('walks a checkout again on the next pass when another read held the slot past its budget, with no cooldown', async () => {
     const release = await holdSlot();
     const quiet = Date.now() - 86_400_000;

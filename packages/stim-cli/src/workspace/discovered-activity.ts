@@ -44,13 +44,23 @@ const overBudget = new Map<string, number>();
 
 export type SourceScan = { newest: number } | { unknown: string };
 
+/** The pending reads a scan of this pass already waited out its whole budget on, which later scans of it do not wait for. */
+const waitedOutBy = new WeakMap<StimContext, WeakSet<Promise<void>>>();
+
 /**
  * Null once no other read holds the one pending-read slot, waiting for it to settle within `left()` and until `signal`
- * aborts; else unknown for this pass, with no cooldown.
+ * aborts; else unknown for this pass, with no cooldown. A read in `waitedOut` is not waited for again, and one waited
+ * out here is added to it.
  */
-async function waiting(left: () => number, signal?: AbortSignal): Promise<SourceScan | null> {
+async function waiting(
+  left: () => number,
+  signal?: AbortSignal,
+  waitedOut?: WeakSet<Promise<void>>,
+): Promise<SourceScan | null> {
   for (let pending = pendingRead(); pending; pending = pendingRead()) {
     const label = hungRead();
+    const busy = { unknown: `its source cannot be read while a read of ${label} has not answered` };
+    if (waitedOut?.has(pending)) return busy;
     const ms = left();
     let timer: NodeJS.Timeout | undefined;
     let onAbort: (() => void) | undefined;
@@ -67,7 +77,10 @@ async function waiting(left: () => number, signal?: AbortSignal): Promise<Source
     clearTimeout(timer);
     if (onAbort) signal?.removeEventListener('abort', onAbort);
     signal?.throwIfAborted();
-    if (!settled) return { unknown: `its source cannot be read while a read of ${label} has not answered` };
+    if (!settled) {
+      waitedOut?.add(pending);
+      return busy;
+    }
   }
   return null;
 }
@@ -78,7 +91,12 @@ async function waiting(left: () => number, signal?: AbortSignal): Promise<Source
  * an unreadable folder or runs past SCAN_BUDGET_MS, a read that does not answer in time included, since an unseen file
  * could be newer.
  */
-export async function scanSourceWrites(root: string, activeSince: number, signal?: AbortSignal): Promise<SourceScan> {
+export async function scanSourceWrites(
+  root: string,
+  activeSince: number,
+  signal?: AbortSignal,
+  waitedOut?: WeakSet<Promise<void>>,
+): Promise<SourceScan> {
   const known = newestSeen.get(root);
   if (known !== undefined && known > activeSince) return { newest: known };
   const over = overBudget.get(root);
@@ -99,7 +117,7 @@ export async function scanSourceWrites(root: string, activeSince: number, signal
   for (let dir = queue.pop(); dir !== undefined; dir = queue.pop()) {
     signal?.throwIfAborted();
     if (left() < 0) return outOfTime();
-    const blocked = pendingRead() && (await waiting(left, signal));
+    const blocked = pendingRead() && (await waiting(left, signal, waitedOut));
     if (blocked) return blocked;
     let entries;
     try {
@@ -119,7 +137,7 @@ export async function scanSourceWrites(root: string, activeSince: number, signal
         });
         if (ignored !== null) continue;
       }
-      const busy = pendingRead() && (await waiting(left, signal));
+      const busy = pendingRead() && (await waiting(left, signal, waitedOut));
       if (busy) return busy;
       let mtime: number;
       try {
@@ -143,13 +161,16 @@ export async function scanSourceWrites(root: string, activeSince: number, signal
 
 /**
  * `scanSourceWrites`, reusing a completed walk's newest write within the shared reads of one pass or gc run; those are
- * dropped before and after every action and when a workspace lock is taken, so a check under a claim walks again.
+ * dropped before and after every action and when a workspace lock is taken, so a check under a claim walks again. A
+ * pending read one scan of the operation waited its whole budget for is not waited for by its later scans.
  */
 async function sharedSourceScan(root: string, activeSince: number, operation?: StimContext): Promise<SourceScan> {
   const walks = await sharedRead(operation, 'source-walks', async () => new Map<string, number>());
   const walked = walks.get(root);
   if (walked !== undefined) return { newest: walked };
-  const scan = await scanSourceWrites(root, activeSince, operation?.signal);
+  let waitedOut = operation && waitedOutBy.get(operation);
+  if (operation && !waitedOut) waitedOutBy.set(operation, (waitedOut = new WeakSet()));
+  const scan = await scanSourceWrites(root, activeSince, operation?.signal, waitedOut);
   if ('newest' in scan && scan.newest <= activeSince) walks.set(root, scan.newest);
   return scan;
 }

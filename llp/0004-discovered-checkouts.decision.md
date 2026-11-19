@@ -506,8 +506,10 @@ one pending-read slot of `bounded-read.ts`), and a walk that crossed the deadlin
 never reports idle. While another read holds that slot, the scan waits for it to
 settle within the time left in its own budget and then walks on; when the budget
 runs out first it reports unknown for this pass without the hour of reuse, so
-the checkout is walked again next pass. A long-held slot can therefore make each
-scan of that pass wait its full 15 seconds. A recent write ends the scan at once as activity, whatever time is left.
+the checkout is walked again next pass. Once one scan of a daemon pass or `stim
+gc` run has waited its whole budget on a pending read, later scans of that run
+give up on that same read at once, so a dead mount costs a pass at most one
+budget of waiting; a new pending read, or the next pass, is waited for again. A recent write ends the scan at once as activity, whatever time is left.
 A scan that reports unknown is the whole evidence: no further read of that
 checkout (its `.git`, git activity, launchers) starts.
 
