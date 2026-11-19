@@ -67,6 +67,7 @@ import { stopIdleWorkspace } from './idle-stop.ts';
 import { archiveExpiryReason, leaseKeepReason } from './prune.ts';
 import type { MaintenanceSettings } from './settings.ts';
 import { executeRecordAction } from './records.ts';
+import { forgetGitReads } from '../../workspace/git-reads.ts';
 
 import { deleteRuntimeAction, deleteUnavailableSimAction } from './runtimes.ts';
 
@@ -521,6 +522,7 @@ function unregisterCache(action: MaintenanceAction): ActionOutcome {
 }
 
 export async function executeAction(action: MaintenanceAction, context: ActContext): Promise<ActionOutcome> {
+  forgetGitReads(context.operation);
   switch (action.kind) {
     case 'would-clear-outputs':
       return clearOutputs(action, context);

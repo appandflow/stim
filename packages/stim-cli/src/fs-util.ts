@@ -1,6 +1,7 @@
 import { lstatSync, readdirSync, readlinkSync, statSync } from 'fs';
 import { dirname, isAbsolute, join, normalize, parse, sep } from 'path';
 import { getExecutor } from './exec.ts';
+import { noteSizeFailure, sizeFailure } from './size-failures.ts';
 import type { StimContext } from '@stim-cli/core';
 import { runOperationFile } from './engine/operation-exec.ts';
 import { WorkspaceProcessCleanupError } from './engine/workspace-process-lock.ts';
@@ -138,8 +139,8 @@ export function isOnMountedVolume(
   return mounted.has(volume) || uncShareIsReachable(volume, statFn);
 }
 
-export function directorySize(dir: string, { timeoutMs }: { timeoutMs: number | 'unbounded' }): number {
-  return measuredDirectorySize(dir, { timeoutMs }) ?? 0;
+export function directorySize(dir: string, options: { timeoutMs: number | 'unbounded'; root?: string }): number {
+  return measuredDirectorySize(dir, options) ?? 0;
 }
 
 export async function directorySizeAsync(
@@ -156,9 +157,17 @@ export async function measuredDirectorySizeAsync(
     signal,
     operation,
     lowPriority = false,
-  }: { timeoutMs: number | 'unbounded'; signal?: AbortSignal; operation?: StimContext; lowPriority?: boolean },
+    root,
+  }: {
+    timeoutMs: number | 'unbounded';
+    signal?: AbortSignal;
+    operation?: StimContext;
+    lowPriority?: boolean;
+    root?: string;
+  },
 ): Promise<number | null> {
   let out: string;
+  const startedAt = Date.now();
   try {
     out = await runOperationFile(
       operation,
@@ -175,6 +184,12 @@ export async function measuredDirectorySizeAsync(
   } catch (error) {
     if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
       throw error;
+    noteSizeFailure(
+      dir,
+      signal?.aborted || operation?.signal.aborted ? { reason: 'aborted' } : sizeFailure(error, timeoutMs, false),
+      Date.now() - startedAt,
+      root,
+    );
     signal?.throwIfAborted();
     operation?.signal.throwIfAborted();
     return null;
@@ -184,11 +199,16 @@ export async function measuredDirectorySizeAsync(
   return isNaN(kb) ? 0 : kb * 1024;
 }
 
-function measuredDirectorySize(dir: string, { timeoutMs }: { timeoutMs: number | 'unbounded' }): number | null {
+function measuredDirectorySize(
+  dir: string,
+  { timeoutMs, root }: { timeoutMs: number | 'unbounded'; root?: string },
+): number | null {
   let out: string;
+  const startedAt = Date.now();
   try {
     out = getExecutor().runFile('du', ['-sk', dir], { timeoutMs });
-  } catch {
+  } catch (error) {
+    noteSizeFailure(dir, sizeFailure(error, timeoutMs, false), Date.now() - startedAt, root);
     return null;
   }
   if (!out) return 0;
