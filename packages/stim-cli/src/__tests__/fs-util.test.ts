@@ -1,7 +1,15 @@
-import { mkdtempSync, symlinkSync, rmSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, rmSync } from 'node:fs';
+import { daemonNdjsonFile } from '@stim-cli/core/state';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { volumeRootFor, isRealMount, isOnMountedVolume, listMountedVolumes } from '../fs-util.ts';
+import {
+  directorySize,
+  volumeRootFor,
+  isRealMount,
+  isOnMountedVolume,
+  listMountedVolumes,
+  measuredDirectorySizeAsync,
+} from '../fs-util.ts';
 
 test('isRealMount treats a matching st_dev (symlink to boot volume) as not a real mount', () => {
   expect(isRealMount(16777234, 16777234)).toBe(false);
@@ -64,3 +72,35 @@ test('isOnMountedVolume returns false for a path it cannot resolve', () => {
   expect(isOnMountedVolume('~/Developer/app', ['/'])).toBe(false);
   expect(isOnMountedVolume('/Volumes/StimTestVolumeThatDoesNotExist/app', ['/'])).toBe(false);
 });
+
+test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+  'a size walk that is aborted, or whose du exits non-zero on a folder that exists, writes a size_failed record with its reason',
+  async () => {
+    const home = mkdtempSync(join(tmpdir(), 'stim-fsutil-'));
+    vi.stubEnv('STIM_HOME', home);
+    try {
+      const aborted = new AbortController();
+      aborted.abort();
+      await expect(
+        measuredDirectorySizeAsync(join(home, 'cache'), { timeoutMs: 10_000, signal: aborted.signal }),
+      ).rejects.toThrow(/abort/i);
+      expect(directorySize(join(home, 'missing'), { timeoutMs: 10_000 })).toBe(0);
+      const locked = join(home, 'locked');
+      mkdirSync(join(locked, 'inner'), { recursive: true });
+      chmodSync(join(locked, 'inner'), 0o000);
+      directorySize(locked, { timeoutMs: 10_000 });
+      chmodSync(join(locked, 'inner'), 0o755);
+      const records = readFileSync(daemonNdjsonFile(), 'utf8')
+        .split('\n')
+        .filter(Boolean)
+        .map((line): unknown => JSON.parse(line));
+      expect(records).toEqual([
+        expect.objectContaining({ event: 'size_failed', path: join(home, 'cache'), reason: 'aborted' }),
+        expect.objectContaining({ event: 'size_failed', path: locked, reason: 'exit', status: 1 }),
+      ]);
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(home, { recursive: true, force: true });
+    }
+  },
+);

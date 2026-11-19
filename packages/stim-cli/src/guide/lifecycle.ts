@@ -2568,7 +2568,8 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
        Stim registered emptied whole (ccache, the macOS artifact cache and the
        React Native and Android caches; \`guide cleanup\` lists them), except
        report-only caches, caches inside a workspace, caches Stim does not own,
-       caches outside a scoped STIM_HOME and one a build holds
+       caches outside a scoped STIM_HOME and one a build holds. A cache whose
+       size walk fails is kept, logged as kept with why
     4. dormant stage now: at high for workspaces idle 10 minutes, at critical
        for workspaces idle 2 minutes (the same reduction a day of idleness
        causes, DORMANT STAGE below)

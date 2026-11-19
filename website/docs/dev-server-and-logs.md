@@ -542,6 +542,20 @@ that threw adds `error`. A tick at normal writes one, up to 16 at high and up
 to 22 at critical. Use them to see which step a slow tick or maintenance run
 spent its time in. The records change nothing a pass does.
 
+When a size walk fails, `daemon.ndjson` gets one `size_failed` warn record,
+from whichever Stim process ran the walk: `path` (the folder), `caller` (the
+function that asked for the size), `reason` (`timeout` with `limitMs`, `exit`
+with `status`, `signal` with `signal`, `aborted`, `error` with an errno `code`,
+or `no-output`) and `ms` (how long it ran). A walk that could not start because
+another walk held the machine's walk claim is not a failure, and neither is a
+`du` that exits non-zero because the folder does not exist. Each process writes
+at most one record per folder and reason every 6 hours, so a folder that fails
+the same way on every pass shows up four times a day per process. The failure record beside the
+size cache (`disk-usage/*.failed.json`) carries the same `reason` fields. When
+pressure ladder rung 3 cannot size the build or Metro cache at high, or the
+Swift compilation cache, it records a kept action that says why instead of
+skipping the cache silently.
+
 For local device lease contention, look for `device_lease_acquire` when the
 request was refused or spent at least five seconds waiting. `waitMs` counts
 time spent waiting for another holder to release the lease. `outcome` records

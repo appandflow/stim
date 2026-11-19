@@ -24,6 +24,7 @@ import { restoreProblem } from '../workspace/lightened.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import { freshLaunchers, launchingOf, type Launching } from '../workspace/launchers.ts';
 import { formatBytes, measuredDirectorySizeAsync } from '../fs-util.ts';
+import { describeSizeFailure, lastSizeFailure } from '../size-failures.ts';
 import { timedStep } from './step-timing.ts';
 import { executeAction, type ActContext, type ActionOutcome } from '../stimd/passes/act.ts';
 import { artifactWorktreesFor } from '../stimd/passes/artifacts.ts';
@@ -457,6 +458,11 @@ async function cargoTargetsStep(context: RungContext): Promise<void> {
   cargoTrimmedAt.set(key, now);
 }
 
+function unsized(dir: string): string {
+  const failure = lastSizeFailure(dir);
+  return `its size walk ${failure ? describeSizeFailure(failure) : 'failed'}, so it was left alone`;
+}
+
 /**
  * Rung 3, the shared caches: at high, each trimmed least recently used first to half its cap (the compilation cache,
  * which can only be emptied whole, emptied once over half its cap); at critical, the Metro cache and the compilation
@@ -475,9 +481,18 @@ async function cachesRung(context: RungContext): Promise<void> {
     if (!existsSync(cache.dir) || !onShort(context, [cache.dir]) || !(await context.stillShort())) continue;
     let evict = Infinity;
     if (!critical) {
+      if (capGb === 0) continue;
       const bytes = await measuredDirectorySizeAsync(cache.dir, { timeoutMs: SIZE_TIMEOUT_MS });
       const target = (capGb * GIB) / 2;
-      if (capGb === 0 || bytes === null || bytes <= target) continue;
+      if (bytes === null) {
+        recordAction(
+          context,
+          { rung: 3, kind: 'trim-cache', target: cache.dir, outcome: 'kept', bytes: 0, detail: unsized(cache.dir) },
+          context.why,
+        );
+        continue;
+      }
+      if (bytes <= target) continue;
       evict = bytes - target;
     }
     const result = await trim(context, cache, evict, recentDays);
@@ -493,7 +508,21 @@ async function cachesRung(context: RungContext): Promise<void> {
   if (existsSync(compilation) && onShort(context, [compilation]) && (await context.stillShort())) {
     const bytes = await measuredDirectorySizeAsync(compilation, { timeoutMs: SIZE_TIMEOUT_MS });
     const capGb = context.settings.swiftCompilationCacheMaxGb;
-    if (bytes !== null && (critical || (capGb > 0 && bytes > (capGb * GIB) / 2))) {
+    if (bytes === null) {
+      if (critical || capGb > 0)
+        recordAction(
+          context,
+          {
+            rung: 3,
+            kind: 'empty-cache',
+            target: compilation,
+            outcome: 'kept',
+            bytes: 0,
+            detail: unsized(compilation),
+          },
+          context.why,
+        );
+    } else if (critical || (capGb > 0 && bytes > (capGb * GIB) / 2)) {
       const blocked = cacheBlocked(
         { name: 'Swift compilation cache', dir: compilation, category: 'compilation-cache' },
         await discoverCachesAsync(),

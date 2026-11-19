@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import {
   diskUsageCacheFile,
+  diskUsageFailureFile,
   diskUsageWalkClaims,
   readDiskUsage,
   readDiskUsageFailure,
@@ -31,7 +32,9 @@ beforeEach(() => {
     runFileAsync: (file, args, opts) => {
       if (file !== 'nice') return real.runFileAsync(file, args, opts);
       walks++;
-      return failing ? Promise.reject(new Error('Command timed out')) : real.runFileAsync(file, args, opts);
+      return failing
+        ? Promise.reject(Object.assign(new Error('Command timed out'), { code: 'ETIMEDOUT' }))
+        : real.runFileAsync(file, args, opts);
     },
   });
 });
@@ -91,6 +94,7 @@ test('a failed walk is recorded and not repeated until the folder is due again, 
   expect(failed).toEqual({ outcome: 'failed', measure: null });
   expect(readDiskUsage(plain)).toBeNull();
   expect(readDiskUsageFailure(plain)).toBe(new Date(clock).toISOString());
+  expect(readJsonObject(diskUsageFailureFile(plain))).toMatchObject({ reason: 'timeout', limitMs: 60_000 });
   const walked = walks;
   expect((await refreshMeasure(plain, { ...options, maxAgeMs: 60_000, now, failures: true })).outcome).toBe('fresh');
   expect(walks).toBe(walked);

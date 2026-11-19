@@ -8,6 +8,7 @@ import { answered, hungRead, Unanswered } from './workspace/bounded-read.ts';
 import { runOperationFile } from './engine/operation-exec.ts';
 import { WorkspaceProcessCleanupError } from './engine/workspace-process-lock.ts';
 import { getExecutor } from './exec.ts';
+import { noteSizeFailure, sizeFailure } from './size-failures.ts';
 
 const NICENESS = '19';
 /** `stim-privsize` exits 2 when the volume does not report private sizes (not APFS). */
@@ -163,17 +164,30 @@ function parseDu(output: string): TreeSize | null {
  * measure it, or when a walk was stopped at the timeout, which covers every walk of the call together. With an operation the walk is its declared child; without
  * one `onSpawn` sees it and it runs at low priority. Claimed background walks keep their low priority with an operation.
  */
-export async function measureTree(
-  path: string,
-  options: {
-    timeoutMs: number;
-    onSpawn?: (child: ChildProcess) => void;
-    operation?: StimContext;
-    lowPriority?: true;
-    targets?: string[];
-    private?: false;
-  },
-): Promise<TreeSize | null> {
+export async function measureTree(path: string, options: TreeOptions): Promise<TreeSize | null> {
+  const startedAt = Date.now();
+  const errors: unknown[] = [];
+  try {
+    const size = await walkTree(path, options, errors);
+    const ms = Date.now() - startedAt;
+    if (!size) noteSizeFailure(path, sizeFailure(errors.at(-1), options.timeoutMs, ms >= options.timeoutMs), ms);
+    return size;
+  } catch (error) {
+    if (options.operation?.signal.aborted) noteSizeFailure(path, { reason: 'aborted' }, Date.now() - startedAt);
+    throw error;
+  }
+}
+
+interface TreeOptions {
+  timeoutMs: number;
+  onSpawn?: (child: ChildProcess) => void;
+  operation?: StimContext;
+  lowPriority?: true;
+  targets?: string[];
+  private?: false;
+}
+
+async function walkTree(path: string, options: TreeOptions, errors: unknown[]): Promise<TreeSize | null> {
   const { operation } = options;
   const exec = getExecutor();
   const lowPriority = options.lowPriority ?? !operation;
@@ -194,6 +208,7 @@ export async function measureTree(
         });
   };
   const failed = (error: unknown): { status: unknown; stdout: unknown } => {
+    errors.push(error);
     if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
       throw error;
     operation?.signal.throwIfAborted();

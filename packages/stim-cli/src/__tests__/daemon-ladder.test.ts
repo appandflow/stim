@@ -1,10 +1,21 @@
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { execSync } from 'node:child_process';
 import type { MockInstance } from 'vitest';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DaemonLadderAction, DaemonPressure, PressureLevel } from '@stim-cli/core/state';
 import {
+  daemonNdjsonFile,
   diskUsageCacheFile,
   IDLE_STOP_KEY,
   ladderRunClaims,
@@ -712,6 +723,60 @@ describe('the pressure ladder', () => {
     expect(actions).toContainEqual(expect.objectContaining({ rung: 3, kind: 'trim-cache', target: buildCache() }));
     expect(existsSync(join(buildCache(), 'ios', 'unused'))).toBe(false);
     expect(existsSync(join(buildCache(), 'ios', 'kept-key'))).toBe(true);
+  });
+
+  test('rung 3 at high keeps a cache whose size walk timed out with a kept action, and logs the failure once per 6 hours', async () => {
+    workspace('idle-hour', 60 * MINUTE_MS, 'Shutdown');
+    mkdirSync(join(buildCache(), 'ios'), { recursive: true });
+    vi.stubEnv('STIM_CACHES_BUILD_CACHE_MAX_GB', '12');
+    const real = getExecutor();
+    setExecutor({
+      ...getExecutor(),
+      runFileAsync: async (file, args, options) => {
+        if (file !== 'du') return real.runFileAsync(file, args, options);
+        throw Object.assign(new Error('Command timed out after 120000ms: du'), { code: 'ETIMEDOUT' });
+      },
+    });
+    const sizeRecords = () =>
+      readFileSync(daemonNdjsonFile(), 'utf8')
+        .split('\n')
+        .filter(Boolean)
+        .map((line): { event?: unknown; path?: unknown } => JSON.parse(line))
+        .filter((record) => record.event === 'size_failed' && record.path === buildCache());
+    const kept = (actions: { rung: number | null; kind: string; target: string; outcome: string }[]) =>
+      actions.find((action) => action.rung === 3 && action.kind === 'trim-cache' && action.target === buildCache());
+
+    const first = await runLadder(
+      input(true, async () => pressure('high')),
+      pressure('high'),
+    );
+    expect(kept(first.actions)).toMatchObject({
+      outcome: 'kept',
+      detail: 'its size walk did not finish within 120 seconds, so it was left alone',
+    });
+    expect(sizeRecords()).toEqual([
+      expect.objectContaining({
+        level: 'warn',
+        caller: 'cachesRung',
+        reason: 'timeout',
+        limitMs: 120_000,
+        ms: expect.any(Number),
+      }),
+    ]);
+
+    const again = await runLadder(
+      input(true, async () => pressure('high')),
+      pressure('high'),
+    );
+    expect(kept(again.actions)?.outcome).toBe('kept');
+    expect(sizeRecords()).toHaveLength(1);
+
+    vi.setSystemTime(Date.now() + 6 * 60 * MINUTE_MS);
+    await runLadder(
+      input(true, async () => pressure('high')),
+      pressure('high'),
+    );
+    expect(sizeRecords()).toHaveLength(2);
   });
 
   test('a memory-only level never trims a cache or deletes a device', async () => {

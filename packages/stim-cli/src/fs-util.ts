@@ -1,6 +1,7 @@
 import { lstatSync, readdirSync, readlinkSync, statSync } from 'fs';
 import { dirname, isAbsolute, join, normalize, parse, sep } from 'path';
 import { getExecutor } from './exec.ts';
+import { noteSizeFailure, sizeFailure } from './size-failures.ts';
 import type { StimContext } from '@stim-cli/core';
 import { runOperationFile } from './engine/operation-exec.ts';
 import { WorkspaceProcessCleanupError } from './engine/workspace-process-lock.ts';
@@ -159,6 +160,7 @@ export async function measuredDirectorySizeAsync(
   }: { timeoutMs: number | 'unbounded'; signal?: AbortSignal; operation?: StimContext; lowPriority?: boolean },
 ): Promise<number | null> {
   let out: string;
+  const startedAt = Date.now();
   try {
     out = await runOperationFile(
       operation,
@@ -175,6 +177,11 @@ export async function measuredDirectorySizeAsync(
   } catch (error) {
     if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
       throw error;
+    noteSizeFailure(
+      dir,
+      signal?.aborted || operation?.signal.aborted ? { reason: 'aborted' } : sizeFailure(error, timeoutMs, false),
+      Date.now() - startedAt,
+    );
     signal?.throwIfAborted();
     operation?.signal.throwIfAborted();
     return null;
@@ -186,9 +193,11 @@ export async function measuredDirectorySizeAsync(
 
 function measuredDirectorySize(dir: string, { timeoutMs }: { timeoutMs: number | 'unbounded' }): number | null {
   let out: string;
+  const startedAt = Date.now();
   try {
     out = getExecutor().runFile('du', ['-sk', dir], { timeoutMs });
-  } catch {
+  } catch (error) {
+    noteSizeFailure(dir, sizeFailure(error, timeoutMs, false), Date.now() - startedAt);
     return null;
   }
   if (!out) return 0;
