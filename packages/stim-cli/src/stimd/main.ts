@@ -37,7 +37,6 @@ import {
   stimdSuccessorMissingFile,
   stimdJobRestartFile,
   readJobRestart,
-  jobRestartUntil,
   stimdSocket,
   stimBuildId,
   macosAppState,
@@ -143,6 +142,7 @@ import { handleLogRequest } from './logs/protocol.ts';
 import { writeDesktopKey } from './desktop-key.ts';
 import { createNetThread, type NetOptions } from './net.ts';
 import { serviceJob, unitSuccessorLabel } from './service-unit.ts';
+import { jobRestartHold, writeJobRestart } from './job-restart.ts';
 import { followEngine } from './engine-follow.ts';
 import { takeLock } from '../engine-store/locks.ts';
 import { createStatusSnapshots } from './status-snapshot.ts';
@@ -265,15 +265,6 @@ async function takeClaim(
   }
 }
 
-const processRuns = (pid: number) => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error instanceof Error && 'code' in error && error.code === 'EPERM';
-  }
-};
-
 interface JobRestartGate {
   wait(): Promise<void>;
   reserved(): boolean;
@@ -281,19 +272,14 @@ interface JobRestartGate {
 
 /**
  * Whether `run/job-restart.json` holds this home for a service unit's job, which a stimd checks before and after it takes
- * the home. The job of that unit (`job`) waits only while the stimd that left runs; any other stimd also waits until
+ * the home. The job of that unit (`job`) waits only while the stimd that left runs; any other stimd waits until
  * `jobRestartUntil`.
  */
 function jobRestartGate(job: string | undefined): JobRestartGate {
-  const gone = new Map<number, number>();
   const reserved = () => {
-    const record = readJobRestart();
-    if (!record) return false;
-    const running = processRuns(record.pid);
-    if (!running && !gone.has(record.pid)) gone.set(record.pid, Date.now());
-    const until = jobRestartUntil(record, running, gone.get(record.pid) ?? Date.now());
-    if (record.label === job) return running && record.left === null && Date.now() < until;
-    return Date.now() < until;
+    const hold = jobRestartHold();
+    if (!hold || Date.now() >= hold.until) return false;
+    return hold.record.label !== job || (hold.running && hold.record.left === null);
   };
   return {
     reserved,
@@ -736,18 +722,15 @@ interface RunStimdOptions {
   attached?: { handover: boolean };
 }
 
-/** Records that this stimd leaves its home to the job of `unit` (`left` once its shutdown ended), which `jobRestartGate` reads. */
+/** Records that this stimd leaves its home to the job of `unit`, which `jobRestartGate` and commands read. */
 function leaveToJob(
   unit: string,
   at: number,
   left: number | null,
   log: (level: Level, event: string, msg: string) => unknown,
 ): void {
-  try {
-    writeAtomic(stimdJobRestartFile(), { at, pid: process.pid, label: unit, left });
-  } catch (error) {
-    log('warn', 'job_restart_record_failed', `${stimdJobRestartFile()}: ${errorText(error)}`);
-  }
+  if (!writeJobRestart({ at, pid: process.pid, label: unit, left }))
+    log('warn', 'job_restart_record_failed', `could not write ${stimdJobRestartFile()}`);
 }
 
 /**
@@ -909,6 +892,8 @@ async function runStimdInner(
     lifetime.retries(CLAIM_TRIES),
     jobRestartGate(inJob ? unit : undefined),
   );
+  const reservation = inJob ? readJobRestart() : null;
+  if (own && reservation && reservation.label === unit) leaveToJob(reservation.label, reservation.at, null, log);
   if (!own) {
     log('debug', 'stimd_claim_held', 'another stimd holds this Stim home; exiting');
     writer.close();
@@ -1375,7 +1360,10 @@ async function runStimdInner(
     // @ref LLP 0009#service-and-engine-updates -- a service unit's stimd hands over through the unit's job
     const job = unit !== undefined && (inJob || [...jobWaiters].some((socket) => !socket.destroyed)) ? unit : null;
     const leftAt = Date.now();
-    if (job) leaveToJob(job, leftAt, null, log);
+    if (job) {
+      leaveToJob(job, leftAt, null, log);
+      process.once('exit', () => writeJobRestart({ at: leftAt, pid: process.pid, label: job, left: Date.now() }));
+    }
     switchedTo = next;
     const changed = `${JSON.stringify({ op: 'engine-changed', ...next, pid: process.pid })}\n`;
     for (const list of [waiters.build, waiters.boot, waiters.test, tickReplies]) list.length = 0;
@@ -1387,7 +1375,6 @@ async function runStimdInner(
     shutdown(why);
     await shutdownDone;
     if (job) {
-      leaveToJob(job, leftAt, Date.now(), log);
       log(
         keepOwn ? 'warn' : 'info',
         'successor_job',

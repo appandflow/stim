@@ -22,8 +22,6 @@ import {
   stimdClaimRoot,
   readStimdBoots,
   readSuccessorMissing,
-  readJobRestart,
-  jobRestartUntil,
   stimdRecordFile,
   stimdRunDir,
   stimdSocket,
@@ -34,6 +32,7 @@ import {
 import { claimRemoveCommand, readClaimSet, type ClaimProblem } from '@stim-cli/core/ownership-claim';
 import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
 import { windowsLauncherArgs } from '../detached-entry.ts';
+import { jobRestartHold } from '../stimd/job-restart.ts';
 import { ANDROID_LOCATION_VARIABLES } from '../devices/android-locations.ts';
 import { endForSwitch, engineShim, ownStoreEngine, switchedEngine } from './engine-switch.ts';
 import { legacyDaemonHolder, legacyDaemonStop } from './legacy-daemon.ts';
@@ -941,33 +940,20 @@ export function launchStimd(
   return { settled, exited: () => exited };
 }
 
-const processRuns = (pid: number) => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error instanceof Error && 'code' in error && error.code === 'EPERM';
-  }
-};
-
-/** How much longer `run/job-restart.json` holds this home for a service unit's job, at least the job's restart window while its stimd still leaves; 0 without a record. */
+/** How much longer `run/job-restart.json` holds this home for a service unit's job; 0 without a record. */
 function jobRestartWaitMs(): number {
-  const record = readJobRestart();
-  if (!record) return 0;
-  const now = Date.now();
-  return Math.max(0, jobRestartUntil(record, false, record.left ?? now) - now);
+  const hold = jobRestartHold();
+  return hold ? Math.max(0, hold.until - Date.now()) : 0;
 }
 
 /**
- * Waits while `run/job-restart.json` holds this home for a service unit's job (`jobRestartUntil`) and no stimd holds it,
- * so a command does not start a stimd only to wait behind the job's restart.
+ * Waits while `run/job-restart.json` holds this home for a service unit's job, which removes it once its stimd has
+ * started, so a command neither starts a stimd only to wait behind the job's restart nor asks the one that is leaving.
  */
 async function awaitJobRestart(signal?: AbortSignal): Promise<void> {
-  const seen = Date.now();
   for (;;) {
-    const record = readJobRestart();
-    if (!record || stimdLive() || signal?.aborted) return;
-    if (Date.now() >= jobRestartUntil(record, processRuns(record.pid), seen)) return;
+    const hold = jobRestartHold();
+    if (!hold || Date.now() >= hold.until || signal?.aborted) return;
     await new Promise((done) => setTimeout(done, CLAIM_POLL_MS));
   }
 }
