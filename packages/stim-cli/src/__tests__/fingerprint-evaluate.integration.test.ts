@@ -974,7 +974,7 @@ describe.skipIf(process.platform === 'win32')('fingerprint child priority', () =
     });
 
   test(
-    'a fingerprint a build reads runs at the caller priority, and the daemon precompute runs throttled at normal pressure',
+    'a fingerprint a build reads runs at the caller priority, and the daemon precompute and queued verification run throttled at normal pressure',
     SLOW,
     async () => {
       const own = priority(process.pid);
@@ -999,8 +999,29 @@ describe.skipIf(process.platform === 'win32')('fingerprint child priority', () =
           },
         ),
       ).toEqual({ outcome: 'recorded' });
+      const verified = join(dir, 'verified');
+      const verifyRoot = app(verified);
+      const directory = fingerprintPendingVerifyDir();
+      mkdirSync(directory, { recursive: true });
+      writeFileSync(
+        join(directory, 'pending.json'),
+        JSON.stringify({
+          root: verifyRoot,
+          target: { platform: 'ios' },
+          embedMode: 'development',
+          hash: 'a'.repeat(64),
+          inputs: [],
+          envRef: { id: 'fixture', digest: writeWorkspaceEnv(verifyRoot, workspaceEnv(baseEnv())) },
+        }),
+      );
+      await runFingerprintVerification(testContext({ projectRoot: verifyRoot, cwd: verifyRoot, env: baseEnv() }), {
+        root: verifyRoot,
+        platform: 'ios',
+        pendingFile: 'pending.json',
+      });
       const lowered = recorded(precomputed);
       expect(recorded(read)).toEqual(own);
+      expect(recorded(verified)).toEqual(lowered);
       expect(lowered).toEqual(
         process.platform === 'darwin' ? { pri: Math.min(own.pri, 20), ni: own.ni } : { pri: lowered.pri, ni: 19 },
       );

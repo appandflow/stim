@@ -269,8 +269,9 @@ again.
 The children that pass it in the daemon: the maintenance pass's size scans,
 owned emulator sizes, Cargo target planning and trims, the dormant stage's
 build-output sizes and Cargo trims, the dependency and checkout measurements
-through their walk claim, and the fingerprint precompute's child. A fingerprint
-a build reads runs at the caller's priority. The same scans and trims in a
+through their walk claim, and the fingerprint precompute's and queued
+verification's children. A fingerprint a build reads runs at the caller's
+priority. The same scans and trims in a
 command, such as `stim gc`, are not lowered, since the person waits for them;
 the walks and trims that ran under `nice -n 19` before pass the option in a
 command too. Worker threads cannot lower themselves: Node's `os.setPriority`
