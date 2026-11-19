@@ -232,7 +232,7 @@ A Cargo target is checked against its owning checkout, not its app
 folder. Each call to a directory has 3 seconds to answer, and a timeout ends the
 reading as incomplete at once. A native read cannot be cancelled, so at most one
 read that timed out is outstanding per JavaScript isolate, shared by the launcher
-readings and the home scan (`bounded-read.ts`): while it is pending, no further
+readings, the home scan and the source scans (`bounded-read.ts`): while it is pending, no further
 launcher or scan read starts, every launcher reading reports incomplete
 immediately naming the folder, and a scheduled scan is skipped. A hung mount
 therefore holds one libuv thread per isolate, and reduction of every checkout
@@ -500,7 +500,11 @@ the scan (`scanSourceWrites`) visits every entry outside dependency, build and
 `.git` folders within 15 seconds and finds no recent write. A scan that runs out
 of time reports the activity as unknown, so the checkout is kept and listed
 under Needs a person, and Stim reuses that verdict for an hour without walking
-again. A recent write ends the scan at once as activity, whatever time is left.
+again. Each folder read, entry read and `git check-ignore` probe gets only the time
+left, a read that does not answer counts as running out of time (it takes the
+one pending-read slot of `bounded-read.ts`), and a walk that crossed the deadline
+never reports idle. A recent write ends the scan at once as activity, whatever
+time is left.
 
 Reason: an entry count kept every checkout over 20,000 source entries forever,
 though `find` walks one of 21,000 in under a second. On a loaded machine

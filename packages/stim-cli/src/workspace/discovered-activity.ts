@@ -5,6 +5,7 @@ import { worktreeActivityOfAsync } from '../commands/gc/worktrees.ts';
 import type { IdleStopEvidence } from '../policy/idle.ts';
 import { gitQuietAsync } from './git.ts';
 import { sharedRead } from './git-reads.ts';
+import { answered, Unanswered } from './bounded-read.ts';
 import type { DiscoveredReads } from './discovered-reads.ts';
 import { checkoutRootOf } from './checkout-role.ts';
 import { launcherReason } from './launchers.ts';
@@ -45,58 +46,64 @@ export type SourceScan = { newest: number } | { unknown: string };
 /**
  * The newest modification time of a file or folder under `root`, outside dependency and build folders, never through a
  * link. It stops at once on a write newer than `activeSince`, which proves activity, and reports unknown when it meets
- * an unreadable folder or runs past SCAN_BUDGET_MS by `clock`, since an unseen file could be newer.
+ * an unreadable folder or runs past SCAN_BUDGET_MS, a read that does not answer in time included, since an unseen file
+ * could be newer.
  */
-export async function scanSourceWrites(
-  root: string,
-  activeSince: number,
-  signal?: AbortSignal,
-  clock: () => number = performance.now.bind(performance),
-): Promise<SourceScan> {
+export async function scanSourceWrites(root: string, activeSince: number, signal?: AbortSignal): Promise<SourceScan> {
   const known = newestSeen.get(root);
   if (known !== undefined && known > activeSince) return { newest: known };
   const over = overBudget.get(root);
   if (over !== undefined && Date.now() - over < OVER_BUDGET_KEEP_MS) return { unknown: OVER_BUDGET };
   let newest = known ?? 0;
-  const started = clock();
+  const started = performance.now();
+  const left = () => SCAN_BUDGET_MS - (performance.now() - started);
+  const outOfTime = (): SourceScan => {
+    newestSeen.set(root, newest);
+    overBudget.set(root, Date.now());
+    return { unknown: OVER_BUDGET };
+  };
+  const unreadable = (path: string, error: unknown): SourceScan => {
+    signal?.throwIfAborted();
+    return error instanceof Unanswered ? outOfTime() : { unknown: `${path} cannot be read` };
+  };
   const queue = [root];
   for (let dir = queue.pop(); dir !== undefined; dir = queue.pop()) {
     signal?.throwIfAborted();
+    if (left() < 0) return outOfTime();
     let entries;
     try {
-      entries = await readdir(dir, { withFileTypes: true });
-    } catch {
-      signal?.throwIfAborted();
-      return { unknown: `${dir} cannot be read` };
+      const at = dir;
+      entries = await answered(at, () => readdir(at, { withFileTypes: true }), Math.max(1, left()), signal);
+    } catch (error) {
+      return unreadable(dir, error);
     }
     for (const entry of entries) {
       if (ALWAYS_SKIPPED.has(entry.name)) continue;
       const path = join(dir, entry.name);
-      if (
-        SKIPPED_WHERE_IGNORED.has(entry.name) &&
-        (await gitQuietAsync(root, ['check-ignore', '-q', '--', relative(root, path)], { signal })) !== null
-      )
-        continue;
+      if (SKIPPED_WHERE_IGNORED.has(entry.name)) {
+        if (left() < 0) return outOfTime();
+        const ignored = await gitQuietAsync(root, ['check-ignore', '-q', '--', relative(root, path)], {
+          signal,
+          timeoutMs: Math.max(1, left()),
+        });
+        if (ignored !== null) continue;
+      }
       let mtime: number;
       try {
-        mtime = (await lstat(path)).mtimeMs;
-      } catch {
-        signal?.throwIfAborted();
-        return { unknown: `${path} cannot be read` };
+        mtime = (await answered(path, () => lstat(path), Math.max(1, left()), signal)).mtimeMs;
+      } catch (error) {
+        return unreadable(path, error);
       }
       if (mtime > newest) newest = mtime;
       if (newest > activeSince) {
         newestSeen.set(root, newest);
         return { newest };
       }
-      if (clock() - started > SCAN_BUDGET_MS) {
-        newestSeen.set(root, newest);
-        overBudget.set(root, Date.now());
-        return { unknown: OVER_BUDGET };
-      }
+      if (left() < 0) return outOfTime();
       if (entry.isDirectory() && !entry.isSymbolicLink()) queue.push(path);
     }
   }
+  if (left() < 0) return outOfTime();
   newestSeen.set(root, newest);
   return { newest };
 }

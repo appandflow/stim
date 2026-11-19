@@ -15,6 +15,7 @@ import { type Config } from '@stim-cli/core/state';
 import { testContext } from './_context.ts';
 import { collectWorktreeSweep } from '../commands/gc/worktrees.ts';
 import { saveConfig } from '../workspace/config.ts';
+import * as git from '../workspace/git.ts';
 import { answered } from '../workspace/bounded-read.ts';
 import { scanSourceWrites } from '../workspace/discovered-activity.ts';
 import {
@@ -28,6 +29,22 @@ import {
 vi.mock('../workspace/protected-locations.ts', () => ({
   isProtectedLocation: () => false,
 }));
+
+const stalled = vi.hoisted(() => ({ path: '', release: async () => {} }));
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  const readdir = ((path: string, ...rest: never[]) => {
+    if (path !== stalled.path) return (actual.readdir as (...args: unknown[]) => unknown)(path, ...rest);
+    stalled.path = '';
+    return new Promise((_, fail) => {
+      stalled.release = async () => {
+        fail(new Error('released'));
+        await Promise.resolve();
+      };
+    });
+  }) as typeof actual.readdir;
+  return { ...actual, readdir, default: { ...actual, readdir } };
+});
 
 describe('isBroadFolder', () => {
   it('refuses the home folder, a folder holding it and the filesystem root, and accepts a folder below it', () => {
@@ -81,7 +98,10 @@ describe('scanSourceWrites', () => {
     age(base);
   });
 
-  afterEach(() => rmSync(base, { recursive: true, force: true }));
+  afterEach(() => {
+    vi.restoreAllMocks();
+    rmSync(base, { recursive: true, force: true });
+  });
 
   it('ignores writes in dependency folders and sees one in source', async () => {
     const quiet = Date.now() - 86_400_000;
@@ -97,25 +117,53 @@ describe('scanSourceWrites', () => {
     await expect(scanSourceWrites(base, Date.now(), AbortSignal.abort())).rejects.toThrow(/abort/i);
   });
 
-  const steppingClock = (stepMs: number) => {
-    let at = 0;
-    return () => (at += stepMs);
+  const OUT_OF_TIME = { unknown: 'it could not check every source entry within 15 s' };
+  const tree = (...names: string[]) => {
+    const root = join(base, `tree-${names.join('-')}`);
+    mkdirSync(root);
+    for (const name of names) mkdirSync(join(root, name));
+    for (const name of names) age(join(root, name));
+    age(root);
+    return root;
   };
-
-  it('proves idleness only when the walk ends within its time budget', async () => {
-    const quiet = Date.now() - 86_400_000;
-    const done = await scanSourceWrites(base, quiet, undefined, steppingClock(1));
-    expect('newest' in done && Math.abs(done.newest - old.getTime()) < 5).toBe(true);
-    expect(await scanSourceWrites(base, quiet, undefined, steppingClock(10_000))).toEqual({
-      unknown: 'it could not check every source entry within 15 s',
+  const slowIgnoreProbe = () =>
+    vi.spyOn(git, 'gitQuietAsync').mockImplementation(async () => {
+      vi.advanceTimersByTime(20_000);
+      return '';
     });
+
+  it('reports unknown, never idle, when its time runs out on entries git ignores, and probes none after', async () => {
+    const quiet = Date.now() - 86_400_000;
+    const probe = slowIgnoreProbe();
+    expect(await scanSourceWrites(tree('build'), quiet)).toEqual(OUT_OF_TIME);
+    probe.mockClear();
+    expect(await scanSourceWrites(tree('build', 'dist'), quiet)).toEqual(OUT_OF_TIME);
+    expect(probe).toHaveBeenCalledTimes(1);
   });
 
-  it('still reports a recent write that it reaches before the budget runs out', async () => {
+  it('still reports a recent write after its time ran out', async () => {
+    const root = tree('build');
+    writeFileSync(join(root, 'edit.ts'), '');
+    slowIgnoreProbe();
     const quiet = Date.now() - 86_400_000;
-    writeFileSync(join(base, 'edit.ts'), '');
-    const scan = await scanSourceWrites(base, quiet, undefined, steppingClock(10_000));
+    const scan = await scanSourceWrites(root, quiet);
     expect('newest' in scan && scan.newest > quiet).toBe(true);
+  });
+
+  it('gives up on a read that never answers when its time runs out, and on abort', async () => {
+    stalled.path = base;
+    const scan = scanSourceWrites(base, Date.now() - 86_400_000);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(await scan).toEqual(OUT_OF_TIME);
+    await stalled.release();
+
+    const src = join(base, 'src');
+    stalled.path = src;
+    const controller = new AbortController();
+    const aborted = scanSourceWrites(src, Date.now() - 86_400_000, controller.signal);
+    controller.abort();
+    await expect(aborted).rejects.toThrow(/abort/i);
+    await stalled.release();
   });
 });
 

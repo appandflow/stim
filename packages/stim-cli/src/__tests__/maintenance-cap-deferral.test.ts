@@ -18,6 +18,7 @@ import * as measurements from '../stimd/passes/measure.ts';
 import { maintenanceStatus } from '../stimd/passes/status.ts';
 import { saveConfig, upsertProject } from '../workspace/config.ts';
 import { scanSourceWrites } from '../workspace/discovered-activity.ts';
+import * as gitCommands from '../workspace/git.ts';
 
 let base: string;
 let target: string;
@@ -208,8 +209,13 @@ test('a discovered checkout whose source scan ran out of time is listed as kept 
   const other = join(base, 'other');
   mkdirSync(join(other, 'ios', 'App.xcodeproj'), { recursive: true });
   writeFileSync(join(other, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
-  let at = 0;
-  const scan = await scanSourceWrites(other, Date.now() + 86_400_000, undefined, () => (at += 10_000));
+  mkdirSync(join(other, 'build'));
+  const probe = vi.spyOn(gitCommands, 'gitQuietAsync').mockImplementation(async () => {
+    vi.advanceTimersByTime(20_000);
+    return '';
+  });
+  const scan = await scanSourceWrites(other, Date.now() + 86_400_000);
+  probe.mockRestore();
   if (!('unknown' in scan)) throw new Error('the scan did not run out of time');
   vi.spyOn(stages, 'discoveredKeepReason').mockResolvedValue(scan.unknown);
 
