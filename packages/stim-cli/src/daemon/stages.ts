@@ -205,8 +205,8 @@ async function idleFor(
 
 /**
  * How long a source checkout has had no activity, by the full evidence whether or not a workspace is registered for it:
- * the newest of Stim activity, source file writes, git writes and the last commit. An unreadable state or a scan over
- * its bound keeps it, and the reason says so.
+ * the newest of Stim activity, source file writes, git writes and the last commit. An unreadable state or a source scan
+ * that ran out of time keeps it, and the reason says so.
  */
 export function sourceCheckoutIdle(
   path: string,

@@ -571,6 +571,10 @@ export async function runDormantDependencies(
   );
 }
 
+function hasTrees(path: string): boolean {
+  return ARTIFACT_DIRS.dependencies.some((dir) => existsSync(join(path, dir)));
+}
+
 async function takeIdleDependencies(
   input: Pick<IdlePassInput, 'act' | 'log'> & DeviceReading & { force?: boolean; walkUnknown?: false },
   config: Config,
@@ -578,7 +582,6 @@ async function takeIdleDependencies(
   source: boolean,
 ): Promise<DaemonLadderAction[]> {
   const keeps = new Map<string, string>();
-  const hasTrees = (path: string) => ARTIFACT_DIRS.dependencies.some((dir) => existsSync(join(path, dir)));
   const candidates = await idleStageCandidates(
     config,
     input,

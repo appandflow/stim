@@ -9,13 +9,14 @@ import {
   utimesSync,
   writeFileSync,
 } from 'node:fs';
+import { readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type Config } from '@stim-cli/core/state';
 import { testContext } from './_context.ts';
 import { collectWorktreeSweep } from '../commands/gc/worktrees.ts';
 import { saveConfig } from '../workspace/config.ts';
-import * as git from '../workspace/git.ts';
+import * as gitCommands from '../workspace/git.ts';
 import { answered } from '../workspace/bounded-read.ts';
 import { scanSourceWrites } from '../workspace/discovered-activity.ts';
 import {
@@ -30,20 +31,9 @@ vi.mock('../workspace/protected-locations.ts', () => ({
   isProtectedLocation: () => false,
 }));
 
-const stalled = vi.hoisted(() => ({ path: '', release: async () => {} }));
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
-  const readdir = ((path: string, ...rest: never[]) => {
-    if (path !== stalled.path) return (actual.readdir as (...args: unknown[]) => unknown)(path, ...rest);
-    stalled.path = '';
-    return new Promise((_, fail) => {
-      stalled.release = async () => {
-        fail(new Error('released'));
-        await Promise.resolve();
-      };
-    });
-  }) as typeof actual.readdir;
-  return { ...actual, readdir, default: { ...actual, readdir } };
+  return { ...actual, readdir: vi.fn<typeof actual.readdir>(actual.readdir) };
 });
 
 describe('isBroadFolder', () => {
@@ -127,7 +117,7 @@ describe('scanSourceWrites', () => {
     return root;
   };
   const slowIgnoreProbe = () =>
-    vi.spyOn(git, 'gitQuietAsync').mockImplementation(async () => {
+    vi.spyOn(gitCommands, 'gitQuietAsync').mockImplementation(async () => {
       vi.advanceTimersByTime(20_000);
       return '';
     });
@@ -141,29 +131,44 @@ describe('scanSourceWrites', () => {
     expect(probe).toHaveBeenCalledTimes(1);
   });
 
-  it('still reports a recent write after its time ran out', async () => {
-    const root = tree('build');
-    writeFileSync(join(root, 'edit.ts'), '');
-    slowIgnoreProbe();
+  it('still reports a recent write that it reaches after its time ran out', async () => {
+    writeFileSync(join(base, 'src', 'edit.ts'), '');
+    const { readdir: real } = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    vi.mocked(readdir).mockImplementationOnce(async (path, options) => {
+      vi.advanceTimersByTime(20_000);
+      return real(path, options);
+    });
     const quiet = Date.now() - 86_400_000;
-    const scan = await scanSourceWrites(root, quiet);
+    const scan = await scanSourceWrites(base, quiet);
     expect('newest' in scan && scan.newest > quiet).toBe(true);
   });
 
   it('gives up on a read that never answers when its time runs out, and on abort', async () => {
-    stalled.path = base;
+    const stall = () => {
+      let release = () => {};
+      vi.mocked(readdir).mockImplementationOnce(
+        () =>
+          new Promise((_, fail) => {
+            release = () => fail(new Error('released'));
+          }),
+      );
+      return async () => {
+        release();
+        await Promise.resolve();
+      };
+    };
+    let release = stall();
     const scan = scanSourceWrites(base, Date.now() - 86_400_000);
     await vi.advanceTimersByTimeAsync(15_000);
     expect(await scan).toEqual(OUT_OF_TIME);
-    await stalled.release();
+    await release();
 
-    const src = join(base, 'src');
-    stalled.path = src;
+    release = stall();
     const controller = new AbortController();
-    const aborted = scanSourceWrites(src, Date.now() - 86_400_000, controller.signal);
+    const aborted = scanSourceWrites(join(base, 'src'), Date.now() - 86_400_000, controller.signal);
     controller.abort();
     await expect(aborted).rejects.toThrow(/abort/i);
-    await stalled.release();
+    await release();
   });
 });
 
