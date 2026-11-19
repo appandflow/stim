@@ -221,7 +221,8 @@ the transient job a command starts and the LaunchAgent `stim service install`
 writes. launchd.plist(5) gives a job without `ProcessType`, or with `Standard`,
 light CPU and I/O throttling, and stimd's children inherit it: Metro, the
 builds it runs, the offload probes and the tools it starts. On a loaded worker
-that throttling made stimd miss `build.offer` and health deadlines (#5925).
+stimd missed `build.offer` and health deadlines while it ran throttled (#5925);
+that the throttling caused the misses is not proven end to end.
 `Adaptive` moves a job between Background and Interactive by its XPC
 transactions, and stimd's clients reach it over a Unix socket and HTTP, never
 XPC, so an Adaptive stimd stays in Background. The man page reserves
@@ -240,12 +241,12 @@ shell and a child, read with `ps -o pri` and `launchctl print`:
 | `Interactive` | interactive | 31                      |
 
 31 is the priority of a process started from a shell. A stimd that Desktop
-starts as its child, or that a command hosts attached, already runs at its
-parent's priority. A unit installed before this change keeps `Standard` until
+starts as its child, or that a command hosts attached, runs outside launchd and
+is not changed here; its priority was not measured. A unit installed before this change keeps `Standard` until
 it is installed again, because launchd reads a job's plist only at bootstrap.
 Background work stimd starts, such as size scans and cache trims, runs at the
 same priority; lowering it explicitly is separate work. Chosen by the
-implementing lane of #5925 and its coordinating session, not the maintainer.
+implementing lane of #5925, not the maintainer.
 
 ## Collect diagnostics with the existing reports
 
