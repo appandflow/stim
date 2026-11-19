@@ -126,6 +126,10 @@ function errorCode(error: unknown): unknown {
   return isRecord(error) ? error.code : undefined;
 }
 
+function diskFull(error: unknown): boolean {
+  return errorCode(error) === 'ENOSPC' || errorCode(error) === 'EDQUOT';
+}
+
 function entriesOf(path: string): Dirent[] | null {
   try {
     return readdirSync(path, { withFileTypes: true });
@@ -373,7 +377,7 @@ async function readTargetUse(
 }
 
 export interface CargoTrimResult {
-  /** Bytes moved aside, which are freed once the delete at the end succeeds. */
+  /** Bytes deleted in place, plus those moved aside, which are freed once the delete at the end succeeds. */
   bytes: number;
   removed: string[];
   kept: string[];
@@ -391,6 +395,8 @@ async function sizeOf(path: string, signal?: AbortSignal, lowPriority = false): 
  * that starts meanwhile makes a fresh one, and the lock is read again at the new path: a build that took it in between
  * gets the directory back. Nothing slow runs between the check and the rename. A path a process executes from or holds
  * open, and a profile whose lock file (`.cargo-lock`, `.cargo-build-lock` or `.cargo-artifact-lock`) a build holds, stays.
+ * When the disk has no room to stage a directory, it is deleted in place instead (`deleteInPlace`) after a fresh read of
+ * the processes.
  */
 export async function trimCargoTarget(registeredTarget: string, options: CargoTrimOptions): Promise<CargoTrimResult> {
   const result: CargoTrimResult = { bytes: 0, removed: [], kept: [] };
@@ -501,7 +507,8 @@ function recentEntryUse(path: string, name: string, now: number, idleMs: number)
  * and no build holds a Cargo or Exact lock file in it. Each entry is renamed into `target/.stim-trimmed`, its locks are
  * read again at the new path, and once all are moved the processes are read again: a lock taken or any path in the
  * target used meanwhile puts every entry back. The moved entries are then deleted without crossing into another
- * filesystem, and the `target/` goes too when nothing is left in it.
+ * filesystem, and the `target/` goes too when nothing is left in it. While the disk has no room to stage, entries are
+ * deleted in place one at a time (`deleteInPlace`), each after the checks are made again, until staging fits.
  */
 export async function deleteCargoTarget(registeredTarget: string, options: DeleteOptions): Promise<CargoTrimResult> {
   const claimed = await withTrimClaim(registeredTarget, async (target): Promise<CargoTrimResult> =>
@@ -560,7 +567,7 @@ async function deleteClaimed(
   const entries = targetEntries(target);
   if (!entries) return keep(`${target} cannot be listed`);
   // @ref LLP 0005#the-dormant-reduction-deletes-an-idle-target-whole -- everything goes but a Solana keypair folder
-  const names = entries.output;
+  let names = entries.output;
   if (!names.length) return result;
   const mount = await otherDevice(
     names.map((name) => join(target, name)),
@@ -582,6 +589,7 @@ async function deleteClaimed(
   const moved: Entry[] = [];
   const unmoved = [...entries.kept];
   const marker = join(aside, STRANDED);
+  let inPlaceBytes = 0;
   const putBackAll = async (why: string): Promise<CargoTrimResult> => {
     const stranded: string[] = [];
     let marked = false;
@@ -597,14 +605,55 @@ async function deleteClaimed(
       await rm(marker, { force: true });
       await rmdir(aside).catch(() => {});
     }
-    return { ...result, bytes: 0, kept: [...result.kept, `${why}${left}`] };
+    return { ...result, bytes: inPlaceBytes, kept: [...result.kept, `${why}${left}`] };
   };
   // @ref LLP 0005#never-delete-what-a-build-took-back -- staged entries carry the NOT-RESTORED marker until the checks pass
-  await mkdir(aside, { recursive: true });
-  await writeFile(
-    marker,
-    `${JSON.stringify(Object.fromEntries(names.map((name, n) => [String(n), name])), null, 2)}\n`,
-  );
+  const stage = async (): Promise<boolean> => {
+    try {
+      await mkdir(aside, { recursive: true });
+      await writeFile(
+        marker,
+        `${JSON.stringify(Object.fromEntries(names.map((name, n) => [String(n), name])), null, 2)}\n`,
+      );
+      return true;
+    } catch (error) {
+      await rm(marker, { force: true });
+      await rmdir(aside).catch(() => {});
+      if (diskFull(error)) return false;
+      throw error;
+    }
+  };
+  const deleteEntryInPlace = async (name: string): Promise<string | null> => {
+    signal?.throwIfAborted();
+    const path = join(target, name);
+    const use = await readTargetUse(target, launching, signal);
+    if ('kept' in use) return use.kept;
+    if (use.used.length) return `a process uses ${use.used[0]}`;
+    const held = (await heldLock(path, name, signal)) ?? (await heldExactLock(target, signal));
+    if (held) return `a build holds ${held}`;
+    if (name === KEYPAIR_DIR && holdsKeypair(path)) return `${path} holds a Solana keypair now`;
+    const used = recentEntryUse(path, name, Date.now(), idleMs);
+    if (used) return `${path} was used: ${used}`;
+    const mounted = mountedUnder(target, mountInfo);
+    if (mounted) return mounted;
+    const bytes = await sizeOf(path, signal);
+    const why = await deleteInPlace(path, [path, ...(await childProfiles(path))], dev, signal);
+    if (why) return `${name}: ${why}`;
+    inPlaceBytes += bytes;
+    result.bytes += bytes;
+    result.removed.push(name);
+    return null;
+  };
+  // @ref LLP 0005#a-full-disk-deletes-in-place -- one entry at a time until staging fits
+  for (let name = names[0]; name !== undefined && !(await stage()); name = names[0]) {
+    const why = await deleteEntryInPlace(name);
+    if (why) return keep(why);
+    names = names.slice(1);
+  }
+  if (!names.length) {
+    await rmdir(target).catch(() => {});
+    return result;
+  }
   try {
     for (const [n, name] of names.entries()) {
       signal?.throwIfAborted();
@@ -712,6 +761,29 @@ async function otherDevice(paths: readonly string[], dev: number): Promise<strin
       if (entry.isDirectory()) queue.push(join(path, entry.name));
   }
   return null;
+}
+
+/**
+ * Deletes `dir` where it is, for a disk with no room to stage it: under exclusive locks on the Cargo lock files already
+ * in `lockDirs`, so a build that starts meanwhile waits, and without entering another filesystem. Returns why it stays.
+ */
+async function deleteInPlace(
+  dir: string,
+  lockDirs: readonly string[],
+  dev: number,
+  signal?: AbortSignal,
+): Promise<string | null> {
+  const locks = lockDirs
+    .flatMap((profile) => PROFILE_LOCKS.map((name) => join(profile, name)))
+    .filter((lock) => existsSync(lock));
+  try {
+    const held = await withCargoLocks(locks, () => removeOnDevice(dir, dev), signal);
+    if ('kept' in held) return held.kept;
+    return held.value.length ? `${held.value[0]} is another filesystem` : null;
+  } catch (error) {
+    signal?.throwIfAborted();
+    return `it could not be deleted in place: ${error instanceof Error ? error.message : error}`;
+  }
 }
 
 /** Deletes `path` without entering a directory on a device other than `dev`; returns those it left. */
@@ -852,6 +924,33 @@ async function trimClaimed(
   const stale = staleCargoTargetPaths(target, now, profileIdleMs);
   if ('refusal' in stale) return { ...result, kept: [stale.refusal] };
   let moved = 0;
+  // @ref LLP 0005#a-full-disk-deletes-in-place -- no room to stage, so no rollback for this directory
+  const moveInPlace = async (
+    dir: string,
+    label: string,
+    bytes: number | null,
+    profiles: readonly string[],
+  ): Promise<boolean> => {
+    const size = bytes ?? (await measured(dir));
+    const fresh = await readTargetUse(target, launching, signal, lowPriority);
+    if ('kept' in fresh) {
+      result.kept.push(`${label}: ${fresh.kept}`);
+      return false;
+    }
+    used = fresh.used;
+    if (inUse(used, dir)) {
+      result.kept.push(`${label}: a process uses it`);
+      return false;
+    }
+    const why = await deleteInPlace(dir, profiles, (await lstat(target)).dev, signal);
+    if (why) {
+      result.kept.push(`${label}: ${why}`);
+      return false;
+    }
+    result.bytes += size;
+    result.removed.push(label);
+    return true;
+  };
   const profilesAt = async (dir: string) => (fingerprintDir(dir) ? [dir] : await childProfiles(dir));
   const move = async (
     dir: string,
@@ -876,11 +975,17 @@ async function trimClaimed(
         return false;
       }
     }
-    await mkdir(aside, { recursive: true });
+    try {
+      await mkdir(aside, { recursive: true });
+    } catch (error) {
+      if (!diskFull(error)) throw error;
+      return moveInPlace(dir, label, bytes, profiles);
+    }
     const there = join(aside, String(moved++));
     try {
       await rename(dir, there);
     } catch (error) {
+      if (diskFull(error)) return moveInPlace(dir, label, bytes, profiles);
       result.kept.push(`${label}: it could not be moved aside: ${error instanceof Error ? error.message : error}`);
       return false;
     }
