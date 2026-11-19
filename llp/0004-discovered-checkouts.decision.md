@@ -232,7 +232,7 @@ A Cargo target is checked against its owning checkout, not its app
 folder. Each call to a directory has 3 seconds to answer, and a timeout ends the
 reading as incomplete at once. A native read cannot be cancelled, so at most one
 read that timed out is outstanding per JavaScript isolate, shared by the launcher
-readings and the home scan (`bounded-read.ts`): while it is pending, no further
+readings, the home scan and the source scans (`bounded-read.ts`): while it is pending, no further
 launcher or scan read starts, every launcher reading reports incomplete
 immediately naming the folder, and a scheduled scan is skipped. A hung mount
 therefore holds one libuv thread per isolate, and reduction of every checkout
@@ -493,6 +493,59 @@ the low-disk line also appears at the high level; whether listing the
 `~/.codex/worktrees` worktrees belongs here; whether `stim status` and Stim
 Desktop show the listing.
 
+## The source scan has a time budget
+
+A discovered checkout's source writes count as evidence of idleness only when
+the scan (`scanSourceWrites`) visits every entry outside dependency, build and
+`.git` folders within 15 seconds and finds no recent write. A scan that runs out
+of time reports the activity as unknown, so the checkout is kept and listed
+under Needs a person, and Stim reuses that verdict for an hour without walking
+again. Each folder read, entry read and `git check-ignore` probe gets only the time
+left, a read that does not answer counts as running out of time (it takes the
+one pending-read slot of `bounded-read.ts`), and a walk that crossed the deadline
+never reports idle. While another read holds that slot, the scan waits for it to
+settle within the time left in its own budget and then walks on; when the budget
+runs out first it reports unknown for this pass without the hour of reuse, so
+the checkout is walked again next pass. Once one scan of a daemon pass or `stim
+gc` run has waited its whole budget on a pending read, later scans of that run
+give up on that same read at once, so a dead mount costs a pass at most one
+budget of waiting; a new pending read, or the next pass, is waited for again. A recent write ends the scan at once as activity, whatever time is left.
+A scan that reports unknown is the whole evidence: no further read of that
+checkout (its `.git`, git activity, launchers) starts.
+
+The hourly pass over source checkouts' dependencies (`idle.sourceDormantDays`)
+walks a discovered checkout only when the source collection would read its
+trees: git lists a non-bare worktree for it, its source checkout resolves, and
+that worktree is the source checkout (a linked worktree or a folder git does not
+list is left out before any dependency read), and
+holds a `node_modules` or an `ios/Pods` that is a real directory, not a link,
+which the source collection would keep. Each of those two probes is one `lstat`
+bounded like the launcher readings (3 seconds, through `answered`); a checkout
+whose own probe does not answer is left out for that pass, and its trees are
+listed as kept with that reason. While another read holds the pending slot no
+probe starts, and the checkout goes through the idle checks and the collection
+as it would without the gate. Deletion still rechecks idleness first. The pass over linked
+worktrees' dependencies and every checkout's build outputs (`idle.dormantDays`)
+reads every discovered checkout before it lists what it would reclaim, so a
+large idle checkout costs one full walk there each hourly pass, even with
+nothing left to take. Within one daemon pass or `stim gc` run, a completed walk is reused
+by every later read of that checkout until the pass acts or takes a workspace
+lock, so the checks made under a claim walk again.
+
+Reason: an entry count kept every checkout over 20,000 source entries forever,
+though `find` walks one of 21,000 in under a second. On a loaded machine
+(load average 8) Stim's walk of the largest checkouts measured 0.5 to 1.5
+seconds for 18,000 to 31,000 entries and 6.1 to 7.6 seconds for 52,000 to 93,000,
+so 15 seconds completes ordinary large checkouts with headroom. The budget is a
+fixed constant, not a setting. A `stim gc` run starts with no cached verdicts,
+so it can spend up to the budget on each checkout that does not finish.
+
+Maintainer decision: "time limited scan could work", 2026-11-19 (#5997).
+
+The 15 second figure was chosen by the agent that implemented #5997, and the
+one-hour reuse of a timed-out verdict was already in force for the entry count;
+neither is the maintainer's.
+
 ## Removing a discovered worktree needs more evidence
 
 A discovered linked worktree follows the registered-workspace rules for build
@@ -518,7 +571,8 @@ registered worktree does, at every pressure level, critical included:
   holds it (a worktree inside the main checkout).
 
 A dirty discovered worktree is kept, never archived. A checkout whose source
-scan exceeds its bound is never reduced and is listed under "Needs a person".
+scan runs out of time is kept that pass, checked again on a later one, and listed
+under "Needs a person".
 
 Reason: Stim has no record of what it put in a discovered worktree. It did not
 run `pod install` there, did not copy its ignored files with `worktree warm`,

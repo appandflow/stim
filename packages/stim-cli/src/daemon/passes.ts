@@ -22,7 +22,7 @@ import { runBootedParkedPass } from './booted-parked.ts';
 import { runDormantDependencies } from './dependencies.ts';
 import { createFingerprintPrecompute, type PrecomputeInput } from './fingerprint-precompute.ts';
 import { daemonMode } from './mode.ts';
-import { runIdlePass, type IdlePassInput } from './idle.ts';
+import { onDiskVolumes, runIdlePass, type IdlePassInput } from './idle.ts';
 import { watchedStep } from './step-timing.ts';
 import { idleOutputBytes, runLadder } from './ladder.ts';
 import { measureDisk, measureMemory, measureTick, type TickMeasurement } from './measure.ts';
@@ -91,9 +91,9 @@ function ladderDue(last: LadderPass, pressure: DaemonPressure, volumes: LadderPa
 }
 
 /**
- * One measurement, the activity pass (the idle stage, taking every workspace idle 2 minutes while the level is high
- * or critical, then the dormant stage) and the pressure ladder while the level stays above normal, in this process, as
- * the daemon runs them each tick. `act: false` decides and logs without acting. `memoryWarningSince` carries the
+ * One measurement, the activity pass (the idle stage, taking every workspace idle 2 minutes while the memory level is
+ * high or critical and deleting only outputs on a short volume while disk alone is, then the dormant stage) and the
+ * pressure ladder while the level stays above normal, in this process, as the daemon runs them each tick. `act: false` decides and logs without acting. `memoryWarningSince` carries the
  * memory warning clock from the last tick. After a ladder pass that freed nothing (`lastLadder`), the ladder waits
  * four times that pass's duration, at most 15 minutes, before it runs again, unless the disk or memory level rose, a
  * measured volume is new, lost 1 GB or reached a higher level since that pass, or `requested` says a command asked for
@@ -171,24 +171,19 @@ async function homePasses(
       act,
       log,
       operation,
-      ...(pressure.level === 'normal'
-        ? {}
-        : {
-            pressure: {
-              level: pressure.level,
-              reasons: pressure.reasons,
-              // @ref LLP 0001#each-rung-frees-only-the-volumes-under-pressure -- memory pressure idles every workspace
-              ...(pressure.memory === 'normal'
-                ? { volumes: shortVolumeDevices(measured.measurement.disk, thresholds, 'high') }
-                : {}),
-            },
-          }),
+      // @ref LLP 0001#the-2-minute-idle-stop-is-for-memory -- a stop frees memory, not disk
+      ...(pressure.memory !== 'normal'
+        ? { pressure: { level: pressure.memory, reasons: pressure.reasons } }
+        : pressure.disk !== 'normal'
+          ? // @ref LLP 0001#each-rung-frees-only-the-volumes-under-pressure -- memory pressure idles every workspace
+            { disk: { volumes: shortVolumeDevices(measured.measurement.disk, thresholds, 'high') } }
+          : {}),
     }),
   );
   operation.signal.throwIfAborted();
   const actions: DaemonLadderAction[] = [
     ...parkedActions,
-    ...(pressure.level === 'normal'
+    ...(pressure.memory === 'normal'
       ? []
       : workspaces.flatMap((entry) =>
           entry.outcome === 'idle' || entry.outcome === 'would-idle'
@@ -508,9 +503,10 @@ export interface ForcedLadder {
 
 /**
  * The pressure ladder forced to each of `levels` whatever the machine measures, every rung in order without stopping
- * once the level clears: the idle stage for every workspace idle 2 minutes or more, then rungs 1 to 8 (rungs 5 and 8 only at
- * critical). `stim gc` runs one level with `act`; `stim gc --dry-run` previews it, measuring what each action would
- * free. Logs to `daemon.ndjson` under `trigger` when acting. Null without a Stim config.
+ * once the level clears: the idle stage (for every workspace idle 2 minutes or more while the measured memory level is
+ * above normal, else at `idle.minutes`), then rungs 1 to 8 (rungs 5 and 8 only at critical). `stim gc` runs one
+ * level with `act`; `stim gc --dry-run` previews it, measuring what each action would free. Logs to `daemon.ndjson`
+ * under `trigger` when acting. Null without a Stim config.
  */
 export async function runForcedLadder({
   levels,
@@ -565,7 +561,10 @@ export async function runForcedLadder({
       for (const entry of await runIdlePass({
         ...reading,
         act,
-        pressure: { level, reasons: [why], ...(volumes ? { volumes } : {}) },
+        // @ref LLP 0001#the-2-minute-idle-stop-is-for-memory -- a stop frees memory, not disk
+        ...(pressure.memory === 'normal'
+          ? { disk: volumes ? { volumes } : {} }
+          : { pressure: { level, reasons: [why] } }),
       })) {
         if (entry.outcome !== 'idle' && entry.outcome !== 'would-idle' && entry.outcome !== 'failed') continue;
         actions.push({
@@ -586,7 +585,7 @@ export async function runForcedLadder({
                     operation,
                     operation?.signal,
                   ),
-                  volumes ? (path) => onShortVolume([path], volumes) : undefined,
+                  volumes && onDiskVolumes(entry.path, volumes) ? (path) => onShortVolume([path], volumes) : undefined,
                 )
               : 0),
           detail: entry.outcome === 'would-idle' ? 'stim gc would do this' : entry.detail,

@@ -509,8 +509,8 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
             simulator runtimes, finished linked worktrees past
             gc.worktreeGraceMinutes
   high      plus the pressure ladder at high (\`guide lifecycle budget\`):
-            idle stage at 2 minutes, parked devices until the level clears,
-            shared caches trimmed to half their caps, the dormant stage and
+            idle stage at 2 minutes (memory pressure), parked devices until
+            the level clears, shared caches trimmed to half their caps, the dormant stage and
             node_modules and Pods of idle linked worktrees at 10 minutes, idle
             daemons, clean finished worktrees without the grace period, and,
             while free disk stays under disk.minFreeGb, other tools' caches
@@ -567,7 +567,7 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
     dormant reduction, N. Kept: source checkout, under 256 MB of its own (a
     copy-on-write clone), in use, a running process inside, pinned.
   Idle dev servers and their outputs (idle 2 minutes)
-    idle stage and rung 1, H. Kept: as above; rung 1 keeps a Cargo target/
+    idle stage (memory pressure) and rung 1, H. Kept: as above; rung 1 keeps a Cargo target/
     for rung 3.
   Parked devices
     rung 2, H until the level clears, C all.
@@ -1123,6 +1123,7 @@ THE PRESSURE LADDER
   rung to its end:
     0  booted parked simulators
     1  idle outputs: the idle stage for every workspace idle 2 minutes or more
+       under memory pressure (at idle.minutes under disk pressure alone)
     2  parked devices (high until the level clears, critical all)
     3  shared caches: trimmed to half their caps at high; at critical emptied
        (compilation cache, ccache, build cache except entries in use, Metro
@@ -1300,8 +1301,8 @@ Idle, with no Stim activity record, means the newest of its source file writes
 and build, dist, target, .cache and similar folders skipped only where git
 ignores them), its last commit and its git writes, for idle.dormantDays. A
 process running from or working in it, an agent session in it, a pin by
-maintenance.keep, more source files than the scan reads, or evidence that
-cannot be read keeps it. Its regenerable build outputs go when it is idle, and its
+maintenance.keep, a source scan that does not finish within 15 seconds, or
+evidence that cannot be read keeps it. Its regenerable build outputs go when it is idle, and its
 node_modules and Pods go too: a linked worktree's after idle.dormantDays (default
 1 day), a main (source) checkout's after idle.sourceDormantDays (default 7 days; 0
 never), by the same evidence. That holds for every kind of discovered checkout
@@ -1329,8 +1330,8 @@ a worktree inside it, is
 managed by another tool and is never removed, though its outputs are reduced;
 so is a reduce-only checkout (above). Dirty work is never archived.
 stim gc --dry-run lists the discovered checkouts and what each
-would lose, or why it is kept; one over the scan bound is listed under Needs a
-person.
+would lose, or why it is kept; one whose scan ran out of time is listed under
+Needs a person.
 
 DELETED WORKTREES STILL REGISTERED
   A worktree deleted outside Stim keeps its registry entry; \`stim status\`
@@ -1879,7 +1880,7 @@ WORKSPACE BUILD OUTPUTS
   other macOS files, locks and device records stay. The workspace keeps its
   devices, ports and running dev server. The pressure ladder's idle stage
   (stim guide lifecycle budget) clears them for a workspace idle 2 minutes
-  under disk pressure. A running, building, unverified or hosted macOS app
+  under memory pressure. A running, building, unverified or hosted macOS app
   keeps its workspace untouched.
   Last use is the newest of the lastUsedAt that start, ios, android, reload,
   logs and worktree warm record in state.json, lastBuild.startedAt,

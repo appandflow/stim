@@ -615,14 +615,16 @@ describe('an executable on PATH that links into a checkout keeps it, whichever w
           force: true,
         });
       await dependencies(false);
-      const planned = snapshotReads;
       expect(launcherDirs.state.reads).toBe(1);
 
       launcherDirs.state.reads = 0;
       snapshotReads = 0;
-      await dependencies(true);
-      expect(snapshotReads).toBeGreaterThan(planned);
-      expect(launcherDirs.state.reads).toBe(1 + (snapshotReads - planned) + 3);
+      const removed = (await dependencies(true)).filter(
+        (action) => action.kind === 'delete-dependencies' && action.outcome === 'done',
+      ).length;
+      expect(removed).toBe(1);
+      expect(snapshotReads).toBeGreaterThan(removed);
+      expect(launcherDirs.state.reads).toBe(1 + removed + 3);
       expect(existsSync(join(linked, 'node_modules'))).toBe(false);
     } finally {
       resetExecutor();
