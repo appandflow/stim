@@ -64,7 +64,7 @@ test.runIf(process.platform === 'linux')('an abort while statfs has not answered
 });
 
 test.runIf(process.platform === 'linux')(
-  'a statfs that does not answer leaves du the whole walk time, marks only that tree and frees the walk claim',
+  'a statfs that does not answer leaves du the rest of the walk time, marks only that tree and frees the walk claim',
   async () => {
     const stalled = tree('stalled');
     const measuring = refreshMeasure(stalled, { timeoutMs: 30_000, claim: true });
@@ -74,7 +74,7 @@ test.runIf(process.platform === 'linux')(
     expect(outcome).toBe('measured');
     expect(measure?.privateBytes).toBeUndefined();
     expect(readDiskUsagePrivateUnknown(stalled)).toBe('walk');
-    expect(duTimeouts).toEqual([30_000]);
+    expect(duTimeouts).toEqual([28_000]);
     const claim = tryAcquireClaim({ root: diskUsageWalkClaims(), mode: 'exclusive', label: 'disk usage walk' });
     expect(claim.acquired).toBeDefined();
     releaseClaim(claim.acquired ?? null);

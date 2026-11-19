@@ -177,7 +177,7 @@ export async function measureTree(
   const { operation } = options;
   const exec = getExecutor();
   const lowPriority = options.lowPriority ?? !operation;
-  let deadline = Date.now() + options.timeoutMs;
+  const deadline = Date.now() + options.timeoutMs;
   const walk = (file: string, args: string[]): Promise<string> => {
     const command = lowPriority ? 'nice' : file;
     const argv = lowPriority ? ['-n', NICENESS, file, ...args] : args;
@@ -202,11 +202,11 @@ export async function measureTree(
     return { status, stdout };
   };
   const counted = !options.targets && options.private !== false;
-  const helper = counted ? await privateSizeHelper(operation) : null;
+  const helper = counted ? await privateSizeHelper(operation, options.timeoutMs) : null;
   let privateUnknown: TreeSize['privateUnknown'] = helper || process.platform === 'darwin' ? 'walk' : 'volume';
   const volume =
     !helper && counted && process.platform === 'linux' ? await privateSizeKnowable(path, operation?.signal) : 'no';
-  deadline = Date.now() + options.timeoutMs;
+  if (Date.now() >= deadline) return null;
   if (volume === 'timeout') privateUnknown = 'walk';
   if (volume === 'busy') privateUnknown = undefined;
   if (volume === 'yes') {
@@ -234,6 +234,7 @@ export async function measureTree(
     }
   }
   const unknown = counted && privateUnknown ? { privateUnknown } : {};
+  if (Date.now() >= deadline) return null;
   try {
     const size = parseDu(await walk('du', ['-sk', ...(options.targets ?? [path])]));
     return size && { ...size, ...unknown };
