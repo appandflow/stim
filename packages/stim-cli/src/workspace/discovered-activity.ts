@@ -30,35 +30,35 @@ export const SKIPPED_WHERE_IGNORED: ReadonlySet<string> = new Set([
   'coverage',
 ]);
 
-const SCAN_LIMIT = 20_000;
-const OVER_BOUND_KEEP_MS = 60 * 60_000;
+const SCAN_BUDGET_MS = 15_000;
+const OVER_BUDGET_KEEP_MS = 60 * 60_000;
+const OVER_BUDGET = `it could not check every source entry within ${SCAN_BUDGET_MS / 1000} s`;
 
 /** The newest modification time seen under each checkout: a lower bound, so it can prove activity and never idleness. */
 const newestSeen = new Map<string, number>();
 
-/** When a scan last met the bound: the verdict is a keep, so reusing it for an hour can only keep longer. */
-const overBound = new Map<string, number>();
+/** When a scan last ran out of time: the verdict is a keep, so reusing it for an hour can only keep longer. */
+const overBudget = new Map<string, number>();
 
 export type SourceScan = { newest: number } | { unknown: string };
 
 /**
  * The newest modification time of a file or folder under `root`, outside dependency and build folders, never through a
  * link. It stops at once on a write newer than `activeSince`, which proves activity, and reports unknown when it meets
- * an unreadable folder or more than SCAN_LIMIT entries, since an unseen file could be newer.
+ * an unreadable folder or runs past SCAN_BUDGET_MS by `clock`, since an unseen file could be newer.
  */
 export async function scanSourceWrites(
   root: string,
   activeSince: number,
   signal?: AbortSignal,
-  limit: number = SCAN_LIMIT,
+  clock: () => number = performance.now.bind(performance),
 ): Promise<SourceScan> {
   const known = newestSeen.get(root);
   if (known !== undefined && known > activeSince) return { newest: known };
-  const bounded = overBound.get(root);
-  if (bounded !== undefined && Date.now() - bounded < OVER_BOUND_KEEP_MS)
-    return { unknown: `it has more than ${limit} source entries to check` };
+  const over = overBudget.get(root);
+  if (over !== undefined && Date.now() - over < OVER_BUDGET_KEEP_MS) return { unknown: OVER_BUDGET };
   let newest = known ?? 0;
-  let seen = 0;
+  const started = clock();
   const queue = [root];
   for (let dir = queue.pop(); dir !== undefined; dir = queue.pop()) {
     signal?.throwIfAborted();
@@ -77,11 +77,6 @@ export async function scanSourceWrites(
         (await gitQuietAsync(root, ['check-ignore', '-q', '--', relative(root, path)], { signal })) !== null
       )
         continue;
-      if (++seen > limit) {
-        newestSeen.set(root, newest);
-        overBound.set(root, Date.now());
-        return { unknown: `it has more than ${limit} source entries to check` };
-      }
       let mtime: number;
       try {
         mtime = (await lstat(path)).mtimeMs;
@@ -93,6 +88,11 @@ export async function scanSourceWrites(
       if (newest > activeSince) {
         newestSeen.set(root, newest);
         return { newest };
+      }
+      if (clock() - started > SCAN_BUDGET_MS) {
+        newestSeen.set(root, newest);
+        overBudget.set(root, Date.now());
+        return { unknown: OVER_BUDGET };
       }
       if (entry.isDirectory() && !entry.isSymbolicLink()) queue.push(path);
     }

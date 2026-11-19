@@ -97,10 +97,25 @@ describe('scanSourceWrites', () => {
     await expect(scanSourceWrites(base, Date.now(), AbortSignal.abort())).rejects.toThrow(/abort/i);
   });
 
-  it('reports unknown, never idle, when the bound stops it', async () => {
-    expect(await scanSourceWrites(base, Date.now() - 86_400_000, undefined, 1)).toMatchObject({
-      unknown: expect.stringContaining('more than 1'),
+  const steppingClock = (stepMs: number) => {
+    let at = 0;
+    return () => (at += stepMs);
+  };
+
+  it('proves idleness only when the walk ends within its time budget', async () => {
+    const quiet = Date.now() - 86_400_000;
+    const done = await scanSourceWrites(base, quiet, undefined, steppingClock(1));
+    expect('newest' in done && Math.abs(done.newest - old.getTime()) < 5).toBe(true);
+    expect(await scanSourceWrites(base, quiet, undefined, steppingClock(10_000))).toEqual({
+      unknown: 'it could not check every source entry within 15 s',
     });
+  });
+
+  it('still reports a recent write that it reaches before the budget runs out', async () => {
+    const quiet = Date.now() - 86_400_000;
+    writeFileSync(join(base, 'edit.ts'), '');
+    const scan = await scanSourceWrites(base, quiet, undefined, steppingClock(10_000));
+    expect('newest' in scan && scan.newest > quiet).toBe(true);
   });
 });
 

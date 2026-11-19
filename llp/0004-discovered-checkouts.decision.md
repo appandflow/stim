@@ -493,6 +493,29 @@ the low-disk line also appears at the high level; whether listing the
 `~/.codex/worktrees` worktrees belongs here; whether `stim status` and Stim
 Desktop show the listing.
 
+## The source scan has a time budget
+
+A discovered checkout's source writes count as evidence of idleness only when
+the scan (`scanSourceWrites`) visits every entry outside dependency, build and
+`.git` folders within 15 seconds and finds no recent write. A scan that runs out
+of time reports the activity as unknown, so the checkout is kept and listed
+under Needs a person, and Stim reuses that verdict for an hour without walking
+again. A recent write ends the scan at once as activity, whatever time is left.
+
+Reason: an entry count kept every checkout over 20,000 source entries forever,
+though `find` walks one of 21,000 in under a second. On a loaded machine
+(load average 8) Stim's walk of the largest checkouts measured 0.5 to 1.5
+seconds for 18,000 to 31,000 entries and 6.1 to 7.6 seconds for 52,000 to 93,000,
+so 15 seconds completes ordinary large checkouts with headroom. The budget is a
+fixed constant, not a setting. A `stim gc` run starts with no cached verdicts,
+so it can spend up to the budget on each checkout that does not finish.
+
+Maintainer decision: "time limited scan could work", 2026-11-19 (#5997).
+
+The 15 second figure was chosen by the agent that implemented #5997, and the
+one-hour reuse of a timed-out verdict was already in force for the entry count;
+neither is the maintainer's.
+
 ## Removing a discovered worktree needs more evidence
 
 A discovered linked worktree follows the registered-workspace rules for build

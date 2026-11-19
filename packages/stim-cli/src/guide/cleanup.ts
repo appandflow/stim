@@ -1299,8 +1299,8 @@ Idle, with no Stim activity record, means the newest of its source file writes
 and build, dist, target, .cache and similar folders skipped only where git
 ignores them), its last commit and its git writes, for idle.dormantDays. A
 process running from or working in it, an agent session in it, a pin by
-maintenance.keep, more source files than the scan reads, or evidence that
-cannot be read keeps it. Its regenerable build outputs go when it is idle, and its
+maintenance.keep, a source scan that does not finish within 15 seconds, or
+evidence that cannot be read keeps it. Its regenerable build outputs go when it is idle, and its
 node_modules and Pods go too: a linked worktree's after idle.dormantDays (default
 1 day), a main (source) checkout's after idle.sourceDormantDays (default 7 days; 0
 never), by the same evidence. That holds for every kind of discovered checkout
@@ -1328,8 +1328,8 @@ a worktree inside it, is
 managed by another tool and is never removed, though its outputs are reduced;
 so is a reduce-only checkout (above). Dirty work is never archived.
 stim gc --dry-run lists the discovered checkouts and what each
-would lose, or why it is kept; one over the scan bound is listed under Needs a
-person.
+would lose, or why it is kept; one whose scan ran out of time is listed under
+Needs a person.
 
 DELETED WORKTREES STILL REGISTERED
   A worktree deleted outside Stim keeps its registry entry; \`stim status\`
