@@ -430,17 +430,20 @@ export async function runStop(options: StopArgs & { slot?: string }): Promise<St
 /**
  * The daemon's idle stop: stops the dev server, its collectors and the owned devices as `stim stop` does, but keeps
  * the Metro port reservation, the launch records and every lease, and has the supervisor record an idle stop, so
- * `stim revive` resumes the workspace. It leaves an owned Chrome and a macOS app alone.
+ * `stim revive` resumes the workspace. It leaves an owned Chrome and a macOS app alone. `serverOnly` stops the dev
+ * server alone and leaves every device and its log collectors running.
  */
 export function runIdleStop({
   root,
   idleMinutes,
   report,
+  serverOnly = false,
   ...processes
 }: {
   root: string;
   idleMinutes: number;
   report: (line: string) => void;
+  serverOnly?: boolean;
 } & Pick<
   StopArgs,
   'state' | 'isAlive' | 'inspectIdentity' | 'killGroup' | 'waitForDeath' | 'resolveMetro' | 'teardownIos' | 'operation'
@@ -456,6 +459,7 @@ export function runIdleStop({
     releaseLeases: () => [],
     teardownBrowser: null,
     stopMacos: false,
+    ...(serverOnly ? { devices: false, collectors: {}, remoteDevice: null } : {}),
   });
 }
 
@@ -584,6 +588,7 @@ async function stopWorkspace({
     withWorkspaceStateLockAsync(projectRoot, () => clearSupervisorState(projectRoot, expected)),
   report = (line: string) => console.error(line),
   requester,
+  devices = true,
 }: {
   root: string;
   operation?: StimContext;
@@ -624,6 +629,8 @@ async function stopWorkspace({
   clearState?: (root: string, expected?: ProcessRecord | null) => boolean | void | Promise<boolean | void>;
   report?: (line: string) => void;
   requester?: StopRequester;
+  /** False leaves every device and hosted device running; the caller passes no collectors and no remote session. */
+  devices?: boolean;
 }): Promise<StopResult> {
   const proj = project === undefined ? getProject(root) : project;
   const sup = state === undefined ? readSupervisorState(root) : state;
@@ -840,7 +847,9 @@ async function stopWorkspace({
     }
   };
 
-  if (stillHolding) {
+  if (!devices) {
+    report(chalk.dim(phaseLine('device', 'left running')));
+  } else if (stillHolding) {
     report(chalk.dim(phaseLine('device', 'left alone (something is still running)')));
   } else {
     outcomes.device = await shutDownDevices(proj, root, {
@@ -863,35 +872,37 @@ async function stopWorkspace({
     stopMacos,
   );
 
-  const hosted = await stopWorkspaceHostedNative(
-    root,
-    hostedSlot,
-    report,
-    () => {
-      ok = false;
-    },
-    operation,
-  );
-  Object.assign(outcomes.device, hosted.devices);
-  await updateWorkspaceStateAsync(root, (workspace) => {
-    const slots = isJsonObject(workspace.deviceSlots) ? workspace.deviceSlots : {};
-    for (const name of ['default', ...Object.keys(slots)]) {
-      if (hostedSlot !== undefined && name !== hostedSlot) continue;
-      const records = name === 'default' ? workspace : slots[name];
-      if (!isJsonObject(records)) continue;
-      for (const platform of ['ios', 'android'] as const) {
-        const hostOutcome = outcomes.device[`${platform}:host:${name}`];
-        if (hostOutcome?.status === 'failed' || (stillHolding && hostOutcome?.status !== 'shut-down')) continue;
-        if (
-          outcomes.device[name === 'default' || hostedSlot !== undefined ? platform : `${platform}:${name}`]?.status ===
-          'failed'
-        )
-          continue;
-        if (isJsonObject(records[platform])) delete records[platform].devicePlacement;
+  if (devices) {
+    const hosted = await stopWorkspaceHostedNative(
+      root,
+      hostedSlot,
+      report,
+      () => {
+        ok = false;
+      },
+      operation,
+    );
+    Object.assign(outcomes.device, hosted.devices);
+    await updateWorkspaceStateAsync(root, (workspace) => {
+      const slots = isJsonObject(workspace.deviceSlots) ? workspace.deviceSlots : {};
+      for (const name of ['default', ...Object.keys(slots)]) {
+        if (hostedSlot !== undefined && name !== hostedSlot) continue;
+        const records = name === 'default' ? workspace : slots[name];
+        if (!isJsonObject(records)) continue;
+        for (const platform of ['ios', 'android'] as const) {
+          const hostOutcome = outcomes.device[`${platform}:host:${name}`];
+          if (hostOutcome?.status === 'failed' || (stillHolding && hostOutcome?.status !== 'shut-down')) continue;
+          if (
+            outcomes.device[name === 'default' || hostedSlot !== undefined ? platform : `${platform}:${name}`]
+              ?.status === 'failed'
+          )
+            continue;
+          if (isJsonObject(records[platform])) delete records[platform].devicePlacement;
+        }
       }
-    }
-    return workspace;
-  });
+      return workspace;
+    });
+  }
   const remote = remoteDevice === undefined ? readRemoteSession(root) : remoteDevice;
   const sessionId = typeof remote?.sessionId === 'string' ? remote.sessionId : null;
   if (sessionId) {

@@ -36,12 +36,20 @@ import {
 import { metroStoreRoot } from '../stimd/metro/metro-store.ts';
 import { linkedFirst, type CheckoutRole } from '../policy/checkout-order.ts';
 import { dormantAction, dormantThresholdMs, longestIdleFirst } from '../policy/pressure.ts';
+import { PRESSURE_IDLE_MS } from '../policy/idle.ts';
 import { resolveSupervisorTarget } from '../stimd/metro/ownership.ts';
 import { getProject, loadConfig, type Config, type ProjectRecord } from '../workspace/config.ts';
 import { checkoutOwnerOf } from '../workspace/checkout-role.ts';
 import { discoverCheckouts } from '../workspace/discovery.ts';
 import { discoveredEvidence } from '../workspace/discovered-activity.ts';
-import { freshLaunchers, launchersOf, launchingOf, type Checkout, type Launching } from '../workspace/launchers.ts';
+import {
+  freshLaunchers,
+  launcherReason,
+  launchersOf,
+  launchingOf,
+  type Checkout,
+  type Launching,
+} from '../workspace/launchers.ts';
 import { lockReason, worktreeLockAsync } from '../workspace/worktree.ts';
 import { discoveredReads, type DiscoveredReads } from '../workspace/discovered-reads.ts';
 import { listedRoots } from '../commands/gc/worktrees.ts';
@@ -61,6 +69,8 @@ import {
   revivable,
   runningIdle,
   servesNow,
+  stopServerForDeletion,
+  storeSharer,
   writeWorkspaceEvent,
   type IdlePassInput,
 } from './idle.ts';
@@ -360,7 +370,7 @@ function idleStageReading(reading: DeviceReading, level: 'high' | 'critical') {
  * Why a candidate is no longer idle, asked again by a caller that holds its native-run claim: a running one by the idle
  * stage's evidence, its devices read again; null when it still is.
  */
-async function stillIdleUnderClaim(
+export async function stillIdleUnderClaim(
   candidate: StageCandidate,
   thresholdMs: number,
   reading: DeviceReading,
@@ -648,6 +658,7 @@ export function dormantCandidates(
   config: Config,
   reading: DeviceReading,
   thresholdMs: number,
+  running?: 'critical',
 ): Promise<StageCandidate[]> {
   return idleWorkspaces(
     'dormant_candidates',
@@ -656,6 +667,7 @@ export function dormantCandidates(
     thresholdMs,
     'idle.dormantDays',
     (path, project) => !alreadyDormant(path) && (ownsDevice(project) || hasLogs(path)),
+    running ? { running } : {},
   );
 }
 
@@ -692,6 +704,66 @@ export function deviceDataDirs(
   ];
 }
 
+/**
+ * Deletes the workspace's owned simulators and emulators through ledger teardown, which shuts a booted one down first,
+ * only those whose data lies where `deletable` allows; the labels deleted, those whose size was not counted, the bytes
+ * freed and the failures, or why the devices could not be listed.
+ */
+async function deleteOwnedDevices(
+  path: string,
+  project: ProjectRecord,
+  config: Config,
+  operation: StimContext | undefined,
+  deletable: ((path: string) => boolean) | undefined,
+): Promise<{ deleted: string[]; unmeasured: string[]; bytes: number; failures: number } | { failed: string }> {
+  const owns = (kind: 'ios' | 'android') =>
+    projectDeviceSlots(project).some(({ platforms }) => platforms[kind]?.owned === true);
+  let sims: IosSimRecord[] = [];
+  let avds: string[] = [];
+  try {
+    if (owns('ios') && process.platform === 'darwin')
+      sims = await listAllIosSimsAsync({ timeoutMs: SIM_LIST_TIMEOUT_MS, signal: operation?.signal, operation });
+    if (owns('android')) avds = await listAvdsAsync({ signal: operation?.signal, operation });
+  } catch (error) {
+    if (isClaimUnavailable(error)) throw error;
+    operation?.signal.throwIfAborted();
+    return { failed: `its owned devices cannot be listed: ${error instanceof Error ? error.message : String(error)}` };
+  }
+  const devices = await withAndroidAvdSizes(
+    findStaleProjectDevices({
+      config: { ...config, projects: { [path]: project } },
+      sims,
+      avds,
+      olderThanDays: 0,
+      lastTouched: () => 0,
+    }).filter((device) => {
+      const dirs = deletable ? deviceDataDirs(sims, device.kind, device.id) : [];
+      return !deletable || (dirs.length > 0 && dirs.every(deletable));
+    }),
+  );
+  const deleted: string[] = [];
+  const unmeasured: string[] = [];
+  let bytes = 0;
+  const failures = await deleteProjectDevices(
+    [],
+    devices,
+    [],
+    {
+      log: () => {},
+      error: () => {},
+      fail: () => {},
+      record: (_kind, status, label, result) => {
+        if (status !== 'done') return;
+        deleted.push(label);
+        if (typeof result?.bytes === 'number') bytes += result.bytes;
+        else unmeasured.push(label);
+      },
+    },
+    operation,
+  );
+  return { deleted, unmeasured, bytes, failures };
+}
+
 export async function enterDormantStage(
   action: MaintenanceAction,
   operation?: StimContext,
@@ -713,55 +785,9 @@ export async function enterDormantStage(
         reduceOnly: false,
       });
       if (idleMs === null) return { status: 'kept', bytes: 0, detail: 'it is no longer idle' };
-      const owns = (kind: 'ios' | 'android') =>
-        projectDeviceSlots(project).some(({ platforms }) => platforms[kind]?.owned === true);
-      let sims: IosSimRecord[] = [];
-      let avds: string[] = [];
-      try {
-        if (owns('ios') && process.platform === 'darwin')
-          sims = await listAllIosSimsAsync({ timeoutMs: SIM_LIST_TIMEOUT_MS, signal: operation?.signal, operation });
-        if (owns('android')) avds = await listAvdsAsync({ signal: operation?.signal, operation });
-      } catch (error) {
-        if (isClaimUnavailable(error)) throw error;
-        operation?.signal.throwIfAborted();
-        return {
-          status: 'failed',
-          bytes: 0,
-          detail: `its owned devices cannot be listed: ${error instanceof Error ? error.message : String(error)}`,
-        };
-      }
-      const devices = await withAndroidAvdSizes(
-        findStaleProjectDevices({
-          config: { ...config, projects: { [path]: project } },
-          sims,
-          avds,
-          olderThanDays: 0,
-          lastTouched: () => 0,
-        }).filter((device) => {
-          const dirs = deletable ? deviceDataDirs(sims, device.kind, device.id) : [];
-          return !deletable || (dirs.length > 0 && dirs.every(deletable));
-        }),
-      );
-      const deleted: string[] = [];
-      const unmeasured: string[] = [];
-      let bytes = 0;
-      const failures = await deleteProjectDevices(
-        [],
-        devices,
-        [],
-        {
-          log: () => {},
-          error: () => {},
-          fail: () => {},
-          record: (_kind, status, label, result) => {
-            if (status !== 'done') return;
-            deleted.push(label);
-            if (typeof result?.bytes === 'number') bytes += result.bytes;
-            else unmeasured.push(label);
-          },
-        },
-        operation,
-      );
+      const removal = await deleteOwnedDevices(path, project, config, operation, deletable);
+      if ('failed' in removal) return { status: 'failed', bytes: 0, detail: removal.failed };
+      const { deleted, unmeasured, bytes, failures } = removal;
       const logs = hasLogs(path);
       if (logs) await archiveWorkspace(path, 'maintenance', readWorkspaceState(path), operation);
       const archived = logs && !hasLogs(path);
@@ -785,6 +811,107 @@ export async function enterDormantStage(
     { purpose: 'dormant stage', devServer: false, hosted: false, hostedMacos: false, operation },
   );
   return run.ran ? run.value : { status: 'kept', bytes: 0, detail: `in use: ${run.reasons.join('; ')}` };
+}
+
+type ClaimedResult = StageResult & { restore?: string };
+
+/** Runs `fn` under the workspace's native-run and metro-start claims, which a running dev server or device allows. */
+async function withIdleClaims(
+  path: string,
+  operation: StimContext | undefined,
+  fn: () => Promise<ClaimedResult>,
+): Promise<ClaimedResult> {
+  const run = await withIdleWorkspace(
+    path,
+    async (): Promise<ClaimedResult> => {
+      try {
+        return await withWorkspaceProcessLock(workspaceDir(path), 'metro-start', fn, {
+          external: true,
+          waitMs: 0,
+          ownerPurpose: 'pressure ladder',
+          signal: operation?.signal,
+          declareSpawnsFor: operation,
+        });
+      } catch (error) {
+        if (workspaceProcessLockError(error))
+          return { outcome: 'kept', bytes: 0, detail: 'a stim start holds its metro-start lock' };
+        throw error;
+      }
+    },
+    { purpose: 'pressure ladder', devServer: false, hosted: false, hostedMacos: false, operation },
+  );
+  return run.ran ? run.value : { outcome: 'kept', bytes: 0, detail: `in use: ${run.reasons.join('; ')}` };
+}
+
+/**
+ * At critical, the owned devices of a running workspace idle the pressure idle threshold, each whose data `deletable`
+ * allows shut down and deleted through teardown under the workspace's claims after judging it again. Its dev server
+ * keeps running; its logs stay and it is not marked dormant.
+ */
+export function deleteRunningDevices(
+  candidate: StageCandidate,
+  reading: DeviceReading,
+  deletable?: (path: string) => boolean,
+): Promise<ClaimedResult> {
+  const { path } = candidate;
+  const { operation } = reading;
+  forgetGitReads(operation);
+  return withIdleClaims(path, operation, async () => {
+    const busy = await stillIdleUnderClaim(candidate, PRESSURE_IDLE_MS, reading, 'critical');
+    if (busy) return { outcome: 'kept', bytes: 0, detail: busy };
+    const config = loadConfig();
+    const project = config?.projects[path];
+    if (!config || !project) return { outcome: 'kept', bytes: 0, detail: 'it is no longer a registered workspace' };
+    const removal = await deleteOwnedDevices(path, project, config, operation, deletable);
+    if ('failed' in removal) return { outcome: 'failed', bytes: 0, detail: removal.failed };
+    const { deleted, unmeasured, bytes, failures } = removal;
+    if (!deleted.length && !failures)
+      return { outcome: 'kept', bytes: 0, detail: 'no owned device of it is on a volume under pressure' };
+    const detail = `no activity for ${Math.floor(candidate.idleMs / MINUTE_MS)} minutes: ${deleted.length ? `deleted ${deleted.join(', ')}` : 'deleted no device'}${unmeasured.length ? ` (freed size not counted for ${unmeasured.join(', ')}: its data directory could not be measured)` : ''}${failures ? `; ${failures} could not be deleted and stay recorded` : ''}; its dev server keeps running. The next stim ios or stim android creates a device.`;
+    return { outcome: failures ? 'failed' : 'done', bytes, detail, restore: 'the next stim ios or stim android' };
+  });
+}
+
+/**
+ * At critical, the Metro store of a workspace whose own dev server runs, idle the pressure idle threshold, when
+ * `deletable` allows it and no other running dev server shares it: under the workspace's claims after judging it again,
+ * its dev server stopped as an idle stop that `stim revive` resumes, its devices left running, then the store deleted.
+ * Null when it has no such store.
+ */
+export async function clearServerStore(
+  candidate: StageCandidate,
+  config: Config,
+  reading: DeviceReading,
+  deletable?: (path: string) => boolean,
+): Promise<ClaimedResult | null> {
+  const { path, project } = candidate;
+  const { operation } = reading;
+  const store = metroStoreRoot(path);
+  const due = (current: Config) =>
+    existsSync(store) && (!deletable || deletable(store)) && servesNow(path, project) && !storeSharer(path, current);
+  if (!candidate.running || !due(config)) return null;
+  forgetGitReads(operation);
+  return withIdleClaims(path, operation, async () => {
+    const busy = await stillIdleUnderClaim(candidate, PRESSURE_IDLE_MS, reading, 'critical');
+    if (busy) return { outcome: 'kept', bytes: 0, detail: busy };
+    const current = loadConfig();
+    if (!current || !due(current))
+      return { outcome: 'kept', bytes: 0, detail: 'its Metro store is gone, shared or no longer served' };
+    const launching = launchingOf(
+      candidate.checkout,
+      launchersOf(operation, operation?.signal, false),
+      operation,
+      operation?.signal,
+    );
+    const launcher = launcherReason(launching.checkout, await launching.anew());
+    if (launcher) return { outcome: 'kept', bytes: 0, detail: `kept ${store}: ${launcher}` };
+    const unstopped = await stopServerForDeletion(path, operation);
+    if (unstopped) return { outcome: 'failed', bytes: 0, detail: `its dev server did not stop: ${unstopped}` };
+    const kept: string[] = [];
+    const bytes = await deleteOutputs([store], launching, kept);
+    const detail = `no activity for ${Math.floor(candidate.idleMs / MINUTE_MS)} minutes: stopped its dev server and ${kept.length ? `kept its Metro store: ${kept.join('; ')}` : `deleted its Metro store ${store}`}; its devices keep running. Run stim revive to resume it.`;
+    return { outcome: kept.length ? 'kept' : 'done', bytes, detail, restore: 'stim revive' };
+  });
 }
 
 /**

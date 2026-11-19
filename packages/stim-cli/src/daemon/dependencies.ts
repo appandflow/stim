@@ -241,6 +241,7 @@ export async function rankDependencies(
   operation?: StimContext,
   source = false,
   log?: DaemonLog,
+  serving?: ReadonlyMap<string, number>,
 ): Promise<RankedDependency[]> {
   const rank = new Map(
     idle.flatMap((candidate, index) => {
@@ -255,7 +256,14 @@ export async function rankDependencies(
     () =>
       collectArtifactsAsync(
         'dependencies',
-        { now: Date.now(), windowMs: 0, protectedRoot, pinned: maintenancePinnedReader(operation), source },
+        {
+          now: Date.now(),
+          windowMs: 0,
+          protectedRoot,
+          pinned: maintenancePinnedReader(operation),
+          source,
+          ...(serving ? { serving } : {}),
+        },
         operation?.signal ?? new AbortController().signal,
         operation,
       ),
@@ -409,7 +417,8 @@ async function stillUnused(
 
 /**
  * Deletes one dependency tree under its workspace's claim once the workspace is still idle `idleMs`, recording the
- * restore. `requireRestorable` keeps a tree `stim worktree warm` could not put back with the same versions.
+ * restore. `requireRestorable` keeps a tree `stim worktree warm` could not put back with the same versions. `running`
+ * asks again whether a workspace whose dev server or devices run is idle, and stops its dev server for the deletion.
  */
 export async function clearDependency(
   dependency: RankedDependency,
@@ -420,6 +429,10 @@ export async function clearDependency(
   operation?: StimContext,
   requireRestorable: boolean = true,
   level: PressureLevel = 'normal',
+  running?: {
+    recheck: () => Promise<string | null>;
+    server?: { workspace: string; pid: number; stop: () => Promise<string | null> };
+  },
 ): Promise<{ status: 'done' | 'kept' | 'failed'; bytes: number; detail: string }> {
   const launchers = freshLaunchers(operation, operation?.signal);
   try {
@@ -439,9 +452,10 @@ export async function clearDependency(
         worktrees,
         requireRestorable,
         launchers,
-        recheck: (keys, worktree) => stillUnused(false, keys, worktree, idleMs, operation),
+        recheck: running ? running.recheck : (keys, worktree) => stillUnused(false, keys, worktree, idleMs, operation),
         level,
         operation,
+        ...(running?.server ? { server: running.server } : {}),
       },
     );
   } catch (error) {

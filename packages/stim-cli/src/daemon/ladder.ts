@@ -40,7 +40,7 @@ import { planCacheEmptying } from '../commands/gc/caches.ts';
 import { isInsideWorkspaces } from '../commands/gc/workspaces.ts';
 import { DEFAULT_WORKTREE_IDLE_DAYS, type WorktreeSweep } from '../commands/gc/worktrees.ts';
 import { causesOf, dormantAction, rungDecision, rungsFrom, type Cause, type Rung } from '../policy/pressure.ts';
-import type { Config, ProjectRecord } from '../workspace/config.ts';
+import { loadConfig, type Config, type ProjectRecord } from '../workspace/config.ts';
 import { runBootedParkedPass } from './booted-parked.ts';
 import { measureDisk } from './measure.ts';
 import { diskThresholds, shortVolumeDevices } from './pressure.ts';
@@ -62,15 +62,28 @@ import {
   selectDependencies,
   SOURCE_RESTORE,
 } from './dependencies.ts';
-import { idleOutputs, PRESSURE_IDLE_MS, writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
 import {
+  idleOutputs,
+  PRESSURE_IDLE_MS,
+  serverPid,
+  stopServerForDeletion,
+  storeSharer,
+  writeWorkspaceEvent,
+  type IdlePassInput,
+} from './idle.ts';
+import { metroStoreRoot } from '../stimd/metro/metro-store.ts';
+import {
+  clearServerStore,
   clearStoppedOutputs,
+  deleteRunningDevices,
   deviceDataDirs,
   dormantAfterMs,
   dormantCandidates,
   idleStageCandidates,
   stoppedOutputCandidates,
+  stillIdleUnderClaim,
   stoppedOutputs,
+  type StageCandidate,
 } from './stages.ts';
 
 const MINUTE_MS = 60_000;
@@ -638,12 +651,17 @@ async function emptyRegisteredCaches(context: RungContext, handled: readonly str
   }
 }
 
-/** Rung 4: the dormant stage now, longest-idle first: at high for workspaces idle 10 minutes, at critical every idle one. */
+/**
+ * Rung 4: the dormant stage now, longest-idle first: at high for workspaces idle 10 minutes, at critical every idle one.
+ * At critical a workspace whose dev server or owned device runs loses only its owned devices on a volume under
+ * pressure, each shut down to be deleted, and its dev server keeps running.
+ */
 async function dormantRung(context: RungContext): Promise<void> {
   if (dormantAfterMs(context.config) <= 0) return;
-  const idleMs = context.level === 'critical' ? PRESSURE_IDLE_MS : DORMANT_HIGH_IDLE_MS;
-  for (const candidate of await dormantCandidates(context.config, context, idleMs)) {
-    const devices: string[][] = [[workspaceDir(candidate.path)]];
+  const critical = context.level === 'critical';
+  const idleMs = critical ? PRESSURE_IDLE_MS : DORMANT_HIGH_IDLE_MS;
+  for (const candidate of await dormantCandidates(context.config, context, idleMs, critical ? 'critical' : undefined)) {
+    const devices: string[][] = candidate.running ? [] : [[workspaceDir(candidate.path)]];
     for (const { platforms } of projectDeviceSlots(candidate.project)) {
       if (platforms.ios?.owned && platforms.ios.deviceUdid)
         devices.push(deviceDataDirs(context.sims, 'ios', platforms.ios.deviceUdid));
@@ -652,6 +670,23 @@ async function dormantRung(context: RungContext): Promise<void> {
     }
     if (!devices.some((dirs) => onShort(context, dirs))) continue;
     if (!(await context.stillShort())) return;
+    if (candidate.running) {
+      // @ref LLP 0001#at-critical-a-deletion-stops-only-what-it-needs -- the device is shut down to be deleted
+      const result = context.act
+        ? await deleteRunningDevices(candidate, context, deletable(context))
+        : {
+            outcome: 'would' as const,
+            bytes: context.measure ? await workspaceDeviceBytes(context, candidate.project) : 0,
+            detail: `${wouldDetail(context)}; its dev server keeps running`,
+            restore: 'the next stim ios or stim android',
+          };
+      recordAction(
+        context,
+        { rung: 4, kind: 'delete-devices', target: candidate.path, workspace: candidate.path, ...result },
+        `${context.why}; idle ${Math.floor(candidate.idleMs / MINUTE_MS)} minutes`,
+      );
+      continue;
+    }
     await run(
       { ...context, why: `${context.why}; idle ${Math.floor(candidate.idleMs / MINUTE_MS)} minutes` },
       dormantAction(candidate.path, idleMs, context.why),
@@ -676,14 +711,29 @@ function canonicalOrNull(path: string): string | null {
  * links, which at critical goes last instead.
  */
 async function dependenciesRung(context: RungContext): Promise<void> {
-  const idleMs = context.level === 'critical' ? PRESSURE_IDLE_MS : DEPENDENCIES_HIGH_IDLE_MS;
-  const idle = await idleStageCandidates(context.config, context, idleMs);
+  const critical = context.level === 'critical';
+  const idleMs = critical ? PRESSURE_IDLE_MS : DEPENDENCIES_HIGH_IDLE_MS;
+  const idle = await idleStageCandidates(context.config, context, idleMs, critical ? { running: 'critical' } : {});
+  const running = new Map(
+    idle.flatMap((candidate) => {
+      const key = candidate.running ? canonicalOrNull(candidate.path) : null;
+      return key ? [[key, candidate] as const] : [];
+    }),
+  );
+  // @ref LLP 0001#at-critical-a-deletion-stops-only-what-it-needs -- Metro stops only for its store or dependencies
+  for (const candidate of running.values()) await serverStoreStep(context, candidate);
+  const serving = new Map(
+    [...running.values()].flatMap((candidate) => {
+      const pid = serverPid(candidate.path, candidate.project);
+      return pid === null ? [] : [[candidate.path, pid] as const];
+    }),
+  );
   const protectedRoot = context.protectedRoot ? (canonicalOrNull(context.protectedRoot) ?? '') : '';
   const ranked = (
     await timedStep(
       context.log,
       'rank_dependencies',
-      () => rankDependencies(idle, protectedRoot, context.operation, false, context.log),
+      () => rankDependencies(idle, protectedRoot, context.operation, false, context.log, serving),
       { signal: context.operation?.signal, items: (found) => found?.length },
     )
   ).filter((dependency) => onShort(context, [dependency.candidate.path]));
@@ -707,6 +757,11 @@ async function dependenciesRung(context: RungContext): Promise<void> {
   const restoreCache: Parameters<typeof restoreProblem>[1] = new Map();
   for (const dependency of take) {
     if (!(await context.stillShort())) return;
+    const owner = running.get(canonicalOrNull(dependency.workspace) ?? '');
+    const pid = owner
+      ? (serverPid(owner.path, loadConfig()?.projects[owner.path] ?? owner.project) ?? undefined)
+      : undefined;
+    const restore = pid === undefined ? 'stim worktree warm' : 'stim worktree warm, then stim revive';
     const why =
       dependency.privateBytes === null
         ? `${context.why}; its real size is unknown`
@@ -725,7 +780,7 @@ async function dependenciesRung(context: RungContext): Promise<void> {
         : await wouldDelete(
             dependency,
             context.level,
-            wouldDetail(context),
+            pid === undefined ? wouldDetail(context) : `${wouldDetail(context)}; its dev server would be stopped`,
             context.operation,
             context.measure ? (dependency.privateBytes ?? (await pathsBytes([dependency.candidate.path]))) : plan.bytes,
           );
@@ -739,7 +794,7 @@ async function dependenciesRung(context: RungContext): Promise<void> {
           outcome: result.status,
           bytes: result.bytes,
           detail: result.detail,
-          ...(result.status === 'would' ? { restore: 'stim worktree warm' } : {}),
+          ...(result.status === 'would' ? { restore } : {}),
         },
         why,
       );
@@ -754,6 +809,20 @@ async function dependenciesRung(context: RungContext): Promise<void> {
       context.operation,
       true,
       context.level,
+      owner
+        ? {
+            recheck: () => stillIdleUnderClaim(owner, idleMs, context, 'critical'),
+            ...(pid === undefined
+              ? {}
+              : {
+                  server: {
+                    workspace: owner.path,
+                    pid,
+                    stop: () => stopServerForDeletion(owner.path, context.operation),
+                  },
+                }),
+          }
+        : undefined,
     );
     recordAction(
       context,
@@ -765,11 +834,38 @@ async function dependenciesRung(context: RungContext): Promise<void> {
         outcome: result.status,
         bytes: result.bytes,
         detail: result.detail,
-        ...(result.status === 'done' ? { restore: 'stim worktree warm' } : {}),
+        ...(result.status === 'done' ? { restore } : {}),
       },
       why,
     );
   }
+}
+
+/** Rung 5's first step at critical: a serving workspace's Metro store, for which its dev server stops. */
+async function serverStoreStep(context: RungContext, candidate: StageCandidate): Promise<void> {
+  const store = metroStoreRoot(candidate.path);
+  if (
+    !existsSync(store) ||
+    !onShort(context, [store]) ||
+    serverPid(candidate.path, candidate.project) === null ||
+    storeSharer(candidate.path, context.config) ||
+    !(await context.stillShort())
+  )
+    return;
+  const result = context.act
+    ? await clearServerStore(candidate, context.config, context, deletable(context))
+    : {
+        outcome: 'would' as const,
+        bytes: context.measure ? await pathsBytes([store]) : 0,
+        detail: `${wouldDetail(context)}; its dev server would be stopped for its Metro store ${store}`,
+        restore: 'stim revive',
+      };
+  if (!result) return;
+  recordAction(
+    context,
+    { rung: 5, kind: 'delete-build-outputs', target: candidate.path, workspace: candidate.path, ...result },
+    `${context.why}; idle ${Math.floor(candidate.idleMs / MINUTE_MS)} minutes`,
+  );
 }
 
 /**

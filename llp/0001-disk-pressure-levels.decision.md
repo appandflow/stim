@@ -187,6 +187,35 @@ on low disk, those are more RAM based I think no? Unless we need to stop the
 worktree in order to free disk space maybe we should only stop fast on low
 RAM?", then "lets do all 4", 2026-11-19.
 
+## At critical a deletion stops only what it needs
+
+At critical disk pressure a workspace idle 2 minutes or more is taken even
+while its dev server or an owned device runs, judged as the idle stage judges
+it. Something is stopped only as part of a deletion on a volume under pressure
+that needs it, in one action under the workspace's native-run and metro-start
+claims, after every other check of that deletion passed and the workspace was
+judged idle again; the deletion checks everything again after the stop.
+
+- Rung 4 shuts down each owned device to delete it, through teardown, and only
+  a device whose data lies on a volume under pressure. The dev server keeps
+  running, the logs stay and the workspace is not marked dormant.
+- Rung 5 stops the dev server to delete the workspace's Metro store, when no
+  other running dev server shares it, and to delete the `node_modules` and Pods
+  of a linked worktree. The stop is an idle stop that `stim revive` resumes;
+  the devices keep running. A tree the dev server's own processes do not keep,
+  but something else does (another process working in the worktree, an agent
+  session, `maintenance.keep`), keeps the dev server running.
+- Rungs 7 and 8 still keep a workspace whose dev server or owned device runs: a
+  finished worktree's removal and a source checkout's dependencies wait for it
+  to stop.
+
+Chosen by the implementer of #5998, not by the maintainer: the Metro store goes
+in rung 5, after the parked devices and shared caches of rungs 2 and 3, rather
+than in rung 1; the deletions at rung 4 do not archive logs or mark the
+workspace dormant while its dev server runs; rungs 7 and 8 are left as they
+were, because their removal paths take several workspaces' claims and cannot
+yet tell the dev server's processes from others in the tree.
+
 ## The folders a build wrote are measured by the daemon
 
 When a local native compile ends, whether it succeeded, failed or was cancelled,
