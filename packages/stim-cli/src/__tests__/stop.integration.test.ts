@@ -1063,7 +1063,11 @@ test('a server-only idle stop records the idle stop and leaves the devices, thei
     JSON.stringify({ supervisor, collectors, ios: { devicePlacement: placement } }),
   );
   let request: unknown;
-  const teardownIos = vi.fn(async () => ({ status: 'torn-down' as const, label: 'stim-a' }));
+  let tornDown = false;
+  const teardownIos = async () => {
+    tornDown = true;
+    return { status: 'torn-down' as const, label: 'stim-a' };
+  };
 
   const r = await runIdleStop({
     root: tmpRoot,
@@ -1084,7 +1088,7 @@ test('a server-only idle stop records the idle stop and leaves the devices, thei
 
   expect(r.ok).toBe(true);
   expect(request).toMatchObject({ by: 'stim daemon', idleMinutes: 2 });
-  expect(teardownIos).not.toHaveBeenCalled();
+  expect(tornDown).toBe(false);
   expect(r.outcomes.device).toEqual({ ios: null, android: null, web: null });
   expect(r.outcomes.port).toMatchObject({ status: 'kept', port: 8083 });
   expect(readWorkspaceState(tmpRoot)?.collectors).toEqual(collectors);
