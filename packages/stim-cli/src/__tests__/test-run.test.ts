@@ -319,5 +319,9 @@ test('reads the Vitest version of the executable a bare or path vitest runs, and
   const wrapper = join(root, 'usr', 'bin', 'vitest');
   expect(vitestVersionFor([wrapper, 'run'], app, found(wrapper))).toBeNull();
   expect(vitestVersionFor(['npx', 'vitest'], app, found(null))).toBe('5.0.4');
+  const globalBin = join(root, 'global', 'bin', 'vitest');
+  expect(vitestVersionFor(['pnpm', 'exec', globalBin, 'run'], app, found(globalBin))).toBe('2.1.9');
+  expect(vitestVersionFor(['npx', wrapper, 'run'], app, found(wrapper))).toBeNull();
+  expect(vitestVersionFor(['bunx', './missing/vitest'], app, found(null))).toBeNull();
   expect(vitestVersionFor(['npm', 'run', 'test'], app, found(null))).toBe('5.0.4');
 });

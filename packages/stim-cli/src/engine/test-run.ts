@@ -131,18 +131,20 @@ export function installedVitestVersion(dir: string): string | null {
 }
 
 /**
- * The version of the Vitest that `argv` runs. An argv that starts with `vitest` itself, by name or path, runs the file
- * `find` resolves (PATH or that path): the package that file belongs to, or the `vitest` package beside a
- * `node_modules/.bin` shim. Launchers and package-manager scripts run the nearest node_modules install. Null when the
- * executable's package cannot be established.
+ * The version of the Vitest that `argv` runs. An argv that starts with `vitest` itself, by name or path, or names a
+ * path to it behind a launcher, runs the file `find` resolves (PATH or that path): the package that file belongs to, or
+ * the `vitest` package beside a `node_modules/.bin` shim. A launcher with the bare name, or a package-manager script,
+ * runs the nearest node_modules install. Null when the executable's package cannot be established.
  */
 export function vitestVersionFor(
   argv: readonly string[],
   dir: string,
   find: (file: string) => string | null,
 ): string | null {
-  const file = argv[0] ?? '';
-  if (runnerName(file) !== 'vitest') return installedVitestVersion(dir);
+  const index = runnerAt(argv, [])?.index;
+  const file = argv[index ?? 0] ?? '';
+  if (index === undefined || runnerName(file) !== 'vitest' || (index > 0 && file === 'vitest'))
+    return installedVitestVersion(dir);
   const found = find(file);
   if (!found) return null;
   let real: string;
