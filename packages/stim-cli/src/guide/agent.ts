@@ -358,10 +358,15 @@ Ask the user before these actions:
   worktree and gives up its owned device.
 - worktree remove --force, because it also discards uncommitted and untracked
   files.
-- gc, because it deletes worktrees, devices, caches and dependencies across
-  workspaces, including ones you do not own, and at high or critical pressure
-  stops apps that are not being driven. Run stim gc --dry-run first and show
-  the user what it would delete (guide facts gc); stim gc deletes, and
+- gc, because it deletes across workspaces, including ones you do not own:
+  orphaned resources, clean linked worktrees whose branch or pull request is
+  merged or closed, unused simulator runtimes, and the build outputs, owned
+  devices, node_modules and Pods of workspaces idle a day or more. At high or
+  critical pressure it also deletes parked devices and trims shared caches
+  (at critical, other tools' caches too), and stops apps that are not being
+  driven. It never touches a workspace that is building, driven, leased,
+  shared, hosted or pinned by maintenance.keep. Run stim gc --dry-run first and
+  show the user what it would delete (guide facts gc); stim gc deletes, and
   --pressure <normal|high|critical> picks the level.
 - settings set daemon.mode on in a home where it is off or report, because
   it lets Stim itself stop idle workspaces and delete their outputs, devices
