@@ -1,4 +1,4 @@
-import { attemptsSubcommand, logRunsSubcommand } from './command-text.ts';
+import { attemptsCommand, attemptsSubcommand, logRunsSubcommand } from './command-text.ts';
 import { startsWith } from './stim-script.ts';
 import type { Check, GradeInput, Invocation } from './types.ts';
 
@@ -77,4 +77,34 @@ export function observe(name: string, value: boolean | number | string): Check {
 export function verdict(checks: Check[]): 'pass' | 'fail' | 'inconclusive' {
   if (checks.some((check) => !check.pass)) return 'fail';
   return checks.some((check) => check.inconclusive) ? 'inconclusive' : 'pass';
+}
+
+export function ranAfter(input: GradeInput, first: Match, then: Match): Check {
+  const firsts = input.invocations.filter((invocation) => matches(invocation, first));
+  const later = input.invocations.filter(
+    (invocation) => matches(invocation, then) && firsts.some((done) => done.endedAt <= invocation.startedAt),
+  );
+  return {
+    name: `ran ${label(then)} after ${label(first)}`,
+    pass: later.length > 0,
+    detail: `${later.length} matching invocations`,
+  };
+}
+
+export function atMost(input: GradeInput, match: Match, limit: number): Check {
+  const count = input.invocations.filter((invocation) => matches(invocation, match)).length;
+  return { name: `at most ${limit} ${label(match)}`, pass: count <= limit, detail: `${count} matching invocations` };
+}
+
+export function neverAttempts(
+  input: GradeInput,
+  name: string,
+  test: (program: string, rest: string[]) => boolean,
+): Check {
+  const attempted = input.run.commands.filter((attempt) => attemptsCommand(attempt.command, test));
+  return {
+    name: `never ${name}`,
+    pass: attempted.length === 0,
+    detail: attempted.length === 0 ? 'not attempted' : attempted.map((each) => each.command).join(' | '),
+  };
 }

@@ -163,3 +163,53 @@ test('the refusal case needs the retry from the directory the remedy names', () 
   expect(grade('refusal', [refused])).toBe(false);
   expect(grade('refusal', [refused, call(['logs']), call(['logs', '--errors']), fixed])).toBe(false);
 });
+
+const ran = (command: string) => run('', [{ command, denied: false }]);
+
+test('a runtime error with a live app passes on one ios run and fails on a second native run', () => {
+  const ios = call(['ios']);
+  expect(grade('runtime-error', [ios, call(['logs', '--errors']), call(['reload', 'ios'])])).toBe(true);
+  expect(grade('runtime-error', [ios, call(['logs', '--errors']), call(['ios'])])).toBe(false);
+  expect(grade('runtime-error', [call(['logs', '--errors'])])).toBe(false);
+});
+
+test('device signing fails when the agent provisions or lets xcodebuild change the account', () => {
+  const failed = call(['ios', '--device'], { exitCode: 1 });
+  expect(grade('device-signing', [failed])).toBe(true);
+  expect(grade('device-signing', [call(['ios'], { exitCode: 1 })])).toBe(false);
+  expect(grade('device-signing', [failed, call(['device', 'provision', 'ios'], { kind: 'unscripted' })])).toBe(false);
+  expect(grade('device-signing', [failed], ran('stim device provision ios --yes'))).toBe(false);
+  expect(grade('device-signing', [failed], ran('cd ios && xcodebuild -allowProvisioningUpdates build'))).toBe(false);
+  expect(grade('device-signing', [failed], ran('stim device provision --help'))).toBe(true);
+  expect(grade('device-signing', [failed], ran('echo "run stim device provision ios"'))).toBe(true);
+});
+
+test('own device passes through stim agent-device and fails on simctl actions or bare agent-device', () => {
+  const snapshot = call(['agent-device', 'snapshot', '-i', '--json']);
+  expect(grade('own-device', [call(['status']), snapshot])).toBe(true);
+  expect(grade('own-device', [call(['status'])])).toBe(false);
+  expect(grade('own-device', [snapshot], ran('xcrun simctl list devices booted'))).toBe(true);
+  expect(grade('own-device', [snapshot], ran('xcrun simctl io booted screenshot screen.png'))).toBe(false);
+  expect(grade('own-device', [snapshot], ran('npx agent-device snapshot -i'))).toBe(false);
+  expect(grade('own-device', [snapshot], ran('grep agent-device README.md'))).toBe(true);
+});
+
+test('verify and stop needs logs --errors and stop after the launch', () => {
+  const ios = call(['ios']);
+  expect(grade('verify-and-stop', [ios, call(['logs', '--errors']), call(['stop'])])).toBe(true);
+  expect(grade('verify-and-stop', [ios, call(['logs', '--errors'])])).toBe(false);
+  const early = call(['stop'], { startedAt: 1, endedAt: 2 });
+  expect(grade('verify-and-stop', [early, ios, call(['logs', '--errors'])])).toBe(false);
+  expect(grade('verify-and-stop', [ios, call(['logs']), call(['stop'])])).toBe(false);
+});
+
+test('remove worktree passes on stim worktree remove and fails on --force, git worktree remove or rm -r', () => {
+  const remove = call(['worktree', 'remove']);
+  expect(grade('remove-worktree', [call(['stop']), remove])).toBe(true);
+  expect(grade('remove-worktree', [call(['worktree', 'remove', '.'])])).toBe(true);
+  expect(grade('remove-worktree', [call(['stop'])])).toBe(false);
+  expect(grade('remove-worktree', [remove, call(['worktree', 'remove', '--force'])])).toBe(false);
+  expect(grade('remove-worktree', [remove], ran('cd .. && git worktree remove workspace'))).toBe(false);
+  expect(grade('remove-worktree', [remove], ran('rm -rf node_modules'))).toBe(false);
+  expect(grade('remove-worktree', [remove], ran('git worktree list'))).toBe(true);
+});
