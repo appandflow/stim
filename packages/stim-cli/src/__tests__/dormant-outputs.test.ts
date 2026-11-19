@@ -23,7 +23,9 @@ import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import * as maintenanceRun from '../stimd/passes/run.ts';
 import { loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
-import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
+import { recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
+import * as fsUtil from '../fs-util.ts';
+import { metroStoreRoot } from '../stimd/metro/metro-store.ts';
 import { testContext } from './_context.ts';
 
 const DAY_MS = 86_400_000;
@@ -32,6 +34,7 @@ const EXTERNAL_PID = 4242;
 
 let base: string;
 let externalCwd: string | null;
+let processesListed: boolean;
 
 const measured: HomePasses['measured'] = {
   measurement: {
@@ -55,11 +58,13 @@ beforeEach(() => {
   mkdirSync(join(base, 'user'), { recursive: true });
   saveConfig({ version: 2, projects: {}, repos: {} });
   externalCwd = null;
+  processesListed = true;
   const real = getExecutor();
   setExecutor({
     ...real,
     runFileQuietAsync: async (file, args, opts) => {
       const external = externalCwd !== null;
+      if (!processesListed && (file === 'ps' || file === 'lsof')) return null;
       if (file === 'ps' && args.includes('pid=,ppid='))
         return `${process.pid} 1\n${external ? `${EXTERNAL_PID} 1\n` : ''}`;
       if (file === 'ps') return `${process.pid} node\n${external ? `${EXTERNAL_PID} java GradleDaemon\n` : ''}`;
@@ -145,6 +150,7 @@ describe.skipIf(process.platform === 'win32')(
       saveConfig({ version: 2, projects: {}, repos: {}, idle: { sourceDormantDays: 1 } });
       const root = register(repo('app'));
       mkdirSync(join(root, 'android', 'build'));
+      mkdirSync(join(metroStoreRoot(root), 'shared'), { recursive: true });
       mkdirSync(join(root, 'node_modules', 'dep'), { recursive: true });
       writeFileSync(join(root, 'node_modules', 'dep', 'index.js'), 'x');
       idleFor(3, root);
@@ -165,6 +171,7 @@ describe.skipIf(process.platform === 'win32')(
       expect(existsSync(join(workspaceDir(root), 'derived-data'))).toBe(false);
       expect(existsSync(join(root, 'node_modules'))).toBe(false);
       expect(existsSync(join(root, 'package.json'))).toBe(true);
+      expect(existsSync(join(metroStoreRoot(root), 'shared'))).toBe(true);
     });
 
     test('a Gradle build working in the checkout keeps its outputs, whatever Stim last saw', async () => {
@@ -177,6 +184,48 @@ describe.skipIf(process.platform === 'win32')(
       ]);
       expect(existsSync(join(root, BUILD, 'app.apk'))).toBe(true);
       expect(existsSync(join(workspaceDir(root), 'derived-data'))).toBe(true);
+    });
+
+    test('a registered app inside a larger checkout keeps its outputs while a process works at the checkout root', async () => {
+      const root = repo('mono');
+      const app = join(root, 'apps', 'mobile');
+      mkdirSync(join(app, BUILD), { recursive: true });
+      writeFileSync(join(app, BUILD, 'app.apk'), 'artifact');
+      register(app);
+      idleFor(3, app);
+      externalCwd = root;
+
+      expect(await gc()).toEqual([
+        expect.objectContaining({
+          target: app,
+          outcome: 'kept',
+          detail: expect.stringContaining(`process ${EXTERNAL_PID}`),
+        }),
+      ]);
+      expect(existsSync(join(app, BUILD, 'app.apk'))).toBe(true);
+    });
+
+    test('where the running processes cannot be listed, as on Windows, gc keeps the outputs and says why', async () => {
+      const root = register(repo('app'));
+      idleFor(3, root);
+      processesListed = false;
+
+      expect(await gc()).toEqual([
+        expect.objectContaining({ outcome: 'kept', detail: expect.stringContaining('cannot be listed') }),
+      ]);
+      expect(existsSync(join(root, BUILD, 'app.apk'))).toBe(true);
+    });
+
+    test('a workspace in use is not measured, and report mode predicts nothing for it', async () => {
+      const root = register(repo('app'));
+      idleFor(3, root);
+      writeWorkspaceState(root, { macos: {} });
+      const walks = vi.spyOn(fsUtil, 'measuredDirectorySizeAsync');
+
+      expect(await hourlyStep(false)).toEqual([]);
+      expect(await gc()).toEqual([]);
+      expect(walks).not.toHaveBeenCalled();
+      expect(existsSync(join(root, BUILD, 'app.apk'))).toBe(true);
     });
 
     test('a worktree locked with git worktree lock keeps its outputs', async () => {
@@ -244,9 +293,11 @@ describe.skipIf(process.platform === 'win32')(
 
       const actions = await hourlyStep(true).finally(() => chmodSync(sealed, 0o755));
       expect(actions).toEqual([
-        expect.objectContaining({ target: stuck, outcome: 'failed' }),
+        expect.objectContaining({ target: stuck, outcome: 'failed', bytes: expect.any(Number) }),
         expect.objectContaining({ target: free, outcome: 'done' }),
       ]);
+      expect(actions[0]?.bytes).toBeGreaterThan(0);
+      expect(existsSync(join(workspaceDir(stuck), 'derived-data'))).toBe(false);
       expect(existsSync(join(free, BUILD))).toBe(false);
     });
   },

@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { rm, stat, utimes } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import type { StimContext } from '@stim-cli/core';
 import type { DaemonLadderAction } from '@stim-cli/core/state';
@@ -15,14 +15,15 @@ import { forgetGitReads } from '../workspace/git-reads.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
 import { freshLaunchers, launcherReason, launchingOf, type Launching } from '../workspace/launchers.ts';
 import { workspaceDir } from '../workspace/paths.ts';
-import { cargoTargetDirsAsync, regenerableDirProblem } from '../workspace/regenerable-dirs.ts';
+import { cargoTargetDirsAsync, existingBuildDirsAsync, regenerableDirProblem } from '../workspace/regenerable-dirs.ts';
 import { lockReason, worktreeLockAsync } from '../workspace/worktree.ts';
-import { idleOutputs, sharedStoreReason, type IdlePassInput } from './idle.ts';
-import { hasOutputs, sourceCheckoutIdle, stillIdle, type StageCandidate } from './stages.ts';
+import { idleOutputs, type IdlePassInput } from './idle.ts';
+import { sourceCheckoutIdle, stillIdle, type StageCandidate } from './stages.ts';
 
 const SETTING = 'idle.dormantDays';
 const PURPOSE = 'dormant reduction';
 const SIZE_TIMEOUT_MS = 120_000;
+const IN_USE_CHECKS = { devServer: false, hosted: false, hostedMacos: false };
 const RESTORE = 'the next stim ios or stim android, from the build cache when nothing changed';
 
 type Input = Pick<IdlePassInput, 'act' | 'log'> & { operation?: StimContext; force?: boolean };
@@ -91,17 +92,19 @@ async function reduceWorkspace(
   const { path } = candidate;
   const { operation } = input;
   const signal = operation?.signal;
-  if (!(await hasOutputs(path))) return null;
+  if (!workspaceOutputPaths(workspaceDir(path)).length && !(await existingBuildDirsAsync(path)).length) return null;
   const keep = (detail: string): Result | null => (input.force ? { outcome: 'kept', bytes: 0, detail } : null);
+  const { checkout } = candidate;
+  if (typeof checkout !== 'string') return keep(`its checkout cannot be established: ${checkout.unknown}`);
   const lock = await worktreeLockAsync(path, gitOptions(operation));
   if (lock) return keep(lockReason(lock));
-  const verdict = await sourceCheckoutIdle(path, afterMs, SETTING, { operation, reads, reduceOnly: false });
+  const verdict = await sourceCheckoutIdle(path, afterMs, SETTING, { operation, reads, reduceOnly: false, checkout });
   if ('kept' in verdict) return keep(verdict.kept);
   const plan = await eligible(
     candidate,
     config,
     afterMs,
-    launchingOf(candidate.checkout, () => reads.launchers(false), operation, signal),
+    launchingOf(checkout, () => reads.launchers(false), operation, signal),
   );
   if (!plan.paths.length && !plan.targets.length) return null;
   const measure = input.act || input.force === true;
@@ -121,9 +124,20 @@ async function reduceWorkspace(
   const kept = [...plan.kept];
   const removed: string[] = [];
   let bytes = 0;
-  let failure: string | null = null;
+  const failures: string[] = [];
+  const failed = (output: string, error: unknown) => {
+    if (isClaimUnavailable(error) || (error instanceof Error && 'reportCleanup' in error)) throw error;
+    signal?.throwIfAborted();
+    failures.push(`${output}: ${error instanceof Error ? error.message : String(error)}`);
+  };
   for (const output of plan.paths) {
-    const reason = await removeOutput(candidate, output, config, afterMs, operation);
+    let reason: string | null;
+    try {
+      reason = await removeOutput(path, checkout, output, afterMs, operation);
+    } catch (error) {
+      failed(output, error);
+      continue;
+    }
     if (reason) kept.push(`kept ${output}: ${reason}`);
     else {
       removed.push(output);
@@ -131,7 +145,13 @@ async function reduceWorkspace(
     }
   }
   for (const { dir } of plan.targets) {
-    const trim = await trimTarget(candidate, dir, afterMs, operation);
+    let trim: Awaited<ReturnType<typeof trimTarget>>;
+    try {
+      trim = await trimTarget(path, checkout, dir, afterMs, operation);
+    } catch (error) {
+      failed(dir, error);
+      continue;
+    }
     if ('refused' in trim) {
       kept.push(`kept ${dir}: ${trim.refused}`);
       continue;
@@ -139,10 +159,12 @@ async function reduceWorkspace(
     bytes += trim.bytes;
     if (trim.removed.length) removed.push(`${dir} (${trim.removed.join(', ')})`);
     if (trim.kept.length) kept.push(`kept in ${dir}: ${trim.kept.join('; ')}`);
-    if (trim.deleteError) failure = `${dir}: moved aside; ${trim.deleteError}; the next pass deletes it`;
+    if (trim.deleteError) failures.push(`${dir}: moved aside; ${trim.deleteError}; the next pass deletes it`);
   }
   const rest = kept.length ? `; ${kept.join('; ')}` : '';
-  if (failure) return { outcome: 'failed', bytes, detail: `${failure}${rest}` };
+  const done = removed.length ? `deleted ${formatBytes(bytes)} of regenerable build outputs; ` : '';
+  if (failures.length)
+    return { outcome: 'failed', bytes, detail: `${done}could not delete ${failures.join('; ')}${rest}` };
   if (!removed.length) return { outcome: 'kept', bytes: 0, detail: kept.join('; ') || 'nothing was removed' };
   return { outcome: 'done', bytes, detail: `deleted ${formatBytes(bytes)} of regenerable build outputs${rest}` };
 }
@@ -162,11 +184,11 @@ async function eligible(
   afterMs: number,
   launching: Launching,
 ): Promise<Plan> {
-  const outputs = await idleOutputs(candidate.path, config, launching);
-  const cargo = new Set(await cargoTargetDirsAsync(candidate.path));
-  const plan: Plan = { paths: [], targets: [], kept: outputs.kept };
+  const store = metroStoreRoot(candidate.path);
+  const outputs = await idleOutputs(candidate.path, config, launching, (output) => output !== store);
+  const plan: Plan = { paths: [], targets: [], kept: outputs.kept.filter((reason) => !reason.includes(store)) };
   for (const output of outputs.paths) {
-    if (!cargo.has(output)) {
+    if (!outputs.targets.includes(output)) {
       plan.paths.push(output);
       continue;
     }
@@ -187,11 +209,11 @@ async function eligible(
 async function outputProblem(
   path: string,
   output: string,
-  config: Config,
   launching: Launching,
   signal: AbortSignal | undefined,
 ): Promise<string | null> {
-  if (output === metroStoreRoot(path)) return sharedStoreReason(path, config);
+  if (basename(output) === 'target') return 'a Cargo target/ is only trimmed, never deleted whole';
+  if (output === metroStoreRoot(path)) return 'the shared Metro store is not a dormant output';
   if (workspaceOutputPaths(workspaceDir(path)).includes(output)) return null;
   return regenerableDirProblem(path, output, signal, { launching });
 }
@@ -202,13 +224,12 @@ async function outputProblem(
  * the checkout. Returns why it stays, or null once it is gone.
  */
 async function removeOutput(
-  candidate: StageCandidate,
+  path: string,
+  checkout: string,
   output: string,
-  config: Config,
   afterMs: number,
   operation: StimContext | undefined,
 ): Promise<string | null> {
-  const { path } = candidate;
   const signal = operation?.signal;
   const run = await withIdleWorkspace(
     path,
@@ -218,14 +239,14 @@ async function removeOutput(
           workspaceDir(path),
           'metro-start',
           async (): Promise<string | null> => {
-            if (!(await stillIdle(path, afterMs, { operation, full: true, setting: SETTING })))
+            if (!(await stillIdle(path, afterMs, { operation, full: true, setting: SETTING, checkout })))
               return 'it is no longer idle';
             const lock = await worktreeLockAsync(path, gitOptions(operation));
             if (lock) return lockReason(lock);
-            const launching = launchingOf(candidate.checkout, freshLaunchers(operation, signal), operation, signal);
-            const problem = await outputProblem(path, output, config, launching, signal);
+            const launching = launchingOf(checkout, freshLaunchers(operation, signal), operation, signal);
+            const problem = await outputProblem(path, output, launching, signal);
             if (problem) return problem;
-            const launcher = launcherReason(candidate.checkout, await launching.launchers());
+            const launcher = launcherReason(checkout, await launching.launchers());
             if (launcher) return launcher;
             await removeUnseen(output);
             return null;
@@ -237,7 +258,7 @@ async function removeOutput(
         throw error;
       }
     },
-    { purpose: PURPOSE, devServer: false, hosted: false, hostedMacos: false, operation },
+    { purpose: PURPOSE, ...IN_USE_CHECKS, operation },
   );
   return run.ran ? run.value : `in use: ${run.reasons.join('; ')}`;
 }
@@ -261,19 +282,21 @@ async function removeUnseen(output: string): Promise<void> {
  * checking again that the workspace is idle and its worktree not locked: every profile no build wrote for `afterMs`.
  */
 async function trimTarget(
-  candidate: StageCandidate,
+  path: string,
+  checkout: string,
   target: string,
   afterMs: number,
   operation: StimContext | undefined,
 ): Promise<{ refused: string } | Awaited<ReturnType<typeof trimCargoTarget>>> {
-  const { path } = candidate;
   const signal = operation?.signal;
   forgetGitReads(operation);
-  if (!(await stillIdle(path, afterMs, { operation, full: true, locked: false, setting: SETTING })))
+  if (!(await stillIdle(path, afterMs, { operation, full: true, locked: false, setting: SETTING, checkout })))
     return { refused: 'it is no longer idle' };
   const lock = await worktreeLockAsync(path, gitOptions(operation));
   if (lock) return { refused: lockReason(lock) };
-  const launching = launchingOf(candidate.checkout, freshLaunchers(operation, signal), operation, signal);
+  if (!(await cargoTargetDirsAsync(path)).includes(target))
+    return { refused: 'it is no longer a Cargo target/ Stim recognises' };
+  const launching = launchingOf(checkout, freshLaunchers(operation, signal), operation, signal);
   const problem = await regenerableDirProblem(path, target, signal, { processes: false, launching });
   if (problem) return { refused: problem };
   return trimCargoTarget(target, { needBytes: 0, profileIdleMs: afterMs, signal, launching });

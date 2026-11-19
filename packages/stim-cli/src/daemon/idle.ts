@@ -43,7 +43,7 @@ import { MODE_COMMAND, readWorkspaceLaunches, launchWithoutMetro } from '../stim
 import { getProject, type Config, type ProjectRecord } from '../workspace/config.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
-import { existingBuildDirsAsync, regenerableDirProblem } from '../workspace/regenerable-dirs.ts';
+import { existingBuildDirKindsAsync, regenerableDirProblem } from '../workspace/regenerable-dirs.ts';
 import {
   idleMinutesSetting,
   maintenanceKeepSetting,
@@ -193,40 +193,43 @@ async function decide(
   };
 }
 
-/** The regenerable outputs the idle stage deletes, and why each other one stays. */
+/**
+ * The regenerable outputs the idle stage deletes, and why each other one stays. `targets` names the Cargo `target/`
+ * among `paths`, recognised by the same reads that listed it.
+ */
 export async function idleOutputs(
   path: string,
   config: Config,
   launching: Launching,
   deletable?: (path: string) => boolean,
-): Promise<{ paths: string[]; kept: string[] }> {
+): Promise<{ paths: string[]; targets: string[]; kept: string[] }> {
   const paths = workspaceOutputPaths(workspaceDir(path));
+  const targets: string[] = [];
   const kept: string[] = [];
-  for (const dir of await existingBuildDirsAsync(path)) {
+  const { dirs, cargo } = await existingBuildDirKindsAsync(path);
+  for (const dir of dirs) {
     const problem = await regenerableDirProblem(path, dir, undefined, { launching });
     if (problem) kept.push(`kept ${dir}: ${problem}`);
-    else paths.push(dir);
+    else {
+      paths.push(dir);
+      if (cargo.includes(dir)) targets.push(dir);
+    }
   }
   const store = metroStoreRoot(path);
   if (existsSync(store)) {
-    const shared = sharedStoreReason(path, config);
-    if (shared) kept.push(`kept the Metro store ${store}: ${shared}`);
+    const sharer = Object.entries(config.projects).find(
+      ([other, project]) =>
+        canonicalPath(other) !== canonicalPath(path) &&
+        canonicalPath(metroStoreRoot(other)) === canonicalPath(store) &&
+        supervisorOf(other, project).status !== 'none' &&
+        supervisorOf(other, project).status !== 'stale',
+    );
+    if (sharer) kept.push(`kept the Metro store ${store}: the running dev server of ${sharer[0]} shares it`);
     else paths.push(store);
   }
-  return { paths: deletable ? paths.filter(deletable) : paths, kept };
-}
-
-/** Why the workspace's Metro store stays: the running dev server of another workspace shares it; null when none does. */
-export function sharedStoreReason(path: string, config: Config): string | null {
-  const store = metroStoreRoot(path);
-  const sharer = Object.entries(config.projects).find(
-    ([other, project]) =>
-      canonicalPath(other) !== canonicalPath(path) &&
-      canonicalPath(metroStoreRoot(other)) === canonicalPath(store) &&
-      supervisorOf(other, project).status !== 'none' &&
-      supervisorOf(other, project).status !== 'stale',
-  );
-  return sharer ? `the running dev server of ${sharer[0]} shares it` : null;
+  return deletable
+    ? { paths: paths.filter(deletable), targets: targets.filter(deletable), kept }
+    : { paths, targets, kept };
 }
 
 /**

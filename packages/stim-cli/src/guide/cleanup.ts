@@ -564,7 +564,8 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
     dormant reduction, N. Kept: source checkout, under 256 MB of its own (a
     copy-on-write clone), in use, a running process inside, pinned.
   Idle dev servers and their outputs (idle 2 minutes)
-    idle stage and rung 1, H. Kept: as above.
+    idle stage and rung 1, H. Kept: as above; rung 1 keeps a Cargo target/
+    for rung 3.
   Parked devices
     rung 2, H until the level clears, C all.
   Cargo target/ stale profiles and incremental/ data (at C also idle units), first in rung 3

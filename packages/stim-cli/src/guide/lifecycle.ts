@@ -2749,7 +2749,10 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   every workspace: no Stim command, source or git write, and no process in the
   checkout (such as a Gradle or cargo build) for idle.dormantDays; git
   worktree lock keeps them. Each is measured, then rechecked and removed under
-  the workspace's claims; a Cargo target/ is only trimmed by profile.
+  the workspace's claims; a Cargo target/ is only trimmed by profile, and the
+  Metro store every worktree of the app shares stays. For an
+  app inside a larger checkout, activity anywhere in that checkout counts.
+  Where processes cannot be listed (always on Windows) nothing goes.
   Still kept: a workspace in use, with a running dev server or build, leased,
   locked, driven, hosted, pinned by maintenance.keep or with idle.minutes 0,
   and a path that cannot be proven. \`stim status\` shows a dormant

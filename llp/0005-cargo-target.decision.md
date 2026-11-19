@@ -14,7 +14,9 @@ Stim recognises two kinds of Cargo `target/`: an Exact app's, beside
 `CACHEDIR.TAG` starts with the standard signature line. Both count in a
 registered workspace and in a discovered checkout (LLP 0004).
 
-The idle stage clears an idle workspace's `target/` whole. The dormant
+The idle stage clears the `target/` of an idle workspace whose dev server or
+devices it stops whole. Ladder rung 1, for a workspace with nothing running,
+leaves it to the trim of rung 3. The dormant
 reduction (`stim gc` and the daemon's hourly step) never does: it runs the
 trim below on every profile no build wrote for `idle.dormantDays`, under the
 trim claim and the profile lock checks, and leaves `.stim-trimmed`,

@@ -41,7 +41,8 @@ import { getProject, loadConfig, type Config, type ProjectRecord } from '../work
 import { checkoutOwnerOf } from '../workspace/checkout-role.ts';
 import { discoverCheckouts } from '../workspace/discovery.ts';
 import { discoveredEvidence } from '../workspace/discovered-activity.ts';
-import { freshLaunchers, launchersOf, launchingOf, type Checkout } from '../workspace/launchers.ts';
+import { freshLaunchers, launchersOf, launchingOf, type Checkout, type Launching } from '../workspace/launchers.ts';
+import { lockReason, worktreeLockAsync } from '../workspace/worktree.ts';
 import { discoveredReads, type DiscoveredReads } from '../workspace/discovered-reads.ts';
 import { listedRoots } from '../commands/gc/worktrees.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
@@ -157,12 +158,15 @@ async function idleVerdict(
     reads = discoveredReads(operation?.signal, operation),
     full = false,
     reduceOnly,
+    checkout = path,
   }: {
     locked?: boolean;
     operation?: StimContext;
     reads?: DiscoveredReads;
     full?: boolean;
     reduceOnly: boolean;
+    /** The checkout whose source and git writes, processes and agent sessions count; default `path`. */
+    checkout?: string;
   },
 ): Promise<{ idleMs: number } | { kept: string }> {
   const now = Date.now();
@@ -171,7 +175,10 @@ async function idleVerdict(
   const evidence =
     !full && (getProject(path) || existsSync(workspaceMetadataFile(path)))
       ? stim
-      : mergeEvidence(stim, await discoveredEvidence(path, { now, idleMs: thresholdMs, reads, operation, reduceOnly }));
+      : mergeEvidence(
+          stim,
+          await discoveredEvidence(checkout, { now, idleMs: thresholdMs, reads, operation, reduceOnly }),
+        );
   const decision = decideIdleStop(evidence, { idleMs: thresholdMs, now, setting, pressured });
   if (!decision.stop) return { kept: decision.reason };
   try {
@@ -210,7 +217,8 @@ export function sourceCheckoutIdle(
     locked = false,
     reduceOnly,
     reads,
-  }: { operation?: StimContext; locked?: boolean; reduceOnly: boolean; reads?: DiscoveredReads },
+    checkout,
+  }: { operation?: StimContext; locked?: boolean; reduceOnly: boolean; reads?: DiscoveredReads; checkout?: string },
 ): Promise<{ idleMs: number } | { kept: string }> {
   return idleVerdict(path, thresholdMs, setting, {
     operation,
@@ -218,6 +226,7 @@ export function sourceCheckoutIdle(
     locked,
     reduceOnly,
     ...(reads ? { reads } : {}),
+    ...(checkout ? { checkout } : {}),
   });
 }
 
@@ -314,7 +323,7 @@ async function readIdleWorkspaces(
   return linkedFirst(candidates);
 }
 
-export async function hasOutputs(path: string): Promise<boolean> {
+async function hasOutputs(path: string): Promise<boolean> {
   return (
     workspaceOutputPaths(workspaceDir(path)).length > 0 ||
     (await existingBuildDirsAsync(path)).length > 0 ||
@@ -331,10 +340,20 @@ export async function stillIdle(
     full = false,
     locked = true,
     setting = PRESSURE_THRESHOLD,
-  }: { operation?: StimContext; full?: boolean; locked?: boolean; setting?: string },
+    checkout,
+  }: { operation?: StimContext; full?: boolean; locked?: boolean; setting?: string; checkout?: string },
 ): Promise<boolean> {
   const reads = discoveredReads(operation?.signal, operation, freshLaunchers(operation, operation?.signal));
-  return (await idleFor(path, thresholdMs, setting, { locked, operation, full, reads, reduceOnly: false })) !== null;
+  return (
+    (await idleFor(path, thresholdMs, setting, {
+      locked,
+      operation,
+      full,
+      reads,
+      reduceOnly: false,
+      ...(checkout ? { checkout } : {}),
+    })) !== null
+  );
 }
 
 /** Workspaces with nothing running, idle `thresholdMs` by the activity definition: linked worktrees, then source checkouts, longest-idle first in each. */
@@ -363,6 +382,34 @@ export function stoppedOutputCandidates(
 }
 
 type StageResult = Pick<DaemonLadderAction, 'outcome' | 'bytes' | 'detail'>;
+
+/**
+ * The outputs rung 1 deletes for a stopped workspace, and why each other one stays: none while its worktree is
+ * locked with git worktree lock or git cannot list it, and never a Cargo `target/`, which only the Cargo trim of rung
+ * 3 reduces.
+ */
+export async function stoppedOutputs(
+  candidate: StageCandidate,
+  config: Config,
+  launching: Launching,
+  operation?: StimContext,
+  deletable?: (path: string) => boolean,
+): Promise<{ paths: string[]; kept: string[] } | { locked: string }> {
+  const lock = await worktreeLockAsync(candidate.path, {
+    env: operation?.env,
+    signal: operation?.signal,
+    declareFor: operation,
+  });
+  if (lock) return { locked: lockReason(lock) };
+  const outputs = await idleOutputs(candidate.path, config, launching, deletable);
+  return {
+    paths: outputs.paths.filter((path) => !outputs.targets.includes(path)),
+    kept: [
+      ...outputs.kept,
+      ...outputs.targets.map((target) => `kept ${target}: a Cargo target/ is left to the Cargo trim of rung 3`),
+    ],
+  };
+}
 
 /**
  * Deletes a stopped workspace's regenerable build outputs under its native-run and metro-start locks. Null when every
@@ -394,8 +441,8 @@ export async function clearStoppedOutputs(
               })) === null
             )
               return { outcome: 'kept', bytes: 0, detail: 'it is no longer idle' };
-            const outputs = await idleOutputs(
-              path,
+            const outputs = await stoppedOutputs(
+              candidate,
               config,
               launchingOf(
                 candidate.checkout,
@@ -403,8 +450,10 @@ export async function clearStoppedOutputs(
                 operation,
                 operation?.signal,
               ),
+              operation,
               deletable,
             );
+            if ('locked' in outputs) return { outcome: 'kept', bytes: 0, detail: outputs.locked };
             if (!outputs.paths.length) return null;
             const bytes = await deleteOutputs(
               outputs.paths,

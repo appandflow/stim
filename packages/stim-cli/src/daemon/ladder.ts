@@ -70,6 +70,7 @@ import {
   dormantCandidates,
   idleStageCandidates,
   stoppedOutputCandidates,
+  stoppedOutputs,
 } from './stages.ts';
 
 const MINUTE_MS = 60_000;
@@ -309,8 +310,8 @@ async function idleOutputsRung(context: RungContext): Promise<void> {
         deletable(context),
       );
     else {
-      const { paths } = await idleOutputs(
-        candidate.path,
+      const outputs = await stoppedOutputs(
+        candidate,
         context.config,
         launchingOf(
           candidate.checkout,
@@ -318,8 +319,10 @@ async function idleOutputsRung(context: RungContext): Promise<void> {
           context.operation,
           context.operation?.signal,
         ),
+        context.operation,
         deletable(context),
       );
+      const paths = 'paths' in outputs ? outputs.paths : [];
       result = paths.length
         ? { outcome: 'would', bytes: context.measure ? await pathsBytes(paths) : 0, detail: wouldDetail(context) }
         : null;

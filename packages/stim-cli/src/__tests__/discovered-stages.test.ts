@@ -102,7 +102,7 @@ describe('a discovered checkout in the idle stages', () => {
     );
   });
 
-  it('clears a Cargo target with CACHEDIR.TAG at a monorepo root and the node_modules of a linked worktree, recording nothing', async () => {
+  it('leaves a Cargo target with CACHEDIR.TAG at a monorepo root to the Cargo trim, clears the node_modules of a linked worktree, recording nothing', async () => {
     const roots = join(base, 'roots');
     const mono = join(roots, 'mono');
     mkdirSync(join(mono, 'apps', 'web'), { recursive: true });
@@ -143,8 +143,8 @@ describe('a discovered checkout in the idle stages', () => {
     const candidates = await stoppedOutputCandidates(config, reading, day);
     expect(candidates.map((entry) => entry.path)).toEqual([mono]);
     const target = candidates.find((entry) => entry.path === mono) ?? fail();
-    expect(await clearStoppedOutputs(target, config, day)).toMatchObject({ outcome: 'done' });
-    expect(existsSync(join(mono, 'target'))).toBe(false);
+    expect(await clearStoppedOutputs(target, config, day)).toBeNull();
+    expect(existsSync(join(mono, 'target'))).toBe(true);
 
     const actions = await runDormantDependencies({
       config,
