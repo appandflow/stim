@@ -31,6 +31,14 @@ Choose the guide for the app or task. Read only the matching route.
 | Report a Stim problem | stim guide agent report |
 | Settings or remote approvals | stim guide settings |
 
+CLEAN UP YOUR WORKTREE
+
+You must remove each linked worktree you created: run stim worktree remove from
+its root once the work is merged or abandoned. It releases the simulator, Metro
+and slots; leftover worktrees fill the disk. If you finish before the pull
+request merges, end your final report with the worktree path and that command so
+whoever merges can run it. Stim's cleanup is the safety net, not the plan.
+
 WORKSPACE SETUP
 
 WORKTREE: Use a linked worktree by default. The clean source checkout
@@ -52,9 +60,8 @@ OWNERSHIP
 
 Use only the device or app Stim reports for the workspace. Stop only devices
 in workspaces you own. Ask before closing other apps or other workspaces' devices.
-Run stim stop when done. Remove your clean linked worktree with stim worktree
-remove after its work is merged or abandoned. Ask before gc, worktree remove
---force, or removing a worktree you did not create. See stim guide agent
+Run stim stop when done. Ask before gc, worktree remove --force, or removing a
+worktree you did not create. See stim guide agent
 ownership for cleanup and consent.
 Agents never run stim setup and never approve access requests. Agents never set
 STIM_ACCESS_TICKET or edit remote.*, server.* or hosting.* for the user.
