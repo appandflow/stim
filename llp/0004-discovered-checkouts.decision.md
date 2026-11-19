@@ -508,7 +508,9 @@ time is left.
 The hourly dependency and output pass walks a discovered checkout only when it
 holds a `node_modules`, an `ios/Pods` or build output to reclaim, so a large
 idle checkout with nothing left to take costs no walk; deletion still rechecks
-idleness first.
+idleness first. Within one daemon pass or `stim gc` run, a completed walk is reused
+by every later read of that checkout until the pass acts or takes a workspace
+lock, so the checks made under a claim walk again.
 
 Reason: an entry count kept every checkout over 20,000 source entries forever,
 though `find` walks one of 21,000 in under a second. On a loaded machine

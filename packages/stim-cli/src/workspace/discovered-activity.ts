@@ -31,6 +31,7 @@ export const SKIPPED_WHERE_IGNORED: ReadonlySet<string> = new Set([
   'coverage',
 ]);
 
+// @ref LLP 0004#the-source-scan-has-a-time-budget -- a partial walk is unknown, never idle
 const SCAN_BUDGET_MS = 15_000;
 const OVER_BUDGET_KEEP_MS = 60 * 60_000;
 const OVER_BUDGET = `it could not check every source entry within ${SCAN_BUDGET_MS / 1000} s`;
@@ -109,6 +110,19 @@ export async function scanSourceWrites(root: string, activeSince: number, signal
 }
 
 /**
+ * `scanSourceWrites`, reusing a completed walk's newest write within the shared reads of one pass or gc run; those are
+ * dropped before and after every action and when a workspace lock is taken, so a check under a claim walks again.
+ */
+async function sharedSourceScan(root: string, activeSince: number, operation?: StimContext): Promise<SourceScan> {
+  const walks = await sharedRead(operation, 'source-walks', async () => new Map<string, number>());
+  const walked = walks.get(root);
+  if (walked !== undefined) return { newest: walked };
+  const scan = await scanSourceWrites(root, activeSince, operation?.signal);
+  if ('newest' in scan && scan.newest <= activeSince) walks.set(root, scan.newest);
+  return scan;
+}
+
+/**
  * What idleness rests on for a checkout with no Stim state: the newest source write (git-ignored files included), the
  * last commit and the last git write count as activity; a process running from or working in it, an agent session
  * working in it, an executable on PATH that resolves into it, or evidence that cannot be read keeps it.
@@ -132,7 +146,7 @@ export async function discoveredEvidence(
   const signal = operation?.signal;
   const activity: IdleStopEvidence['activity'] = [];
   const keep: string[] = [];
-  const scan = await scanSourceWrites(path, now - idleMs, signal);
+  const scan = await sharedSourceScan(path, now - idleMs, operation);
   if ('newest' in scan) activity.push({ basis: 'file edit', at: scan.newest });
   else keep.push(scan.unknown);
   const isGit = await lstat(join(path, '.git')).then(

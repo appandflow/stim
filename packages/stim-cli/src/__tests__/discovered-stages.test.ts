@@ -12,11 +12,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Config } from '@stim-cli/core/state';
 import { runDormantDependencies } from '../daemon/dependencies.ts';
-import { clearStoppedOutputs, stoppedOutputCandidates } from '../daemon/stages.ts';
+import { clearStoppedOutputs, idleStageCandidates, stoppedOutputCandidates } from '../daemon/stages.ts';
 import { execFileSync } from 'node:child_process';
 import { testContext } from './_context.ts';
 import { loadConfig, saveConfig } from '../workspace/config.ts';
 import * as activity from '../workspace/discovered-activity.ts';
+import * as gitCommands from '../workspace/git.ts';
+import { forgetGitReads, openGitReads } from '../workspace/git-reads.ts';
 
 const fail = (): never => {
   throw new Error('no candidate');
@@ -40,6 +42,35 @@ describe('a discovered checkout in the idle stages', () => {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
     rmSync(base, { recursive: true, force: true });
+  });
+
+  it('walks a discovered checkout once per pass until the pass acts, however many stages read it', async () => {
+    const roots = join(base, 'roots');
+    const app = join(roots, 'app');
+    mkdirSync(join(app, 'android', 'app', 'build'), { recursive: true });
+    writeFileSync(join(app, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+    const old = new Date(Date.now() - 3 * day);
+    for (const path of [app, join(app, 'package.json'), join(app, 'android'), join(app, 'android', 'app')])
+      utimesSync(path, old, old);
+    utimesSync(join(app, 'android', 'app', 'build'), old, old);
+    const config: Config = { maintenance: { discoverRoots: [roots] }, projects: {}, repos: {} };
+    const probe = vi.spyOn(gitCommands, 'gitQuietAsync');
+    const walks = () => probe.mock.calls.filter(([cwd, args]) => cwd === app && args[0] === 'check-ignore').length;
+    const operation = testContext();
+    const close = openGitReads(operation);
+    try {
+      const stages = { ...reading, operation };
+      expect((await stoppedOutputCandidates(config, stages, day)).map((entry) => entry.path)).toEqual([app]);
+      expect((await idleStageCandidates(config, stages, day)).map((entry) => entry.path)).toEqual([app]);
+      expect((await idleStageCandidates(config, stages, 2 * day)).map((entry) => entry.path)).toEqual([app]);
+      expect(walks()).toBe(1);
+
+      forgetGitReads(operation);
+      await idleStageCandidates(config, stages, day);
+      expect(walks()).toBe(2);
+    } finally {
+      close();
+    }
   });
 
   it('does not walk the source of a discovered checkout until it holds something the hourly pass reclaims', async () => {
