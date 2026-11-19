@@ -53,9 +53,9 @@ The dormant reduction (`stim gc` and the daemon's hourly step) deletes every
 recognised `target/` whole, tagged, Exact app's and untagged alike, in a
 workspace or discovered checkout that has had no activity for
 `idle.dormantDays` by the full evidence, and whose worktree is not locked with
-`git worktree lock`, but only the top-level entries that are Cargo's build
-output; every other entry stays, so the `target/` goes whole only when all of it
-is Cargo's. It runs the idle stage's
+`git worktree lock`: every top-level entry but a `deploy/` directory holding a
+`*-keypair.json` and a symbolic link, and the `target/` itself once nothing is
+left in it. It runs the idle stage's
 checks above, the process check included, for all three kinds, then, under the
 workspace's claims and checked again right before the delete: the workspace is
 still idle, the directory is still a recognised `target/`, and no PATH launcher
@@ -82,7 +82,7 @@ is not a profile is not seen. A `target/` with no Cargo profile, such as an
 Exact app's, is dated the same way.
 
 Then, as the trims do (Never delete what a build took back, below), it renames
-each Cargo entry into `target/.stim-trimmed/` and reads that entry's lock
+each entry into `target/.stim-trimmed/` and reads that entry's lock
 files again at the new path. Once every entry is moved it reads the processes
 again and dates the moved entries again the same way. A lock a build took, any
 path in the `target/` a process used or a write made meanwhile puts every moved entry back, and so does a
@@ -97,9 +97,8 @@ recreates empty in that instant is replaced. An entry that
 cannot be renamed, such as one on another device (`EXDEV`), stays and the rest
 goes. The moved entries are deleted without entering a directory on another
 device, and the emptied `target/` goes too. Report mode runs the checks that
-need no claim, the use dating among them, and reports the size of the
-recognised entries only, and gc names a `target/` it keeps and why and the
-entries it keeps in one it reduces.
+need no claim, the use dating among them, and reports the size of what would
+go, and gc names a `target/` it keeps and why.
 
 Maintainer decision: "lets full delete it instead of trim on idle", 2026-11-19
 (#5979). Reason: a trim by profile left everything that is not a profile, such
@@ -107,35 +106,17 @@ as Exact's `clients/` and `web-js-modules/`, on an idle checkout, and left an
 untagged `target/` at its full size. Reason the size cap and the pressure trims
 stay trims: they also reach a `target/` in use.
 
-Maintainer decision: "I thought cargo target would all be built output that is
-regenerable? If not the case lets just delete things we know are", 2026-11-19
-(#5979). Recognised build output at the top of a `target/`, the same in every
-recognised `target/`, an Exact app's included:
-
-- Cargo, per rust-lang/cargo's `src/compiler/layout.rs`: a profile directory
-  (one holding `.fingerprint/` or a `.cargo-lock`, `.cargo-build-lock` or
-  `.cargo-artifact-lock`), a target triple directory that holds only profiles,
-  `doc/` and Cargo's own files, Cargo's own files `.rustc_info.json`,
-  `CACHEDIR.TAG` and those lock files, and Cargo's own folders `doc/`,
-  `package/`, `tmp/` and `.metabuild/`. Cargo's saved build timings
-  (`cargo-timings/`) and its future-incompatibility report
-  (`.future-incompat-report.json`, read back by `cargo report`) are records and
-  stay.
-- A symbolic link is never build output, whatever its name: deleting through it
-  would reach what it points at.
-
-Anything else stays, such as Criterion's and Gungraun's saved benchmark
-baselines (`criterion/`, `gungraun/`, `iai/`), a Solana program's private key
-in `deploy/<program>-keypair.json`, which no build can recreate, and every
-folder Exact writes into `target/`. Reason for keeping Exact's folders: they mix
-build products with records Stim cannot rebuild (sweep ledgers in
-`apple-modules/`, Apple bundle receipts with a development token in `clients/`,
-web build receipts in `web-dist/` and `proof-web/`, the Android production
-receipt a deploy reads in `bake/`, session traces, and Cargo's own records in
-the nested Cargo targets `rust-modules/` and `push-tools/`), so their cleanup
-waits until Exact owns it. `gc` names the
-entries it keeps, in report mode too, and a `target/` with nothing recognised in
-it is kept and named.
+Maintainer decision: "yea lets do that", 2026-11-19 (#5979), in reply to
+"switch #5996 to that, full delete except Solana keypairs", after the worst
+cases were listed: Solana keypairs, Exact's receipts and development tokens,
+benchmark baselines and Cargo's reports. A `deploy/` directory holding a
+`*-keypair.json` stays because Solana's `cargo build-sbf` and Anchor keep a
+program's private key there, and a new key is a new program ID. Everything else
+in an idle `target/` goes, Exact's folders and records included. A symbolic
+link stays because deleting through it would reach what it points at. An
+earlier version deleted only entries recognised as Cargo or Exact build
+output; it freed almost nothing from Exact app targets, whose size sits in
+folders that also hold records.
 
 Chosen by the coordinator and the reviews of #5996, not by the maintainer: the
 use dating, the move aside with its recheck and roll back, the mount checks and
