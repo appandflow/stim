@@ -113,43 +113,6 @@ export async function othersRunningAsync(
   return table === null ? null : othersAmong(running, table, process.pid);
 }
 
-/**
- * `running` without the process `root` and its descendants, by a fresh `ps -axo pid=,ppid=` table, so a dev server the
- * caller stops itself does not count as something else running from its folder; null when either listing cannot be
- * read or the table no longer lists `root`.
- */
-export async function withoutTreeAsync(
-  running: RunningProcesses | null,
-  root: number,
-  signal?: AbortSignal,
-): Promise<RunningProcesses | null> {
-  if (!running) return null;
-  const table = await getExecutor().runFileQuietAsync('ps', ['-axo', 'pid=,ppid='], {
-    timeoutMs: LIST_TIMEOUT_MS,
-    signal,
-  });
-  if (table === null) return null;
-  const parent = new Map<number, number>();
-  for (const row of table.split('\n')) {
-    const match = /^\s*(\d+)\s+(\d+)\s*$/.exec(row);
-    if (match) parent.set(Number(match[1]), Number(match[2]));
-  }
-  if (!parent.has(root)) return null;
-  const inTree = (pid: number): boolean => {
-    for (
-      let at: number | undefined = pid, hops = 0;
-      at !== undefined && at > 1 && hops < 256;
-      at = parent.get(at), hops++
-    )
-      if (at === root) return true;
-    return false;
-  };
-  return {
-    commands: running.commands.filter(({ pid }) => !inTree(pid)),
-    cwds: running.cwds.filter(({ pid }) => !inTree(pid)),
-  };
-}
-
 export async function readRunningProcessesAsync(
   signal?: AbortSignal,
   platform: NodeJS.Platform = process.platform,

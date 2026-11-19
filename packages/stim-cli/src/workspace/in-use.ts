@@ -40,8 +40,6 @@ const NATIVE_RUN_HELD = 'a stim ios, android, share or stop run holds its native
 interface InUseChecks {
   supervisor?: boolean;
   devServer?: boolean;
-  /** False leaves out the workspace's own dev server that Stim supervises, which the caller stops itself. */
-  ownServer?: boolean;
   managedLocks?: boolean;
   hosted?: boolean;
   hostedMacos?: boolean;
@@ -52,7 +50,6 @@ export function workspaceInUse(
   {
     supervisor = true,
     devServer = true,
-    ownServer = true,
     managedLocks = true,
     hosted = true,
     hostedMacos = true,
@@ -68,9 +65,8 @@ export function workspaceInUse(
       record: project?.supervisor,
       reservedPort: project?.metroPort,
     });
-    if (target.status === 'ours') {
-      if (ownServer) reasons.push(`its dev server supervisor (pid ${target.pid}) is running`);
-    } else if (target.status === 'unverified') {
+    if (target.status === 'ours') reasons.push(`its dev server supervisor (pid ${target.pid}) is running`);
+    else if (target.status === 'unverified') {
       reasons.push(`its dev server supervisor cannot be verified: ${target.reason ?? 'unknown identity'}`);
     }
     const browser = webFacts(readWebRecord(root));

@@ -52,12 +52,7 @@ import { writeCacheFile } from '../cache-file.ts';
 import { getProject, loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import * as lightened from '../workspace/lightened.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
-import {
-  readWorkspaceState,
-  recordWorkspaceUse,
-  updateWorkspaceState,
-  writeWorkspaceState,
-} from '../workspace/workspace-state.ts';
+import { readWorkspaceState, recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { serveShareList, shareRow } from './_share-list-server.ts';
 import { liveClaimOwner } from './_factories.ts';
 import * as archive from '../archive.ts';
@@ -139,27 +134,7 @@ const pressure = (level: DaemonPressure['level'], cause: 'disk' | 'memory' = 'di
 
 const devicesNow = () => collectOwnedDeviceActivityAsync(loadConfig(), sims, Date.now());
 
-function fakeServerStop() {
-  return vi.spyOn(stopCommand, 'runIdleStop').mockImplementation(async ({ root }) => {
-    updateWorkspaceState(root, ({ supervisor: _stopped, ...rest }) => rest);
-    return {
-      ok: true,
-      outcomes: {
-        supervisor: { status: 'none' },
-        collectors: { status: 'none', entries: [] },
-        metro: { status: 'none' },
-        device: { ios: null, android: null },
-        port: { status: 'none', port: null },
-        metroTunnel: { status: 'none' },
-        releasedLeases: [],
-      },
-      summary: 'stopped',
-    };
-  });
-}
-
 function serve(root: string, bundledAgoMs: number) {
-  mkdirSync(workspaceLogsDir(root), { recursive: true });
   writeWorkspaceState(root, {
     ...readWorkspaceState(root),
     supervisor: { ...liveClaimOwner(), port: 59123, mode: 'expo-child', hmrUpdates: true },
@@ -1074,102 +1049,6 @@ describe('the pressure ladder', () => {
     expect(deleted).toEqual([]);
   });
 
-  describe('at critical, a running workspace idle 2 minutes', () => {
-    const critical = (from: number, last: number) =>
-      runLadder(
-        {
-          ...input(true, async () => pressure('critical')),
-          fromRung: from,
-          lastRung: last,
-          sims,
-        },
-        pressure('critical'),
-      );
-
-    test('has its booted device shut down and deleted while its dev server keeps running', async () => {
-      const { root, udid } = workspace('serving', 3 * MINUTE_MS, 'Booted');
-      serve(root, 3 * MINUTE_MS);
-      const stop = fakeServerStop();
-
-      const { actions } = await runLadder(
-        {
-          ...input(true, async () => pressure('critical')),
-          fromRung: 4,
-          lastRung: 4,
-          sims,
-          devices: await devicesNow(),
-        },
-        pressure('critical'),
-      );
-
-      expect(deleted).toEqual([udid]);
-      expect(actions).toEqual([
-        expect.objectContaining({ rung: 4, kind: 'delete-devices', target: root, outcome: 'done' }),
-      ]);
-      expect(stop).not.toHaveBeenCalled();
-      expect(readDormantStage(readWorkspaceState(root))).toBeNull();
-      expect(readWorkspaceState(root)?.supervisor).toBeDefined();
-    });
-
-    test('has its dev server stopped, and its devices left running, to delete its Metro store', async () => {
-      const { root, udid } = workspace('serving', 3 * MINUTE_MS, 'Booted');
-      serve(root, 3 * MINUTE_MS);
-      const store = join(metroCache(), 'app');
-      mkdirSync(store, { recursive: true });
-      writeFileSync(join(store, 'entry'), 'x');
-      const stop = fakeServerStop();
-
-      const { actions } = await runLadder(
-        {
-          ...input(true, async () => pressure('critical')),
-          fromRung: 5,
-          lastRung: 5,
-          sims,
-          devices: await devicesNow(),
-        },
-        pressure('critical'),
-      );
-
-      expect(existsSync(store)).toBe(false);
-      expect(stop).toHaveBeenCalledTimes(1);
-      expect(stop).toHaveBeenCalledWith(expect.objectContaining({ root, serverOnly: true }));
-      expect(actions).toEqual([
-        expect.objectContaining({
-          rung: 5,
-          kind: 'delete-build-outputs',
-          target: root,
-          outcome: 'done',
-          restore: 'stim revive',
-        }),
-      ]);
-      expect(deleted).toEqual([]);
-      expect(sims.find((sim) => sim.udid === udid)?.state).toBe('Booted');
-    });
-
-    test.each([
-      { name: 'it has no Metro store', store: false, sharer: false },
-      { name: 'another running dev server shares its Metro store', store: true, sharer: true },
-    ])('keeps its dev server running when $name and nothing else needs the stop', async ({ store, sharer }) => {
-      const { root } = workspace('serving', 3 * MINUTE_MS, 'Shutdown');
-      serve(root, 3 * MINUTE_MS);
-      if (store) mkdirSync(join(metroCache(), 'app'), { recursive: true });
-      if (sharer) {
-        const other = join(projects, 'sharer');
-        mkdirSync(other);
-        upsertProject(other, { metroPort: 59124, supervisor: { pid: process.pid, port: 59999 } });
-      }
-      const stop = fakeServerStop();
-
-      const { actions } = await critical(1, 8);
-
-      expect(stop).not.toHaveBeenCalled();
-      expect(readWorkspaceState(root)?.supervisor).toBeDefined();
-      expect(actions.filter((action) => action.workspace === root && action.outcome === 'done')).toEqual([
-        expect.objectContaining({ rung: 4, kind: 'delete-devices' }),
-      ]);
-    });
-  });
-
   test('daemon.mode report plans each rung and deletes nothing', async () => {
     const { udid } = workspace('idle-hour', 60 * MINUTE_MS, 'Shutdown');
     caches('kept-key');
@@ -1577,35 +1456,6 @@ describe('rung 5', () => {
         await ladder('critical');
         expect(existsSync(join(recent, 'node_modules'))).toBe(false);
       });
-
-      test.each([
-        { other: false, outcome: 'done', stops: 1 },
-        { other: true, outcome: undefined, stops: 0 },
-      ])(
-        'at critical it stops the dev server of a serving worktree idle 2 minutes only to delete its node_modules and Pods (another process in it: $other)',
-        async ({ other, outcome, stops }) => {
-          const { serving } = linkedWorktrees(['serving']);
-          register(serving);
-          serve(serving, 3 * MINUTE_MS);
-          const listed = getExecutor();
-          setExecutor({
-            ...listed,
-            runFileQuietAsync: async (file, args, opts) =>
-              file === 'ps' && args.includes('pid=,ppid=')
-                ? `${process.pid} 1\n424242 1\n`
-                : file === 'lsof' && other
-                  ? `p${process.pid}\nn${tmpdir()}\np424242\nn${serving}\n`
-                  : listed.runFileQuietAsync(file, args, opts),
-          });
-          const stop = fakeServerStop();
-
-          const { actions } = await ladder('critical');
-          expect(stop).toHaveBeenCalledTimes(stops);
-          expect(existsSync(join(serving, 'node_modules'))).toBe(other);
-          expect(actions.find((action) => action.rung === 5)?.outcome).toBe(outcome);
-          expect(Boolean(readWorkspaceState(serving)?.supervisor)).toBe(other);
-        },
-      );
 
       test('it keeps a worktree used a minute ago, and one used between selection and deletion', async () => {
         const { recent, late } = linkedWorktrees(['recent', 'late']);

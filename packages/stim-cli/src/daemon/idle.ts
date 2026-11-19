@@ -215,43 +215,10 @@ export async function runningIdle(
   return { idleMs: decision.idleMs, serving: found.serving };
 }
 
-/**
- * Stops the workspace's dev server for a deletion that needs it, as an idle stop that `stim revive` resumes, leaving
- * its devices running, for a caller that holds its native-run and metro-start claims; why it did not stop, or null.
- */
-export async function stopServerForDeletion(path: string, operation?: StimContext): Promise<string | null> {
-  const stopped = await runIdleStop({
-    root: path,
-    idleMinutes: PRESSURE_IDLE_MS / MINUTE_MS,
-    report: () => {},
-    operation,
-    serverOnly: true,
-  });
-  return stopped.ok ? null : stopped.summary;
-}
-
 /** Whether the workspace's dev server runs, or cannot be shown not to. */
 export function servesNow(path: string, project: ProjectRecord): boolean {
   const { status } = supervisorOf(path, project);
   return status !== 'none' && status !== 'stale';
-}
-
-/** The pid of the workspace's dev server supervisor when Stim verified it runs; null otherwise. */
-export function serverPid(path: string, project: ProjectRecord): number | null {
-  const target = supervisorOf(path, project);
-  return target.status === 'ours' ? (target.pid ?? null) : null;
-}
-
-/** Another workspace whose running dev server shares the workspace's Metro store; null when none does. */
-export function storeSharer(path: string, config: Config): string | null {
-  const store = metroStoreRoot(path);
-  const sharer = Object.entries(config.projects).find(
-    ([other, project]) =>
-      canonicalPath(other) !== canonicalPath(path) &&
-      canonicalPath(metroStoreRoot(other)) === canonicalPath(store) &&
-      servesNow(other, project),
-  );
-  return sharer ? sharer[0] : null;
 }
 
 /**
@@ -278,8 +245,13 @@ export async function idleOutputs(
   }
   const store = metroStoreRoot(path);
   if (existsSync(store)) {
-    const sharer = storeSharer(path, config);
-    if (sharer) kept.push(`kept the Metro store ${store}: the running dev server of ${sharer} shares it`);
+    const sharer = Object.entries(config.projects).find(
+      ([other, project]) =>
+        canonicalPath(other) !== canonicalPath(path) &&
+        canonicalPath(metroStoreRoot(other)) === canonicalPath(store) &&
+        servesNow(other, project),
+    );
+    if (sharer) kept.push(`kept the Metro store ${store}: the running dev server of ${sharer[0]} shares it`);
     else paths.push(store);
   }
   return deletable

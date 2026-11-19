@@ -44,11 +44,8 @@ import {
   readRunningProcesses,
   readRunningProcessesAsync,
   runningFromReason,
-  withoutTreeAsync,
   type RunningProcesses,
 } from '../../workspace/running-from.ts';
-import { workspaceDir } from '../../workspace/paths.ts';
-import { withWorkspaceProcessLock, workspaceProcessLockError } from '../../engine/workspace-process-lock.ts';
 import { finishLightened, recordLightened, restoreProblem, workspaceKeys } from '../../workspace/lightened.ts';
 import { checkDependencyEdits, forgetDependencyInstall } from '../../workspace/dependency-edits.ts';
 import { recordSourceDependencies, takeWarmClaim, warmCopyingFrom } from '../../workspace/source-dependencies.ts';
@@ -327,7 +324,6 @@ async function inUseOf(
   signal: AbortSignal,
   operation: StimContext | undefined,
   locked?: Held,
-  serving?: string,
 ): Promise<InUseReader> {
   const reasons = new Map<string, string[]>();
   for (const key of candidate.keys) {
@@ -336,7 +332,7 @@ async function inUseOf(
       key,
       kind === 'build'
         ? await workspaceBuildReasonsAsync(key, signal, operation, { nativeRun })
-        : await workspaceInUseAsync(key, { nativeRun, ownServer: key !== serving }, signal, operation),
+        : await workspaceInUseAsync(key, { nativeRun }, signal, operation),
     );
   }
   return (key) => reasons.get(key) ?? [];
@@ -426,11 +422,6 @@ export async function collectArtifactsAsync(
     pinned: (workspace: string) => boolean | Promise<boolean>;
     /** Dependencies of source checkouts, instead of those of linked worktrees. */
     source?: boolean;
-    /**
-     * Workspaces whose own dev server the deletion may stop, each with its supervisor's pid: that server and its
-     * processes do not keep the tree.
-     */
-    serving?: ReadonlyMap<string, number>;
   },
   signal: AbortSignal,
   operation?: StimContext,
@@ -483,13 +474,8 @@ export async function collectArtifactsAsync(
           reduceOnly: worktree.reduceOnly,
           ...(options.source ? { source: true } : {}),
         };
-        const [key] = candidate.keys;
-        const server = key === undefined ? undefined : options.serving?.get(key);
-        const inUse = protectedHere
-          ? null
-          : await inUseOf(candidate, kind, signal, operation, undefined, server === undefined ? undefined : key);
-        const everything = inUse ? await runningNow() : null;
-        const running = server === undefined ? everything : await withoutTreeAsync(everything, server, signal);
+        const inUse = protectedHere ? null : await inUseOf(candidate, kind, signal, operation);
+        const running = inUse ? await runningNow() : null;
         let reason = !inUse
           ? 'the command that started this pass runs inside its worktree'
           : artifactGuard(candidate, kind, pinned, undefined, running, inUse);
@@ -641,12 +627,6 @@ export async function clearArtifact(
     /** The deletion operation's fresh launcher reading, shared by every check of it. */
     launchers: () => Promise<LauncherScan>;
     operation?: StimContext;
-    /**
-     * The dev server of `workspace`, with its supervisor's pid, which the deletion stops once every other check
-     * passes, under that workspace's native-run and metro-start claims, and checks everything again before it
-     * deletes; ignored unless the deletion takes that workspace's native-run claim.
-     */
-    server?: { workspace: string; pid: number; stop: () => Promise<string | null> };
   },
 ): Promise<{ status: 'done' | 'kept'; bytes: number; detail: string }> {
   const { operation } = options;
@@ -669,30 +649,12 @@ export async function clearArtifact(
     agents,
     reduceOnly: worktree.reduceOnly,
   };
-  const [key] = candidate.keys;
-  const server =
-    key !== undefined &&
-    kind === 'dependencies' &&
-    options.server &&
-    canonicalPath(options.server.workspace) === canonicalPath(key)
-      ? options.server
-      : undefined;
-  const runningNow = async () => {
-    const listed = kind === 'dependencies' ? await readRunningProcessesAsync() : null;
-    return server ? await withoutTreeAsync(listed, server.pid, signal) : listed;
-  };
-  const running = await runningNow();
+  const running = kind === 'dependencies' ? await readRunningProcessesAsync() : null;
   const pinned = await pinsOf(candidate.keys, options.pinned);
   const early = keptReason(
     candidate,
     kind,
-    {
-      ...options,
-      pinned,
-      now: Date.now(),
-      running,
-      inUse: await inUseOf(candidate, kind, signal, operation, undefined, server ? key : undefined),
-    },
+    { ...options, pinned, now: Date.now(), running, inUse: await inUseOf(candidate, kind, signal, operation) },
     await artifactReads(candidate, kind, signal, operation, freshLaunchers(operation, signal)),
   );
   if (early) return { status: 'kept', bytes: 0, detail: early };
@@ -700,24 +662,23 @@ export async function clearArtifact(
     kind === 'dependencies' ? await restoreProblem(candidate, options.restoreCache, operation) : null;
   if (unrestorable && options.requireRestorable) return { status: 'kept', bytes: 0, detail: unrestorable };
   const before = lowestFree(measureDisk());
-  const check = async (stopped: boolean) =>
-    keptReason(
+  const [key] = candidate.keys;
+  const remove = async () => {
+    const lock = candidate.locked ? 'locked' : await worktreeLockAsync(candidate.worktree);
+    if (lock) return lockReason(lock);
+    const reason = keptReason(
       candidate,
       kind,
       {
         ...options,
         pinned: await pinsOf(candidate.keys, options.pinned),
         now: Date.now(),
-        running: stopped ? await readRunningProcessesAsync() : await runningNow(),
-        inUse: await inUseOf(candidate, kind, signal, operation, key, server && !stopped ? key : undefined),
+        running: kind === 'dependencies' ? await readRunningProcessesAsync() : null,
+        inUse: await inUseOf(candidate, kind, signal, operation, key),
         ...(key ? { locked: key } : {}),
       },
       await artifactReads(candidate, kind, signal, operation, freshLaunchers(operation, signal)),
     );
-  const remove = async () => {
-    const lock = candidate.locked ? 'locked' : await worktreeLockAsync(candidate.worktree);
-    if (lock) return lockReason(lock);
-    const reason = await check(false);
     if (reason) return reason;
     const late = key && options.recheck ? await options.recheck(candidate.keys, candidate.worktree) : null;
     if (late) return late;
@@ -732,39 +693,19 @@ export async function clearArtifact(
         signal,
       });
       if ('keep' in edits) return edits.keep;
+      recordLightened(candidate.keys, candidate.path);
     }
-    const erase = () => {
-      if (record) recordLightened(candidate.keys, candidate.path);
-      rmSync(candidate.path, { recursive: true, force: true });
-      if (record) {
-        finishLightened(candidate.keys, candidate.path);
-        forgetDependencyInstall(candidate.path);
-      }
-      return null;
-    };
-    if (!server || key === undefined) return erase();
-    try {
-      return await withWorkspaceProcessLock(
-        workspaceDir(key),
-        'metro-start',
-        async () => {
-          const unstopped = await server.stop();
-          if (unstopped) return `its dev server did not stop: ${unstopped}`;
-          const after = await check(true);
-          return after ? `its dev server was stopped, then kept: ${after}` : erase();
-        },
-        { external: true, waitMs: 0, ownerPurpose: 'maintenance', signal, declareSpawnsFor: operation },
-      );
-    } catch (error) {
-      if (workspaceProcessLockError(error)) return 'a stim start holds its metro-start lock';
-      throw error;
+    rmSync(candidate.path, { recursive: true, force: true });
+    if (record) {
+      finishLightened(candidate.keys, candidate.path);
+      forgetDependencyInstall(candidate.path);
     }
+    return null;
   };
   const kept = key
     ? await withIdleWorkspace(key, remove, {
         purpose: 'maintenance',
         supervisor: kind === 'dependencies',
-        ...(server ? { ownServer: false } : {}),
         ...(kind === 'build' ? { hosted: false, managedLocks: false } : {}),
         operation,
       }).then((run) => (run.ran ? run.value : `in use: ${run.reasons.join('; ')}`))
