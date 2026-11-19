@@ -42,6 +42,7 @@ const firstLaunch = CASES.find((each) => each.id === 'first-launch');
 if (!firstLaunch) throw new Error('first-launch case is missing');
 
 const FIND_LOG = `log="$(grep -o '"log":"[^"]*"' "$(dirname "$(command -v stim)")/stim-eval.json" | cut -d'"' -f4)"`;
+const realLsof = spawnSync('/bin/sh', ['-c', 'command -v lsof'], { encoding: 'utf8' }).stdout.trim() || undefined;
 
 function fakeAgent(body: string): string {
   const file = join(directory, 'fake-claude');
@@ -183,28 +184,32 @@ echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"resul
     expect(existsSync(dirname(workspace ?? ''))).toBe(false);
   }, 30_000);
 
-  test('a leftover-process scan that fails once is retried instead of invalidating the trial', async () => {
-    const tools = join(directory, 'tools');
-    mkdirSync(tools);
-    const marker = join(directory, 'lsof-failed-once');
-    writeFileSync(
-      join(tools, 'lsof'),
-      `#!/bin/sh\nif [ ! -e "${marker}" ]; then touch "${marker}"; exit 1; fi\nexec /usr/sbin/lsof "$@"\n`,
-    );
-    chmodSync(join(tools, 'lsof'), 0o755);
-    const bin = fakeAgent(
-      'echo \'{"type":"result","subtype":"success","is_error":false,"num_turns":1,"result":"","usage":{}}\'',
-    );
-    const path = process.env.PATH;
-    process.env.PATH = `${tools}:${path ?? ''}`;
-    try {
-      const outcome = await runTrial(firstLaunch, withSkill, claudeDriver, options({ bin }));
-      expect(existsSync(marker)).toBe(true);
-      expect(outcome.problems).toEqual([]);
-    } finally {
-      process.env.PATH = path;
-    }
-  }, 30_000);
+  test.skipIf(!realLsof)(
+    'a leftover-process scan that fails once is retried instead of invalidating the trial',
+    async () => {
+      const tools = join(directory, 'tools');
+      mkdirSync(tools);
+      const marker = join(directory, 'lsof-failed-once');
+      writeFileSync(
+        join(tools, 'lsof'),
+        `#!/bin/sh\nif [ ! -e "${marker}" ]; then touch "${marker}"; exit 1; fi\nexec ${realLsof} "$@"\n`,
+      );
+      chmodSync(join(tools, 'lsof'), 0o755);
+      const bin = fakeAgent(
+        'echo \'{"type":"result","subtype":"success","is_error":false,"num_turns":1,"result":"","usage":{}}\'',
+      );
+      const path = process.env.PATH;
+      process.env.PATH = `${tools}:${path ?? ''}`;
+      try {
+        const outcome = await runTrial(firstLaunch, withSkill, claudeDriver, options({ bin }));
+        expect(existsSync(marker)).toBe(true);
+        expect(outcome.problems).toEqual([]);
+      } finally {
+        process.env.PATH = path;
+      }
+    },
+    30_000,
+  );
 
   test('a process in another group whose working directory is the log folder is reported', async () => {
     const marker = join(directory, 'log-dir.pid');
