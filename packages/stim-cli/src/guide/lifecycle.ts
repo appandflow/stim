@@ -2453,7 +2453,7 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   option, and no jest, vitest or vite config up to package.json (or its jest
   key) may name workers, pools, serial runs or projects, spread an object,
   import a module other than Node's, vite's or vitest's (jest's as types), or
-  set a preset other than React Native's or jest-expo's. Vitest 1.5 to 3.2.3
+  set a preset other than React Native's or jest-expo's. Vitest 1.3 to 3.2.3
   also get --minWorkers=1; older or unknown versions get nothing. Otherwise
   the command runs unchanged, with no variables added; one stderr line says
   which.

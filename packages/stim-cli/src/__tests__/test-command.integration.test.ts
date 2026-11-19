@@ -144,6 +144,13 @@ describe.skipIf(process.platform === 'win32')('stim test', () => {
     writeFileSync(join(app, 'node_modules', 'vitest', 'package.json'), JSON.stringify({ version: '2.1.9' }));
     const old = await start(['--', 'vitest', 'run']).done;
     expect(ran(old.stdout).argv).toEqual(['run', `--maxWorkers=${announced(old.stderr)}`, '--minWorkers=1']);
+    const outside = join(home, 'tools', 'vitest');
+    mkdirSync(join(home, 'tools'));
+    writeFileSync(outside, FAKE_RUNNER);
+    chmodSync(outside, 0o755);
+    const unknown = await start(['--', outside, 'run']).done;
+    expect(ran(unknown.stdout).argv).toEqual(['run']);
+    expect(unknown.stderr).toContain('cannot read the installed Vitest version');
     const jest = await start(['--', 'jest', '-w', '2']).done;
     expect(ran(jest.stdout).argv).toEqual(['-w', '2']);
     expect(jest.stderr).toContain('no worker count passed: the command already sets Jest workers');

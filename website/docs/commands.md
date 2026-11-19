@@ -1344,16 +1344,20 @@ stim test -- pnpm exec vitest run --project unit
   Otherwise the `test` script, run by `stim test` or by `stim test -- npm test`
   (or `pnpm`, `yarn`, `bun run`), must be a plain `jest` or `vitest` command
   with no `--` of its own. Vitest applies `fileParallelism: false` after the
-  flag, in Vitest 2 through 5. Vitest 1.5 to 3.2.3 also get `--minWorkers=1`:
+  flag, in Vitest 2 through 5. Vitest 1.3 to 3.2.3 also get `--minWorkers=1`:
   they default `minWorkers` to the cores but one and refuse a lower
   `--maxWorkers` ([vitest#7974](https://github.com/vitest-dev/vitest/issues/7974),
-  fixed in 3.2.4), and Vitest 5 refuses `--minWorkers` as unknown. Stim reads
-  the version from `node_modules/vitest`; an older or unreadable one gets
-  nothing.
+  fixed in 3.2.4), and Vitest 5 refuses `--minWorkers` as unknown. For a
+  command that starts with `vitest` itself, by name or path, Stim reads the
+  version of the package that executable belongs to; for a launcher or a
+  script, the nearest `node_modules/vitest`. An older version, or one Stim
+  cannot read, gets nothing.
 - Nothing is passed when the command names a worker option (Jest
   `--maxWorkers`, `-w`, `--runInBand`, `-i`; Vitest `--maxWorkers`,
   `--minWorkers`), another config, preset, project or workspace (`-c`,
-  `--config`, `--preset`, `--projects`, `--root`, `--project`, `--workspace`),
+  `--config`, `--preset`, `--projects`, `--root`, `--project`, `--workspace`;
+  a short option counts with an attached value or in a cluster, as in `-w50%`
+  or `-ic`),
   the `--pool` or `--poolOptions.*` flags, or a file-parallelism flag. Nothing
   is passed either when a `jest`, `vitest` or `vite` config between the working
   directory and `package.json`, or its `jest` key, names workers, pools, serial

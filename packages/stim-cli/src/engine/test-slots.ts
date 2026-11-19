@@ -11,6 +11,7 @@ import {
   type SlotInfo,
   type TryAcquireSlotOptions,
 } from './slot-queue.ts';
+import { claimFilesRemoveCommand, claimProblemText } from '../ownership-claim.ts';
 
 export type TestSlotHandle = SlotHandle;
 export type TestSlotInfo = SlotInfo;
@@ -52,5 +53,11 @@ export function testSlotUsage(
   max: number = testSlotLimit().max,
   slots: TestSlotInfo[] = listTestSlots(),
 ): StatusBuildSlots {
-  return slotUsage(max, slots);
+  const usage = slotUsage(max, slots);
+  for (const holder of usage.holders) {
+    const problem = holder.unresolved ? slots.find((slot) => slot.index === holder.slot)?.problem : undefined;
+    if (problem)
+      holder.claim = { unresolved: claimProblemText(problem), removeCommand: claimFilesRemoveCommand(problem.path) };
+  }
+  return usage;
 }

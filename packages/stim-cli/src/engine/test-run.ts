@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { builtinModules } from 'node:module';
 import { basename, dirname, join } from 'node:path';
 
@@ -131,7 +131,40 @@ export function installedVitestVersion(dir: string): string | null {
 }
 
 /**
- * The flags that give Vitest `version` `workers`, or null when Stim cannot tell. Vitest 1.5 to 3.2.3 default
+ * The version of the Vitest that `argv` runs. An argv that starts with `vitest` itself, by name or path, runs the file
+ * `find` resolves (PATH or that path): the package that file belongs to, or the `vitest` package beside a
+ * `node_modules/.bin` shim. Launchers and package-manager scripts run the nearest node_modules install. Null when the
+ * executable's package cannot be established.
+ */
+export function vitestVersionFor(
+  argv: readonly string[],
+  dir: string,
+  find: (file: string) => string | null,
+): string | null {
+  const file = argv[0] ?? '';
+  if (runnerName(file) !== 'vitest') return installedVitestVersion(dir);
+  const found = find(file);
+  if (!found) return null;
+  let real: string;
+  try {
+    real = realpathSync(found);
+  } catch {
+    return null;
+  }
+  const bin = dirname(real);
+  if (basename(bin) === '.bin' && basename(dirname(bin)) === 'node_modules') {
+    const version = readPackage(join(dirname(bin), 'vitest'))?.version;
+    return typeof version === 'string' ? version : null;
+  }
+  for (let at = bin; ; at = dirname(at)) {
+    const pkg = readPackage(at);
+    if (pkg) return pkg.name === 'vitest' && typeof pkg.version === 'string' ? pkg.version : null;
+    if (dirname(at) === at) return null;
+  }
+}
+
+/**
+ * The flags that give Vitest `version` `workers`, or null when Stim cannot tell. Vitest 1.3 to 3.2.3 default
  * `minWorkers` to the cores but one and refuse a lower `--maxWorkers` (vitest-dev/vitest#7974, fixed in 3.2.4), so they
  * also get `--minWorkers=1`; Vitest 4 removed `minWorkers`, and 5 refuses the flag as an unknown option.
  */
@@ -141,7 +174,7 @@ export function vitestWorkerFlags(version: string | null, workers: number): stri
   const [major = 0, minor = 0, patch = 0] = match.slice(1).map(Number);
   const atLeast = (a: number, b: number, c: number) => (major !== a ? major > a : minor !== b ? minor > b : patch >= c);
   if (atLeast(3, 2, 4)) return [`--maxWorkers=${workers}`];
-  if (atLeast(1, 5, 0)) return [`--maxWorkers=${workers}`, '--minWorkers=1'];
+  if (atLeast(1, 3, 0)) return [`--maxWorkers=${workers}`, '--minWorkers=1'];
   return null;
 }
 
@@ -187,9 +220,9 @@ function runnerAt(
 }
 
 const JEST_SET =
-  /^(?:--maxWorkers|--max-workers|-w)(?:=.*|\d+)?$|^(?:--runInBand|--run-in-band|-i|-c|--config|--preset|--projects)(?:=.*)?$/;
+  /^(?:--maxWorkers|--max-workers)(?:=.*)?$|^(?:--runInBand|--run-in-band|--config|--preset|--projects)(?:=.*)?$|^-[A-Za-z]*[ciw]/;
 const VITEST_SET =
-  /^(?:--(?:max|min)-?[wW]orkers|-c|--config|-r|--root|--dir|--project|--workspace|--pool)(?:=.*)?$|^--(?:no-)?file-?[pP]arallelism(?:=.*)?$|^--poolOptions\./;
+  /^(?:--(?:max|min)-?[wW]orkers|--config|--root|--dir|--project|--workspace|--pool)(?:=.*)?$|^--(?:no-)?file-?[pP]arallelism(?:=.*)?$|^--poolOptions\.|^-[A-Za-z]*[cr]/;
 const PLAIN_SCRIPT = /^(jest|vitest)(?:[ \t]+(?!--(?:[ \t]|$))[\w@%=.:/,+-]+)*$/;
 
 export interface TestPlan {

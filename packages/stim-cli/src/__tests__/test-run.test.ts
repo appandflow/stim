@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -8,6 +8,7 @@ import {
   planTestRun,
   testScriptFor,
   testWorkerCount,
+  vitestVersionFor,
 } from '../engine/test-run.ts';
 
 test.each([
@@ -41,6 +42,17 @@ test.each([
     expected: ['vitest', 'run', '--maxWorkers=3'],
   },
   { name: 'a Jest run that sets its own workers is left alone', argv: ['npx', 'jest', '-i'], expected: null },
+  ...['-c./jest.e2e.config.js', '-w50%', '-w2', '-ui', '-ci'].map((word) => ({
+    name: `a Jest short option with an attached value or in a cluster, ${word}, is left alone`,
+    argv: ['jest', word],
+    expected: null,
+  })),
+  ...['-c./vitest.e2e.ts', '-r./app'].map((word) => ({
+    name: `a Vitest short option with an attached value, ${word}, is left alone`,
+    argv: ['vitest', 'run', word],
+    expected: null,
+  })),
+  { name: 'a Jest -u still gets the flag', argv: ['jest', '-u'], expected: ['jest', '-u', '--maxWorkers=3'] },
   { name: 'a Jest run naming another config is left alone', argv: ['jest', '-c', 'jest.e2e.js'], expected: null },
   { name: 'a Vitest run naming another config is left alone', argv: ['vitest', '--config', 'x.ts'], expected: null },
   {
@@ -135,7 +147,7 @@ test.each([
     vitestVersion: '4.0.0',
     expected: ['vitest', '--maxWorkers=3'],
   },
-  { name: 'Vitest before 1.5 runs unchanged', argv: ['vitest'], vitestVersion: '1.4.0', expected: null },
+  { name: 'Vitest before 1.3 runs unchanged', argv: ['vitest'], vitestVersion: '1.2.2', expected: null },
   { name: 'Vitest with no readable version runs unchanged', argv: ['vitest'], vitestVersion: null, expected: null },
   {
     name: 'Jest needs no Vitest version',
@@ -280,4 +292,32 @@ test('reads the Vitest version from the nearest node_modules above the package',
   mkdirSync(join(pkg, 'node_modules', 'vitest'), { recursive: true });
   writeFileSync(join(pkg, 'node_modules', 'vitest', 'package.json'), JSON.stringify({ version: '5.0.4' }));
   expect(installedVitestVersion(pkg)).toBe('5.0.4');
+});
+
+test('reads the Vitest version of the executable a bare or path vitest runs, and of node_modules for launchers', () => {
+  const root = mkdtempSync(join(tmpdir(), 'stim-test-run-'));
+  onTestFinished(() => rmSync(root, { recursive: true, force: true }));
+  const pkg = (dir: string, json: object) => {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'package.json'), JSON.stringify(json));
+  };
+  const app = join(root, 'app');
+  pkg(join(app, 'node_modules', 'vitest'), { name: 'vitest', version: '5.0.4' });
+  mkdirSync(join(app, 'node_modules', '.bin'));
+  writeFileSync(join(app, 'node_modules', '.bin', 'vitest'), '');
+  const global = join(root, 'global', 'lib', 'node_modules', 'vitest');
+  pkg(global, { name: 'vitest', version: '2.1.9' });
+  writeFileSync(join(global, 'vitest.mjs'), '');
+  mkdirSync(join(root, 'global', 'bin'));
+  symlinkSync(join(global, 'vitest.mjs'), join(root, 'global', 'bin', 'vitest'));
+  mkdirSync(join(root, 'usr', 'bin'), { recursive: true });
+  writeFileSync(join(root, 'usr', 'bin', 'vitest'), '');
+  const found = (path: string | null) => () => path;
+  expect(vitestVersionFor(['vitest', 'run'], app, found(join(root, 'global', 'bin', 'vitest')))).toBe('2.1.9');
+  expect(vitestVersionFor(['vitest', 'run'], app, found(join(app, 'node_modules', '.bin', 'vitest')))).toBe('5.0.4');
+  expect(vitestVersionFor(['vitest', 'run'], app, found(null))).toBeNull();
+  const wrapper = join(root, 'usr', 'bin', 'vitest');
+  expect(vitestVersionFor([wrapper, 'run'], app, found(wrapper))).toBeNull();
+  expect(vitestVersionFor(['npx', 'vitest'], app, found(null))).toBe('5.0.4');
+  expect(vitestVersionFor(['npm', 'run', 'test'], app, found(null))).toBe('5.0.4');
 });

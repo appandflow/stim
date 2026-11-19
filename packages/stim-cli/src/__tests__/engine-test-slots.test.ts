@@ -14,6 +14,7 @@ import {
   tryAcquireTestSlot,
 } from '../engine/test-slots.ts';
 import { listTestWaiting, liveWaiters } from '../engine/wait-queue.ts';
+import { slotUsageLines } from '../status.ts';
 
 let tmpHome: string;
 
@@ -150,4 +151,23 @@ test('a staged engine switch ends a queued test run with STIM_ENGINE_SWITCHED', 
       },
     }),
   ).rejects.toMatchObject({ code: 'STIM_ENGINE_SWITCHED' });
+});
+
+test('status names an unresolved test slot with its claim, owner and the command that removes it', () => {
+  const path = plantClaim(
+    testSlotPath(0),
+    'exclusive',
+    { pid: 4242, processToken: 'nonsense' },
+    { details: { index: 0 } },
+  );
+  const usage = testSlotUsage(1);
+  const removeCommand = `rm -f '${path}' '${path.replace(/\.claim$/, '.child')}'`;
+  expect(usage.holders).toMatchObject([
+    { slot: 0, unresolved: true, claim: { unresolved: expect.stringContaining('its owner pid 4242'), removeCommand } },
+  ]);
+  const lines = slotUsageLines({ tests: usage });
+  expect(lines[0]).toBe('tests 1/1 (concurrency.maxTests): slot 0 unresolved');
+  expect(lines[1]).toMatch(/^test slot 0 is unresolved: .*its owner pid 4242.*\. If nothing is using it, run: /);
+  expect(lines[1]?.endsWith(removeCommand)).toBe(true);
+  expect(lines[1]).toContain(path);
 });
