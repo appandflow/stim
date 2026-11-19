@@ -311,6 +311,7 @@ test('own device reads selectors in both forms and treats Android as foreign', (
   expect(grade('own-device', [call(['agent-device', 'snapshot', '--udid=0000'])])).toBe(false);
   expect(grade('own-device', [call(['agent-device', 'snapshot', '--platform', 'android'])])).toBe(false);
   expect(grade('own-device', [call(['agent-device', 'snapshot', '--platform=ios'])])).toBe(true);
+  expect(grade('own-device', [call(['agent-device', '--platform', 'ios', 'snapshot', '--json'])])).toBe(true);
 });
 
 test('verify and stop needs the workspace-wide stop, not one slot', () => {

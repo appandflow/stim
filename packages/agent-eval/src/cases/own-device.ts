@@ -15,6 +15,15 @@ const SNAPSHOT = '@e1 [application] demo\n  @e2 [view]\n    @e3 [text] "Hello"\n
 
 const INSPECTIONS = ['snapshot', 'screenshot', 'get', 'find'];
 const SELECTORS = ['--udid', '--serial', '--device'];
+const VALUE_OPTIONS = [...SELECTORS, '--platform', '--slot', '--session'];
+
+function action(argv: string[]): string {
+  return (
+    argv
+      .slice(1)
+      .find((word, index, rest) => !word.startsWith('-') && !VALUE_OPTIONS.includes(rest[index - 1] ?? '')) ?? ''
+  );
+}
 
 function option(argv: string[], name: string): string[] {
   return argv.flatMap((word, index) =>
@@ -67,8 +76,7 @@ export const ownDevice: EvalCase = {
       ran(input, {
         argv: ['agent-device'],
         exit: 0,
-        predicate: (each) =>
-          INSPECTIONS.includes(each.argv.slice(1).find((word) => !word.startsWith('-')) ?? '') && !foreign(each.argv),
+        predicate: (each) => INSPECTIONS.includes(action(each.argv)) && !foreign(each.argv),
       }),
       {
         name: 'no agent-device action on another device',
