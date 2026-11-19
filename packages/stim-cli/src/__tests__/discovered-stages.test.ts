@@ -158,7 +158,7 @@ describe('a discovered checkout in the idle stages', () => {
     await vi.waitUntil(() => hungRead() === null);
   });
 
-  it('lets a source checkout through the gate while another checkout holds the read slot, and ranks it', async () => {
+  it('lets a source checkout through the gate while another checkout holds the read slot, and ranks it once the slot frees mid-walk', async () => {
     const roots = join(base, 'roots');
     const stalledApp = join(roots, 'a-stalled');
     const app = join(roots, 'b-app');
@@ -201,8 +201,7 @@ describe('a discovered checkout in the idle stages', () => {
       if (path === app && hungRead() !== null) {
         slotBusyAtApp = true;
         released = true;
-        release();
-        while (hungRead() !== null) await new Promise((resolve) => setImmediate(resolve));
+        setImmediate(release);
       }
       return readEvidence(path, options);
     });

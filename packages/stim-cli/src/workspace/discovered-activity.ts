@@ -5,7 +5,7 @@ import { worktreeActivityOfAsync } from '../commands/gc/worktrees.ts';
 import type { IdleStopEvidence } from '../policy/idle.ts';
 import { gitQuietAsync } from './git.ts';
 import { sharedRead } from './git-reads.ts';
-import { answered, hungRead, Unanswered } from './bounded-read.ts';
+import { answered, hungRead, pendingRead, Unanswered } from './bounded-read.ts';
 import type { DiscoveredReads } from './discovered-reads.ts';
 import { checkoutRootOf } from './checkout-role.ts';
 import { launcherReason } from './launchers.ts';
@@ -44,10 +44,32 @@ const overBudget = new Map<string, number>();
 
 export type SourceScan = { newest: number } | { unknown: string };
 
-/** Unknown for this pass, with no cooldown, while another read holds the one pending-read slot. */
-function waiting(): SourceScan | null {
-  const pending = hungRead();
-  return pending === null ? null : { unknown: `its source cannot be read while a read of ${pending} has not answered` };
+/**
+ * Null once no other read holds the one pending-read slot, waiting for it to settle within `left()` and until `signal`
+ * aborts; else unknown for this pass, with no cooldown.
+ */
+async function waiting(left: () => number, signal?: AbortSignal): Promise<SourceScan | null> {
+  for (let pending = pendingRead(); pending; pending = pendingRead()) {
+    const label = hungRead();
+    const ms = left();
+    let timer: NodeJS.Timeout | undefined;
+    let onAbort: (() => void) | undefined;
+    const settled =
+      ms > 0 &&
+      (await Promise.race([
+        pending.then(() => true),
+        new Promise<boolean>((resolve) => {
+          timer = setTimeout(() => resolve(false), ms);
+          onAbort = () => resolve(false);
+          signal?.addEventListener('abort', onAbort, { once: true });
+        }),
+      ]));
+    clearTimeout(timer);
+    if (onAbort) signal?.removeEventListener('abort', onAbort);
+    signal?.throwIfAborted();
+    if (!settled) return { unknown: `its source cannot be read while a read of ${label} has not answered` };
+  }
+  return null;
 }
 
 /**
@@ -77,7 +99,7 @@ export async function scanSourceWrites(root: string, activeSince: number, signal
   for (let dir = queue.pop(); dir !== undefined; dir = queue.pop()) {
     signal?.throwIfAborted();
     if (left() < 0) return outOfTime();
-    const blocked = waiting();
+    const blocked = pendingRead() && (await waiting(left, signal));
     if (blocked) return blocked;
     let entries;
     try {
@@ -97,7 +119,7 @@ export async function scanSourceWrites(root: string, activeSince: number, signal
         });
         if (ignored !== null) continue;
       }
-      const busy = waiting();
+      const busy = pendingRead() && (await waiting(left, signal));
       if (busy) return busy;
       let mtime: number;
       try {

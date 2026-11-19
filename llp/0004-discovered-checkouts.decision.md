@@ -503,9 +503,11 @@ under Needs a person, and Stim reuses that verdict for an hour without walking
 again. Each folder read, entry read and `git check-ignore` probe gets only the time
 left, a read that does not answer counts as running out of time (it takes the
 one pending-read slot of `bounded-read.ts`), and a walk that crossed the deadline
-never reports idle. While another read holds that slot, the scan reports unknown
-for this pass without the hour of reuse, so the checkout is walked again next
-pass. A recent write ends the scan at once as activity, whatever time is left.
+never reports idle. While another read holds that slot, the scan waits for it to
+settle within the time left in its own budget and then walks on; when the budget
+runs out first it reports unknown for this pass without the hour of reuse, so
+the checkout is walked again next pass. A long-held slot can therefore make each
+scan of that pass wait its full 15 seconds. A recent write ends the scan at once as activity, whatever time is left.
 A scan that reports unknown is the whole evidence: no further read of that
 checkout (its `.git`, git activity, launchers) starts.
 

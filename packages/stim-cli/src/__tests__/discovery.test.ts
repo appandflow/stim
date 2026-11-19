@@ -197,16 +197,32 @@ describe('scanSourceWrites', () => {
     await vi.advanceTimersByTimeAsync(0);
   });
 
-  it('walks a checkout again on the next pass when another read held the slot, with no cooldown', async () => {
+  const holdSlot = async () => {
     let release = () => {};
     const stuck = answered('/stalled-mount', () => new Promise<void>((resolve) => (release = resolve)), 10).catch(
       () => 'timed out',
     );
     await vi.advanceTimersByTimeAsync(10);
     expect(await stuck).toBe('timed out');
+    return release;
+  };
+
+  it('waits within its budget for another read to free the slot, then walks', async () => {
+    const release = await holdSlot();
+    const quiet = Date.now() - 86_400_000;
+    const scan = scanSourceWrites(base, quiet);
+    await vi.advanceTimersByTimeAsync(5000);
+    release();
+    expect('newest' in (await scan)).toBe(true);
+  });
+
+  it('walks a checkout again on the next pass when another read held the slot past its budget, with no cooldown', async () => {
+    const release = await holdSlot();
     const quiet = Date.now() - 86_400_000;
 
-    expect(await scanSourceWrites(base, quiet)).toEqual({
+    const scan = scanSourceWrites(base, quiet);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(await scan).toEqual({
       unknown: 'its source cannot be read while a read of /stalled-mount has not answered',
     });
 
