@@ -41,13 +41,16 @@ export function targetEntries(target: string): { output: string[]; kept: string[
   const kept: string[] = [];
   for (const entry of entries.toSorted((a, b) => a.name.localeCompare(b.name))) {
     if (entry.name.startsWith(OWN_PREFIX)) continue;
-    const keypairs =
-      entry.name === KEYPAIR_DIR &&
-      entry.isDirectory() &&
-      (entriesOf(join(target, entry.name)) ?? []).some((inner) => inner.name.endsWith('-keypair.json'));
+    const keypairs = entry.name === KEYPAIR_DIR && entry.isDirectory() && holdsKeypair(join(target, entry.name));
     (entry.isSymbolicLink() || keypairs ? kept : output).push(entry.name);
   }
   return { output, kept };
+}
+
+/** Whether the directory at `path` holds a `*-keypair.json`, or cannot be read to tell. */
+function holdsKeypair(path: string): boolean {
+  const entries = entriesOf(path);
+  return !entries || entries.some((entry) => entry.name.endsWith('-keypair.json'));
 }
 
 const FOLD_CASE = process.platform === 'darwin' || process.platform === 'win32';
@@ -577,6 +580,7 @@ async function deleteClaimed(
   if (exactHeld) return keep(`a build holds ${exactHeld}`);
   type Entry = { dir: string; there: string; name: string };
   const moved: Entry[] = [];
+  const unmoved = [...entries.kept];
   const marker = join(aside, STRANDED);
   const putBackAll = async (why: string): Promise<CargoTrimResult> => {
     const stranded: string[] = [];
@@ -609,6 +613,7 @@ async function deleteClaimed(
         await rename(entry.dir, entry.there);
       } catch (error) {
         result.kept.push(`${name}: it could not be moved aside: ${error instanceof Error ? error.message : error}`);
+        unmoved.push(name);
         continue;
       }
       moved.push(entry);
@@ -622,9 +627,21 @@ async function deleteClaimed(
     if (after.used.length) return await putBackAll(`a process took ${after.used[0]} during the move`);
     const now = Date.now();
     for (const entry of moved) {
+      if (entry.name === KEYPAIR_DIR && holdsKeypair(entry.there))
+        return await putBackAll(`${entry.dir} holds a Solana keypair now`);
       const used = recentEntryUse(entry.there, entry.name, now, idleMs);
       if (used) return await putBackAll(`${entry.dir} was used during the move: ${used}`);
     }
+    const listed = entriesOf(target);
+    if (!listed) return await putBackAll(`${target} cannot be listed`);
+    const appeared = listed.find(({ name }) => !name.startsWith(OWN_PREFIX) && !unmoved.includes(name));
+    if (appeared) return await putBackAll(`${join(target, appeared.name)} appeared during the move`);
+    for (const name of unmoved) {
+      const used = recentEntryUse(join(target, name), name, now, idleMs);
+      if (used) return await putBackAll(`${join(target, name)} was used during the move: ${used}`);
+    }
+    const mounted = mountedUnder(target, mountInfo);
+    if (mounted) return await putBackAll(mounted);
     await rm(marker);
   } catch (error) {
     await putBackAll('the delete was interrupted');

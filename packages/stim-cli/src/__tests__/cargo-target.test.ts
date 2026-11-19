@@ -21,6 +21,7 @@ import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import {
   deleteCargoTarget,
   staleCargoPaths,
+  targetEntries,
   staleCargoTargetPaths,
   trimCargoTarget,
 } from '../workspace/cargo-target.ts';
@@ -666,6 +667,62 @@ describe.skipIf(process.platform === 'win32')(
         1: 'debug',
       });
       expect(existsSync(join(dir, 'doc', 'index.html'))).toBe(true);
+    });
+
+    test.skipIf(process.getuid?.() === 0)('a deploy/ folder that cannot be read counts as holding a keypair', () => {
+      mkdirSync(join(dir, 'deploy'));
+      chmodSync(join(dir, 'deploy'), 0o000);
+      try {
+        expect(targetEntries(dir)).toMatchObject({ kept: ['deploy'] });
+      } finally {
+        chmodSync(join(dir, 'deploy'), 0o755);
+      }
+    });
+
+    test.each([
+      [
+        'a keypair appears in the staged deploy/',
+        () => {
+          mkdirSync(join(dir, 'deploy'));
+          ageTree(dir);
+          return () => writeFileSync(join(dir, '.stim-trimmed', '2', 'app-keypair.json'), '[1]');
+        },
+        'holds a Solana keypair now',
+      ],
+      ['a build recreates a moved profile', () => () => mkdirSync(join(dir, 'debug')), 'appeared during the move'],
+      [
+        'a write lands in the kept deploy/',
+        () => {
+          mkdirSync(join(dir, 'deploy'));
+          writeFileSync(join(dir, 'deploy', 'app-keypair.json'), '[1]');
+          ageTree(dir);
+          return () => utimesSync(join(dir, 'deploy', 'app-keypair.json'), new Date(), new Date());
+        },
+        'was used during the move',
+      ],
+    ])('it puts everything back when %s before the delete', async (_, arrange, why) => {
+      const during = arrange();
+      fsHooks.rename = (from) => {
+        if (from.endsWith('/doc')) during();
+      };
+
+      const result = await remove();
+
+      expect(result.removed).toEqual([]);
+      expect(result.kept).toEqual([expect.stringContaining(why)]);
+      expect(existsSync(join(dir, 'doc', 'index.html'))).toBe(true);
+      expect(readdirSync(dir).some((name) => name === 'debug' || name.startsWith('.stim-not-restored-'))).toBe(true);
+    });
+
+    test('a mount that appears under the target during the move puts everything back', async () => {
+      let reads = 0;
+      const mountInfo = () => (reads++ ? `36 35 0:1 / ${real}/doc rw - ext4 /dev/x rw\n` : '');
+
+      const result = await deleteCargoTarget(dir, { idleMs: DAY, launching: noLaunchers(target), mountInfo });
+
+      expect(result.kept).toEqual([expect.stringContaining('is a mount point')]);
+      expect(existsSync(join(dir, 'doc', 'index.html'))).toBe(true);
+      expect(existsSync(join(dir, 'debug', 'app'))).toBe(true);
     });
 
     test('a cancelled delete puts every moved entry back and leaves nothing staged', async () => {
