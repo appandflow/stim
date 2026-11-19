@@ -9,10 +9,22 @@
 
 ## Which targets Stim manages
 
-Stim recognises two kinds of Cargo `target/`: an Exact app's, beside
-`exact.mjs`, and one at a checkout root whose files git ignores and whose
-`CACHEDIR.TAG` starts with the standard signature line. Both count in a
-registered workspace and in a discovered checkout (LLP 0004).
+Stim recognises three kinds of Cargo `target/`: an Exact app's, beside
+`exact.mjs`; one at a checkout root whose `CACHEDIR.TAG` starts with the
+standard signature line; and one at a checkout root beside `Cargo.toml` that
+has Cargo's shape inside: a `.rustc_info.json` at its root, or a direct child
+holding `.fingerprint` or a `CACHEDIR.TAG` with the signature line. All three
+count in a registered workspace and in a discovered checkout (LLP 0004), and
+each must still have every file ignored by git and pass the process, Cargo lock
+and launcher keeps before anything in it is deleted.
+
+Maintainer decision: "Yes leys have same rules for cargo as exact", 2026-11-19
+(#5958). Reason for the third kind: Cargo writes `CACHEDIR.TAG` at the root of
+`target/` only when it creates that directory itself, so a `target/` that a
+tool created first (Exact's builds write `target/web/` and similar) carries
+the tag only in its target triple directories, and on the maintainer's MacBook
+on 2026-11-19 most `~/.exact/exact2` worktrees had no root tag. The shape check
+keeps a project's own `target/` folder that Cargo never wrote out of it.
 
 The idle and dormant stages clear an idle workspace's `target/` whole. A
 process running from or working in the checkout keeps all of it.

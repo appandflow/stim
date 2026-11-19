@@ -124,7 +124,7 @@ In on mode a pass runs, cheapest to rebuild first:
      caches whose directory no longer exists
   2. build outputs of idle workspaces, over maintenance.workspaceOutputsMaxGb,
      or unused for maintenance.olderThanDays; the Cargo target/ of an Exact
-     app or a Cargo workspace root (CACHEDIR.TAG), in a registered workspace or
+     app or a Cargo workspace root, in a registered workspace or
      a discovered checkout, in use or not, over maintenance.cargoTargetMaxGb
      (default 25, 0 no cap; one du walk per target/, at most 6 discovered
      ones per size scan, the least recently measured first, so every one is
@@ -555,8 +555,7 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
     unpushed work, in use, leased, locked, pinned, cannot prove finished.
   Workspace idle idle.dormantDays (default 1): build outputs (android/build,
   android/.gradle, .build, .cxx, .dd DerivedData, an Exact app's target/ beside
-  exact.mjs, a checkout root's target/ with Cargo's CACHEDIR.TAG), owned
-  devices, logs archived
+  exact.mjs, a Cargo workspace root's target/), owned devices, logs archived
     dormant reduction, N. Kept: running dev server or build, booted device,
     leased, driven, locked, hosted, pinned, idle.minutes 0.
   The same: node_modules and ios/Pods of a linked worktree, recorded so the next
@@ -1300,9 +1299,9 @@ never), by the same evidence. That holds for every kind of discovered checkout
 (children of the folders holding registered checkouts, children of
 maintenance.discoverRoots, reduce-only finds) even where no stim command ever ran,
 and a PATH launcher keeps any of them. A
-target directory at a checkout root whose CACHEDIR.TAG starts with the standard
-CACHEDIR.TAG signature line and whose files git ignores counts as build output
-for every checkout.
+target directory at a checkout root whose files git ignores is build output when
+its CACHEDIR.TAG is signed, or beside Cargo.toml when it holds .rustc_info.json or
+a child with .fingerprint or a signed CACHEDIR.TAG.
 Removing a discovered worktree needs a clean one whose work is merged or whose
 pull request ended, and, at every pressure level with no zero grace, that same
 idleness, no process or agent session, and every git-ignored file present byte
@@ -1830,7 +1829,7 @@ WORKSPACE BUILD OUTPUTS
   android/.gradle, .build, the CMake directories android/.cxx and
   android/<module>/.cxx, a .dd directory laid out as Xcode DerivedData
   (a Build/ directory beside ModuleCache.noindex or Logs/), and an Exact
-  app's Cargo target/ (beside its exact.mjs; or any target/ directly in the checkout with Cargo's CACHEDIR.TAG; kept while
+  app's Cargo target/ (beside its exact.mjs; or a Cargo workspace root's, see stim guide cleanup gc; kept while
   another process, such as a shell or an exact.mjs command, runs from or
   works in the app, and on Windows, where processes cannot be listed) count
   with them

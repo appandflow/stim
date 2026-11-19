@@ -131,8 +131,7 @@ async function cargoTargetCandidates(
 }
 
 /**
- * One walk of each Cargo `target/` Stim recognises (an Exact app's, or a root `target/` carrying the standard
- * `CACHEDIR.TAG`) in a registered workspace or an in-scope discovered checkout, and only of directories that exist and
+ * One walk of each Cargo `target/` Stim recognises (`cargoTargetDirsAsync`) in a registered workspace or an in-scope discovered checkout, and only of directories that exist and
  * that git ignores whole; none when the cap is 0. A walk that times out leaves no size and is planned from the scan state.
  */
 export async function measureCargoTargets(

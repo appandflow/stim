@@ -134,13 +134,31 @@ function* exactTargetDirs(root: string): DirReads<string[]> {
 }
 
 const CACHEDIR_TAG = 'CACHEDIR.TAG';
+const CARGO_MANIFEST = 'Cargo.toml';
+const RUSTC_INFO = '.rustc_info.json';
+const FINGERPRINT = '.fingerprint';
+
+function* tagged(dir: string, names: readonly string[]): DirReads<boolean> {
+  return names.includes(CACHEDIR_TAG) && (yield { signature: join(dir, CACHEDIR_TAG) }) === true;
+}
+
+function* cargoShaped(path: string, names: readonly string[]): DirReads<boolean> {
+  if (names.includes(RUSTC_INFO)) return true;
+  for (const name of names) {
+    const child = join(path, name);
+    if (!(yield* realDirectory(child))) continue;
+    const inner = yield* namesIn(child);
+    if (inner.includes(FINGERPRINT) || (yield* tagged(child, inner))) return true;
+  }
+  return false;
+}
 
 function* cargoRootTargetDirs(root: string): DirReads<string[]> {
   const path = join(root, CARGO_TARGET);
   if (!(yield* realDirectory(path))) return [];
-  return (yield* namesIn(path)).includes(CACHEDIR_TAG) && (yield { signature: join(path, CACHEDIR_TAG) }) === true
-    ? [path]
-    : [];
+  const names = yield* namesIn(path);
+  if (yield* tagged(path, names)) return [path];
+  return (yield* namesIn(root)).includes(CARGO_MANIFEST) && (yield* cargoShaped(path, names)) ? [path] : [];
 }
 
 function* cargoTargetDirsReads(root: string): DirReads<string[]> {
@@ -148,8 +166,9 @@ function* cargoTargetDirsReads(root: string): DirReads<string[]> {
 }
 
 /**
- * The Cargo `target/` directly under `root` that Stim recognises: an Exact app's (beside its `exact.mjs`) or one that
- * carries Cargo's `CACHEDIR.TAG` with its signature line. At most one, even when both rules match it.
+ * The Cargo `target/` directly under `root` that Stim recognises: an Exact app's (beside its `exact.mjs`), one that
+ * carries Cargo's `CACHEDIR.TAG` with its signature line, or one beside a `Cargo.toml` with Cargo's shape inside (a
+ * `.rustc_info.json`, or a direct child holding `.fingerprint` or a signed `CACHEDIR.TAG`). At most one.
  */
 export function cargoTargetDirsAsync(root: string): Promise<string[]> {
   return readAsync(cargoTargetDirsReads(root));
@@ -165,9 +184,8 @@ function* discoveredBuildDirsReads(root: string): DirReads<string[]> {
 /**
  * The directories under `root` that hold only what a build regenerates and that the fixed `ARTIFACT_DIRS.build` names
  * cannot list: the Android CMake directories `android/.cxx` and `android/<module>/.cxx`, a `.dd` directory laid
- * out as DerivedData, and a Cargo `target/` directly under `root`: an Exact app's (beside its `exact.mjs`) or any
- * that carries Cargo's `CACHEDIR.TAG` with its signature line. A `.dd` that is not laid out as DerivedData is not one, nor is a `target/`
- * anywhere else.
+ * out as DerivedData, and a Cargo `target/` directly under `root` that `cargoTargetDirsAsync` recognises. A `.dd` that
+ * is not laid out as DerivedData is not one, nor is a `target/` anywhere else.
  */
 export function discoveredBuildDirs(root: string): string[] {
   return readSync(discoveredBuildDirsReads(root));
