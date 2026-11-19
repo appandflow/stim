@@ -13,7 +13,7 @@ import { execSync } from 'node:child_process';
 import type { MockInstance } from 'vitest';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { DaemonLadderAction, DaemonPressure, PressureLevel } from '@stim-cli/core/state';
+import type { DaemonLadderAction, DaemonPressure } from '@stim-cli/core/state';
 import {
   daemonNdjsonFile,
   diskUsageCacheFile,
