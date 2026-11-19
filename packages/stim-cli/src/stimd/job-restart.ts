@@ -24,6 +24,8 @@ export function writeJobRestart(record: JobRestart, home?: string): boolean {
   }
 }
 
+const unstamped = new Map<string, number>();
+
 /**
  * `run/job-restart.json`, whether its stimd still runs, and until when it holds the home for its job. A record whose
  * stimd exited without a `left` gets one now, so every process that waits on it counts from the same moment.
@@ -34,9 +36,11 @@ export function jobRestartHold(home?: string): { record: JobRestart; running: bo
   const running = processRuns(record.pid);
   if (!running && record.left === null) {
     const seen = record;
-    record = { ...record, left: Date.now() };
+    const key = `${home ?? ''}:${seen.pid}:${seen.at}`;
+    record = { ...record, left: unstamped.get(key) ?? Date.now() };
     const now = readJobRestart(home);
-    if (now?.pid === seen.pid && now.at === seen.at && now.left === null) writeJobRestart(record, home);
+    if (now?.pid === seen.pid && now.at === seen.at && now.left === null && !writeJobRestart(record, home))
+      unstamped.set(key, record.left ?? Date.now());
   }
   return { record, running, until: jobRestartUntil(record, running) };
 }

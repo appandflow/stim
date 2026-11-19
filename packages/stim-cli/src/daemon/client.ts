@@ -1014,7 +1014,7 @@ export async function ensureStimd(
     // compat end
     admitting = pin && !held;
     // @ref LLP 0009#service-and-engine-updates -- a home a service stimd left to its job waits for that job
-    await awaitJobRestart(limit?.signal);
+    if (!currentCrashHold()) await awaitJobRestart(limit?.signal);
     if (stimdLive()) {
       if (!pin) await askStimd('hello', CONTACT_TIMEOUT_MS);
       else await admitExisting(held, command, false, invocation, { env, required }, limit);

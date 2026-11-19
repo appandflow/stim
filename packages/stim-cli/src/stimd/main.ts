@@ -736,6 +736,28 @@ function leaveToJob(
     log('warn', 'job_restart_record_failed', `could not write ${stimdJobRestartFile()}`);
 }
 
+/** Renews the job-restart record under this boot's pid when `job`, the unit whose job runs this stimd, wrote it. */
+function takeJobRecord(
+  job: string | undefined,
+  log: (level: Level, event: string, msg: string) => unknown,
+): ReturnType<typeof readJobRestart> {
+  const record = job ? readJobRestart() : null;
+  if (!job || !record || record.label !== job) return null;
+  leaveToJob(job, record.at, null, log);
+  return record;
+}
+
+/** After a crash hold: a staged rollback leaves the home to `job` again; otherwise the record goes. */
+function endJobRecord(
+  staged: boolean,
+  job: string | undefined,
+  record: ReturnType<typeof readJobRestart>,
+  log: (level: Level, event: string, msg: string) => unknown,
+): void {
+  if (staged && job) leaveToJob(job, record?.at ?? Date.now(), Date.now(), log);
+  else rmSync(stimdJobRestartFile(), { force: true });
+}
+
 /**
  * What a boot does when its build crash-loops: with a store engine and three boots the build caused, the engine goes
  * back (`rolled-back`, and the previous build's stimd is launched); otherwise it prints and logs why it stops.
@@ -763,7 +785,7 @@ async function runCrashHold(
     checkedAt: number;
     log: (level: Level, event: string, msg: string) => unknown;
   },
-): Promise<'rolled-back' | { checkedAt: number }> {
+): Promise<'rolled-back' | { checkedAt: number; staged: boolean }> {
   const held = store && loop.engineCaused ? await holdCrashLoop(store, version, getConfigDir()) : null;
   if (store && held && ('rolledBack' in held || 'moved' in held)) {
     const current = readRecords(store.root).current;
@@ -797,7 +819,7 @@ async function runCrashHold(
     log('info', 'engine_update_check', `crash hold: ${line}`);
     checked = Date.now();
   }
-  return { checkedAt: checked };
+  return { checkedAt: checked, staged: held !== null && 'staged' in held };
 }
 
 /**
@@ -886,6 +908,7 @@ async function runStimdInner(
   const lifetime = stimdLifetime(attached !== undefined, identity.version);
   const instance = randomUUID();
   refuseUnresolvedDaemonClaims(writer);
+  const jobUnit = inJob ? unit : undefined;
   // @ref LLP 0009#service-and-engine-updates -- a home a service stimd left to its job waits for that job
   let own = await takeClaim(
     stimdClaimRoot(),
@@ -893,10 +916,8 @@ async function runStimdInner(
     'stimd',
     details,
     lifetime.retries(CLAIM_TRIES),
-    jobRestartGate(inJob ? unit : undefined),
+    jobRestartGate(jobUnit),
   );
-  const reservation = inJob ? readJobRestart() : null;
-  if (own && reservation && reservation.label === unit) leaveToJob(reservation.label, reservation.at, null, log);
   if (!own) {
     log('debug', 'stimd_claim_held', 'another stimd holds this Stim home; exiting');
     writer.close();
@@ -907,6 +928,7 @@ async function runStimdInner(
       );
     return false;
   }
+  const jobRecord = takeJobRecord(jobUnit, log);
   let keepOwn = false;
   let startupClaim: ClaimHandle | null = null;
   let startupFollower: ReturnType<typeof followEngine> = null;
@@ -941,7 +963,9 @@ async function runStimdInner(
     startupFollower?.release();
     if (isUnverifiedCleanup(error)) keepClaim();
     else {
-      if (attached === undefined) recordBoot(`startup failed: ${errorText(error)}`, error);
+      const recorded =
+        attached === undefined && recordBoot(`startup failed: ${errorText(error)}`, error) === 'recorded';
+      if (recorded && inJob && unit) leaveToJob(unit, Date.now(), Date.now(), log);
       releaseClaim(startupClaim);
       releaseClaim(own);
     }
@@ -977,7 +1001,7 @@ async function runStimdInner(
       return false;
     }
     own = updateClaimDetails(own, { ...details, kept: true, updateCheckedAt: held.checkedAt }) ?? own;
-    rmSync(stimdJobRestartFile(), { force: true });
+    endJobRecord(held.staged, jobUnit, jobRecord, log);
     writer.close();
     return true;
   }
