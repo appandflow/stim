@@ -4,12 +4,14 @@ export default {
 
 WORKSPACE SETUP
 
+Skip this for inspection or cleanup (logs, status, gc).
+
 WORKTREE: Use a linked worktree by default; create one with Git if needed.
 The clean source checkout is infrastructure, not a workspace. Unless you
 work in place, run stim worktree warm once in your worktree, even one a harness
-made. Wait for warm to exit successfully (exit code 0) before the first edit,
-install, start, ios or android there.
-Concurrent writes to the destination are unsafe. Options: stim guide lifecycle options.
+made. Wait for warm to exit successfully (exit code 0) before anything else
+there. Concurrent writes to the destination are unsafe.
+Options: stim guide lifecycle options.
 
 SINGLE CHECKOUT: Work in place, without warm, only when the user asks or the
 task needs their uncommitted changes. Run app commands from that checkout.
@@ -85,7 +87,7 @@ Run stim guide for the full topic index.`,
       summary: 'Expo and bare React Native build, Metro, and verification workflow',
       body: () => `NORMAL WORKFLOW
 
-  stim worktree warm                   # first, unless working in place; wait for exit 0
+  stim worktree warm                   # once in a new worktree; wait for exit 0
   stim start
   stim ios                             # or: stim android, or: stim web
 
@@ -235,7 +237,7 @@ Expo, the directory whose package.json depends on react-native or expo):
       summary: 'Run on a connected iPhone or Android phone',
       body: () => `PHYSICAL DEVICES
 
-  stim worktree warm   # first, unless working in place
+  stim worktree warm   # once in a new worktree
   stim ios --device [udid]                  a connected iPhone or iPad, cable or Wi-Fi
   stim android --device [serial]            a connected Android phone
   stim device lock ios <udid> --for 10m     keep the lease between runs
