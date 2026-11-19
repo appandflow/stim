@@ -124,7 +124,8 @@ In on mode a pass runs, cheapest to rebuild first:
      caches whose directory no longer exists
   2. build outputs of idle workspaces, over maintenance.workspaceOutputsMaxGb,
      or unused for maintenance.olderThanDays; the Cargo target/ of an Exact
-     app or a Cargo workspace root (CACHEDIR.TAG), in a registered workspace or
+     app or a Cargo workspace root (CACHEDIR.TAG; untagged beside Cargo.toml:
+     trimmed only), in a registered workspace or
      a discovered checkout, in use or not, over maintenance.cargoTargetMaxGb
      (default 25, 0 no cap; one du walk per target/, at most 6 discovered
      ones per size scan, the least recently measured first, so every one is
@@ -617,7 +618,8 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
 
   The dormant reduction and the dormant stage are the same work: a workspace
   with no activity for idle.dormantDays is reduced to its minimal size, by
-  stim gc at every level and by the stim-daemon. Its node_modules and
+  stim gc at every level and, except build outputs, by the stim-daemon (its
+  idle stage deletes those after a run goes idle). Its node_modules and
   ios/Pods go only in a linked worktree, are recorded, and the next Stim
   command in it restores them with \`stim worktree warm\`, or, when warm cannot
   restore the same versions (its lockfile differs from the source checkout's,
