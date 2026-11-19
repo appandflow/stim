@@ -334,16 +334,29 @@ Ask the user before these actions:
   worktree and gives up its owned device.
 - worktree remove --force, because it also discards uncommitted and untracked
   files.
-- gc, because it deletes across workspaces, including ones you do not own:
-  orphaned resources, clean linked worktrees whose branch or pull request is
-  merged or closed, unused simulator runtimes, and the build outputs, owned
-  devices, node_modules and Pods of workspaces idle a day or more. At high or
-  critical pressure it also deletes parked devices and trims shared caches
-  (at critical, other tools' caches too), and stops apps that are not being
-  driven. It never touches a workspace that is building, driven, leased,
-  shared, hosted or pinned by maintenance.keep. Run stim gc --dry-run first and
-  show the user what it would delete (guide facts gc); stim gc deletes, and
-  --pressure <normal|high|critical> picks the level.
+- gc, because it deletes: it runs one maintenance pass at the measured
+  pressure level and removes orphaned resources, clean linked worktrees that a
+  stim command has run in or discovery finds (a scoped STIM_HOME keeps any
+  other as not-registered) whose branch or pull request is merged (or whose pull request was closed),
+  unused iOS simulator runtimes, and everything a workspace idle for
+  idle.dormantDays (1) holds that regenerates: build outputs, owned devices,
+  and in a linked worktree node_modules and ios/Pods (worktree warm restores
+  them). Above normal it runs the pressure ladder: at high every workspace
+  idle 2 minutes or more goes idle (stim revive resumes it), parked devices
+  are deleted, shared caches are trimmed, and workspaces idle 10 minutes or
+  more go dormant, losing their owned devices, and linked worktrees idle an
+  hour lose node_modules and Pods. At critical it also empties every shared
+  cache, removes clean pushed worktrees idle 7 days across projects, and, when
+  stim gc --pressure critical names the level or a measured critical still
+  leaves the disk under the critical level after the earlier rungs, cleans
+  other tools' caches (npm, Yarn, pnpm, CocoaPods, Gradle, SwiftPM). That includes the workspace
+  you run it from: an app you are not driving right now stops. It never
+  touches a workspace that is building, driven, leased, shared with stim
+  share, hosted or pinned by maintenance.keep. Run stim gc --dry-run first
+  (add --json for the sections) and show the user what it would delete
+  (guide facts gc); stim gc deletes, and --pressure <normal|high|critical>
+  picks the level. The CLI has no flag that picks one cache or item; Stim
+  Desktop does.
 - settings set daemon.mode on in a home where it is off or report, because
   it lets Stim itself stop idle workspaces and delete their outputs, devices
   and finished worktrees later, with no command from you.
