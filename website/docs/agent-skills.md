@@ -47,8 +47,8 @@ its simulator, Metro and slots, and leftover worktrees fill the disk. An agent
 that finishes before its pull request merges names the worktree path and the
 command in its final report, so whoever merges can remove it. Stim's own
 [cleanup of finished worktrees](./worktrees.md#remove-finished-worktrees-in-bulk)
-is the safety net, not the plan. The agent never removes a worktree it did not
-create and asks before `--force`.
+is the safety net, not the plan. The agent asks the user before removing a
+worktree it did not create and before `--force`.
 
 Upgrading Stim also upgrades the guidance. The static skill does not need to be
 reinstalled when commands or behavior change.
