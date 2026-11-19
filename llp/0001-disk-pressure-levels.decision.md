@@ -220,7 +220,9 @@ cannot be listed, always on Windows, that evidence cannot be read, so no
 output goes for dormancy there; ladder rung 1 still takes them under
 pressure, except a Cargo `target/` and a locked worktree's. Each output is
 measured before the workspace's native-run and metro-start claims are taken,
-checked again under them, and removed one at a time. A removal puts its parent
+checked again under them, and removed one at a time; a recognised Cargo
+`target/`, untagged included, goes whole under the checks of LLP 0005 (The
+dormant reduction deletes an idle target whole). A removal puts its parent
 directory's modification time back, so the next output and the dependency step
 do not read Stim's own removal as a source write. The Metro transform cache is
 not a dormant output: every worktree of the app shares it, so one idle

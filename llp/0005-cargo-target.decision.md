@@ -18,9 +18,10 @@ directories never count as that evidence. All three count in a registered
 workspace and in a discovered checkout (LLP 0004), and all three get the size
 cap and the pressure trims below.
 
-Only the first two are ever listed as build output, and only the idle stage,
-for an idle workspace whose dev server or devices it stops, deletes one whole.
-Before that it checks that the directory is real, inside its checkout, not a
+Only the first two are listed as build output. Two steps delete a `target/`
+whole: the idle stage, for an idle workspace whose dev server or devices it
+stops, deletes one of the first two, and the dormant reduction (below) deletes
+any of the three. Before that the idle stage checks that the directory is real, inside its checkout, not a
 mount point, holds no file git tracks and only files git ignores; that no PATH
 launcher resolves into the checkout; that no other process runs from or works
 in the app; and that it holds no copy a trim could not put back
@@ -30,15 +31,39 @@ not the whole-app process check; instead they keep each path a process
 executes from or holds open and each profile whose lock a build holds (below).
 
 Ladder rung 1, for a workspace with nothing running, leaves a `target/` to the
-trim of rung 3. The dormant reduction (`stim gc` and the daemon's hourly step)
-runs the trim below on every profile no build wrote for `idle.dormantDays`,
-under the trim claim and the profile lock checks, and leaves `.stim-trimmed`,
-`.stim-not-restored-*` and everything that is not a profile in place. A process
-running from or working in the checkout keeps all of it.
+trim of rung 3.
 
-Reason: a whole delete took the recovery data of a trim that could not put a
-directory back, and raced a Cargo build that holds a profile lock. Chosen by
-the coordinator and the review of #5966 (#5968), not by the maintainer.
+## The dormant reduction deletes an idle target whole
+
+The dormant reduction (`stim gc` and the daemon's hourly step) deletes every
+recognised `target/` whole, tagged, Exact app's and untagged alike, in a
+workspace or discovered checkout that has had no activity for
+`idle.dormantDays` by the full evidence, and whose worktree is not locked with
+`git worktree lock`. It runs the idle stage's checks above, the process check
+included, for all three kinds, then, under the workspace's claims and checked
+again right before the delete: the workspace is still idle, the directory is
+still a recognised `target/`, and no PATH launcher resolves into the checkout.
+Under the target's trim claim (below) it then keeps the `target/` whole when it
+holds a copy a trim could not put back, when a build wrote one of its profiles
+or Exact's ledger stamped one within `idle.dormantDays` or that cannot be told,
+when a process executes from or holds open a path in it, or when a build holds
+a profile's `.cargo-lock`, `.cargo-build-lock` or `.cargo-artifact-lock`.
+Nothing slow runs between that lock check and the delete, but the two are not
+atomic: a build that takes a profile lock in that instant loses its output.
+Report mode runs the checks that need no claim, the profile times among them,
+and reports the whole size.
+
+Maintainer decision: "lets full delete it instead of trim on idle", 2026-11-19
+(#5979). Reason: a trim by profile left everything that is not a profile, such
+as Exact's `clients/` and `web-js-modules/`, on an idle checkout, and left an
+untagged `target/` at its full size. Reason the size cap and the pressure trims
+stay trims: they also reach a `target/` in use.
+
+The profile-time gate, the trim claim around the delete and the
+non-atomic lock check were chosen by the coordinator and the review of #5979,
+not by the maintainer. Reason for the gate: the idle evidence skips writes in a
+`target/` git ignores, so a build that ran without a source edit is seen only
+in the profile times.
 
 Maintainer decision: "Yes leys have same rules for cargo as exact", 2026-11-19
 (#5958). Reason for the third kind: a Cargo `target/` can lack the root tag.
@@ -48,10 +73,11 @@ held `.rustc_info.json` and a profile with `.fingerprint`, and one carried the
 tag only in `target/wasm32-unknown-unknown/`. The check takes only Cargo's own
 files as evidence, so a project's `target/` folder that Cargo never wrote stays
 out. A `CACHEDIR.TAG` in a child is not evidence: it is a generic standard any
-tool may write. Reason the third kind is trimmed and never deleted whole: such
-a `target/` can also hold another tool's output, as Exact's `bake/` and `web/`
-are, and Cargo's files in it do not show the rest is build output; the trims
-remove only Cargo's profiles and keep the rest and any recovery copy.
+tool may write. Reason the third kind is never listed as build output: such a
+`target/` can also hold another tool's output, as Exact's `bake/` and `web/`
+are, and Cargo's files in it do not show the rest is build output, so the idle
+stage and the size cap remove only Cargo's profiles from it. Only the dormant
+reduction deletes it whole, under the maintainer decision below.
 
 ## The size cap
 
@@ -168,9 +194,10 @@ maintainer.
 
 ## Links
 
-- Issues: #5512, #5516, #5523, #5528, #5530. Pull requests: #5518, #5519,
+- Issues: #5512, #5516, #5523, #5528, #5530, #5979. Pull requests: #5518, #5519,
   #5527, #5539. Locking follow-up: #5542.
 - Code: `packages/stim-cli/src/workspace/cargo-target.ts`,
+  `packages/stim-cli/src/daemon/dormant-outputs.ts`,
   `packages/stim-cli/src/stimd/passes/cargo-target.ts`,
   `packages/stim-cli/src/stimd/passes/defer.ts`,
   `packages/stim-cli/src/daemon/ladder.ts` (`cargoTargetsStep`),
