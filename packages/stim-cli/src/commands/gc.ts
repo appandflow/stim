@@ -38,6 +38,7 @@ import { collectParkedHostedDevices } from './gc/hosted-devices.ts';
 import { collectHostedAppStorage } from './gc/hosted-apps.ts';
 import { collectFinishedDevices } from './gc/finished-devices.ts';
 import { collectGcMemory } from './gc/memory.ts';
+import { openGitReads } from '../workspace/git-reads.ts';
 import {
   collectDeviceRecords,
   collectProjectEasSessions,
@@ -314,8 +315,10 @@ export async function executeGc(
   const act = !opts.dryRun;
   const chosen = opts.pressure !== undefined;
   let log: GcLog | null = null;
+  let closeGitReads: (() => void) | undefined;
   try {
     declareSpawnsOn(deps.operation, claim);
+    closeGitReads = openGitReads(deps.operation);
     const run = await runMaintenanceAtLevel({
       level: opts.pressure,
       act,
@@ -348,6 +351,7 @@ export async function executeGc(
     }
     return { payload, exitCode: payload.failures ? 1 : 0 };
   } finally {
+    closeGitReads?.();
     stopDeclaringSpawnsOn(deps.operation, claim);
   }
 }

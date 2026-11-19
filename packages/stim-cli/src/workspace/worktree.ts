@@ -10,6 +10,7 @@ import { warmTrash } from './worktree-trash.ts';
 import { childEnvironment } from './git-read.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { clonefileHelper } from '../clonefile.ts';
+import { gitReadsOpen, sharedRead } from './git-reads.ts';
 
 const CARRY_SKIP_BASENAMES = new Set(['.DerivedData', '.DS_Store', '.idea', '.jj', '.pnpm-store']);
 
@@ -66,6 +67,21 @@ async function gitReadAsync(
   }
 }
 
+function readKey(dir: string, args: readonly string[], options: AsyncReadOptions): string {
+  return [
+    canonicalPath(dir),
+    options.timeoutThrows ? 'throws' : '',
+    options.untrimmed ? 'untrimmed' : '',
+    ...args,
+  ].join('\0');
+}
+
+/** `gitReadAsync`, answered once per open `git-reads` scope of `declareFor`; a removal check always asks git. */
+function sharedGitRead(dir: string, args: string[], options: AsyncReadOptions): Promise<string | null> {
+  if (options.removal) return gitReadAsync(dir, args, options);
+  return sharedRead(options.declareFor, readKey(dir, args, options), () => gitReadAsync(dir, args, options));
+}
+
 function gitRead(dir: string, args: string[], { removal }: ReadOptions): string | null {
   return removal ? removalCheck(dir, args) : gitQuiet(dir, args);
 }
@@ -75,8 +91,31 @@ export function gitCommonDir(cwd: string, opts: ReadOptions = {}): string | null
   return out ? nativePath(out.trim()) : null;
 }
 
+const CHECKOUT_PATHS = ['rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir', '--show-toplevel'];
+
+/**
+ * One of the paths `CHECKOUT_PATHS` prints, one per line in the order asked (git-rev-parse(1)), read once for all three
+ * in an open `git-reads` scope. `--show-toplevel` fails outside a work tree, a bare repository among them, so a failed
+ * or unexpected combined answer asks for the single path alone.
+ */
+async function checkoutPathAsync(
+  cwd: string,
+  index: 0 | 1 | 2,
+  single: string[],
+  options: AsyncReadOptions,
+): Promise<string | null> {
+  if (options.removal || !gitReadsOpen(options.declareFor)) return gitReadAsync(cwd, single, options);
+  const lines = (await sharedGitRead(cwd, CHECKOUT_PATHS, options))?.split('\n');
+  return lines?.length === 3 ? (lines[index] ?? null) : sharedGitRead(cwd, single, options);
+}
+
+export async function gitDirAsync(cwd: string, options: AsyncReadOptions = {}): Promise<string | null> {
+  const out = await checkoutPathAsync(cwd, 0, ['rev-parse', '--path-format=absolute', '--git-dir'], options);
+  return out ? out.trim() : null;
+}
+
 export async function gitCommonDirAsync(cwd: string, options: AsyncReadOptions = {}): Promise<string | null> {
-  const out = await gitReadAsync(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir'], options);
+  const out = await checkoutPathAsync(cwd, 1, ['rev-parse', '--path-format=absolute', '--git-common-dir'], options);
   return out ? nativePath(out.trim()) : null;
 }
 
@@ -86,7 +125,7 @@ export function repoRoot(cwd: string): string | null {
 }
 
 export async function repoRootAsync(cwd: string, options: AsyncReadOptions = {}): Promise<string | null> {
-  const out = await gitReadAsync(cwd, ['rev-parse', '--show-toplevel'], options);
+  const out = await checkoutPathAsync(cwd, 2, ['rev-parse', '--show-toplevel'], options);
   return out ? nativePath(out.trim()) : null;
 }
 
@@ -699,6 +738,36 @@ export async function hasUncommittedWorkAsync(dir: string, options: AsyncReadOpt
   return out.trim().length > 0;
 }
 
+export interface BranchStatus {
+  dirty: boolean;
+  /** The commit HEAD names, or null before the first commit. */
+  head: string | null;
+  /** The checked-out branch, or null on a detached HEAD. */
+  branch: string | null;
+}
+
+/**
+ * Whether the worktree has uncommitted work, with its HEAD commit and branch, from one `git status --porcelain=v2
+ * --branch`. git-status(1), "Porcelain Format Version 2", fixes the `# branch.oid <commit> | (initial)` and
+ * `# branch.head <branch> | (detached)` headers and starts every other line with an entry. Null when git cannot
+ * answer; throws when git times out.
+ */
+export async function branchStatusAsync(dir: string, options: AsyncReadOptions = {}): Promise<BranchStatus | null> {
+  const out = await removalCheckAsync(dir, ['status', '--porcelain=v2', '--branch'], options);
+  if (out === null) return null;
+  const status: BranchStatus = { dirty: false, head: null, branch: null };
+  for (const line of out.split('\n')) {
+    if (line.startsWith('# branch.oid ')) {
+      const oid = line.slice('# branch.oid '.length);
+      status.head = oid === '(initial)' ? null : oid;
+    } else if (line.startsWith('# branch.head ')) {
+      const name = line.slice('# branch.head '.length);
+      status.branch = name === '(detached)' ? null : name;
+    } else if (line && !line.startsWith('# ')) status.dirty = true;
+  }
+  return status;
+}
+
 /** The porcelain status lines, or null when git cannot answer; throws when git times out. */
 
 export async function dirtyPathsAsync(
@@ -722,12 +791,22 @@ function normalizePorcelainLine(line: string): string {
 
 const SAFE_BRANCH_NAME = /^[A-Za-z0-9@._/-]+$/;
 
-export async function unpushedCommitsAsync(dir: string, options: AsyncReadOptions = {}): Promise<string[] | null> {
-  const ref = await removalCheckAsync(dir, ['symbolic-ref', '--quiet', 'HEAD'], options);
-  const own = ref?.trim().startsWith('refs/heads/') ? ref.trim().slice('refs/heads/'.length) : '';
+/** `status` is the worktree's `branchStatusAsync` answer when the caller has one, which names its branch. */
+export async function unpushedCommitsAsync(
+  dir: string,
+  options: AsyncReadOptions = {},
+  read?: BranchStatus,
+): Promise<string[] | null> {
+  const status = read?.branch ? read : undefined;
+  const ref = status ? null : await removalCheckAsync(dir, ['symbolic-ref', '--quiet', 'HEAD'], options);
+  const own = status
+    ? status.branch
+    : ref?.trim().startsWith('refs/heads/')
+      ? ref.trim().slice('refs/heads/'.length)
+      : '';
   const protection =
     own && SAFE_BRANCH_NAME.test(own) ? ['--remotes', `--exclude=${own}`, '--branches'] : ['--remotes'];
-  if (!own && (await removalCheckAsync(dir, ['rev-parse', '--abbrev-ref', 'HEAD'], options)) === 'HEAD') {
+  if (!own && (status || (await removalCheckAsync(dir, ['rev-parse', '--abbrev-ref', 'HEAD'], options)) === 'HEAD')) {
     protection.push('--branches');
   }
   const out = await removalCheckAsync(dir, ['log', '--oneline', 'HEAD', '--not', ...protection], options);
@@ -938,9 +1017,36 @@ export function listWorktrees(cwd: string, opts: ReadOptions = {}): WorktreeEntr
   return out ? parseWorktrees(out) : [];
 }
 
+const LIST_WORKTREES = ['worktree', 'list', '--porcelain'];
+
+function commonDirOf(entry: WorktreeEntry): string | null {
+  if (!entry.bare) return gitCommonDirOnDisk(entry.path);
+  try {
+    return realpathSync.native(entry.path);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The worktrees git lists from `cwd`. In an open `git-reads` scope the answer also serves every listed worktree whose
+ * `.git` still leads to the repository's common directory: git prints the same list from any worktree of a repository.
+ */
 export async function listWorktreesAsync(cwd: string, options: AsyncReadOptions = {}): Promise<WorktreeEntry[]> {
-  const out = await gitReadAsync(cwd, ['worktree', 'list', '--porcelain'], options);
-  return out ? parseWorktrees(out) : [];
+  if (options.removal) {
+    const out = await gitReadAsync(cwd, LIST_WORKTREES, options);
+    return out ? parseWorktrees(out) : [];
+  }
+  const entries = await sharedRead(options.declareFor, readKey(cwd, LIST_WORKTREES, options), async (share) => {
+    const out = await gitReadAsync(cwd, LIST_WORKTREES, options);
+    const listed = out ? parseWorktrees(out) : [];
+    const common = listed[0] ? commonDirOf(listed[0]) : null;
+    for (const entry of listed)
+      if (common && !entry.prunable && commonDirOf(entry) === common)
+        share(readKey(entry.path, LIST_WORKTREES, options), Promise.resolve(listed));
+    return listed;
+  });
+  return [...entries];
 }
 
 function insideGitCheckout(root: string): boolean {
@@ -1091,7 +1197,7 @@ export async function resolveSourceCheckoutAsync(
   const entries = await listWorktreesAsync(cwd, options);
   const first = entries[0];
   const head = first?.bare
-    ? (await gitReadAsync(first.path, ['symbolic-ref', '--quiet', 'HEAD'], options))?.trim()
+    ? (await sharedGitRead(first.path, ['symbolic-ref', '--quiet', 'HEAD'], options))?.trim()
     : null;
   const branch = head?.startsWith('refs/heads/') ? head.slice('refs/heads/'.length) : null;
   return { entries, ...selectSourceCheckout(entries, branch) };

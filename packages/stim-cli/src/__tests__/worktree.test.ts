@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resetExecutor } from '../exec.ts';
 import {
+  branchStatusAsync,
   unpushedCommitsAsync,
   hasUncommittedWorkAsync,
   listWorktrees,
@@ -87,6 +88,39 @@ test('unpushedCommits against a real repo: commits inherited from a local-only b
     assert(unpushed, 'unpushedCommits returned null');
     expect(unpushed.length).toBe(1);
     expect(unpushed[0]).toMatch(/worktree-only commit/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('unpushedCommits with a status read reports a branch-only commit on a branch named (detached)', async () => {
+  resetExecutor();
+  const base = mkdtempSync(join(tmpdir(), 'stim-test-detached-name-'));
+  const repo = join(base, 'repo');
+  try {
+    const bareRemote = join(base, 'remote.git');
+    mkdirSync(bareRemote, { recursive: true });
+    execSync(`git init -q --bare "${bareRemote}"`);
+    mkdirSync(repo, { recursive: true });
+    const git = (cmd: string) => execSync(cmd, { cwd: repo, encoding: 'utf-8' });
+    git('git init -q -b main');
+    git('git config user.email test@example.com');
+    git('git config user.name test');
+    git(`git remote add origin "${bareRemote}"`);
+    writeFileSync(join(repo, 'README.md'), 'hello');
+    git('git add README.md');
+    git('git commit -q -m init');
+    git('git push -q -u origin main');
+    git("git checkout -q -b '(detached)'");
+    writeFileSync(join(repo, 'local.txt'), 'local only');
+    git('git add local.txt');
+    git('git commit -q -m "branch-only commit"');
+
+    const status = await branchStatusAsync(repo);
+    assert(status, 'branchStatusAsync returned null');
+    const unpushed = await unpushedCommitsAsync(repo, {}, status);
+    assert(unpushed, 'unpushedCommits returned null');
+    expect(unpushed.length).toBe(1);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }

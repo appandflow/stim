@@ -46,6 +46,7 @@ import { sourceDependenciesDue } from '../policy/checkout-order.ts';
 import { warmedFromAt } from '../workspace/source-dependencies.ts';
 import type { Config } from '../workspace/config.ts';
 import { timedStep, type DaemonLog } from './step-timing.ts';
+import { forgetGitReads } from '../workspace/git-reads.ts';
 
 /**
  * The private bytes above which deleting a node_modules or Pods tree is worth a `stim worktree warm` or reinstall.
@@ -456,6 +457,7 @@ export async function clearSourceDependencies(
   operation?: StimContext,
   setting?: string,
 ): Promise<TreeResult[]> {
+  forgetGitReads(operation);
   const launchers = freshLaunchers(operation, operation?.signal);
   try {
     const results = await clearSourceTrees(

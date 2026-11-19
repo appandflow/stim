@@ -52,6 +52,7 @@ import {
 } from '../workspace/settings.ts';
 import { readWorkspaceState, updateWorkspaceStateAsync } from '../workspace/workspace-state.ts';
 import type { DaemonLog } from './step-timing.ts';
+import { forgetGitReads } from '../workspace/git-reads.ts';
 
 const MINUTE_MS = 60_000;
 const SIZE_TIMEOUT_MS = 60_000;
@@ -297,6 +298,7 @@ async function enterIdleStage(
   config: Config,
   input: IdlePassInput,
 ): Promise<{ outcome: DaemonWorkspaceDecision['outcome']; detail: string; freedBytes?: number }> {
+  forgetGitReads(input.operation);
   const run = await withIdleWorkspace(
     path,
     async () => {

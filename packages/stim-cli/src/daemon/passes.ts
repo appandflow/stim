@@ -14,6 +14,7 @@ import { processContext } from '../cli-operation.ts';
 import { runMaintenance } from '../stimd/passes/run.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { checkoutRootOf } from '../workspace/checkout-role.ts';
+import { forgetGitReads, openGitReads } from '../workspace/git-reads.ts';
 import { freshLaunchers, launchersOf, launchingOf, logLauncherProblems } from '../workspace/launchers.ts';
 import { loadConfig, type Config } from '../workspace/config.ts';
 import { requestDaemonTick, stimdRefused } from './client.ts';
@@ -103,21 +104,29 @@ function ladderDue(last: LadderPass, pressure: DaemonPressure, volumes: LadderPa
  * measured volume is new, lost 1 GB or reached a higher level since that pass, or `requested` says a command asked for
  * this tick.
  */
-export async function runHomePasses({
-  act,
-  log,
-  memoryWarningSince = null,
-  signal,
-  lastLadder = null,
-  requested = false,
-}: {
+export async function runHomePasses(input: HomePassesInput): Promise<HomePasses> {
+  const operation = processContext(process.cwd(), input.signal ?? new AbortController().signal);
+  const closeGitReads = openGitReads(operation);
+  try {
+    return await homePasses(input, operation);
+  } finally {
+    closeGitReads();
+  }
+}
+
+interface HomePassesInput {
   act: boolean;
   log: IdlePassInput['log'];
   memoryWarningSince?: string | null;
   signal?: AbortSignal;
   lastLadder?: LadderPass | null;
   requested?: boolean;
-}): Promise<HomePasses> {
+}
+
+async function homePasses(
+  { act, log, memoryWarningSince = null, lastLadder = null, requested = false }: HomePassesInput,
+  operation: StimContext,
+): Promise<HomePasses> {
   let mark = performance.now();
   const lap = () => {
     const at = performance.now();
@@ -127,7 +136,6 @@ export async function runHomePasses({
   };
   const config = loadConfig();
   const now = Date.now();
-  const operation = processContext(process.cwd(), signal ?? new AbortController().signal);
   const measured = await measureTick(config, now, { signal: operation.signal, operation });
   operation.signal.throwIfAborted();
   const measureMs = lap();
@@ -199,6 +207,7 @@ export async function runHomePasses({
         )),
   ];
   const idleMs = lap();
+  if (act) forgetGitReads(operation);
   const reading = { devices: measured.devices, simsFailed: measured.sims === null, operation };
   actions.push(...(await runDormantPass({ config, act, log, ...reading })));
   operation.signal.throwIfAborted();
@@ -410,7 +419,7 @@ async function runCommandLadder(
         config,
         act: mode === 'on',
         log: (level, event, msg, fields = {}) => {
-          if (headroom && event === 'pressure_action') headroom.acted = true;
+          if (headroom && event === 'pressure_action' && !fields.unsized) headroom.acted = true;
           writer.write({ src: trigger, level, event, msg, ...fields });
         },
         devices: measured.devices,

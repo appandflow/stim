@@ -448,7 +448,7 @@ export function pruneCache(
     if (evictBytes !== undefined && bytes >= evictBytes) break;
     try {
       if (!existsSync(entry) || Math.max(statSync(entry).mtimeMs, cache.lastUse?.(entry) ?? 0) >= cutoff) continue;
-      const entryBytes = isDirectory ? directorySize(entry, { timeoutMs: 'unbounded' }) : size;
+      const entryBytes = isDirectory ? directorySize(entry, { timeoutMs: 'unbounded', root: cache.dir }) : size;
       if ((cache.lastUse?.(entry, true) ?? 0) >= cutoff) continue;
       const busy = cache.inUse?.();
       if (busy) {
@@ -503,7 +503,12 @@ export async function pruneCacheAsync(
       const st = await stat(entry);
       if (Math.max(st.atimeMs, st.mtimeMs) >= cutoff) continue;
       const size = st.isDirectory()
-        ? await measuredDirectorySizeAsync(entry, { timeoutMs: CACHE_SIZE_TIMEOUT_MS, signal, operation })
+        ? await measuredDirectorySizeAsync(entry, {
+            timeoutMs: CACHE_SIZE_TIMEOUT_MS,
+            signal,
+            operation,
+            root: cache.dir,
+          })
         : st.size;
       signal?.throwIfAborted();
       if ((await stat(entry)).mtimeMs >= cutoff) continue;
