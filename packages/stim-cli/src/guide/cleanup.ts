@@ -617,7 +617,8 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
 
   The dormant reduction and the dormant stage are the same work: a workspace
   with no activity for idle.dormantDays is reduced to its minimal size, by
-  stim gc at every level and by the stim-daemon. Its node_modules and
+  stim gc at every level and by the stim-daemon, which deletes build outputs
+  only in its pressure ladder. Its node_modules and
   ios/Pods go only in a linked worktree, are recorded, and the next Stim
   command in it restores them with \`stim worktree warm\`, or, when warm cannot
   restore the same versions (its lockfile differs from the source checkout's,

@@ -2690,8 +2690,9 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
 
   DORMANT STAGE: a workspace with nothing running and no activity for
   idle.dormantDays (1; fractions allowed; 0 never) goes dormant and is
-  reduced to its minimal size, at every level, by \`stim gc\` and by the
-  stim-daemon: its regenerable build outputs are deleted (WORKSPACE BUILD
+  reduced to its minimal size at every level by \`stim gc\` and the
+  stim-daemon (build outputs only in its pressure ladder): its regenerable
+  build outputs are deleted (WORKSPACE BUILD
   OUTPUTS in \`guide cleanup disk\`), its owned simulators and emulators are
   deleted through centralized teardown (the parked pool is untouched), its
   logs are archived when archive.enabled is on, and, for a linked worktree,
