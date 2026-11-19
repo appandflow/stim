@@ -1,5 +1,5 @@
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync, type Dirent } from 'node:fs';
-import { link, lstat, mkdir, readdir, rename, rm, rmdir, unlink, writeFile } from 'node:fs/promises';
+import { link, lstat, mkdir, readdir, rename, rm, rmdir, unlink, utimes, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { cargoTargetTrimClaims } from '@stim-cli/core/state';
 import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-claim.ts';
@@ -45,6 +45,18 @@ export function targetEntries(target: string): { output: string[]; kept: string[
     (entry.isSymbolicLink() || keypairs ? kept : output).push(entry.name);
   }
   return { output, kept };
+}
+
+/**
+ * The top-level entries of `target` the dormant delete would remove: `targetEntries`' output, and a `.stim-trimmed`
+ * staging directory an earlier delete committed but did not finish removing. Null when `target` cannot be listed.
+ */
+export function removableEntries(target: string): string[] | null {
+  const entries = targetEntries(target);
+  if (!entries) return null;
+  return lstatSync(join(target, ASIDE), { throwIfNoEntry: false })?.isDirectory()
+    ? [...entries.output, ASIDE]
+    : entries.output;
 }
 
 /** Whether the directory at `path` holds a `*-keypair.json`, or cannot be read to tell. */
@@ -553,19 +565,16 @@ async function deleteClaimed(
   const blocked =
     recoveryReason(target) ?? recentTargetUse(target, Date.now(), idleMs) ?? mountedUnder(target, mountInfo);
   if (blocked) return keep(blocked);
-  const { dev } = await lstat(target);
+  const { dev, atime, mtime } = await lstat(target);
+  const keepTimes = () => utimes(target, atime, mtime).catch(() => {});
   const aside = join(target, ASIDE);
-  const leftover = await removeOnDevice(aside, dev);
-  if (leftover.length) return keep(`${leftover[0]} is another filesystem`);
   const entries = targetEntries(target);
   if (!entries) return keep(`${target} cannot be listed`);
   // @ref LLP 0005#the-dormant-reduction-deletes-an-idle-target-whole -- everything goes but a Solana keypair folder
   const names = entries.output;
-  if (!names.length) return result;
-  const mount = await otherDevice(
-    names.map((name) => join(target, name)),
-    dev,
-  );
+  const committed = lstatSync(aside, { throwIfNoEntry: false })?.isDirectory() === true;
+  if (!names.length && !committed) return result;
+  const mount = await otherDevice([...names.map((name) => join(target, name)), ...(committed ? [aside] : [])], dev);
   if (mount) return keep(`${mount} is another filesystem`);
   const first = await readTargetUse(target, launching, signal);
   if ('kept' in first) return keep(first.kept);
@@ -578,11 +587,20 @@ async function deleteClaimed(
   }
   const exactHeld = await heldExactLock(target, signal);
   if (exactHeld) return keep(`a build holds ${exactHeld}`);
+  if (committed) {
+    const leftover = await removeOnDevice(aside, dev);
+    if (leftover.length) return keep(`${leftover[0]} is another filesystem`);
+    result.removed.push(ASIDE);
+  }
+  if (!names.length) {
+    await rmdir(target).catch(keepTimes);
+    return result;
+  }
   type Entry = { dir: string; there: string; name: string };
   const moved: Entry[] = [];
   const unmoved = [...entries.kept];
   const marker = join(aside, STRANDED);
-  const putBackAll = async (why: string): Promise<CargoTrimResult> => {
+  const putBackAll = async (why: string, written = false): Promise<CargoTrimResult> => {
     const stranded: string[] = [];
     let marked = false;
     for (let entry = moved.pop(); entry !== undefined; entry = moved.pop()) {
@@ -596,6 +614,7 @@ async function deleteClaimed(
     if (!marked) {
       await rm(marker, { force: true });
       await rmdir(aside).catch(() => {});
+      if (!written) await keepTimes();
     }
     return { ...result, bytes: 0, kept: [...result.kept, `${why}${left}`] };
   };
@@ -629,17 +648,17 @@ async function deleteClaimed(
     const now = Date.now();
     for (const entry of moved) {
       if (entry.name === KEYPAIR_DIR && holdsKeypair(entry.there))
-        return await putBackAll(`${entry.dir} holds a Solana keypair now`);
+        return await putBackAll(`${entry.dir} holds a Solana keypair now`, true);
       const used = recentEntryUse(entry.there, entry.name, now, idleMs);
-      if (used) return await putBackAll(`${entry.dir} was used during the move: ${used}`);
+      if (used) return await putBackAll(`${entry.dir} was used during the move: ${used}`, true);
     }
     const listed = entriesOf(target);
     if (!listed) return await putBackAll(`${target} cannot be listed`);
     const appeared = listed.find(({ name }) => !name.startsWith(OWN_PREFIX) && !unmoved.includes(name));
-    if (appeared) return await putBackAll(`${join(target, appeared.name)} appeared during the move`);
+    if (appeared) return await putBackAll(`${join(target, appeared.name)} appeared during the move`, true);
     for (const name of unmoved) {
       const used = recentEntryUse(join(target, name), name, now, idleMs);
-      if (used) return await putBackAll(`${join(target, name)} was used during the move: ${used}`);
+      if (used) return await putBackAll(`${join(target, name)} was used during the move: ${used}`, true);
     }
     const mounted = mountedUnder(target, mountInfo);
     if (mounted) return await putBackAll(mounted);
@@ -649,11 +668,15 @@ async function deleteClaimed(
     throw error;
   }
   result.removed.push(...moved.map(({ name }) => name));
-  const stuck = await removeOnDevice(aside, dev);
-  if (stuck.length) {
-    await writeFile(join(aside, STRANDED), '').catch(() => {});
-    result.deleteError = `${stuck.join(', ')} is another filesystem; a person must unmount it and delete ${aside}`;
-  } else await rmdir(target).catch(() => {});
+  try {
+    const stuck = await removeOnDevice(aside, dev);
+    if (stuck.length) {
+      await writeFile(join(aside, STRANDED), '').catch(() => {});
+      result.deleteError = `${stuck.join(', ')} is another filesystem; a person must unmount it and delete ${aside}`;
+    } else await rmdir(target).catch(() => {});
+  } finally {
+    if (existsSync(target)) await keepTimes();
+  }
   return result;
 }
 

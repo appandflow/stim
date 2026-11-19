@@ -102,7 +102,14 @@ cannot be renamed, such as one on another device (`EXDEV`), stays and the rest
 goes. The moved entries are deleted without entering a directory on another
 device, and the emptied `target/` goes too. Report mode runs the checks that
 need no claim, the use dating among them, and reports the size of what would
-go, and gc names a `target/` it keeps and why.
+go, and gc names a `target/` it keeps and why. Putting entries back after a
+cancellation, an error, a lock or a process, and a delete that ends with entries
+left, give the `target/` its own modification time back, so Stim's own moves
+do not count as use on the next run; a rollback caused by a write or a new
+entry does not. A `target/` holding a `.stim-trimmed` directory counts as a
+recognised `target/` even when its Cargo files were staged: a staging tree
+whose marker is cleared was committed for deletion, and the next run removes
+it after the same idle, process, lock and mount checks.
 
 Maintainer decision: "lets full delete it instead of trim on idle", 2026-11-19
 (#5979). Reason: a trim by profile left everything that is not a profile, such

@@ -31,6 +31,7 @@ const fsHooks = vi.hoisted(
   (): {
     rename?: (from: string) => void | Promise<void>;
     link?: (to: string) => void;
+    unlink?: (path: string) => void;
     dev?: (path: string) => number | undefined;
   } => ({}),
 );
@@ -41,6 +42,10 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     rename: async (...args: Parameters<typeof fs.rename>) => {
       await fsHooks.rename?.(String(args[0]));
       return fs.rename(...args);
+    },
+    unlink: async (...args: Parameters<typeof fs.unlink>) => {
+      fsHooks.unlink?.(String(args[0]));
+      return fs.unlink(...args);
     },
     link: async (...args: Parameters<typeof fs.link>) => {
       fsHooks.link?.(String(args[1]));
@@ -424,6 +429,7 @@ describe.skipIf(process.platform === 'win32')(
       delete fsHooks.rename;
       delete fsHooks.dev;
       delete fsHooks.link;
+      delete fsHooks.unlink;
     });
     const remove = () => deleteCargoTarget(dir, { idleMs: DAY, launching: noLaunchers(target) });
 
@@ -748,8 +754,25 @@ describe.skipIf(process.platform === 'win32')(
 
       expect(readdirSync(dir).toSorted()).toEqual(['.rustc_info.json', 'CACHEDIR.TAG', 'debug', 'doc']);
       stubProcesses({});
-      ageTree(dir);
       expect((await remove()).kept).toEqual([]);
+      expect(existsSync(dir)).toBe(false);
+    });
+
+    test('a tagged target whose final delete fails is finished by the next run', async () => {
+      rmSync(join(target, 'Cargo.toml'));
+      writeFileSync(join(dir, 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55\n');
+      ageTree(dir);
+      fsHooks.unlink = (path) => {
+        if (path.endsWith('/app')) throw Object.assign(new Error('EPERM: operation not permitted'), { code: 'EPERM' });
+      };
+
+      await expect(remove()).rejects.toThrow('EPERM');
+      expect(readdirSync(dir)).toEqual(['.stim-trimmed']);
+
+      delete fsHooks.unlink;
+      const result = await remove();
+
+      expect(result.removed).toEqual(['.stim-trimmed']);
       expect(existsSync(dir)).toBe(false);
     });
 
