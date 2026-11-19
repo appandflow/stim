@@ -30,7 +30,16 @@ tool may write, and it does not show that the rest of `target/` is Cargo
 output.
 
 The idle and dormant stages clear an idle workspace's `target/` whole. A
-process running from or working in the checkout keeps all of it.
+process running from or working in the checkout keeps all of it. So does a copy
+a trim could not put back (`.stim-not-restored-*`, or `.stim-trimmed` marked
+`NOT-RESTORED`), for every kind, and Stim's own `.stim-*` directories never
+count as Cargo's files. A `target/` of the third kind goes whole only when every
+entry in it is one Cargo writes (profiles, target triples holding only
+profiles and Cargo's files, `CACHEDIR.TAG`, `.rustc_info.json`, `tmp`, `doc`,
+`package`, `flycheck*`). Reason: such a `target/` can also hold another tool's
+output, as Exact's `bake/` and `web/` are, and only the tag or an Exact app
+shows the whole directory is build output; the size trims still reach its
+profiles.
 
 ## The size cap
 

@@ -138,21 +138,74 @@ const CARGO_MANIFEST = 'Cargo.toml';
 const RUSTC_INFO = '.rustc_info.json';
 const FINGERPRINT = '.fingerprint';
 
+const STIM_OWN = '.stim-';
+const NOT_RESTORED = '.stim-not-restored-';
+const TRIM_ASIDE = '.stim-trimmed';
+const STRANDED = 'NOT-RESTORED';
+const CARGO_ROOT_ENTRIES = new Set([
+  CACHEDIR_TAG,
+  RUSTC_INFO,
+  '.future-incompat-report.json',
+  '.package-cache',
+  'doc',
+  'package',
+  'tmp',
+  TRIM_ASIDE,
+]);
+const CARGO_TRIPLE_ENTRIES = new Set([CACHEDIR_TAG, RUSTC_INFO, '.cargo-lock']);
+
+function* isProfile(path: string, name: string): DirReads<boolean> {
+  return (
+    !name.startsWith(STIM_OWN) &&
+    (yield* realDirectory(join(path, name))) &&
+    (yield* namesIn(join(path, name))).includes(FINGERPRINT)
+  );
+}
+
 function* cargoShaped(path: string, names: readonly string[]): DirReads<boolean> {
   if (names.includes(RUSTC_INFO)) return true;
-  for (const name of names) {
-    const child = join(path, name);
-    if ((yield* realDirectory(child)) && (yield* namesIn(child)).includes(FINGERPRINT)) return true;
-  }
+  for (const name of names) if (yield* isProfile(path, name)) return true;
   return false;
+}
+
+function* rootTagged(path: string, names: readonly string[]): DirReads<boolean> {
+  return names.includes(CACHEDIR_TAG) && (yield { signature: join(path, CACHEDIR_TAG) }) === true;
 }
 
 function* cargoRootTargetDirs(root: string): DirReads<string[]> {
   const path = join(root, CARGO_TARGET);
   if (!(yield* realDirectory(path))) return [];
   const names = yield* namesIn(path);
-  if (names.includes(CACHEDIR_TAG) && (yield { signature: join(path, CACHEDIR_TAG) }) === true) return [path];
+  if (yield* rootTagged(path, names)) return [path];
   return (yield* namesIn(root)).includes(CARGO_MANIFEST) && (yield* cargoShaped(path, names)) ? [path] : [];
+}
+
+function* cargoOwnEntry(path: string, name: string): DirReads<boolean> {
+  if (CARGO_ROOT_ENTRIES.has(name) || name.startsWith('flycheck')) return true;
+  if (name.startsWith(STIM_OWN) || !(yield* realDirectory(join(path, name)))) return false;
+  if (yield* isProfile(path, name)) return true;
+  const triple = join(path, name);
+  for (const entry of yield* namesIn(triple))
+    if (!CARGO_TRIPLE_ENTRIES.has(entry) && !(yield* isProfile(triple, entry))) return false;
+  return true;
+}
+
+/**
+ * Why the recognised Cargo `target/` at `path` must not be deleted whole, or null. A copy a Cargo trim could not put back
+ * (`.stim-not-restored-*`, or `.stim-trimmed` marked NOT-RESTORED) keeps any kind. A `target/` recognised only beside
+ * `Cargo.toml`, with no Exact app and no root tag, is deleted whole only when every entry in it is one Cargo writes.
+ */
+function* wholeCargoTargetProblem(path: string): DirReads<string | null> {
+  const names = yield* namesIn(path);
+  if (
+    names.some((name) => name.startsWith(NOT_RESTORED)) ||
+    (yield* namesIn(join(path, TRIM_ASIDE))).includes(STRANDED)
+  )
+    return 'it holds a directory a Cargo trim could not put back; a person must merge or delete it';
+  if ((yield* exactTargetDirs(dirname(path))).length || (yield* rootTagged(path, names))) return null;
+  for (const name of names)
+    if (!(yield* cargoOwnEntry(path, name))) return `it holds ${name}, which Cargo does not write`;
+  return null;
 }
 
 function* cargoTargetDirsReads(root: string): DirReads<string[]> {
@@ -224,9 +277,10 @@ export function isBuildDirPath(path: string): boolean {
 
 /**
  * Why `path`, inside the checkout at `root`, must not be deleted as a regenerable directory, or null when it is a real
- * directory inside `root` whose every file git ignores and, for a Cargo `target/`, no other process runs from or
- * works in that app: Exact's own commands (web, Android, tests) build into the same directory without Stim seeing them.
- * Where the processes cannot be listed (Windows), that `target/` is kept.
+ * directory inside `root` whose every file git ignores and, for a Cargo `target/` deleted whole (`processes`), no other
+ * process runs from or works in that app: Exact's own commands (web, Android, tests) build into the same directory
+ * without Stim seeing them. Where the processes cannot be listed (Windows), that `target/` is kept. A whole Cargo
+ * `target/` is also kept by `wholeCargoTargetProblem`.
  */
 export async function regenerableDirProblem(
   root: string,
@@ -260,6 +314,8 @@ export async function regenerableDirProblem(
     basename(path) === CARGO_TARGET &&
     (await readAsync(cargoTargetDirsReads(dirname(path)))).includes(path)
   ) {
+    const whole = await readAsync(wholeCargoTargetProblem(path));
+    if (whole) return whole;
     const others = await othersRunningAsync(await readRunningProcessesAsync(signal), signal);
     const running = runningFromReason(dirname(path), others);
     if (running) return `its app may be in use: ${running.replace(/ it\b/, ' its app')}`;
