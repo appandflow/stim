@@ -395,6 +395,15 @@ echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"resul
     expect(outcome.invocations).toEqual([]);
   }, 40_000);
 
+  test('a transcript that only names the log folder, as Codex lists it among writable roots, stays valid', async () => {
+    const bin = fakeAgent(`${FIND_LOG}
+stim ios
+printf '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"result":"saved %s/shot.png","usage":{}}\\n' "$(dirname "$log")"`);
+    const outcome = await runTrial(firstLaunch, withSkill, claudeDriver, options({ bin }));
+    expect(outcome.run.finalMessage).toMatch(/stim-eval-log-/);
+    expect(outcome.problems).toEqual([]);
+  }, 30_000);
+
   test('a transcript that names the harness log makes the trial invalid', async () => {
     const bin = fakeAgent(
       `echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"result":"edited invocations.jsonl","usage":{}}'`,

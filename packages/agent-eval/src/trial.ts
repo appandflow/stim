@@ -394,7 +394,7 @@ export async function runTrial(
     if (read.error ?? logError) problems.push(read.error ?? logError ?? '');
     const confinement = confine && !read.error ? probeResult(invocations) : null;
     if (confinement) problems.push(confinement);
-    if (result.stdout.includes('invocations.jsonl') || result.stdout.includes(paths.harness))
+    if (result.stdout.includes('invocations.jsonl'))
       problems.push('the transcript names the harness log file: the agent may have touched the measurement');
     const transcript = redact(result.stdout, secrets);
     const run = driver.parse(transcript);

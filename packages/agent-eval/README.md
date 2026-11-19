@@ -190,8 +190,9 @@ and the guide's scratch Stim home sit in their own temporary folder (`stim-eval-
 not next to the workspace, so an agent that lists `..` does not find them; the path is in
 `stim-eval.json`. A
 malformed log line makes the trial invalid, and a transcript that names
-`invocations.jsonl` or the harness directory makes it invalid, but a careful forgery
-would not be noticed.
+`invocations.jsonl` makes it invalid, but a careful forgery would not be noticed.
+Codex lists its writable folders, the log folder among them, to the model, so an agent
+may save a screenshot there; naming the folder alone does not invalidate a trial.
 
 ## What the runner writes or deletes outside the trial directory
 
