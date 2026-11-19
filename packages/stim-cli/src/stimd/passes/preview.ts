@@ -75,7 +75,6 @@ export async function plannedMaintenance(
     operation,
     deviceActivity,
     cargoLevel,
-    lowPriority = false,
   }: {
     devices?: boolean;
     /** Plans the cap trims of the recorded sizes. */
@@ -92,8 +91,6 @@ export async function plannedMaintenance(
     cargoLevel?: PressureLevel;
     /** Reads owned device activity for an operation, such as from the daemon tick's measurement. */
     deviceActivity?: (withSims: boolean) => Promise<OwnedDeviceActivity[]>;
-    /** Measures the Cargo target trims with `lowPriority`, for work nobody waits on. */
-    lowPriority?: boolean;
   } = {},
 ): Promise<PlannedMaintenance> {
   const env = operation?.env ?? process.env;
@@ -221,7 +218,6 @@ export async function plannedMaintenance(
       pinned,
       now: Date.now(),
       signal: operation?.signal,
-      lowPriority,
       ...(cargoLevel ? { level: cargoLevel } : {}),
     });
     merge('caps', {

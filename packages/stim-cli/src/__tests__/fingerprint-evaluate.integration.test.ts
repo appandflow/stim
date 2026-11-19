@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpath
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { describe, expect, test, vi } from 'vitest';
-import { getExecutor, setExecutor } from '../exec.ts';
+import { getExecutor, runMaintenanceWork, setExecutor } from '../exec.ts';
 import { readFingerprint, runFingerprintPrecompute, runFingerprintVerification } from '../fingerprint-precompute.ts';
 import { fingerprintPendingVerifyDir } from '@stim-cli/core/state';
 import { writeWorkspaceEnv } from '../fingerprint/index-store.ts';
@@ -974,7 +974,7 @@ describe.skipIf(process.platform === 'win32')('fingerprint child priority', () =
     });
 
   test(
-    'a fingerprint a build reads runs at the caller priority, and the daemon precompute and queued verification run throttled at normal pressure',
+    'a fingerprint a build reads runs at the caller priority, and the precompute and queued verification the maintenance lane runs are throttled at normal pressure',
     SLOW,
     async () => {
       const own = priority(process.pid);
@@ -991,12 +991,11 @@ describe.skipIf(process.platform === 'win32')('fingerprint child priority', () =
       const precomputeRoot = app(precomputed);
       writeWorkspaceEnv(precomputeRoot, workspaceEnv(baseEnv()));
       expect(
-        await runFingerprintPrecompute(
-          testContext({ projectRoot: precomputeRoot, cwd: precomputeRoot, env: baseEnv() }),
-          {
+        await runMaintenanceWork(undefined, () =>
+          runFingerprintPrecompute(testContext({ projectRoot: precomputeRoot, cwd: precomputeRoot, env: baseEnv() }), {
             root: precomputeRoot,
             platform: 'ios',
-          },
+          }),
         ),
       ).toEqual({ outcome: 'recorded' });
       const verified = join(dir, 'verified');
@@ -1014,11 +1013,13 @@ describe.skipIf(process.platform === 'win32')('fingerprint child priority', () =
           envRef: { id: 'fixture', digest: writeWorkspaceEnv(verifyRoot, workspaceEnv(baseEnv())) },
         }),
       );
-      await runFingerprintVerification(testContext({ projectRoot: verifyRoot, cwd: verifyRoot, env: baseEnv() }), {
-        root: verifyRoot,
-        platform: 'ios',
-        pendingFile: 'pending.json',
-      });
+      await runMaintenanceWork(undefined, () =>
+        runFingerprintVerification(testContext({ projectRoot: verifyRoot, cwd: verifyRoot, env: baseEnv() }), {
+          root: verifyRoot,
+          platform: 'ios',
+          pendingFile: 'pending.json',
+        }),
+      );
       const lowered = recorded(precomputed);
       expect(recorded(read)).toEqual(own);
       expect(recorded(verified)).toEqual(lowered);

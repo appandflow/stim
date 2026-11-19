@@ -1,3 +1,4 @@
+import { runMaintenanceWork } from '../exec.ts';
 import { isClaimUnavailable, releaseClaim, tryAcquireClaim, type ClaimHandle } from '@stim-cli/core/ownership-claim';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { LOG_ROTATE_BYTES, type StimContext } from '@stim-cli/core';
@@ -162,28 +163,30 @@ async function homePasses(
   );
   operation.signal.throwIfAborted();
   const workspaces = await watchedStep(log, 'idle_stage', () =>
-    runIdlePass({
-      config,
-      now,
-      sims: measured.sims,
-      simsError: measured.simsError,
-      devices: measured.devices,
-      act,
-      log,
-      operation,
-      ...(pressure.level === 'normal'
-        ? {}
-        : {
-            pressure: {
-              level: pressure.level,
-              reasons: pressure.reasons,
-              // @ref LLP 0001#each-rung-frees-only-the-volumes-under-pressure -- memory pressure idles every workspace
-              ...(pressure.memory === 'normal'
-                ? { volumes: shortVolumeDevices(measured.measurement.disk, thresholds, 'high') }
-                : {}),
-            },
-          }),
-    }),
+    runMaintenanceWork(pressure.level, () =>
+      runIdlePass({
+        config,
+        now,
+        sims: measured.sims,
+        simsError: measured.simsError,
+        devices: measured.devices,
+        act,
+        log,
+        operation,
+        ...(pressure.level === 'normal'
+          ? {}
+          : {
+              pressure: {
+                level: pressure.level,
+                reasons: pressure.reasons,
+                // @ref LLP 0001#each-rung-frees-only-the-volumes-under-pressure -- memory pressure idles every workspace
+                ...(pressure.memory === 'normal'
+                  ? { volumes: shortVolumeDevices(measured.measurement.disk, thresholds, 'high') }
+                  : {}),
+              },
+            }),
+      }),
+    ),
   );
   operation.signal.throwIfAborted();
   const actions: DaemonLadderAction[] = [
@@ -210,7 +213,7 @@ async function homePasses(
   const idleMs = lap();
   if (act) forgetGitReads(operation);
   const reading = { devices: measured.devices, simsFailed: measured.sims === null, operation };
-  actions.push(...(await runDormantPass({ config, act, log, ...reading })));
+  actions.push(...(await runMaintenanceWork(pressure.level, () => runDormantPass({ config, act, log, ...reading }))));
   operation.signal.throwIfAborted();
   const dormantMs = lap();
   let ladderPass: LadderPass | null = null;
@@ -327,7 +330,7 @@ export function createMaintenanceLane(
       };
       const loopDelay = monitorEventLoopDelay();
       loopDelay.enable();
-      current = (async () => {
+      current = runMaintenanceWork(pressure.level, async () => {
         const reading = { devices: measured.devices, simsFailed: measured.sims === null, operation };
         await watchedStep(log, 'fingerprint_precompute', () =>
           precompute.run({ config, workspaces, pressure, operation }, act),
@@ -355,7 +358,7 @@ export function createMaintenanceLane(
           },
           ...(skipped ? { skipped } : {}),
         });
-      })()
+      })
         .catch((error: unknown) => {
           const cleanup = error instanceof Error && 'reportCleanup' in error;
           if (cleanup) failure = error;

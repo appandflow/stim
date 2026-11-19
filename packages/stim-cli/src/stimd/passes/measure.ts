@@ -109,14 +109,12 @@ export async function measureSizes(
   failure: (target: string, workspace?: string) => void,
   operation?: StimContext,
   discovered?: CacheDescriptor[],
-  lowPriority = false,
 ): Promise<MaintenanceSize[]> {
   const sizes: MaintenanceSize[] = [];
   const outputs = await collectWorkspaceOutputs({
     olderThan: null,
     now,
     sizeTimeoutMs: 120_000,
-    lowPriority,
     ...(operation ? { signal: operation.signal, operation } : {}),
   });
   for (const entry of outputs.workspaces) {
@@ -177,7 +175,6 @@ export async function measureSizes(
     if (!existsSync(entry.dir)) continue;
     const bytes = await measuredDirectorySizeAsync(entry.dir, {
       timeoutMs: 120_000,
-      lowPriority,
       ...(operation ? { signal: operation.signal, operation } : {}),
     });
     if (bytes === null) {

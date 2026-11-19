@@ -4,7 +4,8 @@ import which from 'which';
 import { basename, delimiter, join, resolve as resolvePath, win32 } from 'path';
 import { randomUUID } from 'node:crypto';
 import { existsSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { constants, setPriority, tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { ambientEnv, ambientContext, type StimContext } from '@stim-cli/core';
@@ -12,7 +13,14 @@ import { spawnDeclared } from './engine/spawn-claims.ts';
 import { operationState } from './engine/operation-state.ts';
 import { WorkspaceProcessCleanupError } from './engine/workspace-process-lock.ts';
 import { groupExitBudgetMs, waitForGroupExit } from './process-group-exit.ts';
-import { readDaemonSnapshot, redactArgv, redactCommandLine, tailscaleEnv, trace } from '@stim-cli/core/state';
+import {
+  readDaemonSnapshot,
+  redactArgv,
+  redactCommandLine,
+  tailscaleEnv,
+  trace,
+  type PressureLevel,
+} from '@stim-cli/core/state';
 import { debugLog } from './debug-log.ts';
 import { reportSignal, trackReportResource } from './report-runtime.ts';
 import { logReportChild } from './report-child-log.ts';
@@ -57,12 +65,7 @@ export interface ExecOptions {
   detachedSilent?: boolean;
   /** `runFileAsync` only: put the Windows child tree in a kill-on-close Job Object. */
   containProcessTree?: boolean;
-  /**
-   * `runFileAsync` only: work nobody waits on. While the pressure level in this home's daemon snapshot is normal, or
-   * there is none, the child and its descendants run at low priority: on macOS under `taskpolicy -c utility`, a QoS
-   * clamp on CPU and I/O (`nice` lowers only CPU there), on Windows as is, elsewhere under `nice -n 19`. At high or
-   * critical pressure they run at full priority, since freeing disk or memory is then the urgent work.
-   */
+  /** `runFileAsync` only: run the child as maintenance work even outside {@link runMaintenanceWork}. */
   lowPriority?: boolean;
   /** `runFileAsync` with a cancellation signal: begin verified tree cleanup at leader exit, before inherited pipes close. */
   cleanupOnExit?: boolean;
@@ -486,8 +489,32 @@ function tailscaleEnvironment(file: string, env?: NodeJS.ProcessEnv): NodeJS.Pro
   return basename(file).toLowerCase() === 'tailscale' ? tailscaleEnv(env ?? ambientEnv()) : env;
 }
 
-// taskpolicy(8): -c runs the program under a QoS clamp, which its descendants inherit.
-// @ref LLP 0021#stimd-runs-at-the-priority-of-an-app -- discretionary children run throttled only at normal pressure
+const priorityScope = new AsyncLocalStorage<{ level?: PressureLevel } | 'control'>();
+
+/**
+ * Runs `fn` as maintenance work: every child `runFileAsync` starts in it runs at low priority while the pressure level
+ * is normal, unless it runs inside {@link runControlPath}. `level` is the pressure level the work started at; without
+ * one, each child reads it from the home's daemon snapshot.
+ */
+export function runMaintenanceWork<T>(level: PressureLevel | undefined, fn: () => T): T {
+  return priorityScope.run(level ? { level } : {}, fn);
+}
+
+/** Runs `fn` as work something waits on, such as a stop or a device teardown: its children keep the caller's priority. */
+export function runControlPath<T>(fn: () => T): T {
+  return priorityScope.run('control', fn);
+}
+
+// @ref LLP 0021#stimd-runs-at-the-priority-of-an-app -- maintenance children run throttled only at normal pressure
+// adb starts its shared server from the client when none runs, and that server would keep the client's priority.
+function lowers(file: string, lowPriority: boolean | undefined): boolean {
+  const scope = priorityScope.getStore();
+  if (scope === 'control' || (!scope && !lowPriority) || /^adb(\.exe)?$/i.test(basename(file))) return false;
+  return (scope?.level ?? readDaemonSnapshot()?.pressure?.level ?? 'normal') === 'normal';
+}
+
+// taskpolicy(8): -c runs the program under a QoS clamp, which its descendants inherit. Windows lowers the child after
+// it starts.
 const lowered = (file: string, args: string[]): [string, string[]] =>
   process.platform === 'darwin'
     ? ['/usr/sbin/taskpolicy', ['-c', 'utility', file, ...args]]
@@ -578,10 +605,8 @@ const defaultExecutor: Executor = {
       context: selectedContext,
     },
   ) {
-    const [file, args] =
-      lowPriority && (readDaemonSnapshot()?.pressure?.level ?? 'normal') === 'normal'
-        ? lowered(program, programArgs)
-        : [program, programArgs];
+    const low = lowers(program, lowPriority);
+    const [file, args] = low ? lowered(program, programArgs) : [program, programArgs];
     const command = [file, ...args].join(' ');
     return new Promise((resolve, reject) => {
       const context = selectedContext ?? ambientContext();
@@ -630,6 +655,9 @@ const defaultExecutor: Executor = {
         if (pid === undefined) quietly(() => observed.settled(watch));
         else quietly(() => observed.started(watch, pid));
       }
+      const started = child.pid;
+      if (low && process.platform === 'win32' && started !== undefined)
+        quietly(() => setPriority(started, constants.priority.PRIORITY_BELOW_NORMAL));
       let lifetime: ReturnType<typeof reportChild>;
       let cancel: ((reason?: Parameters<NonNullable<typeof lifetime>['cancel']>[0]) => Promise<void>) | undefined;
       let timer: ReturnType<typeof setTimeout> | undefined;

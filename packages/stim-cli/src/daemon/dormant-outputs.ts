@@ -108,20 +108,16 @@ async function reduceWorkspace(
   );
   if (!plan.paths.length && !plan.targets.length) return null;
   const measure = input.act || input.force === true;
-  const lowPriority = input.force !== true;
   const sizes = new Map<string, number>();
   if (measure)
     for (const output of plan.paths)
-      sizes.set(
-        output,
-        (await measuredDirectorySizeAsync(output, { timeoutMs: SIZE_TIMEOUT_MS, signal, lowPriority })) ?? 0,
-      );
+      sizes.set(output, (await measuredDirectorySizeAsync(output, { timeoutMs: SIZE_TIMEOUT_MS, signal })) ?? 0);
   if (!input.act) {
     let bytes = [...sizes.values()].reduce((sum, size) => sum + size, 0);
     if (measure)
       for (const { stale } of plan.targets)
         for (const gone of stale)
-          bytes += (await measuredDirectorySizeAsync(gone, { timeoutMs: SIZE_TIMEOUT_MS, signal, lowPriority })) ?? 0;
+          bytes += (await measuredDirectorySizeAsync(gone, { timeoutMs: SIZE_TIMEOUT_MS, signal })) ?? 0;
     const detail = input.force ? 'stim gc would do this' : 'daemon.mode report acts on nothing';
     return { outcome: 'would', bytes, detail: [detail, ...plan.kept].join('; ') };
   }
@@ -151,7 +147,7 @@ async function reduceWorkspace(
   for (const { dir } of plan.targets) {
     let trim: Awaited<ReturnType<typeof trimTarget>>;
     try {
-      trim = await trimTarget(path, checkout, dir, afterMs, operation, lowPriority);
+      trim = await trimTarget(path, checkout, dir, afterMs, operation);
     } catch (error) {
       failed(dir, error);
       continue;
@@ -291,7 +287,6 @@ async function trimTarget(
   target: string,
   afterMs: number,
   operation: StimContext | undefined,
-  lowPriority: boolean,
 ): Promise<{ refused: string } | Awaited<ReturnType<typeof trimCargoTarget>>> {
   const signal = operation?.signal;
   forgetGitReads(operation);
@@ -304,5 +299,5 @@ async function trimTarget(
   const launching = launchingOf(checkout, freshLaunchers(operation, signal), operation, signal);
   const problem = await regenerableDirProblem(path, target, signal, { processes: false, launching });
   if (problem) return { refused: problem };
-  return trimCargoTarget(target, { needBytes: 0, profileIdleMs: afterMs, signal, launching, lowPriority });
+  return trimCargoTarget(target, { needBytes: 0, profileIdleMs: afterMs, signal, launching });
 }

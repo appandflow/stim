@@ -22,11 +22,11 @@ import { tickListsSims, type TickMeasurement } from '../../daemon/measure.ts';
 import { listAvdsAsync } from '../../devices/android.ts';
 import { listAllIosSimsAsync } from '../../devices/ios.ts';
 import { loadConfig } from '../../workspace/config.ts';
-import { formatBytes, measuredDirectorySizeAsync } from '../../fs-util.ts';
+import { formatBytes } from '../../fs-util.ts';
 import { memoryCulpritsUnderAsync } from '../../host-memory.ts';
 import { memoryCulpritAdvice } from '../../memory-culprits.ts';
 import { DEVICE_LIST_TIMEOUT_MS, deviceSweepIsScoped } from '../../commands/gc/devices.ts';
-import { AVD_SIZE_TIMEOUT_MS, measureOwnedDevices, type OwnedDeviceReads } from './devices.ts';
+import { measureOwnedDevices, type OwnedDeviceReads } from './devices.ts';
 import { resolveMaintenanceSettings, type MaintenanceSettings } from './settings.ts';
 import { due } from './due.ts';
 import { skipKey } from './plan.ts';
@@ -308,7 +308,6 @@ function tickDeviceReads({ operation, measured }: MaintenanceTick): OwnedDeviceR
       return measured.sims;
     },
     avds: () => listAvdsAsync({ timeoutMs: DEVICE_LIST_TIMEOUT_MS, signal, operation }),
-    size: (dir) => measuredDirectorySizeAsync(dir, { timeoutMs: AVD_SIZE_TIMEOUT_MS, lowPriority: true }),
   };
 }
 
@@ -378,20 +377,13 @@ async function measureCapOnly(
   return true;
 }
 
-const lowersChildren = (cap: { ran: boolean }, tick: MaintenanceTick | undefined): boolean =>
-  cap.ran || tick !== undefined;
-
 async function measureAllSizes(
   now: number,
   failure: Parameters<typeof measureSizes>[1],
   operation: StimContext | undefined,
   recorded: readonly MaintenanceSize[],
-  lowPriority: boolean,
 ): Promise<MaintenanceSize[]> {
-  return [
-    ...(await measureSizes(now, failure, operation, undefined, lowPriority)),
-    ...(await measureCargoTargets(now, operation, recorded, { lowPriority })),
-  ];
+  return [...(await measureSizes(now, failure, operation)), ...(await measureCargoTargets(now, operation, recorded))];
 }
 
 /**
@@ -523,13 +515,7 @@ export async function runMaintenance(
             });
           };
           state.sizes = [
-            ...(await measureAllSizes(
-              state.lastAt[check]!,
-              measureFailed,
-              tick?.operation,
-              state.sizes,
-              tick !== undefined,
-            )),
+            ...(await measureAllSizes(state.lastAt[check]!, measureFailed, tick?.operation, state.sizes)),
             ...(deviceSweepIsScoped()
               ? []
               : await measureOwnedDevices(state.lastAt[check]!, measureFailed, tick && tickDeviceReads(tick))),
@@ -561,7 +547,6 @@ export async function runMaintenance(
     const partPlanned = { caps, sweep: ran.has('sweep'), worktree: plannedWorktrees, idle: ran.has('idle') };
     let plannedParts = new Set([...PLAN_PARTS.filter((part) => partPlanned[part]), ...disabledParts(settings)]);
     let result: PlannedMaintenance;
-    const lowPriority = lowersChildren(cap, tick);
     try {
       result = await plannedMaintenance(state.sizes, settings, {
         caps,
@@ -570,7 +555,6 @@ export async function runMaintenance(
         worktrees: plannedWorktrees,
         idle: ran.has('idle'),
         background,
-        lowPriority,
         ...(tick ? { operation: tick.operation, deviceActivity: tickDeviceActivity(tick) } : {}),
       });
     } catch (error) {
@@ -597,7 +581,7 @@ export async function runMaintenance(
         background,
         protectedRoot: triggeringRoot(),
         worktreeSweep: result.worktreeSweep,
-        lowPriority,
+        lowPriority: cap.ran,
         ...(tick ? { operation: tick.operation } : {}),
       };
       const results: { action: MaintenanceAction; outcome: ActionOutcome }[] = [];

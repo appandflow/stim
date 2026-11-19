@@ -4,6 +4,7 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   readdirSync,
   realpathSync,
   rmSync,
@@ -184,15 +185,28 @@ describe.skipIf(process.platform === 'win32')(
       expect(existsSync(join(metroStoreRoot(root), 'shared'))).toBe(true);
     });
 
-    test('the hourly step measures the outputs it removes at low priority, and gc at the priority of the command', async () => {
-      const walks: { dir: string; lowPriority: boolean }[] = [];
+    test('the hourly step runs its size walks throttled at normal pressure, and gc at the priority of the command', async () => {
+      const field = process.platform === 'darwin' ? 'pri' : 'ni';
+      const read = (text: string) => Number(text.trim());
+      const own = read(execFileSync('ps', ['-o', `${field}=`, '-p', String(process.pid)], { encoding: 'utf8' }));
+      const log = join(base, 'priorities');
+      writeFileSync(log, '');
       const current = getExecutor();
       setExecutor({
         ...current,
-        runFileAsync: async (file, args, opts) => {
-          if (file === 'du') walks.push({ dir: String(args.at(-1)), lowPriority: opts.lowPriority === true });
-          return current.runFileAsync(file, args, opts);
-        },
+        runFileAsync: async (file, args, opts) =>
+          current.runFileAsync(
+            file === 'du' ? '/bin/sh' : file,
+            file === 'du'
+              ? [
+                  '-c',
+                  `for last; do :; done; echo "$last $(ps -o ${field}= -p $$)" >> "$0"; exec du "$@"`,
+                  log,
+                  ...args,
+                ]
+              : args,
+            opts,
+          ),
       });
       const daemon = register(repo('daemon'));
       idleFor(3, daemon);
@@ -201,9 +215,14 @@ describe.skipIf(process.platform === 'win32')(
       idleFor(3, command);
       await gc();
 
-      expect(walks.filter(({ dir }) => dir.startsWith(daemon)).map(({ lowPriority }) => lowPriority)).toEqual([true]);
-      expect(walks.filter(({ dir }) => dir.startsWith(command)).map(({ lowPriority }) => lowPriority)).toEqual([false]);
-    });
+      const walks = readFileSync(log, 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => line.split(/\s+/));
+      const at = (root: string) => walks.filter(([dir]) => dir?.startsWith(root)).map(([, value]) => read(value ?? ''));
+      const throttled = process.platform === 'darwin' ? Math.min(own, 20) : 19;
+      expect({ daemon: at(daemon), command: at(command) }).toEqual({ daemon: [throttled], command: [own] });
+    }, 30_000);
 
     test('a Gradle build working in the checkout keeps its outputs, whatever Stim last saw', async () => {
       const root = register(repo('app'));

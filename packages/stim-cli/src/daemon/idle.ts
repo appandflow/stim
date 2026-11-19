@@ -1,3 +1,4 @@
+import { runControlPath } from '../exec.ts';
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import { existsSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
@@ -330,12 +331,14 @@ async function enterIdleStage(
             const minutes = again.candidate.minutes;
             const booted = new Set(again.candidate.booted.map((device) => `${device.kind}:${device.slot}`));
             const lines: string[] = [];
-            const stopped = await runIdleStop({
-              root: path,
-              idleMinutes: minutes,
-              report: (line) => lines.push(line),
-              operation: input.operation,
-            });
+            const stopped = await runControlPath(() =>
+              runIdleStop({
+                root: path,
+                idleMinutes: minutes,
+                report: (line) => lines.push(line),
+                operation: input.operation,
+              }),
+            );
             if (!stopped.ok) return { outcome: 'failed' as const, detail: stopped.summary };
             const shutDown = Object.entries(stopped.outcomes.device).flatMap(([key, outcome]) => {
               const [kind, slot = 'default'] = key.split(':');

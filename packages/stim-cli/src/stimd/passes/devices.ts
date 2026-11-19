@@ -23,7 +23,7 @@ import {
 } from './activity.ts';
 import type { MaintenancePlan } from './plan.ts';
 
-export const AVD_SIZE_TIMEOUT_MS = 30_000;
+const AVD_SIZE_TIMEOUT_MS = 30_000;
 
 export interface OwnedDeviceReads {
   sims?: () => IosSimRecord[] | Promise<IosSimRecord[]>;

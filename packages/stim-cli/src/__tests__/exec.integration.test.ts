@@ -1,12 +1,12 @@
 import assert from 'node:assert';
-import type { ChildProcess } from 'node:child_process';
+import { execFileSync, type ChildProcess } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { withAmbientContext } from '@stim-cli/core';
 import { runId } from '@stim-cli/core/state';
-import { getExecutor, isUnsafeBatchSpawn, resetExecutor } from '../exec.ts';
+import { getExecutor, isUnsafeBatchSpawn, resetExecutor, runControlPath, runMaintenanceWork } from '../exec.ts';
 import { testContext } from './_context.ts';
 
 vi.mock('../process-group-exit.ts', async (importOriginal) => ({
@@ -457,7 +457,7 @@ test('a cancelled child whose pipes close after the stalled event loop resumes i
   ).resolves.toBeUndefined();
 }, 30_000);
 
-describe.skipIf(process.platform === 'win32')('lowPriority', () => {
+describe.skipIf(process.platform === 'win32')('maintenance work priority', () => {
   const darwin = process.platform === 'darwin';
   const field = darwin ? 'pri' : 'ni';
   let home: string;
@@ -484,33 +484,50 @@ describe.skipIf(process.platform === 'win32')('lowPriority', () => {
       }),
     );
   };
-  const read = async (lowPriority: boolean) =>
+  const priorities = async (file = '/bin/sh', lowPriority?: boolean) =>
     (
-      await getExecutor().runFileAsync('/bin/sh', ['-c', `ps -o ${field}= -p $$; /bin/sh -c 'ps -o ${field}= -p $$'`], {
-        timeoutMs: 30_000,
-        lowPriority,
-      })
+      await getExecutor().runFileAsync(
+        file,
+        file === '/bin/sh' ? ['-c', `ps -o ${field}= -p $$; /bin/sh -c 'ps -o ${field}= -p $$'`] : [],
+        { timeoutMs: 30_000, ...(lowPriority ? { lowPriority } : {}) },
+      )
     )
+      .trim()
       .split(/\s+/)
       .map(Number);
 
-  test('runs a discretionary child and its descendants throttled at normal pressure, and at full priority at high or critical pressure or when not asked', async () => {
+  test('a child of maintenance work and its descendants run throttled at normal pressure, unless the work is a control path, the tool is adb or the pressure is high or critical', async () => {
     resetExecutor();
-    const own = Number(
-      (
-        await getExecutor().runFileAsync('ps', ['-o', `${field}=`, '-p', String(process.pid)], { timeoutMs: 30_000 })
-      ).trim(),
-    );
-    const throttled = darwin ? Math.min(own, 20) : 19;
-    const unasked = await read(false);
-    const absent = await read(true);
-    atLevel('normal');
-    const normal = await read(true);
+    const own = Number(execFileSync('ps', ['-o', `${field}=`, '-p', String(process.pid)], { encoding: 'utf8' }).trim());
+    const adb = join(home, 'bin', 'adb');
+    mkdirSync(dirname(adb));
+    writeFileSync(adb, `#!/bin/sh\nps -o ${field}= -p $$\n`, { mode: 0o755 });
+    const command = await priorities();
+    const maintenance = await runMaintenanceWork('normal', () => priorities());
+    const control = await runMaintenanceWork('normal', () => runControlPath(() => priorities()));
+    const adbChild = await runMaintenanceWork('normal', () => priorities(adb));
+    const high = await runMaintenanceWork('high', () => priorities());
+    const critical = await runMaintenanceWork('critical', () => priorities());
+    const noSnapshot = await runMaintenanceWork(undefined, () => priorities());
     atLevel('high');
-    const high = await read(true);
-    atLevel('critical');
-    const critical = await read(true);
-    expect({ unasked, high, critical }).toEqual({ unasked: [own, own], high: [own, own], critical: [own, own] });
-    expect([...absent, ...normal].every((value) => (darwin ? value <= throttled : value === throttled))).toBe(true);
+    const highSnapshot = await runMaintenanceWork(undefined, () => priorities());
+    const askedAtHigh = await priorities('/bin/sh', true);
+    atLevel('normal');
+    const asked = await priorities('/bin/sh', true);
+    const throttled = darwin ? Math.min(own, 20) : 19;
+    expect({ command, control, adbChild, high, critical, highSnapshot, askedAtHigh }).toEqual({
+      command: [own, own],
+      control: [own, own],
+      adbChild: [own],
+      high: [own, own],
+      critical: [own, own],
+      highSnapshot: [own, own],
+      askedAtHigh: [own, own],
+    });
+    expect({ maintenance, noSnapshot, asked }).toEqual({
+      maintenance: [throttled, throttled],
+      noSnapshot: [throttled, throttled],
+      asked: [throttled, throttled],
+    });
   });
 });
