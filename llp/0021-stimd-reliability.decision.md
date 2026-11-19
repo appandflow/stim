@@ -146,8 +146,9 @@ Two waits outlast it on purpose:
 Each of these limits counts awake time: libuv's timers on macOS read
 `mach_continuous_time`, which advances during sleep, so a plain timer armed
 before a sleep fires on wake, before the cleanup it waits for has had a turn.
-stimd adds the time between 5 s steps instead, and a gap over 60 s (a sleep or a
-stalled event loop) counts as 60 s.
+stimd adds the time between 5 s steps instead, and a gap over 60 s counts as
+nothing, so counting resumes from the wake. A main thread stalled for over 60 s
+between steps is not counted either; a watchdog off the main thread is #5995.
 
 Limit: these timers run on stimd's main thread. A main thread blocked in a
 synchronous call, such as a recursive `rmSync`, runs none of them.
