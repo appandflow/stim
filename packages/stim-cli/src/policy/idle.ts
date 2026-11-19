@@ -15,8 +15,8 @@ export const PRESSURE_IDLE_MS: number = 2 * MINUTE_MS;
 const AGENT_DEVICE_IDLE_MS: number = 10 * MINUTE_MS;
 
 /**
- * The window within which an activity of `basis` keeps a workspace under an `idleMs` threshold. Only at the pressure
- * idle threshold, the memory idle stage's or the ladder's, does an agent-device command hold longer than `idleMs`.
+ * The window within which an activity of `basis` keeps a workspace under an `idleMs` threshold. Only under memory or
+ * disk pressure does an agent-device command hold longer than `idleMs`.
  */
 export function activityWindowMs(basis: string, idleMs: number, pressured: boolean): number {
   return pressured && basis === 'agent-device command' ? Math.max(idleMs, AGENT_DEVICE_IDLE_MS) : idleMs;

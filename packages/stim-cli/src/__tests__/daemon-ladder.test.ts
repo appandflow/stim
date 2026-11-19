@@ -25,7 +25,7 @@ import {
   workspaceLightenedFile,
 } from '@stim-cli/core/state';
 import * as gcDevices from '../commands/gc/devices.ts';
-import { collectOwnedDeviceActivityAsync } from '../commands/gc/idle.ts';
+import { collectOwnedDeviceActivityAsync, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { REAL_BYTES_THRESHOLD, runDormantDependencies } from '../daemon/dependencies.ts';
 import { runIdlePass } from '../daemon/idle.ts';
 import { runLadder } from '../daemon/ladder.ts';
@@ -148,7 +148,10 @@ describe('the idle stage under pressure (rung 1)', () => {
     expect(readIdleStage(readWorkspaceState(root))).toMatchObject({ idleMinutes: 2 });
   });
 
-  function tick(cause: 'disk' | 'memory' | 'both') {
+  function tick(
+    cause: 'disk' | 'memory' | 'both',
+    drive: (device: OwnedDeviceActivity) => OwnedDeviceActivity = (device) => device,
+  ) {
     const disk = [{ volume: '/', freeMb: (cause === 'memory' ? 500 : 30) * 1024, device: statSync(home).dev }];
     const memory = {
       level: 'normal' as const,
@@ -161,7 +164,7 @@ describe('the idle stage under pressure (rung 1)', () => {
       measurement: { disk, memory, load1: 0, cores: 8, bootedSimulators: 1, runningEmulators: null, interaction: null },
       sims,
       simsError: null,
-      devices: await devicesNow(),
+      devices: (await devicesNow()).map(drive),
     }));
   }
 
@@ -204,6 +207,26 @@ describe('the idle stage under pressure (rung 1)', () => {
     expect(readIdleStage(readWorkspaceState(old.root))).toMatchObject({ idleMinutes: 15 });
     expect(existsSync(old.outputs)).toBe(false);
   });
+
+  test.each(['the daemon tick', 'a forced stim gc'])(
+    'under disk pressure alone with idle.minutes 5, %s keeps a workspace whose agent-device command was 6 minutes ago',
+    async (path) => {
+      const { root, udid } = withOutputs('agent', 20 * MINUTE_MS);
+      writeFileSync(join(root, '.stim.json'), JSON.stringify({ idle: { minutes: 5 } }));
+      const at = new Date(Date.now() - 6 * MINUTE_MS).toISOString();
+      tick('disk', (device) => ({
+        ...device,
+        activity: { ...device.activity, recent: { ...device.activity.recent, 'agent-action': at } },
+      }));
+
+      if (path === 'the daemon tick') await runHomePasses({ act: true, log });
+      else
+        await runForcedLadder({ levels: ['high'], act: true, why: 'stim gc at high', trigger: 'gc', measured: true });
+
+      expect(readIdleStage(readWorkspaceState(root))).toBeNull();
+      expect(sims.find((sim) => sim.udid === udid)?.state).toBe('Booted');
+    },
+  );
 
   test('a stim gc --dry-run under memory and disk pressure counts a running workspace outputs once', async () => {
     const { root } = withOutputs('running', 3 * MINUTE_MS);

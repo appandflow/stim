@@ -176,7 +176,7 @@ async function homePasses(
         ? { pressure: { level: pressure.memory, reasons: pressure.reasons } }
         : pressure.disk !== 'normal'
           ? // @ref LLP 0001#each-rung-frees-only-the-volumes-under-pressure -- memory pressure idles every workspace
-            { volumes: shortVolumeDevices(measured.measurement.disk, thresholds, 'high') }
+            { disk: { volumes: shortVolumeDevices(measured.measurement.disk, thresholds, 'high') } }
           : {}),
     }),
   );
@@ -562,8 +562,9 @@ export async function runForcedLadder({
         ...reading,
         act,
         // @ref LLP 0001#the-2-minute-idle-stop-is-for-memory -- a stop frees memory, not disk
-        ...(pressure.memory === 'normal' ? {} : { pressure: { level, reasons: [why] } }),
-        ...(volumes ? { volumes } : {}),
+        ...(pressure.memory === 'normal'
+          ? { disk: volumes ? { volumes } : {} }
+          : { pressure: { level, reasons: [why] } }),
       })) {
         if (entry.outcome !== 'idle' && entry.outcome !== 'would-idle' && entry.outcome !== 'failed') continue;
         actions.push({

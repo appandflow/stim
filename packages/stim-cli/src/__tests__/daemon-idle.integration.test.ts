@@ -166,7 +166,7 @@ test('under disk pressure alone a workspace stopped at idle.minutes loses only t
     devices,
     act: true,
     log: () => {},
-    volumes: new Set([4_242_424]),
+    disk: { volumes: new Set([4_242_424]) },
   });
 
   expect(decisions).toEqual([expect.objectContaining({ path: root, outcome: 'idle' })]);

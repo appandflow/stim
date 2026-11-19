@@ -69,8 +69,12 @@ export interface IdlePassInput {
   act: boolean;
   /** Set while the memory level is high or critical: the idle stage then takes every workspace idle 2 minutes. */
   pressure?: { level: 'high' | 'critical'; reasons: string[] };
-  /** Set when disk alone raised the level: the idle stage deletes only the outputs on one of those devices. */
-  volumes?: ReadonlySet<number>;
+  /**
+   * Set while disk alone raises the level, the threshold staying `idle.minutes`: an agent-device command holds a
+   * workspace for 10 minutes, and the idle stage deletes only outputs on `volumes`; with `volumes`, both apply only to a
+   * workspace on one of those devices. Without `volumes` every volume counts as short.
+   */
+  disk?: { volumes?: ReadonlySet<number> };
   /** A workspace the pass never takes: the one the running command belongs to. */
   protectedRoot?: string;
   /** The daemon tick's context, whose reads run without blocking its event loop. */
@@ -173,22 +177,22 @@ async function decide(
   const found = await candidate(path, project, input);
   if (!found.runs || 'kept' in found) return { candidate: found, decision: null };
   const now = Date.now();
+  const { disk } = input;
+  // @ref LLP 0001#the-2-minute-idle-stop-is-for-memory -- disk pressure keeps the agent-device window, not the threshold
+  const pressured =
+    Boolean(input.pressure) ||
+    (disk !== undefined && (!disk.volumes || onShortVolume([path, workspaceDir(path)], disk.volumes)));
   const evidence = await idleStopEvidence(path, found.booted, {
     now,
     idleMs: found.idleMs,
     locked,
     serving: found.serving,
-    pressured: Boolean(input.pressure),
+    pressured,
     operation: input.operation,
   });
   return {
     candidate: found,
-    decision: decideIdleStop(evidence, {
-      idleMs: found.idleMs,
-      now,
-      setting: thresholdName(input),
-      pressured: Boolean(input.pressure),
-    }),
+    decision: decideIdleStop(evidence, { idleMs: found.idleMs, now, setting: thresholdName(input), pressured }),
   };
 }
 
@@ -341,7 +345,7 @@ async function enterIdleStage(
               return outcome?.status === 'shut-down' && booted.has(`${kind}:${slot}`) ? [key] : [];
             });
             const { operation } = input;
-            const { volumes } = input;
+            const volumes = input.disk?.volumes;
             const checkout = await checkoutRootOf(path, operation?.signal, operation);
             const outputs = await idleOutputs(
               path,
