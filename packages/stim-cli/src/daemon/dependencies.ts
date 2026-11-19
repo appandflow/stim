@@ -367,10 +367,8 @@ async function stillUnused(
   const [first] = keys;
   if (!source)
     return first && !(await stillIdle(first, idleMs, { operation, setting })) ? 'it is no longer idle' : null;
-  const held = new Set(workspaceKeys(keys));
-  for (const key of new Set([...held, worktree]))
-    if (!(await stillIdle(key, idleMs, { operation, full: true, locked: held.has(key), setting })))
-      return `${key} is no longer idle`;
+  for (const key of new Set([...workspaceKeys(keys), worktree]))
+    if (!(await stillIdle(key, idleMs, { operation, full: true, setting }))) return `${key} is no longer idle`;
   return Date.now() - warmedFromAt(keys) < idleMs ? 'a worktree warm copied from it since' : null;
 }
 

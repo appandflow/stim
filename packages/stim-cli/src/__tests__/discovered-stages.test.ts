@@ -25,6 +25,16 @@ vi.mock('../workspace/protected-locations.ts', () => ({
   isProtectedLocation: () => false,
 }));
 
+const large = vi.hoisted(() => new Set<string>());
+vi.mock('../private-size.ts', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../private-size.ts')>();
+  return {
+    ...real,
+    measureTree: async (path: string, options: Parameters<typeof real.measureTree>[1]) =>
+      large.has(path) ? { bytes: 300 * 1024 ** 2, privateBytes: 300 * 1024 ** 2 } : real.measureTree(path, options),
+  };
+});
+
 describe('a discovered checkout in the idle stages', () => {
   let base: string;
   const day = 86_400_000;
@@ -37,6 +47,7 @@ describe('a discovered checkout in the idle stages', () => {
 
   afterEach(() => {
     vi.unstubAllEnvs();
+    large.clear();
     rmSync(base, { recursive: true, force: true });
   });
 
@@ -102,7 +113,7 @@ describe('a discovered checkout in the idle stages', () => {
     );
   });
 
-  it('clears a Cargo target with CACHEDIR.TAG at a monorepo root and the node_modules of a linked worktree, recording nothing', async () => {
+  it('clears a Cargo target with CACHEDIR.TAG at a monorepo root and the node_modules of it and of a linked worktree, recording nothing', async () => {
     const roots = join(base, 'roots');
     const mono = join(roots, 'mono');
     mkdirSync(join(mono, 'apps', 'web'), { recursive: true });
@@ -120,9 +131,12 @@ describe('a discovered checkout in the idle stages', () => {
     git(mono, 'commit', '-q', '-m', 'init');
     const linked = join(roots, 'mono-wt');
     git(mono, 'worktree', 'add', '-q', '-b', 'feature', linked);
-    mkdirSync(join(linked, 'node_modules', 'dep'), { recursive: true });
-    writeFileSync(join(linked, 'node_modules', 'dep', 'index.js'), 'x');
-    const old = new Date(Date.now() - 3 * day);
+    for (const checkout of [mono, linked]) {
+      mkdirSync(join(checkout, 'node_modules', 'dep'), { recursive: true });
+      writeFileSync(join(checkout, 'node_modules', 'dep', 'index.js'), 'x');
+    }
+    large.add(join(mono, 'node_modules'));
+    const old = new Date(Date.now() - 10 * day);
     const age = (dir: string) => {
       for (const entry of readdirSync(dir, { withFileTypes: true })) {
         if (entry.name === '.git' && entry.isDirectory()) continue;
@@ -156,8 +170,9 @@ describe('a discovered checkout in the idle stages', () => {
     });
     expect(actions).toContainEqual(expect.objectContaining({ kind: 'delete-dependencies', outcome: 'done' }));
     expect(existsSync(join(linked, 'node_modules'))).toBe(false);
+    expect(existsSync(join(mono, 'node_modules'))).toBe(false);
     expect(existsSync(join(base, 'home', 'workspaces')) ? readdirSync(join(base, 'home', 'workspaces')) : []).toEqual(
       [],
     );
-  });
+  }, 30_000);
 });
