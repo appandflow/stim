@@ -1654,7 +1654,8 @@ export function deviceLogReadinessWait(
         coverage = reply.coverage;
       if (reply.gone !== true) return;
     }
-    if (requestSequence === sequence && requestThrough === through) coverage = 'failed';
+    const unanswered = reply === null && opToken !== undefined && !(next && 'error' in next);
+    if (!unanswered && requestSequence === sequence && requestThrough === through) coverage = 'failed';
     await cancellableSleep(Math.max(0, ms - (Date.now() - started)), {
       signal: operation?.signal,
       what: 'launch readiness check',

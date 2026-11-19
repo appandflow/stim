@@ -1,9 +1,10 @@
 import { testContext } from './_context.ts';
 import { operationState } from '../engine/operation-state.ts';
 
-const mock = vi.hoisted<{ replies: Array<(reply: object) => void>; sent: Array<{ params: { after: number } }> }>(
-  () => ({ replies: [], sent: [] }),
-);
+const mock = vi.hoisted<{
+  replies: Array<(reply: object) => void>;
+  sent: Array<{ params: { after: number; checkCoverage: boolean } }>;
+}>(() => ({ replies: [], sent: [] }));
 
 vi.mock('node:net', async (original) => {
   const actual = await original<typeof import('node:net')>();
@@ -56,4 +57,24 @@ test('older readiness replies cannot replace newer coverage or move the revision
   mock.replies[2]?.({ op: 'readiness.changed', revision: 3, coverage: 'covered' });
   await next;
   expect(wait.coverage()).toBe('failed');
+});
+
+test('a readiness ask that a busy stimd answers too late leaves the coverage unproven, not failed', async () => {
+  const { deviceLogReadinessWait } = await import('../daemon/client.ts');
+  const context = testContext();
+  operationState(context).stimdOpToken = 'token';
+  mock.replies.length = 0;
+  mock.sent.length = 0;
+  const wait = deviceLogReadinessWait('/workspace', 'ios', 'default', 'stream', 1, context);
+  const unanswered = wait(500);
+  await vi.waitFor(() => expect(mock.replies).toHaveLength(1));
+  await vi.advanceTimersByTimeAsync(1500);
+  await unanswered;
+  expect(wait.coverage()).toBe('pending');
+  const next = wait(500);
+  await vi.waitFor(() => expect(mock.replies).toHaveLength(2));
+  expect(mock.sent[1]?.params.checkCoverage).toBe(true);
+  mock.replies[1]?.({ op: 'readiness.changed', revision: 1, coverage: 'covered' });
+  await next;
+  expect(wait.coverage()).toBe('covered');
 });
