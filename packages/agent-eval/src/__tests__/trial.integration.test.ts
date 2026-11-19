@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import {
   chmodSync,
   existsSync,
@@ -236,6 +236,48 @@ echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"resul
     const [run] = readdirSync(results);
     expect(existsSync(join(results, run ?? '', 'results.json'))).toBe(true);
   }, 60_000);
+
+  test('the CLI --without guide:<words> arm blanks that guide command for the agent', () => {
+    const bin = fakeAgent(`
+stim guide errors > /dev/null
+stim guide agent > /dev/null
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"result":"","usage":{}}'
+`);
+    mkdirSync(join(directory, 'tmp'));
+    const entry = fileURLToPath(new URL('./entry.ts', import.meta.url));
+    const args = [
+      '--agent',
+      'claude',
+      '--bin',
+      bin,
+      '--case',
+      'first-launch',
+      '--trials',
+      '1',
+      '--without',
+      'guide:errors',
+    ];
+    const child = spawnSync(process.execPath, [entry, ...args], {
+      stdio: 'ignore',
+      timeout: 60_000,
+      env: { ...process.env, NODE_NO_WARNINGS: '1', TEST_ROOTS: JSON.stringify(roots), TMPDIR: join(directory, 'tmp') },
+    });
+    expect(child.status).toBe(0);
+    const results = join(roots.home, '.stim-agent-eval', 'results');
+    const [run] = readdirSync(results);
+    const log = join(results, run ?? '', 'claude', 'first-launch', 'without-guide-errors-1', 'invocations.jsonl');
+    const kinds = readFileSync(log, 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => {
+        const each = JSON.parse(line) as { kind: string; argv: string[] };
+        return [each.kind, each.argv.join(' ')];
+      });
+    expect(kinds).toEqual([
+      ['blanked', 'guide errors'],
+      ['guide', 'guide agent'],
+    ]);
+  }, 90_000);
 
   test('a trial is invalid, and the agent is stopped, when the home marker is readable from the scripted stim', async () => {
     const bin = fakeAgent('stim ios\nsleep 30');

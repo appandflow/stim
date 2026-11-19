@@ -74,7 +74,7 @@ export async function main(argv: string[], roots: Roots): Promise<number> {
     arms.push({
       name: `without ${values.without}`,
       skill: true,
-      blank: [values.without.slice('guide:'.length).split(/\s+/)],
+      blank: [['guide', ...values.without.slice('guide:'.length).split(/\s+/)]],
     });
   else if (values.without !== undefined) throw new Error('--without is skill or guide:<words>');
 
