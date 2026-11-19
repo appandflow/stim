@@ -19,6 +19,7 @@ const CARGO_TRIPLE_FILES = new Set(['CACHEDIR.TAG', '.rustc_info.json', '.cargo-
 const PROFILE_LOCKS = ['.cargo-lock', '.cargo-build-lock', '.cargo-artifact-lock'];
 const UNIT_CHUNK = 25;
 const EXACT_LEDGER = '.exact-sweep.json';
+const EXACT_APPLE_LOCKS = '.apple-cargo-locks';
 const NOT_PROFILES = new Set(['.exact-swept']);
 const OWN_PREFIX = '.stim-';
 const STRANDED = 'NOT-RESTORED';
@@ -407,17 +408,25 @@ async function withTrimClaim<T>(
 }
 
 /**
- * Why `target` shows use within `idleMs`: its own directory, a top-level entry other than Stim's own, a profile or
- * Exact's ledger stamp of one written that recently, or any of them that cannot be read. A target with no profile to
- * date counts as used. Null when all of it went unwritten that long.
+ * Why `target` shows use within `idleMs`: a modification time that recent, or one that cannot be read, on the `target/`
+ * itself, a top-level entry other than Stim's own, a direct child of a top-level directory, or a profile and its
+ * `.fingerprint`, `deps`, `build` and `incremental`; or a stamp that recent in Exact's ledger. Null when all of it went
+ * unwritten that long.
  */
 export function recentTargetUse(target: string, now: number, idleMs: number): string | null {
   const entries = entriesOf(target);
   if (!entries) return `${target} cannot be listed`;
-  for (const path of [
-    target,
-    ...entries.filter(({ name }) => !name.startsWith(OWN_PREFIX)).map(({ name }) => join(target, name)),
-  ]) {
+  const paths = [target];
+  for (const entry of entries) {
+    if (entry.name.startsWith(OWN_PREFIX)) continue;
+    const path = join(target, entry.name);
+    paths.push(path);
+    if (!entry.isDirectory()) continue;
+    const inner = entriesOf(path);
+    if (!inner) return `${path} cannot be listed`;
+    paths.push(...inner.map(({ name }) => join(path, name)));
+  }
+  for (const path of paths) {
     let written: number;
     try {
       written = lstatSync(path).mtimeMs;
@@ -426,16 +435,15 @@ export function recentTargetUse(target: string, now: number, idleMs: number): st
     }
     if (now - written <= idleMs) return `${path} was written in that time`;
   }
-  const listed = profilePaths(target);
-  if (!listed) return `${target} cannot be listed`;
-  if (!listed.profiles.length) return 'no Cargo profile in it can be dated';
   const ledger = readLedger(target);
   if ('refusal' in ledger) return ledger.refusal;
+  if ([...ledger.newest.values()].some((at) => now - at <= idleMs)) return "Exact's ledger stamps a unit in that time";
+  const listed = profilePaths(target);
+  if (!listed) return `${target} cannot be listed`;
   for (const profile of listed.profiles) {
     const written = newestMtime(join(target, profile));
     if (written === null) return `the last use of its ${profile} profile cannot be read`;
-    if (now - Math.max(written, ledger.newest.get(profile) ?? 0) <= idleMs)
-      return `a build used its ${profile} profile in that time`;
+    if (now - written <= idleMs) return `a build used its ${profile} profile in that time`;
   }
   return null;
 }
@@ -480,13 +488,12 @@ async function deleteClaimed(
   if (mount) return keep(`${mount} is another filesystem`);
   const first = await readTargetUse(target, launching, signal);
   if ('kept' in first) return keep(first.kept);
-  const locksAt = async (dir: string) => [dir, ...(await childProfiles(dir))];
   for (const name of names) {
     signal?.throwIfAborted();
     const dir = join(target, name);
     if (inUse(first.used, dir)) return keep(`a process uses ${dir}`);
-    const held = await heldLock(await locksAt(dir), signal);
-    if (held) return keep(`a build holds ${join(dir, held)}`);
+    const held = await heldLock(dir, name, signal);
+    if (held) return keep(`a build holds ${held}`);
   }
   type Entry = { dir: string; there: string; name: string };
   const moved: Entry[] = [];
@@ -513,9 +520,9 @@ async function deleteClaimed(
       continue;
     }
     moved.push(entry);
-    const took = await heldLock(await locksAt(entry.there));
+    const took = await heldLock(entry.there, name);
     // @ref LLP 0005#never-delete-what-a-build-took-back -- a build locked it during the move
-    if (took) return putBackAll(`a build took ${join(entry.dir, took)} during the move`);
+    if (took) return putBackAll(`a build took ${took} during the move`);
   }
   const after = moved.length ? await readTargetUse(target, launching, signal) : { used: [] };
   if ('kept' in after) return putBackAll(after.kept);
@@ -533,12 +540,41 @@ async function deleteClaimed(
   return result;
 }
 
-async function heldLock(dirs: readonly string[], signal?: AbortSignal): Promise<string | null> {
-  for (const dir of dirs) {
-    const held = await lockOutcome(dir, signal);
-    if (lockHeld(held)) return held.file ?? '.cargo-lock';
+/** The lock files Exact takes in a top-level entry of a target: `.exact-sweep.json.lock`, and those under `.apple-cargo-locks`. */
+function exactLockFiles(path: string, name: string): string[] {
+  if (name === `${EXACT_LEDGER}.lock`) return [path];
+  if (name !== EXACT_APPLE_LOCKS) return [];
+  const files: string[] = [];
+  for (const entry of entriesOf(path) ?? []) {
+    const inner = join(path, entry.name);
+    if (entry.isFile()) files.push(inner);
+    else if (entry.isDirectory())
+      for (const file of entriesOf(inner) ?? []) if (file.isFile()) files.push(join(inner, file.name));
   }
+  return files;
+}
+
+/**
+ * The lock a build holds in the top-level entry `name` at `path`: a Cargo lock in it or a directory directly in it, or
+ * one of Exact's lock files.
+ */
+async function heldLock(path: string, name: string, signal?: AbortSignal): Promise<string | null> {
+  for (const dir of [path, ...(await childProfiles(path))]) {
+    const held = await lockOutcome(dir, signal);
+    if (lockHeld(held)) return join(dir, held.file ?? '.cargo-lock');
+  }
+  for (const file of exactLockFiles(path, name)) if (await fileHeld(file, signal)) return file;
   return null;
+}
+
+async function fileHeld(file: string, signal?: AbortSignal): Promise<boolean> {
+  try {
+    return lockHeld({
+      stdout: await getExecutor().runFileAsync('lsof', ['-t', '--', file], { timeoutMs: 5000, signal }),
+    });
+  } catch (error) {
+    return lockHeld(isRecord(error) ? { status: error.status, stdout: error.stdout } : { status: null, stdout: null });
+  }
 }
 
 /** The first directory under `paths` on a device other than `dev`, or null. */
