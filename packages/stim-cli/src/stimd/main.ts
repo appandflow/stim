@@ -2415,6 +2415,15 @@ export async function runStimdEntry(argv: readonly string[]): Promise<void> {
     try {
       getExecutor().runFile('launchctl', ['remove', label], { timeoutMs: LAUNCHCTL_TIMEOUT_MS });
     } catch {}
+  await endStimdWorkers();
+}
+
+/**
+ * Ends the worker threads a stimd run in this process started, for a process that is about to exit after `runStimd`
+ * returned: `__stimd` and an owning `stim serve`. One that has not exited after 10 awake minutes is logged, and the
+ * process sends itself SIGKILL.
+ */
+export async function endStimdWorkers(): Promise<void> {
   // @ref LLP 0021#a-shutdown-has-a-deadline -- a worker that does not exit cannot hold the process alive
   await endWorkers(SHUTDOWN_DEADLINE_MS, (count) => {
     try {
