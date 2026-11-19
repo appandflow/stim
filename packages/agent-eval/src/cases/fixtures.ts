@@ -56,6 +56,14 @@ export const workspaceRules: ScriptRule[] = [
     note: 'A short clean report written by hand.',
   },
   {
+    argv: ['ios', '--plan'],
+    prefix: true,
+    stdout: 'Plan: cache hit (local) for com.example.demo on stim-demo; about 5s; nothing is built.\n',
+    exit: 0,
+    source: 'synthetic',
+    note: 'Written by hand; ios --plan reports the next build without building or launching.',
+  },
+  {
     argv: ['status'],
     prefix: true,
     stdout:

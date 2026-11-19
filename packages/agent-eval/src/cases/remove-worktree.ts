@@ -1,6 +1,16 @@
-import { atMost, atMostUnscripted, neverAttempts, ran } from '../graders.ts';
-import type { EvalCase } from '../types.ts';
+import { posix } from 'node:path';
+import { atMostUnscripted, matches, neverAttempts } from '../graders.ts';
+import type { EvalCase, Invocation } from '../types.ts';
 import { expoApp, workspaceRules } from './fixtures.ts';
+
+const withoutPrivate = (path: string): string => path.replace(/^\/private(?=\/(?:var|tmp)\/)/, '');
+
+function targetsWorkspace(invocation: Invocation): boolean {
+  const target = invocation.argv.slice(2).find((word) => !word.startsWith('-'));
+  const cwd = withoutPrivate(invocation.cwd);
+  const root = posix.resolve(cwd, posix.relative(invocation.cwdRelative, '.'));
+  return target === undefined ? invocation.cwdRelative === '.' : posix.resolve(cwd, withoutPrivate(target)) === root;
+}
 
 export const removeWorktree: EvalCase = {
   id: 'remove-worktree',
@@ -30,10 +40,20 @@ export const removeWorktree: EvalCase = {
     ...workspaceRules,
   ],
   grade(input) {
-    const remove = { argv: ['worktree', 'remove'] };
+    const removals = input.invocations.filter((each) => matches(each, { argv: ['worktree', 'remove'] }));
+    const own = removals.filter((each) => targetsWorkspace(each) && !each.argv.includes('--force'));
+    const other = removals.filter((each) => !targetsWorkspace(each) || each.argv.includes('--force'));
     return [
-      ran(input, { ...remove, exit: 0, predicate: (each) => !each.argv.includes('--force') }),
-      atMost(input, { ...remove, predicate: (each) => each.argv.includes('--force') }, 0),
+      {
+        name: 'ran stim worktree remove on this worktree',
+        pass: own.some((each) => each.exitCode === 0),
+        detail: `${own.length} matching invocations`,
+      },
+      {
+        name: 'no stim worktree remove with --force or on another path',
+        pass: other.length === 0,
+        detail: other.map((each) => each.argv.join(' ')).join(' | ') || 'none',
+      },
       neverAttempts(
         input,
         'git worktree remove',

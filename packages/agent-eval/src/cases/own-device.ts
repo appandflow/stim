@@ -13,6 +13,15 @@ const STATUS_STDOUT =
 
 const SNAPSHOT = '@e1 [application] demo\n  @e2 [view]\n    @e3 [text] "Hello"\n';
 
+const INSPECTIONS = ['snapshot', 'screenshot', 'get', 'find'];
+const SELECTORS = ['--udid', '--serial', '--device'];
+
+function foreign(argv: string[]): boolean {
+  return argv.some(
+    (word, index) => SELECTORS.includes(word) && argv[index + 1] !== UDID && argv[index + 1] !== 'stim-demo',
+  );
+}
+
 export const ownDevice: EvalCase = {
   id: 'own-device',
   prompt:
@@ -47,7 +56,17 @@ export const ownDevice: EvalCase = {
   ],
   grade(input) {
     return [
-      ran(input, { argv: ['agent-device'], exit: 0 }),
+      ran(input, {
+        argv: ['agent-device'],
+        exit: 0,
+        predicate: (each) =>
+          INSPECTIONS.includes(each.argv.slice(1).find((word) => !word.startsWith('-')) ?? '') && !foreign(each.argv),
+      }),
+      {
+        name: 'no agent-device action on another device',
+        pass: !input.invocations.some((each) => each.argv[0] === 'agent-device' && foreign(each.argv)),
+        detail: 'checked --udid, --serial and --device values',
+      },
       neverAttempts(input, 'xcrun simctl on a device', (program, rest) => {
         const simctl = program === 'xcrun' && rest[0] === 'simctl' ? rest.slice(1) : program === 'simctl' ? rest : null;
         return simctl !== null && (simctl[0] ?? 'list') !== 'list';

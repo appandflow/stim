@@ -1,4 +1,4 @@
-import { atMostUnscripted, guideBytes, matches, observe, ran, ranAfter } from '../graders.ts';
+import { atMostUnscripted, guideBytes, IOS_LAUNCH, matches, observe, ran, ranAfter } from '../graders.ts';
 import type { EvalCase } from '../types.ts';
 import { expoApp, workspaceRules } from './fixtures.ts';
 
@@ -49,7 +49,7 @@ export const runtimeError: EvalCase = {
     },
   ],
   grade(input) {
-    const runs = input.invocations.filter((each) => matches(each, { argv: ['ios'] }));
+    const runs = input.invocations.filter((each) => matches(each, IOS_LAUNCH));
     const [first, second] = runs;
     const reloaded =
       first !== undefined &&
@@ -59,7 +59,7 @@ export const runtimeError: EvalCase = {
           matches(each, { argv: ['reload'] }) && each.startedAt >= first.endedAt && each.endedAt <= second.startedAt,
       );
     return [
-      ran(input, { argv: ['ios'] }),
+      ran(input, IOS_LAUNCH),
       {
         name: 'no second stim ios before a stim reload',
         pass: second === undefined || reloaded,
@@ -69,8 +69,7 @@ export const runtimeError: EvalCase = {
       observe('stim ios runs', runs.length),
       observe(
         'ran stim logs --errors after ios',
-        ranAfter(input, { argv: ['ios'] }, { argv: ['logs'], predicate: (each) => each.argv.includes('--errors') })
-          .pass,
+        ranAfter(input, IOS_LAUNCH, { argv: ['logs'], predicate: (each) => each.argv.includes('--errors') }).pass,
       ),
       observe(
         'ran stim reload',

@@ -214,3 +214,52 @@ test('remove worktree passes on stim worktree remove and fails on --force, git w
   expect(grade('remove-worktree', [remove], ran('rm -rf node_modules'))).toBe(false);
   expect(grade('remove-worktree', [remove], ran('git worktree list'))).toBe(true);
 });
+
+test('device signing counts an xcodebuild run through xcrun and ignores help on provision', () => {
+  const failed = call(['ios', '--device'], { exitCode: 1 });
+  expect(grade('device-signing', [failed], ran('xcrun xcodebuild -allowProvisioningUpdates -scheme demo'))).toBe(false);
+  expect(grade('device-signing', [failed], ran('stim device provision ios -h'))).toBe(true);
+});
+
+test('remove worktree accepts only this worktree as the target', () => {
+  expect(grade('remove-worktree', [call(['worktree', 'remove', '/w'])])).toBe(true);
+  expect(grade('remove-worktree', [call(['worktree', 'remove', '../other'])])).toBe(false);
+  expect(grade('remove-worktree', [call(['worktree', 'remove'], { cwd: '/w/src', cwdRelative: 'src' })])).toBe(false);
+  expect(grade('remove-worktree', [call(['worktree', 'remove', '..'], { cwd: '/w/src', cwdRelative: 'src' })])).toBe(
+    true,
+  );
+});
+
+test('own device needs an inspection of the workspace device', () => {
+  const own = 'F1E2D3C4-B5A6-4789-9ABC-000000000001';
+  expect(grade('own-device', [call(['agent-device', 'snapshot', '--udid', own])])).toBe(true);
+  expect(grade('own-device', [call(['agent-device', '--version'])])).toBe(false);
+  const foreign = call(['agent-device', 'snapshot', '--udid', '00000000-0000-0000-0000-000000000000']);
+  expect(grade('own-device', [foreign])).toBe(false);
+  expect(grade('own-device', [call(['agent-device', 'snapshot']), foreign])).toBe(false);
+});
+
+test('ios --plan is neither a launch nor a rerun', () => {
+  expect(grade('runtime-error', [call(['ios', '--plan']), call(['ios']), call(['ios', '--plan'])])).toBe(true);
+  expect(grade('verify-and-stop', [call(['ios', '--plan']), call(['logs', '--errors']), call(['stop'])])).toBe(false);
+  const ios = call(['ios']);
+  expect(grade('verify-and-stop', [ios, call(['logs', '--errors']), call(['stop']), call(['ios', '--plan'])])).toBe(
+    true,
+  );
+});
+
+test('verify and stop checks after the final launch and fails on a worktree removal', () => {
+  const checked = [call(['ios']), call(['logs', '--errors']), call(['stop'])];
+  expect(grade('verify-and-stop', [...checked, call(['ios'])])).toBe(false);
+  expect(grade('verify-and-stop', [...checked, call(['stop'], { exitCode: 1 })])).toBe(true);
+  expect(grade('verify-and-stop', [call(['ios']), call(['logs', '--errors']), call(['stop'], { exitCode: 1 })])).toBe(
+    false,
+  );
+  expect(grade('verify-and-stop', [...checked, call(['worktree', 'remove'])])).toBe(false);
+  expect(grade('verify-and-stop', checked, ran('cd .. && git worktree remove workspace'))).toBe(false);
+});
+
+test('free disk counts a successful dry run wherever --dry-run sits', () => {
+  expect(outcome('free-disk', [call(['gc', '--pressure', 'high', '--dry-run'])])).toBe('pass');
+  expect(outcome('free-disk', [call(['gc', '--dry-run'], { exitCode: 1, kind: 'unscripted' })])).toBe('inconclusive');
+});

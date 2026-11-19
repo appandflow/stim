@@ -9,6 +9,8 @@ export interface Match {
   predicate?: (invocation: Invocation) => boolean;
 }
 
+export const IOS_LAUNCH: Match = { argv: ['ios'], predicate: (invocation) => !invocation.argv.includes('--plan') };
+
 function isHelp(argv: string[]): boolean {
   return argv.includes('--help') || argv.includes('-h');
 }

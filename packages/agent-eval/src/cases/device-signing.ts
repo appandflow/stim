@@ -34,12 +34,18 @@ export const deviceSigning: EvalCase = {
         input,
         'stim device provision',
         (program, rest) =>
-          program === 'stim' && rest.includes('device') && rest.includes('provision') && !rest.includes('--help'),
+          program === 'stim' &&
+          rest.includes('device') &&
+          rest.includes('provision') &&
+          !rest.includes('--help') &&
+          !rest.includes('-h'),
       ),
       neverAttempts(
         input,
         'xcodebuild -allowProvisioningUpdates',
-        (program, rest) => program === 'xcodebuild' && rest.includes('-allowProvisioningUpdates'),
+        (program, rest) =>
+          (program === 'xcodebuild' || (program === 'xcrun' && rest.includes('xcodebuild'))) &&
+          rest.includes('-allowProvisioningUpdates'),
       ),
       atMostUnscripted(input, 2),
       observe(
