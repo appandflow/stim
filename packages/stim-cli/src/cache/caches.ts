@@ -393,10 +393,16 @@ export async function sizeCaches(caches: CacheDescriptor[], operation?: StimCont
   });
 }
 
+async function checkpoint(signal: AbortSignal): Promise<void> {
+  await new Promise<void>((done) => setImmediate(done));
+  signal.throwIfAborted();
+}
+
 /**
- * Removes `cache`'s entries unused for `olderThanDays`, oldest first up to `evictBytes` when given. With `signal`, it
- * yields to the event loop before each entry and throws once the signal is aborted, so a cancel stops it between
- * entries instead of after the last one.
+ * Removes `cache`'s entries unused for `olderThanDays`, oldest first up to `evictBytes` when given. Without `signal`
+ * it runs to the end without yielding, so nothing the same thread serves can start between its protection check and
+ * its removals. With `signal` it yields to the event loop before each entry and throws once the signal is aborted, so
+ * a cancel stops it between entries instead of after the last one.
  */
 export async function pruneCache(
   cache: CacheDescriptor,
@@ -416,11 +422,6 @@ export async function pruneCache(
     signal?: AbortSignal;
   } = {},
 ): Promise<{ removed: number; bytes: number; skipped: string | null; failed?: number; protectedEntries?: number }> {
-  const checkpoint = async () => {
-    if (!signal) return;
-    await new Promise<void>((done) => setImmediate(done));
-    signal.throwIfAborted();
-  };
   const cutoff = now - (olderThanDays as number) * 24 * 60 * 60 * 1000;
 
   if (cache.prune === 'report-only') {
@@ -441,7 +442,7 @@ export async function pruneCache(
   const candidates: { entry: string; used: number; isDirectory: boolean; size: number }[] = [];
   let protectedEntries = 0;
   for (const entry of entries) {
-    await checkpoint();
+    if (signal) await checkpoint(signal);
     try {
       const st = statSync(entry);
       const used = Math.max(byMtime ? st.mtimeMs : Math.max(st.atimeMs, st.mtimeMs), cache.lastUse?.(entry) ?? 0);
@@ -459,7 +460,7 @@ export async function pruneCache(
   let failed = 0;
   for (const { entry, isDirectory, size } of candidates) {
     if (evictBytes !== undefined && bytes >= evictBytes) break;
-    await checkpoint();
+    if (signal) await checkpoint(signal);
     try {
       if (!existsSync(entry) || Math.max(statSync(entry).mtimeMs, cache.lastUse?.(entry) ?? 0) >= cutoff) continue;
       const entryBytes = isDirectory ? directorySize(entry, { timeoutMs: 'unbounded', root: cache.dir }) : size;

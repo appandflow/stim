@@ -545,7 +545,7 @@ running after 10 minutes also writes a `daemon_step_running` record (`step`,
 `startedAt`, `runningMs`) every 10 minutes until it ends, and so do the tick's
 `measure`, `booted_parked` and `idle_stage` phases and the maintenance pass's
 `fingerprint_precompute` and `maintenance` phases. These records only log. A
-shutdown still running after 10 minutes writes
+shutdown still running after 10 minutes, not counting time the machine slept, writes
 `daemon_shutdown_timeout`, whose `waiting` names what it waits on, and stimd
 is forced to exit; an engine switch in progress is waited for first. While
 `daemon.mode` is off and stimd stays up for work it still serves, each pass of

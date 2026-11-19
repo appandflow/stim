@@ -113,8 +113,8 @@ report completed, so an unreadable config leaves the hold in place.
 
 ## A shutdown has a deadline
 
-A stimd that has begun to shut down exits within 10 minutes. If its shutdown has
-not finished by then, it logs `daemon_shutdown_timeout` with the parts it still
+A stimd that has begun to shut down exits within 10 minutes of awake time. If its
+shutdown has not finished by then, it logs `daemon_shutdown_timeout` with the parts it still
 waits on (the tick, the maintenance pass, the dependency scan, Metro and tunnel
 children, the net thread and device logs, the worker threads) and makes a forced
 exit, as after a second signal: it records its boot and sends itself SIGKILL. A
@@ -142,6 +142,12 @@ Two waits outlast it on purpose:
   and sends itself SIGKILL. `process.exit` joins worker threads, so a worker
   stuck in a filesystem request would otherwise keep a stimd that kept its
   claims alive.
+
+Each of these limits counts awake time: libuv's timers on macOS read
+`mach_continuous_time`, which advances during sleep, so a plain timer armed
+before a sleep fires on wake, before the cleanup it waits for has had a turn.
+stimd adds the time between 5 s steps instead, and a gap over 60 s (a sleep or a
+stalled event loop) counts as 60 s.
 
 Limit: these timers run on stimd's main thread. A main thread blocked in a
 synchronous call, such as a recursive `rmSync`, runs none of them.

@@ -131,6 +131,7 @@ import {
 } from './metro/children.ts';
 import { invocation, traceInvocation, withInvocation, type Invocation } from './forwarded.ts';
 import { createPassesLane, createThreadTable } from './threads.ts';
+import { awakeTimeout } from './awake-timer.ts';
 import { endWorkers } from './workers.ts';
 import { createCleanupWatch, isUnverifiedCleanup } from './cleanup-watch.ts';
 import { setReportChildLog } from '../report-child-log.ts';
@@ -1834,6 +1835,7 @@ async function runStimdInner(
     const waiting = new Set<string>();
     let settled = false;
     let ended = false;
+    let cancelWait: () => void;
     // @ref LLP 0021#a-shutdown-has-a-deadline -- a shutdown that outlasts it records what it waits on, then is forced
     const expire = () => {
       if (ended) return;
@@ -1844,7 +1846,10 @@ async function runStimdInner(
           'daemon_shutdown_waits',
           'the shutdown deadline passed while the engine selector runs; waiting for it',
         );
-        void selecting.then(() => setTimeout(expire, SHUTDOWN_DEADLINE_MS).unref());
+        void selecting.then(() => {
+          if (!ended) cancelWait = awakeTimeout(SHUTDOWN_DEADLINE_MS, expire);
+          return undefined;
+        });
         return;
       }
       const names = [...waiting];
@@ -1856,11 +1861,10 @@ async function runStimdInner(
         forceExit(`forced exit: ${reason}`);
       }
     };
-    const deadline = setTimeout(expire, SHUTDOWN_DEADLINE_MS);
-    deadline.unref();
+    cancelWait = awakeTimeout(SHUTDOWN_DEADLINE_MS, expire);
     startup.endDeadline = () => {
       ended = true;
-      clearTimeout(deadline);
+      cancelWait();
     };
     foregroundAbort.abort();
     markDaemonFailure(level, attached !== undefined, markAbnormal, why, cause);

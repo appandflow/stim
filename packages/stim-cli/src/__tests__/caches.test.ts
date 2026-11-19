@@ -161,6 +161,26 @@ test('pruneCache writes one size_failed record for a cache whose entries all fai
   }
 });
 
+test('pruneCache without a signal runs to its end before the call returns, so no request on its thread can start between entries', () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-prune-sync-'));
+  vi.stubEnv('STIM_HOME', home);
+  const dir = join(home, 'cache');
+  for (const name of ['a', 'b', 'c']) {
+    mkdirSync(join(dir, name), { recursive: true });
+    age(join(dir, name));
+  }
+  setExecutor({ ...getExecutor(), runFile: () => '4\t.' });
+  try {
+    const pending = pruneCache(makeCacheDescriptor({ dir, prune: 'entries' }), { olderThanDays: 30 });
+    expect(['a', 'b', 'c'].filter((name) => existsSync(join(dir, name)))).toEqual([]);
+    return expect(pending).resolves.toMatchObject({ removed: 3 });
+  } finally {
+    resetExecutor();
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test('a cancel delivered while pruneCache sizes an entry stops it before the next entry', async () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-prune-cancel-'));
   vi.stubEnv('STIM_HOME', home);
