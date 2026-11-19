@@ -16,29 +16,47 @@ export function hungRead(): string | null {
 /**
  * `start()`'s result, or an `Unanswered` rejection when it has not answered in `timeoutMs`; the read keeps running, and
  * is the pending one until it settles. It starts no read at all while one is pending, so the slot is never overwritten.
+ * When `signal` aborts first it rejects with the abort reason at once, and the unsettled read is the pending one too.
  */
-export async function answered<T>(label: string, start: () => Promise<T>, timeoutMs: number): Promise<T> {
+export async function answered<T>(
+  label: string,
+  start: () => Promise<T>,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<T> {
   if (hung) throw new Unanswered(`a read of ${hung.label} is still pending`);
+  signal?.throwIfAborted();
   const read = start();
   let timer: NodeJS.Timeout | undefined;
+  let stop: (() => void) | undefined;
+  let settled = false;
+  const settle = () => {
+    settled = true;
+  };
+  read.then(settle, settle);
   try {
     return await Promise.race([
       read,
       new Promise<never>((_, fail) => {
         timer = setTimeout(() => fail(new Unanswered('timed out')), timeoutMs);
+        if (signal) {
+          stop = () => fail(signal.reason);
+          signal.addEventListener('abort', stop, { once: true });
+        }
       }),
     ]);
   } catch (error) {
-    if (error instanceof Unanswered) {
+    if (error instanceof Unanswered || (signal?.aborted && !settled)) {
       const mine = { label };
       hung = mine;
-      const settled = () => {
+      const release = () => {
         if (hung === mine) hung = null;
       };
-      read.then(settled, settled);
+      read.then(release, release);
     }
     throw error;
   } finally {
     clearTimeout(timer);
+    if (stop) signal?.removeEventListener('abort', stop);
   }
 }

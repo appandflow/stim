@@ -9,6 +9,7 @@ import { resetExecutor, setExecutor } from '../exec.ts';
 import { upsertProject } from '../workspace/config.ts';
 import type { LevelRun } from '../stimd/passes/level-run.ts';
 import { discoverCachesAsync } from '../cache/caches.ts';
+import { hungRead } from '../workspace/bounded-read.ts';
 import { testContext } from './_context.ts';
 
 const hooks: {
@@ -291,7 +292,7 @@ describe('a path Stim manages that does not resolve in time', () => {
     expect(calls).toEqual([]);
   });
 
-  test('stops at once when gc is cancelled', async () => {
+  test('stops at once when gc is cancelled, and records the read it left pending', async () => {
     const controller = new AbortController();
     const pending = unmanagedUsage(levelRun({}), false, testContext({ signal: controller.signal }));
     const outcome = pending.then(
@@ -301,7 +302,11 @@ describe('a path Stim manages that does not resolve in time', () => {
     await reached;
     controller.abort();
     expect(await outcome).toMatch(/abort/i);
+    expect(hungRead()).toBe(home);
     expect(calls).toEqual([]);
+    release?.();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(hungRead()).toBeNull();
   });
 });
 

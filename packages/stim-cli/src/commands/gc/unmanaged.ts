@@ -125,24 +125,10 @@ class Scan {
     const signal = this.operation?.signal;
     signal?.throwIfAborted();
     if (this.left() <= 0) return UNANSWERED;
-    let stop: (() => void) | undefined;
-    try {
-      return await Promise.race([
-        answered(label, start, this.left()).catch((error: unknown) =>
-          error instanceof Unanswered ? UNANSWERED : null,
-        ),
-        ...(signal
-          ? [
-              new Promise<never>((_, reject) => {
-                stop = () => reject(signal.reason);
-                signal.addEventListener('abort', stop, { once: true });
-              }),
-            ]
-          : []),
-      ]);
-    } finally {
-      if (stop) signal?.removeEventListener('abort', stop);
-    }
+    return answered(label, start, this.left(), signal).catch((error: unknown) => {
+      signal?.throwIfAborted();
+      return error instanceof Unanswered ? UNANSWERED : null;
+    });
   }
 
   async read<T>(label: string, start: () => Promise<T>): Promise<T | null> {
