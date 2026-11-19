@@ -1408,8 +1408,9 @@ async function runStimdInner(
     switchedTo = next;
     // @ref LLP 0009#service-and-engine-updates -- a service unit's stimd hands over through the unit's job
     const waiter = [...jobWaiters].find(([socket]) => !socket.destroyed)?.[1];
-    const shim = follower !== null && (await shimWritten(follower.engine.root, next.build));
-    const job = shim ? ((inJob ? unit : undefined) ?? waiter ?? null) : null;
+    const candidate = (inJob ? unit : undefined) ?? waiter ?? null;
+    const job =
+      candidate && follower !== null && (await shimWritten(follower.engine.root, next.build)) ? candidate : null;
     const leftAt = Date.now();
     if (job) {
       leaveToJob(job, leftAt, null, log);

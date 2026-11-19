@@ -953,7 +953,7 @@ function jobRestartWaitMs(): number {
 export async function awaitJobRestart(signal?: AbortSignal, home?: string): Promise<void> {
   for (let said = false; ; said = true) {
     const hold = jobRestartHold(home);
-    if (!hold || Date.now() >= hold.until || signal?.aborted) return;
+    if (!hold || Date.now() >= hold.until || hold.record.pid === process.pid || signal?.aborted) return;
     if (crashLoop(readStimdBoots(home), stimdBuildId(), Date.now())) return;
     if (!said) console.error(`Stim: waiting for the ${hold.record.label} service to start stimd again`);
     await new Promise((done) => setTimeout(done, CLAIM_POLL_MS));
@@ -2002,8 +2002,15 @@ export function serveThroughStimd(
  * refused it and handed the home over to one of this build. Null when no stimd or no net thread answers.
  */
 export async function connectNet(timeoutMs: number): Promise<Socket | null> {
+  const hold = jobRestartHold();
+  const restarting = hold !== null && hold.record.pid !== process.pid;
   await awaitJobRestart();
-  const socket = await openNet(timeoutMs);
+  let socket = await openNet(timeoutMs);
+  const deadline = restarting ? Date.now() + NET_START_MS : 0;
+  while (!socket && Date.now() < deadline) {
+    await new Promise((done) => setTimeout(done, CLAIM_POLL_MS * 5));
+    socket = await openNet(timeoutMs);
+  }
   if (socket || !stimdRefused() || !successorExpected() || !(await successorBound())) return socket;
   return openNet(timeoutMs);
 }
