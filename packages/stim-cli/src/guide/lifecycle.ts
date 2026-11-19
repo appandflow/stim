@@ -2597,8 +2597,9 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
 
   The daemon line of \`stim status\` and \`daemon.pressure\` in its --json show
   the level and why. Above normal, the tick runs the ladder top-down until the
-  level clears; after a pass that freed nothing, the next waits 4 times its
-  length (at most 15 min) unless pressure or disk use rose or a run asks.
+  level clears; at high, after a pass that freed nothing, the next waits 4
+  times its length (at most 15 min) unless pressure or disk use rose or a run
+  asks.
   Each rung measures again before it acts, never touches a
   workspace with a blocker (a build, a driver, a lease or lock, a live web
   share, a hosted placement, unreadable evidence, maintenance.keep), and
