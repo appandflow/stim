@@ -362,11 +362,19 @@ async function sizeOf(path: string, signal?: AbortSignal, lowPriority = false): 
  */
 export async function trimCargoTarget(registeredTarget: string, options: CargoTrimOptions): Promise<CargoTrimResult> {
   const result: CargoTrimResult = { bytes: 0, removed: [], kept: [] };
+  const claimed = await withTrimClaim(registeredTarget, (target) => trimClaimed(target, options));
+  return 'kept' in claimed ? { ...result, kept: [claimed.kept] } : claimed.value;
+}
+
+async function withTrimClaim<T>(
+  registeredTarget: string,
+  run: (target: string) => Promise<T>,
+): Promise<{ value: T } | { kept: string }> {
   let target: string;
   try {
     target = realpathSync.native(registeredTarget);
   } catch {
-    return { ...result, kept: [`${registeredTarget} cannot be resolved to its on-disk path`] };
+    return { kept: `${registeredTarget} cannot be resolved to its on-disk path` };
   }
   // @ref LLP 0005#never-delete-what-a-build-took-back -- one trim of a target at a time across processes
   let claim: ClaimHandle | null | undefined;
@@ -382,18 +390,72 @@ export async function trimCargoTarget(registeredTarget: string, options: CargoTr
     if (!claim) {
       const holder = attempt.held;
       return {
-        ...result,
-        kept: [`another trim of it holds ${holder?.path ?? 'its claim'}${holder ? ` (pid ${holder.owner.pid})` : ''}`],
+        kept: `another trim of it holds ${holder?.path ?? 'its claim'}${holder ? ` (pid ${holder.owner.pid})` : ''}`,
       };
     }
   } catch (error) {
-    return { ...result, kept: [`its trim claim cannot be taken: ${error instanceof Error ? error.message : error}`] };
+    return { kept: `its trim claim cannot be taken: ${error instanceof Error ? error.message : error}` };
   }
   try {
-    return await trimClaimed(target, options);
+    return { value: await run(target) };
   } finally {
     releaseClaim(claim);
   }
+}
+
+/**
+ * Why a build used `target` within `idleMs`: a profile written or stamped in Exact's ledger that recently, or a
+ * profile or ledger that cannot be read. Null when every profile went unused that long.
+ */
+export function recentCargoUse(target: string, now: number, idleMs: number): string | null {
+  const stale = staleCargoTargetPaths(target, now, idleMs);
+  if ('refusal' in stale) return stale.refusal;
+  const profiles = profilePaths(target)?.profiles;
+  if (!profiles) return `${target} cannot be listed`;
+  const used = profiles.find(
+    (profile) => !stale.paths.some((gone) => profile === gone || profile.startsWith(`${gone}/`)),
+  );
+  return used === undefined ? null : `a build used its ${used} profile in that time`;
+}
+
+/**
+ * Deletes `target` whole under its trim claim, after checking that it holds no copy a trim could not put back, that no
+ * profile was used within `idleMs`, that no process executes from or holds open a path in it (the launchers read at the
+ * same moment), and that no build holds a profile's lock file. Returns why it stays, or null once it is gone. Nothing
+ * slow runs between the lock check and the delete, but they are not atomic.
+ */
+export async function deleteCargoTarget(
+  registeredTarget: string,
+  {
+    idleMs,
+    launching,
+    signal,
+    remove,
+  }: {
+    idleMs: number;
+    launching: Launching;
+    signal?: AbortSignal;
+    remove: (target: string) => Promise<void>;
+  },
+): Promise<string | null> {
+  const claimed = await withTrimClaim(registeredTarget, async (target): Promise<string | null> => {
+    const recovery = recoveryReason(target);
+    if (recovery) return recovery;
+    const recent = recentCargoUse(target, Date.now(), idleMs);
+    if (recent) return recent;
+    const use = await readTargetUse(target, launching, signal);
+    if ('kept' in use) return use.kept;
+    if (use.used.length) return `a process uses ${use.used[0]}`;
+    const profiles = cargoProfileDirs(target);
+    if (!profiles) return `${target} cannot be listed`;
+    for (const profile of profiles) {
+      const held = await lockOutcome(profile, signal);
+      if (lockHeld(held)) return `a build holds ${join(profile, held.file ?? '.cargo-lock')}`;
+    }
+    await remove(registeredTarget);
+    return null;
+  });
+  return 'kept' in claimed ? claimed.kept : claimed.value;
 }
 
 interface CargoTrimOptions {
@@ -417,10 +479,22 @@ interface CargoTrimOptions {
 }
 
 /** Why no trim of `target` runs until a person acts: its `.stim-trimmed` holds a directory that could not be put back. */
-export function strandedReason(target: string): string | null {
+function strandedReason(target: string): string | null {
   const aside = join(target, ASIDE);
   return existsSync(join(aside, STRANDED))
     ? `${aside} holds a directory that could not be put back; a person must merge or delete it`
+    : null;
+}
+
+/** Why `target` must not be deleted whole: it holds a directory a trim could not put back. */
+function recoveryReason(target: string): string | null {
+  const stranded = strandedReason(target);
+  if (stranded) return stranded;
+  const entries = entriesOf(target);
+  if (!entries) return `${target} cannot be listed`;
+  const kept = entries.find((entry) => entry.name.startsWith(NOT_RESTORED));
+  return kept
+    ? `${join(target, kept.name)} holds a directory a trim could not put back; a person must merge or delete it`
     : null;
 }
 

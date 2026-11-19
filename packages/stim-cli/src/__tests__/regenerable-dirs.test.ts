@@ -93,7 +93,7 @@ test.each([
   ['only a Stim recovery copy holding .fingerprint', ['.stim-not-restored-1-debug/.fingerprint/'], false],
   ['only a regular file named .fingerprint', ['exports/.fingerprint'], false],
 ])(
-  'a target/ beside Cargo.toml with %s is trimmed as a Cargo target ($2), never deleted whole',
+  'a target/ beside Cargo.toml with %s is a Cargo target ($2) and never listed as build output',
   async (_, entries, recognised) => {
     writeFileSync(join(root, 'Cargo.toml'), '');
     for (const entry of entries) {

@@ -556,11 +556,11 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
     maintenance worktree check, N. Kept: uncommitted (archived first) or
     unpushed work, in use, leased, locked, pinned, cannot prove finished.
   Workspace idle idle.dormantDays (default 1): build outputs (android/build,
-  android/.gradle, .build, .cxx, .dd DerivedData, an Exact app's target/ beside
-  exact.mjs trimmed by profile), owned devices, logs archived
+  android/.gradle, .build, .cxx, .dd DerivedData, a recognised Cargo target/
+  whole, untagged too), owned devices, logs archived
     dormant reduction, N. Kept: running dev server or build, a process in
     the checkout, booted device, leased, driven, locked, hosted, pinned,
-    idle.minutes 0.
+    idle.minutes 0; a target/ a build used or locks, or holding trim recovery.
   The same: node_modules and ios/Pods of a linked worktree, recorded so the next
   Stim command restores them with worktree warm, or asks for an install
     dormant reduction, N. Kept: source checkout, under 256 MB of its own (a

@@ -189,7 +189,8 @@ function* recoveryCopyProblem(path: string): DirReads<string | null> {
 /**
  * The Cargo `target/` directly under `root` that the Cargo trims manage: an Exact app's (beside its `exact.mjs`), one that
  * carries Cargo's `CACHEDIR.TAG` with its signature line, or one beside a `Cargo.toml` that holds files only Cargo writes
- * (a `.rustc_info.json`, or a direct child profile holding `.fingerprint`). Only the first two are ever deleted whole.
+ * (a `.rustc_info.json`, or a direct child profile holding `.fingerprint`). Only the first two are build output; the
+ * dormant reduction deletes any of the three whole.
  */
 export function cargoTargetDirsAsync(root: string): Promise<string[]> {
   return readAsync(cargoTargetDirsReads(root));
@@ -301,7 +302,7 @@ export async function regenerableDirProblem(
   if (
     processes &&
     basename(path) === CARGO_TARGET &&
-    (await readAsync(wholeCargoTargetDirsReads(dirname(path)))).includes(path)
+    (await readAsync(cargoTargetDirsReads(dirname(path)))).includes(path)
   ) {
     const recovery = await readAsync(recoveryCopyProblem(path));
     if (recovery) return recovery;
