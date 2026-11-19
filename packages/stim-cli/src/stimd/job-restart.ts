@@ -11,8 +11,8 @@ function processRuns(pid: number): boolean {
 }
 
 /** Writes `run/job-restart.json`; false when it cannot be written. */
-export function writeJobRestart(record: JobRestart): boolean {
-  const file = stimdJobRestartFile();
+export function writeJobRestart(record: JobRestart, home?: string): boolean {
+  const file = stimdJobRestartFile(home);
   const tmp = `${file}.${process.pid}.tmp`;
   try {
     writeFileSync(tmp, `${JSON.stringify(record)}\n`, { mode: 0o600 });
@@ -28,15 +28,15 @@ export function writeJobRestart(record: JobRestart): boolean {
  * `run/job-restart.json`, whether its stimd still runs, and until when it holds the home for its job. A record whose
  * stimd exited without a `left` gets one now, so every process that waits on it counts from the same moment.
  */
-export function jobRestartHold(): { record: JobRestart; running: boolean; until: number } | null {
-  let record = readJobRestart();
+export function jobRestartHold(home?: string): { record: JobRestart; running: boolean; until: number } | null {
+  let record = readJobRestart(home);
   if (!record) return null;
   const running = processRuns(record.pid);
   if (!running && record.left === null) {
     const seen = record;
     record = { ...record, left: Date.now() };
-    const now = readJobRestart();
-    if (now?.pid === seen.pid && now.at === seen.at && now.left === null) writeJobRestart(record);
+    const now = readJobRestart(home);
+    if (now?.pid === seen.pid && now.at === seen.at && now.left === null) writeJobRestart(record, home);
   }
   return { record, running, until: jobRestartUntil(record, running) };
 }

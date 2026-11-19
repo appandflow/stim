@@ -950,9 +950,9 @@ function jobRestartWaitMs(): number {
  * Waits while `run/job-restart.json` holds this home for a service unit's job, which removes it once its stimd has
  * started, so a command neither starts a stimd only to wait behind the job's restart nor asks the one that is leaving.
  */
-export async function awaitJobRestart(signal?: AbortSignal): Promise<void> {
+export async function awaitJobRestart(signal?: AbortSignal, home?: string): Promise<void> {
   for (let said = false; ; said = true) {
-    const hold = jobRestartHold();
+    const hold = jobRestartHold(home);
     if (!hold || Date.now() >= hold.until || signal?.aborted) return;
     if (!said) console.error(`Stim: waiting for the ${hold.record.label} service to start stimd again`);
     await new Promise((done) => setTimeout(done, CLAIM_POLL_MS));
@@ -1782,7 +1782,7 @@ async function successorBound(limit?: ResumeLimit): Promise<boolean> {
   const job = () => (refusedBuild === stimdBuildId() ? jobRestartWaitMs() : 0);
   const deadline = () => Math.min(Math.max(base, Date.now() + job()), limit?.deadline ?? Infinity);
   let started = false;
-  while (Date.now() < deadline() && !limit?.signal?.aborted) {
+  for (;;) {
     if (readJsonObject(stimdRecordFile())?.build === stimdBuildId()) {
       refusedBuild = null;
       refusal = null;
@@ -1796,6 +1796,7 @@ async function successorBound(limit?: ResumeLimit): Promise<boolean> {
         break;
       }
     }
+    if (Date.now() >= deadline() || limit?.signal?.aborted) break;
     await new Promise((done) => setTimeout(done, CLAIM_POLL_MS));
   }
   successorMissed = true;
