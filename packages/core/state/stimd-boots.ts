@@ -155,12 +155,12 @@ const JOB_RESTART_MAX_MS = 25 * 60_000;
 
 /**
  * Until when `record` holds the home for its job: `JOB_RESTART_WAIT_MS` after its stimd left, and while that stimd still
- * runs without a `left`; never past `JOB_RESTART_MAX_MS` after the record was first written, so a reused pid or a
- * crash-looping job does not hold the home.
+ * runs without a `left`, but then never past `JOB_RESTART_MAX_MS` after the record was first written, so a reused pid
+ * does not hold the home.
  */
 export function jobRestartUntil(record: JobRestart, running: boolean): number {
-  const until = record.left !== null ? record.left + JOB_RESTART_WAIT_MS : running ? Infinity : 0;
-  return Math.min(until, record.at + JOB_RESTART_MAX_MS);
+  if (record.left !== null) return record.left + JOB_RESTART_WAIT_MS;
+  return running ? record.at + JOB_RESTART_MAX_MS : 0;
 }
 
 export type SuccessorMissing = { at: number; pid: number; build: string; reason: string };

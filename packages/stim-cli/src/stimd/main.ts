@@ -897,7 +897,6 @@ async function runStimdInner(
   );
   const reservation = inJob ? readJobRestart() : null;
   if (own && reservation && reservation.label === unit) leaveToJob(reservation.label, reservation.at, null, log);
-  if (own) heldHome = true;
   if (!own) {
     log('debug', 'stimd_claim_held', 'another stimd holds this Stim home; exiting');
     writer.close();
@@ -1924,6 +1923,7 @@ async function runStimdInner(
   const shutdown = (why: string, level: Level = 'info', cause?: unknown) => {
     if (closing) return;
     closing = true;
+    if (level === 'error' && inJob && unit && heldHome) leaveToJob(unit, Date.now(), null, log);
     const waiting = new Set<string>();
     let settled = false;
     let ended = false;
@@ -2081,6 +2081,7 @@ async function runStimdInner(
   startup.finish = undefined;
   startup.cleanup = undefined;
   rmSync(stimdJobRestartFile(), { force: true });
+  heldHome = true;
   log(
     'info',
     'daemon_started',
@@ -2452,8 +2453,15 @@ export async function runStimdEntry(argv: readonly string[]): Promise<void> {
     // @ref LLP 0009#service-and-engine-updates -- a job's stimd that crashes leaves the home to the job's restart
     if (jobLabel)
       process.once('exit', (code) => {
-        if (code !== 0 && heldHome)
-          writeJobRestart({ at: Date.now(), pid: process.pid, label: jobLabel, left: Date.now() });
+        if (code !== 0 && heldHome) {
+          const kept = readJobRestart();
+          writeJobRestart({
+            at: kept?.label === jobLabel ? kept.at : Date.now(),
+            pid: process.pid,
+            label: jobLabel,
+            left: Date.now(),
+          });
+        }
       });
     const served = await runStimd({
       mode: parseDaemonMode(at >= 0 ? argv[at + 1] : undefined) ?? daemonMode(process.env),
