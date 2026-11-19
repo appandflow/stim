@@ -29,12 +29,15 @@ const MINUTE_MS = 60_000;
 const volume = vi.hoisted((): { short: { root: string; dev: number } | null } => ({ short: null }));
 vi.mock('node:fs', async (importOriginal) => {
   const fs = await importOriginal<typeof import('node:fs')>();
-  const statSync = ((path: Parameters<typeof fs.statSync>[0], options?: Parameters<typeof fs.statSync>[1]) => {
-    const stat = fs.statSync(path, options);
-    const short = volume.short;
-    if (!stat || !short || !String(path).startsWith(short.root)) return stat;
-    return Object.assign(Object.create(Object.getPrototypeOf(stat)), stat, { dev: short.dev });
-  }) as typeof fs.statSync;
+  const statSync = new Proxy(fs.statSync, {
+    apply(target, self, args: Parameters<typeof fs.statSync>) {
+      const stat: unknown = Reflect.apply(target, self, args);
+      const short = volume.short;
+      if (stat instanceof fs.Stats && short && String(args[0]).startsWith(short.root))
+        return Object.assign(Object.create(fs.Stats.prototype), stat, { dev: short.dev });
+      return stat;
+    },
+  });
   return { ...fs, statSync };
 });
 
