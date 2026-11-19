@@ -217,13 +217,13 @@ first, which already waits 5 s, a silent stimd takes about 8 s.
 ## stimd runs at the priority of an app
 
 On macOS every launchd job that runs stimd sets `ProcessType` to `Interactive`:
-the transient job a command starts and the LaunchAgent `stim service install`
-writes. launchd.plist(5) gives a job without `ProcessType`, or with `Standard`,
-light CPU and I/O throttling, and stimd's children inherit it: Metro, the
-builds it runs, the offload probes and the tools it starts. On a loaded worker
-stimd missed `build.offer` and health deadlines while it ran throttled (#5925);
-that the throttling caused the misses is not proven end to end.
-`Adaptive` moves a job between Background and Interactive by its XPC
+the transient job `launchStimd` writes, which a command and a handover at an
+engine switch go through, and the LaunchAgent `stim service install` writes. launchd.plist(5) gives a job without `ProcessType`, or with
+`Standard`, light CPU and I/O throttling, and stimd's children inherit it:
+Metro, the builds it runs, the offload probes and the tools it starts. On a
+loaded worker stimd missed `build.offer` and health deadlines while it ran
+throttled (#5925); that the throttling caused the misses is not proven end to
+end. `Adaptive` moves a job between Background and Interactive by its XPC
 transactions, and stimd's clients reach it over a Unix socket and HTTP, never
 XPC, so an Adaptive stimd stays in Background. The man page reserves
 `Interactive` for a job that an app's responsiveness depends on and that cannot
@@ -242,11 +242,48 @@ shell and a child, read with `ps -o pri` and `launchctl print`:
 
 31 is the priority of a process started from a shell. A stimd that Desktop
 starts as its child, or that a command hosts attached, runs outside launchd and
-is not changed here; its priority was not measured. A unit installed before this change keeps `Standard` until
-it is installed again, because launchd reads a job's plist only at bootstrap.
-Background work stimd starts, such as size scans and cache trims, runs at the
-same priority; lowering it explicitly is separate work. Chosen by the
-implementing lane of #5925, not the maintainer.
+is not changed here; its priority was not measured.
+
+The priority of a running stimd follows the job that started it. A stimd that
+an older build started, including the first successor an engine switch onto
+this build starts, runs at 20 until the next handover. A LaunchAgent that still
+names node and a script gets `Interactive` when it is rewritten onto the engine
+shim; one already on the shim keeps `Standard` until `stim service install`
+runs again, and launchd reads a plist only at bootstrap, so after a reboot or a
+login such a unit starts stimd at 20 again.
+
+Work nobody waits on runs its child tools through the `lowPriority` option of
+`runFileAsync`. While the pressure level in the home's daemon snapshot, the
+disk or memory level the ladder uses, is normal, or there is no snapshot, such
+a child runs at low priority: on macOS under `taskpolicy -c utility`
+(taskpolicy(8)), a QoS clamp on CPU and I/O that its descendants inherit,
+priority 20, the class stimd had before; on Windows as it is; elsewhere under
+`nice -n 19`. On macOS `nice -n 19` lowers only CPU and leaves the child at 31. At high or critical
+pressure the same children run at full priority, since freeing disk or memory
+is then the urgent work. stimd's own job stays `Interactive` at every level:
+launchd sets a job's class from its plist when it bootstraps the job, so the
+level stimd reads later cannot change it. A snapshot that a stopped stimd left
+at high or critical keeps these children at full priority until a stimd ticks
+again.
+
+The children that pass it: the maintenance pass's size scans and Cargo target
+trims in the daemon tick, the dependency and checkout measurements through
+their walk claim, and the fingerprint precompute's child. The size scans and
+trims a maintenance pass runs in a command, such as `stim gc`, are not lowered,
+since the person waits for them. The walks and trims that ran under
+`nice -n 19` before pass the option in a command too. Worker threads cannot lower themselves: Node's
+`os.setPriority` acts on a whole process, so the policy goes on the child
+tools.
+
+Maintainer decision: "yea stim itself is fine at interactive I am good with", 2026-11-19.
+[Decision on #5925](https://github.com/appandflow/stim/issues/5925#issuecomment-7023460880).
+
+Maintainer decision: "Can priority be based on disk / ram load, so if high/critical it becomes very important", 2026-11-19.
+[Decision on #5925](https://github.com/appandflow/stim/issues/5925#issuecomment-7023456720).
+
+The implementing lane and its coordinating session chose `taskpolicy -c
+utility` as the low priority, reading the level from the daemon snapshot, and
+which children pass the option.
 
 ## Collect diagnostics with the existing reports
 
