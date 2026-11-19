@@ -160,6 +160,12 @@ export function launcherReader(
               } catch (unopened) {
                 if (unopened instanceof Unanswered) throw unopened;
                 signal?.throwIfAborted();
+                found.incomplete.push({
+                  kind: 'entry',
+                  path: entry,
+                  error: `${describe(error)}; fallback: ${describe(unopened)}`,
+                });
+                continue;
               }
             }
             found.incomplete.push({ kind: 'entry', path: entry, error: describe(error) });
@@ -279,11 +285,11 @@ function takeLauncherProblems(operation: StimContext): LauncherProblem[] {
   return problems;
 }
 
-/** What cleanup did about `problems`: went ahead past a failed directory or entry, kept what the rest cannot rule out. */
+/** What cleanup does about `problems`: goes ahead past a failed directory or entry, keeps what the rest cannot rule out. */
 export function launcherProblemsOutcome(problems: readonly LauncherProblem[]): string {
   const outcome = [];
   if (problems.some(({ kind }) => kind === 'directory' || kind === 'entry'))
-    outcome.push('cleanup went ahead as if what could not be read points into no checkout');
+    outcome.push('cleanup goes ahead as if what could not be read points into no checkout');
   if (problems.some(({ kind }) => kind === 'pending'))
     outcome.push('cleanup keeps every checkout while a read has not answered');
   if (problems.some(({ kind }) => kind === 'owner')) outcome.push('cleanup keeps a checkout whose owner is unknown');

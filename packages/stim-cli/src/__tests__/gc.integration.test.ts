@@ -4333,7 +4333,7 @@ describe('the gc log', () => {
       expect.objectContaining({
         level: 'warn',
         trigger: 'manual',
-        msg: expect.stringMatching(/the directory \/locked could not be read \(EACCES\).*cleanup went ahead/i),
+        msg: expect.stringMatching(/the directory \/locked could not be read \(EACCES\).*cleanup goes ahead/i),
       }),
     ]);
   });

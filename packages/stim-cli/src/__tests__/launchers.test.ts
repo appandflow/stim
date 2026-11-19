@@ -100,7 +100,9 @@ describe('the PATH launcher scan', () => {
     expect(unrunnable).toEqual({ targets: ['/work/app/.build/release/tool'], incomplete: [] });
     expect(launcherReason('/work/other', unrunnable)).toBeNull();
     const runnable = await scan(['/usr/sbin'], io(entries, links));
-    expect(runnable.incomplete).toEqual([{ kind: 'entry', path: '/usr/sbin/weakpass_edit', error: 'EACCES' }]);
+    expect(runnable.incomplete).toEqual([
+      { kind: 'entry', path: '/usr/sbin/weakpass_edit', error: 'EACCES; fallback: ENOENT' },
+    ]);
     const vanished = await scan(['/usr/sbin'], io(entries, links, [], { '/usr/sbin/weakpass_edit': 'ENOENT' }));
     expect(vanished).toEqual({ targets: ['/work/app/.build/release/tool'], incomplete: [] });
     const unchecked = await scan(['/usr/sbin'], io(entries, links, [], { '/usr/sbin/weakpass_edit': 'EIO' }));
@@ -126,7 +128,7 @@ describe('the PATH launcher scan', () => {
     expect(launcherReason('/work/other', inside)).toBeNull();
   });
 
-  it.skipIf(process.platform !== 'darwin')(
+  test.skipIf(process.platform !== 'darwin')(
     'resolves an unreadable link through lsof on macOS, but not into a file with another hard link',
     async () => {
       const base = realpathSync(mkdtempSync(join(tmpdir(), 'stim-launchers-')));
@@ -143,7 +145,13 @@ describe('the PATH launcher scan', () => {
         const result = await launcherReader(undefined, { directories: [join(base, 'bin')] })();
         expect(result).toEqual({
           targets: [join(base, 'app', 'single')],
-          incomplete: [{ kind: 'entry', path: join(base, 'bin', 'linked'), error: 'EACCES' }],
+          incomplete: [
+            {
+              kind: 'entry',
+              path: join(base, 'bin', 'linked'),
+              error: 'EACCES; fallback: the file has more than one hard link',
+            },
+          ],
         });
       } finally {
         rmSync(base, { recursive: true, force: true });

@@ -258,9 +258,11 @@ as a root link with mode 0700 (macOS denies `readlink` on it, not the path
 lookup), is resolved through the file it opens to: on macOS the entry is opened
 read-only and non-blocking, `lsof` names the opened file, and that path counts
 as the link's target when its `realpath` is the same file (device and inode) as
-the open one. Any failure of that (open denied, `lsof` failing, timing out or
-naming no path or another file, any other platform) leaves the entry
-unresolved; the open and `lsof` together are one call under the 3 second bound
+the open one and that file has a single hard link (`lsof` names any one of a
+file's links, which the device and inode check cannot tell apart). Any failure
+of that (open denied, a second hard link, `lsof` failing, timing out or naming
+no path or another file, any other platform) leaves the entry unresolved, and
+its error names the original one and the fallback's; the open and `lsof` together are one call under the 3 second bound
 above. (#5896: a root 0700 `/usr/local/bin/1password-mcp` kept every checkout
 for days, through a critical disk level.) Not seen, as a result: a launcher
 that only root or another user can run, pointing into one of this user's
@@ -613,9 +615,9 @@ bounded by 3 seconds per call and a 10 second deadline that covers queue time an
 every entry read, and a read that reaches the deadline is reported as incomplete; it
 also runs the same bounded ownership probe for each registered project. A checkout
 whose owner cannot be established is part of the same pass record, as a count and
-the first five. Each daemon pass writes one
-`launcher_evidence_incomplete` warn record that names the problems and what
-cleanup did about them, and the keep reason of an item kept by a read that has
+the first five. Each daemon pass, and each acting `stim gc` in the gc log, writes
+one `launcher_evidence_incomplete` warn record that names the problems and what
+cleanup does about them, and the keep reason of an item kept by a read that has
 not answered names the cause.
 
 Limits: the daemon reads its own PATH and the fixed folders above, so a launcher
