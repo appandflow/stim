@@ -311,7 +311,9 @@ devices at a time.
 `concurrency.maxTests` caps the test commands a machine runs at once the same
 way, derived as `max(1, floor(CPU cores / 6))` (2 on a 14-core Mac, 1 on a
 10-core one; also `STIM_MAX_TESTS`). Test slots are separate from build slots,
-and a test run waiting for one appears under `daemon.testWaiting`.
+and a test run waiting for one appears under `daemon.testWaiting`. `stim test`
+takes these slots and sizes its test runner's workers from them; see
+[`stim test`](./commands.md#test).
 
 A run past a cap waits in arrival order per resource and prints its queue
 position and what it waits for every 10 seconds, and keeps waiting while every

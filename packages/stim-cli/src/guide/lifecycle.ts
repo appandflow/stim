@@ -2353,7 +2353,8 @@ WHAT MAKES THE CACHE ACTUALLY HIT: .FINGERPRINTIGNORE
   move the key on one machine and not another.`,
     },
     concurrency: {
-      summary: "waiting on another workspace's build, --no-build-cache, concurrency.maxBuilds and maxDevices",
+      summary:
+        "waiting on another workspace's build, --no-build-cache, concurrency.maxBuilds, maxDevices and maxTests, stim test",
       body: () => `ONE COMPILE PER FINGERPRINT, ACROSS EVERY WORKSPACE
   The cache makes the SECOND workspace on a commit free -- but only once the
   first has finished. Three agents starting within the same minute all miss it,
@@ -2424,13 +2425,50 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
                             A workspace's own booted or booting device
                             bypasses the queue.
 
-    concurrency.maxTests    how many test commands run at once on this
+    concurrency.maxTests    how many stim test runs run at once on this
                             machine; derived max(1, floor(CPU cores / 6)).
                             It is a semaphore of N slots (~/.stim/test-slots)
                             that never counts against concurrency.maxBuilds.
                             A run past it waits in arrival order in
                             ~/.stim/test-waits and shows in status as a
-                            daemon.testWaiting entry.
+                            daemon.testWaiting entry; a running one shows as
+                            capacity.tests and a "tests" status line.
+
+  STIM TEST: stim test runs the project's test script through the package
+  manager whose lockfile is nearest (pnpm, yarn, bun, else npm), from its
+  package.json's directory; stim test -- <command> runs that command, with no
+  shell and no stdin. A word before -- is refused. It takes a test slot first
+  (--wait <seconds> bounds the wait, else at most 90 minutes; --no-wait
+  refuses a full cap with STIM_AT_CAPACITY), then picks a worker count:
+
+    workers = floor((cores - 1) / concurrency.maxTests), times cores / load1
+              when the 1-minute load is past the core count, at least 1
+
+  Jest and Vitest get --maxWorkers=<n> only when Stim can tell nothing else
+  sets workers or a serial run: the command runs jest or vitest directly (also
+  behind npx, bunx, pnpm exec, or pnpm or yarn with no script of that name,
+  yarn without --; the flag goes before any --), or the test script is a plain
+  jest or vitest command with no --. The command must name no worker, config,
+  preset, project, workspace, --pool, --poolOptions.* or file-parallelism
+  option, and no jest, vitest or vite config up to package.json (or its jest
+  key) may name workers, pools, serial runs or projects, spread an object,
+  import a module other than Node's, vite's or vitest's (jest's as types), or
+  set a preset other than React Native's or jest-expo's. Vitest 1.3 to 3.2.3
+  also get --minWorkers=1; older or unknown versions get nothing. Otherwise
+  the command runs unchanged, with no variables added; one stderr line says
+  which.
+
+  The command runs in its own process group, with no stdin, so a watch run has
+  no prompt and holds its slot until stopped. SIGINT, SIGTERM and SIGHUP reach
+  the group, which gets SIGKILL after a grace of at most 10s, or on a second
+  interrupt; a cancelled run exits with the signal's code. The slot frees once
+  the group is empty; what the command leaves there gets SIGTERM, then
+  SIGKILL, and a killed stim keeps the slot held. A process that leaves the
+  group (its own session, a detached server, a simulator the system starts)
+  does not count. STIM_TEST_RUN names the slot claim: a stim test inside it
+  takes no slot while that claim is held, and runs in the caller's group;
+  under env -i it loses the claim and queues behind its outer run. Windows
+  refuses stim test.
 
   Beyond the caps, at most 2 boots run at once in a Stim home, and no boot
   starts while the stim-daemon's last tick measured macOS memory pressure
@@ -2812,6 +2850,7 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   stop            --slot <name> --json
   status          --json --watch  (already machine-wide)
   stats           --json          (this project and machine-wide)
+  test            --wait <seconds> --no-wait [-- <command...>]
   settings        --json; get <key> --scope <layer> --json;
                   set <key> <value> --scope <layer> --json; unset <key> --scope <layer> --json
   doctor          --json --fix --platform <ios|android>

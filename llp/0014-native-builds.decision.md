@@ -9,7 +9,7 @@
 
 ## Use fixed invocations
 
-Do not infer and rebuild commands from project scripts. Bare React Native hosts
+Do not infer and rebuild commands from project scripts; `stim test` running a project's own `test` script is the one exception ([LLP 0020](./0020-test-offload.decision.md#the-plain-form-reads-the-test-script)). Bare React Native hosts
 Metro from the project's dependencies. Expo runs its fixed start command. iOS
 and Android use fixed `xcodebuild` and Gradle arguments. An Exact app builds
 with its own `./exact.mjs ios --no-install` (plus `--release` for

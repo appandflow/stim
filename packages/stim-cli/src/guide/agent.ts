@@ -22,7 +22,7 @@ Choose the guide for the app or task. Read only the matching route.
 | App readiness markers | stim guide lifecycle readiness |
 | Shell sandbox | stim guide errors sandbox |
 | Build cache or unexpected rebuild | stim guide lifecycle builds |
-| Queued build or device | stim guide lifecycle concurrency |
+| Queued build, device or test run | stim guide lifecycle concurrency |
 | Named ports | stim guide ports |
 | Share the running app | stim guide share |
 | Clean up, park, or reclaim resources | stim guide agent ownership |
@@ -63,6 +63,12 @@ worktree you did not create. See stim guide agent
 ownership for cleanup and consent.
 Agents never run stim setup and never approve access requests. Agents never set
 STIM_ACCESS_TICKET or edit remote.*, server.* or hosting.* for the user.
+
+TESTS
+
+Run tests through stim test (the project's test script) or stim test --
+<command>. It queues for a machine-wide test slot and sizes Jest or Vitest
+workers; see stim guide lifecycle concurrency.
 
 NEXT STEP
 

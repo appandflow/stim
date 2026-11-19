@@ -67,6 +67,8 @@ export interface OpInput<Options, Args> {
   /** The parent's options: those before the subcommand's name, or anywhere when the parent has no `positionalOptions`. */
   readonly parent: Readonly<Record<string, unknown>>;
   readonly version: string;
+  /** An operand came before `--`, or with no `--` at all. */
+  readonly bare?: boolean;
 }
 
 /** A command: its argv and help derive from `arguments` and `options`. */
@@ -438,13 +440,15 @@ function showHelp(usage: string[], op: Op, error: boolean): number {
   return error ? 1 : 0;
 }
 
+const variadicArgument = (op: Op): boolean => /\.\.\.[\]>]$/.test(op.arguments);
+
 function checkArity(op: Op, operands: string[], program: boolean): void {
   const declared = op.arguments ? op.arguments.split(' ') : [];
   declared.forEach((arg, index) => {
     if (arg.startsWith('<') && operands[index] === undefined)
       throw new CliUsageError(`error: missing required argument '${arg.slice(1, -1)}'`);
   });
-  if (operands.length > declared.length) {
+  if (operands.length > declared.length && !variadicArgument(op)) {
     const s = declared.length === 1 ? '' : 's';
     const name = program ? '' : ` for '${op.name}'`;
     throw new CliUsageError(
@@ -519,7 +523,8 @@ export async function runCli(op: Op, args: string[], context: CliContext): Promi
     if (!current.run) return help(path, current, true);
     checkArity(current, parsed.operands, context.root === true && current === op);
     await context.before?.(path.slice(context.root ? 1 : 0).map((each) => each.name));
-    await current.run({ args: parsed.operands, options: parsed.options, parent, version: context.version });
+    const bare = parsed.leading !== undefined && parsed.leading < end(rest);
+    await current.run({ args: parsed.operands, options: parsed.options, parent, version: context.version, bare });
     return 0;
   }
 }

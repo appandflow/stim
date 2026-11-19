@@ -778,6 +778,8 @@ export interface StatusCapacity {
   builds?: StatusBuildSlots;
   /** `concurrency.maxDevices` usage; present only while that cap is set. */
   devices?: StatusDeviceSlots;
+  /** `concurrency.maxTests` usage; present only while a `stim test` run holds a test slot. */
+  tests?: StatusBuildSlots;
   /** `concurrency.maxIosDevices` and `concurrency.maxAndroidDevices` usage; each is present only while its cap is set. */
   platformDevices?: Partial<Record<'ios' | 'android', StatusPlatformDeviceSlots>>;
   /** This machine's load. Optional only so payloads from releases that predate it still decode. */

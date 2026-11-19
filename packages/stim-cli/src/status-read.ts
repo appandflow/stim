@@ -10,6 +10,7 @@ import { isAbsentPath, isOnMountedVolume, listMountedVolumes } from './fs-util.t
 import { basename, dirname, join } from 'path';
 import { admissionLimits, getPlatformDeviceLimits, loadConfig } from './workspace/config.ts';
 import { buildSlotUsage } from './engine/build-slots.ts';
+import { testSlotUsage } from './engine/test-slots.ts';
 import { deviceSlotUsages, readFreshDeviceListing } from './engine/device-capacity.ts';
 import type { ProjectRecord, SupervisorRecord } from './workspace/config.ts';
 import { getExecutor } from './exec.ts';
@@ -204,7 +205,7 @@ export interface StatusSnapshot {
   daemonAnswer?: Pick<DaemonStatus, 'unanswered'>;
   tables: DeviceProcessTables;
   machine: MachineUsageState | null;
-  slotUsage: Pick<StatusCapacity, 'builds' | 'devices' | 'platformDevices'>;
+  slotUsage: Pick<StatusCapacity, 'builds' | 'devices' | 'platformDevices' | 'tests'>;
   roots: WorkspaceProcessRoots[];
   simNames: Record<string, string>;
   probes: StatusProbes;
@@ -319,6 +320,11 @@ function applyStages(state: EnvironmentState, saved: WorkspaceState | null): voi
   if (idle) state.idleStage = idle;
   const dormant = currentStage(saved, readDormantStage(saved));
   if (dormant) state.dormantStage = dormant;
+}
+
+function heldTestSlots(): Pick<StatusCapacity, 'tests'> {
+  const tests = testSlotUsage();
+  return tests.inUse > 0 ? { tests } : {};
 }
 
 async function readStatusFacts(probes: StatusProbes, gitScope: GitScope, cwd: string): Promise<StatusSnapshot> {
@@ -556,6 +562,7 @@ async function readStatusFacts(probes: StatusProbes, gitScope: GitScope, cwd: st
   const platformLimits = getPlatformDeviceLimits();
   const slotUsage: StatusSnapshot['slotUsage'] = {
     ...(maxBuilds > 0 ? { builds: buildSlotUsage(maxBuilds, process.env) } : {}),
+    ...heldTestSlots(),
     ...(maxDevices > 0 || platformLimits.ios > 0 || platformLimits.android > 0
       ? await deviceSlotUsages(maxDevices, platformLimits, {
           config: cfg,

@@ -1,0 +1,311 @@
+import { constants, availableParallelism, loadavg } from 'node:os';
+import { basename } from 'node:path';
+import chalk from 'chalk';
+import type { StimContext } from '@stim-cli/core';
+import { testSlotLimit } from '@stim-cli/core/state';
+import { defineOp, type Op } from '../cli/define-op.ts';
+import { exitCli, processContext, runProcessOperation } from '../cli-operation.ts';
+import { formatElapsed, phaseLine } from '../command-output.ts';
+import { debugLog } from '../debug-log.ts';
+import { operationState } from '../engine/operation-state.ts';
+import { spawnDeclared } from '../engine/spawn-claims.ts';
+import {
+  configuredWorkers,
+  nearestPackageDir,
+  packageScripts,
+  packageManagerFor,
+  planTestRun,
+  testScriptFor,
+  testScriptRun,
+  testWorkerCount,
+  vitestVersionFor,
+} from '../engine/test-run.ts';
+import { acquireTestSlot, listTestSlots, releaseTestSlot, type TestSlotHandle } from '../engine/test-slots.ts';
+import { getExecutor } from '../exec.ts';
+import { readClaimSet } from '../ownership-claim.ts';
+import { groupExitBudgetMs, waitForGroupExit } from '../process-group-exit.ts';
+import { captureProcessIdentity, inspectProcessIdentity } from '../process-identity.ts';
+
+const note = (context: StimContext, text: string) => context.output('stderr', `${phaseLine('test', text)}\n`);
+
+function refusal(context: StimContext, code: string, message: string, remedy: string): number {
+  context.output('stderr', `${chalk.red(phaseLine('error', `${code}: ${message}`))}\n${phaseLine('remedy', remedy)}\n`);
+  return 1;
+}
+
+const KILL_GRACE_CAP_MS = 10_000;
+
+export interface GroupLeader {
+  pid: number;
+  /** The leader's identity captured at spawn, or null when the capture failed. */
+  processToken: string | null;
+}
+
+function pidInUse(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return !(error instanceof Error && 'code' in error && error.code === 'ESRCH');
+  }
+}
+
+/**
+ * Sends `signal` to the process group `leader` led, only while that group id provably still belongs to it, since POSIX
+ * does not reuse a pid while a process group with that id exists: the leader is still the recorded process, or no
+ * process has its pid. Without a recorded identity, `running` (the leader is the caller's child and not reaped yet)
+ * also keeps the pid reserved. Returns whether the signal went out.
+ */
+export function signalLedGroup(leader: GroupLeader, signal: NodeJS.Signals, running = false): boolean {
+  const identity = leader.processToken === null ? 'unknown' : inspectProcessIdentity(leader);
+  if (identity === 'different') return false;
+  if (identity === 'unknown' && !running && pidInUse(leader.pid)) return false;
+  try {
+    process.kill(-leader.pid, signal);
+  } catch {}
+  return true;
+}
+
+/**
+ * Stops what is left in the process group `leader` led once the leader exited: SIGTERM, then SIGKILL after `graceMs`,
+ * each through {@link signalLedGroup}. Resolves to whether the group emptied.
+ */
+export async function stopGroupLeftovers(leader: GroupLeader, graceMs: number): Promise<boolean> {
+  for (const [signal, waitMs] of [
+    ['SIGTERM', graceMs],
+    ['SIGKILL', groupExitBudgetMs()],
+  ] as const) {
+    if (!signalLedGroup(leader, signal)) return false;
+    if (await waitForGroupExit(leader.pid, waitMs)) return true;
+  }
+  return false;
+}
+
+/**
+ * Runs `argv` in `cwd` and resolves once it exited. With `group`, the command leads its own process group: a
+ * cancellation reaches the whole group, the group gets SIGKILL when it outlives a grace period, whether or not its
+ * leader exited, processes the command left in the group after it exited get SIGTERM after a grace period and SIGKILL
+ * after another, and the run resolves only once the group is empty. Every group signal goes through `signalLedGroup`.
+ * `survivors` is true when processes of the group still run after that; the declaration then keeps recording the child,
+ * so the slot claim stays held by the group. Without `group` (a run nested in another stim test), the command stays in
+ * the caller's group, which the outer run waits for and stops, and a cancellation, its grace and SIGKILL reach only the
+ * direct child, not the outer group's other members.
+ */
+async function runCommand(
+  context: StimContext,
+  argv: string[],
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  group: boolean,
+): Promise<{ code: number | null; signal: NodeJS.Signals | null; survivors: boolean }> {
+  const state = operationState(context);
+  state.handled = true;
+  state.draining = true;
+  const [file = '', ...args] = argv;
+  let settleGroup!: (gone: boolean) => void;
+  const emptied = new Promise<void>((resolve, reject) => {
+    settleGroup = (gone) => (gone ? resolve() : reject(new Error('the test command left processes running')));
+  });
+  void emptied.catch(() => {});
+  const child = spawnDeclared(
+    context,
+    () =>
+      getExecutor().spawn(file, args, {
+        stdio: ['ignore', 'inherit', 'inherit'],
+        cwd,
+        env,
+        detached: group,
+      }),
+    { until: emptied },
+  );
+  const pid = group ? child.pid : undefined;
+  const captured = pid === undefined ? null : captureProcessIdentity(pid);
+  const leader = pid === undefined ? null : { pid, processToken: captured?.ok ? captured.token : null };
+  const running = () => child.exitCode === null && child.signalCode === null;
+  const send = (signal: NodeJS.Signals) => {
+    if (leader) signalLedGroup(leader, signal, running());
+    else if (running()) child.kill(signal);
+  };
+  let killTimer: ReturnType<typeof setTimeout> | undefined;
+  const killGroup = () => send('SIGKILL');
+  const forward = () => {
+    const reason = context.signal.reason;
+    send(reason === 'SIGINT' ? 'SIGINT' : reason === 'SIGHUP' ? 'SIGHUP' : 'SIGTERM');
+    killTimer ??= setTimeout(killGroup, groupExitBudgetMs(KILL_GRACE_CAP_MS));
+  };
+  context.signal.addEventListener('abort', forward);
+  state.exitCleanups.add(killGroup);
+  try {
+    const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
+      child.once('error', (error) => {
+        note(context, `${basename(file)} could not start: ${error.message}`);
+        resolve({ code: 127, signal: null });
+      });
+      child.once('exit', (code, signal) => resolve({ code, signal }));
+    });
+    const cancelled = context.signal.aborted;
+    let gone =
+      pid === undefined || (await waitForGroupExit(pid, groupExitBudgetMs(cancelled ? KILL_GRACE_CAP_MS : undefined)));
+    if (!gone && leader && !context.signal.aborted) {
+      gone = await stopGroupLeftovers(leader, groupExitBudgetMs(KILL_GRACE_CAP_MS));
+      if (gone) note(context, `stopped the processes the test command left running in its process group ${pid}`);
+    } else if (!gone && pid !== undefined) {
+      killGroup();
+      gone = await waitForGroupExit(pid, groupExitBudgetMs());
+    }
+    if (!gone)
+      note(
+        context,
+        `processes the test command started still run in its process group ${pid}; the test slot stays held until they exit`,
+      );
+    settleGroup(gone);
+    return { ...exit, survivors: !gone };
+  } finally {
+    clearTimeout(killTimer);
+    context.signal.removeEventListener('abort', forward);
+    state.exitCleanups.delete(killGroup);
+  }
+}
+
+/** Whether `marker`, a `STIM_TEST_RUN` value, names a test slot claim that is still held. */
+function heldTestRun(marker: string): boolean {
+  const at = marker.lastIndexOf('#');
+  if (at < 0) return false;
+  const path = marker.slice(0, at);
+  const claimId = marker.slice(at + 1);
+  return (
+    listTestSlots().some((held) => held.path === path && held.alive) &&
+    readClaimSet(path).live.some((holder) => holder.claimId === claimId)
+  );
+}
+
+async function runTest(
+  context: StimContext,
+  command: string[],
+  bare: boolean,
+  ceilingMs: number | undefined,
+): Promise<number> {
+  const { cwd, env } = context;
+  if (process.platform === 'win32')
+    return refusal(
+      context,
+      'STIM_BAD_ARG',
+      'stim test is not supported on Windows: Stim cannot stop the process tree of a test command there.',
+      'Run the test command directly on Windows, or run stim test on macOS or Linux.',
+    );
+  const started = Date.now();
+  if (bare)
+    return refusal(
+      context,
+      'STIM_BAD_ARG',
+      `stim test takes its command after --; got ${command.join(' ')}.`,
+      `stim test -- ${command.join(' ')}`,
+    );
+  const scriptRun = testScriptRun(command);
+  const manager = scriptRun ?? packageManagerFor(cwd);
+  const script = command.length && !scriptRun ? null : testScriptFor(cwd);
+  if ((!command.length || scriptRun) && !script)
+    return refusal(
+      context,
+      'STIM_BAD_ARG',
+      `No package.json with a test script was found from ${cwd}.`,
+      'Pass the test command after --, for example: stim test -- npx jest',
+    );
+  const argv = command.length ? command : [manager, 'run', 'test'];
+  const dir = command.length ? cwd : (nearestPackageDir(cwd) ?? cwd);
+  const program = basename(argv[0] ?? '');
+  debugLog.log('test_start', { program, script: script !== null, manager });
+  let slot: TestSlotHandle | undefined;
+  let exit: number;
+  let signal: NodeJS.Signals | null;
+  let retain = false;
+  let marker = '1';
+  try {
+    const parent = env.STIM_TEST_RUN;
+    if (parent && heldTestRun(parent)) {
+      note(context, 'inside another stim test run, which holds the test slot; running without one');
+      marker = parent;
+    } else {
+      slot = await acquireTestSlot({
+        root: cwd,
+        signal: context.signal,
+        out: (line) => context.output('stderr', `  ${line}\n`),
+        ceilingMs,
+      });
+      debugLog.log('test_slot', { index: slot.index ?? null, waitedMs: slot.slotWaitMs ?? 0 });
+      marker = slot.path && slot.claim ? `${slot.path}#${slot.claim.claimId}` : '1';
+    }
+    const cores = availableParallelism();
+    const slots = testSlotLimit({ env }).max;
+    const load1 = Math.round((loadavg()[0] ?? 0) * 10) / 10;
+    const workers = testWorkerCount({ cores, slots, load1 });
+    const plan = planTestRun({
+      argv,
+      workers,
+      script,
+      manager,
+      configured: configuredWorkers(dir),
+      scripts: packageScripts(dir),
+      vitestVersion: vitestVersionFor(argv, dir, (file) => getExecutor().findExecutable(file, { env, cwd: dir })),
+    });
+    debugLog.log('test_workers', { workers, cores, slots, load1, applied: plan.applied, skipped: plan.skipped });
+    const basis = `${cores} cores, ${slots} test slot${slots === 1 ? '' : 's'}, load ${load1}`;
+    note(
+      context,
+      plan.applied
+        ? `${workers} workers (${basis}) through ${plan.applied}`
+        : `no worker count passed: ${plan.skipped} (${basis})`,
+    );
+    const result = await runCommand(context, plan.argv, dir, { ...env, STIM_TEST_RUN: marker }, slot !== undefined);
+    retain = result.survivors;
+    signal = result.signal;
+    exit = signal ? 128 + (constants.signals[signal] ?? 0) : (result.code ?? 1);
+  } catch (error) {
+    if (!(error instanceof Error) || !('code' in error) || typeof error.code !== 'string') throw error;
+    if (!error.code.startsWith('STIM_')) throw error;
+    const remedy =
+      'remedy' in error && typeof error.remedy === 'string' ? error.remedy : 'stim guide lifecycle concurrency';
+    return refusal(context, error.code, error.message, remedy);
+  } finally {
+    releaseTestSlot(slot, retain);
+  }
+  debugLog.log('test_exit', { exit, signal, ms: Date.now() - started });
+  note(context, `${program} exited ${signal ?? exit} after ${formatElapsed(Date.now() - started)}`);
+  return exit;
+}
+
+const test: Op = defineOp({
+  name: 'test',
+  arguments: '[command...]',
+  description:
+    "Run a test command under a machine-wide test slot (concurrency.maxTests), with Jest's or Vitest's worker count sized to this machine. Without a command, run the project's test script through its package manager. Output and exit status are the command's own.",
+  options: {
+    wait: {
+      flags: '--wait <seconds>',
+      description:
+        'How long to wait for a test slot before refusing with STIM_AT_CAPACITY (0 refuses at once); without it, a queued run waits up to 90 minutes.',
+      parse: (value: string) => {
+        const seconds = Number(value);
+        if (!value.trim() || !Number.isFinite(seconds) || seconds < 0)
+          throw new Error('expected a number of seconds, 0 or more');
+        return seconds;
+      },
+    },
+    noWait: {
+      flags: '--no-wait',
+      description: 'Refuse with STIM_AT_CAPACITY instead of queueing when every test slot is taken.',
+    },
+  },
+  run: async ({ args, options, bare }) => {
+    const ceilingMs = options.wait === undefined ? undefined : options.wait === false ? 0 : options.wait * 1000;
+    const { value, interrupted } = await runProcessOperation(
+      processContext('').cwd,
+      (context) => runTest(context, [...args], bare === true, ceilingMs),
+      { hangup: true },
+    );
+    const code = interrupted ?? value;
+    if (code !== 0) exitCli(code);
+  },
+});
+
+export default test;
