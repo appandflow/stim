@@ -27,10 +27,121 @@ const CANNOT_READ = 'the files processes hold open or the executables on PATH ca
 const DEADLINE_KEPT = 'the rest was left at the build headroom deadline';
 const NOT_RESTORED = `${OWN_PREFIX}not-restored-`;
 /**
- * Benchmark baseline folders: Criterion's `criterion/` and Gungraun's `gungraun/` (`iai/` before it was renamed from
- * iai-callgrind) hold saved baselines that describe code that may be gone, so no build can recreate them.
+ * The entries Cargo itself creates at the top of a target besides its profile and target triple directories, per
+ * rust-lang/cargo's `src/compiler/layout.rs` and `src/compiler/future_incompat.rs`.
  */
-const KEPT_WHOLE = new Set(['criterion', 'gungraun', 'iai']);
+const CARGO_TOP_FILES = new Set(['.rustc_info.json', 'CACHEDIR.TAG', '.future-incompat-report.json', ...PROFILE_LOCKS]);
+const CARGO_TOP_DIRS = new Set(['doc', 'package', 'tmp', 'cargo-timings', '.metabuild']);
+/**
+ * The entries Exact's own tools write at the top of a target (Exact's `scripts/app.mjs`, `scripts/sweep.mjs`,
+ * `scripts/cargo-dep-info.mjs`, `scripts/cargo-check.mjs`, `scripts/filesystem.mjs`, `scripts/rust.mjs`,
+ * `scripts/web-build.mjs`, `scripts/evidence.mjs`, `scripts/publisher.mjs`, `scripts/agent.mjs`,
+ * `host/apple/build.mjs`, `host/apple/modules.mjs`, `host/apple/compose.mjs`, `host/apple/extensions.mjs`,
+ * `host/apple/svg-filter.mjs`, `host/web/build.mjs`, `host/web/dev.mjs`, `host/web-js/module.mjs`,
+ * `host/web-js/build.mjs`, `host/web-js/dev.mjs` and `host/windows/build.mjs`).
+ */
+const EXACT_TOP = new Set([
+  '.exact-sweep.json',
+  '.exact-sweep.json.lock',
+  '.exact-sweep.log',
+  '.exact-crates',
+  '.exact-swept',
+  '.apple-cargo-locks',
+  'apple-extension-module-cache',
+  'apple-modules',
+  'apple-swift',
+  'bake',
+  'bake-compiled',
+  'bake-input-hashes.json',
+  'bake-inputs',
+  'bake-metadata',
+  'clients',
+  'dev-gpu',
+  'exact-filesystem-tool',
+  'gpu-dev',
+  'metal-kept',
+  'module-dev',
+  'native-receipts',
+  'native-reuse',
+  'native-runs',
+  'proof-web',
+  'push-tools',
+  'rust-bake',
+  'rust-dev',
+  'rust-modules',
+  'rust-sign',
+  'rust-tools',
+  'swift-packages',
+  'traces',
+  'web-bakes',
+  'web-dist',
+  'web-dist-resident',
+  'web-dist-stages',
+  'web-js-dev-stage',
+  'web-js-gpu',
+  'web-js-modules',
+  'web-loops',
+  'web-opt',
+  'web-receipts',
+  'web-runs',
+]);
+/** Exact's entries named from a fixed prefix and a key, and `web-dist`'s generation, lease and lock siblings. */
+const EXACT_TOP_PREFIXES = ['kept-crates-', 'web-js-dev-compiler-', 'web-check-', 'push-ts-', 'inspect-', 'web-dist.'];
+
+/** Whether `root` is an Exact app (beside its `exact.mjs`) or a checkout of Exact itself. */
+function exactRoot(root: string): boolean {
+  return (
+    existsSync(join(root, 'exact.mjs')) ||
+    (existsSync(join(root, 'scripts', 'app.mjs')) && existsSync(join(root, 'host', 'web-js', 'module.mjs')))
+  );
+}
+
+/** Whether `path` is a Cargo profile directory: one holding `.fingerprint/` or a lock file Cargo takes there. */
+function cargoProfile(path: string): boolean {
+  return fingerprintDir(path) || PROFILE_LOCKS.some((name) => existsSync(join(path, name)));
+}
+
+/**
+ * Whether the top-level entry `name` of `target` is build output Stim knows: Cargo's own files and folders, a Cargo
+ * profile, a target triple directory holding only profiles, Cargo's files and `doc/`, and, in an Exact app's or Exact's
+ * own target (`exact`), what Exact writes there.
+ */
+function buildOutputEntry(target: string, name: string, exact: boolean): boolean {
+  const path = join(target, name);
+  const stat = lstatSync(path, { throwIfNoEntry: false });
+  if (!stat) return false;
+  if (exact && (EXACT_TOP.has(name) || EXACT_TOP_PREFIXES.some((prefix) => name.startsWith(prefix)))) return true;
+  if (!stat.isDirectory()) return CARGO_TOP_FILES.has(name);
+  if (CARGO_TOP_DIRS.has(name) || cargoProfile(path)) return true;
+  const inner = entriesOf(path);
+  return (
+    !!inner?.length &&
+    inner.some((entry) => entry.isDirectory() && cargoProfile(join(path, entry.name))) &&
+    inner.every((entry) =>
+      entry.isDirectory()
+        ? entry.name === 'doc' || cargoProfile(join(path, entry.name))
+        : CARGO_TRIPLE_FILES.has(entry.name),
+    )
+  );
+}
+
+/**
+ * The top-level entries of `target` the dormant delete removes (`output`), and the rest, which it keeps (`kept`); Stim's
+ * own `.stim-*` entries are in neither. Null when `target` cannot be listed.
+ */
+export function targetEntries(target: string): { output: string[]; kept: string[] } | null {
+  const entries = entriesOf(target);
+  if (!entries) return null;
+  const exact = exactRoot(dirname(target));
+  const output: string[] = [];
+  const kept: string[] = [];
+  for (const { name } of entries.toSorted((a, b) => a.name.localeCompare(b.name))) {
+    if (name.startsWith(OWN_PREFIX)) continue;
+    (buildOutputEntry(target, name, exact) ? output : kept).push(name);
+  }
+  return { output, kept };
+}
+
 const FOLD_CASE = process.platform === 'darwin' || process.platform === 'win32';
 
 export interface CargoProfile {
@@ -534,7 +645,12 @@ async function deleteClaimed(
   const aside = join(target, ASIDE);
   const leftover = await removeOnDevice(aside, dev);
   if (leftover.length) return keep(`${leftover[0]} is another filesystem`);
-  const names = (await readdir(target)).filter((name) => !KEPT_WHOLE.has(name) && !name.startsWith(OWN_PREFIX));
+  const entries = targetEntries(target);
+  if (!entries) return keep(`${target} cannot be listed`);
+  // @ref LLP 0005#the-dormant-reduction-deletes-an-idle-target-whole -- only entries Stim knows as build output go
+  const names = entries.output;
+  if (entries.kept.length) result.kept.push(`not recognised as build output: ${entries.kept.join(', ')}`);
+  if (!names.length) return result;
   const mount = await otherDevice(
     names.map((name) => join(target, name)),
     dev,
@@ -551,24 +667,34 @@ async function deleteClaimed(
   }
   type Entry = { dir: string; there: string; name: string };
   const moved: Entry[] = [];
+  const marker = join(aside, STRANDED);
   const putBackAll = async (why: string): Promise<CargoTrimResult> => {
     const stranded: string[] = [];
+    let marked = false;
     for (let entry = moved.pop(); entry !== undefined; entry = moved.pop()) {
       const back = await restoreOrStrand(target, entry.there, entry.dir, moved.length);
+      marked ||= back.marked;
       if (back.home !== entry.dir) stranded.push(back.home);
     }
     const left = stranded.length
       ? `; ${stranded.join(', ')} could not be put back and stay for a person to merge or delete`
       : '';
-    await rmdir(aside).catch(() => {});
+    if (!marked) {
+      await rm(marker, { force: true });
+      await rmdir(aside).catch(() => {});
+    }
     return { ...result, kept: [...result.kept, `${why}${left}`] };
   };
-  // @ref LLP 0005#never-delete-what-a-build-took-back -- nothing stays staged unless the final checks pass
+  // @ref LLP 0005#never-delete-what-a-build-took-back -- staged entries carry the NOT-RESTORED marker until the checks pass
+  await mkdir(aside, { recursive: true });
+  await writeFile(
+    marker,
+    `${JSON.stringify(Object.fromEntries(names.map((name, n) => [String(n), name])), null, 2)}\n`,
+  );
   try {
-    for (const name of names) {
+    for (const [n, name] of names.entries()) {
       signal?.throwIfAborted();
-      await mkdir(aside, { recursive: true });
-      const entry = { dir: join(target, name), there: join(aside, String(moved.length)), name };
+      const entry = { dir: join(target, name), there: join(aside, String(n)), name };
       try {
         await rename(entry.dir, entry.there);
       } catch (error) {
@@ -588,6 +714,7 @@ async function deleteClaimed(
       const used = recentEntryUse(entry.there, entry.name, now, idleMs);
       if (used) return await putBackAll(`${entry.dir} was used during the move: ${used}`);
     }
+    await rm(marker);
   } catch (error) {
     await putBackAll('the delete was interrupted');
     throw error;
@@ -698,7 +825,7 @@ async function restoreOrStrand(
   } catch {}
   const aside = join(target, ASIDE);
   try {
-    await writeFile(join(aside, STRANDED), '');
+    await writeFile(join(aside, STRANDED), '', { flag: 'a' });
   } catch (error) {
     throw new Error(
       `${there} could not be put back and ${aside} could not be marked for a person: ${error instanceof Error ? error.message : error}`,

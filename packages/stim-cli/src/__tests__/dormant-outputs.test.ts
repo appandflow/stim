@@ -132,8 +132,8 @@ function cargo(name: string, kind: 'exact' | 'tagged' | 'untagged'): string {
   mkdirSync(join(target, 'debug', '.fingerprint'), { recursive: true });
   writeFileSync(join(target, 'debug', '.fingerprint', 'unit'), 'x');
   writeFileSync(join(target, 'debug', '.cargo-lock'), '');
-  mkdirSync(join(target, 'bake'));
-  writeFileSync(join(target, 'bake', 'out'), 'x');
+  mkdirSync(join(target, 'doc'));
+  writeFileSync(join(target, 'doc', 'index.html'), 'x');
   if (kind === 'exact') writeFileSync(join(root, 'exact.mjs'), '');
   if (kind === 'tagged') writeFileSync(join(target, 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55\n');
   if (kind === 'untagged') {
@@ -295,6 +295,23 @@ describe.skipIf(process.platform === 'win32')(
         expect(existsSync(join(root, 'target'))).toBe(false);
       },
     );
+
+    test('a dry run names the entries of an idle target that are not build output, and gc keeps exactly those', async () => {
+      const root = onlyTarget(cargo('app', 'untagged'));
+      mkdirSync(join(root, 'target', 'criterion'));
+      writeFileSync(join(root, 'target', 'criterion', 'estimates.json'), '{}');
+      idleFor(3, root);
+
+      expect(await gc(false)).toEqual([
+        expect.objectContaining({
+          target: root,
+          outcome: 'would',
+          detail: expect.stringContaining('not recognised as build output: criterion'),
+        }),
+      ]);
+      expect(await gc()).toEqual([expect.objectContaining({ target: root, outcome: 'done' })]);
+      expect(readdirSync(join(root, 'target'))).toEqual(['criterion']);
+    });
 
     test.each([
       [

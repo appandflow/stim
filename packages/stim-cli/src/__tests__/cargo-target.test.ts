@@ -23,13 +23,15 @@ import {
 } from '../workspace/cargo-target.ts';
 import { launchingWith, noLaunchers } from './fixtures/launching.ts';
 
-const fsHooks = vi.hoisted((): { rename?: (from: string) => void; dev?: (path: string) => number | undefined } => ({}));
+const fsHooks = vi.hoisted(
+  (): { rename?: (from: string) => void | Promise<void>; dev?: (path: string) => number | undefined } => ({}),
+);
 vi.mock('node:fs/promises', async (importOriginal) => {
   const fs = await importOriginal<typeof import('node:fs/promises')>();
   return {
     ...fs,
     rename: async (...args: Parameters<typeof fs.rename>) => {
-      fsHooks.rename?.(String(args[0]));
+      await fsHooks.rename?.(String(args[0]));
       return fs.rename(...args);
     },
     lstat: async (...args: Parameters<typeof fs.lstat>) => {
@@ -395,13 +397,12 @@ describe.skipIf(process.platform === 'win32')(
     beforeEach(() => {
       dir = join(target, 'target');
       writeFileSync(join(target, 'Cargo.toml'), '');
-      for (const path of ['debug/.fingerprint/unit', 'debug/deps', 'bake', 'criterion/base'])
+      for (const path of ['debug/.fingerprint/unit', 'debug/deps', 'doc'])
         mkdirSync(join(dir, path), { recursive: true });
       writeFileSync(join(dir, '.rustc_info.json'), '{}');
       writeFileSync(join(dir, 'debug', '.cargo-lock'), '');
       writeFileSync(join(dir, 'debug', 'app'), 'binary');
-      writeFileSync(join(dir, 'bake', 'out.js'), 'x');
-      writeFileSync(join(dir, 'criterion', 'base', 'estimates.json'), '{}');
+      writeFileSync(join(dir, 'doc', 'index.html'), 'x');
       ageTree(dir);
       real = realpathSync(dir);
       stubProcesses({});
@@ -413,31 +414,36 @@ describe.skipIf(process.platform === 'win32')(
     });
     const remove = () => deleteCargoTarget(dir, { idleMs: DAY, launching: noLaunchers(target) });
 
-    test('everything but the Criterion and Gungraun baselines goes, after the move aside, and nothing is left aside', async () => {
-      for (const name of ['gungraun', 'iai']) {
+    test('only what Cargo writes goes, after the move aside: baselines, a Solana keypair folder and an unknown folder stay', async () => {
+      for (const name of ['criterion', 'gungraun', 'iai']) {
         mkdirSync(join(dir, name, 'base'), { recursive: true });
         writeFileSync(join(dir, name, 'base', 'summary.json'), '{}');
       }
+      mkdirSync(join(dir, 'deploy'));
+      writeFileSync(join(dir, 'deploy', 'app-keypair.json'), '[1,2,3]');
+      writeFileSync(join(dir, 'deploy', 'app.so'), 'program');
+      mkdirSync(join(dir, 'notes'));
       ageTree(dir);
 
       const result = await remove();
 
-      expect(result.removed.toSorted()).toEqual(['.rustc_info.json', 'bake', 'debug']);
-      expect(result.kept).toEqual([]);
-      expect(readdirSync(dir).toSorted()).toEqual(['criterion', 'gungraun', 'iai']);
-      expect(existsSync(join(dir, 'criterion', 'base', 'estimates.json'))).toBe(true);
+      expect(result.removed.toSorted()).toEqual(['.rustc_info.json', 'debug', 'doc']);
+      expect(result.kept).toEqual(['not recognised as build output: criterion, deploy, gungraun, iai, notes']);
+      expect(readdirSync(dir).toSorted()).toEqual(['criterion', 'deploy', 'gungraun', 'iai', 'notes']);
+      expect(readFileSync(join(dir, 'deploy', 'app-keypair.json'), 'utf8')).toBe('[1,2,3]');
+      expect(existsSync(join(dir, 'criterion', 'base', 'summary.json'))).toBe(true);
     });
 
     test('an entry on another device that cannot be renamed stays, and the rest goes', async () => {
       fsHooks.rename = (from) => {
-        if (from.endsWith('/bake'))
+        if (from.endsWith('/doc'))
           throw Object.assign(new Error('EXDEV: cross-device link not permitted'), { code: 'EXDEV' });
       };
 
       const result = await remove();
 
-      expect(result.kept).toEqual([expect.stringContaining('bake: it could not be moved aside: EXDEV')]);
-      expect(readdirSync(dir).toSorted()).toEqual(['bake', 'criterion']);
+      expect(result.kept).toEqual([expect.stringContaining('doc: it could not be moved aside: EXDEV')]);
+      expect(readdirSync(dir)).toEqual(['doc']);
     });
 
     test.each([
@@ -448,8 +454,8 @@ describe.skipIf(process.platform === 'win32')(
       ],
       [
         'a build wrote a top-level entry',
-        () => utimesSync(join(dir, 'bake'), new Date(), new Date()),
-        'bake was written in that time',
+        () => utimesSync(join(dir, 'doc'), new Date(), new Date()),
+        'doc was written in that time',
       ],
       [
         'a build wrote one level into a top-level directory',
@@ -501,7 +507,7 @@ describe.skipIf(process.platform === 'win32')(
         () => {
           let reads = 0;
           stubProcesses({
-            lsof: (args) => (args.includes('-Fn') && reads++ > 0 ? `p100\nn${real}/.stim-trimmed/0/out.js\n` : ''),
+            lsof: (args) => (args.includes('-Fn') && reads++ > 0 ? `p100\nn${real}/.stim-trimmed/0/index.html\n` : ''),
           });
         },
         'a process took',
@@ -511,7 +517,7 @@ describe.skipIf(process.platform === 'win32')(
         () => {
           let reads = 0;
           stubProcesses({
-            lsof: (args) => (args.includes('-Fn') && reads++ > 0 ? `p100\nn${real}/bake/out.js\n` : ''),
+            lsof: (args) => (args.includes('-Fn') && reads++ > 0 ? `p100\nn${real}/doc/index.html\n` : ''),
           });
         },
         'a process took',
@@ -520,13 +526,13 @@ describe.skipIf(process.platform === 'win32')(
         'a build writes an entry staged later during the move',
         () =>
           (fsHooks.rename = (from) => {
-            if (from.endsWith('/bake')) utimesSync(join(dir, 'debug', 'deps'), new Date(), new Date());
+            if (from.endsWith('/debug')) utimesSync(join(dir, 'doc', 'index.html'), new Date(), new Date());
           }),
         'was used during the move',
       ],
       [
         'another filesystem is mounted in it',
-        () => (fsHooks.dev = (path) => (path.endsWith('/bake') ? -1 : undefined)),
+        () => (fsHooks.dev = (path) => (path.endsWith('/doc') ? -1 : undefined)),
         'another filesystem',
       ],
       ['it is no longer a Cargo target', () => rmSync(join(target, 'Cargo.toml')), 'no longer a Cargo target'],
@@ -538,12 +544,12 @@ describe.skipIf(process.platform === 'win32')(
       expect(result.removed).toEqual([]);
       expect(result.kept).toEqual([expect.stringContaining(why)]);
       expect(existsSync(join(dir, 'debug', 'app'))).toBe(true);
-      expect(existsSync(join(dir, 'bake', 'out.js'))).toBe(true);
+      expect(existsSync(join(dir, 'doc', 'index.html'))).toBe(true);
       expect(existsSync(join(dir, '.stim-trimmed'))).toBe(false);
     });
 
     test.each([
-      ['a bind mount lies under it', () => `36 35 0:1 / ${real}/bake rw - ext4 /dev/x rw\n`, 'is a mount point'],
+      ['a bind mount lies under it', () => `36 35 0:1 / ${real}/doc rw - ext4 /dev/x rw\n`, 'is a mount point'],
       [
         'the mounts cannot be read',
         () => {
@@ -555,21 +561,46 @@ describe.skipIf(process.platform === 'win32')(
       const result = await deleteCargoTarget(dir, { idleMs: DAY, launching: noLaunchers(target), mountInfo });
 
       expect(result.kept).toEqual([expect.stringContaining(why)]);
-      expect(existsSync(join(dir, 'bake', 'out.js'))).toBe(true);
+      expect(existsSync(join(dir, 'doc', 'index.html'))).toBe(true);
+    });
+
+    test('a delete that stops after staging leaves a marker that later trims and deletes refuse', async () => {
+      let reached!: () => void;
+      const staged = new Promise<void>((resolve) => (reached = resolve));
+      fsHooks.rename = (from) => {
+        if (!from.endsWith('/doc')) return;
+        reached();
+        return new Promise(() => {});
+      };
+      void remove();
+      await staged;
+      delete fsHooks.rename;
+      rmSync(cargoTargetTrimClaims(real), { recursive: true, force: true });
+
+      const trim = await trimCargoTarget(dir, { launching: noLaunchers(target), needBytes: 0 });
+      const again = await remove();
+
+      expect(trim.kept).toEqual([expect.stringContaining('could not be put back')]);
+      expect(again).toMatchObject({ removed: [], kept: [expect.any(String)] });
+      expect(readFileSync(join(dir, '.stim-trimmed', '1', 'app'), 'utf8')).toBe('binary');
+      expect(JSON.parse(readFileSync(join(dir, '.stim-trimmed', 'NOT-RESTORED'), 'utf8'))).toMatchObject({
+        1: 'debug',
+      });
+      expect(existsSync(join(dir, 'doc', 'index.html'))).toBe(true);
     });
 
     test('a cancelled delete puts every moved entry back and leaves nothing staged', async () => {
       const controller = new AbortController();
       fsHooks.rename = (from) => {
-        if (from.endsWith('/bake')) controller.abort();
+        if (from.endsWith('/debug')) controller.abort();
       };
 
       await expect(
         deleteCargoTarget(dir, { idleMs: DAY, launching: noLaunchers(target), signal: controller.signal }),
       ).rejects.toThrow('aborted');
 
-      expect(readdirSync(dir).toSorted()).toEqual(['.rustc_info.json', 'bake', 'criterion', 'debug']);
-      expect(existsSync(join(dir, 'bake', 'out.js'))).toBe(true);
+      expect(readdirSync(dir).toSorted()).toEqual(['.rustc_info.json', 'debug', 'doc']);
+      expect(existsSync(join(dir, 'doc', 'index.html'))).toBe(true);
     });
 
     test('a roll back keeps a file a build recreated and leaves the staged copy for a person', async () => {

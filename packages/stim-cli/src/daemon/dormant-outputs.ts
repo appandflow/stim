@@ -7,7 +7,7 @@ import { workspaceOutputPaths } from '../commands/gc/workspaces.ts';
 import { withWorkspaceProcessLock, workspaceProcessLockError } from '../engine/workspace-process-lock.ts';
 import { formatBytes, measuredDirectorySizeAsync } from '../fs-util.ts';
 import { metroStoreRoot } from '../stimd/metro/metro-store.ts';
-import { deleteCargoTarget, recentTargetUse, type CargoTrimResult } from '../workspace/cargo-target.ts';
+import { deleteCargoTarget, recentTargetUse, targetEntries, type CargoTrimResult } from '../workspace/cargo-target.ts';
 import type { Config } from '../workspace/config.ts';
 import { discoveredReads, type DiscoveredReads } from '../workspace/discovered-reads.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
@@ -119,15 +119,24 @@ async function reduceWorkspace(
   );
   if (!plan.paths.length) return plan.keptTarget ? keep(plan.kept.join('; ')) : null;
   const measure = input.act || input.force === true;
+  const sizeOf = async (dir: string) =>
+    (await measuredDirectorySizeAsync(dir, { timeoutMs: SIZE_TIMEOUT_MS, signal })) ?? 0;
   const sizes = new Map<string, number>();
   if (measure)
-    for (const output of plan.paths)
-      if (!input.act || !plan.targets.has(output))
-        sizes.set(output, (await measuredDirectorySizeAsync(output, { timeoutMs: SIZE_TIMEOUT_MS, signal })) ?? 0);
+    for (const output of plan.paths) {
+      if (!plan.targets.has(output)) sizes.set(output, await sizeOf(output));
+      else if (!input.act)
+        for (const name of targetEntries(output)?.output ?? [])
+          sizes.set(join(output, name), await sizeOf(join(output, name)));
+    }
   if (!input.act) {
     const bytes = [...sizes.values()].reduce((sum, size) => sum + size, 0);
     const detail = input.force ? 'stim gc would do this' : 'daemon.mode report acts on nothing';
-    return { outcome: 'would', bytes, detail: [detail, ...plan.kept].join('; ') };
+    const unknown = [...plan.targets].flatMap((output) => {
+      const left = targetEntries(output)?.kept ?? [];
+      return left.length ? [`kept in ${output}, not recognised as build output: ${left.join(', ')}`] : [];
+    });
+    return { outcome: 'would', bytes, detail: [detail, ...plan.kept, ...unknown].join('; ') };
   }
   const kept = [...plan.kept];
   const removed: string[] = [];
@@ -197,7 +206,10 @@ async function eligible(
   plan.keptTarget ||= kept.some((reason) => reason.startsWith(`kept ${join(candidate.path, 'target')}:`));
   for (const output of [...outputs.paths, ...targets.filter((dir) => !outputs.paths.includes(dir))]) {
     const target = targets.includes(output);
-    const recent = target ? recentTargetUse(output, Date.now(), afterMs) : null;
+    const recent = target
+      ? (recentTargetUse(output, Date.now(), afterMs) ??
+        (targetEntries(output)?.output.length ? null : 'nothing in it is build output Stim recognises'))
+      : null;
     if (recent) {
       plan.kept.push(`kept ${output}: ${recent}`);
       plan.keptTarget = true;
