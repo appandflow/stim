@@ -51,7 +51,30 @@ within two edits, or one word away, it adds a line naming it ("Did you mean
 STIM_CLAIM_REFUSED?"). Any other name is an unknown section, with the index on
 standard error and exit code 1.
 
+## Warm is the agent's step, not the launch command's
+
+start, ios, android, macos and web never warm a worktree because it is new.
+Warming a new worktree is the agent's setup step: the guides have the agent run
+`stim worktree warm` in it, including one a harness created, before the first
+edit, install or launch there. The agent skips it when it works in place, and
+for inspection, cleanup or an app already running in its workspace.
+
+Restoring what gc deleted is a separate case, owned by
+[LLP 0001](./0001-disk-pressure-levels.decision.md#one-idle-day-reduces-a-workspace):
+start, ios and android restore gc's recorded directories through
+[`restoreLightenedDependencies`](../packages/stim-cli/src/workspace/lightened.ts),
+which runs warm when it can restore them safely and otherwise refuses with
+`STIM_DEPS_FAILED`.
+
+Reason: a project may skip warm and install its own dependencies, so warm stays
+an agent step, and the agent evals (LLP 0025) measure whether the guide text
+gets agents to run it.
+
+Maintainer decision: "I prefer no auto warm, technically someone can decide to not use warm and install its own deps, just improve guide and see if evals pass, lets just run them on codex", 2026-11-19.
+[Issue #5982](https://github.com/appandflow/stim/issues/5982).
+
 ## Code
 
 - [The errors topic and its absent-section line](../packages/stim-cli/src/guide/errors.ts) and [how the guide command prints it](../packages/stim-cli/src/commands/guide.ts).
 - [The agent router](../packages/stim-cli/src/guide/agent.ts).
+- [The lightened-worktree restore that start, ios and android run](../packages/stim-cli/src/workspace/lightened.ts).
