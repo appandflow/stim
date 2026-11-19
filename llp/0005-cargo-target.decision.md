@@ -97,8 +97,9 @@ recreates empty in that instant is replaced. An entry that
 cannot be renamed, such as one on another device (`EXDEV`), stays and the rest
 goes. The moved entries are deleted without entering a directory on another
 device, and the emptied `target/` goes too. Report mode runs the checks that
-need no claim, the use dating among them, and reports the whole size, and gc
-names a `target/` it keeps and why.
+need no claim, the use dating among them, and reports the size of the
+recognised entries only, and gc names a `target/` it keeps and why and the
+entries it keeps in one it reduces.
 
 Maintainer decision: "lets full delete it instead of trim on idle", 2026-11-19
 (#5979). Reason: a trim by profile left everything that is not a profile, such
