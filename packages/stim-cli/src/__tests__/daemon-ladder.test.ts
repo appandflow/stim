@@ -1,8 +1,9 @@
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
+import type { MockInstance } from 'vitest';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { DaemonPressure } from '@stim-cli/core/state';
+import type { DaemonLadderAction, DaemonPressure, PressureLevel } from '@stim-cli/core/state';
 import {
   diskUsageCacheFile,
   IDLE_STOP_KEY,
@@ -18,7 +19,11 @@ import { REAL_BYTES_THRESHOLD, runDormantDependencies } from '../daemon/dependen
 import { runIdlePass } from '../daemon/idle.ts';
 import { runLadder } from '../daemon/ladder.ts';
 import * as cargoTargetPasses from '../stimd/passes/cargo-target.ts';
-import { runForcedLadder, runLadderToFree } from '../daemon/passes.ts';
+import { runForcedLadder, runHomePasses, runLadderToFree, type LadderPass } from '../daemon/passes.ts';
+import * as ladderModule from '../daemon/ladder.ts';
+import * as bootedParked from '../daemon/booted-parked.ts';
+import * as idlePass from '../daemon/idle.ts';
+import * as stages from '../daemon/stages.ts';
 import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { dormantCandidates, pendingDormant, runDormantPass } from '../daemon/stages.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
@@ -1456,5 +1461,126 @@ describe('rung timing records', () => {
 
     expect(steps()).toMatchObject([{ step: 'rung', rung: 2, outcome: 'aborted' }]);
     expect(steps()[0]).not.toHaveProperty('error');
+  });
+});
+
+describe("the daemon tick's ladder pacing", () => {
+  const GB = 1024;
+  const MINUTE = 60_000;
+  let ladder: MockInstance<typeof ladderModule.runLadder>;
+
+  const FULL = 512;
+  const OTHER = 10 * GB;
+
+  function measuredAt(free: [number, number] = [FULL, OTHER], memory: 'normal' | 'critical' = 'normal') {
+    vi.spyOn(daemonMeasure, 'measureTick').mockResolvedValue({
+      measurement: {
+        disk: free.map((freeMb, i) => ({ volume: `/volume${i + 1}`, freeMb, device: i + 1 })),
+        memory: { level: memory, availableBytes: null, totalBytes: 1 },
+        load1: 0,
+        cores: 1,
+        bootedSimulators: 0,
+        runningEmulators: null,
+        interaction: null,
+      },
+      sims: [],
+      simsError: null,
+      devices: [],
+    });
+  }
+
+  function passTaking(outcomes: DaemonLadderAction['outcome'][]) {
+    ladder.mockImplementation(async (_input, level) => {
+      vi.setSystemTime(Date.now() + 90_000);
+      return {
+        actions: outcomes.map((outcome) => ({
+          rung: 3,
+          kind: 'empty-cache',
+          target: '/cache',
+          outcome,
+          bytes: 1,
+          detail: '',
+        })),
+        pressure: level,
+      };
+    });
+  }
+
+  beforeEach(() => {
+    vi.spyOn(bootedParked, 'runBootedParkedPass').mockResolvedValue([]);
+    vi.spyOn(idlePass, 'runIdlePass').mockResolvedValue([]);
+    vi.spyOn(stages, 'runDormantPass').mockResolvedValue([]);
+    ladder = vi.spyOn(ladderModule, 'runLadder').mockImplementation(async (_input, level) => ({
+      actions: [],
+      pressure: level,
+    }));
+  });
+
+  test('records the levels, each volume, duration and whether a pass took an action, and nothing at normal', async () => {
+    measuredAt();
+    passTaking(['kept', 'would']);
+    const fruitless = await runHomePasses({ act: true, log });
+    passTaking(['kept', 'done']);
+    const freed = await runHomePasses({ act: true, log, requested: true });
+
+    const pass = {
+      disk: 'critical',
+      memory: 'normal',
+      volumes: { 1: { freeMb: FULL, level: 'critical' }, 2: { freeMb: OTHER, level: 'critical' } },
+      durationMs: 90_000,
+      endedAt: Date.now(),
+    };
+    expect(fruitless.ladder).toEqual({ ...pass, freed: false, endedAt: Date.now() - 90_000 });
+    expect(freed.ladder).toEqual({ ...pass, freed: true });
+    measuredAt([100 * GB, 100 * GB]);
+    expect((await runHomePasses({ act: true, log, lastLadder: freed.ladder })).ladder).toBeNull();
+  });
+
+  const fruitless: Omit<LadderPass, 'endedAt'> = {
+    disk: 'critical',
+    memory: 'normal',
+    volumes: { 1: { freeMb: FULL, level: 'critical' }, 2: { freeMb: OTHER, level: 'critical' } },
+    freed: false,
+    durationMs: MINUTE,
+  };
+  const other = (freeMb: number, level: PressureLevel = 'critical') => ({
+    ...fruitless,
+    volumes: { ...fruitless.volumes, 2: { freeMb, level } },
+  });
+  test.each<[string, Omit<LadderPass, 'endedAt'>, Parameters<typeof measuredAt>, number, boolean, boolean]>([
+    ['runs after a pass that took an action', { ...fruitless, freed: true }, [], 0, false, true],
+    ['waits under four times a fruitless pass', fruitless, [], 4 * MINUTE - 1, false, false],
+    ['runs at four times a fruitless pass', fruitless, [], 4 * MINUTE, false, true],
+    [
+      'runs 15 minutes after a long fruitless pass',
+      { ...fruitless, durationMs: 10 * MINUTE },
+      [],
+      15 * MINUTE,
+      false,
+      true,
+    ],
+    ['runs when disk rose to critical', { ...fruitless, disk: 'high' }, [], 0, false, true],
+    ['runs when memory pressure rose', fruitless, [undefined, 'critical'], 0, false, true],
+    ['waits while every volume lost under 1 GB', other(OTHER + GB - 1), [], 0, false, false],
+    ['runs once a volume other than the fullest lost 1 GB', other(OTHER + GB), [], 0, false, true],
+    [
+      'runs when a volume was not measured before',
+      { ...fruitless, volumes: { 1: { freeMb: FULL, level: 'critical' } } },
+      [],
+      0,
+      false,
+      true,
+    ],
+    ['runs when a volume reached a higher level', other(20 * GB + 500, 'high'), [[FULL, 20 * GB - 1]], 0, false, true],
+    ['runs when a command asked for the tick', fruitless, [], 0, true, true],
+    ['waits at high after a fruitless pass at critical', fruitless, [[30 * GB, 30 * GB]], MINUTE, false, false],
+  ])('%s', async (_name, last, measurement, elapsedMs, requested, runs) => {
+    measuredAt(...measurement);
+    const lastLadder = { ...last, endedAt: Date.now() - elapsedMs };
+
+    const passes = await runHomePasses({ act: true, log, lastLadder, requested });
+
+    expect(ladder).toHaveBeenCalledTimes(runs ? 1 : 0);
+    expect(passes.ladder === lastLadder).toBe(!runs);
   });
 });
