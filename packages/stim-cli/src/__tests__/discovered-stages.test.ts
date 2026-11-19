@@ -16,6 +16,7 @@ import { clearStoppedOutputs, stoppedOutputCandidates } from '../daemon/stages.t
 import { execFileSync } from 'node:child_process';
 import { testContext } from './_context.ts';
 import { loadConfig, saveConfig } from '../workspace/config.ts';
+import * as activity from '../workspace/discovered-activity.ts';
 
 const fail = (): never => {
   throw new Error('no candidate');
@@ -36,8 +37,28 @@ describe('a discovered checkout in the idle stages', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.unstubAllEnvs();
     rmSync(base, { recursive: true, force: true });
+  });
+
+  it('does not walk the source of a discovered checkout until it holds something the hourly pass reclaims', async () => {
+    const roots = join(base, 'roots');
+    const app = join(roots, 'app');
+    mkdirSync(app, { recursive: true });
+    writeFileSync(join(app, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+    const config: Config = { maintenance: { discoverRoots: [roots] }, projects: {}, repos: {} };
+    saveConfig(config);
+    const evidence = vi.spyOn(activity, 'discoveredEvidence');
+    const pass = () =>
+      runDormantDependencies({ config, act: false, log: () => {}, ...reading, operation: testContext() });
+
+    await pass();
+    expect(evidence).not.toHaveBeenCalled();
+
+    mkdirSync(join(app, 'node_modules'));
+    await pass();
+    expect(evidence).toHaveBeenCalledWith(app, expect.anything());
   });
 
   it('is a candidate once its source is idle, is kept after an edit, and gets no workspace directory', async () => {

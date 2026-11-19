@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { rmSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import type { StimContext } from '@stim-cli/core';
 import {
@@ -37,6 +37,7 @@ import { writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
 import { reduceDormantOutputs } from './dormant-outputs.ts';
 import {
   dormantAfterMs,
+  hasOutputs,
   idleStageCandidates,
   sourceCheckoutIdle,
   sourceDormantAfterMs,
@@ -577,6 +578,7 @@ async function takeIdleDependencies(
   source: boolean,
 ): Promise<DaemonLadderAction[]> {
   const keeps = new Map<string, string>();
+  const hasTrees = (path: string) => ARTIFACT_DIRS.dependencies.some((dir) => existsSync(join(path, dir)));
   const candidates = await idleStageCandidates(
     config,
     input,
@@ -586,8 +588,9 @@ async function takeIdleDependencies(
           full: true,
           setting: 'idle.sourceDormantDays',
           onKept: (path, reason) => keeps.set(canonicalOrNull(path) ?? path, reason),
+          reclaimable: hasTrees,
         }
-      : {},
+      : { reclaimable: async (path) => hasTrees(path) || (await hasOutputs(path)) },
   );
   const { operation } = input;
   const actions: DaemonLadderAction[] = source

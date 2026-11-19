@@ -505,6 +505,10 @@ left, a read that does not answer counts as running out of time (it takes the
 one pending-read slot of `bounded-read.ts`), and a walk that crossed the deadline
 never reports idle. A recent write ends the scan at once as activity, whatever
 time is left.
+The hourly dependency and output pass walks a discovered checkout only when it
+holds a `node_modules`, an `ios/Pods` or build output to reclaim, so a large
+idle checkout with nothing left to take costs no walk; deletion still rechecks
+idleness first.
 
 Reason: an entry count kept every checkout over 20,000 source entries forever,
 though `find` walks one of 21,000 in under a second. On a loaded machine

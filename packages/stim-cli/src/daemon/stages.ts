@@ -256,6 +256,8 @@ interface IdleSelection {
   /** The setting the threshold comes from, named in the reason a workspace is kept; default the pressure threshold. */
   setting?: string;
   onKept?: (path: string, reason: string) => void;
+  /** Whether a discovered checkout holds anything the caller reclaims; one that does not is left out before its source walk. */
+  reclaimable?: (path: string) => boolean | Promise<boolean>;
 }
 
 function idleWorkspaces(
@@ -282,17 +284,19 @@ async function readIdleWorkspaces(
   thresholdMs: number,
   setting: string,
   worthIt: (path: string, project: ProjectRecord) => boolean | Promise<boolean>,
-  { discover = false, full = false, onKept }: Omit<IdleSelection, 'setting'> & { discover?: boolean } = {},
+  { discover = false, full = false, onKept, reclaimable }: Omit<IdleSelection, 'setting'> & { discover?: boolean } = {},
 ): Promise<StageCandidate[]> {
   const readings: (Omit<StageCandidate, 'idleMs' | 'role' | 'checkout'> & { idleMs: number | null })[] = [];
   const reads = discoveredReads(reading.operation?.signal, reading.operation);
   const found = discover ? await discoverCheckouts(config, listedRoots(), reading.operation) : [];
   const discovered = found.map(({ path }): [string, ProjectRecord] => [path, {}]);
+  const discoveredPaths = new Set(found.map(({ path }) => path));
   const reduceOnly = new Set(found.filter((entry) => entry.reduceOnly).map(({ path }) => path));
   const checkouts = [...Object.entries(config.projects), ...discovered];
   tally.items = checkouts.length;
   for (const [path, project] of checkouts) {
     if (sameRoot(path, reading.protectedRoot) || !(await worthIt(path, project))) continue;
+    if (reclaimable && discoveredPaths.has(path) && !(await reclaimable(path))) continue;
     const used = Date.parse(String(readWorkspaceState(path)?.lastUsedAt ?? ''));
     if (Number.isFinite(used) && Date.now() - used < thresholdMs) {
       onKept?.(path, `a Stim command used it ${Math.floor((Date.now() - used) / MINUTE_MS)} minutes ago`);
@@ -323,7 +327,7 @@ async function readIdleWorkspaces(
   return linkedFirst(candidates);
 }
 
-async function hasOutputs(path: string): Promise<boolean> {
+export async function hasOutputs(path: string): Promise<boolean> {
   return (
     workspaceOutputPaths(workspaceDir(path)).length > 0 ||
     (await existingBuildDirsAsync(path)).length > 0 ||
