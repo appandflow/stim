@@ -128,3 +128,25 @@ test('an error whose name cannot be read is still the error that is rethrown, re
 
   expect(log.mock.calls[0]?.[3]).toMatchObject({ outcome: 'threw' });
 });
+
+test('a step that has not ended is named every 10 minutes, and the records stop once it ends', async () => {
+  let end!: () => void;
+  const step = timedStep(log, 'collect_artifacts', () => new Promise<void>((resolve) => (end = resolve)), {
+    fields: { rung: 5 },
+  });
+
+  await vi.advanceTimersByTimeAsync(20 * 60_000);
+  expect(log.mock.calls.map(([, event, , fields]) => [event, fields])).toEqual([
+    ['daemon_step_running', expect.objectContaining({ step: 'collect_artifacts', rung: 5, runningMs: 600_000 })],
+    ['daemon_step_running', expect.objectContaining({ step: 'collect_artifacts', rung: 5, runningMs: 1_200_000 })],
+  ]);
+
+  end();
+  await step;
+  await vi.advanceTimersByTimeAsync(20 * 60_000);
+  expect(log.mock.calls.map(([, event]) => event)).toEqual([
+    'daemon_step_running',
+    'daemon_step_running',
+    'daemon_step',
+  ]);
+});

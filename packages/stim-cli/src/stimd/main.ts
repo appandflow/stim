@@ -131,6 +131,8 @@ import {
 } from './metro/children.ts';
 import { invocation, traceInvocation, withInvocation, type Invocation } from './forwarded.ts';
 import { createPassesLane, createThreadTable } from './threads.ts';
+import { awakeTimeout } from './awake-timer.ts';
+import { endWorkers } from './workers.ts';
 import { createCleanupWatch, isUnverifiedCleanup } from './cleanup-watch.ts';
 import { setReportChildLog } from '../report-child-log.ts';
 import { createStreams } from './logs/streams.ts';
@@ -181,6 +183,7 @@ const SUCCESSOR_BIND_MS = 10_000;
 const SIGNALS = ['SIGTERM', 'SIGINT'] as const;
 const DETACHED_SIGNALS = [...SIGNALS, 'SIGHUP'] as const;
 const SECOND_SIGNAL_GRACE_MS = 5000;
+const SHUTDOWN_DEADLINE_MS = 10 * 60_000;
 
 type Level = 'debug' | 'info' | 'warn' | 'error';
 type Resource = 'build' | 'boot' | 'test';
@@ -652,6 +655,7 @@ interface StimdStartup {
   cleanup?: (error: unknown) => Promise<void>;
   signal: AbortSignal;
   finish?: () => void;
+  endDeadline?: () => void;
 }
 
 interface RunStimdOptions {
@@ -772,6 +776,7 @@ export async function runStimd(options: RunStimdOptions = {}): Promise<boolean> 
     await startup.cleanup?.(error);
     throw error;
   } finally {
+    startup.endDeadline?.();
     startup.finish?.();
   }
 }
@@ -1275,6 +1280,13 @@ async function runStimdInner(
       );
     }
   };
+  // @ref LLP 0021#a-handover-with-no-successor -- log it and leave the marker a client starts a stimd for
+  const successorMissing = (next: { build: string; version: string }, reason: string) => {
+    log('error', 'successor_missing', `no stimd of ${next.version} (${next.build}) took this Stim home: ${reason}`);
+    try {
+      writeAtomic(stimdSuccessorMissingFile(), { at: Date.now(), pid: process.pid, build: next.build, reason });
+    } catch {}
+  };
   const relaunchFailed = (error: unknown): void => {
     log(
       'error',
@@ -1293,13 +1305,7 @@ async function runStimdInner(
     handingOver = true;
     shutdown(why);
     await shutdownDone;
-    // @ref LLP 0021#a-handover-with-no-successor -- log it and leave the marker a client starts a stimd for
-    const missing = (reason: string) => {
-      log('error', 'successor_missing', `no stimd of ${next.version} (${next.build}) took this Stim home: ${reason}`);
-      try {
-        writeAtomic(stimdSuccessorMissingFile(), { at: Date.now(), pid: process.pid, build: next.build, reason });
-      } catch {}
-    };
+    const missing = (reason: string) => successorMissing(next, reason);
     if (keepOwn) return missing('its cleanup was not verified, so no successor was started');
     try {
       launchStimd(process.env, startMode, process.platform, entry, serveArgs(carried, service || serviceNet, unit));
@@ -1826,6 +1832,40 @@ async function runStimdInner(
   const shutdown = (why: string, level: Level = 'info', cause?: unknown) => {
     if (closing) return;
     closing = true;
+    const waiting = new Set<string>();
+    let settled = false;
+    let ended = false;
+    let cancelWait: () => void;
+    // @ref LLP 0021#a-shutdown-has-a-deadline -- a shutdown that outlasts it records what it waits on, then is forced
+    const expire = () => {
+      if (ended) return;
+      const selecting = follower?.selecting();
+      if (selecting) {
+        log(
+          'warn',
+          'daemon_shutdown_waits',
+          'the shutdown deadline passed while the engine selector runs; waiting for it',
+        );
+        void selecting.then(() => {
+          if (!ended) cancelWait = awakeTimeout(SHUTDOWN_DEADLINE_MS, expire);
+          return undefined;
+        });
+        return;
+      }
+      const names = [...waiting];
+      const reason = `shutdown did not finish within ${SHUTDOWN_DEADLINE_MS / 1000} s${names.length ? `; still waiting on ${names.join(', ')}` : ''}`;
+      try {
+        log('error', 'daemon_shutdown_timeout', reason, { waiting: names });
+        if (switchedTo && !settled) successorMissing(switchedTo, reason);
+      } finally {
+        forceExit(`forced exit: ${reason}`);
+      }
+    };
+    cancelWait = awakeTimeout(SHUTDOWN_DEADLINE_MS, expire);
+    startup.endDeadline = () => {
+      ended = true;
+      cancelWait();
+    };
     foregroundAbort.abort();
     markDaemonFailure(level, attached !== undefined, markAbnormal, why, cause);
     if (dependencyWork) log('debug', 'daemon_dependency_scan_cancelled', 'stopping the dependency size scan');
@@ -1841,12 +1881,20 @@ async function runStimdInner(
     if (readJsonObject(stimdRecordFile())?.pid === process.pid) rmSync(stimdRecordFile(), { force: true });
     if (attached) for (const signal of SIGNALS) process.off(signal, onSignal);
     log(level, 'daemon_exited', `exiting: ${why}`);
+    const awaited = (name: string, work: Promise<void> | undefined) => {
+      if (!work) return work;
+      waiting.add(name);
+      return work.finally(() => waiting.delete(name));
+    };
     shutdownDone = Promise.allSettled([
-      waitForeground(foregroundDone, () => foregroundFailure),
-      lane.settled(),
-      dependencyWork,
-      closeMetroChildren(),
-      closeNetAndLogs(),
+      awaited(
+        'the tick',
+        waitForeground(foregroundDone, () => foregroundFailure),
+      ),
+      awaited('the maintenance pass', lane.settled()),
+      awaited('the dependency scan', dependencyWork),
+      awaited('Metro and tunnel children', closeMetroChildren()),
+      awaited('the net thread and device logs', closeNetAndLogs()),
     ])
       .then(async (results) => {
         cleanups.settle();
@@ -1859,7 +1907,7 @@ async function runStimdInner(
           keepClaim();
           keepDaemon = true;
         }
-        await threads.close();
+        await awaited('the worker threads', threads.close());
         return undefined;
       })
       .catch((error: unknown) =>
@@ -1872,6 +1920,7 @@ async function runStimdInner(
             'daemon_claims_kept',
             `shutdown kept the ${[keepOwn && 'stimd', keepDaemon && 'daemon'].filter(Boolean).join(' and ')} claim`,
           );
+        settled = true;
         follower?.release();
         if (!keepDaemon) releaseClaim(claim);
         if (!keepOwn) releaseClaim(own);
@@ -2007,6 +2056,7 @@ async function runStimdInner(
       await logs.ownedSync();
       if (hasOffWork()) {
         for (const socket of tickReplies.splice(0)) socket.destroy();
+        log('debug', 'daemon_tick_off', 'daemon.mode is off; stimd stays up for the work it still serves');
         continue;
       }
       shutdown('daemon.mode is off');
@@ -2365,6 +2415,31 @@ export async function runStimdEntry(argv: readonly string[]): Promise<void> {
     try {
       getExecutor().runFile('launchctl', ['remove', label], { timeoutMs: LAUNCHCTL_TIMEOUT_MS });
     } catch {}
+  await endStimdWorkers();
+}
+
+/**
+ * Ends the worker threads a stimd run in this process started, for a process that is about to exit after `runStimd`
+ * returned: `__stimd` and an owning `stim serve`. One that has not exited after 10 awake minutes is logged, and the
+ * process sends itself SIGKILL.
+ */
+export async function endStimdWorkers(): Promise<void> {
+  // @ref LLP 0021#a-shutdown-has-a-deadline -- a worker that does not exit cannot hold the process alive
+  await endWorkers(SHUTDOWN_DEADLINE_MS, (count) => {
+    try {
+      const writer = createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES });
+      writer.write({
+        src: 'stimd',
+        level: 'error',
+        event: 'daemon_shutdown_timeout',
+        msg: `${count} worker threads did not exit within ${SHUTDOWN_DEADLINE_MS / 1000} s of stimd's end`,
+        waiting: ['the worker threads'],
+      });
+      writer.close();
+    } finally {
+      process.kill(process.pid, 'SIGKILL');
+    }
+  });
 }
 
 /** Removes the jobs of this home's earlier stimds that exited without removing their own, such as after a crash. */

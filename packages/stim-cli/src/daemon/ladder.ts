@@ -414,7 +414,7 @@ async function trim(
           : ((await measuredDirectorySizeAsync(cache.dir, { timeoutMs: SIZE_TIMEOUT_MS })) ?? 0),
       detail: wouldDetail(context),
     };
-  const result = pruneCache(cache, {
+  const result = await pruneCache(cache, {
     olderThanDays: recentDays,
     byMtime: true,
     protect: await cacheEntryProtectionFor(context.config, context.operation),

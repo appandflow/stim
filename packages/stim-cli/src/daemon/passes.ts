@@ -23,6 +23,7 @@ import { runDormantDependencies } from './dependencies.ts';
 import { createFingerprintPrecompute, type PrecomputeInput } from './fingerprint-precompute.ts';
 import { daemonMode } from './mode.ts';
 import { runIdlePass, type IdlePassInput } from './idle.ts';
+import { watchedStep } from './step-timing.ts';
 import { idleOutputBytes, runLadder } from './ladder.ts';
 import { measureDisk, measureMemory, measureTick, type TickMeasurement } from './measure.ts';
 import { classifyPressure, diskPressure, diskThresholds, shortVolumeDevices, type DiskThresholds } from './pressure.ts';
@@ -130,7 +131,9 @@ async function homePasses(
   };
   const config = loadConfig();
   const now = Date.now();
-  const measured = await measureTick(config, now, { signal: operation.signal, operation });
+  const measured = await watchedStep(log, 'measure', () =>
+    measureTick(config, now, { signal: operation.signal, operation }),
+  );
   operation.signal.throwIfAborted();
   const measureMs = lap();
   const { thresholds, error } = diskThresholds(config);
@@ -148,36 +151,40 @@ async function homePasses(
   };
   let pressure = classify(measured.measurement);
   const memoryLevel = measured.measurement.memory.level;
-  const parkedActions = await runBootedParkedPass({
-    sims: measured.sims,
-    memory: memoryLevel !== 'normal' ? memoryLevel : pressure.memory !== 'normal' ? 'warning' : memoryLevel,
-    act,
-    log,
-    operation,
-  });
+  const parkedActions = await watchedStep(log, 'booted_parked', () =>
+    runBootedParkedPass({
+      sims: measured.sims,
+      memory: memoryLevel !== 'normal' ? memoryLevel : pressure.memory !== 'normal' ? 'warning' : memoryLevel,
+      act,
+      log,
+      operation,
+    }),
+  );
   operation.signal.throwIfAborted();
-  const workspaces = await runIdlePass({
-    config,
-    now,
-    sims: measured.sims,
-    simsError: measured.simsError,
-    devices: measured.devices,
-    act,
-    log,
-    operation,
-    ...(pressure.level === 'normal'
-      ? {}
-      : {
-          pressure: {
-            level: pressure.level,
-            reasons: pressure.reasons,
-            // @ref LLP 0001#each-rung-frees-only-the-volumes-under-pressure -- memory pressure idles every workspace
-            ...(pressure.memory === 'normal'
-              ? { volumes: shortVolumeDevices(measured.measurement.disk, thresholds, 'high') }
-              : {}),
-          },
-        }),
-  });
+  const workspaces = await watchedStep(log, 'idle_stage', () =>
+    runIdlePass({
+      config,
+      now,
+      sims: measured.sims,
+      simsError: measured.simsError,
+      devices: measured.devices,
+      act,
+      log,
+      operation,
+      ...(pressure.level === 'normal'
+        ? {}
+        : {
+            pressure: {
+              level: pressure.level,
+              reasons: pressure.reasons,
+              // @ref LLP 0001#each-rung-frees-only-the-volumes-under-pressure -- memory pressure idles every workspace
+              ...(pressure.memory === 'normal'
+                ? { volumes: shortVolumeDevices(measured.measurement.disk, thresholds, 'high') }
+                : {}),
+            },
+          }),
+    }),
+  );
   operation.signal.throwIfAborted();
   const actions: DaemonLadderAction[] = [
     ...parkedActions,
@@ -322,7 +329,9 @@ export function createMaintenanceLane(
       loopDelay.enable();
       current = (async () => {
         const reading = { devices: measured.devices, simsFailed: measured.sims === null, operation };
-        await precompute.run({ config, workspaces, pressure, operation }, act).catch((error: unknown) => {
+        await watchedStep(log, 'fingerprint_precompute', () =>
+          precompute.run({ config, workspaces, pressure, operation }, act),
+        ).catch((error: unknown) => {
           if (isClaimUnavailable(error) || (error instanceof Error && 'reportCleanup' in error)) throw error;
           operation.signal.throwIfAborted();
           log('warn', 'daemon_fingerprint_precompute', error instanceof Error ? error.message : String(error));
@@ -331,7 +340,9 @@ export function createMaintenanceLane(
         const deleted = await runDormantDependencies({ config, act, log, ...reading, cadence: dependencyCadence });
         taken.push(...deleted);
         const dependenciesMs = lap();
-        const skipped = await runMaintenance('daemon', { report: !act, tick: { operation, measured } });
+        const skipped = await watchedStep(log, 'maintenance', () =>
+          runMaintenance('daemon', { report: !act, tick: { operation, measured } }),
+        );
         const maintenanceMs = lap();
         logLauncherProblems(operation, log);
         const tookMs = Math.round(performance.now() - started);
