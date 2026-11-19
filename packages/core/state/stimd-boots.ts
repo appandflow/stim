@@ -147,8 +147,11 @@ export function readJobRestart(home?: string): JobRestart | null {
     : null;
 }
 
-/** The longest a record holds the home after it was written: a stimd's 10-minute shutdown deadline and the job's restart. */
-const JOB_RESTART_MAX_MS = 15 * 60_000;
+/**
+ * The longest a record holds the home after it was first written: a stimd's shutdown deadline, 10 awake minutes and up
+ * to 10 more while the engine selector runs, then the job's restart.
+ */
+const JOB_RESTART_MAX_MS = 25 * 60_000;
 
 /**
  * Until when `record` holds the home for its job: `JOB_RESTART_WAIT_MS` after its stimd left, and while that stimd still

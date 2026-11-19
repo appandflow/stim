@@ -951,9 +951,10 @@ function jobRestartWaitMs(): number {
  * started, so a command neither starts a stimd only to wait behind the job's restart nor asks the one that is leaving.
  */
 async function awaitJobRestart(signal?: AbortSignal): Promise<void> {
-  for (;;) {
+  for (let said = false; ; said = true) {
     const hold = jobRestartHold();
     if (!hold || Date.now() >= hold.until || signal?.aborted) return;
+    if (!said) console.error(`Stim: waiting for the ${hold.record.label} service to start stimd again`);
     await new Promise((done) => setTimeout(done, CLAIM_POLL_MS));
   }
 }

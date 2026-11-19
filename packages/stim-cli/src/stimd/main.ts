@@ -974,6 +974,7 @@ async function runStimdInner(
       return false;
     }
     own = updateClaimDetails(own, { ...details, kept: true, updateCheckedAt: held.checkedAt }) ?? own;
+    rmSync(stimdJobRestartFile(), { force: true });
     writer.close();
     return true;
   }

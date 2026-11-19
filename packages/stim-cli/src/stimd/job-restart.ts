@@ -33,8 +33,10 @@ export function jobRestartHold(): { record: JobRestart; running: boolean; until:
   if (!record) return null;
   const running = processRuns(record.pid);
   if (!running && record.left === null) {
+    const seen = record;
     record = { ...record, left: Date.now() };
-    writeJobRestart(record);
+    const now = readJobRestart();
+    if (now?.pid === seen.pid && now.at === seen.at && now.left === null) writeJobRestart(record);
   }
   return { record, running, until: jobRestartUntil(record, running) };
 }
