@@ -50,6 +50,18 @@ export interface GcLogEntry extends NdjsonRecord {
   mode: 'report' | 'on';
 }
 
+/** A warning of a `stim gc` run that is not an item: launcher evidence the run went ahead past or kept for. */
+export interface GcLogNote extends NdjsonRecord {
+  ts: number;
+  src: 'gc';
+  level: 'warn';
+  msg: string;
+  event: 'launcher_evidence_incomplete';
+  runId: string;
+  trigger: GcLogTrigger;
+  options?: GcLogOptions;
+}
+
 const TRIGGERS: readonly string[] = ['manual', 'desktop', 'maintenance', 'budget'];
 const STATUSES: readonly string[] = ['done', 'kept', 'failed'];
 
@@ -68,8 +80,10 @@ export function isGcLogRecord(record: NdjsonRecord): record is GcLogRecord {
   );
 }
 
-export function readGcLog(file: string = gcLogFile()): (GcLogRecord | GcLogEntry)[] {
+export function readGcLog(file: string = gcLogFile()): (GcLogRecord | GcLogEntry | GcLogNote)[] {
   return readNdjsonGenerations(file)
-    .filter((record): record is GcLogRecord | GcLogEntry => record.src === 'gc' && typeof record.ts === 'number')
+    .filter(
+      (record): record is GcLogRecord | GcLogEntry | GcLogNote => record.src === 'gc' && typeof record.ts === 'number',
+    )
     .toSorted((a, b) => a.ts - b.ts);
 }

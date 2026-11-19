@@ -255,11 +255,22 @@ That includes every entry of a directory this user can list but not search.
 `/usr/sbin/authserver`, and reading it as a failure kept every checkout on
 every pass.) A link this user cannot resolve but can execute, such
 as a root link with mode 0700 (macOS denies `readlink` on it, not the path
-lookup), stays a failure. Not seen, as a result: a launcher that only root or
-another user can run, pointing into one of this user's checkouts. Any other
-failure to inspect a directory (permission, I/O, a timeout) keeps every
-checkout for that operation, with a reason naming the
-directory. A wrapper script that only names a path is not followed.
+lookup), is resolved through the file it opens to: on macOS the entry is opened
+read-only and non-blocking, `lsof` names the opened file, and that path counts
+as the link's target when its `realpath` is the same file (device and inode) as
+the open one and that file has a single hard link (`lsof` names any one of a
+file's links, which the device and inode check cannot tell apart). Any failure
+of that (open denied, a second hard link, `lsof` failing, timing out or naming
+no path or another file, any other platform) leaves the entry unresolved, and
+its error names the original one and the fallback's; the open and `lsof` together are one call under the 3 second bound
+above. (#5896: a root 0700 `/usr/local/bin/1password-mcp` kept every checkout
+for days, through a critical disk level.) Not seen, as a result: a launcher
+that only root or another user can run, pointing into one of this user's
+checkouts. An entry that stays unresolved and a directory that cannot be read
+(permission, I/O) are treated as pointing into no checkout and are logged, as
+the launcher keep section below states; a read that times out keeps every
+checkout for that operation, with a reason naming the directory. A wrapper
+script that only names a path is not followed.
 
 Every source (main) checkout, registered or discovered by any route (siblings,
 `maintenance.discoverRoots` children, tool folders, the scan), follows the
@@ -576,14 +587,27 @@ operation's shared one of the checkout's kind at planning and a fresh one with e
 deletion, as above. `reduceOnly` keeps its other meaning: such a checkout is never
 removed.
 
-Incomplete launcher evidence keeps every checkout, and is reported where it
-happens. A PATH directory that cannot be read, one entry whose `lstat` or
-`realpath` fails (EPERM, EACCES, ELOOP, EIO) and a read that has not answered each
+Incomplete launcher evidence is reported where it happens, and only a read that
+has not answered keeps every checkout. A PATH directory that cannot be read, one
+entry whose `lstat` or `realpath` fails (EPERM, EACCES, ELOOP, EIO) and that the
+opened-file fallback above does not resolve, and a read that has not answered each
 become a `LauncherProblem` naming the path and the error; ENOENT and ENOTDIR are
-no launcher. A single unreadable entry is not ruled out by its link text: a
+no launcher. A directory or entry that failed is treated as pointing into no
+checkout: cleanup goes ahead, and the pass record and the doctor finding say so.
+A read that timed out or is still pending keeps every checkout, because a hung
+mount says nothing about what it would have listed.
+
+Maintainer decision, 2026-11-19 (#5896): "Can we err on cleanup side if fail to
+get path stuff and log the error"
+
+The cost: a single unreadable entry is not ruled out by its link text, since a
 textual target outside every checkout can still pass through a directory link
-into one, and the resolution is what failed, so no rule narrows the keep without
-risking a missed launcher. The pending-read slot is shared with the home scan, so
+into one, so a launcher behind an unreadable entry or directory can lose the
+build output, dependencies or Cargo target it runs from, and a worktree it
+runs from can be removed. Resolving through the opened file, above,
+reads where the link leads, not its text, and narrows that to entries it cannot
+open. A checkout whose owner cannot be established is not a launcher read and
+still keeps that checkout. The pending-read slot is shared with the home scan, so
 a pending read of a folder that is not a launcher directory is reported as a read
 outside PATH, not as a PATH directory. `stim doctor` reports the finding
 `launcher-evidence-incomplete` with the path, the error and the fix, from a read
@@ -591,9 +615,10 @@ bounded by 3 seconds per call and a 10 second deadline that covers queue time an
 every entry read, and a read that reaches the deadline is reported as incomplete; it
 also runs the same bounded ownership probe for each registered project. A checkout
 whose owner cannot be established is part of the same pass record, as a count and
-the first five. Each daemon pass writes one
-`launcher_evidence_incomplete` record, and each item's keep reason names the
-cause.
+the first five. Each daemon pass, and each acting `stim gc` in the gc log, writes
+one `launcher_evidence_incomplete` warn record that names the problems and what
+cleanup does about them, and the keep reason of an item kept by a read that has
+not answered names the cause.
 
 Limits: the daemon reads its own PATH and the fixed folders above, so a launcher
 in a folder that only an interactive shell's PATH names is not seen. A launcher
@@ -623,7 +648,7 @@ level short, as for every other keep reason.
 
 ## Links
 
-- Issues: #5512, #5515, #5757, #5762, #5765, #5775. Pull request: #5519.
+- Issues: #5512, #5515, #5757, #5762, #5765, #5775, #5896. Pull request: #5519.
 - Code: `packages/stim-cli/src/workspace/discovery.ts`,
   `packages/stim-cli/src/workspace/discovery-scan.ts`,
   `packages/stim-cli/src/workspace/discovery-census.ts`,

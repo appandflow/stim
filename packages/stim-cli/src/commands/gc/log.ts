@@ -3,6 +3,7 @@ import { executedActionName } from '../../maintenance-kind.ts';
 import {
   gcLogFile,
   runId,
+  type GcLogNote,
   type GcLogOptions,
   type GcLogRecord,
   type GcLogTrigger,
@@ -28,6 +29,7 @@ interface GcLogRun {
 
 export interface GcLog {
   record(result: GcLogItem): void;
+  note(level: 'warn', event: GcLogNote['event'], msg: string, fields?: Record<string, unknown>): void;
 }
 
 const VERBS = { done: 'Cleared', kept: 'Kept', failed: 'Failed to clear' } as const;
@@ -60,7 +62,7 @@ export function openGcLog(run: GcLogRun): GcLog {
   let failed = false;
   let acted = run.holdKept !== true;
   const held: GcLogRecord[] = [];
-  const append = (record: GcLogRecord) => {
+  const append = (record: GcLogRecord | GcLogNote) => {
     try {
       const writer = openRetainedLog(gcLogFile(), resolveMaintenanceSettings(loadConfig(), run.env));
       try {
@@ -86,6 +88,19 @@ export function openGcLog(run: GcLogRun): GcLog {
         for (const earlier of held.splice(0)) append(earlier);
       }
       append(record);
+    },
+    note(level, event, msg, fields = {}) {
+      append({
+        ...fields,
+        ts: Date.now(),
+        src: 'gc',
+        level,
+        msg,
+        event,
+        runId: run.runId ?? runId(),
+        trigger: run.trigger,
+        ...(run.options === undefined ? {} : { options: run.options }),
+      });
     },
   };
 }
