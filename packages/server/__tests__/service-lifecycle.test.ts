@@ -16,7 +16,14 @@ import { delimiter, dirname, join } from 'node:path';
 import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '@stim-cli/core/ownership-claim';
 import type { ServeRoute } from '@stim-cli/core/protocol';
 import { stimBuildDigest, stimdClaimRoot } from '@stim-cli/core/state';
-import { installJob, installService, recordServiceRoute, serviceStatus, uninstallService } from '../src/service.ts';
+import {
+  installJob,
+  installService,
+  recordServiceRoute,
+  rewriteUnitToShim,
+  serviceStatus,
+  uninstallService,
+} from '../src/service.ts';
 import { serverBuild } from '../src/release-install.ts';
 import { parseInstalledPlist, renderPlist } from '../src/service-plist.ts';
 
@@ -391,6 +398,23 @@ describe.skipIf(process.platform !== 'darwin')('service lifecycle', () => {
       stimd: { pid: process.pid, port: 35679 },
       followsEngine: false,
     });
+  });
+
+  it('rewrites a LaunchAgent that names node and a script to the shim once, keeping its options and environment', async () => {
+    const shim = engineShim();
+    const before = installedPlist();
+    expect(before?.node).toBe(process.execPath);
+    expect(await rewriteUnitToShim(label)).toBe(true);
+    expect(installedPlist()).toMatchObject({
+      host: before?.host,
+      node: null,
+      script: shim,
+      port: before?.port,
+      stimHome: before?.stimHome,
+      programArguments: [before?.host, 'run', shim, '--service', '--port', String(before?.port)],
+    });
+    expect(launchd.bootstraps).toEqual([]);
+    expect(await rewriteUnitToShim(label)).toBe(false);
   });
 
   it('records that the Stim home the service runs uses the tailnet when it keeps a serve route', async () => {

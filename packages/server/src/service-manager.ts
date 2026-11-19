@@ -89,7 +89,7 @@ export interface ServiceManager {
   start(label: string): Promise<Run>;
   /** Makes the manager read the service file again without starting or stopping the job; absent where it reads the file at each start. */
   reload?(): Promise<Run>;
-  /** The start command the manager has loaded for `label`, as it prints it, or null when it has loaded none. */
+  /** The start command the manager has loaded for `label`, as it prints it; absent where `reload` is. */
   loadedCommand?(label: string): Promise<string | null>;
   /** Asks the manager to stop the job; callers wait for it to go. */
   stop(label: string): Promise<Run>;
@@ -140,10 +140,6 @@ const launchd: ServiceManager = {
   },
   render: renderPlist,
   start: (label) => run('launchctl', ['bootstrap', domain(), launchd.file(label)]),
-  async loadedCommand(label) {
-    const printed = await run('launchctl', ['print', `${domain()}/${label}`]);
-    return printed.ok ? printed.stdout : null;
-  },
   stop: (label) => run('launchctl', ['bootout', `${domain()}/${label}`]),
   async remove(label) {
     rmSync(launchd.file(label), { force: true });
@@ -184,48 +180,6 @@ const launchd: ServiceManager = {
   detached: (node, args) => ({ file: node, args }),
   runningLabel: (env) => labelFrom(env.XPC_SERVICE_NAME),
 };
-
-/** Whether `launchctl print` output shows a job that runs `path`: print lists each argument on its own line. */
-export const launchdRuns = (printed: string, path: string): boolean => printed.includes(`\n\t\t${path}\n`);
-
-const RELOAD_SCRIPT = `domain=$1 label=$2 plist=$3 shim=$4 pid=$5 written=$6
-while kill -0 "$pid" 2>/dev/null; do sleep 0.1; done
-launchctl print "$domain/$label" >/dev/null 2>&1 || exit 0
-cmp -s "$plist" "$written" || exit 0
-remedy="run \\\`launchctl bootout $domain/$label\\\` and \\\`launchctl bootstrap $domain $plist\\\` when no build runs"
-launchctl bootout "$domain/$label" || { echo "stim: could not unload $label to load its plist again; $remedy." >&2; exit 1; }
-i=0
-while launchctl print "$domain/$label" >/dev/null 2>&1 && [ $i -lt 450 ]; do sleep 0.1; i=$((i + 1)); done
-i=0
-until launchctl bootstrap "$domain" "$plist"; do
-  i=$((i + 1))
-  if [ $i -ge 20 ]; then echo "stim: could not load $label again; $remedy." >&2; exit 1; fi
-  sleep 0.5
-done
-tab=$(printf '\\t')
-launchctl print "$domain/$label" | grep -qxF "$tab$tab$shim" || { echo "stim: launchd did not load the engine shim for $label; $remedy." >&2; exit 1; }
-echo "stim: $label now runs the engine shim from its rewritten plist."
-`;
-
-/**
- * The command that loads the LaunchAgent `label` again from its plist once `pid`, its job's process, has exited.
- * launchd restarts a `KeepAlive` job from the definition it read at bootstrap, so a rewritten plist takes effect only
- * after a bootout and bootstrap, which a process inside the job cannot run because the bootout stops it. Started
- * detached, the command outlives the job. It does nothing when the job is unloaded or the plist no longer matches
- * `written`, a copy of what the rewrite wrote (`stim service install` or `uninstall` got there first), and gives up with
- * the remedy on stderr when the bootout fails, the job does not load again within 10 s, or it loads without `shim`.
- */
-export function launchdReloadCommand(
-  label: string,
-  pid: number,
-  shim: string,
-  written: string,
-): { file: string; args: string[] } {
-  return {
-    file: '/bin/sh',
-    args: ['-c', RELOAD_SCRIPT, 'sh', domain(), label, launchd.file(label), shim, String(pid), written],
-  };
-}
 
 const unit = (label: string) => `${label}.service`;
 
