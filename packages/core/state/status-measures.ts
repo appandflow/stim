@@ -294,6 +294,41 @@ export function readDiskUsageFailure(path: string): string | null {
   return Number.isFinite(Date.parse(entry.failedAt)) ? entry.failedAt : null;
 }
 
+/** How many walks of `path` in a row failed, as its failure record counts them; 1 for a record without a count. */
+export function readDiskUsageFailureCount(path: string): number {
+  const entry = readJsonObject(diskUsageFailureFile(path));
+  const count = entry?.count;
+  return typeof count === 'number' && Number.isInteger(count) && count >= 1 ? count : 1;
+}
+
+/** How long the cached walk of `path` took, in milliseconds, or null when the entry does not record it. */
+export function readDiskUsageWalkMs(path: string): number | null {
+  const entry = readJsonObject(diskUsageCacheFile(path));
+  if (entry === null || entry.path !== path) return null;
+  return typeof entry.walkMs === 'number' && Number.isFinite(entry.walkMs) && entry.walkMs >= 0 ? entry.walkMs : null;
+}
+
+/** The file that records until when no status measurer on this machine may start a disk walk. */
+export function statusWalkRestFile(): string {
+  return join(diskUsageCacheDir(), 'status-walk-rest.json');
+}
+
+/**
+ * When the status walk rest was written and until when (epoch milliseconds) no status measurer may start a disk walk;
+ * null when nothing readable is recorded.
+ */
+export function readStatusWalkRest(): { writtenAt: number; until: number } | null {
+  const entry = readJsonObject(statusWalkRestFile());
+  const writtenAt = entry?.writtenAt;
+  const until = entry?.until;
+  return typeof writtenAt === 'number' &&
+    Number.isFinite(writtenAt) &&
+    typeof until === 'number' &&
+    Number.isFinite(until)
+    ? { writtenAt, until }
+    : null;
+}
+
 function countOrNull(value: unknown): number | null {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null;
 }

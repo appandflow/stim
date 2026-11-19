@@ -381,7 +381,7 @@ one up to 16, a critical one up to 22; the dormant step adds ~7/hour,
 build_end_measure one a pass. None alter a pass.
 Each disk-usage cache entry written after a walk also records walkMs, in milliseconds, from just
 before the install signature and target reads to the end of the folder walk;
-nothing reads it yet.
+status --watch reads it.
 When a report child's cleanup is refused (STIM_CLAIM_UNAVAILABLE) inside stimd, or a cancelled child whose identity
 was not captured is killed after its cancel (POSIX), the daemon log also gets one info record, event
 daemon_report_child_exited, when that child's own exit is seen. It never appears for a child that has not exited. Fields: pid, command (program and redacted, bounded arguments), cancelReason (timeout,

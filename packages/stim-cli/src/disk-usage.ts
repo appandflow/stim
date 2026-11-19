@@ -16,6 +16,7 @@ import {
   diskUsageWalkClaims,
   readDiskUsage,
   readDiskUsageFailure,
+  readDiskUsageFailureCount,
   readDiskUsageFailureSignature,
   readDiskUsagePartial,
   type DiskMeasure,
@@ -127,6 +128,11 @@ export interface RefreshOptions {
   /** Records a failed walk, and leaves the folder alone for `maxAgeMs` after it. */
   failures?: boolean;
   /**
+   * Asked under the walk claim, right before a walk would start: false leaves the folder unwalked with the outcome
+   * `busy`.
+   */
+  admit?: () => boolean;
+  /**
    * The caller has established, through a bounded read, that `path` exists: do not probe it. Without it the folder is
    * probed with a synchronous `existsSync`, which a stalled mount can block.
    */
@@ -204,6 +210,7 @@ export async function refreshMeasure(
   let cleanupUnverified = false;
   try {
     if (claim && skip()) return fresh();
+    if (options.admit && !options.admit()) return { outcome: 'busy', measure: null };
     const startedAt = now();
     const signature = dependency ? (options.signature ?? treeSignature(path)) : null;
     const targets = options.targets?.();
@@ -225,12 +232,20 @@ export async function refreshMeasure(
     }
     operation?.signal.throwIfAborted();
     if (!size) {
-      if (options.failures)
+      if (options.failures) {
+        const previous = readDiskUsageFailure(path);
+        const last = readDiskUsage(path);
+        const streak =
+          previous !== null &&
+          (!last || Date.parse(previous) > Date.parse(last.measuredAt)) &&
+          (!dependency || readDiskUsageFailureSignature(path) === signature);
         writeCacheFile(diskUsageFailureFile(path), {
           path,
           failedAt: new Date(now()).toISOString(),
           ...(signature ? { signature } : {}),
+          count: streak ? readDiskUsageFailureCount(path) + 1 : 1,
         });
+      }
       return { outcome: 'failed', measure: null };
     }
     return {
