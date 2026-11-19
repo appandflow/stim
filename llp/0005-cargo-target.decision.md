@@ -12,8 +12,8 @@
 Stim recognises three kinds of Cargo `target/`: an Exact app's, beside
 `exact.mjs`; one at a checkout root whose `CACHEDIR.TAG` starts with the
 standard signature line; and one at a checkout root beside `Cargo.toml` that
-has Cargo's shape inside: a `.rustc_info.json` at its root, or a direct child
-holding `.fingerprint` or a `CACHEDIR.TAG` with the signature line. All three
+holds files only Cargo writes: a `.rustc_info.json` at its root, or a direct
+child profile holding `.fingerprint`. All three
 count in a registered workspace and in a discovered checkout (LLP 0004), and
 each must still have every file ignored by git and pass the process, Cargo lock
 and launcher keeps before anything in it is deleted.
@@ -23,8 +23,11 @@ Maintainer decision: "Yes leys have same rules for cargo as exact", 2026-11-19
 On the maintainer's MacBook on 2026-11-19, 3 of the 7 `~/.exact/exact2`
 worktrees with a `target/` had none, among them an 18 GB and a 31 GB one. Both
 held `.rustc_info.json` and a profile with `.fingerprint`, and one carried the
-tag only in `target/wasm32-unknown-unknown/`. The shape check keeps a project's own
-`target/` folder that Cargo never wrote out of it.
+tag only in `target/wasm32-unknown-unknown/`. The check takes only Cargo's own
+files as evidence, so a project's `target/` folder that Cargo never wrote stays
+out. A `CACHEDIR.TAG` in a child is not evidence: it is a generic standard any
+tool may write, and it does not show that the rest of `target/` is Cargo
+output.
 
 The idle and dormant stages clear an idle workspace's `target/` whole. A
 process running from or working in the checkout keeps all of it.

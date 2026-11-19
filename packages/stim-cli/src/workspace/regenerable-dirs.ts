@@ -138,17 +138,11 @@ const CARGO_MANIFEST = 'Cargo.toml';
 const RUSTC_INFO = '.rustc_info.json';
 const FINGERPRINT = '.fingerprint';
 
-function* tagged(dir: string, names: readonly string[]): DirReads<boolean> {
-  return names.includes(CACHEDIR_TAG) && (yield { signature: join(dir, CACHEDIR_TAG) }) === true;
-}
-
 function* cargoShaped(path: string, names: readonly string[]): DirReads<boolean> {
   if (names.includes(RUSTC_INFO)) return true;
   for (const name of names) {
     const child = join(path, name);
-    if (!(yield* realDirectory(child))) continue;
-    const inner = yield* namesIn(child);
-    if (inner.includes(FINGERPRINT) || (yield* tagged(child, inner))) return true;
+    if ((yield* realDirectory(child)) && (yield* namesIn(child)).includes(FINGERPRINT)) return true;
   }
   return false;
 }
@@ -157,7 +151,7 @@ function* cargoRootTargetDirs(root: string): DirReads<string[]> {
   const path = join(root, CARGO_TARGET);
   if (!(yield* realDirectory(path))) return [];
   const names = yield* namesIn(path);
-  if (yield* tagged(path, names)) return [path];
+  if (names.includes(CACHEDIR_TAG) && (yield { signature: join(path, CACHEDIR_TAG) }) === true) return [path];
   return (yield* namesIn(root)).includes(CARGO_MANIFEST) && (yield* cargoShaped(path, names)) ? [path] : [];
 }
 
@@ -167,8 +161,8 @@ function* cargoTargetDirsReads(root: string): DirReads<string[]> {
 
 /**
  * The Cargo `target/` directly under `root` that Stim recognises: an Exact app's (beside its `exact.mjs`), one that
- * carries Cargo's `CACHEDIR.TAG` with its signature line, or one beside a `Cargo.toml` with Cargo's shape inside (a
- * `.rustc_info.json`, or a direct child holding `.fingerprint` or a signed `CACHEDIR.TAG`). At most one.
+ * carries Cargo's `CACHEDIR.TAG` with its signature line, or one beside a `Cargo.toml` that holds Cargo's own files (a
+ * `.rustc_info.json`, or a direct child profile holding `.fingerprint`). At most one.
  */
 export function cargoTargetDirsAsync(root: string): Promise<string[]> {
   return readAsync(cargoTargetDirsReads(root));

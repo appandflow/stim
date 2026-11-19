@@ -1301,8 +1301,8 @@ never), by the same evidence. That holds for every kind of discovered checkout
 maintenance.discoverRoots, reduce-only finds) even where no stim command ever ran,
 and a PATH launcher keeps any of them. A
 target directory at a checkout root whose files git ignores is build output when
-its CACHEDIR.TAG is signed, or beside Cargo.toml when it holds .rustc_info.json or
-a child with .fingerprint or a signed CACHEDIR.TAG.
+its CACHEDIR.TAG is signed, or beside Cargo.toml holding .rustc_info.json or a
+profile with .fingerprint.
 Removing a discovered worktree needs a clean one whose work is merged or whose
 pull request ended, and, at every pressure level with no zero grace, that same
 idleness, no process or agent session, and every git-ignored file present byte

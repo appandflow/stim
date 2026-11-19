@@ -88,19 +88,17 @@ test('the Cargo target/ of an Exact app is build output; a target/ in any other 
 test.each([
   ['.rustc_info.json at its root', ['.rustc_info.json'], true],
   ['a profile holding .fingerprint', ['debug/.fingerprint/'], true],
-  ['a target triple with a signed CACHEDIR.TAG', ['wasm32-unknown-unknown/CACHEDIR.TAG'], true],
-  ['an unsigned CACHEDIR.TAG in a child', ['web/CACHEDIR.TAG'], false],
+  ['only a signed CACHEDIR.TAG in a child, beside other output', ['cache/CACHEDIR.TAG', 'releases/file'], false],
   ['no Cargo files', ['web/index.js'], false],
 ])('a target/ beside Cargo.toml with %s is a Cargo target: $2', async (_, entries, recognised) => {
   writeFileSync(join(root, 'Cargo.toml'), '');
   for (const entry of entries) {
-    const path = join(root, 'target', entry);
     if (entry.endsWith('/')) dir('target', entry);
     else {
       dir('target', entry.split('/').slice(0, -1).join('/'));
       writeFileSync(
-        path,
-        entry === 'wasm32-unknown-unknown/CACHEDIR.TAG' ? 'Signature: 8a477f597d28d172789f06886806bc55\n' : '',
+        join(root, 'target', entry),
+        entry.endsWith('CACHEDIR.TAG') ? 'Signature: 8a477f597d28d172789f06886806bc55\n' : '',
       );
     }
   }
