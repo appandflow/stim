@@ -4,7 +4,7 @@ export default {
 
 WORKSPACE SETUP
 
-Skip this for inspection, cleanup or a running app.
+Skip this for inspection, cleanup or an app already running.
 
 WORKTREE: Use a linked worktree by default; create one with Git if needed.
 The clean source checkout is infrastructure, not a workspace. Unless you
@@ -14,7 +14,7 @@ there. Concurrent writes to the destination are unsafe.
 Options: stim guide lifecycle options.
 
 SINGLE CHECKOUT: Work in place, without warm, only when the user asks or the
-task needs their uncommitted changes. Run app commands from that checkout.
+task needs their uncommitted changes. Run app commands there.
 
 Run doctor before native work only when STATUS says it is due for the
 requested platform, or when diagnosing a toolchain problem. A worktree check
