@@ -30,10 +30,9 @@ import { hardLinkSample } from '../link-sample.ts';
 import { workspaceKeys } from '../workspace/lightened.ts';
 import { freshLaunchers } from '../workspace/launchers.ts';
 import { workspaceDir } from '../workspace/paths.ts';
-import { workspaceOutputPaths } from '../commands/gc/workspaces.ts';
 import { answered, hungRead, Unanswered } from '../workspace/bounded-read.ts';
 import { buildOutputDirs, dependencyTreeSignature } from '../workspace/discovery-census.ts';
-import { ARTIFACT_DIRS, existingBuildDirsAsync } from '../workspace/regenerable-dirs.ts';
+import { ARTIFACT_DIRS } from '../workspace/regenerable-dirs.ts';
 import { checkDependencyEdits } from '../workspace/dependency-edits.ts';
 import { writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
 import { reduceDormantOutputs } from './dormant-outputs.ts';
@@ -574,27 +573,26 @@ export async function runDormantDependencies(
 }
 
 /**
- * Whether a discovered checkout holds a dependency tree, its two probes bounded like the launcher readings by `answered`
- * (false, for this pass, when one does not answer or another read is pending), or with `outputs` the Stim workspace or
- * in-tree build output, read as the dormant output pass reads it.
+ * Whether a discovered checkout holds a `node_modules` or `ios/Pods`, each probe bounded like the launcher readings by
+ * `answered`; false, for this pass, when one does not answer or another read is pending.
  */
-async function holdsReclaimable(path: string, outputs: boolean, signal?: AbortSignal): Promise<boolean> {
-  const exists = (target: string) =>
-    answered(
-      target,
-      () =>
-        stat(target).then(
-          () => true,
-          () => false,
-        ),
-      PROBE_TIMEOUT_MS,
-      signal,
-    );
+async function holdsDependencyTrees(path: string, signal?: AbortSignal): Promise<boolean> {
   try {
-    for (const dir of ARTIFACT_DIRS.dependencies) if (await exists(join(path, dir))) return true;
-    if (!outputs) return false;
-    signal?.throwIfAborted();
-    return workspaceOutputPaths(workspaceDir(path)).length > 0 || (await existingBuildDirsAsync(path)).length > 0;
+    for (const dir of ARTIFACT_DIRS.dependencies) {
+      const target = join(path, dir);
+      const found = await answered(
+        target,
+        () =>
+          stat(target).then(
+            () => true,
+            () => false,
+          ),
+        PROBE_TIMEOUT_MS,
+        signal,
+      );
+      if (found) return true;
+    }
+    return false;
   } catch (error) {
     if (error instanceof Unanswered) return false;
     throw error;
@@ -617,9 +615,9 @@ async function takeIdleDependencies(
           full: true,
           setting: 'idle.sourceDormantDays',
           onKept: (path, reason) => keeps.set(canonicalOrNull(path) ?? path, reason),
-          reclaimable: (path) => holdsReclaimable(path, false, input.operation?.signal),
+          reclaimable: (path) => holdsDependencyTrees(path, input.operation?.signal),
         }
-      : { reclaimable: (path) => holdsReclaimable(path, true, input.operation?.signal) },
+      : {},
   );
   const { operation } = input;
   const actions: DaemonLadderAction[] = source

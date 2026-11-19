@@ -8,7 +8,7 @@ import {
   utimesSync,
   writeFileSync,
 } from 'node:fs';
-import { lstat, stat } from 'node:fs/promises';
+import { stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Config } from '@stim-cli/core/state';
@@ -32,7 +32,6 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   return {
     ...actual,
     stat: vi.fn<typeof actual.stat>(actual.stat),
-    lstat: vi.fn<typeof actual.lstat>(actual.lstat),
   };
 });
 
@@ -85,13 +84,19 @@ describe('a discovered checkout in the idle stages', () => {
     }
   });
 
-  it('does not walk the source of a discovered checkout, nor resolve its Metro store, until it holds something the hourly pass reclaims', async () => {
+  const discoveredApp = (idle: Config['idle'], ...dirs: string[]) => {
     const roots = join(base, 'roots');
     const app = join(roots, 'app');
-    mkdirSync(join(app, 'android'), { recursive: true });
+    for (const dir of ['android', ...dirs]) mkdirSync(join(app, dir), { recursive: true });
     writeFileSync(join(app, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
-    const config: Config = { maintenance: { discoverRoots: [roots] }, projects: {}, repos: {} };
+    const config: Config = { maintenance: { discoverRoots: [roots] }, projects: {}, repos: {}, idle };
     saveConfig(config);
+    return { app, config };
+  };
+  const sourcePassOnly = { dormantDays: 0 };
+
+  it('does not walk the source of a discovered checkout in the source-checkout pass until it holds node_modules or Pods', async () => {
+    const { app, config } = discoveredApp(sourcePassOnly);
     const evidence = vi.spyOn(activity, 'discoveredEvidence');
     const store = vi.spyOn(metroStore, 'metroStoreRoot');
     const pass = () =>
@@ -106,18 +111,8 @@ describe('a discovered checkout in the idle stages', () => {
     expect(evidence).toHaveBeenCalledWith(app, expect.anything());
   });
 
-  const discoveredApp = (...dirs: string[]) => {
-    const roots = join(base, 'roots');
-    const app = join(roots, 'app');
-    for (const dir of ['android', ...dirs]) mkdirSync(join(app, dir), { recursive: true });
-    writeFileSync(join(app, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
-    const config: Config = { maintenance: { discoverRoots: [roots] }, projects: {}, repos: {} };
-    saveConfig(config);
-    return { app, config };
-  };
-
-  it('skips a discovered checkout for the pass when its dependency tree probe never answers', async () => {
-    const { app, config } = discoveredApp();
+  it('skips a discovered checkout for the source-checkout pass when its dependency tree probe never answers', async () => {
+    const { app, config } = discoveredApp(sourcePassOnly);
     const target = join(app, 'node_modules');
     const real = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
     const stalled: (() => void)[] = [];
@@ -144,24 +139,11 @@ describe('a discovered checkout in the idle stages', () => {
     await vi.waitUntil(() => hungRead() === null);
   });
 
-  it('keeps a discovered checkout as a candidate when its build output listing is slow but answers', async () => {
-    const { app, config } = discoveredApp(join('android', 'app', 'build'));
-    const target = join(app, 'android', 'app', 'build');
-    const real = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
-    let reached = () => {};
-    const atListing = new Promise<void>((resolve) => (reached = resolve));
-    vi.mocked(lstat).mockImplementation((path, options) => {
-      if (path !== target) return real.lstat(path, options);
-      reached();
-      return new Promise((resolve) => setTimeout(() => resolve(real.lstat(path, options)), 5000));
-    });
+  it('walks a discovered checkout with only in-tree build output in the linked-worktree pass, as before', async () => {
+    const { app, config } = discoveredApp({ sourceDormantDays: 0 }, join('android', 'app', 'build'));
     const evidence = vi.spyOn(activity, 'discoveredEvidence');
 
-    const run = runDormantDependencies({ config, act: false, log: () => {}, ...reading, operation: testContext() });
-    await atListing;
-    vi.mocked(lstat).mockReset();
-    await vi.advanceTimersByTimeAsync(5000);
-    await run;
+    await runDormantDependencies({ config, act: false, log: () => {}, ...reading, operation: testContext() });
 
     expect(evidence).toHaveBeenCalledWith(app, expect.anything());
   });
