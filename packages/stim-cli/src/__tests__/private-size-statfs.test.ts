@@ -29,7 +29,7 @@ beforeEach(() => {
   setExecutor({
     ...real,
     runFileAsync: (file, args, options) => {
-      if (args.includes('du')) duTimeouts.push(options?.timeoutMs ?? 0);
+      if (file === 'du' || args.includes('du')) duTimeouts.push(options?.timeoutMs ?? 0);
       return real.runFileAsync(file, args, options);
     },
   });
