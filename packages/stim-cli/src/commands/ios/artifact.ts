@@ -140,6 +140,8 @@ export interface PreparedIosArtifact {
     offloadedTo: string | null;
     /** Why the app was built here after the run considered offloading it. */
     offloadFallback: string | null;
+    /** Why `offloadedTo` took the build. */
+    offloadReason?: string | null;
     readEnabled: boolean;
     missReason: BuildMissReason | null;
     waitedForBuild: WaitedForBuild | null;
@@ -208,6 +210,7 @@ export async function acquireIosArtifact(
   let bundleId: string | null = null;
   let cacheHit: CacheHitLevel = false;
   let offloadedTo: string | null = null;
+  let offloadReason: string | null = null;
   let handoff: BuildHandoff | null = null;
   let offloadFallback: string | null = null;
   let fallbackMachine: string | null = null;
@@ -592,7 +595,7 @@ export async function acquireIosArtifact(
       queryPeer = Boolean(inputs && !('uncertain' in inputs));
       if (!queryPeer && candidate.cacheOnly) return null;
     }
-    const { chooseBuildMachine, closeOffload, placementLoad } = await import('../../offload/client.ts');
+    const { chooseBuildMachine, closeOffload, placementDetail } = await import('../../offload/client.ts');
     const choice = await chooseBuildMachine({
       projectRoot: root,
       target,
@@ -630,10 +633,10 @@ export async function acquireIosArtifact(
         platform: PLATFORM,
         buildMachine,
         candidates: asked,
-        chose: { machine: choice.machine, reason: `${candidate.reason}${placementLoad(choice)}` },
+        chose: { machine: choice.machine, reason: `${candidate.reason}${placementDetail(choice)}` },
       }),
     );
-    phase('build', `placement: ${choice.machine} (${candidate.reason}${placementLoad(choice)})`);
+    phase('build', `placement: ${choice.machine} (${candidate.reason}${placementDetail(choice)})`);
     return choice;
   }
 
@@ -647,7 +650,7 @@ export async function acquireIosArtifact(
   }): Promise<boolean> {
     const offload = recipe.offload;
     if (!offload) return false;
-    const { offloadBuild, remotePhaseText, placementLoad } = await import('../../offload/client.ts');
+    const { offloadBuild, remotePhaseText, placementDetail } = await import('../../offload/client.ts');
     const stagingDir = join(workspaceDir(root), 'offload', PLATFORM);
     const outcome = await offloadBuild({
       choice,
@@ -706,10 +709,11 @@ export async function acquireIosArtifact(
     appPath = prepared;
     builtOn = outcome.machine;
     offloadedTo = outcome.machine;
+    offloadReason = `${candidate.reason}${placementDetail(choice)}`;
     stats.setPlacement({
       decision: 'offloaded',
       machine: outcome.machine,
-      reason: `${candidate.reason}${placementLoad(choice)}`,
+      reason: offloadReason,
       buildMs: timings.totalMs,
     });
     phase(
@@ -741,7 +745,7 @@ export async function acquireIosArtifact(
       if (namedBuildMachine(buildMachine)) fallBack('the build fingerprint or cache key is unavailable');
       return false;
     }
-    const { offloadBuild, remotePhaseText, placementLoad } = await import('../../offload/client.ts');
+    const { offloadBuild, remotePhaseText, placementDetail } = await import('../../offload/client.ts');
     const stagingDir = join(workspaceDir(root), 'offload', PLATFORM);
     const outcome = await offloadBuild({
       choice,
@@ -834,11 +838,12 @@ export async function acquireIosArtifact(
     if (outcome.cacheHit) cacheHit = 'remote';
     builtOn = outcome.machine;
     offloadedTo = outcome.machine;
+    offloadReason = `${candidate.reason}${placementDetail(choice)}`;
     handoff = outcome.handoff ?? null;
     stats.setPlacement({
       decision: 'offloaded',
       machine: outcome.machine,
-      reason: `${candidate.reason}${placementLoad(choice)}`,
+      reason: offloadReason,
       buildMs: timings.totalMs,
     });
     phase(
@@ -1121,6 +1126,7 @@ export async function acquireIosArtifact(
       ...(builtOn ? { builtOn } : {}),
       offloadedTo,
       offloadFallback: offloadedTo ? null : offloadFallback,
+      offloadReason: offloadedTo ? offloadReason : null,
       readEnabled: useBuildCache,
       missReason: cacheHit ? null : missReason,
       waitedForBuild,

@@ -17,7 +17,7 @@ import {
   offloadBuild,
   buildPlacementCandidates,
   offloadPlacement,
-  placementLoad,
+  placementDetail,
   remotePhaseText,
   type BuildHandoff,
   type OffloadChoice,
@@ -201,15 +201,16 @@ export async function buildMacosBundle({
           if (typeof chosen === 'string') throw new Error(chosen);
           choice = chosen;
           failedMachine = chosen.machine;
+          const chosenReason = `${placement.reason}${placementDetail(chosen)}`;
           writer.write(
             buildPlacementRecord({
               platform: 'macos',
               buildMachine,
               candidates: asked,
-              chose: { machine: chosen.machine, reason: `${placement.reason}${placementLoad(chosen)}` },
+              chose: { machine: chosen.machine, reason: chosenReason },
             }),
           );
-          write(`placement: ${choice.machine} (${placement.reason}${placementLoad(choice)})`);
+          write(`placement: ${choice.machine} (${chosenReason})`);
           const outcome = await offloadBuild({
             choice,
             request,
@@ -243,6 +244,7 @@ export async function buildMacosBundle({
             delete record.fingerprint;
             delete record.cacheKey;
             record.offloadedTo = outcome.machine;
+            record.offloadReason = `${placement.reason}${placementDetail(chosen)}`;
             record.builtOn = outcome.machine;
             record.cacheHit = outcome.cacheHit === true;
             if (outcome.cacheHit) record.cacheSource = 'peer';

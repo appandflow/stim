@@ -8,6 +8,7 @@ import * as artifactQuery from '../job/offload/artifact-query.ts';
 import type { WebSocket } from 'ws';
 import { existsSync, readFileSync } from 'node:fs';
 import { captureProcessIdentity, inspectProcessIdentity } from '@stim-cli/core/process-identity';
+import { releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import { waitForPid } from './_pid-file.ts';
 
 const identity = { fingerprint: 'source', cacheKey: 'source-xcode-sdk-arch-target' };
@@ -554,3 +555,101 @@ else {
     }
   },
 );
+
+test('an offer reports warm only for what a successful build left in the area', async () => {
+  const worker = join(root, 'warm-worker.mjs');
+  await writeFile(
+    worker,
+    `
+import { createHash } from 'node:crypto';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+if (process.argv[2] !== 'build') {
+  console.log(JSON.stringify({ stimBuild: 'b1', arch: 'arm64', xcode: 'Xcode 27', simulatorSdk: '27', runtimes: ['iOS-27-0'] }));
+} else {
+  let text = '';
+  for await (const chunk of process.stdin) text += chunk;
+  const job = JSON.parse(text);
+  if (job.fail) {
+    console.log(JSON.stringify({ type: 'result', ok: false, code: job.fail, message: 'failed', fingerprintSettled: true }));
+  } else {
+    const output = join(job.area, 'out', job.job);
+    mkdirSync(output, { recursive: true });
+    writeFileSync(join(output, 'app.tgz'), 'app');
+    console.log(JSON.stringify({ type: 'result', ok: true, fingerprintSettled: true, fingerprint: job.expectedFingerprint,
+      artifact: { name: 'Sample.app', size: 3, sha256: createHash('sha256').update('app').digest('hex') }, compilationCache: {}, timings: {} }));
+  }
+}
+`,
+  );
+  await mkdir(join(root, 'home'), { recursive: true });
+  await writeFile(join(root, 'home', 'config.json'), JSON.stringify({ server: { maxLoadPerCore: 100_000 } }));
+  const host = new BuildHost({ worker, env: process.env, limits: { minFreeBytes: 0 } });
+  const socket = { OPEN: 1, readyState: 1, bufferedAmount: 0, send: () => {} };
+  const session = host.session('builder', socket, () => {});
+  const project = '0123456789abcdef';
+  const build = async (repo: string, fail?: string) => {
+    const job = await host.launch({
+      client: 'builder',
+      repo,
+      session,
+      send: () => {},
+      job: { platform: 'ios', expectedFingerprint: 'source', warmthProject: project, ...(fail ? { fail } : {}) },
+    });
+    if ('error' in job) throw new Error(job.error.message);
+    await job.done;
+    host.forget(job);
+  };
+  const warm = async (
+    client: string,
+    repo: string,
+    warmth: { platform: string; project: string } = { platform: 'ios', project },
+  ) => {
+    const offered = await host.offer(client, { repo, warmth });
+    if ('error' in offered) throw new Error(offered.error.message);
+    return { build: offered.result.warm.build, project: offered.result.warm.project };
+  };
+  try {
+    expect(await warm('builder', 'app-1')).toEqual({ build: false, project: false });
+    await build('app-1');
+    expect(await warm('builder', 'app-1')).toEqual({ build: true, project: false });
+    const busy = tryAcquireClaim({
+      root: `${join(host.clientDir('builder'), 'repos', 'app-1')}.claims`,
+      mode: 'exclusive',
+      label: 'build worker',
+    }).acquired;
+    if (!busy) throw new Error('Expected to hold the area claim.');
+    expect(await host.offer('builder', { repo: 'app-1' })).toHaveProperty(
+      'result.capacity.declined',
+      'another build of this repository is running here',
+    );
+    releaseClaim(busy);
+    expect(await host.offer('builder', { repo: 'app-1' })).toHaveProperty('result.capacity.declined', null);
+    expect(await warm('builder', 'app-1', { platform: 'android', project })).toEqual({ build: false, project: false });
+    expect(await warm('builder', 'app-1', { platform: 'ios', project: 'fedcba9876543210' })).toEqual({
+      build: false,
+      project: false,
+    });
+    expect(await warm('builder', 'app-2')).toEqual({ build: false, project: true });
+    expect(await warm('other-client', 'app-1')).toEqual({ build: false, project: false });
+    expect(await host.offer('builder', { repo: 'app-1', warmth: { platform: 'ios', project: '../x' } })).toHaveProperty(
+      'error.code',
+      'bad-request',
+    );
+
+    await build('app-1', 'failed');
+    expect(await warm('builder', 'app-1')).toEqual({ build: true, project: false });
+    await build('app-1', 'STIM_COMPILATION_CACHE_CORRUPT');
+    expect(await warm('builder', 'app-1')).toEqual({ build: false, project: false });
+
+    await build('app-1');
+    const area = join(host.clientDir('builder'), 'repos', 'app-1');
+    await writeFile(join(area, 'area.json'), JSON.stringify({ build: 'older', schema: -1 }));
+    expect(await warm('builder', 'app-1')).toEqual({ build: false, project: false });
+    await build('app-1', 'failed');
+    expect(await warm('builder', 'app-1')).toEqual({ build: false, project: false });
+  } finally {
+    session.close();
+    await host.close();
+  }
+});

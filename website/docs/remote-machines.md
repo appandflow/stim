@@ -60,7 +60,7 @@ stim ios --remote-build run-mini --remote run-mini`}
 | `remote-only`  | Remote machines only. A device run can wait for a host with room. |
 | A machine name | Exactly that machine.                                             |
 
-Automatic placement follows `remote.machines` order among eligible workers. For a device run, an eligible host named for the build takes priority. Builds default to `remote.build=auto`. Devices and macOS apps default to running here. Set `ios.remote`, `android.remote` or `macos.remote` to change the default. `STIM_REMOTE_BUILD` overrides the build setting, and the CLI flags override both. Stop a running device before switching its host.
+Automatic placement follows `remote.machines` order among eligible workers. A build first prefers a worker that holds caches for it: one that last built this checkout, then one that built the project. For a device run, an eligible host named for the build takes priority. Builds default to `remote.build=auto`. Devices and macOS apps default to running here. Set `ios.remote`, `android.remote` or `macos.remote` to change the default. `STIM_REMOTE_BUILD` overrides the build setting, and the CLI flags override both. Stop a running device before switching its host.
 
 Use `stim doctor` for compatibility and `stim logs --source placement` for the last decision. [Build cache behavior](./build-caches.md) · [Automatic device placement](#automatic-device-placement)
 

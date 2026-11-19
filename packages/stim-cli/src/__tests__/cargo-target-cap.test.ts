@@ -175,6 +175,23 @@ describe('the Cargo target cap over a root target/', () => {
     expect(existsSync(join(target, '.stim-trimmed'))).toBe(false);
   });
 
+  it('trims the stale profiles of an untagged target beside Cargo.toml and keeps what Cargo did not write', async () => {
+    const wt = linked('untagged', join(base, 'roots'));
+    const target = monorepoTarget(wt);
+    rmSync(join(target, 'CACHEDIR.TAG'));
+    writeFileSync(join(wt, 'Cargo.toml'), '[workspace]\n');
+    noProcesses();
+
+    const sizes = await measureCargoTargets(Date.now());
+    expect(sizes).toMatchObject([{ name: 'Cargo target', dir: target, workspace: wt }]);
+    const [action] = (await planCargoTargets({ sizes, settings, pinned: () => false, now: Date.now() })).actions;
+    if (!action) throw new Error('no trim was planned');
+
+    expect(await trimCargoTargetAction(action)).toMatchObject({ status: 'done' });
+    expect(existsSync(join(target, 'debug'))).toBe(false);
+    expect(['release', 'bake/out.bin', 'clients'].filter((path) => !existsSync(join(target, path)))).toEqual([]);
+  });
+
   it('measures the root target of a registered checkout, and not a discovered worktree outside the managed folders', async () => {
     upsertProject(main, { metroPort: null });
     monorepoTarget(main);

@@ -814,7 +814,10 @@ describe('macOS build placement and promotion', () => {
   let swiftTmpdirs: Array<string | undefined>;
   let plist: Record<string, unknown>;
   const bundleId = 'dev.sample.stim.test';
-  const choice = { machine: 'mini', offer: { capacity: {} } } as offload.OffloadChoice;
+  const choice = {
+    machine: 'mini',
+    offer: { capacity: {}, warm: { checkout: false, dependencies: false, build: false } },
+  } as offload.OffloadChoice;
   let buildRecord: MacosAppRecord['build'];
 
   beforeEach(() => {
@@ -1361,6 +1364,38 @@ describe('macOS build placement and promotion', () => {
     },
   );
 
+  it('records why the machine that built took the build after the first one passed it on', async () => {
+    const target: { platform: 'macos' } = { platform: 'macos' };
+    vi.spyOn(offload, 'chooseBuildMachine').mockResolvedValue(
+      Object.assign({}, choice, { offer: { ...choice.offer }, target, warmth: null }),
+    );
+    const artifactPath = remoteBundle();
+    vi.spyOn(offload, 'offloadBuild').mockImplementation(async ({ choice: taken }) => {
+      Object.assign(taken, { machine: 'mini-2', warmth: 'checkout' });
+      return {
+        ok: true,
+        machine: 'mini-2',
+        artifactPath,
+        handoff,
+        compilationCache: { status: 'not-run', hits: null, cacheableTasks: null, hitRatePercent: null },
+        ccache: { status: 'not-run', hits: null, misses: null, hitRatePercent: null },
+        timings: {
+          offerMs: 0,
+          syncMs: 0,
+          workerMs: 0,
+          fetchMs: 0,
+          totalMs: 0,
+          worker: {},
+          uploadedBytes: 0,
+          artifactBytes: 0,
+        },
+      };
+    });
+    await build();
+    expect(buildRecord.offloadedTo).toBe('mini-2');
+    expect(buildRecord.offloadReason).toContain('this checkout last built macos there');
+  });
+
   it('promotes a verified offloaded bundle without taking a local build slot and persists placement', async () => {
     succeeds(remoteBundle());
     const store = vi.fn<NonNullable<MacosArtifactRecipe['cache']>['store']>();
@@ -1406,7 +1441,13 @@ describe('macOS build placement and promotion', () => {
         },
       });
       vi.mocked(offload.chooseBuildMachine).mockResolvedValue(
-        Object.assign({}, choice, { offer: { capacity: {}, toolchain: { arch: workerArch } } }),
+        Object.assign({}, choice, {
+          offer: {
+            capacity: {},
+            warm: { checkout: false, dependencies: false, build: false },
+            toolchain: { arch: workerArch },
+          },
+        }),
       );
       succeeds(remoteBundle(), true);
       await expect(build({ buildMachine: 'mini', hostServerKey: nodeKey })).resolves.toMatchObject({

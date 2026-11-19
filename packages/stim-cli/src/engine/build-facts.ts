@@ -57,6 +57,8 @@ export interface IosFacts {
   offloadedTo?: string;
   /** Why the app was built here after the run considered offloading it; absent otherwise. */
   offloadFallback?: string;
+  /** Why `offloadedTo` took the build: the placement reason, what it was ranked by, and its load. */
+  offloadReason?: string;
   compilationCache: CompilationCacheActivity;
   waitedForBuild: { pid: number | null; ms: number } | null;
   appPath?: string | null;
@@ -94,6 +96,8 @@ export interface AndroidFacts {
   offloadedTo?: string;
   /** Why the APK was built here after the run considered offloading it; absent otherwise. */
   offloadFallback?: string;
+  /** Why `offloadedTo` took the build: the placement reason, what it was ranked by, and its load. */
+  offloadReason?: string;
   waitedForBuild: { pid: number | null; ms: number } | null;
   appPath: string | null;
   bundleId: string | null;

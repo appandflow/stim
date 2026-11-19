@@ -228,6 +228,7 @@ export async function finishHostedIosRun({
     builtOn: cache.builtOn,
     offloadedTo: cache.offloadedTo,
     offloadFallback: cache.offloadFallback,
+    offloadReason: cache.offloadReason,
     webPreviewUrl: null,
   });
   return { facts, uploadsAbandoned };
