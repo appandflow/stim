@@ -39,7 +39,7 @@ import { IDLE_SETTING, idleKeep, idleScope, PRESSURE_IDLE_MS, type IdleKeepFacts
 import { metroStoreRoot } from '../stimd/metro/metro-store.ts';
 import { resolveSupervisorTarget } from '../stimd/metro/ownership.ts';
 import { MODE_COMMAND, readWorkspaceLaunches, launchWithoutMetro } from '../stimd/metro/state.ts';
-import { getProject, type Config, type ProjectRecord } from '../workspace/config.ts';
+import { getProject, loadConfig, type Config, type ProjectRecord } from '../workspace/config.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { existingBuildDirKindsAsync, regenerableDirProblem } from '../workspace/regenerable-dirs.ts';
@@ -215,10 +215,28 @@ export async function runningIdle(
   return { idleMs: decision.idleMs, serving: found.serving };
 }
 
-/** Whether the workspace's dev server runs, or cannot be shown not to. */
+/** Whether the workspace's dev server runs, or cannot be shown not to, its supervisor gone or not. */
 export function servesNow(path: string, project: ProjectRecord): boolean {
   const { status } = supervisorOf(path, project);
-  return status !== 'none' && status !== 'stale';
+  if (status === 'stale') return survivingServer(readWorkspaceState(path)?.supervisor) !== null;
+  return status !== 'none';
+}
+
+/**
+ * Why the workspace's Metro store stays, read from the registry now: its own dev server or another workspace's that
+ * shares the store runs; null when none does.
+ */
+export function storeInUse(path: string): string | null {
+  const config = loadConfig();
+  if (!config) return null;
+  const store = canonicalPath(metroStoreRoot(path));
+  for (const [other, project] of Object.entries(config.projects)) {
+    if (canonicalPath(metroStoreRoot(other)) !== store || !servesNow(other, project)) continue;
+    return canonicalPath(other) === canonicalPath(path)
+      ? 'its own dev server runs'
+      : `the running dev server of ${other} shares it`;
+  }
+  return null;
 }
 
 /**
@@ -261,16 +279,23 @@ export async function idleOutputs(
 
 /**
  * Deletes `paths` one at a time: it measures a path, reads the executables on PATH anew (`launching.anew`) and removes
- * the path, or keeps it and says so in `kept` when one resolves into the checkout. Each removal has a reading of its
- * own, taken after the size walk and every process read before it, so none is older than the removal before it.
+ * the path, or keeps it and says so in `kept` when one resolves into the checkout or `keep`, asked last, names why.
+ * Each removal has a reading of its own, taken after the size walk and every process read before it, so none is older
+ * than the removal before it.
  */
-export async function deleteOutputs(paths: readonly string[], launching: Launching, kept: string[]): Promise<number> {
+export async function deleteOutputs(
+  paths: readonly string[],
+  launching: Launching,
+  kept: string[],
+  keep?: (path: string) => string | null,
+): Promise<number> {
   let freed = 0;
   for (const path of paths) {
     const bytes = (await measuredDirectorySizeAsync(path, { timeoutMs: SIZE_TIMEOUT_MS })) ?? 0;
     const launcher = launcherReason(launching.checkout, await launching.anew());
-    if (launcher) {
-      kept.push(`kept ${path}: ${launcher}`);
+    const why = launcher ?? keep?.(path) ?? null;
+    if (why) {
+      kept.push(`kept ${path}: ${why}`);
       continue;
     }
     freed += bytes;

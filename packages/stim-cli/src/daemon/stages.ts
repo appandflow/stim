@@ -60,7 +60,7 @@ import {
   idleOutputs,
   revivable,
   runningIdle,
-  servesNow,
+  storeInUse,
   writeWorkspaceEvent,
   type IdlePassInput,
 } from './idle.ts';
@@ -476,13 +476,13 @@ export async function stoppedOutputs(
   if (lock) return { locked: lockReason(lock) };
   const outputs = await idleOutputs(candidate.path, config, launching, deletable);
   const store = metroStoreRoot(candidate.path);
-  const serving = outputs.paths.includes(store) && servesNow(candidate.path, candidate.project);
+  const used = outputs.paths.includes(store) ? storeInUse(candidate.path) : null;
   return {
-    paths: outputs.paths.filter((path) => !outputs.targets.includes(path) && !(serving && path === store)),
+    paths: outputs.paths.filter((path) => !outputs.targets.includes(path) && !(used && path === store)),
     kept: [
       ...outputs.kept,
       ...outputs.targets.map((target) => `kept ${target}: a Cargo target/ is left to the Cargo trim of rung 3`),
-      ...(serving ? [`kept the Metro store ${store}: its own dev server runs`] : []),
+      ...(used ? [`kept the Metro store ${store}: ${used}`] : []),
     ],
   };
 }
@@ -539,6 +539,7 @@ export async function clearStoppedOutputs(
                 operation?.signal,
               ),
               outputs.kept,
+              (output) => (output === metroStoreRoot(path) ? storeInUse(path) : null),
             );
             return {
               outcome: 'done',
