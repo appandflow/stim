@@ -745,6 +745,15 @@ function shimRuns(root: string, build: string): boolean {
   }
 }
 
+/** `shimRuns`, giving a flip that wrote `current.json` up to 2 s to write the shim after it. */
+async function shimWritten(root: string, build: string): Promise<boolean> {
+  for (const deadline = Date.now() + 2000; !shimRuns(root, build);) {
+    if (Date.now() >= deadline) return false;
+    await new Promise((done) => setTimeout(done, 50));
+  }
+  return true;
+}
+
 /** Renews the job-restart record under this boot's pid when `job`, the unit whose job runs this stimd, wrote it. */
 function takeJobRecord(
   job: string | undefined,
@@ -1396,10 +1405,11 @@ async function runStimdInner(
     );
   };
   const relaunch = async (next: { build: string; version: string }, entry: string) => {
+    switchedTo = next;
     // @ref LLP 0009#service-and-engine-updates -- a service unit's stimd hands over through the unit's job
     const waiter = [...jobWaiters].find(([socket]) => !socket.destroyed)?.[1];
-    const job =
-      follower && shimRuns(follower.engine.root, next.build) ? ((inJob ? unit : undefined) ?? waiter ?? null) : null;
+    const shim = follower !== null && (await shimWritten(follower.engine.root, next.build));
+    const job = shim ? ((inJob ? unit : undefined) ?? waiter ?? null) : null;
     const leftAt = Date.now();
     if (job) {
       leaveToJob(job, leftAt, null, log);
@@ -1408,7 +1418,6 @@ async function runStimdInner(
           writeJobRestart({ at: leftAt, pid: process.pid, label: job, left: Date.now() });
       });
     }
-    switchedTo = next;
     const changed = `${JSON.stringify({ op: 'engine-changed', ...next, pid: process.pid })}\n`;
     for (const list of [waiters.build, waiters.boot, waiters.test, tickReplies]) list.length = 0;
     for (const socket of open) socket.end(changed);

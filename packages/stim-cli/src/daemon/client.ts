@@ -1789,6 +1789,7 @@ async function successorBound(limit?: ResumeLimit): Promise<boolean> {
   const deadline = () => Math.min(Math.max(base, Date.now() + job()), limit?.deadline ?? Infinity);
   let started = false;
   for (;;) {
+    if (limit?.signal?.aborted) break;
     if (readJsonObject(stimdRecordFile())?.build === stimdBuildId()) {
       refusedBuild = null;
       refusal = null;
@@ -2001,6 +2002,7 @@ export function serveThroughStimd(
  * refused it and handed the home over to one of this build. Null when no stimd or no net thread answers.
  */
 export async function connectNet(timeoutMs: number): Promise<Socket | null> {
+  await awaitJobRestart();
   const socket = await openNet(timeoutMs);
   if (socket || !stimdRefused() || !successorExpected() || !(await successorBound())) return socket;
   return openNet(timeoutMs);
