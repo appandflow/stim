@@ -117,6 +117,95 @@ describe.skipIf(process.platform === 'win32')('readiness across a lost daemon co
   );
 });
 
+async function readinessAfterLoss(
+  respond: (request: Record<string, unknown>, socket: Socket, reply: (message: object) => void) => void,
+  run: (wait: ReturnType<typeof deviceLogReadinessWait>) => Promise<void>,
+): Promise<string> {
+  return withSocketPeer(respond, async (root) => {
+    const sockets: Socket[] = [];
+    await ensureStimd(process.env, process.platform, true, sockets, 'stim ios');
+    const operation = testContext({ cwd: root, projectRoot: root });
+    operationState(operation).stimdOpToken = admittedOpToken(sockets);
+    const wait = deviceLogReadinessWait(root, 'ios', 'default', 'stream', 1, operation);
+    wait.coverThrough(25);
+    try {
+      await run(wait);
+    } finally {
+      wait.close();
+    }
+    return wait.coverage();
+  });
+}
+
+describe.skipIf(process.platform === 'win32')('readiness after a lost daemon connection, across polls', () => {
+  test('overlapping polls share one readmission and one successor request', async () => {
+    let first: Socket | undefined;
+    let admissions = 0;
+    const requests: Record<string, unknown>[] = [];
+    const coverage = await readinessAfterLoss(
+      (request, socket, reply) => {
+        if (request.op === 'op.begin') {
+          admissions++;
+          if (admissions === 1) first = socket;
+          reply({ op: 'op.begun', opToken: `admission-${admissions}` });
+        } else if (request.op === 'readiness.wait') {
+          requests.push(request);
+          if (requests.length === 1) {
+            first?.end();
+            socket.end();
+          } else {
+            const answer = requests.length === 2 ? 'covered' : 'failed';
+            setTimeout(() => reply({ op: 'readiness.changed', revision: 2, coverage: answer }), 300);
+          }
+        }
+      },
+      async (wait) => {
+        await Promise.all([wait(1500), wait(1500)]);
+      },
+    );
+    expect(requests.map((request) => request.opToken)).toEqual(['admission-1', 'admission-2']);
+    expect(coverage).toBe('covered');
+  });
+
+  test.each(['late', 'gone first'] as const)(
+    'a successor admitted after the poll ended still proves coverage when its answer is %s',
+    async (successor) => {
+      let first: Socket | undefined;
+      let admissions = 0;
+      let successorAsks = 0;
+      const seen: string[] = [];
+      const coverage = await readinessAfterLoss(
+        (request, socket, reply) => {
+          if (request.op === 'op.begin') {
+            admissions++;
+            if (admissions === 1) {
+              first = socket;
+              reply({ op: 'op.begun', opToken: 'admission-1' });
+            } else setTimeout(() => reply({ op: 'op.begun', opToken: 'admission-2' }), 800);
+          } else if (request.op === 'readiness.wait') {
+            if (request.opToken === 'admission-1') {
+              first?.end();
+              socket.end();
+            } else if (++successorAsks === 1 && successor === 'gone first') {
+              reply({ op: 'readiness.changed', revision: 0, gone: true });
+            } else setTimeout(() => reply({ op: 'readiness.changed', revision: 3, coverage: 'covered' }), 1700);
+          }
+        },
+        async (wait) => {
+          for (let poll = 0; poll < 20; poll++) {
+            await wait(500);
+            seen.push(wait.coverage());
+            if (wait.coverage() === 'covered') break;
+          }
+        },
+      );
+      expect(coverage).toBe('covered');
+      expect(seen).not.toContain('failed');
+      expect(successorAsks).toBe(successor === 'late' ? 1 : 2);
+    },
+  );
+});
+
 describe.skipIf(process.platform === 'win32')('local requests after a lost daemon connection', () => {
   test.each(['tunnel.ensure', 'logs.start'] as const)(
     '%s repeats the request under the successor admission',
