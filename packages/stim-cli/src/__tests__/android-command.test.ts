@@ -7919,7 +7919,10 @@ describe('strict remote machine selection', () => {
     ['fingerprint-mismatch: The worker resolved a different native artifact identity.', /doctor --fix/],
   ])('remote %s never falls back to Gradle', async (reason, remedy) => {
     configureMini();
-    const choice = { machine: 'mini', offer: { capacity: {} } } as offloadClient.OffloadChoice;
+    const choice = {
+      machine: 'mini',
+      offer: { capacity: {}, warm: { checkout: false, dependencies: false, build: false } },
+    } as offloadClient.OffloadChoice;
     vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue(choice);
     vi.spyOn(offloadClient, 'offloadBuild').mockResolvedValue({ ok: false, machine: 'mini', reason });
     const build = vi.fn<() => never>();
@@ -7934,9 +7937,10 @@ describe('strict remote machine selection', () => {
   });
 
   function offloadedRelease(artifactPath = fakeApk('app-release.apk')) {
-    const choose = vi
-      .spyOn(offloadClient, 'chooseBuildMachine')
-      .mockResolvedValue({ machine: 'mini', offer: { capacity: {} } } as offloadClient.OffloadChoice);
+    const choose = vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue({
+      machine: 'mini',
+      offer: { capacity: {}, warm: { checkout: false, dependencies: false, build: false } },
+    } as offloadClient.OffloadChoice);
     const offload = vi.spyOn(offloadClient, 'offloadBuild').mockResolvedValue({
       ok: true,
       machine: 'mini',
@@ -8340,7 +8344,10 @@ describe('strict remote machine selection', () => {
     'a strict fetched artifact is %s without a local compile',
     async (scenario) => {
       configureMini();
-      const choice = { machine: 'mini', offer: { capacity: {} } } as offloadClient.OffloadChoice;
+      const choice = {
+        machine: 'mini',
+        offer: { capacity: {}, warm: { checkout: false, dependencies: false, build: false } },
+      } as offloadClient.OffloadChoice;
       vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue(choice);
       const artifactPath = fakeApk();
       let built = false;
@@ -8429,7 +8436,7 @@ describe('strict remote machine selection', () => {
     };
     vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue({
       machine: 'mini',
-      offer: { capacity: {} },
+      offer: { capacity: {}, warm: { checkout: false, dependencies: false, build: false } },
     } as offloadClient.OffloadChoice);
     vi.spyOn(offloadClient, 'offloadBuild').mockResolvedValue({
       ok: true,

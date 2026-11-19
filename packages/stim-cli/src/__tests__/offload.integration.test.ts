@@ -152,11 +152,31 @@ describe('pickOffer', () => {
     expect(codes(offer({ toolchain: { cocoapods: null } }), IOS, true)).toEqual([]);
   });
 
-  it('keeps the remote.machines order, whatever each machine holds warm or how loaded it is', () => {
+  it('ranks what a machine holds warm ahead of remote.machines order, while its slot and load still gate it', () => {
     const cold = offer();
-    const warm = offer({ warm: { checkout: true, dependencies: true, build: true } });
-    const ranked = pick([cold, null, warm]);
-    expect({ order: ranked.order, reasons: ranked.reasons }).toEqual({ order: [0, 2], reasons: ['mac1: unreachable'] });
+    const built = { checkout: true, dependencies: false, build: true };
+    const warm = offer({ warm: built });
+    const sibling = offer({ warm: { checkout: false, dependencies: false, build: false, project: true } });
+    const installed = offer({ warm: { checkout: true, dependencies: true, build: false } });
+    const ranked = pick([cold, sibling, null, warm]);
+    expect({ order: ranked.order, reasons: ranked.reasons }).toEqual({
+      order: [3, 1, 0],
+      reasons: ['mac2: unreachable'],
+    });
+    expect(ranked.candidates.find(({ machine }) => machine === 'mac3')).toMatchObject({
+      code: 'accepted',
+      warmth: 'checkout',
+      msg: expect.stringContaining('this checkout last built ios there'),
+    });
+    expect(ranked.candidates.find(({ machine }) => machine === 'mac0')).not.toHaveProperty('warmth');
+    expect(pick([cold, installed, sibling]).order).toEqual([1, 2, 0]);
+    const full = offer({
+      warm: built,
+      capacity: capacity({ running: 1, declined: 'already running 1 offloaded build(s), its limit' }),
+    });
+    const saturated = offer({ warm: built, capacity: capacity({ loadPerCore: 2 }) });
+    expect(pick([cold, full]).order).toEqual([0]);
+    expect(pick([cold, saturated]).order).toEqual([0]);
     const loaded = offer({ capacity: capacity({ loadPerCore: 1.4 }) });
     const older = offer({ capacity: { running: 0, max: 1, diskFreeBytes: null, minDiskFreeBytes: 0 } });
     expect(pick([older, loaded, cold]).order).toEqual([0, 1, 2]);

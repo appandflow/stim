@@ -4,8 +4,9 @@
  *
  * - `local`: this machine only.
  * - `auto`: this machine first, a remote machine when this one is full or busy.
- * - `remote`: remote machines first, in `remote.machines` order; this machine only when none takes the run.
- * - `remote-only`: remote machines in `remote.machines` order, never this machine.
+ * - `remote`: remote machines first, in `remote.machines` order (a build ranks machines warm for it first); this
+ *   machine only when none takes the run.
+ * - `remote-only`: remote machines in that order, never this machine.
  */
 export const PLACEMENT_WORDS = ['local', 'auto', 'remote', 'remote-only'] as const;
 

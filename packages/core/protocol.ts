@@ -1061,6 +1061,18 @@ export interface BuildOfferParams {
   swiftpmArtifact?: BuildSwiftpmArtifactQuery;
   /** An Exact app's pins, which the machine checks its own Bun, Rust and exact2 against. */
   exact?: BuildExactPins;
+  /** The build's platform and the client's project id, which `warm.build` and `warm.project` answer for. */
+  warmth?: BuildWarmth;
+}
+
+/**
+ * What a build is warm for: its platform and `project`, a hash of the client's canonical git common directory and the
+ * app's path in the repository, which is the same across every worktree of one repository, bare or not, and differs
+ * between apps of one repository.
+ */
+export interface BuildWarmth {
+  platform: 'ios' | 'android' | 'macos';
+  project: string;
 }
 
 /**
@@ -1201,10 +1213,14 @@ export interface BuildCapacity {
   declined?: string | null;
 }
 
+/**
+ * `build` is true when this checkout's area completed a build for the offer's `warmth` under the current home schema,
+ * and `project` when another area of the same client did; both are false without `warmth`.
+ */
 export interface BuildOfferResult {
   toolchain: BuildToolchain;
   capacity: BuildCapacity;
-  warm: { checkout: boolean; dependencies: boolean; build: boolean };
+  warm: { checkout: boolean; dependencies: boolean; build: boolean; project?: boolean };
   artifact?: CachedBuildArtifact | null;
   /** What of Exact's toolchain this machine lacks for the offer's `exact` pins, each with its install commands. */
   exact?: { missing: Array<{ reason: string; commands: string[] }> };
@@ -1265,6 +1281,8 @@ export interface BuildStartParams {
   repo: string;
   project: string;
   platform: 'ios' | 'android' | 'macos';
+  /** The client's project id (`BuildWarmth.project`); a successful build records it for later offers. */
+  warmthProject?: string;
   configuration?: string | null;
   scheme?: string | null;
   iosProjectPath?: string | null;

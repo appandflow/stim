@@ -6,6 +6,7 @@ import {
   existsSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   readSync,
   renameSync,
@@ -23,6 +24,7 @@ import {
   claimRemoveCommand,
   markClaimChildPending,
   processGroupAlive,
+  readClaimSet,
   releaseClaim,
   tryAcquireClaim,
   type ClaimHandle,
@@ -65,6 +67,7 @@ import {
   type BuildSwiftpmArtifactQuery,
   type BuildSyncResult,
   type BuildToolchain,
+  type BuildWarmth,
   type CachedBuildArtifact,
   type ErrorCode,
   type ProtocolError,
@@ -103,6 +106,7 @@ import { runArtifactQuery, type ArtifactQueryResult } from './artifact-query.ts'
 import { foreignDescendants } from './descendants.ts';
 import { groupProcesses, jobLog, keepTail, serviceLine, type CancelReason } from './job-record.ts';
 import { outputLine, silenceText } from '../../offload/output-silence.ts';
+import { COMPILATION_CACHE_CORRUPT } from '../../cache/compilation-cache-corruption.ts';
 
 const DIGEST_BYTES = 32;
 const MAX_MANIFEST_FILES = 200_000;
@@ -592,6 +596,9 @@ export class BuildHost {
     }
     if (params.native !== undefined && params.native !== 'xcode' && params.native !== 'gradle')
       return refusal('bad-request', 'build.offer supports native Xcode or Gradle toolchains.');
+    const warmth = params.warmth === undefined ? undefined : warmthParam(params.warmth);
+    if (warmth === null)
+      return refusal('bad-request', 'build.offer warmth needs ios, android or macos and a 16-digit hex project id.');
     const exactPins = params.exact === undefined ? undefined : exactPinsParam(params.exact);
     if (exactPins === null || (exactPins !== undefined && params.native !== undefined))
       return refusal('bad-request', 'An Exact offer needs the exact2 commit and the Bun and Rust versions.');
@@ -645,22 +652,46 @@ export class BuildHost {
     const available = await readAvailableMemory();
     const total = totalmem();
     const memory = available === null ? {} : { memoryTotalBytes: total, memoryUsedBytes: total - available };
+    const built = warmth ? `${warmth.platform}:${warmth.project}` : null;
+    const warmHere = built !== null && areaHomeCurrent(area) && areaBuilt(area).includes(built);
+    const capacity = this.capacity();
     return {
       result: {
         toolchain,
-        capacity: { ...this.capacity(), ...memory },
+        capacity: {
+          ...capacity,
+          ...memory,
+          ...(!capacity.declined && areaBuilding(area)
+            ? { declined: 'another build of this repository is running here' }
+            : {}),
+        },
         warm: {
           checkout: existsSync(join(area, 'src')),
           dependencies:
             typeof params.lockfile === 'string' &&
             dependencies !== undefined &&
             reusableDependencies(area, dependencies.project, params.lockfile, this.environment()),
-          build: false,
+          build: warmHere,
+          project: built !== null && !warmHere && this.builtElsewhere(client, params.repo, built),
         },
         ...(artifact !== undefined ? { artifact } : {}),
         ...(exactPins ? { exact: { missing: exactToolProblems(exactPins, this.environment()) } } : {}),
       },
     };
+  }
+
+  /** Whether another area of `client` built `entry`, so this client's shared caches hold that project's downloads. */
+  private builtElsewhere(client: string, repo: string, entry: string): boolean {
+    const repos = join(this.clientDir(client), 'repos');
+    let names: string[];
+    try {
+      names = readdirSync(repos, { withFileTypes: true })
+        .filter((each) => each.isDirectory() && each.name !== repo)
+        .map((each) => each.name);
+    } catch {
+      return false;
+    }
+    return names.some((name) => areaBuilt(join(repos, name)).includes(entry));
   }
 
   private artifactCacheDir(client: string, repo: string): string {
@@ -1026,6 +1057,7 @@ export class BuildHost {
       return refusal('build-refused', (error as Error).message);
     }
     try {
+      if (!areaHomeCurrent(area)) rmSync(join(area, BUILT_RECORD), { force: true });
       useAreaHome(area);
     } catch (error) {
       releaseClaims();
@@ -1225,6 +1257,12 @@ export class BuildHost {
             : { ok: false, code: 'worker-exited', message: 'The build process exited without a result.' });
         const abnormal = !entry.outcome;
         entry.outcome = outcome;
+        const warmth = warmthProject(job.warmthProject);
+        try {
+          if (outcome.ok && warmth) recordAreaBuilt(area, `${String(job.platform)}:${warmth}`);
+          else if (!outcome.ok && outcome.code === COMPILATION_CACHE_CORRUPT)
+            rmSync(join(area, BUILT_RECORD), { force: true });
+        } catch {}
         if (child.pid !== undefined && processGroupAlive(child.pid)) cancel('group-outlived-worker');
         const drainAndroid = job.platform === 'android' && (killTimer !== null || abnormal || !outcome.ok);
         let abandoned = false;
@@ -1452,6 +1490,60 @@ function useAreaHome(area: string): void {
   writeFileSync(record, `${JSON.stringify({ build: stimBuildId(dirname(spawnEntry('cli'))), schema: SCHEMA })}\n`);
 }
 // compat end
+
+const BUILT_RECORD = 'built.json';
+const WARMTH_PROJECT = /^[0-9a-f]{16}$/;
+
+function warmthProject(value: unknown): string | null {
+  return typeof value === 'string' && WARMTH_PROJECT.test(value) ? value : null;
+}
+
+function warmthParam(value: unknown): BuildWarmth | null {
+  if (!isJsonObject(value)) return null;
+  const { platform } = value;
+  const project = warmthProject(value.project);
+  return (platform === 'ios' || platform === 'android' || platform === 'macos') && project
+    ? { platform, project }
+    : null;
+}
+
+/** The `<platform>:<project>` of each build that succeeded in `area` since its home was last replaced. */
+function areaBuilt(area: string): string[] {
+  try {
+    const record: unknown = JSON.parse(readFileSync(join(area, BUILT_RECORD), 'utf8'));
+    return isJsonObject(record) && Array.isArray(record.built)
+      ? record.built.filter((entry): entry is string => typeof entry === 'string')
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Whether a build holds the area's exclusive claim, which `build.start` would refuse on. */
+function areaBuilding(area: string): boolean {
+  try {
+    return readClaimSet(`${area}.claims`).live.some((holder) => holder.mode === 'exclusive');
+  } catch {
+    return false;
+  }
+}
+
+/** Whether `area.json` records this Stim's home schema, so `useAreaHome` keeps the area's home. */
+function areaHomeCurrent(area: string): boolean {
+  try {
+    const record: unknown = JSON.parse(readFileSync(join(area, 'area.json'), 'utf8'));
+    return isJsonObject(record) && record.schema === SCHEMA;
+  } catch {
+    return false;
+  }
+}
+
+function recordAreaBuilt(area: string, warmth: string): void {
+  const built = [...new Set([...areaBuilt(area), warmth])];
+  const temporary = join(area, `${BUILT_RECORD}.${randomUUID()}.tmp`);
+  writeFileSync(temporary, `${JSON.stringify({ built })}\n`);
+  renameSync(temporary, join(area, BUILT_RECORD));
+}
 
 function workerOutcome(value: Record<string, unknown>, native?: 'xcode' | 'gradle'): BuildJobOutcome {
   const timings = isJsonObject(value.timings) ? (value.timings as Record<string, number>) : {};
@@ -1706,6 +1798,8 @@ export class BuildSession {
     if (params.project !== '' && !validBuildPath(params.project)) {
       return refusal('bad-request', 'params.project must be a relative path inside the repository.');
     }
+    const warmth = params.warmthProject === undefined ? undefined : warmthProject(params.warmthProject);
+    if (warmth === null) return refusal('bad-request', 'params.warmthProject must be a 16-digit hex project id.');
     if (!this.done || this.repo !== params.repo) {
       return refusal('bad-request', 'Send the whole manifest of this repo with build.sync first.');
     }
@@ -1731,6 +1825,7 @@ export class BuildSession {
         android,
         macos,
         project: params.project,
+        ...(warmth ? { warmthProject: warmth } : {}),
         isExpo: params.isExpo === true,
         cacheArtifact: params.cacheArtifact === true,
         ...podsOnWorkerJob(params),
