@@ -549,9 +549,10 @@ function that asked for the size), `reason` (`timeout` with `limitMs`, `exit`
 with `status`, `signal` with `signal`, `aborted`, `error` with an errno `code`,
 or `no-output`) and `ms` (how long it ran). A walk that could not start because
 another walk held the machine's walk claim is not a failure, and neither is a
-`du` that exits non-zero because the folder does not exist. Each process writes
-at most one record per folder and reason every 6 hours, so a folder that fails
-the same way on every pass shows up four times a day per process. The entries
+`du` that exits non-zero because the folder does not exist. The home writes at
+most one record per folder and reason every 6 hours, whichever process or
+thread ran the walk (`daemon/size-failures.json` holds the times), so a folder
+that fails the same way on every pass shows up four times a day. The entries
 of a cache being trimmed share one record per reason, with `root` naming the
 cache. The failure record beside the
 size cache (`disk-usage/*.failed.json`) carries the same `reason` fields. When

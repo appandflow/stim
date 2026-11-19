@@ -1,6 +1,7 @@
-import { statSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { configDir, LOG_ROTATE_BYTES } from '@stim-cli/core';
-import { daemonNdjsonFile } from '@stim-cli/core/state';
+import { daemonNdjsonFile, sizeFailuresFile } from '@stim-cli/core/state';
+import { writeCacheFile } from './cache-file.ts';
 import { isTimeoutError } from './exec.ts';
 import { createNdjsonWriter } from './ndjson.ts';
 
@@ -27,7 +28,6 @@ export type SizeFailure =
   | { reason: 'no-output' };
 
 const failures = new Map<string, { failure: SizeFailure; at: number }>();
-const recorded = new Map<string, number>();
 
 /** The failure of a walk from the error it threw, or none; `overran` when it ended at or past `limitMs`. */
 export function sizeFailure(error: unknown, limitMs: number | 'unbounded', overran: boolean): SizeFailure {
@@ -87,9 +87,21 @@ function expired(at: number, now: number): boolean {
   return now - at >= RECORD_EVERY_MS || now < at;
 }
 
+function readRecorded(): Record<string, number> {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(sizeFailuresFile(), 'utf8'));
+    const recorded: Record<string, number> = {};
+    if (parsed && typeof parsed === 'object')
+      for (const [slot, at] of Object.entries(parsed)) if (typeof at === 'number') recorded[slot] = at;
+    return recorded;
+  } catch {
+    return {};
+  }
+}
+
 /**
  * Notes that sizing `path` failed after `ms`, and appends one `size_failed` record to the daemon log, at most once per
- * RECORD_EVERY_MS per path and reason in this process, naming the function that asked for the size. For an entry of a
+ * RECORD_EVERY_MS per path and reason across the home's processes and threads, naming the function that asked for the size. For an entry of a
  * cache, `root` names the cache: its entries share one record per reason, and their failures are not kept. A `du` that
  * exited non-zero on a folder that does not exist is no failure. Never throws.
  */
@@ -101,13 +113,15 @@ export function noteSizeFailure(path: string, failure: SizeFailure, ms: number, 
       return;
     }
     const now = Date.now();
-    const slot = root ? `${configDir()}\0${root}\0entries\0${failure.reason}` : `${key}\0${failure.reason}`;
+    const slot = root ? `${failure.reason} entries of ${root}` : `${failure.reason} ${path}`;
     if (!root) failures.set(key, { failure, at: now });
-    const last = recorded.get(slot);
+    const recorded = readRecorded();
+    const last = recorded[slot];
     if (last !== undefined && !expired(last, now)) return;
-    for (const [stale, at] of recorded) if (expired(at, now)) recorded.delete(stale);
+    for (const [stale, at] of Object.entries(recorded)) if (expired(at, now)) delete recorded[stale];
     for (const [stale, { at }] of failures) if (expired(at, now)) failures.delete(stale);
-    recorded.set(slot, now);
+    recorded[slot] = now;
+    writeCacheFile(sizeFailuresFile(), recorded);
     const caller = sizeCaller();
     const writer = createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES });
     try {
