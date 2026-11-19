@@ -1,5 +1,5 @@
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync, type Dirent } from 'node:fs';
-import { lstat, mkdir, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readdir, rename, rm, rmdir, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { cargoTargetTrimClaims } from '@stim-cli/core/state';
 import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-claim.ts';
@@ -7,6 +7,7 @@ import { getExecutor } from '../exec.ts';
 import { measuredDirectorySizeAsync } from '../fs-util.ts';
 import { withCargoLocks } from './cargo-lock.ts';
 import { launcherReason, type Launching } from './launchers.ts';
+import { cargoTargetDirsAsync } from './regenerable-dirs.ts';
 import { cargoUnitPaths, cargoUnitWasRead, idleCargoUnits, readCargoUnits, removalOrder } from './cargo-units.ts';
 
 const CARGO_PROFILE_IDLE_MS: number = 24 * 3_600_000;
@@ -24,6 +25,8 @@ const STRANDED = 'NOT-RESTORED';
 const CANNOT_READ = 'the files processes hold open or the executables on PATH cannot be read';
 const DEADLINE_KEPT = 'the rest was left at the build headroom deadline';
 const NOT_RESTORED = `${OWN_PREFIX}not-restored-`;
+/** Criterion's saved benchmark baselines describe code that may be gone, so no build can recreate them. */
+const KEPT_WHOLE = new Set(['criterion']);
 const FOLD_CASE = process.platform === 'darwin' || process.platform === 'win32';
 
 export interface CargoProfile {
@@ -404,58 +407,202 @@ async function withTrimClaim<T>(
 }
 
 /**
- * Why a build used `target` within `idleMs`: a profile written or stamped in Exact's ledger that recently, or a
- * profile or ledger that cannot be read. Null when every profile went unused that long.
+ * Why `target` shows use within `idleMs`: its own directory, a top-level entry other than Stim's own, a profile or
+ * Exact's ledger stamp of one written that recently, or any of them that cannot be read. A target with no profile to
+ * date counts as used. Null when all of it went unwritten that long.
  */
-export function recentCargoUse(target: string, now: number, idleMs: number): string | null {
-  const stale = staleCargoTargetPaths(target, now, idleMs);
-  if ('refusal' in stale) return stale.refusal;
-  const profiles = profilePaths(target)?.profiles;
-  if (!profiles) return `${target} cannot be listed`;
-  const used = profiles.find(
-    (profile) => !stale.paths.some((gone) => profile === gone || profile.startsWith(`${gone}/`)),
-  );
-  return used === undefined ? null : `a build used its ${used} profile in that time`;
+export function recentTargetUse(target: string, now: number, idleMs: number): string | null {
+  const entries = entriesOf(target);
+  if (!entries) return `${target} cannot be listed`;
+  for (const path of [
+    target,
+    ...entries.filter(({ name }) => !name.startsWith(OWN_PREFIX)).map(({ name }) => join(target, name)),
+  ]) {
+    let written: number;
+    try {
+      written = lstatSync(path).mtimeMs;
+    } catch {
+      return `${path} cannot be read`;
+    }
+    if (now - written <= idleMs) return `${path} was written in that time`;
+  }
+  const listed = profilePaths(target);
+  if (!listed) return `${target} cannot be listed`;
+  if (!listed.profiles.length) return 'no Cargo profile in it can be dated';
+  const ledger = readLedger(target);
+  if ('refusal' in ledger) return ledger.refusal;
+  for (const profile of listed.profiles) {
+    const written = newestMtime(join(target, profile));
+    if (written === null) return `the last use of its ${profile} profile cannot be read`;
+    if (now - Math.max(written, ledger.newest.get(profile) ?? 0) <= idleMs)
+      return `a build used its ${profile} profile in that time`;
+  }
+  return null;
 }
 
 /**
- * Deletes `target` whole under its trim claim, after checking that it holds no copy a trim could not put back, that no
- * profile was used within `idleMs`, that no process executes from or holds open a path in it (the launchers read at the
- * same moment), and that no build holds a profile's lock file. Returns why it stays, or null once it is gone. Nothing
- * slow runs between the lock check and the delete, but they are not atomic.
+ * Deletes `target` whole under its trim claim, except a Criterion `criterion/` directory, once it is still a Cargo
+ * `target/` Stim recognises, holds no copy a trim could not put back, shows no use within `idleMs`
+ * (`recentTargetUse`) and has no other filesystem mounted inside. Each top-level entry no process uses and whose lock
+ * files no build holds is renamed into `target/.stim-trimmed`, its locks are read again at the new path, and once all
+ * are moved the processes are read again: an entry a build or process took meanwhile is put back. The moved entries
+ * are then deleted without crossing into another filesystem, and the emptied `target/` goes too.
  */
 export async function deleteCargoTarget(
   registeredTarget: string,
-  {
-    idleMs,
-    launching,
-    signal,
-    remove,
-  }: {
-    idleMs: number;
-    launching: Launching;
-    signal?: AbortSignal;
-    remove: (target: string) => Promise<void>;
-  },
-): Promise<string | null> {
-  const claimed = await withTrimClaim(registeredTarget, async (target): Promise<string | null> => {
-    const recovery = recoveryReason(target);
-    if (recovery) return recovery;
-    const recent = recentCargoUse(target, Date.now(), idleMs);
-    if (recent) return recent;
-    const use = await readTargetUse(target, launching, signal);
-    if ('kept' in use) return use.kept;
-    if (use.used.length) return `a process uses ${use.used[0]}`;
-    const profiles = cargoProfileDirs(target);
-    if (!profiles) return `${target} cannot be listed`;
-    for (const profile of profiles) {
-      const held = await lockOutcome(profile, signal);
-      if (lockHeld(held)) return `a build holds ${join(profile, held.file ?? '.cargo-lock')}`;
+  options: { idleMs: number; launching: Launching; signal?: AbortSignal },
+): Promise<CargoTrimResult> {
+  const claimed = await withTrimClaim(registeredTarget, async (target): Promise<CargoTrimResult> =>
+    (await cargoTargetDirsAsync(dirname(registeredTarget))).includes(registeredTarget)
+      ? deleteClaimed(target, options)
+      : { bytes: 0, removed: [], kept: ['it is no longer a Cargo target/ Stim recognises'] },
+  );
+  return 'kept' in claimed ? { bytes: 0, removed: [], kept: [claimed.kept] } : claimed.value;
+}
+
+async function deleteClaimed(
+  target: string,
+  { idleMs, launching, signal }: { idleMs: number; launching: Launching; signal?: AbortSignal },
+): Promise<CargoTrimResult> {
+  const result: CargoTrimResult = { bytes: 0, removed: [], kept: [] };
+  const keep = (why: string): CargoTrimResult => ({ ...result, kept: [why] });
+  const blocked = recoveryReason(target) ?? recentTargetUse(target, Date.now(), idleMs);
+  if (blocked) return keep(blocked);
+  const { dev } = await lstat(target);
+  const aside = join(target, ASIDE);
+  const leftover = await removeOnDevice(aside, dev);
+  if (leftover.length) return keep(`${leftover[0]} is another filesystem`);
+  const names = (await readdir(target)).filter((name) => !KEPT_WHOLE.has(name) && !name.startsWith(OWN_PREFIX));
+  const mount = await otherDevice(
+    names.map((name) => join(target, name)),
+    dev,
+  );
+  if (mount) return keep(`${mount} is another filesystem`);
+  const first = await readTargetUse(target, launching, signal);
+  if ('kept' in first) return keep(first.kept);
+  const locksAt = async (dir: string) => [dir, ...(await childProfiles(dir))];
+  for (const name of names) {
+    signal?.throwIfAborted();
+    const dir = join(target, name);
+    if (inUse(first.used, dir)) return keep(`a process uses ${dir}`);
+    const held = await heldLock(await locksAt(dir), signal);
+    if (held) return keep(`a build holds ${join(dir, held)}`);
+  }
+  type Entry = { dir: string; there: string; name: string };
+  const moved: Entry[] = [];
+  const putBackAll = async (why: string): Promise<CargoTrimResult> => {
+    const stranded: string[] = [];
+    for (const entry of moved.toReversed()) {
+      const back = await restoreOrStrand(target, entry.there, entry.dir, moved.indexOf(entry));
+      if (back.home !== entry.dir) stranded.push(back.home);
     }
-    await remove(registeredTarget);
-    return null;
-  });
-  return 'kept' in claimed ? claimed.kept : claimed.value;
+    const left = stranded.length
+      ? `; ${stranded.join(', ')} could not be put back and stay for a person to merge or delete`
+      : '';
+    await rmdir(aside).catch(() => {});
+    return { ...result, kept: [...result.kept, `${why}${left}`] };
+  };
+  for (const name of names) {
+    signal?.throwIfAborted();
+    await mkdir(aside, { recursive: true });
+    const entry = { dir: join(target, name), there: join(aside, String(moved.length)), name };
+    try {
+      await rename(entry.dir, entry.there);
+    } catch (error) {
+      result.kept.push(`${name}: it could not be moved aside: ${error instanceof Error ? error.message : error}`);
+      continue;
+    }
+    moved.push(entry);
+    const took = await heldLock(await locksAt(entry.there));
+    // @ref LLP 0005#never-delete-what-a-build-took-back -- a build locked it during the move
+    if (took) return putBackAll(`a build took ${join(entry.dir, took)} during the move`);
+  }
+  const after = moved.length ? await readTargetUse(target, launching, signal) : { used: [] };
+  if ('kept' in after) return putBackAll(after.kept);
+  const taken = moved.find(({ there }) => inUse(after.used, there));
+  if (taken) return putBackAll(`a process took ${taken.dir} during the move`);
+  for (const entry of moved) {
+    result.bytes += await sizeOf(entry.there, signal);
+    result.removed.push(entry.name);
+  }
+  const stuck = await removeOnDevice(aside, dev);
+  if (stuck.length) {
+    await writeFile(join(aside, STRANDED), '').catch(() => {});
+    result.deleteError = `${stuck.join(', ')} is another filesystem; a person must unmount it and delete ${aside}`;
+  } else await rmdir(target).catch(() => {});
+  return result;
+}
+
+async function heldLock(dirs: readonly string[], signal?: AbortSignal): Promise<string | null> {
+  for (const dir of dirs) {
+    const held = await lockOutcome(dir, signal);
+    if (lockHeld(held)) return held.file ?? '.cargo-lock';
+  }
+  return null;
+}
+
+/** The first directory under `paths` on a device other than `dev`, or null. */
+async function otherDevice(paths: readonly string[], dev: number): Promise<string | null> {
+  const queue = [...paths];
+  for (let path = queue.pop(); path !== undefined; path = queue.pop()) {
+    const stat = await lstat(path);
+    if (!stat.isDirectory()) continue;
+    if (stat.dev !== dev) return path;
+    for (const entry of await readdir(path, { withFileTypes: true }))
+      if (entry.isDirectory()) queue.push(join(path, entry.name));
+  }
+  return null;
+}
+
+/** Deletes `path` without entering a directory on a device other than `dev`; returns those it left. */
+async function removeOnDevice(path: string, dev: number): Promise<string[]> {
+  let stat;
+  try {
+    stat = await lstat(path);
+  } catch (error) {
+    if (errorCode(error) === 'ENOENT') return [];
+    throw error;
+  }
+  if (!stat.isDirectory()) {
+    await unlink(path);
+    return [];
+  }
+  if (stat.dev !== dev) return [path];
+  const left: string[] = [];
+  for (const name of await readdir(path)) left.push(...(await removeOnDevice(join(path, name), dev)));
+  if (!left.length) await rmdir(path);
+  return left;
+}
+
+/**
+ * Puts `there` back at `dir`, or keeps it for a person: renamed to `target/.stim-not-restored-*`, or else left where it
+ * is with its `.stim-trimmed` marked NOT-RESTORED (`marked`).
+ */
+async function restoreOrStrand(
+  target: string,
+  there: string,
+  dir: string,
+  n: number,
+): Promise<{ home: string; marked: boolean }> {
+  try {
+    await rename(there, dir);
+    return { home: dir, marked: false };
+  } catch {}
+  const stranded = join(target, `${NOT_RESTORED}${Date.now()}-${n}`);
+  try {
+    await rename(there, stranded);
+    return { home: stranded, marked: false };
+  } catch {}
+  const aside = join(target, ASIDE);
+  try {
+    await writeFile(join(aside, STRANDED), '');
+  } catch (error) {
+    throw new Error(
+      `${there} could not be put back and ${aside} could not be marked for a person: ${error instanceof Error ? error.message : error}`,
+      { cause: error },
+    );
+  }
+  return { home: there, marked: true };
 }
 
 interface CargoTrimOptions {
@@ -571,31 +718,14 @@ async function trimClaimed(
       const after = await lockOutcome(profile, undefined, lowPriority);
       const lockName = after.file ?? '.cargo-lock';
       if (!renameStands(after)) {
-        try {
-          await rename(there, dir);
-          result.kept.push(`${label}: a build took its ${lockName} during the move`);
-        } catch {
-          // @ref LLP 0005#never-delete-what-a-build-took-back -- a build locked it during the move
-          const stranded = join(target, `${NOT_RESTORED}${Date.now()}-${moved}`);
-          const home = await rename(there, stranded).then(
-            () => stranded,
-            async () => {
-              keepAside = true;
-              try {
-                await writeFile(join(aside, STRANDED), '');
-              } catch (error) {
-                throw new Error(
-                  `${there} could not be put back and ${aside} could not be marked for a person: ${error instanceof Error ? error.message : error}`,
-                  { cause: error },
-                );
-              }
-              return there;
-            },
-          );
-          result.kept.push(
-            `${label}: a build took its ${lockName} during the move and the directory could not be put back; it stays in ${home} for a person to merge or delete`,
-          );
-        }
+        // @ref LLP 0005#never-delete-what-a-build-took-back -- a build locked it during the move
+        const back = await restoreOrStrand(target, there, dir, moved);
+        keepAside ||= back.marked;
+        result.kept.push(
+          back.home === dir
+            ? `${label}: a build took its ${lockName} during the move`
+            : `${label}: a build took its ${lockName} during the move and the directory could not be put back; it stays in ${back.home} for a person to merge or delete`,
+        );
         return false;
       }
     }

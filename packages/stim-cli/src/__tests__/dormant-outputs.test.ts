@@ -175,8 +175,8 @@ async function hourlyStep(act: boolean): Promise<DaemonLadderAction[]> {
   return lane.take().filter((action) => action.kind === 'delete-build-outputs');
 }
 
-const gc = async () =>
-  (await runDormantReduction({ act: true, trigger: 'gc', operation: testContext() })).filter(
+const gc = async (act = true) =>
+  (await runDormantReduction({ act, trigger: 'gc', operation: testContext() })).filter(
     (action) => action.kind === 'delete-build-outputs',
   );
 
@@ -300,14 +300,16 @@ describe.skipIf(process.platform === 'win32')(
       [
         'a build wrote a profile in that time',
         (target: string) => utimesSync(join(target, 'debug'), new Date(), new Date()),
-        [],
+        'was written in that time',
+        'kept',
       ],
       [
         'a build holds a profile lock',
         (target: string) => {
           heldLock = join(target, 'debug', '.cargo-lock');
         },
-        [expect.objectContaining({ outcome: 'kept', detail: expect.stringContaining('.cargo-lock') })],
+        'a build holds',
+        'would',
       ],
       [
         'a trim left a directory marked not restored',
@@ -315,19 +317,27 @@ describe.skipIf(process.platform === 'win32')(
           mkdirSync(join(target, '.stim-trimmed', '0'), { recursive: true });
           writeFileSync(join(target, '.stim-trimmed', 'NOT-RESTORED'), '');
         },
-        [],
+        'could not put back',
+        'kept',
       ],
       [
         'a trim moved a directory aside for a person',
         (target: string) => mkdirSync(join(target, '.stim-not-restored-1-0')),
-        [],
+        'could not put back',
+        'kept',
       ],
-    ])('an idle untagged Cargo target/ stays whole when %s', async (_, arrange, expected) => {
+    ])('an idle untagged Cargo target/ stays whole, and gc says why, when %s', async (_, arrange, why, report) => {
       const root = onlyTarget(cargo('app', 'untagged'));
       idleFor(3, root);
       arrange(join(root, 'target'));
-
-      expect(await gc()).toEqual(expected);
+      expect(await gc(false)).toEqual([expect.objectContaining({ target: root, outcome: report })]);
+      expect(await gc()).toEqual([
+        expect.objectContaining({
+          target: root,
+          outcome: 'kept',
+          detail: expect.stringMatching(new RegExp(`${join(root, 'target')}.*${why}`)),
+        }),
+      ]);
       expect(existsSync(join(root, 'target', 'debug', '.fingerprint', 'unit'))).toBe(true);
     });
 

@@ -1,5 +1,5 @@
 import { rm, stat, utimes } from 'node:fs/promises';
-import { basename, dirname } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import type { StimContext } from '@stim-cli/core';
 import type { DaemonLadderAction } from '@stim-cli/core/state';
@@ -7,7 +7,7 @@ import { workspaceOutputPaths } from '../commands/gc/workspaces.ts';
 import { withWorkspaceProcessLock, workspaceProcessLockError } from '../engine/workspace-process-lock.ts';
 import { formatBytes, measuredDirectorySizeAsync } from '../fs-util.ts';
 import { metroStoreRoot } from '../stimd/metro/metro-store.ts';
-import { deleteCargoTarget, recentCargoUse } from '../workspace/cargo-target.ts';
+import { deleteCargoTarget, recentTargetUse, type CargoTrimResult } from '../workspace/cargo-target.ts';
 import type { Config } from '../workspace/config.ts';
 import { discoveredReads, type DiscoveredReads } from '../workspace/discovered-reads.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
@@ -34,7 +34,11 @@ type Result = Pick<DaemonLadderAction, 'outcome' | 'bytes' | 'detail'>;
 
 interface Plan {
   paths: string[];
+  /** The planned paths that are Cargo `target/` directories, which go only through the Cargo delete. */
+  targets: Set<string>;
   kept: string[];
+  /** Whether a Cargo `target/` is among the outputs kept. */
+  keptTarget: boolean;
 }
 
 /**
@@ -113,12 +117,13 @@ async function reduceWorkspace(
     afterMs,
     launchingOf(checkout, () => reads.launchers(false), operation, signal),
   );
-  if (!plan.paths.length) return null;
+  if (!plan.paths.length) return plan.keptTarget ? keep(plan.kept.join('; ')) : null;
   const measure = input.act || input.force === true;
   const sizes = new Map<string, number>();
   if (measure)
     for (const output of plan.paths)
-      sizes.set(output, (await measuredDirectorySizeAsync(output, { timeoutMs: SIZE_TIMEOUT_MS, signal })) ?? 0);
+      if (!input.act || !plan.targets.has(output))
+        sizes.set(output, (await measuredDirectorySizeAsync(output, { timeoutMs: SIZE_TIMEOUT_MS, signal })) ?? 0);
   if (!input.act) {
     const bytes = [...sizes.values()].reduce((sum, size) => sum + size, 0);
     const detail = input.force ? 'stim gc would do this' : 'daemon.mode report acts on nothing';
@@ -134,17 +139,22 @@ async function reduceWorkspace(
     failures.push(`${output}: ${error instanceof Error ? error.message : String(error)}`);
   };
   for (const output of plan.paths) {
-    let reason: string | null;
+    let outcome: string | CargoTrimResult | null;
     try {
-      reason = await removeOutput(path, checkout, output, afterMs, operation);
+      outcome = await removeOutput(path, checkout, output, plan.targets.has(output), afterMs, operation);
     } catch (error) {
       failed(output, error);
       continue;
     }
-    if (reason) kept.push(`kept ${output}: ${reason}`);
-    else {
+    if (typeof outcome === 'string') kept.push(`kept ${output}: ${outcome}`);
+    else if (outcome === null) {
       removed.push(output);
       bytes += sizes.get(output) ?? 0;
+    } else {
+      bytes += outcome.bytes;
+      if (outcome.removed.length) removed.push(`${output} (${outcome.removed.join(', ')})`);
+      if (outcome.kept.length) kept.push(`kept in ${output}: ${outcome.kept.join('; ')}`);
+      if (outcome.deleteError) failures.push(`${output}: ${outcome.deleteError}`);
     }
   }
   const rest = kept.length ? `; ${kept.join('; ')}` : '';
@@ -161,8 +171,8 @@ function gitOptions(operation: StimContext | undefined) {
 
 /**
  * The read-only eligibility check that report and acting mode share: each output the regenerable-directory checks
- * allow, among them every recognised Cargo `target/`, which stays while a build used one of its profiles within
- * `afterMs` or that cannot be told.
+ * allow, among them every recognised Cargo `target/`, which stays while it shows use within `afterMs`
+ * (`recentTargetUse`).
  */
 async function eligible(
   candidate: StageCandidate,
@@ -172,19 +182,29 @@ async function eligible(
 ): Promise<Plan> {
   const store = metroStoreRoot(candidate.path);
   const outputs = await idleOutputs(candidate.path, config, launching, (output) => output !== store);
-  const plan: Plan = { paths: [], kept: outputs.kept.filter((reason) => !reason.includes(store)) };
+  const kept = outputs.kept.filter((reason) => !reason.includes(store));
+  const plan: Plan = { paths: [], targets: new Set(), kept, keptTarget: false };
   const targets = [...outputs.targets];
-  // @ref LLP 0005#which-targets-stim-manages -- an untagged target/ is never build output, but goes whole when idle
+  // @ref LLP 0005#the-dormant-reduction-deletes-an-idle-target-whole -- untagged too, never build output
   for (const dir of await cargoTargetDirsAsync(candidate.path)) {
     if (isBuildDirPath(dir)) continue;
     const problem = await regenerableDirProblem(candidate.path, dir, undefined, { launching });
-    if (problem) plan.kept.push(`kept ${dir}: ${problem}`);
-    else targets.push(dir);
+    if (problem) {
+      plan.kept.push(`kept ${dir}: ${problem}`);
+      plan.keptTarget = true;
+    } else targets.push(dir);
   }
+  plan.keptTarget ||= kept.some((reason) => reason.startsWith(`kept ${join(candidate.path, 'target')}:`));
   for (const output of [...outputs.paths, ...targets.filter((dir) => !outputs.paths.includes(dir))]) {
-    const recent = targets.includes(output) ? recentCargoUse(output, Date.now(), afterMs) : null;
-    if (recent) plan.kept.push(`kept ${output}: ${recent}`);
-    else plan.paths.push(output);
+    const target = targets.includes(output);
+    const recent = target ? recentTargetUse(output, Date.now(), afterMs) : null;
+    if (recent) {
+      plan.kept.push(`kept ${output}: ${recent}`);
+      plan.keptTarget = true;
+    } else {
+      plan.paths.push(output);
+      if (target) plan.targets.add(output);
+    }
   }
   return plan;
 }
@@ -193,49 +213,52 @@ async function eligible(
 async function outputProblem(
   path: string,
   output: string,
+  cargo: boolean,
   launching: Launching,
   signal: AbortSignal | undefined,
 ): Promise<string | null> {
   if (output === metroStoreRoot(path)) return 'the shared Metro store is not a dormant output';
-  if (workspaceOutputPaths(workspaceDir(path)).includes(output)) return null;
-  if (basename(output) === 'target' && !(await cargoTargetDirsAsync(path)).includes(output))
+  if (cargo && !(await cargoTargetDirsAsync(path)).includes(output))
     return 'it is no longer a Cargo target/ Stim recognises';
+  if (!cargo && basename(output) === 'target') return 'a Cargo target/ goes only through the Cargo delete';
+  if (workspaceOutputPaths(workspaceDir(path)).includes(output)) return null;
   return regenerableDirProblem(path, output, signal, { launching });
 }
 
 /**
  * Removes one output under the workspace's native-run and metro-start claims after checking again that the workspace
  * is idle by the full evidence, its worktree is not locked, the output is still eligible and no launcher points into
- * the checkout. Returns why it stays, or null once it is gone.
+ * the checkout; a Cargo `target/` (`cargo`, from the plan) goes through `deleteCargoTarget`. Returns why it stays, the
+ * Cargo delete's result, or null once it is gone.
  */
 async function removeOutput(
   path: string,
   checkout: string,
   output: string,
+  cargo: boolean,
   afterMs: number,
   operation: StimContext | undefined,
-): Promise<string | null> {
+): Promise<string | CargoTrimResult | null> {
   const signal = operation?.signal;
   const run = await withIdleWorkspace(
     path,
-    async (): Promise<string | null> => {
+    async (): Promise<string | CargoTrimResult | null> => {
       try {
         return await withWorkspaceProcessLock(
           workspaceDir(path),
           'metro-start',
-          async (): Promise<string | null> => {
+          async (): Promise<string | CargoTrimResult | null> => {
             if (!(await stillIdle(path, afterMs, { operation, full: true, setting: SETTING, checkout })))
               return 'it is no longer idle';
             const lock = await worktreeLockAsync(path, gitOptions(operation));
             if (lock) return lockReason(lock);
             const launching = launchingOf(checkout, freshLaunchers(operation, signal), operation, signal);
-            const problem = await outputProblem(path, output, launching, signal);
+            const problem = await outputProblem(path, output, cargo, launching, signal);
             if (problem) return problem;
             const launcher = launcherReason(checkout, await launching.launchers());
             if (launcher) return launcher;
-            if ((await cargoTargetDirsAsync(path)).includes(output))
-              return deleteCargoTarget(output, { idleMs: afterMs, launching, signal, remove: removeUnseen });
-            await removeUnseen(output);
+            if (cargo) return unseen(output, () => deleteCargoTarget(output, { idleMs: afterMs, launching, signal }));
+            await unseen(output, () => rm(output, { recursive: true, force: true }));
             return null;
           },
           { external: true, waitMs: 0, ownerPurpose: PURPOSE, signal, declareSpawnsFor: operation },
@@ -251,14 +274,14 @@ async function removeOutput(
 }
 
 /**
- * Removes `output` and puts its parent directory's modification time back, so the source-write scan that decides
- * idleness does not count Stim's own removal as activity of the checkout.
+ * Runs `remove` on `output` and puts its parent directory's modification time back, so the source-write scan that
+ * decides idleness does not count Stim's own removal as activity of the checkout.
  */
-async function removeUnseen(output: string): Promise<void> {
+async function unseen<T>(output: string, remove: () => Promise<T>): Promise<T> {
   const parent = dirname(output);
   const before = await stat(parent).catch(() => null);
   try {
-    await rm(output, { recursive: true, force: true });
+    return await remove();
   } finally {
     if (before) await utimes(parent, before.atime, before.mtime).catch(() => {});
   }

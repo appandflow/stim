@@ -10,11 +10,33 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { cargoTargetTrimClaims } from '@stim-cli/core/state';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
-import { staleCargoPaths, staleCargoTargetPaths, trimCargoTarget } from '../workspace/cargo-target.ts';
+import {
+  deleteCargoTarget,
+  staleCargoPaths,
+  staleCargoTargetPaths,
+  trimCargoTarget,
+} from '../workspace/cargo-target.ts';
 import { launchingWith, noLaunchers } from './fixtures/launching.ts';
+
+const fsHooks = vi.hoisted((): { rename?: (from: string) => void; dev?: (path: string) => number | undefined } => ({}));
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...fs,
+    rename: async (...args: Parameters<typeof fs.rename>) => {
+      fsHooks.rename?.(String(args[0]));
+      return fs.rename(...args);
+    },
+    lstat: async (...args: Parameters<typeof fs.lstat>) => {
+      const stat = await fs.lstat(...args);
+      const dev = fsHooks.dev?.(String(args[0]));
+      return dev === undefined ? stat : Object.assign(stat, { dev });
+    },
+  };
+});
 
 const DAY = 24 * 3_600_000;
 const NOW = Date.parse('2026-11-11T20:00:00Z');
@@ -353,4 +375,131 @@ test('a launcher on PATH that appears after the first reading keeps what it poin
   } finally {
     resetExecutor();
   }
+});
+
+describe('deleting an idle Cargo target whole', () => {
+  let dir: string;
+  let real: string;
+  beforeEach(() => {
+    dir = join(target, 'target');
+    writeFileSync(join(target, 'Cargo.toml'), '');
+    for (const path of ['debug/.fingerprint/unit', 'debug/deps', 'bake', 'criterion/base'])
+      mkdirSync(join(dir, path), { recursive: true });
+    writeFileSync(join(dir, '.rustc_info.json'), '{}');
+    writeFileSync(join(dir, 'debug', '.cargo-lock'), '');
+    writeFileSync(join(dir, 'debug', 'app'), 'binary');
+    writeFileSync(join(dir, 'bake', 'out.js'), 'x');
+    writeFileSync(join(dir, 'criterion', 'base', 'estimates.json'), '{}');
+    const old = new Date(Date.now() - 3 * DAY);
+    const age = (path: string): void => {
+      for (const entry of readdirSync(path, { withFileTypes: true }))
+        if (entry.isDirectory()) age(join(path, entry.name));
+        else utimesSync(join(path, entry.name), old, old);
+      utimesSync(path, old, old);
+    };
+    age(dir);
+    real = realpathSync(dir);
+    stubProcesses({});
+  });
+  afterEach(() => {
+    resetExecutor();
+    delete fsHooks.rename;
+    delete fsHooks.dev;
+  });
+  const remove = () => deleteCargoTarget(dir, { idleMs: DAY, launching: noLaunchers(target) });
+
+  test('everything but Criterion baselines goes, after the move aside, and nothing is left aside', async () => {
+    const result = await remove();
+
+    expect(result.removed.toSorted()).toEqual(['.rustc_info.json', 'bake', 'debug']);
+    expect(result.kept).toEqual([]);
+    expect(readdirSync(dir)).toEqual(['criterion']);
+    expect(existsSync(join(dir, 'criterion', 'base', 'estimates.json'))).toBe(true);
+  });
+
+  test('an entry on another device that cannot be renamed stays, and the rest goes', async () => {
+    fsHooks.rename = (from) => {
+      if (from.endsWith('/bake'))
+        throw Object.assign(new Error('EXDEV: cross-device link not permitted'), { code: 'EXDEV' });
+    };
+
+    const result = await remove();
+
+    expect(result.kept).toEqual([expect.stringContaining('bake: it could not be moved aside: EXDEV')]);
+    expect(readdirSync(dir).toSorted()).toEqual(['bake', 'criterion']);
+  });
+
+  test.each([
+    [
+      'a trim left a directory for a person',
+      () => mkdirSync(join(dir, '.stim-not-restored-1-0')),
+      'could not put back',
+    ],
+    [
+      'a build wrote a top-level entry',
+      () => utimesSync(join(dir, 'bake'), new Date(), new Date()),
+      'bake was written in that time',
+    ],
+    [
+      'a build wrote inside a profile only',
+      () => utimesSync(join(dir, 'debug', 'deps'), new Date(), new Date()),
+      'a build used its debug profile in that time',
+    ],
+    [
+      'no profile can be dated',
+      () => {
+        rmSync(join(dir, 'debug', '.fingerprint'), { recursive: true });
+        utimesSync(join(dir, 'debug'), new Date(Date.now() - 3 * DAY), new Date(Date.now() - 3 * DAY));
+      },
+      'no Cargo profile in it can be dated',
+    ],
+    [
+      'a process runs a binary in it',
+      () => stubProcesses({ lsof: (args) => (args.includes('-Fn') ? `p100\nn${real}/debug/app\n` : '') }),
+      'a process uses',
+    ],
+    [
+      'a build holds a profile lock',
+      () => stubProcesses({ lsof: (args) => (args.at(-1) === join(real, 'debug', '.cargo-lock') ? '4242\n' : '') }),
+      'a build holds',
+    ],
+    [
+      'a build takes a profile lock during the move',
+      () =>
+        stubProcesses({
+          lsof: (args) =>
+            args.at(-1)?.includes('.stim-trimmed') && args.at(-1)?.endsWith('.cargo-lock') ? '4242\n' : '',
+        }),
+      'during the move',
+    ],
+    [
+      'a process opens a file in it during the move',
+      () => {
+        let reads = 0;
+        stubProcesses({
+          lsof: (args) => (args.includes('-Fn') && reads++ > 0 ? `p100\nn${real}/.stim-trimmed/0/out.js\n` : ''),
+        });
+      },
+      'a process took',
+    ],
+    [
+      'another filesystem is mounted in it',
+      () => (fsHooks.dev = (path) => (path.endsWith('/bake') ? -1 : undefined)),
+      'another filesystem',
+    ],
+    ['it is no longer a Cargo target', () => rmSync(join(target, 'Cargo.toml')), 'no longer a Cargo target'],
+  ])('it stays whole when %s', async (_, arrange, why) => {
+    arrange();
+
+    const result = await remove();
+
+    expect(result.removed).toEqual([]);
+    expect(result.kept).toEqual([expect.stringContaining(why)]);
+    expect(
+      readdirSync(dir)
+        .filter((name) => !name.startsWith('.stim-not-restored'))
+        .toSorted(),
+    ).toEqual(['.rustc_info.json', 'bake', 'criterion', 'debug']);
+    expect(existsSync(join(dir, 'debug', 'app'))).toBe(true);
+  });
 });
