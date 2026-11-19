@@ -249,8 +249,11 @@ async function removeOutput(
 async function removeUnseen(output: string): Promise<void> {
   const parent = dirname(output);
   const before = await stat(parent).catch(() => null);
-  await rm(output, { recursive: true, force: true });
-  if (before) await utimes(parent, before.atime, before.mtime).catch(() => {});
+  try {
+    await rm(output, { recursive: true, force: true });
+  } finally {
+    if (before) await utimes(parent, before.atime, before.mtime).catch(() => {});
+  }
 }
 
 /**
