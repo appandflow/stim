@@ -2506,7 +2506,7 @@ could not count its shared blocks (or saw only part of the tree), or its volume
 cannot report them.
 
 A tree whose own size is still unknown is kept at normal and high, and taken
-last at critical, when a sample finds it is mostly hard links into a pnpm
+at critical (by rung 5 after every other tree), when a sample finds it is mostly hard links into a pnpm
 store: its `.modules.yaml` must name a store directory outside the tree, and
 Stim reads the link counts of up to 36 files from up to 12 of its packages
 within 10 seconds for all trees of one step, keeping the tree when

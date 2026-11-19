@@ -299,7 +299,8 @@ once per install signature, one directory read per package, 2 seconds at a
 time from after the last package listed (by path, in sorted order), so a large tree on a slow disk is
 listed over a few runs and has no `links` verdict until the list is complete
 (a package whose listing fails other than by being absent stops the listing
-there, to be retried on the next run);
+there, to be retried on the next run, and a `.pnpm` or scope folder that
+cannot be listed gives no verdict at all until it can);
 every use of a `links` verdict, a recorded one included, then reads the
 `android`, `ios` and `apple` folders of those packages once each (and
 `android/app` when present) for build output folders, and a build output
@@ -307,18 +308,20 @@ folder or a check that does not answer or fails ends it. No read starts with
 less than 500 ms of its budget left, so a read near the end of the budget does
 not become the pending read that makes the launcher scan incomplete; one that
 does not answer in the time it got is the pending read, as any other, and a
-sample the step's limit cut short records no verdict. The verdict and the
+sample that the step's limit left less than its full 2 seconds records no
+`timeout` verdict, so it is sampled again on the next run. The verdict and the
 listing are written under their file's lock, waited for at most 200 ms; when
-the lock or the write fails or times out there is no verdict and nothing is
-written, and the tree stays unknown. Build
+the lock or the write fails or times out there is no verdict, and the tree
+stays unknown. Build
 output outside those folders is not seen: a `.build` folder that appears after
 the listing in a package with none of them, `android/<module>/build` or
 `android/<module>/.cxx` of a library with several modules, or
 `node_modules/react-native/ReactAndroid/build` and `.cxx` when React Native is
 built from source. Such a tree is kept at normal and high by the 7-day
 source rule, the dormant step and rung 5, with a kept reason that gives the
-counts; at critical, rungs 5 and 8 take it after every measured tree and every
-other tree of unknown size. Anything else (no recorded or existing store, as for
+counts; at critical, rung 5 takes it after every measured tree and every other
+tree of unknown size, and rung 8 takes it in the same batch as the other trees
+of the source checkouts it clears. Anything else (no recorded or existing store, as for
 every tree pnpm did not install, too few files, or reads that did not answer)
 leaves the tree unknown and the rules above unchanged. The verdict is recorded
 beside the size cache with the install signature and the store, and reused for

@@ -2716,7 +2716,7 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   whose command line names a path in it; reading files in an editor with no
   process there is not activity. A tree of unknown size is not taken at the
   7-day rule (stim gc measures them first, up to 2 minutes, and says why one
-  stays unknown), and is at critical, last when a sample of its files
+  stays unknown), and is at critical, even when a sample of its files
   finds mostly hard links. A
   linked worktree listed by git with a symlink at the same relative path, or in
   its top two directory levels (up to 2000 entries, not entering node_modules or

@@ -1,9 +1,9 @@
 import { lstat, open, readdir } from 'node:fs/promises';
-import { mkdirSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import { withDirLockAsync } from '@stim-cli/core';
 import { diskUsageLinksFile, diskUsageNativeFile, readDiskUsageLinks, readJsonObject } from '@stim-cli/core/state';
-import { writeCacheFile } from './cache-file.ts';
 import { treeSignature } from './private-size.ts';
 import { TREE_DOT_DIRS } from './workspace/dependency-edits.ts';
 import { ARTIFACT_DIRS } from './workspace/regenerable-dirs.ts';
@@ -134,9 +134,25 @@ async function takeSample(
   io: LinkSampleIo,
   until: number,
   signal?: AbortSignal,
-): Promise<{ linked: number; sampled: number; packages: number; store: string | null; dirs: string[] } | 'timeout'> {
+): Promise<
+  | { linked: number; sampled: number; packages: number; store: string | null; dirs: string[]; incomplete: boolean }
+  | 'timeout'
+> {
   const read = boundedReads(SAMPLE_TIMEOUT_MS, until, signal);
   const entries = async (dir: string) => (await read(dir, () => io.entries(dir))) ?? [];
+  let incomplete = false;
+  const packageList = async (dir: string) => {
+    const found = await read(dir, async () => {
+      try {
+        return await io.entries(dir);
+      } catch (error) {
+        if (absent(error)) return [];
+        throw error;
+      }
+    });
+    if (found === null) incomplete = true;
+    return found ?? [];
+  };
   const filesOf = async (dir: string, found: readonly { name: string; kind: Kind }[]): Promise<string[]> => {
     const files = found.filter(({ kind }) => kind === 'file').map(({ name }) => join(dir, name));
     for (const sub of found.filter(({ kind }) => kind === 'directory').slice(0, 2)) {
@@ -147,7 +163,7 @@ async function takeSample(
     return files.slice(0, FILES_PER_PACKAGE);
   };
   return orTimeout(async () => {
-    const none = { linked: 0, sampled: 0, packages: 0, store: null, dirs: [] };
+    const none = { linked: 0, sampled: 0, packages: 0, store: null, dirs: [], incomplete: false };
     const top = await entries(path);
     const caches = top.some(
       ({ name, kind }) => kind === 'directory' && name.startsWith('.') && ![...TREE_DOT_DIRS, '.bin'].includes(name),
@@ -156,7 +172,7 @@ async function takeSample(
     const store = await pnpmStore(path, read, io);
     if (!store) return none;
     const virtual = top.some(({ name, kind }) => name === '.pnpm' && kind === 'directory')
-      ? (await entries(join(path, '.pnpm'))).flatMap(({ name, kind }) => {
+      ? (await packageList(join(path, '.pnpm'))).flatMap(({ name, kind }) => {
           const pkg = kind === 'directory' && name !== 'node_modules' ? pnpmPackage(name) : null;
           return pkg ? [join(path, '.pnpm', name, 'node_modules', pkg)] : [];
         })
@@ -167,7 +183,7 @@ async function takeSample(
       if (kind !== 'directory' || name.startsWith('.')) continue;
       if (!name.startsWith('@')) dirs.push(join(path, name));
       else
-        for (const scoped of await entries(join(path, name)))
+        for (const scoped of await packageList(join(path, name)))
           if (scoped.kind === 'directory') dirs.push(join(path, name, scoped.name));
     }
     const sorted = dirs.toSorted();
@@ -188,13 +204,14 @@ async function takeSample(
       }
       if (counted) packages++;
     }
-    return { linked, sampled: seen.size, packages, store: store.dir, dirs: sorted };
+    return { linked, sampled: seen.size, packages, store: store.dir, dirs: sorted, incomplete };
   });
 }
 
 /**
  * Writes what `next` makes of the record in `file` under the file's lock, waiting at most LOCK_WAIT_MS and never past
- * `until`: the record written, or null when the lock was not had in time or could not be taken. Only an abort throws.
+ * `until`: the record written, or null when the lock was not had in time or could not be taken or the record was not
+ * written. Only an abort throws.
  */
 async function writeLocked<T extends object>(
   file: string,
@@ -207,7 +224,14 @@ async function writeLocked<T extends object>(
       `${file}.lock`,
       () => {
         const record = next(readJsonObject(file));
-        writeCacheFile(file, record);
+        const temporary = `${file}.${randomUUID()}.tmp`;
+        try {
+          writeFileSync(temporary, JSON.stringify(record));
+          renameSync(temporary, file);
+        } catch (error) {
+          rmSync(temporary, { force: true });
+          throw error;
+        }
         return record;
       },
       {
@@ -357,7 +381,8 @@ async function builtInPlace(
  * is no `links` verdict. Every use of a `links` verdict checks the build output folders of those packages first, within
  * SAMPLE_TIMEOUT_MS, so a build after the sample ends it. A `.build` folder is checked only in a package listed with a
  * native project folder, and build output outside those folders (such as React Native built from source) is not seen.
- * No read starts after `until`, and a sample cut short by it records no verdict. Both records are written under their
+ * No read starts after `until`, and a sample that `until` left less than SAMPLE_TIMEOUT_MS records no `timeout`
+ * verdict. A package list (`.pnpm` or a scope folder) that could not be read leaves no `links` verdict. Both records are written under their
  * lock; when it is not had in time, there is no verdict and nothing is written.
  */
 export async function hardLinkSample(
@@ -395,12 +420,14 @@ export async function hardLinkSample(
       await write('other', { linked: 0, sampled: 0 }, fresh.store);
       return null;
     }
-    if (fresh.store && (await storeStands(fresh.store, io, until)))
-      return { linked: fresh.linked, sampled: fresh.sampled };
+    const stands = fresh.store ? await storeStands(fresh.store, io, until) : false;
+    if (stands === 'timeout') return null;
+    if (stands) return { linked: fresh.linked, sampled: fresh.sampled };
   }
+  const ownBudget = Date.now() + SAMPLE_TIMEOUT_MS <= until;
   const sample = await takeSample(path, io, until, signal);
   if (sample === 'timeout') {
-    if (Date.now() < until) await write('timeout', { linked: 0, sampled: 0 });
+    if (ownBudget) await write('timeout', { linked: 0, sampled: 0 });
     return null;
   }
   const counts = { linked: sample.linked, sampled: sample.sampled };
@@ -409,6 +436,7 @@ export async function hardLinkSample(
     await write('other', counts, store);
     return null;
   }
+  if (sample.incomplete) return null;
   if (!native?.complete) native = await findNativeRoots(path, signature, sample.dirs, native, io, until, signal);
   if (!native?.complete) return null;
   const built = await builtInPlace(native.roots, io, until, signal);
@@ -416,12 +444,12 @@ export async function hardLinkSample(
   return (await write(built ? 'other' : 'links', counts, store)) && !built ? counts : null;
 }
 
-async function storeStands(store: string, io: LinkSampleIo, until: number): Promise<boolean> {
+async function storeStands(store: string, io: LinkSampleIo, until: number): Promise<boolean | 'timeout'> {
   const left = Math.min(until - Date.now(), SAMPLE_TIMEOUT_MS);
-  if (hungRead() !== null || left < MIN_READ_MS) return false;
+  if (hungRead() !== null || left < MIN_READ_MS) return 'timeout';
   try {
     return (await answered(store, () => io.lstat(store), left)).kind === 'directory';
-  } catch {
-    return false;
+  } catch (error) {
+    return error instanceof Unanswered ? 'timeout' : false;
   }
 }

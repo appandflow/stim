@@ -961,23 +961,18 @@ test.skipIf(process.platform === 'win32')(
   60_000,
 );
 
-test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
-  'at high, rung 5 takes a hard-linked tree of unknown size as unknown when its sample records cannot be locked or written',
+test.skipIf(process.platform === 'win32')(
+  'at high, rung 5 takes a hard-linked tree of unknown size as unknown when its link verdict cannot be written',
   async () => {
     const roots = idleRepo([{ name: 'linked', workspace: true }]);
     const modules = join(roots.linked ?? '', 'node_modules');
     pnpmTree(modules, 'linked', new Date(Date.now() - 60 * 60_000));
     walks.set(modules, () => null);
-    const records = dirname(diskUsageLinksFile(modules));
-    mkdirSync(records, { recursive: true });
-    chmodSync(records, 0o555);
-    try {
-      const { payload }: { payload: LevelPayload } = await gcJson('high');
-      expect(dependencyAction(payload, modules, 5)?.outcome).toBe('would');
-    } finally {
-      chmodSync(records, 0o755);
-    }
-    expect(existsSync(diskUsageLinksFile(modules))).toBe(false);
+    mkdirSync(join(diskUsageLinksFile(modules), 'occupied'), { recursive: true });
+    const { payload }: { payload: LevelPayload } = await gcJson('high');
+    expect(readJsonObject(diskUsageNativeFile(modules))?.complete).toBe(true);
+    expect(dependencyAction(payload, modules, 5)).toMatchObject({ outcome: 'would' });
+    expect(dependencyAction(payload, modules, 5)?.detail ?? '').not.toMatch(linkedDetail);
   },
   60_000,
 );
@@ -1145,6 +1140,7 @@ test.skipIf(process.platform === 'win32')(
 );
 
 function memoryTree(modules: string, delayMs = 0) {
+  const timing = { delayMs };
   const store = join(modules, '..', 'memory-store');
   const pnpm = join(modules, '.pnpm');
   const packageDir = (index: number) =>
@@ -1161,7 +1157,7 @@ function memoryTree(modules: string, delayMs = 0) {
         } catch (error) {
           fail(error);
         }
-      }, delayMs),
+      }, timing.delayMs),
     );
   const io: LinkSampleIo = {
     entries: (path) =>
@@ -1192,7 +1188,7 @@ function memoryTree(modules: string, delayMs = 0) {
       }),
     ends: () => answer(() => JSON.stringify({ storeDir: store })),
   };
-  return { io, packageDir, failing, built };
+  return { io, packageDir, failing, built, timing };
 }
 
 test.skipIf(process.platform === 'win32')(
@@ -1275,6 +1271,77 @@ test.skipIf(process.platform === 'win32')(
     for (const answer of answers) answer();
     await vi.advanceTimersByTimeAsync(0);
     expect(hungRead()).toBeNull();
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'a link sample started with under 500 ms of the caller deadline left records no verdict, and the next one with time samples the tree',
+  async () => {
+    const modules = join(projects, 'late', 'node_modules');
+    mkdirSync(modules, { recursive: true });
+    const { io } = memoryTree(modules);
+    expect(await hardLinkSample(modules, undefined, io, Date.now() + 400)).toBeNull();
+    expect(existsSync(diskUsageLinksFile(modules))).toBe(false);
+    const result = hardLinkSample(modules, undefined, io);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(await result).toEqual({ linked: 36, sampled: 36 });
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'a recorded links verdict whose store check has under 500 ms left gives no verdict and keeps the record',
+  async () => {
+    const modules = join(projects, 'starved', 'node_modules');
+    mkdirSync(modules, { recursive: true });
+    const { io, timing } = memoryTree(modules);
+    const first = hardLinkSample(modules, undefined, io);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(await first).toEqual({ linked: 36, sampled: 36 });
+    const recorded = readFileSync(diskUsageLinksFile(modules), 'utf8');
+    timing.delayMs = 300;
+    const starved = hardLinkSample(modules, undefined, io, Date.now() + 700);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(await starved).toBeNull();
+    expect(readFileSync(diskUsageLinksFile(modules), 'utf8')).toBe(recorded);
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'a link sample whose verdict cannot be written gives no verdict',
+  async () => {
+    const modules = join(projects, 'unwritable', 'node_modules');
+    mkdirSync(modules, { recursive: true });
+    const { io } = memoryTree(modules);
+    mkdirSync(join(diskUsageLinksFile(modules), 'occupied'), { recursive: true });
+    const result = hardLinkSample(modules, undefined, io);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(await result).toBeNull();
+  },
+);
+
+test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+  'a hoisted tree whose scope folder cannot be listed gets no links verdict until it can, and then its build output is found',
+  async () => {
+    const hoisted = join(projects, 'scoped', 'node_modules');
+    const store = join(projects, 'scoped-store');
+    for (let index = 0; index < 8; index++)
+      for (const file of ['package.json', 'index.js', 'main.js']) {
+        mkdirSync(join(store, `pkg${index}`), { recursive: true });
+        mkdirSync(join(hoisted, `pkg${index}`), { recursive: true });
+        writeFileSync(join(store, `pkg${index}`, file), `pkg${index} ${file}`);
+        linkSync(join(store, `pkg${index}`, file), join(hoisted, `pkg${index}`, file));
+      }
+    writeFileSync(join(hoisted, '.modules.yaml'), JSON.stringify({ nodeLinker: 'hoisted', storeDir: store }));
+    mkdirSync(join(hoisted, '@scope', 'native', 'android', 'build'), { recursive: true });
+    chmodSync(join(hoisted, '@scope'), 0o000);
+    try {
+      expect(await hardLinkSample(hoisted)).toBeNull();
+      expect(existsSync(diskUsageLinksFile(hoisted))).toBe(false);
+    } finally {
+      chmodSync(join(hoisted, '@scope'), 0o755);
+    }
+    expect(await hardLinkSample(hoisted)).toBeNull();
+    expect(readJsonObject(diskUsageLinksFile(hoisted))?.verdict).toBe('other');
   },
 );
 
