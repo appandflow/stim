@@ -71,8 +71,10 @@ tunnel stop, or a job on the passes or measure thread. stimd logs
 the child again on every tick; once it has stopped, the claims only that
 failure retained are released. Any other unverified cleanup, a thread that
 crashes, a net thread failure, and a tick or maintenance pass that runs 3
-hours (LLP 0021) end stimd; its home, daemon and engine claims stay complete,
-so the next start recovers them once that stimd is gone.
+hours (LLP 0021) end stimd. Its home and daemon claims stay, and the next start
+recovers them once that stimd is gone. Its engine claim is released once
+shutdown cleanup settles, because engine cleanup keeps every build a running
+process runs from (#5510).
 
 A thread job's refusal is watched only when no other child its operation
 declared is still running. #5510 kept every thread refusal fatal because a
