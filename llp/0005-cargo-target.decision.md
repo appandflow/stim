@@ -33,6 +33,20 @@ executes from or holds open and each profile whose lock a build holds (below).
 Ladder rung 1, for a workspace with nothing running, leaves a `target/` to the
 trim of rung 3.
 
+Maintainer decision: "Yes leys have same rules for cargo as exact", 2026-11-19
+(#5958). Reason for the third kind: a Cargo `target/` can lack the root tag.
+On the maintainer's MacBook on 2026-11-19, 3 of the 7 `~/.exact/exact2`
+worktrees with a `target/` had none, among them an 18 GB and a 31 GB one. Both
+held `.rustc_info.json` and a profile with `.fingerprint`, and one carried the
+tag only in `target/wasm32-unknown-unknown/`. The check takes only Cargo's own
+files as evidence, so a project's `target/` folder that Cargo never wrote stays
+out. A `CACHEDIR.TAG` in a child is not evidence: it is a generic standard any
+tool may write. Reason the third kind is never listed as build output: such a
+`target/` can also hold another tool's output, as Exact's `bake/` and `web/`
+are, and Cargo's files in it do not show the rest is build output, so the idle
+stage leaves it and the trims remove only Cargo's profiles from it. Only the dormant
+reduction deletes it whole, under the maintainer decision in the next section.
+
 ## The dormant reduction deletes an idle target whole
 
 The dormant reduction (`stim gc` and the daemon's hourly step) deletes every
@@ -64,20 +78,6 @@ non-atomic lock check were chosen by the coordinator and the review of #5979,
 not by the maintainer. Reason for the gate: the idle evidence skips writes in a
 `target/` git ignores, so a build that ran without a source edit is seen only
 in the profile times.
-
-Maintainer decision: "Yes leys have same rules for cargo as exact", 2026-11-19
-(#5958). Reason for the third kind: a Cargo `target/` can lack the root tag.
-On the maintainer's MacBook on 2026-11-19, 3 of the 7 `~/.exact/exact2`
-worktrees with a `target/` had none, among them an 18 GB and a 31 GB one. Both
-held `.rustc_info.json` and a profile with `.fingerprint`, and one carried the
-tag only in `target/wasm32-unknown-unknown/`. The check takes only Cargo's own
-files as evidence, so a project's `target/` folder that Cargo never wrote stays
-out. A `CACHEDIR.TAG` in a child is not evidence: it is a generic standard any
-tool may write. Reason the third kind is never listed as build output: such a
-`target/` can also hold another tool's output, as Exact's `bake/` and `web/`
-are, and Cargo's files in it do not show the rest is build output, so the idle
-stage and the size cap remove only Cargo's profiles from it. Only the dormant
-reduction deletes it whole, under the maintainer decision below.
 
 ## The size cap
 
