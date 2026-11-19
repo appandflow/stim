@@ -293,7 +293,7 @@ export function launcherProblemsOutcome(problems: readonly LauncherProblem[]): s
 /** Writes one record when a pass met launcher evidence it could not settle, and what cleanup did about it. */
 export function logLauncherProblems(
   operation: StimContext,
-  log: (level: 'warn', event: string, msg: string, fields?: Record<string, unknown>) => void,
+  log: (level: 'warn', event: 'launcher_evidence_incomplete', msg: string, fields?: Record<string, unknown>) => void,
 ): void {
   const problems = takeLauncherProblems(operation);
   if (!problems.length) return;
