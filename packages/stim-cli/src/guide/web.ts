@@ -12,7 +12,7 @@ stim doctor reports a missing Chrome.
 
 stim web never starts a web server, for any framework. It opens, reuses or
 reloads the owned Chrome at the page URL. Every web project follows the same
-two steps: start your dev server, then run stim web.
+steps: warm the worktree, start your dev server, then run stim web.
 
   stim worktree warm       # first, unless working in place
   stim web                 # headless, the default
@@ -27,6 +27,7 @@ WHICH PAGE AND WHICH DEV SERVER
 Expo web runs on the workspace's Metro. With web.url unset, an Expo app
 opens http://localhost:<metroPort>/. Its dev server is stim start:
 
+  stim worktree warm
   npx expo install react-dom react-native-web @expo/metro-runtime   # once
   stim start
   stim web
@@ -36,6 +37,7 @@ Reserve its port with stim ports get, start it with strict-port behavior, and
 point web.url at it. {port:<label>} in web.url becomes that named port,
 {port:metro} the Metro port:
 
+  stim worktree warm
   pnpm exec vite --port "$(stim ports get web)" --strictPort
   stim settings set web.url 'http://localhost:{port:web}/' --scope workspace
   stim web
