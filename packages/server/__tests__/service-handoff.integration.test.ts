@@ -826,22 +826,27 @@ describe.skipIf(process.platform === 'win32')("an engine switch under a service 
         );
       });
       expect(started).toMatchObject({ op: 'logs.started' });
-      await until('the device log stream', () => service.streams().length === 1);
+      const [first] = await until('the device log stream', () =>
+        service.streams().length > 0 ? service.streams() : null,
+      );
       op.destroy();
       service.restartJob(60_000);
       const waiter = await until('the job process', () => service.jobPid());
-      const resumed = await until('the resumed device log stream', () =>
-        service.streams().length === 2 ? service.streams()[1] : null,
+      const deviceLog = () => {
+        try {
+          return readFileSync(join(workspaceLogsDir(app), 'device.ndjson'), 'utf8');
+        } catch {
+          return '';
+        }
+      };
+      await until('a resumed stream writing the workspace log', () =>
+        service.streams().some((pid) => pid !== first && deviceLog().includes(`line from ${pid}`)),
       );
       expect(gone(holder.pid)).toBe(true);
       expect(parentOf(service.record()?.pid ?? 0)).toBe(waiter);
-      await until('the resumed stream writing the workspace log', () => {
-        try {
-          return readFileSync(join(workspaceLogsDir(app), 'device.ndjson'), 'utf8').includes(`line from ${resumed}`);
-        } catch {
-          return false;
-        }
-      });
+      expect(readFileSync(join(service.home, 'daemon', 'daemon.ndjson'), 'utf8')).toContain(
+        `resumed device log stream ${String(started.streamId)}`,
+      );
       expect(readWorkspaceState(app)?.collectors?.ios).toMatchObject({ kind: 'stream', streamId: started.streamId });
     } finally {
       await service.cleanup();
