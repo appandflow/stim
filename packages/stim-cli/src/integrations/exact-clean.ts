@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { lstatSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { getExecutor } from '../exec.ts';
@@ -60,6 +60,13 @@ function parseReport(stdout: unknown): ExactCleanReport | null {
   return { status, remove, kept: keptEntries, held, ...(typeof error === 'string' ? { error } : {}) };
 }
 
+/** Exact's `sweep.mjs` with the `clean` command and its version 1 report (appandflow/exact#41), read as text. */
+const CLEAN_COMMAND = /process\.argv\[2\] === ['"]clean['"]/;
+const CLEAN_REPORT = /version: 1\b/;
+
+/** A refusal LLP 0007 says a caller reports instead of swallowing. */
+const reportsCleanup = (error: unknown): boolean => error instanceof Error && 'reportCleanup' in error;
+
 /** A failed child's stdout, which `runFileAsync` attaches to the error it rejects with. */
 function stdoutOf(error: unknown): unknown {
   return isRecord(error) ? error.stdout : undefined;
@@ -70,14 +77,18 @@ function stdoutOf(error: unknown): unknown {
  * Runs Exact's own cleaner on the idle Exact app at `app`: `<bun> <checkout>/scripts/sweep.mjs clean <app> [--dry-run]
  * --json`. The checkout is the one the app's `exact.mjs` resolves, which its `help` names on its last line (`Exact
  * checkout: <path> at <commit>`), run with the Bun its launcher pins; the cleaner runs with the Bun the checkout's
- * `package.json` pins, both from `~/.bun-<version>`. Anything but one version 1 report, such as an older checkout that
- * prints no JSON, is `unsupported`, which keeps the target. Exact checks its own locks and leases; a dev server or a
+ * `package.json` pins, both from `~/.bun-<version>`. A launcher that is not a plain file, or a checkout whose
+ * `scripts/sweep.mjs` does not carry the `clean` command and its version 1 report, read as text so an older cleaner is
+ * never run, is `unsupported`, and so is a dry run without one version 1 report; each keeps the target. A clean that
+ * ends without one is `unknown`: it may have removed part. Exact checks its own locks and leases; a dev server or a
  * running app holds none, so the caller decides the app is idle first.
  */
 export async function exactClean(
   app: string,
   { dryRun = false, signal, home = homedir() }: { dryRun?: boolean; signal?: AbortSignal; home?: string } = {},
-): Promise<ExactCleanReport | { unsupported: string }> {
+): Promise<ExactCleanReport | { unsupported: string } | { unknown: string }> {
+  if (!lstatSync(join(app, 'exact.mjs'), { throwIfNoEntry: false })?.isFile())
+    return { unsupported: `${app}/exact.mjs is not a plain file` };
   let launcher: string;
   try {
     launcher = readFileSync(join(app, 'exact.mjs'), 'utf8');
@@ -93,6 +104,7 @@ export async function exactClean(
   try {
     help = await run(bunAt(launcherBun, home), [join(app, 'exact.mjs'), 'help'], HELP_TIMEOUT_MS);
   } catch (error) {
+    if (reportsCleanup(error)) throw error;
     signal?.throwIfAborted();
     return {
       unsupported: `bun exact.mjs help failed: ${error instanceof Error ? error.message.split('\n')[0] : error}`,
@@ -109,20 +121,31 @@ export async function exactClean(
   const manager = isRecord(pinned) ? pinned.packageManager : null;
   const version = typeof manager === 'string' && manager.startsWith('bun@') ? manager.slice('bun@'.length) : '';
   if (!BUN_VERSION.test(version)) return { unsupported: `${checkout}/package.json pins no Bun version` };
+  const sweep = join(checkout, 'scripts', 'sweep.mjs');
+  let script = '';
+  try {
+    script = readFileSync(sweep, 'utf8');
+  } catch {}
+  if (!CLEAN_COMMAND.test(script) || !CLEAN_REPORT.test(script))
+    return {
+      unsupported: `the Exact checkout at ${checkout} has no clean that reports version 1 JSON (appandflow/exact#41)`,
+    };
   let stdout: unknown;
+  let failure: unknown = null;
   try {
     stdout = await run(
       bunAt(version, home),
-      [join(checkout, 'scripts', 'sweep.mjs'), 'clean', app, ...(dryRun ? ['--dry-run'] : []), '--json'],
+      [sweep, 'clean', app, ...(dryRun ? ['--dry-run'] : []), '--json'],
       CLEAN_TIMEOUT_MS,
     );
   } catch (error) {
+    if (reportsCleanup(error)) throw error;
     signal?.throwIfAborted();
     stdout = stdoutOf(error);
+    failure = error;
   }
-  return (
-    parseReport(stdout) ?? {
-      unsupported: `the Exact checkout at ${checkout} has no clean that reports version 1 JSON (appandflow/exact#41)`,
-    }
-  );
+  const report = parseReport(stdout);
+  if (report) return report;
+  const why = (failure instanceof Error ? failure.message.split('\n')[0] : null) ?? 'it printed no version 1 report';
+  return dryRun ? { unsupported: `Exact's clean --dry-run failed: ${why}` } : { unknown: why };
 }

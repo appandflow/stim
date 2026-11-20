@@ -347,13 +347,43 @@ removes. Exact keeps the records an app stores in its `target/`
 (`traces/`, `web-receipts/`, `native-receipts/`, production builds) and any name
 it does not know.
 
-Stim requires `version: 1` in the one JSON object the cleaner prints. Anything
-else, an older checkout that prints no JSON among them, means the cleaner is not
-available, and the `target/` stays with that reason. `busy` (a lock or lease
-held) and `refused` keep it with Exact's reason; `failed` reports the action
-failed with what Exact had already removed. The pressure trims of an Exact app's
-`target/` stay Stim's Cargo trims under the profile locks; Exact's cleaner owns
-only the whole delete.
+Stim keeps the `target/` whole whenever anything is uncertain, and never hands it
+to the remover instead:
+
+- Any `exact.mjs` beside the `target/`, a file or a link, makes it an Exact app's,
+  for discovery and for the delete alike. A launcher that is a link, or a cleaner
+  that cannot be resolved, keeps it.
+- A Cargo `target/` holding Exact's ledger (`.exact-sweep.json`) with no Exact app
+  beside it, such as a Cargo workspace's `target/` its Exact apps share, stays
+  whole: no single app's cleaner owns it.
+- The checkout's `scripts/sweep.mjs` must carry the `clean` command and its
+  version 1 report, read as text, before Stim runs it, so a cleaner from before
+  appandflow/exact#41, which reads `clean` as a folder to sweep, is never run.
+  Exact's `package.json` carries no version to compare.
+- Before the dry run, one walk of the `target/` that follows no link: any link in
+  it keeps it, since the cleaner could follow one out. Every path the dry run
+  lists must resolve inside the canonical `target/` and hold no plain
+  `*-keypair.json`; otherwise the clean never runs.
+- Stim requires `version: 1` in the one JSON object the cleaner prints. A dry run
+  without one keeps the `target/`. `busy` and `refused` keep it with Exact's
+  reason. After a keep without a removal, Stim does not ask Exact again about
+  that `target/` for a day, in the running process, so hourly passes do not rerun
+  `help` and the dry run.
+- `failed` reports the action failed with what Exact had already removed. A
+  clean that times out, crashes or prints no report fails the action too, with
+  what it removed unknown, since Exact moves entries aside before it reports. A
+  cleanup refusal from the process guard (LLP 0007) is reported, not turned
+  into a keep.
+
+The pressure trims of an Exact app's `target/` stay Stim's Cargo trims under the
+profile locks, and the remover never enters `.apple-cargo-locks/` or unlinks
+Exact's ledger lock; Exact's cleaner owns only the whole delete.
+
+Stim runs the app's own `exact.mjs` and the cleaner it names without vetting
+their code, during unattended cleanup too. The maintainer said in the
+coordinating session on 2026-11-20: "I dont think this is really a problem,
+stim security model assumes code is safe since I am pretty sure a lot of other
+places could have similar problem".
 
 Maintainer decision: "I agree lets do this and ur recommendations from prev
 messages, also lets do the changes now that u flagged as after 2.0 id rather
@@ -363,7 +393,8 @@ instead of Stim's folder-name rules. This replaces Stim's own Exact rules for a
 whole delete: the `.exact-sweep.json.lock` and `.apple-cargo-locks/` probes and
 the full delete of Exact's records. Chosen by the lane of #6025, not by the
 maintainer: resolving the checkout through `help`, the Bun pins, the dry run
-before the clean, and keeping the `target/` when the cleaner is not available.
+before the clean, reading the cleaner's support from its script text, the day
+between asks, and keeping the `target/` whenever anything above is uncertain.
 
 ## Leftovers of the staged trim
 
