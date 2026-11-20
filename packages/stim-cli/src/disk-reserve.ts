@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { statfs } from 'node:fs/promises';
 import { join } from 'node:path';
 import { maintenanceDir } from '@stim-cli/core/state';
 
@@ -40,17 +41,19 @@ export function diskFull(error: unknown): boolean {
   return error.code === 'ENOSPC' || error.code === 'EDQUOT';
 }
 
+const FULL_BYTES = 64 * 1024 * 1024;
+
+// @ref LLP 0005#a-full-disk-releases-the-reserve -- once, before a cleanup that writes or unlinks
 /**
- * Runs `write`; when it fails with ENOSPC or EDQUOT and this call releases the maintenance disk reserve, awaits
- * `released` and runs `write` once more. A throw from `released` ends the retry with that error. Any other failure,
- * or a second one, is thrown.
+ * Deletes the maintenance disk reserve when the volume holding `path` has less than 64 MiB free, so the claims and
+ * unlinks of a cleanup that follows have room even on APFS; true when it did. A volume that cannot be read keeps it.
  */
-export async function retryWithReserve<T>(write: () => Promise<T>, released: () => void | Promise<void>): Promise<T> {
+export async function releaseReserveWhenFull(path: string): Promise<boolean> {
   try {
-    return await write();
-  } catch (error) {
-    if (!diskFull(error) || !releaseReserve()) throw error;
-    await released();
-    return await write();
+    const volume = await statfs(path);
+    if (volume.bavail * volume.bsize >= FULL_BYTES) return false;
+  } catch {
+    return false;
   }
+  return releaseReserve();
 }

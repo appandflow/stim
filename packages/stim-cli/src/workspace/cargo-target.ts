@@ -1,42 +1,29 @@
-import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync, type Dirent } from 'node:fs';
-import { link, lstat, mkdir, open, readdir, rename, rm, rmdir, unlink, utimes, writeFile } from 'node:fs/promises';
+import { lstatSync, readFileSync, readdirSync, realpathSync, statSync, type Dirent } from 'node:fs';
+import { lstat, readdir, rmdir, unlink } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
-import { cargoTargetTrimClaims } from '@stim-cli/core/state';
-import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-claim.ts';
-import { diskFull, retryWithReserve } from '../disk-reserve.ts';
+import { releaseReserveWhenFull } from '../disk-reserve.ts';
 import { getExecutor } from '../exec.ts';
 import { measuredDirectorySizeAsync } from '../fs-util.ts';
 import { withCargoLocks } from './cargo-lock.ts';
 import { cargoTargetDirsAsync } from './regenerable-dirs.ts';
-import { cargoUnitPaths, cargoUnitWasRead, idleCargoUnits, readCargoUnits, removalOrder } from './cargo-units.ts';
 
 const CARGO_PROFILE_IDLE_MS: number = 24 * 3_600_000;
 
-/** Why a staging write found the disk full and the checks made after releasing the reserve keep the entry. */
-class KeptAfterRelease extends Error {
-  /** Whether the reason keeps the whole target, as unreadable process evidence does. */
-  readonly whole: boolean;
-  constructor(message: string, whole = false) {
-    super(message);
-    this.whole = whole;
-  }
-}
-const ASIDE = '.stim-trimmed';
 const PROFILE_PARTS = ['.fingerprint', 'deps', 'build', 'incremental'];
 /** The files Cargo itself writes in a target triple directory; any other entry there belongs to something else. */
 const CARGO_TRIPLE_FILES = new Set(['CACHEDIR.TAG', '.rustc_info.json', '.cargo-lock']);
 /** Cargo 1.97 locks the build and artifact directories separately and takes .cargo-lock for older Cargo. */
 const PROFILE_LOCKS = ['.cargo-lock', '.cargo-build-lock', '.cargo-artifact-lock'];
-const UNIT_CHUNK = 25;
 const EXACT_LEDGER = '.exact-sweep.json';
 const EXACT_APPLE_LOCKS = '.apple-cargo-locks';
+/** The lock files Cargo and Exact take in a `target/`, which a delete leaves in place. */
+const LOCK_FILES = new Set([...PROFILE_LOCKS, `${EXACT_LEDGER}.lock`]);
 const NOT_PROFILES = new Set(['.exact-swept']);
 const OWN_PREFIX = '.stim-';
-const STRANDED = 'NOT-RESTORED';
-const CANNOT_READ = 'the files processes hold open or the executables on PATH cannot be read';
-const DEADLINE_KEPT = 'the rest was left at the build headroom deadline';
+const ASIDE = `${OWN_PREFIX}trimmed`;
 const NOT_RESTORED = `${OWN_PREFIX}not-restored-`;
-const STAGED_LEFT = 'what was staged stays in its .stim-trimmed, marked NOT-RESTORED, for a person';
+const CANNOT_READ = 'the files processes hold open cannot be read';
+const DEADLINE_KEPT = 'the rest was left at the build headroom deadline';
 /** Solana's `cargo build-sbf` and Anchor keep each program's private key in `deploy/<program>-keypair.json`. */
 const KEYPAIR_DIR = 'deploy';
 const isKeypairDir = (name: string): boolean => name.toLowerCase() === KEYPAIR_DIR;
@@ -73,19 +60,26 @@ export function targetEntries(target: string): { output: string[]; kept: string[
 }
 
 /**
- * The top-level entries of `target` the dormant delete would remove: `targetEntries`' output but an entry holding a
- * `*-keypair.json` at any depth, and a `.stim-trimmed` staging directory an earlier delete committed but did not finish
- * removing. Null when `target` cannot be listed.
+ * The top-level entries of `target` the dormant delete would remove something from: `targetEntries`' output but an
+ * entry that holds only what the delete leaves (lock files, keypairs and links). Null when `target` cannot be listed.
  */
 export async function removableEntries(target: string): Promise<string[] | null> {
   const entries = targetEntries(target);
   if (!entries) return null;
-  const walked = await walkEntries(
-    entries.output.map((name) => join(target, name)),
-    lstatSync(target).dev,
-  ).catch(() => null);
-  const output = entries.output.filter((name) => !walked?.keypairs.has(join(target, name)));
-  return lstatSync(join(target, ASIDE), { throwIfNoEntry: false })?.isDirectory() ? [...output, ASIDE] : output;
+  const output: string[] = [];
+  for (const name of entries.output) if (!(await leftAlone(join(target, name)))) output.push(name);
+  return output;
+}
+
+/** Whether the remover would leave everything at `path`: it holds nothing but lock files, keypairs and links. */
+async function leftAlone(path: string): Promise<boolean> {
+  const stat = await lstat(path).catch(() => null);
+  if (!stat) return true;
+  if (!stat.isDirectory()) return kept(basename(path));
+  if (basename(path) === EXACT_APPLE_LOCKS) return true;
+  for (const name of (await readdir(path).catch(() => null)) ?? [])
+    if (!(await leftAlone(join(path, name)))) return false;
+  return true;
 }
 
 /** Whether the directory at `path` holds a `*-keypair.json` in any letter case or a symbolic link, or cannot be read to tell. */
@@ -230,19 +224,12 @@ interface Ledger {
 
 const EMPTY_LEDGER: Ledger = { units: new Map(), newest: new Map(), at: null };
 
-/** A ledger whose own time is older than this no longer shows use: Exact's sweep stopped recording it. */
-const LEDGER_FRESH_MS = 3 * 24 * 3_600_000;
-
-function ledgerShowsUse(ledger: Ledger | { refusal: string }, now: number): boolean {
-  return !('refusal' in ledger) && ledger.units.size > 0 && ledger.at !== null && now - ledger.at <= LEDGER_FRESH_MS;
-}
-
 function readLedger(target: string): Ledger | { refusal: string } {
   return readLedgerAt(join(target, EXACT_LEDGER));
 }
 
 function readLedgerAt(ledgerPath: string): Ledger | { refusal: string } {
-  if (!existsSync(ledgerPath)) return EMPTY_LEDGER;
+  if (!lstatSync(ledgerPath, { throwIfNoEntry: false })) return EMPTY_LEDGER;
   let text: string;
   try {
     text = readFileSync(ledgerPath, 'utf8');
@@ -275,80 +262,9 @@ export function staleCargoTargetPaths(
   return { paths: staleCargoPaths(profiles, listed.extras, now, idleMs) };
 }
 
-/**
- * The units Exact's ledger shows no build used for a day in every profile of `target/` outside `skip`, as absolute
- * paths: a unit's fingerprint directory, build-script directory and `deps` files. The newest unit of each crate is never
- * among them, and a target without that ledger has none.
- */
-export function idleCargoUnitPaths(target: string, now: number, skip: readonly string[] = []): string[] {
-  const ledger = readLedger(target);
-  if (!ledgerShowsUse(ledger, now) || 'refusal' in ledger) return [];
-  const stamps = ledger.units;
-  const found: string[] = [];
-  for (const profile of cargoProfileDirs(target) ?? []) {
-    if (skip.some((gone) => profile === gone || profile.startsWith(`${gone}/`))) continue;
-    const units = readCargoUnits(profile, stamps, profile.slice(target.length + 1), now);
-    if (!units) continue;
-    for (const [, paths] of cargoUnitPaths(profile, idleCargoUnits(units, now, CARGO_PROFILE_IDLE_MS)))
-      found.push(...paths.map((path) => join(profile, path)));
-  }
-  return found;
-}
-
 /** The profile directories of `target/` as absolute paths, or null when it cannot be listed. */
 export function cargoProfileDirs(target: string): string[] | null {
   return profilePaths(target)?.profiles.map((path) => join(target, path)) ?? null;
-}
-
-type LsofOutcome = ({ stdout: string } | { status: unknown; stdout: unknown }) & { file?: string };
-
-/** Whether a process holds a file open, from an lsof run: output names a holder, and anything but a clean no-match holds. */
-function lockHeld(outcome: LsofOutcome): boolean {
-  if ('status' in outcome) return !(outcome.status === 1 && (outcome.stdout === '' || outcome.stdout === undefined));
-  return outcome.stdout.trim().length > 0;
-}
-
-/**
- * Whether a rename of a profile that passed the lock check stands: it is rolled back when a Cargo build holds the
- * profile's lock files after the move, or when that cannot be told.
- */
-function renameStands(afterMove: LsofOutcome): boolean {
-  return !lockHeld(afterMove);
-}
-
-/**
- * The `<profile>/incremental` directories to remove, largest first, until `needBytes` are covered; all of them when
- * they cannot cover it.
- */
-function selectIncremental(candidates: readonly { path: string; bytes: number }[], needBytes: number): string[] {
-  const chosen: string[] = [];
-  let covered = 0;
-  for (const { path, bytes } of candidates.toSorted((a, b) => b.bytes - a.bytes)) {
-    if (covered >= needBytes) break;
-    chosen.push(path);
-    covered += bytes;
-  }
-  return chosen;
-}
-
-async function lockOutcome(profile: string, signal?: AbortSignal, lowPriority = false): Promise<LsofOutcome> {
-  for (const name of PROFILE_LOCKS) {
-    const lock = join(profile, name);
-    if (!existsSync(lock)) continue;
-    let outcome: LsofOutcome;
-    try {
-      const exec = getExecutor();
-      outcome = {
-        stdout: await (lowPriority
-          ? exec.runFileAsync('nice', ['-n', '19', 'lsof', '-t', '--', lock], { timeoutMs: 5000, signal })
-          : exec.runFileAsync('lsof', ['-t', '--', lock], { timeoutMs: 5000, signal })),
-      };
-    } catch (error) {
-      outcome = isRecord(error) ? { status: error.status, stdout: error.stdout } : { status: null, stdout: null };
-    }
-    if (lockHeld(outcome)) return { ...outcome, file: name };
-  }
-  return { stdout: '' };
 }
 
 const folded = (path: string): string => (FOLD_CASE ? path.toLowerCase() : path);
@@ -405,14 +321,27 @@ async function readTargetUse(
   }
 }
 
+/**
+ * The `<profile>/incremental` directories to remove, largest first, until `needBytes` are covered; all of them when
+ * they cannot cover it.
+ */
+function selectIncremental(candidates: readonly { path: string; bytes: number }[], needBytes: number): string[] {
+  const chosen: string[] = [];
+  let covered = 0;
+  for (const { path, bytes } of candidates.toSorted((a, b) => b.bytes - a.bytes)) {
+    if (covered >= needBytes) break;
+    chosen.push(path);
+    covered += bytes;
+  }
+  return chosen;
+}
+
 export interface CargoTrimResult {
-  /** Bytes moved aside, which are freed once the delete at the end succeeds. */
+  /** Bytes measured before the removal; 0 when the trim did not measure. */
   bytes: number;
   removed: string[];
   kept: string[];
-  /** Why the final delete failed; what was moved aside stays under `target/.stim-trimmed` for the next pass. */
-  deleteError?: string;
-  /** Set when a write found the disk full and the maintenance disk reserve was released to retry it. */
+  /** Set when the target's volume was full and the maintenance disk reserve was released before the trim. */
   reserveReleased?: boolean;
 }
 
@@ -420,64 +349,220 @@ async function sizeOf(path: string, signal?: AbortSignal, lowPriority = false): 
   return (await measuredDirectorySizeAsync(path, { timeoutMs: 120_000, signal, lowPriority })) ?? 0;
 }
 
+/** Whether the remover leaves the file `name` in place: a lock file Cargo or Exact takes, or a Solana keypair. */
+const kept = (name: string): boolean => LOCK_FILES.has(name) || isKeypairName(name);
+
+/** What a removal left that is worth reporting: anything but the lock files it always leaves. */
+const reported = (left: readonly string[]): string[] =>
+  left.filter((path) => !LOCK_FILES.has(basename(path)) && basename(path) !== EXACT_APPLE_LOCKS);
+
+// @ref LLP 0005#one-remover -- never through a link, never onto another device, never a lock file or a keypair
 /**
- * Removes the stale profiles of `target`, then, while `needBytes` are not covered, the `incremental` directory of each
- * remaining profile, largest first. A directory is renamed into `target/.stim-trimmed` after its lock check, so a build
- * that starts meanwhile makes a fresh one, and the lock is read again at the new path: a build that took it in between
- * gets the directory back. Nothing slow runs between the check and the rename. A path a process executes from or holds
- * open, and a profile whose lock file (`.cargo-lock`, `.cargo-build-lock` or `.cargo-artifact-lock`) a build holds, stays.
+ * Removes `path` in place, deepest first: a symbolic link is unlinked and never followed, a directory on a device other
+ * than `dev` and Exact's `.apple-cargo-locks` are not entered, a lock file Cargo or Exact takes and a `*-keypair.json`
+ * (any case) are never unlinked, and a directory goes once it is empty. A `.fingerprint` goes before its siblings, so a
+ * build that starts while a profile is half removed rebuilds it. A path already gone counts as removed. Returns the paths
+ * it left because of those rules; a directory a build filled again meanwhile stays too.
  */
-export async function trimCargoTarget(registeredTarget: string, options: CargoTrimOptions): Promise<CargoTrimResult> {
-  const result: CargoTrimResult = { bytes: 0, removed: [], kept: [] };
-  const claimed = await withTrimClaim(registeredTarget, (target) => trimClaimed(target, options));
-  const done = 'kept' in claimed ? { ...result, kept: [claimed.kept] } : claimed.value;
-  return claimed.released ? { ...done, reserveReleased: true } : done;
+async function removeInPlace(path: string, dev: number, signal?: AbortSignal): Promise<string[]> {
+  signal?.throwIfAborted();
+  const stat = await lstat(path).catch((error: unknown) => {
+    if (errorCode(error) === 'ENOENT') return null;
+    throw error;
+  });
+  if (!stat) return [];
+  const name = basename(path);
+  if (!stat.isDirectory()) {
+    if (kept(name)) return [path];
+    await unlink(path).catch((error: unknown) => {
+      if (errorCode(error) !== 'ENOENT') throw error;
+    });
+    return [];
+  }
+  if (stat.dev !== dev || name === EXACT_APPLE_LOCKS) return [path];
+  const names = await readdir(path).catch((error: unknown) => {
+    if (errorCode(error) === 'ENOENT') return null;
+    throw error;
+  });
+  if (!names) return [];
+  const left: string[] = [];
+  for (const child of names.toSorted((a, b) => Number(b === '.fingerprint') - Number(a === '.fingerprint')))
+    left.push(...(await removeInPlace(join(path, child), dev, signal)));
+  if (left.length) return left;
+  await rmdir(path).catch((error: unknown) => {
+    const code = errorCode(error);
+    if (code !== 'ENOENT' && code !== 'ENOTEMPTY' && code !== 'EEXIST') throw error;
+  });
+  return [];
 }
 
-async function withTrimClaim<T>(
+/** The lock files of `profile` that exist, or null when it has no `.cargo-lock`, which keeps it. */
+function profileLocks(profile: string): string[] | null {
+  const locks = PROFILE_LOCKS.map((name) => join(profile, name)).filter(
+    (path) => lstatSync(path, { throwIfNoEntry: false }) !== undefined,
+  );
+  return locks.some((path) => basename(path) === '.cargo-lock') ? locks : null;
+}
+
+/** The Cargo lock files of `target` that exist: in each top-level entry and in each directory directly in one. */
+function targetLocks(target: string): string[] {
+  const locks: string[] = [];
+  for (const top of subdirectories(target) ?? []) {
+    const dir = join(target, top.name);
+    for (const at of [dir, ...(subdirectories(dir) ?? []).map((inner) => join(dir, inner.name))])
+      for (const name of PROFILE_LOCKS)
+        if (lstatSync(join(at, name), { throwIfNoEntry: false })?.isFile()) locks.push(join(at, name));
+  }
+  return locks;
+}
+
+// @ref LLP 0005#leftovers-of-the-staged-trim -- a person decides what happens to them
+/**
+ * Why `target` stays out of every trim and delete: it holds a leftover of an earlier engine's staging (`.stim-trimmed` or
+ * `.stim-not-restored-*`), which Stim no longer deletes. Null when it holds none or cannot be listed.
+ */
+export function leftoverReason(target: string): string | null {
+  const leftover = entriesOf(target)?.find((entry) => entry.name === ASIDE || entry.name.startsWith(NOT_RESTORED));
+  return leftover
+    ? `${join(target, leftover.name)} is a leftover of an earlier Stim's trim; delete it, or move what you need out of it, and the next pass trims this target/ again`
+    : null;
+}
+
+/** Why `target` stays whole: a leftover (`leftoverReason`), another filesystem mounted at or under it on Linux, or it cannot be listed. */
+function wholeTargetReason(target: string, mountInfo: (() => string) | null): string | null {
+  if (!entriesOf(target)) return `${target} cannot be listed`;
+  return leftoverReason(target) ?? mountedUnder(target, mountInfo);
+}
+
+interface CargoTrimOptions {
+  needBytes: number;
+  incremental?: 'toNeed' | 'all';
+  /**
+   * Keep the whole target while a process uses any path in it or a build holds any of its Cargo locks, and hold every
+   * lock for the whole trim; the size cap at normal pressure. Without it a busy path or profile keeps only itself.
+   */
+  idleOnly?: boolean;
+  /** A profile no build wrote for this long goes whole; default a day. */
+  profileIdleMs?: number;
+  lowPriority?: boolean;
+  now?: number;
+  signal?: AbortSignal;
+  /** Stops the trim between steps that completed; a step in flight finishes. */
+  stop?: AbortSignal;
+  /** Whether to walk what is removed to report its bytes; false reports 0. Default true. */
+  measure?: boolean;
+  mountInfo?: (() => string) | null;
+}
+
+// @ref LLP 0005#the-size-cap -- deleted in place under Cargo's own locks
+/**
+ * Removes the stale profiles and target triples of `target`, then, while `needBytes` are not covered, the `incremental`
+ * directory of each remaining profile, largest first, in place under the profile's Cargo locks, taken exclusively and
+ * without waiting. A path a process executes from or holds open stays, and so does a profile whose lock a build holds or
+ * that has no `.cargo-lock`; with `idleOnly` either keeps the whole target. Sizes are measured before the locks.
+ */
+export async function trimCargoTarget(
   registeredTarget: string,
-  run: (target: string) => Promise<T>,
-): Promise<({ value: T } | { kept: string }) & { released: boolean }> {
-  let released = false;
+  {
+    needBytes,
+    incremental = 'toNeed',
+    idleOnly = false,
+    profileIdleMs = CARGO_PROFILE_IDLE_MS,
+    lowPriority = false,
+    now = Date.now(),
+    signal,
+    stop,
+    measure = true,
+    mountInfo = LINUX_MOUNT_INFO,
+  }: CargoTrimOptions,
+): Promise<CargoTrimResult> {
+  const result: CargoTrimResult = { bytes: 0, removed: [], kept: [] };
+  const keep = (why: string): CargoTrimResult => ({ ...result, kept: [...result.kept, why] });
   let target: string;
   try {
     target = realpathSync.native(registeredTarget);
   } catch {
-    return { kept: `${registeredTarget} cannot be resolved to its on-disk path`, released };
+    return keep(`${registeredTarget} cannot be resolved to its on-disk path`);
   }
-  // @ref LLP 0005#never-delete-what-a-build-took-back -- one trim of a target at a time across processes
-  let claim: ClaimHandle | null | undefined;
-  try {
-    // @ref LLP 0005#a-full-disk-releases-the-reserve -- the claim is a write too
-    const attempt = await retryWithReserve(
-      async () =>
-        tryAcquireClaim({
-          root: cargoTargetTrimClaims(target),
-          mode: 'exclusive',
-          label: 'Cargo target trim',
-          details: { target },
-        }),
-      () => {
-        released = true;
-      },
-    );
-    if (attempt.pending) releaseClaim(attempt.pending);
-    claim = attempt.acquired;
-    if (!claim) {
-      const holder = attempt.held;
-      return {
-        kept: `another trim of it holds ${holder?.path ?? 'its claim'}${holder ? ` (pid ${holder.owner.pid})` : ''}`,
-        released,
-      };
+  const whole = wholeTargetReason(target, mountInfo);
+  if (whole) return keep(whole);
+  if (await releaseReserveWhenFull(target)) result.reserveReleased = true;
+  const { dev } = await lstat(target);
+  const first = await readTargetUse(target, signal, lowPriority);
+  if ('kept' in first) return keep(first.kept);
+  const { used } = first;
+  if (idleOnly && used.length) return keep(`a process uses ${used[0]}, and the cap trims an idle target/ only`);
+  const stale = staleCargoTargetPaths(target, now, profileIdleMs);
+  if ('refusal' in stale) return keep(stale.refusal);
+  const stopped = (): boolean => {
+    if (stop?.aborted !== true) return false;
+    if (!result.kept.includes(DEADLINE_KEPT)) result.kept.push(DEADLINE_KEPT);
+    return true;
+  };
+  const profilesAt = (dir: string): string[] =>
+    fingerprintDir(dir) ? [dir] : (subdirectories(dir) ?? []).map((entry) => join(dir, entry.name));
+  const step = async (dir: string, label: string, profiles: readonly string[], bytes: number): Promise<void> => {
+    signal?.throwIfAborted();
+    if (inUse(used, dir)) {
+      result.kept.push(`${label}: a process uses it`);
+      return;
     }
-  } catch (error) {
-    return { kept: `its trim claim cannot be taken: ${error instanceof Error ? error.message : error}`, released };
+    const locks: string[] = [];
+    if (!idleOnly)
+      for (const profile of profiles) {
+        const found = profileLocks(profile);
+        if (!found) {
+          result.kept.push(`${label}: ${basename(profile)} has no .cargo-lock to take`);
+          return;
+        }
+        locks.push(...found);
+      }
+    const done = await withCargoLocks(locks, () => removeInPlace(dir, dev, signal), signal);
+    if ('kept' in done) {
+      result.kept.push(`${label}: ${done.kept}`);
+      return;
+    }
+    result.bytes += bytes;
+    result.removed.push(label);
+    const left = reported(done.value);
+    if (left.length) result.kept.push(`${label}: left ${left.join(', ')}`);
+  };
+  const trim = async (): Promise<void> => {
+    for (const path of stale.paths) {
+      if (stopped()) return;
+      const dir = join(target, path);
+      await step(dir, path, profilesAt(dir), measure ? await sizeOf(dir, signal, lowPriority) : 0);
+    }
+    if (incremental === 'toNeed' && result.bytes >= needBytes) return;
+    const gone = stale.paths.map((path) => join(target, path));
+    const candidates: { path: string; bytes: number }[] = [];
+    for (const profile of cargoProfileDirs(target) ?? []) {
+      if (gone.some((path) => profile === path || profile.startsWith(`${path}/`))) continue;
+      const dir = join(profile, 'incremental');
+      if (!lstatSync(dir, { throwIfNoEntry: false })?.isDirectory()) continue;
+      if (incremental === 'toNeed' && inUse(used, profile)) continue;
+      candidates.push({
+        path: dir,
+        bytes: measure || incremental === 'toNeed' ? await sizeOf(dir, signal, lowPriority) : 0,
+      });
+    }
+    const chosen =
+      incremental === 'all'
+        ? candidates.map(({ path }) => path)
+        : selectIncremental(candidates, needBytes - result.bytes);
+    for (const path of chosen) {
+      if (stopped()) return;
+      const bytes = candidates.find((candidate) => candidate.path === path)?.bytes ?? 0;
+      await step(path, path.slice(target.length + 1), [dirname(path)], bytes);
+    }
+  };
+  if (!idleOnly) {
+    await trim();
+    return result;
   }
-  try {
-    return { value: await run(target), released };
-  } finally {
-    releaseClaim(claim);
-  }
+  const locks = targetLocks(target);
+  const held = await withCargoLocks(locks, trim, signal);
+  return 'kept' in held ? keep(`${held.kept}, and the cap trims an idle target/ only`) : result;
 }
 
 /**
@@ -511,8 +596,8 @@ function recentWrite(paths: readonly string[], now: number, idleMs: number): str
 }
 
 /**
- * Why the top-level entry `name` of a target, now at `path`, shows use within `idleMs`: its own modification time, each
- * of its direct children's, a profile in it or directly inside it with its `.fingerprint`, `deps`, `build` and
+ * Why the top-level entry `name` of a target, at `path`, shows use within `idleMs`: its own modification time, each of
+ * its direct children's, a profile in it or directly inside it with its `.fingerprint`, `deps`, `build` and
  * `incremental`, or, for Exact's ledger, a unit stamp that recent.
  */
 function recentEntryUse(path: string, name: string, now: number, idleMs: number): string | null {
@@ -539,27 +624,9 @@ function recentEntryUse(path: string, name: string, now: number, idleMs: number)
   return null;
 }
 
-/**
- * Deletes `target` under its trim claim, every top-level entry but a Solana keypair folder and a symbolic link
- * (`targetEntries`), once it is still a Cargo `target/` Stim recognises, holds no copy a trim could not put back, shows
- * no use within `idleMs` (`recentTargetUse`), has no other filesystem mounted inside, no process uses any path in it
- * and no build holds a Cargo or Exact lock file in it. Each entry is renamed into `target/.stim-trimmed`, its locks are
- * read again at the new path, and once all are moved the processes are read again: a lock taken or any path in the
- * target used meanwhile puts every entry back. The moved entries are then deleted without crossing into another
- * filesystem, and the `target/` goes too when nothing is left in it.
- */
-export async function deleteCargoTarget(registeredTarget: string, options: DeleteOptions): Promise<CargoTrimResult> {
-  const claimed = await withTrimClaim(registeredTarget, async (target): Promise<CargoTrimResult> =>
-    (await cargoTargetDirsAsync(dirname(registeredTarget), { staged: true })).includes(registeredTarget)
-      ? deleteClaimed(target, options)
-      : { bytes: 0, removed: [], kept: ['it is no longer a Cargo target/ Stim recognises'] },
-  );
-  const done = 'kept' in claimed ? { bytes: 0, removed: [], kept: [claimed.kept] } : claimed.value;
-  return claimed.released ? { ...done, reserveReleased: true } : done;
-}
-
 interface DeleteOptions {
-  idleMs: number;
+  /** How long the target must show no use (`recentTargetUse`); left out by a caller that already found it unused. */
+  idleMs?: number;
   signal?: AbortSignal;
   /**
    * Reads Linux's `/proc/self/mountinfo`, where a bind mount keeps the device number of the volume it exposes, so the
@@ -588,194 +655,64 @@ function mountedUnder(target: string, mountInfo: (() => string) | null): string 
   return null;
 }
 
-async function deleteClaimed(
-  target: string,
+// @ref LLP 0005#the-dormant-reduction-deletes-an-idle-target-whole -- in place under every profile's Cargo locks
+/**
+ * Deletes everything in `target` the remover may delete, every top-level entry but a symbolic link and a `deploy` that
+ * is or holds one (`targetEntries`), in place under all its Cargo locks, once it is still a Cargo `target/` Stim
+ * recognises, shows no use within `idleMs` (`recentTargetUse`), has no other filesystem mounted inside or a leftover of
+ * an earlier engine's staging, no process uses any path in it and no build holds an Exact lock file in it. Lock files
+ * and keypairs stay, and so does the `target/` while anything is left in it.
+ */
+export async function deleteCargoTarget(
+  registeredTarget: string,
   { idleMs, signal, mountInfo = LINUX_MOUNT_INFO }: DeleteOptions,
 ): Promise<CargoTrimResult> {
   const result: CargoTrimResult = { bytes: 0, removed: [], kept: [] };
   const keep = (why: string): CargoTrimResult => ({ ...result, kept: [...result.kept, why] });
-  // @ref LLP 0005#the-dormant-reduction-deletes-an-idle-target-whole -- never into another filesystem or a bind mount
+  if (!(await cargoTargetDirsAsync(dirname(registeredTarget))).includes(registeredTarget))
+    return keep('it is no longer a Cargo target/ Stim recognises');
+  let target: string;
+  try {
+    target = realpathSync.native(registeredTarget);
+  } catch {
+    return keep(`${registeredTarget} cannot be resolved to its on-disk path`);
+  }
   const blocked =
-    recoveryReason(target) ?? recentTargetUse(target, Date.now(), idleMs) ?? mountedUnder(target, mountInfo);
+    wholeTargetReason(target, mountInfo) ?? (idleMs === undefined ? null : recentTargetUse(target, Date.now(), idleMs));
   if (blocked) return keep(blocked);
-  const { dev, ino, atime, mtime } = await lstat(target);
-  const sameTarget = async (): Promise<boolean> => {
-    const now = await lstat(target).catch(() => null);
-    return now?.isDirectory() === true && now.dev === dev && now.ino === ino;
-  };
-  const replaced = `${target} was replaced during the delete`;
-  const keepTimes = () => utimes(target, atime, mtime).catch(() => {});
-  const aside = join(target, ASIDE);
+  if (await releaseReserveWhenFull(target)) result.reserveReleased = true;
+  const { dev } = await lstat(target);
   const entries = targetEntries(target);
   if (!entries) return keep(`${target} cannot be listed`);
-  // @ref LLP 0005#the-dormant-reduction-deletes-an-idle-target-whole -- everything goes but a Solana keypair folder
-  const committed = lstatSync(aside, { throwIfNoEntry: false })?.isDirectory() === true;
-  if (!entries.output.length && !committed) return result;
+  const names = entries.output;
+  if (!names.length) return result;
   const walked = await walkEntries(
-    [...entries.output.map((name) => join(target, name)), ...(committed ? [aside] : [])],
+    names.map((name) => join(target, name)),
     dev,
   );
   if (walked.mount) return keep(`${walked.mount} is another filesystem`);
-  if (walked.keypairs.has(aside)) return keep(`${aside} holds a Solana keypair`);
-  const fresh = writtenWithin(walked.newest, Date.now(), idleMs, aside);
+  const fresh = idleMs === undefined ? null : writtenWithin(walked.newest, Date.now(), idleMs);
   if (fresh) return keep(`${fresh} holds a file written in that time`);
-  const keyed = entries.output.filter((name) => walked.keypairs.has(join(target, name)));
-  const names = entries.output.filter((name) => !keyed.includes(name));
   const first = await readTargetUse(target, signal);
   if ('kept' in first) return keep(first.kept);
   if (first.used.length) return keep(`a process uses ${first.used[0]}`);
-  for (const name of names) {
-    signal?.throwIfAborted();
-    const dir = join(target, name);
-    const held = await heldLock(dir, name, signal);
-    if (held) return keep(`a build holds ${held}`);
-  }
   const exactHeld = await heldExactLock(target, signal);
   if (exactHeld) return keep(`a build holds ${exactHeld}`);
-  if (committed) {
-    const leftover = await removeOnDevice(aside, dev);
-    if (leftover.length) return keep(`${leftover[0]} is another filesystem`);
-    result.removed.push(ASIDE);
-  }
-  if (!names.length) {
-    await rmdir(target).catch(keepTimes);
-    return result;
-  }
-  type Entry = { dir: string; there: string; name: string };
-  const moved: Entry[] = [];
-  const unmoved = [...entries.kept, ...keyed];
-  const marker = join(aside, STRANDED);
-  let strandThrew = false;
-  const putBackAll = async (why: string, written = false): Promise<CargoTrimResult> => {
-    const stranded: string[] = [];
-    let marked = false;
-    for (let entry = moved.pop(); entry !== undefined; entry = moved.pop()) {
-      const back = await restoreOrStrand(target, entry.there, entry.dir, moved.length, released).catch(
-        (error: unknown) => {
-          strandThrew = true;
-          throw error;
-        },
-      );
-      marked ||= back.marked;
-      if (back.home !== entry.dir) stranded.push(back.home);
-    }
-    const left = stranded.length
-      ? `; ${stranded.join(', ')} could not be put back and stay for a person to merge or delete`
-      : '';
-    if (!marked && !strandThrew) {
-      await rm(marker, { force: true });
-      await rmdir(aside).catch(() => {});
-      if (!written) await keepTimes();
-    }
-    return { ...result, bytes: 0, kept: [...result.kept, `${why}${left}`] };
-  };
-  const released = (): void => {
-    result.reserveReleased = true;
-  };
-  try {
-    // @ref LLP 0005#a-full-disk-releases-the-reserve -- staging retries once after the reserve is released
-    await retryWithReserve(async () => {
-      if (!(await sameTarget())) throw new KeptAfterRelease(replaced);
-      await mkdir(aside);
-    }, released);
-  } catch (error) {
-    if (error instanceof KeptAfterRelease) return keep(error.message);
-    return keep(`${aside} cannot be made: ${error instanceof Error ? error.message : error}`);
-  }
-  // @ref LLP 0005#never-delete-what-a-build-took-back -- staged entries carry the NOT-RESTORED marker until the checks pass
-  try {
-    await retryWithReserve(async () => {
-      if (!(await sameTarget())) throw new KeptAfterRelease(replaced);
-      const file = await open(marker, 'wx');
-      let ours: { dev: number; ino: number } | undefined;
-      let failure: unknown;
-      try {
-        ours = await file.stat();
-        await file.writeFile(
-          `${JSON.stringify(Object.fromEntries(names.map((name, n) => [String(n), name])), null, 2)}\n`,
-        );
-      } catch (error) {
-        failure = error;
-      } finally {
-        await file.close().catch((error: unknown) => {
-          failure ??= error;
-        });
-      }
-      if (failure === undefined) return;
-      const now = ours && (await lstat(marker).catch(() => null));
-      if (ours && now?.dev === ours.dev && now.ino === ours.ino) await unlink(marker).catch(() => {});
-      throw failure;
-    }, released);
-  } catch (error) {
-    await rmdir(aside).catch(() => {});
-    if (error instanceof KeptAfterRelease) return keep(error.message);
-    if (errorCode(error) === 'EEXIST') return keep(`${marker} already exists, so the target stays`);
-    if (!diskFull(error)) throw error;
-    return keep(`${marker} cannot be written: ${error instanceof Error ? error.message : error}`);
-  }
-  try {
-    for (const [n, name] of names.entries()) {
-      signal?.throwIfAborted();
-      const entry = { dir: join(target, name), there: join(aside, String(n)), name };
-      // @ref LLP 0005#the-dormant-reduction-deletes-an-idle-target-whole -- no put-back through a swapped path
-      if (!(await sameTarget())) return { ...result, bytes: 0, kept: [...result.kept, `${replaced}; ${STAGED_LEFT}`] };
-      try {
-        await rename(entry.dir, entry.there);
-      } catch (error) {
-        result.kept.push(`${name}: it could not be moved aside: ${error instanceof Error ? error.message : error}`);
-        unmoved.push(name);
-        continue;
-      }
-      moved.push(entry);
-      const took = await heldLock(entry.there, name);
-      if (took) return await putBackAll(`a build took ${took} during the move`);
-    }
-    for (const entry of moved) result.bytes += await sizeOf(entry.there, signal);
-    const exactTook = await heldExactLock(target);
-    if (exactTook) return await putBackAll(`a build took ${exactTook} during the move`);
-    const after = moved.length ? await readTargetUse(target, signal) : { used: [] };
-    if ('kept' in after) return await putBackAll(after.kept);
-    if (after.used.length) return await putBackAll(`a process took ${after.used[0]} during the move`);
-    const now = Date.now();
-    const staged = await walkEntries(
-      moved.map(({ there }) => there),
-      dev,
-    );
-    const stagedKeypairs = staged.keypairs;
-    for (const entry of moved) {
-      if (stagedKeypairs.has(entry.there) || (isKeypairDir(entry.name) && holdsKeypair(entry.there)))
-        return await putBackAll(`${entry.dir} holds a Solana keypair now`, true);
-      const used = recentEntryUse(entry.there, entry.name, now, idleMs);
-      if (used) return await putBackAll(`${entry.dir} was used during the move: ${used}`, true);
-    }
-    const stagedFresh = writtenWithin(staged.newest, now, idleMs);
-    if (stagedFresh) return await putBackAll(`${stagedFresh} holds a file written during the move`, true);
-    const listed = entriesOf(target);
-    if (!listed) return await putBackAll(`${target} cannot be listed`);
-    const appeared = listed.find(({ name }) => !name.startsWith(OWN_PREFIX) && !unmoved.includes(name));
-    if (appeared) return await putBackAll(`${join(target, appeared.name)} appeared during the move`, true);
-    for (const name of unmoved) {
-      const used = recentEntryUse(join(target, name), name, now, idleMs);
-      if (used) return await putBackAll(`${join(target, name)} was used during the move: ${used}`, true);
-    }
-    const mounted = mountedUnder(target, mountInfo);
-    if (mounted) return await putBackAll(mounted);
-    if (!(await sameTarget())) return { ...result, bytes: 0, kept: [...result.kept, `${replaced}; ${STAGED_LEFT}`] };
-    await rm(marker);
-  } catch (error) {
-    await putBackAll('the delete was interrupted');
-    throw error;
-  }
-  result.removed.push(...moved.map(({ name }) => name));
-  try {
-    const stuck = await removeOnDevice(aside, dev);
-    if (stuck.length) {
-      await writeFile(join(aside, STRANDED), '').catch(() => {});
-      result.deleteError = `${stuck.join(', ')} is another filesystem; a person must unmount it and delete ${aside}`;
-    } else await rmdir(target).catch(() => {});
-  } finally {
-    if (existsSync(target)) await keepTimes();
-  }
+  const done = await withCargoLocks(
+    targetLocks(target),
+    async () => {
+      const left: string[] = [];
+      for (const name of names) left.push(...(await removeInPlace(join(target, name), dev, signal)));
+      return left;
+    },
+    signal,
+  );
+  if ('kept' in done) return keep(done.kept);
+  result.removed.push(...names);
+  result.bytes = names.reduce((sum, name) => sum + (walked.bytes.get(join(target, name)) ?? 0), 0);
+  const left = reported(done.value);
+  if (left.length) result.kept.push(`left ${left.join(', ')}`);
+  await rmdir(target).catch(() => {});
   return result;
 }
 
@@ -793,19 +730,6 @@ function exactLockFiles(path: string, name: string): string[] {
   return files;
 }
 
-/**
- * The lock a build holds in the top-level entry `name` at `path`: a Cargo lock in it or a directory directly in it, or
- * one of Exact's lock files.
- */
-async function heldLock(path: string, name: string, signal?: AbortSignal): Promise<string | null> {
-  for (const dir of [path, ...(await childProfiles(path))]) {
-    const held = await lockOutcome(dir, signal);
-    if (lockHeld(held)) return join(dir, held.file ?? '.cargo-lock');
-  }
-  for (const file of exactLockFiles(path, name)) if (await fileHeld(file, signal)) return file;
-  return null;
-}
-
 /** The lock file of Exact's at the top of `target` a process holds, which keeps the whole target. */
 async function heldExactLock(target: string, signal?: AbortSignal): Promise<string | null> {
   for (const name of [`${EXACT_LEDGER}.lock`, EXACT_APPLE_LOCKS])
@@ -813,478 +737,41 @@ async function heldExactLock(target: string, signal?: AbortSignal): Promise<stri
   return null;
 }
 
+/** Whether a process holds `file` open, from `lsof -t`: output names a holder, and anything but a clean no-match holds. */
 async function fileHeld(file: string, signal?: AbortSignal): Promise<boolean> {
   try {
-    return lockHeld({
-      stdout: await getExecutor().runFileAsync('lsof', ['-t', '--', file], { timeoutMs: 5000, signal }),
-    });
+    return (await getExecutor().runFileAsync('lsof', ['-t', '--', file], { timeoutMs: 5000, signal })).trim() !== '';
   } catch (error) {
-    return lockHeld(isRecord(error) ? { status: error.status, stdout: error.stdout } : { status: null, stdout: null });
+    signal?.throwIfAborted();
+    return !(isRecord(error) && error.status === 1 && (error.stdout === '' || error.stdout === undefined));
   }
 }
 
 /**
- * One walk of `paths`, never through a symbolic link: the first directory on a device other than `dev` (`mount`), each
- * of `paths` that holds a `*-keypair.json` at any depth, in any letter case (`keypairs`), and the newest modification
- * time of anything in each of `paths` (`newest`).
+ * One walk of `paths`, never through a symbolic link: the first directory on a device other than `dev` (`mount`), the
+ * newest modification time of anything in each of `paths` (`newest`), and the bytes each holds (`bytes`).
  */
 async function walkEntries(
   paths: readonly string[],
   dev: number,
-): Promise<{ mount: string | null; keypairs: Set<string>; newest: Map<string, number> }> {
-  const keypairs = new Set<string>();
+): Promise<{ mount: string | null; newest: Map<string, number>; bytes: Map<string, number> }> {
   const newest = new Map<string, number>();
+  const bytes = new Map<string, number>();
   const queue = paths.map((path) => ({ path, top: path }));
   for (let item = queue.pop(); item !== undefined; item = queue.pop()) {
     const { path, top } = item;
     const stat = await lstat(path);
     newest.set(top, Math.max(newest.get(top) ?? 0, stat.mtimeMs));
-    if (!stat.isDirectory()) {
-      if (isKeypairName(basename(path))) keypairs.add(top);
-      continue;
-    }
-    if (stat.dev !== dev) return { mount: path, keypairs, newest };
+    bytes.set(top, (bytes.get(top) ?? 0) + stat.blocks * 512);
+    if (!stat.isDirectory()) continue;
+    if (stat.dev !== dev) return { mount: path, newest, bytes };
     for (const entry of await readdir(path, { withFileTypes: true })) queue.push({ path: join(path, entry.name), top });
   }
-  return { mount: null, keypairs, newest };
+  return { mount: null, newest, bytes };
 }
 
-/** The first of `newest`'s entries but `skip` whose newest time is within `idleMs` of `now`. */
-function writtenWithin(newest: Map<string, number>, now: number, idleMs: number, skip?: string): string | null {
-  for (const [path, at] of newest) if (path !== skip && now - at <= idleMs) return path;
+/** The first of `newest`'s entries whose newest time is within `idleMs` of `now`. */
+function writtenWithin(newest: Map<string, number>, now: number, idleMs: number): string | null {
+  for (const [path, at] of newest) if (now - at <= idleMs) return path;
   return null;
-}
-
-/** Deletes `path` without entering a directory on a device other than `dev`; returns those it left. */
-async function removeOnDevice(path: string, dev: number): Promise<string[]> {
-  let stat;
-  try {
-    stat = await lstat(path);
-  } catch (error) {
-    if (errorCode(error) === 'ENOENT') return [];
-    throw error;
-  }
-  if (!stat.isDirectory()) {
-    await unlink(path);
-    return [];
-  }
-  if (stat.dev !== dev) return [path];
-  const left: string[] = [];
-  for (const name of await readdir(path)) left.push(...(await removeOnDevice(join(path, name), dev)));
-  if (!left.length) await rmdir(path);
-  return left;
-}
-
-/**
- * Puts `there` back at `dir`, or keeps it for a person: renamed to `target/.stim-not-restored-*`, or else left where it
- * is with its `.stim-trimmed` marked NOT-RESTORED (`marked`).
- */
-async function restoreOrStrand(
-  target: string,
-  there: string,
-  dir: string,
-  n: number,
-  released: () => void,
-): Promise<{ home: string; marked: boolean }> {
-  try {
-    const staged = lstatSync(there);
-    if (staged.isFile()) {
-      await link(there, dir);
-      await unlink(there);
-      return { home: dir, marked: false };
-    }
-    // Node has no rename that refuses to replace, and rename(2) replaces an empty directory, so a directory recreated
-    // empty between this check and the rename is still replaced.
-    if (staged.isDirectory() && !lstatSync(dir, { throwIfNoEntry: false })) {
-      await rename(there, dir);
-      return { home: dir, marked: false };
-    }
-  } catch {}
-  const stranded = join(target, `${NOT_RESTORED}${Date.now()}-${n}`);
-  try {
-    await rename(there, stranded);
-    return { home: stranded, marked: false };
-  } catch {}
-  const aside = join(target, ASIDE);
-  try {
-    // @ref LLP 0005#a-full-disk-releases-the-reserve -- the marker of a failed put-back retries too
-    await retryWithReserve(() => writeFile(join(aside, STRANDED), '', { flag: 'a' }), released);
-  } catch (error) {
-    throw new Error(
-      `${there} could not be put back and ${aside} could not be marked for a person: ${error instanceof Error ? error.message : error}`,
-      { cause: error },
-    );
-  }
-  return { home: there, marked: true };
-}
-
-interface CargoTrimOptions {
-  needBytes: number;
-  incremental?: 'toNeed' | 'all';
-  units?: 'none' | 'toNeed' | 'all';
-  /** A profile no build wrote for this long goes whole; default a day. */
-  profileIdleMs?: number;
-  lowPriority?: boolean;
-  now?: number;
-  signal?: AbortSignal;
-  /** Stops the trim between units that completed; a unit in flight finishes. */
-  stop?: AbortSignal;
-  /** Whether to walk what was removed to report its bytes; false reports 0 and removes at once. Default true. */
-  measure?: boolean;
-}
-
-/** Why no trim of `target` runs until a person acts: its `.stim-trimmed` holds a directory that could not be put back. */
-function strandedReason(target: string): string | null {
-  const aside = join(target, ASIDE);
-  return existsSync(join(aside, STRANDED))
-    ? `${aside} holds a directory that could not be put back; a person must merge or delete it`
-    : null;
-}
-
-/**
- * Deletes the entries `names` a trim staged in `aside`, then `aside` itself, once it is still the real directory `made`
- * identifies. Returns why `aside` stays when anything else appeared in it.
- */
-async function deleteStaged(
-  aside: string,
-  made: { dev: number; ino: number },
-  names: readonly string[],
-): Promise<string | null> {
-  const now = await lstat(aside).catch((error: unknown) => {
-    if (errorCode(error) !== 'ENOENT') throw error;
-    return null;
-  });
-  if (!now) return null;
-  if (!now.isDirectory() || now.dev !== made.dev || now.ino !== made.ino)
-    throw new Error(`${aside} is no longer the directory the trim staged into`);
-  for (const name of names) await rm(join(aside, name), { recursive: true, force: true });
-  try {
-    await rmdir(aside);
-  } catch (error) {
-    if (errorCode(error) !== 'ENOTEMPTY' && errorCode(error) !== 'EEXIST') throw error;
-    return `${aside} holds ${(await readdir(aside)).join(', ')}, which this trim did not stage, so it stays`;
-  }
-  return null;
-}
-
-/** Why `target` must not be deleted whole: it holds a directory a trim could not put back. */
-function recoveryReason(target: string): string | null {
-  const stranded = strandedReason(target);
-  if (stranded) return stranded;
-  const entries = entriesOf(target);
-  if (!entries) return `${target} cannot be listed`;
-  const kept = entries.find((entry) => entry.name.startsWith(NOT_RESTORED));
-  return kept
-    ? `${join(target, kept.name)} holds a directory a trim could not put back; a person must merge or delete it`
-    : null;
-}
-
-async function trimClaimed(
-  target: string,
-  {
-    needBytes,
-    incremental = 'toNeed',
-    units = 'none',
-    profileIdleMs = CARGO_PROFILE_IDLE_MS,
-    lowPriority = false,
-    now = Date.now(),
-    signal,
-    stop,
-    measure = true,
-  }: CargoTrimOptions,
-): Promise<CargoTrimResult> {
-  const result: CargoTrimResult = { bytes: 0, removed: [], kept: [] };
-  const stopped = (): boolean => stop?.aborted === true;
-  const measured = (path: string): Promise<number> =>
-    measure ? sizeOf(path, signal, lowPriority) : Promise.resolve(0);
-  const aside = join(target, ASIDE);
-  let keepAside = false;
-  const blocked = strandedReason(target);
-  if (blocked) return { ...result, kept: [blocked] };
-  try {
-    await rm(aside, { recursive: true, force: true });
-  } catch (error) {
-    return {
-      ...result,
-      kept: [`a leftover ${aside} cannot be deleted: ${error instanceof Error ? error.message : error}`],
-    };
-  }
-  const first = await readTargetUse(target, signal, lowPriority);
-  if ('kept' in first) return { ...result, kept: [first.kept] };
-  let used: string[] = first.used;
-  const stale = staleCargoTargetPaths(target, now, profileIdleMs);
-  if ('refusal' in stale) return { ...result, kept: [stale.refusal] };
-  let latestStale: { paths: string[] } | { refusal: string } = stale;
-  let moved = 0;
-  let wholeKept = false;
-  const released = (): void => {
-    result.reserveReleased = true;
-  };
-  const keptAfterRelease = (label: string, error: KeptAfterRelease): false => {
-    wholeKept ||= error.whole;
-    result.kept.push(error.whole ? error.message : `${label}: ${error.message}`);
-    return false;
-  };
-  let made: { dev: number; ino: number } | null = null;
-  const stagedNames: string[] = [];
-  const stage = async (recheck: () => Promise<void>): Promise<boolean> => {
-    if (made) return true;
-    await retryWithReserve(() => mkdir(aside, { recursive: true }), recheck);
-    const dir = await lstat(aside);
-    if (!dir.isDirectory()) {
-      wholeKept = true;
-      result.kept.push(`${aside} is not a directory, so nothing was moved`);
-      return false;
-    }
-    made = { dev: dir.dev, ino: dir.ino };
-    return true;
-  };
-  const profilesAt = async (dir: string) => (fingerprintDir(dir) ? [dir] : await childProfiles(dir));
-  const move = async (
-    dir: string,
-    label: string,
-    bytes: number | null,
-    locks: (where: string) => Promise<string[]>,
-    stalePath = false,
-    busy = dir,
-  ): Promise<boolean> => {
-    signal?.throwIfAborted();
-    if (wholeKept) return false;
-    if (stopped()) {
-      if (!result.kept.includes(DEADLINE_KEPT)) result.kept.push(DEADLINE_KEPT);
-      return false;
-    }
-    const profiles = await locks(dir);
-    if (inUse(used, busy)) {
-      result.kept.push(`${label}: a process uses it`);
-      return false;
-    }
-    for (const profile of profiles) {
-      const held = await lockOutcome(profile, signal, lowPriority);
-      if (lockHeld(held)) {
-        result.kept.push(`${label}: a build holds its ${held.file ?? '.cargo-lock'}`);
-        return false;
-      }
-    }
-    const recheck = async (): Promise<void> => {
-      released();
-      const fresh = await readTargetUse(target, signal, lowPriority);
-      if ('kept' in fresh) throw new KeptAfterRelease(fresh.kept, true);
-      used = fresh.used;
-      if (stalePath) latestStale = staleCargoTargetPaths(target, now, profileIdleMs);
-      if ('refusal' in latestStale) throw new KeptAfterRelease(latestStale.refusal);
-      if (inUse(used, busy)) throw new KeptAfterRelease('a process uses it');
-      for (const profile of profiles) {
-        const held = await lockOutcome(profile, signal, lowPriority);
-        if (lockHeld(held)) throw new KeptAfterRelease(`a build holds its ${held.file ?? '.cargo-lock'}`);
-      }
-      if (stalePath && !latestStale.paths.includes(label))
-        throw new KeptAfterRelease('it is no longer stale as a whole');
-    };
-    try {
-      // @ref LLP 0005#a-full-disk-releases-the-reserve -- the checks run again before the retry
-      if (!(await stage(recheck))) return false;
-    } catch (error) {
-      if (!(error instanceof KeptAfterRelease)) throw error;
-      return keptAfterRelease(label, error);
-    }
-    const there = join(aside, String(moved));
-    stagedNames.push(String(moved++));
-    try {
-      await retryWithReserve(() => rename(dir, there), recheck);
-    } catch (error) {
-      if (error instanceof KeptAfterRelease) return keptAfterRelease(label, error);
-      result.kept.push(`${label}: it could not be moved aside: ${error instanceof Error ? error.message : error}`);
-      return false;
-    }
-    for (const profile of await locks(there)) {
-      const after = await lockOutcome(profile, undefined, lowPriority);
-      const lockName = after.file ?? '.cargo-lock';
-      if (!renameStands(after)) {
-        // @ref LLP 0005#never-delete-what-a-build-took-back -- a build locked it during the move
-        const back = await restoreOrStrand(target, there, dir, moved, released);
-        keepAside ||= back.marked;
-        result.kept.push(
-          back.home === dir
-            ? `${label}: a build took its ${lockName} during the move`
-            : `${label}: a build took its ${lockName} during the move and the directory could not be put back; it stays in ${back.home} for a person to merge or delete`,
-        );
-        return false;
-      }
-    }
-    result.bytes += bytes ?? (await measured(there));
-    result.removed.push(label);
-    return true;
-  };
-  const sweepUnits = async (profile: string, key: string): Promise<{ units: number; bytes: number; kept?: string }> => {
-    const none = { units: 0, bytes: 0 };
-    const ledgerPath = join(target, EXACT_LEDGER);
-    const snapshot = await lstat(ledgerPath, { bigint: true }).catch(() => null);
-    if (!snapshot?.isFile()) return none;
-    const ledger = readLedger(target);
-    if (!ledgerShowsUse(ledger, now) || 'refusal' in ledger) return none;
-    const all = readCargoUnits(profile, ledger.units, key, now);
-    if (!all) return { ...none, kept: 'its units cannot be listed' };
-    const candidates = [...cargoUnitPaths(profile, idleCargoUnits(all, now, CARGO_PROFILE_IDLE_MS))];
-    if (!candidates.length) return none;
-    const fresh = await readTargetUse(target, signal, lowPriority);
-    if ('kept' in fresh) return { ...none, kept: fresh.kept };
-    let swept = 0;
-    let bytes = 0;
-    let unitsUsed = fresh.used;
-    const recheck =
-      (paths: readonly string[] = [], batch?: string) =>
-      async (): Promise<void> => {
-        released();
-        const again = await readTargetUse(target, signal, lowPriority);
-        if ('kept' in again) throw new KeptAfterRelease(again.kept, true);
-        unitsUsed = again.used;
-        const busy = paths.find(
-          (path) =>
-            inUse(unitsUsed, join(profile, path)) || (batch !== undefined && inUse(unitsUsed, join(batch, path))),
-        );
-        if (busy) throw new KeptAfterRelease(`${busy}: a process uses it`);
-      };
-    // @ref LLP 0005#never-delete-what-a-build-took-back -- Exact serializes access-time resets and ledger replacement
-    const locks = [join(target, `${EXACT_LEDGER}.lock`), ...PROFILE_LOCKS.map((name) => join(profile, name))];
-    for (let at = 0; at < candidates.length; at += UNIT_CHUNK) {
-      signal?.throwIfAborted();
-      if (stopped()) return { units: swept, bytes, kept: DEADLINE_KEPT };
-      if (wholeKept) return { units: swept, bytes };
-      const chunk = candidates
-        .slice(at, at + UNIT_CHUNK)
-        .filter(([, paths]) => !paths.some((path) => inUse(unitsUsed, join(profile, path))));
-      if (!chunk.length) continue;
-      const batch = join(aside, `units-${moved}`);
-      stagedNames.push(`units-${moved++}`);
-      const movedBatch = await withCargoLocks(
-        locks,
-        async () => {
-          // Exact renames the ledger after resetting fingerprint access times under its ledger lock.
-          const current = lstatSync(ledgerPath, { bigint: true, throwIfNoEntry: false });
-          if (current?.ino !== snapshot.ino || current.dev !== snapshot.dev)
-            return { kept: 'Exact updated its ledger, so the sweep stopped' };
-          const idle = chunk.filter(([unit]) => !cargoUnitWasRead(join(profile, '.fingerprint', unit.id)));
-          const done: string[] = [];
-          const order = removalOrder(idle.flatMap(([, paths]) => paths));
-          for (const path of order) {
-            try {
-              // @ref LLP 0005#a-full-disk-releases-the-reserve -- the checks run again before the retry
-              const again = recheck(order, batch);
-              if (!(await stage(again))) return { units: 0 };
-              await retryWithReserve(() => mkdir(dirname(join(batch, path)), { recursive: true }), again);
-              await retryWithReserve(() => rename(join(profile, path), join(batch, path)), again);
-              done.push(path);
-            } catch (error) {
-              if (errorCode(error) === 'ENOENT') continue;
-              wholeKept ||= error instanceof KeptAfterRelease && error.whole;
-              const stranded = await putBack(profile, batch, done);
-              return {
-                kept:
-                  stranded ??
-                  (error instanceof KeptAfterRelease
-                    ? error.message
-                    : `a unit could not be moved aside: ${error instanceof Error ? error.message : error}`),
-              };
-            }
-          }
-          return { units: idle.length };
-        },
-        signal,
-      );
-      if ('kept' in movedBatch) return { units: swept, bytes, kept: movedBatch.kept };
-      if ('kept' in movedBatch.value) return { units: swept, bytes, kept: movedBatch.value.kept };
-      swept += movedBatch.value.units;
-      if (movedBatch.value.units) bytes += await measured(batch);
-    }
-    return { units: swept, bytes };
-  };
-  const putBack = async (profile: string, batch: string, done: readonly string[]): Promise<string | null> => {
-    for (const path of done.toReversed()) {
-      const home = join(profile, path);
-      const there = join(batch, path);
-      if (existsSync(home)) {
-        await rm(there, { recursive: true, force: true }).catch(() => {});
-        continue;
-      }
-      try {
-        await rename(there, home);
-      } catch {
-        keepAside = true;
-        await retryWithReserve(() => writeFile(join(aside, STRANDED), ''), released).catch(() => {});
-        return `${path} is missing and could not be put back; it stays in ${batch} for a person to merge or delete`;
-      }
-    }
-    return null;
-  };
-  for (const path of stale.paths) {
-    const latest: { paths: string[] } | { refusal: string } = latestStale;
-    if ('refusal' in latest) result.kept.push(`${path}: ${latest.refusal}`);
-    else if (!latest.paths.includes(path)) result.kept.push(`${path}: no longer stale as a whole after the rescan`);
-    else await move(join(target, path), path, null, profilesAt, true);
-  }
-  const removedStale = new Set(stale.paths.map((path) => join(target, path)));
-  const remaining = (cargoProfileDirs(target) ?? []).filter(
-    (profile) => ![...removedStale].some((gone) => profile === gone || profile.startsWith(`${gone}/`)),
-  );
-  const refreshed =
-    stopped() || wholeKept
-      ? null
-      : incremental === 'all' || result.bytes < needBytes
-        ? await readTargetUse(target, signal, lowPriority)
-        : { used };
-  if (stopped()) {
-    if (!result.kept.includes(DEADLINE_KEPT)) result.kept.push(DEADLINE_KEPT);
-  } else if (refreshed && 'kept' in refreshed) result.kept.push(refreshed.kept);
-  else if (refreshed) used = refreshed.used;
-  if (refreshed && 'used' in refreshed && (incremental === 'all' || result.bytes < needBytes)) {
-    const candidates: { path: string; bytes: number }[] = [];
-    for (const profile of remaining) {
-      const dir = join(profile, 'incremental');
-      if (incremental === 'toNeed' && inUse(used, profile)) continue;
-      if (existsSync(dir))
-        candidates.push({ path: dir, bytes: incremental === 'all' ? 0 : await sizeOf(dir, signal, lowPriority) });
-    }
-    const chosen =
-      incremental === 'all'
-        ? candidates.map(({ path }) => path)
-        : selectIncremental(candidates, needBytes - result.bytes);
-    for (const path of chosen) {
-      const bytes = candidates.find((candidate) => candidate.path === path)?.bytes ?? 0;
-      const parent = dirname(path);
-      await move(
-        path,
-        path.slice(target.length + 1),
-        bytes,
-        async () => [parent],
-        false,
-        incremental === 'toNeed' ? parent : path,
-      );
-    }
-  }
-  if (!wholeKept && (units === 'all' || (units === 'toNeed' && result.bytes < needBytes)))
-    for (const profile of remaining) {
-      signal?.throwIfAborted();
-      if (stopped() || wholeKept) break;
-      const key = profile.slice(target.length + 1);
-      const swept = await sweepUnits(profile, key);
-      if (swept.kept) result.kept.push(`${key}: ${swept.kept}`);
-      if (swept.units) {
-        result.bytes += swept.bytes;
-        result.removed.push(`${key}: ${swept.units} idle units`);
-      }
-    }
-  if (keepAside || !made) return result;
-  try {
-    const left = await deleteStaged(aside, made, stagedNames);
-    if (left) result.kept.push(left);
-  } catch (error) {
-    result.deleteError = `${aside} could not be deleted: ${error instanceof Error ? error.message : error}`;
-  }
-  return result;
-}
-
-async function childProfiles(dir: string): Promise<string[]> {
-  const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
-  return entries.filter((entry) => entry.isDirectory()).map((entry) => join(dir, entry.name));
 }

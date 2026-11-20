@@ -11,7 +11,12 @@ import { clearFreeClaimSet, describeClaimProblem, readClaimSet } from '../../own
 import { emptyWorkspaceDir, workspaceInUse, workspaceInUseAsync, withIdleWorkspace } from '../../workspace/in-use.ts';
 import { workspaceName } from '../../workspace/paths.ts';
 import { readWorkspaceState, workspaceLastUsed } from '../../workspace/workspace-state.ts';
-import { existingBuildDirsAsync, regenerableDirProblem } from '../../workspace/regenerable-dirs.ts';
+import {
+  existingBuildDirKindsAsync,
+  existingBuildDirsAsync,
+  regenerableDirProblem,
+} from '../../workspace/regenerable-dirs.ts';
+import { deleteCargoTarget } from '../../workspace/cargo-target.ts';
 import { workspaceBuildInProgress } from './idle.ts';
 import { mapLimited, sizeConcurrency } from './limited.ts';
 import { canonicalPath } from './paths.ts';
@@ -660,14 +665,18 @@ export async function clearWorkspaceOutputs(
           );
           if (again?.keptReason) return again.keptReason;
           const inTree: { path: string; problem: string | null }[] = [];
-          for (const path of lighten ? await existingBuildDirsAsync(root) : [])
+          const kinds = lighten ? await existingBuildDirKindsAsync(root) : { dirs: [], cargo: [] };
+          for (const path of kinds.dirs)
             inTree.push({ path, problem: await regenerableDirProblem(root, path, signal) });
           for (const path of [
             ...workspaceOutputPaths(entry.dir),
             ...inTree.filter((dir) => !dir.problem).map((dir) => dir.path),
           ]) {
             signal?.throwIfAborted();
-            await rm(path, { recursive: true, force: true });
+            if (kinds.cargo.includes(path)) {
+              const result = await deleteCargoTarget(path, { signal });
+              for (const why of result.kept) log(chalk.yellow(`Kept in ${path}: ${why}`));
+            } else await rm(path, { recursive: true, force: true });
           }
           signal?.throwIfAborted();
           for (const { path, problem } of inTree) if (problem) log(chalk.yellow(`Kept ${path}: ${problem}`));

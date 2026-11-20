@@ -114,12 +114,6 @@ test.each([
   },
 );
 
-test('a target/ holding only a staging directory counts for the dormant delete alone, not for the trims', async () => {
-  dir('target', '.stim-trimmed', '0');
-  expect(await cargoTargetDirsAsync(root)).toEqual([]);
-  expect(await cargoTargetDirsAsync(root, { staged: true })).toEqual([join(root, 'target')]);
-});
-
 test('a Cargo target/ that both the Exact rule and the CACHEDIR.TAG rule recognise is listed once', async () => {
   writeFileSync(join(root, 'exact.mjs'), '');
   dir('target');
