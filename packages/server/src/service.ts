@@ -576,7 +576,7 @@ export async function installJob(
 
   const successor =
     previous?.port == null ? null : await unitSuccessor(options.label, unitHome(previous.stimHome), previous.port);
-  const serviceRecord = stimdServiceFile(unitHome(stimHome));
+  let restoreRecord = keepRecord;
   const wasLoaded = (await loaded(options.label)) !== null;
   let routeCreated = false;
   let bootstrapped = false;
@@ -596,15 +596,14 @@ export async function installJob(
     const partial = `${path}.${process.pid}.tmp`;
     writeFileSync(partial, manager.render(spec), { mode: 0o644 });
     renameSync(partial, path);
-    // @ref LLP 0009#service-and-engine-updates -- other stimds of the home read it to leave the home to the job
-    mkdirSync(dirname(serviceRecord), { recursive: true, mode: 0o700 });
-    writeFileSync(serviceRecord, `${JSON.stringify({ label: options.label, port: options.port })}\n`);
+    restoreRecord = recordService(unitHome(stimHome), options.label, options.port);
     const started = await manager.start(options.label);
     if (!started.ok) throw new ServiceError(`${startCommand()} failed: ${started.stderr.trim()}`);
     bootstrapped = true;
     health = await waitForHealth(options.port, options.label);
   } catch (error) {
     if (oldPlist !== null) writeFileSync(path, oldPlist, { mode: 0o644 });
+    restoreRecord();
     if (routeCreated && serve)
       await run(tailscale, ['serve', `--https=${serve.port}`, 'off'], tailscaleEnv(process.env));
     if (bootstrapped) {
@@ -616,7 +615,6 @@ export async function installJob(
     }
     if (oldPlist === null) {
       await manager.remove(options.label).catch(() => rmSync(path, { force: true }));
-      rmSync(serviceRecord, { force: true });
       throw error;
     }
     const restored = wasLoaded && !(await loaded(options.label)) ? await manager.start(options.label) : null;
@@ -675,6 +673,21 @@ export async function installJob(
   }
   notes.push(...(await manager.sessionNotes()));
   return notes;
+}
+
+const keepRecord = (): void => {};
+
+/**
+ * Writes `run/service.json` in `home` for `label`, which the home's other stimds read to leave the home to its job, and
+ * returns what puts back the record that was there.
+ */
+function recordService(home: string, label: string, port: number): () => void {
+  // @ref LLP 0009#service-and-engine-updates -- other stimds of the home read it to leave the home to the job
+  const file = stimdServiceFile(home);
+  const previous = existsSync(file) ? readFileSync(file) : null;
+  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+  writeFileSync(file, `${JSON.stringify({ label, port })}\n`);
+  return () => (previous ? writeFileSync(file, previous) : rmSync(file, { force: true }));
 }
 
 function sameFile(a: string, b: string): boolean {

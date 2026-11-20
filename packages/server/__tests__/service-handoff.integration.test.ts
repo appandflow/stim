@@ -126,7 +126,7 @@ function fixture(label: string, port: number, shim = false) {
   );
   writeFileSync(
     join(bin, 'systemctl'),
-    `#!/bin/sh\ncase "$*" in\n  *KillMode*) echo process ;;\n  *ActiveState*) printf 'ActiveState=activating\\nSubState=auto-restart\\n' ;;\n  "--user start ${label}.service") echo "$3" >> '${jobStarts}' ;;\n  *) exit 1 ;;\nesac\n`,
+    `#!/bin/sh\ncase "$*" in\n  *KillMode*) echo process ;;\n  *ActiveState*) printf '%s\\n' ActiveState=activating SubState=auto-restart RestartUSec=0 'Environment=STIM_HOME=${home}' 'ExecStart={ path=${store}/bin/stimd ; argv[]=${store}/bin/stimd --service --port ${port} ; }' ;;\n  "--user start --no-block ${label}.service") echo "$4" >> '${jobStarts}' ;;\n  *) exit 1 ;;\nesac\n`,
     { mode: 0o755 },
   );
   const pkg = join(repo, 'packages/stim-cli');

@@ -6,6 +6,20 @@ import { deferringService, serviceJob, startServiceJob } from '../stimd/service-
 
 describe('serviceJob on systemd', () => {
   let home: string;
+  const shim = (build: string) => `#!/bin/sh\nexec node "/engine/${build}/dist/cli.mjs" __stimd "$@"\n`;
+  /** What `systemctl show` prints for the loaded unit. */
+  const showLoaded = ({
+    active = 'ActiveState=active\nSubState=running',
+    stimHome = join(home, '.stim'),
+    restart = '30s',
+  }: { active?: string; stimHome?: string; restart?: string } = {}) => {
+    const stimd = join(home, '.stim', 'engine', 'bin', 'stimd');
+    writeFileSync(
+      join(home, 'unit-state'),
+      `${active}\nRestartUSec=${restart}\nEnvironment=STIM_HOME=${stimHome} STIM_SERVICE_LABEL=dev.stim.server\n` +
+        `ExecStart={ path=${stimd} ; argv[]=${stimd} --service --port 7787 ; ignore_errors=no ; start_time=[n/a] }\n`,
+    );
+  };
 
   beforeEach(() => {
     home = mkdtempSync(join(tmpdir(), 'stim-service-unit-'));
@@ -22,14 +36,18 @@ case "$*" in
 esac
 `,
     );
-    writeFileSync(join(home, 'unit-state'), 'ActiveState=active\nSubState=running\n');
+    showLoaded();
     chmodSync(join(home, 'bin', 'systemctl'), 0o755);
     vi.stubEnv('PATH', `${join(home, 'bin')}${delimiter}${process.env.PATH ?? ''}`);
     writeFileSync(join(home, 'loaded-killmode'), 'process\n');
     const dir = join(home, '.config', 'systemd', 'user');
     mkdirSync(dir, { recursive: true });
     mkdirSync(join(home, '.stim', 'engine', 'bin'), { recursive: true });
-    writeFileSync(join(home, '.stim', 'engine', 'bin', 'stimd'), '');
+    writeFileSync(join(home, '.stim', 'engine', 'bin', 'stimd'), shim('b1'));
+    writeFileSync(
+      join(home, '.stim', 'engine', 'current.json'),
+      JSON.stringify({ format: 1, dir: 'b1', version: 'b1' }),
+    );
     writeFileSync(
       join(dir, 'dev.stim.server.service'),
       renderUnit({
@@ -96,23 +114,35 @@ esac
     beforeEach(() => record({ label: 'dev.stim.server', port: 7787 }));
 
     it.each([
-      ['runs', 'ActiveState=active\nSubState=running\n'],
-      ['waits to restart', 'ActiveState=activating\nSubState=auto-restart\n'],
-    ])('leaves the home to a unit that follows the engine and whose job %s', (_case, state) => {
-      writeFileSync(join(home, 'unit-state'), state);
-      expect(defers()).toBe('dev.stim.server');
+      ['runs', 'ActiveState=active\nSubState=running'],
+      ['waits to restart', 'ActiveState=activating\nSubState=auto-restart'],
+    ])('leaves the home to a unit that follows the engine and whose job %s', (_case, active) => {
+      showLoaded({ active });
+      expect(defers()?.label).toBe('dev.stim.server');
     });
 
     it.each([
+      ['30s', 75_000],
+      ['1min 30s', 135_000],
+      ['100ms', 45_100],
+    ])('waits for a unit with RestartSec %s through its restart delay and a boot', (restart, waitMs) => {
+      showLoaded({ restart });
+      expect(defers()).toEqual({ label: 'dev.stim.server', waitMs });
+    });
+
+    it.each([
+      ['the user stopped the unit', () => showLoaded({ active: 'ActiveState=inactive\nSubState=dead' })],
+      ['a drop-in moves the loaded unit to another Stim home', () => showLoaded({ stimHome: join(home, 'other') })],
       [
-        'the user stopped the unit',
-        () => writeFileSync(join(home, 'unit-state'), 'ActiveState=inactive\nSubState=dead\n'),
+        'the engine selected a build its shim does not start yet',
+        () => writeFileSync(join(home, '.stim', 'engine', 'current.json'), JSON.stringify({ format: 1, dir: 'b2' })),
       ],
       ['no unit is recorded', () => rmSync(join(home, '.stim', 'run', 'service.json'))],
       ['the recorded port is not the unit port', () => record({ label: 'dev.stim.server', port: 7788 })],
       ['the unit file is gone', () => rmSync(join(home, '.config', 'systemd', 'user', 'dev.stim.server.service'))],
       ['systemd kills the children of the unit', () => writeFileSync(join(home, 'loaded-killmode'), 'control-group\n')],
     ])('boots as before when %s', (_case, change) => {
+      mkdirSync(join(home, 'other'), { recursive: true });
       change();
       expect(defers()).toBeNull();
     });
@@ -134,7 +164,7 @@ esac
 
     it('starts the unit through systemctl', () => {
       startServiceJob('dev.stim.server', 'linux');
-      expect(readFileSync(join(home, 'started'), 'utf8')).toBe('--user start dev.stim.server.service\n');
+      expect(readFileSync(join(home, 'started'), 'utf8')).toBe('--user start --no-block dev.stim.server.service\n');
     });
   });
 });

@@ -141,7 +141,13 @@ import { createStreams } from './logs/streams.ts';
 import { handleLogRequest } from './logs/protocol.ts';
 import { writeDesktopKey } from './desktop-key.ts';
 import { createNetThread, type NetOptions } from './net.ts';
-import { deferringService, serviceJob, startServiceJob, unitSuccessorLabel } from './service-unit.ts';
+import {
+  serviceJob,
+  deferringService,
+  startServiceJob,
+  unitSuccessorLabel,
+  type ServiceStarter,
+} from './service-unit.ts';
 import { followEngine } from './engine-follow.ts';
 import { takeLock } from '../engine-store/locks.ts';
 import { createStatusSnapshots } from './status-snapshot.ts';
@@ -182,7 +188,7 @@ const WAKE_GRACE_MS = 2000;
 const RECORD_FORMAT = 1;
 const LAUNCHCTL_TIMEOUT_MS = 5000;
 const SUCCESSOR_BIND_MS = 10_000;
-/** How long a stimd that left the home to a service's job waits for that job's stimd to take it. */
+/** How long an attached stimd that left the home to a service's job waits for that job's stimd to take it. */
 const JOB_START_MS = 5_000;
 const SIGNALS = ['SIGTERM', 'SIGINT'] as const;
 const DETACHED_SIGNALS = [...SIGNALS, 'SIGHUP'] as const;
@@ -719,11 +725,11 @@ async function shimWritten(root: string, build: string): Promise<boolean> {
  * manager to start the job; null when this stimd may take the home. The job's own stimd (`job`) records its unit for
  * the others first.
  */
-function serviceStarter(
+function leaveToServiceJob(
   job: string | undefined,
   port: number | undefined,
   log: (level: Level, event: string, msg: string) => unknown,
-): string | null {
+): ServiceStarter | null {
   // @ref LLP 0009#service-and-engine-updates -- a home whose service unit follows the engine has one starter, its job
   if (job && port !== undefined)
     try {
@@ -733,22 +739,24 @@ function serviceStarter(
     }
   const starter = deferringService(getConfigDir(), engineRoot(process.env));
   if (!starter) return null;
-  log('info', 'stimd_deferred_to_job', `the ${starter} service starts this Stim home's stimd; asking it to start`);
+  const { label } = starter;
+  log('info', 'stimd_deferred_to_job', `the ${label} service starts this Stim home's stimd; asking it to start`);
   try {
-    startServiceJob(starter);
+    startServiceJob(label);
   } catch (error) {
-    log('warn', 'service_start_failed', `could not ask ${starter} to start: ${errorText(error)}`);
+    log('warn', 'service_start_failed', `could not ask ${label} to start: ${errorText(error)}`);
   }
   return starter;
 }
 
 /**
- * What a stimd that did not take its home does before it exits: one that left it to `starter` waits up to 5 s for a
- * stimd to hold it, and an attached one tells its command who holds the home, or that the service did not start one.
+ * What a stimd that did not take its home does before it exits: one that left it to `starter` waits for a stimd to hold
+ * it, within the job's restart delay and a boot, and an attached one tells its command who holds the home, or that the
+ * service did not start one within the 5 s its command waits for it.
  */
-async function answerUnclaimed(starter: string | null, attached: boolean): Promise<void> {
+async function answerUnclaimed(starter: ServiceStarter | null, attached: boolean): Promise<void> {
   if (starter !== null && !attached)
-    for (const deadline = Date.now() + JOB_START_MS; !stimdLive() && Date.now() < deadline;)
+    for (const deadline = Date.now() + starter.waitMs; !stimdLive() && Date.now() < deadline;)
       await new Promise((done) => setTimeout(done, CLAIM_RETRY_MS));
   const answer = attached ? await waitForStimdHello() : null;
   const line = answer
@@ -758,7 +766,7 @@ async function answerUnclaimed(starter: string | null, attached: boolean): Promi
           op: 'attached-claim-refusal',
           refusal: {
             code: 'STIM_DAEMON_UNAVAILABLE',
-            message: `The ${starter} service did not start this Stim home's stimd within ${JOB_START_MS / 1000} s.`,
+            message: `The ${starter.label} service did not start this Stim home's stimd within ${JOB_START_MS / 1000} s.`,
             remedy: 'Run stim service status.',
           },
         }
@@ -915,7 +923,7 @@ async function runStimdInner(
   const lifetime = stimdLifetime(attached !== undefined, identity.version);
   const instance = randomUUID();
   refuseUnresolvedDaemonClaims(writer);
-  const starter = serviceStarter(inJob ? unit : undefined, serve?.port, log);
+  const starter = leaveToServiceJob(inJob ? unit : undefined, serve?.port, log);
   let own = starter
     ? null
     : await takeClaim(stimdClaimRoot(), 'exclusive', 'stimd', details, lifetime.retries(CLAIM_TRIES));

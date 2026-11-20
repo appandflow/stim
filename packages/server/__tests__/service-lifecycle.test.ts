@@ -661,6 +661,19 @@ describe.skipIf(process.platform !== 'darwin')('service lifecycle', () => {
     expect(readFileSync(plist, 'utf8')).toBe(launchd.original);
   });
 
+  it("keeps the running service's record when another label's install is refused", async () => {
+    launchd.job = null;
+    launchd.unrelatedPort = 7787;
+    launchd.busyUntil = Infinity;
+    const record = join(process.env.STIM_HOME!, 'run', 'service.json');
+    mkdirSync(dirname(record), { recursive: true });
+    writeFileSync(record, JSON.stringify({ label, port: 7787 }));
+    await expect(
+      installService({ label: 'dev.stim.other', port: 7787, env: [], pathPrepend: [], serve: false }),
+    ).rejects.toThrow('already answers as a stim-server that is not dev.stim.other');
+    expect(JSON.parse(readFileSync(record, 'utf8'))).toEqual({ label, port: 7787 });
+  });
+
   it('does not wait for a listener that replaced the one captured before bootout', async () => {
     launchd.stopDelay = 60_000;
     launchd.replaceListener = true;
