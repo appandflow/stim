@@ -274,7 +274,10 @@ park goes through, run as control path, and so does the workspace stop inside
 workspace stop and the maintenance actions that stop a workspace, Gradle or
 watchman or delete a device or runtime run as control path too. `adb` is
 never lowered, because a client that finds no server starts the shared adb
-server, which would keep the client's priority for every later install.
+server, which would keep the client's priority for every later install. A lowered
+`git` child runs with `-c core.fsmonitor=false`: with `core.fsmonitor` set, the
+git command that finds no daemon starts the worktree's fsmonitor daemon, which
+would keep the lowered priority for every later git call there.
 Commands keep the caller's priority, `stim gc` included; a call that passes
 `lowPriority`, such as a size walk under a walk claim, is lowered there too.
 Only `runFileAsync` applies the rule; a child started with `spawn` or the

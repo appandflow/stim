@@ -1,10 +1,10 @@
 import { processContext } from '../cli-operation.ts';
 import assert from 'node:assert';
-import { execSync } from 'node:child_process';
+import { execFileSync, execSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { resetExecutor } from '../exec.ts';
+import { resetExecutor, runMaintenanceWork } from '../exec.ts';
 import {
   branchStatusAsync,
   unpushedCommitsAsync,
@@ -338,3 +338,52 @@ function copyContext(target: string) {
   const context = processContext(target);
   return { ...context, home: target, env: { ...context.env, STIM_HOME: target } };
 }
+
+describe.skipIf(process.platform === 'win32')('a git read in maintenance work', () => {
+  test('passes core.fsmonitor=false only when it runs lowered', async () => {
+    resetExecutor();
+    const base = mkdtempSync(join(tmpdir(), 'stim-test-git-fsmonitor-args-'));
+    try {
+      const log = join(base, 'args');
+      const bin = join(base, 'bin');
+      mkdirSync(bin);
+      writeFileSync(
+        join(bin, 'git'),
+        `#!/bin/sh\necho "$*" >> '${log}'\nprintf '# branch.oid (initial)\\n# branch.head main\\n'\n`,
+        { mode: 0o755 },
+      );
+      vi.stubEnv('PATH', `${bin}:${process.env.PATH ?? ''}`);
+      await branchStatusAsync(base);
+      await runMaintenanceWork('normal', () => branchStatusAsync(base));
+      await runMaintenanceWork('high', () => branchStatusAsync(base));
+      const calls = readFileSync(log, 'utf8').trim().split('\n');
+      expect(calls.map((call) => call.includes('-c core.fsmonitor=false'))).toEqual([false, true, false]);
+      expect(calls.every((call) => call.includes('status --porcelain=v2 --branch'))).toBe(true);
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  test.skipIf(process.platform !== 'darwin')(
+    'reads the status of a worktree with core.fsmonitor set without starting its fsmonitor daemon',
+    async () => {
+      resetExecutor();
+      const repo = mkdtempSync(join(tmpdir(), 'stim-test-git-fsmonitor-'));
+      const git = (...args: string[]) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf-8' });
+      try {
+        git('init', '-q', '-b', 'main');
+        git('config', 'core.fsmonitor', 'true');
+        writeFileSync(join(repo, 'file'), 'x');
+        const status = await runMaintenanceWork('normal', () => branchStatusAsync(repo));
+        expect(status).toEqual({ dirty: true, head: null, branch: 'main' });
+        expect(spawnSync('git', ['-C', repo, 'fsmonitor--daemon', 'status'], { encoding: 'utf-8' }).stdout).toContain(
+          'not watching',
+        );
+      } finally {
+        spawnSync('git', ['-C', repo, 'fsmonitor--daemon', 'stop']);
+        rmSync(repo, { recursive: true, force: true });
+      }
+    },
+  );
+});

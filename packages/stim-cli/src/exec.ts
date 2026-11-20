@@ -514,13 +514,13 @@ function lowers(file: string, lowPriority: boolean | undefined): boolean {
 }
 
 // taskpolicy(8): -c runs the program under a QoS clamp, which its descendants inherit. Windows lowers the child after
-// it starts.
-const lowered = (file: string, args: string[]): [string, string[]] =>
-  process.platform === 'darwin'
-    ? ['/usr/sbin/taskpolicy', ['-c', 'utility', file, ...args]]
-    : process.platform === 'win32'
-      ? [file, args]
-      : ['nice', ['-n', '19', file, ...args]];
+// it starts. git(1) with core.fsmonitor set starts a shared fsmonitor daemon from the command that finds none, and that
+// daemon would keep the lowered priority for every later git call in the worktree.
+function lowered(file: string, programArgs: string[]): [string, string[]] {
+  const args = /^git(\.exe)?$/i.test(basename(file)) ? ['-c', 'core.fsmonitor=false', ...programArgs] : programArgs;
+  if (process.platform === 'darwin') return ['/usr/sbin/taskpolicy', ['-c', 'utility', file, ...args]];
+  return process.platform === 'win32' ? [file, args] : ['nice', ['-n', '19', file, ...args]];
+}
 
 const defaultExecutor: Executor = {
   reportSignal: () => reportSignal(ambientContext()),
