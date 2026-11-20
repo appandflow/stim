@@ -7,7 +7,7 @@ vi.mock('node:os', async (importOriginal) => ({
   ...(await importOriginal<typeof import('node:os')>()),
   setPriority: os.setPriority,
 }));
-const spawned = vi.hoisted(() => ({ calls: [] as unknown[][] }));
+const spawned = vi.hoisted((): { calls: unknown[][] } => ({ calls: [] }));
 vi.mock('cross-spawn', async (importOriginal) => {
   const original = await importOriginal<{ default: { sync: unknown } }>();
   const spawn = Object.assign(
