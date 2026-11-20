@@ -380,6 +380,14 @@ export async function verifyLaunch({
   let bundlingAt: NdjsonRecord | null = null;
   let reported: 'bundling' | 'waiting-ready' | null = null;
   let coverageCandidate: string | null = null;
+  let rereadPastDeadline = false;
+  const readCoverage = (coveredWhenRead: boolean, deadline: number) => {
+    const proven = sleep.coverage?.();
+    if (proven !== 'covered' || coveredWhenRead) return proven;
+    if (rereadPastDeadline || now() < deadline) return 'pending';
+    rereadPastDeadline = true;
+    return 'reread';
+  };
   const report = (name: typeof reported, at: number) => {
     if (name === reported) return;
     reported = name;
@@ -553,9 +561,9 @@ export async function verifyLaunch({
             coverageCandidate = candidate;
             sleep.coverThrough?.(now());
           }
-          const proven = sleep.coverage?.();
-          const coverage = proven === 'covered' && !coveredWhenRead ? 'pending' : proven;
           const coverageDeadline = pendingAt !== null ? readinessDeadline : bundleDeadline;
+          const coverage = readCoverage(coveredWhenRead, coverageDeadline);
+          if (coverage === 'reread') continue;
           if (
             deviceStreamId === null ||
             coverage === 'failed' ||
