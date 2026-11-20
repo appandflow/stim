@@ -81,7 +81,9 @@ outside the findings.
 Chosen by the implementing lane, not by the maintainer: the setting's name and
 machine scope, the environment override `STIM_MAINTENANCE_AUTO_DISCOVER`, keeping
 the worktrees of root children inside the root when off, gating the tool folders and
-the scan finds with the rest, keeping the scan and census running when off, the
+the scan finds with the rest, keeping the scan and census running when off,
+leaving the `~/.codex/worktrees` worktrees out of `untracked` (so their bytes never
+count toward the suggestion, and no command adopts another tool's folder), the
 10 GiB threshold (half the default `maintenance.workspaceOutputsMaxGb`, so the
 suggestion means more than one workspace's worth of output), and a note rather than
 a `costs time` finding.
