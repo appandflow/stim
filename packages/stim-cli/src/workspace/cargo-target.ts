@@ -1018,6 +1018,7 @@ async function trimClaimed(
   let used: string[] = first.used;
   const stale = staleCargoTargetPaths(target, now, profileIdleMs);
   if ('refusal' in stale) return { ...result, kept: [stale.refusal] };
+  let latestStale: { paths: string[] } | { refusal: string } = stale;
   let moved = 0;
   let wholeKept = false;
   const released = (): void => {
@@ -1078,9 +1079,10 @@ async function trimClaimed(
         const held = await lockOutcome(profile, signal, lowPriority);
         if (lockHeld(held)) throw new KeptAfterRelease(`a build holds its ${held.file ?? '.cargo-lock'}`);
       }
-      const again = stalePath ? staleCargoTargetPaths(target, now, profileIdleMs) : null;
-      if (again && ('refusal' in again || !again.paths.includes(label)))
-        throw new KeptAfterRelease('it is no longer stale as a whole');
+      if (!stalePath) return;
+      latestStale = staleCargoTargetPaths(target, now, profileIdleMs);
+      if ('refusal' in latestStale) throw new KeptAfterRelease(latestStale.refusal);
+      if (!latestStale.paths.includes(label)) throw new KeptAfterRelease('it is no longer stale as a whole');
     };
     try {
       // @ref LLP 0005#a-full-disk-releases-the-reserve -- the checks run again before the retry
@@ -1223,7 +1225,10 @@ async function trimClaimed(
     }
     return null;
   };
-  for (const path of stale.paths) await move(join(target, path), path, null, profilesAt, true);
+  for (const path of stale.paths) {
+    if ('refusal' in latestStale) break;
+    if (latestStale.paths.includes(path)) await move(join(target, path), path, null, profilesAt, true);
+  }
   const removedStale = new Set(stale.paths.map((path) => join(target, path)));
   const remaining = (cargoProfileDirs(target) ?? []).filter(
     (profile) => ![...removedStale].some((gone) => profile === gone || profile.startsWith(`${gone}/`)),

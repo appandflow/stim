@@ -719,6 +719,24 @@ describe('trimming on a full disk', () => {
     expect(readFileSync(join(target, 'aarch64-linux-android', 'notes.txt'), 'utf8')).toBe('mine');
   });
 
+  test('a file that appears in another stale triple before the rescan keeps that triple too', async () => {
+    stubProcesses({});
+    const triples = ['aarch64-linux-android', 'x86_64-linux-android'];
+    for (const triple of triples) makeProfile(`${triple}/host-dev`, 3 * DAY);
+    let full = true;
+    fsHooks.mkdir = (path) => {
+      if (!full || !path.endsWith('.stim-trimmed')) return;
+      full = false;
+      for (const triple of triples) writeFileSync(join(target, triple, 'notes.txt'), 'mine');
+      throw diskFull();
+    };
+
+    const result = await trimCargoTarget(target, { launching: noLaunchers(target), needBytes: 0 });
+
+    expect(result).toMatchObject({ removed: [], reserveReleased: true });
+    for (const triple of triples) expect(readFileSync(join(target, triple, 'notes.txt'), 'utf8')).toBe('mine');
+  });
+
   test('without a reserve to release, a full disk keeps the profile', async () => {
     stubProcesses({});
     makeProfile('debug', 3 * DAY);

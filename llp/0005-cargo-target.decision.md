@@ -325,8 +325,9 @@ maintenance pass and an acting `stim gc` already keep) and tries that write
 once more. The dormant delete's renames of each entry into `.stim-trimmed` are
 not retried: an entry that cannot be moved stays, as above. The retry runs the
 same staged path with every check above unchanged. Before the trim retries a
-staging write, it reads the processes and the launchers again, and for a
-profile its lock files; a launcher into the checkout or process evidence that
+staging write, it reads the processes and the launchers again, for a
+profile its lock files, and, for a stale profile or target triple, whether it
+is still stale as a whole, which also decides the stale paths still to come; a launcher into the checkout or process evidence that
 cannot be read stops the rest of that run, and a path in use keeps that path;
 in a unit batch, one busy path, moved or not yet moved, puts the whole batch
 back.
