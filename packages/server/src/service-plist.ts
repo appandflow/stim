@@ -201,8 +201,9 @@ export function renderPlist(spec: ServiceSpec): string {
     '\t<true/>',
     key('ThrottleInterval', '\t'),
     `\t<integer>${THROTTLE_SECONDS}</integer>`,
+    // @ref LLP 0021#stimd-runs-at-the-priority-of-an-app -- ProcessType Interactive, since stimd has no XPC for Adaptive
     key('ProcessType', '\t'),
-    string('Standard', '\t'),
+    string('Interactive', '\t'),
     key('StandardOutPath', '\t'),
     string(spec.logPath, '\t'),
     key('StandardErrorPath', '\t'),

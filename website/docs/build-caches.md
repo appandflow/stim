@@ -639,7 +639,7 @@ shared caches on a different volume. The same values can live in the machine con
 
 Stim automatically trims its own caches, idle build outputs and parked devices, and can remove [finished worktrees](./worktrees.md#remove-finished-worktrees-in-bulk). Run `stim gc --dry-run` to preview cleanup and `stim logs --source maintenance` to see the workspace's recent cleanup activity.
 
-Set `daemon.mode` to `report` to see plans without automatic deletion, or `off` to disable automatic maintenance. It defaults to `on` outside CI. Use `maintenance.keep` to protect a workspace from maintenance cleanup. [Maintenance settings](./settings.md#automatic-maintenance)
+Set `daemon.mode` to `report` to see plans without automatic deletion, or `off` to disable automatic maintenance. It defaults to `on` outside CI. Use `maintenance.keep` to protect a workspace from maintenance cleanup. Maintenance and the pressure ladder act on registered workspaces and on [checkouts in the folders you name](./worktrees.md#checkouts-stim-never-ran-in) in `maintenance.discoverRoots`; turn on `maintenance.autoDiscover` to also reach checkouts next to your projects and linked worktrees of known repositories that no `stim` command ran in. [Maintenance settings](./settings.md#automatic-maintenance)
 
 <StimTabs code="stim settings set daemon.mode report --scope machine" />
 
@@ -666,10 +666,12 @@ and above normal runs one ladder top-down until the level clears:
 | 9    | Nothing                                                                                                                                                              | Other tools' caches, subject to the rules below                                                                                                                                                                                                                                            |
 
 After a ladder pass that freed nothing, the next pass waits four times that
-pass's duration, at most 15 minutes, unless the disk or memory level rose, any
-measured volume is new, lost 1 GB or reached a higher level, or a command asked
-the `stim-daemon` for a tick, such as one under `disk.hardFloorGb`. The rest of the tick still runs every
-minute.
+pass's duration, at most 15 minutes, or at most one minute at critical, unless
+the disk or memory level rose, any measured volume is new or reached a higher
+level, a volume classified high or critical lost 256 MB, a volume classified
+normal lost 1 GB, or a command asked the `stim-daemon` for a tick, such as one
+under `disk.hardFloorGb`. The rest of the tick still runs each time; a ladder
+pass runs inside the tick, so a long pass delays the next tick.
 
 A rung that frees disk takes only what lies on a volume under `disk.minFreeGb`:
 a full external disk does not clear `node_modules`, outputs or caches on a

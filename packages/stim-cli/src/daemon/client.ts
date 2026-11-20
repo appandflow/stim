@@ -67,6 +67,8 @@ interface ResumeLimit {
 const within = (ms: number, limit?: ResumeLimit): number =>
   limit ? Math.max(0, Math.min(ms, limit.deadline - Date.now())) : ms;
 const LOSS_GRACE_MS = 1000;
+const READINESS_WAIT_MAX_MS = 30_000;
+const READINESS_REPLY_GRACE_MS = 1000;
 /** The label of the launchd job that runs a stimd, which it removes as it exits. */
 export const LAUNCHD_LABEL_ENV = 'STIMD_LAUNCHD_LABEL';
 
@@ -415,13 +417,24 @@ function askStimd(
   onProgress?: (line: string) => void,
   home?: string,
 ): Promise<Record<string, unknown> | null> {
+  return requestStimd(op, timeoutMs, fields, signal, onProgress, home).then(({ reply }) => reply);
+}
+
+function requestStimd(
+  op: string,
+  timeoutMs: number,
+  fields: Record<string, unknown> = {},
+  signal?: AbortSignal,
+  onProgress?: (line: string) => void,
+  home?: string,
+): Promise<{ reply: Record<string, unknown> | null; closed: boolean }> {
   return new Promise((resolve) => {
     let socket: Socket | null = null;
-    const finish = (reply: Record<string, unknown> | null) => {
+    const finish = (reply: Record<string, unknown> | null, closed = false) => {
       clearTimeout(timer);
       signal?.removeEventListener('abort', cancel);
       socket?.destroy();
-      if (!following) resolve(reply);
+      if (!following) resolve({ reply, closed });
     };
     const cancel = () => finish(null);
     const timer = setTimeout(() => finish(null), timeoutMs);
@@ -439,7 +452,7 @@ function askStimd(
       false,
       home,
     );
-    socket.once('close', () => finish(null));
+    socket.once('close', () => finish(null, true));
   });
 }
 
@@ -836,9 +849,10 @@ function startLaunchdJob(command: readonly string[], env: Record<string, string>
     .map(([name, value]) => `<key>${xml(name)}</key><string>${xml(value)}</string>`)
     .join('');
   const log = xml(join(stimdRunDir(), 'stimd.log'));
+  // @ref LLP 0021#stimd-runs-at-the-priority-of-an-app -- ProcessType Interactive, since stimd has no XPC for Adaptive
   writeFileSync(
     plist,
-    `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict><key>Label</key><string>${label}</string><key>ProgramArguments</key><array>${strings(command)}</array><key>EnvironmentVariables</key><dict>${environment}</dict><key>WorkingDirectory</key><string>${xml(stimdRunDir())}</string><key>StandardOutPath</key><string>${log}</string><key>StandardErrorPath</key><string>${log}</string><key>RunAtLoad</key><true/><key>KeepAlive</key><false/><key>AbandonProcessGroup</key><true/></dict></plist>\n`,
+    `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict><key>Label</key><string>${label}</string><key>ProgramArguments</key><array>${strings(command)}</array><key>EnvironmentVariables</key><dict>${environment}</dict><key>WorkingDirectory</key><string>${xml(stimdRunDir())}</string><key>StandardOutPath</key><string>${log}</string><key>StandardErrorPath</key><string>${log}</string><key>RunAtLoad</key><true/><key>KeepAlive</key><false/><key>AbandonProcessGroup</key><true/><key>ProcessType</key><string>Interactive</string></dict></plist>\n`,
     { mode: 0o600 },
   );
   try {
@@ -1269,6 +1283,13 @@ interface Admission {
 }
 
 const admissions = new Map<string, Admission>();
+const releasedHolds = new WeakSet<Socket[]>();
+
+/** Ends an API operation's admission: closes its held connections, and any a readmission still under way delivers later. */
+export function releaseHeldAdmission(held: Socket[]): void {
+  releasedHolds.add(held);
+  for (const socket of held) socket.destroy();
+}
 
 function track(
   socket: Socket,
@@ -1348,8 +1369,10 @@ async function readmit(
     refusal = null;
     refusedByAttached = false;
   }
+  const released = () =>
+    signal?.aborted === true || (admission.held !== undefined && releasedHolds.has(admission.held));
   for (;;) {
-    if (signal?.aborted) return null;
+    if (released()) return null;
     const refused = otherBuildRefusal();
     if (refused && refusedBuild !== stimdBuildId() && !stimdLive())
       return { error: Object.assign(new Error(refused.message), refused) };
@@ -1386,7 +1409,7 @@ async function readmit(
     const socket = fresh[0];
     const token = socket ? opTokens.get(socket) : undefined;
     if (socket && token) {
-      if (signal?.aborted) {
+      if (released()) {
         socket.destroy();
         return null;
       }
@@ -1402,7 +1425,7 @@ async function readmit(
       return { token };
     }
     for (const unused of fresh) unused.destroy();
-    if (signal?.aborted) return null;
+    if (released()) return null;
     const lastRefusal = otherBuildRefusal();
     if (lastRefusal) return { error: Object.assign(new Error(lastRefusal.message), lastRefusal) };
     if (!running && !stimdLive()) return { error: daemonRestarted('no stimd took its place') };
@@ -1613,6 +1636,18 @@ export async function stopDeviceLogStream(
   };
 }
 
+function pauseUnlessAborted(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((done) => {
+    const finish = () => {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', finish);
+      done();
+    };
+    const timer = setTimeout(finish, ms);
+    signal.addEventListener('abort', finish, { once: true });
+  });
+}
+
 export function deviceLogReadinessWait(
   root: string,
   platform: 'ios' | 'android',
@@ -1623,70 +1658,121 @@ export function deviceLogReadinessWait(
 ): ((ms: number) => Promise<void>) & {
   coverage: () => 'pending' | 'covered' | 'failed';
   coverThrough: (at: number) => void;
+  close: () => void;
 } {
   let revision = 0;
   let through = 0;
   let coverage: 'pending' | 'covered' | 'failed' = 'pending';
-  let sequence = 0;
+  type Runner = { token: string; through: number; controller: AbortController; done: Promise<boolean> };
+  let runner: Runner | null = null;
+  let restoring: { token: string; until: number } | null = null;
+  const ask = (token: string, horizon: number, deadline: number, signal: AbortSignal) => {
+    const timeoutMs = Math.max(0, Math.min(READINESS_WAIT_MAX_MS, Math.ceil(deadline - Date.now())));
+    return requestStimd(
+      'readiness.wait',
+      timeoutMs + READINESS_REPLY_GRACE_MS,
+      {
+        opToken: token,
+        params: {
+          root,
+          platform,
+          slot,
+          streamId,
+          since,
+          through: horizon,
+          checkCoverage: coverage === 'pending',
+          after: revision,
+          timeoutMs,
+        },
+      },
+      signal,
+    );
+  };
+  const run = async (current: Runner, signal: AbortSignal): Promise<boolean> => {
+    const before = { revision, coverage };
+    const live = () => runner === current && current.through === through && !signal.aborted;
+    const changed = () => revision !== before.revision || coverage !== before.coverage;
+    const settle = (value: 'pending' | 'covered' | 'failed') => {
+      if (live()) coverage = value;
+    };
+    let deadline = Date.now() + READINESS_WAIT_MAX_MS;
+    let readmitted = false;
+    for (;;) {
+      const { reply, closed } = await ask(current.token, current.through, deadline, signal);
+      if (signal.aborted) return false;
+      if ((!reply || reply.op === 'error') && !readmitted) {
+        readmitted = true;
+        const next = await resumeAdmission(current.token, operation, closed);
+        if (signal.aborted) return false;
+        if (!next) {
+          if (!reply && !closed) return false;
+          settle('failed');
+          return changed();
+        }
+        if ('error' in next) {
+          settle('failed');
+          return changed();
+        }
+        // @ref LLP 0012#a-command-continues-across-a-stimd-restart -- the successor proves coverage again and resumes the stream after it boots
+        deadline = Date.now() + READINESS_WAIT_MAX_MS;
+        restoring = { token: next.token, until: deadline };
+        current.token = next.token;
+        revision = 0;
+        settle('pending');
+        continue;
+      }
+      if (!reply && !closed) return changed();
+      const gone = reply?.op === 'readiness.changed' && reply.gone === true;
+      if (gone && restoring?.token === current.token && Date.now() < Math.min(deadline, restoring.until)) {
+        await pauseUnlessAborted(Math.min(CLAIM_POLL_MS * 4, Math.max(0, deadline - Date.now())), signal);
+        if (signal.aborted) return false;
+        continue;
+      }
+      if (reply?.op === 'readiness.changed' && typeof reply.revision === 'number') {
+        if (!gone && restoring?.token === current.token) restoring = null;
+        if (live()) revision = Math.max(revision, reply.revision);
+        if (reply.coverage === 'pending' || reply.coverage === 'covered' || reply.coverage === 'failed')
+          settle(reply.coverage);
+        if (!gone) return changed();
+      }
+      settle('failed');
+      return changed();
+    }
+  };
+  const close = () => {
+    runner?.controller.abort();
+    runner = null;
+  };
   const wait = async (ms: number) => {
     const started = Date.now();
-    const requestSequence = ++sequence;
-    const requestThrough = through;
-    const opToken = operationToken(operation);
-    const ask = (token: string) => {
-      const timeoutMs = Math.min(30_000, Math.max(0, Math.ceil(ms - (Date.now() - started))));
-      return askStimd(
-        'readiness.wait',
-        timeoutMs + 1000,
-        {
-          opToken: token,
-          params: {
-            root,
-            platform,
-            slot,
-            streamId,
-            since,
-            through: requestThrough,
-            checkCoverage: coverage === 'pending',
-            after: revision,
-            timeoutMs,
-          },
-        },
-        operation?.signal,
-      );
-    };
-    let reply = opToken ? await ask(opToken) : null;
+    const remaining = () => Math.max(0, ms - (Date.now() - started));
+    const rest = () => cancellableSleep(remaining(), { signal: operation?.signal, what: 'launch readiness check' });
+    const token = operationToken(operation);
+    if (!token) {
+      close();
+      coverage = 'failed';
+      await rest();
+      return;
+    }
+    if (!runner || runner.token !== token || runner.through !== through) {
+      close();
+      const controller = new AbortController();
+      const signal = operation?.signal ? AbortSignal.any([operation.signal, controller.signal]) : controller.signal;
+      const current: Runner = { token, through, controller, done: Promise.resolve(false) };
+      runner = current;
+      current.done = run(current, signal);
+    }
+    const current = runner;
+    let timer: NodeJS.Timeout | undefined;
+    const answered = await Promise.race([
+      current.done,
+      new Promise<null>((done) => (timer = setTimeout(() => done(null), remaining()))),
+    ]);
+    clearTimeout(timer);
     throwIfCancelled(operation?.signal, 'launch readiness check');
-    const next = opToken && (!reply || reply.op === 'error') ? await resumeAdmission(opToken, operation, !reply) : null;
-    if (next && 'token' in next) {
-      // @ref LLP 0012#a-command-continues-across-a-stimd-restart -- the successor proves coverage again and resumes the stream after it boots
-      revision = 0;
-      if (requestSequence === sequence) coverage = 'pending';
-      for (;;) {
-        reply = await ask(next.token);
-        throwIfCancelled(operation?.signal, 'launch readiness check');
-        if (reply?.op !== 'readiness.changed' || reply.gone !== true || Date.now() - started >= ms) break;
-        await cancellableSleep(Math.min(CLAIM_POLL_MS * 4, Math.max(0, ms - (Date.now() - started))), {
-          signal: operation?.signal,
-          what: 'launch readiness check',
-        });
-      }
-    }
-    if (reply?.op === 'readiness.changed' && typeof reply.revision === 'number') {
-      revision = Math.max(revision, reply.revision);
-      if (
-        requestSequence === sequence &&
-        requestThrough === through &&
-        (reply.coverage === 'pending' || reply.coverage === 'covered' || reply.coverage === 'failed')
-      )
-        coverage = reply.coverage;
-      if (reply.gone !== true) return;
-    }
-    if (requestSequence === sequence && requestThrough === through) coverage = 'failed';
-    await cancellableSleep(Math.max(0, ms - (Date.now() - started)), {
-      signal: operation?.signal,
-      what: 'launch readiness check',
-    });
+    if (answered === null) return;
+    if (runner === current) runner = null;
+    if (!answered && !current.controller.signal.aborted && remaining() > 0) await rest();
   };
   return Object.assign(wait, {
     coverage: () => coverage,
@@ -1696,6 +1782,7 @@ export function deviceLogReadinessWait(
         if (coverage === 'covered') coverage = 'pending';
       }
     },
+    close,
   });
 }
 

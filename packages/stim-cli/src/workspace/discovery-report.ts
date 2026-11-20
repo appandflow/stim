@@ -1,7 +1,8 @@
-import { resolve, sep } from 'node:path';
+import { basename, resolve, sep } from 'node:path';
 import type { CensusFind, DiscoveryCensusFile, DiscoveryScanFile, ScanTruncation } from '@stim-cli/core/state';
 
 export const DISCOVER_ROOTS_KEY = 'maintenance.discoverRoots';
+export const AUTO_DISCOVER_KEY = 'maintenance.autoDiscover';
 
 /** How long a measurement of a checkout's build output stays current before the daemon measures it again. */
 export const REFRESH_MS: number = 24 * 60 * 60_000;
@@ -12,9 +13,10 @@ interface UnmanagedGroup {
   folder: string;
   /**
    * `reduce-only`: Stim reduces their build output and never removes them. `dot-folder`: Stim does nothing with them.
+   * `untracked`: only automatic discovery would reach them, and it is off, so Stim does nothing with them.
    * `unchecked`: a read did not answer, so whether they are still checkouts, and managed, is not known this time.
    */
-  kind: 'reduce-only' | 'dot-folder' | 'unchecked';
+  kind: 'reduce-only' | 'dot-folder' | 'untracked' | 'unchecked';
   checkouts: number;
   /** The bytes of the build directories that were measured; a lower bound while `failed`, `partial` or `notMeasuredYet` is above 0, or the list is not `complete`. */
   bytes: number;
@@ -58,7 +60,10 @@ export interface DiscoveryReport {
   censusAt: number | null;
   /** Whether the census was made from the scan the scan file holds now; when false its sizes are not shown. */
   censusCurrent: boolean;
-  /** `maintenance.discoverRoots` changed since the census classified, so the classification may be stale. */
+  /**
+   * `maintenance.discoverRoots` or `maintenance.autoDiscover` changed since the census classified, so the classification
+   * may be stale.
+   */
   rootsChangedSinceCensus: boolean;
   /**
    * Whether the listing may be taken as everything the scan found: false when the scan stopped early, failed or could
@@ -93,13 +98,13 @@ function shellQuote(text: string): string {
   return `'${text.replaceAll("'", `'\\''`)}'`;
 }
 
-/** The command that adds `folder` to the machine's roots, or null when the current value does not read. */
-export function adoptCommand(setting: DiscoverRootsValue, folder: string): string | null {
+/** The command that adds `folders` to the machine's roots, or null when the current value does not read. */
+export function adoptCommand(setting: DiscoverRootsValue, ...folders: string[]): string | null {
   if (setting.error || !isStrings(setting.value)) return null;
-  return `stim settings set ${DISCOVER_ROOTS_KEY} ${shellQuote(JSON.stringify([...setting.value, folder]))} --scope machine`;
+  return `stim settings set ${DISCOVER_ROOTS_KEY} ${shellQuote(JSON.stringify([...setting.value, ...folders]))} --scope machine`;
 }
 
-const KIND_ORDER = { 'reduce-only': 0, 'dot-folder': 1, unchecked: 2 };
+const KIND_ORDER = { untracked: 0, 'reduce-only': 1, 'dot-folder': 2, unchecked: 3 };
 
 function groupOf(
   first: CensusFind,
@@ -165,12 +170,15 @@ export function discoveryReport({
   scan,
   census,
   setting,
+  autoDiscover,
   home,
   canonical,
 }: {
   scan: DiscoveryScanFile;
   census: DiscoveryCensusFile;
   setting: DiscoverRootsValue;
+  /** The current `maintenance.autoDiscover` value. */
+  autoDiscover: boolean;
   home: string;
   /**
    * Resolves symlinks of a configured root, which `stim doctor` may do. The per-command hook passes null and so makes no
@@ -197,7 +205,10 @@ export function discoveryReport({
   if (!census.census) return { ...base, census: 'unusable', censusAt: null };
   const lexical = rootsOf(setting, home);
   const recorded = census.census.roots;
-  const unchanged = recorded.length === lexical.length && recorded.every((root, at) => root === lexical[at]);
+  const unchanged =
+    recorded.length === lexical.length &&
+    recorded.every((root, at) => root === lexical[at]) &&
+    (census.census.autoDiscover ?? true) === autoDiscover;
   const roots = new Set([...lexical, ...census.census.canonicalRoots, ...(canonical ? lexical.map(canonical) : [])]);
   const current = summary.ranAt === census.census.scanRanAt;
   const madeAt = census.census.at;
@@ -320,7 +331,7 @@ export function discoveryLines(report: DiscoveryReport, home: string): string[] 
     );
   if (report.rootsChangedSinceCensus)
     lines.push(
-      'That list was made before maintenance.discoverRoots last changed, so some of these may be managed now; the daemon lists again within about an hour.',
+      'That list was made before maintenance.discoverRoots or maintenance.autoDiscover last changed, so some of these may be managed now; the daemon lists again within about an hour.',
     );
   const outdated = !report.censusCurrent || report.rootsChangedSinceCensus;
   for (const group of report.groups) {
@@ -341,9 +352,11 @@ export function discoveryLines(report: DiscoveryReport, home: string): string[] 
     );
     if (!outdated) {
       lines.push(
-        group.kind === 'reduce-only'
-          ? '  Stim reduces their build output when idle and never removes them. Adding the folder to maintenance.discoverRoots applies the full discovered-checkout rules, which include removing finished linked worktrees:'
-          : '  Under a home dot-folder, where Stim cannot tell a checkout from an installed tool, so it does nothing with them. Adding the folder to maintenance.discoverRoots lets Stim reduce their build output and, for linked worktrees, remove finished ones:',
+        group.kind === 'untracked'
+          ? '  Automatic discovery (maintenance.autoDiscover) is off, so Stim does nothing with them. Adding the folder to maintenance.discoverRoots applies the discovered-checkout rules, which include removing finished linked worktrees:'
+          : group.kind === 'reduce-only'
+            ? '  Stim reduces their build output when idle and never removes them. Adding the folder to maintenance.discoverRoots applies the full discovered-checkout rules, which include removing finished linked worktrees:'
+            : '  Under a home dot-folder, where Stim cannot tell a checkout from an installed tool, so it does nothing with them. Adding the folder to maintenance.discoverRoots lets Stim reduce their build output and, for linked worktrees, remove finished ones:',
       );
       lines.push(
         group.command
@@ -359,7 +372,7 @@ export function discoveryLines(report: DiscoveryReport, home: string): string[] 
       lines.push(
         `  ${shorten(path, home)}: last git activity ${gitActivityAt === null ? 'unknown' : gitActivityAt.slice(0, 10)}`,
       );
-    if (group.kind === 'reduce-only' && !outdated)
+    if ((group.kind === 'reduce-only' || group.kind === 'untracked') && !outdated)
       lines.push(
         '  Stim has not checked whether they are in use or hold uncommitted or unpushed work; last git activity is when git last wrote there and says nothing about edits made without it; delete a checkout you no longer need yourself, after checking that.',
       );
@@ -369,15 +382,60 @@ export function discoveryLines(report: DiscoveryReport, home: string): string[] 
 
 /**
  * The extra line of the low-disk warning: how much the unmanaged checkouts hold and the one command that adds the largest
- * reduce-only folder. Null when no checkout has a measured build directory. Dot-folder finds count toward the total but
+ * reduce-only or untracked folder. Null when no checkout has a measured build directory. Dot-folder finds count toward the total but
  * are never the one named, since adopting them gives a tool home the full discovered rules.
  */
 export function lowDiskLine(report: DiscoveryReport, home: string): string | null {
   const total = report.groups.reduce((sum, group) => sum + group.bytes, 0);
   if (total === 0 || report.rootsChangedSinceCensus) return null;
   const qualifier = report.complete ? '' : 'at least ';
-  const largest = report.groups.find((group) => group.kind === 'reduce-only' && group.command && group.bytes > 0);
+  const largest = report.groups
+    .filter((group) => (group.kind === 'reduce-only' || group.kind === 'untracked') && group.command && group.bytes > 0)
+    .toSorted((a, b) => b.bytes - a.bytes)[0];
   const holding = `Stim: checkouts it does not fully manage hold ${qualifier}${gb(total)} of build output`;
   if (!largest?.command) return `${holding}; stim doctor lists them.`;
   return `${holding}. stim doctor lists them and what adopting each folder changes. Adding the largest folder, ${shorten(largest.folder, home)} (${qualifier}${gb(largest.bytes)}), lets Stim apply its full rules there, finished linked worktree removal included: ${largest.command}`;
+}
+
+// @ref LLP 0004#automatic-discovery-is-off-by-default -- doctor suggests it above 10 GiB of measured build output
+/** The measured build output of untracked checkouts at which doctor suggests turning automatic discovery on. */
+export const AUTO_DISCOVER_SUGGESTION_BYTES: number = 10 * 1024 ** 3;
+
+const AUTO_DISCOVER_COMMAND = `stim settings set ${AUTO_DISCOVER_KEY} true --scope machine`;
+export const AUTO_DISCOVER_ENV = 'STIM_MAINTENANCE_AUTO_DISCOVER';
+
+/**
+ * The doctor suggestion while `maintenance.autoDiscover` is off: when the checkouts only automatic discovery would reach
+ * hold at least `AUTO_DISCOVER_SUGGESTION_BYTES` of measured build output in the census, turn it on or add their folders
+ * to `maintenance.discoverRoots`. The bytes count build output only, of measured checkouts only, so an incomplete
+ * census leaves the suggestion out rather than adding it; a cached size can still overstate a directory deleted since it
+ * was measured. Null below the threshold, with discovery on, or when the census is not current for the scan and the
+ * settings. `override` is the value of the environment variable that overrides the machine setting, when set.
+ */
+export function autoDiscoverSuggestion(
+  report: DiscoveryReport,
+  setting: DiscoverRootsValue,
+  autoDiscover: boolean,
+  home: string,
+  override: string | null,
+): { detail: string; fix: string } | null {
+  if (autoDiscover || report.census !== 'read' || !report.censusCurrent || report.rootsChangedSinceCensus) return null;
+  const groups = report.groups.filter((group) => group.kind === 'untracked');
+  const bytes = groups.reduce((sum, group) => sum + group.bytes, 0);
+  if (bytes < AUTO_DISCOVER_SUGGESTION_BYTES) return null;
+  const checkouts = groups.reduce((sum, group) => sum + group.checkouts, 0);
+  // @ref LLP 0004#automatic-discovery-is-off-by-default -- discovery skips dot-named children of a root
+  const folders = groups
+    .filter((group) => group.command !== null && group.members.some(({ path }) => !basename(path).startsWith('.')))
+    .map((group) => group.folder);
+  const command = folders.length ? adoptCommand(setting, ...folders) : null;
+  const largest = groups.toSorted((a, b) => b.bytes - a.bytes)[0];
+  return {
+    detail: `Automatic discovery (${AUTO_DISCOVER_KEY}) is off, so Maintenance and stim gc act only on registered workspaces and the folders in ${DISCOVER_ROOTS_KEY}. ${count(checkouts, 'checkout')} no stim command ran in hold ${report.complete ? '' : 'at least '}${gb(bytes)} of build output${largest ? `, the most in ${shorten(largest.folder, home)} (${gb(largest.bytes)})` : ''}; the section below lists them.`,
+    fix: `${
+      override === null
+        ? `Turn automatic discovery on with \`${AUTO_DISCOVER_COMMAND}\``
+        : `Turn automatic discovery on: ${AUTO_DISCOVER_ENV}=${override} in this environment overrides the machine setting, so set it to true or remove it (then \`${AUTO_DISCOVER_COMMAND}\`)`
+    }${command ? `, or add their folders with \`${command}\`; each folder named there brings every recognised checkout directly in it under the full discovered-checkout rules, finished linked worktree removal included` : ''}.`,
+  };
 }

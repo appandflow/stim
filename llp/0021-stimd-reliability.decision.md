@@ -214,6 +214,75 @@ probe beside the rest of their read, so a healthy stimd adds no measurable time 
 a silent one adds the 3 s. Through the `status --json` shortcut that asks stimd
 first, which already waits 5 s, a silent stimd takes about 8 s.
 
+## stimd runs at the priority of an app
+
+On macOS every launchd job that runs stimd sets `ProcessType` to `Interactive`:
+the transient job `launchStimd` writes, which a command and a handover at an
+engine switch go through, and the LaunchAgent `stim service install` writes.
+launchd.plist(5) gives a job without `ProcessType`, or with `Standard`, light
+CPU and I/O throttling, and stimd's children inherit it:
+Metro, the builds it runs, the offload probes and the tools it starts. On a
+loaded worker stimd missed `build.offer` and health deadlines while it ran
+throttled (#5925); that the throttling caused the misses is not proven end to
+end. `Adaptive` moves a job between Background and Interactive by its XPC
+transactions, and stimd's clients reach it over a Unix socket and HTTP, never
+XPC, so an Adaptive stimd stays in Background. The man page reserves
+`Interactive` for a job that an app's responsiveness depends on and that cannot
+be made Adaptive, which is stimd's case.
+
+Measured on macOS 27 with throwaway jobs in the user's domain, each running a
+shell and a child, read with `ps -o pri` and `launchctl print`:
+
+| `ProcessType` | spawn type  | priority, job and child |
+| ------------- | ----------- | ----------------------- |
+| unset         | daemon      | 20                      |
+| `Standard`    | daemon      | 20                      |
+| `Adaptive`    | adaptive    | 4                       |
+| `Background`  | background  | 4                       |
+| `Interactive` | interactive | 31                      |
+
+31 is the priority of a process started from a shell. A stimd that Desktop
+starts as its child, or that a command hosts attached, runs outside launchd and
+is not changed here; its priority was not measured.
+
+The priority of a running stimd follows the job that started it. A stimd that
+an older build started, including the first successor an engine switch onto
+this build starts, runs at 20 until the next handover. Stim does not edit an
+existing LaunchAgent for this: a unit installed before keeps `Standard`, also
+when it is rewritten onto the engine shim, until `stim service install` runs
+again, and launchd reads a plist only at bootstrap, so after a reboot or a login
+such a unit starts stimd at 20 again. The stale-unit check (#6009) compares
+the unit's `ProcessType` with what `renderPlist` writes, and `stim service
+status`, `stim doctor` and `stim setup` print the `stim service install`
+remedy.
+
+Maintenance children keep the priority they had: they run at stimd's priority,
+now 31, except the size walks that already ran under `nice -n 19` and the
+fingerprint children at nice 10. On macOS `nice` lowers only CPU, not I/O. A
+QoS clamp that lowered every maintenance child at normal pressure was built for
+this change and dropped before 2.0 (#6025). It had to exempt every child that
+holds a lock a command waits on, and every child that may start a long-lived
+shared process, such as git's fsmonitor daemon, an ssh `ControlPersist` master
+or the adb server, which keeps the clamp for later foreground work. That list
+cannot be completed from inside Stim. Less maintenance work comes first and is
+done before 2.0 under #6025: the ladder paces on bytes freed and the
+maintenance lane never runs beside it. After 2.0: measure a foreground build
+with the lane running, and only if that shows a cost, do not start maintenance
+at normal pressure while foreground work runs, never holding it back at high or
+critical pressure.
+
+Maintainer decision: "yea stim itself is fine at interactive I am good with", 2026-11-19.
+[Decision on #5925](https://github.com/appandflow/stim/issues/5925#issuecomment-7023460880).
+
+The request "Can priority be based on disk / ram load, so if high/critical it
+becomes very important" (2026-11-19,
+[#5925](https://github.com/appandflow/stim/issues/5925#issuecomment-7023456720))
+is met at high and critical pressure, where maintenance runs at 31, and deferred
+at normal pressure by #6025.
+
+Maintainer decision: "I agree lets do this and ur recommendations from prev messages, also lets do the changes now that u flagged as after 2.0 id rather delay than ship what we have", 2026-11-20.
+[Decision on #6025](https://github.com/appandflow/stim/issues/6025).
+
 ## Collect diagnostics with the existing reports
 
 The [diagnostic procedure](../website/docs/dev-server-and-logs.md#collect-diagnostics-for-a-stimd-problem)

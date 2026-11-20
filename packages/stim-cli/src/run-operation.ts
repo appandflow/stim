@@ -128,7 +128,7 @@ export async function runOperation(
   if (entry.caller === 'cli') return { admitted: command, end: endCli };
   const opToken = held.length ? client.admittedOpToken(held) : undefined;
   return held.length
-    ? { admitted: command, end: () => held.forEach((socket) => socket.destroy()), ...(opToken ? { opToken } : {}) }
+    ? { admitted: command, end: () => client.releaseHeldAdmission(held), ...(opToken ? { opToken } : {}) }
     : { admitted: command };
 }
 

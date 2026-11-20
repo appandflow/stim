@@ -1021,6 +1021,7 @@ directory in the temp directory among them), parked simulators and emulators, an
 also stops idle Gradle and Kotlin daemons, shuts down an unused watchman over 2 GiB, deletes Gradle versions no project
 pins once unmodified for `maintenance.gradleVersionIdleDays` (7; 0 keeps
 them), and deletes TMPDIR leftovers and the worktree trash.
+`maintenance.autoDiscover` (off) decides which checkouts no `stim` command ran in a pass and `stim gc` reach: off, only those in the folders named in `maintenance.discoverRoots`; on, also those next to your registered projects and the linked worktrees of known repositories ([checkouts Stim never ran in](./worktrees.md#checkouts-stim-never-ran-in)). While it is off, `stim doctor` suggests turning it on, or adding their folders to `maintenance.discoverRoots`, when such checkouts hold at least 10 GiB of measured build output.
 `maintenance.removeFinishedWorktrees` controls the worktree check; with it false no finished worktree is removed at any level. `stim gc` at high or critical stops idle Gradle and Kotlin daemons with no local
 build, including iOS, whatever `daemon.mode` says. A pass stops a dev server only in a
 workspace whose device is hosted on a remote Mac, after
