@@ -134,8 +134,8 @@ interface RemoveOptions {
 
 /**
  * Removes `path`, inside the directory `parent`, deepest first. A symbolic link is unlinked and never followed, a
- * directory on a device other than `dev` is not entered, a directory without owner read or write permission gets them
- * once entered (one without owner search permission gets its mode set by name first: the one call made before the
+ * directory on a device other than `dev` is not entered, an empty directory is removed before anything else, so its
+ * mode does not matter, a nonempty directory without owner read or write permission gets them once entered (one without owner search permission gets its mode set by name first: the one call made before the
  * anchor, which a link swapped in after the `lstat` would redirect to the link target), an
  * entry whose name is not valid UTF-8 is renamed to an ASCII name in its directory first, and a directory goes once it
  * is empty. A path already gone counts as removed. Returns the
@@ -158,6 +158,16 @@ async function removeInPlace(path: string, parent: Identity, options: RemoveOpti
     return [];
   }
   if (stat.dev !== options.dev) return [path];
+  try {
+    await rmdir(name);
+    options.removed?.();
+    return [];
+  } catch (error) {
+    const code = errorCode(error);
+    if (code === 'ENOENT') return [];
+    if (code === 'ENOTDIR') return [path];
+    if (code !== 'ENOTEMPTY' && code !== 'EEXIST') throw error;
+  }
   if (!(stat.mode & 0o100)) await chmod(name, stat.mode | 0o700);
   anchor.enter(path, stat);
   const left: string[] = [];

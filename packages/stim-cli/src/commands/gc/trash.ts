@@ -18,6 +18,7 @@ import { openDeleteSession, type DeleteSession } from '../../delete-child.ts';
 import { filesystemDevice } from '../../temporary.ts';
 import {
   deleteTrashEntry,
+  onlyClaimFiles,
   trashEntryMisplaced,
   TRASH_CLAIMS,
   TRASH_ENTRY_PREFIX,
@@ -89,7 +90,10 @@ async function readContents(dir: string): Promise<{ manifest: TrashManifest | nu
   const manifest = await readManifest(dir);
   if (!manifest) {
     const names = await readdir(dir).catch(() => null);
-    return { manifest, kept: names?.every((name) => name === TRASH_CLAIMS) ? null : NOT_WRITTEN_BY_STIM };
+    const onlyClaims =
+      names?.every((name) => name === TRASH_CLAIMS) === true &&
+      (!names.length || (await onlyClaimFiles(join(dir, TRASH_CLAIMS))));
+    return { manifest, kept: onlyClaims ? null : NOT_WRITTEN_BY_STIM };
   }
   return { manifest, kept: manifest.kind === 'warm' ? null : await worktreeKept(manifest.worktree) };
 }

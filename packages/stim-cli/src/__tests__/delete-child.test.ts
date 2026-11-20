@@ -22,6 +22,19 @@ import { runRmJob } from '../workspace/remover.ts';
 
 const POSIX = process.platform !== 'win32';
 
+const modes = vi.hoisted((): { refuseChmod: boolean } => ({ refuseChmod: false }));
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...fs,
+    chmod: async (...args: Parameters<typeof fs.chmod>) => {
+      if (modes.refuseChmod) throw Object.assign(new Error('operation not permitted'), { code: 'EPERM' });
+      return fs.chmod(...args);
+    },
+  };
+});
+
 function fakeChild(ready: boolean, exitsOnKill: boolean) {
   const child = Object.assign(new EventEmitter(), {
     pid: process.pid,
@@ -50,6 +63,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  modes.refuseChmod = false;
   resetExecutor();
   rmSync(base, { recursive: true, force: true });
 });
@@ -254,3 +268,24 @@ test.skipIf(!POSIX)(
   'a delete in the caller thread removes a file and a directory whose names are not valid UTF-8',
   ({ skip }) => removesNamesThatAreNotUtf8(false, skip),
 );
+
+describe.skipIf(!POSIX)('an empty directory whose mode the user cannot change', () => {
+  test.each([
+    { name: 'the delete child removes it', anchored: true },
+    { name: 'a delete in the caller thread removes it', anchored: false },
+  ])('$name without changing its mode', async ({ anchored }) => {
+    const tree = join(base, 'tree');
+    mkdirSync(join(tree, 'owned-elsewhere'), { recursive: true });
+    chmodSync(join(tree, 'owned-elsewhere'), 0o555);
+    modes.refuseChmod = true;
+
+    const outcome = await runRmJob(
+      { id: 1, op: 'rm', path: tree, dev: lstatSync(tree).dev },
+      new AbortController().signal,
+      anchored ? { cwd: { chdir: (path: string) => process.chdir(path), current: () => process.cwd() } } : {},
+    );
+
+    expect(outcome).toEqual({ done: { left: [] } });
+    expect(existsSync(tree)).toBe(false);
+  });
+});

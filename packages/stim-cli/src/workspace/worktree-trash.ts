@@ -8,7 +8,6 @@ import { trashRoot } from '@stim-cli/core/state';
 import { getExecutor } from '../exec.ts';
 import {
   clearClaimChild,
-  clearFreeClaimSet,
   markClaimChildPending,
   releaseClaim,
   setClaimChild,
@@ -254,13 +253,53 @@ export async function deleteTrashEntry(
   const left = (await readdir(dir)).filter((name) => name !== TRASH_CLAIMS && name !== TRASH_MANIFEST);
   if (left.length) throw new Error(`${join(dir, left[0] ?? '')} is still in the entry`);
   await unlink(join(dir, TRASH_MANIFEST)).catch(ignoreMissing);
+  await removeClaimStaging(join(dir, TRASH_CLAIMS), options.dev);
   releaseClaim(claim);
-  const cleared = clearFreeClaimSet({ root: join(dir, TRASH_CLAIMS), label: 'worktree trash' });
-  if (cleared.status !== 'cleared')
-    throw new Error(
-      `the claims of ${dir} were not cleared: ${cleared.status === 'held' ? 'another process holds one' : cleared.reason}`,
-    );
+  try {
+    await rmdir(join(dir, TRASH_CLAIMS));
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT'))
+      throw new Error(`${join(dir, TRASH_CLAIMS)} holds files Stim did not write, so the entry stays`, {
+        cause: error,
+      });
+  }
   await rmdir(dir).catch(ignoreMissing);
+}
+
+const CLAIM_ID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+const STAGED_FILE = new RegExp(`^\\.staging-(?:(?:child|details)-)?${CLAIM_ID}$`);
+const STAGED_DIRECTORY = new RegExp(`^\\.staging-(${CLAIM_ID})$`);
+
+/** Whether the claim set `root` holds only what the claim code writes: its claim directories and staging. */
+export async function onlyClaimFiles(root: string): Promise<boolean> {
+  const names = await readdir(root).catch(() => null);
+  if (!names) return false;
+  return names.every(
+    (name) => name === 'exclusive' || name === 'shared' || STAGED_FILE.test(name) || STAGED_DIRECTORY.test(name),
+  );
+}
+
+/**
+ * Removes, from the claim set `root` on device `dev`, the staging files a claim writer left when it crashed: in the shapes
+ * `@stim-cli/core/ownership-claim` writes them, without recursing, so anything else stays.
+ */
+async function removeClaimStaging(root: string, dev: number): Promise<void> {
+  for (const name of await readdir(root).catch(() => [])) {
+    const path = join(root, name);
+    const stat = await lstat(path).catch(() => null);
+    if (!stat || stat.dev !== dev) continue;
+    if (stat.isFile() && STAGED_FILE.test(name)) await unlink(path).catch(ignoreMissing);
+    const id = STAGED_DIRECTORY.exec(name)?.[1];
+    if (!stat.isDirectory() || !id) continue;
+    const inside = await readdir(path).catch(() => null);
+    if (!inside || inside.some((entry) => entry !== `${id}.claim`)) continue;
+    if (inside.length) {
+      const claimFile = await lstat(join(path, `${id}.claim`)).catch(() => null);
+      if (!claimFile?.isFile() || claimFile.dev !== dev) continue;
+      await unlink(join(path, `${id}.claim`)).catch(ignoreMissing);
+    }
+    await rmdir(path).catch(ignoreMissing);
+  }
 }
 
 function ignoreMissing(error: unknown): void {

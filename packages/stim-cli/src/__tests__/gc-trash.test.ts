@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   realpathSync,
   rmSync,
   symlinkSync,
@@ -259,14 +260,34 @@ test.skipIf(!POSIX)(
   'gc clears claim staging a crash left and counts the entry once its directory is gone',
   async () => {
     const entry = plantEntry('remove-staged', join(base, 'gone'));
-    mkdirSync(join(entry, 'claims'), { recursive: true });
-    writeFileSync(join(entry, 'claims', '.staging-child-abandoned'), '{}');
+    const claims = join(entry, 'claims');
+    const id = '0f0e0d0c-0b0a-4908-8706-050403020100';
+    mkdirSync(join(claims, `.staging-${id}`), { recursive: true });
+    writeFileSync(join(claims, `.staging-${id}`, `${id}.claim`), '{}');
+    writeFileSync(join(claims, `.staging-child-${id}`), '{}');
+    writeFileSync(join(claims, `.staging-details-${id}`), '{}');
 
     expect(await deleteTrash(undefined)).toMatchObject({ count: 1, failures: 0 });
 
     expect(existsSync(entry)).toBe(false);
   },
 );
+
+test.skipIf(!POSIX)('gc keeps an entry whose claims hold files Stim did not write, and leaves them', async () => {
+  const withManifest = plantEntry('remove-foreign', join(base, 'gone'));
+  mkdirSync(join(withManifest, 'claims', '.staging-backup'), { recursive: true });
+  writeFileSync(join(withManifest, 'claims', '.staging-backup', 'file'), 'keep');
+  const manifestless = join(trash, 'remove-foreign-claims');
+  mkdirSync(join(manifestless, 'claims', '.staging-backup'), { recursive: true });
+  writeFileSync(join(manifestless, 'claims', '.staging-backup', 'file'), 'keep');
+
+  const report = await collectTrash();
+  expect(report?.entries.find((item) => item.path === manifestless)?.willDelete).toBe(false);
+  expect(await deleteTrash(undefined)).toMatchObject({ count: 0, failures: 1 });
+
+  for (const entry of [withManifest, manifestless])
+    expect(readFileSync(join(entry, 'claims', '.staging-backup', 'file'), 'utf8')).toBe('keep');
+});
 
 test.skipIf(!POSIX)('gc deletes an entry with a top-level name that is not valid UTF-8', async ({ skip }) => {
   const entry = plantEntry('remove-bytes', join(base, 'gone'));

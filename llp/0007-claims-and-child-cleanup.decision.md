@@ -280,8 +280,9 @@ How the child anchors each delete:
   `lstat` it took before, and unlinks single-component names there; going back
   up it compares `.` with the parent it recorded. A directory swapped for a link
   after its check is then never acted through, and the delete stops.
-- A directory without owner read or write permission gets them through `.` once
-  entered. A directory without owner search permission gets its mode set by
+- An empty directory is removed before anything else, so its mode, and its
+  owner, do not matter. A nonempty directory without owner read or write
+  permission gets them through `.` once entered. A directory without owner search permission gets its mode set by
   name before the check (`chmod(name, mode | 0o700)`); a link swapped in after
   the `lstat` redirects that one call, which then sets the link target's whole
   mode. Node has no `unlinkat`, so the working directory is the only anchor; it is
@@ -327,12 +328,15 @@ How a trash entry is deleted:
   whose manifest or contents changed its answer.
 - Each step leaves a state gc finishes: everything but `claims/` and
   `trash.json` (names that are not valid UTF-8 included), then a check that
-  nothing else is left, then `trash.json`, then the claim and any staging a
-  crash left in the claim set (`clearFreeClaimSet`), then the emptied entry.
+  nothing else is left, then `trash.json`, then the staging a crashed claim
+  writer left (only the exact file and directory shapes the claim code writes,
+  on the trash's device, without recursing), then the claim, then the emptied
+  entry. Anything else in `claims/` stays, and so does the entry.
   The entry counts as deleted only once its directory is gone.
-- A `remove-*` entry that holds nothing but its claims is one whose delete
-  stopped after its manifest went, or before one was written. gc deletes it
-  once its claim is free, and keeps it while a live claim holds it.
+- A `remove-*` entry that holds nothing but its claims, and claims that hold
+  nothing but what the claim code writes, is one whose delete stopped after its
+  manifest went, or before one was written. gc deletes it once its claim is
+  free, and keeps it while a live claim holds it.
 
 Reason: Node cannot set an I/O policy per thread, so a delete that should run
 at a lower I/O priority than the thread holding locks and claims needs its own
