@@ -287,11 +287,18 @@ path already gone counts as removed. What it left for those rules is reported,
 lock files aside. Right before each unlink and each directory removal, the
 parent directory must still resolve through `realpath` to the path the remover
 built from the canonical `target/`; otherwise the delete stops and keeps the
-rest. Known limit: Node offers no `openat` or `unlinkat`, so another local
-process that replaces a directory inside the `target/` with a link between that
-check and the unlink can still redirect that one unlink. A recursive `rm` would
-not close it: Node's walks by path name too. Chosen by the review of #6032, not
-by the maintainer.
+rest.
+
+Threat model: cleanup guards against builds, static links, a moved or replaced
+`target/` and crashes; it does not guard against a process of the same user
+that swaps directories inside a `target/` during a delete. The maintainer chose
+this in the coordinating session of #6025 on 2026-11-20, answering "Sign it" to
+that statement. The checks above stay. Known limit that follows: Node offers no
+`openat` or `unlinkat`, so such a process that replaces a directory inside the
+`target/` with a link between the `realpath` check and the unlink can still
+redirect that one unlink; a recursive `rm` would not close it, since Node's
+walks by path name too. The structural fix, deletes anchored to the checked
+directory, comes with the delete child of the GC redesign.
 
 Each trim step takes the Cargo locks of the profiles it deletes from, the lock
 files that exist and never a new one, exclusively and without waiting, through
