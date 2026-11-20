@@ -50,65 +50,47 @@ disk.
 
 Viewing another server and asking a remote worker to run a local workspace have different owners. An address locates the paired server and its pinned key authenticates it. The private LAN parser brings Desktop in line with phone pairing while keeping the same key proof. [Pairing with owning servers](https://github.com/appandflow/stim/pull/4489), [Desktop LAN pairing](https://github.com/appandflow/stim/pull/5015).
 
-## A command continues across a stimd restart
+## A command does not continue across a stimd restart
 
 A command's admission (`op.begin` and its token) lives only in the memory of
-the stimd that gave it. When that stimd goes away under the command, whether or
-not it is waiting on stimd at that moment (a crash, a kill, an in-place update,
-an engine switch), the CLI admits the command again with the stimd that
-replaces it, the way it was first admitted, starting one where the command
-would have started one. It then repeats the step it was waiting on and
-continues, printing one stderr line that stimd restarted. A command that was
-not waiting is admitted again at its next stimd step that takes the command's
-own admission (a lease, a log stream or a readiness check), with the same line;
-a Metro or tunnel request takes a request-scoped admission of its own and
-prints none. It does this once per operation, and the whole resume (every wait
-in it) takes at most 30 seconds, or as long as a service unit's job-restart
-record holds the home (LLP 0009, Service and engine updates). A cancelled operation stops resuming at once
-and is not admitted again. With no stimd admitting it again, or when the stimd
-that replaced the first one also goes away under the repeated step, the command
-fails with `STIM_DAEMON_UNAVAILABLE`, a message that says stimd stopped while
-the command was running, or with the other-build refusal. A command that was
-not waiting meets a refusal at its step: the CLI's device lease falls back to a
-local lease, the log stream reports the refusal with its remedy, and the
-readiness check marks coverage failed. When a stimd of another build ended the
-connection, the resume reports that refusal and starts no stimd of this build.
-It never re-runs the whole command on another engine mid-way, and it does not
-continue on an attached stimd, which ends with the command that hosts it.
+the stimd that gave it, and so do its device lease ticket, its Metro ticket and
+its readiness wait. A command waits automatically only before that admission:
+while a stimd starts, while a stimd of another build hands the home over to
+one of this build, and in the build, boot and test slot queues, which are claim
+files. Once a stimd has admitted it, a command whose stimd goes away (a crash,
+a kill, a service restart) fails at its next step that uses the admission with
+`STIM_DAEMON_UNAVAILABLE`, a message that says stimd stopped while the command
+was running, and the remedy to run the command again. Those steps are the
+device lease (`lease.prepare`/`lease.acquire`), Metro
+(`metro.prepare`/`metro.wait`), the managed tunnel (`tunnel.ensure`), the
+device log stream (`logs.start`) and launch verification (`readiness.wait`).
+The CLI does not admit the command again, starts no stimd for it and repeats no
+step. The device lease does not fall back to a local lease, and a launch whose
+readiness wait loses its stimd fails instead of ending `unverified`, since a
+lost stimd is not missing evidence (invariant 11).
 
-Only steps that are safe to repeat are repeated, each within the time left of
-its own budget:
+A rerun costs little: the build is cached, the next stimd adopts a running Metro
+by its claim (one still starting is waited for, not restarted) and resumes the
+device log streams. A lease whose issuing stimd went away is released by its
+token in the CLI, also when the operation is cancelled.
 
-- `lease.prepare`/`lease.acquire`: the successor finds a lease the dead stimd
-  granted by the workspace's holder record and its token and raises it; a lease
-  it cannot prove its own refuses as before. A lease whose issuing stimd went
-  away is released by its token in the CLI, also when the operation is
-  cancelled.
-- `metro.prepare`/`metro.wait`: the successor adopts a running Metro by its
-  claim, so ensuring it again reuses it (on Windows Metro ends with stimd and
-  starts again).
-- `tunnel.ensure`: the tunnel claim names the tunnel the successor reuses.
-- `logs.start`: a start answers the stream that already runs for the slot.
-- `readiness.wait`: asked again with coverage reset to pending, so the
-  successor proves it again, and again while the successor has not yet resumed
-  the stream.
-- A CI hold of a persistent stimd that is ending when it asks, or that stops
-  while it holds, waits for it to go and pins the stimd that replaces it,
-  starting one when none did; a stimd of another build, or one an attached
-  command hosts, is refused at once, and a failed replacement is printed on
-  stderr. A stimd that decided to exit idle exits only if
-  no command was admitted while it checked the engine.
+An engine switch waits while admitted commands pin stimd, so it does not cut
+one. A stimd that decided to exit idle exits only if no command was admitted
+while it checked the engine. A `stim ci` hold of a persistent stimd that is
+ending when it asks waits for it to go and pins the stimd that replaces it,
+starting one when none did; a stimd of another build, or one an attached
+command hosts, is refused at once. A stimd that stops while the hold holds it
+is not replaced: the hold prints one stderr line, and the job's next command
+admits itself.
 
-Build, boot and test slot waits already resume, since their queue is claim
-files.
+Maintainer decision: "And yes i think the resumeability thing was maybe a bad idea? If we can avoid by having clear errors if we interrup commants or have stuff wait automatically it would be better", 2026-11-20 (quoted on [#6025](https://github.com/appandflow/stim/issues/6025#issuecomment-7031965051)).
+It replaces the CLI re-admission that followed from the decision of
+2026-11-12 on [#5579](https://github.com/appandflow/stim/issues/5579#issuecomment-6835670519).
 
-Maintainer decision: "another important consteaint of stimd is being resumable", 2026-11-12 (quoted on [#5579](https://github.com/appandflow/stim/issues/5579#issuecomment-6835670519)).
-
-The CLI-side re-admission, the once-per-operation limit, the 30-second bound,
-the release by token and the CI hold's replacement were chosen by the
-implementing agent for [#5587](https://github.com/appandflow/stim/issues/5587)
-and [#5567](https://github.com/appandflow/stim/issues/5567), not by the
-maintainer.
+Chosen by the implementing lane, not the maintainer: the exit code stays 1, the
+CLI waits up to 1 s for the admission's connection to close before it reads a
+failed step as a lost stimd, and the CI hold's 30 s wait for an ending stimd
+before it pins.
 
 ## A service stimd serves the service port
 
@@ -151,5 +133,5 @@ running non-share thread.
 ## Code
 
 - [Home and socket discovery](../apps/desktop/Sources/StimKit/StimHome.swift), [machine engine paths](../apps/desktop/Sources/StimKit/EngineState.swift), [server lifecycle](../apps/desktop/Sources/StimDesktop/ServerController.swift), and [paired endpoint validation](../apps/desktop/Sources/StimKit/PairingPayload.swift).
-- [Re-admission after a stimd restart](../packages/stim-cli/src/daemon/client.ts).
+- [Failing a command whose stimd went away](../packages/stim-cli/src/daemon/client.ts).
 - [stimd socket](../packages/stim-cli/src/stimd/main.ts) and [Desktop bootstrap proof](../packages/server/src/desktop-bootstrap.ts).
