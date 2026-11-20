@@ -241,8 +241,30 @@ status`, `stim doctor` and `stim setup` print the `stim service install`
 remedy, the only path for such a unit.
 
 Maintenance children keep the priority they had: they run at stimd's priority,
-now 31, except the size walks that already ran under `nice -n 19` and the
-fingerprint children at nice 10. On macOS `nice` lowers only CPU, not I/O. A
+now 31, except the size walks under `nice -n 19` and the fingerprint children
+at nice 10. On macOS `nice` lowers only CPU, not I/O, so a low-priority walk
+whose root is on a device a pressure sample read at normal also runs at a
+throttled I/O policy: `/usr/sbin/taskpolicy -d utility` on macOS, by its
+absolute path so a walk's PATH cannot drop it, and `ionice -c3` on Linux when
+`ionice` is on PATH. A throttled walk that fails before printing a size (its
+wrapper missing or refused a spawn with ENOENT, EACCES or EPERM, or exiting nonzero with nothing on stdout, as an `ionice` does
+when it rejects its arguments or is refused the class) runs once more under
+`nice` alone; a walk killed at its deadline, or one that printed a partial
+size, does not. Windows keeps `nice` alone. Any other low-priority walk,
+including one whose volume could not be read or whose root sits on another
+device than the sample, gets `nice` and no I/O throttle. Today only the Cargo
+trim plan samples each target's volume, so only its `du` is throttled. The cap's
+size scan, the cap trim, the dependency and status walks and the
+unmanaged-usage scan keep `nice` alone: none of them has a sample of the walked
+volume, and a target can sit on another volume than the ones the home's level
+comes from.
+`utility` is the milder of macOS's two throttled policies.
+`taskpolicy -b` was rejected: it also moves CPU into the background band, and
+under a load average of about 300 its walks took 2 to 3.5 times as long as a
+niced walk, where `utility` and `throttle` took no longer. The `lsof` and `ps`
+reads of the Cargo trim and the background delete of a worktree's trash keep
+`nice -n 19`, and every other child keeps stimd's priority, for the reason the
+clamp below was dropped. A
 QoS clamp that lowered every maintenance child at normal pressure was built for
 this change and dropped before 2.0 (#6025). It had to exempt every child that
 holds a lock a command waits on, and every child that may start a long-lived
@@ -254,6 +276,14 @@ maintenance lane never runs beside it. After 2.0: measure a foreground build
 with the lane running, and only if that shows a cost, do not start maintenance
 at normal pressure while foreground work runs, never holding it back at high or
 critical pressure.
+
+Maintainer decision: "I really like all 6 points lets do them all!", 2026-11-20
+([#6047](https://github.com/appandflow/stim/issues/6047)). Point 4 of those six
+is background I/O priority for cleanup work below critical pressure. That a
+size walk runs without the I/O throttle at high and critical applies the
+maintainer's rule for sweeps, "it should be based on pressure lvl, critical
+should prob just delete right away" (2026-11-20), to walks; the coordinating
+session chose that, and the command each platform uses, not the maintainer.
 
 Maintainer decision: "yea stim itself is fine at interactive I am good with", 2026-11-19.
 [Decision on #5925](https://github.com/appandflow/stim/issues/5925#issuecomment-7023460880).

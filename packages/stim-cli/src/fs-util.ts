@@ -1,6 +1,7 @@
 import { lstatSync, readdirSync, readlinkSync, statSync } from 'fs';
 import { dirname, isAbsolute, join, normalize, parse, sep } from 'path';
 import { getExecutor } from './exec.ts';
+import { runLowPriority } from './io-priority.ts';
 import { noteSizeFailure, sizeFailure } from './size-failures.ts';
 import type { StimContext } from '@stim-cli/core';
 import { runOperationFile } from './engine/operation-exec.ts';
@@ -157,30 +158,29 @@ export async function measuredDirectorySizeAsync(
     signal,
     operation,
     lowPriority = false,
+    throttleIo = false,
     root,
   }: {
     timeoutMs: number | 'unbounded';
     signal?: AbortSignal;
     operation?: StimContext;
     lowPriority?: boolean;
+    /** With `lowPriority`, whether the walk also yields its I/O: only for a volume sampled at normal pressure. */
+    throttleIo?: boolean;
     root?: string;
   },
 ): Promise<number | null> {
   let out: string;
   const startedAt = Date.now();
   try {
-    out = await runOperationFile(
-      operation,
-      getExecutor(),
-      lowPriority ? 'nice' : 'du',
-      lowPriority ? ['-n', '19', 'du', '-sk', dir] : ['-sk', dir],
-      {
+    const walk = (file: string, args: string[]) =>
+      runOperationFile(operation, getExecutor(), file, args, {
         timeoutMs,
         killSignal: 'SIGKILL',
         signal,
         cwd: operation?.cwd,
-      },
-    );
+      });
+    out = lowPriority ? await runLowPriority(walk, 'du', ['-sk', dir], throttleIo) : await walk('du', ['-sk', dir]);
   } catch (error) {
     if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
       throw error;
