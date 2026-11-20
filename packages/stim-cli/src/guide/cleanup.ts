@@ -147,8 +147,7 @@ In on mode a pass runs, cheapest to rebuild first:
      at critical it also loses every idle unit. An explicit stim gc --pressure high|critical applies the level
      to every target/. At high or critical the trim is planned
      from the folders alone, with no size scan, no du and no load gate first: the
-     pressure ladder runs it at the end of rung 3, after the shared caches,
-     largest target first by its last recorded size (the stim-daemon's at most every 10 minutes per level; the one
+     pressure ladder runs it last in rung 3, largest target first (the stim-daemon's at most every 10 minutes per level; the one
      start, ios and android run before they build runs it once and leaves the
      workspace being built alone), one process at a time per target/ for each user account, whatever its Stim home, and an acting stim gc runs
      it before it measures anything. At normal the cap is planned at the hourly
@@ -569,7 +568,7 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
     dormant reduction, N. Kept: source checkout, under 256 MB of its own (a
     copy-on-write clone), in use, a running process inside, pinned.
   Parked devices
-    rung 2, first after rung 0, H until the level clears, C all.
+    rung 2, H until the level clears, C all.
   Shared caches trimmed to half their caps; at C every registered cache emptied,
   the fingerprint index and memo
     rung 3, H and C. Kept: entries a running build protects, report-only
@@ -578,28 +577,26 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
     rung 3 after the caches, largest target first by its last recorded size, H
     and C. Kept: as the cap trim above.
   Idle dev servers and their outputs (idle 2 minutes)
-    idle stage (memory pressure) and rung 1, after rung 3, H. Kept: as above;
-    rung 1 keeps a Cargo target/ for rung 3 and skips a checkout whose only
-    output is one.
+    idle stage (memory pressure) and rung 1, H. Kept: as above; rung 1
+    skips a Cargo target/ and a checkout whose only output is one.
   Dormant stage at 10 minutes (H) or 2 minutes (C)
     rung 4, H. Kept: as the dormant reduction.
   node_modules and Pods of linked worktrees idle 1 hour (H) or 2 minutes (C)
-    rung 5, H, reported only, never deleted: a kept action with what it would
-    free; the stim-daemon reports at most hourly. Not listed: a copy-on-write
-    clone, in use, pinned.
+    rung 5, H, reported only, hourly in the daemon. Not listed: a
+    copy-on-write clone, in use, pinned.
   Idle Gradle and Kotlin daemons, unused watchman, unpinned Gradle versions (C:
   all unpinned), TMPDIR leftovers, worktree trash
     rung 6, H. Kept: a build running, a project pins it, modified within 24
     hours.
   Clean finished worktrees after gc.worktreeGraceMinutes (H), without it (C);
   clean pushed worktrees idle 7 days (C)
-    rung 7, H and C, reported only, never removed, while
+    rung 7, H and C, reported only, while
     maintenance.removeFinishedWorktrees is true; the idle pushed ones only
     while maintenance.removeIdleWorktrees is true. Not listed: dirty,
     unpushed, in use, leased, locked, pinned.
   node_modules and Pods of source checkouts idle 2 minutes, on a volume still
   under the critical level
-    rung 8, C, reported only, never deleted.
+    rung 8, C, reported only.
   Every device recording and archived logs, recordings and agent actions
     rung 8, C. Kept: a recording being written, those of a workspace pinned
     with maintenance.keep or in use (checked again under the workspace's
@@ -1126,7 +1123,7 @@ THE PRESSURE LADDER
   gc.worktreeGraceMinutes; and it reduces every workspace idle for
   idle.dormantDays (1) to its minimal size (the table under RUNNING GC).
   Above normal it forces the ladder (\`guide lifecycle budget\`) to the level, every
-  rung to its end, in the order listed, by yield (rung numbers stay):
+  rung to its end, in this order:
     0  booted parked simulators
     2  parked devices (high until the level clears, critical all)
     3  shared caches: trimmed to half their caps at high; at critical emptied
@@ -1137,11 +1134,11 @@ THE PRESSURE LADDER
        under memory pressure (at idle.minutes under disk pressure alone)
     4  the dormant stage: workspaces idle 10 minutes (high) or 2 minutes
        (critical)
-    5  reported only, never deleted: node_modules and Pods of idle linked
+    5  reported only: node_modules and Pods of idle linked
        worktrees, at high (idle 1 hour) and critical (idle 2 minutes)
     6  idle Gradle and Kotlin daemons, an unused watchman, unpinned Gradle
        versions (critical: all unpinned), TMPDIR leftovers, the worktree trash
-    7  reported only, never removed: worktrees, only while
+    7  reported only: worktrees, only while
        maintenance.removeFinishedWorktrees is true:
        clean finished ones after gc.worktreeGraceMinutes (high) or without it
        (critical); at critical also clean pushed ones no Stim command used for
@@ -1908,8 +1905,8 @@ WORKTREE DEPENDENCIES
   A linked worktree that has a Stim workspace loses its node_modules and
   ios/Pods, at the root or a project root, never the source checkout's, in
   one way: the dormant reduction at every level once its workspace has been
-  idle for idle.dormantDays (1 day). Pressure ladder rung 5 only reports
-  them, at high (idle 1 hour) and at critical (idle 2 minutes). A worktree
+  idle for idle.dormantDays (1 day); pressure ladder rung 5 only reports
+  them. A worktree
   locked with git worktree lock keeps them always, so a rollback checkout
   stays runnable. Otherwise a worktree keeps them while it is in use (its
   dev server runs, a native run or build holds it), while it was used within
