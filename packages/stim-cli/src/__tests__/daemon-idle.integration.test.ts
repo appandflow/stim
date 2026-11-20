@@ -206,7 +206,7 @@ test.skipIf(process.platform === 'win32')(
     const calls = async () => {
       writeFileSync(log, '');
       await runHomePasses({ act: false, log: () => {} });
-      return readFileSync(log, 'utf8').trim().split('\n');
+      return readFileSync(log, 'utf8').split('\n').filter(Boolean);
     };
 
     const quiet = await calls();
@@ -219,7 +219,7 @@ test.skipIf(process.platform === 'win32')(
     }
     expect(ticket).not.toBeNull();
     expect(quiet).toContain('1');
-    expect(waiting.length).toBeGreaterThan(0);
+    expect(waiting).toContain('none');
     expect(waiting).not.toContain('1');
   },
 );

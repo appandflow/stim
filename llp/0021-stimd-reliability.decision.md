@@ -274,7 +274,7 @@ included, runs as control path. That covers the idle stage, the output
 clearing of stopped workspaces (`clearStoppedOutputs`), the dormant output
 removal, the dormant stage and `reclaimProject`; the first three also hold
 `metro-start`. Size walks a pass runs
-before it takes the lock stay lowered. While a boot waits in the queue, the
+before it takes the lock stay lowered, except while a boot waits. While a boot waits in the queue, the
 tick's passes run as control path, since the reclaim that frees a device for it
 runs after them. The fingerprint precompute and the queued fingerprint
 verification hold `native-run` while they run lowered; this is accepted, since
