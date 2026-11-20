@@ -89,17 +89,17 @@ function ownsDevice(config: Config | null, platform: 'ios' | 'android'): boolean
 
 /**
  * The device slots a person is using in the focused window: the focused simulator or emulator when it can be read,
- * else every booted simulator this home owns.
+ * else every running simulator or emulator of that platform this home owns.
  */
 export function focusedSlots(
   use: FocusedDeviceUse,
   config: Config | null,
   devices: readonly OwnedDeviceActivity[],
 ): { root: string; key: string; id: string }[] {
-  if (use.platform === 'ios' && use.udid === null)
+  if ((use.platform === 'ios' ? use.udid : use.avdName) === null)
     return devices
-      .filter((device) => device.kind === 'ios' && ownedHere(device))
-      .map((device) => ({ root: device.project, key: deviceSlotKey('ios', device.slot), id: device.id }));
+      .filter((device) => device.kind === use.platform && ownedHere(device))
+      .map((device) => ({ root: device.project, key: deviceSlotKey(use.platform, device.slot), id: device.id }));
   return Object.entries(config?.projects ?? {}).flatMap(([root, project]) =>
     projectDeviceSlots(project).flatMap(({ slot, platforms }) => {
       const id =

@@ -1,3 +1,4 @@
+import assert from 'node:assert';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -54,6 +55,56 @@ test('Device Hub in front, or Simulator with no readable current device, names n
     await probeFocusedDeviceUse({ platform: 'darwin', exec: frontmost('com.apple.iphonesimulator', 'UDID-A') }),
   ).toEqual({ platform: 'ios', udid: 'UDID-A', idleMs: 4682 });
   expect(await probeFocusedDeviceUse({ platform: 'darwin', exec: frontmost('com.apple.Terminal', null) })).toBe(null);
+});
+
+test('a standalone QEMU window whose arguments name no AVD is no emulator use', async () => {
+  const exec = {
+    ...getExecutor(),
+    async runFileAsync(file: string, args: string[] = []) {
+      if (file === 'ioreg') return '    | | |   "HIDIdleTime" = 4682113625\n';
+      if (file === 'lsappinfo' && args[0] === 'front') return 'ASN:0x0-0x1565063b:\n';
+      if (file === 'lsappinfo') return 'executable path="/opt/homebrew/bin/qemu-system-aarch64"\npid = 24393\n';
+      return 'qemu-system-aarch64 -machine virt -drive file=linux.qcow2\n';
+    },
+  };
+  expect(await probeFocusedDeviceUse({ platform: 'darwin', exec })).toBe(null);
+});
+
+test('an emulator window whose AVD cannot be read, as when its ps times out, keeps every owned emulator in use', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-probe-'));
+  process.env.STIM_HOME = home;
+  onTestFinished(() => {
+    delete process.env.STIM_HOME;
+    rmSync(home, { recursive: true, force: true });
+  });
+  const exec = {
+    ...getExecutor(),
+    async runFileAsync(file: string, args: string[] = []) {
+      if (file === 'ioreg') return '    | | |   "HIDIdleTime" = 4682113625\n';
+      if (file === 'lsappinfo' && args[0] === 'front') return 'ASN:0x0-0x1565063b:\n';
+      if (file === 'lsappinfo')
+        return 'executable path="/sdk/emulator/qemu/darwin-aarch64/qemu-system-aarch64"\npid = 24393\n';
+      throw Object.assign(new Error(`${file} timed out`), { code: 'ETIMEDOUT' });
+    },
+  };
+  const use = await probeFocusedDeviceUse({ platform: 'darwin', exec });
+  expect(use).toEqual({ platform: 'android', avdName: null, idleMs: 4682 });
+  recordCreatedDevice('android', 'stim-a');
+  recordCreatedDevice('android', 'stim-b');
+  const running = (project: string, id: string): OwnedDeviceActivity => ({
+    kind: 'android',
+    id,
+    name: id,
+    project,
+    slot: 'default',
+    activity: { state: 'idle', basis: [] },
+  });
+  const devices = [running('/w/a', 'stim-a'), running('/w/b', 'stim-b'), running('/w/c', 'unowned')];
+  assert(use);
+  expect(focusedSlots(use, { version: 2, repos: {}, projects: {} }, devices)).toEqual([
+    { root: '/w/a', key: 'android', id: 'stim-a' },
+    { root: '/w/b', key: 'android', id: 'stim-b' },
+  ]);
 });
 
 test('use with no named simulator counts for every booted simulator this home owns, a named one for its slot only', () => {

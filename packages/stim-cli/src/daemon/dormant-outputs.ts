@@ -34,7 +34,12 @@ const SIZE_TIMEOUT_MS = 120_000;
 const IN_USE_CHECKS = { devServer: false, hosted: false, hostedMacos: false };
 const RESTORE = 'the next stim ios or stim android, from the build cache when nothing changed';
 
-type Input = Pick<IdlePassInput, 'act' | 'log'> & { operation?: StimContext; force?: boolean };
+type Input = Pick<IdlePassInput, 'act' | 'log'> & {
+  operation?: StimContext;
+  force?: boolean;
+  /** Runs before each size walk and each removal, outside the workspace's claims: a unit boundary of the disk owner. */
+  between?: () => Promise<void>;
+};
 type Result = Pick<DaemonLadderAction, 'outcome' | 'bytes' | 'detail'>;
 
 interface Plan {
@@ -119,8 +124,10 @@ async function reduceWorkspace(
   const plan = await eligible(candidate, config, afterMs);
   if (!plan.paths.length) return plan.keptTarget ? keep(plan.kept.join('; ')) : null;
   const measure = input.act || input.force === true;
-  const sizeOf = async (dir: string) =>
-    (await measuredDirectorySizeAsync(dir, { timeoutMs: SIZE_TIMEOUT_MS, signal })) ?? 0;
+  const sizeOf = async (dir: string) => {
+    await input.between?.();
+    return (await measuredDirectorySizeAsync(dir, { timeoutMs: SIZE_TIMEOUT_MS, signal })) ?? 0;
+  };
   const sizes = new Map<string, number>();
   if (measure)
     for (const output of plan.paths) {
@@ -146,6 +153,7 @@ async function reduceWorkspace(
   let released = false;
   for (const output of plan.paths) {
     let outcome: string | CargoTrimResult | null;
+    await input.between?.();
     try {
       // @ref LLP 0005#a-full-disk-releases-the-reserve -- the workspace claims are writes too
       outcome = await retryWithReserve(

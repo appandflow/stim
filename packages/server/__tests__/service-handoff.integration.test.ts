@@ -129,6 +129,11 @@ function fixture(label: string, port: number, shim = false) {
   mkdirSync(store, { recursive: true });
   mkdirSync(bin);
   writeFileSync(join(bin, 'launchctl'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  writeFileSync(
+    join(bin, 'systemctl'),
+    '#!/bin/sh\ncase "$*" in *show*KillMode*) echo process ;; *) exit 1 ;; esac\n',
+    { mode: 0o755 },
+  );
   const streamPids = join(scratch, 'stream-pids');
   // Stands in for `xcrun simctl spawn ... log stream`: one line, then it runs until killed.
   writeFileSync(
