@@ -1061,7 +1061,7 @@ describe('the pressure ladder', () => {
     expect(sizeRecords()).toEqual([
       expect.objectContaining({
         level: 'warn',
-        caller: 'cachesRung',
+        caller: 'sharedCachesStep',
         reason: 'timeout',
         limitMs: 120_000,
         ms: expect.any(Number),
@@ -1095,6 +1095,50 @@ describe('the pressure ladder', () => {
       detail: 'its size walk did not finish within 120 seconds, so it was left alone',
     });
     vi.setSystemTime(startedAt);
+  });
+
+  test('rung 3 at high trims a cache from the size the scan recorded, with no size walk first', async () => {
+    caches('kept-key');
+    vi.stubEnv('STIM_CACHES_BUILD_CACHE_MAX_GB', '12');
+    mkdirSync(dirname(maintenanceStateFile()), { recursive: true });
+    writeFileSync(
+      maintenanceStateFile(),
+      JSON.stringify({
+        version: 1,
+        lastAt: {},
+        pressure: null,
+        sizes: [
+          {
+            name: 'shared build cache',
+            category: 'build-cache',
+            dir: buildCache(),
+            bytes: 20 * 1024 ** 3,
+            measuredAt: Date.now(),
+          },
+        ],
+        lastPass: null,
+        recent: [],
+        plan: [],
+      }),
+    );
+    const walks: string[] = [];
+    const real = getExecutor();
+    setExecutor({
+      ...real,
+      runFileAsync: async (file, args, options) => {
+        if (file === 'du') walks.push(String(args.at(-1)));
+        return real.runFileAsync(file, args, options);
+      },
+    });
+
+    const { actions } = await runLadder(
+      input(true, async () => pressure('high')),
+      pressure('high'),
+    );
+
+    expect(walks).not.toContain(buildCache());
+    expect(existsSync(join(buildCache(), 'ios', 'unused'))).toBe(false);
+    expect(actions).toContainEqual(expect.objectContaining({ rung: 3, target: buildCache(), outcome: 'done' }));
   });
 
   test('a build headroom run goes on to the Metro cache after the build cache could not be sized and was kept', async () => {
