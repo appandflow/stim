@@ -86,7 +86,7 @@ test('an unfinished pnpm patch keeps the tree at critical too', async () => {
   installAt(ago(HOUR));
   write(join(tree, '.pnpm_patches', 'pkg@1.0.0', 'index.js'), 'patched by hand', ago(2 * HOUR));
 
-  expect(await keptFiles()).toContain('unfinished pnpm patch in node_modules/.pnpm_patches');
+  expect(await keptFiles()).toContain('pnpm patch edit folder, node_modules/.pnpm_patches/pkg@1.0.0');
 });
 
 test('.bin shims a version of Stim recorded as edits no longer keep the tree', async () => {

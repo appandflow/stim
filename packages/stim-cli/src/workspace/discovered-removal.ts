@@ -2,14 +2,14 @@ import { lstat, readFile, readdir, readlink } from 'node:fs/promises';
 import { dirname, join, relative, sep } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
 import { decideIdleStop } from '../policy/idle.ts';
-import { ARTIFACT_DIRS, existingBuildDirsAsync } from './regenerable-dirs.ts';
+import { ARTIFACT_DIRS, cargoTargetDirsAsync, existingBuildDirsAsync } from './regenerable-dirs.ts';
+import { targetEntries } from './cargo-target.ts';
 import { discoveredEvidence, SKIPPED_WHERE_IGNORED } from './discovered-activity.ts';
 import type { DiscoveredReads } from './discovered-reads.ts';
 import { gitQuietAsync } from './git.ts';
 import { hiddenEditHold } from './hidden-edits.ts';
-import { checkDependencyEdits, dependencyEditsHold } from './dependency-edits.ts';
+import { checkDependencyEdits, dependencyEditsHold, pnpmPatchHold } from './dependency-edits.ts';
 import { absent } from './scan-rules.ts';
-import { protectedPathHold } from './protected-paths.ts';
 
 const MAX_IGNORED_FILES = 200;
 const MAX_COMPARED_BYTES = 16 * 1024 * 1024;
@@ -62,6 +62,12 @@ export async function ignoredFilesHold(path: string, main: string, signal?: Abor
     },
   );
   if (listed === null) return 'git cannot list its ignored files';
+  for (const target of await cargoTargetDirsAsync(path)) {
+    const entries = targetEntries(target);
+    if (!entries) return `its ${relative(path, target)} cannot be listed`;
+    if (entries.kept.length)
+      return `its ${relative(path, target)} holds ${entries.kept.join(', ')}, a Solana keypair folder or a link`;
+  }
   const folders = [
     ...ARTIFACT_DIRS.dependencies.filter((folder) => !podsFolder(folder)),
     ...(await existingBuildDirsAsync(path)).map((dir) => relative(path, dir)),
@@ -141,21 +147,6 @@ async function enclosingCheckout(path: string): Promise<string | null> {
   return null;
 }
 
-/**
- * Why an unfinished `pnpm patch` keeps the worktree, or null: pnpm keeps the editable copy in
- * `node_modules/.pnpm_patches` until `pnpm patch-commit`, which git ignores and no activity read looks into.
- */
-export async function pendingPnpmPatch(path: string): Promise<string | null> {
-  const dir = join(path, 'node_modules', '.pnpm_patches');
-  try {
-    return (await readdir(dir)).length
-      ? 'it has an unfinished pnpm patch in node_modules/.pnpm_patches; run pnpm patch-commit or delete it'
-      : null;
-  } catch (error) {
-    return absent(error) ? null : 'node_modules/.pnpm_patches cannot be read';
-  }
-}
-
 // @ref LLP 0004#removing-a-discovered-worktree-needs-more-evidence -- no Stim record of its files
 /**
  * What stops Stim removing a discovered linked worktree, or null: it must have had no activity for `idleMs` by the full
@@ -190,7 +181,7 @@ export async function discoveredRemovalHold(
   const folder = inOwner ?? toolFolder(main);
   if (folder)
     return `it is managed by another tool (inside ${folder} of ${inOwner && owner !== main ? owner : 'its main checkout'})`;
-  const patches = await pendingPnpmPatch(path);
+  const patches = await pnpmPatchHold(join(path, 'node_modules'), operation?.signal);
   if (patches) return patches;
   if (!(idleMs > 0)) return 'idle.dormantDays is 0, so its idleness cannot be established';
   const now = Date.now();
@@ -203,7 +194,6 @@ export async function discoveredRemovalHold(
   if (!main) return 'its main checkout is unknown, so its git-ignored files cannot be compared';
   return (
     (await hiddenEditHold(path, operation?.signal)) ??
-    (await protectedPathHold(path, operation?.signal)) ??
     (await ignoredFilesHold(path, main, operation?.signal)) ??
     (await dependencyEditsHold(path, operation?.signal))
   );

@@ -40,7 +40,7 @@ const STAGED_LEFT = 'what was staged stays in its .stim-trimmed, marked NOT-REST
 /** Solana's `cargo build-sbf` and Anchor keep each program's private key in `deploy/<program>-keypair.json`. */
 const KEYPAIR_DIR = 'deploy';
 const isKeypairDir = (name: string): boolean => name.toLowerCase() === KEYPAIR_DIR;
-export const isKeypairName = (name: string): boolean => name.toLowerCase().endsWith('-keypair.json');
+const isKeypairName = (name: string): boolean => name.toLowerCase().endsWith('-keypair.json');
 
 /**
  * The top-level entries of `target` the dormant delete removes (`output`), and those it keeps (`kept`): a symbolic link,

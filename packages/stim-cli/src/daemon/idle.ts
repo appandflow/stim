@@ -18,7 +18,6 @@ import { formatBytes, measuredDirectorySizeAsync } from '../fs-util.ts';
 import { collectOwnedDeviceActivityAsync, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { workspaceOutputPaths } from '../commands/gc/workspaces.ts';
-import { protectedPathHold } from '../workspace/protected-paths.ts';
 import { runIdleStop } from '../commands/stop.ts';
 import { isStimOwnedAvd, isStimOwnedSim } from '../devices/device-ownership.ts';
 import { holdsDeferredShutdown } from '../devices/deferred-shutdown.ts';
@@ -211,9 +210,7 @@ export async function idleOutputs(
   const kept: string[] = [];
   const { dirs, cargo } = await existingBuildDirKindsAsync(path);
   for (const dir of dirs) {
-    const problem =
-      (await regenerableDirProblem(path, dir, undefined)) ??
-      (cargo.includes(dir) ? await protectedPathHold(dir) : null);
+    const problem = await regenerableDirProblem(path, dir, undefined);
     if (problem) kept.push(`kept ${dir}: ${problem}`);
     else {
       paths.push(dir);

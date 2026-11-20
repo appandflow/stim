@@ -1,6 +1,6 @@
 import { existsSync, lstatSync, readdirSync, type Stats } from 'node:fs';
 import { basename, dirname, join, relative, sep } from 'node:path';
-import { readdir } from 'node:fs/promises';
+import { lstat, readdir } from 'node:fs/promises';
 import { setImmediate as nextTurn } from 'node:timers/promises';
 import {
   readDependencyInstall,
@@ -16,6 +16,7 @@ import { gitQuietAsync } from './git.ts';
 import { updateDependencyInstall as updateRecord } from './dependency-install-records.ts';
 import { ARTIFACT_DIRS, existingDirsOf } from './regenerable-dirs.ts';
 import { absent } from './scan-rules.ts';
+import { answered } from './bounded-read.ts';
 
 /**
  * How long after a package manager's stamp the root project's own install-time script (`preinstall`, `install`,
@@ -365,18 +366,28 @@ export function editsKeptReason(
   return `${countText(edits.count, edits.complete)} in it ${after} (${shown}${more}), so maintenance and stim gc keep it at every disk pressure and its disk is not freed; make the change a patch (pnpm patch, yarn patch or patch-package), or reinstall the dependencies, to release it`;
 }
 
+const PATCH_PROBE_MS = 5_000;
+
 /**
- * Why an unfinished `pnpm patch` keeps the node_modules `tree`, or null: pnpm keeps the editable copy in its
- * `.pnpm_patches` until `pnpm patch-commit`, and the edit scan skips that dot-directory with the tools' caches.
+ * Why an unfinished `pnpm patch` keeps the node_modules `tree`, or null: `pnpm patch` copies the package into an edit
+ * folder in its `.pnpm_patches`, which the edit scan skips with the tools' caches. A `.pnpm_patches` holding only
+ * `state.json`, which pnpm keeps on purpose (pnpm/pnpm#8401), does not keep it; `pnpm patch-commit` leaves the edit
+ * folder in place, so a committed patch keeps the tree until that folder is deleted. Never follows a link.
  */
-async function pnpmPatchHold(tree: string): Promise<string | null> {
+export async function pnpmPatchHold(tree: string, signal?: AbortSignal): Promise<string | null> {
+  const dir = join(tree, '.pnpm_patches');
   const where = `${basename(tree)}/.pnpm_patches`;
   try {
-    return (await readdir(join(tree, '.pnpm_patches'))).length
-      ? `it has an unfinished pnpm patch in ${where}; run pnpm patch-commit or delete it`
+    if (!(await answered(dir, () => lstat(dir), PATCH_PROBE_MS, signal)).isDirectory()) return null;
+    const entries = await answered(dir, () => readdir(dir, { withFileTypes: true }), PATCH_PROBE_MS, signal);
+    const edit = entries.find((entry) => entry.isDirectory());
+    return edit
+      ? `it has a pnpm patch edit folder, ${where}/${edit.name}; run pnpm patch-commit if the patch is unfinished, then delete that folder`
       : null;
   } catch (error) {
-    return absent(error) ? null : `${where} cannot be read`;
+    if (absent(error)) return null;
+    signal?.throwIfAborted();
+    return `${where} cannot be read`;
   }
 }
 
@@ -403,7 +414,7 @@ export async function checkDependencyEdits(
   }: { level: PressureLevel; worktree: string; readOnly?: boolean; signal?: AbortSignal },
 ): Promise<EditCheck> {
   const tree = canonicalOr(path);
-  const patch = kindOf(tree) === 'node_modules' ? await pnpmPatchHold(tree) : null;
+  const patch = kindOf(tree) === 'node_modules' ? await pnpmPatchHold(tree, signal) : null;
   return patch ? { keep: patch, edited: true } : recordedEdits(path, { level, worktree, readOnly, signal });
 }
 

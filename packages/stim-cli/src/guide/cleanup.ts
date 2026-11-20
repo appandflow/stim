@@ -1321,14 +1321,12 @@ for byte in the main checkout, except inside regenerable folders: directories
 git reports as ignored that are named node_modules or like build output (build,
 dist, target, .next, .turbo, .expo and the rest of the source scan's list) or
 that the stages recognise; the files inside them are deleted with the worktree.
-A *-keypair.json anywhere in it, an unfinished pnpm patch in any node_modules
-or a deploy link in a target folder keeps it, as does a check that cannot
-finish in 15 s.
+A root Cargo target/ holding a Solana keypair folder or a link keeps it.
 An ignored file elsewhere that the main checkout lacks, even inside a tracked
 dist folder, keeps it (more than 200 files or 16 MB to compare also keeps it).
 Any change to a tracked file, even Podfile.lock or project.pbxproj, is dirty
 work and keeps it, as does any tracked file marked assume-unchanged or
-skip-worktree, which hides edits from git status, or an unfinished pnpm patch
+skip-worktree, which hides edits from git status, or a pnpm patch edit folder
 in node_modules/.pnpm_patches. A finished registered worktree follows the
 ignored-file and pnpm patch rules too; Pods under any ios folder and a linked
 node_modules count as regenerable. A worktree inside a

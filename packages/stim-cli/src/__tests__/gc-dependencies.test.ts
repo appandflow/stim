@@ -365,8 +365,26 @@ test.skipIf(process.platform === 'win32')(
 
     const kept = payload.actions.find((action) => action.kind === 'delete-dependencies' && action.target === modules);
     expect(kept?.outcome).toBe('kept');
-    expect(kept?.detail).toContain('unfinished pnpm patch');
+    expect(kept?.detail).toContain('pnpm patch edit folder');
     expect(readFileSync(patched, 'utf-8')).toBe('patched by hand');
+  },
+  60_000,
+);
+
+test.skipIf(process.platform === 'win32')(
+  'gc deletes the dependencies of an idle worktree whose .pnpm_patches holds only the state pnpm keeps',
+  async () => {
+    const feature = idleRepo([{ name: 'feature', workspace: true }]).feature ?? '';
+    const modules = join(feature, 'node_modules');
+    const config = loadConfig();
+    if (!config) throw new Error('no config');
+    saveConfig({ ...config, idle: { dormantDays: 0.01 } });
+    mkdirSync(join(modules, '.pnpm_patches'));
+    writeFileSync(join(modules, '.pnpm_patches', 'state.json'), '{}');
+
+    await quietly(() => runGc({ pressure: 'normal' }));
+
+    expect(existsSync(modules)).toBe(false);
   },
   60_000,
 );

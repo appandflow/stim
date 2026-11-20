@@ -66,7 +66,7 @@ import { canonicalPath } from './paths.ts';
 import { discoverCheckouts } from '../../workspace/discovery.ts';
 import { discoveredReads } from '../../workspace/discovered-reads.ts';
 import { hiddenEditHold } from '../../workspace/hidden-edits.ts';
-import { dependencyEditsHold } from '../../workspace/dependency-edits.ts';
+import { dependencyEditsHold, pnpmPatchHold } from '../../workspace/dependency-edits.ts';
 import { listWorkspaceDirs } from './workspaces.ts';
 import { eachLimited, readConcurrency } from './limited.ts';
 import { phase } from './progress.ts';
@@ -594,9 +594,8 @@ function dormantMs(operation?: StimContext): number {
  * file outside its dependency and build-output folders that its main checkout lacks or holds differently.
  */
 async function registeredRemovalHold(path: string, operation?: StimContext): Promise<string | null> {
-  const { ignoredFilesHold, pendingPnpmPatch } = await import('../../workspace/discovered-removal.ts');
-  const { protectedPathHold } = await import('../../workspace/protected-paths.ts');
-  const patch = (await pendingPnpmPatch(path)) ?? (await protectedPathHold(path, operation?.signal));
+  const { ignoredFilesHold } = await import('../../workspace/discovered-removal.ts');
+  const patch = await pnpmPatchHold(join(path, 'node_modules'), operation?.signal);
   if (patch) return patch;
   const source = await resolveSourceCheckoutAsync(path, {
     env: operation?.env,
