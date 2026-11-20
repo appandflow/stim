@@ -557,12 +557,12 @@ export async function trimCargoTarget(
     if (left.length) result.kept.push(`${label}: left ${left.join(', ')}`);
   };
   const trim = async (): Promise<void> => {
-    for (const planned of steps) {
+    for (const next of steps) {
       if (stop?.aborted === true) {
         result.kept.push(DEADLINE_KEPT);
         return;
       }
-      await step(planned);
+      await step(next);
     }
   };
   if (!idleOnly) {
