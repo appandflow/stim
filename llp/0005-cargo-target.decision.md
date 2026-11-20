@@ -93,9 +93,11 @@ still idle and the directory is still a recognised `target/`. A path the plan to
 through the Cargo delete, never through the plain removal of other outputs.
 
 The Cargo delete then keeps the whole `target/` when it is no longer
-recognised, when the admitted path is no longer a directory or no longer
-resolves to the canonical path the delete works on (checked before the checks
-below and again under the Cargo locks), when it holds a leftover of an earlier engine's staging (Leftovers
+recognised, when the admitted path no longer names the directory it admitted:
+not a directory, another device and inode, or another canonical path (checked
+before the checks below and again under the Cargo locks before each top-level
+entry; the trims check it before planning and in each locked step, with the
+identity the pressure and cap actions capture when they admit the target), when it holds a leftover of an earlier engine's staging (Leftovers
 of the staged trim, below), when it shows use within `idle.dormantDays` or that
 use cannot be told, when another filesystem is mounted anywhere in it (on Linux
 also any mount point at or under it in `/proc/self/mountinfo`, since a bind
