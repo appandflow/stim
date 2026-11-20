@@ -373,6 +373,30 @@ describe.skipIf(process.platform === 'win32')('trimming in place (Cargo locks ne
     expect(result.removed).toEqual(['debug']);
   });
 
+  test('a keypair link a build publishes while the trim takes its locks still keeps the target', async () => {
+    makeProfile('debug', 3 * DAY);
+    writeFileSync(join(target, 'debug', 'deps', 'wallet.json'), '[9]');
+    const old = new Date(Date.now() - 3 * DAY);
+    for (const path of [join(target, 'debug', 'deps'), join(target, 'debug')]) utimesSync(path, old, old);
+    const real = getExecutor();
+    setExecutor({
+      ...real,
+      runFileAsync: async (file, args, options) =>
+        file === 'lsof' || file === 'ps' ? '' : real.runFileAsync(file, args, options),
+      spawn: (...args: Parameters<typeof real.spawn>) => {
+        mkdirSync(join(target, 'deploy'), { recursive: true });
+        symlinkSync(join('..', 'debug', 'deps', 'wallet.json'), join(target, 'deploy', 'app-keypair.json'));
+        return real.spawn(...args);
+      },
+    });
+
+    const result = await trimCargoTarget(target, { needBytes: 0 });
+
+    expect(result.removed).toEqual([]);
+    expect(result.kept).toEqual([expect.stringContaining('app-keypair.json is a symbolic link')]);
+    expect(readFileSync(join(target, 'debug', 'deps', 'wallet.json'), 'utf8')).toBe('[9]');
+  });
+
   test('a link named like a keypair anywhere in the target keeps it whole, and what it points at stays', async () => {
     makeProfile('debug', 3 * DAY);
     const deps = join(target, 'debug', 'deps');
@@ -519,6 +543,25 @@ describe.skipIf(process.platform === 'win32')('deleting an idle Cargo target who
 
     expect(result.removed.toSorted()).toEqual(['.rustc_info.json', 'debug', 'doc']);
     expect(await cargoTargetDirsAsync(target)).toEqual([dir]);
+  });
+
+  test('a keypair link a build publishes after the checks still keeps it whole', async () => {
+    writeFileSync(join(dir, 'debug', 'wallet.json'), '[1,2,3]');
+    ageTree(dir);
+    stubProcesses({
+      lsof: () => {
+        mkdirSync(join(dir, 'deploy'), { recursive: true });
+        if (!existsSync(join(dir, 'deploy', 'app-keypair.json')))
+          symlinkSync(join('..', 'debug', 'wallet.json'), join(dir, 'deploy', 'app-keypair.json'));
+        return '';
+      },
+    });
+
+    const result = await remove();
+
+    expect(result.removed).toEqual([]);
+    expect(result.kept).toEqual([expect.stringContaining('app-keypair.json is a symbolic link')]);
+    expect(readFileSync(join(dir, 'debug', 'wallet.json'), 'utf8')).toBe('[1,2,3]');
   });
 
   test('a target with nothing left in it goes too', async () => {

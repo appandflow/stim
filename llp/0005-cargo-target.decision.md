@@ -144,7 +144,8 @@ one, keeps the whole `target/`, since its keys may live anywhere in it. The same
 holds at any depth, in the delete and in every trim: a symbolic link named
 `deploy` or `*-keypair.json`, or one directly in a `deploy` directory, anywhere in
 the `target/` keeps all of it, and so does a directory that cannot be listed to
-look. Reason: a `deploy/debug/app-keypair.json` that links to a wallet file
+look. The walk runs under the Cargo locks, right before each delete step. A key
+a tool publishes with no Cargo lock held, after that walk, is not covered. Reason: a `deploy/debug/app-keypair.json` that links to a wallet file
 beside it would survive while the wallet went. Chosen by the review of #6032,
 not by the maintainer. Both `deploy` and `*-keypair.json` match in any letter
 case. Anywhere else the

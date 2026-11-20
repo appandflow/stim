@@ -357,14 +357,14 @@ const kept = (name: string): boolean => LOCK_FILES.has(name) || isKeypairName(na
 const reported = (left: readonly string[]): string[] =>
   left.filter((path) => !LOCK_FILES.has(basename(path)) && basename(path) !== EXACT_APPLE_LOCKS);
 
-/** Raised when a directory the remover is emptying stops being a real directory inside the target; the delete stops. */
-class LeftTarget extends Error {}
+/** Raised under the Cargo locks to stop a trim or delete and keep the rest of the target, with the reason as message. */
+class KeepTarget extends Error {}
 
-/** Throws `LeftTarget` unless the parent of `path`, built from the canonical target, is still its own canonical path. */
+/** Throws `KeepTarget` unless the parent of `path`, built from the canonical target, is still its own canonical path. */
 async function stillInside(path: string): Promise<void> {
   const parent = dirname(path);
   if ((await realpath(parent).catch(() => null)) !== parent)
-    throw new LeftTarget(`${parent} is no longer a directory inside the target/, so the delete stopped`);
+    throw new KeepTarget(`${parent} is no longer a directory inside the target/, so the delete stopped`);
 }
 
 // @ref LLP 0005#one-remover -- never through a link, never onto another device, never a lock file or a keypair
@@ -372,7 +372,7 @@ async function stillInside(path: string): Promise<void> {
  * Removes `path` in place, deepest first: a symbolic link is unlinked and never followed, a directory on a device other
  * than `dev` and Exact's `.apple-cargo-locks` are not entered, a lock file Cargo or Exact takes and a `*-keypair.json`
  * (any case) are never unlinked, and a directory goes once it is empty. Right before each unlink and each directory
- * removal its parent must still resolve to itself, or `LeftTarget` stops the delete. A `.fingerprint` goes before its
+ * removal its parent must still resolve to itself, or `KeepTarget` stops the delete. A `.fingerprint` goes before its
  * siblings, so a build that starts while a profile is half removed rebuilds it. A path already gone counts as removed.
  * Returns the paths it left because of those rules; a directory a build filled again meanwhile stays too.
  */
@@ -437,6 +437,12 @@ async function keypairLink(target: string, signal?: AbortSignal): Promise<string
     }
   }
   return null;
+}
+
+/** Throws `KeepTarget` when `keypairLink` finds a link; run under the Cargo locks that cover the delete. */
+async function refuseKeypairLink(target: string, signal?: AbortSignal): Promise<void> {
+  const link = await keypairLink(target, signal);
+  if (link) throw new KeepTarget(link);
 }
 
 /** The lock files of `profile` that exist, or null when it has no `.cargo-lock`, which keeps it. */
@@ -594,7 +600,14 @@ export async function trimCargoTarget(
       }
       locks.push(...found);
     }
-    const done = await withCargoLocks(idleOnly ? [] : locks, () => removeInPlace(dir, dev, signal), signal);
+    const done = await withCargoLocks(
+      idleOnly ? [] : locks,
+      async () => {
+        await refuseKeypairLink(target, signal);
+        return removeInPlace(dir, dev, signal);
+      },
+      signal,
+    );
     if ('kept' in done) {
       result.kept.push(`${label}: ${done.kept}`);
       return;
@@ -614,8 +627,6 @@ export async function trimCargoTarget(
     }
   };
   if (!steps.length) return result;
-  const link = await keypairLink(target, signal);
-  if (link) return keep(link);
   try {
     if (!idleOnly) {
       await trim();
@@ -624,7 +635,7 @@ export async function trimCargoTarget(
     const held = await withCargoLocks(targetLocks(target), trim, signal);
     return 'kept' in held ? keep(`${held.kept}, and the cap trims an idle target/ only`) : result;
   } catch (error) {
-    if (error instanceof LeftTarget) return keep(error.message);
+    if (error instanceof KeepTarget) return keep(error.message);
     throw error;
   }
 }
@@ -750,8 +761,6 @@ export async function deleteCargoTarget(
   if (!entries) return keep(`${target} cannot be listed`);
   const names = entries.output;
   if (!names.length) return result;
-  const link = await keypairLink(target, signal);
-  if (link) return keep(link);
   const walked = await walkEntries(
     names.map((name) => join(target, name)),
     dev,
@@ -769,6 +778,7 @@ export async function deleteCargoTarget(
     done = await withCargoLocks(
       targetLocks(target),
       async () => {
+        await refuseKeypairLink(target, signal);
         const left: string[] = [];
         for (const name of names) left.push(...(await removeInPlace(join(target, name), dev, signal)));
         return left;
@@ -776,7 +786,7 @@ export async function deleteCargoTarget(
       signal,
     );
   } catch (error) {
-    if (error instanceof LeftTarget) return keep(error.message);
+    if (error instanceof KeepTarget) return keep(error.message);
     throw error;
   }
   if ('kept' in done) return keep(done.kept);
