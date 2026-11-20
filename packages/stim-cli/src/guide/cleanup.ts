@@ -1844,7 +1844,9 @@ WORKSPACE BUILD OUTPUTS
   nothing running idle 2 minutes or more, and in the idle stage of a running
   one. It prints the bytes freed per category.
   Idle idle.dormantDays, a Cargo target/ goes but its keypairs (\`stim
-  guide cleanup gc\`).
+  guide cleanup gc\`); an Exact app's goes through Exact's own cleaner
+  (scripts/sweep.mjs clean), which keeps its records, or stays when the
+  app's Exact checkout has none.
   A workspace whose worktree is locked with git worktree lock is never
   lightened: not its outputs, not its project's build directories, at any
   disk pressure level, including the age sweep and the pressure ladder, and gc and

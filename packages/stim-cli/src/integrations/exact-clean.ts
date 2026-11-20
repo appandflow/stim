@@ -76,11 +76,7 @@ function stdoutOf(error: unknown): unknown {
  */
 export async function exactClean(
   app: string,
-  {
-    dryRun = false,
-    signal,
-    home = homedir(),
-  }: { dryRun?: boolean; signal?: AbortSignal; home?: string } = {},
+  { dryRun = false, signal, home = homedir() }: { dryRun?: boolean; signal?: AbortSignal; home?: string } = {},
 ): Promise<ExactCleanReport | { unsupported: string }> {
   let launcher: string;
   try {
