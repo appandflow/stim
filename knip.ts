@@ -41,7 +41,7 @@ export default ({ production }: { production?: boolean }): KnipConfig => ({
       // TypeScript reads it as the declarations of bin/route.mjs, which the published router imports.
       ignore: ['bin/route.d.mts'],
       entry: ['src/injected/*.cjs'],
-      ignoreBinaries: ['mkfifo'],
+      ignoreBinaries: ['mkfifo', 'clang'],
       // tsdown bundles the workspace packages; their bare unique-pid import stays external.
       ignoreDependencies: production ? ['@stim-cli/*', 'unique-pid'] : [],
     },

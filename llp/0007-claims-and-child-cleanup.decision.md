@@ -38,19 +38,6 @@ cannot answer whether a record on disk still describes its writer.
 
 A process ID can be reused after a crash, and a busy build can outlive any age limit. The claim binds ownership to process identity. The claim-set lock closes the gap between a cleanup survey and a new claimant arriving. The shared protocol also lets cache packages recover claims without depending on the CLI. [Shared ownership claims](https://github.com/appandflow/stim/pull/681), [Claim-only directory locks](https://github.com/appandflow/stim/pull/5340).
 
-## One claim per Cargo target for each user account
-
-A trim of a Cargo `target/`, and the dormant reduction's whole delete of one,
-holds an exclusive claim named by the canonical target path, at
-`~/.stim/machine/cargo-trim/` (`cargoTargetTrimClaims`, core's state paths),
-whatever `STIM_HOME` is, so no two Stim homes of one user account trim or
-delete one target at once (LLP 0005). A claim it cannot take, or cannot prove dead, keeps the
-target, and the kept detail names the claim and the command that removes it;
-the trim does not raise `STIM_CLAIM_REFUSED` or `STIM_CLAIM_UNAVAILABLE`,
-because nothing was deleted and a run that goes on is safe. Release removes
-the claim; one left by a crash is reaped by the next trim once its owner is
-proven gone.
-
 ## A null child is never recovered
 
 A claim whose child file reads `{"record":null}` means an unidentified child may
@@ -259,6 +246,5 @@ Related: #5766, #5769, #5771.
 - `packages/stim-cli/src/fingerprint/detached-groups.ts`: the ledger and the
   owner's check.
 - `packages/stim-cli/bin/fingerprint-precompute.ts`: the bootstrap.
-- `packages/stim-cli/src/workspace/cargo-target.ts`: the Cargo target trim claim.
 - `packages/stim-cli/src/exec.ts` (`reportChild`): the kill of an uncaptured report child.
 - `packages/stim-cli/src/stimd/cleanup-watch.ts` and `packages/stim-cli/src/stimd/threads.ts`: what stimd stays up for.

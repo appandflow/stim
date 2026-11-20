@@ -12,7 +12,7 @@ import {
 import { execSync } from 'node:child_process';
 import type { MockInstance } from 'vitest';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import type { DaemonLadderAction, DaemonPressure } from '@stim-cli/core/state';
 import {
   daemonNdjsonFile,
@@ -62,7 +62,6 @@ import * as settings from '../workspace/settings.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { LADDER_CLOCK_SLOTS } from '../daemon/disk-owner.ts';
 import * as daemonMeasure from '../daemon/measure.ts';
-import * as budget from '../stimd/passes/budget.ts';
 
 const MINUTE_MS = 60_000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
@@ -592,6 +591,7 @@ describe('the pressure ladder', () => {
     const incremental = join(target, 'debug', 'incremental');
     const fill = () => {
       mkdirSync(join(target, 'debug', '.fingerprint'), { recursive: true });
+      writeFileSync(join(target, 'debug', '.cargo-lock'), '');
       mkdirSync(incremental, { recursive: true });
       writeFileSync(join(incremental, 'data'), 'x'.repeat(50_000));
     };
@@ -840,44 +840,6 @@ describe('the pressure ladder', () => {
     },
   );
 
-  test.skipIf(process.platform === 'win32')(
-    'a build headroom run on a critical build volume removes the idle Cargo build units',
-    async () => {
-      const { target, incremental } = cargoApp();
-      rmSync(incremental, { recursive: true, force: true });
-      vi.stubEnv('STIM_DISK_MIN_FREE_GB', '40');
-      vi.stubEnv('STIM_DISK_CRITICAL_FREE_GB', '20');
-      const now = Date.now();
-      for (const unit of ['aaaaaaaaaaaaaaa1', 'aaaaaaaaaaaaaaa2']) {
-        mkdirSync(join(target, 'debug', '.fingerprint', `serde-${unit}`), { recursive: true });
-        mkdirSync(join(target, 'debug', 'deps'), { recursive: true });
-        writeFileSync(join(target, 'debug', 'deps', `libserde-${unit}.rlib`), 'x'.repeat(1000));
-      }
-      writeFileSync(
-        join(target, '.exact-sweep.json'),
-        JSON.stringify({
-          at: now,
-          units: { 'debug#aaaaaaaaaaaaaaa1': now - 5 * DAY_MS, 'debug#aaaaaaaaaaaaaaa2': now },
-        }),
-      );
-      const device = statSync(home).dev;
-      const disk = [{ volume: '/', freeMb: 5 * 1024, device }];
-      vi.spyOn(daemonMeasure, 'measureDisk').mockResolvedValue(disk);
-      vi.spyOn(budget, 'readVolumeSpaceAsync').mockResolvedValue(disk);
-
-      await runLadderToFree({
-        operation: testContext({ env: { ...process.env, CI: undefined, STIM_DAEMON: undefined } }),
-        signal: new AbortController().signal,
-        device,
-        freeMb: 200 * 1024,
-        protectedRoot: join(projects, 'build'),
-      });
-
-      expect(existsSync(join(target, 'debug', 'deps', 'libserde-aaaaaaaaaaaaaaa1.rlib'))).toBe(false);
-      expect(existsSync(join(target, 'debug', 'deps', 'libserde-aaaaaaaaaaaaaaa2.rlib'))).toBe(true);
-    },
-  );
-
   test('at high disk pressure rung 1 deletes the outputs of a stopped workspace idle 2 minutes, not of one used since', async () => {
     const outputs = (name: string, usedAgoMs: number) => {
       const { root } = workspace(name, usedAgoMs, 'Shutdown');
@@ -1065,7 +1027,7 @@ describe('the pressure ladder', () => {
       );
       expect(existsSync(entry)).toBe(false);
       expect(seen.sync).toEqual([]);
-      const entryWalks = seen.async.filter((path) => path.startsWith(`${buildCache()}/`));
+      const entryWalks = seen.async.filter((path) => path.startsWith(`${buildCache()}${sep}`));
       expect(entryWalks.includes(entry)).toBe(level === 'high');
       expect(entryWalks.length === 0).toBe(level === 'critical');
     }

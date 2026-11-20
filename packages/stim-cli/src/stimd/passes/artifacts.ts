@@ -1,6 +1,6 @@
 import { lstatSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { lstat, readdir, stat as pathStat } from 'node:fs/promises';
-import { join, relative, sep } from 'node:path';
+import { basename, join, relative, sep } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
 import { lastNativeUseFrom, type MaintenanceAction, type PressureLevel } from '@stim-cli/core/state';
 import {
@@ -33,6 +33,7 @@ import {
   regenerableDirProblem,
   type ArtifactKind,
 } from '../../workspace/regenerable-dirs.ts';
+import { deleteCargoTarget } from '../../workspace/cargo-target.ts';
 import {
   readRunningProcesses,
   readRunningProcessesAsync,
@@ -673,6 +674,10 @@ export async function clearArtifact(
       });
       if ('keep' in edits) return edits.keep;
       recordLightened(candidate.keys, candidate.path);
+    }
+    if (kind === 'build' && basename(candidate.path) === 'target') {
+      const result = await deleteCargoTarget(candidate.path, { signal });
+      return result.removed.length ? null : result.kept.join('; ') || 'nothing in it could be removed';
     }
     rmSync(candidate.path, { recursive: true, force: true });
     if (record) {
