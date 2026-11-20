@@ -61,19 +61,12 @@ export function targetEntries(target: string): { output: string[]; kept: string[
 }
 
 /**
- * What the dormant delete would remove from `target`, as absolute paths, or why it removes nothing. For an Exact app's
- * `target/` that is what Exact's cleaner lists in a dry run; for any other, each top-level entry of `targetEntries`'
- * output but one that holds only what the remover leaves (lock files, keypairs and links).
+ * What the dormant delete would remove from `target`, as absolute paths: each top-level entry of `targetEntries`' output
+ * but one that holds only what the remover leaves (lock files, keypairs and links). For an Exact app's `target/` it is an
+ * upper bound, since Exact's cleaner decides at the delete what goes; Stim does not run that cleaner to plan, because
+ * every run writes Exact's sweep files into the `target/` and would make it look used.
  */
-export async function removablePaths(
-  target: string,
-  signal?: AbortSignal,
-): Promise<{ paths: string[] } | { kept: string }> {
-  const app = dirname(target);
-  if (isExactApp(app)) {
-    const report = await exactClean(app, { dryRun: true, ...(signal ? { signal } : {}) });
-    return 'unsupported' in report || report.status !== 'ok' ? { kept: exactKept(report) } : { paths: report.remove };
-  }
+export async function removablePaths(target: string): Promise<{ paths: string[] } | { kept: string }> {
   const entries = targetEntries(target);
   if (!entries) return { kept: `${target} cannot be listed` };
   const paths: string[] = [];
@@ -756,6 +749,7 @@ async function exactDelete(app: string, result: CargoTrimResult, signal?: AbortS
   const options = signal ? { signal } : {};
   const planned = await exactClean(app, { ...options, dryRun: true });
   if ('unsupported' in planned || planned.status !== 'ok') return keep(exactKept(planned));
+  if (!planned.remove.length) return keep("Exact's cleaner lists nothing its builds remake");
   const sizes = new Map<string, number>();
   for (const path of planned.remove) sizes.set(path, await sizeOf(path, signal));
   const report = await exactClean(app, options);

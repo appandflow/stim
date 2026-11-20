@@ -294,9 +294,13 @@ the one the app's `exact.mjs` resolves (`EXACT`, else `EXACT2`, else the path it
 launcher names), read from the last line of `bun exact.mjs help` (`Exact
 checkout: <path> at <commit>`), run with the Bun the launcher pins; the cleaner
 runs with the Bun the checkout's `package.json` pins (`packageManager`), both
-from `~/.bun-<version>/bin/bun`. A dry run lists what goes, which Stim measures
-and report mode shows; the clean then removes it all or nothing under Exact's
-own locks and leases. Exact keeps the records an app stores in its `target/`
+from `~/.bun-<version>/bin/bun`. At the delete, after the use dating, a dry run
+lists what goes, which Stim measures; the clean then removes it all or nothing
+under Exact's own locks and leases. Planning and report mode never run the
+cleaner: each run writes Exact's sweep files (`.exact-sweep.json`, its lock and
+log) into the `target/`, which the use dating would read as use. They show
+Stim's own listing of the `target/` instead, an upper bound of what Exact
+removes. Exact keeps the records an app stores in its `target/`
 (`traces/`, `web-receipts/`, `native-receipts/`, production builds) and any name
 it does not know.
 

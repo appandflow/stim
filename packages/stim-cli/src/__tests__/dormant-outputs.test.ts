@@ -314,7 +314,7 @@ describe.skipIf(process.platform === 'win32')(
       },
     );
 
-    test("an idle Exact app's target/ is predicted from Exact's dry run, then cleaned by Exact", async () => {
+    test("an idle Exact app's target/ is predicted without running Exact, then cleaned by Exact", async () => {
       const root = onlyTarget(cargo('app', 'exact'));
       idleFor(3, root);
       const target = realpathSync(join(root, 'target'));
@@ -327,6 +327,7 @@ describe.skipIf(process.platform === 'win32')(
       expect(await hourlyStep(false)).toEqual([
         expect.objectContaining({ target: root, outcome: 'would', bytes: expect.any(Number) }),
       ]);
+      expect(cleaner).not.toHaveBeenCalled();
       expect(existsSync(join(root, 'target', 'debug'))).toBe(true);
       expect(await gc()).toEqual([expect.objectContaining({ target: root, outcome: 'done' })]);
       expect(readdirSync(join(root, 'target'))).toEqual([]);
