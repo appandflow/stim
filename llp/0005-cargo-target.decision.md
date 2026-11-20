@@ -307,7 +307,9 @@ Earlier engines staged removals in `target/.stim-trimmed/` and kept what they
 could not put back as `target/.stim-not-restored-*`. A `target/` that holds
 either is left out of every trim and delete, read only: the plan names it with
 the remedy (delete the leftover, or move what you need out of it), and the next
-pass trims the `target/` again. Chosen by the lane of #6025, not by the
+pass trims the `target/` again. The leftover alone makes a `target/` recognised,
+so one an earlier engine staged whole, with nothing else left in it, is still
+named. Chosen by the lane of #6025, not by the
 maintainer, following the step-back review: an earlier engine deleted an
 unmarked `.stim-trimmed` at its next trim; this one leaves that to a person
 rather than keep any knowledge of the staging format.

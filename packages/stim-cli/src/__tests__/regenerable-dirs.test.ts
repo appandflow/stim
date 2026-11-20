@@ -90,7 +90,6 @@ test.each([
   ['a profile holding .fingerprint', ['debug/.fingerprint/'], true],
   ['only a signed CACHEDIR.TAG in a child, beside other output', ['cache/CACHEDIR.TAG', 'releases/file'], false],
   ['no Cargo files', ['web/index.js'], false],
-  ['only a Stim recovery copy holding .fingerprint', ['.stim-not-restored-1-debug/.fingerprint/'], false],
   ['only a regular file named .fingerprint', ['exports/.fingerprint'], false],
 ])(
   'a target/ beside Cargo.toml with %s is a Cargo target ($2) and never listed as build output',
@@ -113,6 +112,14 @@ test.each([
     expect(await cargoTargetDirsAsync(root)).toEqual([]);
   },
 );
+
+test('a target/ holding only a leftover of an earlier Stim trim is recognised without Cargo.toml, never as build output', async () => {
+  dir('target', '.stim-not-restored-1-debug/.fingerprint');
+
+  expect(await cargoTargetDirsAsync(root)).toEqual([join(root, 'target')]);
+  expect(await existingBuildDirsAsync(root)).toEqual([]);
+  expect(isBuildDirPath(join(root, 'target'))).toBe(false);
+});
 
 test('a Cargo target/ that both the Exact rule and the CACHEDIR.TAG rule recognise is listed once', async () => {
   writeFileSync(join(root, 'exact.mjs'), '');

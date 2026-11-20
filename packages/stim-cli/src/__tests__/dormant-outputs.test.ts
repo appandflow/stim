@@ -7,6 +7,7 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
+  renameSync,
   rmSync,
   utimesSync,
   writeFileSync,
@@ -375,6 +376,24 @@ describe.skipIf(process.platform === 'win32')(
         }),
       ]);
       expect(existsSync(join(root, 'target', 'debug', '.fingerprint', 'unit'))).toBe(true);
+    });
+
+    test('a target/ an earlier Stim staged whole into .stim-trimmed is still found, and gc names the leftover', async () => {
+      const root = onlyTarget(cargo('app', 'untagged'));
+      const target = join(root, 'target');
+      mkdirSync(join(target, '.stim-trimmed'));
+      for (const name of ['debug', 'doc', '.rustc_info.json'])
+        renameSync(join(target, name), join(target, '.stim-trimmed', name));
+      idleFor(3, root);
+
+      expect(await gc()).toEqual([
+        expect.objectContaining({
+          target: root,
+          outcome: 'kept',
+          detail: expect.stringMatching(new RegExp(`${join(target, '.stim-trimmed')} is a leftover`)),
+        }),
+      ]);
+      expect(existsSync(join(target, '.stim-trimmed', 'debug', '.fingerprint', 'unit'))).toBe(true);
     });
 
     test('an idle untagged Cargo target/ stays whole while a build holds a profile lock', async () => {
