@@ -179,11 +179,21 @@ function* stagedTargetDirs(root: string): DirReads<string[]> {
   return (yield* realDirectory(path)) && (yield* realDirectory(join(path, TRIM_ASIDE))) ? [path] : [];
 }
 
-function* cargoTargetDirsReads(root: string, staged: boolean): DirReads<string[]> {
+/** A `target/` whose `.stim-trimmed` holds the NOT-RESTORED and STAGED files of a Cargo trim that did not finish. */
+function* trimLeftoverTargetDirs(root: string): DirReads<string[]> {
+  const path = join(root, CARGO_TARGET);
+  if (!(yield* realDirectory(path)) || !(yield* realDirectory(join(path, TRIM_ASIDE)))) return [];
+  const names = yield* namesIn(join(path, TRIM_ASIDE));
+  return names.includes(STRANDED) && names.includes('STAGED') ? [path] : [];
+}
+
+function* cargoTargetDirsReads(root: string, staged: boolean, trimLeftover = false): DirReads<string[]> {
   const whole = yield* wholeCargoTargetDirsReads(root);
   if (whole.length) return whole;
   const untagged = yield* untaggedRootTargetDirs(root);
-  return untagged.length || !staged ? untagged : yield* stagedTargetDirs(root);
+  if (untagged.length) return untagged;
+  if (staged) return yield* stagedTargetDirs(root);
+  return trimLeftover ? yield* trimLeftoverTargetDirs(root) : [];
 }
 
 /** Why a Cargo `target/` must not be deleted whole: it holds a copy a Cargo trim could not put back. */
@@ -198,11 +208,15 @@ function* recoveryCopyProblem(path: string): DirReads<string | null> {
  * The Cargo `target/` directly under `root` that the Cargo trims manage: an Exact app's (beside its `exact.mjs`), one that
  * carries Cargo's `CACHEDIR.TAG` with its signature line, or one beside a `Cargo.toml` that holds files only Cargo writes
  * (a `.rustc_info.json`, or a direct child profile holding `.fingerprint`), and with `staged`, for the dormant
- * reduction only, one holding the `.stim-trimmed` staging directory an earlier delete left. Only the first two are
+ * reduction only, one holding the `.stim-trimmed` staging directory an earlier delete left, and with `trimLeftover`, for
+ * the trims, one whose `.stim-trimmed` holds a killed trim's NOT-RESTORED and STAGED files. Only the first two are
  * build output; the dormant reduction deletes any of them whole but a Solana keypair folder.
  */
-export function cargoTargetDirsAsync(root: string, { staged = false }: { staged?: boolean } = {}): Promise<string[]> {
-  return readAsync(cargoTargetDirsReads(root, staged));
+export function cargoTargetDirsAsync(
+  root: string,
+  { staged = false, trimLeftover = false }: { staged?: boolean; trimLeftover?: boolean } = {},
+): Promise<string[]> {
+  return readAsync(cargoTargetDirsReads(root, staged, trimLeftover));
 }
 
 function* discoveredBuildDirKindsReads(root: string): DirReads<{ dirs: string[]; cargo: string[] }> {

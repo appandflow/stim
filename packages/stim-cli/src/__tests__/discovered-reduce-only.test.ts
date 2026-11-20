@@ -220,6 +220,38 @@ describe('checkouts found through a tool folder or the full scan', () => {
     expect(trim).toMatchObject({ status: 'kept', detail: expect.stringContaining('on PATH') });
   });
 
+  it('plans and clears the target of a registered Cargo app whose only profile a killed trim left staged', async () => {
+    const app = join(base, 'dev', 'rusty');
+    const aside = join(app, 'target', '.stim-trimmed');
+    mkdirSync(join(aside, '0', '.fingerprint'), { recursive: true });
+    writeFileSync(join(aside, '0', '.fingerprint', 'unit'), 'x');
+    writeFileSync(join(aside, 'NOT-RESTORED'), '');
+    writeFileSync(join(aside, 'STAGED'), '');
+    writeFileSync(join(app, 'Cargo.toml'), '[package]\n');
+    writeFileSync(join(app, '.gitignore'), 'target/\n');
+    execFileSync('git', ['-C', app, 'init', '-q']);
+    execFileSync('git', ['-C', app, 'add', '-A']);
+    execFileSync('git', ['-C', app, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'x']);
+    saveConfig({ version: 2, projects: { [app]: {} }, repos: {} });
+
+    const planned = await planCargoTargetsAtPressure({
+      settings: resolveMaintenanceSettings(),
+      pinned: () => false,
+      now: Date.now(),
+      level: 'high',
+      operation: testContext({ env: {} }),
+    });
+    expect(planned.actions).toMatchObject([{ kind: 'would-clear-build-dirs', target: join(app, 'target') }]);
+    const [action] = planned.actions;
+    if (!action) throw new Error('no trim was planned');
+
+    expect(await trimCargoTargetAction(action, testContext({ env: {} }))).toMatchObject({
+      status: 'done',
+      detail: expect.stringContaining('.stim-trimmed/0'),
+    });
+    expect(existsSync(aside)).toBe(false);
+  });
+
   it('keeps the Cargo target of a registered app inside a monorepo when a PATH launcher resolves into the checkout outside that app', async () => {
     const mono = join(base, 'dev', 'mono');
     const app = join(mono, 'apps', 'native');

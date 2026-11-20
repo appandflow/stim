@@ -160,6 +160,37 @@ test('a ledger that is not a unit ledger refuses the whole target', () => {
   expect(staleCargoTargetPaths(target, Date.now())).toMatchObject({ refusal: expect.stringContaining('unit ledger') });
 });
 
+test.skipIf(process.platform === 'win32')(
+  'a staging directory swapped for a symbolic link while the trim measures keeps what the link points at',
+  async () => {
+    makeProfile('debug', 3 * DAY);
+    const outside = join(target, '..', `${target.split('/').at(-1)}-outside`);
+    mkdirSync(join(outside, '0'), { recursive: true });
+    writeFileSync(join(outside, '0', 'theirs'), 'theirs');
+    onTestFinished(() => rmSync(outside, { recursive: true, force: true }));
+    const real = getExecutor();
+    let swapped = false;
+    setExecutor({
+      ...real,
+      runFileAsync: async (file, args, options) => {
+        if (file === 'du' && !swapped) {
+          swapped = true;
+          renameSync(join(target, '.stim-trimmed'), join(target, 'moved-staging'));
+          symlinkSync(outside, join(target, '.stim-trimmed'));
+        }
+        return file === 'lsof' || file === 'ps' ? '' : real.runFileAsync(file, args, options);
+      },
+    });
+    onTestFinished(() => resetExecutor());
+
+    const result = await trimCargoTarget(target, { launching: noLaunchers(target), needBytes: 0 });
+
+    expect(swapped).toBe(true);
+    expect(result.deleteError).toContain('no longer the directory the trim staged into');
+    expect(readFileSync(join(outside, '0', 'theirs'), 'utf8')).toBe('theirs');
+  },
+);
+
 test('trimming removes the stale profiles, keeps the rest and leaves nothing aside', async () => {
   const real = getExecutor();
   setExecutor({
@@ -779,6 +810,18 @@ describe('trimming on a full disk', () => {
       expect(existsSync(join(target, 'release', 'deps', `libserde-${hash}.rlib`))).toBe(true);
     },
   );
+
+  test('a keypair directly in a killed trim staging is kept', async () => {
+    stubProcesses({});
+    killedTrim();
+    writeFileSync(join(target, '.stim-trimmed', 'app-keypair.json'), '[1]');
+
+    const result = await trimCargoTarget(target, { launching: noLaunchers(target), needBytes: 0 });
+
+    expect(result.kept).toEqual([expect.stringContaining('is not something a trim staged')]);
+    expect(readFileSync(join(target, '.stim-trimmed', 'app-keypair.json'), 'utf8')).toBe('[1]');
+    expect(existsSync(join(target, '.stim-trimmed', '0', 'deps', 'libx.rlib'))).toBe(true);
+  });
 
   test('a trim whose marker cannot be written even after the reserve is released moves nothing', async () => {
     stubProcesses({});

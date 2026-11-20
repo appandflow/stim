@@ -950,12 +950,25 @@ async function markPutBackFailed(aside: string): Promise<void> {
   await writeFile(join(aside, STRANDED), '', { flag: 'a' });
 }
 
-/** Deletes what a trim staged in `aside`, then its STAGED file, then its marker, so a stop at any step stays marked. */
-async function deleteStaged(aside: string): Promise<void> {
-  for (const name of await readdir(aside).catch(() => []))
-    if (name !== STAGED && name !== STRANDED) await rm(join(aside, name), { recursive: true, force: true });
-  await rm(join(aside, STAGED), { force: true });
+/**
+ * Deletes the entries `names` a trim staged in `aside`, then its marker, then its STAGED file, once `aside` is still the
+ * real directory `made` identifies; a lone STAGED file left by a stop is harmless.
+ */
+async function deleteStaged(
+  aside: string,
+  made: { dev: number; ino: number },
+  names: readonly string[],
+): Promise<void> {
+  const now = await lstat(aside).catch((error: unknown) => {
+    if (errorCode(error) !== 'ENOENT') throw error;
+    return null;
+  });
+  if (!now) return;
+  if (!now.isDirectory() || now.dev !== made.dev || now.ino !== made.ino)
+    throw new Error(`${aside} is no longer the directory the trim staged into`);
+  for (const name of names) await rm(join(aside, name), { recursive: true, force: true });
   await rm(join(aside, STRANDED), { force: true });
+  await rm(join(aside, STAGED), { force: true });
 }
 
 /**
@@ -977,7 +990,8 @@ async function clearUnfinished(
   const aside = join(target, ASIDE);
   const marker = lstatSync(join(aside, STRANDED), { throwIfNoEntry: false });
   // @ref LLP 0005#never-delete-what-a-build-took-back -- only a killed trim's STAGED leftover is checked
-  if (!lstatSync(aside, { throwIfNoEntry: false })?.isDirectory()) return null;
+  const made = lstatSync(aside, { throwIfNoEntry: false });
+  if (!made?.isDirectory()) return null;
   if (!lstatSync(join(aside, STAGED), { throwIfNoEntry: false })?.isFile() || !marker?.isFile() || marker.size)
     return null;
   const notRestored = notRestoredReason(target);
@@ -985,8 +999,13 @@ async function clearUnfinished(
   const use = await readTargetUse(target, launching, signal, lowPriority);
   if ('kept' in use) return use.kept;
   if (inUse(use.used, aside)) return `a process uses what ${aside} holds, so it stays for a person`;
-  const staged = entriesOf(aside)?.filter((item) => item.isDirectory());
-  if (!staged) return `${aside} cannot be listed`;
+  const listed = entriesOf(aside);
+  if (!listed) return `${aside} cannot be listed`;
+  const odd = listed.find(
+    (item) => !item.isDirectory() && !((item.name === STAGED || item.name === STRANDED) && item.isFile()),
+  );
+  if (odd) return `${join(aside, odd.name)} is not something a trim staged, so ${aside} stays for a person`;
+  const staged = listed.filter((item) => item.isDirectory());
   for (const entry of staged) {
     const held = await heldLock(join(aside, entry.name), entry.name, signal);
     if (held) return `a build holds ${held}, so ${aside} stays for a person`;
@@ -1001,7 +1020,15 @@ async function clearUnfinished(
   if (walked.keypairs.size) return `${aside} holds a Solana keypair, so it stays for a person`;
   const mounted = mountedUnder(aside, mountInfo);
   if (mounted) return `${mounted}, so ${aside} stays for a person`;
-  await deleteStaged(aside);
+  try {
+    await deleteStaged(
+      aside,
+      made,
+      staged.map((entry) => entry.name),
+    );
+  } catch (error) {
+    return `${aside} could not be deleted: ${error instanceof Error ? error.message : error}`;
+  }
   removed.push(...staged.map((entry) => join(ASIDE, entry.name)));
   return null;
 }
@@ -1070,25 +1097,32 @@ async function trimClaimed(
     result.kept.push(error.whole ? error.message : `${label}: ${error.message}`);
     return false;
   };
-  let staged = false;
+  let made: { dev: number; ino: number } | null = null;
+  const stagedNames: string[] = [];
   // @ref LLP 0005#never-delete-what-a-build-took-back -- the marker is written before the first move
   const stage = async (recheck: () => Promise<void>): Promise<boolean> => {
-    if (staged) return true;
+    if (made) return true;
     await retryWithReserve(() => mkdir(aside, { recursive: true }), recheck);
+    const dir = await lstat(aside);
+    if (!dir.isDirectory()) {
+      wholeKept = true;
+      result.kept.push(`${aside} is not a directory, so nothing was moved`);
+      return false;
+    }
     try {
-      await retryWithReserve(() => writeFile(join(aside, STRANDED), ''), recheck);
       await retryWithReserve(() => writeFile(join(aside, STAGED), ''), recheck);
+      await retryWithReserve(() => writeFile(join(aside, STRANDED), ''), recheck);
     } catch (error) {
       if (error instanceof KeptAfterRelease) throw error;
-      await rm(join(aside, STAGED), { force: true });
       await rm(join(aside, STRANDED), { force: true });
+      await rm(join(aside, STAGED), { force: true });
       wholeKept = true;
       result.kept.push(
         `${aside} cannot be marked, so nothing was moved: ${error instanceof Error ? error.message : error}`,
       );
       return false;
     }
-    staged = true;
+    made = { dev: dir.dev, ino: dir.ino };
     return true;
   };
   const profilesAt = async (dir: string) => (fingerprintDir(dir) ? [dir] : await childProfiles(dir));
@@ -1134,7 +1168,8 @@ async function trimClaimed(
       if (!(error instanceof KeptAfterRelease)) throw error;
       return keptAfterRelease(label, error);
     }
-    const there = join(aside, String(moved++));
+    const there = join(aside, String(moved));
+    stagedNames.push(String(moved++));
     try {
       await retryWithReserve(() => rename(dir, there), recheck);
     } catch (error) {
@@ -1206,7 +1241,8 @@ async function trimClaimed(
         .slice(at, at + UNIT_CHUNK)
         .filter(([, paths]) => !paths.some((path) => inUse(unitsUsed, join(profile, path))));
       if (!chunk.length) continue;
-      const batch = join(aside, `units-${moved++}`);
+      const batch = join(aside, `units-${moved}`);
+      stagedNames.push(`units-${moved++}`);
       const movedBatch = await withCargoLocks(
         locks,
         async () => {
@@ -1313,7 +1349,7 @@ async function trimClaimed(
     }
   if (keepAside) return result;
   try {
-    await deleteStaged(aside);
+    if (made) await deleteStaged(aside, made, stagedNames);
     await rm(aside, { recursive: true, force: true });
   } catch (error) {
     result.deleteError = `${aside} could not be deleted: ${error instanceof Error ? error.message : error}`;

@@ -270,27 +270,31 @@ a person to merge or delete. If that move fails too, it stays in
 `target/` stop until a person removes it. When the put-back and the marking
 both fail, nothing records it, a known gap that main shares.
 
-Before its first move the trim writes an empty `NOT-RESTORED` marker, which
-every Stim version reads as a block, and a `STAGED` file beside it. A failed
-put-back removes `STAGED`, which needs no space, and leaves the marker. A
-clean finish deletes the staged entries, then `STAGED`, then the marker, so a
-stop at any step leaves the tree marked. A later trim that finds `STAGED`
-beside an empty marker, in a `.stim-trimmed` that is a real directory,
-treats it as a trim that did not finish, such as one whose process was
-killed. Under the trim claim it reads the processes once, probes the Cargo
-and Exact lock files of each staged entry at its staged path, walks them for
-a `*-keypair.json` and for another filesystem mounted inside, and on Linux
-reads the mounts for one at or under `.stim-trimmed`. When nothing uses,
-holds or keeps any of them, it deletes the staged entries, `STAGED` and the
-marker in that order, reports the entries as removed and goes on. Anything
-else keeps the whole `.stim-trimmed` for a person: a process in use, a held
-lock, a keypair, a mount, mounts that cannot be read, a launcher or process
-evidence that cannot be read, a check that throws, is cancelled or reaches
-the build headroom deadline, a `.stim-not-restored-*` entry in the
-`target/`, and every other marker: the dormant delete's list of names, or a
-marker without `STAGED` beside it. Whatever deletes a `target/` whole (the
-dormant delete, the idle stage, gc's workspace outputs) treats any marker as a
-veto.
+Before its first move the trim writes a `STAGED` file and then an empty
+`NOT-RESTORED` marker, which every Stim version reads as a block, and notes
+the device and inode of the `.stim-trimmed` it made. A failed put-back
+removes `STAGED`, which needs no space, and leaves the marker. A clean finish
+checks that `.stim-trimmed` is still that real directory, deletes only the
+entries this trim staged, then the marker, then `STAGED`; a lone `STAGED`
+left by a stop is harmless, and a replaced `.stim-trimmed` keeps everything.
+A later trim that finds `STAGED` beside an empty marker, in a `.stim-trimmed`
+that is a real directory, treats it as a trim that did not finish, such as
+one whose process was killed; a `target/` holding such a leftover counts as a
+Cargo `target/` for the trims even when its last profile is staged. Under the
+trim claim it reads the processes once, probes the Cargo and Exact lock files
+of each staged entry at its staged path, walks them for a `*-keypair.json`
+and for another filesystem mounted inside, and on Linux reads the mounts for
+one at or under `.stim-trimmed`. When nothing uses, holds or keeps any of
+them, it deletes the staged entries, the marker and `STAGED` in that order,
+reports the entries as removed and goes on. Anything else keeps the whole
+`.stim-trimmed` for a person: a process in use, a held lock, a keypair, a
+mount, mounts that cannot be read, any entry at its top that is not a staged
+directory, `STAGED` or the marker, a launcher or process evidence that cannot
+be read, a check or delete that throws, is cancelled or reaches the build
+headroom deadline, a `.stim-not-restored-*` entry in the `target/`, and every
+other marker: the dormant delete's list of names, or a marker without
+`STAGED` beside it. Whatever deletes a `target/` whole (the dormant delete,
+the idle stage, gc's workspace outputs) treats any marker as a veto.
 
 Maintainer decision: "Ok 2", 2026-11-19
 [Pull request comment](https://github.com/appandflow/stim/pull/6013#issuecomment-7027224653),
@@ -337,7 +341,9 @@ not retried: an entry that cannot be moved stays, as above. The retry runs the
 same staged path with every check above unchanged. Before the trim retries a
 staging write, it reads the processes and the launchers again, and for a
 profile its lock files; a launcher into the checkout or process evidence that
-cannot be read stops the rest of that run, and a path in use keeps that path.
+cannot be read stops the rest of that run, and a path in use keeps that path;
+in a unit batch, one busy path, moved or not yet moved, puts the whole batch
+back.
 The dormant delete checks that the `target/` is still the same directory
 before each try. For the workspace claims the whole removal of that output
 runs again. A run that released the reserve says so in its outcome. When the
