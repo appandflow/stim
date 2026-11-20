@@ -115,9 +115,20 @@ function fixture(label: string, port: number, shim = false) {
   const home = join(scratch, 'home');
   const store = join(scratch, 'engine');
   const bin = join(scratch, 'bin');
+  const jobStarts = join(scratch, 'job-starts');
   mkdirSync(store, { recursive: true });
   mkdirSync(bin);
-  writeFileSync(join(bin, 'launchctl'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  // Stand in for the service manager the stimds ask: the job of `label` is loaded and set to restart, and a start is recorded.
+  writeFileSync(
+    join(bin, 'launchctl'),
+    `#!/bin/sh\ncase "$1 $2" in\n  "print "*/${label}) exit 0 ;;\n  "kickstart "*/${label}) echo "$2" >> '${jobStarts}'; exit 0 ;;\nesac\nexit 1\n`,
+    { mode: 0o755 },
+  );
+  writeFileSync(
+    join(bin, 'systemctl'),
+    `#!/bin/sh\ncase "$*" in\n  *KillMode*) echo process ;;\n  *ActiveState*) printf 'ActiveState=activating\\nSubState=auto-restart\\n' ;;\n  "--user start ${label}.service") echo "$3" >> '${jobStarts}' ;;\n  *) exit 1 ;;\nesac\n`,
+    { mode: 0o755 },
+  );
   const pkg = join(repo, 'packages/stim-cli');
   const makeBuild = (name: string) => {
     const dir = join(store, name);
@@ -380,9 +391,27 @@ function fixture(label: string, port: number, shim = false) {
     return started;
   };
 
+  /** Starts an attached stimd as `stim ci` does and resolves with its first answer line. */
+  const attached = async () => {
+    const child = spawn(process.execPath, [join(store, first, 'dist', 'cli.mjs'), '__stimd', '--attached'], {
+      env,
+      stdio: ['pipe', 'pipe', 'ignore'],
+    });
+    child.stdout.setEncoding('utf8');
+    let output = '';
+    for await (const chunk of child.stdout) {
+      output += String(chunk);
+      if (output.includes('\n')) break;
+    }
+    child.stdin.end();
+    return JSON.parse(output.split('\n')[0] ?? '') as unknown;
+  };
+
   return {
     home,
     last,
+    jobStarts,
+    attached,
     answers,
     command: () => cli(next, ['__stimd', '--mode', 'on']),
     jobPid,
@@ -636,6 +665,46 @@ describe.skipIf(process.platform === 'win32')("an engine switch under a service 
       expectServedInJob(service, initial, successor.build, label);
       await exited;
       expect(homeClaim(service.home)?.owner.pid).toBe(successor.pid);
+      expect(readFileSync(join(service.home, 'daemon', 'daemon.ndjson'), 'utf8')).toContain(
+        '"event":"stimd_deferred_to_job"',
+      );
+      expect(readFileSync(service.jobStarts, 'utf8')).toContain(label);
+    } finally {
+      await service.cleanup();
+    }
+  }, 240_000);
+
+  it("an attached stimd, such as stim ci's, uses the job's stimd instead of taking the home", async () => {
+    const label = 'dev.stim.handoff-job-attached';
+    const port = await freePort();
+    const service = fixture(label, port, true);
+    try {
+      const job = await service.runJob();
+      expect(await service.attached()).toEqual({ op: 'attached-held' });
+      expect(homeClaim(service.home)?.owner.pid).toBe(job.pid);
+      expect(readFileSync(service.jobStarts, 'utf8')).toContain(label);
+    } finally {
+      await service.cleanup();
+    }
+  }, 240_000);
+
+  it("an attached stimd on a home whose job does not start names the service's status as the remedy", async () => {
+    const label = 'dev.stim.handoff-job-down';
+    const port = await freePort();
+    const service = fixture(label, port, true);
+    try {
+      mkdirSync(join(service.home, 'run'), { recursive: true });
+      writeFileSync(join(service.home, 'run', 'service.json'), JSON.stringify({ label, port }));
+      expect(await service.attached()).toEqual({
+        op: 'attached-claim-refusal',
+        refusal: {
+          code: 'STIM_DAEMON_UNAVAILABLE',
+          message: `The ${label} service did not start this Stim home's stimd within 5 s.`,
+          remedy: 'Run stim service status.',
+        },
+      });
+      expect(homeClaim(service.home)).toBeUndefined();
+      expect(readFileSync(service.jobStarts, 'utf8')).toContain(label);
     } finally {
       await service.cleanup();
     }

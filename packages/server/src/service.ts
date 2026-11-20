@@ -23,7 +23,15 @@ import {
 } from '@stim-cli/core/ownership-claim';
 import { execStartOverride } from '@stim-cli/core';
 import { inspectProcessIdentity, sameProcessRecord, waitForProcessExit } from '@stim-cli/core/process-identity';
-import { readJsonObject, stimBuildDigest, stimdClaimRoot, stimdRecordFile, tailscaleEnv } from '@stim-cli/core/state';
+import {
+  readJsonObject,
+  readStimdService,
+  stimBuildDigest,
+  stimdClaimRoot,
+  stimdRecordFile,
+  stimdServiceFile,
+  tailscaleEnv,
+} from '@stim-cli/core/state';
 import type { WorkerRootUsage } from './worker-areas.ts';
 import {
   jobArguments,
@@ -568,6 +576,7 @@ export async function installJob(
 
   const successor =
     previous?.port == null ? null : await unitSuccessor(options.label, unitHome(previous.stimHome), previous.port);
+  const serviceRecord = stimdServiceFile(unitHome(stimHome));
   const wasLoaded = (await loaded(options.label)) !== null;
   let routeCreated = false;
   let bootstrapped = false;
@@ -587,6 +596,9 @@ export async function installJob(
     const partial = `${path}.${process.pid}.tmp`;
     writeFileSync(partial, manager.render(spec), { mode: 0o644 });
     renameSync(partial, path);
+    // @ref LLP 0009#service-and-engine-updates -- other stimds of the home read it to leave the home to the job
+    mkdirSync(dirname(serviceRecord), { recursive: true, mode: 0o700 });
+    writeFileSync(serviceRecord, `${JSON.stringify({ label: options.label, port: options.port })}\n`);
     const started = await manager.start(options.label);
     if (!started.ok) throw new ServiceError(`${startCommand()} failed: ${started.stderr.trim()}`);
     bootstrapped = true;
@@ -604,6 +616,7 @@ export async function installJob(
     }
     if (oldPlist === null) {
       await manager.remove(options.label).catch(() => rmSync(path, { force: true }));
+      rmSync(serviceRecord, { force: true });
       throw error;
     }
     const restored = wasLoaded && !(await loaded(options.label)) ? await manager.start(options.label) : null;
@@ -1112,6 +1125,8 @@ async function uninstallJob(label: string): Promise<string[]> {
     notes.push(`Removed the tailscale serve route on https port ${routeOff}.`);
   }
   await serviceManager().remove(label);
+  const home = unitHome(installed.stimHome);
+  if (readStimdService(home)?.label === label) rmSync(stimdServiceFile(home), { force: true });
   notes.unshift(
     `Uninstalled ${label}. Pairings, stim home and the log ${installed.logPath ?? logPath(label)} are kept.`,
   );

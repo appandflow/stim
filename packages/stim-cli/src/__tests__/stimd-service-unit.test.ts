@@ -1,8 +1,8 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { renderUnit } from '../../../server/src/service-unit.ts';
-import { serviceJob } from '../stimd/service-unit.ts';
+import { deferringService, serviceJob, startServiceJob } from '../stimd/service-unit.ts';
 
 describe('serviceJob on systemd', () => {
   let home: string;
@@ -14,8 +14,15 @@ describe('serviceJob on systemd', () => {
     mkdirSync(join(home, 'bin'));
     writeFileSync(
       join(home, 'bin', 'systemctl'),
-      `#!/bin/sh\n[ -e '${home}/loaded-killmode' ] || exit 1\ncat '${home}/loaded-killmode'\n`,
+      `#!/bin/sh
+case "$*" in
+  *KillMode*) [ -e '${home}/loaded-killmode' ] || exit 1; cat '${home}/loaded-killmode' ;;
+  *ActiveState*) cat '${home}/unit-state' ;;
+  *) echo "$*" >> '${home}/started' ;;
+esac
+`,
     );
+    writeFileSync(join(home, 'unit-state'), 'ActiveState=active\nSubState=running\n');
     chmodSync(join(home, 'bin', 'systemctl'), 0o755);
     vi.stubEnv('PATH', `${join(home, 'bin')}${delimiter}${process.env.PATH ?? ''}`);
     writeFileSync(join(home, 'loaded-killmode'), 'process\n');
@@ -76,5 +83,58 @@ describe('serviceJob on systemd', () => {
     expect(serviceJob({ STIM_SERVICE_LABEL: 'dev.stim.server' }, 7787, join(home, '.stim', 'engine'), 'linux')).toEqual(
       { label: 'dev.stim.server', followsEngine: false },
     );
+  });
+
+  describe('deferringService', () => {
+    const record = (value: object) => {
+      mkdirSync(join(home, '.stim', 'run'), { recursive: true });
+      writeFileSync(join(home, '.stim', 'run', 'service.json'), JSON.stringify(value));
+    };
+    const defers = (env: NodeJS.ProcessEnv = {}, root = join(home, '.stim', 'engine')) =>
+      deferringService(join(home, '.stim'), root, env, 'linux');
+
+    beforeEach(() => record({ label: 'dev.stim.server', port: 7787 }));
+
+    it.each([
+      ['runs', 'ActiveState=active\nSubState=running\n'],
+      ['waits to restart', 'ActiveState=activating\nSubState=auto-restart\n'],
+    ])('leaves the home to a unit that follows the engine and whose job %s', (_case, state) => {
+      writeFileSync(join(home, 'unit-state'), state);
+      expect(defers()).toBe('dev.stim.server');
+    });
+
+    it.each([
+      [
+        'the user stopped the unit',
+        () => writeFileSync(join(home, 'unit-state'), 'ActiveState=inactive\nSubState=dead\n'),
+      ],
+      ['no unit is recorded', () => rmSync(join(home, '.stim', 'run', 'service.json'))],
+      ['the recorded port is not the unit port', () => record({ label: 'dev.stim.server', port: 7788 })],
+      ['the unit file is gone', () => rmSync(join(home, '.config', 'systemd', 'user', 'dev.stim.server.service'))],
+      ['systemd kills the children of the unit', () => writeFileSync(join(home, 'loaded-killmode'), 'control-group\n')],
+    ])('boots as before when %s', (_case, change) => {
+      change();
+      expect(defers()).toBeNull();
+    });
+
+    it('boots as before in a Stim home the unit does not serve', () => {
+      const other = join(home, 'other');
+      mkdirSync(join(other, 'run'), { recursive: true });
+      writeFileSync(join(other, 'run', 'service.json'), JSON.stringify({ label: 'dev.stim.server', port: 7787 }));
+      expect(deferringService(other, join(home, '.stim', 'engine'), {}, 'linux')).toBeNull();
+    });
+
+    it('boots as before when the unit does not run the shim of this engine', () => {
+      expect(defers({}, join(home, 'other-engine'))).toBeNull();
+    });
+
+    it('never leaves the home to the job the process runs in', () => {
+      expect(defers({ STIM_SERVICE_LABEL: 'dev.stim.server' })).toBeNull();
+    });
+
+    it('starts the unit through systemctl', () => {
+      startServiceJob('dev.stim.server', 'linux');
+      expect(readFileSync(join(home, 'started'), 'utf8')).toBe('--user start dev.stim.server.service\n');
+    });
   });
 });

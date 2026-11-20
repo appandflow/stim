@@ -46,7 +46,7 @@ const launchd = vi.hoisted(() => ({
   spawnUntil: 0,
   failRestore: false,
   failBootout: false,
-  bootstraps: [] as { plist: string; portBusy: boolean }[],
+  bootstraps: [] as { plist: string; portBusy: boolean; recorded: string | null }[],
 }));
 
 const tailnet = vi.hoisted((): { route: ServeRoute; offFails: boolean; offs: number } => ({
@@ -119,7 +119,12 @@ vi.mock('node:child_process', async (importOriginal) => {
         }
         if (args[0] === 'bootstrap') {
           const plist = readFileSync(args[2]!, 'utf8');
-          launchd.bootstraps.push({ plist, portBusy: Date.now() < launchd.busyUntil });
+          const record = join(process.env.STIM_HOME!, 'run', 'service.json');
+          launchd.bootstraps.push({
+            plist,
+            portBusy: Date.now() < launchd.busyUntil,
+            recorded: existsSync(record) ? readFileSync(record, 'utf8') : null,
+          });
           if (plist === launchd.original && launchd.failRestore) return callback(new Error('failed'), '', 'failed');
           launchd.job = plist === launchd.original ? 'old' : 'new';
           if (launchd.job === 'new') launchd.spawnUntil = Date.now() + launchd.spawnDelay;
@@ -481,6 +486,16 @@ describe.skipIf(process.platform !== 'darwin')('service lifecycle', () => {
     launchd.stopDelay = 1000;
     expect(await finish(install())).toContain(`stim-server 1.0.0 answers on 127.0.0.1:${launchd.port}.`);
     expect(launchd.bootstraps.map((attempt) => attempt.portBusy)).toEqual([false]);
+  });
+
+  it('records the unit in its Stim home before starting the job, and uninstall removes the record', async () => {
+    await finish(install());
+    expect(launchd.bootstraps.map((attempt) => attempt.recorded && JSON.parse(attempt.recorded))).toEqual([
+      { label, port: 7787 },
+    ]);
+    launchd.job = null;
+    expect((await finish(uninstallService(label))).join('\n')).toContain(`Uninstalled ${label}`);
+    expect(existsSync(join(process.env.STIM_HOME!, 'run', 'service.json'))).toBe(false);
   });
 
   it('names the occupied port and listening pid when the old child does not stop', async () => {
