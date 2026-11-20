@@ -136,7 +136,7 @@ import { invocation, traceInvocation, withInvocation, type Invocation } from './
 import { createPassesLane, createThreadTable } from './threads.ts';
 import { awakeTimeout } from './awake-timer.ts';
 import { endWorkers } from './workers.ts';
-import { createCleanupWatch, isUnverifiedCleanup } from './cleanup-watch.ts';
+import { createCleanupWatch, isReadOnlyCleanup, isUnverifiedCleanup } from './cleanup-watch.ts';
 import { setReportChildLog } from '../report-child-log.ts';
 import { createStreams } from './logs/streams.ts';
 import { handleLogRequest } from './logs/protocol.ts';
@@ -575,13 +575,15 @@ function attachedCleanupError(
   initial: unknown,
   background: unknown,
   results: PromiseSettledResult<unknown>[],
+  leaveReadOnly: (error: unknown) => void,
 ): unknown {
   const errors = [
     initial,
     background,
     ...results.flatMap((result) => (result.status === 'rejected' ? [result.reason] : [])),
   ];
-  return errors.find(isUnverifiedCleanup) ?? errors.find(Boolean);
+  for (const error of errors) if (isReadOnlyCleanup(error)) leaveReadOnly(error);
+  return errors.find(isUnverifiedCleanup) ?? errors.find((error) => error && !isReadOnlyCleanup(error));
 }
 
 function countIdleTicks(idle: boolean, streamsRunning: boolean, previous: number): number {
@@ -850,7 +852,8 @@ async function runCrashHold(
  * row with nothing running, no work pending (`pendingWork`), no slow pass running and no contact, when `daemon.mode`
  * turns off, or when a tick throws, releasing its claims so each supervisor's own idle timer takes over. A tick that
  * cannot verify a child's cleanup does not end it: stimd logs `daemon_cleanup_unverified`, stays up and checks the child
- * again each tick, and releases the claims that child held once it has stopped. During shutdown it cancels the
+ * again each tick, and releases the claims that child held once it has stopped. An allowlisted read-only report child
+ * with no declared claims is instead logged as `report_child_left` and forgotten. During shutdown it cancels the
  * dependency size scan and waits for its cleanup and for any slow pass already running.
  */
 export async function runStimd(options: RunStimdOptions = {}): Promise<boolean> {
@@ -968,7 +971,11 @@ async function runStimdInner(
   ): 'recorded' | 'refusal' => {
     const failure = classifyFailure(cause);
     if (failure.kind === 'refusal') {
-      log('warn', 'startup_refused', reason);
+      log(
+        'warn',
+        'startup_refused',
+        cause instanceof Error && !reason.includes(cause.message) ? `${reason}: ${cause.message}` : reason,
+      );
       return 'refusal';
     }
     const home = failure.kind === 'home' ? failure.remedy : undefined;
@@ -993,7 +1000,7 @@ async function runStimdInner(
   };
   let refused = false;
   markAbnormal = (reason, cause, kind) => {
-    if (!own || keepOwn || refused) return;
+    if (!own || keepOwn || refused || isReadOnlyCleanup(cause)) return;
     refused = recordBoot(reason, cause, kind) === 'refusal';
     keepClaim();
   };
@@ -1179,7 +1186,7 @@ async function runStimdInner(
       .then(() => undefined)
       .catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
-        if (isUnverifiedCleanup(error) && !contain(error))
+        if (!contain(error) && isUnverifiedCleanup(error))
           failBackground(error, 'dependency cleanup could not be verified');
         if (message !== 'aborted') log('warn', failedEvent, message);
       })
@@ -1317,6 +1324,7 @@ async function runStimdInner(
     listBuildSlots().some((slot) => slot.alive && slot.client !== null) ||
     (net.running() !== null && readHostedSessions().some(hostedNativeWork));
   const failBackground = (error: unknown, why: string) => {
+    if (isReadOnlyCleanup(error) && contain(error)) return;
     backgroundFailure = error;
     if (attached === undefined) recordBoot(why, error);
     keepClaim();
@@ -1881,7 +1889,9 @@ async function runStimdInner(
         closeMetroChildren(),
         closeNetAndLogs(),
       ]);
-      const error = attachedCleanupError(initial, backgroundFailure, results);
+      const error = attachedCleanupError(initial, backgroundFailure, results, (failure) =>
+        cleanups.contain(failure, true),
+      );
       if (error) {
         if (isUnverifiedCleanup(error)) {
           keepClaim();
@@ -1975,6 +1985,7 @@ async function runStimdInner(
     closing = true;
     if (level === 'error' && inJob && unit && heldHome) leaveToJob(unit, readJobRestart()?.at ?? Date.now(), null, log);
     const waiting = new Set<string>();
+    let cleanupReasons: string[] = [];
     let settled = false;
     let ended = false;
     let cancelWait: () => void;
@@ -2040,12 +2051,15 @@ async function runStimdInner(
     ])
       .then(async (results) => {
         cleanups.settle();
-        const unverified = [
+        const failures = [
           backgroundFailure,
           ...results.flatMap((result) => (result.status === 'rejected' ? [result.reason] : [])),
           ...cleanups.errors(),
-        ].some(isUnverifiedCleanup);
-        if (unverified) {
+        ];
+        for (const error of failures) if (isReadOnlyCleanup(error)) cleanups.contain(error, true);
+        const unverified = failures.filter(isUnverifiedCleanup);
+        cleanupReasons = [...new Set(unverified.map((error) => error.message))];
+        if (unverified.length) {
           keepClaim();
           keepDaemon = true;
         }
@@ -2060,7 +2074,7 @@ async function runStimdInner(
           log(
             'warn',
             'daemon_claims_kept',
-            `shutdown kept the ${[keepOwn && 'stimd', keepDaemon && 'daemon'].filter(Boolean).join(' and ')} claim`,
+            `shutdown kept the ${[keepOwn && 'stimd', keepDaemon && 'daemon'].filter(Boolean).join(' and ')} claim${cleanupReasons.length ? `: ${cleanupReasons.join('; ')}` : ''}`,
           );
         settled = true;
         follower?.release();
@@ -2082,6 +2096,7 @@ async function runStimdInner(
       });
   };
   startup.cleanup = async (error) => {
+    if (isReadOnlyCleanup(error)) cleanups.contain(error, true);
     if (isUnverifiedCleanup(error)) backgroundFailure = error;
     if (inJob && unit && attached === undefined) {
       if (classifyFailure(error).kind === 'refusal') rmSync(stimdJobRestartFile(), { force: true });

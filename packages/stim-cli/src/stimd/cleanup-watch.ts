@@ -10,10 +10,14 @@ import { reportChildOf, WorkspaceProcessCleanupError } from '../engine/workspace
 
 const MAX_CONTAINED_CLEANUPS = 8;
 
-type Log = (level: 'info' | 'error', event: string, msg: string) => void;
+type Log = (level: 'info' | 'warn' | 'error', event: string, msg: string, fields?: Record<string, unknown>) => void;
 
 export function isUnverifiedCleanup(error: unknown): error is ClaimUnavailableError {
-  return isClaimUnavailable(error) && 'reportCleanup' in error;
+  return isClaimUnavailable(error) && 'reportCleanup' in error && !isReadOnlyCleanup(error);
+}
+
+export function isReadOnlyCleanup(error: unknown): error is ClaimUnavailableError {
+  return isClaimUnavailable(error) && 'reportCleanup' in error && 'readOnly' in error && error.readOnly === true;
 }
 
 /** The key that names the child an unverified cleanup refusal identifies, or null when it names none. */
@@ -23,7 +27,7 @@ export function childKey(error: unknown): string | null {
 }
 
 export interface CleanupWatch {
-  /** Watches `error`'s child and returns true, or returns false when stimd cannot stay up for it. */
+  /** Logs and forgets a read-only child, or watches another child; false when stimd cannot stay up for it. */
   contain(error: unknown, ending: boolean): boolean;
   /** Drops every child found stopped, releasing the claims only it retained. */
   settle(): void;
@@ -38,7 +42,7 @@ export interface CleanupWatch {
 
 /**
  * The children whose cleanup stimd's tick, a Metro or tunnel stop, or a job on one of its threads could not verify.
- * Each keeps stimd up until a later check finds it stopped, which releases the claims its failure retained once no other
+ * Read-only report children are logged and forgotten. Each other child keeps stimd up until a later check finds it stopped, which releases the claims its failure retained once no other
  * unverified child holds them. Only a refusal that names one child and how to check it is contained, each child once and
  * at most `MAX_CONTAINED_CLEANUPS` of them; any other unverified cleanup ends stimd. A thread keeps its own watch, since
  * the checks are functions that cannot leave it.
@@ -52,6 +56,11 @@ export function createCleanupWatch(log: Log): CleanupWatch {
   }[] = [];
   return {
     contain(error: unknown, ending: boolean): boolean {
+      if (isReadOnlyCleanup(error)) {
+        const child = reportChildOf(error);
+        log('warn', 'report_child_left', error.message, { pid: child?.pid, command: child?.command });
+        return true;
+      }
       if (ending || !isUnverifiedCleanup(error)) return false;
       const key = childKey(error);
       const settled = cleanupCheck(error);

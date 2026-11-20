@@ -70,6 +70,29 @@ test('close requires a successful cleanup acknowledgement and worker exit', asyn
   expect(onExit).toHaveBeenCalledWith();
 });
 
+test('a read-only close failure logs its children and permits clean shutdown', async () => {
+  const records = vi.fn<Parameters<typeof createNetThread>[0]>();
+  const onExit = vi.fn<(error?: Error) => void>();
+  const net = createNetThread(records, onExit);
+  const started = net.ensure(options);
+  current().emit('message', { type: 'listening', port: 1234 });
+  await started;
+  const closing = net.close();
+  current().emit('message', {
+    type: 'closed',
+    error: 'report child remains',
+    readOnly: true,
+    children: [{ pid: 12345, command: 'ps -axo pid=' }],
+  });
+  current().emit('exit', 0);
+  await expect(closing).resolves.toBeUndefined();
+  expect(records).toHaveBeenCalledWith('warn', 'report_child_left', 'report child remains', {
+    pid: 12345,
+    command: 'ps -axo pid=',
+  });
+  expect(onExit).toHaveBeenCalledWith();
+});
+
 test.each(['child still running', ''])('failed cleanup stays sticky after the worker exits: %s', async (message) => {
   const { net, onExit } = await listening();
   const closing = net.close();

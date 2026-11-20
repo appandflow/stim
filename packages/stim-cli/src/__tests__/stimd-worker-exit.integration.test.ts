@@ -242,6 +242,28 @@ parentPort.on('message', (message) => {
 });
 
 describe.skipIf(process.platform === 'win32')('a job whose child cleanup is unverified', () => {
+  test('a read-only refusal crosses the thread boundary without a retained watch', async () => {
+    const entry = vi
+      .spyOn(entries, 'spawnEntry')
+      .mockReturnValue(fileURLToPath(new URL('./fixtures/thread-jobs-worker.ts', import.meta.url)));
+    const lost = vi.fn<(error: Error) => void>();
+    const threads = createThreadTable(() => {}, lost);
+    try {
+      const input = { cwd: process.cwd(), readOnly: true };
+      await expect(threads.run('measure', input)).rejects.toMatchObject({
+        code: 'STIM_CLAIM_UNAVAILABLE',
+        reportCleanup: true,
+        readOnly: true,
+        reportChild: { pid: 85183, command: 'ps -axo pid=' },
+      });
+      await threads.close();
+      expect(lost).not.toHaveBeenCalled();
+    } finally {
+      await threads.close();
+      entry.mockRestore();
+    }
+  });
+
   test.each([
     [1, 'is watched on its thread, which keeps the claim until the child has stopped'],
     [2, 'is not contained while another child of the operation runs, and keeps the claim'],

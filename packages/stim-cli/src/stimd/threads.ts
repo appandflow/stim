@@ -6,6 +6,7 @@ import { childKey } from './cleanup-watch.ts';
 import { setReportChildLog } from '../report-child-log.ts';
 import { serveThreadJobs } from './thread-jobs.ts';
 import { trackWorker } from './workers.ts';
+import type { ReportChild } from '../engine/workspace-process-error.ts';
 
 type ThreadName = 'passes' | 'measure';
 type PassesInput = Omit<Parameters<MaintenanceLane['start']>[0], 'operation'> & { act: boolean; cwd: string };
@@ -35,7 +36,9 @@ type FromThread =
       code?: string;
       remedy?: string;
       reportCleanup?: boolean;
-      contained?: { pid: number; processToken: string | null };
+      readOnly?: boolean;
+      reportChild?: ReportChild;
+      contained?: ReportChild;
     }
   | { type: 'settled'; pending: string[]; reading: boolean };
 
@@ -113,6 +116,7 @@ export function createThreadTable(log: Log, onLost: (error: Error) => void = () 
           ...(message.code ? { code: message.code } : {}),
           ...(message.remedy ? { remedy: message.remedy } : {}),
           ...(message.reportCleanup ? { reportCleanup: true } : {}),
+          ...(message.readOnly ? { readOnly: true, reportChild: message.reportChild } : {}),
           ...(key ? { reportChild: child, cleanupSettled: () => !thread.unsettled.has(key) } : {}),
         }),
       );

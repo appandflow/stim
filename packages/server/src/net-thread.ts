@@ -16,7 +16,7 @@ export type ToNet =
 export type FromNet =
   | { type: 'listening'; port: number }
   | { type: 'refused'; message: string; clean: boolean }
-  | { type: 'closed'; error?: string }
+  | { type: 'closed'; error?: string; readOnly?: boolean; children?: { pid: number; command?: string }[] }
   | { type: 'data'; id: number; chunk: Uint8Array }
   | { type: 'end'; id: number }
   | { type: 'idle' }
@@ -47,6 +47,17 @@ class Bridged extends Duplex {
     this.#post({ type: 'end', id: this.id });
     done(error);
   }
+}
+
+interface CloseFailure extends Error {
+  readOnly?: boolean;
+  reportChild?: { pid: number; command?: string };
+}
+
+function closeFailures(error: unknown): CloseFailure[] {
+  return error instanceof AggregateError
+    ? [error, ...error.errors.flatMap(closeFailures)]
+    : [error instanceof Error ? error : new Error(String(error))];
 }
 
 async function run(port: MessagePort, options: NetOptions): Promise<void> {
@@ -88,7 +99,21 @@ async function run(port: MessagePort, options: NetOptions): Promise<void> {
       void close()
         .then(
           () => post({ type: 'closed' }),
-          (error: unknown) => post({ type: 'closed', error: error instanceof Error ? error.message : String(error) }),
+          (error: unknown) => {
+            const failures = closeFailures(error);
+            const leaves = failures.filter((failure) => !(failure instanceof AggregateError));
+            const readOnly = leaves.length > 0 && leaves.every((failure) => failure.readOnly === true);
+            post({
+              type: 'closed',
+              error: failures.map((failure) => failure.message).join('; '),
+              ...(readOnly
+                ? {
+                    readOnly: true,
+                    children: leaves.flatMap((failure) => (failure.reportChild ? [failure.reportChild] : [])),
+                  }
+                : {}),
+            });
+          },
         )
         .finally(() => port.close());
   };

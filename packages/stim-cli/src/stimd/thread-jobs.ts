@@ -38,10 +38,11 @@ export function serveThreadJobs<Input>(
       port.postMessage({ type: 'done', result, reading: hungRead() !== null });
     } catch (error) {
       const cleanup = error instanceof Error && 'reportCleanup' in error;
+      const readOnly = cleanup && 'readOnly' in error && error.readOnly === true;
       const child = reportChildOf(error);
       const others = [...operationState(operation).running].some((running) => running.pid !== child?.pid);
-      const contained = child && !others && watch.contain(error, signal.aborted) ? child : null;
-      if (contained) forget();
+      const contained = !readOnly && child && !others && watch.contain(error, signal.aborted) ? child : null;
+      if (contained || readOnly) forget();
       port.postMessage({
         type: 'failed',
         reading: hungRead() !== null,
@@ -49,6 +50,7 @@ export function serveThreadJobs<Input>(
         ...(cleanup
           ? {
               reportCleanup: true,
+              ...(readOnly ? { readOnly: true, reportChild: child } : {}),
               ...(error instanceof Error && 'code' in error && typeof error.code === 'string'
                 ? { code: error.code }
                 : {}),

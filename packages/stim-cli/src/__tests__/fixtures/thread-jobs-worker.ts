@@ -9,9 +9,19 @@ import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-err
 import { captureProcessIdentity } from '../../process-identity.ts';
 import { serveThreadJobs } from '../../stimd/thread-jobs.ts';
 
+type Input = { children?: number; readOnly?: true };
+
 /** A stimd thread whose job declares `children` sleepers on a claim under `cwd`, then refuses naming the first. */
 if (parentPort)
-  serveThreadJobs<{ children?: number }>(parentPort, processContext, async ({ cwd, children = 1 }, operation) => {
+  serveThreadJobs<Input>(parentPort, processContext, async (input, operation) => {
+    const { cwd, children = 1, readOnly } = input;
+    if (readOnly)
+      throw Object.assign(new Error('Cannot verify cleanup for ps.'), {
+        code: 'STIM_CLAIM_UNAVAILABLE',
+        reportCleanup: true,
+        readOnly: true,
+        reportChild: { pid: 85183, processToken: null, command: 'ps -axo pid=' },
+      });
     const claim = tryAcquireClaim({ root: join(cwd, 'work.lock'), mode: 'exclusive' }).acquired;
     if (!claim) throw new Error('the fixture claim is held');
     declareSpawnsOn(operation, claim);
