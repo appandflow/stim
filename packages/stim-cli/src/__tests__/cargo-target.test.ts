@@ -29,7 +29,11 @@ import {
 import { cargoTargetDirsAsync } from '../workspace/regenerable-dirs.ts';
 
 const fsHooks = vi.hoisted(
-  (): { dev?: (path: string) => number | undefined; afterLstat?: (path: string) => void } => ({}),
+  (): {
+    dev?: (path: string) => number | undefined;
+    afterLstat?: (path: string) => void;
+    beforeReaddir?: (path: string) => void;
+  } => ({}),
 );
 vi.mock('node:fs/promises', async (importOriginal) => {
   const fs = await importOriginal<typeof import('node:fs/promises')>();
@@ -41,11 +45,18 @@ vi.mock('node:fs/promises', async (importOriginal) => {
       fsHooks.afterLstat?.(String(args[0]));
       return dev === undefined ? stat : Object.assign(stat, { dev });
     },
+    readdir: new Proxy(fs.readdir, {
+      apply: (readdir, self, args: unknown[]) => {
+        fsHooks.beforeReaddir?.(String(args[0]));
+        return Reflect.apply(readdir, self, args);
+      },
+    }),
   };
 });
 afterEach(() => {
   delete fsHooks.dev;
   delete fsHooks.afterLstat;
+  delete fsHooks.beforeReaddir;
   resetExecutor();
 });
 
@@ -331,6 +342,20 @@ describe.skipIf(process.platform === 'win32')('trimming in place (Cargo locks ne
     expect(readFileSync(join(outside, 'libx.rlib'), 'utf8')).toBe('theirs');
     expect(result.removed).toEqual([]);
     expect(result.kept).toEqual([expect.stringContaining(`${deps} is no longer a directory inside`)]);
+  });
+
+  test('a directory a build removes while the keypair link check walks the target does not keep it', async () => {
+    makeProfile('debug', 3 * DAY);
+    const incremental = join(realpathSync.native(target), 'debug', 'incremental');
+    fsHooks.beforeReaddir = (path) => {
+      if (path !== incremental) return;
+      delete fsHooks.beforeReaddir;
+      rmSync(incremental, { recursive: true });
+    };
+
+    const result = await trimCargoTarget(target, { needBytes: 0, measure: false });
+
+    expect(result.removed).toEqual(['debug']);
   });
 
   test('a link named like a keypair anywhere in the target keeps it whole, and what it points at stays', async () => {

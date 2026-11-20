@@ -413,13 +413,19 @@ async function removeInPlace(path: string, dev: number, signal?: AbortSignal): P
 /**
  * Why the whole of `target` stays because of a symbolic link a Solana key may stand behind, found at any depth without
  * following links: one named `deploy` or `*-keypair.json`, or one directly in a `deploy` directory, all in any letter
- * case. A directory that cannot be listed keeps it too. Null when there is none.
+ * case. A directory that cannot be listed keeps it too; one a build removed meanwhile is skipped. Null when there is none.
  */
-async function keypairLink(target: string): Promise<string | null> {
+async function keypairLink(target: string, signal?: AbortSignal): Promise<string | null> {
   const queue = [target];
   for (let dir = queue.pop(); dir !== undefined; dir = queue.pop()) {
-    const entries = await readdir(dir, { withFileTypes: true }).catch(() => null);
-    if (!entries) return `${dir} cannot be listed to look for keypair links`;
+    signal?.throwIfAborted();
+    let entries: Dirent[];
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch (error) {
+      if (errorCode(error) === 'ENOENT' || errorCode(error) === 'ENOTDIR') continue;
+      return `${dir} cannot be listed to look for keypair links`;
+    }
     for (const entry of entries) {
       const path = join(dir, entry.name);
       if (entry.isDirectory()) queue.push(path);
@@ -605,7 +611,7 @@ export async function trimCargoTarget(
     }
   };
   if (!steps.length) return result;
-  const link = await keypairLink(target);
+  const link = await keypairLink(target, signal);
   if (link) return keep(link);
   try {
     if (!idleOnly) {
@@ -741,7 +747,7 @@ export async function deleteCargoTarget(
   if (!entries) return keep(`${target} cannot be listed`);
   const names = entries.output;
   if (!names.length) return result;
-  const link = await keypairLink(target);
+  const link = await keypairLink(target, signal);
   if (link) return keep(link);
   const walked = await walkEntries(
     names.map((name) => join(target, name)),
