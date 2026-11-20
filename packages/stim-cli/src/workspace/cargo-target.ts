@@ -439,6 +439,15 @@ async function keypairLink(target: string, signal?: AbortSignal): Promise<string
   return null;
 }
 
+/** Why the admitted `registered` path no longer leads to the canonical `target`: it is not a directory now, or resolves elsewhere. */
+async function rootMoved(registered: string, target: string): Promise<string | null> {
+  if (!(await lstat(registered).catch(() => null))?.isDirectory())
+    return `${registered} is no longer a directory, so the delete stopped`;
+  return (await realpath(registered).catch(() => null)) === target
+    ? null
+    : `${registered} no longer resolves to ${target}, so the delete stopped`;
+}
+
 /** Throws `KeepTarget` when `keypairLink` finds a link; run under the Cargo locks that cover the delete. */
 async function refuseKeypairLink(target: string, signal?: AbortSignal): Promise<void> {
   const link = await keypairLink(target, signal);
@@ -752,6 +761,8 @@ export async function deleteCargoTarget(
   } catch {
     return keep(`${registeredTarget} cannot be resolved to its on-disk path`);
   }
+  const moved = await rootMoved(registeredTarget, target);
+  if (moved) return keep(moved);
   const blocked =
     wholeTargetReason(target, mountInfo) ?? (idleMs === undefined ? null : recentTargetUse(target, Date.now(), idleMs));
   if (blocked) return keep(blocked);
@@ -778,6 +789,8 @@ export async function deleteCargoTarget(
     done = await withCargoLocks(
       targetLocks(target),
       async () => {
+        const movedSince = await rootMoved(registeredTarget, target);
+        if (movedSince) throw new KeepTarget(movedSince);
         await refuseKeypairLink(target, signal);
         const left: string[] = [];
         for (const name of names) left.push(...(await removeInPlace(join(target, name), dev, signal)));

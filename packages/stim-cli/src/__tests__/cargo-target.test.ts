@@ -33,8 +33,20 @@ const fsHooks = vi.hoisted(
     dev?: (path: string) => number | undefined;
     afterLstat?: (path: string) => void;
     beforeReaddir?: (path: string) => void;
+    afterRecognise?: () => void;
   } => ({}),
 );
+vi.mock('../workspace/regenerable-dirs.ts', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../workspace/regenerable-dirs.ts')>();
+  return {
+    ...real,
+    cargoTargetDirsAsync: async (root: string) => {
+      const found = await real.cargoTargetDirsAsync(root);
+      fsHooks.afterRecognise?.();
+      return found;
+    },
+  };
+});
 vi.mock('node:fs/promises', async (importOriginal) => {
   const fs = await importOriginal<typeof import('node:fs/promises')>();
   return {
@@ -57,6 +69,7 @@ afterEach(() => {
   delete fsHooks.dev;
   delete fsHooks.afterLstat;
   delete fsHooks.beforeReaddir;
+  delete fsHooks.afterRecognise;
   resetExecutor();
 });
 
@@ -562,6 +575,24 @@ describe.skipIf(process.platform === 'win32')('deleting an idle Cargo target who
     expect(result.removed).toEqual([]);
     expect(result.kept).toEqual([expect.stringContaining('app-keypair.json is a symbolic link')]);
     expect(readFileSync(join(dir, 'debug', 'wallet.json'), 'utf8')).toBe('[1,2,3]');
+  });
+
+  test('a target replaced by a link once recognised stays, and nothing behind the link goes', async () => {
+    const elsewhere = join(target, 'elsewhere');
+    mkdirSync(join(elsewhere, 'doc'), { recursive: true });
+    writeFileSync(join(elsewhere, 'doc', 'index.html'), 'theirs');
+    ageTree(elsewhere);
+    fsHooks.afterRecognise = () => {
+      delete fsHooks.afterRecognise;
+      renameSync(dir, `${dir}-moved`);
+      symlinkSync(elsewhere, dir);
+    };
+
+    const result = await remove();
+
+    expect(result.removed).toEqual([]);
+    expect(result.kept).toEqual([expect.stringContaining('is no longer a directory')]);
+    expect(readFileSync(join(elsewhere, 'doc', 'index.html'), 'utf8')).toBe('theirs');
   });
 
   test('a target with nothing left in it goes too', async () => {
