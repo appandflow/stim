@@ -27,9 +27,18 @@ export function releaseDisk(): void {
   else held = false;
 }
 
-/** A unit boundary of the lane: gives the turn to a waiting ladder pass, and takes it back after. */
-export async function diskBoundary(): Promise<void> {
-  if (!waiting.some((entry) => entry.rank < LANE)) return;
-  releaseDisk();
-  await acquireDisk(LANE);
+let regained: Promise<void> | null = null;
+
+/**
+ * A unit boundary of the lane: gives the turn to a waiting ladder pass, and takes it back after. Walks the lane runs
+ * side by side share one hand-over: each waits until the lane has the turn back.
+ */
+export function diskBoundary(): Promise<void> {
+  if (!regained && waiting.some((entry) => entry.rank < LANE)) {
+    releaseDisk();
+    regained = acquireDisk(LANE).finally(() => {
+      regained = null;
+    });
+  }
+  return regained ?? Promise.resolve();
 }

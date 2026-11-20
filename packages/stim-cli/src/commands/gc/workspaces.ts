@@ -482,14 +482,15 @@ async function outputBytes(
   timeoutMs: number,
   signal?: AbortSignal,
   operation?: StimContext,
+  between?: () => Promise<void>,
 ): Promise<(number | null)[]> {
   const sizes = await mapLimited(
     entries.flatMap((paths, index) => paths.map((path) => ({ path, index }))),
     sizeConcurrency(operation),
-    async ({ path, index }) => ({
-      index,
-      size: await measuredDirectorySizeAsync(path, { timeoutMs, signal, operation }),
-    }),
+    async ({ path, index }) => {
+      await between?.();
+      return { index, size: await measuredDirectorySizeAsync(path, { timeoutMs, signal, operation }) };
+    },
   );
   return entries.map((_, index) => {
     const own = sizes.filter((size) => size.index === index).map((size) => size.size);
@@ -506,6 +507,8 @@ interface WorkspaceOutputsOptions {
   sizeTimeoutMs?: number;
   signal?: AbortSignal;
   operation?: StimContext;
+  /** Runs before each walk: a unit boundary of the stim-daemon's disk owner. */
+  between?: () => Promise<void>;
   /**
    * Lighten workspaces for `stim gc`: include the project's in-tree build directories, keep only a workspace
    * that is building or ran a native command within LIGHTEN_AFTER_MS, and ignore its dev server and devices.
@@ -526,6 +529,7 @@ export function collectWorkspaceOutputs({
   sizeTimeoutMs = SIZE_TIMEOUT_MS,
   signal,
   operation,
+  between,
   lighten = false,
 }: WorkspaceOutputsOptions): WorkspaceOutputsReport | Promise<WorkspaceOutputsReport> {
   const mountedVolumes = listMountedVolumes();
@@ -591,6 +595,7 @@ export function collectWorkspaceOutputs({
           sizeTimeoutMs,
           signal,
           operation,
+          between,
         )
       : [];
     const locks = await mapLimited(entries, sizeConcurrency(operation), async ({ projectRoot }) =>

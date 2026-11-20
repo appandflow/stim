@@ -80,12 +80,14 @@ export async function runDiskPass(
   input: DiskPassInput,
   log: IdlePassInput['log'],
   operation: StimContext,
+  unownedCadence?: BigInt64Array,
 ): Promise<DiskPassResult> {
   const config = loadConfig();
   if (!config) return { actions: [], pressure: input.pressure };
   // @ref LLP 0001#one-task-runs-every-gc-deletion -- the ladder and the lane never delete at the same time
   await acquireDisk(input.requested ? HARD_FLOOR : LADDER);
   try {
+    operation.signal.throwIfAborted();
     const { thresholds } = diskThresholds(config);
     let warningSince = input.pressure.memoryWarningSince;
     return await runLadder(
@@ -99,6 +101,7 @@ export async function runDiskPass(
         operation,
         reports: true,
         only: 'disk',
+        ...(unownedCadence ? { unownedCadence } : {}),
         remeasure: remeasurer(config, operation, (measurement) => {
           const pressure = classifyPressure({
             ...measurement,
@@ -452,6 +455,11 @@ export function createMaintenanceLane(
         const fingerprintMs = lap();
         // @ref LLP 0001#one-task-runs-every-gc-deletion -- a ladder pass waits for one unit, never a whole step
         await acquireDisk(LANE);
+        let holding = true;
+        const release = () => {
+          if (holding) releaseDisk();
+          holding = false;
+        };
         let dependenciesMs: number;
         let skipped: string | void;
         try {
@@ -467,10 +475,15 @@ export function createMaintenanceLane(
           );
           dependenciesMs = lap();
           skipped = await watchedStep(log, 'maintenance', () =>
-            runMaintenance('daemon', { report: !act, tick: { operation, measured }, between: diskBoundary }),
+            runMaintenance('daemon', {
+              report: !act,
+              tick: { operation, measured },
+              between: diskBoundary,
+              deleted: release,
+            }),
           );
         } finally {
-          releaseDisk();
+          release();
         }
         const maintenanceMs = lap();
         const tookMs = Math.round(performance.now() - started);

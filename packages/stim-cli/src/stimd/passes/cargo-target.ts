@@ -131,7 +131,14 @@ export async function measureCargoTargets(
   now: number,
   operation?: StimContext,
   recorded: readonly MaintenanceSize[] = [],
-  { lowPriority = false }: { lowPriority?: boolean } = {},
+  {
+    lowPriority = false,
+    between,
+  }: {
+    lowPriority?: boolean;
+    /** Runs before each walk: a unit boundary of the stim-daemon's disk owner. */
+    between?: () => Promise<void>;
+  } = {},
 ): Promise<MaintenanceSize[]> {
   const sizes: MaintenanceSize[] = [];
   for (const size of recorded)
@@ -152,6 +159,7 @@ export async function measureCargoTargets(
       scan.refused.set(dir, { workspace: root, reason: problem });
       continue;
     }
+    await between?.();
     const bytes = await measuredDirectorySizeAsync(dir, {
       timeoutMs: SIZE_TIMEOUT_MS,
       lowPriority,

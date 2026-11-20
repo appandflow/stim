@@ -19,6 +19,14 @@ type Log = (
 
 const IDLE_MS = 2 * 60_000;
 
+interface Failure {
+  message: string;
+  code?: string;
+  remedy?: string;
+  reportCleanup?: boolean;
+  contained?: { pid: number; processToken: string | null };
+}
+
 type FromThread =
   | {
       type: 'log';
@@ -28,22 +36,9 @@ type FromThread =
       fields: Record<string, unknown>;
     }
   | { type: 'done'; result: DaemonLadderAction[]; reading: boolean }
-  | {
-      type: 'failed';
-      reading: boolean;
-      message: string;
-      code?: string;
-      remedy?: string;
-      reportCleanup?: boolean;
-      contained?: { pid: number; processToken: string | null };
-    }
+  | ({ type: 'failed'; reading: boolean } & Failure)
   | { type: 'settled'; pending: string[]; reading: boolean }
-  | {
-      type: 'ladderDone';
-      id: number;
-      result?: DiskPassResult;
-      failure?: { message: string; code?: string; remedy?: string; reportCleanup?: boolean };
-    };
+  | { type: 'ladderDone'; id: number; reading: boolean; result?: DiskPassResult; failure?: Failure };
 
 interface Thread {
   worker: Worker;
@@ -77,6 +72,13 @@ export interface ThreadTable {
   ladder?(input: DiskPassInput): Promise<DiskPassResult>;
 }
 
+const lostError = (name: ThreadName, error: Error) =>
+  Object.assign(error, {
+    code: 'STIM_CLAIM_UNAVAILABLE',
+    reportCleanup: true,
+    remedy: `Verify the ${name} thread's child processes and their descendants have stopped.`,
+  });
+
 /**
  * stimd's worker threads, each started on its first job and ended once it has had none for two minutes, watches no
  * unverified child and has no timed-out read pending. A job's unverified cleanup that names one child is watched on its thread, which releases what the
@@ -86,10 +88,16 @@ export interface ThreadTable {
 export function createThreadTable(log: Log, onLost: (error: Error) => void = () => {}): ThreadTable {
   const threads = new Map<ThreadName, Thread>();
   const dependencyCadence = new BigInt64Array(new SharedArrayBuffer(BigInt64Array.BYTES_PER_ELEMENT));
+  const unownedCadence = new BigInt64Array(new SharedArrayBuffer(BigInt64Array.BYTES_PER_ELEMENT));
   let nextLadder = 0;
   const idleEnd = (name: ThreadName, thread: Thread) => {
+    if (thread.idle) clearTimeout(thread.idle);
+    thread.idle = null;
+    if (thread.pending || thread.ladders.size) return;
     thread.idle = setTimeout(() => {
-      if (thread.unsettled.size === 0 && !thread.reading && !thread.ladders.size) return end(name, thread);
+      thread.idle = null;
+      if (thread.pending || thread.ladders.size) return;
+      if (thread.unsettled.size === 0 && !thread.reading) return end(name, thread);
       if (thread.reading) thread.worker.postMessage({ type: 'settle' });
       idleEnd(name, thread);
     }, IDLE_MS);
@@ -103,7 +111,7 @@ export function createThreadTable(log: Log, onLost: (error: Error) => void = () 
   const start = (name: ThreadName): Thread => {
     const worker = trackWorker(
       new Worker(spawnEntry('stimd-thread'), {
-        workerData: { stimdThread: name, ...(name === 'passes' ? { dependencyCadence } : {}) },
+        workerData: { stimdThread: name, ...(name === 'passes' ? { dependencyCadence, unownedCadence } : {}) },
       }),
     );
     const thread: Thread = {
@@ -115,43 +123,42 @@ export function createThreadTable(log: Log, onLost: (error: Error) => void = () 
       lost: false,
       ladders: new Map(),
     };
+    const rejection = (failure: Failure) => {
+      const child = failure.contained;
+      const key = child ? childKey({ reportChild: child }) : null;
+      if (key) thread.unsettled.add(key);
+      return Object.assign(new Error(failure.message), {
+        ...(failure.code ? { code: failure.code } : {}),
+        ...(failure.remedy ? { remedy: failure.remedy } : {}),
+        ...(failure.reportCleanup ? { reportCleanup: true } : {}),
+        ...(key ? { reportChild: child, cleanupSettled: () => !thread.unsettled.has(key) } : {}),
+      });
+    };
     worker.on('message', (message: FromThread) => {
       if (message.type === 'log') return log(message.level, message.event, message.msg, message.fields);
-      if (message.type === 'ladderDone') {
-        const asked = thread.ladders.get(message.id);
-        thread.ladders.delete(message.id);
-        if (!thread.pending && !thread.ladders.size) idleEnd(name, thread);
-        if (message.result) return asked?.resolve(message.result);
-        return asked?.reject(
-          Object.assign(new Error(message.failure?.message ?? 'the disk pass failed'), message.failure),
-        );
-      }
       if (message.type === 'settled') {
         thread.unsettled = new Set(message.pending);
         thread.reading = message.reading;
         return;
       }
       thread.reading = message.reading;
+      if (message.type === 'ladderDone') {
+        const asked = thread.ladders.get(message.id);
+        thread.ladders.delete(message.id);
+        idleEnd(name, thread);
+        if (message.result) return asked?.resolve(message.result);
+        return asked?.reject(rejection(message.failure ?? { message: 'the disk pass failed' }));
+      }
       const pending = thread.pending;
       thread.pending = null;
       idleEnd(name, thread);
       if (message.type === 'done') return pending?.resolve(message.result);
-      const child = message.contained;
-      const key = child ? childKey({ reportChild: child }) : null;
-      if (key) thread.unsettled.add(key);
-      pending?.reject(
-        Object.assign(new Error(message.message), {
-          ...(message.code ? { code: message.code } : {}),
-          ...(message.remedy ? { remedy: message.remedy } : {}),
-          ...(message.reportCleanup ? { reportCleanup: true } : {}),
-          ...(key ? { reportChild: child, cleanupSettled: () => !thread.unsettled.has(key) } : {}),
-        }),
-      );
+      pending?.reject(rejection(message));
     });
     const gone = (error: Error) => {
       if (threads.get(name) === thread) threads.delete(name);
       for (const asked of thread.ladders.values())
-        asked.reject(new Error(`the ${name} thread ended during a disk pass`));
+        asked.reject(lostError(name, new Error(`the ${name} thread ended during a disk pass`)));
       thread.ladders.clear();
       if (thread.idle) clearTimeout(thread.idle);
       thread.idle = null;
@@ -169,13 +176,7 @@ export function createThreadTable(log: Log, onLost: (error: Error) => void = () 
           ),
         );
       }
-      thread.pending?.reject(
-        Object.assign(error, {
-          code: 'STIM_CLAIM_UNAVAILABLE',
-          reportCleanup: true,
-          remedy: `Verify the ${name} thread's child processes and their descendants have stopped.`,
-        }),
-      );
+      thread.pending?.reject(lostError(name, error));
       thread.pending = null;
     };
     worker.on('error', gone);
@@ -216,7 +217,7 @@ export function createThreadTable(log: Log, onLost: (error: Error) => void = () 
     },
     abort(name) {
       const thread = threads.get(name);
-      if (thread?.pending) thread.worker.postMessage({ type: 'abort' });
+      if (thread && (thread.pending || thread.ladders.size)) thread.worker.postMessage({ type: 'abort' });
     },
     settle() {
       for (const thread of threads.values())
@@ -296,35 +297,9 @@ else if (thread && parentPort) {
   const log: Log = (level, event, msg, fields = {}) => port.postMessage({ type: 'log', level, event, msg, fields });
   setReportChildLog(log);
   const { processContext } = await import('../cli-operation.ts');
+  const unownedCadence: BigInt64Array | undefined = workerData.unownedCadence;
   let lane: MaintenanceLane | undefined;
-  const ladders = new Set<AbortController>();
-  port.on('message', async (message: { type: string; id?: number; input?: DiskPassInput & { cwd: string } }) => {
-    if (message.type === 'abort') for (const controller of ladders) controller.abort();
-    if (message.type !== 'ladder' || !message.input) return;
-    const controller = new AbortController();
-    ladders.add(controller);
-    const { runDiskPass } = await import('../daemon/passes.ts');
-    try {
-      const result = await runDiskPass(message.input, log, processContext(message.input.cwd, controller.signal));
-      port.postMessage({ type: 'ladderDone', id: message.id, result });
-    } catch (error) {
-      port.postMessage({
-        type: 'ladderDone',
-        id: message.id,
-        failure: {
-          message: error instanceof Error ? error.message : String(error),
-          ...(error instanceof Error && 'code' in error && typeof error.code === 'string' ? { code: error.code } : {}),
-          ...(error instanceof Error && 'remedy' in error && typeof error.remedy === 'string'
-            ? { remedy: error.remedy }
-            : {}),
-          ...(error instanceof Error && 'reportCleanup' in error ? { reportCleanup: true } : {}),
-        },
-      });
-    } finally {
-      ladders.delete(controller);
-    }
-  });
-  serveThreadJobs<ThreadInput>(
+  serveThreadJobs<ThreadInput, DiskPassInput, DiskPassResult>(
     port,
     processContext,
     async (input, operation) => {
@@ -351,6 +326,10 @@ else if (thread && parentPort) {
     },
     () => {
       lane = undefined;
+    },
+    async (input, operation) => {
+      const { runDiskPass } = await import('../daemon/passes.ts');
+      return runDiskPass(input, log, operation, unownedCadence);
     },
   );
 }

@@ -1549,6 +1549,44 @@ describe('the ladder stim gc forces', () => {
       ]);
     },
   );
+
+  test.skipIf(process.platform === 'win32')(
+    "the stim-daemon's rung 9 runs at most hourly by the clock its disk passes share, whichever thread runs them",
+    async () => {
+      setExecutor({
+        ...getExecutor(),
+        runFileAsync: async () => '',
+        runFileQuietAsync: async (file) =>
+          file === 'ps' ? `${process.pid} node vitest\n` : file === 'lsof' ? `p${process.pid}\nn/\n` : null,
+        findExecutable: (name) => (name === 'npm' ? '/usr/local/bin/npm' : null),
+      });
+      mkdirSync(join(projects, '.npm'), { recursive: true });
+      vi.spyOn(daemonMeasure, 'measureDisk').mockResolvedValue([
+        { volume: '/', freeMb: 1024, device: statSync(join(projects, '.npm')).dev },
+      ]);
+      const operation = testContext({
+        env: { ...process.env, STIM_HOME: undefined, ANDROID_HOME: projects, npm_config_cache: join(projects, '.npm') },
+      });
+      const cleaned = async (cadence: BigInt64Array) =>
+        (
+          await runDiskPass(
+            { act: false, pressure: pressure('critical'), devices: [], sims: [], requested: false },
+            log,
+            operation,
+            cadence,
+          )
+        ).actions.filter((action) => action.kind === 'clean-tool-cache');
+
+      const ranRecently = new BigInt64Array([BigInt(Date.now() - 10 * MINUTE_MS)]);
+      expect(await cleaned(ranRecently)).toEqual([]);
+
+      const neverRan = new BigInt64Array(1);
+      const before = Date.now();
+      expect(await cleaned(neverRan)).toEqual([expect.objectContaining({ rung: 9, outcome: 'would' })]);
+      expect(Number(neverRan[0])).toBeGreaterThanOrEqual(before);
+      expect(await cleaned(neverRan)).toEqual([]);
+    },
+  );
 });
 
 describe('the ladder a build runs for its headroom', () => {

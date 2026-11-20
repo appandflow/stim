@@ -273,9 +273,10 @@ export interface MaintenanceTick {
   measured: TickMeasurement;
 }
 
-function tickDeviceReads({ operation, measured }: MaintenanceTick): OwnedDeviceReads {
+function tickDeviceReads({ operation, measured }: MaintenanceTick, between?: () => Promise<void>): OwnedDeviceReads {
   const { signal } = operation;
   return {
+    ...(between ? { between } : {}),
     sims: () => {
       if (!tickListsSims(loadConfig()))
         return listAllIosSimsAsync({ timeoutMs: DEVICE_LIST_TIMEOUT_MS, signal, operation });
@@ -387,8 +388,16 @@ async function measureAllSizes(
   failure: Parameters<typeof measureSizes>[1],
   operation: StimContext | undefined,
   recorded: readonly MaintenanceSize[],
+  between: (() => Promise<void>) | undefined,
 ): Promise<MaintenanceSize[]> {
-  return [...(await measureSizes(now, failure, operation)), ...(await measureCargoTargets(now, operation, recorded))];
+  return [
+    ...(await measureSizes(now, failure, operation, undefined, between)),
+    ...(await measureCargoTargets(now, operation, recorded, between ? { between } : {})),
+  ];
+}
+
+async function unitBoundary(between?: () => Promise<void>): Promise<void> {
+  await between?.();
 }
 
 /**
@@ -397,21 +406,23 @@ async function measureAllSizes(
  * plans and logs without acting, whatever `daemon.mode` says. Within a daemon `tick`, the pass reuses the tick's
  * measurement and runs no child process synchronously. Returns why no pass ran when another process holds the pass.
  */
-async function unitBoundary(between?: () => Promise<void>): Promise<void> {
-  await between?.();
-}
-
 export async function runMaintenance(
   trigger: string,
   {
     report = false,
     tick,
     between,
+    deleted,
   }: {
     report?: boolean;
     tick?: MaintenanceTick;
-    /** Runs before each check and each action: a unit boundary of the stim-daemon's disk owner. */
+    /**
+     * Runs before each check, each walk of the size check, the plan and each action: a unit boundary of the
+     * stim-daemon's disk owner.
+     */
     between?: () => Promise<void>;
+    /** Runs once the pass deletes nothing more, before its discovery scan and census. */
+    deleted?: () => void;
   } = {},
 ): Promise<string | void> {
   const startedAt = Date.now();
@@ -534,10 +545,10 @@ export async function runMaintenance(
             });
           };
           state.sizes = [
-            ...(await measureAllSizes(state.lastAt[check]!, measureFailed, tick?.operation, state.sizes)),
+            ...(await measureAllSizes(state.lastAt[check]!, measureFailed, tick?.operation, state.sizes, between)),
             ...(deviceSweepIsScoped()
               ? []
-              : await measureOwnedDevices(state.lastAt[check]!, measureFailed, tick && tickDeviceReads(tick))),
+              : await measureOwnedDevices(state.lastAt[check]!, measureFailed, tick && tickDeviceReads(tick, between))),
           ];
           keepScannedSizes(state.sizes);
           for (const size of state.sizes)
@@ -567,6 +578,7 @@ export async function runMaintenance(
     const partPlanned = { caps, sweep: ran.has('sweep'), worktree: plannedWorktrees, idle: ran.has('idle') };
     let plannedParts = new Set([...PLAN_PARTS.filter((part) => partPlanned[part]), ...disabledParts(settings)]);
     let result: PlannedMaintenance;
+    await unitBoundary(between);
     try {
       result = await plannedMaintenance(state.sizes, settings, {
         caps,
@@ -769,7 +781,7 @@ export async function runMaintenance(
     logger?.close();
     keepReserve();
     releaseClaim(claim);
-    if (scanAfter) await scanAfterPass(tick, passFailed, trigger);
+    if (scanAfter) await scanAfterPass(tick, passFailed, trigger, deleted);
   }
 }
 
@@ -779,7 +791,13 @@ export async function runMaintenance(
  * unchanged for the daemon's cleanup containment (LLP 0007): this runs only after a pass that did not fail, so it masks
  * no earlier error. A census failure it contains is recorded in the maintenance log.
  */
-async function scanAfterPass(tick: MaintenanceTick | undefined, passFailed: boolean, trigger: string): Promise<void> {
+async function scanAfterPass(
+  tick: MaintenanceTick | undefined,
+  passFailed: boolean,
+  trigger: string,
+  deleted?: () => void,
+): Promise<void> {
+  deleted?.();
   if (passFailed || tick?.operation.signal.aborted) return;
   try {
     await runDiscoveryScanIfDue(tick);

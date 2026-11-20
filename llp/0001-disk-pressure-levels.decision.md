@@ -286,7 +286,9 @@ so none ever runs beside another.
   and waits for its result, which pacing and the snapshot use as before.
 - The dormant step and the maintenance pass run in units: one checkout's
   reads, the dormant outputs, the ranking, one dependency deletion, one
-  maintenance check or plan action. Between units a waiting disk pass goes
+  maintenance check, each size walk of the size check, the plan, or one plan
+  action. Walks that run side by side hand the turn over once and each waits
+  until the lane has it back. Between units a waiting disk pass goes
   first, a hard-floor pass ahead of any other, and the lane then continues
   from where it was. Each deletion still checks its candidate again under its
   workspace's claims right before it acts, so a pass in between cannot leave
@@ -297,9 +299,15 @@ so none ever runs beside another.
   which run as one unit.
 - The disk pass measures again before each rung, so a level that fell while
   it waited takes only what the new level needs.
-- When the passes thread ends, a disk pass it had not answered fails, the tick
-  logs `pressure_ladder_failed` and goes on, and the next pass starts a new
-  thread.
+- The maintenance pass gives up the turn once it deletes nothing more, before
+  its discovery scan and census.
+- When the passes thread ends, a disk pass it had not answered fails as
+  unverified cleanup, as a job of that thread does: a child it started may
+  still run. A disk pass whose cleanup refusal names one child crosses with
+  that child, which stimd watches as it does one of the tick's. An abort of
+  the passes thread reaches a disk pass as well as the lane's job.
+- Rung 9's hourly clock lives as long as stimd, like the dormant step's, so a
+  new passes thread does not empty the machine caches again within the hour.
 
 The fingerprint precompute deletes nothing and runs beside a disk pass. The
 idle stage's output deletion and the dormant stage's device and archive work

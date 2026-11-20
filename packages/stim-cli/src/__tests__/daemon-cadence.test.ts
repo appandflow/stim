@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { buildCacheRoot, metroCacheRoot } from '@stim-cli/core';
 import {
   daemonNdjsonFile,
   maintenanceStateFile,
@@ -22,7 +23,10 @@ import * as ladder from '../daemon/ladder.ts';
 import * as measure from '../daemon/measure.ts';
 import * as reclaim from '../daemon/reclaim.ts';
 import { ensureStimd } from '../daemon/client.ts';
+import { acquireDisk, diskBoundary, HARD_FLOOR, LANE, releaseDisk } from '../daemon/disk-owner.ts';
 import { createMaintenanceLane, runDiskPass, runHomePasses } from '../daemon/passes.ts';
+import * as fsUtil from '../fs-util.ts';
+import { measureSizes } from '../stimd/passes/measure.ts';
 import { runStimd } from '../stimd/main.ts';
 import * as stages from '../daemon/stages.ts';
 import { pendingDormant } from '../daemon/stages.ts';
@@ -209,7 +213,85 @@ describe('the disk owner', () => {
     expect(order).toEqual(['unit 1', 'pass hard floor', 'pass waiting', 'unit 2', 'deletions']);
   });
 
-  test('a disk pass that fails, as when the passes thread ends, is logged and the tick goes on', async () => {
+  test('a hard-floor pass asked during the size check runs after the current walk, before the next one', async () => {
+    saveConfig({ version: 2, projects: {}, repos: {} });
+    mkdirSync(buildCacheRoot(), { recursive: true });
+    mkdirSync(metroCacheRoot(), { recursive: true });
+    const order: string[] = [];
+    let entered!: () => void;
+    let finish!: () => void;
+    const walking = new Promise<void>((resolve) => (entered = resolve));
+    const finished = new Promise<void>((resolve) => (finish = resolve));
+    vi.spyOn(fsUtil, 'measuredDirectorySizeAsync').mockImplementation(async (dir) => {
+      const walk = dir === buildCacheRoot() ? 'walk build cache' : 'walk Metro cache';
+      order.push(walk);
+      if (walk === 'walk build cache') {
+        entered();
+        await finished;
+      }
+      return 1;
+    });
+    vi.spyOn(ladder, 'runLadder').mockImplementation(async (_input, pressure) => {
+      order.push('pass hard floor');
+      return { actions: [], pressure };
+    });
+    await acquireDisk(LANE);
+    try {
+      const sizes = measureSizes(Date.now(), () => {}, testContext(), [], diskBoundary);
+      await walking;
+      const floor = runDiskPass(
+        { act: true, pressure: critical('floor'), devices: [], sims: [], requested: true },
+        () => {},
+        testContext(),
+      );
+      finish();
+      await Promise.all([sizes, floor]);
+    } finally {
+      releaseDisk();
+    }
+
+    expect(order).toEqual(['walk build cache', 'pass hard floor', 'walk Metro cache']);
+  });
+
+  test('the maintenance pass gives up the turn once it deletes nothing more, before its discovery scan', async () => {
+    const order: string[] = [];
+    vi.spyOn(dependencies, 'runDormantDependencies').mockResolvedValue([]);
+    vi.spyOn(ladder, 'runLadder').mockImplementation(async (_input, pressure) => {
+      order.push('pass');
+      return { actions: [], pressure };
+    });
+    let asked: Promise<unknown> = Promise.resolve();
+    vi.spyOn(maintenanceRun, 'runMaintenance').mockImplementation(async (_trigger, options) => {
+      options?.deleted?.();
+      asked = pass('scan');
+      await vi.advanceTimersByTimeAsync(0);
+      order.push('discovery scan');
+    });
+    const lane = await laneStarted();
+    await lane.settled();
+    await asked;
+
+    expect(order).toEqual(['pass', 'discovery scan']);
+  });
+
+  test('walks the lane runs side by side hand the turn over once, and each waits until the lane has it back', async () => {
+    const order: string[] = [];
+    await acquireDisk(LANE);
+    const floor = acquireDisk(HARD_FLOOR).then(() => void order.push('pass'));
+    const walks = Promise.all([
+      diskBoundary().then(() => void order.push('walk a')),
+      diskBoundary().then(() => void order.push('walk b')),
+    ]);
+    await floor;
+    order.push('pass done');
+    releaseDisk();
+    await walks;
+    releaseDisk();
+
+    expect(order).toEqual(['pass', 'pass done', 'walk a', 'walk b']);
+  });
+
+  test('a disk pass that fails is logged and the tick goes on', async () => {
     saveConfig({ version: 2, projects: {}, repos: {} });
     freeMb = 10 * 1024;
     vi.spyOn(idlePass, 'runIdlePass').mockResolvedValue([]);

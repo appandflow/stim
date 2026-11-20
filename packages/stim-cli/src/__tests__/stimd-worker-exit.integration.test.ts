@@ -22,6 +22,28 @@ async function stopFixture(pid: number, token: string): Promise<void> {
   }
 }
 
+const diskInput = (reasons: string[]): DiskPassInput => ({
+  act: true,
+  pressure: { level: 'critical', disk: 'critical', memory: 'normal', reasons, memoryWarningSince: null },
+  devices: [],
+  sims: [],
+  requested: false,
+});
+
+function fakeWorker(source: string): { root: string; restore: () => void } {
+  const root = mkdtempSync(join(tmpdir(), 'stim-worker-fake-'));
+  const fixture = join(root, 'worker.mjs');
+  writeFileSync(fixture, source);
+  const entry = vi.spyOn(entries, 'spawnEntry').mockReturnValue(fixture);
+  return {
+    root,
+    restore: () => {
+      entry.mockRestore();
+      rmSync(root, { recursive: true, force: true });
+    },
+  };
+}
+
 test('the hourly dependency check survives retirement of the worker that started it', async () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-dependency-cadence-'));
   vi.stubEnv('STIM_HOME', home);
@@ -122,39 +144,161 @@ parentPort.on('message', (message) => {
   }
 });
 
-test('a disk pass asked of a passes worker that ends settles, and the next one starts a new worker', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'stim-worker-ladder-'));
-  const fixture = join(root, 'worker.mjs');
-  writeFileSync(
-    fixture,
-    `
+test('a disk pass asked of a passes worker that ends fails as unverified cleanup, and the next one starts a new worker', async () => {
+  const fake = fakeWorker(`
 import { parentPort } from 'node:worker_threads';
 parentPort.on('message', (message) => {
   if (message.type !== 'ladder') return;
   if (message.input.pressure.reasons.length === 0) process.exit(1);
-  parentPort.postMessage({ type: 'ladderDone', id: message.id, result: { actions: [], pressure: message.input.pressure } });
+  parentPort.postMessage({ type: 'ladderDone', id: message.id, reading: false, result: { actions: [], pressure: message.input.pressure } });
 });
-`,
-  );
-  const entry = vi.spyOn(entries, 'spawnEntry').mockReturnValue(fixture);
+`);
   const threads = createThreadTable(() => {});
-  const input = (reasons: string[]): DiskPassInput => ({
-    act: true,
-    pressure: { level: 'critical', disk: 'critical', memory: 'normal', reasons, memoryWarningSince: null },
-    devices: [],
-    sims: [],
-    requested: false,
+  try {
+    const ladder = threads.ladder?.bind(threads);
+    if (!ladder) throw new Error('no ladder');
+    await expect(ladder(diskInput([]))).rejects.toMatchObject({
+      message: 'the passes thread ended during a disk pass',
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      reportCleanup: true,
+    });
+    await expect(ladder(diskInput(['answer']))).resolves.toMatchObject({ actions: [] });
+  } finally {
+    await threads.close();
+    fake.restore();
+  }
+});
+
+test('a passes worker whose job ends while its disk pass runs stays up for the next job', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const fake = fakeWorker(`
+import { parentPort } from 'node:worker_threads';
+let asked = null;
+let holding = false;
+parentPort.on('message', (message) => {
+  if (message.type === 'ladder' && asked === null) asked = message.id;
+  else if (message.type === 'ladder') {
+    parentPort.postMessage({ type: 'done', result: [], reading: false });
+    parentPort.postMessage({ type: 'ladderDone', id: message.id, reading: false, result: { actions: [], pressure: message.input.pressure } });
+  } else if (message.type === 'run' && message.input.hold) holding = true;
+  else if (message.type === 'run') {
+    parentPort.postMessage({ type: 'done', result: [], reading: false });
+    setTimeout(() => parentPort.postMessage({ type: 'ladderDone', id: asked, reading: false, result: { actions: [], pressure: { level: 'normal' } } }), 20);
+  }
+});
+`);
+  const threads = createThreadTable(() => {});
+  const job = { cwd: fake.root };
+  const held = { cwd: fake.root, hold: true };
+  try {
+    const ladder = threads.ladder?.bind(threads);
+    if (!ladder) throw new Error('no ladder');
+    const first = ladder(diskInput(['first']));
+    await threads.run('passes', job);
+    await first;
+    const next = threads.run('passes', held);
+    await vi.advanceTimersByTimeAsync(120_001);
+    await ladder(diskInput(['release']));
+    await expect(next).resolves.toEqual([]);
+  } finally {
+    vi.useRealTimers();
+    await threads.close();
+    fake.restore();
+  }
+});
+
+test('the hourly machine cache cleanup clock survives retirement of the worker that ran the disk pass', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const fake = fakeWorker(`
+import { parentPort, threadId, workerData } from 'node:worker_threads';
+parentPort.on('message', (message) => {
+  if (message.type !== 'ladder') return;
+  const runs = Number(Atomics.add(workerData.unownedCadence, 0, 1n)) + 1;
+  parentPort.postMessage({ type: 'log', level: 'info', event: 'fixture', msg: '', fields: { threadId, runs } });
+  parentPort.postMessage({ type: 'ladderDone', id: message.id, reading: false, result: { actions: [], pressure: message.input.pressure } });
+});
+`);
+  const traces: Record<string, unknown>[] = [];
+  const threads = createThreadTable((_level, event, _message, fields) => {
+    if (event === 'fixture' && fields) traces.push(fields);
   });
   try {
     const ladder = threads.ladder?.bind(threads);
     if (!ladder) throw new Error('no ladder');
-    await expect(ladder(input([]))).rejects.toThrow('the passes thread ended during a disk pass');
-    await expect(ladder(input(['answer']))).resolves.toMatchObject({ actions: [] });
+    await ladder(diskInput(['first']));
+    await vi.advanceTimersByTimeAsync(120_001);
+    await ladder(diskInput(['replacement']));
+    expect(traces.map((trace) => trace.runs)).toEqual([1, 2]);
+    expect(traces[0]?.threadId).not.toBe(traces[1]?.threadId);
   } finally {
-    entry.mockRestore();
+    vi.useRealTimers();
     await threads.close();
-    rmSync(root, { recursive: true, force: true });
+    fake.restore();
   }
+});
+
+describe.skipIf(process.platform === 'win32')('a disk pass on the passes worker', () => {
+  test('stops when the passes thread is aborted, with no lane job running', async () => {
+    const entry = vi
+      .spyOn(entries, 'spawnEntry')
+      .mockReturnValue(fileURLToPath(new URL('./fixtures/thread-jobs-worker.ts', import.meta.url)));
+    const threads = createThreadTable(() => {});
+    try {
+      const ladder = threads.ladder?.bind(threads);
+      if (!ladder) throw new Error('no ladder');
+      const running = ladder(diskInput(['wait']));
+      void running.catch(() => {});
+      await new Promise((done) => setTimeout(done, 500));
+      threads.abort('passes');
+      await expect(running).rejects.toThrow('aborted');
+    } finally {
+      entry.mockRestore();
+      await threads.close();
+    }
+  }, 10_000);
+
+  test('whose child cleanup is unverified crosses as the named child, and the claim stays until it has stopped', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'stim-worker-ladder-'));
+    const entry = vi
+      .spyOn(entries, 'spawnEntry')
+      .mockReturnValue(fileURLToPath(new URL('./fixtures/thread-jobs-worker.ts', import.meta.url)));
+    const threads = createThreadTable(() => {});
+    let sleeper: { pid: number; token: string | null } | undefined;
+    try {
+      const ladder = threads.ladder?.bind(threads);
+      if (!ladder) throw new Error('no ladder');
+      const failure: unknown = await ladder(diskInput(['refuse', root])).catch((error: unknown) => error);
+      const pid = Number(readFileSync(join(root, 'pids'), 'utf8'));
+      sleeper = { pid, token: captureProcessToken(pid) };
+      assert(sleeper.token);
+      expect(failure).toMatchObject({
+        code: 'STIM_CLAIM_UNAVAILABLE',
+        reportCleanup: true,
+        reportChild: { pid, processToken: sleeper.token },
+      });
+      const settled = Reflect.get(Object(failure), 'cleanupSettled');
+      assert(typeof settled === 'function');
+      const claimRoot = join(root, 'work.lock');
+      threads.settle();
+      await new Promise((done) => setTimeout(done, 200));
+      expect(settled()).toBe(false);
+      expect(readClaimSet(claimRoot).live).toHaveLength(1);
+      await stopFixture(pid, sleeper.token);
+      await vi.waitFor(
+        () => {
+          threads.settle();
+          expect(settled()).toBe(true);
+          expect(readClaimSet(claimRoot).live).toHaveLength(0);
+        },
+        { timeout: 5000, interval: 100 },
+      );
+    } finally {
+      entry.mockRestore();
+      await threads.close();
+      if (sleeper?.token) await stopFixture(sleeper.pid, sleeper.token);
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 20_000);
 });
 
 describe.skipIf(process.platform === 'win32')('unexpected worker exit', () => {

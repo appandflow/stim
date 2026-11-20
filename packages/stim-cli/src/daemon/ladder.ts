@@ -69,7 +69,7 @@ const SIZE_TIMEOUT_MS = 120_000;
 const DORMANT_HIGH_IDLE_MS = 10 * MINUTE_MS;
 const DEPENDENCIES_HIGH_IDLE_MS = 60 * MINUTE_MS;
 const UNOWNED_EVERY_MS = 60 * MINUTE_MS;
-let unownedRunAt = -Infinity;
+const unownedRunAt = new BigInt64Array(1);
 const REPORT_EVERY_MS = 60 * MINUTE_MS;
 const reportedAt = new Map<string, number>();
 
@@ -108,6 +108,8 @@ export interface LadderInput {
   only?: Cause;
   /** Runs the report-only rungs 5 and 7: the stim-daemon's ladder, at most hourly and never at critical. */
   reports?: boolean;
+  /** When rung 9 last ran unforced, in epoch ms: the stim-daemon's clock, which outlives the thread that runs its ladder. */
+  unownedCadence?: BigInt64Array;
 }
 
 interface RungContext extends LadderInput {
@@ -949,10 +951,11 @@ async function historyRung(context: RungContext): Promise<void> {
 async function unownedRung(context: RungContext): Promise<void> {
   // @ref LLP 0003#rung-9-runs-only-at-critical -- at high it would wipe tool caches on every pass
   if (context.level !== 'critical' || isScopedHome(context.operation?.env ?? process.env)) return;
-  if (!context.force && Date.now() - unownedRunAt < UNOWNED_EVERY_MS) return;
+  const cadence = context.unownedCadence ?? unownedRunAt;
+  if (!context.force && Date.now() - Number(Atomics.load(cadence, 0)) < UNOWNED_EVERY_MS) return;
   const critical = context.force && !context.force.measured ? null : await shortDevices(context, 'critical');
   if (critical?.size === 0) return;
-  if (!context.force) unownedRunAt = Date.now();
+  if (!context.force) Atomics.store(cadence, 0, BigInt(Date.now()));
   for (const plan of await surveyToolCaches(context.operation)) {
     // @ref LLP 0003#only-on-the-short-volume -- a full external disk must not empty another volume
     const result = onShortVolume(plan.cache.paths, critical)
