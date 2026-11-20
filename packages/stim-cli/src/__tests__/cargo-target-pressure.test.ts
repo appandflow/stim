@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { MaintenanceSize } from '@stim-cli/core/state';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { resetExecutor, setExecutor } from '../exec.ts';
 import { planCargoTargets } from '../stimd/passes/cargo-target.ts';
 import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
 
@@ -97,43 +97,75 @@ describe('the Cargo target trim under disk pressure', () => {
     expect(normal.actions).toEqual([]);
   });
 
-  it.skipIf(process.platform === 'win32')(
-    'a low-priority walk throttles its I/O only for a target on a volume at normal',
-    async () => {
-      const short = target('short');
-      const capped = target('capped');
-      const diskLevel = async (dir: string) => (dir === short ? ('critical' as const) : ('normal' as const));
+  describe('a low-priority walk of the trim plan', () => {
+    const platform = process.platform;
+    afterEach(() => {
+      Object.defineProperty(process, 'platform', { value: platform });
+      resetExecutor();
+    });
+
+    async function plan(
+      on: NodeJS.Platform,
+      ionice: string | null,
+      missing: string | null = null,
+    ): Promise<Record<'critical' | 'unsampled' | 'normal', string[][]>> {
+      Object.defineProperty(process, 'platform', { value: on });
+      const dirs = { critical: target('critical'), unsampled: target('unsampled'), normal: target('normal') };
+      const levels = new Map([
+        [dirs.critical, 'critical' as const],
+        [dirs.normal, 'normal' as const],
+      ]);
       const walks: string[][] = [];
-      const real = getExecutor();
       setExecutor({
-        ...real,
+        findExecutable: (name) => (name === 'ionice' ? ionice : null),
         runFileAsync: async (file, args) => {
           walks.push([file, ...args]);
+          if (file === missing) throw Object.assign(new Error(`spawn ${file} ENOENT`), { code: 'ENOENT' });
           return `4\t${args.at(-1)}\n`;
         },
       });
-      try {
-        await planCargoTargets({
-          sizes: [size(short), { ...size(capped), bytes: 10_000 * 1024 ** 3 }],
-          settings,
-          pinned: () => false,
-          now: Date.now(),
-          diskLevel,
-          lowPriority: true,
-        });
-      } finally {
-        resetExecutor();
-      }
-
+      await planCargoTargets({
+        sizes: Object.values(dirs).map((dir) => Object.assign(size(dir), { bytes: 10_000 * 1024 ** 3 })),
+        settings,
+        pinned: () => false,
+        now: Date.now(),
+        diskLevel: async (dir) => levels.get(dir) ?? null,
+        lowPriority: true,
+      });
       const of = (dir: string) => walks.filter((walk) => walk.some((arg) => arg.startsWith(dir)));
-      expect(of(short).length).toBeGreaterThan(0);
-      expect(of(short).every(([file, ...args]) => file === 'nice' && args.slice(0, 3).join(' ') === '-n 19 du')).toBe(
-        true,
-      );
-      expect(of(capped).length).toBeGreaterThan(0);
-      expect(of(capped).every(([file]) => file === (process.platform === 'darwin' ? 'taskpolicy' : 'ionice'))).toBe(
-        true,
-      );
-    },
-  );
+      return { critical: of(dirs.critical), unsampled: of(dirs.unsampled), normal: of(dirs.normal) };
+    }
+
+    const niced = (walks: string[][]) =>
+      walks.length > 0 &&
+      walks.every(([file, ...args]) => file === 'nice' && args.slice(0, 3).join(' ') === '-n 19 du');
+
+    it.each([
+      ['darwin', '/usr/bin/ionice', '/usr/sbin/taskpolicy -d utility nice -n 19 du'],
+      ['linux', '/usr/bin/ionice', 'ionice -t -c3 nice -n 19 du'],
+      ['linux', null, 'nice -n 19 du'],
+    ] as const)(
+      'on %s with ionice at %s, throttles I/O only on a volume sampled at normal',
+      async (on, ionice, throttled) => {
+        const walks = await plan(on, ionice);
+
+        expect(niced(walks.critical)).toBe(true);
+        expect(niced(walks.unsampled)).toBe(true);
+        expect(walks.normal.length).toBeGreaterThan(0);
+        for (const walk of walks.normal) expect(walk.join(' ')).toMatch(new RegExp(`^${throttled} `));
+      },
+    );
+
+    it('retries a walk under nice alone when the I/O wrapper is missing', async () => {
+      const walks = await plan('linux', '/usr/bin/ionice', 'ionice');
+
+      expect(walks.normal.length).toBeGreaterThan(0);
+      for (let at = 0; at < walks.normal.length; at += 2) {
+        const [failed, retried] = [walks.normal[at] ?? [], walks.normal[at + 1] ?? []];
+        expect(failed[0]).toBe('ionice');
+        expect(retried.slice(0, 3)).toEqual(['nice', '-n', '19']);
+        expect(retried.slice(3)).toEqual(failed.slice(6));
+      }
+    });
+  });
 });

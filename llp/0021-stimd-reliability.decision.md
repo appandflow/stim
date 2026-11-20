@@ -242,15 +242,20 @@ remedy, the only path for such a unit.
 
 Maintenance children keep the priority they had: they run at stimd's priority,
 now 31, except the size walks under `nice -n 19` and the fingerprint children
-at nice 10. On macOS `nice` lowers only CPU, not I/O. A size walk at normal
-disk pressure on its volume therefore also runs at a throttled I/O policy:
-`taskpolicy -d utility` on macOS and `ionice -c3` on Linux, or `nice` alone
-when `ionice` is not on PATH. Windows keeps `nice` alone. A walk whose caller
-asks for low priority at high or critical gets `nice` and no I/O throttle. Today
-only the Cargo target walks know they run at normal: the cap's `du` while host
-load defers the size scan, and the trim plan's `du` for a target whose volume
-is at normal. The dependency and status walks and the unmanaged-usage scan keep
-`nice` alone. `utility` is the milder of macOS's two throttled policies.
+at nice 10. On macOS `nice` lowers only CPU, not I/O, so a low-priority walk
+whose own volume a pressure sample read at normal also runs at a throttled I/O
+policy: `/usr/sbin/taskpolicy -d utility` on macOS, by its absolute path so a
+walk's PATH cannot drop it, and `ionice -t -c3` on Linux (`-t`
+still runs the walk when the kernel refuses the class). Linux uses `nice` alone
+when `ionice` is not on PATH, and a walk whose `ionice` spawn fails with ENOENT
+is retried once under `nice`. Windows keeps `nice` alone. Any other
+low-priority walk, including one whose volume could not be read, gets `nice`
+and no I/O throttle. Today only the Cargo trim plan samples each target's own
+volume, so only its `du` is throttled. The cap's size scan, the cap trim, the
+dependency and status walks and the unmanaged-usage scan keep `nice` alone:
+none of them has a sample of the walked volume, and a target can sit on another
+volume than the ones the home's level comes from.
+`utility` is the milder of macOS's two throttled policies.
 `taskpolicy -b` was rejected: it also moves CPU into the background band, and
 under a load average of about 300 its walks took 2 to 3.5 times as long as a
 niced walk, where `utility` and `throttle` took no longer. The `lsof` and `ps`

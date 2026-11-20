@@ -5,7 +5,7 @@ import type { StimContext } from '@stim-cli/core';
 import { loadConfig, type MaintenanceAction, type MaintenanceSize, type PressureLevel } from '@stim-cli/core/state';
 import { RESERVE_RELEASED } from '../../disk-reserve.ts';
 import { getExecutor } from '../../exec.ts';
-import { lowPriorityCommand } from '../../io-priority.ts';
+import { runLowPriority } from '../../io-priority.ts';
 import { diskPressure, diskThresholds } from '../../daemon/pressure.ts';
 import { measuredDirectorySizeAsync } from '../../fs-util.ts';
 import { canonicalPath } from '../../commands/gc/paths.ts';
@@ -168,7 +168,7 @@ async function bytesOf(
   paths: readonly string[],
   signal?: AbortSignal,
   lowPriority = false,
-  throttleIo = true,
+  throttleIo = false,
 ): Promise<number> {
   let total = 0;
   for (const path of paths) {
@@ -186,15 +186,16 @@ async function bytesOfMany(
   paths: readonly string[],
   signal?: AbortSignal,
   lowPriority = false,
-  throttleIo = true,
+  throttleIo = false,
 ): Promise<number | null> {
   let total = 0;
   for (let at = 0; at < paths.length; at += DU_CHUNK) {
     signal?.throwIfAborted();
     const args = ['-sk', ...paths.slice(at, at + DU_CHUNK)];
     try {
-      const [file, argv] = lowPriority ? lowPriorityCommand('du', args, throttleIo) : ['du', args];
-      const out = await getExecutor().runFileAsync(file, argv, { timeoutMs: SIZE_TIMEOUT_MS, signal });
+      const walk = (file: string, argv: string[]) =>
+        getExecutor().runFileAsync(file, argv, { timeoutMs: SIZE_TIMEOUT_MS, signal });
+      const out = lowPriority ? await runLowPriority(walk, 'du', args, throttleIo) : await walk('du', args);
       for (const line of out.split('\n')) total += (parseInt(line, 10) || 0) * 1024;
     } catch {
       signal?.throwIfAborted();
@@ -232,8 +233,15 @@ function profilesOutside(dir: string, gone: readonly string[]): string[] {
 }
 
 export async function measuredDiskLevel(dir: string, signal?: AbortSignal): Promise<PressureLevel> {
+  return (await sampledDiskLevel(dir, signal)) ?? 'normal';
+}
+
+/** The disk level of the volume `dir` is on, or null when that volume could not be read. */
+async function sampledDiskLevel(dir: string, signal?: AbortSignal): Promise<PressureLevel | null> {
+  const volumes = await readVolumeSpaceAsync([dir], signal);
+  if (!volumes.length) return null;
   const { thresholds } = diskThresholds(loadConfig());
-  return diskPressure(await readVolumeSpaceAsync([dir], signal), thresholds).level;
+  return diskPressure(volumes, thresholds).level;
 }
 
 /**
@@ -249,7 +257,7 @@ export async function planCargoTargets({
   now,
   signal,
   level,
-  diskLevel = measuredDiskLevel,
+  diskLevel = sampledDiskLevel,
   lowPriority = false,
 }: {
   sizes: readonly MaintenanceSize[];
@@ -258,7 +266,8 @@ export async function planCargoTargets({
   now: number;
   signal?: AbortSignal;
   level?: PressureLevel;
-  diskLevel?: (dir: string, signal?: AbortSignal) => Promise<PressureLevel>;
+  /** The level of the volume `dir` is on, null when it could not be read. */
+  diskLevel?: (dir: string, signal?: AbortSignal) => Promise<PressureLevel | null>;
   lowPriority?: boolean;
 }): Promise<MaintenancePlan> {
   const plan: MaintenancePlan = { actions: [], blocked: [], skips: [] };
@@ -278,7 +287,8 @@ export async function planCargoTargets({
     );
   for (const { dir, workspace, bytes } of targets) {
     signal?.throwIfAborted();
-    const tightened = level ?? (await diskLevel(dir, signal));
+    const sampled = level ? null : await diskLevel(dir, signal);
+    const tightened = level ?? sampled ?? 'normal';
     const capped = cap > 0 && (bytes === null || bytes > cap);
     if (!capped && tightened === 'normal') continue;
     const policy = cargoTrimPolicy(tightened);
@@ -300,7 +310,7 @@ export async function planCargoTargets({
       continue;
     }
     const gone = stale.paths.map((path) => join(dir, path));
-    const throttleIo = tightened === 'normal';
+    const throttleIo = sampled === 'normal';
     let freeable = await bytesOf(gone, signal, lowPriority, throttleIo);
     if (policy.incremental === 'all' || freeable < overBytes) {
       freeable += await bytesOf(
