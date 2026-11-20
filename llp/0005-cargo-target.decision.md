@@ -273,11 +273,14 @@ a directory on a device other than the `target/`'s and Exact's
 `.apple-cargo-locks/` are not entered, a lock file Cargo or Exact takes
 (`.cargo-lock`, `.cargo-build-lock`, `.cargo-artifact-lock`,
 `.exact-sweep.json.lock`) and a `*-keypair.json` (any case) are never unlinked,
-and a directory goes once it is empty. In a profile it removes `.fingerprint`
-first, so a build that starts while the profile is half removed rebuilds it.
-Removing it last would keep a half removed profile listed, but Cargo 1.97 then
-fails: with the fingerprint kept and a build script's `OUT_DIR` file gone, it
-recompiles the library without running the script again. A
+and a directory goes once it is empty. In a profile it empties `.fingerprint`
+first and removes the empty directory last. Emptying it first makes a build
+after a delete stopped part way rebuild every unit and rerun its build scripts:
+with a fingerprint kept and a build script's `OUT_DIR` file gone, Cargo 1.97
+recompiles the library without running the script again and fails, while with
+`.fingerprint` empty it rebuilds cleanly. Keeping the empty directory to the end
+keeps such a profile listed, so a later trim removes the rest. Chosen by the
+review of #6032, not by the maintainer. A
 path already gone counts as removed. What it left for those rules is reported,
 lock files aside. Right before each unlink and each directory removal, the
 parent directory must still resolve through `realpath` to the path the remover

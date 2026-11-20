@@ -9,7 +9,8 @@ import { cargoTargetDirsAsync } from './regenerable-dirs.ts';
 
 const CARGO_PROFILE_IDLE_MS: number = 24 * 3_600_000;
 
-const PROFILE_PARTS = ['.fingerprint', 'deps', 'build', 'incremental'];
+const FINGERPRINT = '.fingerprint';
+const PROFILE_PARTS = [FINGERPRINT, 'deps', 'build', 'incremental'];
 /** The files Cargo itself writes in a target triple directory; any other entry there belongs to something else. */
 const CARGO_TRIPLE_FILES = new Set(['CACHEDIR.TAG', '.rustc_info.json', '.cargo-lock']);
 /** Cargo 1.97 locks the build and artifact directories separately and takes .cargo-lock for older Cargo. */
@@ -372,11 +373,13 @@ async function stillInside(path: string): Promise<void> {
  * Removes `path` in place, deepest first: a symbolic link is unlinked and never followed, a directory on a device other
  * than `dev` and Exact's `.apple-cargo-locks` are not entered, a lock file Cargo or Exact takes and a `*-keypair.json`
  * (any case) are never unlinked, and a directory goes once it is empty. Right before each unlink and each directory
- * removal its parent must still resolve to itself, or `KeepTarget` stops the delete. A `.fingerprint` goes before its
- * siblings, so a build that starts while a profile is half removed rebuilds it. A path already gone counts as removed.
- * Returns the paths it left because of those rules; a directory a build filled again meanwhile stays too.
+ * removal its parent must still resolve to itself, or `KeepTarget` stops the delete. The contents of a `.fingerprint`
+ * go before its siblings, so a build after a delete stopped part way rebuilds every unit and reruns its build scripts,
+ * and the emptied `.fingerprint` goes after them, so such a profile is still listed and trimmed again. A path already
+ * gone counts as removed. Returns the paths it left because of those rules; a directory a build filled again meanwhile
+ * stays too. With `keepDir` a directory's contents go but the directory stays.
  */
-async function removeInPlace(path: string, dev: number, signal?: AbortSignal): Promise<string[]> {
+async function removeInPlace(path: string, dev: number, signal?: AbortSignal, keepDir = false): Promise<string[]> {
   signal?.throwIfAborted();
   const stat = await lstat(path).catch((error: unknown) => {
     if (errorCode(error) === 'ENOENT') return null;
@@ -399,9 +402,10 @@ async function removeInPlace(path: string, dev: number, signal?: AbortSignal): P
   });
   if (!names) return [];
   const left: string[] = [];
-  for (const child of names.toSorted((a, b) => Number(b === '.fingerprint') - Number(a === '.fingerprint')))
+  if (names.includes(FINGERPRINT)) left.push(...(await removeInPlace(join(path, FINGERPRINT), dev, signal, true)));
+  for (const child of names.toSorted((a, b) => Number(a === FINGERPRINT) - Number(b === FINGERPRINT)))
     left.push(...(await removeInPlace(join(path, child), dev, signal)));
-  if (left.length) return left;
+  if (left.length || keepDir) return left;
   await stillInside(path);
   await rmdir(path).catch((error: unknown) => {
     const code = errorCode(error);

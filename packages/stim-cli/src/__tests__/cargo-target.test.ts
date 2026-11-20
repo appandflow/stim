@@ -410,6 +410,24 @@ describe.skipIf(process.platform === 'win32')('trimming in place (Cargo locks ne
     expect(readFileSync(join(target, 'debug', 'deps', 'wallet.json'), 'utf8')).toBe('[9]');
   });
 
+  test('a trim interrupted once the fingerprints are gone leaves a profile a later trim still removes', async () => {
+    makeProfile('debug', 3 * DAY);
+    const debug = join(realpathSync.native(target), 'debug');
+    const abort = new AbortController();
+    fsHooks.afterLstat = (path) => {
+      if (['deps', 'build', 'incremental'].some((part) => path === join(debug, part))) abort.abort();
+    };
+
+    await expect(trimCargoTarget(target, { needBytes: 0, signal: abort.signal })).rejects.toThrow('aborted');
+    delete fsHooks.afterLstat;
+
+    expect(readdirSync(join(target, 'debug', '.fingerprint'))).toEqual([]);
+    expect(existsSync(join(target, 'debug', 'deps', 'libx.rlib'))).toBe(true);
+    const later = await trimCargoTarget(target, { needBytes: 0, now: Date.now() + 2 * DAY });
+    expect(later.removed).toEqual(['debug']);
+    expect(readdirSync(join(target, 'debug'))).toEqual(['.cargo-lock']);
+  });
+
   test('a link named like a keypair anywhere in the target keeps it whole, and what it points at stays', async () => {
     makeProfile('debug', 3 * DAY);
     const deps = join(target, 'debug', 'deps');
