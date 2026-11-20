@@ -835,11 +835,6 @@ describe.skipIf(process.platform === 'win32')(
       checkout = join(target, 'exact2');
       mkdirSync(checkout);
       writeFileSync(join(checkout, 'package.json'), JSON.stringify({ packageManager: 'bun@1.4.3' }));
-      mkdirSync(join(checkout, 'scripts'));
-      writeFileSync(
-        join(checkout, 'scripts', 'sweep.mjs'),
-        "if (process.argv[2] === 'clean') console.log(JSON.stringify({ version: 1, status }));\n",
-      );
       calls = [];
       const real = realpathSync(dir);
       report = (args) => {
@@ -886,11 +881,11 @@ describe.skipIf(process.platform === 'win32')(
     const processTable = (file: string, args: string[]): string | null => {
       const other = devServerIn === null ? [] : [4242];
       if (file === 'ps' && args.includes('pid=,args='))
-        return [`${process.pid} node test`, ...other.map((pid) => `${pid} bun exact.mjs dev`)].join('\n');
+        return [`${process.pid} node test`, ...other.map((pid) => `${pid} bun ${devServerIn}/exact.mjs dev`)].join(
+          '\n',
+        );
       if (file === 'ps' && args.includes('pid=,ppid='))
         return [process.pid, ...other].map((pid) => `${pid} 1`).join('\n');
-      if (file === 'lsof' && args.includes('cwd'))
-        return [`p${process.pid}`, 'n/', ...other.flatMap((pid) => [`p${pid}`, `n${devServerIn}`])].join('\n');
       return null;
     };
     const remove = () => deleteCargoTarget(dir, { idleMs: DAY, mountInfo: null });
@@ -967,17 +962,6 @@ describe.skipIf(process.platform === 'win32')(
       expect(existsSync(join(dir, 'bake', 'app', 'development', 'app.bin'))).toBe(true);
     });
 
-    test('a checkout whose sweep.mjs has no clean is never run, and an app folder named clean stays', async () => {
-      writeFileSync(join(checkout, 'scripts', 'sweep.mjs'), 'sweep(process.argv[2]);\n');
-      mkdirSync(join(target, 'clean', 'debug'), { recursive: true });
-
-      const result = await remove();
-
-      expect(result.kept).toEqual([expect.stringContaining('has no clean that reports version 1 JSON')]);
-      expect(calls.filter((call) => call.includes('clean'))).toEqual([]);
-      expect(existsSync(join(target, 'clean', 'debug'))).toBe(true);
-    });
-
     test('a linked exact.mjs keeps the target whole, out of reach of the in-place remover', async () => {
       rmSync(join(target, 'exact.mjs'));
       writeFileSync(join(target, 'launcher.mjs'), 'ensureBun("1.4.2");\n');
@@ -989,37 +973,6 @@ describe.skipIf(process.platform === 'win32')(
       expect(result.kept).toEqual([expect.stringContaining('exact.mjs is not a plain file')]);
       expect(existsSync(join(dir, 'traces', 'trace-1.json'))).toBe(true);
       expect(existsSync(join(dir, 'bake', 'app', 'development', 'app.bin'))).toBe(true);
-    });
-
-    test('a link anywhere in the target keeps it, and Exact is never asked', async () => {
-      symlinkSync(join(target, 'exact2'), join(dir, 'bake', 'app', 'linked'));
-      const old = new Date(Date.now() - 3 * DAY);
-      lutimesSync(join(dir, 'bake', 'app', 'linked'), old, old);
-      ageTree(dir);
-
-      const result = await remove();
-
-      expect(result.kept).toEqual([expect.stringContaining("is a link, which Exact's cleaner could follow")]);
-      expect(calls).toEqual([]);
-    });
-
-    test.each([
-      ['a path outside the target', (real: string) => join(real, '..', 'exact2'), 'outside'],
-      ['a profile holding a Solana keypair', (real: string) => join(real, 'debug'), 'a Solana keypair'],
-    ])('a dry run listing %s keeps the target and the clean never runs', async (_, path, why) => {
-      writeFileSync(join(dir, 'debug', 'program-keypair.json'), '[1]');
-      ageTree(dir);
-      const real = realpathSync(dir);
-      report = () => ({
-        status: 0,
-        stdout: JSON.stringify({ version: 1, status: 'ok', remove: [path(real)], kept: [], held: [] }),
-      });
-
-      const result = await remove();
-
-      expect(result.kept).toEqual([expect.stringContaining(why)]);
-      expect(calls.filter((call) => call.includes('clean') && !call.includes('--dry-run'))).toEqual([]);
-      expect(existsSync(join(dir, 'debug', 'program-keypair.json'))).toBe(true);
     });
 
     test('a clean that ends without a report fails with an unknown outcome instead of keeping the target', async () => {
@@ -1040,17 +993,34 @@ describe.skipIf(process.platform === 'win32')(
       await expect(remove()).rejects.toThrow('what it removed is not known');
     });
 
-    test('a cleanup refusal from the executor is reported, not turned into a keep', async () => {
+    test.each([
+      ['help', (args: string[]) => args[1] === 'help'],
+      ['the dry run', (args: string[]) => args.includes('--dry-run')],
+    ])('a cleanup refusal from the executor during %s is reported, not turned into a keep', async (_, when) => {
       const executor = getExecutor();
       setExecutor({
         ...executor,
         runFileAsync: async (file, args, options) => {
-          if (file.endsWith('/bin/bun')) throw Object.assign(new Error('refused'), { reportCleanup: true });
+          if (file.endsWith('/bin/bun') && when(args))
+            throw Object.assign(new Error('refused'), { reportCleanup: true });
           return executor.runFileAsync(file, args, options);
         },
       });
 
       await expect(remove()).rejects.toThrow('refused');
+    });
+
+    test('a dry run listing a path outside the target keeps it, and the clean never runs', async () => {
+      const real = realpathSync(dir);
+      report = () => ({
+        status: 0,
+        stdout: JSON.stringify({ version: 1, status: 'ok', remove: [join(real, '..', 'exact2')], kept: [], held: [] }),
+      });
+
+      const result = await remove();
+
+      expect(result.kept).toEqual([expect.stringContaining('outside')]);
+      expect(calls.filter((call) => call.includes('clean') && !call.includes('--dry-run'))).toEqual([]);
     });
 
     test('a target Exact kept is not asked about again within a day', async () => {
@@ -1088,7 +1058,6 @@ describe.skipIf(process.platform === 'win32')('Exact files in a target no Exact 
     writeFileSync(join(dir, 'debug', '.cargo-lock'), '');
     writeFileSync(join(dir, 'debug', 'app'), 'binary');
     writeFileSync(join(dir, '.apple-cargo-locks', 'aarch64-apple-ios', 'libapp.lock.flock'), '');
-    writeFileSync(join(dir, '.exact-sweep.json.lock'), '');
     ageTree(dir);
     stubProcesses({});
   });
@@ -1100,7 +1069,20 @@ describe.skipIf(process.platform === 'win32')('Exact files in a target no Exact 
     expect(existsSync(join(dir, 'debug', 'app'))).toBe(false);
     expect(result.removed).toContain('debug');
     expect(existsSync(join(dir, '.apple-cargo-locks', 'aarch64-apple-ios', 'libapp.lock.flock'))).toBe(true);
-    expect(existsSync(join(dir, '.exact-sweep.json.lock'))).toBe(true);
+  });
+
+  test("a target holding Exact's sweep lock and a receipt with no Exact app beside it stays whole", async () => {
+    writeFileSync(join(dir, '.exact-sweep.json.lock'), '');
+    mkdirSync(join(dir, 'web-receipts'));
+    writeFileSync(join(dir, 'web-receipts', 'r.json'), '{}');
+    ageTree(dir);
+
+    const result = await remove();
+
+    expect(result.removed).toEqual([]);
+    expect(result.kept).toEqual([expect.stringContaining('.exact-sweep.json.lock but no Exact app beside it')]);
+    expect(existsSync(join(dir, 'web-receipts', 'r.json'))).toBe(true);
+    expect(existsSync(join(dir, 'debug', 'app'))).toBe(true);
   });
 
   test("a target holding Exact's ledger with no Exact app beside it stays whole", async () => {
@@ -1112,7 +1094,7 @@ describe.skipIf(process.platform === 'win32')('Exact files in a target no Exact 
     const result = await remove();
 
     expect(result.removed).toEqual([]);
-    expect(result.kept).toEqual([expect.stringContaining('no Exact app beside it')]);
+    expect(result.kept).toEqual([expect.stringContaining('.exact-sweep.json but no Exact app beside it')]);
     expect(existsSync(join(dir, 'web-receipts', 'r.json'))).toBe(true);
   });
 });

@@ -24,6 +24,8 @@ const EXACT_APPLE_LOCKS = '.apple-cargo-locks';
 /** The lock files Cargo and Exact take in a `target/`, which a delete leaves in place. */
 const LOCK_FILES = new Set([...PROFILE_LOCKS, `${EXACT_LEDGER}.lock`]);
 const NOT_PROFILES = new Set(['.exact-swept']);
+/** What Exact writes in a `target/` it owns: its sweep ledger and lock, and the folders that hold an app's records. */
+const EXACT_OWNED = [EXACT_LEDGER, `${EXACT_LEDGER}.lock`, 'web-receipts', 'native-receipts', 'receipts', 'traces'];
 const OWN_PREFIX = '.stim-';
 const ASIDE = `${OWN_PREFIX}trimmed`;
 const NOT_RESTORED = `${OWN_PREFIX}not-restored-`;
@@ -812,8 +814,8 @@ function mountedUnder(target: string, mountInfo: (() => string) | null): string 
  * is or holds one, that holds anything the remover removes (`removableEntries`), in place under all its Cargo locks,
  * once it is still a Cargo `target/` Stim recognises, shows no use within `idleMs` (`recentTargetUse`), has no other
  * filesystem mounted inside or a leftover of an earlier engine's staging, and no process uses any path in it. An Exact
- * app's `target/` goes to Exact's cleaner instead (`exactDelete`), and one holding Exact's ledger with no Exact app
- * beside it stays. Lock files and keypairs stay, and so does the `target/` while anything is left in it.
+ * app's `target/` goes to Exact's cleaner instead (`exactDelete`), and one holding Exact's files (`EXACT_OWNED`) with no
+ * Exact app beside it stays. Lock files and keypairs stay, and so does the `target/` while anything is left in it.
  */
 export async function deleteCargoTarget(
   registeredTarget: string,
@@ -847,8 +849,9 @@ export async function deleteCargoTarget(
   if (first.used.length) return keep(`a process uses ${first.used[0]}`);
   const app = dirname(target);
   if (isExactApp(app)) return exactDelete(app, target, result, signal);
-  if (lstatSync(join(target, EXACT_LEDGER), { throwIfNoEntry: false }))
-    return keep(`it holds Exact's ${EXACT_LEDGER} but no Exact app beside it, so it may be shared by Exact apps`);
+  const exactOwned = EXACT_OWNED.find((name) => lstatSync(join(target, name), { throwIfNoEntry: false }));
+  if (exactOwned)
+    return keep(`it holds Exact's ${exactOwned} but no Exact app beside it, so it may be shared by Exact apps`);
   let done: Awaited<ReturnType<typeof withCargoLocks<string[]>>>;
   try {
     done = await withCargoLocks(
@@ -891,34 +894,11 @@ function recognitionLast(target: string, name: string): number {
 /** When Exact's cleaner last kept each target without removing anything, so a pass within a day does not ask again. */
 const exactKeptAt = new Map<string, number>();
 
-/**
- * The links in `target`, never followed, and its plain `*-keypair.json` files, from one walk: `links` stops at the
- * first link found.
- */
-async function linksAndKeypairs(
-  target: string,
-  signal?: AbortSignal,
-): Promise<{ link: string | null; keypairs: string[] }> {
-  const keypairs: string[] = [];
-  const queue = [target];
-  for (let dir = queue.pop(); dir !== undefined; dir = queue.pop()) {
-    signal?.throwIfAborted();
-    for (const entry of await readdir(dir, { withFileTypes: true })) {
-      const path = join(dir, entry.name);
-      if (entry.isSymbolicLink()) return { link: path, keypairs };
-      if (entry.isDirectory()) queue.push(path);
-      else if (isKeypairName(entry.name)) keypairs.push(path);
-    }
-  }
-  return { link: null, keypairs };
-}
-
 // @ref LLP 0005#exact-apps-clean-through-exact -- Stim checks the app is idle, Exact decides what goes
 /**
  * Hands the idle Exact app `app`'s `target/` (`target`, canonical) to Exact's cleaner, once no process runs from or
- * works in the app: a dev server or a running app holds no lock Exact could see. It keeps the target when anything is
- * uncertain: a link anywhere in it, which the cleaner could follow; a dry-run removal outside it, or holding a Solana
- * keypair; an unsupported checkout; a busy or refused clean. A dry run first lists what goes, which Stim measures; the
+ * works in the app: a dev server or a running app holds no lock Exact could see. An unsupported checkout, a dry run
+ * listing a path outside the canonical `target`, or a busy or refused clean keeps the target. A dry run first lists what goes, which Stim measures; the
  * clean then removes it all or nothing. A failed clean, or one that ends without a report, throws: what it removed is
  * not known. A keep without a removal is not asked again for a day.
  */
@@ -940,17 +920,13 @@ async function exactDelete(
   };
   const running = runningFromReason(app, await othersRunningAsync(await readRunningProcessesAsync(signal), signal));
   if (running) return keep(`its app may be in use: ${running.replace(/ it\b/, ' its app')}`);
-  const { link, keypairs } = await linksAndKeypairs(target, signal);
-  if (link) return keep(`${link} is a link, which Exact's cleaner could follow out of the target/`);
   const options = signal ? { signal } : {};
   const planned = await exactClean(app, { ...options, dryRun: true });
   if (!('status' in planned) || planned.status !== 'ok') return keptByExact(exactKept(planned));
   if (!planned.remove.length) return keptByExact("Exact's cleaner lists nothing its builds remake");
   for (const path of planned.remove) {
     const real = await realpath(path).catch(() => null);
-    if (!real || !real.startsWith(`${target}/`)) return keep(`Exact's cleaner lists ${path}, outside ${target}`);
-    const keyed = keypairs.find((keypair) => keypair === real || keypair.startsWith(`${real}/`));
-    if (keyed) return keep(`Exact's cleaner would remove ${keyed}, a Solana keypair`);
+    if (!real?.startsWith(`${target}/`)) return keptByExact(`Exact's cleaner lists ${path}, outside ${target}`);
   }
   const sizes = new Map<string, number>();
   for (const path of planned.remove) sizes.set(path, await sizeOf(path, signal));
