@@ -1613,7 +1613,8 @@ async function runStimdInner(
                       // @ref LLP 0009#service-and-engine-updates -- the job ends up the owner once this stimd is idle
                       if (!inJob && !attached) {
                         restartWhy ??= `the ${params.unit} service takes this Stim home back once no command runs`;
-                        void checkEngine();
+                        socket.write(`${JSON.stringify({ op: 'net', ...state })}\n`, () => void checkEngine());
+                        return true;
                       }
                     }
                   }
