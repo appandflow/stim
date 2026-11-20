@@ -276,13 +276,19 @@ watchman or delete a device or runtime run as control path too. `adb` is
 never lowered, because a client that finds no server starts the shared adb
 server, which would keep the client's priority for every later install. Every lowered
 child gets an empty `core.fsmonitor` in its environment, appended through
-`GIT_CONFIG_COUNT` after any configuration the caller set, so every git it
-starts at any depth sees it: with `core.fsmonitor` set, the git command that
-finds no daemon starts the worktree's fsmonitor daemon, which would keep the
-lowered priority for every later git call there. The value is empty because git
-before 2.36 reads `core.fsmonitor` as a hook path, where `false` would run as a
-hook. The scheduled `git fetch` of the maintenance worktree check runs as
-control path: a fetch can start an ssh `ControlPersist` master or a credential
+`GIT_CONFIG_COUNT` after any configuration the caller set, so every git that
+inherits that environment sees it: with `core.fsmonitor` set, the git command
+that finds no daemon starts the worktree's fsmonitor daemon, which would keep
+the lowered priority for every later git call there. git 2.31 and later read
+`GIT_CONFIG_COUNT`; older git ignores it. An inherited `GIT_CONFIG_PARAMETERS`
+takes precedence over it. The value is empty because git before 2.36 reads
+`core.fsmonitor` as a hook path, where `false` would run as a hook; from 2.31 on
+an empty value means off. Two gaps are
+left for #6018: a git the fingerprint evaluator starts with an environment it
+rebuilds, and a lazy fetch in a partial clone, which runs lowered.
+
+The scheduled `git fetch` of the maintenance worktree check runs as control
+path: a fetch can start an ssh `ControlPersist` master or a credential
 cache daemon that later pushes and pulls go through. Fingerprint children no
 longer run at nice 10: a fingerprint a build reads runs at the caller's
 priority, and the precompute and queued verification follow the maintenance

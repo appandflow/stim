@@ -523,9 +523,10 @@ const lowered = (file: string, args: string[]): [string, string[]] =>
       : ['nice', ['-n', '19', file, ...args]];
 
 // git(1) with core.fsmonitor set starts the worktree's shared fsmonitor daemon from the command that finds none, and
-// that daemon would keep the lowered priority for every later git call there. git-config(1) GIT_CONFIG_COUNT reaches
-// every git a lowered child starts, at any depth. The value is empty because git before 2.36 reads core.fsmonitor as a
-// hook path, so false would run as a hook; empty means off on every version.
+// that daemon would keep the lowered priority for every later git call there. git-config(1) GIT_CONFIG_COUNT, read by
+// git 2.31 and later, reaches every git that inherits the lowered child's environment; an inherited
+// GIT_CONFIG_PARAMETERS takes precedence. The value is empty because git before 2.36 reads core.fsmonitor as a hook
+// path, so false would run as a hook; empty means off from 2.31 on.
 function withoutFsmonitor(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const count = Number.parseInt(env.GIT_CONFIG_COUNT ?? '', 10);
   const at = Number.isInteger(count) && count > 0 ? count : 0;
