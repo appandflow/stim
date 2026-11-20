@@ -1862,10 +1862,15 @@ export async function ensureNet(
 
 /** The `net.ensure` params stimd reads, named field by field so no caller's option names reach the wire. */
 function netEnsureParams(
-  serve: Partial<ServeOptions> & { service?: boolean; unit?: string; envValues?: Record<string, string> },
+  serve: Partial<ServeOptions> & {
+    service?: boolean;
+    unit?: string;
+    envValues?: Record<string, string>;
+    foreground?: boolean;
+  },
 ): Record<string, unknown> {
-  const { shareOnly, port, loopbackOnly, extraEnv, pathPrepend, service, unit, envValues } = serve;
-  return { share: shareOnly === true, port, loopbackOnly, extraEnv, pathPrepend, service, unit, envValues };
+  const { shareOnly, port, loopbackOnly, extraEnv, pathPrepend, service, unit, envValues, foreground } = serve;
+  return { share: shareOnly === true, port, loopbackOnly, extraEnv, pathPrepend, service, unit, envValues, foreground };
 }
 
 /**
@@ -1878,7 +1883,7 @@ function netEnsureParams(
  * stimd outside that job leaves the home to the job at its engine switch.
  */
 export function serveThroughStimd(
-  params: ServeOptions & { service: boolean; unit?: string },
+  params: ServeOptions & { service: boolean; unit?: string; foreground?: boolean },
   onAnswer: (answer: NetAnswer | null) => void,
 ): Promise<void> {
   const envValues = params.service

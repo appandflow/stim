@@ -27,6 +27,9 @@ import { isJsonObject, LABEL_VARIABLE, stimBuildId, stimdClaimRoot } from '@stim
 import { renderPlist } from '../src/service-plist.ts';
 import { renderUnit } from '../src/service-unit.ts';
 import { installJob, serviceStatus } from '../src/service.ts';
+import { upsertProject } from '../../stim-cli/src/workspace/config.ts';
+import { workspaceLogsDir } from '../../stim-cli/src/workspace/paths.ts';
+import { readWorkspaceState } from '../../stim-cli/src/workspace/workspace-state.ts';
 
 const launchd = vi.hoisted((): { job: ChildProcess | null; start: (() => ChildProcess) | null } => ({
   job: null,
@@ -128,6 +131,20 @@ function fixture(label: string, port: number, shim = false) {
   mkdirSync(store, { recursive: true });
   mkdirSync(bin);
   writeFileSync(join(bin, 'launchctl'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  const streamPids = join(scratch, 'stream-pids');
+  // Stands in for `xcrun simctl spawn ... log stream`: one line, then it runs until killed.
+  writeFileSync(
+    join(bin, 'xcrun'),
+    `#!/bin/sh\ncase "$*" in *'log show'*) exit 0;; esac\necho $$ >> '${streamPids}'\nprintf '{"eventType":"logEvent","eventMessage":"line from %s"}\\n' $$\nexec /bin/sleep 600\n`,
+    { mode: 0o755 },
+  );
+  const streams = () => {
+    try {
+      return readFileSync(streamPids, 'utf8').trim().split('\n').filter(Boolean).map(Number);
+    } catch {
+      return [];
+    }
+  };
   const pkg = join(repo, 'packages/stim-cli');
   const makeBuild = (name: string) => {
     const dir = join(store, name);
@@ -339,6 +356,10 @@ function fixture(label: string, port: number, shim = false) {
   const cleanup = async () => {
     await stopJob();
     await stopHome();
+    for (const pid of streams())
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {}
     rmSync(scratch, { recursive: true, force: true });
   };
 
@@ -368,7 +389,7 @@ function fixture(label: string, port: number, shim = false) {
   };
 
   /** Starts a stimd as Stim Desktop does and asks it, as Desktop asks, to serve the unit's port. */
-  const runDesktop = async () => {
+  const runDesktop = async (netPort = port) => {
     cli(first, ['__stimd', '--mode', 'on']);
     const started = await until('the Desktop stimd', () => record());
     await new Promise<void>((resolve, reject) => {
@@ -384,10 +405,10 @@ function fixture(label: string, port: number, shim = false) {
         }
       });
       client.write(
-        `${JSON.stringify({ kind: 'desktop' })}\n${JSON.stringify({ op: 'net.ensure', params: { port, loopbackOnly: true } })}\n`,
+        `${JSON.stringify({ kind: 'desktop' })}\n${JSON.stringify({ op: 'net.ensure', params: { port: netPort, loopbackOnly: true } })}\n`,
       );
     });
-    await answers('the Desktop stimd');
+    if (netPort === port) await answers('the Desktop stimd');
     return started;
   };
 
@@ -409,6 +430,11 @@ function fixture(label: string, port: number, shim = false) {
     home,
     label,
     talk,
+    cli,
+    first,
+    bin,
+    scratch,
+    streams,
     stopJobOnly: () => stopJob(),
     restartJob: (restartMs: number) => keepJob(restartMs),
     last,
@@ -756,6 +782,105 @@ describe.skipIf(process.platform === 'win32')("an engine switch under a service 
       await new Promise((done) => setTimeout(done, 8000));
       expect(service.record()?.pid).toBe(serve.pid);
       expect(service.jobPid()).toBe(waiter);
+      expect(readFileSync(join(service.home, 'daemon', 'daemon.ndjson'), 'utf8')).not.toContain(
+        'takes this Stim home back',
+      );
+    } finally {
+      await service.cleanup();
+    }
+  }, 240_000);
+
+  it("the job resumes the device log streams of the command's stimd it takes the home back from", async () => {
+    const port = await freePort();
+    const service = fixture('dev.stim.handoff-job-logs', port, true);
+    try {
+      const app = join(service.scratch, 'app');
+      mkdirSync(app);
+      vi.stubEnv('STIM_HOME', service.home);
+      upsertProject(app, {});
+      service.cli(service.first, ['__stimd', '--mode', 'on']);
+      const holder = await until('the command stimd', () => service.record());
+      const op = await service.talk(
+        holder.socket,
+        holder.build,
+        [
+          {
+            op: 'op.begin',
+            params: {
+              workspace: app,
+              forwarded: { cwd: app, env: { PATH: service.bin, HOME: service.scratch, STIM_HOME: service.home } },
+            },
+          },
+        ],
+        'op.begun',
+      );
+      const started = await new Promise<Record<string, unknown>>((resolve) => {
+        let buffer = '';
+        op.on('data', (chunk: string) => {
+          buffer += chunk;
+          const line = buffer.split('\n').find((entry) => entry.includes('"logs.'));
+          if (line) resolve(JSON.parse(line));
+        });
+        op.write(
+          `${JSON.stringify({ op: 'logs.start', params: { root: app, platform: 'ios', udid: 'U1', bundleId: 'com.test.app', appName: 'Test' } })}\n`,
+        );
+      });
+      expect(started).toMatchObject({ op: 'logs.started' });
+      await until('the device log stream', () => service.streams().length === 1);
+      op.destroy();
+      service.restartJob(60_000);
+      const waiter = await until('the job process', () => service.jobPid());
+      const resumed = await until('the resumed device log stream', () =>
+        service.streams().length === 2 ? service.streams()[1] : null,
+      );
+      expect(gone(holder.pid)).toBe(true);
+      expect(parentOf(service.record()?.pid ?? 0)).toBe(waiter);
+      await until('the resumed stream writing the workspace log', () =>
+        readFileSync(join(workspaceLogsDir(app), 'device.ndjson'), 'utf8').includes(`line from ${resumed}`),
+      );
+      expect(readWorkspaceState(app)?.collectors?.ios).toMatchObject({ kind: 'stream', streamId: started.streamId });
+    } finally {
+      await service.cleanup();
+    }
+  }, 240_000);
+
+  it('a stimd a foreground stim serve listens through keeps the home while the job asks for other options', async () => {
+    const port = await freePort();
+    const other = await freePort();
+    const service = fixture('dev.stim.handoff-job-foreground', port, true);
+    try {
+      service.cli(service.first, ['__stimd', '--mode', 'on']);
+      const holder = await until('the command stimd', () => service.record());
+      const serve = service.cli(service.first, ['serve', '--loopback-only', '--port', String(other)]);
+      for (const deadline = Date.now() + 60_000; ;) {
+        const listening = await fetch(`http://127.0.0.1:${other}/health`, { signal: AbortSignal.timeout(2000) }).then(
+          (response) => response.ok,
+          () => false,
+        );
+        if (listening) break;
+        if (Date.now() > deadline) throw new Error('timed out waiting for stim serve to listen');
+        await new Promise((done) => setTimeout(done, 100));
+      }
+      service.restartJob(60_000);
+      await until('the job process', () => service.jobPid());
+      await new Promise((done) => setTimeout(done, 8000));
+      expect(service.record()?.pid).toBe(holder.pid);
+      expect(serve.exitCode).toBeNull();
+    } finally {
+      await service.cleanup();
+    }
+  }, 240_000);
+
+  it('a stimd whose net thread Stim Desktop started on other options keeps the home, also after an engine switch', async () => {
+    const port = await freePort();
+    const service = fixture('dev.stim.handoff-job-desktop', port, true);
+    try {
+      const desktop = await service.runDesktop(await freePort());
+      const successor = await service.switchEngine(desktop);
+      service.restartJob(60_000);
+      await until('the job process', () => service.jobPid());
+      await new Promise((done) => setTimeout(done, 8000));
+      expect(service.record()?.pid).toBe(successor.pid);
       expect(readFileSync(join(service.home, 'daemon', 'daemon.ndjson'), 'utf8')).not.toContain(
         'takes this Stim home back',
       );
