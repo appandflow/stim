@@ -356,7 +356,7 @@ async function measureCapOnly(
 /**
  * Writes the size of each Cargo target the scan measured into the disk-usage cache, which keeps it across scans that
  * measure other targets, for the pressure ladder's largest-first order; the caps still plan from the scan's own list.
- * A newer record stays, and an older one keeps its other fields.
+ * A newer record stays; an older one keeps its other fields but the private-size ones, which described its old bytes.
  */
 function keepScannedSizes(sizes: readonly MaintenanceSize[]): void {
   for (const size of sizes) {
@@ -365,9 +365,15 @@ function keepScannedSizes(sizes: readonly MaintenanceSize[]): void {
     const recorded = readJsonObject(file);
     const recordedAt = Date.parse(String(recorded?.measuredAt ?? ''));
     if (recorded?.path === size.dir && Number.isFinite(recordedAt) && recordedAt >= size.measuredAt) continue;
+    const {
+      privateBytes: _private,
+      partial: _partial,
+      privateUnknown: _unknown,
+      ...kept
+    } = recorded?.path === size.dir ? recorded : {};
     try {
       writeCacheFile(file, {
-        ...(recorded?.path === size.dir ? recorded : {}),
+        ...kept,
         path: size.dir,
         measuredAt: new Date(size.measuredAt).toISOString(),
         bytes: size.bytes,
@@ -391,9 +397,22 @@ async function measureAllSizes(
  * plans and logs without acting, whatever `daemon.mode` says. Within a daemon `tick`, the pass reuses the tick's
  * measurement and runs no child process synchronously. Returns why no pass ran when another process holds the pass.
  */
+async function unitBoundary(between?: () => Promise<void>): Promise<void> {
+  await between?.();
+}
+
 export async function runMaintenance(
   trigger: string,
-  { report = false, tick }: { report?: boolean; tick?: MaintenanceTick } = {},
+  {
+    report = false,
+    tick,
+    between,
+  }: {
+    report?: boolean;
+    tick?: MaintenanceTick;
+    /** Runs before each check and each action: a unit boundary of the stim-daemon's disk owner. */
+    between?: () => Promise<void>;
+  } = {},
 ): Promise<string | void> {
   const startedAt = Date.now();
   let claim: ClaimHandle | undefined;
@@ -472,6 +491,7 @@ export async function runMaintenance(
     const ran = new Set<MaintenanceCheck>();
     const cap = { ran: false };
     for (const check of checks) {
+      await unitBoundary(between);
       if (check !== 'pressure' && (await deferIfLoaded(state, check, tick?.operation, record, keepState, cap)))
         continue;
       state.lastAt[check] = Date.now();
@@ -587,6 +607,7 @@ export async function runMaintenance(
       const results: { action: MaintenanceAction; outcome: ActionOutcome }[] = [];
       const ordered = actions.toSorted((a, b) => executionRank(a) - executionRank(b));
       for (const action of ordered) {
+        await unitBoundary(between);
         const began = Date.now();
         let outcome: ActionOutcome;
         try {

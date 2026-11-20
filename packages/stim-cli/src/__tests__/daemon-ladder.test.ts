@@ -34,7 +34,7 @@ import { REAL_BYTES_THRESHOLD, runDormantDependencies } from '../daemon/dependen
 import { runIdlePass } from '../daemon/idle.ts';
 import { runLadder } from '../daemon/ladder.ts';
 import * as cargoTargetPasses from '../stimd/passes/cargo-target.ts';
-import { runForcedLadder, runHomePasses, runLadderToFree, type LadderPass } from '../daemon/passes.ts';
+import { runDiskPass, runForcedLadder, runHomePasses, runLadderToFree, type LadderPass } from '../daemon/passes.ts';
 import * as ladderModule from '../daemon/ladder.ts';
 import * as bootedParked from '../daemon/booted-parked.ts';
 import * as idlePass from '../daemon/idle.ts';
@@ -1070,6 +1070,34 @@ describe('the pressure ladder', () => {
     }
   });
 
+  test('rung 3 at high removes an entry whose size walk timed out and stops the trim there', async () => {
+    caches('kept-key');
+    const at = (hours: number) => (Date.now() - hours * 60 * MINUTE_MS) / 1000;
+    const oldest = join(buildCache(), 'ios', 'unused');
+    const next = join(buildCache(), 'ios', 'kept-key');
+    utimesSync(oldest, at(4), at(4));
+    utimesSync(next, at(3), at(3));
+    vi.stubEnv('STIM_CACHES_BUILD_CACHE_MAX_GB', '12');
+    const real = getExecutor();
+    setExecutor({
+      ...real,
+      runFileAsync: async (file, args, options) => {
+        if (file === 'du' && args.at(-1) === buildCache()) return `${20 * 1024 * 1024}\t${buildCache()}\n`;
+        if (file === 'du' && args.at(-1) === oldest)
+          throw Object.assign(new Error('Command timed out after 60000ms: du'), { code: 'ETIMEDOUT' });
+        return real.runFileAsync(file, args, options);
+      },
+    });
+
+    await runLadder(
+      input(true, async () => pressure('high')),
+      pressure('high'),
+    );
+
+    expect(existsSync(oldest)).toBe(false);
+    expect(existsSync(next)).toBe(true);
+  });
+
   test('rung 3 at high keeps a cache or the Swift compilation cache whose size walk timed out with a kept action, and logs the failure once per 6 hours', async () => {
     workspace('idle-hour', 60 * MINUTE_MS, 'Shutdown');
     mkdirSync(join(buildCache(), 'ios'), { recursive: true });
@@ -1613,6 +1641,18 @@ describe('the ladder a build runs for its headroom', () => {
     expect(deleted).toEqual([]);
   });
 
+  test('a disk pass on the owner measures again before it acts, so a level that fell from critical to high takes only what high needs', async () => {
+    parked(3);
+    vi.spyOn(daemonMeasure, 'measureDisk').mockImplementation(async () => [
+      { volume: '/', freeMb: (30 + deleted.length * 20) * 1024, device: DEVICE },
+    ]);
+    const critical: DaemonPressure = { ...pressure('critical'), reasons: ['critical when the pass was asked'] };
+
+    await runDiskPass({ act: true, pressure: critical, devices: [], sims: [], requested: false }, log, testContext());
+
+    expect(deleted).toEqual(['PARKED-0']);
+  });
+
   test('does nothing while another process holds the ladder claim', async () => {
     parked(2);
     const disk = freeOnBuildDevice(10, 1);
@@ -2152,7 +2192,7 @@ describe("the daemon tick's ladder pacing", () => {
 
     const passes = await runHomePasses({ act: true, log, lastLadder, requested });
 
-    expect(ladder).toHaveBeenCalledTimes(runs ? 1 : 0);
+    expect(ladder.mock.calls.length > 0).toBe(runs);
     expect(passes.ladder === lastLadder).toBe(!runs);
   });
 

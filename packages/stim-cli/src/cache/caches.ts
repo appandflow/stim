@@ -423,7 +423,8 @@ export async function pruneCache(
     signal?: AbortSignal;
     /**
      * How a directory entry is sized for the bytes it frees: a blocking walk with no time limit, a non-blocking walk
-     * bounded like the cache size walks (0 when it does not finish), or not at all (0).
+     * bounded like the cache size walks, or not at all (0). An entry whose bounded walk does not finish is removed and
+     * ends the trim, since what it freed cannot count toward `evictBytes`.
      */
     entrySizes?: 'walk' | 'bounded' | 'none';
   } = {},
@@ -474,11 +475,11 @@ export async function pruneCache(
         : entrySizes === 'walk'
           ? directorySize(entry, { timeoutMs: 'unbounded', root: cache.dir })
           : entrySizes === 'bounded'
-            ? ((await measuredDirectorySizeAsync(entry, {
+            ? await measuredDirectorySizeAsync(entry, {
                 timeoutMs: CACHE_SIZE_TIMEOUT_MS,
                 ...(signal ? { signal } : {}),
                 root: cache.dir,
-              })) ?? 0)
+              })
             : 0;
       if ((cache.lastUse?.(entry, true) ?? 0) >= cutoff) continue;
       const busy = cache.inUse?.();
@@ -488,6 +489,7 @@ export async function pruneCache(
       }
       rmSync(entry, { recursive: true, force: true });
       removed++;
+      if (entryBytes === null) break;
       bytes += entryBytes;
     } catch {
       failed++;

@@ -26,18 +26,11 @@ import { onDiskVolumes, runIdlePass, type IdlePassInput } from './idle.ts';
 import { watchedStep } from './step-timing.ts';
 import { idleOutputBytes, runLadder } from './ladder.ts';
 import { measureDisk, measureMemory, measureTick, type TickMeasurement } from './measure.ts';
+import type { OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { classifyPressure, diskPressure, diskThresholds, shortVolumeDevices, type DiskThresholds } from './pressure.ts';
 import { onShortVolume } from '../stimd/passes/unowned.ts';
 import { dormantAfterMs, runDormantPass, sourceDormantAfterMs } from './stages.ts';
-import {
-  admitStep,
-  createDormantGate,
-  holdLadder,
-  releaseLadder,
-  releaseStep,
-  stepHeldMs,
-  takeLadder,
-} from './dormant-gate.ts';
+import { acquireDisk, diskBoundary, HARD_FLOOR, LADDER, LANE, releaseDisk } from './disk-owner.ts';
 
 const LADDER_PACE_FACTOR = 4;
 const LADDER_PACE_MAX_MS = 15 * 60_000;
@@ -45,39 +38,85 @@ const LADDER_PACE_DISK_DROP_MB = 1024;
 const LADDER_PACE_SHORT_DROP_MB = 256;
 const LADDER_CRITICAL_WAIT_MS = 60_000;
 const RANK: Record<PressureLevel, number> = { normal: 0, high: 1, critical: 2 };
-/** How long the lane's dormant step may keep a ladder pass for disk waiting. */
-const DORMANT_STEP_LIMIT_MS = 10 * 60_000;
 
-/** What a stimd tick shares with its maintenance lane so the dormant step never runs beside a disk ladder pass. */
-interface DormantTurn {
-  gate: BigInt64Array;
-  cadence: BigInt64Array;
-  /** Stops the lane's running job and resolves once it has settled. */
-  yieldLane: () => Promise<void>;
+/** What the tick hands the disk owner for one ladder pass; every field crosses to the passes thread. */
+export interface DiskPassInput {
+  act: boolean;
+  pressure: DaemonPressure;
+  devices: OwnedDeviceActivity[];
+  sims: TickMeasurement['sims'];
+  /** A command at the hard floor asked for this tick, so the pass goes first. */
+  requested: boolean;
+}
+
+export interface DiskPassResult {
+  actions: DaemonLadderAction[];
+  pressure: DaemonPressure;
+}
+
+/** Measures disk and memory again and classifies them, carrying the memory warning clock. */
+function remeasurer(
+  config: Config,
+  operation: StimContext,
+  classify: (measurement: Pick<TickMeasurement['measurement'], 'disk' | 'memory'>) => DaemonPressure,
+): () => Promise<DaemonPressure> {
+  return async () => {
+    const results = await Promise.allSettled([
+      measureDisk(config, operation.signal),
+      measureMemory(operation.signal, operation),
+    ]);
+    const cleanup = results.find((result) => result.status === 'rejected' && isClaimUnavailable(result.reason));
+    if (cleanup?.status === 'rejected') throw cleanup.reason;
+    operation.signal.throwIfAborted();
+    if (results[0].status === 'rejected') throw results[0].reason;
+    if (results[1].status === 'rejected') throw results[1].reason;
+    return classify({ disk: results[0].value, memory: results[1].value });
+  };
 }
 
 /**
- * Takes the turn for a ladder pass's disk rungs. While the lane's dormant step holds it the pass leaves its disk rungs
- * out, unless a command at the hard floor asked for the tick, which stops the step and gives its hour back, or the step
- * has held the turn DORMANT_STEP_LIMIT_MS, which stops it at its next check and leaves it to its next hour.
+ * One ladder pass for disk on the disk owner's turn, which every gc deletion of the stim-daemon takes: it waits for the
+ * maintenance lane to finish its current unit, a hard-floor pass first, and measures again before each rung.
  */
-async function holdForLadder(
-  { gate, cadence, yieldLane }: DormantTurn,
-  requested: boolean,
+export async function runDiskPass(
+  input: DiskPassInput,
   log: IdlePassInput['log'],
-): Promise<boolean> {
-  if (holdLadder(gate)) return true;
-  const heldMs = stepHeldMs(gate);
-  if (!requested && heldMs < DORMANT_STEP_LIMIT_MS) {
-    log('debug', 'pressure_ladder_deferred', 'the dormant step holds the turn; the disk rungs wait for it', {
-      heldMs,
-    });
-    return false;
+  operation: StimContext,
+): Promise<DiskPassResult> {
+  const config = loadConfig();
+  if (!config) return { actions: [], pressure: input.pressure };
+  // @ref LLP 0001#one-task-runs-every-gc-deletion -- the ladder and the lane never delete at the same time
+  await acquireDisk(input.requested ? HARD_FLOOR : LADDER);
+  try {
+    const { thresholds } = diskThresholds(config);
+    let warningSince = input.pressure.memoryWarningSince;
+    return await runLadder(
+      {
+        config,
+        act: input.act,
+        log,
+        devices: input.devices,
+        sims: input.sims,
+        simsFailed: input.sims === null,
+        operation,
+        reports: true,
+        only: 'disk',
+        remeasure: remeasurer(config, operation, (measurement) => {
+          const pressure = classifyPressure({
+            ...measurement,
+            thresholds,
+            previousWarningSince: warningSince,
+            now: Date.now(),
+          });
+          warningSince = pressure.memoryWarningSince;
+          return pressure;
+        }),
+      },
+      input.pressure,
+    );
+  } finally {
+    releaseDisk();
   }
-  await yieldLane();
-  if (requested) Atomics.store(cadence, 0, 0n);
-  takeLadder(gate);
-  return true;
 }
 
 interface HomePassPhases {
@@ -144,8 +183,8 @@ function ladderDue(last: LadderPass, pressure: DaemonPressure, volumes: LadderPa
  * four times that pass's duration, at most 15 minutes or, while the level is critical, one minute, before it runs again,
  * unless the disk or memory level rose, a measured volume is new, reached a higher level or lost free space since that
  * pass (256 MB on a volume under pressure, 1 GB on any other), or `requested` says a command asked for this tick.
- * With `dormant`, a ladder pass takes the turn before its first disk rung, and leaves its disk rungs out while the
- * maintenance lane's dormant step holds it (`holdForLadder`).
+ * The tick runs the rungs that relieve memory; the disk rungs run on the disk owner through `diskPass`
+ * (`runDiskPass`), and the tick waits for them.
  */
 export async function runHomePasses(input: HomePassesInput): Promise<HomePasses> {
   const operation = processContext(process.cwd(), input.signal ?? new AbortController().signal);
@@ -164,12 +203,12 @@ interface HomePassesInput {
   signal?: AbortSignal;
   lastLadder?: LadderPass | null;
   requested?: boolean;
-  /** The stim-daemon's share with its maintenance lane; without it no dormant step runs in the tick. */
-  dormant?: DormantTurn;
+  /** Runs the disk pass on the disk owner, the passes thread; without it the pass runs in this thread. */
+  diskPass?: (input: DiskPassInput) => Promise<DiskPassResult>;
 }
 
 async function homePasses(
-  { act, log, memoryWarningSince = null, lastLadder = null, requested = false, dormant }: HomePassesInput,
+  { act, log, memoryWarningSince = null, lastLadder = null, requested = false, diskPass }: HomePassesInput,
   operation: StimContext,
 ): Promise<HomePasses> {
   let mark = performance.now();
@@ -276,56 +315,57 @@ async function homePasses(
       { level, lastDurationMs: lastLadder.durationMs, lastEndedAt: new Date(lastLadder.endedAt).toISOString() },
     );
   } else if (config && level !== 'normal') {
-    // @ref LLP 0001#the-dormant-step-never-runs-beside-the-ladder -- both walk the same checkouts
-    let turn: DormantTurn | undefined;
-    const holdTurn = async () => {
-      if (!dormant) return true;
-      if (await holdForLadder(dormant, requested, log)) turn = dormant;
-      return turn !== undefined;
-    };
-    try {
-      const before = pressure;
-      const started = Date.now();
-      const ladder = await runLadder(
+    const before = pressure;
+    const started = Date.now();
+    const ladderActions: DaemonLadderAction[] = [];
+    if (pressure.memory !== 'normal') {
+      const memory = await runLadder(
         {
           config,
           act,
           log,
           ...reading,
           sims: measured.sims,
-          reports: true,
-          beforeDiskRung: holdTurn,
-          remeasure: async () => {
-            const results = await Promise.allSettled([
-              measureDisk(config, operation.signal),
-              measureMemory(operation.signal, operation),
-            ]);
-            const cleanup = results.find((result) => result.status === 'rejected' && isClaimUnavailable(result.reason));
-            if (cleanup?.status === 'rejected') throw cleanup.reason;
-            operation.signal.throwIfAborted();
-            if (results[0].status === 'rejected') throw results[0].reason;
-            if (results[1].status === 'rejected') throw results[1].reason;
-            const [disk, memory] = [results[0].value, results[1].value];
-            return classify({ disk, memory });
-          },
+          only: 'memory',
+          remeasure: remeasurer(config, operation, classify),
         },
         pressure,
       );
-      actions.push(...ladder.actions);
-      pressure = ladder.pressure;
-      const endedAt = Date.now();
-      ladderPass = {
-        disk: before.disk,
-        memory: before.memory,
-        volumes,
-        // @ref LLP 0001#a-ladder-pass-that-frees-nothing-waits -- an action that freed no bytes is no progress
-        freed: ladder.actions.some((action) => action.outcome === 'done' && action.bytes > 0),
-        durationMs: endedAt - started,
-        endedAt,
-      };
-    } finally {
-      if (turn) releaseLadder(turn.gate);
+      ladderActions.push(...memory.actions);
+      pressure = memory.pressure;
     }
+    if (pressure.disk !== 'normal')
+      try {
+        const request: DiskPassInput = {
+          act,
+          pressure,
+          devices: measured.devices,
+          sims: measured.sims,
+          requested,
+        };
+        const disk = await (diskPass ? diskPass(request) : runDiskPass(request, log, operation));
+        ladderActions.push(...disk.actions);
+        pressure = disk.pressure;
+      } catch (failure) {
+        if (isClaimUnavailable(failure) || (failure instanceof Error && 'reportCleanup' in failure)) throw failure;
+        operation.signal.throwIfAborted();
+        log(
+          'warn',
+          'pressure_ladder_failed',
+          `the disk pass failed: ${failure instanceof Error ? failure.message : String(failure)}`,
+        );
+      }
+    actions.push(...ladderActions);
+    const endedAt = Date.now();
+    ladderPass = {
+      disk: before.disk,
+      memory: before.memory,
+      volumes,
+      // @ref LLP 0001#a-ladder-pass-that-frees-nothing-waits -- an action that freed no bytes is no progress
+      freed: ladderActions.some((action) => action.outcome === 'done' && action.bytes > 0),
+      durationMs: endedAt - started,
+      endedAt,
+    };
   }
   operation.signal.throwIfAborted();
   const ladderMs = lap();
@@ -355,8 +395,8 @@ export interface MaintenanceLane {
 
 /**
  * The daemon's slow passes, beside its tick instead of in it: the fingerprint precompute of the live workspaces whose
- * HEAD, lockfile or install stamp changed, the dormant stage's dependency step, at any level while no ladder pass holds
- * `gate`, and an automatic maintenance pass, from the
+ * HEAD, lockfile or install stamp changed, then on the disk owner's turn the dormant stage's dependency step and an
+ * automatic maintenance pass, which give the turn to a waiting ladder pass between units, from the
  * measurement of the tick that started them, one at a time, so a slow git fetch, `gh` call or size scan never holds
  * the tick that serves waiting runs. Each logs a `daemon_maintenance` record with its phases; one that throws is
  * logged and the next tick starts them again.
@@ -370,7 +410,6 @@ export function createMaintenanceLane(
   ) => void,
   precompute: { run(input: PrecomputeInput, act: boolean): Promise<void> } = createFingerprintPrecompute(log),
   dependencyCadence: BigInt64Array = new BigInt64Array(1),
-  gate: BigInt64Array = createDormantGate(),
 ): MaintenanceLane {
   let current: Promise<void> | null = null;
   let failure: unknown;
@@ -398,17 +437,28 @@ export function createMaintenanceLane(
           log('warn', 'daemon_fingerprint_precompute', error instanceof Error ? error.message : String(error));
         });
         const fingerprintMs = lap();
-        // @ref LLP 0001#the-dormant-step-never-runs-beside-the-ladder -- above normal the tick runs it after its ladder
-        if (admitStep(gate))
-          try {
-            taken.push(...(await runDormantDependencies({ config, act, log, ...reading, cadence: dependencyCadence })));
-          } finally {
-            releaseStep(gate);
-          }
-        const dependenciesMs = lap();
-        const skipped = await watchedStep(log, 'maintenance', () =>
-          runMaintenance('daemon', { report: !act, tick: { operation, measured } }),
-        );
+        // @ref LLP 0001#one-task-runs-every-gc-deletion -- a ladder pass waits for one unit, never a whole step
+        await acquireDisk(LANE);
+        let dependenciesMs: number;
+        let skipped: string | void;
+        try {
+          taken.push(
+            ...(await runDormantDependencies({
+              config,
+              act,
+              log,
+              ...reading,
+              cadence: dependencyCadence,
+              between: diskBoundary,
+            })),
+          );
+          dependenciesMs = lap();
+          skipped = await watchedStep(log, 'maintenance', () =>
+            runMaintenance('daemon', { report: !act, tick: { operation, measured }, between: diskBoundary }),
+          );
+        } finally {
+          releaseDisk();
+        }
         const maintenanceMs = lap();
         logLauncherProblems(operation, log);
         const tookMs = Math.round(performance.now() - started);

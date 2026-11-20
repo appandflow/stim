@@ -1,7 +1,6 @@
 import { isMainThread, parentPort, Worker, workerData } from 'node:worker_threads';
 import type { DaemonLadderAction } from '@stim-cli/core/state';
-import type { MaintenanceLane } from '../daemon/passes.ts';
-import { createDormantGate, releaseStep } from '../daemon/dormant-gate.ts';
+import type { DiskPassInput, DiskPassResult, MaintenanceLane } from '../daemon/passes.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 import { childKey } from './cleanup-watch.ts';
 import { setReportChildLog } from '../report-child-log.ts';
@@ -38,7 +37,13 @@ type FromThread =
       reportCleanup?: boolean;
       contained?: { pid: number; processToken: string | null };
     }
-  | { type: 'settled'; pending: string[]; reading: boolean };
+  | { type: 'settled'; pending: string[]; reading: boolean }
+  | {
+      type: 'ladderDone';
+      id: number;
+      result?: DiskPassResult;
+      failure?: { message: string; code?: string; remedy?: string; reportCleanup?: boolean };
+    };
 
 interface Thread {
   worker: Worker;
@@ -51,6 +56,8 @@ interface Thread {
   unsettled: Set<string>;
   /** A read of this thread timed out and has not settled; a replacement thread would start another. */
   reading: boolean;
+  /** Disk passes asked of this thread and not answered yet, by request id. */
+  ladders: Map<number, { resolve: (result: DiskPassResult) => void; reject: (error: Error) => void }>;
   lost: boolean;
 }
 
@@ -63,8 +70,11 @@ export interface ThreadTable {
   settle(): void;
   /** Waits for every running job, then ends every thread. */
   close(): Promise<void>;
-  /** The dormant step's hourly clock and turn, shared with the passes thread. */
-  dormant?: { cadence: BigInt64Array; gate: BigInt64Array };
+  /**
+   * Runs one disk pass on the passes thread, the stim-daemon's disk owner, beside the job it runs: the pass takes the
+   * owner's turn at the job's next unit boundary.
+   */
+  ladder?(input: DiskPassInput): Promise<DiskPassResult>;
 }
 
 /**
@@ -76,10 +86,10 @@ export interface ThreadTable {
 export function createThreadTable(log: Log, onLost: (error: Error) => void = () => {}): ThreadTable {
   const threads = new Map<ThreadName, Thread>();
   const dependencyCadence = new BigInt64Array(new SharedArrayBuffer(BigInt64Array.BYTES_PER_ELEMENT));
-  const dormantGate = createDormantGate();
+  let nextLadder = 0;
   const idleEnd = (name: ThreadName, thread: Thread) => {
     thread.idle = setTimeout(() => {
-      if (thread.unsettled.size === 0 && !thread.reading) return end(name, thread);
+      if (thread.unsettled.size === 0 && !thread.reading && !thread.ladders.size) return end(name, thread);
       if (thread.reading) thread.worker.postMessage({ type: 'settle' });
       idleEnd(name, thread);
     }, IDLE_MS);
@@ -93,12 +103,29 @@ export function createThreadTable(log: Log, onLost: (error: Error) => void = () 
   const start = (name: ThreadName): Thread => {
     const worker = trackWorker(
       new Worker(spawnEntry('stimd-thread'), {
-        workerData: { stimdThread: name, ...(name === 'passes' ? { dependencyCadence, dormantGate } : {}) },
+        workerData: { stimdThread: name, ...(name === 'passes' ? { dependencyCadence } : {}) },
       }),
     );
-    const thread: Thread = { worker, pending: null, idle: null, unsettled: new Set(), reading: false, lost: false };
+    const thread: Thread = {
+      worker,
+      pending: null,
+      idle: null,
+      unsettled: new Set(),
+      reading: false,
+      lost: false,
+      ladders: new Map(),
+    };
     worker.on('message', (message: FromThread) => {
       if (message.type === 'log') return log(message.level, message.event, message.msg, message.fields);
+      if (message.type === 'ladderDone') {
+        const asked = thread.ladders.get(message.id);
+        thread.ladders.delete(message.id);
+        if (!thread.pending && !thread.ladders.size) idleEnd(name, thread);
+        if (message.result) return asked?.resolve(message.result);
+        return asked?.reject(
+          Object.assign(new Error(message.failure?.message ?? 'the disk pass failed'), message.failure),
+        );
+      }
       if (message.type === 'settled') {
         thread.unsettled = new Set(message.pending);
         thread.reading = message.reading;
@@ -123,7 +150,9 @@ export function createThreadTable(log: Log, onLost: (error: Error) => void = () 
     });
     const gone = (error: Error) => {
       if (threads.get(name) === thread) threads.delete(name);
-      if (name === 'passes') releaseStep(dormantGate);
+      for (const asked of thread.ladders.values())
+        asked.reject(new Error(`the ${name} thread ended during a disk pass`));
+      thread.ladders.clear();
       if (thread.idle) clearTimeout(thread.idle);
       thread.idle = null;
       thread.reading = false;
@@ -155,7 +184,21 @@ export function createThreadTable(log: Log, onLost: (error: Error) => void = () 
     return thread;
   };
   return {
-    dormant: { cadence: dependencyCadence, gate: dormantGate },
+    ladder(input) {
+      const thread = threads.get('passes') ?? start('passes');
+      if (thread.idle) clearTimeout(thread.idle);
+      thread.idle = null;
+      const id = ++nextLadder;
+      return new Promise((resolve, reject) => {
+        thread.ladders.set(id, { resolve, reject });
+        try {
+          thread.worker.postMessage({ type: 'ladder', id, input: { ...input, cwd: process.cwd() } });
+        } catch (error) {
+          thread.ladders.delete(id);
+          reject(error instanceof Error ? error : new Error(String(error)));
+        }
+      });
+    },
     run(name, input) {
       const thread = threads.get(name) ?? start(name);
       if (thread.pending) return Promise.reject(new Error(`the ${name} thread is busy`));
@@ -250,18 +293,44 @@ if (thread === 'logs') await import('./logs/writer-thread.ts');
 else if (thread && parentPort) {
   const port = parentPort;
   const dependencyCadence: BigInt64Array | undefined = workerData.dependencyCadence;
-  const dormantGate: BigInt64Array | undefined = workerData.dormantGate;
   const log: Log = (level, event, msg, fields = {}) => port.postMessage({ type: 'log', level, event, msg, fields });
   setReportChildLog(log);
   const { processContext } = await import('../cli-operation.ts');
   let lane: MaintenanceLane | undefined;
+  const ladders = new Set<AbortController>();
+  port.on('message', async (message: { type: string; id?: number; input?: DiskPassInput & { cwd: string } }) => {
+    if (message.type === 'abort') for (const controller of ladders) controller.abort();
+    if (message.type !== 'ladder' || !message.input) return;
+    const controller = new AbortController();
+    ladders.add(controller);
+    const { runDiskPass } = await import('../daemon/passes.ts');
+    try {
+      const result = await runDiskPass(message.input, log, processContext(message.input.cwd, controller.signal));
+      port.postMessage({ type: 'ladderDone', id: message.id, result });
+    } catch (error) {
+      port.postMessage({
+        type: 'ladderDone',
+        id: message.id,
+        failure: {
+          message: error instanceof Error ? error.message : String(error),
+          ...(error instanceof Error && 'code' in error && typeof error.code === 'string' ? { code: error.code } : {}),
+          ...(error instanceof Error && 'remedy' in error && typeof error.remedy === 'string'
+            ? { remedy: error.remedy }
+            : {}),
+          ...(error instanceof Error && 'reportCleanup' in error ? { reportCleanup: true } : {}),
+        },
+      });
+    } finally {
+      ladders.delete(controller);
+    }
+  });
   serveThreadJobs<ThreadInput>(
     port,
     processContext,
     async (input, operation) => {
       if ('act' in input) {
         const { createMaintenanceLane } = await import('../daemon/passes.ts');
-        lane ??= createMaintenanceLane(log, undefined, dependencyCadence, dormantGate);
+        lane ??= createMaintenanceLane(log, undefined, dependencyCadence);
         lane.start({ ...input, operation }, input.act);
         await lane.settled();
         return lane.take();

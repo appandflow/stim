@@ -22,10 +22,7 @@ import * as ladder from '../daemon/ladder.ts';
 import * as measure from '../daemon/measure.ts';
 import * as reclaim from '../daemon/reclaim.ts';
 import { ensureStimd } from '../daemon/client.ts';
-import { admitStep, createDormantGate, holdLadder, releaseStep } from '../daemon/dormant-gate.ts';
-import * as simPool from '../devices/sim-pool.ts';
-import * as bootedParked from '../daemon/booted-parked.ts';
-import { createMaintenanceLane, runHomePasses } from '../daemon/passes.ts';
+import { createMaintenanceLane, runDiskPass, runHomePasses } from '../daemon/passes.ts';
 import { runStimd } from '../stimd/main.ts';
 import * as stages from '../daemon/stages.ts';
 import { pendingDormant } from '../daemon/stages.ts';
@@ -119,147 +116,116 @@ function quietWorkspace(usedAgoMs = MINUTE_MS): string {
   return root;
 }
 
-describe('the dormant step and the disk ladder', () => {
-  const normal: DaemonPressure = {
-    level: 'normal',
-    disk: 'normal',
+describe('the disk owner', () => {
+  const critical = (reason: string): DaemonPressure => ({
+    level: 'critical',
+    disk: 'critical',
     memory: 'normal',
-    reasons: [],
+    reasons: [reason],
     memoryWarningSince: null,
-  };
+  });
 
-  async function laneInput() {
-    return {
-      config: loadConfig(),
-      measured: await measure.measureTick(null, Date.now()),
-      operation: testContext(),
-      workspaces: [],
-      pressure: normal,
-    };
+  function unitsOfTheStep(order: string[]) {
+    let enter!: () => void;
+    let finish!: () => void;
+    const entered = new Promise<void>((resolve) => (enter = resolve));
+    const finished = new Promise<void>((resolve) => (finish = resolve));
+    vi.spyOn(dependencies, 'runDormantDependencies').mockImplementation(async (input) => {
+      order.push('unit 1');
+      enter();
+      await finished;
+      await input.between?.();
+      order.push('unit 2');
+      await input.between?.();
+      order.push('deletions');
+      return [];
+    });
+    vi.spyOn(ladder, 'runLadder').mockImplementation(async (_input, pressure) => {
+      order.push(pressure.reasons[0] === 'waiting' ? 'pass waiting' : 'pass hard floor');
+      return { actions: [], pressure };
+    });
+    return { entered, finish };
   }
 
-  function quietTick() {
+  async function laneStarted() {
+    saveConfig({ version: 2, projects: {}, repos: {} });
+    const lane = createMaintenanceLane(() => {}, { run: async () => {} });
+    lane.start(
+      {
+        config: loadConfig(),
+        measured: await measure.measureTick(null, Date.now()),
+        operation: testContext(),
+        workspaces: [],
+        pressure: critical('lane'),
+      },
+      true,
+    );
+    return lane;
+  }
+
+  const pass = (reason: string) =>
+    runDiskPass(
+      { act: true, pressure: critical(reason), devices: [], sims: [], requested: false },
+      () => {},
+      testContext(),
+    );
+
+  test('a disk pass asked while the dormant step runs waits for its current unit, and the step then goes on to its deletions', async () => {
+    const order: string[] = [];
+    const { entered, finish } = unitsOfTheStep(order);
+    const lane = await laneStarted();
+    await entered;
+
+    const asked = pass('waiting');
+    order.push('asked');
+    finish();
+    await asked;
+    await lane.settled();
+
+    expect(order).toEqual(['unit 1', 'asked', 'pass waiting', 'unit 2', 'deletions']);
+  });
+
+  test('a hard-floor pass goes ahead of a waiting pass, and the tick that asked for it answers only after it', async () => {
+    const order: string[] = [];
+    const { entered, finish } = unitsOfTheStep(order);
+    vi.spyOn(idlePass, 'runIdlePass').mockResolvedValue([]);
+    vi.spyOn(stages, 'runDormantPass').mockResolvedValue([]);
+    freeMb = 10 * 1024;
+    const lane = await laneStarted();
+    await entered;
+
+    const waiting = pass('waiting');
+    let answered = false;
+    const floor = runHomePasses({ act: true, log: () => {}, requested: true }).finally(() => {
+      answered = true;
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    const beforeTheUnitEnded = answered;
+    finish();
+    await Promise.all([waiting, floor]);
+    await lane.settled();
+
+    expect(beforeTheUnitEnded).toBe(false);
+    expect(order).toEqual(['unit 1', 'pass hard floor', 'pass waiting', 'unit 2', 'deletions']);
+  });
+
+  test('a disk pass that fails, as when the passes thread ends, is logged and the tick goes on', async () => {
     saveConfig({ version: 2, projects: {}, repos: {} });
     freeMb = 10 * 1024;
     vi.spyOn(idlePass, 'runIdlePass').mockResolvedValue([]);
     vi.spyOn(stages, 'runDormantPass').mockResolvedValue([]);
-  }
-
-  test('the lane starts its dormant step at any disk level while the turn is free, and none while a ladder pass holds it', async () => {
-    const step = vi.spyOn(dependencies, 'runDormantDependencies').mockResolvedValue([]);
-    const gate = createDormantGate();
-    const lane = createMaintenanceLane(() => {}, { run: async () => {} }, new BigInt64Array(1), gate);
-    const critical: DaemonPressure = { ...normal, level: 'critical', disk: 'critical' };
-
-    lane.start({ ...(await laneInput()), pressure: critical }, true);
-    await lane.settled();
-    expect(holdLadder(gate)).toBe(true);
-    lane.start(await laneInput(), true);
-    await lane.settled();
-
-    expect(step).toHaveBeenCalledTimes(1);
-  });
-
-  test('a lane whose precompute outlasts the start of a critical ladder pass starts no dormant step beside it, and the tick runs none', async () => {
-    quietTick();
-    let release!: () => void;
-    const blocked = new Promise<void>((resolve) => (release = resolve));
-    const gate = createDormantGate();
-    const cadence = new BigInt64Array(1);
-    const lane = createMaintenanceLane(() => {}, { run: () => blocked }, cadence, gate);
-    const step = vi.spyOn(dependencies, 'runDormantDependencies').mockResolvedValue([]);
-    vi.spyOn(ladder, 'runLadder').mockImplementation(async (input, pressure) => {
-      expect(await input.beforeDiskRung?.()).toBe(true);
-      release();
-      await lane.settled();
-      return { actions: [], pressure };
-    });
-    lane.start(await laneInput(), true);
-
-    await runHomePasses({ act: true, log: () => {}, dormant: { cadence, gate, yieldLane: async () => {} } });
-
-    expect(step).not.toHaveBeenCalled();
-  });
-
-  test('while the dormant step holds the turn a tick leaves its disk rungs out and does not stop the step', async () => {
-    quietTick();
-    const gate = createDormantGate();
-    expect(admitStep(gate)).toBe(true);
-    const yieldLane = vi.fn<() => Promise<void>>(async () => {});
-    const allowed: unknown[] = [];
-    vi.spyOn(ladder, 'runLadder').mockImplementation(async (input, pressure) => {
-      allowed.push(await input.beforeDiskRung?.());
-      return { actions: [], pressure };
-    });
+    const events: string[] = [];
 
     const passes = await runHomePasses({
       act: true,
-      log: () => {},
-      dormant: { cadence: new BigInt64Array(1), gate, yieldLane },
-    });
-
-    expect(allowed).toEqual([false]);
-    expect(yieldLane).not.toHaveBeenCalled();
-    expect(passes.ladder).not.toBeNull();
-  });
-
-  test.each([
-    { name: 'a hard-floor tick stops the dormant step and gives its hour back', heldMs: 0, requested: true, clock: 0n },
-    {
-      name: 'a tick stops a dormant step that has held the turn past its limit, and leaves it to its next hour',
-      heldMs: 11 * MINUTE_MS,
-      requested: false,
-      clock: 7n,
-    },
-  ])('$name', async ({ heldMs, requested, clock }) => {
-    quietTick();
-    const gate = createDormantGate();
-    const cadence = new BigInt64Array([7n]);
-    expect(admitStep(gate, Date.now() - heldMs)).toBe(true);
-    const yieldLane = vi.fn<() => Promise<void>>(async () => {
-      releaseStep(gate);
-    });
-    const allowed: unknown[] = [];
-    vi.spyOn(ladder, 'runLadder').mockImplementation(async (input, pressure) => {
-      allowed.push(await input.beforeDiskRung?.());
-      return { actions: [], pressure };
-    });
-
-    await runHomePasses({ act: true, log: () => {}, requested, dormant: { cadence, gate, yieldLane } });
-
-    expect(allowed).toEqual([true]);
-    expect(yieldLane).toHaveBeenCalledTimes(1);
-    expect(Atomics.load(cadence, 0)).toBe(clock);
-  });
-
-  test('a tick that starts on memory pressure holds the turn through its disk rungs once a fresh measurement admits them', async () => {
-    quietTick();
-    const gate = createDormantGate();
-    const tick = await measure.measureTick(null, Date.now());
-    vi.spyOn(measure, 'measureTick').mockResolvedValue({
-      ...tick,
-      measurement: {
-        ...tick.measurement,
-        disk: [{ volume: '/', freeMb: 500_000 }],
-        memory: { level: 'critical', availableBytes: null, totalBytes: 16 * 1024 ** 3 },
+      log: (_level, event) => void events.push(event),
+      diskPass: async () => {
+        throw new Error('the passes thread ended during a disk pass');
       },
     });
-    vi.spyOn(measure, 'measureDisk').mockResolvedValue([{ volume: '/', freeMb: 1024 }]);
-    vi.spyOn(bootedParked, 'runBootedParkedPass').mockResolvedValue([]);
-    const admittedDuringDisk: boolean[] = [];
-    vi.spyOn(simPool, 'readParked').mockImplementation(() => {
-      admittedDuringDisk.push(admitStep(gate));
-      return [];
-    });
 
-    await runHomePasses({
-      act: true,
-      log: () => {},
-      dormant: { cadence: new BigInt64Array(1), gate, yieldLane: async () => {} },
-    });
-
-    expect(admittedDuringDisk.length).toBeGreaterThan(0);
-    expect(admittedDuringDisk).not.toContain(true);
+    expect(events).toContain('pressure_ladder_failed');
+    expect(passes.ladder).toMatchObject({ freed: false });
   });
 });
 
@@ -602,38 +568,6 @@ describe.skipIf(process.platform === 'win32')(
       await daemon;
       expect(maintenance).toHaveBeenCalledTimes(2);
       expect(ticks().map(({ at }) => Math.round((at - started) / MINUTE_MS))).toEqual([1, 6, 11, 16, 21]);
-    });
-
-    test("while the lane's dormant step holds the turn, ticks leave their disk rungs out and keep serving boot waiters", async () => {
-      saveConfig({ version: 2, projects: {}, repos: {} });
-      freeMb = 10 * 1024;
-      const after = <T>(ms: number, value: T) => new Promise<T>((resolve) => setTimeout(() => resolve(value), ms));
-      vi.spyOn(dependencies, 'runDormantDependencies').mockImplementationOnce(() => after(12 * MINUTE_MS, []));
-      const allowed: unknown[] = [];
-      vi.spyOn(ladder, 'runLadder').mockImplementation(async (input, pressure) => {
-        allowed.push(await input.beforeDiskRung?.());
-        return { actions: [], pressure };
-      });
-      const reclaims = vi.spyOn(reclaim, 'reclaimForBootWaiters').mockResolvedValue(null);
-      let exited = false;
-      const daemon = (async () => {
-        await runStimd({ mode: 'on' });
-        exited = true;
-      })();
-
-      await vi.advanceTimersByTimeAsync(MINUTE_MS);
-      await vi.waitFor(() => expect(ticks()).toHaveLength(1));
-      await vi.advanceTimersByTimeAsync(5 * MINUTE_MS);
-      await vi.waitFor(() => expect(ticks().length).toBeGreaterThanOrEqual(2));
-
-      expect(allowed[0]).toBe(true);
-      expect(allowed.slice(1)).toContain(false);
-      expect(reclaims.mock.calls.length).toBe(ticks().length);
-
-      await vi.advanceTimersByTimeAsync(12 * MINUTE_MS);
-      await vi.advanceTimersByTimeAsync(3 * 5 * MINUTE_MS);
-      await vi.waitFor(() => expect(exited).toBe(true));
-      await daemon;
     });
 
     describe('work that never ends', () => {

@@ -258,6 +258,8 @@ interface IdleSelection {
   onKept?: (path: string, reason: string) => void;
   /** Whether a discovered checkout holds anything the caller reclaims; one that does not is left out before its source walk. */
   reclaimable?: (path: string) => boolean | Promise<boolean>;
+  /** Runs before each checkout's reads, a unit boundary of the disk owner. */
+  between?: () => Promise<void>;
 }
 
 function idleWorkspaces(
@@ -284,7 +286,13 @@ async function readIdleWorkspaces(
   thresholdMs: number,
   setting: string,
   worthIt: (path: string, project: ProjectRecord) => boolean | Promise<boolean>,
-  { discover = false, full = false, onKept, reclaimable }: Omit<IdleSelection, 'setting'> & { discover?: boolean } = {},
+  {
+    discover = false,
+    full = false,
+    onKept,
+    reclaimable,
+    between,
+  }: Omit<IdleSelection, 'setting'> & { discover?: boolean } = {},
 ): Promise<StageCandidate[]> {
   const readings: (Omit<StageCandidate, 'idleMs' | 'role' | 'checkout'> & { idleMs: number | null })[] = [];
   const reads = discoveredReads(reading.operation?.signal, reading.operation);
@@ -295,6 +303,7 @@ async function readIdleWorkspaces(
   const checkouts = [...Object.entries(config.projects), ...discovered];
   tally.items = checkouts.length;
   for (const [path, project] of checkouts) {
+    await between?.();
     if (sameRoot(path, reading.protectedRoot) || !(await worthIt(path, project))) continue;
     if (reclaimable && discoveredPaths.has(path) && !(await reclaimable(path))) continue;
     const used = Date.parse(String(readWorkspaceState(path)?.lastUsedAt ?? ''));

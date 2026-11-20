@@ -6,7 +6,11 @@ import { reportChildOf } from '../engine/workspace-process-error.ts';
 import { hungRead } from '../workspace/bounded-read.ts';
 import { createCleanupWatch } from './cleanup-watch.ts';
 
-type ToThread<Input> = { type: 'run'; input: Input & { cwd: string } } | { type: 'abort' } | { type: 'settle' };
+type ToThread<Input> =
+  | { type: 'run'; input: Input & { cwd: string } }
+  | { type: 'abort' }
+  | { type: 'settle' }
+  | { type: 'ladder' };
 
 /**
  * Serves one stimd thread's jobs on `port`, one at a time, each with its own operation from `context`. A job whose
@@ -30,6 +34,7 @@ export function serveThreadJobs<Input>(
       watch.settle();
       return port.postMessage({ type: 'settled', pending: watch.keys(), reading: hungRead() !== null });
     }
+    if (message.type !== 'run') return;
     controller = new AbortController();
     const { signal } = controller;
     const operation = context(message.input.cwd, signal);

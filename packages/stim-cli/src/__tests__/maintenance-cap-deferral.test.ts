@@ -80,19 +80,26 @@ test('while host load defers the size scan, the cap still measures and plans an 
   expect(maintenanceStatus().deferred).toContainEqual({ check: 'size', since: expect.any(Number) });
 });
 
-test('the cap writes its Cargo size over an older disk-usage record, keeping its other fields, and leaves a newer one', async () => {
-  const record = (at: number) => ({ path: target, measuredAt: new Date(at).toISOString(), bytes: 1, walkMs: 5 });
+test('the cap writes its Cargo size over an older disk-usage record, keeping its other fields but the private sizes, and leaves a newer one', async () => {
+  const record = (at: number) => ({
+    path: target,
+    measuredAt: new Date(at).toISOString(),
+    bytes: 1,
+    walkMs: 5,
+    privateBytes: 1,
+    partial: true,
+  });
   writeCacheFile(diskUsageCacheFile(target), record(Date.now() + 60_000));
   await runMaintenance('test');
-  expect(readJsonObject(diskUsageCacheFile(target))).toMatchObject({ bytes: 1, walkMs: 5 });
+  expect(readJsonObject(diskUsageCacheFile(target))).toMatchObject({ bytes: 1, walkMs: 5, privateBytes: 1 });
 
   writeCacheFile(diskUsageCacheFile(target), record(Date.now() - 2 * 3_600_000));
   writeFileSync(maintenanceStateFile(), '{}');
   await runMaintenance('test');
-  expect(readJsonObject(diskUsageCacheFile(target))).toMatchObject({
-    bytes: readMaintenanceState()?.sizes[0]?.bytes,
-    walkMs: 5,
-  });
+  const rewritten = readJsonObject(diskUsageCacheFile(target));
+  expect(rewritten).toMatchObject({ bytes: readMaintenanceState()?.sizes[0]?.bytes, walkMs: 5 });
+  expect(rewritten).not.toHaveProperty('privateBytes');
+  expect(rewritten).not.toHaveProperty('partial');
 });
 
 test('a size scan deferred for the ceiling runs anyway, and the status field clears', async () => {

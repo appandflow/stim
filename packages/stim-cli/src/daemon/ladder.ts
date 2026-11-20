@@ -105,11 +105,8 @@ export interface LadderInput {
   stop?: AbortSignal;
   /** The device id of the one volume a build's headroom run frees; without it, the volumes under `disk.minFreeGb`. */
   volume?: number;
-  /**
-   * Asked once, before the first rung that relieves disk, once its measurement has admitted it; false leaves the pass's
-   * disk work out, so only what relieves memory runs.
-   */
-  beforeDiskRung?: () => Promise<boolean>;
+  /** Runs only what relieves this cause: the stim-daemon's tick relieves memory, its disk owner disk. */
+  only?: Cause;
   /** Runs the report-only rungs 5 and 7: the stim-daemon's ladder, at most hourly and never at critical. */
   reports?: boolean;
 }
@@ -1106,14 +1103,12 @@ export async function runLadder(
   }
   if (pressure.level === 'normal') return { actions, pressure };
   let current = pressure;
-  let diskAllowed: boolean | undefined;
   for (const { rung, relieves: rungRelieves } of rungsFrom(input.fromRung).filter(
     (entry) => entry.rung <= (input.lastRung ?? 9),
   )) {
+    const relieves = input.only ? rungRelieves.filter((cause) => cause === input.only) : rungRelieves;
+    if (!relieves.length) continue;
     current = await input.remeasure();
-    if (rungDecision(current, rungRelieves) === 'stop') break;
-    if (causesOf(current, rungRelieves).includes('disk')) diskAllowed ??= (await input.beforeDiskRung?.()) ?? true;
-    const relieves = diskAllowed === false ? rungRelieves.filter((cause) => cause !== 'disk') : rungRelieves;
     const decision = rungDecision(current, relieves);
     if (decision === 'stop') break;
     if (decision === 'skip') continue;

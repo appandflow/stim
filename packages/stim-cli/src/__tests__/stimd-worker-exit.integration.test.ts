@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { readClaimSet } from '@stim-cli/core/ownership-claim';
 import * as entries from '../spawn-entry.ts';
 import { createThreadTable } from '../stimd/threads.ts';
-import { admitStep } from '../daemon/dormant-gate.ts';
+import type { DiskPassInput } from '../daemon/passes.ts';
 import { captureProcessToken, inspectProcessIdentity } from '../process-identity.ts';
 import { signalProcessTree } from '../metro.ts';
 import { waitForProcessExit } from '@stim-cli/core/process-identity';
@@ -122,27 +122,34 @@ parentPort.on('message', (message) => {
   }
 });
 
-test('a passes worker that exits inside the dormant step gives the turn back', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'stim-worker-turn-'));
+test('a disk pass asked of a passes worker that ends settles, and the next one starts a new worker', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'stim-worker-ladder-'));
   const fixture = join(root, 'worker.mjs');
   writeFileSync(
     fixture,
     `
-import { parentPort, workerData } from 'node:worker_threads';
+import { parentPort } from 'node:worker_threads';
 parentPort.on('message', (message) => {
-  if (message.type !== 'run') return;
-  Atomics.compareExchange(workerData.dormantGate, 0, 0n, 2n);
-  process.exit(1);
+  if (message.type !== 'ladder') return;
+  if (message.input.pressure.reasons.length === 0) process.exit(1);
+  parentPort.postMessage({ type: 'ladderDone', id: message.id, result: { actions: [], pressure: message.input.pressure } });
 });
 `,
   );
   const entry = vi.spyOn(entries, 'spawnEntry').mockReturnValue(fixture);
   const threads = createThreadTable(() => {});
+  const input = (reasons: string[]): DiskPassInput => ({
+    act: true,
+    pressure: { level: 'critical', disk: 'critical', memory: 'normal', reasons, memoryWarningSince: null },
+    devices: [],
+    sims: [],
+    requested: false,
+  });
   try {
-    await expect(threads.run('passes', { cwd: root })).rejects.toThrow('the passes thread exited with code 1');
-    const gate = threads.dormant?.gate;
-    if (!gate) throw new Error('no dormant gate');
-    expect(admitStep(gate)).toBe(true);
+    const ladder = threads.ladder?.bind(threads);
+    if (!ladder) throw new Error('no ladder');
+    await expect(ladder(input([]))).rejects.toThrow('the passes thread ended during a disk pass');
+    await expect(ladder(input(['answer']))).resolves.toMatchObject({ actions: [] });
   } finally {
     entry.mockRestore();
     await threads.close();
