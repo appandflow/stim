@@ -16,8 +16,8 @@
  *     uuid-changed, id-ahead, dropped, ids-wrapped.
  *   {"dev": N, "dirty": [rootIndex, ...], "eventId": N}
  *     Roots, by index in the last watch line, that changed up to `eventId`.
- *     History replay prints one such line, right before historyDone; live
- *     changes print one per batch.
+ *     History replay prints one such line, right before historyDone, and at
+ *     most one purged line; live changes print one line per batch.
  *   {"dev": N, "historyDone": true, "uuid": "..." | null, "eventId": N}
  *     Every change before `eventId` has been reported.
  * `eventId` never decreases for a device within one watch.
@@ -253,6 +253,7 @@ typedef struct {
   uint64_t last;
   bool replaying;
   bool replayed_dirty;
+  bool replay_purged;
   FSEventStreamRef stream;
 } device;
 
@@ -330,13 +331,14 @@ static void on_events(ConstFSEventStreamRef stream, void *info, size_t count, vo
     }
   }
   if (d->replaying) d->replayed_dirty |= dirty;
-  if (purged) emit_purged(d, purged);
+  if (purged && !d->replay_purged) emit_purged(d, purged);
   else if (dirty && !d->replaying) emit_dirty(d);
+  if (purged && d->replaying) d->replay_purged = true;
   if (history_done) {
     FSEventStreamEventId latest = FSEventStreamGetLatestEventId(stream);
     if (latest > d->last) d->last = latest;
     if (d->replayed_dirty) emit_dirty(d);
-    d->replaying = false;
+    d->replaying = d->replay_purged = false;
     emit_history_done(d);
   }
 }
