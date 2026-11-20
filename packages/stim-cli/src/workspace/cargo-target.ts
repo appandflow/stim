@@ -40,7 +40,24 @@ const STAGED_LEFT = 'what was staged stays in its .stim-trimmed, marked NOT-REST
 /** Solana's `cargo build-sbf` and Anchor keep each program's private key in `deploy/<program>-keypair.json`. */
 const KEYPAIR_DIR = 'deploy';
 const isKeypairDir = (name: string): boolean => name.toLowerCase() === KEYPAIR_DIR;
-const isKeypairName = (name: string): boolean => name.toLowerCase().endsWith('-keypair.json');
+export const isKeypairName = (name: string): boolean => name.toLowerCase().endsWith('-keypair.json');
+
+/**
+ * The first `*-keypair.json` in any letter case under the directory `dir`, relative to it, never through a symbolic
+ * link, or null when there is none. Throws when a directory in it cannot be read.
+ */
+export async function keypairUnder(dir: string, signal?: AbortSignal): Promise<string | null> {
+  const queue = [''];
+  for (let rel = queue.pop(); rel !== undefined; rel = queue.pop()) {
+    signal?.throwIfAborted();
+    for (const entry of await readdir(join(dir, rel), { withFileTypes: true })) {
+      const child = rel ? join(rel, entry.name) : entry.name;
+      if (entry.isDirectory()) queue.push(child);
+      else if (isKeypairName(entry.name)) return child;
+    }
+  }
+  return null;
+}
 
 /**
  * The top-level entries of `target` the dormant delete removes (`output`), and those it keeps (`kept`): a symbolic link,

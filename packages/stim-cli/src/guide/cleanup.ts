@@ -1320,7 +1320,8 @@ idleness, no process or agent session, and every git-ignored file present byte
 for byte in the main checkout, except inside regenerable folders: directories
 git reports as ignored that are named node_modules or like build output (build,
 dist, target, .next, .turbo, .expo and the rest of the source scan's list) or
-that the stages recognise; the files inside them are deleted with the worktree.
+that the stages recognise; the files inside them are deleted with the worktree,
+but a Solana *-keypair.json in a target folder keeps it.
 An ignored file elsewhere that the main checkout lacks, even inside a tracked
 dist folder, keeps it (more than 200 files or 16 MB to compare also keeps it).
 Any change to a tracked file, even Podfile.lock or project.pbxproj, is dirty

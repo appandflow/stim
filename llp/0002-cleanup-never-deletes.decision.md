@@ -65,6 +65,9 @@ deletes the worktree with its dependency folders.
 --dry-run` shows it kept), and before automatic maintenance removes a
   finished or discovered worktree, which waits while one of its dependency
   folders has detected edits.
+- An unfinished `pnpm patch`, a non-empty `.pnpm_patches` in a node_modules
+  folder, counts as an edit. The scan skips that folder with the tools' caches,
+  so the check reads it on its own.
 - A kept folder's reason names the files, in the kept action, the cleanup
   log, `stim gc --dry-run`, `stim status` (`dependencyEdits`) and
   `stim doctor`, which says its disk is not freed and how to release it: make

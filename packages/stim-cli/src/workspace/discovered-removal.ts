@@ -7,7 +7,8 @@ import { discoveredEvidence, SKIPPED_WHERE_IGNORED } from './discovered-activity
 import type { DiscoveredReads } from './discovered-reads.ts';
 import { gitQuietAsync } from './git.ts';
 import { hiddenEditHold } from './hidden-edits.ts';
-import { checkDependencyEdits, dependencyEditsHold } from './dependency-edits.ts';
+import { checkDependencyEdits, dependencyEditsHold, pnpmPatchHold } from './dependency-edits.ts';
+import { isKeypairName, keypairUnder } from './cargo-target.ts';
 import { absent } from './scan-rules.ts';
 
 const MAX_IGNORED_FILES = 200;
@@ -25,6 +26,9 @@ const inFolder = (rel: string, folders: readonly string[]) =>
 /** Whether git reported the whole folder ignored and it is a dependency or build-output folder the stages recognise. */
 const regenerableFolder = (rel: string, folders: readonly string[]) =>
   outputNamed(rel.split('/').at(-1) ?? '') || podsFolder(rel) || inFolder(rel, folders);
+
+/** Whether `rel` is a Cargo `target` folder or lies inside one, where Solana and Anchor keep program keypairs. */
+const inCargoTarget = (rel: string) => rel.split('/').includes('target');
 
 /** Whether the ignored entry `rel` is a `node_modules` that is a symbolic link, as some package managers and tools make. */
 const linkedNodeModules = async (path: string, rel: string): Promise<boolean> =>
@@ -82,6 +86,15 @@ export async function ignoredFilesHold(path: string, main: string, signal?: Abor
       return unreadable;
     }
   };
+  const keypairHold = async (rel: string): Promise<string | null> => {
+    try {
+      const found = await keypairUnder(join(path, rel), signal);
+      return found ? `its ${join(rel, found)} is a Solana keypair, which a rebuild does not recreate` : null;
+    } catch {
+      signal?.throwIfAborted();
+      return unreadable;
+    }
+  };
   const walk = async (rel: string): Promise<string | null> => {
     let names: string[];
     try {
@@ -107,7 +120,11 @@ export async function ignoredFilesHold(path: string, main: string, signal?: Abor
         if ('keep' in edits) return `its ${child}: ${edits.keep}`;
         continue;
       }
-      if (directory && regenerableFolder(child, folders)) continue;
+      if (directory && regenerableFolder(child, folders)) {
+        const keypair = inCargoTarget(child) ? await keypairHold(child) : null;
+        if (keypair) return keypair;
+        continue;
+      }
       if (stat.isSymbolicLink() && name === 'node_modules') continue;
       const hold = directory ? await walk(child) : await check(child);
       if (hold) return hold;
@@ -116,10 +133,15 @@ export async function ignoredFilesHold(path: string, main: string, signal?: Abor
   };
   for (const entry of listed.split('\0').filter(Boolean)) {
     const rel = entry.endsWith('/') ? entry.slice(0, -1) : entry;
+    if (entry.endsWith('/') && regenerableFolder(rel, folders)) {
+      const keypair = inCargoTarget(rel) ? await keypairHold(rel) : null;
+      if (keypair) return keypair;
+      continue;
+    }
     if (
-      entry.endsWith('/')
-        ? regenerableFolder(rel, folders)
-        : inFolder(dirname(rel), folders) || (await linkedNodeModules(path, rel))
+      !entry.endsWith('/') &&
+      ((inFolder(dirname(rel), folders) && !isKeypairName(rel.split('/').at(-1) ?? '')) ||
+        (await linkedNodeModules(path, rel)))
     )
       continue;
     const hold = entry.endsWith('/') ? await walk(rel) : await check(rel);
@@ -145,14 +167,7 @@ async function enclosingCheckout(path: string): Promise<string | null> {
  * `node_modules/.pnpm_patches` until `pnpm patch-commit`, which git ignores and no activity read looks into.
  */
 export async function pendingPnpmPatch(path: string): Promise<string | null> {
-  const dir = join(path, 'node_modules', '.pnpm_patches');
-  try {
-    return (await readdir(dir)).length
-      ? 'it has an unfinished pnpm patch in node_modules/.pnpm_patches; run pnpm patch-commit or delete it'
-      : null;
-  } catch (error) {
-    return absent(error) ? null : 'node_modules/.pnpm_patches cannot be read';
-  }
+  return pnpmPatchHold(join(path, 'node_modules'));
 }
 
 // @ref LLP 0004#removing-a-discovered-worktree-needs-more-evidence -- no Stim record of its files

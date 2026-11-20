@@ -1,5 +1,6 @@
 import { existsSync, lstatSync, readdirSync, type Stats } from 'node:fs';
 import { basename, dirname, join, relative, sep } from 'node:path';
+import { readdir } from 'node:fs/promises';
 import { setImmediate as nextTurn } from 'node:timers/promises';
 import {
   readDependencyInstall,
@@ -14,6 +15,7 @@ import { treeSignature } from '../private-size.ts';
 import { gitQuietAsync } from './git.ts';
 import { updateDependencyInstall as updateRecord } from './dependency-install-records.ts';
 import { ARTIFACT_DIRS, existingDirsOf } from './regenerable-dirs.ts';
+import { absent } from './scan-rules.ts';
 
 /**
  * How long after a package manager's stamp the root project's own install-time script (`preinstall`, `install`,
@@ -363,6 +365,21 @@ export function editsKeptReason(
   return `${countText(edits.count, edits.complete)} in it ${after} (${shown}${more}), so maintenance and stim gc keep it at every disk pressure and its disk is not freed; make the change a patch (pnpm patch, yarn patch or patch-package), or reinstall the dependencies, to release it`;
 }
 
+/**
+ * Why an unfinished `pnpm patch` keeps the node_modules `tree`, or null: pnpm keeps the editable copy in its
+ * `.pnpm_patches` until `pnpm patch-commit`, and the edit scan skips that dot-directory with the tools' caches.
+ */
+export async function pnpmPatchHold(tree: string): Promise<string | null> {
+  const where = `${basename(tree)}/.pnpm_patches`;
+  try {
+    return (await readdir(join(tree, '.pnpm_patches'))).length
+      ? `it has an unfinished pnpm patch in ${where}; run pnpm patch-commit or delete it`
+      : null;
+  } catch (error) {
+    return absent(error) ? null : `${where} cannot be read`;
+  }
+}
+
 /** `edited` when the keep is for changed files rather than a tree that could not be checked. */
 export type EditCheck = { keep: string; edited?: true } | { delete: true };
 
@@ -385,6 +402,8 @@ export async function checkDependencyEdits(
   }: { level: PressureLevel; worktree: string; readOnly?: boolean; signal?: AbortSignal },
 ): Promise<EditCheck> {
   const tree = canonicalOr(path);
+  const patch = kindOf(tree) === 'node_modules' ? await pnpmPatchHold(tree) : null;
+  if (patch) return { keep: patch, edited: true };
   const record = readDependencyInstall(tree);
   const signature = treeSignature(tree);
   const known = (record?.edits?.files ?? []).filter(

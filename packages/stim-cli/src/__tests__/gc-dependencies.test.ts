@@ -349,6 +349,29 @@ test.skipIf(process.platform === 'win32')(
 );
 
 test.skipIf(process.platform === 'win32')(
+  'gc keeps the dependencies of an idle worktree with an unfinished pnpm patch, at critical too',
+  async () => {
+    const feature = idleRepo([{ name: 'feature', workspace: true }]).feature ?? '';
+    const modules = join(feature, 'node_modules');
+    const config = loadConfig();
+    if (!config) throw new Error('no config');
+    saveConfig({ ...config, idle: { dormantDays: 0.01 } });
+    const patched = join(modules, '.pnpm_patches', 'pkg@1.0.0', 'index.js');
+    mkdirSync(dirname(patched), { recursive: true });
+    writeFileSync(patched, 'patched by hand');
+
+    const { payload }: { payload: LevelPayload } = await gcJson('normal');
+    await quietly(() => runGc({ pressure: 'critical' }));
+
+    const kept = payload.actions.find((action) => action.kind === 'delete-dependencies' && action.target === modules);
+    expect(kept?.outcome).toBe('kept');
+    expect(kept?.detail).toContain('unfinished pnpm patch');
+    expect(readFileSync(patched, 'utf-8')).toBe('patched by hand');
+  },
+  60_000,
+);
+
+test.skipIf(process.platform === 'win32')(
   'a scoped STIM_HOME does not consider the dependencies of a linked worktree it does not list',
   async () => {
     const roots = idleRepo([

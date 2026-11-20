@@ -306,4 +306,39 @@ describe('a worktree of a plain Node repository on the removal path', () => {
     expect(existsSync(join(dirty, 'notes.txt'))).toBe(true);
     expect(existsSync(patched)).toBe(true);
   });
+
+  it('keeps a finished one whose ignored Cargo target holds a Solana keypair', async () => {
+    writeFileSync(join(main, '.git', 'info', 'exclude'), 'target/\n');
+    const keyed = worktree('keyed');
+    const keypair = join(keyed, 'target', 'deploy', 'Program-Keypair.json');
+    mkdirSync(join(keyed, 'target', 'deploy'), { recursive: true });
+    writeFileSync(keypair, '[1,2,3]');
+    age(keyed);
+    const planned = await collectWorktreeSweep({ idle: false, olderThan: null, now: Date.now(), refresh: false });
+    expect(planned.worktrees.find((entry) => entry.path === keyed)?.skipped).toContain('Solana keypair');
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await removeWorktrees(planned, { now: Date.now() });
+    expect(existsSync(keypair)).toBe(true);
+  });
+
+  it('keeps a finished one whose keypair git lists on its own inside a partly tracked Cargo target', async () => {
+    writeFileSync(join(main, '.git', 'info', 'exclude'), 'target/\n');
+    mkdirSync(join(main, 'target', 'deploy'), { recursive: true });
+    writeFileSync(join(main, 'target', 'deploy', '.gitkeep'), '');
+    git(main, 'add', '-f', 'target/deploy/.gitkeep');
+    git(main, 'commit', '-q', '-m', 'deploy');
+    git(main, 'push', '-q');
+    const keyed = worktree('keyed');
+    writeFileSync(join(keyed, 'target', 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55');
+    const keypair = join(keyed, 'target', 'deploy', 'program-keypair.json');
+    writeFileSync(keypair, '[1,2,3]');
+    age(keyed);
+    const planned = await collectWorktreeSweep({ idle: false, olderThan: null, now: Date.now(), refresh: false });
+    expect(planned.worktrees.find((entry) => entry.path === keyed)?.skipped).toContain('program-keypair.json');
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await removeWorktrees(planned, { now: Date.now() });
+    expect(existsSync(keypair)).toBe(true);
+  });
 });

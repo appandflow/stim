@@ -82,6 +82,13 @@ test('an untouched tree is deleted; Gradle, pnpm and tool-cache output does not 
   expect(await keptFiles()).toContain('hybrid/build/index.js');
 });
 
+test('an unfinished pnpm patch keeps the tree at critical too', async () => {
+  installAt(ago(HOUR));
+  write(join(tree, '.pnpm_patches', 'pkg@1.0.0', 'index.js'), 'patched by hand', ago(2 * HOUR));
+
+  expect(await keptFiles()).toContain('unfinished pnpm patch in node_modules/.pnpm_patches');
+});
+
 test('.bin shims a version of Stim recorded as edits no longer keep the tree', async () => {
   installAt(ago(HOUR));
   write(join(tree, '.bin', 'tsc'), '#!/bin/sh');
