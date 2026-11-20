@@ -731,11 +731,7 @@ service's stimd exits and the service starts it again on the new build, inside
 the service's job (on Linux after systemd's 30 s restart delay). The first switch
 onto a Stim with this behavior is still made by the older build, so it can leave
 one stimd outside the job until the next switch. A Linux service installed by an
-earlier Stim keeps the older handover until it starts again after Stim adds the
-`KillMode=process` setting it needs, which Stim does the first time it runs in
-that service; `stim service install` also adds it. With that setting,
-`systemctl --user stop` and `stim service uninstall` leave the service's dev
-servers running, as any stimd exit does. It never changes pairings,
+earlier Stim keeps the older handover until you run `stim service install` again. It never changes pairings,
 approvals, Stim Host, the pinned `--env` and `--path-prepend` values or the
 serve route. A client approved for builds or device hosting can ask for the
 same update from its machine with `stim remote update <mac>`. A build whose

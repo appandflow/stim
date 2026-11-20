@@ -1,4 +1,4 @@
-import { quoteUnitWord, unitLines } from '@stim-cli/core';
+import { quoteUnitWord } from '@stim-cli/core';
 import { LABEL_VARIABLE } from '@stim-cli/core/state';
 import {
   environmentValues,
@@ -11,8 +11,6 @@ import {
 export { LABEL_VARIABLE, parseSystemctlShow, parseUnit, SHOW_PROPERTIES } from '@stim-cli/core/state';
 
 const STOP_TIMEOUT_SECONDS = 30;
-// @ref LLP 0009#service-and-engine-updates -- a unit stop signals stimd alone, so its dev servers outlive it
-const KILL_MODE = 'KillMode=process';
 
 const execLine = (args: string[]) => `ExecStart=${args.map((arg) => quoteUnitWord(arg, true)).join(' ')}`;
 
@@ -35,7 +33,7 @@ export function renderUnit(spec: ServiceSpec, previousScript: string | null = nu
     'WorkingDirectory=%h',
     'Restart=always',
     `RestartSec=${THROTTLE_SECONDS}`,
-    KILL_MODE,
+    'KillMode=process',
     `TimeoutStopSec=${STOP_TIMEOUT_SECONDS}`,
     `StandardOutput=append:${spec.logPath.replace(/%/g, '%%')}`,
     'StandardError=inherit',
@@ -49,21 +47,6 @@ export function renderUnit(spec: ServiceSpec, previousScript: string | null = nu
     'WantedBy=default.target',
     '',
   ];
-  return lines.join('\n');
-}
-
-/** The `KillMode=` value the `[Service]` section of `text` sets last, or null when it sets none. */
-export function unitKillMode(text: string): string | null {
-  return unitLines(text).findLast((line) => line.section === 'Service' && line.key === 'KillMode')?.value ?? null;
-}
-
-/** `text` with `KillMode=process` added to its `[Service]` section when that section sets no `KillMode=`. */
-export function withKillMode(text: string): string {
-  if (unitKillMode(text) !== null) return text;
-  const lines = text.split('\n');
-  const service = lines.findIndex((line) => line.trim() === '[Service]');
-  if (service < 0) return text;
-  lines.splice(service + 1, 0, KILL_MODE);
   return lines.join('\n');
 }
 
