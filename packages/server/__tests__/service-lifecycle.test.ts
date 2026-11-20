@@ -502,6 +502,16 @@ describe.skipIf(process.platform !== 'darwin')('service lifecycle', () => {
     expect(launchd.job).toBe('old');
   });
 
+  it('restores a binary previous plist byte for byte when the replacement exits immediately', async () => {
+    execFileSync('plutil', ['-convert', 'binary1', plist]);
+    const before = readFileSync(plist);
+    launchd.original = before.toString('utf8');
+    launchd.failNew = true;
+    await Promise.all([expect(install()).rejects.toThrow('is not running (last exit code 1)'), vi.runAllTimersAsync()]);
+    expect(readFileSync(plist).equals(before)).toBe(true);
+    expect(execFileSync('plutil', ['-lint', plist], { encoding: 'utf8' })).toContain('OK');
+  });
+
   it('keeps the startup error and restores the previous job when cleanup cannot release the new port', async () => {
     launchd.port = 7788;
     launchd.unrelatedPort = 7788;

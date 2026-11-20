@@ -549,7 +549,7 @@ export async function installJob(
       return [`${options.label} already runs stim-server ${health.version}.`];
     }
   }
-  const oldPlist = previous ? readFileSync(path, 'utf8') : null;
+  const oldPlist = previous ? readFileSync(path) : null;
   mkdirSync(dirname(path), { recursive: true });
   mkdirSync(dirname(spec.logPath), { recursive: true });
 
