@@ -19,7 +19,6 @@ import { afterEach, beforeEach, describe, expect, onTestFinished, test, vi } fro
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { withCargoLocks } from '../workspace/cargo-lock.ts';
 import {
-  cargoProfileDirs,
   deleteCargoTarget,
   removableEntries,
   staleCargoPaths,
@@ -332,18 +331,6 @@ describe.skipIf(process.platform === 'win32')('trimming in place (Cargo locks ne
     expect(readFileSync(join(outside, 'libx.rlib'), 'utf8')).toBe('theirs');
     expect(result.removed).toEqual([]);
     expect(result.kept).toEqual([expect.stringContaining(`${deps} is no longer a directory inside`)]);
-  });
-
-  test('a trim aborted part way through a profile leaves it a profile the next trim finds', async () => {
-    makeProfile('debug', 3 * DAY);
-    const abort = new AbortController();
-    fsHooks.afterLstat = (path) => {
-      if (path.endsWith(join('deps', 'libx.rlib'))) abort.abort();
-    };
-
-    await expect(trimCargoTarget(target, { needBytes: 0, signal: abort.signal })).rejects.toThrow('aborted');
-
-    expect(cargoProfileDirs(target)).toEqual([join(target, 'debug')]);
   });
 
   test('a link named like a keypair anywhere in the target keeps it whole, and what it points at stays', async () => {

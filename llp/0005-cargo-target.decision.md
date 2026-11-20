@@ -271,9 +271,7 @@ a directory on a device other than the `target/`'s and Exact's
 (`.cargo-lock`, `.cargo-build-lock`, `.cargo-artifact-lock`,
 `.exact-sweep.json.lock`) and a `*-keypair.json` (any case) are never unlinked,
 and a directory goes once it is empty. In a profile it removes `.fingerprint`
-last, so a delete stopped part way leaves a directory Stim still lists as a
-profile and trims again; Cargo 1.97 rebuilds a unit whose outputs are missing
-while its fingerprint stays, which a real run of removed `deps` files showed. A
+first, so a build that starts while the profile is half removed rebuilds it. A
 path already gone counts as removed. What it left for those rules is reported,
 lock files aside. Right before each unlink and each directory removal, the
 parent directory must still resolve through `realpath` to the path the remover

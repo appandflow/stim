@@ -372,9 +372,8 @@ async function stillInside(path: string): Promise<void> {
  * Removes `path` in place, deepest first: a symbolic link is unlinked and never followed, a directory on a device other
  * than `dev` and Exact's `.apple-cargo-locks` are not entered, a lock file Cargo or Exact takes and a `*-keypair.json`
  * (any case) are never unlinked, and a directory goes once it is empty. Right before each unlink and each directory
- * removal its parent must still resolve to itself, or `LeftTarget` stops the delete. A `.fingerprint` goes after its
- * siblings, so a profile a delete left half removed is still listed as one; Cargo rebuilds a unit whose outputs are
- * missing. A path already gone counts as removed.
+ * removal its parent must still resolve to itself, or `LeftTarget` stops the delete. A `.fingerprint` goes before its
+ * siblings, so a build that starts while a profile is half removed rebuilds it. A path already gone counts as removed.
  * Returns the paths it left because of those rules; a directory a build filled again meanwhile stays too.
  */
 async function removeInPlace(path: string, dev: number, signal?: AbortSignal): Promise<string[]> {
@@ -400,7 +399,7 @@ async function removeInPlace(path: string, dev: number, signal?: AbortSignal): P
   });
   if (!names) return [];
   const left: string[] = [];
-  for (const child of names.toSorted((a, b) => Number(a === '.fingerprint') - Number(b === '.fingerprint')))
+  for (const child of names.toSorted((a, b) => Number(b === '.fingerprint') - Number(a === '.fingerprint')))
     left.push(...(await removeInPlace(join(path, child), dev, signal)));
   if (left.length) return left;
   await stillInside(path);
