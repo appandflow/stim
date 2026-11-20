@@ -40,7 +40,7 @@ async function sameAsMain(path: string, main: string, rel: string, budget: { byt
  * regenerable folders (a directory git reports ignored whose name is node_modules or build output, or a folder the stages recognise) must exist, byte for byte, at the same place in the repository's main checkout. More than
  * MAX_IGNORED_FILES files, more than MAX_COMPARED_BYTES to compare, or anything unreadable keeps the worktree.
  */
-async function ignoredFilesHold(path: string, main: string, signal?: AbortSignal): Promise<string | null> {
+export async function ignoredFilesHold(path: string, main: string, signal?: AbortSignal): Promise<string | null> {
   const listed = await gitQuietAsync(
     path,
     ['ls-files', '-z', '--others', '--ignored', '--exclude-standard', '--directory'],

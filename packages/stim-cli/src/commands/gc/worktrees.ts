@@ -589,10 +589,22 @@ function dormantMs(operation?: StimContext): number {
   );
 }
 
-/** The reasons a discovered worktree stays, read again under the removal locks: its removal evidence. */
+/**
+ * The reasons a worktree stays, read again under the removal locks: for a registered one, a git-ignored file that the
+ * main checkout lacks or holds differently; for a discovered one, its whole removal evidence.
+ */
 async function removalUseHold(candidate: WorktreeCandidate, operation?: StimContext): Promise<string[]> {
-  if (!candidate.discovered) return [];
-  const { discoveredRemovalHold } = await import('../../workspace/discovered-removal.ts');
+  const { discoveredRemovalHold, ignoredFilesHold } = await import('../../workspace/discovered-removal.ts');
+  if (!candidate.discovered) {
+    const source = await resolveSourceCheckoutAsync(candidate.path, {
+      env: operation?.env,
+      signal: operation?.signal,
+      declareFor: operation,
+    });
+    if ('refusal' in source) return ['its main checkout cannot be named, so its git-ignored files cannot be compared'];
+    const hold = await ignoredFilesHold(candidate.path, source.path, operation?.signal);
+    return hold ? [hold] : [];
+  }
   const hold = await discoveredRemovalHold(candidate.path, {
     main: candidate.source ?? null,
     idleMs: dormantMs(operation),

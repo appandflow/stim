@@ -2677,6 +2677,19 @@ test('gc keeps a finished worktree a running agent session works in', async () =
   expect(existsSync(worktrees.squashed ?? '')).toBe(false);
 }, 240_000);
 
+test('gc keeps a finished registered worktree whose git-ignored hand-written file the main checkout lacks', async () => {
+  const { worktrees } = repoWithMergedBranches();
+  const merged = worktrees.merged ?? '';
+  mkdirSync(join(merged, '.claude'));
+  writeFileSync(join(merged, '.claude', 'tool.sh'), '#!/bin/sh\necho mine\n');
+
+  await checkWorktrees();
+  await gcJson({ pressure: 'normal' });
+
+  expect(existsSync(join(merged, '.claude', 'tool.sh'))).toBe(true);
+  expect(existsSync(worktrees.squashed ?? '')).toBe(false);
+}, 240_000);
+
 test('worktree remove removes a clean linked worktree no stim command ran in', async () => {
   const { worktrees } = repoWithMergedBranches({ registerWorktrees: false });
   const merged = worktrees.merged ?? '';
