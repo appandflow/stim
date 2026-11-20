@@ -7,7 +7,6 @@ import { diskFull, retryWithReserve } from '../disk-reserve.ts';
 import { getExecutor } from '../exec.ts';
 import { measuredDirectorySizeAsync } from '../fs-util.ts';
 import { withCargoLocks } from './cargo-lock.ts';
-import { launcherReason, type Launching } from './launchers.ts';
 import { cargoTargetDirsAsync } from './regenerable-dirs.ts';
 import { cargoUnitPaths, cargoUnitWasRead, idleCargoUnits, readCargoUnits, removalOrder } from './cargo-units.ts';
 
@@ -15,7 +14,7 @@ const CARGO_PROFILE_IDLE_MS: number = 24 * 3_600_000;
 
 /** Why a staging write found the disk full and the checks made after releasing the reserve keep the entry. */
 class KeptAfterRelease extends Error {
-  /** Whether the reason keeps the whole target, as a launcher or unreadable process evidence does. */
+  /** Whether the reason keeps the whole target, as unreadable process evidence does. */
   readonly whole: boolean;
   constructor(message: string, whole = false) {
     super(message);
@@ -383,13 +382,11 @@ function inUse(used: readonly string[], dir: string): boolean {
 }
 
 /**
- * The paths under `target` a running process executes from or holds open, from one `lsof` and one `ps` read, with the
- * launcher reading taken at the same moment: an executable on PATH that resolves into the owning checkout, a launcher
- * read that has not answered, or process evidence that cannot be read, keeps everything.
+ * The paths under `target` a running process executes from or holds open, from one `lsof` and one `ps` read; process
+ * evidence that cannot be read keeps everything.
  */
 async function readTargetUse(
   target: string,
-  launching: Launching,
   signal?: AbortSignal,
   lowPriority = false,
 ): Promise<{ used: string[] } | { kept: string }> {
@@ -401,13 +398,7 @@ async function readTargetUse(
         : exec.runFileAsync(file, args, { timeoutMs, signal });
     const lsof = await run('lsof', ['-nP', '-w', '-Fn'], 60_000);
     const ps = await run('ps', ['-axww', '-o', 'args='], 30_000);
-    const used = targetPathsInUse(target, lsof, ps);
-    const scan = await launching.anew();
-    const launcher = launcherReason(launching.checkout, scan);
-    if (launcher) return { kept: launcher };
-    const prefix = `${folded(target)}/`;
-    for (const path of scan.targets) if (folded(path).startsWith(prefix)) used.push(folded(path));
-    return { used };
+    return { used: targetPathsInUse(target, lsof, ps) };
   } catch {
     signal?.throwIfAborted();
     return { kept: CANNOT_READ };
@@ -569,7 +560,6 @@ export async function deleteCargoTarget(registeredTarget: string, options: Delet
 
 interface DeleteOptions {
   idleMs: number;
-  launching: Launching;
   signal?: AbortSignal;
   /**
    * Reads Linux's `/proc/self/mountinfo`, where a bind mount keeps the device number of the volume it exposes, so the
@@ -600,7 +590,7 @@ function mountedUnder(target: string, mountInfo: (() => string) | null): string 
 
 async function deleteClaimed(
   target: string,
-  { idleMs, launching, signal, mountInfo = LINUX_MOUNT_INFO }: DeleteOptions,
+  { idleMs, signal, mountInfo = LINUX_MOUNT_INFO }: DeleteOptions,
 ): Promise<CargoTrimResult> {
   const result: CargoTrimResult = { bytes: 0, removed: [], kept: [] };
   const keep = (why: string): CargoTrimResult => ({ ...result, kept: [...result.kept, why] });
@@ -631,7 +621,7 @@ async function deleteClaimed(
   if (fresh) return keep(`${fresh} holds a file written in that time`);
   const keyed = entries.output.filter((name) => walked.keypairs.has(join(target, name)));
   const names = entries.output.filter((name) => !keyed.includes(name));
-  const first = await readTargetUse(target, launching, signal);
+  const first = await readTargetUse(target, signal);
   if ('kept' in first) return keep(first.kept);
   if (first.used.length) return keep(`a process uses ${first.used[0]}`);
   for (const name of names) {
@@ -743,7 +733,7 @@ async function deleteClaimed(
     for (const entry of moved) result.bytes += await sizeOf(entry.there, signal);
     const exactTook = await heldExactLock(target);
     if (exactTook) return await putBackAll(`a build took ${exactTook} during the move`);
-    const after = moved.length ? await readTargetUse(target, launching, signal) : { used: [] };
+    const after = moved.length ? await readTargetUse(target, signal) : { used: [] };
     if ('kept' in after) return await putBackAll(after.kept);
     if (after.used.length) return await putBackAll(`a process took ${after.used[0]} during the move`);
     const now = Date.now();
@@ -941,11 +931,6 @@ interface CargoTrimOptions {
   stop?: AbortSignal;
   /** Whether to walk what was removed to report its bytes; false reports 0 and removes at once. Default true. */
   measure?: boolean;
-  /**
-   * The checkout that owns the target and how to read the launchers anew, which the trim does after each read of the
-   * processes using the target; a launcher into any of the checkout keeps the whole target. Every caller states it.
-   */
-  launching: Launching;
 }
 
 /** Why no trim of `target` runs until a person acts: its `.stim-trimmed` holds a directory that could not be put back. */
@@ -1006,7 +991,6 @@ async function trimClaimed(
     signal,
     stop,
     measure = true,
-    launching,
   }: CargoTrimOptions,
 ): Promise<CargoTrimResult> {
   const result: CargoTrimResult = { bytes: 0, removed: [], kept: [] };
@@ -1025,7 +1009,7 @@ async function trimClaimed(
       kept: [`a leftover ${aside} cannot be deleted: ${error instanceof Error ? error.message : error}`],
     };
   }
-  const first = await readTargetUse(target, launching, signal, lowPriority);
+  const first = await readTargetUse(target, signal, lowPriority);
   if ('kept' in first) return { ...result, kept: [first.kept] };
   let used: string[] = first.used;
   const stale = staleCargoTargetPaths(target, now, profileIdleMs);
@@ -1084,7 +1068,7 @@ async function trimClaimed(
     }
     const recheck = async (): Promise<void> => {
       released();
-      const fresh = await readTargetUse(target, launching, signal, lowPriority);
+      const fresh = await readTargetUse(target, signal, lowPriority);
       if ('kept' in fresh) throw new KeptAfterRelease(fresh.kept, true);
       used = fresh.used;
       if (stalePath) latestStale = staleCargoTargetPaths(target, now, profileIdleMs);
@@ -1143,7 +1127,7 @@ async function trimClaimed(
     if (!all) return { ...none, kept: 'its units cannot be listed' };
     const candidates = [...cargoUnitPaths(profile, idleCargoUnits(all, now, CARGO_PROFILE_IDLE_MS))];
     if (!candidates.length) return none;
-    const fresh = await readTargetUse(target, launching, signal, lowPriority);
+    const fresh = await readTargetUse(target, signal, lowPriority);
     if ('kept' in fresh) return { ...none, kept: fresh.kept };
     let swept = 0;
     let bytes = 0;
@@ -1152,7 +1136,7 @@ async function trimClaimed(
       (paths: readonly string[] = [], batch?: string) =>
       async (): Promise<void> => {
         released();
-        const again = await readTargetUse(target, launching, signal, lowPriority);
+        const again = await readTargetUse(target, signal, lowPriority);
         if ('kept' in again) throw new KeptAfterRelease(again.kept, true);
         unitsUsed = again.used;
         const busy = paths.find(
@@ -1247,7 +1231,7 @@ async function trimClaimed(
     stopped() || wholeKept
       ? null
       : incremental === 'all' || result.bytes < needBytes
-        ? await readTargetUse(target, launching, signal, lowPriority)
+        ? await readTargetUse(target, signal, lowPriority)
         : { used };
   if (stopped()) {
     if (!result.kept.includes(DEADLINE_KEPT)) result.kept.push(DEADLINE_KEPT);

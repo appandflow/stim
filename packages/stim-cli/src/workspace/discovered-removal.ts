@@ -7,7 +7,7 @@ import { discoveredEvidence, SKIPPED_WHERE_IGNORED } from './discovered-activity
 import type { DiscoveredReads } from './discovered-reads.ts';
 import { gitQuietAsync } from './git.ts';
 import { hiddenEditHold } from './hidden-edits.ts';
-import { dependencyEditsHold } from './dependency-edits.ts';
+import { checkDependencyEdits, dependencyEditsHold } from './dependency-edits.ts';
 import { absent } from './scan-rules.ts';
 
 const MAX_IGNORED_FILES = 200;
@@ -15,9 +15,21 @@ const MAX_COMPARED_BYTES = 16 * 1024 * 1024;
 
 const outputNamed = (name: string) => name === 'node_modules' || SKIPPED_WHERE_IGNORED.has(name);
 
+/** Whether `rel` is an `ios/Pods` folder, at the checkout root or below, as `apps/mobile/ios/Pods` in a monorepo. */
+const podsFolder = (rel: string) => rel === 'ios/Pods' || rel.endsWith('/ios/Pods');
+
+/** Whether `rel` is one of `folders`, checkout-relative, or lies inside one. */
+const inFolder = (rel: string, folders: readonly string[]) =>
+  folders.some((folder) => rel === folder || rel.startsWith(`${folder}/`));
+
 /** Whether git reported the whole folder ignored and it is a dependency or build-output folder the stages recognise. */
 const regenerableFolder = (rel: string, folders: readonly string[]) =>
-  outputNamed(rel.split('/').at(-1) ?? '') || folders.some((folder) => rel === folder || rel.startsWith(`${folder}/`));
+  outputNamed(rel.split('/').at(-1) ?? '') || podsFolder(rel) || inFolder(rel, folders);
+
+/** Whether the ignored entry `rel` is a `node_modules` that is a symbolic link, as some package managers and tools make. */
+const linkedNodeModules = async (path: string, rel: string): Promise<boolean> =>
+  rel.split('/').at(-1) === 'node_modules' &&
+  ((await lstat(join(path, rel)).catch(() => null))?.isSymbolicLink() ?? false);
 
 async function sameAsMain(path: string, main: string, rel: string, budget: { bytes: number }): Promise<boolean | null> {
   const mine = await lstat(join(path, rel));
@@ -40,7 +52,7 @@ async function sameAsMain(path: string, main: string, rel: string, budget: { byt
  * regenerable folders (a directory git reports ignored whose name is node_modules or build output, or a folder the stages recognise) must exist, byte for byte, at the same place in the repository's main checkout. More than
  * MAX_IGNORED_FILES files, more than MAX_COMPARED_BYTES to compare, or anything unreadable keeps the worktree.
  */
-async function ignoredFilesHold(path: string, main: string, signal?: AbortSignal): Promise<string | null> {
+export async function ignoredFilesHold(path: string, main: string, signal?: AbortSignal): Promise<string | null> {
   const listed = await gitQuietAsync(
     path,
     ['ls-files', '-z', '--others', '--ignored', '--exclude-standard', '--directory'],
@@ -50,7 +62,7 @@ async function ignoredFilesHold(path: string, main: string, signal?: AbortSignal
   );
   if (listed === null) return 'git cannot list its ignored files';
   const folders = [
-    ...ARTIFACT_DIRS.dependencies,
+    ...ARTIFACT_DIRS.dependencies.filter((folder) => !podsFolder(folder)),
     ...(await existingBuildDirsAsync(path)).map((dir) => relative(path, dir)),
   ];
   const budget = { bytes: 0 };
@@ -84,7 +96,19 @@ async function ignoredFilesHold(path: string, main: string, signal?: AbortSignal
       const stat = await lstat(join(path, child)).catch(() => null);
       if (!stat) return unreadable;
       const directory = stat.isDirectory() && !stat.isSymbolicLink();
+      if (directory && podsFolder(child)) {
+        // @ref LLP 0002#edits-inside-dependency-folders -- git lists only the ignored parent, so check the Pods here
+        const edits = await checkDependencyEdits(join(path, child), {
+          level: 'high',
+          worktree: path,
+          readOnly: true,
+          signal,
+        });
+        if ('keep' in edits) return `its ${child}: ${edits.keep}`;
+        continue;
+      }
       if (directory && regenerableFolder(child, folders)) continue;
+      if (stat.isSymbolicLink() && name === 'node_modules') continue;
       const hold = directory ? await walk(child) : await check(child);
       if (hold) return hold;
     }
@@ -92,7 +116,11 @@ async function ignoredFilesHold(path: string, main: string, signal?: AbortSignal
   };
   for (const entry of listed.split('\0').filter(Boolean)) {
     const rel = entry.endsWith('/') ? entry.slice(0, -1) : entry;
-    if (entry.endsWith('/') ? regenerableFolder(rel, folders) : folders.some((folder) => rel.startsWith(`${folder}/`)))
+    if (
+      entry.endsWith('/')
+        ? regenerableFolder(rel, folders)
+        : inFolder(dirname(rel), folders) || (await linkedNodeModules(path, rel))
+    )
       continue;
     const hold = entry.endsWith('/') ? await walk(rel) : await check(rel);
     if (hold) return hold;
@@ -116,7 +144,7 @@ async function enclosingCheckout(path: string): Promise<string | null> {
  * Why an unfinished `pnpm patch` keeps the worktree, or null: pnpm keeps the editable copy in
  * `node_modules/.pnpm_patches` until `pnpm patch-commit`, which git ignores and no activity read looks into.
  */
-async function pendingPnpmPatch(path: string): Promise<string | null> {
+export async function pendingPnpmPatch(path: string): Promise<string | null> {
   const dir = join(path, 'node_modules', '.pnpm_patches');
   try {
     return (await readdir(dir)).length
@@ -165,7 +193,7 @@ export async function discoveredRemovalHold(
   if (patches) return patches;
   if (!(idleMs > 0)) return 'idle.dormantDays is 0, so its idleness cannot be established';
   const now = Date.now();
-  const decision = decideIdleStop(await discoveredEvidence(path, { now, idleMs, reads, operation, reduceOnly }), {
+  const decision = decideIdleStop(await discoveredEvidence(path, { now, idleMs, reads, operation }), {
     idleMs,
     now,
     setting: 'idle.dormantDays',

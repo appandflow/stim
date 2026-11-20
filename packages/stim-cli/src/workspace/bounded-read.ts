@@ -1,6 +1,6 @@
 /**
- * The one filesystem read, of the launcher directories, the home scan or a checkout's source scan, that timed out and
- * has not settled. A timed-out native read cannot be cancelled, so while one is pending no further read of any kind starts: a hung mount holds
+ * The one filesystem read, of the home scan, a checkout's source scan or a discovery listing, that timed out and has
+ * not settled. A timed-out native read cannot be cancelled, so while one is pending no further read of any kind starts: a hung mount holds
  * exactly one libuv thread however many readings and scans are asked for. Module state, so the bound is one outstanding
  * read per JavaScript isolate: the daemon's main thread and its passes thread each have their own.
  */
