@@ -123,7 +123,7 @@ esac
     expect(reloads()).toBe('');
   });
 
-  it('adds KillMode=process once to a unit written without it, reloading without a restart, and keeps a set one', async () => {
+  it('adds KillMode=process once to a unit written without it, reloading without a restart, restores it when the reload fails, and keeps a set one', async () => {
     const written = `[Unit]
 Description=stim-server (${label})
 
@@ -141,11 +141,18 @@ Managed=true
     expect(reloads()).toBe('reload\n');
     await addUnitKillMode(label);
     expect(reloads()).toBe('reload\n');
+    writeFileSync(unit, written);
+    writeFileSync(join(home, 'fail'), '');
+    await expect(addUnitKillMode(label)).rejects.toThrow(/did not reload.*bus unavailable.*unchanged/);
+    expect(readFileSync(unit, 'utf8')).toBe(written);
+    await addUnitKillMode(label);
+    expect(readFileSync(unit, 'utf8')).toContain('[Service]\nKillMode=process\n');
+    expect(reloads()).toBe('reload\nreload\nreload\n');
     const mixed = written.replace('Restart=always', 'Restart=always\nKillMode=mixed');
     writeFileSync(unit, mixed);
     await addUnitKillMode(label);
     expect(readFileSync(unit, 'utf8')).toBe(mixed);
-    expect(reloads()).toBe('reload\n');
+    expect(reloads()).toBe('reload\nreload\nreload\n');
   });
 
   it('writes through a symlinked unit instead of replacing the link', async () => {

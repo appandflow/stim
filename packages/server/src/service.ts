@@ -470,7 +470,8 @@ function writeUnitThrough(path: string, text: string): void {
 
 /**
  * Adds `KillMode=process` to the systemd unit `label` when install wrote it without one, and reloads systemd so the
- * next stop of the running unit applies it; no restart is needed.
+ * next stop of the running unit applies it; no restart is needed. When the reload fails the unit is written back as it
+ * was, so the file never claims a mode systemd has not loaded, and the next boot tries again.
  */
 export async function addUnitKillMode(label: string): Promise<void> {
   const manager = serviceManager();
@@ -481,10 +482,12 @@ export async function addUnitKillMode(label: string): Promise<void> {
   if (edited === text) return;
   writeUnitThrough(path, edited);
   const reloaded = await manager.reload?.();
-  if (!reloaded?.ok)
+  if (!reloaded?.ok) {
+    writeUnitThrough(path, text);
     throw new ServiceError(
-      `systemd has not loaded KillMode=process for ${label} (${reloaded?.stderr.trim()}); run \`systemctl --user daemon-reload\`.`,
+      `systemd did not reload (${reloaded?.stderr.trim()}); the unit is unchanged and the server retries at its next boot.`,
     );
+  }
 }
 
 /** The server directory of the Stim home a service runs with `STIM_HOME` set to `stimHome`. */
