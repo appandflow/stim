@@ -31,6 +31,7 @@ import {
   stimBuildId,
 } from '@stim-cli/core/state';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { backgroundWalk } from './_background-walk.ts';
 import * as clonefile from '../clonefile.ts';
 import {
   claimRemoveCommand,
@@ -1418,7 +1419,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
     setExecutor({
       ...real,
       runFileAsync(file, args, options) {
-        if (file !== 'nice' || !args.includes(tree)) return real.runFileAsync(file, args, options);
+        if (!backgroundWalk(file, args)?.includes(tree)) return real.runFileAsync(file, args, options);
         walk = real.runFileAsync(process.execPath, ['-e', 'setTimeout(() => {}, 20000)'], {
           ...options,
           onSpawn(spawned) {

@@ -155,7 +155,7 @@ In on mode a pass runs, cheapest to rebuild first:
      size scan, or hourly on its own while host load defers the size scan (the
      cap is never held back by load, and its du runs at low priority, one
      target/ at a time, 120 seconds at most each, ended at once by a handover;
-     the planning du, the trim's du, lsof and ps run niced, while reading the
+     every du runs at background priority, lsof and ps niced, while reading the
      units' directories is in-process and short). Without Exact's ledger, a build that changes nothing leaves
      no trace in a profile's directory times. Each is renamed
      into target/.stim-trimmed after a check, checked again at its new path,

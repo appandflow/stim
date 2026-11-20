@@ -5,6 +5,7 @@ import type { StimContext } from '@stim-cli/core';
 import { loadConfig, type MaintenanceAction, type MaintenanceSize, type PressureLevel } from '@stim-cli/core/state';
 import { RESERVE_RELEASED } from '../../disk-reserve.ts';
 import { getExecutor } from '../../exec.ts';
+import { backgroundPriority } from '../../io-priority.ts';
 import { diskPressure, diskThresholds } from '../../daemon/pressure.ts';
 import { measuredDirectorySizeAsync } from '../../fs-util.ts';
 import { canonicalPath } from '../../commands/gc/paths.ts';
@@ -185,9 +186,8 @@ async function bytesOfMany(
     signal?.throwIfAborted();
     const args = ['-sk', ...paths.slice(at, at + DU_CHUNK)];
     try {
-      const out = await (lowPriority
-        ? getExecutor().runFileAsync('nice', ['-n', '19', 'du', ...args], { timeoutMs: SIZE_TIMEOUT_MS, signal })
-        : getExecutor().runFileAsync('du', args, { timeoutMs: SIZE_TIMEOUT_MS, signal }));
+      const [file, argv] = lowPriority ? backgroundPriority('du', args) : ['du', args];
+      const out = await getExecutor().runFileAsync(file, argv, { timeoutMs: SIZE_TIMEOUT_MS, signal });
       for (const line of out.split('\n')) total += (parseInt(line, 10) || 0) * 1024;
     } catch {
       signal?.throwIfAborted();

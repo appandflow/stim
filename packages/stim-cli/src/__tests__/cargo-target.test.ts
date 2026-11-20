@@ -19,6 +19,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, onTestFinished, test, vi } from 'vitest';
 import { cargoTargetTrimClaims, maintenanceDir } from '@stim-cli/core/state';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { backgroundWalk } from './_background-walk.ts';
 import { withCargoLocks } from '../workspace/cargo-lock.ts';
 import {
   deleteCargoTarget,
@@ -390,7 +391,7 @@ test('a trim stopped at a deadline keeps every unit it has not moved, finishes t
     setExecutor({
       ...real,
       runFileAsync: async (file, args, options) => {
-        if (file === 'du' || file === 'nice') walked.push(String(args.at(-1)));
+        if (file === 'du' || backgroundWalk(file, args)) walked.push(String(args.at(-1)));
         if (file === 'lsof' && args.some((arg: string) => arg.includes('.stim-trimmed'))) deadline.abort();
         return file === 'lsof' || file === 'ps' ? '' : real.runFileAsync(file, args, options);
       },

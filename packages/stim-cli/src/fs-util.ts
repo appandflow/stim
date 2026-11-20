@@ -1,6 +1,7 @@
 import { lstatSync, readdirSync, readlinkSync, statSync } from 'fs';
 import { dirname, isAbsolute, join, normalize, parse, sep } from 'path';
 import { getExecutor } from './exec.ts';
+import { backgroundPriority } from './io-priority.ts';
 import { noteSizeFailure, sizeFailure } from './size-failures.ts';
 import type { StimContext } from '@stim-cli/core';
 import { runOperationFile } from './engine/operation-exec.ts';
@@ -169,18 +170,13 @@ export async function measuredDirectorySizeAsync(
   let out: string;
   const startedAt = Date.now();
   try {
-    out = await runOperationFile(
-      operation,
-      getExecutor(),
-      lowPriority ? 'nice' : 'du',
-      lowPriority ? ['-n', '19', 'du', '-sk', dir] : ['-sk', dir],
-      {
-        timeoutMs,
-        killSignal: 'SIGKILL',
-        signal,
-        cwd: operation?.cwd,
-      },
-    );
+    const [file, args] = lowPriority ? backgroundPriority('du', ['-sk', dir]) : ['du', ['-sk', dir]];
+    out = await runOperationFile(operation, getExecutor(), file, args, {
+      timeoutMs,
+      killSignal: 'SIGKILL',
+      signal,
+      cwd: operation?.cwd,
+    });
   } catch (error) {
     if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
       throw error;

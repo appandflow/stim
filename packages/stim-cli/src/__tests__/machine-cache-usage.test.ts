@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { machineCacheUsageFile, readMachineCacheUsage } from '@stim-cli/core/state';
 import { getMachineCacheReport } from '../devices/machine-cache-usage.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { backgroundWalk } from './_background-walk.ts';
 import { saveConfig, upsertProject } from '../workspace/config.ts';
 import { withAmbientContext } from '@stim-cli/core';
 import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from '@stim-cli/core/process-identity';
@@ -119,7 +120,7 @@ beforeEach(() => {
       }
       calls.push([file, ...args]);
       if (file === 'du') return `2048\t${args.at(-1)}\n`;
-      if (file === PRIVATE_SIZE_HELPER || (file === 'nice' && args[2] === PRIVATE_SIZE_HELPER))
+      if (file === PRIVATE_SIZE_HELPER || backgroundWalk(file, args)?.[0] === PRIVATE_SIZE_HELPER)
         return '4194304 1048576 0\n';
       const result = tools[[file, ...args].join(' ')];
       if (result === undefined || result instanceof Error) throw result ?? new Error('unexpected');

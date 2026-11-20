@@ -241,8 +241,14 @@ status`, `stim doctor` and `stim setup` print the `stim service install`
 remedy, the only path for such a unit.
 
 Maintenance children keep the priority they had: they run at stimd's priority,
-now 31, except the size walks that already ran under `nice -n 19` and the
-fingerprint children at nice 10. On macOS `nice` lowers only CPU, not I/O. A
+now 31, except the size walks and the fingerprint children at nice 10. A size
+walk that ran under `nice -n 19` runs at background CPU and I/O priority
+instead: `taskpolicy -b` on macOS, where `nice` lowers only CPU, `ionice -c3
+nice -n 19` on Linux, and unchanged on Windows (#6047). Only the size walks
+(`du`, `find` and the private-size helper) are wrapped; the `lsof` and `ps`
+reads of the Cargo trim and the background delete of a worktree's trash keep
+`nice -n 19`, and every other child keeps stimd's priority, for the reason the
+clamp below was dropped. A
 QoS clamp that lowered every maintenance child at normal pressure was built for
 this change and dropped before 2.0 (#6025). It had to exempt every child that
 holds a lock a command waits on, and every child that may start a long-lived
@@ -254,6 +260,12 @@ maintenance lane never runs beside it. After 2.0: measure a foreground build
 with the lane running, and only if that shows a cost, do not start maintenance
 at normal pressure while foreground work runs, never holding it back at high or
 critical pressure.
+
+Maintainer decision: "I really like all 6 points lets do them all!", 2026-11-20
+([#6047](https://github.com/appandflow/stim/issues/6047)). Point 4 of those six
+is background I/O priority for cleanup work below critical pressure. The
+wrapper's command on each platform is the GC redesign's proposal, not the
+maintainer's wording.
 
 Maintainer decision: "yea stim itself is fine at interactive I am good with", 2026-11-19.
 [Decision on #5925](https://github.com/appandflow/stim/issues/5925#issuecomment-7023460880).
