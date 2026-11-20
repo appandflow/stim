@@ -1,11 +1,13 @@
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -17,6 +19,24 @@ import { executeAction } from '../stimd/passes/act.ts';
 import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
 import { testContext } from './_context.ts';
 import { goneClaimOwner, liveClaimOwner, plantClaim } from './_factories.ts';
+
+const seams = vi.hoisted((): { mounts: string; beforeClaim?: (root: string) => void } => ({ mounts: '' }));
+
+vi.mock('../workspace/remover.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../workspace/remover.ts')>()),
+  LINUX_MOUNT_INFO: () => seams.mounts,
+}));
+
+vi.mock('@stim-cli/core/ownership-claim', async (importOriginal) => {
+  const claims = await importOriginal<typeof import('@stim-cli/core/ownership-claim')>();
+  return {
+    ...claims,
+    tryAcquireClaim: (options: Parameters<typeof claims.tryAcquireClaim>[0]) => {
+      seams.beforeClaim?.(options.root);
+      return claims.tryAcquireClaim(options);
+    },
+  };
+});
 
 const POSIX = process.platform !== 'win32';
 
@@ -37,6 +57,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  seams.mounts = '';
+  seams.beforeClaim = undefined;
   takeGcResults();
   delete process.env.STIM_HOME;
   rmSync(base, { recursive: true, force: true });
@@ -200,5 +222,80 @@ test.skipIf(!POSIX)(
     expect(outcome).toMatchObject({ message: 'cancel the trash action' });
     expect(existsSync(join(entry, 'trash.json'))).toBe(true);
     expect(readdirSync(join(entry, 'entries', '0')).length).toBeGreaterThan(0);
+  },
+);
+
+test.skipIf(!POSIX)('gc keeps a trash entry with a mount point at it and writes no claim there', async () => {
+  const mounted = plantEntry('remove-mounted', join(base, 'gone'));
+  seams.mounts = `36 35 98:0 /elsewhere ${mounted} rw - ext4 /dev/sda1 rw\n`;
+
+  expect(await deleteTrash(undefined)).toMatchObject({ count: 0, failures: 0 });
+
+  expect(readdirSync(mounted).toSorted()).toEqual(['entries', 'trash.json']);
+});
+
+test.skipIf(!POSIX)(
+  'gc rereads an entry once it holds its claim and keeps one a removal filled meanwhile',
+  async () => {
+    const worktree = join(base, 'worktree');
+    mkdirSync(worktree);
+    const entry = join(trash, 'remove-opening');
+    mkdirSync(entry, { recursive: true });
+    seams.beforeClaim = (root) => {
+      if (root !== join(entry, 'claims')) return;
+      mkdirSync(join(entry, 'entries', '0'), { recursive: true });
+      writeFileSync(join(entry, 'entries', '0', 'file'), 'moved');
+      writeFileSync(join(entry, 'trash.json'), JSON.stringify({ worktree, createdAt: 'T' }));
+    };
+
+    expect(await deleteTrash(undefined)).toMatchObject({ count: 0, failures: 0 });
+
+    expect(existsSync(join(entry, 'entries', '0', 'file'))).toBe(true);
+    expect(existsSync(join(entry, 'trash.json'))).toBe(true);
+  },
+);
+
+test.skipIf(!POSIX)(
+  'gc clears claim staging a crash left and counts the entry once its directory is gone',
+  async () => {
+    const entry = plantEntry('remove-staged', join(base, 'gone'));
+    mkdirSync(join(entry, 'claims'), { recursive: true });
+    writeFileSync(join(entry, 'claims', '.staging-child-abandoned'), '{}');
+
+    expect(await deleteTrash(undefined)).toMatchObject({ count: 1, failures: 0 });
+
+    expect(existsSync(entry)).toBe(false);
+  },
+);
+
+test.skipIf(!POSIX)('gc deletes an entry with a top-level name that is not valid UTF-8', async ({ skip }) => {
+  const entry = plantEntry('remove-bytes', join(base, 'gone'));
+  try {
+    writeFileSync(Buffer.concat([Buffer.from(`${entry}/`), Buffer.from([0x78, 0xff])]), 'x');
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'EILSEQ')
+      skip('this filesystem rejects such names');
+    throw error;
+  }
+
+  expect(await deleteTrash(undefined)).toMatchObject({ count: 1, failures: 0 });
+
+  expect(existsSync(entry)).toBe(false);
+});
+
+test.skipIf(!POSIX || !existsSync('/dev/shm'))(
+  'gc deletes from a trash that is a link to another volume',
+  async ({ skip }) => {
+    const target = mkdtempSync('/dev/shm/stim-test-trash-');
+    onTestFinished(() => rmSync(target, { recursive: true, force: true }));
+    if (lstatSync(target).dev === lstatSync(base).dev)
+      skip('/dev/shm is on the same volume as the temporary directory');
+    mkdirSync(join(base, 'stim'), { recursive: true });
+    symlinkSync(target, trash);
+    const entry = plantEntry('remove-linked', join(base, 'gone'));
+
+    expect(await deleteTrash(undefined)).toMatchObject({ count: 1, failures: 0 });
+
+    expect(existsSync(entry)).toBe(false);
   },
 );

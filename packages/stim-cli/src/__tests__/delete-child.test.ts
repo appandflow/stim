@@ -154,6 +154,17 @@ describe.skipIf(!POSIX)('a delete child that is not ready', () => {
     releaseClaim(claim);
   });
 
+  test('that does not exit once killed is refused with its pid, after seeing EOF', async () => {
+    const child = fakeChild(false, false);
+    setExecutor({ ...getExecutor(), spawn: () => child });
+    const opening = openDeleteSession().catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(await opening).toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE', reportChild: { pid: process.pid } });
+    expect(child.stdin.writableEnded).toBe(true);
+    expect(child.kill).toHaveBeenCalledWith('SIGKILL');
+  });
+
   test('is killed when the caller cancels, and the cancel is thrown', async () => {
     const child = fakeChild(false, true);
     setExecutor({ ...getExecutor(), spawn: () => child });

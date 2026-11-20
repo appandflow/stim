@@ -265,8 +265,8 @@ What the remover never does:
 
 - It never follows a link: a link is unlinked.
 - It never deletes from a device other than the one its caller trusts. For the
-  trash that is the device of `$STIM_HOME/trash`, not of the tree, so a volume
-  mounted at the tree is kept.
+  trash that is the device of the resolved `$STIM_HOME/trash`, the one an entry
+  was opened on, not of the tree, so a volume mounted at the tree is kept.
 - On Linux it keeps a tree with a mount point at or under it in
   `/proc/self/mountinfo`, since a bind mount keeps the device number of the
   volume it exposes.
@@ -302,7 +302,9 @@ How the parent runs the child:
   spawned, exits before it is ready, is not ready within 5 s, or whose identity
   cannot be captured gets no job and is killed. The delete then runs in the
   parent's thread through the same remover, so a sweep at critical still
-  deletes at once. The fallback is logged with its reason
+  deletes at once. A child that is still running 5 s after its stdin was
+  closed and it was killed is a cleanup refusal naming it. The fallback is
+  logged with its reason
   (`daemon_delete_child_fallback` in stimd's log, `delete_child.fallback` in
   the debug log). A cancel during the wait for readiness kills the child and is
   thrown.
@@ -319,8 +321,15 @@ How the parent runs the child:
 
 How a trash entry is deleted:
 
+- Before taking an entry's claim, which writes inside it, gc checks that the
+  resolved entry is on the trash's device and, on Linux, has no mount point at
+  or under it. Once it holds the claim it reads the entry again and keeps one
+  whose manifest or contents changed its answer.
 - Each step leaves a state gc finishes: everything but `claims/` and
-  `trash.json`, then `trash.json`, then the claim, then the emptied entry.
+  `trash.json` (names that are not valid UTF-8 included), then a check that
+  nothing else is left, then `trash.json`, then the claim and any staging a
+  crash left in the claim set (`clearFreeClaimSet`), then the emptied entry.
+  The entry counts as deleted only once its directory is gone.
 - A `remove-*` entry that holds nothing but its claims is one whose delete
   stopped after its manifest went, or before one was written. gc deletes it
   once its claim is free, and keeps it while a live claim holds it.

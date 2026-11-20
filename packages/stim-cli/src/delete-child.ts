@@ -69,8 +69,8 @@ const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 /**
  * Starts the delete child (`dist/delete-child.mjs`). It falls back to deleting in this thread, through the same remover,
  * when the child cannot be spawned, exits before it is ready, is not ready within 5 s, or its identity cannot be
- * captured; such a child gets no job and is killed. Throws the abort reason, after killing the child, when `signal` aborts
- * first.
+ * captured; such a child gets no job, sees EOF and is killed. Throws the abort reason, after killing the child, when
+ * `signal` aborts first, and a cleanup refusal naming the child when it is still running 5 s after it was stopped.
  */
 export async function openDeleteSession(signal?: AbortSignal): Promise<DeleteSession> {
   signal?.throwIfAborted();
@@ -99,6 +99,7 @@ export async function openDeleteSession(signal?: AbortSignal): Promise<DeleteSes
   const captured = pid === undefined ? null : captureProcessIdentity(pid);
   // @ref LLP 0007#a-report-child-whose-identity-was-not-captured-is-killed-after-its-cancel -- signalled only from a macrotask, before its exit is delivered
   if (!captured?.ok || pid === undefined) {
+    child.stdin?.end();
     setImmediate(() => {
       if (!gone) child.kill('SIGKILL');
     });
@@ -108,9 +109,19 @@ export async function openDeleteSession(signal?: AbortSignal): Promise<DeleteSes
   const kill = () => {
     if (!gone && inspectProcessIdentity(identity) === 'same') child.kill('SIGKILL');
   };
+  const stopped = () => gone || inspectProcessIdentity(identity) === 'gone';
   const reap = async () => {
+    child.stdin?.end();
     kill();
     await Promise.race([exited, delay(EXIT_WAIT_MS)]);
+    if (stopped()) return;
+    throw Object.assign(new Error(`The delete child ${pid} did not exit after it was stopped.`), {
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      reportCleanup: true,
+      remedy: `Check whether process ${pid} (\`ps -p ${pid}\`) still runs, and stop it if it does.`,
+      reportChild: identity,
+      cleanupSettled: stopped,
+    });
   };
   const replies = new Map<number, (outcome: DeleteOutcome | 'unverified') => void>();
   let ready: (state: 'ready' | 'aborted' | { failed: string }) => void;
@@ -149,6 +160,7 @@ export async function openDeleteSession(signal?: AbortSignal): Promise<DeleteSes
   }
   const stdin = child.stdin;
   let next = 0;
+  let raised = false;
   return {
     async rm(path, claim, { dev, signal: jobSignal }) {
       const resolved = await canonical(path);
@@ -181,16 +193,18 @@ export async function openDeleteSession(signal?: AbortSignal): Promise<DeleteSes
         clearTimeout(stopTimer);
         replies.delete(id);
       }
-      if (result === 'unverified')
+      if (result === 'unverified') {
+        raised = true;
         throw new WorkspaceProcessCleanupError(
           [claim],
           `The delete child ${pid} did not exit after it was cancelled and killed; ${resolved} may still be changing.`,
           `Check whether process ${pid} (\`ps -p ${pid}\`) still runs.`,
           Object.assign(new Error('delete child exit unverified'), {
             reportChild: identity,
-            cleanupSettled: () => gone || inspectProcessIdentity(identity) === 'gone',
+            cleanupSettled: stopped,
           }),
         );
+      }
       clearClaimChild(claim);
       if (result !== 'exited') return result;
       const how = child.signalCode ? `signal ${child.signalCode}` : `code ${child.exitCode}`;
@@ -200,7 +214,9 @@ export async function openDeleteSession(signal?: AbortSignal): Promise<DeleteSes
     async close() {
       stdin.end();
       await Promise.race([exited, delay(EXIT_WAIT_MS)]);
-      kill();
+      if (gone) return;
+      if (raised) kill();
+      else await reap();
     },
   };
 }

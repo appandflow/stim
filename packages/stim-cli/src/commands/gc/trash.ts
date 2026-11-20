@@ -1,5 +1,5 @@
 import { lstat, readdir, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import chalk from 'chalk';
 import type { StimContext } from '@stim-cli/core';
 import { trashRoot } from '@stim-cli/core/state';
@@ -15,8 +15,10 @@ import { directorySizeAsync, formatBytes } from '../../fs-util.ts';
 import { plural } from '../../command-output.ts';
 import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
 import { openDeleteSession, type DeleteSession } from '../../delete-child.ts';
+import { filesystemDevice } from '../../temporary.ts';
 import {
   deleteTrashEntry,
+  trashEntryMisplaced,
   TRASH_CLAIMS,
   TRASH_ENTRY_PREFIX,
   TRASH_MANIFEST,
@@ -75,10 +77,21 @@ async function readManifest(dir: string): Promise<TrashManifest | null> {
   }
 }
 
-/** Whether `dir` holds nothing but its claims: a delete that stopped after its manifest went, or before one was written. */
-async function finishing(dir: string): Promise<boolean> {
-  const names = await readdir(dir).catch(() => null);
-  return names?.every((name) => name === TRASH_CLAIMS) === true;
+const NOT_WRITTEN_BY_STIM = 'it has no valid trash.json, so Stim did not create it';
+
+/**
+ * What the contents of the entry `dir` say, apart from its claim: its manifest, and why they keep it (null when they do
+ * not). An entry with no manifest is deletable only while it holds nothing but its claims: a delete that stopped after
+ * its manifest went, or an entry whose manifest was not written yet.
+ */
+async function readContents(dir: string): Promise<{ manifest: TrashManifest | null; kept: string | null }> {
+  if (!basename(dir).startsWith(TRASH_ENTRY_PREFIX)) return { manifest: null, kept: NOT_WRITTEN_BY_STIM };
+  const manifest = await readManifest(dir);
+  if (!manifest) {
+    const names = await readdir(dir).catch(() => null);
+    return { manifest, kept: names?.every((name) => name === TRASH_CLAIMS) ? null : NOT_WRITTEN_BY_STIM };
+  }
+  return { manifest, kept: manifest.kind === 'warm' ? null : await worktreeKept(manifest.worktree) };
 }
 
 /** The entries under `$STIM_HOME/trash`, each deletable only with a valid manifest, no live or unresolved ownership claim, and a worktree that is gone. */
@@ -98,13 +111,10 @@ export async function collectTrash({
     const path = join(root, name);
     const stat = await lstat(path).catch(() => null);
     if (!stat?.isDirectory()) continue;
-    const manifest = name.startsWith(TRASH_ENTRY_PREFIX) ? await readManifest(path) : null;
-    const claim =
-      manifest || (name.startsWith(TRASH_ENTRY_PREFIX) && (await finishing(path)))
-        ? claimKept(path)
-        : { kept: 'it has no valid trash.json, so Stim did not create it', live: false };
+    const { manifest, kept: contents } = await readContents(path);
+    const claim = contents === NOT_WRITTEN_BY_STIM ? { kept: null, live: false } : claimKept(path);
     const live = claim.live;
-    const kept = claim.kept ?? (manifest && manifest.kind !== 'warm' ? await worktreeKept(manifest.worktree) : null);
+    const kept = contents === NOT_WRITTEN_BY_STIM ? contents : (claim.kept ?? contents);
     entries.push({
       path,
       worktree: manifest?.worktree ?? null,
@@ -125,12 +135,17 @@ export async function deleteTrash(
   const report = await collectTrash({ signal: operation?.signal, operation });
   const done = { count: 0, bytes: 0, failures: 0 };
   if (!report) return done;
-  const { dev } = await lstat(report.root);
+  const dev = filesystemDevice(report.root);
   const signal = operation?.signal;
   let session: DeleteSession | undefined;
   try {
     for (const entry of report.entries) {
       if (!entry.willDelete) continue;
+      const misplaced = trashEntryMisplaced(entry.path, dev);
+      if (misplaced) {
+        output.record('trash', 'kept', entry.path, { bytes: entry.bytes ?? 0, detail: misplaced });
+        continue;
+      }
       let claim;
       try {
         claim = tryAcquireClaim({ root: join(entry.path, TRASH_CLAIMS), mode: 'exclusive', label: CLAIM_LABEL });
@@ -149,6 +164,11 @@ export async function deleteTrash(
       }
       let retained = false;
       try {
+        const now = await readContents(entry.path);
+        if (now.kept) {
+          output.record('trash', 'kept', entry.path, { bytes: entry.bytes ?? 0, detail: now.kept });
+          continue;
+        }
         if (session?.exited()) {
           await session.close();
           session = undefined;

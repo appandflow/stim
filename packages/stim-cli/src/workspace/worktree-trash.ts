@@ -1,12 +1,14 @@
-import { existsSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { existsSync, lstatSync, realpathSync } from 'node:fs';
 import { lstat, mkdir, mkdtemp, readdir, rename, rm, rmdir, unlink, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, join, sep } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
 import { captureProcessIdentity, childExitedWithin } from '@stim-cli/core/process-identity';
 import { trashRoot } from '@stim-cli/core/state';
 import { getExecutor } from '../exec.ts';
 import {
   clearClaimChild,
+  clearFreeClaimSet,
   markClaimChildPending,
   releaseClaim,
   setClaimChild,
@@ -17,6 +19,7 @@ import { filesystemDevice } from '../temporary.ts';
 import { openDeleteSession, type DeleteSession } from '../delete-child.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { gitAsync } from './git.ts';
+import { LINUX_MOUNT_INFO, mountedUnder } from './remover.ts';
 import { childEnvironment } from './git-read.ts';
 
 export const TRASH_MANIFEST = 'trash.json';
@@ -200,9 +203,26 @@ export async function restoreTrashedTrees(trash: WorktreeTrash): Promise<string[
 }
 
 /**
+ * Why the trash entry `dir` must not be deleted from: it is not on `dev`, the trash's device, or on Linux a mount point
+ * lies at or under it. Null when neither holds. Checked before the entry's claim is taken, since taking it writes there.
+ */
+export function trashEntryMisplaced(dir: string, dev: number): string | null {
+  let real: string;
+  try {
+    real = realpathSync(dir);
+    if (lstatSync(real).dev !== dev) return `${dir} is not on the volume of the trash`;
+  } catch (error) {
+    return `${dir} cannot be checked: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  // @ref LLP 0007#a-delete-child-holds-the-claim-of-the-tree-it-deletes -- never into a bind mount
+  return mountedUnder(real, LINUX_MOUNT_INFO);
+}
+
+/**
  * Deletes one trash entry through `session` while `claim` holds it, each step leaving a state gc finishes: everything but
- * the claims and the manifest, then the manifest, then the claim, then the emptied entry. Only `dev`, the trash root's
- * device, is deleted from. Throws, with the claim still held, when a step fails.
+ * the claims and the manifest, then the manifest, then the claim, then the emptied entry. Only `dev`, the trash's
+ * device, is deleted from. Returns once the entry is gone; throws, with the claim still held until the manifest is gone,
+ * when a step fails.
  */
 export async function deleteTrashEntry(
   dir: string,
@@ -210,8 +230,14 @@ export async function deleteTrashEntry(
   session: DeleteSession,
   options: { dev: number; signal?: AbortSignal },
 ): Promise<void> {
-  for (const name of await readdir(dir)) {
+  for (const raw of await readdir(dir, { encoding: 'buffer' })) {
+    let name = raw.toString();
     if (name === TRASH_CLAIMS || name === TRASH_MANIFEST) continue;
+    if (!Buffer.from(name).equals(raw)) {
+      const ascii = `.stim-delete-${randomUUID()}`;
+      await rename(Buffer.concat([Buffer.from(`${dir}${sep}`), raw]), join(dir, ascii));
+      name = ascii;
+    }
     const outcome = await session.rm(join(dir, name), claim, options);
     if ('cancelled' in outcome) options.signal?.throwIfAborted();
     if ('done' in outcome && !outcome.done.left.length) continue;
@@ -225,12 +251,16 @@ export async function deleteTrashEntry(
             : 'the delete was cancelled',
     );
   }
+  const left = (await readdir(dir)).filter((name) => name !== TRASH_CLAIMS && name !== TRASH_MANIFEST);
+  if (left.length) throw new Error(`${join(dir, left[0] ?? '')} is still in the entry`);
   await unlink(join(dir, TRASH_MANIFEST)).catch(ignoreMissing);
   releaseClaim(claim);
-  await rmdir(dir).catch((error: unknown) => {
-    const code = error instanceof Error && 'code' in error ? error.code : undefined;
-    if (code !== 'ENOENT' && code !== 'ENOTEMPTY' && code !== 'EEXIST') throw error;
-  });
+  const cleared = clearFreeClaimSet({ root: join(dir, TRASH_CLAIMS), label: 'worktree trash' });
+  if (cleared.status !== 'cleared')
+    throw new Error(
+      `the claims of ${dir} were not cleared: ${cleared.status === 'held' ? 'another process holds one' : cleared.reason}`,
+    );
+  await rmdir(dir).catch(ignoreMissing);
 }
 
 function ignoreMissing(error: unknown): void {
@@ -299,7 +329,9 @@ export async function disposeTrash(
   let session: DeleteSession | undefined;
   let retained = false;
   try {
-    const { dev } = await lstat(trashRoot());
+    const dev = filesystemDevice(trashRoot());
+    const misplaced = trashEntryMisplaced(trash.dir, dev);
+    if (misplaced) throw new Error(misplaced);
     session = await openDeleteSession(operation?.signal);
     await deleteTrashEntry(trash.dir, trash.claim, session, { dev, signal: operation?.signal });
     return 'deleted';
