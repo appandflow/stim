@@ -18,6 +18,10 @@ import * as teardown from '../devices/teardown.ts';
 import { getExecutor, resetExecutor, runMaintenanceWork, setExecutor } from '../exec.ts';
 import { runBootedParkedPass, shutDownDeferredIosSim } from '../daemon/booted-parked.ts';
 import { runIdlePass } from '../daemon/idle.ts';
+import * as measure from '../daemon/measure.ts';
+import { runHomePasses } from '../daemon/passes.ts';
+import { takeWaitTicket } from '../engine/wait-queue.ts';
+import { releaseClaim } from '../ownership-claim.ts';
 import { getProject, loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState, recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
@@ -156,6 +160,59 @@ test.skipIf(process.platform === 'win32')(
     const calls = readFileSync(log, 'utf8').trim().split('\n');
     expect(calls.length).toBeGreaterThan(0);
     expect(calls.every((call) => call === 'none')).toBe(true);
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'a tick runs its idle pass git reads lowered, and at full priority while a boot waits on its reclaim',
+  async () => {
+    vi.stubEnv('GIT_CONFIG_COUNT', undefined);
+    bootedWorkspace('waited', 20 * MINUTE_MS);
+    const config = loadConfig();
+    const devices = await collectOwnedDeviceActivityAsync(config, sims, Date.now());
+    vi.spyOn(measure, 'measureTick').mockResolvedValue({
+      measurement: {
+        disk: [{ volume: '/', freeMb: 500_000 }],
+        memory: { level: 'normal', availableBytes: 8 * 1024 ** 3, totalBytes: 16 * 1024 ** 3 },
+        load1: 0,
+        cores: 8,
+        bootedSimulators: 1,
+        runningEmulators: null,
+        interaction: null,
+      },
+      sims,
+      simsError: null,
+      devices,
+    });
+    const realGit = execSync('command -v git', { encoding: 'utf8' }).trim();
+    const bin = join(home, 'bin');
+    const log = join(home, 'git-calls');
+    mkdirSync(bin);
+    writeFileSync(
+      join(bin, 'git'),
+      `#!/bin/sh\necho "\${GIT_CONFIG_COUNT:-none}" >> '${log}'\nexec '${realGit}' "$@"\n`,
+      {
+        mode: 0o755,
+      },
+    );
+    vi.stubEnv('PATH', `${bin}:${process.env.PATH ?? ''}`);
+    const calls = async () => {
+      writeFileSync(log, '');
+      await runHomePasses({ act: false, log: () => {} });
+      return readFileSync(log, 'utf8').trim().split('\n');
+    };
+
+    const quiet = await calls();
+    const ticket = takeWaitTicket('boot', { platform: 'ios', key: 'new', root: home, displayName: 'waiter' }, []);
+    let waiting: string[];
+    try {
+      waiting = await calls();
+    } finally {
+      releaseClaim(ticket);
+    }
+    expect(quiet).toContain('1');
+    expect(waiting.length).toBeGreaterThan(0);
+    expect(waiting).not.toContain('1');
   },
 );
 

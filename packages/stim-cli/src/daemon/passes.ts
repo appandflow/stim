@@ -1,4 +1,5 @@
-import { runMaintenanceWork } from '../exec.ts';
+import { runControlPath, runMaintenanceWork } from '../exec.ts';
+import { liveWaiters } from '../engine/wait-queue.ts';
 import { isClaimUnavailable, releaseClaim, tryAcquireClaim, type ClaimHandle } from '@stim-cli/core/ownership-claim';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { LOG_ROTATE_BYTES, type StimContext } from '@stim-cli/core';
@@ -104,9 +105,18 @@ export async function runHomePasses(input: HomePassesInput): Promise<HomePasses>
   const operation = processContext(process.cwd(), input.signal ?? new AbortController().signal);
   const closeGitReads = openGitReads(operation);
   try {
-    return await homePasses(input, operation);
+    // @ref LLP 0021#stimd-runs-at-the-priority-of-an-app -- a queued boot waits on the reclaim after these passes
+    return await (bootWaiting() ? runControlPath(() => homePasses(input, operation)) : homePasses(input, operation));
   } finally {
     closeGitReads();
+  }
+}
+
+function bootWaiting(): boolean {
+  try {
+    return liveWaiters('boot').length > 0;
+  } catch {
+    return false;
   }
 }
 

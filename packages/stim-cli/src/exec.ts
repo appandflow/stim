@@ -493,10 +493,12 @@ const priorityScope = new AsyncLocalStorage<{ level?: PressureLevel } | 'control
 
 /**
  * Runs `fn` as maintenance work: every child `runFileAsync` starts in it runs at low priority while the pressure level
- * is normal, unless it runs inside {@link runControlPath}. `level` is the pressure level the work started at; without
- * one, each child reads it from the home's daemon snapshot.
+ * is normal, unless it runs inside {@link runControlPath}. Called inside {@link runControlPath}, `fn` stays control
+ * path. `level` is the pressure level the work started at; without one, each child reads it from the home's daemon
+ * snapshot.
  */
 export function runMaintenanceWork<T>(level: PressureLevel | undefined, fn: () => T): T {
+  if (priorityScope.getStore() === 'control') return fn();
   return priorityScope.run(level ? { level } : {}, fn);
 }
 
