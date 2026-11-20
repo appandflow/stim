@@ -691,6 +691,8 @@ interface RunStimdOptions {
    * `daemon.mode` off, and ends when its stdin closes or on a signal, through `endAttached`.
    */
   attached?: { handover: boolean };
+  /** A `stim serve` the user runs in the foreground, which a service's job never asks to exit. */
+  foreground?: boolean;
 }
 
 /** Whether the engine's `bin/stimd` shim, which a service job runs, already starts `build`. */
@@ -820,6 +822,7 @@ async function runStimdInner(
     unit,
     inJob = false,
     attached,
+    foreground = false,
   }: RunStimdOptions,
   startup: StimdStartup,
 ): Promise<boolean> {
@@ -1620,7 +1623,7 @@ async function runStimdInner(
                     }
                   }
                   // @ref LLP 0009#service-and-engine-updates -- the job ends up the owner once this stimd is idle
-                  if (job && (state.listening || (mismatch && !netForDesktop)) && !inJob && !attached) {
+                  if (job && (state.listening || (mismatch && !netForDesktop)) && !inJob && !attached && !foreground) {
                     restartWhy ??= `the ${job} service takes this Stim home back once no command runs`;
                     socket.write(`${JSON.stringify({ op: 'net', ...state })}\n`, () => void checkEngine());
                     return true;

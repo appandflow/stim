@@ -745,4 +745,22 @@ describe.skipIf(process.platform === 'win32')("an engine switch under a service 
       await service.cleanup();
     }
   }, 240_000);
+
+  it('a stim serve the user runs keeps the home while the job waits on it', async () => {
+    const port = await freePort();
+    const service = fixture('dev.stim.handoff-job-serve', port, true);
+    try {
+      const serve = await service.runServe();
+      service.restartJob(60_000);
+      const waiter = await until('the job process', () => service.jobPid());
+      await new Promise((done) => setTimeout(done, 8000));
+      expect(service.record()?.pid).toBe(serve.pid);
+      expect(service.jobPid()).toBe(waiter);
+      expect(readFileSync(join(service.home, 'daemon', 'daemon.ndjson'), 'utf8')).not.toContain(
+        'takes this Stim home back',
+      );
+    } finally {
+      await service.cleanup();
+    }
+  }, 240_000);
 });

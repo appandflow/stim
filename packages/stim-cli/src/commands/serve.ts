@@ -112,6 +112,7 @@ async function serveInStimd(serve: ServeOptions, service: boolean, unit: string 
       mode: daemonMode(process.env),
       serve,
       unit,
+      foreground: true,
       ...(desktop?.key ? { desktopKey: desktop.key } : {}),
       onNet: answered,
     });
