@@ -246,8 +246,9 @@ The pressure trim needs no byte count, so it never waits for a size scan, a
 `du` or host load (LLP 0001, Pressure acts without waiting for measurement or
 load). The pressure ladder, the daemon's and the one a build command runs before it
 builds, plans it from folder structure, lock files
-and Exact's ledger at the start of rung 3, before any shared cache is trimmed,
-and runs it; the daemon runs it at most every 10 minutes per level, a command
+and Exact's ledger at the end of rung 3, after the shared caches, and runs it
+largest target first by its last recorded size (LLP 0001, The ladder runs by
+yield); the daemon runs it at most every 10 minutes per level, a command
 once, and a command leaves its own workspace's `target/` alone. An acting `stim gc` runs it
 before it measures anything. It reports the bytes the trim removed. Cap 0,
 `maintenance.keep` and the lock, `lsof` and `ps` checks apply unchanged. Two

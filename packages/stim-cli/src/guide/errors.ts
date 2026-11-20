@@ -340,6 +340,9 @@ Rerun with --remote-build auto or remote for placement with local fallback, or
   only; whatever still runs is left untouched. The remedy tells you what to check and which command to run
   again, and when the run held ownership claims it lists the exact \`rm\`
   command for each retained claim.
+  On macOS a ps listing with no claims is the exception: it is left running,
+  logged as report_child_left, and the command fails with its own error, up to
+  eight at once.
   When a Metro, tunnel, maintenance child or server worker cannot be verified
   stopped, Stim retains only the claim that guards that child's work. When the
   child is identified, that claim records it and frees itself once the child's

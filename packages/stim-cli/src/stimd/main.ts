@@ -968,7 +968,11 @@ async function runStimdInner(
   ): 'recorded' | 'refusal' => {
     const failure = classifyFailure(cause);
     if (failure.kind === 'refusal') {
-      log('warn', 'startup_refused', reason);
+      log(
+        'warn',
+        'startup_refused',
+        cause instanceof Error && !reason.includes(cause.message) ? `${reason}: ${cause.message}` : reason,
+      );
       return 'refusal';
     }
     const home = failure.kind === 'home' ? failure.remedy : undefined;
@@ -1975,6 +1979,7 @@ async function runStimdInner(
     closing = true;
     if (level === 'error' && inJob && unit && heldHome) leaveToJob(unit, readJobRestart()?.at ?? Date.now(), null, log);
     const waiting = new Set<string>();
+    let cleanupReasons: string[] = [];
     let settled = false;
     let ended = false;
     let cancelWait: () => void;
@@ -2044,8 +2049,9 @@ async function runStimdInner(
           backgroundFailure,
           ...results.flatMap((result) => (result.status === 'rejected' ? [result.reason] : [])),
           ...cleanups.errors(),
-        ].some(isUnverifiedCleanup);
-        if (unverified) {
+        ].filter(isUnverifiedCleanup);
+        cleanupReasons = [...new Set(unverified.map((error) => error.message))];
+        if (unverified.length) {
           keepClaim();
           keepDaemon = true;
         }
@@ -2060,7 +2066,7 @@ async function runStimdInner(
           log(
             'warn',
             'daemon_claims_kept',
-            `shutdown kept the ${[keepOwn && 'stimd', keepDaemon && 'daemon'].filter(Boolean).join(' and ')} claim`,
+            `shutdown kept the ${[keepOwn && 'stimd', keepDaemon && 'daemon'].filter(Boolean).join(' and ')} claim${cleanupReasons.length ? `: ${cleanupReasons.join('; ')}` : ''}`,
           );
         settled = true;
         follower?.release();
@@ -2224,6 +2230,8 @@ async function runStimdInner(
     foregroundDone = new Promise<void>((done) => {
       settleForeground = done;
     });
+    let reclaimed: Awaited<ReturnType<typeof reclaimForBootWaiters>> = null;
+    let reclaimMs = 0;
     try {
       const passes = await runHomePasses({
         act: mode === 'on',
@@ -2232,6 +2240,19 @@ async function runStimdInner(
         signal: foregroundAbort.signal,
         lastLadder,
         requested: replying.length > 0,
+        ...(threads.ladder ? { diskPass: threads.ladder.bind(threads) } : {}),
+        beforeLadder: async ({ measured: reading, operation: tickOperation }) => {
+          const reclaimStarted = performance.now();
+          reclaimed = await reclaimForBootWaiters({
+            devices: reading.devices,
+            sims: reading.sims,
+            act: mode === 'on',
+            log,
+            operation: tickOperation,
+          });
+          reclaimMs = Math.round(performance.now() - reclaimStarted);
+          if (reclaimed?.outcome === 'done') wakeOldest('boot');
+        },
       });
       const { config, now, measured, workspaces, pressure, actions, operation } = passes;
       lastLadder = passes.ladder ?? null;
@@ -2242,20 +2263,8 @@ async function runStimdInner(
         dependencyScanAt = Date.now();
         startMeasureJob({ cwd: process.cwd() }, 'daemon_dependency_scan_failed');
       }
-      const reclaimStarted = performance.now();
-      const reclaimed = await reclaimForBootWaiters({
-        devices: measured.devices,
-        sims: measured.sims,
-        act: mode === 'on',
-        log,
-        operation,
-      });
-      operation.signal.throwIfAborted();
-      phases = { ...passes.phases, reclaimMs: Math.round(performance.now() - reclaimStarted) };
-      if (reclaimed) {
-        actions.push(reclaimed);
-        if (reclaimed.outcome === 'done') wakeOldest('boot');
-      }
+      phases = { ...passes.phases, reclaimMs };
+      if (reclaimed) actions.push(reclaimed);
       const waiting = listWaiting();
       alive = aliveForWaiters(
         waiters.build.length + waiters.boot.length + waiters.test.length + waiting.length + listTestWaiting().length,
@@ -2346,7 +2355,7 @@ async function runStimdInner(
     loopDelay.reset();
     if (emptyTicks >= lifetime.idleTicks(EMPTY_TICKS_BEFORE_EXIT)) {
       await checkEngine();
-      // @ref LLP 0012#a-command-continues-across-a-stimd-restart -- an op admitted during the engine check keeps stimd running
+      // @ref LLP 0012#a-command-does-not-continue-across-a-stimd-restart -- an op admitted during the engine check keeps stimd running
       if (!hasActiveCommands()) {
         shutdown('nothing runs in this Stim home');
         break;

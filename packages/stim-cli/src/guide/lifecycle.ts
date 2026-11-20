@@ -2596,8 +2596,12 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
               pressure critical
 
   The daemon line of \`stim status\` and \`daemon.pressure\` in its --json show
-  the level and why. Above normal, the tick runs the ladder top-down until the
-  level clears; after a pass that freed nothing, the next waits 4 times its
+  the level and why. Above normal, the tick runs the ladder in the order below,
+  by yield (rung numbers stay), until the level clears. Its disk rungs, the
+  hourly dormant step and automatic maintenance take turns in one background
+  task, so a pass waits at most one unit of them (a hard-floor pass first);
+  after a pass that freed
+  no bytes, the next waits 4 times its
   length (max 15 min; 1 min at critical) unless pressure or disk use rose
   or a run asks.
   Each rung measures again before it acts, never touches a
@@ -2606,9 +2610,6 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   takes the longest-idle workspace first. Disk rungs take only what lies on a
   short volume (stim gc --pressure: every volume):
 
-    1. idle stage: memory pressure idles every workspace idle 2 minutes or
-       more now (\`guide metro\`, IDLE STOP), disk pressure alone at
-       idle.minutes; outputs of workspaces with nothing running go
     2. parked devices: at high the oldest deleted until the level clears, at
        critical all of them
     3. shared caches: at high the build and Metro caches trimmed least
@@ -2620,45 +2621,27 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
        Stim registered emptied whole (ccache, the macOS artifact cache and the
        React Native and Android caches; \`guide cleanup\` lists them), except
        report-only caches, caches inside a workspace, caches Stim does not own,
-       caches outside a scoped STIM_HOME and one a build holds. A capped cache
-       whose size walk fails is kept: build and Metro at high, Swift
-       compilation at high and critical
+       caches outside a scoped STIM_HOME and one a build holds. At high each
+       capped cache is sized with a bounded walk, and one whose walk fails is
+       kept; at critical nothing is walked. Then the Cargo trims (\`guide cleanup
+       disk\`), largest target first by its last recorded size, each only while
+       its own volume is still short, even when a cache step failed
+    1. idle stage: memory pressure idles every workspace idle 2 minutes or
+       more now (\`guide metro\`, IDLE STOP), disk pressure alone at
+       idle.minutes; outputs of workspaces with nothing running go, but a
+       checkout whose only output is a Cargo target/ is not read
     4. dormant stage now: at high for workspaces idle 10 minutes, at critical
        for workspaces idle 2 minutes (the same reduction a day of idleness
        causes, DORMANT STAGE below)
-    5. node_modules and Pods of idle linked worktrees, now at high (idle 1
-       hour) and at critical (idle 2 minutes), only those \`stim worktree
-       warm\` can restore, recorded so the next start, ios or android runs it.
-       Each one holding 256 MB or more of its own (private) bytes goes, most
-       first; a copy-on-write clone holding less frees almost nothing and is
-       kept, logged as kept. A tree whose private size is unknown (off APFS,
-       ext4 and tmpfs, without the Command Line Tools, or not measured since
-       its last install) goes after the measured ones, longest-idle first,
-       unless a sample of its files finds mostly hard links (a pnpm store on a
-       volume without clones): that one stays at high and goes last at
-       critical. The daemon
-       measures each tree in the background, one walk at a time on the
-       machine, after its install changes and at least every 6 hours
     6. idle Gradle and Kotlin daemons, an unused watchman (over 2 GiB, or over
        1 GiB under memory pressure), unpinned Gradle versions unmodified for
        maintenance.gradleVersionIdleDays (at critical every unpinned one), Stim
        TMPDIR leftovers unmodified for 24 hours, and the worktree trash;
        automatic maintenance's daily sweep runs this rung at normal
-    7. worktrees, only while maintenance.removeFinishedWorktrees is true: at
-       high clean finished linked worktrees after the gc.worktreeGraceMinutes
-       wait; at critical without it, and also clean pushed worktrees no Stim
-       command used for 7 days, only while maintenance.removeIdleWorktrees is
-       true. The tick uses the pull request lookups the
-       worktree check cached instead of calling gh; stim gc looks them up again
-    8. critical only: first the node_modules and Pods of source (main)
-       checkouts idle 2 minutes, on a volume still under the critical level
-       and only after rungs 5 and 7 took every linked worktree's (a source
-       checkout is what worktree warm copies from, and one reinstall costs
-       less than losing the history and tool caches below; stim gc
-       --pressure critical always takes it); then every device recording not
+    8. critical only: every device recording not
        being written, except those of workspaces pinned with maintenance.keep
        or in use, and archived logs, recordings and agent actions
-    9. last, at critical only, never in a STIM_HOME-scoped home and never in
+    9. at critical only, never in a STIM_HOME-scoped home and never in
        the in-process ladder a build command runs at disk.hardFloorGb: caches
        Stim does not own, each
        through the tool's own command and only when that tool is installed and
@@ -2682,6 +2665,20 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
        measures free disk again after the earlier rungs and runs it only if
        the disk is still under the critical level; an explicit
        \`stim gc --pressure critical\` always runs it
+    5. reported only, never deleted: node_modules and Pods of idle linked
+       worktrees at high (idle 1 hour), each a kept action with the bytes
+       deleting it would free when known; then, in \`stim gc\` at critical, those
+       of source (main) checkouts idle 2 minutes on a volume still under the
+       critical level. Rungs 5 and 7 run last: the daemon's ladder runs them at
+       most hourly and never at critical, a command's ladder never, \`stim gc\`
+       each time. Only the dormant stage deletes them
+    7. reported only, never removed: worktrees, only while
+       maintenance.removeFinishedWorktrees is true: at
+       high clean finished linked worktrees after the gc.worktreeGraceMinutes
+       wait; at critical without it, and also clean pushed worktrees no Stim
+       command used for 7 days, only while maintenance.removeIdleWorktrees is
+       true. The tick uses the pull request lookups the
+       worktree check cached instead of calling gh; stim gc looks them up again
 
   A level raised only by memory runs only what frees memory: the idle stage
   of rung 1, which shuts devices down, and the Gradle daemons and watchman of
@@ -2730,8 +2727,8 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   or finds a stimd of another build refusing this process, skips it. A
   headroom run can overlap the daemon's own pass; the worst case is freeing more
   than needed, as both may delete different parked devices or trim the same
-  cache. The run ends after any action that leaves the build volume's free
-  space no higher, such as one on another volume. It runs at most 60 seconds: the
+  cache. The run ends after any action that removed something and left the
+  build volume's free space no higher, such as one on another volume. It runs at most 60 seconds: the
   deadline and cancelling the build are checked before every rung and every
   action, so a step in flight finishes and none is left half done. If the space
   is still short, one warning on stderr (also in --json mode) gives the bytes
@@ -2763,13 +2760,12 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   or commit, in the checkout and in every Stim workspace in it, registered or
   not; a worktree warm copying from it is activity when the warmed app has a
   Stim workspace in the source, and a running warm keeps it, without moving its
-  last use), or at critical under rung 8 by the same evidence. Runs from or
+  last use); at critical rung 8 only reports it. Runs from or
   works in it means a process whose working directory is in the checkout or
   whose command line names a path in it; reading files in an editor with no
   process there is not activity. A tree of unknown size is not taken at the
   7-day rule (stim gc measures them first, up to 2 minutes, and says why one
-  stays unknown), and is at critical, even when a sample of its files
-  finds mostly hard links. A
+  stays unknown). A
   linked worktree listed by git with a symlink at the same relative path, or in
   its top two directory levels (up to 2000 entries, not entering node_modules or
   .git), that resolves into the tree keeps it; past 2000 entries or at a

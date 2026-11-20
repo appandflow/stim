@@ -79,7 +79,8 @@ without starting, and a command that needs it falls back to the attached host as
 when a detached start fails, printing one line that names the hold and its remedy. An
 attached stimd is never refused by the hold. `stim doctor --fix` clears the hold by
 removing the boots file, as a person's `rm` does, and the remedy names it first; no
-new flag. `stim status`, `status --json` (`crashHold`, `abnormalExits` with their
+new flag. It clears the hold only after its repairs and report completed, so an
+unreadable config leaves the hold in place. `stim status`, `status --json` (`crashHold`, `abnormalExits` with their
 cause, additive) and `stim doctor` show the hold and the last abnormal exits.
 
 Rules for what supervises stimd (an OS job restarts it on any exit but 0):
@@ -93,23 +94,6 @@ reason, cause)` is the call a later watchdog self-kill or forced replacement of 
   stimd that does not answer uses to record its boot.
 - Silent exits count through `stimd_predecessor_lost`, as `unknown`. On Windows the
   boot id cannot be compared, so silent exits are not counted there.
-
-## A resume counts a crash twice
-
-A command waiting on stimd continues once with the stimd that replaces a crashed
-one (#5612). A request that crashes stimd therefore gives two abnormal boots: the
-stimd that took the request and the one started for the repeat. The thresholds
-count exits, so they are unchanged: with a known cause (`engine` or `home`), one
-crashing command leaves 2 of 3, and the hold, and on a store engine the rollback
-for cause `engine`, arrives with the next crash, after about 1.5 crashing
-commands. With an unknown cause, a kill or out-of-memory exit repeats only if the
-new stimd is killed as well, so 5 unknown exits still mean about 2.5 to 5 commands.
-A resume that meets the hold fails at once with the hold's remedy, naming
-`stim doctor --fix`, and starts no stimd. Chosen by the coordinating session, not
-the maintainer: two crashes in a row on the same request are evidence, the hold
-clears after 10 minutes or with `stim doctor --fix`, and only cause `engine` rolls
-a build back. `stim doctor --fix` clears the hold only after its repairs and
-report completed, so an unreadable config leaves the hold in place.
 
 ## A shutdown has a deadline
 
