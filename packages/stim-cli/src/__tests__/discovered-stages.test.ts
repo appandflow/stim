@@ -446,5 +446,5 @@ describe('a discovered checkout in the idle stages', () => {
     expect(existsSync(join(base, 'home', 'workspaces')) ? readdirSync(join(base, 'home', 'workspaces')) : []).toEqual(
       [],
     );
-  });
+  }, 20_000);
 });

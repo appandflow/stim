@@ -479,7 +479,10 @@ describe.skipIf(process.platform === 'win32')('stim test', () => {
   }, 60_000);
 
   test('leftovers of a leader that exited before its identity was captured are still stopped', async () => {
-    const child = spawn('sh', ['-c', 'sleep 600 & echo $!'], { detached: true, stdio: ['ignore', 'pipe', 'ignore'] });
+    const child = spawn('sh', ['-c', 'sleep 600 >/dev/null & echo $!'], {
+      detached: true,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
     const pid = child.pid ?? 0;
     onTestFinished(() => {
       try {
@@ -488,10 +491,11 @@ describe.skipIf(process.platform === 'win32')('stim test', () => {
     });
     let out = '';
     child.stdout?.on('data', (chunk) => (out += chunk));
-    await new Promise((resolve) => child.once('exit', resolve));
+    await new Promise((resolve) => child.once('close', resolve));
     const captured = captureProcessIdentity(pid);
     expect(captured.ok).toBe(false);
     const sleeper = Number(out.trim());
+    expect(sleeper).toBeGreaterThan(1);
     expect(alive(sleeper)).toBe(true);
     expect(await stopGroupLeftovers({ pid, processToken: null }, 5_000)).toBe(true);
     expect(alive(sleeper)).toBe(false);

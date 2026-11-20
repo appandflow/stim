@@ -2800,8 +2800,8 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   every workspace: no Stim command, source or git write, and no process in the
   checkout (such as a Gradle or cargo build) for idle.dormantDays; git
   worktree lock keeps them. Each is measured, then rechecked and removed under
-  the workspace's claims; a Cargo target/ is only trimmed by profile, and the
-  Metro store every worktree of the app shares stays. For an
+  the workspace's claims; a Cargo target/ goes whole unless a build used or
+  locks it, and the Metro store every worktree of the app shares stays. For an
   app inside a larger checkout, activity anywhere in that checkout counts.
   Where processes cannot be listed (always on Windows) nothing goes.
   Still kept: a workspace in use, with a running dev server or build, leased,

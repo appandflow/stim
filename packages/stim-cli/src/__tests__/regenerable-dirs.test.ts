@@ -93,7 +93,7 @@ test.each([
   ['only a Stim recovery copy holding .fingerprint', ['.stim-not-restored-1-debug/.fingerprint/'], false],
   ['only a regular file named .fingerprint', ['exports/.fingerprint'], false],
 ])(
-  'a target/ beside Cargo.toml with %s is trimmed as a Cargo target ($2), never deleted whole',
+  'a target/ beside Cargo.toml with %s is a Cargo target ($2) and never listed as build output',
   async (_, entries, recognised) => {
     writeFileSync(join(root, 'Cargo.toml'), '');
     for (const entry of entries) {
@@ -113,6 +113,12 @@ test.each([
     expect(await cargoTargetDirsAsync(root)).toEqual([]);
   },
 );
+
+test('a target/ holding only a staging directory counts for the dormant delete alone, not for the trims', async () => {
+  dir('target', '.stim-trimmed', '0');
+  expect(await cargoTargetDirsAsync(root)).toEqual([]);
+  expect(await cargoTargetDirsAsync(root, { staged: true })).toEqual([join(root, 'target')]);
+});
 
 test('a Cargo target/ that both the Exact rule and the CACHEDIR.TAG rule recognise is listed once', async () => {
   writeFileSync(join(root, 'exact.mjs'), '');
