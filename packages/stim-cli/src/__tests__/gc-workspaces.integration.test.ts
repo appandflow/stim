@@ -2731,6 +2731,32 @@ test('gc keeps a finished registered worktree whose ignored file sits in a track
   expect(existsSync(worktrees.squashed ?? '')).toBe(false);
 }, 240_000);
 
+test('gc keeps a finished registered worktree whose ignored source sits beside a tracked header in a nested Pods tree', async () => {
+  const { repo, worktrees } = repoWithMergedBranches();
+  const merged = worktrees.merged ?? '';
+  writeFileSync(join(repo, '.git', 'info', 'exclude'), 'Pods/\n');
+  const lib = join(merged, 'apps', 'mobile', 'ios', 'Pods', 'Lib');
+  mkdirSync(lib, { recursive: true });
+  writeFileSync(join(lib, 'Lib.h'), 'tracked');
+  execSync(
+    'git add -f apps/mobile/ios/Pods/Lib/Lib.h && git -c user.name=t -c user.email=t@t commit -q -m pods && git push -q',
+    {
+      cwd: merged,
+    },
+  );
+  execSync(
+    'git fetch -q origin merged && git -c user.name=t -c user.email=t@t merge -q --no-ff origin/merged -m pods && git push -q origin main',
+    { cwd: join(projects, 'upstream') },
+  );
+  writeFileSync(join(lib, 'Lib.local.m'), 'written by hand');
+
+  await checkWorktrees();
+  await gcJson({ pressure: 'normal' });
+
+  expect(readFileSync(join(lib, 'Lib.local.m'), 'utf8')).toBe('written by hand');
+  expect(existsSync(worktrees.squashed ?? '')).toBe(false);
+}, 240_000);
+
 test('gc keeps a finished registered worktree whose hand-edited Pods sit in a wholly ignored iOS folder', async () => {
   const { repo, worktrees } = repoWithMergedBranches();
   const merged = worktrees.merged ?? '';

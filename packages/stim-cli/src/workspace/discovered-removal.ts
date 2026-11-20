@@ -18,11 +18,9 @@ const outputNamed = (name: string) => name === 'node_modules' || SKIPPED_WHERE_I
 /** Whether `rel` is an `ios/Pods` folder, at the checkout root or below, as `apps/mobile/ios/Pods` in a monorepo. */
 const podsFolder = (rel: string) => rel === 'ios/Pods' || rel.endsWith('/ios/Pods');
 
-/** Whether `rel` is one of `folders`, checkout-relative, or lies inside one, or inside an `ios/Pods` folder. */
+/** Whether `rel` is one of `folders`, checkout-relative, or lies inside one. */
 const inFolder = (rel: string, folders: readonly string[]) =>
-  folders.some((folder) => rel === folder || rel.startsWith(`${folder}/`)) ||
-  rel.startsWith('ios/Pods/') ||
-  rel.includes('/ios/Pods/');
+  folders.some((folder) => rel === folder || rel.startsWith(`${folder}/`));
 
 /** Whether git reported the whole folder ignored and it is a dependency or build-output folder the stages recognise. */
 const regenerableFolder = (rel: string, folders: readonly string[]) =>
@@ -64,7 +62,7 @@ export async function ignoredFilesHold(path: string, main: string, signal?: Abor
   );
   if (listed === null) return 'git cannot list its ignored files';
   const folders = [
-    ...ARTIFACT_DIRS.dependencies,
+    ...ARTIFACT_DIRS.dependencies.filter((folder) => !podsFolder(folder)),
     ...(await existingBuildDirsAsync(path)).map((dir) => relative(path, dir)),
   ];
   const budget = { bytes: 0 };
