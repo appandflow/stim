@@ -14,6 +14,7 @@ import { homedir, userInfo } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { configDir, dropInExecStart } from '@stim-cli/core';
+import { staleSystemdUnit } from '@stim-cli/server/service-plist';
 import {
   isJsonObject,
   parseInstalledPlist,
@@ -121,10 +122,12 @@ async function readSystemdServices(): Promise<InstalledServerService[]> {
   const services = await Promise.all(
     files.map(async (name): Promise<InstalledServerService | null> => {
       let installed: InstalledService | null = null;
+      let text = '';
       try {
-        installed = parseUnit(readFileSync(join(dir, name), 'utf8'));
+        text = readFileSync(join(dir, name), 'utf8');
+        installed = parseUnit(text);
       } catch {}
-      if (!isServerService(installed)) return null;
+      if (installed === null || (!installed.managed && !isServerService(installed))) return null;
       const shown = await getExecutor().runFileQuietAsync(
         'systemctl',
         ['--user', 'show', name, '-p', SHOW_PROPERTIES],
@@ -137,6 +140,7 @@ async function readSystemdServices(): Promise<InstalledServerService[]> {
         installed,
         job: shown === null ? null : parseSystemctlShow(shown),
         override: override ?? undefined,
+        stale: installed.managed ? staleSystemdUnit(text) : null,
       };
     }),
   );

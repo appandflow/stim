@@ -10,7 +10,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
-import { rewriteUnitToShim } from '../src/service.ts';
+import { rewriteUnitToShim, serviceStale, serviceStatus } from '../src/service.ts';
 import { renderUnit } from '../src/service-unit.ts';
 import type { ServiceSpec } from '../src/service-plist.ts';
 
@@ -121,6 +121,20 @@ esac
     await expect(rewriteUnitToShim(label)).rejects.toThrow(/not one single line/);
     expect(readFileSync(unit, 'utf8')).toBe(continued);
     expect(reloads()).toBe('');
+  });
+
+  it('names the install that writes KillMode=process for a unit install wrote without it, and nothing otherwise', async () => {
+    expect(await serviceStale(label)).toBeNull();
+    const current = readFileSync(unit, 'utf8');
+    writeFileSync(unit, current.replace('KillMode=process\n', ''));
+    const stale = await serviceStale(label);
+    expect(stale?.reason).toMatch(/sets no KillMode=/);
+    expect(stale?.remedy).toBe(
+      `run \`STIM_HOME=${join(home, '.stim')} stim service install --port 7787 --path-prepend /jdk/bin --env ANDROID_HOME=<value>\` once when no build runs, with each <value> set to what the service sets now`,
+    );
+    expect((await serviceStatus(label)).stale).toEqual(stale);
+    writeFileSync(unit, current.replace('KillMode=process\n', '').replace('[X-Stim]\nManaged=true\n', ''));
+    expect(await serviceStale(label)).toBeNull();
   });
 
   it('writes through a symlinked unit instead of replacing the link', async () => {

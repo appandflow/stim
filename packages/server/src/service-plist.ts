@@ -1,4 +1,5 @@
 import { delimiter, isAbsolute } from 'node:path';
+import { unitLines } from '@stim-cli/core';
 import { isJsonObject, isServiceLabel, type InstalledService } from '@stim-cli/core/state';
 import type { ServeRecord } from '@stim-cli/transport-tailscale';
 
@@ -220,6 +221,32 @@ export function renderPlist(spec: ServiceSpec): string {
   lines.push('\t</dict>');
   lines.push('</dict>', '</plist>', '');
   return lines.join('\n');
+}
+
+const shellWord = (value: string): string =>
+  /^[\w./:@%+=,-]+$/.test(value) ? value : `'${value.replace(/'/g, `'\\''`)}'`;
+
+/**
+ * The `stim service install` command that writes `installed` again with its label, port, Stim home, `--path-prepend`
+ * directories and `--env` names; each `--env` value stays a `<value>` placeholder, since the plist may hold a secret.
+ */
+export function serviceInstallCommand(installed: InstalledService): string {
+  const home = installed.stimHome ? `STIM_HOME=${shellWord(installed.stimHome)} ` : 'env -u STIM_HOME ';
+  const label = installed.label === DEFAULT_LABEL ? '' : ` --label ${shellWord(installed.label)}`;
+  const paths = installed.pathPrepend.map((dir) => ` --path-prepend ${shellWord(dir)}`).join('');
+  const env = installed.env.map((entry) => ` --env ${entry.slice(0, entry.indexOf('='))}=<value>`).join('');
+  return `${home}stim service install${label} --port ${installed.port ?? DEFAULT_PORT}${paths}${env}`;
+}
+
+/**
+ * Why the systemd unit `text` does not set what `stim service install` writes now, or null. Install writes
+ * `KillMode=process`, so stopping or restarting the unit leaves the dev servers stimd hands to the next stimd; a unit
+ * without it keeps systemd's `control-group`, and its stimd keeps the successor handover at an engine switch.
+ */
+export function staleSystemdUnit(text: string): string | null {
+  const mode = unitLines(text).findLast((line) => line.section === 'Service' && line.key === 'KillMode')?.value;
+  if (mode === 'process') return null;
+  return `its unit sets ${mode === undefined ? 'no KillMode=' : `KillMode=${mode}`} where \`stim service install\` writes KillMode=process, so systemd stops the dev servers stimd leaves running whenever the unit stops or restarts`;
 }
 
 /** The job's `ProgramArguments` with the server script, which follows the launcher, `run` and node, set to `script`. */

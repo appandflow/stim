@@ -177,7 +177,7 @@ describe('serverSetupFindings', () => {
       }),
     );
     expect(legacy?.fix).toBe(
-      'Follow https://stim.appandflow.com/docs/migrate-to-2#for-agents first. At its services step, once active work has drained, run `STIM_HOME=/Users/me/.stim stim service install --label worker --port 7788 --path-prepend /opt/homebrew/bin --path-prepend "/Users/me/My Tools" --env ANDROID_HOME=<value> --env SECRET_TOKEN=<value>`, with each <value> set to what the service sets now. The service does not run the engine\'s stimd shim, so `stim engine update` does not move it.',
+      "Follow https://stim.appandflow.com/docs/migrate-to-2#for-agents first. At its services step, once active work has drained, run `STIM_HOME=/Users/me/.stim stim service install --label worker --port 7788 --path-prepend /opt/homebrew/bin --path-prepend '/Users/me/My Tools' --env ANDROID_HOME=<value> --env SECRET_TOKEN=<value>`, with each <value> set to what the service sets now. The service does not run the engine's stimd shim, so `stim engine update` does not move it.",
     );
     expect(legacy?.fix).not.toContain('hunter2');
     const defaultHome = service();
@@ -251,6 +251,21 @@ describe('serverSetupFindings', () => {
       );
       expect(finding).toMatchObject({ code: 'server-service-override', level: 'note' });
       expect(finding?.detail).toContain('o.conf');
+    });
+
+    it('tells a stale unit to install once with its own options', () => {
+      const stale = service({
+        stale: 'its unit sets no KillMode= where `stim service install` writes KillMode=process',
+      });
+      stale.installed = { ...stale.installed, env: ['TOKEN=secret'], pathPrepend: ['/opt/jdk bin'] };
+      const [finding] = serverSetupFindings(setup({ services: [stale] }));
+      expect(finding).toMatchObject({ code: 'server-service-stale', level: 'note' });
+      expect(finding?.detail).toMatch(/^Its unit sets no KillMode=/);
+      expect(finding?.fix).toContain(
+        "STIM_HOME=/Users/me/.stim stim service install --port 7788 --path-prepend '/opt/jdk bin' --env TOKEN=<value>",
+      );
+      expect(finding?.fix).not.toContain('secret');
+      expect(serverSetupFindings(setup({ services: [service({ stale: null })] }))).toEqual([]);
     });
 
     it('keeps the crash finding next to the drop-in note, and says nothing for a unit already on the shim', () => {

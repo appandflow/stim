@@ -32,6 +32,8 @@ import {
   DEFAULT_PORT,
   validateLabel,
   normalizeEnv,
+  serviceInstallCommand,
+  staleSystemdUnit,
   ServiceError,
   type InstalledService,
   type ServeRecord,
@@ -463,6 +465,24 @@ export async function rewriteUnitToShim(label: string): Promise<boolean> {
   return changed;
 }
 
+/**
+ * Why the systemd unit `installed` describes does not set what `stim service install` writes now (`staleSystemdUnit`),
+ * with the install that writes it again; null when it is current, not one install wrote, or not a systemd unit. Reads only.
+ */
+function systemdStale(installed: InstalledService): { reason: string; remedy: string } | null {
+  if (serviceManager().name !== 'systemd' || !installed.managed) return null;
+  const reason = staleSystemdUnit(readFileSync(plistPath(installed.label), 'utf8'));
+  if (!reason) return null;
+  const fill = installed.env.length ? ', with each <value> set to what the service sets now' : '';
+  return { reason, remedy: `run \`${serviceInstallCommand(installed)}\` once when no build runs${fill}` };
+}
+
+/** Why the service `label` does not set what `stim service install` writes now, and the install that fixes it; null when it is current. */
+export async function serviceStale(label: string): Promise<{ reason: string; remedy: string } | null> {
+  const installed = await readInstalled(label);
+  return installed ? systemdStale(installed) : null;
+}
+
 /** The server directory of the Stim home a service runs with `STIM_HOME` set to `stimHome`. */
 function serviceServerDir(stimHome: string | null | undefined): string {
   return join(stimHome || join(homedir(), '.stim'), 'server');
@@ -724,6 +744,8 @@ export interface ServiceStatus {
    * build's launcher, null without an engine store or when it names a copy outside it.
    */
   followsEngine: boolean | null;
+  /** Why the unit does not set what `stim service install` writes now, and the install that fixes it; null otherwise. */
+  stale: { reason: string; remedy: string } | null;
   /** Whether systemd keeps this user's services running without a login; null under launchd. */
   linger: boolean | null;
 }
@@ -837,6 +859,7 @@ export async function serviceStatus(label: string): Promise<ServiceStatus> {
     stimBuild: { service, cli, match: service && cli ? service === cli : null },
     stimd: installed ? homeStimd(home) : null,
     followsEngine: installed?.script ? followsEngine(installed.script) : null,
+    stale: installed ? systemdStale(installed) : null,
     linger: await manager.linger(),
   };
 }
@@ -958,6 +981,7 @@ export function statusLines(status: ServiceStatus, panes: { screen: string; cont
     lines.push(
       '  engine: the unit starts one engine build, not the engine shim, so it restarts that build after every engine switch; run `stim service install` again',
     );
+  if (status.stale) lines.push(`  stale: ${status.stale.reason}; ${status.stale.remedy}`);
   lines.push(`  log: ${status.logPath}`);
   if (status.pathPrepend.length) lines.push(`  path-prepend: ${status.pathPrepend.join(delimiter)}`);
   if (status.envNames.length) lines.push(`  env: ${status.envNames.join(', ')}`);
