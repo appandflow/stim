@@ -41,6 +41,7 @@ beforeEach(() => {
   git(app, 'commit', '-q', '-m', 'init');
   target = join(app, 'target');
   mkdirSync(join(target, 'debug', '.fingerprint'), { recursive: true });
+  writeFileSync(join(target, 'debug', '.cargo-lock'), '');
   mkdirSync(join(target, 'debug', 'incremental'), { recursive: true });
   writeFileSync(join(target, 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55\n');
   writeFileSync(join(target, 'debug', 'incremental', 'data'), 'x'.repeat(200_000));

@@ -583,6 +583,7 @@ describe('the pressure ladder', () => {
     const incremental = join(target, 'debug', 'incremental');
     const fill = () => {
       mkdirSync(join(target, 'debug', '.fingerprint'), { recursive: true });
+      writeFileSync(join(target, 'debug', '.cargo-lock'), '');
       mkdirSync(incremental, { recursive: true });
       writeFileSync(join(incremental, 'data'), 'x'.repeat(50_000));
     };
