@@ -190,6 +190,12 @@ describe('serverSetupFindings', () => {
       }),
     ).find((each) => each.code === 'server-version');
     expect(fromScratchShell?.fix).toContain('`env -u STIM_HOME stim service install --port 7788`');
+    const portless = service();
+    portless.installed = { ...portless.installed, port: null };
+    const [unknownPort] = serverSetupFindings(
+      setup({ services: [portless], servers: [reading({ health: health({ stim: '1.40.0' }) })] }),
+    );
+    expect(unknownPort?.fix).toContain('stim service install --port 7788');
     const shim = service();
     shim.installed = { ...shim.installed, node: null, script: '/Users/me/.stim/engine/bin/stimd' };
     const [engine] = serverSetupFindings(

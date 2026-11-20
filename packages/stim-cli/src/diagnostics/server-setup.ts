@@ -218,7 +218,7 @@ function updateRemedy(server: ServerReading, setup: ServerSetup): string {
     if (installed?.script?.endsWith('/bin/stimd') && !earlierMajor)
       return `Run \`stim engine update\` there, or \`stim engine use ${setup.version}\` for exactly this version.`;
     const command = installed
-      ? serviceInstallCommand(installed)
+      ? serviceInstallCommand({ ...installed, port: installed.port ?? server.port })
       : `env -u STIM_HOME stim service install${labelFlag(server.label ?? 'dev.stim.server')} --port ${server.port}`;
     const fill = installed?.env.length ? ', with each <value> set to what the service sets now' : '';
     const run = earlierMajor
