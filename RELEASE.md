@@ -605,10 +605,12 @@ build or sign a Mach-O, so the helper ships as its own signed GitHub release,
 like Stim Host. It only needs a new version when its source changes. Nothing in
 `stim` downloads or runs it yet.
 
-Before the first release, a maintainer adds `fsevents-v*` to the `release`
-environment's deployment policy and to the ruleset that protects release tags.
-Until then the environment rejects a `fsevents-v` tag run, and the tags are not
-protected.
+Before the first release, a maintainer adds `fsevents-v*` to the release tags
+ruleset with a rule that restricts who can create those tags, and only then adds
+`fsevents-v*` to the `release` environment's deployment policy. The workflow
+checks that a tag is on `main`, but a tag can carry a modified workflow, so only
+the creation restriction keeps the signing secrets from such a tag. Until the
+environment admits `fsevents-v*`, it rejects a `fsevents-v` tag run.
 
 1. Tag a commit on `main` with `fsevents-v<version>` and push the tag. The
    `FSEvents helper release` workflow runs the helper's tests on macOS and
