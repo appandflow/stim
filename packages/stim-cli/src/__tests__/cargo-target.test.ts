@@ -19,6 +19,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, onTestFinished, test, vi } from 'vitest';
 import { cargoTargetTrimClaims, maintenanceDir } from '@stim-cli/core/state';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { withCargoLocks } from '../workspace/cargo-lock.ts';
 import {
   deleteCargoTarget,
   staleCargoPaths,
@@ -526,6 +527,39 @@ function makeIdleUnit(name: string): void {
   }
   writeFileSync(join(target, '.exact-sweep.json'), JSON.stringify({ at: Date.now(), units: stamps }));
 }
+
+describe.skipIf(process.platform === 'win32')('a unit sweep that moves nothing', () => {
+  afterEach(() => resetExecutor());
+
+  test.each([
+    [
+      'because every candidate is in use',
+      (sweep: () => Promise<unknown>) => {
+        const rlib = join(realpathSync.native(target), 'release', 'deps', `libserde-${'1'.padStart(16, '0')}.rlib`);
+        stubProcesses({ lsof: (args) => (args.includes('-Fn') ? `p100\nn${rlib}\n` : '') });
+        return sweep();
+      },
+    ],
+    [
+      'because a build holds its Cargo lock',
+      (sweep: () => Promise<unknown>) => {
+        stubProcesses({});
+        return withCargoLocks([join(target, 'release', '.cargo-lock')], sweep);
+      },
+    ],
+  ])('%s leaves the target untouched', async (_, run) => {
+    makeIdleUnit('release');
+    writeFileSync(join(target, '.exact-sweep.json.lock'), '');
+    const old = new Date(Date.now() - 3 * DAY);
+    utimesSync(target, old, old);
+
+    await run(() => trimCargoTarget(target, { launching: noLaunchers(target), needBytes: 0, units: 'all' }));
+
+    expect(existsSync(join(target, '.stim-trimmed'))).toBe(false);
+    expect(Math.abs(lstatSync(target).mtimeMs - old.getTime())).toBeLessThan(1000);
+    expect(existsSync(join(target, 'release', 'deps', `libserde-${'1'.padStart(16, '0')}.rlib`))).toBe(true);
+  });
+});
 
 describe('trimming on a full disk', () => {
   stimHomeWithReserve();

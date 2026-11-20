@@ -1166,13 +1166,7 @@ async function trimClaimed(
     for (let at = 0; at < candidates.length; at += UNIT_CHUNK) {
       signal?.throwIfAborted();
       if (stopped()) return { units: swept, bytes, kept: DEADLINE_KEPT };
-      try {
-        if (!(await stage(recheck()))) return { units: swept, bytes };
-      } catch (error) {
-        if (!(error instanceof KeptAfterRelease)) throw error;
-        wholeKept ||= error.whole;
-        return { units: swept, bytes, kept: error.message };
-      }
+      if (wholeKept) return { units: swept, bytes };
       const chunk = candidates
         .slice(at, at + UNIT_CHUNK)
         .filter(([, paths]) => !paths.some((path) => inUse(unitsUsed, join(profile, path))));
@@ -1193,6 +1187,7 @@ async function trimClaimed(
             try {
               // @ref LLP 0005#a-full-disk-releases-the-reserve -- the checks run again before the retry
               const again = recheck(order, batch);
+              if (!(await stage(again))) return { units: 0 };
               await retryWithReserve(() => mkdir(dirname(join(batch, path)), { recursive: true }), again);
               await retryWithReserve(() => rename(join(profile, path), join(batch, path)), again);
               done.push(path);
