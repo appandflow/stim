@@ -234,11 +234,12 @@ export async function idleOutputs(
     : { paths, targets, kept };
 }
 
-/** Deletes `paths` one at a time, each measured first; the bytes measured. */
-export async function deleteOutputs(paths: readonly string[]): Promise<number> {
+/** Deletes `paths` one at a time, each measured first; the bytes measured. An abort stops it before the next removal. */
+export async function deleteOutputs(paths: readonly string[], signal?: AbortSignal): Promise<number> {
   let freed = 0;
   for (const path of paths) {
-    freed += (await measuredDirectorySizeAsync(path, { timeoutMs: SIZE_TIMEOUT_MS })) ?? 0;
+    freed += (await measuredDirectorySizeAsync(path, { timeoutMs: SIZE_TIMEOUT_MS, signal })) ?? 0;
+    signal?.throwIfAborted();
     await rm(path, { recursive: true, force: true });
   }
   return freed;
@@ -339,7 +340,7 @@ async function enterIdleStage(
               config,
               volumes ? (output) => onShortVolume([output], volumes) : undefined,
             );
-            const freed = await deleteOutputs(outputs.paths);
+            const freed = await deleteOutputs(outputs.paths, input.operation?.signal);
             await recordStage(path, minutes, shutDown, freed);
             const idle = Math.floor(again.decision.idleMs / MINUTE_MS);
             const restore = revivable(path) ? 'stim revive' : 'stim ios or stim android';

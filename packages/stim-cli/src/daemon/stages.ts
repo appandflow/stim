@@ -429,7 +429,7 @@ export async function clearStoppedOutputs(
             const outputs = await stoppedOutputs(candidate, config, operation, deletable);
             if ('locked' in outputs) return { outcome: 'kept', bytes: 0, detail: outputs.locked };
             if (!outputs.paths.length) return null;
-            const bytes = await deleteOutputs(outputs.paths);
+            const bytes = await deleteOutputs(outputs.paths, operation?.signal);
             return {
               outcome: 'done',
               bytes,
