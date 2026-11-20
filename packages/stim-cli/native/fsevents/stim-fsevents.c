@@ -16,6 +16,8 @@
  *     uuid-changed, id-ahead, dropped, ids-wrapped.
  *   {"dev": N, "dirty": [rootIndex, ...], "eventId": N}
  *     Roots, by index in the last watch line, that changed up to `eventId`.
+ *     History replay prints one such line, right before historyDone; live
+ *     changes print one per batch.
  *   {"dev": N, "historyDone": true, "uuid": "..." | null, "eventId": N}
  *     Every change before `eventId` has been reported.
  * `eventId` never decreases for a device within one watch.
@@ -249,6 +251,8 @@ typedef struct {
   size_t count;
   char uuid[40];
   uint64_t last;
+  bool replaying;
+  bool replayed_dirty;
   FSEventStreamRef stream;
 } device;
 
@@ -310,7 +314,7 @@ static void on_events(ConstFSEventStreamRef stream, void *info, size_t count, vo
   char **paths = raw_paths;
   const char *purged = NULL;
   bool dirty = false, history_done = false;
-  memset(d->hit, 0, d->count * sizeof *d->hit);
+  if (!d->replaying) memset(d->hit, 0, d->count * sizeof *d->hit);
   for (size_t i = 0; i < count; i++) {
     if (flags[i] & kFSEventStreamEventFlagHistoryDone) {
       history_done = true;
@@ -325,11 +329,14 @@ static void on_events(ConstFSEventStreamRef stream, void *info, size_t count, vo
       if (!d->hit[r] && covers(d, r, paths[i], subtree)) d->hit[r] = dirty = true;
     }
   }
+  if (d->replaying) d->replayed_dirty |= dirty;
   if (purged) emit_purged(d, purged);
-  else if (dirty) emit_dirty(d);
+  else if (dirty && !d->replaying) emit_dirty(d);
   if (history_done) {
     FSEventStreamEventId latest = FSEventStreamGetLatestEventId(stream);
     if (latest > d->last) d->last = latest;
+    if (d->replayed_dirty) emit_dirty(d);
+    d->replaying = false;
     emit_history_done(d);
   }
 }
@@ -380,6 +387,7 @@ static void start(device *d, const json *since_value, const json *uuid_value) {
   }
   FSEventStreamContext context = {.info = d};
   FSEventStreamEventId since_when = d->uuid[0] ? d->last : kFSEventStreamEventIdSinceNow;
+  d->replaying = since_when != kFSEventStreamEventIdSinceNow;
   d->stream = FSEventStreamCreate(NULL, on_events, &context, paths, since_when, latency_seconds,
                                   kFSEventStreamCreateFlagFullHistory);
   CFRelease(paths);
