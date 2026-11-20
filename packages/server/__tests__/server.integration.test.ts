@@ -1359,7 +1359,9 @@ describe.skipIf(!lanIp)('the local network listener', () => {
     await refused.closed;
     expect(await stillOpen(second.closed)).toBe(true);
 
-    first.socket.destroy();
+    // The server frees the slot on its own socket's close, which a client-side destroy does not wait for. Its HTTP
+    // server answers a half-close with its own FIN and closes, so the client's close follows the server's.
+    first.socket.end();
     await first.closed;
     const { token } = createPairingToken(Date.now(), capabilitiesFor(false));
     const phone = await noiseConnect(`ws://${host}:${port}`, { secret: token });
