@@ -251,6 +251,40 @@ describe.skipIf(process.platform === 'win32')(
       expect({ daemon: at(daemon), command: at(command) }).toEqual({ daemon: [throttled], command: [own] });
     }, 30_000);
 
+    test('the hourly step lowers the size walks it runs before taking the workspace locks and runs the probes it runs under them at full priority', async () => {
+      vi.stubEnv('GIT_CONFIG_COUNT', undefined);
+      const root = cargo('mixed', 'untagged');
+      idleFor(3, root);
+      const log = join(base, 'children');
+      writeFileSync(log, '');
+      const current = getExecutor();
+      setExecutor({
+        ...current,
+        runFileAsync: async (file, args, opts) => {
+          if (file === 'du' || file === 'lsof')
+            await current.runFileAsync(
+              '/bin/sh',
+              ['-c', 'for last; do :; done; echo "$1 $last ${GIT_CONFIG_COUNT:-none}" >> "$0"', log, file, ...args],
+              opts,
+            );
+          return current.runFileAsync(file, args, opts);
+        },
+      });
+
+      expect(await hourlyStep(true)).toEqual([expect.objectContaining({ target: root, outcome: 'done' })]);
+
+      const children = readFileSync(log, 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => line.split(' '));
+      const target = join(root, 'target');
+      const before = children.filter(([tool, path]) => tool === 'du' && path === join(root, BUILD));
+      const held = children.filter(([, path]) => path?.startsWith(target));
+      expect(before.map(([, , count]) => count)).toEqual(['1']);
+      expect(held.length).toBeGreaterThan(0);
+      expect(held.every(([, , count]) => count === 'none')).toBe(true);
+    }, 30_000);
+
     test('a Gradle build working in the checkout keeps its outputs, whatever Stim last saw', async () => {
       const root = register(repo('app'));
       idleFor(3, root);

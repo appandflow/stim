@@ -30,6 +30,7 @@ import {
 import { resolveSupervisorTarget } from '../stimd/metro/ownership.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { getProject } from './config.ts';
+import { runControlPath } from '../exec.ts';
 import { workspaceDir } from './paths.ts';
 import { readWorkspaceState } from './workspace-state.ts';
 import { readWebRecord, webFacts } from '../web/state.ts';
@@ -183,13 +184,15 @@ export async function withIdleWorkspace<T>(
     return await withWorkspaceProcessLock(
       workspaceDir(root),
       NATIVE_RUN,
-      async (): Promise<IdleWorkspaceRun<T>> => {
-        const reasons = signal
-          ? await workspaceInUseAsync(root, { ...checks, nativeRun: false }, signal, operation)
-          : workspaceInUse(root, { ...checks, nativeRun: false });
-        if (reasons.length) return { ran: false, reasons };
-        return { ran: true, value: await fn() };
-      },
+      // @ref LLP 0021#stimd-runs-at-the-priority-of-an-app -- work that holds a lock a command waits on is control path
+      (): Promise<IdleWorkspaceRun<T>> =>
+        runControlPath(async (): Promise<IdleWorkspaceRun<T>> => {
+          const reasons = signal
+            ? await workspaceInUseAsync(root, { ...checks, nativeRun: false }, signal, operation)
+            : workspaceInUse(root, { ...checks, nativeRun: false });
+          if (reasons.length) return { ran: false, reasons };
+          return { ran: true, value: await fn() };
+        }),
       { external: true, waitMs: 0, ownerPurpose: purpose, signal, declareSpawnsFor: operation },
     );
   } catch (error) {

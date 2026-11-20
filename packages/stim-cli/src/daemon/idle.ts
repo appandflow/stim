@@ -1,4 +1,3 @@
-import { runControlPath } from '../exec.ts';
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import { existsSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
@@ -308,12 +307,7 @@ async function recordStage(path: string, minutes: number, shutDown: readonly str
  * collectors ended), then the workspace's regenerable build outputs, its in-tree build directories and its Metro
  * store deleted.
  */
-// @ref LLP 0021#stimd-runs-at-the-priority-of-an-app -- the idle stage holds the metro-start lock a stim start waits on
-function enterIdleStage(...args: Parameters<typeof idleStage>): ReturnType<typeof idleStage> {
-  return runControlPath(() => idleStage(...args));
-}
-
-async function idleStage(
+async function enterIdleStage(
   path: string,
   project: ProjectRecord,
   config: Config,
