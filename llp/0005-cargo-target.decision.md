@@ -269,6 +269,26 @@ a person to merge or delete. If that move fails too, it stays in
 `.stim-trimmed` with a marker, and later trims of that `target/` stop until a
 person removes it.
 
+The trim writes no marker before it moves: a trim that is killed leaves an
+unmarked `.stim-trimmed`, which the next trim deletes at its start. The
+trim notes the device and inode of the `.stim-trimmed` it made; at the end it
+checks that `.stim-trimmed` is still that real directory, deletes only the
+entries it staged, and removes `.stim-trimmed` only when that leaves it empty,
+so anything else that appeared there stays and is reported, until the next
+trim deletes a leftover `.stim-trimmed` at its start, as before. Two gaps are
+accepted, both shared with earlier versions: a kill between a build taking a
+profile back during the move and the trim's own check after the move, and a
+put-back whose marking fails too.
+
+Maintainer decision: "ok", 2026-11-19
+[Pull request comment](https://github.com/appandflow/stim/pull/6013#issuecomment-7029140328),
+choosing option 3 for a killed trim's staging: no marker before the move, so
+the next trim removes an unmarked `.stim-trimmed`; a failed put-back is
+recorded with the `NOT-RESTORED` marker for a person; and the gap when the
+marking fails too is accepted. Reason given: everything the trim stages is
+regenerable Cargo build output, Solana keypairs are never staged, and the
+remaining kill window exists on earlier versions.
+
 A unit sweep takes exclusive, non-blocking locks on Exact's ledger lock and the
 profile's `.cargo-lock`, `.cargo-build-lock` and `.cargo-artifact-lock` before
 each chunk of 25. A busy or unavailable lock stops the sweep of that profile.
@@ -292,12 +312,56 @@ deleting it breaks the build rather than slowing the next one.
 Chosen by the coordinator and the reviews of #5518 and #5539, not by the
 maintainer.
 
+## A full disk releases the reserve
+
+The trim and the dormant delete write before they free anything: the trim
+claim under `~/.stim/machine/cargo-trim/`, on the dormant path the
+workspace's `native-run` and `metro-start` claims, the `target/.stim-trimmed`
+directory, the dormant delete's `NOT-RESTORED` marker, and the trim's moves of profiles,
+`incremental/` directories and unit files into it. When one of those writes
+fails with `ENOSPC`, or `EDQUOT` over a quota, Stim deletes its 1 MiB
+maintenance disk reserve (`$STIM_HOME/maintenance/disk-reserve`, the file the
+maintenance pass and an acting `stim gc` already keep) and tries that write
+once more. The dormant delete's renames of each entry into `.stim-trimmed` are
+not retried: an entry that cannot be moved stays, as above. The retry runs the
+same staged path with every check above unchanged. Before the trim retries a
+staging write, it reads the processes and the launchers again, for a profile
+its lock files, and, for a stale profile or target triple, whether it is still
+stale as a whole, which also decides the stale paths still to come: a refusal
+of that scan stops the remaining stale moves, and each path skipped is
+reported. A launcher into the checkout or process evidence that cannot be read
+stops the rest of that run, and a path in use keeps that path; in a unit batch,
+one busy path, moved or not yet moved, puts the whole batch back. The dormant
+delete checks that the `target/` is still the same directory before each try,
+the marker's included, and creates its marker exclusively, so it never replaces
+a marker already there; a failed write removes only the file that attempt
+created. For the workspace claims the whole removal of that output runs again.
+A run that released the reserve says so in its outcome. When the write fails
+again, or there was no reserve to release, the `target/` is kept as before.
+
+A failed put-back's `NOT-RESTORED` marker retries the same way. The dormant
+delete removes a marker it could not finish writing with its empty
+`.stim-trimmed` and keeps the `target/`; its modification time stays as the
+attempt left it, so a file that arrived meanwhile still counts as use, and no
+marker blocks the next run. The maintenance pass writes the reserve back at its
+end when there is room.
+
+Reason: on 2026-11-19 at 23:01 UTC, with the maintainer's disk full, a rung 3
+trim failed with `ENOSPC` creating `.stim-trimmed` and freed nothing (#6012),
+and on a disk with no free bytes the claims fail first (#6016). Deleting in
+place without staging would need every guarantee of the staged path proven
+again; the reserve gives the staged path the room it needs instead.
+
+Asked for in #6012 and #6016; reusing the reserve was chosen by the
+coordinator of that work, not by the maintainer.
+
 ## Links
 
-- Issues: #5512, #5516, #5523, #5528, #5530, #5979. Pull requests: #5518, #5519,
+- Issues: #5512, #5516, #5523, #5528, #5530, #5979, #6012, #6016. Pull requests: #5518, #5519,
   #5527, #5539. Locking follow-up: #5542.
 - Code: `packages/stim-cli/src/workspace/cargo-target.ts`,
   `packages/stim-cli/src/daemon/dormant-outputs.ts`,
+  `packages/stim-cli/src/disk-reserve.ts`,
   `packages/stim-cli/src/stimd/passes/cargo-target.ts`,
   `packages/stim-cli/src/stimd/passes/defer.ts`,
   `packages/stim-cli/src/daemon/ladder.ts` (`cargoTargetsStep`),

@@ -4,6 +4,7 @@ import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import type { StimContext } from '@stim-cli/core';
 import type { DaemonLadderAction } from '@stim-cli/core/state';
 import { workspaceOutputPaths } from '../commands/gc/workspaces.ts';
+import { RESERVE_RELEASED, retryWithReserve } from '../disk-reserve.ts';
 import { withWorkspaceProcessLock, workspaceProcessLockError } from '../engine/workspace-process-lock.ts';
 import { formatBytes, measuredDirectorySizeAsync } from '../fs-util.ts';
 import { metroStoreRoot } from '../stimd/metro/metro-store.ts';
@@ -148,10 +149,17 @@ async function reduceWorkspace(
     signal?.throwIfAborted();
     failures.push(`${output}: ${error instanceof Error ? error.message : String(error)}`);
   };
+  let released = false;
   for (const output of plan.paths) {
     let outcome: string | CargoTrimResult | null;
     try {
-      outcome = await removeOutput(path, checkout, output, plan.targets.has(output), afterMs, operation);
+      // @ref LLP 0005#a-full-disk-releases-the-reserve -- the workspace claims are writes too
+      outcome = await retryWithReserve(
+        () => removeOutput(path, checkout, output, plan.targets.has(output), afterMs, operation),
+        () => {
+          released = true;
+        },
+      );
     } catch (error) {
       failed(output, error);
       continue;
@@ -165,8 +173,10 @@ async function reduceWorkspace(
       if (outcome.removed.length) removed.push(`${output} (${outcome.removed.join(', ')})`);
       if (outcome.kept.length) kept.push(`kept in ${output}: ${outcome.kept.join('; ')}`);
       if (outcome.deleteError) failures.push(`${output}: ${outcome.deleteError}`);
+      released ||= outcome.reserveReleased === true;
     }
   }
+  if (released) kept.push(RESERVE_RELEASED);
   const rest = kept.length ? `; ${kept.join('; ')}` : '';
   const done = removed.length ? `deleted ${formatBytes(bytes)} of regenerable build outputs; ` : '';
   if (failures.length)

@@ -1,5 +1,5 @@
-import { randomBytes } from 'node:crypto';
-import { appendFileSync, mkdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { diskFull, keepReserve, releaseReserve } from '../../disk-reserve.ts';
 import { basename, join } from 'node:path';
 import { withDirLock, type StimContext } from '@stim-cli/core';
 import {
@@ -58,33 +58,6 @@ function writeState(state: MaintenanceState): void {
   });
 }
 
-const RESERVE_BYTES = 1024 * 1024;
-const reserveFile = () => join(maintenanceDir(), 'disk-reserve');
-
-export function releaseReserve(): boolean {
-  try {
-    const bytes = statSync(reserveFile()).size;
-    rmSync(reserveFile());
-    return bytes > 0;
-  } catch {
-    return false;
-  }
-}
-
-export function keepReserve(): void {
-  try {
-    if (statSync(reserveFile()).size === RESERVE_BYTES) return;
-  } catch {}
-  try {
-    mkdirSync(maintenanceDir(), { recursive: true });
-    writeFileSync(reserveFile(), randomBytes(RESERVE_BYTES));
-  } catch {
-    try {
-      rmSync(reserveFile(), { force: true });
-    } catch {}
-  }
-}
-
 export function claimPass(trigger: string): { acquired?: ClaimHandle; held?: ClaimHolder } {
   const take = () => {
     const attempt = tryAcquireClaim({
@@ -99,8 +72,7 @@ export function claimPass(trigger: string): { acquired?: ClaimHandle; held?: Cla
   try {
     return take();
   } catch (error) {
-    const full = error instanceof Error && 'code' in error && (error.code === 'ENOSPC' || error.code === 'EDQUOT');
-    if (!full || !releaseReserve()) throw error;
+    if (!diskFull(error) || !releaseReserve()) throw error;
     return take();
   }
 }

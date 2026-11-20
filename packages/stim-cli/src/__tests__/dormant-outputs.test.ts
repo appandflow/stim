@@ -14,12 +14,13 @@ import {
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { diskUsageCacheFile, type DaemonLadderAction } from '@stim-cli/core/state';
+import { diskUsageCacheFile, maintenanceDir, type DaemonLadderAction } from '@stim-cli/core/state';
 import { writeCacheFile } from '../cache-file.ts';
 import { REAL_BYTES_THRESHOLD } from '../daemon/dependencies.ts';
 import { treeSignature } from '../private-size.ts';
 import { createMaintenanceLane, runDormantReduction, type HomePasses } from '../daemon/passes.ts';
 import * as measure from '../daemon/measure.ts';
+import * as processLock from '../engine/workspace-process-lock.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import * as maintenanceRun from '../stimd/passes/run.ts';
 import { loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
@@ -210,6 +211,36 @@ describe.skipIf(process.platform === 'win32')(
       expect(existsSync(join(root, 'node_modules'))).toBe(false);
       expect(existsSync(join(root, 'package.json'))).toBe(true);
       expect(existsSync(join(metroStoreRoot(root), 'shared'))).toBe(true);
+    });
+
+    test('a workspace claim that hits a full disk is taken again once the disk reserve is released', async () => {
+      const root = register(repo('app'));
+      idleFor(3, root);
+      const reserveFile = join(maintenanceDir(), 'disk-reserve');
+      mkdirSync(maintenanceDir(), { recursive: true });
+      writeFileSync(reserveFile, 'x'.repeat(1024));
+      vi.spyOn(processLock, 'withWorkspaceProcessLock').mockImplementationOnce(async () => {
+        throw Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' });
+      });
+
+      expect(await gc()).toEqual([
+        expect.objectContaining({ outcome: 'done', detail: expect.stringContaining('disk reserve') }),
+      ]);
+      expect(existsSync(join(root, BUILD, 'app.apk'))).toBe(false);
+      expect(existsSync(reserveFile)).toBe(false);
+    });
+
+    test('without a disk reserve, a workspace claim that hits a full disk is not retried', async () => {
+      register(repo('app'));
+      idleFor(3, join(base, 'app'));
+      vi.spyOn(processLock, 'withWorkspaceProcessLock').mockImplementationOnce(async () => {
+        throw Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' });
+      });
+
+      const [action] = await gc();
+
+      expect(action).toMatchObject({ outcome: 'failed', detail: expect.stringContaining('ENOSPC') });
+      expect(action?.detail).not.toContain('disk reserve');
     });
 
     test('a Gradle build working in the checkout keeps its outputs, whatever Stim last saw', async () => {
