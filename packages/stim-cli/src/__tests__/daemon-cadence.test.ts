@@ -1,4 +1,13 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildCacheRoot, metroCacheRoot } from '@stim-cli/core';
@@ -29,6 +38,8 @@ import { acquireDisk, diskBoundary, HARD_FLOOR, LADDER, LANE, releaseDisk } from
 import { createMaintenanceLane, runDiskPass, runHomePasses } from '../daemon/passes.ts';
 import * as fsUtil from '../fs-util.ts';
 import { measureSizes } from '../stimd/passes/measure.ts';
+import { executeAction } from '../stimd/passes/act.ts';
+import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
 import { runStimd } from '../stimd/main.ts';
 import * as stages from '../daemon/stages.ts';
 import { pendingDormant } from '../daemon/stages.ts';
@@ -361,6 +372,58 @@ describe('the disk owner', () => {
     } finally {
       releaseDisk();
     }
+  });
+
+  test('a hard-floor pass asked during a maintenance cache trim runs before its next entry', async () => {
+    saveConfig({ version: 2, projects: {}, repos: {} });
+    const entries = ['a', 'b'].map((name) => join(buildCacheRoot(), 'key', name));
+    const old = new Date(Date.now() - 10 * 24 * 60 * MINUTE_MS);
+    for (const entry of entries) {
+      mkdirSync(entry, { recursive: true });
+      utimesSync(entry, old, old);
+    }
+    const order: string[] = [];
+    let entered!: () => void;
+    let finish!: () => void;
+    const walking = new Promise<void>((resolve) => (entered = resolve));
+    const finished = new Promise<void>((resolve) => (finish = resolve));
+    vi.spyOn(fsUtil, 'measuredDirectorySizeAsync').mockImplementation(async (dir) => {
+      if (!entries.includes(dir)) return 0;
+      order.push(`entry ${dir.slice(-1)}`);
+      if (order.length === 1) {
+        entered();
+        await finished;
+      }
+      return 1;
+    });
+    vi.spyOn(ladder, 'runLadder').mockImplementation(async (_input, pressure) => {
+      order.push('pass hard floor');
+      return { actions: [], pressure };
+    });
+    await acquireDisk(LANE);
+    try {
+      const trim = executeAction(
+        { kind: 'would-trim-cache', target: 'Build cache', dir: buildCacheRoot(), bytes: 100, reason: 'over its cap' },
+        {
+          settings: resolveMaintenanceSettings(),
+          protectedRoot: '',
+          operation: testContext(),
+          between: diskBoundary,
+        },
+      );
+      await walking;
+      const floor = runDiskPass(
+        { act: true, pressure: critical('floor'), devices: [], sims: [], requested: true },
+        () => {},
+        testContext(),
+      );
+      finish();
+      await Promise.all([trim, floor]);
+    } finally {
+      releaseDisk();
+    }
+
+    expect(order).toEqual(['entry a', 'pass hard floor', 'entry b']);
   });
 
   test('walks the lane runs side by side hand the turn over once, and each waits until the lane has it back', async () => {

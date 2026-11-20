@@ -287,7 +287,7 @@ so none ever runs beside another.
 - The dormant step and the maintenance pass run in units: one checkout's
   reads, each size walk or removal of the dormant outputs, the ranking, one dependency deletion, one
   maintenance check, each size walk of the size check, the plan, one plan
-  action, or one source checkout's trees. Walks that run side by side hand the turn over once and each waits
+  action (each entry, for a cache trim), or one source checkout's trees. Walks that run side by side hand the turn over once and each waits
   until the lane has it back. Between units a waiting disk pass goes
   first, a hard-floor pass ahead of any other, and the lane then continues
   from where it was. Each deletion still checks its candidate again under its

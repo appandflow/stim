@@ -414,6 +414,7 @@ export async function pruneCache(
     byMtime = false,
     signal,
     entrySizes = 'walk',
+    between,
   }: {
     olderThanDays?: number;
     now?: number;
@@ -427,6 +428,8 @@ export async function pruneCache(
      * ends the trim, since what it freed cannot count toward `evictBytes`.
      */
     entrySizes?: 'walk' | 'bounded' | 'none';
+    /** Runs before each entry is checked again and removed: a unit boundary of the stim-daemon's disk owner. */
+    between?: () => Promise<void>;
   } = {},
 ): Promise<{ removed: number; bytes: number; skipped: string | null; failed?: number; protectedEntries?: number }> {
   const cutoff = now - (olderThanDays as number) * 24 * 60 * 60 * 1000;
@@ -468,6 +471,13 @@ export async function pruneCache(
   for (const { entry, isDirectory, size } of candidates) {
     if (evictBytes !== undefined && bytes >= evictBytes) break;
     if (signal) await checkpoint(signal);
+    if (between) {
+      await between();
+      if (protect?.(entry)) {
+        protectedEntries++;
+        continue;
+      }
+    }
     try {
       if (!existsSync(entry) || Math.max(statSync(entry).mtimeMs, cache.lastUse?.(entry) ?? 0) >= cutoff) continue;
       const entryBytes = !isDirectory

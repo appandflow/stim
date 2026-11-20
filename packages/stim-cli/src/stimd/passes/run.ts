@@ -620,6 +620,7 @@ export async function runMaintenance(
         worktreeSweep: result.worktreeSweep,
         lowPriority: cap.ran,
         ...(tick ? { operation: tick.operation } : {}),
+        ...(between ? { between } : {}),
       };
       const results: { action: MaintenanceAction; outcome: ActionOutcome }[] = [];
       const ordered = actions.toSorted((a, b) => executionRank(a) - executionRank(b));
