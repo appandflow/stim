@@ -610,13 +610,15 @@ command installed as a symbolic link into a checkout's build output,
 dependencies or Cargo target stops working when that folder is removed, and
 rebuilding or reinstalling it fixes it. `cargo install` copies its binaries, so
 the usual installs are unaffected. Where a route reads the processes (the
-dependency passes, discovered-checkout idleness, worktree removal, a Cargo
-`target/`), a command running at that read keeps what it runs from, also when
-its command line names a link that resolves into the checkout; a registered
-workspace's other build outputs are deleted without a process read. A finished
-registered worktree also stays while a git-ignored file outside its dependency and
-build-output folders is missing from the main checkout or differs there, the rule
-discovered worktrees already had.
+dependency passes, discovered-checkout idleness and the removal of a discovered
+worktree, a Cargo `target/`), a command whose command line or working directory
+names the folder at that read keeps it; one started through a link elsewhere
+does not. The removal of a registered worktree and a registered workspace's
+other build outputs have no process read. A finished registered worktree stays,
+at planning and at removal, while a git-ignored file outside its dependency and
+build-output folders is missing from the main checkout or differs there, and
+while an unfinished `pnpm patch` is in its `node_modules`, the rules discovered
+worktrees already had.
 
 Maintainer decision: "Like remove this whole look at stuff on path", 2026-11-20
 (#6024).
@@ -627,13 +629,13 @@ incident one Cargo target spent its whole 159 seconds on a PATH read that timed
 out and freed nothing. For build output and Cargo targets the loss is a rebuild,
 which LLP 0005's loss budget accepts.
 
-The coordinator's reading of the decision above, not the maintainer's words: it
-removes the scan for dependency folders and finished worktrees too, which the
-loss budget does not cover. The concrete loss: a command installed with `npm
-link` or `pnpm link --global` from a merged, clean worktree breaks when gc removes
-that worktree, unless it is running at the process read or the worktree holds a
-git-ignored file the main checkout lacks. The edit, dependency and worktree rules
-that protect work still apply. This replaces the 2026-11-15 decision (#5765) that extended the
+Maintainer decision: "Remove it everywhere (Recommended)", 2026-11-20
+([#6024 comment](https://github.com/appandflow/stim/issues/6024#issuecomment-7039790502)),
+for dependency folders and finished worktrees too, which the loss budget does not
+cover. The trade-off offered with it: a command installed with `npm link` or
+`pnpm link --global` from a merged, clean worktree can break when gc removes that
+worktree, and is fixed by relinking or reinstalling. The edit, dependency and
+worktree rules that protect work still apply. This replaces the 2026-11-15 decision (#5765) that extended the
 launcher keep to every checkout, and the 2026-11-19 decision (#5896) on
 unreadable launcher entries, which no longer applies.
 
