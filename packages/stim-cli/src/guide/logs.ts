@@ -404,8 +404,6 @@ other abort), timeoutMs (when the call had one), spawnToCancelMs, cancelToExitMs
 the cancel), exitCode, exitSignal, refusal (unverified, did_not_close or descendants; absent when the cleanup was not refused),
 killedUncaptured (true when the kill was sent), captured and captureReason.
 It changes nothing a pass does.
-report_child_left (warn, pid, command): stimd forgot an allowlisted read-only report child it could not
-verify; it holds no idle exit or engine switch.
 
 BUILD LEDGER
 stim logs --source builds reads $STIM_HOME/builds/builds.ndjson from any

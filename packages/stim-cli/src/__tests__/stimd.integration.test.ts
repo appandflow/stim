@@ -665,69 +665,53 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
     }
   }, 20_000);
 
-  test.each([false, true])(
-    'attached final measurement cleanup (readOnly=%s)',
-    async (readOnly) => {
-      const before = new Set(process.listeners('SIGTERM'));
-      const oldExit = process.exitCode;
-      const root = join(home, 'engine');
-      const build = 'aaaaaaaaaaaa';
-      mkdirSync(root, { recursive: true });
-      writeFileSync(join(root, 'current.json'), JSON.stringify({ format: 1, dir: build, version: '1' }));
-      const ownEngine = vi.spyOn(engineSwitch, 'ownStoreEngine').mockReturnValue({ root, build });
-      const releaseEngine = vi.fn<() => void>();
-      const follower = vi.spyOn(engineFollow, 'followEngine').mockReturnValue({
-        engine: { root, build },
-        record: () => {},
-        admit: async () => null,
-        check: async () => null,
-        selecting: () => null,
-        release: releaseEngine,
-      });
-      const original = measure.measureTick;
-      const measurement = vi.spyOn(measure, 'measureTick').mockImplementation(async (...args) => {
-        if (args[2]?.probe === false)
-          throw Object.assign(new Error('final measurement cleanup unverified'), {
-            code: 'STIM_CLAIM_UNAVAILABLE',
-            remedy: 'Inspect fixture child.',
-            reportCleanup: true,
-            ...(readOnly
-              ? { readOnly: true, reportChild: { pid: 85183, processToken: null, command: 'ps -axo pid=' } }
-              : {}),
-          });
-        return original(...args);
-      });
-      let running: Promise<boolean> | undefined;
-      try {
-        process.exitCode = undefined;
-        running = runStimd({ mode: 'on', tickMs: 60_000, attached: { handover: true } });
-        await vi.waitFor(() => expect(existsSync(stimdRecordFile())).toBe(true), { timeout: 10_000, interval: 20 });
-        await requestDaemonTick({ ...process.env, STIM_DAEMON: 'on' });
-        const handler = process.listeners('SIGTERM').find((listener) => !before.has(listener));
-        assert(handler);
-        handler('SIGTERM');
-        const outcome = await running.catch((error: unknown) => error);
-        const expectedFailure = expect.objectContaining({ code: 'STIM_CLAIM_UNAVAILABLE' });
-        expect(outcome).toEqual(readOnly ? true : expectedFailure);
-        expect(readClaimSet(stimdClaimRoot()).live).toMatchObject(readOnly ? [] : [{ childDeclared: false }]);
-        const records: { event: string; level: string }[] = daemonLog()
-          .split('\n')
-          .filter(Boolean)
-          .map((line) => JSON.parse(line));
-        expect(records.some((logged) => logged.event === 'report_child_left' && logged.level === 'warn')).toBe(
-          readOnly,
-        );
-        expect(releaseEngine).toHaveBeenCalled();
-      } finally {
-        measurement.mockRestore();
-        follower.mockRestore();
-        ownEngine.mockRestore();
-        process.exitCode = oldExit;
-        await running?.catch(() => {});
-      }
-    },
-    20_000,
-  );
+  test('an attached stimd ended by an unverified final measurement releases its engine claim and leaves the home claim complete', async () => {
+    const before = new Set(process.listeners('SIGTERM'));
+    const oldExit = process.exitCode;
+    const root = join(home, 'engine');
+    const build = 'aaaaaaaaaaaa';
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, 'current.json'), JSON.stringify({ format: 1, dir: build, version: '1' }));
+    const ownEngine = vi.spyOn(engineSwitch, 'ownStoreEngine').mockReturnValue({ root, build });
+    const releaseEngine = vi.fn<() => void>();
+    const follower = vi.spyOn(engineFollow, 'followEngine').mockReturnValue({
+      engine: { root, build },
+      record: () => {},
+      admit: async () => null,
+      check: async () => null,
+      selecting: () => null,
+      release: releaseEngine,
+    });
+    const original = measure.measureTick;
+    const measurement = vi.spyOn(measure, 'measureTick').mockImplementation(async (...args) => {
+      if (args[2]?.probe === false)
+        throw Object.assign(new Error('final measurement cleanup unverified'), {
+          code: 'STIM_CLAIM_UNAVAILABLE',
+          remedy: 'Inspect fixture child.',
+          reportCleanup: true,
+        });
+      return original(...args);
+    });
+    let running: Promise<boolean> | undefined;
+    try {
+      process.exitCode = undefined;
+      running = runStimd({ mode: 'on', tickMs: 60_000, attached: { handover: true } });
+      await vi.waitFor(() => expect(existsSync(stimdRecordFile())).toBe(true), { timeout: 10_000, interval: 20 });
+      await requestDaemonTick({ ...process.env, STIM_DAEMON: 'on' });
+      const handler = process.listeners('SIGTERM').find((listener) => !before.has(listener));
+      assert(handler);
+      handler('SIGTERM');
+      await expect(running).rejects.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
+      expect(readClaimSet(stimdClaimRoot()).live).toMatchObject([{ childDeclared: false }]);
+      expect(releaseEngine).toHaveBeenCalled();
+    } finally {
+      measurement.mockRestore();
+      follower.mockRestore();
+      ownEngine.mockRestore();
+      process.exitCode = oldExit;
+      await running?.catch(() => {});
+    }
+  }, 20_000);
 
   const stopInProcess = (before: Set<NodeJS.SignalsListener | ((...args: never[]) => unknown)>) => {
     for (const listener of process.listeners('SIGTERM')) if (!before.has(listener)) listener('SIGTERM');
@@ -743,91 +727,6 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
             return logged.event;
           })
       : [];
-
-  test.each([
-    ['listed read', true],
-    ['claimless mutation', false],
-    ['claimed child', false],
-  ] as const)(
-    '%s cleanup controls pinning and claim retention',
-    async (kind, readOnly) => {
-      const before = new Set(process.listeners('SIGTERM'));
-      const retained =
-        kind === 'claimed child'
-          ? tryAcquireClaim({ root: join(home, 'fixture.lock'), mode: 'exclusive' }).acquired
-          : null;
-      const child = {
-        pid: 85183,
-        processToken: null,
-        command: readOnly ? 'ps -axo pid=' : 'xcrun simctl privacy fixture reset all',
-      };
-      const failure = Object.assign(new Error('Cannot verify fixture child cleanup.'), {
-        code: 'STIM_CLAIM_UNAVAILABLE',
-        reportCleanup: true,
-        reportChild: child,
-        reportResourceSettled: () => false,
-        ...(readOnly ? { readOnly: true } : {}),
-      });
-      const passes = vi
-        .spyOn(daemonPasses, 'runHomePasses')
-        .mockRejectedValue(
-          retained
-            ? new WorkspaceProcessCleanupError([retained], failure.message, 'Inspect fixture child.', failure)
-            : failure,
-        );
-      const root = join(home, 'engine');
-      const build = 'aaaaaaaaaaaa';
-      mkdirSync(root, { recursive: true });
-      const ownEngine = vi.spyOn(engineSwitch, 'ownStoreEngine').mockReturnValue({ root, build });
-      const record = vi.fn<(pinned: boolean, engineDirs: string[]) => void>();
-      const follower = vi.spyOn(engineFollow, 'followEngine').mockReturnValue({
-        engine: { root, build },
-        record,
-        admit: async () => null,
-        check: async () => null,
-        selecting: () => null,
-        release: () => {},
-      });
-      let running: Promise<boolean> | undefined;
-      try {
-        running = runStimd({ mode: 'on', tickMs: 60_000 });
-        await listening();
-        await requestDaemonTick({ ...process.env, STIM_DAEMON: 'on' }).catch(() => false);
-        const event = readOnly ? 'report_child_left' : 'daemon_cleanup_unverified';
-        await vi.waitFor(() => expect(daemonEvents()).toContain(event), { timeout: 10_000 });
-        const listed = daemonStatus();
-        expect(listed?.unverified?.length ?? 0).toBe(readOnly ? 0 : 1);
-        record.mockClear();
-        await requestDaemonTick({ ...process.env, STIM_DAEMON: 'on' }).catch(() => false);
-        expect(record.mock.calls.some(([pinned]) => pinned === !readOnly)).toBe(true);
-        const left = daemonLog()
-          .split('\n')
-          .filter(Boolean)
-          .map((line) => JSON.parse(line))
-          .find((logged) => logged.event === event);
-        expect(left).toMatchObject(
-          readOnly ? { level: 'warn', pid: child.pid, command: child.command } : { level: 'error' },
-        );
-        saveConfig({ version: 2, projects: {}, repos: {}, daemon: { mode: 'off' } });
-        await requestDaemonTick({ ...process.env, STIM_DAEMON: 'on' }).catch(() => false);
-        if (!readOnly) {
-          await vi.waitUntil(() => daemonEvents().includes('daemon_tick_off'), { timeout: 10_000 });
-          stopInProcess(before);
-        }
-        await running;
-        for (const claims of [stimdClaimRoot(), daemonClaimRoot()])
-          expect(readClaimSet(claims).live).toHaveLength(readOnly ? 0 : 1);
-      } finally {
-        stopInProcess(before);
-        await running?.catch(() => {});
-        passes.mockRestore();
-        follower.mockRestore();
-        ownEngine.mockRestore();
-        releaseClaim(retained);
-      }
-    },
-    20_000,
-  );
 
   test('a tick whose report child cleanup is unverified keeps stimd ticking and releases the retained claim once the child stops', async () => {
     const before = new Set(process.listeners('SIGTERM'));

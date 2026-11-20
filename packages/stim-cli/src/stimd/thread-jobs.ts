@@ -40,9 +40,8 @@ export function serveThreadJobs<Input>(
       const cleanup = error instanceof Error && 'reportCleanup' in error;
       const child = reportChildOf(error);
       const others = [...operationState(operation).running].some((running) => running.pid !== child?.pid);
-      const readOnly = cleanup && !others && 'readOnly' in error && error.readOnly === true;
-      const contained = !readOnly && child && !others && watch.contain(error, signal.aborted) ? child : null;
-      if (contained || readOnly) forget();
+      const contained = child && !others && watch.contain(error, signal.aborted) ? child : null;
+      if (contained) forget();
       port.postMessage({
         type: 'failed',
         reading: hungRead() !== null,
@@ -50,7 +49,6 @@ export function serveThreadJobs<Input>(
         ...(cleanup
           ? {
               reportCleanup: true,
-              ...(readOnly ? { readOnly: true, reportChild: child } : {}),
               ...(error instanceof Error && 'code' in error && typeof error.code === 'string'
                 ? { code: error.code }
                 : {}),

@@ -9,24 +9,9 @@ import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-err
 import { captureProcessIdentity } from '../../process-identity.ts';
 import { serveThreadJobs } from '../../stimd/thread-jobs.ts';
 
-type Input = { children?: number; readOnly?: true };
-
-const readOnlyFailure = () =>
-  Object.assign(new Error('Cannot verify cleanup for ps.'), {
-    code: 'STIM_CLAIM_UNAVAILABLE',
-    reportCleanup: true,
-    readOnly: true,
-    reportChild: { pid: 85183, processToken: null, command: 'ps -axo pid=' },
-  });
-
-/**
- * A stimd thread whose job declares `children` sleepers on a claim under `cwd`, then refuses naming the first, or with
- * `readOnly` refuses for an unrelated read-only child while the sleepers run.
- */
+/** A stimd thread whose job declares `children` sleepers on a claim under `cwd`, then refuses naming the first. */
 if (parentPort)
-  serveThreadJobs<Input>(parentPort, processContext, async (input, operation) => {
-    const { cwd, children = 1, readOnly } = input;
-    if (readOnly && children === 0) throw readOnlyFailure();
+  serveThreadJobs<{ children?: number }>(parentPort, processContext, async ({ cwd, children = 1 }, operation) => {
     const claim = tryAcquireClaim({ root: join(cwd, 'work.lock'), mode: 'exclusive' }).acquired;
     if (!claim) throw new Error('the fixture claim is held');
     declareSpawnsOn(operation, claim);
@@ -35,7 +20,6 @@ if (parentPort)
       () => spawnDeclared(operation, () => spawn('sleep', ['30'], { detached: true, stdio: 'ignore' })).pid ?? 0,
     );
     writeFileSync(join(cwd, 'pids'), pids.join(' '));
-    if (readOnly) throw readOnlyFailure();
     const named = pids[0] ?? 0;
     const captured = captureProcessIdentity(named);
     throw new WorkspaceProcessCleanupError(

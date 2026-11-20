@@ -29,7 +29,7 @@ type ToNet =
 type FromNet =
   | { type: 'listening'; port: number }
   | { type: 'refused'; message: string; clean: boolean }
-  | { type: 'closed'; error?: string; readOnly?: boolean; children?: { pid: number; command?: string }[] }
+  | { type: 'closed'; error?: string }
   | { type: 'data'; id: number; chunk: Uint8Array }
   | { type: 'end'; id: number }
   | { type: 'idle' }
@@ -68,7 +68,7 @@ export interface NetThread {
  * none of them. One start at a time; every request made while it starts gets that start's answer.
  */
 export function createNetThread(
-  log: (level: 'info' | 'warn', event: string, msg: string, fields?: Record<string, unknown>) => void,
+  log: (level: 'info' | 'warn', event: string, msg: string) => void,
   onExit: (failure?: Error) => void,
   onUpdate: (why: string) => void = () => {},
   onRestart: (why: string) => void = () => {},
@@ -164,11 +164,8 @@ export function createNetThread(
             answer({ listening: false, message: message.message });
             void thread.terminate();
           } else if (message.type === 'closed') {
-            clean = message.error === undefined || message.readOnly === true;
-            if (message.readOnly)
-              for (const { pid, command } of message.children ?? [])
-                log('warn', 'report_child_left', message.error ?? '', { pid, command });
-            else if (message.error !== undefined) unverified(message.error);
+            clean = message.error === undefined;
+            if (message.error !== undefined) unverified(message.error);
           } else if (message.type === 'idle') {
             if (!shareOnly) return;
             log('info', 'net_idle', 'no web share is left; stopping the net thread');

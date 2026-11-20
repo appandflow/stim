@@ -1,7 +1,7 @@
 import { type ChildProcess, type SpawnOptions, execSync } from 'child_process';
 import spawn from 'cross-spawn';
 import which from 'which';
-import { basename, delimiter, dirname, join, resolve as resolvePath, win32 } from 'path';
+import { basename, delimiter, join, resolve as resolvePath, win32 } from 'path';
 import { randomUUID } from 'node:crypto';
 import { existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -183,48 +183,8 @@ function describeReportCommand(file: string, args: readonly string[], redact?: r
 type CancelReason = 'timeout' | 'overflow' | 'exit' | 'close' | 'report_budget' | 'abort' | 'unknown';
 type Refusal = 'unverified' | 'did_not_close' | 'descendants';
 
-const SYSTEM_TOOL_DIRS = ['/bin', '/usr/bin', '/sbin', '/usr/sbin'];
-
-// @ref LLP 0007#read-only-report-children-do-not-hold-stimd -- only audited system tools and shapes qualify
-function readOnlyReportCommand(
-  file: string,
-  args: readonly string[],
-  env: NodeJS.ProcessEnv,
-  cwd: string | URL,
-): boolean {
-  if (process.platform === 'win32') return false;
-  const resolved = executableIn(file, env, cwd);
-  if (!resolved || !SYSTEM_TOOL_DIRS.includes(dirname(resolved))) return false;
-  const program = basename(resolved);
-  if (program === 'nice' && args[0] === '-n' && args[1] === '19')
-    return readOnlyReportCommand(args[2] ?? '', args.slice(3), env, cwd);
-  if (program === 'ps')
-    return (
-      (args.length === 3 && args[0] === '-axww' && args[1] === '-o') ||
-      (args.length === 2 && args[0] === '-axo') ||
-      (args.length === 4 && args[0] === '-o' && args[2] === '-p' && /^\d+$/.test(args[3] ?? ''))
-    );
-  if (program === 'lsof') {
-    const end = args.indexOf('--');
-    return (
-      args.length > 0 &&
-      args.every((arg, index) =>
-        end >= 0 && index > end
-          ? arg.startsWith('/')
-          : /^(?:--|-nP|-w|-a|-t|-d|-p|cwd|-F[pn]+|-iTCP(?::\d+(?:,\d+)*)?|-sTCP:(?:LISTEN|ESTABLISHED)|\d+(?:,\d+)*)$/.test(
-              arg,
-            ),
-      )
-    );
-  }
-  if (program === 'du')
-    return args[0] === '-sk' && args.length > 1 && args.slice(1).every((arg) => arg.startsWith('/'));
-  return false;
-}
-
 function reportChild(
   child: ChildProcess,
-  readOnly: boolean,
   signal?: AbortSignal,
   failed?: (error: Error) => Error,
   contained = false,
@@ -309,11 +269,8 @@ function reportChild(
       remedy: `Check whether the report child${pid === undefined ? '' : ` ${pid}${process.platform === 'win32' ? '' : ` (\`ps -p ${pid}\`)`}`} and its descendants are still running and stop them if they are`,
     });
     const error = Object.assign(failed?.(failure) ?? failure, {
-      ...(readOnly ? { readOnly: true } : {}),
       reportResourceSettled: cleanupSettled,
-      ...(pid === undefined
-        ? {}
-        : { reportChild: { pid, processToken: captured?.ok ? captured.token : null, command } }),
+      ...(pid === undefined ? {} : { reportChild: { pid, processToken: captured?.ok ? captured.token : null } }),
     });
     child.stdin?.destroy();
     child.stdout?.destroy();
@@ -673,7 +630,6 @@ const defaultExecutor: Executor = {
       try {
         lifetime = reportChild(
           child,
-          claims.length === 0 && readOnlyReportCommand(file, args, opts.env ?? ambientEnv(), childCwd ?? process.cwd()),
           report,
           (error) => {
             const failure = claims.length
@@ -864,8 +820,6 @@ const defaultExecutor: Executor = {
     }
     const lifetime = reportChild(
       child,
-      claims.length === 0 &&
-        readOnlyReportCommand(cmd, args, childOpts.env ?? ambientEnv(), childOpts.cwd ?? process.cwd()),
       undefined,
       (error) =>
         claims.length

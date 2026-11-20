@@ -16,7 +16,7 @@ export type ToNet =
 export type FromNet =
   | { type: 'listening'; port: number }
   | { type: 'refused'; message: string; clean: boolean }
-  | { type: 'closed'; error?: string; readOnly?: boolean; children?: { pid: number; command?: string }[] }
+  | { type: 'closed'; error?: string }
   | { type: 'data'; id: number; chunk: Uint8Array }
   | { type: 'end'; id: number }
   | { type: 'idle' }
@@ -49,18 +49,13 @@ class Bridged extends Duplex {
   }
 }
 
-interface CloseFailure extends Error {
-  readOnly?: boolean;
-  reportChild?: { pid: number; command?: string };
-}
-
-function closeFailures(error: unknown): CloseFailure[] {
+function closeFailures(error: unknown): Error[] {
   return error instanceof AggregateError
     ? [error, ...error.errors.flatMap(closeFailures)]
     : [error instanceof Error ? error : new Error(String(error))];
 }
 
-const failureText = (failures: CloseFailure[]): string => failures.map((failure) => failure.message).join('; ');
+const failureText = (failures: Error[]): string => failures.map((failure) => failure.message).join('; ');
 
 async function run(port: MessagePort, options: NetOptions): Promise<void> {
   const post = (message: FromNet) => port.postMessage(message);
@@ -106,21 +101,7 @@ async function run(port: MessagePort, options: NetOptions): Promise<void> {
       void close()
         .then(
           () => post({ type: 'closed' }),
-          (error: unknown) => {
-            const failures = closeFailures(error);
-            const leaves = failures.filter((failure) => !(failure instanceof AggregateError));
-            const readOnly = leaves.length > 0 && leaves.every((failure) => failure.readOnly === true);
-            post({
-              type: 'closed',
-              error: failureText(failures),
-              ...(readOnly
-                ? {
-                    readOnly: true,
-                    children: leaves.flatMap((failure) => (failure.reportChild ? [failure.reportChild] : [])),
-                  }
-                : {}),
-            });
-          },
+          (error: unknown) => post({ type: 'closed', error: failureText(closeFailures(error)) }),
         )
         .finally(() => port.close());
   };
