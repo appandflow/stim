@@ -17,11 +17,15 @@ import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, expect, test } from 'vitest';
+import { withAmbientContext } from '@stim-cli/core';
 import { deleteTrash } from '../commands/gc/trash.ts';
 import { takeGcResults } from '../commands/gc/results.ts';
 import { openDeleteSession } from '../delete-child.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
+import { runReport } from '../report-runtime.ts';
+import { warmTrash } from '../workspace/worktree-trash.ts';
+import { testContext } from './_context.ts';
 
 const CHILD = fileURLToPath(new URL('../../dist/delete-child.mjs', import.meta.url));
 const POSIX = process.platform !== 'win32';
@@ -84,13 +88,16 @@ function whenChildRecorded(claims: string, act: (pid: number) => void): () => vo
 }
 
 test.skipIf(!POSIX)(
-  'the delete child removes a tree in place, reports progress, and never follows a link',
+  'the delete child removes a tree in place, with directories it may not read or search, and never follows a link',
   async () => {
     const tree = join(base, 'tree');
     plantTree(tree, 3);
     mkdirSync(join(tree, 'read-only'));
     writeFileSync(join(tree, 'read-only', 'file'), 'r');
     chmodSync(join(tree, 'read-only'), 0o500);
+    mkdirSync(join(tree, 'locked'));
+    writeFileSync(join(tree, 'locked', 'file'), 'l');
+    chmodSync(join(tree, 'locked'), 0o000);
     mkdirSync(join(base, 'outside'));
     writeFileSync(join(base, 'outside', 'keep'), 'k');
     symlinkSync(join(base, 'outside'), join(tree, 'link'));
@@ -118,6 +125,27 @@ test.skipIf(!POSIX)(
     expect(await exited).toBe(0);
   },
 );
+
+test.skipIf(!POSIX)('a cancel sent after the first progress stops the delete part way', async () => {
+  const tree = join(base, 'tree');
+  plantTree(tree, 2000);
+  const child = spawn(process.execPath, [CHILD], { stdio: ['pipe', 'pipe', 'inherit'] });
+  const reply = await new Promise<Record<string, unknown>>((resolve) => {
+    createInterface({ input: child.stdout }).on('line', (line) => {
+      const message = JSON.parse(line);
+      if (message.ready)
+        child.stdin.write(`${JSON.stringify({ id: 1, op: 'rm', path: tree, dev: lstatSync(tree).dev })}\n`);
+      else if (message.progress) child.stdin.write(`${JSON.stringify({ cancel: 1 })}\n`);
+      else resolve(message);
+    });
+  });
+  child.stdin.end();
+
+  expect(reply).toEqual({ id: 1, cancelled: { left: [tree] } });
+  const remaining = readdirSync(join(tree, 'nested')).length;
+  expect(remaining).toBeGreaterThan(0);
+  expect(remaining).toBeLessThan(2000);
+});
 
 test.skipIf(!POSIX)('gc deletes trash entries through one delete child under a symlinked Stim home', async () => {
   const real = getExecutor();
@@ -153,7 +181,7 @@ test.skipIf(!POSIX)('a killed delete child fails the delete and leaves an entry 
   expect(existsSync(entry)).toBe(false);
 });
 
-test.skipIf(!POSIX)('a cancelled delete stops before the next unlink and the child takes the next job', async () => {
+test.skipIf(!POSIX)('a cancelled delete clears the child record and the child takes the next job', async () => {
   const tree = join(base, 'tree');
   plantTree(tree, 2000);
   const claim = tryAcquireClaim({ root: join(base, 'claims'), mode: 'exclusive', label: 'test' }).acquired;
@@ -187,3 +215,36 @@ test.skipIf(!POSIX)('a delete child that exits before it is ready leaves the del
   expect(await deleteTrash(undefined)).toMatchObject({ count: 1, failures: 0 });
   expect(existsSync(entry)).toBe(false);
 });
+
+test.skipIf(!POSIX)(
+  'inside a report, a trash entry goes through the delete child when the caller cwd is gone',
+  async () => {
+    const worktree = join(base, 'worktree');
+    plantTree(join(worktree, 'store'), 3);
+    const gone = join(base, 'gone');
+    mkdirSync(gone);
+    const context = testContext({ home: join(base, 'home'), cwd: gone, projectRoot: gone });
+    rmSync(gone, { recursive: true });
+    const real = getExecutor();
+    const exits: (number | null)[] = [];
+    setExecutor({
+      ...real,
+      spawn: (...args: Parameters<typeof real.spawn>) => {
+        const child = real.spawn(...args);
+        child.once('exit', (code) => exits.push(code));
+        return child;
+      },
+    });
+    const warm = warmTrash(worktree);
+
+    await runReport(context, (operation) =>
+      withAmbientContext(operation, async () => {
+        expect(await warm.take(join(worktree, 'store'))).toBe(true);
+        await warm.dispose(operation);
+      }),
+    );
+
+    expect(exits).toEqual([0]);
+    expect(readdirSync(trash)).toEqual([]);
+  },
+);

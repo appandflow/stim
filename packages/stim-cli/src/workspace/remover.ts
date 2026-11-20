@@ -93,8 +93,8 @@ interface RemoveOptions {
 
 /**
  * Removes `path`, inside the directory `parent`, deepest first. A symbolic link is unlinked and never followed, a
- * directory on a device other than `dev` is not entered, a directory without owner read, write or search permission gets
- * them before it is listed, and a directory goes once it is empty. A path already gone counts as removed. Returns the
+ * directory on a device other than `dev` is not entered, a directory without owner read or write permission gets them
+ * once entered (one without owner search permission gets it by name first, the one call made before the anchor), and a directory goes once it is empty. A path already gone counts as removed. Returns the
  * paths it left: directories on another device, and a directory refilled or replaced meanwhile.
  */
 async function removeInPlace(path: string, parent: Identity, options: RemoveOptions): Promise<string[]> {
@@ -114,8 +114,9 @@ async function removeInPlace(path: string, parent: Identity, options: RemoveOpti
     return [];
   }
   if (stat.dev !== options.dev) return [path];
-  if ((stat.mode & 0o700) !== 0o700) await chmod(name, stat.mode | 0o700);
+  if (!(stat.mode & 0o100)) await chmod(name, stat.mode | 0o700);
   anchor.enter(path, stat);
+  if ((stat.mode & 0o600) !== 0o600) await chmod(anchor.list(path), stat.mode | 0o700);
   const left: string[] = [];
   try {
     for (const child of await readdir(anchor.list(path)))

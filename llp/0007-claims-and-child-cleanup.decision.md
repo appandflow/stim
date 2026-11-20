@@ -255,7 +255,9 @@ Related: #5766, #5769, #5771.
 ## A delete child holds the claim of the tree it deletes
 
 Tree deletes run in a delete child (`bin/delete-child.ts`), one per sweep, fed
-one job at a time on stdin and ending at stdin EOF. Its parent decides; the
+one job at a time on stdin and ending at stdin EOF. Under LLP 0018 it is a child
+a restart of its parent may drop: at EOF it stops before its next entry, and the
+part-deleted tree stays for the next sweep. Its parent decides; the
 child only removes, through the one remover (`workspace/remover.ts`), which
 never follows a link and never enters another device. Its first caller is gc's
 trash deletion.
@@ -264,7 +266,10 @@ trash deletion.
   directory with `chdir`, compares the device and inode of `.` with the
   `lstat` it took before, and unlinks single-component names there; going back
   up it compares `.` with the parent it recorded. A directory swapped for a link
-  after its check is then never acted through, and the delete stops. Node has
+  after its check is then never acted through, and the delete stops. A
+  directory without owner read or write permission gets it through `.` once
+  entered. Only a directory without owner search permission gets it by name
+  before the check, so that `chmod` alone can reach through a swapped link. Node has
   no `unlinkat`, so the working directory is the only anchor; it is
   process-wide, which is why the child runs one job at a time and why only the
   child's entry passes `chdir` to the remover.

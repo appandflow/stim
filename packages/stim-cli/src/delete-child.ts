@@ -51,11 +51,12 @@ const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 export async function openDeleteSession(): Promise<DeleteSession> {
   let child: ChildProcess;
   try {
-    child = getExecutor().spawn(
-      process.execPath,
-      [fileURLToPath(new URL('../dist/delete-child.mjs', import.meta.url))],
-      { stdio: ['pipe', 'pipe', 'ignore'], detached: process.platform !== 'win32' },
-    );
+    const entry = fileURLToPath(new URL('../dist/delete-child.mjs', import.meta.url));
+    child = getExecutor().spawn(process.execPath, [entry], {
+      cwd: dirname(entry),
+      stdio: ['pipe', 'pipe', 'ignore'],
+      detached: process.platform !== 'win32',
+    });
   } catch {
     return inThread;
   }
