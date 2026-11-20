@@ -706,7 +706,7 @@ function canonicalOrNull(path: string): string | null {
  */
 function reportDue(context: RungContext): boolean {
   if (context.force) return true;
-  if (!context.reports || context.level === 'critical') return false;
+  if (!context.reports || context.pressure.level === 'critical') return false;
   const key = `${configDir()}\0${context.rung}`;
   const now = Date.now();
   const last = reportedAt.get(key);

@@ -1751,6 +1751,36 @@ describe('rung 5', () => {
         expect(reports(later.actions).length).toBeGreaterThanOrEqual(2);
       });
 
+      test("the daemon's ladder reports nothing while memory is critical, even with disk only high", async () => {
+        const { idle } = linkedWorktrees(['idle']);
+        register(idle);
+        const level: DaemonPressure = {
+          level: 'critical',
+          disk: 'high',
+          memory: 'critical',
+          reasons: ['fixture'],
+          memoryWarningSince: null,
+        };
+        const config = loadConfig();
+        if (!config) throw new Error('no config');
+
+        const { actions } = await runLadder(
+          {
+            config,
+            act: true,
+            log,
+            devices: [],
+            simsFailed: false,
+            remeasure: async () => level,
+            fromRung: 5,
+            reports: true,
+          },
+          level,
+        );
+
+        expect(reports(actions)).toEqual([]);
+      });
+
       test('it reports nothing of a worktree used a minute ago, and reports one used two hours ago', async () => {
         const { recent, idle } = linkedWorktrees(['recent', 'idle']);
         register(recent);
