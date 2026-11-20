@@ -612,7 +612,7 @@ like Stim Host. It only needs a new version when its source changes. Nothing in
    notarizes a zip of it, and attaches `stim-fsevents-<version>.zip` and
    `SHA256SUMS` to a `fsevents-v<version>` GitHub release. `SHA256SUMS` lists
    the zip and the `stim-fsevents` binary inside it. A bare executable cannot
-   be stapled, so Gatekeeper checks its notarization ticket online. It uses
+   be stapled, so the notarization ticket is not attached to the file. It uses
    the `release` environment and the same Desktop signing and App Store
    Connect secrets as Stim Host. A tag refuses to publish a build that is not
    signed and notarized; a dispatched run is a dry run that uploads the build
