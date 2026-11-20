@@ -27,6 +27,7 @@ import { readJsonObject, stimBuildDigest, stimdClaimRoot, stimdRecordFile, tails
 import type { WorkerRootUsage } from './worker-areas.ts';
 import {
   jobArguments,
+  withProgramArguments,
   DEFAULT_LABEL,
   DEFAULT_PORT,
   validateLabel,
@@ -434,29 +435,15 @@ export async function rewriteUnitToShim(label: string): Promise<boolean> {
       ...(installed.host ? [installed.host, 'run'] : []),
       ...jobArguments({ ...installed, node: installed.node, script: installed.script, port: installed.port, stimd }),
     ];
-    const rewritten = manager.name === 'launchd' ? null : editUnit(text, { programArguments: args });
+    const rewritten =
+      manager.name === 'launchd' ? withProgramArguments(text, args) : editUnit(text, { programArguments: args });
     if (rewritten !== text) {
       const problem = manager.name === 'systemd' ? execStartOverride(path, text) : null;
       if (problem) throw new ServiceError(`${problem}; not rewriting ${label} to the engine shim.`);
       const target = realpathSync(path);
       const partial = `${target}.${process.pid}.tmp`;
-      try {
-        if (rewritten === null) {
-          copyFileSync(target, partial);
-          // @ref LLP 0021#stimd-runs-at-the-priority-of-an-app -- the unit moves to ProcessType Interactive with the shim
-          const edits: [string, string[]][] = [
-            ['ProgramArguments', ['-json', JSON.stringify(args)]],
-            ['ProcessType', ['-string', 'Interactive']],
-          ];
-          for (const [key, value] of edits) {
-            const edited = await run('plutil', ['-replace', key, ...value, partial]);
-            if (!edited.ok) throw new ServiceError(`plutil -replace ${key} failed: ${edited.stderr.trim()}`);
-          }
-        } else writeFileSync(partial, rewritten, { mode: 0o644 });
-        renameSync(partial, target);
-      } finally {
-        rmSync(partial, { force: true });
-      }
+      writeFileSync(partial, rewritten, { mode: 0o644 });
+      renameSync(partial, target);
       changed = true;
     }
   } else if (installed.script !== stimd) return false;

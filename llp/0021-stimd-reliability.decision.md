@@ -247,11 +247,14 @@ is not changed here; its priority was not measured.
 
 The priority of a running stimd follows the job that started it. A stimd that
 an older build started, including the first successor an engine switch onto
-this build starts, runs at 20 until the next handover. A LaunchAgent that still
-names node and a script gets `Interactive` when it is rewritten onto the engine
-shim; one already on the shim keeps `Standard` until `stim service install`
-runs again, and launchd reads a plist only at bootstrap, so after a reboot or a
-login such a unit starts stimd at 20 again.
+this build starts, runs at 20 until the next handover. Stim does not edit an
+existing LaunchAgent for this: a unit installed before keeps `Standard`, also
+when it is rewritten onto the engine shim, until `stim service install` runs
+again, and launchd reads a plist only at bootstrap, so after a reboot or a login
+such a unit starts stimd at 20 again. The stale-unit check (#6009) compares
+the unit's `ProcessType` with what `renderPlist` writes, and `stim service
+status`, `stim doctor` and `stim setup` print the `stim service install`
+remedy.
 
 Maintenance children keep the priority they had: they run at stimd's priority,
 now 31, except the size walks that already ran under `nice -n 19` and the
