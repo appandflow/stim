@@ -25,6 +25,7 @@ import {
   workspaceLightenedFile,
 } from '@stim-cli/core/state';
 import * as gcDevices from '../commands/gc/devices.ts';
+import { recordGcResult } from '../commands/gc/results.ts';
 import { collectOwnedDeviceActivityAsync, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { REAL_BYTES_THRESHOLD, runDormantDependencies } from '../daemon/dependencies.ts';
 import { runIdlePass } from '../daemon/idle.ts';
@@ -1354,6 +1355,7 @@ describe('the ladder a build runs for its headroom', () => {
     vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
     vi.spyOn(gcDevices, 'deleteParkedSims').mockImplementation(async (taken) => {
       deleted.push(...taken.map((sim) => sim.udid));
+      for (const sim of taken) recordGcResult('parkedDevice', 'done', sim.name);
       return taken.length;
     });
     const sim = { deviceTypeIdentifier: 'iPhone', runtimeIdentifier: 'iOS-26-0', simslimManaged: false };
