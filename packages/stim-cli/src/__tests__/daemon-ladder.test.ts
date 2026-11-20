@@ -24,6 +24,7 @@ import {
   readJsonObject,
   workspaceLightenedFile,
 } from '@stim-cli/core/state';
+import * as cacheModule from '../cache/caches.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
 import { recordGcResult } from '../commands/gc/results.ts';
 import { collectOwnedDeviceActivityAsync, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
@@ -653,6 +654,26 @@ describe('the pressure ladder', () => {
         ['trim-cargo', big.target],
         ['trim-cargo', small.target],
       ]);
+    },
+  );
+
+  test.skipIf(process.platform === 'win32')(
+    'rung 3 still trims the Cargo targets after its shared caches fail, and records the failure',
+    async () => {
+      const { target } = cargoApp();
+      caches('kept-key');
+      vi.spyOn(cacheModule, 'pruneCache').mockRejectedValue(new Error('ENOSPC: no space left on device'));
+
+      const { actions } = await runLadder(
+        input(true, async () => pressure('critical')),
+        pressure('critical'),
+      );
+
+      expect(actions.filter((action) => action.rung === 3).map((action) => [action.kind, action.outcome])).toEqual([
+        ['rung', 'failed'],
+        ['trim-cargo', 'done'],
+      ]);
+      expect(actions.find((action) => action.target === target)).toBeDefined();
     },
   );
 

@@ -478,12 +478,35 @@ function unsizedDetail(dir: string): string {
 }
 
 /**
- * Rung 3, the shared caches: at high, each trimmed least recently used first to half its cap (the compilation cache,
- * which can only be emptied whole, emptied once over half its cap); at critical, the Metro cache and the compilation
- * cache emptied, the build cache trimmed to its protected entries, the fingerprint index and memo emptied, and every
- * other registered cache emptied whole except those `emptyRegisteredCaches` keeps. Then the Cargo trims.
+ * Rung 3: the shared caches, then the Cargo trims, which a failure of the caches does not stop.
  */
 async function cachesRung(context: RungContext): Promise<void> {
+  try {
+    await sharedCachesStep(context);
+  } catch (error) {
+    if (isClaimUnavailable(error)) throw error;
+    context.operation?.signal.throwIfAborted();
+    const message = error instanceof Error ? error.message : String(error);
+    context.log('warn', 'pressure_rung_failed', `rung 3 shared caches failed: ${message}`);
+    context.actions.push({
+      rung: 3,
+      kind: 'rung',
+      target: 'rung 3 shared caches',
+      outcome: 'failed',
+      bytes: 0,
+      detail: message,
+    });
+  }
+  await cargoTargetsStep(context);
+}
+
+/**
+ * Rung 3's shared caches: at high, each trimmed least recently used first to half its cap (the compilation cache,
+ * which can only be emptied whole, emptied once over half its cap); at critical, the Metro cache and the compilation
+ * cache emptied, the build cache trimmed to its protected entries, the fingerprint index and memo emptied, and every
+ * other registered cache emptied whole except those `emptyRegisteredCaches` keeps.
+ */
+async function sharedCachesStep(context: RungContext): Promise<void> {
   const critical = context.level === 'critical';
   const recentDays = critical ? 0 : context.settings.protectRecentHours / 24;
   const entries = [
@@ -585,7 +608,6 @@ async function cachesRung(context: RungContext): Promise<void> {
       context.why,
     );
   }
-  await cargoTargetsStep(context);
 }
 
 /**

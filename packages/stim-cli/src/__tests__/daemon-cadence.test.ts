@@ -12,6 +12,7 @@ import {
   readStimdBoots,
   stimdClaimRoot,
   type DaemonMode,
+  type DaemonPressure,
 } from '@stim-cli/core/state';
 import { readClaimSet } from '@stim-cli/core/ownership-claim';
 import * as engineFollow from '../stimd/engine-follow.ts';
@@ -117,7 +118,13 @@ function quietWorkspace(usedAgoMs = MINUTE_MS): string {
 }
 
 describe('the dormant step and the disk ladder', () => {
-  const normal = { level: 'normal', disk: 'normal', memory: 'normal', reasons: [], memoryWarningSince: null } as const;
+  const normal: DaemonPressure = {
+    level: 'normal',
+    disk: 'normal',
+    memory: 'normal',
+    reasons: [],
+    memoryWarningSince: null,
+  };
 
   async function laneInput() {
     return {
