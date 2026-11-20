@@ -422,12 +422,20 @@ async function removeInPlace(path: string, dev: number, signal?: AbortSignal, ke
 /**
  * Why the whole of `target` stays because of a symbolic link a Solana key may stand behind, found at any depth without
  * following links: one named `deploy` or `*-keypair.json`, or one directly in a `deploy` directory, all in any letter
- * case. A directory that cannot be listed keeps it too; one a build removed meanwhile is skipped. Null when there is none.
+ * case. A directory that cannot be listed keeps it too; one a build removed meanwhile, or one on a device other than
+ * `dev`, is skipped. Stops with `DEADLINE_KEPT` once `stop` fires. Null when there is none.
  */
-async function keypairLink(target: string, signal?: AbortSignal): Promise<string | null> {
+async function keypairLink(
+  target: string,
+  dev: number,
+  signal?: AbortSignal,
+  stop?: AbortSignal,
+): Promise<string | null> {
   const queue = [target];
   for (let dir = queue.pop(); dir !== undefined; dir = queue.pop()) {
     signal?.throwIfAborted();
+    if (stop?.aborted === true) return DEADLINE_KEPT;
+    if ((await lstat(dir).catch(() => null))?.dev !== dev) continue;
     let entries: Dirent[];
     try {
       entries = await readdir(dir, { withFileTypes: true });
@@ -458,8 +466,8 @@ async function rootMoved(registered: string, target: string): Promise<string | n
 }
 
 /** Throws `KeepTarget` when `keypairLink` finds a link; run under the Cargo locks that cover the delete. */
-async function refuseKeypairLink(target: string, signal?: AbortSignal): Promise<void> {
-  const link = await keypairLink(target, signal);
+async function refuseKeypairLink(target: string, dev: number, signal?: AbortSignal, stop?: AbortSignal): Promise<void> {
+  const link = await keypairLink(target, dev, signal, stop);
   if (link) throw new KeepTarget(link);
 }
 
@@ -621,7 +629,7 @@ export async function trimCargoTarget(
     const done = await withCargoLocks(
       idleOnly ? [] : locks,
       async () => {
-        await refuseKeypairLink(target, signal);
+        await refuseKeypairLink(target, dev, signal, stop);
         return removeInPlace(dir, dev, signal);
       },
       signal,
@@ -799,7 +807,7 @@ export async function deleteCargoTarget(
       async () => {
         const movedSince = await rootMoved(registeredTarget, target);
         if (movedSince) throw new KeepTarget(movedSince);
-        await refuseKeypairLink(target, signal);
+        await refuseKeypairLink(target, dev, signal);
         const left: string[] = [];
         for (const name of names) left.push(...(await removeInPlace(join(target, name), dev, signal)));
         return left;

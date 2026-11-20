@@ -415,7 +415,11 @@ describe.skipIf(process.platform === 'win32')('trimming in place (Cargo locks ne
     const debug = join(realpathSync.native(target), 'debug');
     const abort = new AbortController();
     fsHooks.afterLstat = (path) => {
-      if (['deps', 'build', 'incremental'].some((part) => path === join(debug, part))) abort.abort();
+      if (
+        ['deps', 'build', 'incremental'].some((part) => path === join(debug, part)) &&
+        readdirSync(join(debug, '.fingerprint')).length === 0
+      )
+        abort.abort();
     };
 
     await expect(trimCargoTarget(target, { needBytes: 0, signal: abort.signal })).rejects.toThrow('aborted');
@@ -426,6 +430,23 @@ describe.skipIf(process.platform === 'win32')('trimming in place (Cargo locks ne
     const later = await trimCargoTarget(target, { needBytes: 0, now: Date.now() + 2 * DAY });
     expect(later.removed).toEqual(['debug']);
     expect(readdirSync(join(target, 'debug'))).toEqual(['.cargo-lock']);
+  });
+
+  test('the keypair link walk stays off another device and stops at the deadline', async () => {
+    makeProfile('debug', 3 * DAY);
+    mkdirSync(join(target, 'mounted'));
+    symlinkSync('/nonexistent', join(target, 'mounted', 'app-keypair.json'));
+    fsHooks.dev = (path) => (path.endsWith('/mounted') ? -1 : undefined);
+    expect((await trimCargoTarget(target, { needBytes: 0 })).removed).toEqual(['debug']);
+
+    makeProfile('release', 3 * DAY);
+    const deadline = new AbortController();
+    fsHooks.beforeReaddir = (path) => {
+      if (path === realpathSync.native(target)) deadline.abort();
+    };
+    const stopped = await trimCargoTarget(target, { needBytes: 0, stop: deadline.signal });
+    expect(stopped).toMatchObject({ removed: [], kept: ['the rest was left at the build headroom deadline'] });
+    expect(existsSync(join(target, 'release', 'deps', 'libx.rlib'))).toBe(true);
   });
 
   test('a link named like a keypair anywhere in the target keeps it whole, and what it points at stays', async () => {
@@ -463,16 +484,9 @@ describe.skipIf(process.platform === 'win32')('trimming in place (Cargo locks ne
   test('a trim stopped at a deadline finishes the step in flight and leaves the rest', async () => {
     for (const name of ['debug', 'release', 'host-dev']) makeProfile(name, 3 * DAY);
     const deadline = new AbortController();
-    const real = getExecutor();
-    setExecutor({
-      ...real,
-      runFileAsync: async (file, args, options) =>
-        file === 'lsof' || file === 'ps' ? '' : real.runFileAsync(file, args, options),
-      spawn: (...args: Parameters<typeof real.spawn>) => {
-        deadline.abort();
-        return real.spawn(...args);
-      },
-    });
+    fsHooks.afterLstat = (path) => {
+      if (path.endsWith(join('deps', 'libx.rlib'))) deadline.abort();
+    };
 
     const result = await trimCargoTarget(target, {
       needBytes: 0,
