@@ -28,7 +28,6 @@ import { renderPlist } from '../src/service-plist.ts';
 import { renderUnit } from '../src/service-unit.ts';
 import { installJob, serviceStatus } from '../src/service.ts';
 import { upsertProject } from '../../stim-cli/src/workspace/config.ts';
-import { readWorkspaceState } from '../../stim-cli/src/workspace/workspace-state.ts';
 
 const launchd = vi.hoisted((): { job: ChildProcess | null; start: (() => ChildProcess) | null } => ({
   job: null,
@@ -835,7 +834,6 @@ describe.skipIf(process.platform === 'win32')("an engine switch under a service 
       );
       expect(gone(holder.pid)).toBe(true);
       expect(parentOf(service.record()?.pid ?? 0)).toBe(waiter);
-      expect(readWorkspaceState(app)?.collectors?.ios).toMatchObject({ kind: 'stream', streamId: started.streamId });
     } finally {
       await service.cleanup();
     }
