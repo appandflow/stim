@@ -280,12 +280,13 @@ How the child anchors each delete:
   `lstat` it took before, and unlinks single-component names there; going back
   up it compares `.` with the parent it recorded. A directory swapped for a link
   after its check is then never acted through, and the delete stops.
-- An empty directory is removed before anything else, so its mode, and its
-  owner, do not matter. A nonempty directory without owner read or write
-  permission gets them through `.` once entered. A directory without owner search permission gets its mode set by
-  name before the check (`chmod(name, mode | 0o700)`); a link swapped in after
-  the `lstat` redirects that one call, which then sets the link target's whole
-  mode. Node has no `unlinkat`, so the working directory is the only anchor; it is
+- Every operation runs with the permissions as they are, so an empty
+  directory, or one the user may change through its group, goes whatever its
+  mode and owner. Only an operation that is denied gives the owner read, write
+  and search permission on the directory it acts in, and runs once more.
+  Entering a directory that denies search sets its mode by name before the
+  check (`chmod(name, mode | 0o700)`); a link swapped in after the `lstat`
+  redirects that one call, which then sets the link target's whole mode. Node has no `unlinkat`, so the working directory is the only anchor; it is
   process-wide, which is why the child runs one job at a time and why only the
   child's entry passes `chdir` to the remover.
 - The in-thread fallback cannot move the working directory (it is shared with
@@ -322,9 +323,13 @@ How the parent runs the child:
 
 How a trash entry is deleted:
 
-- Before taking an entry's claim, which writes inside it, gc checks that the
-  resolved entry is on the trash's device and, on Linux, has no mount point at
-  or under it. Once it holds the claim it reads the entry again and keeps one
+- Before taking an entry's claim, which writes inside it and reaps dead records
+  there, gc checks that the resolved entry is on the trash's device and, on
+  Linux, has no mount point at or under it, and that `claims/`,
+  `claims/exclusive/` and `claims/shared/`, where they exist, are real
+  directories on that device. For an entry without a manifest, those three must
+  also hold only what the claim code writes: UUID-named `.claim` and `.child`
+  files and its staging shapes. Once it holds the claim it reads the entry again and keeps one
   whose manifest or contents changed its answer.
 - Each step leaves a state gc finishes: everything but `claims/` and
   `trash.json` (names that are not valid UTF-8 included), then a check that

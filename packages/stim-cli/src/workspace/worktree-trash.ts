@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, lstatSync, realpathSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, realpathSync, type Dirent } from 'node:fs';
 import { lstat, mkdir, mkdtemp, readdir, rename, rm, rmdir, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join, sep } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
@@ -258,10 +258,10 @@ export async function deleteTrashEntry(
   try {
     await rmdir(join(dir, TRASH_CLAIMS));
   } catch (error) {
-    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT'))
-      throw new Error(`${join(dir, TRASH_CLAIMS)} holds files Stim did not write, so the entry stays`, {
-        cause: error,
-      });
+    const code = error instanceof Error && 'code' in error ? String(error.code) : String(error);
+    const why = code === 'ENOTEMPTY' || code === 'EEXIST' ? 'it holds files Stim did not write' : code;
+    if (code !== 'ENOENT')
+      throw new Error(`${join(dir, TRASH_CLAIMS)} could not be removed (${why}), so the entry stays`, { cause: error });
   }
   await rmdir(dir).catch(ignoreMissing);
 }
@@ -270,13 +270,40 @@ const CLAIM_ID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const STAGED_FILE = new RegExp(`^\\.staging-(?:(?:child|details)-)?${CLAIM_ID}$`);
 const STAGED_DIRECTORY = new RegExp(`^\\.staging-(${CLAIM_ID})$`);
 
-/** Whether the claim set `root` holds only what the claim code writes: its claim directories and staging. */
-export async function onlyClaimFiles(root: string): Promise<boolean> {
-  const names = await readdir(root).catch(() => null);
-  if (!names) return false;
-  return names.every(
-    (name) => name === 'exclusive' || name === 'shared' || STAGED_FILE.test(name) || STAGED_DIRECTORY.test(name),
-  );
+const CLAIM_RECORD = new RegExp(`^${CLAIM_ID}\\.(?:claim|child)$`);
+
+const claimRootEntry = (entry: Dirent) =>
+  ((entry.name === 'exclusive' || entry.name === 'shared') && entry.isDirectory()) ||
+  (STAGED_FILE.test(entry.name) && entry.isFile()) ||
+  (STAGED_DIRECTORY.test(entry.name) && entry.isDirectory());
+
+const claimRecord = (entry: Dirent) => CLAIM_RECORD.test(entry.name) && entry.isFile();
+
+/**
+ * Why the claim set `root` of a trash entry must not be touched, or null. `root`, `exclusive/` and `shared/`, where they
+ * exist, must be real directories on `dev`, the trash's device; with `strict`, for an entry without a manifest, they must
+ * also hold only the files and directories the claim code writes. Taking a claim reaps dead records in them, so this runs
+ * before it.
+ */
+export function claimSetKept(root: string, dev: number, strict: boolean): string | null {
+  const levels: [string, (entry: Dirent) => boolean][] = [
+    [root, claimRootEntry],
+    [join(root, 'exclusive'), claimRecord],
+    [join(root, 'shared'), claimRecord],
+  ];
+  for (const [dir, written] of levels) {
+    try {
+      const stat = lstatSync(dir, { throwIfNoEntry: false });
+      if (!stat) continue;
+      if (!stat.isDirectory() || stat.dev !== dev) return `${dir} is not a directory on the volume of the trash`;
+      if (!strict) continue;
+      const foreign = readdirSync(dir, { withFileTypes: true }).find((entry) => !written(entry));
+      if (foreign) return `${join(dir, foreign.name)} is not a file Stim's claims write`;
+    } catch (error) {
+      return `${dir} cannot be checked: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  }
+  return null;
 }
 
 /**

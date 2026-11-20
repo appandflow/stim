@@ -70,6 +70,8 @@ interface Anchor {
   rename(dir: string, raw: Buffer): Promise<string>;
   enter(path: string, seen: Identity): void;
   leave(parent: Identity): void;
+  /** Gives the owner read, write and search permission on the directory that holds `path`. */
+  repairParent(path: string): Promise<void>;
 }
 
 const asciiName = () => `.stim-delete-${randomUUID()}`;
@@ -92,6 +94,11 @@ const byPath: Anchor = {
   },
   enter() {},
   leave() {},
+  async repairParent(path) {
+    await stillInside(path);
+    const dir = dirname(path);
+    await chmod(dir, (await lstat(dir)).mode | 0o700);
+  },
 };
 
 /** The process working directory, which only the delete child may change: it is process-wide. */
@@ -123,7 +130,42 @@ const byWorkingDirectory = (cwd: WorkingDirectory): Anchor => ({
     if (!same(statSync('.'), parent))
       throw new KeepTree('a directory above the delete was replaced while it ran, so the delete stopped');
   },
+  async repairParent() {
+    await chmod('.', statSync('.').mode | 0o700);
+  },
 });
+
+const denied = (error: unknown) => errorCode(error) === 'EACCES' || errorCode(error) === 'EPERM';
+
+/**
+ * Runs `operation` with the permissions as they are, and only when it is denied, runs `repair` and runs it once more; a
+ * repair that fails leaves the first denial as the error.
+ */
+async function withRepair<T>(operation: () => Promise<T>, repair: () => Promise<void>): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    if (!denied(error)) throw error;
+    await repair().catch(() => {
+      throw error;
+    });
+    return operation();
+  }
+}
+
+/** `rmdir(name)`: whether it removed the directory or found it gone, found it not empty, or found something else there. */
+async function tryRmdir(name: string): Promise<'gone' | 'nonempty' | 'replaced'> {
+  try {
+    await rmdir(name);
+    return 'gone';
+  } catch (error) {
+    const code = errorCode(error);
+    if (code === 'ENOENT') return 'gone';
+    if (code === 'ENOTEMPTY' || code === 'EEXIST') return 'nonempty';
+    if (code === 'ENOTDIR') return 'replaced';
+    throw error;
+  }
+}
 
 interface RemoveOptions {
   dev: number;
@@ -134,12 +176,13 @@ interface RemoveOptions {
 
 /**
  * Removes `path`, inside the directory `parent`, deepest first. A symbolic link is unlinked and never followed, a
- * directory on a device other than `dev` is not entered, an empty directory is removed before anything else, so its
- * mode does not matter, a nonempty directory without owner read or write permission gets them once entered (one without owner search permission gets its mode set by name first: the one call made before the
- * anchor, which a link swapped in after the `lstat` would redirect to the link target), an
- * entry whose name is not valid UTF-8 is renamed to an ASCII name in its directory first, and a directory goes once it
- * is empty. A path already gone counts as removed. Returns the
- * paths it left: directories on another device, and a directory refilled or replaced meanwhile.
+ * directory on a device other than `dev` is not entered, an empty directory is removed before anything else, and an entry
+ * whose name is not valid UTF-8 is renamed to an ASCII name in its directory first. Every operation runs with the
+ * permissions as they are; only one that is denied gives the owner read, write and search permission on the directory it
+ * acts in and runs once more. Entering a directory without search permission sets its mode by name, the one call made
+ * before the anchor's check, which a link swapped in after the `lstat` would redirect to the link target. A path already
+ * gone counts as removed. Returns the paths it left: directories on another device, and a directory refilled or replaced
+ * meanwhile.
  */
 async function removeInPlace(path: string, parent: Identity, options: RemoveOptions): Promise<string[]> {
   options.signal.throwIfAborted();
@@ -150,45 +193,42 @@ async function removeInPlace(path: string, parent: Identity, options: RemoveOpti
     throw error;
   });
   if (!stat) return [];
+  const inParent = <T>(operation: () => Promise<T>) => withRepair(operation, () => anchor.repairParent(path));
   if (!stat.isDirectory()) {
-    await unlink(name).catch((error: unknown) => {
-      if (errorCode(error) !== 'ENOENT') throw error;
-    });
+    await inParent(() =>
+      unlink(name).catch((error: unknown) => {
+        if (errorCode(error) !== 'ENOENT') throw error;
+      }),
+    );
     options.removed?.();
     return [];
   }
   if (stat.dev !== options.dev) return [path];
-  try {
-    await rmdir(name);
+  const first = await inParent(() => tryRmdir(name));
+  if (first === 'replaced') return [path];
+  if (first === 'gone') {
     options.removed?.();
     return [];
-  } catch (error) {
-    const code = errorCode(error);
-    if (code === 'ENOENT') return [];
-    if (code === 'ENOTDIR') return [path];
-    if (code !== 'ENOTEMPTY' && code !== 'EEXIST') throw error;
   }
-  if (!(stat.mode & 0o100)) await chmod(name, stat.mode | 0o700);
-  anchor.enter(path, stat);
+  await withRepair(
+    async () => anchor.enter(path, stat),
+    () => chmod(name, stat.mode | 0o700),
+  );
   const left: string[] = [];
   try {
-    if ((stat.mode & 0o600) !== 0o600) await chmod(anchor.list(path), stat.mode | 0o700);
-    for (const raw of await readdir(anchor.list(path), { encoding: 'buffer' })) {
+    const here = anchor.list(path);
+    const inside = <T>(operation: () => Promise<T>) => withRepair(operation, () => chmod(here, stat.mode | 0o700));
+    for (const raw of await inside(() => readdir(here, { encoding: 'buffer' }))) {
       const decoded = raw.toString();
-      const child = Buffer.from(decoded).equals(raw) ? decoded : await anchor.rename(path, raw);
+      const child = Buffer.from(decoded).equals(raw) ? decoded : await inside(() => anchor.rename(path, raw));
       left.push(...(await removeInPlace(join(path, child), stat, options)));
     }
   } finally {
     anchor.leave(parent);
   }
   if (left.length) return left;
-  try {
-    await rmdir(await anchor.name(path));
-  } catch (error) {
-    const code = errorCode(error);
-    if (code === 'ENOTEMPTY' || code === 'EEXIST' || code === 'ENOTDIR') return [path];
-    if (code !== 'ENOENT') throw error;
-  }
+  const last = await inParent(async () => tryRmdir(await anchor.name(path)));
+  if (last !== 'gone') return [path];
   options.removed?.();
   return [];
 }

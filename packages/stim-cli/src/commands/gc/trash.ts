@@ -18,7 +18,7 @@ import { openDeleteSession, type DeleteSession } from '../../delete-child.ts';
 import { filesystemDevice } from '../../temporary.ts';
 import {
   deleteTrashEntry,
-  onlyClaimFiles,
+  claimSetKept,
   trashEntryMisplaced,
   TRASH_CLAIMS,
   TRASH_ENTRY_PREFIX,
@@ -85,14 +85,17 @@ const NOT_WRITTEN_BY_STIM = 'it has no valid trash.json, so Stim did not create 
  * not). An entry with no manifest is deletable only while it holds nothing but its claims: a delete that stopped after
  * its manifest went, or an entry whose manifest was not written yet.
  */
-async function readContents(dir: string): Promise<{ manifest: TrashManifest | null; kept: string | null }> {
+async function readContents(
+  dir: string,
+  dev: number,
+): Promise<{ manifest: TrashManifest | null; kept: string | null }> {
   if (!basename(dir).startsWith(TRASH_ENTRY_PREFIX)) return { manifest: null, kept: NOT_WRITTEN_BY_STIM };
   const manifest = await readManifest(dir);
   if (!manifest) {
     const names = await readdir(dir).catch(() => null);
     const onlyClaims =
       names?.every((name) => name === TRASH_CLAIMS) === true &&
-      (!names.length || (await onlyClaimFiles(join(dir, TRASH_CLAIMS))));
+      (!names.length || claimSetKept(join(dir, TRASH_CLAIMS), dev, true) === null);
     return { manifest, kept: onlyClaims ? null : NOT_WRITTEN_BY_STIM };
   }
   return { manifest, kept: manifest.kind === 'warm' ? null : await worktreeKept(manifest.worktree) };
@@ -105,8 +108,10 @@ export async function collectTrash({
 }: { signal?: AbortSignal; operation?: StimContext } = {}): Promise<TrashReport | null> {
   const root = trashRoot();
   let names: string[];
+  let dev: number;
   try {
     names = await readdir(root);
+    dev = filesystemDevice(root);
   } catch {
     return null;
   }
@@ -115,7 +120,7 @@ export async function collectTrash({
     const path = join(root, name);
     const stat = await lstat(path).catch(() => null);
     if (!stat?.isDirectory()) continue;
-    const { manifest, kept: contents } = await readContents(path);
+    const { manifest, kept: contents } = await readContents(path, dev);
     const claim = contents === NOT_WRITTEN_BY_STIM ? { kept: null, live: false } : claimKept(path);
     const live = claim.live;
     const kept = contents === NOT_WRITTEN_BY_STIM ? contents : (claim.kept ?? contents);
@@ -145,7 +150,9 @@ export async function deleteTrash(
   try {
     for (const entry of report.entries) {
       if (!entry.willDelete) continue;
-      const misplaced = trashEntryMisplaced(entry.path, dev);
+      const misplaced =
+        trashEntryMisplaced(entry.path, dev) ??
+        claimSetKept(join(entry.path, TRASH_CLAIMS), dev, entry.worktree === null);
       if (misplaced) {
         output.record('trash', 'kept', entry.path, { bytes: entry.bytes ?? 0, detail: misplaced });
         continue;
@@ -168,7 +175,7 @@ export async function deleteTrash(
       }
       let retained = false;
       try {
-        const now = await readContents(entry.path);
+        const now = await readContents(entry.path, dev);
         if (now.kept) {
           output.record('trash', 'kept', entry.path, { bytes: entry.bytes ?? 0, detail: now.kept });
           continue;

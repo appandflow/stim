@@ -11,6 +11,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { collectTrash, deleteTrash } from '../commands/gc/trash.ts';
@@ -21,7 +22,38 @@ import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
 import { testContext } from './_context.ts';
 import { goneClaimOwner, liveClaimOwner, plantClaim } from './_factories.ts';
 
-const seams = vi.hoisted((): { mounts: string; beforeClaim?: (root: string) => void } => ({ mounts: '' }));
+const seams = vi.hoisted(
+  (): {
+    mounts: string;
+    beforeClaim?: (root: string) => void;
+    otherDevice?: string;
+    afterListing?: { dir: string; run: () => void };
+  } => ({ mounts: '' }),
+);
+
+vi.mock('node:fs', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs')>();
+  const lstatOnOtherDevice = (...args: Parameters<typeof fs.lstatSync>) => {
+    const stat = fs.lstatSync(...args);
+    if (stat && seams.otherDevice && String(args[0]) === seams.otherDevice) stat.dev = Number(stat.dev) + 1;
+    return stat;
+  };
+  return { ...fs, default: { ...fs, lstatSync: lstatOnOtherDevice }, lstatSync: lstatOnOtherDevice };
+});
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs/promises')>();
+  const readdir = async (...args: Parameters<typeof fs.readdir>) => {
+    const listed = await fs.readdir(...args);
+    const after = seams.afterListing;
+    if (after && String(args[0]) === after.dir) {
+      seams.afterListing = undefined;
+      after.run();
+    }
+    return listed;
+  };
+  return { ...fs, default: { ...fs, readdir }, readdir };
+});
 
 vi.mock('../workspace/remover.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../workspace/remover.ts')>()),
@@ -60,6 +92,8 @@ beforeEach(() => {
 afterEach(() => {
   seams.mounts = '';
   seams.beforeClaim = undefined;
+  seams.otherDevice = undefined;
+  seams.afterListing = undefined;
   takeGcResults();
   delete process.env.STIM_HOME;
   rmSync(base, { recursive: true, force: true });
@@ -185,9 +219,9 @@ test.skipIf(!POSIX)(
   'gc finishes an entry whose delete stopped after its manifest went, and only once its claim is free',
   async () => {
     const stopped = join(trash, 'remove-stopped');
-    plantClaim(join(stopped, 'claims'), 'exclusive', goneClaimOwner());
+    plantClaim(join(stopped, 'claims'), 'exclusive', goneClaimOwner(), { claimId: randomUUID() });
     const finishing = join(trash, 'remove-finishing');
-    plantClaim(join(finishing, 'claims'), 'exclusive', liveClaimOwner());
+    plantClaim(join(finishing, 'claims'), 'exclusive', liveClaimOwner(), { claimId: randomUUID() });
 
     const report = await collectTrash();
     expect(report?.entries.find((item) => item.path === stopped)).toMatchObject({ willDelete: true, kept: null });
@@ -318,5 +352,44 @@ test.skipIf(!POSIX || !existsSync('/dev/shm'))(
     expect(await deleteTrash(undefined)).toMatchObject({ count: 1, failures: 0 });
 
     expect(existsSync(entry)).toBe(false);
+  },
+);
+
+test.skipIf(!POSIX)(
+  'gc keeps an entry without a manifest whose claims hold a file the claim code does not write',
+  async () => {
+    const entry = join(trash, 'remove-notes');
+    mkdirSync(join(entry, 'claims', 'shared'), { recursive: true });
+    writeFileSync(join(entry, 'claims', 'shared', 'notes.child'), 'keep');
+
+    const report = await collectTrash();
+    expect(report?.entries.find((item) => item.path === entry)?.willDelete).toBe(false);
+    expect(await deleteTrash(undefined)).toMatchObject({ count: 0, failures: 0 });
+
+    expect(readFileSync(join(entry, 'claims', 'shared', 'notes.child'), 'utf8')).toBe('keep');
+  },
+);
+
+test.skipIf(!POSIX)('gc keeps an entry whose claims are on another volume and takes no claim there', async () => {
+  const entry = plantEntry('remove-claims-elsewhere', join(base, 'gone'));
+  const dead = plantClaim(join(entry, 'claims'), 'exclusive', goneClaimOwner(), { claimId: randomUUID() });
+  seams.otherDevice = join(entry, 'claims');
+
+  expect(await deleteTrash(undefined)).toMatchObject({ count: 0, failures: 0 });
+
+  expect(existsSync(dead)).toBe(true);
+  expect(existsSync(join(entry, 'entries', '0', 'file'))).toBe(true);
+});
+
+test.skipIf(!POSIX)(
+  'gc keeps the manifest of an entry that something filled while its payload was deleted',
+  async () => {
+    const entry = plantEntry('remove-refilled', join(base, 'gone'));
+    seams.afterListing = { dir: entry, run: () => writeFileSync(join(entry, 'late'), 'late') };
+
+    expect(await deleteTrash(undefined)).toMatchObject({ count: 0, failures: 1 });
+
+    expect(existsSync(join(entry, 'trash.json'))).toBe(true);
+    expect(existsSync(join(entry, 'late'))).toBe(true);
   },
 );

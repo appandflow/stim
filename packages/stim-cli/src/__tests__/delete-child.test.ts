@@ -22,7 +22,7 @@ import { runRmJob } from '../workspace/remover.ts';
 
 const POSIX = process.platform !== 'win32';
 
-const modes = vi.hoisted((): { refuseChmod: boolean } => ({ refuseChmod: false }));
+const modes = vi.hoisted((): { refuseChmod: boolean; groupWritable?: string } => ({ refuseChmod: false }));
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const fs = await importOriginal<typeof import('node:fs/promises')>();
@@ -31,6 +31,11 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     chmod: async (...args: Parameters<typeof fs.chmod>) => {
       if (modes.refuseChmod) throw Object.assign(new Error('operation not permitted'), { code: 'EPERM' });
       return fs.chmod(...args);
+    },
+    lstat: async (path: Parameters<typeof fs.lstat>[0]) => {
+      const stat = await fs.lstat(path);
+      if (modes.groupWritable && String(path).endsWith(modes.groupWritable)) stat.mode = (stat.mode & ~0o777) | 0o570;
+      return stat;
     },
   };
 });
@@ -64,6 +69,7 @@ beforeEach(() => {
 
 afterEach(() => {
   modes.refuseChmod = false;
+  modes.groupWritable = undefined;
   resetExecutor();
   rmSync(base, { recursive: true, force: true });
 });
@@ -277,6 +283,27 @@ describe.skipIf(!POSIX)('an empty directory whose mode the user cannot change', 
     const tree = join(base, 'tree');
     mkdirSync(join(tree, 'owned-elsewhere'), { recursive: true });
     chmodSync(join(tree, 'owned-elsewhere'), 0o555);
+    modes.refuseChmod = true;
+
+    const outcome = await runRmJob(
+      { id: 1, op: 'rm', path: tree, dev: lstatSync(tree).dev },
+      new AbortController().signal,
+      anchored ? { cwd: { chdir: (path: string) => process.chdir(path), current: () => process.cwd() } } : {},
+    );
+
+    expect(outcome).toEqual({ done: { left: [] } });
+    expect(existsSync(tree)).toBe(false);
+  });
+});
+
+describe.skipIf(!POSIX)('a nonempty directory the user may change but whose mode it cannot', () => {
+  test.each([
+    { name: 'the delete child empties and removes it', anchored: true },
+    { name: 'a delete in the caller thread empties and removes it', anchored: false },
+  ])('$name with the permissions it has', async ({ anchored }) => {
+    const tree = join(base, 'tree');
+    plantFiles(join(tree, 'group-writable'));
+    modes.groupWritable = 'group-writable';
     modes.refuseChmod = true;
 
     const outcome = await runRmJob(
