@@ -413,6 +413,7 @@ export async function pruneCache(
     evictBytes,
     byMtime = false,
     signal,
+    entrySizes = 'walk',
   }: {
     olderThanDays?: number;
     now?: number;
@@ -420,6 +421,11 @@ export async function pruneCache(
     evictBytes?: number;
     byMtime?: boolean;
     signal?: AbortSignal;
+    /**
+     * How a directory entry is sized for the bytes it frees: a blocking walk with no time limit, a non-blocking walk
+     * bounded like the cache size walks (0 when it does not finish), or not at all (0).
+     */
+    entrySizes?: 'walk' | 'bounded' | 'none';
   } = {},
 ): Promise<{ removed: number; bytes: number; skipped: string | null; failed?: number; protectedEntries?: number }> {
   const cutoff = now - (olderThanDays as number) * 24 * 60 * 60 * 1000;
@@ -463,7 +469,17 @@ export async function pruneCache(
     if (signal) await checkpoint(signal);
     try {
       if (!existsSync(entry) || Math.max(statSync(entry).mtimeMs, cache.lastUse?.(entry) ?? 0) >= cutoff) continue;
-      const entryBytes = isDirectory ? directorySize(entry, { timeoutMs: 'unbounded', root: cache.dir }) : size;
+      const entryBytes = !isDirectory
+        ? size
+        : entrySizes === 'walk'
+          ? directorySize(entry, { timeoutMs: 'unbounded', root: cache.dir })
+          : entrySizes === 'bounded'
+            ? ((await measuredDirectorySizeAsync(entry, {
+                timeoutMs: CACHE_SIZE_TIMEOUT_MS,
+                ...(signal ? { signal } : {}),
+                root: cache.dir,
+              })) ?? 0)
+            : 0;
       if ((cache.lastUse?.(entry, true) ?? 0) >= cutoff) continue;
       const busy = cache.inUse?.();
       if (busy) {

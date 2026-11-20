@@ -25,6 +25,7 @@ import { workspaceDir } from '../workspace/paths.ts';
 import { freshLaunchers, launchingOf, type Launching } from '../workspace/launchers.ts';
 import { formatBytes, measuredDirectorySizeAsync } from '../fs-util.ts';
 import { timedStep } from './step-timing.ts';
+import { describeSizeFailure, lastSizeFailure } from '../size-failures.ts';
 import { forgetGitReads } from '../workspace/git-reads.ts';
 import { executeAction, type ActContext, type ActionOutcome } from '../stimd/passes/act.ts';
 import { cacheBlocked } from '../stimd/passes/measure.ts';
@@ -405,6 +406,9 @@ async function trim(
     byMtime: true,
     protect: await cacheEntryProtectionFor(context.config, context.operation),
     evictBytes,
+    // @ref LLP 0001#pressure-acts-without-waiting-for-measurement-or-load -- at critical no entry is sized
+    entrySizes: Number.isFinite(evictBytes) ? 'bounded' : 'none',
+    ...(context.operation ? { signal: context.operation.signal } : {}),
   });
   if (result.skipped) return { outcome: 'kept', bytes: 0, detail: result.skipped };
   const kept = result.protectedEntries ? `; ${result.protectedEntries} protected entries kept` : '';
@@ -419,12 +423,17 @@ const triedAt = new Map<string, number>();
 
 /**
  * The size the disk-usage cache records for `dir`, which the size scan writes for every Cargo target and shared cache
- * it measures; null when none is recorded, or none since this process last tried to free `dir`.
+ * it measures; null when none is recorded, or none since this process last tried to trim the Cargo target at `dir`.
  */
 function recordedBytes(dir: string): number | null {
   // @ref LLP 0001#pressure-acts-without-waiting-for-measurement-or-load -- no size walk before a cache is freed
   const recorded = readDiskUsage(dir);
   return recorded && Date.parse(recorded.measuredAt) > (triedAt.get(dir) ?? -Infinity) ? recorded.bytes : null;
+}
+
+function unsizedDetail(dir: string): string {
+  const failure = lastSizeFailure(dir);
+  return `its size walk ${failure ? describeSizeFailure(failure) : 'failed'}, so it was left alone`;
 }
 
 /** The trims ordered by `recordedBytes`, largest first; targets with no recorded size follow in plan order. */
@@ -510,11 +519,25 @@ async function sharedCachesStep(context: RungContext): Promise<void> {
     let evict = Infinity;
     if (!critical) {
       if (capGb === 0) continue;
-      const bytes = recordedBytes(cache.dir) ?? 0;
+      const bytes = await measuredDirectorySizeAsync(cache.dir, { timeoutMs: SIZE_TIMEOUT_MS });
       const target = (capGb * GIB) / 2;
+      if (bytes === null) {
+        recordAction(
+          context,
+          {
+            rung: 3,
+            kind: 'trim-cache',
+            target: cache.dir,
+            outcome: 'kept',
+            bytes: 0,
+            detail: unsizedDetail(cache.dir),
+          },
+          context.why,
+        );
+        continue;
+      }
       if (bytes <= target) continue;
       evict = bytes - target;
-      if (context.act) triedAt.set(cache.dir, Date.now());
     }
     const result = await trim(context, cache, evict, recentDays);
     recordAction(
@@ -527,9 +550,26 @@ async function sharedCachesStep(context: RungContext): Promise<void> {
   }
   const compilation = sharedCompilationCache();
   if (existsSync(compilation) && onShort(context, [compilation]) && (await context.stillShort())) {
-    const bytes = recordedBytes(compilation) ?? 0;
     const capGb = context.settings.swiftCompilationCacheMaxGb;
-    if (critical || (capGb > 0 && bytes > (capGb * GIB) / 2)) {
+    const bytes = critical
+      ? (recordedBytes(compilation) ?? 0)
+      : capGb > 0
+        ? await measuredDirectorySizeAsync(compilation, { timeoutMs: SIZE_TIMEOUT_MS })
+        : 0;
+    if (bytes === null)
+      recordAction(
+        context,
+        {
+          rung: 3,
+          kind: 'empty-cache',
+          target: compilation,
+          outcome: 'kept',
+          bytes: 0,
+          detail: unsizedDetail(compilation),
+        },
+        context.why,
+      );
+    else if (critical || (capGb > 0 && bytes > (capGb * GIB) / 2)) {
       const blocked = cacheBlocked(
         { name: 'Swift compilation cache', dir: compilation, category: 'compilation-cache' },
         await discoverCachesAsync(),
@@ -541,7 +581,6 @@ async function sharedCachesStep(context: RungContext): Promise<void> {
           context.why,
         );
       else {
-        if (context.act) triedAt.set(compilation, Date.now());
         await run(context, {
           kind: 'would-empty-cache',
           target: compilation,
