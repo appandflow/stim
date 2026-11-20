@@ -737,6 +737,32 @@ describe('trimming on a full disk', () => {
     for (const triple of triples) expect(readFileSync(join(target, triple, 'notes.txt'), 'utf8')).toBe('mine');
   });
 
+  test('a rescan that finds the first stale triple busy still decides the later ones', async () => {
+    const triples = ['aarch64-linux-android', 'x86_64-linux-android'];
+    for (const triple of triples) makeProfile(`${triple}/host-dev`, 3 * DAY);
+    const real = realpathSync.native(target);
+    let first: string | undefined;
+    let full = true;
+    stubProcesses({
+      lsof: (args) => {
+        if (args.includes('-t')) first ??= triples.find((triple) => args.some((arg) => arg.includes(`/${triple}/`)));
+        return args.includes('-Fn') && !full ? `p100\nn${real}/${first}/host-dev/deps\n` : '';
+      },
+    });
+    fsHooks.mkdir = (path) => {
+      if (!full || !path.endsWith('.stim-trimmed')) return;
+      full = false;
+      writeFileSync(join(target, triples.find((triple) => triple !== first) ?? '', 'notes.txt'), 'mine');
+      throw diskFull();
+    };
+
+    const result = await trimCargoTarget(target, { launching: noLaunchers(target), needBytes: 0 });
+
+    expect(result).toMatchObject({ removed: [], kept: [`${first}: a process uses it`], reserveReleased: true });
+    const other = triples.find((triple) => triple !== first) ?? '';
+    expect(readFileSync(join(target, other, 'notes.txt'), 'utf8')).toBe('mine');
+  });
+
   test('without a reserve to release, a full disk keeps the profile', async () => {
     stubProcesses({});
     makeProfile('debug', 3 * DAY);

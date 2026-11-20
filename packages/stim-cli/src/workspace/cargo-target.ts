@@ -1074,15 +1074,15 @@ async function trimClaimed(
       const fresh = await readTargetUse(target, launching, signal, lowPriority);
       if ('kept' in fresh) throw new KeptAfterRelease(fresh.kept, true);
       used = fresh.used;
+      if (stalePath) latestStale = staleCargoTargetPaths(target, now, profileIdleMs);
+      if ('refusal' in latestStale) throw new KeptAfterRelease(latestStale.refusal);
       if (inUse(used, dir)) throw new KeptAfterRelease('a process uses it');
       for (const profile of profiles) {
         const held = await lockOutcome(profile, signal, lowPriority);
         if (lockHeld(held)) throw new KeptAfterRelease(`a build holds its ${held.file ?? '.cargo-lock'}`);
       }
-      if (!stalePath) return;
-      latestStale = staleCargoTargetPaths(target, now, profileIdleMs);
-      if ('refusal' in latestStale) throw new KeptAfterRelease(latestStale.refusal);
-      if (!latestStale.paths.includes(label)) throw new KeptAfterRelease('it is no longer stale as a whole');
+      if (stalePath && !latestStale.paths.includes(label))
+        throw new KeptAfterRelease('it is no longer stale as a whole');
     };
     try {
       // @ref LLP 0005#a-full-disk-releases-the-reserve -- the checks run again before the retry
