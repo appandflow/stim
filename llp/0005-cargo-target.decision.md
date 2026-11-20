@@ -147,7 +147,8 @@ symbolic link stays, and a `deploy` that is itself a symbolic link, or holds
 one, keeps the whole `target/`, since its keys may live anywhere in it. The same
 holds at any depth: a symbolic link named `deploy` or `*-keypair.json`, or one
 directly in a `deploy` directory, keeps all of the `target/`, and so does a
-directory that cannot be listed to look. The walk runs under the Cargo locks
+directory that cannot be listed to look or that stands on another device, since
+a link there may point into what is removed. The walk runs under the Cargo locks
 right before deleting: over the whole `target/` for the dormant delete and for
 the first step of a trim that removes something, and over what the step removes
 for each later step, so a trim walks the whole `target/` once, not once per

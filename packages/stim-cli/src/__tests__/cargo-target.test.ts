@@ -322,7 +322,7 @@ describe.skipIf(process.platform === 'win32')('trimming in place (Cargo locks ne
     expect(existsSync(join(target, 'debug', 'deps', 'libx.rlib'))).toBe(true);
   });
 
-  test('the remover unlinks a link without following it, and never unlinks a keypair, a lock file or another device', async () => {
+  test('the remover unlinks a link without following it, and never unlinks a keypair or a lock file', async () => {
     makeProfile('debug', 3 * DAY);
     const outside = join(tmpdir(), `${realpathSync(target).split('/').at(-1)}-outside`);
     mkdirSync(outside);
@@ -330,11 +330,8 @@ describe.skipIf(process.platform === 'win32')('trimming in place (Cargo locks ne
     writeFileSync(join(outside, 'theirs'), 'theirs');
     symlinkSync(outside, join(target, 'debug', 'deps', 'linked'));
     writeFileSync(join(target, 'debug', 'deps', 'App-Keypair.json'), '[1]');
-    mkdirSync(join(target, 'debug', 'build', 'mounted'));
-    writeFileSync(join(target, 'debug', 'build', 'mounted', 'data'), 'x');
     const old = new Date(Date.now() - 3 * DAY);
-    for (const dir of ['deps', 'build', '.']) utimesSync(join(target, 'debug', dir), old, old);
-    fsHooks.dev = (path) => (path.endsWith('/mounted') ? -1 : undefined);
+    for (const dir of ['deps', '.']) utimesSync(join(target, 'debug', dir), old, old);
 
     const result = await trimCargoTarget(target, { needBytes: 0 });
 
@@ -342,14 +339,9 @@ describe.skipIf(process.platform === 'win32')('trimming in place (Cargo locks ne
     expect(readFileSync(join(outside, 'theirs'), 'utf8')).toBe('theirs');
     expect(existsSync(join(target, 'debug', 'deps', 'linked'))).toBe(false);
     expect(readFileSync(join(target, 'debug', 'deps', 'App-Keypair.json'), 'utf8')).toBe('[1]');
-    expect(existsSync(join(target, 'debug', 'build', 'mounted', 'data'))).toBe(true);
     expect(existsSync(join(target, 'debug', '.cargo-lock'))).toBe(true);
     expect(existsSync(join(target, 'debug', 'deps', 'libx.rlib'))).toBe(false);
-    expect(result.kept).toEqual([
-      expect.stringMatching(
-        /^debug: left .*App-Keypair\.json, .*mounted$|^debug: left .*mounted, .*App-Keypair\.json$/,
-      ),
-    ]);
+    expect(result.kept).toEqual([expect.stringMatching(/^debug: left .*App-Keypair\.json$/)]);
   });
 
   test('a directory a build removes while the keypair link check walks the target does not keep it', async () => {
@@ -412,14 +404,19 @@ describe.skipIf(process.platform === 'win32')('trimming in place (Cargo locks ne
     expect(readdirSync(join(target, 'debug'))).toEqual(['.cargo-lock']);
   });
 
-  test('the keypair link walk stays off another device and stops at the deadline', async () => {
+  test('a keypair link on another device keeps the target, and the keypair link walk stops at the deadline', async () => {
     makeProfile('debug', 3 * DAY);
-    mkdirSync(join(target, 'debug', 'deps', 'mounted'));
-    symlinkSync('/nonexistent', join(target, 'debug', 'deps', 'mounted', 'app-keypair.json'));
+    writeFileSync(join(target, 'debug', 'wallet.json'), '[5]');
     const old = new Date(Date.now() - 3 * DAY);
-    for (const path of [join(target, 'debug', 'deps'), join(target, 'debug')]) utimesSync(path, old, old);
-    fsHooks.dev = (path) => (path.endsWith('/mounted') ? -1 : undefined);
-    expect((await trimCargoTarget(target, { needBytes: 0 })).removed).toEqual(['debug']);
+    utimesSync(join(target, 'debug'), old, old);
+    mkdirSync(join(target, 'deploy'));
+    symlinkSync(join('..', 'debug', 'wallet.json'), join(target, 'deploy', 'app-keypair.json'));
+    fsHooks.dev = (path) => (path.endsWith('/deploy') ? -1 : undefined);
+    const mounted = await trimCargoTarget(target, { needBytes: 0 });
+    expect(mounted).toMatchObject({ removed: [], kept: [expect.stringContaining('deploy is another filesystem')] });
+    expect(readFileSync(join(target, 'deploy', 'app-keypair.json'), 'utf8')).toBe('[5]');
+    delete fsHooks.dev;
+    rmSync(join(target, 'deploy'), { recursive: true });
 
     makeProfile('release', 3 * DAY);
     const deadline = new AbortController();

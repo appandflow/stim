@@ -414,8 +414,8 @@ async function removeInPlace(path: string, dev: number, signal?: AbortSignal, ke
  * Why the whole target stays because of a symbolic link a Solana key may stand behind, found at any depth of `root` (the
  * whole target for the delete and for a trim's first step, what the step removes for each later trim step) without
  * following links: one named `deploy` or `*-keypair.json`, or one directly in a `deploy` directory, all in any letter
- * case. A directory that cannot be listed keeps it too; one a build removed meanwhile, or one on a device other than
- * `dev`, is skipped. Stops with `DEADLINE_KEPT` once `stop` fires. Null when there is none.
+ * case. A directory that cannot be listed, or one on a device other than `dev`, keeps it too, since a link there may
+ * point into what is removed; one a build removed meanwhile is skipped. Stops with `DEADLINE_KEPT` once `stop` fires. Null when there is none.
  */
 async function keypairLink(
   root: string,
@@ -427,7 +427,9 @@ async function keypairLink(
   for (let dir = queue.pop(); dir !== undefined; dir = queue.pop()) {
     signal?.throwIfAborted();
     if (stop?.aborted === true) return DEADLINE_KEPT;
-    if ((await lstat(dir).catch(() => null))?.dev !== dev) continue;
+    const stat = await lstat(dir).catch(() => null);
+    if (!stat) continue;
+    if (stat.dev !== dev) return `${dir} is another filesystem, so the whole target/ stays`;
     let entries: Dirent[];
     try {
       entries = await readdir(dir, { withFileTypes: true });
