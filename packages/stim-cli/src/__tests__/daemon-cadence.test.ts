@@ -355,7 +355,11 @@ describe('the disk owner', () => {
       releaseDisk();
     }
 
-    expect(order).toEqual(['clear /a/node_modules', 'pass hard floor', 'clear /b/node_modules']);
+    expect(order).toEqual([
+      `clear ${join('/a', 'node_modules')}`,
+      'pass hard floor',
+      `clear ${join('/b', 'node_modules')}`,
+    ]);
   });
 
   test('a unit boundary refuses to run while the lane does not hold the turn', async () => {

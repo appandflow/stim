@@ -1,5 +1,16 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -14,6 +25,18 @@ import {
 import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
 import { saveConfig, upsertProject } from '../workspace/config.ts';
 
+const afterProblem = vi.hoisted((): { run?: () => void } => ({}));
+vi.mock('../workspace/regenerable-dirs.ts', async (original) => {
+  const real = await original<typeof import('../workspace/regenerable-dirs.ts')>();
+  return {
+    ...real,
+    regenerableDirProblem: async (...args: Parameters<typeof real.regenerableDirProblem>) => {
+      const problem = await real.regenerableDirProblem(...args);
+      afterProblem.run?.();
+      return problem;
+    },
+  };
+});
 const protectedRoots = vi.hoisted((): { home: string; temps: string[] } => ({ home: '/nonexistent-home', temps: [] }));
 vi.mock('../workspace/protected-locations.ts', async (original) => {
   const real = await original<typeof import('../workspace/protected-locations.ts')>();
@@ -81,6 +104,7 @@ describe('the Cargo target cap over a root target/', () => {
     for (const part of ['.fingerprint', 'deps', 'build', 'incremental'])
       mkdirSync(join(dir, part), { recursive: true });
     writeFileSync(join(dir, 'deps', 'libx.rlib'), 'x'.repeat(5000));
+    writeFileSync(join(dir, '.cargo-lock'), '');
     const at = new Date(Date.now() - ageMs);
     for (const part of ['.fingerprint', 'deps', 'build', 'incremental', '']) utimesSync(join(dir, part), at, at);
   }
@@ -127,6 +151,7 @@ describe('the Cargo target cap over a root target/', () => {
   });
 
   afterEach(() => {
+    delete afterProblem.run;
     protectedRoots.home = '/nonexistent-home';
     protectedRoots.temps = [];
     resetExecutor();
@@ -157,9 +182,9 @@ describe('the Cargo target cap over a root target/', () => {
 
     const outcome = await trimCargoTargetAction(action);
 
-    expect(outcome.status).toBe('done');
-    expect(existsSync(join(target, 'debug'))).toBe(false);
-    expect(existsSync(join(target, 'exact-filesystem-tool', 'debug'))).toBe(false);
+    expect(outcome).toMatchObject({ status: 'done' });
+    expect(readdirSync(join(target, 'debug'))).toEqual(['.cargo-lock']);
+    expect(readdirSync(join(target, 'exact-filesystem-tool', 'debug'))).toEqual(['.cargo-lock']);
     const stayed = [
       'exact-filesystem-tool/exact-filesystem-bad498',
       'exact-filesystem-tool/.bootstrap.claims',
@@ -186,7 +211,7 @@ describe('the Cargo target cap over a root target/', () => {
     if (!action) throw new Error('no trim was planned');
 
     expect(await trimCargoTargetAction(action)).toMatchObject({ status: 'done' });
-    expect(existsSync(join(target, 'debug'))).toBe(false);
+    expect(readdirSync(join(target, 'debug'))).toEqual(['.cargo-lock']);
     expect(['release', 'bake/out.bin', 'clients'].filter((path) => !existsSync(join(target, path)))).toEqual([]);
   });
 
@@ -198,6 +223,28 @@ describe('the Cargo target cap over a root target/', () => {
     const sizes = await measureCargoTargets(Date.now());
 
     expect(sizes.map(({ dir }) => dir)).toEqual([join(main, 'target')]);
+  });
+
+  it('does not follow a target swapped for a link to another checkout while the trim is admitted', async () => {
+    const wt = linked('wt', join(base, 'roots'));
+    const target = monorepoTarget(wt);
+    const other = monorepoTarget(linked('other', join(base, 'roots')));
+    noProcesses();
+    const sizes = await measureCargoTargets(Date.now());
+    const action = (await planCargoTargets({ sizes, settings, pinned: () => false, now: Date.now() })).actions.find(
+      (planned) => planned.target === target,
+    );
+    if (!action) throw new Error('no trim was planned');
+    afterProblem.run = () => {
+      delete afterProblem.run;
+      renameSync(target, `${target}-moved`);
+      symlinkSync(other, target);
+    };
+
+    const outcome = await trimCargoTargetAction(action);
+
+    expect(outcome.status).toBe('kept');
+    expect(existsSync(join(other, 'debug', 'deps', 'libx.rlib'))).toBe(true);
   });
 
   it('does not trim a target whose checkout left discovery scope after the plan was made', async () => {

@@ -15,6 +15,7 @@ import {
   type IdleStageRecord,
 } from '@stim-cli/core/state';
 import { formatBytes, measuredDirectorySizeAsync } from '../fs-util.ts';
+import { deleteCargoTarget } from '../workspace/cargo-target.ts';
 import { collectOwnedDeviceActivityAsync, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { workspaceOutputPaths } from '../commands/gc/workspaces.ts';
@@ -234,10 +235,23 @@ export async function idleOutputs(
     : { paths, targets, kept };
 }
 
-/** Deletes `paths` one at a time, each measured first; the bytes measured. An abort stops it before the next removal. */
-export async function deleteOutputs(paths: readonly string[], signal?: AbortSignal): Promise<number> {
+/**
+ * Deletes `paths` one at a time, each measured first; the bytes measured. A Cargo `target/` among `targets` goes through
+ * the Cargo delete (`deleteCargoTarget`), which says in `kept` what it left. An abort stops it before the next removal.
+ */
+export async function deleteOutputs(
+  paths: readonly string[],
+  signal?: AbortSignal,
+  { targets = [], kept = [] }: { targets?: readonly string[]; kept?: string[] } = {},
+): Promise<number> {
   let freed = 0;
   for (const path of paths) {
+    if (targets.includes(path)) {
+      const result = await deleteCargoTarget(path, { signal });
+      freed += result.bytes;
+      if (result.kept.length) kept.push(`kept in ${path}: ${result.kept.join('; ')}`);
+      continue;
+    }
     freed += (await measuredDirectorySizeAsync(path, { timeoutMs: SIZE_TIMEOUT_MS, signal })) ?? 0;
     signal?.throwIfAborted();
     await rm(path, { recursive: true, force: true });
@@ -340,7 +354,7 @@ async function enterIdleStage(
               config,
               volumes ? (output) => onShortVolume([output], volumes) : undefined,
             );
-            const freed = await deleteOutputs(outputs.paths, input.operation?.signal);
+            const freed = await deleteOutputs(outputs.paths, input.operation?.signal, outputs);
             await recordStage(path, minutes, shutDown, freed);
             const idle = Math.floor(again.decision.idleMs / MINUTE_MS);
             const restore = revivable(path) ? 'stim revive' : 'stim ios or stim android';

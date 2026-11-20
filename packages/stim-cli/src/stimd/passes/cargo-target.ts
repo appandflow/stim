@@ -4,7 +4,6 @@ import { dirname, join } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
 import { loadConfig, type MaintenanceAction, type MaintenanceSize, type PressureLevel } from '@stim-cli/core/state';
 import { RESERVE_RELEASED } from '../../disk-reserve.ts';
-import { getExecutor } from '../../exec.ts';
 import { diskPressure, diskThresholds } from '../../daemon/pressure.ts';
 import { measuredDirectorySizeAsync } from '../../fs-util.ts';
 import { canonicalPath } from '../../commands/gc/paths.ts';
@@ -14,8 +13,9 @@ import { cargoTargetDirsAsync, regenerableDirProblem } from '../../workspace/reg
 import { appRoots, artifactCheckoutsAsync } from './artifacts.ts';
 import { readVolumeSpaceAsync } from './budget.ts';
 import {
+  admitCargoTarget,
   cargoProfileDirs,
-  idleCargoUnitPaths,
+  leftoverReason,
   staleCargoTargetPaths,
   trimCargoTarget,
 } from '../../workspace/cargo-target.ts';
@@ -180,48 +180,14 @@ async function bytesOf(paths: readonly string[], signal?: AbortSignal, lowPriori
   return total;
 }
 
-const DU_CHUNK = 400;
-
-/** The bytes of many paths with one `du` per chunk; null when any chunk could not be measured. */
-async function bytesOfMany(
-  paths: readonly string[],
-  signal?: AbortSignal,
-  lowPriority = false,
-): Promise<number | null> {
-  let total = 0;
-  for (let at = 0; at < paths.length; at += DU_CHUNK) {
-    signal?.throwIfAborted();
-    const args = ['-sk', ...paths.slice(at, at + DU_CHUNK)];
-    try {
-      const out = await (lowPriority
-        ? getExecutor().runFileAsync('nice', ['-n', '19', 'du', ...args], { timeoutMs: SIZE_TIMEOUT_MS, signal })
-        : getExecutor().runFileAsync('du', args, { timeoutMs: SIZE_TIMEOUT_MS, signal }));
-      for (const line of out.split('\n')) total += (parseInt(line, 10) || 0) * 1024;
-    } catch {
-      signal?.throwIfAborted();
-      return null;
-    }
-  }
-  return total;
-}
-
-/** Whether a target still over its cap after the other steps would lose its idle units too, at normal and high; `'none'` turns that step off. */
-const UNITS_WHEN_OVER_CAP: 'toNeed' | 'none' = 'none';
-
+// @ref LLP 0005#the-size-cap -- at normal the cap trims an idle target/ only
 /**
  * What a trim of a Cargo `target/` removes at a disk level: normal covers the overage with stale profiles, then
- * `incremental` data; high removes every stale profile and all `incremental` data whatever the cap; critical also
- * removes every idle unit (which needs Exact's usage ledger). Idle units are never removed at normal or high
- * (`UNITS_WHEN_OVER_CAP`).
+ * `incremental` data, and only on a target no process or build uses; high and critical remove every stale profile and
+ * all `incremental` data whatever the cap, keeping only the paths and profiles in use.
  */
-function cargoTrimPolicy(level: PressureLevel): {
-  incremental: 'toNeed' | 'all';
-  units: 'none' | 'toNeed' | 'all';
-} {
-  return {
-    incremental: level === 'normal' ? 'toNeed' : 'all',
-    units: level === 'critical' ? 'all' : UNITS_WHEN_OVER_CAP,
-  };
+function cargoTrimPolicy(level: PressureLevel): { incremental: 'toNeed' | 'all'; idleOnly: boolean } {
+  return { incremental: level === 'normal' ? 'toNeed' : 'all', idleOnly: level === 'normal' };
 }
 
 const LEVELS = { normal: undefined, high: 2, critical: 3 } as const;
@@ -294,6 +260,11 @@ export async function planCargoTargets({
       plan.skips.push({ target: dir, reason: 'pinned by maintenance.keep', workspace });
       continue;
     }
+    const leftover = leftoverReason(dir);
+    if (leftover) {
+      plan.skips.push({ target: dir, reason: leftover, workspace });
+      continue;
+    }
     if (bytes === null) plan.blocked.push(why);
     const stale = staleCargoTargetPaths(dir, now);
     if ('refusal' in stale) {
@@ -311,19 +282,12 @@ export async function planCargoTargets({
         lowPriority,
       );
     }
-    let idleUnits = false;
-    if (policy.units === 'all' || (policy.units === 'toNeed' && freeable < overBytes)) {
-      const unitBytes = await bytesOfMany(idleCargoUnitPaths(dir, now, gone), signal, lowPriority);
-      idleUnits = unitBytes !== 0;
-      if (unitBytes === null) plan.blocked.push(`${dir}: the idle build units could not be measured`);
-      else freeable += unitBytes;
-    }
-    if (freeable === 0 && !existsSync(join(dir, '.stim-trimmed'))) {
+    if (freeable === 0) {
       if (bytes !== null && tightened === 'normal')
         plan.blocked.push(`${why}; every profile was used in the last day and none has anything idle to remove`);
       continue;
     }
-    const steps = `trims the profiles unused for a day, then the incremental caches${tightened === 'normal' ? '' : ' (all of them)'}${idleUnits ? ', then the build units unused for a day (all of them)' : ''}`;
+    const steps = `trims the profiles unused for a day, then the incremental caches${tightened === 'normal' ? ', while nothing uses the target' : ' (all of them)'}`;
     plan.actions.push({
       kind: 'would-clear-build-dirs',
       target: dir,
@@ -372,18 +336,19 @@ export async function planCargoTargetsAtPressure({
       plan.skips.push({ target: dir, reason: 'pinned by maintenance.keep', workspace });
       continue;
     }
+    const leftover = leftoverReason(dir);
+    if (leftover) {
+      plan.skips.push({ target: dir, reason: leftover, workspace });
+      continue;
+    }
     const stale = staleCargoTargetPaths(dir, now);
     if ('refusal' in stale) {
       plan.skips.push({ target: dir, reason: stale.refusal, workspace });
       continue;
     }
     const gone = stale.paths.map((path) => join(dir, path));
-    const idleUnits = cargoTrimPolicy(tightened).units === 'all' && idleCargoUnitPaths(dir, now, gone).length > 0;
     const worth =
-      gone.length > 0 ||
-      idleUnits ||
-      profilesOutside(dir, gone).some((profile) => existsSync(join(profile, 'incremental'))) ||
-      existsSync(join(dir, '.stim-trimmed'));
+      gone.length > 0 || profilesOutside(dir, gone).some((profile) => existsSync(join(profile, 'incremental')));
     if (!worth) continue;
     plan.actions.push({
       kind: 'would-clear-build-dirs',
@@ -393,7 +358,7 @@ export async function planCargoTargetsAtPressure({
       overBytes: 0,
       ...(LEVELS[tightened] ? { level: LEVELS[tightened] } : {}),
       olderThanDays: 1,
-      reason: `disk is at the ${tightened} level for ${dir}; trims the profiles unused for a day, then the incremental caches (all of them)${idleUnits ? ', then the build units unused for a day (all of them)' : ''}`,
+      reason: `disk is at the ${tightened} level for ${dir}; trims the profiles unused for a day, then the incremental caches (all of them)`,
     });
   }
   return plan;
@@ -422,12 +387,15 @@ export async function trimCargoTargetAction(
   const root = action.workspace;
   if (!root || !(await cargoTargetDirsAsync(dirname(action.target))).includes(action.target))
     return kept('it is no longer a Cargo target/ Stim recognises');
+  const admitted = await admitCargoTarget(action.target);
+  if ('kept' in admitted) return kept(admitted.kept);
   if (!(await managed(root, operation))) return kept('its checkout is no longer in a workspace or discovery scope');
   const problem = await regenerableDirProblem(root, action.target, operation?.signal, { processes: false });
   if (problem) return kept(problem);
   const measure = action.level === undefined;
   const before = measure ? null : await targetVolume(action.target, operation?.signal);
   const result = await trimCargoTarget(action.target, {
+    admitted,
     needBytes: action.olderThanDays === undefined ? (action.overBytes ?? action.bytes) : 0,
     ...cargoTrimPolicy(action.level === 3 ? 'critical' : action.level === 2 ? 'high' : 'normal'),
     lowPriority,
@@ -441,11 +409,5 @@ export async function trimCargoTargetAction(
     result.bytes = result.removed.length && freed > 0 ? Math.round(freed * 1024 * 1024) : 0;
   }
   const detail = `${result.removed.length ? `removed ${result.removed.join(', ')}` : 'removed nothing'}${result.kept.length ? `; kept ${result.kept.join('; ')}` : ''}${result.reserveReleased ? `; ${RESERVE_RELEASED}` : ''}`;
-  if (result.deleteError)
-    return {
-      status: 'failed',
-      bytes: result.bytes,
-      detail: `${(result.bytes / GIB).toFixed(1)}G moved aside; ${result.deleteError}; the next pass deletes it; ${detail}`,
-    };
   return result.removed.length ? { status: 'done', bytes: result.bytes, detail } : kept(detail);
 }

@@ -7,6 +7,7 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
+  renameSync,
   rmSync,
   utimesSync,
   writeFileSync,
@@ -14,7 +15,7 @@ import {
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { diskUsageCacheFile, maintenanceDir, type DaemonLadderAction } from '@stim-cli/core/state';
+import { diskUsageCacheFile, type DaemonLadderAction } from '@stim-cli/core/state';
 import { writeCacheFile } from '../cache-file.ts';
 import { REAL_BYTES_THRESHOLD } from '../daemon/dependencies.ts';
 import { treeSignature } from '../private-size.ts';
@@ -22,6 +23,7 @@ import { createMaintenanceLane, runDiskPass, runDormantReduction, type HomePasse
 import * as ladderModule from '../daemon/ladder.ts';
 import * as measure from '../daemon/measure.ts';
 import * as processLock from '../engine/workspace-process-lock.ts';
+import { withCargoLocks } from '../workspace/cargo-lock.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import * as maintenanceRun from '../stimd/passes/run.ts';
 import { loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
@@ -32,6 +34,21 @@ import { metroStoreRoot } from '../stimd/metro/metro-store.ts';
 import * as runningFrom from '../workspace/running-from.ts';
 import type { RunningProcesses } from '../workspace/running-from.ts';
 import { testContext } from './_context.ts';
+import { keepReserve, RESERVE_RELEASED } from '../disk-reserve.ts';
+
+const volumes = vi.hoisted((): { freeBytes?: (path: string) => number | undefined } => ({}));
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...fs,
+    statfs: async (...args: Parameters<typeof fs.statfs>) => {
+      const free = volumes.freeBytes?.(String(args[0]));
+      return free === undefined
+        ? fs.statfs(...args)
+        : { ...(await fs.statfs(...args)), bavail: free / 4096, bsize: 4096 };
+    },
+  };
+});
 
 const DAY_MS = 86_400_000;
 const BUILD = join('android', 'app', 'build');
@@ -40,7 +57,6 @@ const EXTERNAL_PID = 4242;
 let base: string;
 let externalCwd: string | null;
 let processesListed: boolean;
-let heldLock: string | null;
 
 const measured: HomePasses['measured'] = {
   measurement: {
@@ -65,7 +81,6 @@ beforeEach(() => {
   saveConfig({ version: 2, projects: {}, repos: {} });
   externalCwd = null;
   processesListed = true;
-  heldLock = null;
   const table = (): RunningProcesses | null => {
     if (!processesListed) return null;
     const external = externalCwd === null ? [] : [{ pid: EXTERNAL_PID, line: 'java GradleDaemon' }];
@@ -87,7 +102,6 @@ beforeEach(() => {
         ? `${process.pid} 1\n${externalCwd === null ? '' : `${EXTERNAL_PID} 1\n`}`
         : real.runFileQuietAsync(file, args, opts),
     runFileAsync: async (file, args, opts) => {
-      if (file === 'lsof' && heldLock !== null && args.includes(heldLock)) return `${EXTERNAL_PID}\n`;
       return file === 'lsof' || file === 'ps' ? '' : real.runFileAsync(file, args, opts);
     },
   });
@@ -258,24 +272,22 @@ describe.skipIf(process.platform === 'win32')(
       expect(order).toEqual(['walk', 'pass', 'walk']);
     });
 
-    test('a workspace claim that hits a full disk is taken again once the disk reserve is released', async () => {
-      const root = register(repo('app'));
-      idleFor(3, root);
-      const reserveFile = join(maintenanceDir(), 'disk-reserve');
-      mkdirSync(maintenanceDir(), { recursive: true });
-      writeFileSync(reserveFile, 'x'.repeat(1024));
-      vi.spyOn(processLock, 'withWorkspaceProcessLock').mockImplementationOnce(async () => {
-        throw Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' });
+    test('a full disk under STIM_HOME releases the reserve before the workspace claims, whatever the checkout volume has', async () => {
+      register(repo('app'));
+      idleFor(3, join(base, 'app'));
+      keepReserve();
+      const home = join(base, 'home');
+      volumes.freeBytes = (path) => (path === home || path.startsWith(`${home}/`) ? 1024 * 1024 : undefined);
+      onTestFinished(() => {
+        delete volumes.freeBytes;
       });
 
-      expect(await gc()).toEqual([
-        expect.objectContaining({ outcome: 'done', detail: expect.stringContaining('disk reserve') }),
-      ]);
-      expect(existsSync(join(root, BUILD, 'app.apk'))).toBe(false);
-      expect(existsSync(reserveFile)).toBe(false);
+      const [action] = await gc();
+
+      expect(action).toMatchObject({ outcome: 'done', detail: expect.stringContaining(RESERVE_RELEASED) });
     });
 
-    test('without a disk reserve, a workspace claim that hits a full disk is not retried', async () => {
+    test('a workspace claim that hits a full disk fails that output, with no retry', async () => {
       register(repo('app'));
       idleFor(3, join(base, 'app'));
       vi.spyOn(processLock, 'withWorkspaceProcessLock').mockImplementationOnce(async () => {
@@ -369,7 +381,11 @@ describe.skipIf(process.platform === 'win32')(
         ]);
         expect(existsSync(join(root, 'target', 'debug'))).toBe(true);
         expect(await gc()).toEqual([expect.objectContaining({ target: root, outcome: 'done' })]);
-        expect(existsSync(join(root, 'target'))).toBe(false);
+        expect(readdirSync(join(root, 'target')).toSorted()).toEqual(
+          kind === 'tagged' ? ['CACHEDIR.TAG', 'debug'] : ['debug'],
+        );
+        expect(readdirSync(join(root, 'target', 'debug'))).toEqual(['.cargo-lock']);
+        expect((await gc()).filter((action) => action.outcome !== 'kept')).toEqual([]);
       },
     );
 
@@ -393,7 +409,7 @@ describe.skipIf(process.platform === 'win32')(
 
       expect(await gc(false)).toEqual([expect.objectContaining({ target: root, outcome: 'would' })]);
       expect(await gc()).toEqual([expect.objectContaining({ target: root, outcome: 'done' })]);
-      expect(readdirSync(join(root, 'target'))).toEqual(['deploy']);
+      expect(readdirSync(join(root, 'target')).toSorted()).toEqual(['debug', 'deploy']);
       expect(readFileSync(join(root, 'target', 'deploy', 'app-keypair.json'), 'utf8')).toBe('[1,2,3]');
     });
 
@@ -405,26 +421,21 @@ describe.skipIf(process.platform === 'win32')(
         'kept',
       ],
       [
-        'a build holds a profile lock',
-        (target: string) => {
-          heldLock = join(target, 'debug', '.cargo-lock');
-        },
-        'a build holds',
-        'would',
-      ],
-      [
-        'a trim left a directory marked not restored',
+        'an earlier Stim left its trim staging',
         (target: string) => {
           mkdirSync(join(target, '.stim-trimmed', '0'), { recursive: true });
-          writeFileSync(join(target, '.stim-trimmed', 'NOT-RESTORED'), '');
+          age(target, new Date(Date.now() - 3 * DAY_MS));
         },
-        'could not put back',
+        'is a leftover',
         'kept',
       ],
       [
-        'a trim moved a directory aside for a person',
-        (target: string) => mkdirSync(join(target, '.stim-not-restored-1-0')),
-        'could not put back',
+        'an earlier Stim moved a directory aside for a person',
+        (target: string) => {
+          mkdirSync(join(target, '.stim-not-restored-1-0'));
+          age(target, new Date(Date.now() - 3 * DAY_MS));
+        },
+        'is a leftover',
         'kept',
       ],
     ])('an idle untagged Cargo target/ stays whole, and gc says why, when %s', async (_, arrange, why, report) => {
@@ -439,6 +450,38 @@ describe.skipIf(process.platform === 'win32')(
           detail: expect.stringMatching(new RegExp(`${join(root, 'target')}.*${why}`)),
         }),
       ]);
+      expect(existsSync(join(root, 'target', 'debug', '.fingerprint', 'unit'))).toBe(true);
+    });
+
+    test('a target/ an earlier Stim staged whole into .stim-trimmed is still found, and gc names the leftover', async () => {
+      const root = onlyTarget(cargo('app', 'untagged'));
+      const target = join(root, 'target');
+      mkdirSync(join(target, '.stim-trimmed'));
+      for (const name of ['debug', 'doc', '.rustc_info.json'])
+        renameSync(join(target, name), join(target, '.stim-trimmed', name));
+      idleFor(3, root);
+
+      expect(await gc()).toEqual([
+        expect.objectContaining({
+          target: root,
+          outcome: 'kept',
+          detail: expect.stringMatching(new RegExp(`${join(target, '.stim-trimmed')} is a leftover`)),
+        }),
+      ]);
+      expect(existsSync(join(target, '.stim-trimmed', 'debug', '.fingerprint', 'unit'))).toBe(true);
+    });
+
+    test('an idle untagged Cargo target/ stays whole while a build holds a profile lock', async () => {
+      const root = onlyTarget(cargo('app', 'untagged'));
+      idleFor(3, root);
+
+      const held = await withCargoLocks([join(root, 'target', 'debug', '.cargo-lock')], () => gc());
+
+      expect(held).toEqual({
+        value: [
+          expect.objectContaining({ target: root, outcome: 'kept', detail: expect.stringContaining('a build holds') }),
+        ],
+      });
       expect(existsSync(join(root, 'target', 'debug', '.fingerprint', 'unit'))).toBe(true);
     });
 

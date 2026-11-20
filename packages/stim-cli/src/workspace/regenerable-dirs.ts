@@ -138,9 +138,6 @@ const RUSTC_INFO = '.rustc_info.json';
 const FINGERPRINT = '.fingerprint';
 
 const STIM_OWN = '.stim-';
-const NOT_RESTORED = '.stim-not-restored-';
-const TRIM_ASIDE = '.stim-trimmed';
-const STRANDED = 'NOT-RESTORED';
 
 function* isProfile(path: string, name: string): DirReads<boolean> {
   return (
@@ -172,36 +169,33 @@ function* wholeCargoTargetDirsReads(root: string): DirReads<string[]> {
   return [...new Set([...(yield* exactTargetDirs(root)), ...(yield* taggedRootTargetDirs(root))])];
 }
 
-/** A `target/` holding a `.stim-trimmed` staging directory, which only Stim's Cargo trims and deletes make. */
-function* stagedTargetDirs(root: string): DirReads<string[]> {
+/** A `target/` holding a leftover of an earlier Stim's staged trim, which only those trims made, so its remedy is reported. */
+function* leftoverTargetDirs(root: string): DirReads<string[]> {
   const path = join(root, CARGO_TARGET);
-  return (yield* realDirectory(path)) && (yield* realDirectory(join(path, TRIM_ASIDE))) ? [path] : [];
+  if (!(yield* realDirectory(path))) return [];
+  return (yield* namesIn(path)).some(
+    (name) => name === `${STIM_OWN}trimmed` || name.startsWith(`${STIM_OWN}not-restored-`),
+  )
+    ? [path]
+    : [];
 }
 
-function* cargoTargetDirsReads(root: string, staged: boolean): DirReads<string[]> {
+function* cargoTargetDirsReads(root: string): DirReads<string[]> {
   const whole = yield* wholeCargoTargetDirsReads(root);
   if (whole.length) return whole;
   const untagged = yield* untaggedRootTargetDirs(root);
-  return untagged.length || !staged ? untagged : yield* stagedTargetDirs(root);
-}
-
-/** Why a Cargo `target/` must not be deleted whole: it holds a copy a Cargo trim could not put back. */
-function* recoveryCopyProblem(path: string): DirReads<string | null> {
-  return (yield* namesIn(path)).some((name) => name.startsWith(NOT_RESTORED)) ||
-    (yield* namesIn(join(path, TRIM_ASIDE))).includes(STRANDED)
-    ? 'it holds a directory a Cargo trim could not put back; a person must merge or delete it'
-    : null;
+  return untagged.length ? untagged : yield* leftoverTargetDirs(root);
 }
 
 /**
  * The Cargo `target/` directly under `root` that the Cargo trims manage: an Exact app's (beside its `exact.mjs`), one that
  * carries Cargo's `CACHEDIR.TAG` with its signature line, or one beside a `Cargo.toml` that holds files only Cargo writes
- * (a `.rustc_info.json`, or a direct child profile holding `.fingerprint`), and with `staged`, for the dormant
- * reduction only, one holding the `.stim-trimmed` staging directory an earlier delete left. Only the first two are
+ * (a `.rustc_info.json`, or a direct child profile holding `.fingerprint`), or one holding a leftover of an earlier
+ * Stim's staged trim, which every trim and delete then keeps with its remedy. Only the first two are
  * build output; the dormant reduction deletes any of them whole but a Solana keypair folder.
  */
-export function cargoTargetDirsAsync(root: string, { staged = false }: { staged?: boolean } = {}): Promise<string[]> {
-  return readAsync(cargoTargetDirsReads(root, staged));
+export function cargoTargetDirsAsync(root: string): Promise<string[]> {
+  return readAsync(cargoTargetDirsReads(root));
 }
 
 function* discoveredBuildDirKindsReads(root: string): DirReads<{ dirs: string[]; cargo: string[] }> {
@@ -277,8 +271,7 @@ export function isBuildDirPath(path: string): boolean {
  * Why `path`, inside the checkout at `root`, must not be deleted as a regenerable directory, or null when it is a real
  * directory inside `root` whose every file git ignores and, for a Cargo `target/` deleted whole (`processes`), no other
  * process runs from or works in that app: Exact's own commands (web, Android, tests) build into the same directory
- * without Stim seeing them. Where the processes cannot be listed (Windows), that `target/` is kept. A whole Cargo
- * `target/` is also kept by `recoveryCopyProblem`.
+ * without Stim seeing them. Where the processes cannot be listed (Windows), that `target/` is kept.
  */
 export async function regenerableDirProblem(
   root: string,
@@ -308,10 +301,8 @@ export async function regenerableDirProblem(
   if (
     processes &&
     basename(path) === CARGO_TARGET &&
-    (await readAsync(cargoTargetDirsReads(dirname(path), true))).includes(path)
+    (await readAsync(cargoTargetDirsReads(dirname(path)))).includes(path)
   ) {
-    const recovery = await readAsync(recoveryCopyProblem(path));
-    if (recovery) return recovery;
     const others = await othersRunningAsync(await readRunningProcessesAsync(signal), signal);
     const running = runningFromReason(dirname(path), others);
     if (running) return `its app may be in use: ${running.replace(/ it\b/, ' its app')}`;
