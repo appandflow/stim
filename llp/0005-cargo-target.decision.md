@@ -83,15 +83,21 @@ recognised `target/` whole, tagged, Exact app's and untagged alike, in a
 workspace or discovered checkout that has had no activity for
 `idle.dormantDays` by the full evidence, and whose worktree is not locked with
 `git worktree lock`: every top-level entry but a `deploy/` directory holding a
-`*-keypair.json` and a symbolic link, and the `target/` itself once nothing is
-left in it. It runs the idle stage's
+`*-keypair.json`, a symbolic link and Cargo's `CACHEDIR.TAG`, and the `target/`
+itself once nothing is left in it. The tag stays because Cargo writes it only
+when it creates the `target/`, and a tagged `target/` with no `Cargo.toml`
+beside it is recognised by the tag alone. It runs the idle stage's
 checks above, the process check included, for all three kinds, then, under the
 workspace's claims and checked again right before the delete: the workspace is
 still idle and the directory is still a recognised `target/`. A path the plan took as a `target/` goes only
 through the Cargo delete, never through the plain removal of other outputs.
 
 The Cargo delete then keeps the whole `target/` when it is no longer
-recognised, when it holds a leftover of an earlier engine's staging (Leftovers
+recognised, when the admitted path no longer names the directory it admitted:
+not a directory, another device and inode, or another canonical path (checked
+before the checks below and again under the Cargo locks before each top-level
+entry; the trims check it before planning and in each locked step, with the
+identity the pressure and cap actions capture when they admit the target), when it holds a leftover of an earlier engine's staging (Leftovers
 of the staged trim, below), when it shows use within `idle.dormantDays` or that
 use cannot be told, when another filesystem is mounted anywhere in it (on Linux
 also any mount point at or under it in `/proc/self/mountinfo`, since a bind
@@ -138,8 +144,24 @@ program's private key there, and a new key is a new program ID. Everything else
 in an idle `target/` goes; for an Exact app's `target/`, Exact's cleaner
 decides instead and keeps its records (below). A top-level
 symbolic link stays, and a `deploy` that is itself a symbolic link, or holds
-one, keeps the whole `target/`, since its keys may live anywhere in it. Both
-`deploy` and `*-keypair.json` match in any letter case. Anywhere else the
+one, keeps the whole `target/`, since its keys may live anywhere in it. The same
+holds at any depth: a symbolic link named `deploy` or `*-keypair.json`, or one
+directly in a `deploy` directory, keeps all of the `target/`, and so does a
+directory that cannot be listed to look or that stands on another device, since
+a link there may point into what is removed. The walk runs under the Cargo locks
+right before deleting: over the whole `target/` for the dormant delete and for
+the first step of a trim that removes something, and over what the step removes
+for each later step, so a trim walks the whole `target/` once, not once per
+step. Every such link already in the `target/` when a delete or trim starts is
+covered wherever it points, a `deploy/app-keypair.json` beside a stale `debug/`
+that links into it included: these are the static links of the threat model
+under One remover, which the maintainer signed. A link that appears elsewhere in
+the `target/` after that first walk falls under the gap for a key a tool
+publishes with no Cargo lock held, such as a `deploy/` a tool writes itself
+rather than through Cargo; no walk under Cargo's locks can rule that out.
+Reason: a `deploy/debug/app-keypair.json` that links to a wallet file beside it
+would survive while the wallet went. Both `deploy` and `*-keypair.json` match in any letter
+case. Anywhere else the
 remover never unlinks a `*-keypair.json`: a debug-only `cargo build-sbf --debug`
 writes the key under `deploy/debug/`, and `--sbf-out-dir` can put it in any
 folder. A dry run leaves an entry that would keep only such files out of the
@@ -176,7 +198,9 @@ trim; a used path or a busy lock keeps the whole `target/` until the next pass.
 Under pressure (below) it reaches a `target/` in use. Over the cap, maintenance removes the profile and target-triple
 directories no build wrote in the last day, then, if still over, the
 `incremental/` directory of each remaining profile, largest first, until the
-overage is covered. 0 means no cap and no pressure trim either.
+overage is covered; a stale step the trim already knows it will skip, a used
+path or a profile with no `.cargo-lock`, does not count toward it. 0 means no cap
+and no pressure trim either.
 
 "Wrote in the last day" comes from directory modification times and the unit
 stamps in Exact's `.exact-sweep.json`, never from access times. Reason: reads
@@ -222,15 +246,17 @@ The pressure trim needs no byte count, so it never waits for a size scan, a
 `du` or host load (LLP 0001, Pressure acts without waiting for measurement or
 load). The pressure ladder, the daemon's and the one a build command runs before it
 builds, plans it from folder structure, lock files
-and Exact's ledger at the start of rung 3, before any shared cache is trimmed,
-and runs it; the daemon runs it at most every 10 minutes per level, a command
+and Exact's ledger at the end of rung 3, after the shared caches, and runs it
+largest target first by its last recorded size (LLP 0001, The ladder runs by
+yield); the daemon runs it at most every 10 minutes per level, a command
 once, and a command leaves its own workspace's `target/` alone. An acting `stim gc` runs it
 before it measures anything. It reports the bytes the trim removed. Cap 0,
 `maintenance.keep` and the lock, `lsof` and `ps` checks apply unchanged. Two
 Stims that trim the same `target/` at once need no claim: each takes the Cargo
 locks it deletes under, and the remover counts a path already gone as removed.
-Under a headroom deadline the trim stops between steps; at high and critical it
-walks nothing before removing, and reports the free space it gained of the
+Under a headroom deadline the trim stops between steps, and between directories
+of a step's keypair link walk before that step deletes anything; at high and
+critical it measures nothing before removing, and reports the free space it gained of the
 target's own volume, or 0 when either sample is missing. The deadline stop, the
 free-space report and the absence of a per-run limit on targets were chosen by
 the coordinator and the reviews of #5763, not by the maintainer.
@@ -255,15 +281,32 @@ decisions in #6025 removes that sweep.
 
 Every deletion of Cargo build output, the trims, the dormant reduction, the idle
 stage, the build-output pass and the artifact pass, goes through one remover,
-except an Exact app's whole `target/` (below). It deletes in place, deepest
-first: a symbolic link is unlinked and never followed, a directory on a device
-other than the `target/`'s is not entered, a Cargo lock file (`.cargo-lock`,
-`.cargo-build-lock`, `.cargo-artifact-lock`) and a `*-keypair.json` (any case)
-are never unlinked,
-and a directory goes once it is empty. In a profile it removes `.fingerprint`
-first, so a build that starts while the profile is half removed rebuilds it. A
+except an Exact app's whole `target/` (below). It deletes in place, deepest first: a symbolic link is unlinked and never followed,
+a directory on a device other than the `target/`'s and Exact's
+`.apple-cargo-locks/` are not entered, a lock file Cargo or Exact takes
+(`.cargo-lock`, `.cargo-build-lock`, `.cargo-artifact-lock`,
+`.exact-sweep.json.lock`) and a `*-keypair.json` (any case) are never unlinked,
+and a directory goes once it is empty. In a profile it empties `.fingerprint`
+first and removes the empty directory last. Emptying it first makes a build
+after a delete stopped part way rebuild every unit and rerun its build scripts:
+with a fingerprint kept and a build script's `OUT_DIR` file gone, Cargo 1.97
+recompiles the library without running the script again and fails, while with
+`.fingerprint` empty it rebuilds cleanly. Keeping the empty directory to the end
+keeps such a profile listed, so a later trim removes the rest. Chosen by the
+review of #6032, not by the maintainer. A
 path already gone counts as removed. What it left for those rules is reported,
 lock files aside.
+
+Threat model: cleanup guards against builds, static links, a moved or replaced
+`target/` and crashes; it does not guard against a process of the same user
+that swaps directories inside a `target/` during a delete. The maintainer chose
+this in the coordinating session of #6025 on 2026-11-20, answering "Sign it" to
+that statement. So the remover checks the admitted `target/` itself (path,
+device and inode) under the locks before each top-level entry and each trim
+step, but not each unlink: Node offers no `openat` or `unlinkat`, and a
+`realpath` per unlink cost a large trim more than half its time while leaving a
+window anyway. The structural fix, deletes anchored to the checked directory,
+comes with the delete child of the GC redesign.
 
 Each trim step takes the Cargo locks of the profiles it deletes from, the lock
 files that exist and never a new one, exclusively and without waiting, through
@@ -328,7 +371,9 @@ Earlier engines staged removals in `target/.stim-trimmed/` and kept what they
 could not put back as `target/.stim-not-restored-*`. A `target/` that holds
 either is left out of every trim and delete, read only: the plan names it with
 the remedy (delete the leftover, or move what you need out of it), and the next
-pass trims the `target/` again. Chosen by the lane of #6025, not by the
+pass trims the `target/` again. The leftover alone makes a `target/` recognised,
+so one an earlier engine staged whole, with nothing else left in it, is still
+named. Chosen by the lane of #6025, not by the
 maintainer, following the step-back review: an earlier engine deleted an
 unmarked `.stim-trimmed` at its next trim; this one leaves that to a person
 rather than keep any knowledge of the staging format.
@@ -340,7 +385,9 @@ Before a trim or a delete, and before the dormant reduction takes a workspace's
 reserve (`$STIM_HOME/maintenance/disk-reserve`, the file the maintenance pass
 and an acting `stim gc` already keep) once when the volume it acts on has less
 than 64 MiB free, so those claims and the unlinks, which can need space on
-APFS, have room. A run that released the reserve says so in its outcome. The
+APFS, have room. For the dormant reduction that volume is the one holding the
+workspace's directory under `$STIM_HOME` (or its nearest existing parent),
+where the claims are written, not the checkout's. A run that released the reserve says so in its outcome. The
 maintenance pass writes the reserve back at its end when there is room.
 
 Reason: on 2026-11-19 at 23:01 UTC, with the maintainer's disk full, a rung 3

@@ -808,12 +808,13 @@ writes to and from memory: **high** under `disk.minFreeGb` (40 GB), after
 available; **critical** under `disk.criticalFreeGb` (20 GB), or under
 `disk.hardFloorGb` when that is higher, or with critical memory pressure.
 Above normal it runs one pressure ladder until the level
-clears: idle stage for every workspace idle 2 minutes under memory pressure
-(at `idle.minutes` under disk pressure alone), parked devices, the
-shared caches, the dormant stage, the `node_modules` and Pods of idle worktrees
-that `stim worktree warm` can restore (idle 1 hour at high, 2 minutes at critical),
-then Gradle daemons, unpinned Gradle versions, TMPDIR leftovers and the worktree
-trash, finished and long-idle worktrees, at critical recordings and archived
+clears, by yield: parked devices, the shared caches and the Cargo trims, the
+idle stage for every workspace idle 2 minutes under memory pressure (at
+`idle.minutes` under disk pressure alone), the dormant stage, a report of the
+`node_modules` and Pods of idle worktrees (idle 1 hour at high, 2 minutes at
+critical) that deletes nothing, then Gradle daemons, unpinned Gradle versions,
+TMPDIR leftovers and the worktree trash, a report of finished and long-idle
+worktrees that removes nothing, at critical recordings and archived
 logs, and last, at critical only, in the `stim-daemon` (at most hourly, while the disk is still short) and `stim gc` (see [the ladder](./build-caches.md#disk-pressure)), never in a `STIM_HOME`-scoped home or from a build command's own ladder, other tools' caches (npm, Yarn, pnpm, CocoaPods, Gradle, SwiftPM). Each rung measures again first, skips a workspace with
 a build, a driver, a lease, a live [web share](./share.md) or
 `maintenance.keep`, and takes the longest-idle

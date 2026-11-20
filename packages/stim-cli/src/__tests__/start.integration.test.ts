@@ -898,6 +898,43 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     expect(facts.mode).toBe('bare-inproc');
   });
 
+  test('a stimd that goes away while the dev server becomes ready fails start with the rerun error', async () => {
+    const { server, port } = await metroListener();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    const exec = metroExecutor();
+    const base = exec.runQuiet.bind(exec);
+    exec.runQuiet = (cmd) => {
+      if (cmd === `lsof -nP -iTCP:${port} -sTCP:LISTEN -t`) return exec.listening ? String(process.pid) : '';
+      return base(cmd);
+    };
+    setExecutor(exec);
+    upsertProject(root, { metroPort: port });
+
+    const result = await runAction({ json: true, wait: '10' }, () =>
+      registerPosixStart({
+        ensureMetro: async () => {
+          const ready = createServer((_req, res) => res.end('packager-status:running'));
+          openServers.push(ready);
+          await new Promise<void>((resolve) => ready.listen(port, '127.0.0.1', resolve));
+          exec.listening = true;
+          await new Promise((done) => setTimeout(done, 500));
+          return {
+            op: 'error',
+            code: 'STIM_DAEMON_UNAVAILABLE',
+            message: "This Stim home's stimd stopped while this command was running.",
+            remedy: 'Run the command again; `stim status` shows whether a stimd runs.',
+          };
+        },
+      }),
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.logs.at(-1) ?? '')).toMatchObject({
+      code: 'STIM_DAEMON_UNAVAILABLE',
+      remedy: expect.stringContaining('Run the command again'),
+    });
+  });
+
   test('start --remote passes --tunnel to an Expo supervisor in explicit expo mode', async () => {
     const { exec, port } = await runSpawnedExpoStart({
       options: { json: true, wait: '10', remote: true },

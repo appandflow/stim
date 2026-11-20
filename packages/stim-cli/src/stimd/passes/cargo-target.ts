@@ -13,6 +13,7 @@ import { cargoTargetDirsAsync, regenerableDirProblem } from '../../workspace/reg
 import { appRoots, artifactCheckoutsAsync } from './artifacts.ts';
 import { readVolumeSpaceAsync } from './budget.ts';
 import {
+  admitCargoTarget,
   cargoProfileDirs,
   leftoverReason,
   staleCargoTargetPaths,
@@ -130,7 +131,14 @@ export async function measureCargoTargets(
   now: number,
   operation?: StimContext,
   recorded: readonly MaintenanceSize[] = [],
-  { lowPriority = false }: { lowPriority?: boolean } = {},
+  {
+    lowPriority = false,
+    between,
+  }: {
+    lowPriority?: boolean;
+    /** Runs before each walk: a unit boundary of the stim-daemon's disk owner. */
+    between?: () => Promise<void>;
+  } = {},
 ): Promise<MaintenanceSize[]> {
   const sizes: MaintenanceSize[] = [];
   for (const size of recorded)
@@ -151,6 +159,7 @@ export async function measureCargoTargets(
       scan.refused.set(dir, { workspace: root, reason: problem });
       continue;
     }
+    await between?.();
     const bytes = await measuredDirectorySizeAsync(dir, {
       timeoutMs: SIZE_TIMEOUT_MS,
       lowPriority,
@@ -378,12 +387,15 @@ export async function trimCargoTargetAction(
   const root = action.workspace;
   if (!root || !(await cargoTargetDirsAsync(dirname(action.target))).includes(action.target))
     return kept('it is no longer a Cargo target/ Stim recognises');
+  const admitted = await admitCargoTarget(action.target);
+  if ('kept' in admitted) return kept(admitted.kept);
   if (!(await managed(root, operation))) return kept('its checkout is no longer in a workspace or discovery scope');
   const problem = await regenerableDirProblem(root, action.target, operation?.signal, { processes: false });
   if (problem) return kept(problem);
   const measure = action.level === undefined;
   const before = measure ? null : await targetVolume(action.target, operation?.signal);
   const result = await trimCargoTarget(action.target, {
+    admitted,
     needBytes: action.olderThanDays === undefined ? (action.overBytes ?? action.bytes) : 0,
     ...cargoTrimPolicy(action.level === 3 ? 'critical' : action.level === 2 ? 'high' : 'normal'),
     lowPriority,

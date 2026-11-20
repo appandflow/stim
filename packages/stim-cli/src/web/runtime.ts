@@ -74,6 +74,7 @@ export async function launchOwnedBrowser(
           return { ok: true, record: { ...live, url }, since, reused: true };
         } catch (error) {
           throwIfCancelled(signal, 'browser launch');
+          if (error instanceof Error && 'code' in error && error.code === 'STIM_DAEMON_UNAVAILABLE') throw error;
           note(chalk.dim(phaseLine('device', `restarting the owned Chrome: ${(error as Error).message}`)));
         }
       }

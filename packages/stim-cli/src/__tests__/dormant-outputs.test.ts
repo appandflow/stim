@@ -7,6 +7,7 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
+  renameSync,
   rmSync,
   utimesSync,
   writeFileSync,
@@ -18,7 +19,8 @@ import { diskUsageCacheFile, type DaemonLadderAction } from '@stim-cli/core/stat
 import { writeCacheFile } from '../cache-file.ts';
 import { REAL_BYTES_THRESHOLD } from '../daemon/dependencies.ts';
 import { treeSignature } from '../private-size.ts';
-import { createMaintenanceLane, runDormantReduction, type HomePasses } from '../daemon/passes.ts';
+import { createMaintenanceLane, runDiskPass, runDormantReduction, type HomePasses } from '../daemon/passes.ts';
+import * as ladderModule from '../daemon/ladder.ts';
 import * as measure from '../daemon/measure.ts';
 import * as processLock from '../engine/workspace-process-lock.ts';
 import { withCargoLocks } from '../workspace/cargo-lock.ts';
@@ -37,6 +39,21 @@ import { metroStoreRoot } from '../stimd/metro/metro-store.ts';
 import * as runningFrom from '../workspace/running-from.ts';
 import type { RunningProcesses } from '../workspace/running-from.ts';
 import { testContext } from './_context.ts';
+import { keepReserve, RESERVE_RELEASED } from '../disk-reserve.ts';
+
+const volumes = vi.hoisted((): { freeBytes?: (path: string) => number | undefined } => ({}));
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...fs,
+    statfs: async (...args: Parameters<typeof fs.statfs>) => {
+      const free = volumes.freeBytes?.(String(args[0]));
+      return free === undefined
+        ? fs.statfs(...args)
+        : { ...(await fs.statfs(...args)), bavail: free / 4096, bsize: 4096 };
+    },
+  };
+});
 
 const DAY_MS = 86_400_000;
 const BUILD = join('android', 'app', 'build');
@@ -216,6 +233,65 @@ describe.skipIf(process.platform === 'win32')(
       expect(existsSync(join(metroStoreRoot(root), 'shared'))).toBe(true);
     });
 
+    test('a hard-floor pass asked during the first output walk of a workspace runs before its next walk', async () => {
+      const root = register(repo('app'));
+      idleFor(3, root);
+      const outputs = [join(root, BUILD), join(workspaceDir(root), 'derived-data')];
+      const order: string[] = [];
+      let entered!: () => void;
+      let finish!: () => void;
+      const walking = new Promise<void>((resolve) => (entered = resolve));
+      const finished = new Promise<void>((resolve) => (finish = resolve));
+      const walk = fsUtil.measuredDirectorySizeAsync;
+      vi.spyOn(fsUtil, 'measuredDirectorySizeAsync').mockImplementation(async (dir, options) => {
+        if (outputs.includes(dir)) {
+          order.push('walk');
+          if (order.length === 1) {
+            entered();
+            await finished;
+          }
+        }
+        return walk(dir, options);
+      });
+      vi.spyOn(ladderModule, 'runLadder').mockImplementation(async (_input, pressure) => {
+        order.push('pass');
+        return { actions: [], pressure };
+      });
+
+      const step = hourlyStep(true);
+      await walking;
+      const floor = runDiskPass(
+        {
+          act: true,
+          pressure: { level: 'critical', disk: 'critical', memory: 'normal', reasons: [], memoryWarningSince: null },
+          devices: [],
+          sims: [],
+          requested: true,
+        },
+        () => {},
+        testContext(),
+      );
+      finish();
+      await Promise.all([step, floor]);
+
+      expect(order).toEqual(['walk', 'pass', 'walk']);
+    });
+
+    test('a full disk under STIM_HOME releases the reserve before the workspace claims, whatever the checkout volume has', async () => {
+      register(repo('app'));
+      idleFor(3, join(base, 'app'));
+      keepReserve();
+      const home = join(base, 'home');
+      volumes.freeBytes = (path) => (path === home || path.startsWith(`${home}/`) ? 1024 * 1024 : undefined);
+      onTestFinished(() => {
+        delete volumes.freeBytes;
+      });
+
+      const [action] = await gc();
+
+      expect(action).toMatchObject({ outcome: 'done', detail: expect.stringContaining(RESERVE_RELEASED) });
+    });
+
     test('a workspace claim that hits a full disk fails that output, with no retry', async () => {
       register(repo('app'));
       idleFor(3, join(base, 'app'));
@@ -310,7 +386,9 @@ describe.skipIf(process.platform === 'win32')(
         ]);
         expect(existsSync(join(root, 'target', 'debug'))).toBe(true);
         expect(await gc()).toEqual([expect.objectContaining({ target: root, outcome: 'done' })]);
-        expect(readdirSync(join(root, 'target'))).toEqual(['debug']);
+        expect(readdirSync(join(root, 'target')).toSorted()).toEqual(
+          kind === 'tagged' ? ['CACHEDIR.TAG', 'debug'] : ['debug'],
+        );
         expect(readdirSync(join(root, 'target', 'debug'))).toEqual(['.cargo-lock']);
         expect((await gc()).filter((action) => action.outcome !== 'kept')).toEqual([]);
       },
@@ -401,6 +479,24 @@ describe.skipIf(process.platform === 'win32')(
         }),
       ]);
       expect(existsSync(join(root, 'target', 'debug', '.fingerprint', 'unit'))).toBe(true);
+    });
+
+    test('a target/ an earlier Stim staged whole into .stim-trimmed is still found, and gc names the leftover', async () => {
+      const root = onlyTarget(cargo('app', 'untagged'));
+      const target = join(root, 'target');
+      mkdirSync(join(target, '.stim-trimmed'));
+      for (const name of ['debug', 'doc', '.rustc_info.json'])
+        renameSync(join(target, name), join(target, '.stim-trimmed', name));
+      idleFor(3, root);
+
+      expect(await gc()).toEqual([
+        expect.objectContaining({
+          target: root,
+          outcome: 'kept',
+          detail: expect.stringMatching(new RegExp(`${join(target, '.stim-trimmed')} is a leftover`)),
+        }),
+      ]);
+      expect(existsSync(join(target, '.stim-trimmed', 'debug', '.fingerprint', 'unit'))).toBe(true);
     });
 
     test('an idle untagged Cargo target/ stays whole while a build holds a profile lock', async () => {

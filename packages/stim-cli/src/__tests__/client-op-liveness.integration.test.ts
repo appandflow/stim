@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { livenessChild } from './_op-liveness-child.ts';
 
 /**
- * @ref LLP 0012#a-command-continues-across-a-stimd-restart -- a command waiting on stimd stays alive until its wait ends
+ * @ref LLP 0012#a-command-does-not-continue-across-a-stimd-restart -- a command waiting on stimd settles instead of exiting silently
  */
 test.skipIf(process.platform === 'win32')(
   'a command waiting on a stimd that stopped answering settles instead of exiting silently',

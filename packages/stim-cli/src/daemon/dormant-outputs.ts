@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { rm, stat, utimes } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
@@ -35,7 +36,12 @@ const SIZE_TIMEOUT_MS = 120_000;
 const IN_USE_CHECKS = { devServer: false, hosted: false, hostedMacos: false };
 const RESTORE = 'the next stim ios or stim android, from the build cache when nothing changed';
 
-type Input = Pick<IdlePassInput, 'act' | 'log'> & { operation?: StimContext; force?: boolean };
+type Input = Pick<IdlePassInput, 'act' | 'log'> & {
+  operation?: StimContext;
+  force?: boolean;
+  /** Runs before each size walk and each removal, outside the workspace's claims: a unit boundary of the disk owner. */
+  between?: () => Promise<void>;
+};
 type Result = Pick<DaemonLadderAction, 'outcome' | 'bytes' | 'detail'>;
 
 interface Plan {
@@ -96,6 +102,11 @@ export async function reduceDormantOutputs(
   return actions;
 }
 
+/** `path`, or its nearest ancestor that exists, whose volume is the one a write at `path` lands on. */
+function nearestExisting(path: string): string {
+  for (let at = path; ; at = dirname(at)) if (existsSync(at) || dirname(at) === at) return at;
+}
+
 async function reduceWorkspace(
   candidate: StageCandidate,
   config: Config,
@@ -122,8 +133,10 @@ async function reduceWorkspace(
   const plan = await eligible(candidate, config, afterMs);
   if (!plan.paths.length) return plan.keptTarget ? keep(plan.kept.join('; ')) : null;
   const measure = input.act || input.force === true;
-  const sizeOf = async (dir: string) =>
-    (await measuredDirectorySizeAsync(dir, { timeoutMs: SIZE_TIMEOUT_MS, signal })) ?? 0;
+  const sizeOf = async (dir: string) => {
+    await input.between?.();
+    return (await measuredDirectorySizeAsync(dir, { timeoutMs: SIZE_TIMEOUT_MS, signal })) ?? 0;
+  };
   const sizes = new Map<string, number>();
   if (measure)
     for (const output of plan.paths) {
@@ -146,9 +159,10 @@ async function reduceWorkspace(
     failures.push(`${output}: ${error instanceof Error ? error.message : String(error)}`);
   };
   // @ref LLP 0005#a-full-disk-releases-the-reserve -- the workspace claims are writes too
-  let released = await releaseReserveWhenFull(path);
+  let released = await releaseReserveWhenFull(nearestExisting(workspaceDir(path)));
   for (const output of plan.paths) {
     let outcome: string | CargoTrimResult | null;
+    await input.between?.();
     try {
       outcome = await removeOutput(path, checkout, output, plan.targets.has(output), afterMs, operation);
     } catch (error) {

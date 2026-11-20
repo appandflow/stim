@@ -2,7 +2,15 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { maintenanceStateFile, readMaintenanceState, type MaintenanceState } from '@stim-cli/core/state';
+import {
+  diskUsageCacheFile,
+  maintenanceStateFile,
+  readDiskUsage,
+  readJsonObject,
+  readMaintenanceState,
+  type MaintenanceState,
+} from '@stim-cli/core/state';
+import { writeCacheFile } from '../cache-file.ts';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { planCargoTargetsAtPressure, trimCargoTargetAction } from '../stimd/passes/cargo-target.ts';
 import { deferCheck } from '../stimd/passes/defer.ts';
@@ -68,8 +76,54 @@ test('while host load defers the size scan, the cap still measures and plans an 
   expect(measurements.measureSizes).not.toHaveBeenCalled();
   expect(state?.lastAt.size).toBeUndefined();
   expect(state?.sizes.map(({ name, dir }) => [name, dir])).toEqual([['Cargo target', target]]);
+  expect(readDiskUsage(target)?.bytes).toBe(state?.sizes[0]?.bytes);
   expect(state?.plan.map(({ kind, target: dir }) => [kind, dir])).toEqual([['would-clear-build-dirs', target]]);
   expect(maintenanceStatus().deferred).toContainEqual({ check: 'size', since: expect.any(Number) });
+});
+
+test('while host load defers the size scan, the cap gives the disk owner a unit boundary before each target walk', async () => {
+  const other = join(base, 'other');
+  mkdirSync(join(other, 'target', 'debug', 'incremental'), { recursive: true });
+  writeFileSync(join(other, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+  writeFileSync(join(other, '.gitignore'), 'target/\n');
+  writeFileSync(join(other, 'target', 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55\n');
+  git(other, 'init', '-q', '-b', 'main');
+  git(other, 'add', '-A');
+  git(other, 'commit', '-q', '-m', 'init');
+  upsertProject(other, { metroPort: null });
+  const order: string[] = [];
+  const walk = fsUtil.measuredDirectorySizeAsync;
+  vi.spyOn(fsUtil, 'measuredDirectorySizeAsync').mockImplementation(async (dir, options) => {
+    order.push(dir.endsWith('target') ? 'walk' : 'other');
+    return walk(dir, options);
+  });
+
+  await runMaintenance('test', { between: async () => void order.push('boundary') });
+
+  const walks = order.flatMap((entry, at) => (entry === 'walk' ? [order[at - 1]] : []));
+  expect(walks).toEqual(['boundary', 'boundary']);
+});
+
+test('the cap writes its Cargo size over an older disk-usage record, keeping its other fields but the private sizes, and leaves a newer one', async () => {
+  const record = (at: number) => ({
+    path: target,
+    measuredAt: new Date(at).toISOString(),
+    bytes: 1,
+    walkMs: 5,
+    privateBytes: 1,
+    partial: true,
+  });
+  writeCacheFile(diskUsageCacheFile(target), record(Date.now() + 60_000));
+  await runMaintenance('test');
+  expect(readJsonObject(diskUsageCacheFile(target))).toMatchObject({ bytes: 1, walkMs: 5, privateBytes: 1 });
+
+  writeCacheFile(diskUsageCacheFile(target), record(Date.now() - 2 * 3_600_000));
+  writeFileSync(maintenanceStateFile(), '{}');
+  await runMaintenance('test');
+  const rewritten = readJsonObject(diskUsageCacheFile(target));
+  expect(rewritten).toMatchObject({ bytes: readMaintenanceState()?.sizes[0]?.bytes, walkMs: 5 });
+  expect(rewritten).not.toHaveProperty('privateBytes');
+  expect(rewritten).not.toHaveProperty('partial');
 });
 
 test('a size scan deferred for the ceiling runs anyway, and the status field clears', async () => {

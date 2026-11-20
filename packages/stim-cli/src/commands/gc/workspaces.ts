@@ -487,14 +487,15 @@ async function outputBytes(
   timeoutMs: number,
   signal?: AbortSignal,
   operation?: StimContext,
+  between?: () => Promise<void>,
 ): Promise<(number | null)[]> {
   const sizes = await mapLimited(
     entries.flatMap((paths, index) => paths.map((path) => ({ path, index }))),
     sizeConcurrency(operation),
-    async ({ path, index }) => ({
-      index,
-      size: await measuredDirectorySizeAsync(path, { timeoutMs, signal, operation }),
-    }),
+    async ({ path, index }) => {
+      await between?.();
+      return { index, size: await measuredDirectorySizeAsync(path, { timeoutMs, signal, operation }) };
+    },
   );
   return entries.map((_, index) => {
     const own = sizes.filter((size) => size.index === index).map((size) => size.size);
@@ -511,6 +512,8 @@ interface WorkspaceOutputsOptions {
   sizeTimeoutMs?: number;
   signal?: AbortSignal;
   operation?: StimContext;
+  /** Runs before each walk: a unit boundary of the stim-daemon's disk owner. */
+  between?: () => Promise<void>;
   /**
    * Lighten workspaces for `stim gc`: include the project's in-tree build directories, keep only a workspace
    * that is building or ran a native command within LIGHTEN_AFTER_MS, and ignore its dev server and devices.
@@ -531,6 +534,7 @@ export function collectWorkspaceOutputs({
   sizeTimeoutMs = SIZE_TIMEOUT_MS,
   signal,
   operation,
+  between,
   lighten = false,
 }: WorkspaceOutputsOptions): WorkspaceOutputsReport | Promise<WorkspaceOutputsReport> {
   const mountedVolumes = listMountedVolumes();
@@ -596,6 +600,7 @@ export function collectWorkspaceOutputs({
           sizeTimeoutMs,
           signal,
           operation,
+          between,
         )
       : [];
     const locks = await mapLimited(entries, sizeConcurrency(operation), async ({ projectRoot }) =>
@@ -620,6 +625,8 @@ export function collectWorkspaceOutputs({
     return report(sizes);
   })();
 }
+
+const NOTHING_REMOVED = 'nothing in them could be removed';
 
 export async function clearWorkspaceOutputs(
   report: WorkspaceOutputsReport,
@@ -646,6 +653,8 @@ export async function clearWorkspaceOutputs(
       continue;
     }
     let run;
+    let freed = 0;
+    let removed = 0;
     try {
       run = await withIdleWorkspace(
         root,
@@ -675,12 +684,18 @@ export async function clearWorkspaceOutputs(
             signal?.throwIfAborted();
             if (kinds.cargo.includes(path)) {
               const result = await deleteCargoTarget(path, { signal });
+              freed += result.bytes;
+              removed += result.removed.length;
               for (const why of result.kept) log(chalk.yellow(`Kept in ${path}: ${why}`));
-            } else await rm(path, { recursive: true, force: true });
+            } else if (lstatSync(path, { throwIfNoEntry: false })) {
+              freed += (await measuredDirectorySizeAsync(path, { timeoutMs: SIZE_TIMEOUT_MS, signal })) ?? 0;
+              await rm(path, { recursive: true, force: true });
+              removed++;
+            }
           }
           signal?.throwIfAborted();
           for (const { path, problem } of inTree) if (problem) log(chalk.yellow(`Kept ${path}: ${problem}`));
-          return null;
+          return removed ? null : NOTHING_REMOVED;
         },
         { purpose: 'gc', signal, operation, ...(lighten ? BUILD_CHECKS : {}) },
       );
@@ -698,19 +713,19 @@ export async function clearWorkspaceOutputs(
     const kept = run.ran ? run.value : `in use: ${run.reasons.join('; ')}`;
     if (kept) {
       log(chalk.yellow(`Kept the build outputs of ${root}: ${kept}`));
-      record('workspaceOutputs', 'kept', root, { bytes: entry.bytes, detail: kept });
+      record('workspaceOutputs', 'kept', root, { bytes: kept === NOTHING_REMOVED ? 0 : entry.bytes, detail: kept });
       continue;
     }
-    cleared += entry.bytes ?? 0;
+    cleared += freed;
     clearedRoots.push(root);
     log(
       chalk.green(
         lighten
-          ? `Lightened ${root}: freed ${sizeText(entry.bytes)} of build outputs`
-          : `Cleared the build outputs of ${root} (${sizeText(entry.bytes)})`,
+          ? `Lightened ${root}: freed ${sizeText(freed)} of build outputs`
+          : `Cleared the build outputs of ${root} (${sizeText(freed)})`,
       ),
     );
-    record('workspaceOutputs', 'done', root, { bytes: entry.bytes });
+    record('workspaceOutputs', 'done', root, { bytes: freed });
   }
   if (cleared) {
     const count = `${clearedRoots.length} workspace${clearedRoots.length === 1 ? '' : 's'}`;
