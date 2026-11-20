@@ -14,7 +14,7 @@ import { homedir, userInfo } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { configDir, dropInExecStart } from '@stim-cli/core';
-import { staleLaunchAgent } from '@stim-cli/server/service-plist';
+import { staleLaunchAgent, staleSystemdUnit } from '@stim-cli/server/service-plist';
 import {
   isJsonObject,
   parseInstalledPlist,
@@ -40,6 +40,7 @@ import {
   parseProcessRows,
   parseServerProcesses,
   type InstalledServerService,
+  type KillModeOverride,
   type StaleService,
   type ServerHealthReading,
   type ServerReading,
@@ -126,7 +127,15 @@ async function readLaunchdServices(): Promise<{ services: InstalledServerService
   };
 }
 
-async function readSystemdServices(): Promise<InstalledServerService[]> {
+/**
+ * The server services, as `isServerService` finds them, the managed units whose file does not set `KillMode=process`,
+ * and the managed units whose file sets it while systemd has another mode loaded.
+ */
+async function readSystemdServices(): Promise<{
+  services: InstalledServerService[];
+  stale: StaleService[];
+  killModeOverrides: KillModeOverride[];
+}> {
   const dir = join(homedir(), '.config', 'systemd', 'user');
   const files = existsSync(dir)
     ? readdirSync(dir).filter((name) => name.endsWith('.service') && mentionsServer(join(dir, name)))
@@ -137,29 +146,58 @@ async function readSystemdServices(): Promise<InstalledServerService[]> {
     ),
     XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR ?? `/run/user/${process.getuid?.() ?? 1000}`,
   };
-  const services = await Promise.all(
-    files.map(async (name): Promise<InstalledServerService | null> => {
-      let installed: InstalledService | null = null;
-      try {
-        installed = parseUnit(readFileSync(join(dir, name), 'utf8'));
-      } catch {}
-      if (!isServerService(installed)) return null;
-      const shown = await getExecutor().runFileQuietAsync(
-        'systemctl',
-        ['--user', 'show', name, '-p', SHOW_PROPERTIES],
-        { timeoutMs: PROBE_TIMEOUT_MS, env },
-      );
-      const override = dropInExecStart(join(dir, name));
-      return {
-        manager: 'systemd',
-        label: installed.label,
-        installed,
-        job: shown === null ? null : parseSystemctlShow(shown),
-        override: override ?? undefined,
-      };
-    }),
+  const read = await Promise.all(
+    files.map(
+      async (
+        name,
+      ): Promise<(InstalledServerService & { stale: string | null; loadedKillMode: string | null }) | null> => {
+        let installed: InstalledService | null = null;
+        let text = '';
+        try {
+          text = readFileSync(join(dir, name), 'utf8');
+          installed = parseUnit(text);
+        } catch {}
+        if (installed === null || (!installed.managed && !isServerService(installed))) return null;
+        const shown = await getExecutor().runFileQuietAsync(
+          'systemctl',
+          ['--user', 'show', name, '-p', SHOW_PROPERTIES],
+          { timeoutMs: PROBE_TIMEOUT_MS, env },
+        );
+        const override = dropInExecStart(join(dir, name));
+        const stale = installed.managed ? staleSystemdUnit(text) : null;
+        const loadedKillMode =
+          installed.managed && stale === null
+            ? await getExecutor().runFileQuietAsync(
+                'systemctl',
+                ['--user', 'show', name, '-p', 'KillMode', '--value'],
+                {
+                  timeoutMs: PROBE_TIMEOUT_MS,
+                  env,
+                },
+              )
+            : null;
+        return {
+          manager: 'systemd',
+          label: installed.label,
+          installed,
+          job: shown === null ? null : parseSystemctlShow(shown),
+          override: override ?? undefined,
+          stale,
+          loadedKillMode: loadedKillMode?.trim() ?? null,
+        };
+      },
+    ),
   );
-  return services.filter((service) => service !== null);
+  const found = read.filter((service) => service !== null);
+  return {
+    services: found
+      .filter(({ installed }) => isServerService(installed))
+      .map(({ stale: _stale, loadedKillMode: _loaded, ...service }) => service),
+    stale: found.flatMap(({ label, installed, stale }) => (stale ? [{ label, installed, reason: stale }] : [])),
+    killModeOverrides: found.flatMap(({ label, loadedKillMode }) =>
+      loadedKillMode && loadedKillMode !== 'process' ? [{ label, loaded: loadedKillMode }] : [],
+    ),
+  };
 }
 
 async function readHealth(port: number): Promise<ServerHealthReading | null> {
@@ -343,10 +381,17 @@ export async function readServerSetup(
   });
   const rows = parseProcessRows(ps ?? '');
   const processes = parseServerProcesses(ps ?? '');
-  const { services, stale } =
-    platform === 'darwin' ? await readLaunchdServices() : { services: await readSystemdServices(), stale: [] };
+  const { services, stale, killModeOverrides } =
+    platform === 'darwin' ? { ...(await readLaunchdServices()), killModeOverrides: [] } : await readSystemdServices();
   const socket = existsSync(cliSocket());
-  if (processes.length === 0 && services.length === 0 && stale.length === 0 && !socket) return null;
+  if (
+    processes.length === 0 &&
+    services.length === 0 &&
+    stale.length === 0 &&
+    killModeOverrides.length === 0 &&
+    !socket
+  )
+    return null;
   const classified = classifyServers(processes, rows, services);
   const [servers, local, network, permissions, linger] = await Promise.all([
     Promise.all(
@@ -366,6 +411,7 @@ export async function readServerSetup(
     build: stimBuildDigest(dirname(fileURLToPath(import.meta.url))),
     services,
     staleServices: stale,
+    killModeOverrides,
     servers,
     local,
     clients: readServerClientCounts(),

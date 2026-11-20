@@ -70,11 +70,20 @@ export interface InstalledServerService {
   override?: string | undefined;
 }
 
-/** A LaunchAgent `stim service install` wrote whose definition is not what install writes now (`staleLaunchAgent`). */
+/**
+ * A LaunchAgent or systemd unit `stim service install` wrote whose definition is not what install writes now
+ * (`staleLaunchAgent`, `staleSystemdUnit`).
+ */
 export interface StaleService {
   label: string;
   installed: InstalledService;
   reason: string;
+}
+
+/** A systemd unit install wrote whose file sets `KillMode=process` while systemd has `loaded` another mode. */
+export interface KillModeOverride {
+  label: string;
+  loaded: string;
 }
 
 export interface ServerReading extends ServerProcess {
@@ -95,8 +104,10 @@ export interface ServerSetup {
   version: string;
   build: string | null;
   services: InstalledServerService[];
-  /** Managed LaunchAgents with a stale definition; only the stale report reads them. */
+  /** Managed LaunchAgents and systemd units with a stale definition; only the stale report reads them. */
   staleServices: StaleService[];
+  /** Managed systemd units whose loaded `KillMode=` is not the unit's `KillMode=process`. */
+  killModeOverrides: KillModeOverride[];
   servers: ServerReading[];
   local: LocalServerReading | null;
   clients: { build: number; deviceHost: number };
@@ -297,6 +308,16 @@ const lastExit = (job: LaunchdJob | UnitJob | null): { failed: boolean; text: st
   return text.startsWith('signal') ? { failed: true, text } : null;
 };
 
+function killModeFindings(setup: ServerSetup): Finding[] {
+  return setup.killModeOverrides.map(({ label, loaded }) => ({
+    code: 'server-service-override',
+    level: 'note',
+    title: `systemd runs the ${label} service with KillMode=${loaded}, not its unit's KillMode=process`,
+    detail: `A drop-in in ~/.config/systemd/user/${label}.service.d/ sets it, or systemd has not reloaded the unit, so its stimd keeps the successor handover at an engine switch.`,
+    fix: `Remove KillMode= from that drop-in, then run \`systemctl --user daemon-reload\`; Stim never edits a drop-in.`,
+  }));
+}
+
 function overrideFindings(service: InstalledServerService): Finding[] {
   if (!service.override || service.installed.script?.endsWith('/bin/stimd')) return [];
   return [
@@ -493,6 +514,7 @@ export function serverSetupFindings(setup: ServerSetup): Finding[] {
     ...multipleFindings(setup),
     ...serviceStateFindings(setup),
     ...staleFindings(setup),
+    ...killModeFindings(setup),
     ...versionFindings(setup),
     ...homeFindings(setup),
     ...desktopAuthorityFindings(setup),
