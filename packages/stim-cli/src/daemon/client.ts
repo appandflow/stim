@@ -22,7 +22,6 @@ import {
   readJsonObject,
   stimdClaimRoot,
   readStimdBoots,
-  readStimdService,
   readSuccessorMissing,
   stimdRecordFile,
   stimdRunDir,
@@ -34,6 +33,7 @@ import {
 import { claimRemoveCommand, readClaimSet, type ClaimProblem } from '@stim-cli/core/ownership-claim';
 import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
 import { windowsLauncherArgs } from '../detached-entry.ts';
+import { deferringService } from '../stimd/service-unit.ts';
 import { ANDROID_LOCATION_VARIABLES } from '../devices/android-locations.ts';
 import { endForSwitch, engineShim, ownStoreEngine, switchedEngine } from './engine-switch.ts';
 import { legacyDaemonHolder, legacyDaemonStop } from './legacy-daemon.ts';
@@ -1680,13 +1680,14 @@ function successorExpected(): boolean {
  * Whether a stimd of this build replaced the one of an older build that refused it, within `HANDOVER_WAIT_MS` when
  * that one said it hands over (it drains, exits, and its successor boots) and `CLAIM_WAIT_MS` otherwise. Once the old
  * one is gone it starts a stimd itself when no successor started (`successor-missing.json`) or a service unit's job
- * starts this home's stimd (`run/service.json`), which that stimd asks to start. Once a wait ran out, it answers false at
+ * is this home's only starter (`deferringService`), which that stimd asks to start. Once a wait ran out, it answers false at
  * once for the rest of this process.
  */
 async function successorBound(): Promise<boolean> {
   if (successorMissed) return false;
   const deadline = Date.now() + (refusal?.handover ? HANDOVER_WAIT_MS : CLAIM_WAIT_MS);
   let started = false;
+  let defers: boolean | undefined;
   for (;;) {
     if (readJsonObject(stimdRecordFile())?.build === stimdBuildId()) {
       refusedBuild = null;
@@ -1694,7 +1695,13 @@ async function successorBound(): Promise<boolean> {
       return true;
     }
     // @ref LLP 0009#service-and-engine-updates -- on a service home the stimd started here asks the job to start
-    if (!started && !stimdLive() && (readSuccessorMissing() || readStimdService()) && !currentCrashHold()) {
+    if (
+      !started &&
+      !stimdLive() &&
+      !currentCrashHold() &&
+      (readSuccessorMissing() ||
+        (defers ??= deferringService(dirname(stimdRunDir()), engineRoot(process.env)) !== null))
+    ) {
       started = true;
       try {
         launchStimd(process.env, daemonMode(process.env), process.platform);

@@ -6,12 +6,23 @@ import { dirname, join } from 'node:path';
 import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '@stim-cli/core/ownership-claim';
 import { stimdClaimRoot, stimdRecordFile, stimdRunDir, stimdSocket } from '@stim-cli/core/state';
 
-describe('a command that a switching stimd refused on a service home', () => {
+const service = vi.hoisted(() => ({ starter: null as string | null, homes: [] as string[] }));
+
+vi.mock('../stimd/service-unit.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../stimd/service-unit.ts')>()),
+  deferringService: (home: string) => {
+    service.homes.push(home);
+    return service.starter;
+  },
+}));
+
+describe('a command that a switching stimd refused', () => {
   let home: string;
   let server: Server | null = null;
   let claim: ClaimHandle | null = null;
 
   beforeEach(() => {
+    service.homes = [];
     home = realpathSync(mkdtempSync(join(tmpdir(), 'stim-service-successor-')));
     vi.stubEnv('STIM_HOME', home);
   });
@@ -27,7 +38,8 @@ describe('a command that a switching stimd refused on a service home', () => {
     rmSync(home, { recursive: true, force: true });
   });
 
-  it("starts a stimd, which asks the unit's job to start, once the old stimd is gone", async () => {
+  /** Refuses the command as a switching stimd does, lets its claim go, and returns what the command launched and how long it waited. */
+  const refuse = async () => {
     mkdirSync(dirname(stimdSocket()), { recursive: true, mode: 0o700 });
     mkdirSync(stimdRunDir(), { recursive: true, mode: 0o700 });
     writeFileSync(join(stimdRunDir(), 'service.json'), JSON.stringify({ label: 'dev.stim.server', port: 7787 }));
@@ -74,9 +86,22 @@ describe('a command that a switching stimd refused on a service home', () => {
       waited += 50;
     }
     await asked;
-    expect(launches.some((launch) => launch.includes('__stimd') || launch.some((arg) => arg.endsWith('.plist')))).toBe(
-      true,
-    );
+    return {
+      launched: launches.some((launch) => launch.includes('__stimd') || launch.some((arg) => arg.endsWith('.plist'))),
+      waited,
+    };
+  };
+
+  it('on a home whose service job is its only starter, starts a stimd, which asks the job to start, once the old stimd is gone', async () => {
+    service.starter = 'dev.stim.server';
+    const { launched, waited } = await refuse();
+    expect(launched).toBe(true);
     expect(waited).toBeLessThan(10_000);
+    expect(service.homes).toEqual([home]);
+  });
+
+  it('on a home whose recorded service job is not its only starter, waits for the successor the old stimd starts', async () => {
+    service.starter = null;
+    expect((await refuse()).launched).toBe(false);
   });
 });
