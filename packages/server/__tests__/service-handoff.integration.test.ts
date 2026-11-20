@@ -835,9 +835,13 @@ describe.skipIf(process.platform === 'win32')("an engine switch under a service 
       );
       expect(gone(holder.pid)).toBe(true);
       expect(parentOf(service.record()?.pid ?? 0)).toBe(waiter);
-      await until('the resumed stream writing the workspace log', () =>
-        readFileSync(join(workspaceLogsDir(app), 'device.ndjson'), 'utf8').includes(`line from ${resumed}`),
-      );
+      await until('the resumed stream writing the workspace log', () => {
+        try {
+          return readFileSync(join(workspaceLogsDir(app), 'device.ndjson'), 'utf8').includes(`line from ${resumed}`);
+        } catch {
+          return false;
+        }
+      });
       expect(readWorkspaceState(app)?.collectors?.ios).toMatchObject({ kind: 'stream', streamId: started.streamId });
     } finally {
       await service.cleanup();
