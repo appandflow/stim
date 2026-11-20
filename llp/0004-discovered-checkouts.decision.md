@@ -60,21 +60,44 @@ We can recommend auto disc or adding to roots", 2026-11-20
 The daemon keeps running the full scan and the census whatever the setting, so
 doctor has sizes to read. With the setting off, the census also computes what
 automatic discovery would select (one `computeDiscovered` with it forced on, in the
-census run only, at most hourly while pending and daily otherwise) and lists every
+census run only) and lists every
 checkout that adds, except the `~/.codex/worktrees` worktrees, as `untracked`, grouped by its parent folder like the other
 kinds, with the command that adds the folder to `maintenance.discoverRoots`. The
 census records the value it classified under (`autoDiscover`; a file without it was
 written with discovery on); a change makes the census due and the report treats the
-list as outdated, as for a roots change.
+list as outdated, as for a roots change. The forced discovery runs at most once a
+day: the census records when (`untrackedAt`), and a run within a day of it, with the
+setting still off and `maintenance.discoverRoots` unchanged, reuses that list, so the
+hourly runs that continue the measuring, or follow an hourly low-disk scan, read no
+repository. Its time counts toward the census run's 90 second budget, which is fixed
+before it starts; the discovery itself is not cut short, and its reads are bounded
+as the passes' are.
+
+While the setting is off, every path the last scan recorded (revalidated or not)
+still keeps a plain Node worktree that is or holds it reduce-only, as a pending scan
+find does with the setting on (see "Plain Node checkouts"), so a Node worktree reached
+through `maintenance.discoverRoots` is never removed over a recorded app. The scan
+paths are only a veto; they are not candidates.
+
+`stim gc` and the daemon recheck, under the removal locks, that a discovered worktree
+is still discovered under the current settings, computed again rather than taken from
+the operation's memo, so a sweep planned with the setting on removes nothing after it
+is turned off. A linked worktree that is neither registered nor discovered is reported
+`not-registered` before any git, launcher, device or pull request read.
 
 `stim doctor` reports a `note` finding, `auto-discover-suggested`, when the setting is
 off, the census is current for the last scan and the settings, and the untracked
 groups' measured build output totals at least 10 GiB. It names both remedies with
 exact commands: `stim settings set maintenance.autoDiscover true --scope machine`, and
 one `maintenance.discoverRoots` command that adds every adoptable folder. The figure
-is the census's lower bound (recognised build output only, measured checkouts only,
-no `node_modules` or Pods), so an incomplete census can leave the finding out but
-never invent it. Doctor reads only the census file; it walks nothing. This finding is
+counts recognised build output of measured checkouts only, no `node_modules` or Pods,
+so an incomplete census leaves the finding out rather than adding it; a cached size
+can still overstate a directory deleted since it was measured. When
+`STIM_MAINTENANCE_AUTO_DISCOVER` overrides the setting, the fix says to change or
+remove it, since the settings command alone changes nothing then. The roots command
+brings every recognised checkout directly in each named folder under the full
+discovered-checkout rules, finished linked worktree removal included, and the
+finding says so. Doctor reads only the census file; it walks nothing. This finding is
 the one part of the listing that changes the findings count; the listing itself stays
 outside the findings.
 
@@ -119,7 +142,7 @@ Everything else in this section was chosen by the coordinator and the review of
 
 ## Tool folders and the full scan
 
-Discovery also reads two more sources, and what they find is reduce-only: Stim
+With `maintenance.autoDiscover` on, discovery also reads two more sources, and what they find is reduce-only: Stim
 reduces its build outputs and its `node_modules` and Pods (a linked worktree's
 after `idle.dormantDays`, a source checkout's after `idle.sourceDormantDays`) by
 the discovered-checkout rules, and never removes the checkout or worktree. The
@@ -350,6 +373,11 @@ Maintainer decision, 2026-11-14 (#5762), verbatim:
 
 Earlier the same evening, on including common tool folders by default: "Could
 these common paths just be included by default in Discovered checkout".
+
+The 2026-11-20 decision (#6023, quoted in "Automatic discovery is off by default"),
+"lets disable auto discovery by default", supersedes these two for the default:
+the tool folders and the full scan feed discovery only with `maintenance.autoDiscover`
+on. The scan itself still runs, so the census can size what turning it on would add.
 
 The coordinator's reading, not the maintainer's words, for the points the
 decision leaves open:

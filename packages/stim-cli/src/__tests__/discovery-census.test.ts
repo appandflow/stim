@@ -145,6 +145,20 @@ describe('runDiscoveryCensusIfDue', () => {
     expect(on?.finds.some(({ kind }) => kind === 'untracked')).toBe(false);
   });
 
+  it('reuses the untracked list for a day while maintenance.autoDiscover is off, even when hourly runs continue the measuring', async () => {
+    saveConfig({ version: 2, projects: {}, repos: {}, maintenance: { discoverRoots: [join(home, 'dev', 'tools')] } });
+    const { census: first } = await run(t0, { maxCheckouts: 1 });
+    expect(first).toMatchObject({ untrackedAt: t0, pending: true });
+    checkout(join(home, 'dev', 'later'));
+    await runDiscoveryScanIfDue(tick(), { home, now: t0 + 8 * day, attempted: { at: 0 } });
+    const { census: second } = await run(t0 + hour, { maxCheckouts: 1 });
+    expect(second?.untrackedAt).toBe(t0);
+    expect(second?.finds.some(({ path }) => path.endsWith('/later'))).toBe(false);
+    const { census: third } = await run(t0 + day, { maxCheckouts: 1 });
+    expect(third?.untrackedAt).toBe(t0 + day);
+    expect(third?.finds.find(({ path }) => path.endsWith('/later'))?.kind).toBe('untracked');
+  });
+
   it('still lists an app the scan found under a home dot-folder inside a plain Node checkout that a root leads to', async () => {
     const cli = join(home, '.tools', 'cli');
     mkdirSync(join(cli, '.git'), { recursive: true });

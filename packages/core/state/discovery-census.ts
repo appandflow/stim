@@ -56,6 +56,8 @@ export interface DiscoveryCensus {
   canonicalRoots: string[];
   /** The `maintenance.autoDiscover` value it was classified under; absent in a file written before it existed, which was on. */
   autoDiscover?: boolean;
+  /** With `autoDiscover` false, when the `untracked` list was last computed, epoch ms; it is reused for a day. */
+  untrackedAt?: number;
   /** Some find has a directory not measured yet, so another run continues. */
   pending: boolean;
   finds: CensusFind[];
@@ -114,6 +116,7 @@ export function parseDiscoveryCensus(value: unknown): DiscoveryCensus | null {
     !strings(value.canonicalRoots) ||
     typeof value.pending !== 'boolean' ||
     (value.autoDiscover !== undefined && typeof value.autoDiscover !== 'boolean') ||
+    (value.untrackedAt !== undefined && !finite(value.untrackedAt)) ||
     !Array.isArray(value.finds)
   )
     return null;
@@ -130,6 +133,7 @@ export function parseDiscoveryCensus(value: unknown): DiscoveryCensus | null {
     roots: value.roots,
     canonicalRoots: value.canonicalRoots,
     ...(value.autoDiscover === undefined ? {} : { autoDiscover: value.autoDiscover }),
+    ...(value.untrackedAt === undefined ? {} : { untrackedAt: value.untrackedAt }),
     pending: value.pending,
     finds,
   };

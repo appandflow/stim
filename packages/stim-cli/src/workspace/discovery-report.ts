@@ -402,19 +402,22 @@ export function lowDiskLine(report: DiscoveryReport, home: string): string | nul
 export const AUTO_DISCOVER_SUGGESTION_BYTES: number = 10 * 1024 ** 3;
 
 const AUTO_DISCOVER_COMMAND = `stim settings set ${AUTO_DISCOVER_KEY} true --scope machine`;
+export const AUTO_DISCOVER_ENV = 'STIM_MAINTENANCE_AUTO_DISCOVER';
 
 /**
  * The doctor suggestion while `maintenance.autoDiscover` is off: when the checkouts only automatic discovery would reach
  * hold at least `AUTO_DISCOVER_SUGGESTION_BYTES` of measured build output in the census, turn it on or add their folders
- * to `maintenance.discoverRoots`. The bytes are a lower bound (build output only, measured checkouts only), so an
- * incomplete census can only leave the suggestion out, never invent it. Null below the threshold, with discovery on, or
- * when the census is not current for the scan and the settings.
+ * to `maintenance.discoverRoots`. The bytes count build output only, of measured checkouts only, so an incomplete
+ * census leaves the suggestion out rather than adding it; a cached size can still overstate a directory deleted since it
+ * was measured. Null below the threshold, with discovery on, or when the census is not current for the scan and the
+ * settings. `override` is the value of the environment variable that overrides the machine setting, when set.
  */
 export function autoDiscoverSuggestion(
   report: DiscoveryReport,
   setting: DiscoverRootsValue,
   autoDiscover: boolean,
   home: string,
+  override: string | null,
 ): { detail: string; fix: string } | null {
   if (autoDiscover || report.census !== 'read' || !report.censusCurrent || report.rootsChangedSinceCensus) return null;
   const groups = report.groups.filter((group) => group.kind === 'untracked');
@@ -426,6 +429,10 @@ export function autoDiscoverSuggestion(
   const largest = groups.toSorted((a, b) => b.bytes - a.bytes)[0];
   return {
     detail: `Automatic discovery (${AUTO_DISCOVER_KEY}) is off, so Maintenance and stim gc act only on registered workspaces and the folders in ${DISCOVER_ROOTS_KEY}. ${count(checkouts, 'checkout')} no stim command ran in hold ${report.complete ? '' : 'at least '}${gb(bytes)} of build output${largest ? `, the most in ${shorten(largest.folder, home)} (${gb(largest.bytes)})` : ''}; the section below lists them.`,
-    fix: `Turn automatic discovery on with \`${AUTO_DISCOVER_COMMAND}\`${command ? `, or add their folders with \`${command}\`` : ''}.`,
+    fix: `${
+      override === null
+        ? `Turn automatic discovery on with \`${AUTO_DISCOVER_COMMAND}\``
+        : `Turn automatic discovery on: ${AUTO_DISCOVER_ENV}=${override} in this environment overrides the machine setting, so set it to true or remove it (then \`${AUTO_DISCOVER_COMMAND}\`)`
+    }${command ? `, or add their folders with \`${command}\`; each folder named there brings every recognised checkout directly in it under the full discovered-checkout rules, finished linked worktree removal included` : ''}.`,
   };
 }

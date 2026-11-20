@@ -26,6 +26,7 @@ import type { ProjectDoctor } from '../integrations/project-doctor.ts';
 import { getProject, loadConfig } from '../workspace/config.ts';
 import { autoDiscoverEnabled, broadDiscoverRoots, missingDiscoverRoots } from '../workspace/discovery.ts';
 import {
+  AUTO_DISCOVER_ENV,
   autoDiscoverSuggestion,
   DISCOVER_ROOTS_KEY,
   discoveryLines,
@@ -802,7 +803,14 @@ async function assembleDoctorReport(
     home: homedir(),
     canonical: canonicalOrSelf,
   });
-  const suggestion = autoDiscoverSuggestion(discovery, rootsSetting, autoDiscover, homedir());
+  const override = env[AUTO_DISCOVER_ENV];
+  const suggestion = autoDiscoverSuggestion(
+    discovery,
+    rootsSetting,
+    autoDiscover,
+    homedir(),
+    override === undefined || override === '' ? null : override,
+  );
   if (suggestion)
     findings.push({
       code: 'auto-discover-suggested',

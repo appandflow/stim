@@ -580,11 +580,14 @@ describe('autoDiscoverSuggestion', () => {
       ? { ...file, census: { ...file.census, roots: ['/Users/me/work'], autoDiscover: false } }
       : file;
   };
-  const offReport = (finds: CensusFind[], over: { autoDiscover?: boolean } = {}) =>
+  const offReport = (
+    finds: CensusFind[],
+    over: { autoDiscover?: boolean; scanRanAt?: number; roots?: string[] } = {},
+  ) =>
     discoveryReport({
-      scan: { status: 'read', scan },
+      scan: { status: 'read', scan: { ...scan, ranAt: over.scanRanAt ?? scan.ranAt } },
       census: offCensus(finds),
-      setting: { value: ['/Users/me/work'], error: null },
+      setting: { value: over.roots ?? ['/Users/me/work'], error: null },
       autoDiscover: over.autoDiscover ?? false,
       home,
       canonical: same,
@@ -599,6 +602,7 @@ describe('autoDiscoverSuggestion', () => {
       { value: ['/Users/me/work'], error: null },
       false,
       home,
+      null,
     );
     expect(suggestion?.fix).toContain('`stim settings set maintenance.autoDiscover true --scope machine`');
     expect(suggestion?.fix).toContain(
@@ -607,14 +611,30 @@ describe('autoDiscoverSuggestion', () => {
     expect(suggestion?.detail).toContain('2 checkouts');
 
     const below = [untracked('/Users/me/dev/a', half), untracked('/Users/me/dev/b', half - 1)];
-    expect(autoDiscoverSuggestion(offReport(below), { value: [], error: null }, false, home)).toBeNull();
+    expect(autoDiscoverSuggestion(offReport(below), { value: [], error: null }, false, home, null)).toBeNull();
   });
 
   it('counts only untracked checkouts, and says nothing with automatic discovery on', () => {
     const big = AUTO_DISCOVER_SUGGESTION_BYTES * 2;
     const reduceOnly = [find({ path: '/Users/me/dev/a', bytes: big })];
-    expect(autoDiscoverSuggestion(offReport(reduceOnly), noRoots, false, home)).toBeNull();
+    expect(autoDiscoverSuggestion(offReport(reduceOnly), noRoots, false, home, null)).toBeNull();
     const finds = [untracked('/Users/me/dev/a', big)];
-    expect(autoDiscoverSuggestion(offReport(finds, { autoDiscover: true }), noRoots, true, home)).toBeNull();
+    expect(autoDiscoverSuggestion(offReport(finds, { autoDiscover: true }), noRoots, true, home, null)).toBeNull();
+  });
+
+  it('says nothing while the census predates the last scan or a roots change', () => {
+    const finds = [untracked('/Users/me/dev/a', AUTO_DISCOVER_SUGGESTION_BYTES * 2)];
+    expect(autoDiscoverSuggestion(offReport(finds), noRoots, false, home, null)).not.toBeNull();
+    expect(
+      autoDiscoverSuggestion(offReport(finds, { scanRanAt: scan.ranAt + 1 }), noRoots, false, home, null),
+    ).toBeNull();
+    expect(autoDiscoverSuggestion(offReport(finds, { roots: [] }), noRoots, false, home, null)).toBeNull();
+  });
+
+  it('names the environment override instead of offering the setting alone when one forces discovery off', () => {
+    const finds = [untracked('/Users/me/dev/a', AUTO_DISCOVER_SUGGESTION_BYTES)];
+    expect(autoDiscoverSuggestion(offReport(finds), noRoots, false, home, '0')?.fix).toMatch(
+      /^Turn automatic discovery on: STIM_MAINTENANCE_AUTO_DISCOVER=0 in this environment overrides the machine setting, so set it to true or remove it/,
+    );
   });
 });

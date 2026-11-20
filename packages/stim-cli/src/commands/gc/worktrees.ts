@@ -879,6 +879,40 @@ export async function collectWorktreeSweep({
     const linked = !('refusal' in source) && entry !== null && source.path !== entry.path;
     const managed = roots.some((root) => registry.has(root));
     const discoveredOnly = !managed && roots.some((root) => discoveredPaths.has(root));
+    // @ref LLP 0004#automatic-discovery-is-off-by-default -- an unknown worktree is kept before any probe
+    if (linked && !entry.bare && !managed && !discoveredOnly) {
+      inspected[index] = {
+        candidate: {
+          path,
+          keys,
+          idleDays,
+          merge: null,
+          head: null,
+          pullRequest: null,
+          skipCode: null,
+          skipped: null,
+          eligibleAt: null,
+          activity: null,
+        },
+        facts: {
+          source: 'linked',
+          bare: false,
+          locked: entry.locked === true,
+          unregistered: true,
+          porcelain: null,
+          unpushed: null,
+          submodules: null,
+          inUse: [],
+          idleDays,
+          merge: null,
+          pullRequest: null,
+          activity: null,
+        },
+        repo: null,
+        branch: null,
+      };
+      return;
+    }
     const fact = <T>(name: string, readFact: () => Promise<T>) =>
       sharedRead(operation, `sweep\0${name}\0${path}`, readFact);
     const status = linked
@@ -950,7 +984,7 @@ export async function collectWorktreeSweep({
       branch: head && entry?.branch ? entry.branch : null,
     };
   });
-  const linked = inspected.filter(({ facts }) => facts.source === 'linked');
+  const linked = inspected.filter(({ facts }) => facts.source === 'linked' && !facts.unregistered);
   const launchers = launchersOf(operation, operation?.signal, false);
   for (const { candidate, facts } of linked) {
     for (const key of candidate.keys)
@@ -974,7 +1008,7 @@ export async function collectWorktreeSweep({
     );
     registered.forEach(({ facts }, i) => facts.inUse.push(...(agents[i] ?? [])));
   }
-  const own = inspected.filter(({ candidate }) => !candidate.discovered);
+  const own = inspected.filter(({ candidate, facts }) => !candidate.discovered && !facts.unregistered);
   const handedOver = inspected.filter(({ candidate }) => candidate.discovered);
   if (refresh) await lookUpPullRequests(own, operation);
   else readCachedPullRequests(own, now, freshMs);
@@ -1076,6 +1110,13 @@ async function noOwnCommitsRecheck(
   );
 }
 
+/** Whether discovery, computed again from the current config and not the operation's memo, still selects it. */
+async function stillDiscovered(candidate: WorktreeCandidate, operation?: StimContext): Promise<boolean> {
+  const found = await discoverCheckouts(loadConfig(), listedRoots(), operation, { nodeWorktrees: true, fresh: true });
+  const paths = new Set(found.map(({ path }) => path));
+  return candidate.keys.some((key) => paths.has(key));
+}
+
 export async function removeWorktrees(
   sweep: WorktreeSweep,
   { now = Date.now(), operation }: { now?: number; operation?: StimContext } = {},
@@ -1107,6 +1148,9 @@ export async function removeWorktrees(
         ...(agents.get(candidate.path) ?? []),
         ...(await removalUseHold(candidate, operation)),
       ].map((r) => `in use: ${r}`);
+      // @ref LLP 0004#automatic-discovery-is-off-by-default -- recheck discovery under the removal lock
+      if (candidate.discovered && !(await stillDiscovered(candidate, operation)))
+        reasons.push('no longer discovered under the current maintenance settings');
       const mergedHead = candidate.merge?.merged
         ? candidate.merge.head
         : endedPullRequest(candidate.pullRequest)

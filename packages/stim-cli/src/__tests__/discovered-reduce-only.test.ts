@@ -151,6 +151,10 @@ describe('checkouts found through a tool folder or the full scan', () => {
     expect(finds?.untracked).toEqual([sibling]);
     expect(finds?.untracked).not.toContain(codex);
     expect(finds?.autoDiscover).toBe(false);
+
+    const rooted = { ...config, maintenance: { discoverRoots: [join(base, 'dev')] } };
+    expect((await discoverCheckouts(rooted, [main])).map(({ path }) => path)).toEqual([sibling]);
+    expect((await discoveredOutside(rooted, [main])).map(({ path }) => path)).toEqual([codex]);
   });
 
   it('never selects a checkout under a home dot-folder from the scan result, only through maintenance.discoverRoots', async () => {
@@ -784,10 +788,36 @@ describe('checkouts found through a tool folder or the full scan', () => {
       (await collectWorktreeSweep({ idle: false, olderThan: null, now: Date.now(), refresh: false })).worktrees.find(
         (entry) => entry.path === sibling,
       );
+    const statusReads: string[] = [];
+    const real = getExecutor();
+    setExecutor({
+      ...real,
+      runFileAsync: async (file, args, options) => {
+        if (file === 'git' && args.includes('status')) statusReads.push(String(options?.cwd ?? args.join(' ')));
+        return real.runFileAsync(file, args, options);
+      },
+    });
     saveConfig({ version: 2, projects: { [main]: {} }, repos: {} });
-    expect(await plan()).toMatchObject({ skipCode: 'not-registered' });
+    try {
+      expect(await plan()).toMatchObject({ skipCode: 'not-registered' });
+      expect(statusReads.filter((read) => read.includes(sibling))).toEqual([]);
+    } finally {
+      resetExecutor();
+    }
     saveConfig({ version: 2, projects: { [main]: {} }, repos: {}, maintenance: { autoDiscover: true } });
     expect(await plan()).toMatchObject({ skipped: null });
+  });
+
+  it('keeps a worktree planned for removal with maintenance.autoDiscover on when it is turned off before the removal', async () => {
+    const sibling = worktree(join(base, 'dev', 'sibling-wt'), 'sibling');
+    const planned = await collectWorktreeSweep({ idle: false, olderThan: null, now: Date.now(), refresh: false });
+    const worktrees = planned.worktrees.filter((entry) => entry.path === sibling);
+    expect(worktrees).toMatchObject([{ discovered: true, skipped: null }]);
+    saveConfig({ version: 2, projects: { [main]: {} }, repos: {} });
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await removeWorktrees({ ...planned, worktrees }, { now: Date.now(), operation: testContext({ env: {} }) });
+    expect(existsSync(sibling)).toBe(true);
   });
 
   it('plans a reduce-only worktree as kept, and keeps it at removal even when the plan said it was removable', async () => {

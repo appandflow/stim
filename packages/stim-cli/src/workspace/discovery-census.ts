@@ -490,10 +490,23 @@ export async function runDiscoveryCensusIfDue(
     )
       return;
     attempted.at = now;
-    const finds = await unmanagedScanFinds(config, listedRoots(), operation);
+    const deadline = Date.now() + budgetMs;
+    // @ref LLP 0004#automatic-discovery-is-off-by-default -- the forced discovery runs at most daily
+    const reuse =
+      last?.autoDiscover === false &&
+      last.untrackedAt !== undefined &&
+      now >= last.untrackedAt &&
+      now - last.untrackedAt < REFRESH_MS &&
+      last.roots.length === roots.length &&
+      last.roots.every((root, at) => root === roots[at]);
+    const finds = await unmanagedScanFinds(
+      config,
+      listedRoots(),
+      operation,
+      reuse ? { untrackedBefore: last.finds.filter(({ kind }) => kind === 'untracked').map(({ path }) => path) } : {},
+    );
     if (!finds) return;
     const previous = new Map((last?.finds ?? []).map((find) => [find.path, find]));
-    const deadline = Date.now() + budgetMs;
     let looked = 0;
     const entries: CensusFind[] = [];
     const due: Array<{
@@ -561,6 +574,7 @@ export async function runDiscoveryCensusIfDue(
       roots,
       canonicalRoots: finds.canonicalRoots,
       autoDiscover: finds.autoDiscover,
+      ...(finds.autoDiscover ? {} : { untrackedAt: reuse ? last.untrackedAt : now }),
       pending: entries.some(
         (find) =>
           find.kind === 'unchecked' ||
