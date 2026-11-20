@@ -8,9 +8,11 @@ import {
   rmSync,
   utimesSync,
   writeFileSync,
+  readFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { readRescuedCopies } from '@stim-cli/core/state';
 import { saveConfig, upsertProject } from '../workspace/config.ts';
 import { collectWorktreeSweep, removeWorktrees } from '../commands/gc/worktrees.ts';
 import * as reads from '../workspace/discovered-reads.ts';
@@ -285,7 +287,7 @@ describe('a worktree of a plain Node repository on the removal path', () => {
     rmSync(base, { recursive: true, force: true });
   });
 
-  it('removes a finished one with its node_modules and keeps a dirty one or one with an unfinished pnpm patch', async () => {
+  it('removes a finished one with its node_modules, and one with an unfinished pnpm patch after copying it aside, and keeps a dirty one', async () => {
     const done = worktree('done');
     const dirty = worktree('dirty');
     writeFileSync(join(dirty, 'notes.txt'), 'untracked');
@@ -297,31 +299,17 @@ describe('a worktree of a plain Node repository on the removal path', () => {
     const of = (path: string) => planned.worktrees.find((entry) => entry.path === path);
     expect(of(done)).toMatchObject({ discovered: true, skipped: null });
     expect(of(dirty)).toMatchObject({ skipCode: 'dirty' });
-    expect(of(patched)?.skipped).toContain('pnpm patch not yet committed');
+    expect(of(patched)).toMatchObject({ discovered: true, skipped: null });
     expect(of(main)).toBeUndefined();
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
     await removeWorktrees(planned, { now: Date.now() });
     expect(existsSync(done)).toBe(false);
     expect(existsSync(join(dirty, 'notes.txt'))).toBe(true);
-    expect(existsSync(patched)).toBe(true);
-  });
-
-  it('keeps a finished one whose ignored Cargo target holds a Solana keypair', async () => {
-    writeFileSync(join(main, '.git', 'info', 'exclude'), 'target/\n');
-    const keyed = worktree('keyed');
-    const keypair = join(keyed, 'target', 'deploy', 'Program-Keypair.json');
-    mkdirSync(join(keyed, 'target', 'deploy'), { recursive: true });
-    writeFileSync(join(keyed, 'target', 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55');
-    writeFileSync(keypair, '[1,2,3]');
-    age(keyed);
-    const planned = await collectWorktreeSweep({ idle: false, olderThan: null, now: Date.now(), refresh: false });
-    expect(planned.worktrees.find((entry) => entry.path === keyed)?.skipped).toContain(
-      'deploy/Program-Keypair.json is a Solana keypair',
+    expect(existsSync(patched)).toBe(false);
+    const [copy] = readRescuedCopies();
+    expect(readFileSync(join(copy?.dir ?? '', 'node_modules', '.pnpm_patches', 'dep@1.0.0', 'index.js'), 'utf8')).toBe(
+      'edited',
     );
-    vi.spyOn(console, 'log').mockImplementation(() => {});
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    await removeWorktrees(planned, { now: Date.now() });
-    expect(existsSync(keypair)).toBe(true);
   });
 });

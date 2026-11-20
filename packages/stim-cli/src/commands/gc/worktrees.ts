@@ -66,7 +66,7 @@ import { canonicalPath } from './paths.ts';
 import { discoverCheckouts } from '../../workspace/discovery.ts';
 import { discoveredReads } from '../../workspace/discovered-reads.ts';
 import { hiddenEditHold } from '../../workspace/hidden-edits.ts';
-import { dependencyEditsHold, pnpmPatchHold } from '../../workspace/dependency-edits.ts';
+import { dependencyEditsHold } from '../../workspace/dependency-edits.ts';
 import { listWorkspaceDirs } from './workspaces.ts';
 import { eachLimited, readConcurrency } from './limited.ts';
 import { phase } from './progress.ts';
@@ -594,9 +594,9 @@ function dormantMs(operation?: StimContext): number {
  * file outside its dependency and build-output folders that its main checkout lacks or holds differently.
  */
 async function registeredRemovalHold(path: string, operation?: StimContext): Promise<string | null> {
-  const { ignoredFilesHold } = await import('../../workspace/discovered-removal.ts');
-  const patch = await pnpmPatchHold(join(path, 'node_modules'), operation?.signal);
-  if (patch) return patch;
+  const { ignoredFilesHold, worktreeRescue } = await import('../../workspace/discovered-removal.ts');
+  const rescue = await worktreeRescue(path, false, operation?.signal);
+  if (rescue) return rescue;
   const source = await resolveSourceCheckoutAsync(path, {
     env: operation?.env,
     signal: operation?.signal,
@@ -1206,6 +1206,11 @@ export async function removeWorktrees(
       // @ref LLP 0002#edits-inside-dependency-folders -- automatic removal waits for edited dependencies
       const edited = await dependencyEditsHold(candidate.path, operation?.signal);
       if (edited) reasons.push(edited);
+      if (!reasons.length) {
+        const { worktreeRescue } = await import('../../workspace/discovered-removal.ts');
+        const rescue = await worktreeRescue(candidate.path, true, operation?.signal);
+        if (rescue) reasons.push(rescue);
+      }
       kept = reasons;
       return reasons;
     };

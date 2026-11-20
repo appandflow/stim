@@ -16,7 +16,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, relative } from 'node:path';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { runGc } from '../commands/gc.ts';
 import { deleteGcItem } from '../commands/gc/item.ts';
@@ -87,6 +87,7 @@ import {
   maintenanceStateFile,
   pullRequestCacheFile,
   readMaintenanceState,
+  readRescuedCopies,
   worktreeArchiveRoot,
 } from '@stim-cli/core/state';
 import { IMPOSSIBLE_PID, goneClaimOwner, liveClaimOwner, plantClaim, writeDerivedData } from './_factories.ts';
@@ -2693,64 +2694,27 @@ test('gc keeps a finished registered worktree whose git-ignored hand-written fil
   expect(existsSync(worktrees.squashed ?? '')).toBe(false);
 }, 240_000);
 
-test('gc keeps a finished registered worktree with an unfinished pnpm patch', async () => {
+test('gc copies a pnpm patch and a Solana keypair aside before it removes a finished registered worktree', async () => {
   const { repo, worktrees } = repoWithMergedBranches();
   const merged = worktrees.merged ?? '';
-  writeFileSync(join(repo, '.git', 'info', 'exclude'), 'node_modules/\n');
+  writeFileSync(join(repo, '.git', 'info', 'exclude'), 'node_modules/\ntarget/\n');
   mkdirSync(join(merged, 'node_modules', '.pnpm_patches', 'left-pad@1.3.0'), { recursive: true });
   writeFileSync(join(merged, 'node_modules', '.pnpm_patches', 'left-pad@1.3.0', 'index.js'), 'patched');
-
-  await checkWorktrees();
-  await gcJson({ pressure: 'normal' });
-
-  expect(existsSync(join(merged, 'node_modules', '.pnpm_patches', 'left-pad@1.3.0', 'index.js'))).toBe(true);
-  expect(existsSync(worktrees.squashed ?? '')).toBe(false);
-}, 240_000);
-
-test('gc keeps a finished registered worktree whose untagged Cargo target holds a Solana keypair below debug', async () => {
-  const { repo, worktrees } = repoWithMergedBranches();
-  const merged = worktrees.merged ?? '';
-  writeFileSync(join(repo, '.git', 'info', 'exclude'), 'target/\n');
-  writeFileSync(join(merged, 'Cargo.toml'), '[package]\nname = "program"\n');
-  execSync('git add Cargo.toml && git -c user.name=t -c user.email=t@t commit -q -m cargo && git push -q', {
-    cwd: merged,
-  });
-  execSync(
-    'git fetch -q origin merged && git -c user.name=t -c user.email=t@t merge -q --no-ff origin/merged -m cargo && git push -q origin main',
-    { cwd: join(projects, 'upstream') },
-  );
-  const keypair = join(merged, 'target', 'debug', 'program-keypair.json');
-  mkdirSync(dirname(keypair), { recursive: true });
-  writeFileSync(join(merged, 'target', '.rustc_info.json'), '{}');
-  writeFileSync(keypair, '[1,2,3]');
-
-  await checkWorktrees();
-  const { payload } = await gcJson({ dryRun: true, pressure: 'normal' });
-  const entry = payload.sections.linkedWorktrees.find(
-    (w: { path: string }) => realpathSync.native(w.path) === realpathSync.native(merged),
-  );
-  expect(entry).toMatchObject({
-    willRemove: false,
-    detail: expect.stringContaining('debug/program-keypair.json is a Solana keypair'),
-  });
-  await gcJson({ pressure: 'normal' });
-
-  expect(readFileSync(keypair, 'utf8')).toBe('[1,2,3]');
-  expect(existsSync(worktrees.squashed ?? '')).toBe(false);
-}, 240_000);
-
-test('gc removes a finished registered worktree whose tagged Cargo target holds only build output', async () => {
-  const { repo, worktrees } = repoWithMergedBranches();
-  const merged = worktrees.merged ?? '';
-  writeFileSync(join(repo, '.git', 'info', 'exclude'), 'target/\n');
-  mkdirSync(join(merged, 'target', 'debug', '.fingerprint'), { recursive: true });
+  mkdirSync(join(merged, 'target', 'debug'), { recursive: true });
   writeFileSync(join(merged, 'target', 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55\n');
-  writeFileSync(join(merged, 'target', 'debug', 'app'), 'binary');
+  writeFileSync(join(merged, 'target', 'debug', 'Program-Keypair.json'), '[1,2,3]');
 
   await checkWorktrees();
-  await gcJson({ pressure: 'normal' });
+  const { payload } = await gcJson({ pressure: 'normal' });
 
   expect(existsSync(merged)).toBe(false);
+  const copy = readRescuedCopies().find((entry) => entry.from === merged);
+  expect(copy?.items.map((item) => relative(merged, item.source)).toSorted()).toEqual([
+    join('node_modules', '.pnpm_patches', 'left-pad@1.3.0', 'index.js'),
+    join('target', 'debug', 'Program-Keypair.json'),
+  ]);
+  expect(readFileSync(join(copy?.dir ?? '', 'target', 'debug', 'Program-Keypair.json'), 'utf8')).toBe('[1,2,3]');
+  expect(payload.rescued).toContainEqual(expect.objectContaining({ dir: copy?.dir }));
 }, 240_000);
 
 test('gc keeps a finished registered worktree whose ignored file sits in a tracked folder named like the root Cargo target', async () => {

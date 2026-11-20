@@ -5,6 +5,7 @@ import {
   diskUsageNativeFile,
   diskUsageWalkClaims,
   readJsonObject,
+  readRescuedCopies,
   readWorkspaceState,
   workspaceLightenedFile,
 } from '@stim-cli/core/state';
@@ -349,7 +350,7 @@ test.skipIf(process.platform === 'win32')(
 );
 
 test.skipIf(process.platform === 'win32')(
-  'gc keeps the dependencies of an idle worktree with an unfinished pnpm patch, at critical too',
+  'gc copies an unfinished pnpm patch aside before it deletes the dependencies holding it, and lists the copy',
   async () => {
     const feature = idleRepo([{ name: 'feature', workspace: true }]).feature ?? '';
     const modules = join(feature, 'node_modules');
@@ -360,31 +361,23 @@ test.skipIf(process.platform === 'win32')(
     mkdirSync(dirname(patched), { recursive: true });
     writeFileSync(patched, 'patched by hand');
 
-    const { payload }: { payload: LevelPayload } = await gcJson('normal');
-    await quietly(() => runGc({ pressure: 'critical' }));
-
-    const kept = payload.actions.find((action) => action.kind === 'delete-dependencies' && action.target === modules);
-    expect(kept?.outcome).toBe('kept');
-    expect(kept?.detail).toContain('pnpm patch not yet committed');
-    expect(readFileSync(patched, 'utf-8')).toBe('patched by hand');
-  },
-  60_000,
-);
-
-test.skipIf(process.platform === 'win32')(
-  'gc deletes the dependencies of an idle worktree whose .pnpm_patches holds only the state pnpm keeps',
-  async () => {
-    const feature = idleRepo([{ name: 'feature', workspace: true }]).feature ?? '';
-    const modules = join(feature, 'node_modules');
-    const config = loadConfig();
-    if (!config) throw new Error('no config');
-    saveConfig({ ...config, idle: { dormantDays: 0.01 } });
-    mkdirSync(join(modules, '.pnpm_patches'));
-    writeFileSync(join(modules, '.pnpm_patches', 'state.json'), '{}');
-
-    await quietly(() => runGc({ pressure: 'normal' }));
+    const stdout: string[] = [];
+    const log = vi.spyOn(console, 'log').mockImplementation((...args) => void stdout.push(args.join(' ')));
+    try {
+      await runGc({ pressure: 'normal', json: true });
+    } finally {
+      log.mockRestore();
+    }
 
     expect(existsSync(modules)).toBe(false);
+    const [copy] = readRescuedCopies();
+    expect(copy?.items).toEqual([
+      expect.objectContaining({ source: patched, size: 'patched by hand'.length, link: null }),
+    ]);
+    expect(readFileSync(join(copy?.dir ?? '', 'node_modules', '.pnpm_patches', 'pkg@1.0.0', 'index.js'), 'utf8')).toBe(
+      'patched by hand',
+    );
+    expect(JSON.parse(stdout[0] ?? '').rescued).toEqual([expect.objectContaining({ dir: copy?.dir, from: feature })]);
   },
   60_000,
 );

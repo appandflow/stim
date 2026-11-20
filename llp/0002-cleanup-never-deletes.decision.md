@@ -32,48 +32,46 @@ a `deploy/` folder holding a Solana `*-keypair.json` (LLP 0005).
 Reason: everything Stim deletes must come back by rebuilding or reinstalling.
 Work a person made cannot.
 
-## Pnpm patches and Solana keypairs
+## Rescue copies
 
-Two rules keep what no rebuild or reinstall restores.
+Two things in folders cleanup deletes cannot come back by rebuilding or
+reinstalling: a `pnpm patch` edit folder in a node_modules `.pnpm_patches`, and
+a Solana `*-keypair.json` in a Cargo `target/`. Before maintenance or
+`stim gc` deletes a node_modules (every delete that runs the dependency edit
+check) or removes a finished or discovered worktree, Stim copies them to
+`$STIM_HOME/rescued/<workspace id>/<time>/`, at their paths relative to the
+checkout, with a `manifest.json` naming each source path, its size and the
+time. Then the delete goes ahead.
 
-- A pnpm patch not yet committed: `pnpm patch` copies a package into an edit
-  folder in `.pnpm_patches`, and `pnpm patch-commit` writes the patch file
-  that `patchedDependencies` (in `pnpm-workspace.yaml`, or `package.json`
-  before pnpm 10) names but leaves the edit folder and `state.json` in place
-  ([pnpm/pnpm#8401](https://github.com/pnpm/pnpm/pull/8401)). The key is the
-  one pnpm writes for that folder: `name@version` from the folder's
-  `package.json`, or `name` alone when `state.json` records the edit as
-  applying to every version. It is looked up in the project and in the
-  nearest workspace root above it. An edit folder with no patch file under
-  that key, with no single `state.json` record, or with anything modified
-  after its patch file, keeps its node_modules from deletion, and a finished
-  or discovered worktree whose root node_modules holds one is not removed. A
-  committed edit folder does not keep anything, so cleanup stays automatic.
-  The probe does not follow links and reads through the bounded reader; a
-  read that does not answer in 5 s, or more than 5,000 entries, keeps the
-  folder.
-- A Solana keypair: Cargo `target/` deletes go through one remover that never
-  unlinks a `*-keypair.json` (LLP 0005). Worktree removal does not go through
-  that remover, so a finished or discovered worktree whose recognised root
-  Cargo `target/` holds a `*-keypair.json` at any depth, or a link named like
-  one or named `deploy`, is not removed. The walk does not follow links and
-  stops after 30 s or 1,000,000 entries; another volume or a walk that
-  cannot finish keeps the worktree.
+- What is copied: every file of a `.pnpm_patches` that holds at least one edit
+  folder (the edit folders and `state.json`), and every `*-keypair.json` in any
+  letter case, at any depth, in each recognised root Cargo `target/` of a
+  removed worktree. Links are copied as links and never followed.
+- The search and the copy read through the bounded reader. More than 50 MB to
+  copy for one delete, another volume, more than 1,000,000 entries, or a copy
+  that fails or does not finish in 30 s keeps the folder or worktree, with the
+  reason.
+- `stim gc` removes rescued copies older than 30 days, lists what it copied in
+  that run (`rescued` in `--json`), and `stim doctor` lists every rescued copy
+  with its source and age, so an agent restores a file by copying it back.
+- Cargo `target/` deletes themselves go through one remover that never unlinks
+  a `*-keypair.json` (LLP 0005), so they copy nothing.
+
+The maintainer chose this in the coordinating session on 2026-11-20, answering
+"Rescue copies" to the question of rescuing protected items before deleting
+instead of detecting committed patches. The 30 days and the 50 MB are the
+coordinator's choices, constants in the code rather than settings.
 
 Not covered:
 
-- a keypair in a Cargo `target/` Stim does not recognise, such as a nested
-  one;
-- an uncommitted edit made before something rewrote the patch file with a
-  newer modification time, such as a branch switch, or copied the edit folder
-  while keeping its times, such as `cp -p`, `rsync -a` or `tar`, since the
-  probe compares modification times;
-- a hand-written range key such as `is-number@^7`, which keeps the edit
-  folder because the probe matches only the keys pnpm writes;
-- a pnpm patch in a node_modules no workspace package root owns;
+- a keypair in a Cargo `target/` Stim does not recognise, such as a nested one;
+- a pnpm patch in a node_modules the worktree removal does not list as a
+  dependency tree, such as one under an ignored parent folder;
 - build folders other than Cargo targets, which are deleted with a plain
   recursive delete;
-- `stim worktree remove`, which is explicit and runs none of these checks.
+- `stim worktree remove`, which is explicit and runs none of these checks;
+- rescued copies made by the background maintenance pass expire only when a
+  `stim gc` runs.
 
 ## Edits git status does not show
 
@@ -108,8 +106,6 @@ deletes the worktree with its dependency folders.
 --dry-run` shows it kept), and before automatic maintenance removes a
   finished or discovered worktree, which waits while one of its dependency
   folders has detected edits.
-- A pnpm patch not yet committed counts as an edit (above). The scan skips
-  `.pnpm_patches` with the tools' caches, so the check reads it on its own.
 - A kept folder's reason names the files, in the kept action, the cleanup
   log, `stim gc --dry-run`, `stim status` (`dependencyEdits`) and
   `stim doctor`, which says its disk is not freed and how to release it: make

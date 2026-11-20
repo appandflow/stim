@@ -1,6 +1,5 @@
 import { existsSync, lstatSync, readdirSync, type Stats } from 'node:fs';
-import { basename, dirname, join, relative, resolve, sep } from 'node:path';
-import { lstat, readdir, readFile, stat as statFile } from 'node:fs/promises';
+import { basename, dirname, join, relative, sep } from 'node:path';
 import { setImmediate as nextTurn } from 'node:timers/promises';
 import {
   readDependencyInstall,
@@ -15,10 +14,7 @@ import { treeSignature } from '../private-size.ts';
 import { gitQuietAsync } from './git.ts';
 import { updateDependencyInstall as updateRecord } from './dependency-install-records.ts';
 import { ARTIFACT_DIRS, existingDirsOf } from './regenerable-dirs.ts';
-import { absent } from './scan-rules.ts';
-import { answered } from './bounded-read.ts';
-import { yamlBlock } from '../fingerprint/inputs.ts';
-import { field as jsonField } from '../fingerprint/walk.ts';
+import { rescueBeforeDelete } from './rescue.ts';
 
 /**
  * How long after a package manager's stamp the root project's own install-time script (`preinstall`, `install`,
@@ -368,141 +364,6 @@ export function editsKeptReason(
   return `${countText(edits.count, edits.complete)} in it ${after} (${shown}${more}), so maintenance and stim gc keep it at every disk pressure and its disk is not freed; make the change a patch (pnpm patch, yarn patch or patch-package), or reinstall the dependencies, to release it`;
 }
 
-const PATCH_PROBE_MS = 5_000;
-const MAX_PATCH_ENTRIES = 5_000;
-
-/** The patch file of each key of pnpm's `patchedDependencies` declared at the project `root`. */
-async function patchFiles(root: string, read: <T>(path: string, start: () => Promise<T>) => Promise<T>) {
-  const files = new Map<string, string>();
-  const text = async (name: string) => {
-    try {
-      return await read(join(root, name), () => readFile(join(root, name), 'utf8'));
-    } catch (error) {
-      if (absent(error)) return null;
-      throw error;
-    }
-  };
-  for (const line of yamlBlock(await text('pnpm-workspace.yaml'), 'patchedDependencies')) {
-    const entry = /^(['"]?)(.+)\1:\s*(['"]?)(.+\.patch)\3$/.exec(line);
-    if (entry?.[2] && entry[4]) files.set(entry[2], resolve(root, entry[4]));
-  }
-  const manifest = await text('package.json');
-  const declared: unknown = manifest ? JSON.parse(manifest)?.pnpm?.patchedDependencies : null;
-  for (const [key, file] of Object.entries(declared && typeof declared === 'object' ? declared : {}))
-    if (typeof file === 'string') files.set(key, resolve(root, file));
-  return files;
-}
-
-/** The nearest folder above `project` that holds a `pnpm-workspace.yaml`, or null. */
-async function workspaceRoot(
-  project: string,
-  read: <T>(path: string, start: () => Promise<T>) => Promise<T>,
-): Promise<string | null> {
-  for (let dir = dirname(project); dir !== dirname(dir); dir = dirname(dir)) {
-    const file = join(dir, 'pnpm-workspace.yaml');
-    const found = await read(file, () => lstat(file)).catch((error: unknown) => {
-      if (absent(error)) return null;
-      throw error;
-    });
-    if (found) return dir;
-  }
-  return null;
-}
-
-/**
- * The `patchedDependencies` key `pnpm patch-commit` writes for the edit folder `edit` (`folder` in `.pnpm_patches`): its
- * package's `name@version`, or `name` alone when pnpm recorded the edit as applying to every version. Empty when
- * `state.json` holds no single record of it, which leaves the folder uncommitted.
- */
-async function patchKey(
-  edit: string,
-  folder: string,
-  states: unknown,
-  read: <T>(path: string, start: () => Promise<T>) => Promise<T>,
-): Promise<string> {
-  const records = Object.entries(states && typeof states === 'object' ? states : {}).filter(
-    ([key]) => key === edit || key.endsWith(`${sep}.pnpm_patches${sep}${folder}`),
-  );
-  const all = new Set(records.map(([, record]: [string, unknown]) => jsonField(record, 'applyToAll')));
-  const [applyToAll] = all;
-  if (all.size !== 1 || typeof applyToAll !== 'boolean') return '';
-  const manifest: unknown = JSON.parse(await read(edit, () => readFile(join(edit, 'package.json'), 'utf8')));
-  const name = jsonField(manifest, 'name');
-  const version = jsonField(manifest, 'version');
-  if (typeof name !== 'string' || typeof version !== 'string') return '';
-  return applyToAll ? name : `${name}@${version}`;
-}
-
-/**
- * Why a `pnpm patch` not yet committed keeps the node_modules `tree`, or null. `pnpm patch` copies a package into an
- * edit folder in `.pnpm_patches`, which the edit scan skips with the tools' caches, and `pnpm patch-commit` writes the
- * patch file `patchedDependencies` names, in the project or its workspace root, but leaves the edit folder and
- * `state.json` in place (pnpm/pnpm#8401). An edit folder with no patch file under the exact key pnpm writes for it, or
- * with anything modified after its patch file, keeps the tree; a hand-written range key does not count. Never follows a
- * link; a read that does not answer within PATCH_PROBE_MS, or more than MAX_PATCH_ENTRIES entries, keeps it too.
- */
-export async function pnpmPatchHold(tree: string, signal?: AbortSignal): Promise<string | null> {
-  const dir = join(tree, '.pnpm_patches');
-  const where = `${basename(tree)}/.pnpm_patches`;
-  const started = performance.now();
-  const read = <T>(path: string, start: () => Promise<T>) =>
-    answered(path, start, Math.max(1, PATCH_PROBE_MS - (performance.now() - started)), signal);
-  const list = (path: string) => read(path, () => readdir(path, { withFileTypes: true }));
-  try {
-    if (!(await read(dir, () => lstat(dir))).isDirectory()) return null;
-  } catch (error) {
-    if (absent(error)) return null;
-    signal?.throwIfAborted();
-    return `${where} cannot be read`;
-  }
-  try {
-    const folders: string[] = [];
-    for (const entry of await list(dir)) {
-      if (!entry.isDirectory()) continue;
-      if (!entry.name.startsWith('@')) folders.push(entry.name);
-      else
-        for (const inner of await list(join(dir, entry.name)))
-          if (inner.isDirectory()) folders.push(`${entry.name}/${inner.name}`);
-    }
-    if (!folders.length) return null;
-    const files = await patchFiles(dirname(tree), read);
-    const shared = await workspaceRoot(dirname(tree), read);
-    if (shared) for (const [key, file] of await patchFiles(shared, read)) if (!files.has(key)) files.set(key, file);
-    const states = await read(join(dir, 'state.json'), () => readFile(join(dir, 'state.json'), 'utf8'))
-      .then((text): unknown => JSON.parse(text))
-      .catch((error: unknown) => {
-        if (absent(error) || error instanceof SyntaxError) return null;
-        throw error;
-      });
-    let entries = 0;
-    for (const folder of folders) {
-      const file = files.get(await patchKey(join(dir, folder), folder, states, read));
-      const committed = file
-        ? await read(file, () => statFile(file)).catch((error: unknown) => {
-            if (absent(error)) return null;
-            throw error;
-          })
-        : null;
-      if (!file || !committed)
-        return `it has a pnpm patch not yet committed in ${where}/${folder}; run pnpm patch-commit`;
-      const queue = [join(dir, folder)];
-      for (let path = queue.pop(); path !== undefined; path = queue.pop()) {
-        if (++entries > MAX_PATCH_ENTRIES)
-          return `${where} holds over ${MAX_PATCH_ENTRIES} entries to check for a pnpm patch not yet committed`;
-        const at = path;
-        const info = await read(at, () => lstat(at));
-        if (info.mtimeMs > committed.mtimeMs)
-          return `it has pnpm patch edits in ${where}/${folder} newer than ${relative(dirname(tree), file)}; run pnpm patch-commit`;
-        if (info.isDirectory()) for (const entry of await list(at)) queue.push(join(at, entry.name));
-      }
-    }
-    return null;
-  } catch {
-    signal?.throwIfAborted();
-    return `${where} cannot be checked for a pnpm patch not yet committed`;
-  }
-}
-
 /** `edited` when the keep is for changed files rather than a tree that could not be checked. */
 export type EditCheck = { keep: string; edited?: true } | { delete: true };
 
@@ -513,10 +374,9 @@ export type EditCheck = { keep: string; edited?: true } | { delete: true };
  * install did to the stamp; when an install Stim did not run moved the reference, files changed after the old one in
  * a package or pod that install did not reinstall, or well after that package was installed, stay edits. Any edit
  * keeps the tree at every pressure level. A tree kept for edits is not walked again while its install signature and
- * its known edits are unchanged, except at critical. An unfinished `pnpm patch` keeps a node_modules tree too. With
- * `readOnly` nothing is written.
+ * its known edits are unchanged, except at critical. With `readOnly` nothing is written.
  */
-export async function checkDependencyEdits(
+async function recordedEdits(
   path: string,
   {
     level,
@@ -524,20 +384,6 @@ export async function checkDependencyEdits(
     readOnly = false,
     signal,
   }: { level: PressureLevel; worktree: string; readOnly?: boolean; signal?: AbortSignal },
-): Promise<EditCheck> {
-  const tree = canonicalOr(path);
-  const patch = kindOf(tree) === 'node_modules' ? await pnpmPatchHold(tree, signal) : null;
-  return patch ? { keep: patch, edited: true } : recordedEdits(path, { level, worktree, readOnly, signal });
-}
-
-async function recordedEdits(
-  path: string,
-  {
-    level,
-    worktree,
-    readOnly,
-    signal,
-  }: { level: PressureLevel; worktree: string; readOnly: boolean; signal?: AbortSignal },
 ): Promise<EditCheck> {
   const tree = canonicalOr(path);
   const record = readDependencyInstall(tree);
@@ -581,6 +427,21 @@ async function recordedEdits(
     : { delete: true };
 }
 
+/** `recordedEdits`, then, for a tree it would delete, `rescueBeforeDelete`, which copies its pnpm patches aside. */
+export async function checkDependencyEdits(
+  path: string,
+  options: { level: PressureLevel; worktree: string; readOnly?: boolean; signal?: AbortSignal },
+): Promise<EditCheck> {
+  const check = await recordedEdits(path, options);
+  if ('keep' in check) return check;
+  const held = await rescueBeforeDelete(
+    options.worktree,
+    { trees: [canonicalOr(path)], targets: [] },
+    { act: !options.readOnly, signal: options.signal },
+  );
+  return held ? { keep: held } : check;
+}
+
 /**
  * Before an install or pod install Stim runs into existing `trees`: records the files changed since the current
  * reference, so the install moving the reference does not hide them.
@@ -588,7 +449,7 @@ async function recordedEdits(
 export async function noteEditsBeforeInstall(trees: readonly string[], signal?: AbortSignal): Promise<void> {
   for (const tree of trees) {
     if (!existsSync(tree)) continue;
-    await recordedEdits(tree, { level: 'high', worktree: dirname(tree), readOnly: false, signal });
+    await recordedEdits(tree, { level: 'high', worktree: dirname(tree), signal });
   }
 }
 
@@ -622,7 +483,7 @@ function inside(root: string, path: string): boolean {
  * lists, which include the nested ones of npm and Yarn workspaces, and those the cleanup paths take at the worktree's
  * root and its workspaces `keys`.
  */
-async function removedTrees(worktree: string, signal?: AbortSignal): Promise<string[]> {
+export async function removedTrees(worktree: string, signal?: AbortSignal): Promise<string[]> {
   const root = canonicalOr(worktree);
   const trees = new Set<string>();
   const listed = await gitQuietAsync(

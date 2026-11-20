@@ -188,7 +188,7 @@ function configNamedPaths(config: unknown, roots: Roots, nativeDirs: readonly st
   return [...found];
 }
 
-export function yamlBlock(text: string | null, key: string): string[] {
+function yamlBlock(text: string | null, key: string): string[] {
   const lines = text?.split(/\r?\n/) ?? [];
   const start = lines.indexOf(`${key}:`);
   if (start === -1) return [];
