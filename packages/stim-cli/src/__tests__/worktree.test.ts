@@ -353,6 +353,7 @@ describe.skipIf(process.platform === 'win32')('a git read in maintenance work', 
         { mode: 0o755 },
       );
       vi.stubEnv('PATH', `${bin}:${process.env.PATH ?? ''}`);
+      vi.stubEnv('GIT_CONFIG_COUNT', undefined);
       await branchStatusAsync(base);
       await runMaintenanceWork('normal', () => branchStatusAsync(base));
       await runMaintenanceWork('high', () => branchStatusAsync(base));

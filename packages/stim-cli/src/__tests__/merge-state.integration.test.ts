@@ -190,6 +190,7 @@ test.skipIf(process.platform === 'win32')(
       { mode: 0o755 },
     );
     vi.stubEnv('PATH', `${bin}:${process.env.PATH ?? ''}`);
+    vi.stubEnv('GIT_CONFIG_COUNT', undefined);
     try {
       expect(await runMaintenanceWork('normal', () => fetchDefaultBranchAsync(clone))).toMatchObject({
         ref: 'refs/remotes/origin/main',
