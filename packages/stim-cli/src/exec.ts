@@ -186,8 +186,8 @@ type Refusal = 'unverified' | 'did_not_close' | 'descendants';
 const MAX_LEFT_LISTINGS = 8;
 let leftListings = 0;
 
-const isListing = (program: string, claims: readonly unknown[]): boolean =>
-  process.platform === 'darwin' && program === 'ps' && claims.length === 0;
+const isListing = (program: string, claims: readonly unknown[], report: AbortSignal | undefined): boolean =>
+  report !== undefined && process.platform === 'darwin' && program === 'ps' && claims.length === 0;
 
 function reportChild(
   child: ChildProcess,
@@ -627,7 +627,7 @@ const defaultExecutor: Executor = {
               retainDeclaration = rejectDeclaration;
             })
           : undefined;
-      const listing = isListing(file, claims);
+      const listing = isListing(file, claims, report);
       const contained = startsInReportJob(file, opts, containProcessTree || Boolean(report), context);
       const base =
         contained && timeout !== undefined ? join(tmpdir(), `stim-report-${process.pid}-${randomUUID()}`) : null;
@@ -845,7 +845,7 @@ const defaultExecutor: Executor = {
     if (report && process.platform !== 'win32') childOpts.detached = true;
     refuseUnsafeBatchArguments(cmd, args, childOpts.env ?? ambientEnv(), childOpts.cwd);
     const claims = report ? [...operationState(context).declaring] : [];
-    const listing = isListing(cmd, claims);
+    const listing = isListing(cmd, claims, report);
     const contained = startsInReportJob(cmd, childOpts, false);
     const observed = childOpts.detached ? detachedObserver : null;
     const watch = observed?.begin();

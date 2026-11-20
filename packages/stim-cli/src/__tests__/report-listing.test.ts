@@ -7,7 +7,7 @@ import type { ClaimHandle } from '../ownership-claim.ts';
 import { setReportChildLog } from '../report-child-log.ts';
 import { runReport } from '../report-runtime.ts';
 
-const spawned = vi.hoisted(() => [] as { file: string; child: EventEmitter }[]);
+const spawned = vi.hoisted((): { file: string; child: EventEmitter }[] => []);
 vi.mock('../process-identity.ts', () => ({
   captureProcessIdentity: () => ({ ok: true, token: 'fixture' }),
   inspectProcessIdentity: () => 'unknown',
@@ -85,6 +85,14 @@ async function cancelled(file: string, { claimed = false, via = 'runFileAsync' }
 }
 
 describe.skipIf(process.platform !== 'darwin')('a macOS ps listing whose cleanup cannot be verified', () => {
+  test('a call outside a report runs the ps on PATH', async () => {
+    const outside = getExecutor().runFileAsync('ps', ['-axo', 'pid='], { timeoutMs: 10_000 });
+    getExecutor().spawn('ps', ['-axo', 'pid=']);
+    expect(spawned.map(({ file }) => file)).toEqual(['ps', 'ps']);
+    spawned[0]?.child.emit('close', 0, null);
+    await expect(outside).resolves.toBe('');
+  });
+
   test.each(['runFileAsync', 'spawn'])('runs /bin/ps and is left without a refusal through %s', async (via) => {
     const error = await cancelled('ps', { via });
     expect(spawned.map(({ file }) => file)).toEqual(['/bin/ps']);
