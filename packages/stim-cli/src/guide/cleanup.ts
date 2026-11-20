@@ -1276,8 +1276,8 @@ anything else is dropped. Checkouts the scan finds under a dot-folder of the
 home folder are recorded in the result and never acted on, because an installed
 tool cannot be told from a checkout there; maintenance.discoverRoots is the way
 to manage one. Cleanup does not look at PATH: a command installed as a link
-into a build output folder (not cargo install, which copies) breaks when that
-output goes, and rebuilding it fixes it. A folder read that does not answer in
+into build output, dependencies or a Cargo target (not cargo install, which
+copies) breaks when that folder goes, and rebuilding or reinstalling fixes it. A folder read that does not answer in
 3 seconds stays pending (at most one per thread: the daemon's main thread and
 passes thread each have one; the scan runs on the passes thread); while it is,
 no other scan read starts and a scheduled scan is skipped. A scan stops at the first read that

@@ -59,7 +59,7 @@ deleted (below).
 Maintainer decision: "I agree lets do this and ur recommendations from prev
 messages, also lets do the changes now that u flagged as after 2.0 id rather
 delay than ship what we have", 2026-11-20 (#6025), whose list of decisions
-states the budget in the words of the paragraph above.
+states the budget in words that match the first two sentences of this section.
 
 Chosen by the lane of #6025, not by the maintainer: stale target triples and
 the dormant reduction's whole `target/` count as covered output, the way stale
@@ -72,7 +72,7 @@ Reason: earlier maintainer decisions already accepted such windows ("ok",
 2026-11-19, for a killed trim's staging, because everything it stages is
 regenerable Cargo build output; LLP 0002's "best effort" for dependency edits),
 and Cargo's own `cargo clean` removes a whole target with no lock. Protecting
-against the window drew most of the review findings on #5996 and #6013.
+against the window drew a large share of the review findings on #5996 and #6013.
 
 ## The dormant reduction deletes an idle target whole
 
