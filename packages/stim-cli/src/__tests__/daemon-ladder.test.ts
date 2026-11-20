@@ -12,7 +12,7 @@ import {
 import { execSync } from 'node:child_process';
 import type { MockInstance } from 'vitest';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import type { DaemonLadderAction, DaemonPressure } from '@stim-cli/core/state';
 import {
   daemonNdjsonFile,
@@ -1065,7 +1065,7 @@ describe('the pressure ladder', () => {
       );
       expect(existsSync(entry)).toBe(false);
       expect(seen.sync).toEqual([]);
-      const entryWalks = seen.async.filter((path) => path.startsWith(`${buildCache()}/`));
+      const entryWalks = seen.async.filter((path) => path.startsWith(`${buildCache()}${sep}`));
       expect(entryWalks.includes(entry)).toBe(level === 'high');
       expect(entryWalks.length === 0).toBe(level === 'critical');
     }
