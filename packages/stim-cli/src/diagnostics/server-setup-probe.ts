@@ -134,13 +134,22 @@ async function readSystemdServices(): Promise<InstalledServerService[]> {
         { timeoutMs: PROBE_TIMEOUT_MS, env },
       );
       const override = dropInExecStart(join(dir, name));
+      const stale = installed.managed ? staleSystemdUnit(text) : null;
+      const loadedKillMode =
+        installed.managed && stale === null
+          ? await getExecutor().runFileQuietAsync('systemctl', ['--user', 'show', name, '-p', 'KillMode', '--value'], {
+              timeoutMs: PROBE_TIMEOUT_MS,
+              env,
+            })
+          : null;
       return {
         manager: 'systemd',
         label: installed.label,
         installed,
         job: shown === null ? null : parseSystemctlShow(shown),
         override: override ?? undefined,
-        stale: installed.managed ? staleSystemdUnit(text) : null,
+        stale,
+        loadedKillMode: loadedKillMode?.trim() ?? null,
       };
     }),
   );

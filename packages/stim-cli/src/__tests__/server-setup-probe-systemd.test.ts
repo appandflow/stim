@@ -17,7 +17,11 @@ describe('doctor on a systemd unit that install wrote for the engine shim', () =
     rmSync(home, { recursive: true, force: true });
   });
 
-  const readUnit = async (edit: (text: string) => string) => {
+  const readUnit = async (
+    edit: (text: string) => string,
+    loadedKillMode = 'process',
+    code = 'server-service-stale',
+  ) => {
     home = mkdtempSync(join(tmpdir(), 'stim-probe-systemd-'));
     vi.stubEnv('HOME', home);
     vi.stubEnv('STIM_HOME', join(home, 'state'));
@@ -41,6 +45,7 @@ describe('doctor on a systemd unit that install wrote for the engine shim', () =
     writeFileSync(join(units, 'dev.stim.server.service'), edit(text));
     setExecutor({
       runFileQuiet: (file: string, argv: string[]) => {
+        if (file === 'systemctl' && argv.includes('KillMode')) return `${loadedKillMode}\n`;
         if (file === 'systemctl' && argv.includes('show'))
           return 'ActiveState=active\nSubState=running\nMainPID=4242\nNRestarts=0\nExecMainStatus=0\n';
         if (file === 'loginctl') return 'yes\n';
@@ -52,7 +57,7 @@ describe('doctor on a systemd unit that install wrote for the engine shim', () =
     const setup = await readServerSetup('2.0.0');
     Object.defineProperty(process, 'platform', { value: platform });
     expect(setup?.services.map((service) => service.label)).toEqual(['dev.stim.server']);
-    return setup ? serverSetupFindings(setup).filter((finding) => finding.code === 'server-service-stale') : [];
+    return setup ? serverSetupFindings(setup).filter((finding) => finding.code === code) : [];
   };
 
   it('finds the shim unit install wrote and reports one written without KillMode=process', async () => {
@@ -63,5 +68,12 @@ describe('doctor on a systemd unit that install wrote for the engine shim', () =
 
   it('reports nothing for a unit as install writes it', async () => {
     expect(await readUnit((text) => text)).toEqual([]);
+    expect(await readUnit((text) => text, 'process', 'server-service-override')).toEqual([]);
+  });
+
+  it('names the drop-in when systemd has another KillMode loaded than the unit file sets', async () => {
+    const [override] = await readUnit((text) => text, 'mixed', 'server-service-override');
+    expect(override?.title).toContain('KillMode=mixed');
+    expect(override?.detail).toMatch(/dev\.stim\.server\.service\.d\/.*keeps the successor handover/);
   });
 });

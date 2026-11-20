@@ -70,6 +70,8 @@ export interface InstalledServerService {
   override?: string | undefined;
   /** Why the service does not run what `stim service install` writes now. */
   stale?: string | null;
+  /** The `KillMode=` systemd has loaded for a unit whose file sets `KillMode=process`; null when unread. */
+  loadedKillMode?: string | null;
 }
 
 export interface ServerReading extends ServerProcess {
@@ -290,6 +292,19 @@ const lastExit = (job: LaunchdJob | UnitJob | null): { failed: boolean; text: st
   return text.startsWith('signal') ? { failed: true, text } : null;
 };
 
+function killModeFindings(service: InstalledServerService): Finding[] {
+  if (!service.loadedKillMode || service.loadedKillMode === 'process') return [];
+  return [
+    {
+      code: 'server-service-override',
+      level: 'note',
+      title: `systemd runs the ${service.label} service with KillMode=${service.loadedKillMode}, not its unit's KillMode=process`,
+      detail: `A drop-in in ~/.config/systemd/user/${service.label}.service.d/ sets it, or systemd has not reloaded the unit, so its stimd keeps the successor handover at an engine switch.`,
+      fix: `Remove KillMode= from that drop-in, then run \`systemctl --user daemon-reload\`; Stim never edits a drop-in.`,
+    },
+  ];
+}
+
 function overrideFindings(service: InstalledServerService): Finding[] {
   if (!service.override || service.installed.script?.endsWith('/bin/stimd')) return [];
   return [
@@ -320,6 +335,7 @@ function staleFindings(service: InstalledServerService): Finding[] {
 function serviceStateFindings(setup: ServerSetup): Finding[] {
   return setup.services.flatMap((service): Finding[] => [
     ...overrideFindings(service),
+    ...killModeFindings(service),
     ...staleFindings(service),
     ...crashFindings(setup, service),
   ]);
