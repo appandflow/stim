@@ -8,6 +8,7 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
+  renameSync,
   rmSync,
   symlinkSync,
   utimesSync,
@@ -684,6 +685,81 @@ describe.skipIf(process.platform === 'win32')(
 
     test.each([
       [
+        'a keypair appears deep in an entry',
+        () => {
+          mkdirSync(join(dir, 'doc', 'keys', 'old'), { recursive: true });
+          ageTree(dir);
+          return () => writeFileSync(join(dir, 'doc', 'keys', 'old', 'App-Keypair.json'), '[1]');
+        },
+        'doc holds a Solana keypair',
+        join('doc', 'index.html'),
+      ],
+      [
+        'a file deep in an entry is written',
+        () => {
+          mkdirSync(join(dir, 'doc', 'a', 'b'), { recursive: true });
+          writeFileSync(join(dir, 'doc', 'a', 'b', 'page.html'), 'x');
+          ageTree(dir);
+          return () => utimesSync(join(dir, 'doc', 'a', 'b', 'page.html'), new Date(), new Date());
+        },
+        'holds a file written in that time',
+        join('doc', 'index.html'),
+      ],
+      [
+        'a symbolic link appears as deploy/',
+        () => () => symlinkSync(target, join(dir, 'deploy')),
+        'no longer an entry the delete removes',
+        '.rustc_info.json',
+      ],
+    ])(
+      'on a full disk the in-place delete keeps an entry when %s after the first check',
+      async (_, arrange, why, kept) => {
+        const during = arrange();
+        let reads = 0;
+        stubProcesses({
+          lsof: (args) => {
+            if (args.includes('-Fn') && reads++ === 1) during();
+            return '';
+          },
+        });
+        fsHooks.writeFile = (path) => {
+          if (path.endsWith('NOT-RESTORED')) throw diskFull('ENOSPC');
+        };
+
+        const result = await remove();
+
+        expect(result.kept).toEqual([expect.stringContaining(why)]);
+        expect(existsSync(join(dir, kept))).toBe(true);
+      },
+    );
+
+    test('on a full disk a target swapped during the in-place delete is left alone', async () => {
+      const moved = `${dir}-moved`;
+      let reads = 0;
+      stubProcesses({
+        lsof: (args) => {
+          if (args.includes('-Fn') && reads++ === 1) {
+            renameSync(dir, moved);
+            mkdirSync(dir);
+            writeFileSync(join(dir, '.rustc_info.json'), 'theirs');
+            ageTree(dir);
+          }
+          return '';
+        },
+      });
+      fsHooks.writeFile = (path) => {
+        if (path.endsWith('NOT-RESTORED')) throw diskFull('ENOSPC');
+      };
+
+      const result = await remove();
+
+      expect(result.kept).toEqual([expect.stringContaining('was replaced during the delete')]);
+      expect(readFileSync(join(dir, '.rustc_info.json'), 'utf8')).toBe('theirs');
+      expect(readdirSync(moved).toSorted()).toEqual(['.rustc_info.json', 'debug', 'doc']);
+    });
+
+    test.each([
+      [
         'a trim left a directory for a person',
         () => mkdirSync(join(dir, '.stim-not-restored-1-0')),
         'could not put back',
@@ -772,6 +848,16 @@ describe.skipIf(process.platform === 'win32')(
         'another filesystem',
       ],
       ['it is no longer a Cargo target', () => rmSync(join(target, 'Cargo.toml')), 'no longer a Cargo target'],
+      [
+        'Criterion rewrites a saved baseline deep inside while its folders stay old',
+        () => {
+          mkdirSync(join(dir, 'criterion', 'bench', 'base'), { recursive: true });
+          writeFileSync(join(dir, 'criterion', 'bench', 'base', 'sample.json'), '{}');
+          ageTree(dir);
+          utimesSync(join(dir, 'criterion', 'bench', 'base', 'sample.json'), new Date(), new Date());
+        },
+        'criterion holds a file written in that time',
+      ],
       [
         'a process works in the target itself',
         () => stubProcesses({ lsof: (args) => (args.includes('-Fn') ? `p100\nn${real}\n` : '') }),
@@ -872,6 +958,16 @@ describe.skipIf(process.platform === 'win32')(
         },
         'holds a Solana keypair now',
       ],
+      [
+        'a build rewrites a file deep inside a moved profile',
+        () => {
+          writeFileSync(join(dir, 'debug', '.fingerprint', 'unit', 'lib'), 'x');
+          ageTree(dir);
+          return () =>
+            utimesSync(join(dir, '.stim-trimmed', '1', '.fingerprint', 'unit', 'lib'), new Date(), new Date());
+        },
+        'holds a file written during the move',
+      ],
       ['a build recreates a moved profile', () => () => mkdirSync(join(dir, 'debug')), 'appeared during the move'],
       [
         'a write lands in the kept deploy/',
@@ -951,6 +1047,102 @@ describe.skipIf(process.platform === 'win32')(
 
       expect(result.removed).toEqual(['.stim-trimmed']);
       expect(existsSync(dir)).toBe(false);
+    });
+
+    test('a staging directory that is a symbolic link keeps the target, and what it points at', async () => {
+      const outside = join(target, 'outside');
+      mkdirSync(outside);
+      writeFileSync(join(outside, 'mine.txt'), 'mine');
+      symlinkSync(outside, join(dir, '.stim-trimmed'));
+      const old = new Date(Date.now() - 3 * DAY);
+      lutimesSync(join(dir, '.stim-trimmed'), old, old);
+      utimesSync(dir, old, old);
+
+      const result = await remove();
+
+      expect(result.removed).toEqual([]);
+      expect(result.kept).toEqual([expect.stringContaining('cannot be made')]);
+      expect(readdirSync(outside)).toEqual(['mine.txt']);
+      expect(existsSync(join(dir, 'debug', 'app'))).toBe(true);
+    });
+
+    test('a deploy that is a symbolic link keeps the whole target', async () => {
+      mkdirSync(join(dir, 'sbf-output'));
+      writeFileSync(join(dir, 'sbf-output', 'app-keypair.json'), '[1,2,3]');
+      symlinkSync(join(dir, 'sbf-output'), join(dir, 'deploy'));
+      ageTree(dir);
+      lutimesSync(join(dir, 'deploy'), new Date(Date.now() - 3 * DAY), new Date(Date.now() - 3 * DAY));
+
+      const result = await remove();
+
+      expect(result.removed).toEqual([]);
+      expect(readFileSync(join(dir, 'sbf-output', 'app-keypair.json'), 'utf8')).toBe('[1,2,3]');
+      expect(existsSync(join(dir, 'debug', 'app'))).toBe(true);
+    });
+
+    test('a keypair in deploy/ that is a symbolic link keeps the whole target', async () => {
+      mkdirSync(join(dir, 'keys'));
+      writeFileSync(join(dir, 'keys', 'app.json'), '[1,2,3]');
+      mkdirSync(join(dir, 'deploy'));
+      symlinkSync(join('..', 'keys', 'app.json'), join(dir, 'deploy', 'app-keypair.json'));
+      ageTree(dir);
+      const old = new Date(Date.now() - 3 * DAY);
+      lutimesSync(join(dir, 'deploy', 'app-keypair.json'), old, old);
+      utimesSync(join(dir, 'deploy'), old, old);
+
+      const result = await remove();
+
+      expect(result.removed).toEqual([]);
+      expect(readFileSync(join(dir, 'deploy', 'app-keypair.json'), 'utf8')).toBe('[1,2,3]');
+    });
+
+    test('a keypair folder named in another letter case stays', async () => {
+      mkdirSync(join(dir, 'Deploy'));
+      writeFileSync(join(dir, 'Deploy', 'app-keypair.json'), '[1,2,3]');
+      ageTree(dir);
+
+      const result = await remove();
+
+      expect(result.removed).not.toContain('Deploy');
+      expect(readFileSync(join(dir, 'Deploy', 'app-keypair.json'), 'utf8')).toBe('[1,2,3]');
+    });
+
+    test('a target/ replaced by a symbolic link during the process scan is kept, and the directory it points at untouched', async () => {
+      const outside = join(target, 'outside');
+      mkdirSync(outside);
+      writeFileSync(join(outside, 'mine.txt'), 'mine');
+      let swapped = false;
+      stubProcesses({
+        lsof: (args) => {
+          if (args.includes('-Fn') && !swapped) {
+            swapped = true;
+            renameSync(dir, join(target, 'moved-target'));
+            symlinkSync(outside, dir);
+          }
+          return '';
+        },
+      });
+
+      const result = await remove();
+
+      expect(result.removed).toEqual([]);
+      expect(result.kept).toEqual([expect.stringContaining('was replaced during the delete')]);
+      expect(readdirSync(outside)).toEqual(['mine.txt']);
+      expect(existsSync(join(target, 'moved-target', 'debug', 'app'))).toBe(true);
+    });
+
+    test.each([
+      ['a debug-only Solana build', join('deploy', 'debug')],
+      ['a custom --sbf-out-dir', 'sbf-output'],
+    ])('a keypair at any depth keeps its top-level entry: %s', async (_, folder) => {
+      mkdirSync(join(dir, folder), { recursive: true });
+      writeFileSync(join(dir, folder, 'app-keypair.json'), '[1,2,3]');
+      ageTree(dir);
+
+      const result = await remove();
+
+      expect(result.removed.toSorted()).toEqual(['.rustc_info.json', 'debug', 'doc']);
+      expect(readFileSync(join(dir, folder, 'app-keypair.json'), 'utf8')).toBe('[1,2,3]');
     });
 
     test('a cancelled delete puts every moved entry back and leaves nothing staged', async () => {

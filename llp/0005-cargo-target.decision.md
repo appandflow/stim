@@ -77,8 +77,11 @@ within that time, or one that cannot be read, on the `target/` itself, on any
 top-level entry but Stim's own `.stim-*`, on each direct child of a top-level
 directory, or on a profile directory and its `.fingerprint`, `deps`, `build` and
 `incremental`; or a unit stamp within that time in Exact's ledger. The times
-are read two levels down and no deeper, so a write deeper inside a folder that
-is not a profile is not seen. A `target/` with no Cargo profile, such as an
+are read two levels down by the eligibility check; the delete itself also takes
+the newest modification time of everything in each entry in the walk that checks
+devices and keypairs, before the move and on the moved entries before the
+delete, so a file rewritten in place deep inside, such as a Criterion baseline,
+keeps the `target/`. A `target/` with no Cargo profile, such as an
 Exact app's, is dated the same way.
 
 Then, as the trims do (Never delete what a build took back, below), it renames
@@ -106,8 +109,9 @@ go, and gc names a `target/` it keeps and why. Putting entries back after a
 cancellation, an error, a lock or a process, and a delete that ends with entries
 left, give the `target/` its own modification time back, so Stim's own moves
 do not count as use on the next run; a rollback caused by a write or a new
-entry does not. A `target/` holding a `.stim-trimmed` directory counts as a
-recognised `target/` even when its Cargo files were staged: a staging tree
+entry does not. For the dormant reduction only, a `target/` holding a `.stim-trimmed` directory
+counts as a recognised `target/` even when its Cargo files were staged; the
+size cap and the pressure trims do not see such a `target/`, as before: a staging tree
 whose marker is cleared was committed for deletion, and the next run removes
 it after the same idle, process, lock and mount checks.
 
@@ -124,10 +128,32 @@ benchmark baselines and Cargo's reports. A `deploy/` directory holding a
 `*-keypair.json`, or one that cannot be read to tell, stays because Solana's `cargo build-sbf` and Anchor keep a
 program's private key there, and a new key is a new program ID. Everything else
 in an idle `target/` goes, Exact's folders and records included. A symbolic
-link stays because deleting through it would reach what it points at. An
+link stays because deleting through it would reach what it points at, and a
+`deploy` that is itself a symbolic link, or holds one, keeps the whole
+`target/`, since its keys may live anywhere in it. Both `deploy` and
+`*-keypair.json` match in any letter case. Any other top-level entry holding a
+`*-keypair.json` at any depth stays too, found in the same walk that checks
+devices, before the move and again on the moved entries before the delete: a
+debug-only `cargo build-sbf --debug` writes the key under `deploy/debug/`, and
+`--sbf-out-dir` can put it in any folder. A dry run leaves such entries out of
+the size it reports. A `.stim-trimmed` that is not a real directory
+keeps the `target/` too: the staging directory is made fresh, never reused. An
 earlier version deleted only entries recognised as Cargo or Exact build
 output; it freed almost nothing from Exact app targets, whose size sits in
 folders that also hold records.
+
+The delete notes the `target/`'s device and inode first and checks them again
+before it makes the staging directory, before each move and before the final
+delete. If the `target/` is no longer that real directory, it stops without
+putting anything back through the new path; what was staged stays in the
+original directory's `.stim-trimmed`, marked `NOT-RESTORED`, for a person. A
+swap made deliberately between one of those checks and the call that follows is
+not covered.
+
+Known limit: a Linux bind mount that exposes part of the `target/` elsewhere,
+such as `target/doc` mounted at `/srv/docs` for a server outside the checkout,
+is not detected; the mount checks look only for mount points at or under the
+`target/`.
 
 Known limit: the process checks see a path in the `target/` only when a process
 runs from it, works in it, holds a file in it open or names it absolutely on
@@ -279,10 +305,18 @@ quota, and only then, the directory is deleted where it is instead:
   its profiles, without entering another filesystem. The next directory tries
   staging again.
 - The dormant delete removes a marker the failed write left, then deletes one
-  entry at a time, each after the process, Cargo and Exact lock, recent-use,
-  keypair and mount checks are made again, and tries staging again before the
-  next entry. Once staging fits, the rest is staged as above. A check that
-  stops it gives the `target/` its modification time back, as a rollback does.
+  entry at a time. Before each, it makes the checks again: the `target/` is
+  the same directory, no process uses it, no build holds a Cargo or Exact
+  lock, the entry is still one the delete removes (a `deploy` that became a
+  symbolic link keeps every entry), it holds no keypair at any depth, no file
+  in it was written within the idle time, and no mount lies under the
+  `target/`. It tries staging again before the next entry, and once staging
+  fits the rest is staged as above. A check that stops it gives the
+  `target/` its modification time back, as a rollback does.
+
+Only a full disk takes this path: staging that fails for another reason, such
+as a `.stim-trimmed` that already exists as a symbolic link, keeps everything
+as before, and an in-place delete never goes through `.stim-trimmed`.
 
 The trade-off: an in-place delete has no rollback. On the staged path a build
 that takes a lock during the move gets its directory back. In place, Stim holds

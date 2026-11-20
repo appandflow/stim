@@ -297,6 +297,18 @@ describe.skipIf(process.platform === 'win32')(
       },
     );
 
+    test('a dry run leaves out a folder holding a Solana keypair deeper inside', async () => {
+      const root = onlyTarget(cargo('app', 'untagged'));
+      mkdirSync(join(root, 'target', 'deploy', 'debug'), { recursive: true });
+      writeFileSync(join(root, 'target', 'deploy', 'debug', 'app-keypair.json'), 'k'.repeat(4 * 1024 * 1024));
+      idleFor(3, root);
+
+      const [action] = await gc(false);
+
+      expect(action).toMatchObject({ target: root, outcome: 'would' });
+      expect(action?.bytes).toBeLessThan(1024 * 1024);
+    });
+
     test('gc deletes all of an idle target but a deploy/ folder holding a Solana keypair', async () => {
       const root = onlyTarget(cargo('app', 'untagged'));
       mkdirSync(join(root, 'target', 'deploy'));

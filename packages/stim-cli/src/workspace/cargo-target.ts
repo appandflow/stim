@@ -1,6 +1,6 @@
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync, type Dirent } from 'node:fs';
 import { link, lstat, mkdir, readdir, rename, rm, rmdir, unlink, utimes, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { cargoTargetTrimClaims } from '@stim-cli/core/state';
 import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-claim.ts';
 import { getExecutor } from '../exec.ts';
@@ -26,12 +26,17 @@ const STRANDED = 'NOT-RESTORED';
 const CANNOT_READ = 'the files processes hold open or the executables on PATH cannot be read';
 const DEADLINE_KEPT = 'the rest was left at the build headroom deadline';
 const NOT_RESTORED = `${OWN_PREFIX}not-restored-`;
+const STAGED_LEFT = 'what was staged stays in its .stim-trimmed, marked NOT-RESTORED, for a person';
 /** Solana's `cargo build-sbf` and Anchor keep each program's private key in `deploy/<program>-keypair.json`. */
 const KEYPAIR_DIR = 'deploy';
+const isKeypairDir = (name: string): boolean => name.toLowerCase() === KEYPAIR_DIR;
+const isKeypairName = (name: string): boolean => name.toLowerCase().endsWith('-keypair.json');
 
 /**
  * The top-level entries of `target` the dormant delete removes (`output`), and those it keeps (`kept`): a symbolic link,
- * which a delete must not go through, and a `deploy/` directory holding a `*-keypair.json`. Stim's own `.stim-*`
+ * which a delete must not go through, and a `deploy/` directory holding a `*-keypair.json`, both names in any letter
+ * case. A `deploy` that is a symbolic link, or holds one, keeps every entry, since Stim cannot tell what of the target
+ * holds the keys it points at. Stim's own `.stim-*`
  * entries are in neither. Null when `target` cannot be listed.
  */
 export function targetEntries(target: string): { output: string[]; kept: string[] } | null {
@@ -39,30 +44,44 @@ export function targetEntries(target: string): { output: string[]; kept: string[
   if (!entries) return null;
   const output: string[] = [];
   const kept: string[] = [];
+  const linkedKeypairs = entries.some(
+    (entry) =>
+      isKeypairDir(entry.name) &&
+      (entry.isSymbolicLink() ||
+        (entry.isDirectory() && (entriesOf(join(target, entry.name)) ?? []).some((inner) => inner.isSymbolicLink()))),
+  );
   for (const entry of entries.toSorted((a, b) => a.name.localeCompare(b.name))) {
     if (entry.name.startsWith(OWN_PREFIX)) continue;
-    const keypairs = entry.name === KEYPAIR_DIR && entry.isDirectory() && holdsKeypair(join(target, entry.name));
+    if (linkedKeypairs) {
+      kept.push(entry.name);
+      continue;
+    }
+    const keypairs = isKeypairDir(entry.name) && entry.isDirectory() && holdsKeypair(join(target, entry.name));
     (entry.isSymbolicLink() || keypairs ? kept : output).push(entry.name);
   }
   return { output, kept };
 }
 
 /**
- * The top-level entries of `target` the dormant delete would remove: `targetEntries`' output, and a `.stim-trimmed`
- * staging directory an earlier delete committed but did not finish removing. Null when `target` cannot be listed.
+ * The top-level entries of `target` the dormant delete would remove: `targetEntries`' output but an entry holding a
+ * `*-keypair.json` at any depth, and a `.stim-trimmed` staging directory an earlier delete committed but did not finish
+ * removing. Null when `target` cannot be listed.
  */
-export function removableEntries(target: string): string[] | null {
+export async function removableEntries(target: string): Promise<string[] | null> {
   const entries = targetEntries(target);
   if (!entries) return null;
-  return lstatSync(join(target, ASIDE), { throwIfNoEntry: false })?.isDirectory()
-    ? [...entries.output, ASIDE]
-    : entries.output;
+  const walked = await walkEntries(
+    entries.output.map((name) => join(target, name)),
+    lstatSync(target).dev,
+  ).catch(() => null);
+  const output = entries.output.filter((name) => !walked?.keypairs.has(join(target, name)));
+  return lstatSync(join(target, ASIDE), { throwIfNoEntry: false })?.isDirectory() ? [...output, ASIDE] : output;
 }
 
-/** Whether the directory at `path` holds a `*-keypair.json`, or cannot be read to tell. */
+/** Whether the directory at `path` holds a `*-keypair.json` in any letter case or a symbolic link, or cannot be read to tell. */
 function holdsKeypair(path: string): boolean {
   const entries = entriesOf(path);
-  return !entries || entries.some((entry) => entry.name.endsWith('-keypair.json'));
+  return !entries || entries.some((entry) => entry.isSymbolicLink() || isKeypairName(entry.name));
 }
 
 const FOLD_CASE = process.platform === 'darwin' || process.platform === 'win32';
@@ -524,7 +543,7 @@ function recentEntryUse(path: string, name: string, now: number, idleMs: number)
  */
 export async function deleteCargoTarget(registeredTarget: string, options: DeleteOptions): Promise<CargoTrimResult> {
   const claimed = await withTrimClaim(registeredTarget, async (target): Promise<CargoTrimResult> =>
-    (await cargoTargetDirsAsync(dirname(registeredTarget))).includes(registeredTarget)
+    (await cargoTargetDirsAsync(dirname(registeredTarget), { staged: true })).includes(registeredTarget)
       ? deleteClaimed(target, options)
       : { bytes: 0, removed: [], kept: ['it is no longer a Cargo target/ Stim recognises'] },
   );
@@ -572,17 +591,29 @@ async function deleteClaimed(
   const blocked =
     recoveryReason(target) ?? recentTargetUse(target, Date.now(), idleMs) ?? mountedUnder(target, mountInfo);
   if (blocked) return keep(blocked);
-  const { dev, atime, mtime } = await lstat(target);
+  const { dev, ino, atime, mtime } = await lstat(target);
+  const sameTarget = async (): Promise<boolean> => {
+    const now = await lstat(target).catch(() => null);
+    return now?.isDirectory() === true && now.dev === dev && now.ino === ino;
+  };
+  const replaced = `${target} was replaced during the delete`;
   const keepTimes = () => utimes(target, atime, mtime).catch(() => {});
   const aside = join(target, ASIDE);
   const entries = targetEntries(target);
   if (!entries) return keep(`${target} cannot be listed`);
   // @ref LLP 0005#the-dormant-reduction-deletes-an-idle-target-whole -- everything goes but a Solana keypair folder
-  let names = entries.output;
   const committed = lstatSync(aside, { throwIfNoEntry: false })?.isDirectory() === true;
-  if (!names.length && !committed) return result;
-  const mount = await otherDevice([...names.map((name) => join(target, name)), ...(committed ? [aside] : [])], dev);
-  if (mount) return keep(`${mount} is another filesystem`);
+  if (!entries.output.length && !committed) return result;
+  const walked = await walkEntries(
+    [...entries.output.map((name) => join(target, name)), ...(committed ? [aside] : [])],
+    dev,
+  );
+  if (walked.mount) return keep(`${walked.mount} is another filesystem`);
+  if (walked.keypairs.has(aside)) return keep(`${aside} holds a Solana keypair`);
+  const fresh = writtenWithin(walked.newest, Date.now(), idleMs, aside);
+  if (fresh) return keep(`${fresh} holds a file written in that time`);
+  const keyed = entries.output.filter((name) => walked.keypairs.has(join(target, name)));
+  let names = entries.output.filter((name) => !keyed.includes(name));
   const first = await readTargetUse(target, launching, signal);
   if ('kept' in first) return keep(first.kept);
   if (first.used.length) return keep(`a process uses ${first.used[0]}`);
@@ -605,7 +636,7 @@ async function deleteClaimed(
   }
   type Entry = { dir: string; there: string; name: string };
   const moved: Entry[] = [];
-  const unmoved = [...entries.kept];
+  const unmoved = [...entries.kept, ...keyed];
   const marker = join(aside, STRANDED);
   let inPlaceBytes = 0;
   const putBackAll = async (why: string, written = false): Promise<CargoTrimResult> => {
@@ -627,9 +658,15 @@ async function deleteClaimed(
     return { ...result, bytes: inPlaceBytes, kept: [...result.kept, `${why}${left}`] };
   };
   // @ref LLP 0005#never-delete-what-a-build-took-back -- staged entries carry the NOT-RESTORED marker until the checks pass
-  const stage = async (): Promise<boolean> => {
+  const stage = async (): Promise<boolean | { kept: string }> => {
+    if (!(await sameTarget())) return { kept: replaced };
     try {
-      await mkdir(aside, { recursive: true });
+      await mkdir(aside);
+    } catch (error) {
+      if (diskFull(error)) return false;
+      return { kept: `${aside} cannot be made: ${error instanceof Error ? error.message : error}` };
+    }
+    try {
       await writeFile(
         marker,
         `${JSON.stringify(Object.fromEntries(names.map((name, n) => [String(n), name])), null, 2)}\n`,
@@ -645,17 +682,26 @@ async function deleteClaimed(
   const deleteEntryInPlace = async (name: string): Promise<string | null> => {
     signal?.throwIfAborted();
     const path = join(target, name);
+    if (!(await sameTarget())) return replaced;
     const use = await readTargetUse(target, launching, signal);
     if ('kept' in use) return use.kept;
     if (use.used.length) return `a process uses ${use.used[0]}`;
     const held = (await heldLock(path, name, signal)) ?? (await heldExactLock(target, signal));
     if (held) return `a build holds ${held}`;
-    if (name === KEYPAIR_DIR && holdsKeypair(path)) return `${path} holds a Solana keypair now`;
-    const used = recentEntryUse(path, name, Date.now(), idleMs);
+    if (!targetEntries(target)?.output.includes(name)) return `${path} is no longer an entry the delete removes`;
+    if (isKeypairDir(name) && holdsKeypair(path)) return `${path} holds a Solana keypair now`;
+    const now = Date.now();
+    const walk = await walkEntries([path], dev);
+    if (walk.mount) return `${walk.mount} is another filesystem`;
+    if (walk.keypairs.has(path)) return `${path} holds a Solana keypair`;
+    const written = writtenWithin(walk.newest, now, idleMs);
+    if (written) return `${written} holds a file written in that time`;
+    const used = recentEntryUse(path, name, now, idleMs);
     if (used) return `${path} was used: ${used}`;
     const mounted = mountedUnder(target, mountInfo);
     if (mounted) return mounted;
     const bytes = await sizeOf(path, signal);
+    if (!(await sameTarget())) return replaced;
     const why = await deleteInPlace(path, [path, ...(await childProfiles(path))], dev, signal);
     if (why) return `${name}: ${why}`;
     inPlaceBytes += bytes;
@@ -664,10 +710,13 @@ async function deleteClaimed(
     return null;
   };
   // @ref LLP 0005#a-full-disk-deletes-in-place -- one entry at a time until staging fits
-  for (let name = names[0]; name !== undefined && !(await stage()); name = names[0]) {
+  for (let name = names[0]; name !== undefined; name = names[0]) {
+    const staged = await stage();
+    if (staged === true) break;
+    if (staged !== false) return keep(staged.kept);
     const why = await deleteEntryInPlace(name);
     if (why) {
-      await keepTimes();
+      if (await sameTarget()) await keepTimes();
       return keep(why);
     }
     names = names.slice(1);
@@ -680,6 +729,8 @@ async function deleteClaimed(
     for (const [n, name] of names.entries()) {
       signal?.throwIfAborted();
       const entry = { dir: join(target, name), there: join(aside, String(n)), name };
+      // @ref LLP 0005#the-dormant-reduction-deletes-an-idle-target-whole -- no put-back through a swapped path
+      if (!(await sameTarget())) return { ...result, bytes: 0, kept: [...result.kept, `${replaced}; ${STAGED_LEFT}`] };
       try {
         await rename(entry.dir, entry.there);
       } catch (error) {
@@ -698,12 +749,19 @@ async function deleteClaimed(
     if ('kept' in after) return await putBackAll(after.kept);
     if (after.used.length) return await putBackAll(`a process took ${after.used[0]} during the move`);
     const now = Date.now();
+    const staged = await walkEntries(
+      moved.map(({ there }) => there),
+      dev,
+    );
+    const stagedKeypairs = staged.keypairs;
     for (const entry of moved) {
-      if (entry.name === KEYPAIR_DIR && holdsKeypair(entry.there))
+      if (stagedKeypairs.has(entry.there) || (isKeypairDir(entry.name) && holdsKeypair(entry.there)))
         return await putBackAll(`${entry.dir} holds a Solana keypair now`, true);
       const used = recentEntryUse(entry.there, entry.name, now, idleMs);
       if (used) return await putBackAll(`${entry.dir} was used during the move: ${used}`, true);
     }
+    const stagedFresh = writtenWithin(staged.newest, now, idleMs);
+    if (stagedFresh) return await putBackAll(`${stagedFresh} holds a file written during the move`, true);
     const listed = entriesOf(target);
     if (!listed) return await putBackAll(`${target} cannot be listed`);
     const appeared = listed.find(({ name }) => !name.startsWith(OWN_PREFIX) && !unmoved.includes(name));
@@ -714,6 +772,7 @@ async function deleteClaimed(
     }
     const mounted = mountedUnder(target, mountInfo);
     if (mounted) return await putBackAll(mounted);
+    if (!(await sameTarget())) return { ...result, bytes: 0, kept: [...result.kept, `${replaced}; ${STAGED_LEFT}`] };
     await rm(marker);
   } catch (error) {
     await putBackAll('the delete was interrupted');
@@ -776,16 +835,35 @@ async function fileHeld(file: string, signal?: AbortSignal): Promise<boolean> {
   }
 }
 
-/** The first directory under `paths` on a device other than `dev`, or null. */
-async function otherDevice(paths: readonly string[], dev: number): Promise<string | null> {
-  const queue = [...paths];
-  for (let path = queue.pop(); path !== undefined; path = queue.pop()) {
+/**
+ * One walk of `paths`, never through a symbolic link: the first directory on a device other than `dev` (`mount`), each
+ * of `paths` that holds a `*-keypair.json` at any depth, in any letter case (`keypairs`), and the newest modification
+ * time of anything in each of `paths` (`newest`).
+ */
+async function walkEntries(
+  paths: readonly string[],
+  dev: number,
+): Promise<{ mount: string | null; keypairs: Set<string>; newest: Map<string, number> }> {
+  const keypairs = new Set<string>();
+  const newest = new Map<string, number>();
+  const queue = paths.map((path) => ({ path, top: path }));
+  for (let item = queue.pop(); item !== undefined; item = queue.pop()) {
+    const { path, top } = item;
     const stat = await lstat(path);
-    if (!stat.isDirectory()) continue;
-    if (stat.dev !== dev) return path;
-    for (const entry of await readdir(path, { withFileTypes: true }))
-      if (entry.isDirectory()) queue.push(join(path, entry.name));
+    newest.set(top, Math.max(newest.get(top) ?? 0, stat.mtimeMs));
+    if (!stat.isDirectory()) {
+      if (isKeypairName(basename(path))) keypairs.add(top);
+      continue;
+    }
+    if (stat.dev !== dev) return { mount: path, keypairs, newest };
+    for (const entry of await readdir(path, { withFileTypes: true })) queue.push({ path: join(path, entry.name), top });
   }
+  return { mount: null, keypairs, newest };
+}
+
+/** The first of `newest`'s entries but `skip` whose newest time is within `idleMs` of `now`. */
+function writtenWithin(newest: Map<string, number>, now: number, idleMs: number, skip?: string): string | null {
+  for (const [path, at] of newest) if (path !== skip && now - at <= idleMs) return path;
   return null;
 }
 
