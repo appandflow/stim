@@ -15,7 +15,11 @@ describe.skipIf(process.platform !== 'darwin')('doctor on a LaunchAgent that ins
   });
 
   /** Writes the default unit for the shim, optionally under Stim Host, and answers `launchctl print` with `loaded`. */
-  const readUnit = async (withHost: boolean, loaded: (node: string, script: string, args: string[]) => string[]) => {
+  const readUnit = async (
+    withHost: boolean,
+    loaded: (node: string, script: string, args: string[]) => string[],
+    { binary = false, unmanaged = false } = {},
+  ) => {
     home = mkdtempSync(join(tmpdir(), 'stim-probe-'));
     vi.stubEnv('HOME', home);
     vi.stubEnv('STIM_HOME', join(home, 'state'));
@@ -32,7 +36,9 @@ describe.skipIf(process.platform !== 'darwin')('doctor on a LaunchAgent that ins
       label: 'dev.stim.server',
       host: withHost ? host : null,
       node: process.execPath,
-      script: join(home, 'npm', 'lib', 'node_modules', 'stim', 'bin', 'stim.mjs'),
+      script: unmanaged
+        ? join(home, 'npm', 'lib', 'node_modules', '@stim-cli', 'server', 'dist', 'stim-server.mjs')
+        : join(home, 'npm', 'lib', 'node_modules', 'stim', 'bin', 'stim.mjs'),
       port: 7787,
       env: [],
       pathPrepend: [],
@@ -41,7 +47,13 @@ describe.skipIf(process.platform !== 'darwin')('doctor on a LaunchAgent that ins
       workingDirectory: home,
       serve: null,
     };
-    writeFileSync(join(agents, 'dev.stim.server.plist'), renderPlist({ ...spec, stimd: shim }));
+    const unit = join(agents, 'dev.stim.server.plist');
+    const text = renderPlist(unmanaged ? spec : { ...spec, stimd: shim });
+    writeFileSync(
+      unit,
+      unmanaged ? text.replace(/\t<key>StimService<\/key>\n\t<dict>[\s\S]*?\n\t<\/dict>\n/, '') : text,
+    );
+    if (binary) getExecutor().runFile('plutil', ['-convert', 'binary1', unit], { timeoutMs: 10_000 });
     const launcher = withHost ? [host, 'run'] : [];
     const args = [...launcher, ...loaded(spec.node, spec.script, [shim, '--service', '--port', '7787'])];
     const real = getExecutor();
@@ -64,6 +76,18 @@ describe.skipIf(process.platform !== 'darwin')('doctor on a LaunchAgent that ins
     const stale = findings.find((finding) => finding.code === 'server-service-stale');
     expect(stale?.detail).toMatch(/launchd still runs the definition it loaded before/i);
     expect(stale?.fix).toContain('stim service install --port 7787');
+  });
+
+  it('finds a binary plist by its StimService marker', async () => {
+    const findings = await readUnit(false, (node, script) => [node, script, 'serve', '--service', '--port', '7787'], {
+      binary: true,
+    });
+    expect(findings.map((finding) => finding.code)).toContain('server-service-stale');
+  });
+
+  it('keeps an unmanaged stim-server agent in doctor without the reinstall remedy', async () => {
+    const findings = await readUnit(false, (node) => [node, 'other.mjs'], { unmanaged: true });
+    expect(findings.map((finding) => finding.code)).not.toContain('server-service-stale');
   });
 
   it.each([

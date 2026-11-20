@@ -84,9 +84,7 @@ function mentionsServer(file: string, marker = 'stim-server'): boolean {
 async function readLaunchdServices(): Promise<InstalledServerService[]> {
   const dir = join(homedir(), 'Library', 'LaunchAgents');
   const files = existsSync(dir)
-    ? readdirSync(dir).filter(
-        (name) => name.endsWith('.plist') && mentionsServer(join(dir, name), '<key>StimService</key>'),
-      )
+    ? readdirSync(dir).filter((name) => name.endsWith('.plist') && mentionsServer(join(dir, name), 'StimService'))
     : [];
   const exec = getExecutor();
   const services = await Promise.all(
@@ -111,7 +109,9 @@ async function readLaunchdServices(): Promise<InstalledServerService[]> {
         label: installed.label,
         installed,
         job,
-        stale: staleLaunchAgent(installed, job?.arguments ?? null, existsSync(shim) ? shim : null),
+        stale: installed.managed
+          ? staleLaunchAgent(installed, job?.arguments ?? null, existsSync(shim) ? shim : null)
+          : null,
       };
     }),
   );

@@ -330,19 +330,40 @@ describe.skipIf(process.platform !== 'darwin')('service lifecycle', () => {
     ).toEqual(['ANDROID_HOME=/sdk']);
   });
 
-  it.each([
-    ['a stale ProcessType', () => execFileSync('plutil', ['-replace', 'ProcessType', '-string', 'Background', plist])],
-    ['a node unit once the engine shim exists', () => engineShim()],
-  ])('setup keeps a healthy service with %s running and names the install that fixes it', async (_case, change) => {
+  it('setup keeps a healthy service with a stale ProcessType running and names the install that fixes it', async () => {
     const options = { label, port: launchd.port, env: [], pathPrepend: [], serve: false };
     const setup = { script: process.argv[1] ?? '', host: null, requestPermissions: false as const };
     await finish(installJob(options, setup));
     const bootstraps = launchd.bootstraps.length;
-    change();
+    execFileSync('plutil', ['-replace', 'ProcessType', '-string', 'Standard', plist]);
     expect((await finish(installJob(options, setup)))[0]).toMatch(/already runs/);
     expect(launchd.job).toBe('new');
     expect(launchd.bootstraps).toHaveLength(bootstraps);
     expect((await serviceStale(label))?.remedy).toMatch(/stim service install --label dev\.stim\.lifecycle/);
+  });
+
+  it('setup reinstalls a managed node unit with the same options onto the engine shim once the shim exists', async () => {
+    const script = realpathSync(join(home, 'new-server.mjs'));
+    launchd.original = renderPlist({
+      label,
+      host: null,
+      node: process.execPath,
+      script,
+      port: launchd.port,
+      env: [],
+      pathPrepend: [],
+      environment: { STIM_HOME: join(home, 'state') },
+      logPath: join(home, 'server.log'),
+      workingDirectory: home,
+      serve: null,
+    });
+    writeFileSync(plist, launchd.original);
+    const shim = engineShim();
+    const options = { label, port: launchd.port, env: [], pathPrepend: [], serve: false };
+    const setup = { script, host: null, requestPermissions: false as const };
+    expect((await finish(installJob(options, setup)))[0]).not.toMatch(/already runs/);
+    expect(launchd.bootstraps).toHaveLength(1);
+    expect(installedPlist()).toMatchObject({ node: null, script: shim });
   });
 
   const installedPlist = () =>

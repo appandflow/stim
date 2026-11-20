@@ -473,27 +473,12 @@ async function launchdStale(
   installed: InstalledService,
   job?: ServiceJob | null,
 ): Promise<{ reason: string; remedy: string } | null> {
-  if (serviceManager().name !== 'launchd') return null;
+  if (serviceManager().name !== 'launchd' || !installed.managed) return null;
   const loadedJob = job === undefined ? await loaded(installed.label) : job;
   const reason = staleLaunchAgent(installed, loadedJob?.arguments ?? null, unitShim());
   if (!reason) return null;
   const fill = installed.env.length ? ', with each <value> set to what the service sets now' : '';
   return { reason, remedy: `run \`${serviceInstallCommand(installed)}\` once when no build runs${fill}` };
-}
-
-/** Whether `previous` runs `script` with the port, launcher and options `spec` names. */
-function sameOptions(
-  previous: InstalledService | null,
-  spec: ServiceSpec,
-  script: string,
-): previous is InstalledService {
-  return (
-    previous?.script === script &&
-    previous.port === spec.port &&
-    previous.host === spec.host &&
-    JSON.stringify(normalizeEnv(previous.env)) === JSON.stringify(normalizeEnv(spec.env)) &&
-    JSON.stringify(previous.pathPrepend) === JSON.stringify(spec.pathPrepend)
-  );
 }
 
 /** Why the LaunchAgent `label` is stale and the install that fixes it (`staleLaunchAgent`); null when it is current. */
@@ -551,8 +536,14 @@ export async function installJob(
   const path = plistPath(options.label);
   const { findTailscale, serveCommand } = await tailscalePackage();
   const tailscale = findTailscale(process.env) ?? 'tailscale';
-  const toShim = manager.name === 'launchd' && stimd !== null && previous !== null && previous.script !== stimd;
-  if (setup && sameOptions(previous, spec, toShim ? (previous.script ?? '') : (stimd ?? script))) {
+  if (
+    setup &&
+    previous?.script === (stimd ?? script) &&
+    previous.port === options.port &&
+    previous.host === spec.host &&
+    JSON.stringify(normalizeEnv(previous.env)) === JSON.stringify(normalizeEnv(spec.env)) &&
+    JSON.stringify(previous.pathPrepend) === JSON.stringify(spec.pathPrepend)
+  ) {
     const health = await fetchHealth(options.port);
     if (health && health.startup?.state !== 'pending' && health.startup?.state !== 'degraded') {
       return [`${options.label} already runs stim-server ${health.version}.`];
