@@ -26,6 +26,8 @@ import {
   workspaceLightenedFile,
 } from '@stim-cli/core/state';
 import * as cacheModule from '../cache/caches.ts';
+import * as acting from '../stimd/passes/act.ts';
+import * as sweep from '../stimd/passes/sweep.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
 import { recordGcResult } from '../commands/gc/results.ts';
 import { collectOwnedDeviceActivityAsync, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
@@ -918,6 +920,53 @@ describe('the pressure ladder', () => {
     const candidates = await stages.stoppedOutputCandidates(input().config, input(), idlePass.PRESSURE_IDLE_MS);
 
     expect(candidates.map(({ path }) => path)).toEqual([built]);
+  });
+
+  test('rung 1 deletes the other outputs of a stopped workspace and leaves its Cargo target/ to rung 3', async () => {
+    const { root } = workspace('mixed', 5 * MINUTE_MS, 'Shutdown');
+    mkdirSync(join(root, 'target'));
+    writeFileSync(join(root, 'target', 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55\n');
+    const derived = join(workspaceDir(root), 'derived-data');
+    mkdirSync(derived, { recursive: true });
+    writeFileSync(join(derived, 'Build.o'), 'x'.repeat(4096));
+
+    const { actions } = await runLadder(
+      input(true, async () => pressure('high')),
+      pressure('high'),
+    );
+
+    expect(existsSync(derived)).toBe(false);
+    expect(existsSync(join(root, 'target', 'CACHEDIR.TAG'))).toBe(true);
+    expect(actions.filter((action) => action.rung === 1)).toEqual([
+      expect.objectContaining({ outcome: 'done', detail: expect.stringContaining(`kept ${join(root, 'target')}`) }),
+    ]);
+  });
+
+  test("rung 7 in the daemon's ladder reports a finished worktree and removes nothing", async () => {
+    const worktree = join(projects, 'finished');
+    vi.spyOn(sweep, 'planWorktrees').mockResolvedValue({
+      sweep: {
+        idle: null,
+        graceMs: 0,
+        now: Date.now(),
+        noOwnCommitsIdleMs: null,
+        worktrees: [{ path: worktree, dirty: false }],
+      },
+      actions: [{ kind: 'would-remove-worktree', target: worktree, bytes: 0, reason: 'its branch is merged' }],
+      blocked: [],
+      skips: [],
+    } as unknown as Awaited<ReturnType<typeof sweep.planWorktrees>>);
+    const act = vi.spyOn(acting, 'executeAction');
+
+    const { actions } = await runLadder(
+      { ...input(true, async () => pressure('high')), fromRung: 7, reports: true },
+      pressure('high'),
+    );
+
+    expect(act).not.toHaveBeenCalled();
+    expect(actions.filter((action) => action.rung === 7)).toEqual([
+      expect.objectContaining({ target: worktree, outcome: 'kept', detail: expect.stringMatching(/^report only/) }),
+    ]);
   });
 
   test('rung 1 records nothing for a stopped workspace whose only output is a Metro store a running dev server shares', async () => {
