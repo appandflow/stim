@@ -267,15 +267,20 @@ one in the home's daemon snapshot. At high or critical pressure the same
 children run at full priority, since freeing disk or memory is then the urgent
 work.
 
-Inside maintenance work, a stop or a device teardown keeps full priority. The
-exported teardowns of `devices/teardown.ts`, which every shutdown, delete and
-park goes through, run as control path, and so does the workspace stop inside
-`reclaimProject`, the agent-device daemon stop included. The idle stage's
-workspace stop and the maintenance actions that stop a workspace, Gradle or
-watchman or delete a device or runtime run as control path too. `adb` is
-never lowered, because a client that finds no server starts the shared adb
-server, which would keep the client's priority for every later install. Every lowered
-child gets an empty `core.fsmonitor` in its environment, appended through
+Inside maintenance work, a stop, a device teardown and work that holds a lock a
+command waits on keep full priority. Everything that runs while a workspace's
+`native-run` lock is held through `withIdleWorkspace`, its in-use check
+included, runs as control path; this covers the idle stage, the dormant stage
+and the dormant output removal, which also hold `metro-start`, and
+`reclaimProject`. Size walks a pass runs before it takes the lock stay lowered.
+The exported teardowns of `devices/teardown.ts`, which every shutdown, delete
+and park goes through, run as control path wherever they are called from, and
+so do the maintenance actions that stop a workspace, Gradle or watchman or delete a device,
+a hosted device or a runtime. `adb` is never lowered, because a client that
+finds no server starts the shared adb server, which would keep the client's
+priority for every later install.
+
+Every lowered child gets an empty `core.fsmonitor` in its environment, appended through
 `GIT_CONFIG_COUNT` after any configuration the caller set, so every git that
 inherits that environment sees it: with `core.fsmonitor` set, the git command
 that finds no daemon starts the worktree's fsmonitor daemon, which would keep
