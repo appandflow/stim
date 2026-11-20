@@ -1,6 +1,7 @@
 import { isMainThread, parentPort, Worker, workerData } from 'node:worker_threads';
 import type { DaemonLadderAction } from '@stim-cli/core/state';
 import type { MaintenanceLane } from '../daemon/passes.ts';
+import { createDormantGate } from '../daemon/dormant-gate.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 import { childKey } from './cleanup-watch.ts';
 import { setReportChildLog } from '../report-child-log.ts';
@@ -62,6 +63,8 @@ export interface ThreadTable {
   settle(): void;
   /** Waits for every running job, then ends every thread. */
   close(): Promise<void>;
+  /** The dormant step's hourly clock and turn, shared with the passes thread. */
+  dormant?: { cadence: BigInt64Array; gate: Int32Array };
 }
 
 /**
@@ -73,6 +76,7 @@ export interface ThreadTable {
 export function createThreadTable(log: Log, onLost: (error: Error) => void = () => {}): ThreadTable {
   const threads = new Map<ThreadName, Thread>();
   const dependencyCadence = new BigInt64Array(new SharedArrayBuffer(BigInt64Array.BYTES_PER_ELEMENT));
+  const dormantGate = createDormantGate();
   const idleEnd = (name: ThreadName, thread: Thread) => {
     thread.idle = setTimeout(() => {
       if (thread.unsettled.size === 0 && !thread.reading) return end(name, thread);
@@ -89,7 +93,7 @@ export function createThreadTable(log: Log, onLost: (error: Error) => void = () 
   const start = (name: ThreadName): Thread => {
     const worker = trackWorker(
       new Worker(spawnEntry('stimd-thread'), {
-        workerData: { stimdThread: name, ...(name === 'passes' ? { dependencyCadence } : {}) },
+        workerData: { stimdThread: name, ...(name === 'passes' ? { dependencyCadence, dormantGate } : {}) },
       }),
     );
     const thread: Thread = { worker, pending: null, idle: null, unsettled: new Set(), reading: false, lost: false };
@@ -150,6 +154,7 @@ export function createThreadTable(log: Log, onLost: (error: Error) => void = () 
     return thread;
   };
   return {
+    dormant: { cadence: dependencyCadence, gate: dormantGate },
     run(name, input) {
       const thread = threads.get(name) ?? start(name);
       if (thread.pending) return Promise.reject(new Error(`the ${name} thread is busy`));
@@ -244,6 +249,7 @@ if (thread === 'logs') await import('./logs/writer-thread.ts');
 else if (thread && parentPort) {
   const port = parentPort;
   const dependencyCadence: BigInt64Array | undefined = workerData.dependencyCadence;
+  const dormantGate: Int32Array | undefined = workerData.dormantGate;
   const log: Log = (level, event, msg, fields = {}) => port.postMessage({ type: 'log', level, event, msg, fields });
   setReportChildLog(log);
   const { processContext } = await import('../cli-operation.ts');
@@ -254,7 +260,7 @@ else if (thread && parentPort) {
     async (input, operation) => {
       if ('act' in input) {
         const { createMaintenanceLane } = await import('../daemon/passes.ts');
-        lane ??= createMaintenanceLane(log, undefined, dependencyCadence);
+        lane ??= createMaintenanceLane(log, undefined, dependencyCadence, dormantGate);
         lane.start({ ...input, operation }, input.act);
         await lane.settled();
         return lane.take();

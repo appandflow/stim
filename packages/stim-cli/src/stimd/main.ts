@@ -2232,6 +2232,17 @@ async function runStimdInner(
         signal: foregroundAbort.signal,
         lastLadder,
         requested: replying.length > 0,
+        ...(threads.dormant
+          ? {
+              dormant: {
+                ...threads.dormant,
+                yieldLane: async () => {
+                  threads.abort('passes');
+                  await lane.settled().catch(() => {});
+                },
+              },
+            }
+          : {}),
       });
       const { config, now, measured, workspaces, pressure, actions, operation } = passes;
       lastLadder = passes.ladder ?? null;
