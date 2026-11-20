@@ -1,7 +1,7 @@
 import { type ChildProcess, type SpawnOptions, execSync } from 'child_process';
 import spawn from 'cross-spawn';
 import which from 'which';
-import { basename, delimiter, join, resolve as resolvePath, win32 } from 'path';
+import { basename, delimiter, dirname, join, resolve as resolvePath, win32 } from 'path';
 import { randomUUID } from 'node:crypto';
 import { existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -183,11 +183,21 @@ function describeReportCommand(file: string, args: readonly string[], redact?: r
 type CancelReason = 'timeout' | 'overflow' | 'exit' | 'close' | 'report_budget' | 'abort' | 'unknown';
 type Refusal = 'unverified' | 'did_not_close' | 'descendants';
 
-// @ref LLP 0007#read-only-report-children-do-not-hold-stimd -- only audited command shapes qualify
-function readOnlyReportCommand(file: string, args: readonly string[]): boolean {
-  const program = basename(file);
+const SYSTEM_TOOL_DIRS = ['/bin', '/usr/bin', '/sbin', '/usr/sbin'];
+
+// @ref LLP 0007#read-only-report-children-do-not-hold-stimd -- only audited system tools and shapes qualify
+function readOnlyReportCommand(
+  file: string,
+  args: readonly string[],
+  env: NodeJS.ProcessEnv,
+  cwd: string | URL,
+): boolean {
+  if (process.platform === 'win32') return false;
+  const resolved = executableIn(file, env, cwd);
+  if (!resolved || !SYSTEM_TOOL_DIRS.includes(dirname(resolved))) return false;
+  const program = basename(resolved);
   if (program === 'nice' && args[0] === '-n' && args[1] === '19')
-    return readOnlyReportCommand(args[2] ?? '', args.slice(3));
+    return readOnlyReportCommand(args[2] ?? '', args.slice(3), env, cwd);
   if (program === 'ps')
     return (
       (args.length === 3 && args[0] === '-axww' && args[1] === '-o') ||
@@ -209,40 +219,6 @@ function readOnlyReportCommand(file: string, args: readonly string[]): boolean {
   }
   if (program === 'du')
     return args[0] === '-sk' && args.length > 1 && args.slice(1).every((arg) => arg.startsWith('/'));
-  if (program === 'git' && args[0] === '--no-optional-locks' && args[1] === '-C' && args[3] === 'rev-parse') {
-    const rest = args.slice(4);
-    return (
-      rest.length > 0 &&
-      rest.every(
-        (arg) =>
-          !arg.startsWith('-') ||
-          [
-            '--show-toplevel',
-            '--git-dir',
-            '--git-common-dir',
-            '--path-format=absolute',
-            '--git-path',
-            '--verify',
-            '--abbrev-ref',
-            '--symbolic-full-name',
-            '--is-inside-work-tree',
-          ].includes(arg),
-      )
-    );
-  }
-  if (program === 'xcrun' && args[0] === 'simctl')
-    return (
-      (args[1] === 'list' &&
-        args.slice(2).every((arg) => ['devices', 'runtimes', 'devicetypes', '-j', '--json'].includes(arg))) ||
-      (args.length === 4 && args[1] === 'runtime' && args[2] === 'list' && args[3] === '-j')
-    );
-  if (program === 'adb' || program === 'adb.exe') {
-    const query = args[0] === '-s' ? args.slice(2) : args;
-    return (
-      (query.length === 1 && ['devices', 'get-state', 'get-serialno'].includes(query[0] ?? '')) ||
-      (query.length === 2 && query[0] === 'reverse' && query[1] === '--list')
-    );
-  }
   return false;
 }
 
@@ -697,7 +673,7 @@ const defaultExecutor: Executor = {
       try {
         lifetime = reportChild(
           child,
-          claims.length === 0 && readOnlyReportCommand(file, args),
+          claims.length === 0 && readOnlyReportCommand(file, args, opts.env ?? ambientEnv(), childCwd ?? process.cwd()),
           report,
           (error) => {
             const failure = claims.length
@@ -888,7 +864,8 @@ const defaultExecutor: Executor = {
     }
     const lifetime = reportChild(
       child,
-      claims.length === 0 && readOnlyReportCommand(cmd, args),
+      claims.length === 0 &&
+        readOnlyReportCommand(cmd, args, childOpts.env ?? ambientEnv(), childOpts.cwd ?? process.cwd()),
       undefined,
       (error) =>
         claims.length

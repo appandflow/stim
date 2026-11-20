@@ -113,9 +113,11 @@ Maintainer decision: "We really need to fix stimd crashing and not being able to
 
 A report child is read-only only when it has no declared claims at spawn and
 matches the command allowlist in `exec.ts` (`readOnlyReportCommand`). The
-allowlist accepts audited argument shapes of `ps`, `lsof`, `du`, `git
---no-optional-locks -C <dir> rev-parse`, `xcrun simctl list` and `runtime list`,
-and adb device queries and `reverse --list`. `nice -n 19` may wrap a listed read.
+allowlist accepts audited argument shapes of `ps`, `lsof` and `du`, alone or
+under `nice -n 19`, and only when the program resolves to a file in `/bin`,
+`/usr/bin`, `/sbin` or `/usr/sbin`, so a same-named program earlier on `PATH`,
+such as one in a project's `node_modules/.bin`, does not qualify. Windows has
+no read-only children.
 Unknown commands, unlisted arguments and every child with declared claims keep
 the existing cleanup refusal. In particular, a report context alone does not
 establish that a child reads: device tools mutate through simctl and adb, and
@@ -126,7 +128,9 @@ across worker threads. stimd logs `report_child_left` at warn level with the pid
 and bounded, redacted command, then forgets it. It holds neither idle exit nor
 an engine switch and retains neither the stimd nor daemon claim. The child may
 outlive stimd; no protected write can continue. A failure from any other
-resource in the same report or server close still retains its existing refusal.
+resource in the same report or server close still retains its existing refusal. So does
+a thread job's read-only refusal while another child its operation declared
+still runs.
 Server close failures log every aggregate member in `startup_refused` and
 `daemon_claims_kept`; an aggregate is read-only only when every member is.
 
@@ -145,16 +149,17 @@ claimless report children that write.
 
 Both report spawn paths are in `exec.ts`: `runFileAsync` and `spawn` call
 `reportChild`, under a report's signal or an explicit probe signal. The
-classification is by command shape, so it holds at every site that runs one.
-Every listed shape only reads: `simctl list` and `runtime list` boot nothing,
-and `adb reverse --list` changes no forward. Any adb call may start the adb
-server; that is not state a claim guards.
+classification is by command and shape, so it holds at every site that runs
+one. The listed shapes write no state a claim guards.
 
 The audit found claimless report children that write: `commands/device-tools.ts`
 (simctl location, privacy and push; adb geo, permission and network changes) and
-`reverseMetroPorts` in `engine/app-install.ts`, which reload reaches. `git status`
-and `git ls-files` are left out because they run a repository's
-`core.fsmonitor` hook, which is project code, even with `--no-optional-locks`.
+`reverseMetroPorts` in `engine/app-install.ts`, which reload reaches. Other tools
+are left off the list because no call site needs their children forgotten and
+each has a way to act: `git status` and `git ls-files` run a repository's
+`core.fsmonitor` hook even with `--no-optional-locks`, `git rev-parse` can fetch
+an object lazily in a partial clone, and adb and simctl resolve from a
+developer-chosen SDK path.
 
 ## Releasing a claim after a killed fingerprint child
 

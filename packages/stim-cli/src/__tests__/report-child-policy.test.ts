@@ -1,4 +1,7 @@
 import { EventEmitter } from 'node:events';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { delimiter, join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { withAmbientContext, type StimContext } from '@stim-cli/core';
 import { getExecutor } from '../exec.ts';
@@ -35,30 +38,35 @@ test.each([
   ['lsof', ['-nP', '-iTCP:8081', '-sTCP:LISTEN', '-Fpn'], false, true],
   ['du', ['-sk', '/fixture'], false, true],
   ['nice', ['-n', '19', 'du', '-sk', '/fixture'], false, true],
-  ['git', ['--no-optional-locks', '-C', '/fixture', 'rev-parse', '--git-dir'], false, true],
-  ['xcrun', ['simctl', 'list', 'devices', '--json'], false, true],
-  ['adb', ['devices'], false, true],
-  ['adb', ['-s', 'fixture', 'reverse', '--list'], false, true],
   ['ps', ['-axo', 'pid='], true, false],
-  ['xcrun', ['simctl', 'privacy', 'fixture', 'reset', 'all'], false, false],
-  ['xcrun', ['simctl', 'spawn', 'fixture', 'defaults', 'write', 'key', 'value'], false, false],
-  ['adb', ['-s', 'fixture', 'reverse', 'tcp:8081', 'tcp:8081'], false, false],
-  ['git', ['--no-optional-locks', '-C', '/fixture', 'diff', '--output=/fixture/out'], false, false],
-  ['git', ['--no-optional-locks', '-C', '/fixture', 'status', '--porcelain'], false, false],
+  ['ps', ['-axo', 'pid='], false, false, 'runFileAsync', 'shadowed'],
+  ['ps', ['-axo', 'pid=', 'extra'], false, false],
+  ['lsof', ['-r', '1'], false, false],
+  ['nice', ['-n', '10', 'ps', '-axo', 'pid='], false, false],
+  ['du', ['-sk', '/fixture', '-x'], false, false],
   ['lsof', ['-D', '/fixture/cache'], false, false],
+  ['xcrun', ['simctl', 'privacy', 'fixture', 'reset', 'all'], false, false],
+  ['adb', ['-s', 'fixture', 'reverse', 'tcp:8081', 'tcp:8081'], false, false],
   ['unknown', [], false, false],
   ['ps', ['-axww', '-o', 'pid='], false, true, 'spawn'],
   ['ps', ['-axww', '-o', 'pid='], true, false, 'spawn'],
 ] as const)(
   '%s %j (claimed=%s) classifies cleanup as read-only=%s',
-  async (file, args, claimed, readOnly, kind?: 'spawn') => {
+  async (file, args, claimed, readOnly, kind?: 'runFileAsync' | 'spawn', shadowed?: 'shadowed') => {
+    let env = process.env;
+    if (shadowed) {
+      const bin = mkdtempSync(join(tmpdir(), 'stim-report-shadow-'));
+      onTestFinished(() => rmSync(bin, { recursive: true, force: true }));
+      writeFileSync(join(bin, file), '#!/bin/sh\n', { mode: 0o755 });
+      env = { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH ?? ''}` };
+    }
     const controller = new AbortController();
     const context: StimContext = {
       home: process.env.STIM_HOME ?? '',
       buildCache: null,
       projectRoot: process.cwd(),
       cwd: process.cwd(),
-      env: process.env,
+      env,
       runId: 'report-child-policy',
       signal: controller.signal,
       output: () => {},
