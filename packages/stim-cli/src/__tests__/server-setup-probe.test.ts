@@ -11,6 +11,7 @@ describe.skipIf(process.platform !== 'darwin')('doctor on a LaunchAgent that ins
   afterEach(() => {
     resetExecutor();
     vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
     rmSync(home, { recursive: true, force: true });
   });
 
@@ -18,7 +19,7 @@ describe.skipIf(process.platform !== 'darwin')('doctor on a LaunchAgent that ins
   const readUnit = async (
     withHost: boolean,
     loaded: (node: string, script: string, args: string[]) => string[],
-    { binary = false, unmanaged = false } = {},
+    { binary = false, unmanaged = false, lastExit = '(never exited)' } = {},
   ) => {
     home = mkdtempSync(join(tmpdir(), 'stim-probe-'));
     vi.stubEnv('HOME', home);
@@ -61,11 +62,26 @@ describe.skipIf(process.platform !== 'darwin')('doctor on a LaunchAgent that ins
       runFileQuiet: (file: string, argv: string[], options: ExecOptions) => {
         if (file === 'plutil') return real.runFileQuiet(file, argv, options);
         if (file === 'launchctl' && argv[0] === 'print')
-          return `\tstate = running\n\tpid = 4242\n\tlast exit code = (never exited)\n\targuments = {\n${args.map((arg) => `\t\t${arg}\n`).join('')}\t}\n`;
+          return `\tstate = running\n\tpid = 4242\n\truns = 2\n\tlast exit code = ${lastExit}\n\targuments = {\n${args.map((arg) => `\t\t${arg}\n`).join('')}\t}\n`;
         if (file === 'ps') return `4242 1 ${args.join(' ')}\n4243 4242 stimd\n`;
         return null;
       },
     });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (new URL(url).port !== '7787') throw new Error('connection refused');
+        return new Response(
+          JSON.stringify({
+            server: 'stim-server',
+            version: '2.0.0',
+            stim: '2.0.0',
+            stimHome: join(home, 'state'),
+            startup: { state: 'ready' },
+          }),
+        );
+      }),
+    );
     const setup = await readServerSetup('2.0.0');
     expect(setup?.services.map((service) => service.label)).toEqual(['dev.stim.server']);
     return setup ? serverSetupFindings(setup) : [];
@@ -88,6 +104,11 @@ describe.skipIf(process.platform !== 'darwin')('doctor on a LaunchAgent that ins
   it('keeps an unmanaged stim-server agent in doctor without the reinstall remedy', async () => {
     const findings = await readUnit(false, (node) => [node, 'other.mjs'], { unmanaged: true });
     expect(findings.map((finding) => finding.code)).not.toContain('server-service-stale');
+  });
+
+  it('reads the health of a running shim service, so an earlier nonzero exit is no crash finding', async () => {
+    const findings = await readUnit(false, (_node, _script, shimArgs) => shimArgs, { lastExit: '1' });
+    expect(findings.map((finding) => finding.code)).not.toContain('server-service-crash');
   });
 
   it.each([

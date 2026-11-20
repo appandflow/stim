@@ -40,6 +40,7 @@ import {
   parseProcessRows,
   parseServerProcesses,
   type InstalledServerService,
+  type ProcessRow,
   type ServerHealthReading,
   type ServerReading,
   type NetworkReading,
@@ -152,6 +153,37 @@ async function readSystemdServices(): Promise<InstalledServerService[]> {
     }),
   );
   return services.filter((service) => service !== null);
+}
+
+/**
+ * The running managed services that start the engine's `bin/stimd` shim, which `parseServerProcesses` cannot see: the
+ * shim's process is titled `stimd`. Each is read at its installed port, under its launchd or systemd job's pid.
+ */
+function shimServers(
+  services: readonly InstalledServerService[],
+  found: readonly ReturnType<typeof classifyServers>[number][],
+  rows: readonly ProcessRow[],
+): ReturnType<typeof classifyServers> {
+  return services.flatMap((service) => {
+    const { installed, job } = service;
+    const pid = job?.pid;
+    if (!installed.managed || !installed.script?.endsWith('/bin/stimd') || pid == null || installed.port === null)
+      return [];
+    if (found.some((server) => server.kind === 'service' && server.label === service.label)) return [];
+    const row = rows.find((each) => each.pid === pid);
+    return [
+      {
+        pid,
+        ppid: row?.ppid ?? 1,
+        command: row?.command ?? installed.script,
+        script: installed.script,
+        port: installed.port,
+        share: false,
+        kind: 'service' as const,
+        label: service.label,
+      },
+    ];
+  });
 }
 
 async function readHealth(port: number): Promise<ServerHealthReading | null> {
@@ -338,7 +370,8 @@ export async function readServerSetup(
   const services = platform === 'darwin' ? await readLaunchdServices() : await readSystemdServices();
   const socket = existsSync(cliSocket());
   if (processes.length === 0 && services.length === 0 && !socket) return null;
-  const classified = classifyServers(processes, rows, services);
+  const found = classifyServers(processes, rows, services);
+  const classified = [...found, ...shimServers(services, found, rows)];
   const [servers, local, network, permissions, linger] = await Promise.all([
     Promise.all(
       classified.map(async (server): Promise<ServerReading> =>
