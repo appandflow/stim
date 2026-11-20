@@ -5,10 +5,13 @@ const PROBE_TIMEOUT_MS = 5000;
 const SIMULATOR_BUNDLE_ID = 'com.apple.iphonesimulator';
 const DEVICE_HUB_BUNDLE_ID = 'com.apple.dt.Devices';
 
-/** `udid` null: the focused simulator cannot be read, so every booted simulator counts as in use. */
+/**
+ * `udid` or `avdName` null: the focused simulator or emulator cannot be read, so every running device of that
+ * platform this home owns counts as in use.
+ */
 export type FocusedDeviceUse =
   | { platform: 'ios'; udid: string | null; idleMs: number }
-  | { platform: 'android'; avdName: string; idleMs: number };
+  | { platform: 'android'; avdName: string | null; idleMs: number };
 
 /** Milliseconds since the last keyboard, mouse or trackpad input, from `ioreg`'s IOHIDSystem `HIDIdleTime` (ns). */
 export function parseHidIdleMs(output: string): number | null {
@@ -47,7 +50,7 @@ async function read(exec: Executor, file: string, args: string[], signal?: Abort
  * The Simulator or emulator window a person used within the last two minutes: the HID idle time is under two
  * minutes and the frontmost app is Simulator.app (its focused device from `CurrentDeviceUDID` when readable),
  * Xcode 27's Device Hub, which records no readable focused device, or an emulator's `qemu-system-*` window (its AVD
- * from the process arguments). These reads need no permission. Null elsewhere, and on any other platform than macOS.
+ * from the process arguments when readable). These reads need no permission. Null elsewhere, and on any other platform than macOS.
  */
 export async function probeFocusedDeviceUse({
   platform = process.platform,
@@ -78,7 +81,7 @@ export async function probeFocusedDeviceUse({
   }
   if (front.pid !== null && /(?:^|\/)qemu-system-[^/]*$/.test(front.executable ?? '')) {
     const avdName = parseAvdName((await read(exec, 'ps', ['-o', 'args=', '-p', String(front.pid)], signal)) ?? '');
-    return avdName ? { platform: 'android', avdName, idleMs } : null;
+    return { platform: 'android', avdName, idleMs };
   }
   return null;
 }
