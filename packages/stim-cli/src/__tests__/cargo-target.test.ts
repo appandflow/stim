@@ -17,7 +17,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { cargoTargetTrimClaims } from '@stim-cli/core/state';
+import { cargoTargetTrimClaims, maintenanceDir } from '@stim-cli/core/state';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import {
   deleteCargoTarget,
@@ -30,9 +30,12 @@ import { launchingWith, noLaunchers } from './fixtures/launching.ts';
 
 const fsHooks = vi.hoisted(
   (): {
-    rename?: (from: string) => void | Promise<void>;
+    rename?: (from: string, to: string) => void | Promise<void>;
     link?: (to: string) => void;
     unlink?: (path: string) => void;
+    mkdir?: (path: string) => void;
+    writeFile?: (path: string) => void;
+    claim?: () => void;
     dev?: (path: string) => number | undefined;
   } => ({}),
 );
@@ -41,8 +44,16 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   return {
     ...fs,
     rename: async (...args: Parameters<typeof fs.rename>) => {
-      await fsHooks.rename?.(String(args[0]));
+      await fsHooks.rename?.(String(args[0]), String(args[1]));
       return fs.rename(...args);
+    },
+    mkdir: async (...args: Parameters<typeof fs.mkdir>) => {
+      fsHooks.mkdir?.(String(args[0]));
+      return fs.mkdir(...args);
+    },
+    writeFile: async (...args: Parameters<typeof fs.writeFile>) => {
+      fsHooks.writeFile?.(String(args[0]));
+      return fs.writeFile(...args);
     },
     unlink: async (...args: Parameters<typeof fs.unlink>) => {
       fsHooks.unlink?.(String(args[0]));
@@ -56,6 +67,17 @@ vi.mock('node:fs/promises', async (importOriginal) => {
       const stat = await fs.lstat(...args);
       const dev = fsHooks.dev?.(String(args[0]));
       return dev === undefined ? stat : Object.assign(stat, { dev });
+    },
+  };
+});
+
+vi.mock('../ownership-claim.ts', async (importOriginal) => {
+  const claims = await importOriginal<typeof import('../ownership-claim.ts')>();
+  return {
+    ...claims,
+    tryAcquireClaim: (...args: Parameters<typeof claims.tryAcquireClaim>) => {
+      fsHooks.claim?.();
+      return claims.tryAcquireClaim(...args);
     },
   };
 });
@@ -399,6 +421,76 @@ test('a launcher on PATH that appears after the first reading keeps what it poin
   }
 });
 
+const diskFull = (code = 'ENOSPC') => Object.assign(new Error(`${code}: no space left on device`), { code });
+const reserveFile = () => join(maintenanceDir(), 'disk-reserve');
+
+function stimHomeWithReserve(): void {
+  beforeEach(() => {
+    vi.stubEnv('STIM_HOME', mkdtempSync(join(tmpdir(), 'stim-cargo-reserve-')));
+    mkdirSync(maintenanceDir(), { recursive: true });
+    writeFileSync(reserveFile(), 'x'.repeat(1024));
+  });
+  afterEach(() => {
+    rmSync(join(maintenanceDir(), '..'), { recursive: true, force: true });
+    vi.unstubAllEnvs();
+    for (const hook of ['mkdir', 'writeFile', 'rename', 'claim'] as const) delete fsHooks[hook];
+  });
+}
+
+function fullOnce(at: 'mkdir' | 'writeFile' | 'rename' | 'claim', match = '', code = 'ENOSPC'): void {
+  let full = true;
+  fsHooks[at] = (...paths: string[]) => {
+    if (!full || (match && !paths.some((path) => path.includes(match)))) return;
+    full = false;
+    throw diskFull(code);
+  };
+}
+
+describe('trimming on a full disk', () => {
+  stimHomeWithReserve();
+  afterEach(() => resetExecutor());
+
+  test.each([
+    ['taking the trim claim', () => fullOnce('claim')],
+    ['making the staging directory', () => fullOnce('mkdir', '.stim-trimmed')],
+    ['the move into staging', () => fullOnce('rename', '.stim-trimmed', 'EDQUOT')],
+  ])('when %s fails, the reserve is released and the stale profile is staged and removed', async (_, fill) => {
+    stubProcesses({});
+    makeProfile('debug', 3 * DAY);
+    makeProfile('release', 0);
+    fill();
+    const staged: string[] = [];
+    const inner = fsHooks.rename;
+    fsHooks.rename = async (from, to) => {
+      await inner?.(from, to);
+      if (to.includes('.stim-trimmed')) staged.push(from);
+    };
+
+    const result = await trimCargoTarget(target, { launching: noLaunchers(target), needBytes: 0 });
+
+    expect(result).toMatchObject({ removed: ['debug'], kept: [], reserveReleased: true });
+    expect(staged).toHaveLength(1);
+    expect(existsSync(reserveFile())).toBe(false);
+    expect(existsSync(join(target, 'debug'))).toBe(false);
+    expect(existsSync(join(target, 'release', 'deps', 'libx.rlib'))).toBe(true);
+    expect(existsSync(join(target, '.stim-trimmed'))).toBe(false);
+  });
+
+  test('without a reserve to release, a full disk keeps the profile', async () => {
+    stubProcesses({});
+    makeProfile('debug', 3 * DAY);
+    rmSync(reserveFile());
+    fullOnce('rename', '.stim-trimmed', 'EDQUOT');
+
+    const result = await trimCargoTarget(target, { launching: noLaunchers(target), needBytes: 0 });
+
+    expect(result.removed).toEqual([]);
+    expect(result.kept).toEqual([expect.stringContaining('could not be moved aside: EDQUOT')]);
+    expect(result.reserveReleased).toBeUndefined();
+    expect(existsSync(join(target, 'debug', 'deps', 'libx.rlib'))).toBe(true);
+  });
+});
+
 function ageTree(path: string): void {
   const old = new Date(Date.now() - 3 * DAY);
   for (const entry of readdirSync(path, { withFileTypes: true }))
@@ -433,6 +525,51 @@ describe.skipIf(process.platform === 'win32')(
       delete fsHooks.unlink;
     });
     const remove = () => deleteCargoTarget(dir, { idleMs: DAY, launching: noLaunchers(target) });
+
+    describe('on a full disk', () => {
+      stimHomeWithReserve();
+
+      test.each([
+        ['taking the trim claim', () => fullOnce('claim')],
+        ['making the staging directory', () => fullOnce('mkdir', '.stim-trimmed')],
+        [
+          'writing the marker',
+          () => {
+            fullOnce('writeFile', 'NOT-RESTORED');
+            const fail = fsHooks.writeFile;
+            fsHooks.writeFile = (path) => {
+              if (path.endsWith('NOT-RESTORED') && !existsSync(path)) writeFileSync(path, '');
+              fail?.(path);
+            };
+          },
+        ],
+      ])('when %s fails, the reserve is released and the target goes through staging', async (_, fill) => {
+        fill();
+
+        const result = await remove();
+
+        expect(result).toMatchObject({ kept: [], reserveReleased: true });
+        expect(result.removed.toSorted()).toEqual(['.rustc_info.json', 'debug', 'doc']);
+        expect(existsSync(reserveFile())).toBe(false);
+        expect(existsSync(dir)).toBe(false);
+      });
+
+      test('a marker that still cannot be written keeps everything and leaves nothing that blocks the next run', async () => {
+        fsHooks.writeFile = (path) => {
+          if (!path.endsWith('NOT-RESTORED')) return;
+          writeFileSync(path, '');
+          throw diskFull();
+        };
+
+        const result = await remove();
+
+        expect(result.kept).toEqual([expect.stringContaining('cannot be written: ENOSPC')]);
+        expect(readdirSync(dir).toSorted()).toEqual(['.rustc_info.json', 'debug', 'doc']);
+        delete fsHooks.writeFile;
+        expect((await remove()).kept).toEqual([]);
+        expect(existsSync(dir)).toBe(false);
+      });
+    });
 
     test('everything goes after the move aside but a deploy/ folder holding a Solana keypair', async () => {
       for (const name of ['criterion', 'gungraun', 'iai']) {

@@ -292,12 +292,40 @@ deleting it breaks the build rather than slowing the next one.
 Chosen by the coordinator and the reviews of #5518 and #5539, not by the
 maintainer.
 
+## A full disk releases the reserve
+
+The trim and the dormant delete write before they free anything: the trim
+claim under `~/.stim/machine/cargo-trim/`, on the dormant path the
+workspace's `native-run` and `metro-start` claims, the `target/.stim-trimmed`
+directory, the rename into it, and the dormant delete's `NOT-RESTORED`
+marker. When one of those writes fails with `ENOSPC`, or `EDQUOT` over a
+quota, Stim deletes its 1 MiB maintenance disk reserve
+(`$STIM_HOME/maintenance/disk-reserve`, the file the maintenance pass and an
+acting `stim gc` already keep) and tries that write once more. The retry runs
+the same staged path with every check above unchanged; for the workspace
+claims it runs the whole removal of that output again. A run that released
+the reserve says so in its outcome. When the write fails again, or there was
+no reserve to release, the `target/` is kept as before. A marker that cannot
+be written is removed with its empty `.stim-trimmed`, and the `target/`
+gets its modification time back, so nothing blocks the next run. The
+maintenance pass writes the reserve back at its end when there is room.
+
+Reason: on 2026-11-19 at 23:01 UTC, with the maintainer's disk full, a rung 3
+trim failed with `ENOSPC` creating `.stim-trimmed` and freed nothing (#6012),
+and on a disk with no free bytes the claims fail first (#6016). Deleting in
+place without staging would need every guarantee of the staged path proven
+again; the reserve gives the staged path the room it needs instead.
+
+Asked for in #6012 and #6016; reusing the reserve was chosen by the
+coordinator of that work, not by the maintainer.
+
 ## Links
 
-- Issues: #5512, #5516, #5523, #5528, #5530, #5979. Pull requests: #5518, #5519,
+- Issues: #5512, #5516, #5523, #5528, #5530, #5979, #6012, #6016. Pull requests: #5518, #5519,
   #5527, #5539. Locking follow-up: #5542.
 - Code: `packages/stim-cli/src/workspace/cargo-target.ts`,
   `packages/stim-cli/src/daemon/dormant-outputs.ts`,
+  `packages/stim-cli/src/disk-reserve.ts`,
   `packages/stim-cli/src/stimd/passes/cargo-target.ts`,
   `packages/stim-cli/src/stimd/passes/defer.ts`,
   `packages/stim-cli/src/daemon/ladder.ts` (`cargoTargetsStep`),

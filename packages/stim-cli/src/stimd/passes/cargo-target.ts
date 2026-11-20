@@ -3,6 +3,7 @@ import { lstat, realpath } from 'node:fs/promises';
 import { dirname, join, sep } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
 import { loadConfig, type MaintenanceAction, type MaintenanceSize, type PressureLevel } from '@stim-cli/core/state';
+import { RESERVE_RELEASED } from '../../disk-reserve.ts';
 import { getExecutor } from '../../exec.ts';
 import { diskPressure, diskThresholds } from '../../daemon/pressure.ts';
 import { measuredDirectorySizeAsync } from '../../fs-util.ts';
@@ -485,7 +486,7 @@ export async function trimCargoTargetAction(
     const freed = after && after.device === before?.device ? after.freeMb - (before?.freeMb ?? 0) : 0;
     result.bytes = result.removed.length && freed > 0 ? Math.round(freed * 1024 * 1024) : 0;
   }
-  const detail = `${result.removed.length ? `removed ${result.removed.join(', ')}` : 'removed nothing'}${result.kept.length ? `; kept ${result.kept.join('; ')}` : ''}`;
+  const detail = `${result.removed.length ? `removed ${result.removed.join(', ')}` : 'removed nothing'}${result.kept.length ? `; kept ${result.kept.join('; ')}` : ''}${result.reserveReleased ? `; ${RESERVE_RELEASED}` : ''}`;
   if (result.deleteError)
     return {
       status: 'failed',

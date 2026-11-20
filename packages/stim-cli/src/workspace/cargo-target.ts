@@ -3,6 +3,7 @@ import { link, lstat, mkdir, readdir, rename, rm, rmdir, unlink, utimes, writeFi
 import { basename, dirname, join } from 'node:path';
 import { cargoTargetTrimClaims } from '@stim-cli/core/state';
 import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-claim.ts';
+import { diskFull, retryWithReserve } from '../disk-reserve.ts';
 import { getExecutor } from '../exec.ts';
 import { measuredDirectorySizeAsync } from '../fs-util.ts';
 import { withCargoLocks } from './cargo-lock.ts';
@@ -410,6 +411,8 @@ export interface CargoTrimResult {
   kept: string[];
   /** Why the final delete failed; what was moved aside stays under `target/.stim-trimmed` for the next pass. */
   deleteError?: string;
+  /** Set when a write found the disk full and the maintenance disk reserve was released to retry it. */
+  reserveReleased?: boolean;
 }
 
 async function sizeOf(path: string, signal?: AbortSignal, lowPriority = false): Promise<number> {
@@ -426,41 +429,49 @@ async function sizeOf(path: string, signal?: AbortSignal, lowPriority = false): 
 export async function trimCargoTarget(registeredTarget: string, options: CargoTrimOptions): Promise<CargoTrimResult> {
   const result: CargoTrimResult = { bytes: 0, removed: [], kept: [] };
   const claimed = await withTrimClaim(registeredTarget, (target) => trimClaimed(target, options));
-  return 'kept' in claimed ? { ...result, kept: [claimed.kept] } : claimed.value;
+  const done = 'kept' in claimed ? { ...result, kept: [claimed.kept] } : claimed.value;
+  return claimed.released ? { ...done, reserveReleased: true } : done;
 }
 
 async function withTrimClaim<T>(
   registeredTarget: string,
   run: (target: string) => Promise<T>,
-): Promise<{ value: T } | { kept: string }> {
+): Promise<({ value: T } | { kept: string }) & { released: boolean }> {
+  let released = false;
   let target: string;
   try {
     target = realpathSync.native(registeredTarget);
   } catch {
-    return { kept: `${registeredTarget} cannot be resolved to its on-disk path` };
+    return { kept: `${registeredTarget} cannot be resolved to its on-disk path`, released };
   }
   // @ref LLP 0005#never-delete-what-a-build-took-back -- one trim of a target at a time across processes
   let claim: ClaimHandle | null | undefined;
   try {
-    const attempt = tryAcquireClaim({
-      root: cargoTargetTrimClaims(target),
-      mode: 'exclusive',
-      label: 'Cargo target trim',
-      details: { target },
-    });
+    // @ref LLP 0005#a-full-disk-releases-the-reserve -- the claim is a write too
+    const attempt = await retryWithReserve(
+      async () =>
+        tryAcquireClaim({
+          root: cargoTargetTrimClaims(target),
+          mode: 'exclusive',
+          label: 'Cargo target trim',
+          details: { target },
+        }),
+      () => (released = true),
+    );
     if (attempt.pending) releaseClaim(attempt.pending);
     claim = attempt.acquired;
     if (!claim) {
       const holder = attempt.held;
       return {
         kept: `another trim of it holds ${holder?.path ?? 'its claim'}${holder ? ` (pid ${holder.owner.pid})` : ''}`,
+        released,
       };
     }
   } catch (error) {
-    return { kept: `its trim claim cannot be taken: ${error instanceof Error ? error.message : error}` };
+    return { kept: `its trim claim cannot be taken: ${error instanceof Error ? error.message : error}`, released };
   }
   try {
-    return { value: await run(target) };
+    return { value: await run(target), released };
   } finally {
     releaseClaim(claim);
   }
@@ -540,7 +551,8 @@ export async function deleteCargoTarget(registeredTarget: string, options: Delet
       ? deleteClaimed(target, options)
       : { bytes: 0, removed: [], kept: ['it is no longer a Cargo target/ Stim recognises'] },
   );
-  return 'kept' in claimed ? { bytes: 0, removed: [], kept: [claimed.kept] } : claimed.value;
+  const done = 'kept' in claimed ? { bytes: 0, removed: [], kept: [claimed.kept] } : claimed.value;
+  return claimed.released ? { ...done, reserveReleased: true } : done;
 }
 
 interface DeleteOptions {
@@ -649,17 +661,33 @@ async function deleteClaimed(
     }
     return { ...result, bytes: 0, kept: [...result.kept, `${why}${left}`] };
   };
+  const released = () => (result.reserveReleased = true);
   if (!(await sameTarget())) return keep(replaced);
   try {
-    await mkdir(aside);
+    // @ref LLP 0005#a-full-disk-releases-the-reserve -- staging retries once after the reserve is released
+    await retryWithReserve(() => mkdir(aside), released);
   } catch (error) {
     return keep(`${aside} cannot be made: ${error instanceof Error ? error.message : error}`);
   }
   // @ref LLP 0005#never-delete-what-a-build-took-back -- staged entries carry the NOT-RESTORED marker until the checks pass
-  await writeFile(
-    marker,
-    `${JSON.stringify(Object.fromEntries(names.map((name, n) => [String(n), name])), null, 2)}\n`,
-  );
+  try {
+    await retryWithReserve(async () => {
+      try {
+        await writeFile(
+          marker,
+          `${JSON.stringify(Object.fromEntries(names.map((name, n) => [String(n), name])), null, 2)}\n`,
+        );
+      } catch (error) {
+        await rm(marker, { force: true });
+        throw error;
+      }
+    }, released);
+  } catch (error) {
+    await rmdir(aside).catch(() => {});
+    if (!diskFull(error)) throw error;
+    await keepTimes();
+    return keep(`${marker} cannot be written: ${error instanceof Error ? error.message : error}`);
+  }
   try {
     for (const [n, name] of names.entries()) {
       signal?.throwIfAborted();
@@ -940,6 +968,7 @@ async function trimClaimed(
   const stale = staleCargoTargetPaths(target, now, profileIdleMs);
   if ('refusal' in stale) return { ...result, kept: [stale.refusal] };
   let moved = 0;
+  const released = () => (result.reserveReleased = true);
   const profilesAt = async (dir: string) => (fingerprintDir(dir) ? [dir] : await childProfiles(dir));
   const move = async (
     dir: string,
@@ -964,10 +993,11 @@ async function trimClaimed(
         return false;
       }
     }
-    await mkdir(aside, { recursive: true });
+    // @ref LLP 0005#a-full-disk-releases-the-reserve -- staging retries once after the reserve is released
+    await retryWithReserve(() => mkdir(aside, { recursive: true }), released);
     const there = join(aside, String(moved++));
     try {
-      await rename(dir, there);
+      await retryWithReserve(() => rename(dir, there), released);
     } catch (error) {
       result.kept.push(`${label}: it could not be moved aside: ${error instanceof Error ? error.message : error}`);
       return false;
