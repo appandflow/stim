@@ -301,6 +301,22 @@ describe.skipIf(process.platform === 'win32')('trimming in place (Cargo locks ne
     expect(result.kept).toEqual([expect.stringContaining(`${deps} is no longer a directory inside`)]);
   });
 
+  test('a link named like a keypair anywhere in the target keeps it whole, and what it points at stays', async () => {
+    makeProfile('debug', 3 * DAY);
+    const deps = join(target, 'debug', 'deps');
+    writeFileSync(join(deps, 'wallet.json'), '[9]');
+    symlinkSync('wallet.json', join(deps, 'App-Keypair.json'));
+    const old = new Date(Date.now() - 3 * DAY);
+    lutimesSync(join(deps, 'App-Keypair.json'), old, old);
+    for (const path of [join(deps, 'wallet.json'), deps, join(target, 'debug')]) utimesSync(path, old, old);
+
+    const result = await trimCargoTarget(target, { needBytes: 0 });
+
+    expect(result.removed).toEqual([]);
+    expect(result.kept).toEqual([expect.stringContaining('App-Keypair.json is a symbolic link')]);
+    expect(readFileSync(join(deps, 'wallet.json'), 'utf8')).toBe('[9]');
+  });
+
   test.each(['.stim-trimmed', '.stim-not-restored-1-0'])(
     'a leftover %s of an earlier trim keeps the target whole and says what to do',
     async (leftover) => {
@@ -404,6 +420,22 @@ describe.skipIf(process.platform === 'win32')('deleting an idle Cargo target who
     expect(readdirSync(join(dir, 'debug'))).toEqual(['.cargo-lock']);
     expect(readdirSync(join(dir, 'deploy')).toSorted()).toEqual(['app-keypair.json', 'app.so']);
     expect(await removableEntries(dir)).toEqual([]);
+  });
+
+  test('a link named like a keypair deep in deploy/ keeps the whole target, and the key it points at stays', async () => {
+    mkdirSync(join(dir, 'deploy', 'debug'), { recursive: true });
+    writeFileSync(join(dir, 'deploy', 'debug', 'wallet.json'), '[1,2,3]');
+    symlinkSync('wallet.json', join(dir, 'deploy', 'debug', 'app-keypair.json'));
+    ageTree(dir);
+    const old = new Date(Date.now() - 3 * DAY);
+    lutimesSync(join(dir, 'deploy', 'debug', 'app-keypair.json'), old, old);
+
+    const result = await remove();
+
+    expect(result.removed).toEqual([]);
+    expect(result.kept).toEqual([expect.stringContaining('app-keypair.json is a symbolic link')]);
+    expect(readFileSync(join(dir, 'deploy', 'debug', 'wallet.json'), 'utf8')).toBe('[1,2,3]');
+    expect(existsSync(join(dir, 'debug', 'app'))).toBe(true);
   });
 
   test('a target with nothing left in it goes too', async () => {
