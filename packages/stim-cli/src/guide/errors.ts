@@ -340,6 +340,8 @@ Rerun with --remote-build auto or remote for placement with local fallback, or
   only; whatever still runs is left untouched. The remedy tells you what to check and which command to run
   again, and when the run held ownership claims it lists the exact \`rm\`
   command for each retained claim.
+  Inside stimd, a child that took no claim and runs an allowlisted read (ps, lsof,
+  du, git, simctl or adb listings) is logged as report_child_left and forgotten.
   When a Metro, tunnel, maintenance child or server worker cannot be verified
   stopped, Stim retains only the claim that guards that child's work. When the
   child is identified, that claim records it and frees itself once the child's

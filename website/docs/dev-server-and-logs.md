@@ -530,6 +530,12 @@ rotated during it, look in `daemon.ndjson.1` too. Include records from both
 sides of a restart or engine switch. Preserve timestamps, event names, error
 codes, build versions, and the run IDs needed to join those records.
 
+A `report_child_left` record (warn, with `pid` and `command`) names a read-only
+child, such as a `ps` or `lsof` listing, whose stop stimd could not verify. stimd
+forgets it, so the child may outlive stimd; it does not hold an idle exit or an
+engine switch. `startup_refused` and `daemon_claims_kept` records include each
+server close error.
+
 Each step of the daemon's cleanup passes writes one `daemon_step` record when
 it ends: every pressure ladder rung, and the loops that read evidence for a
 checkout (`idle_stage_candidates`, `stopped_output_candidates`,
