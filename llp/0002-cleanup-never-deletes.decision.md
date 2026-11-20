@@ -44,7 +44,10 @@ checkout, with a `manifest.json` naming each source path, its size and the
 time. Then the delete goes ahead.
 
 - What is copied: for a node_modules delete, every file of its `.pnpm_patches`
-  when that holds at least one edit folder (the edit folders and `state.json`).
+  when that holds at least one edit folder (the edit folders and `state.json`),
+  or only its `state.json` when that names a live edit folder outside the folder
+  being deleted (`pnpm patch --edit-dir`), so `pnpm patch-commit` still finds the
+  edit after a restore.
   For a worktree removal, one walk of the whole worktree, which does not ask git
   or recognise Cargo targets: it skips `.git`, looks into each node_modules only
   for its `.pnpm_patches` as above, and copies every `*-keypair.json` in any

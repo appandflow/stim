@@ -129,6 +129,41 @@ test('a pnpm --edit-dir inside the deleted folder that state.json names keeps it
 });
 
 test.skipIf(process.platform === 'win32')(
+  'a pnpm --edit-dir recorded through a linked parent of the deleted folder keeps it',
+  async () => {
+    const edit = join(tree, '.cache', 'pkg');
+    mkdirSync(edit, { recursive: true });
+    mkdirSync(join(tree, '.pnpm_patches'));
+    symlinkSync(root, join(base, 'alias'));
+    const recorded = join(base, 'alias', 'node_modules', '.cache', 'pkg');
+    writeFileSync(join(tree, '.pnpm_patches', 'state.json'), JSON.stringify({ [recorded]: { applyToAll: false } }));
+
+    expect(await rescue()).toContain(`edits in ${edit} lie outside`);
+  },
+);
+
+test('a pnpm --edit-dir outside the deleted folder gets its state.json copied, which restores the registration', async () => {
+  const edit = join(base, 'elsewhere', 'pkg');
+  mkdirSync(edit, { recursive: true });
+  mkdirSync(join(tree, '.pnpm_patches'), { recursive: true });
+  const state = JSON.stringify({ [edit]: { patchedPkg: 'pkg@1.0.0', applyToAll: false } });
+  writeFileSync(join(tree, '.pnpm_patches', 'state.json'), state);
+
+  expect(await rescue()).toBeNull();
+  rmSync(tree, { recursive: true });
+  const [copy] = readRescuedCopies();
+  mkdirSync(join(tree, '.pnpm_patches'), { recursive: true });
+  writeFileSync(
+    join(tree, '.pnpm_patches', 'state.json'),
+    readFileSync(join(copy?.dir ?? '', 'node_modules', '.pnpm_patches', 'state.json')),
+  );
+
+  expect(JSON.parse(readFileSync(join(tree, '.pnpm_patches', 'state.json'), 'utf8'))).toEqual({
+    [edit]: { patchedPkg: 'pkg@1.0.0', applyToAll: false },
+  });
+});
+
+test.skipIf(process.platform === 'win32')(
   'a node_modules linked to a folder holding a pnpm patch keeps the worktree',
   async () => {
     mkdirSync(join(root, '.cache', 'deps', '.pnpm_patches', 'pkg@1.0.0'), { recursive: true });

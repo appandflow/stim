@@ -20,7 +20,8 @@ const MAX_RESCUE_ENTRIES = 1_000_000;
  * folder in `trees`, and with `whole`, in every node_modules of `root` and every `*-keypair.json` in any letter case
  * anywhere in it outside `.git` and node_modules, at their paths relative to `root`. Without `act` it only checks.
  * Returns why the delete must not go ahead, or null. It copies only plain files: a link where a protected file is, a
- * link in a `.pnpm_patches`, a `state.json` naming an edit folder elsewhere in `deleting` (`pnpm patch --edit-dir`), a
+ * link in a `.pnpm_patches`, a `state.json` naming an edit folder elsewhere in `deleting` (`pnpm patch --edit-dir`;
+ * one outside `deleting` gets its `state.json` copied, so `pnpm patch-commit` still finds it after a restore), a
  * linked node_modules whose target holds a `.pnpm_patches`, a mount at or under `deleting` by `mountInfo`, another volume than `deleting`'s, a rescue store inside
  * `deleting` or reached through a link, more than RESCUE_CAP_BYTES, more than MAX_RESCUE_ENTRIES entries, or a read or
  * copy that fails or does not finish within RESCUE_MS keeps the folder.
@@ -105,16 +106,22 @@ export async function rescueBeforeDelete(
       const listed = await bounded(dir, () => readdir(dir, { withFileTypes: true }));
       const link = listed.find((entry) => entry.isSymbolicLink());
       if (link) throw new Error(`${join(dir, link.name)} is a link`);
+      const editFolders = listed.some((entry) => entry.isDirectory());
       if (listed.some((entry) => entry.isFile() && entry.name === 'state.json')) {
-        const state: unknown = JSON.parse(await bounded(dir, () => readFile(join(dir, 'state.json'), 'utf8')));
+        const stateFile = join(dir, 'state.json');
+        const state: unknown = JSON.parse(await bounded(dir, () => readFile(stateFile, 'utf8')));
+        let elsewhere = false;
         for (const named of Object.keys(state && typeof state === 'object' ? state : {})) {
-          const edit = resolve(modules, '..', named);
+          const edit = await real(resolve(modules, '..', named));
+          if (!edit) continue;
           const under = (base: string) => edit === base || edit.startsWith(`${base}${sep}`);
-          if (under(doomed) && !under(dir) && (await lstatOrNull(edit)))
-            throw new Error(`pnpm patch edits in ${edit} lie outside ${dir}`);
+          if (under(doomed) && !under(dir)) throw new Error(`pnpm patch edits in ${edit} lie outside ${dir}`);
+          if (!under(doomed)) elsewhere = true;
         }
+        if (elsewhere && !editFolders)
+          found.push({ source: stateFile, size: (await bounded(stateFile, () => lstat(stateFile))).size });
       }
-      if (listed.some((entry) => entry.isDirectory())) await walk(dir, () => true, false);
+      if (editFolders) await walk(dir, () => true, false);
     };
     if (whole) await walk(checkout, isKeypairName, true);
     for (const tree of trees) {
