@@ -1,7 +1,6 @@
 import type { StimContext } from '@stim-cli/core';
 import {
   readDaemonSnapshot,
-  type DaemonLadderAction,
   type DaemonPressure,
   type MaintenanceAction,
   type PressureLevel,
@@ -16,6 +15,7 @@ import { PRESSURE_IDLE_MS } from '../../daemon/idle.ts';
 import { discoveredReads } from '../../workspace/discovered-reads.ts';
 import { deviceSweepIsScoped } from '../../commands/gc/devices.ts';
 import { executeAction, type ActionOutcome } from './act.ts';
+import { fromLadder } from './ladder-run.ts';
 import { executedActionName } from '../../maintenance-kind.ts';
 import { measureCargoTargets, planCargoTargetsAtPressure } from './cargo-target.ts';
 import { maintenancePinnedReader } from './protect.ts';
@@ -100,43 +100,32 @@ function fromOutcome(action: MaintenanceAction, outcome: ActionOutcome): LevelRu
   };
 }
 
-function fromLadder(action: DaemonLadderAction, dormant = false): LevelRunAction {
-  return {
-    rung: dormant ? null : action.rung,
-    kind: action.kind,
-    target: action.target,
-    ...(action.workspace ? { workspace: action.workspace } : {}),
-    outcome: action.outcome,
-    bytes: action.bytes,
-    reason: dormant ? `no activity for ${action.setting ?? 'idle.dormantDays'}` : `pressure ladder rung ${action.rung}`,
-    detail: action.detail,
-    ...(action.restore ? { restore: action.restore } : {}),
-  };
-}
-
 /**
  * One maintenance run at `level`, the measured one by default: at every level the plan of automatic maintenance (cap
  * trims, the age sweep with unused simulator runtimes, the prune of stale records and the finished-worktree check) and
  * the dormant reduction of workspaces idle `idle.dormantDays`, then above normal the pressure ladder forced to that
  * level, every rung to its end. Without `act` it plans and measures and deletes nothing.
- * `onAction` sees each action once it is decided.
+ * `onAction` sees each action once it is decided, and `onLevel` the level once it is known.
  */
 export async function runMaintenanceAtLevel({
   level: chosen,
   act,
   operation,
   onAction,
+  onLevel,
   walkUnknown,
 }: {
   level?: PressureLevel;
   act: boolean;
   operation?: StimContext;
   onAction?: (action: LevelRunAction) => void;
+  onLevel?: (level: PressureLevel) => void;
   walkUnknown?: false;
 }): Promise<LevelRun> {
   const env = operation?.env ?? process.env;
   const pressure = await measureLevel(operation);
   const level = chosen ?? pressure.level;
+  onLevel?.(level);
   const settings = resolveMaintenanceSettings(loadConfig(), env);
   const actions: LevelRunAction[] = [];
   const blocked: string[] = [];

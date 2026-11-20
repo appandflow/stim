@@ -298,10 +298,10 @@ so none ever runs beside another.
   dormant `target/` or dependency tree, and the maintenance plan.
 - The disk pass measures again before each rung, so a level that fell while
   it waited takes only what the new level needs.
-- The hard-floor rank does not change the order in the stim-daemon yet: only
-  the tick asks for disk passes, and it waits for each one, so no two passes
-  queue at once. It is kept for when `stim gc` and a build's headroom pass ask
-  the queue for their passes.
+- An acting `stim gc` and the API's `collectGarbage` ask the queue for a gc
+  pass (Every gc joins a pass under way) at the ladder rank, so it takes the
+  turn at the lane's next unit boundary. The hard-floor rank is kept for when
+  a build's headroom pass asks the queue for its pass.
 - The maintenance pass gives up the turn once it deletes nothing more, before
   its discovery scan and census.
 - When the passes thread ends, a disk pass it had not answered fails as
@@ -316,8 +316,9 @@ so none ever runs beside another.
 The fingerprint precompute deletes nothing and runs beside a disk pass. The
 idle stage's output deletion and the dormant stage's device and archive work
 stay in the tick, inside flows that also stop dev servers and devices and
-hold workspace claims. A build's headroom ladder and `stim gc` run in their
-own processes and keep the claims that guard them today.
+hold workspace claims. A build's headroom ladder and the API's
+`deleteGarbageItem` run in their own processes and keep the claims that guard
+them today.
 
 Reason: on 2026-11-19 the lane's dormant step ran for 49 minutes beside both
 slow rung 1 passes and rung 3, walking the same 171 checkouts with its own
@@ -329,6 +330,51 @@ Maintainer decision: "Like everything gc related should run in same task ro
 avoid concurrency problems", 2026-11-20. The units, the hard-floor priority
 and keeping the idle and dormant stages in the tick are the coordinator's and
 implementer's reading of it on #6029.
+
+## Every gc joins a pass under way
+
+An acting `stim gc` and the API's `collectGarbage` send one `gc.run` request
+to this home's stimd and run nothing in their own process; `gc --dry-run` and
+`previewGarbage` stay there, since they only read. The request starts a stimd
+whatever `daemon.mode` says, as Metro does; under `off` that stimd serves the
+request as a command it runs and exits after it. With no stimd the request
+fails with `STIM_DAEMON_UNAVAILABLE`. stimd's config and environment apply to
+the pass, not the caller's `STIM_*` overrides; the caller's working directory
+travels, so the pass never takes the caller's own workspace.
+
+- A request with no level, or a level at or below that of the pass running or
+  queued on the passes thread, joins it: the running pass first, then the
+  queued one. That pass is another gc pass or the tick's acting disk pass,
+  which frees only the volumes under pressure. The joined result names the
+  pass's start, trigger and level.
+- A request for a higher level raises the queued gc pass to it, or queues one
+  when none waits. At most one gc pass waits.
+- A request that leaves (an interrupted gc, a cancelled call) stops its pass
+  only when no other request waits for it; completed actions stay. The API's
+  report budget detaches instead and the pass goes on.
+- A stimd that stops during the pass fails the request with the remedy to run
+  it again (LLP 0012, A command does not continue across a stimd restart).
+
+Reason: one queue for every cleanup, so a gc and the daemon never repeat each
+other's work on the same disk.
+
+Maintainer decision: "I would like every cleanup to use the same queue,
+including stim gc calls.", 2026-11-20 (#6058).
+
+Maintainer decision: "It should avoid duplicate work too like if gc runs while
+maintenance is ongoing I dont think we need to run it twice as long as it is
+for same pressure lvl (no flag passed or same value as current run)",
+2026-11-20 (#6058).
+
+Maintainer decision: "Always join same level" (a forced `--pressure` level
+joins a pass at that level), 2026-11-20 (#6058).
+
+Maintainer decision: "Accept, stimd's config wins", 2026-11-20 (#6058).
+
+A lower level joins, a higher level queues one pass, and a request leaving
+stops only a pass it alone waits for: the coordinator's reading on #6058. The
+lane's dormant step and maintenance pass are not passes a request joins; a gc
+pass takes the turn at their next unit boundary.
 
 ## Each rung frees only the volumes under pressure
 

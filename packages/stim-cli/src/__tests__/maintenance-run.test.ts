@@ -19,13 +19,15 @@ import * as preview from '../stimd/passes/preview.ts';
 import { cacheClaimRoot } from '../cache/cache-claim.ts';
 import { maintenanceStatus } from '../stimd/passes/status.ts';
 import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
-import { runGc } from '../commands/gc.ts';
+import { runGc as runGcCommand, runGcPass } from '../commands/gc.ts';
 import statusOp from '../commands/status.ts';
 import { runCli } from '../cli/define-op.ts';
 import { warnCriticalDisk } from '../stimd/passes/trigger.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { makeChildProcess } from './_factories.ts';
 import { testContext } from './_context.ts';
+
+const runGc: typeof runGcCommand = (opts, deps) => runGcCommand(opts, deps, runGcPass);
 
 const disk = vi.hoisted(() => ({ full: false, reserve: '', code: 'ENOSPC', partialReserveWrite: false }));
 vi.mock('@stim-cli/core/ownership-claim', async (importOriginal) => {
@@ -105,7 +107,7 @@ test('load deferral leaves the size check due and a failing pressure check is no
   expect(measurements.measureSizes).not.toHaveBeenCalled();
 });
 
-test('an already held pass makes the child exit silently, names the holder to its caller, and gc refuses with the holder', async () => {
+test('an already held pass makes the child exit silently and names the holder to its caller', async () => {
   const attempt = tryAcquireClaim({
     root: maintenanceRunClaims(),
     mode: 'exclusive',
@@ -121,13 +123,6 @@ test('an already held pass makes the child exit silently, names the holder to it
     expect(measurements.measurePressure).not.toHaveBeenCalled();
     expect(out).not.toHaveBeenCalled();
     expect(err).not.toHaveBeenCalled();
-    await runGc({ pressure: 'normal', json: true });
-    const payload = JSON.parse(String(out.mock.calls[0]![0]));
-    expect(payload).toMatchObject({ code: 'STIM_CLAIM_REFUSED' });
-    expect(payload.message).toContain(`pid ${process.pid}`);
-    expect(payload.message).toContain('first-pass');
-    expect(payload.message).toContain(attempt.acquired!.path);
-    expect(out).toHaveBeenCalledTimes(1);
   } finally {
     releaseClaim(attempt.acquired!);
   }

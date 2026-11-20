@@ -300,14 +300,13 @@ status and doctor report invalid settings and unresolved claims with a removal
 command to run only after confirming the holder is gone. Invalid cache caps
 fall back to their own defaults; invalid maintenance settings disable passes.
 Pin a workspace with \`stim settings set maintenance.keep true\` in its project.
-The run claim serializes passes with an acting gc; gc refuses a held claim
-with the holder and recovery guidance instead of waiting. A dry run takes no
-claim.
+An acting gc runs on stimd's passes thread, which serializes it with the
+daemon's own passes; a dry run stays in the calling process.
 Each pass keeps a 1 MiB file, maintenance/disk-reserve. When taking the run
 claim fails with ENOSPC or EDQUOT, the pass deletes it and retries once; a
 Cargo trim or delete, and the dormant step before its workspace claims, delete
 it once up front when their volume has less than 64 MiB free; an acting gc
-gives it back before taking the claim. Either starts deleting at zero
+gives it back before its pass. Either starts deleting at zero
 free disk as long as an earlier run left the reserve, and writes the reserve
 again at its end when there is room.
 
@@ -698,13 +697,21 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
   cannot be read, is kept. stim doctor, stim gc --dry-run and report-mode
   passes write nothing.
 
-  Concurrency: an acting stim gc takes the same exclusive maintenance claim as
-  the stim-daemon's maintenance pass. While one holds it the other refuses at
-  once with STIM_CLAIM_REFUSED naming the holder (pid, start, trigger); retry
-  after it ends. A dry run takes no claim.
+  Where it runs: an acting stim gc (and the API's collectGarbage) asks this
+  home's stimd for a pass, starting one whatever daemon.mode says; with
+  daemon.mode off that stimd exits once the pass ends. stimd's config and
+  environment apply, not the STIM_* variables of the gc command. With no stimd
+  it fails with STIM_DAEMON_UNAVAILABLE and runs nothing. A gc with no
+  --pressure, or a level at or below the level of a pass already running or
+  queued, joins that pass and prints "Joined the <level> pass ..." with the
+  pass's own actions; a higher level queues one pass at that level after it.
+  A pass the daemon runs for disk pressure frees only the volumes under
+  pressure. Interrupting gc stops its pass only when no other request waits
+  for it; completed actions stay. A stimd that stops during the pass fails gc
+  with STIM_DAEMON_UNAVAILABLE: run it again. A dry run takes no claim.
   Full disk: gc gives back the 1 MiB maintenance disk reserve
-  ($STIM_HOME/maintenance/disk-reserve) before taking its claim, so it can
-  start at 0 bytes free, and writes it again when the run ends.
+  ($STIM_HOME/maintenance/disk-reserve) before its pass, so it can start at
+  0 bytes free, and writes it again when the pass ends.
 
 PARKED HOSTED DEVICES
 On a hosting Mac, gc --dry-run lists parked hosted iOS/Android devices by session,

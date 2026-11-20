@@ -18,7 +18,7 @@ import {
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative } from 'node:path';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
-import { runGc } from '../commands/gc.ts';
+import { runGc as runGcCommand, runGcPass } from '../commands/gc.ts';
 import { deleteGcItem } from '../commands/gc/item.ts';
 import * as maintenancePreview from '../stimd/passes/preview.ts';
 import { collectWorkspaceLogs, trimWorkspaceLogs } from '../commands/gc/logs.ts';
@@ -93,6 +93,8 @@ import {
 import { deleteCargoTarget } from '../workspace/cargo-target.ts';
 import { IMPOSSIBLE_PID, goneClaimOwner, liveClaimOwner, plantClaim, writeDerivedData } from './_factories.ts';
 import { gcReportSections } from '../commands/gc/report.ts';
+
+const runGc: typeof runGcCommand = (opts, deps) => runGcCommand(opts, deps, runGcPass);
 
 vi.mock('../devices/machine-cache-usage.ts', () => ({ getMachineCacheReport: async () => null }));
 

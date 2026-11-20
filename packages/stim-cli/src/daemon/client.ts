@@ -8,6 +8,9 @@ import { fileURLToPath } from 'node:url';
 import type { StimContext } from '@stim-cli/core';
 import type { StreamSpec } from '../stimd/logs/streams.ts';
 import type { ServeOptions } from '../stimd/main.ts';
+import type { GcPassRequest } from '../commands/gc.ts';
+import type { GcPassReply } from './disk-owner.ts';
+import type { LevelRunAction } from '../stimd/passes/level-run.ts';
 import { fileLeaseIo, releaseRunLease } from '../engine/device-lease.ts';
 import { deviceSlotKey } from '../devices/device-slots.ts';
 import { operationState } from '../engine/operation-state.ts';
@@ -2114,4 +2117,82 @@ export async function requestDaemonTick(env: NodeJS.ProcessEnv = process.env, si
     await cancellableSleep(100, { signal, what: 'stimd' });
   }
   return tickOnce(TICK_REPLY_TIMEOUT_MS, signal);
+}
+
+/**
+ * Runs one acting gc pass on this home's stimd, or joins one under way there, starting a stimd whatever `daemon.mode`
+ * says; stimd's own config applies, not this process's STIM_* overrides. Without a stimd it fails with
+ * STIM_DAEMON_UNAVAILABLE and runs nothing here. Each action of the pass reaches `onAction` as it lands. An abort of
+ * the operation leaves the pass, which stimd stops when no other request waits for it; a report timeout detaches and
+ * the pass goes on. A stimd that stops before it answers fails the request with the remedy to run it again.
+ */
+export async function runGcThroughStimd(
+  request: GcPassRequest,
+  operation: StimContext | undefined,
+  onAction: (action: LevelRunAction) => void,
+): Promise<GcPassReply> {
+  const signal = operation?.signal;
+  const env = operation?.env ?? process.env;
+  const started = await ensureStimd(
+    env,
+    process.platform,
+    false,
+    undefined,
+    'stim gc',
+    true,
+    undefined,
+    true,
+    operation,
+  );
+  signal?.throwIfAborted();
+  const refused = (): Error => {
+    const why = otherBuildRefusal() ?? {
+      code: 'STIM_DAEMON_UNAVAILABLE',
+      message: "No stimd runs for this Stim home and none could start; an acting gc runs only on this home's stimd.",
+      remedy: 'Run stim doctor, then run the command again.',
+    };
+    return Object.assign(new Error(why.message), why);
+  };
+  if (!started) throw refused();
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (error: Error | null, reply?: GcPassReply) => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener('abort', abort);
+      if (error) reject(error);
+      else if (reply) resolve(reply);
+    };
+    const socket = openStimd(
+      [{ op: 'gc.run', params: { ...request, cwd: operation?.cwd ?? process.cwd() } }],
+      (message) => {
+        if (message.op === 'gc.action' && isJsonObject(message.action)) {
+          onAction(message.action as unknown as LevelRunAction);
+          return;
+        }
+        if (message.op === 'gc.done' && isJsonObject(message.run)) {
+          finish(null, message as unknown as GcPassReply);
+          return;
+        }
+        finish(
+          Object.assign(
+            new Error(typeof message.message === 'string' ? message.message : 'stimd refused the gc pass'),
+            {
+              code: typeof message.code === 'string' ? message.code : 'STIM_DAEMON_UNAVAILABLE',
+              remedy: typeof message.remedy === 'string' ? message.remedy : 'Run the command again.',
+            },
+          ),
+        );
+      },
+    );
+    const abort = () => {
+      const reason: unknown = signal?.reason;
+      if (reason instanceof Error && 'code' in reason && reason.code === 'STIM_REPORT_TIMEOUT') socket.unref();
+      else socket.destroy();
+      finish(reason instanceof Error ? reason : new Error('GC was cancelled.'));
+    };
+    signal?.addEventListener('abort', abort, { once: true });
+    // @ref LLP 0012#a-command-does-not-continue-across-a-stimd-restart -- a gc whose stimd went away fails, never reruns
+    socket.once('close', () => finish(stimdRefused() ? refused() : daemonRestarted()));
+  });
 }

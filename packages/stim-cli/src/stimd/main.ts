@@ -55,6 +55,7 @@ import {
   type DaemonMode,
   type DaemonRecentAction,
   type DaemonSnapshot,
+  type PressureLevel,
 } from '@stim-cli/core/state';
 import { startBuildEndTimer } from './build-end-timer.ts';
 import {
@@ -485,6 +486,8 @@ function handleNetStop(
   else shutdown(why, 'warn');
 }
 
+const GC_LEVELS: readonly PressureLevel[] = ['normal', 'high', 'critical'];
+
 function refusesSealedOperation(sealed: boolean, op: unknown): boolean {
   return (
     sealed &&
@@ -497,6 +500,7 @@ function refusesSealedOperation(sealed: boolean, op: unknown): boolean {
       'metro.prepare',
       'lease.prepare',
       'lease.acquire',
+      'gc.run',
     ].includes(String(op))
   );
 }
@@ -1847,6 +1851,40 @@ async function runStimdInner(
               if (ops.has(socket)) return reply(answer);
               return socket.end(`${JSON.stringify(answer)}\n`);
             });
+        } else if (op === 'gc.run') {
+          const params = isJsonObject(message.params) ? message.params : {};
+          const level = GC_LEVELS.find((entry) => entry === params.level);
+          // @ref LLP 0001#every-gc-joins-a-pass-under-way -- every acting gc runs on the passes thread
+          ops.set(socket, 'pinned');
+          opCommands.set(socket, 'stim gc');
+          const asked = threads.gc(
+            {
+              ...(level ? { level } : {}),
+              client: params.client === 'desktop' ? 'desktop' : 'manual',
+              ...(params.walkUnknown === false ? { walkUnknown: false } : {}),
+              cwd: typeof params.cwd === 'string' ? params.cwd : process.cwd(),
+            },
+            (action) => reply({ op: 'gc.action', action }),
+          );
+          socket.once('close', () => {
+            asked.leave();
+            if (effectiveMode() === 'off') requestTick();
+          });
+          void asked.result
+            .then(
+              (result) => ({ op: 'gc.done', ...result }),
+              (error: unknown) => {
+                if (isUnverifiedCleanup(error) && !contain(error))
+                  failBackground(error, 'gc cleanup could not be verified');
+                return {
+                  op: 'error',
+                  code: error instanceof Error && 'code' in error ? error.code : 'STIM_DAEMON_UNAVAILABLE',
+                  message: error instanceof Error ? error.message : String(error),
+                  remedy: error instanceof Error && 'remedy' in error ? error.remedy : 'Run the command again.',
+                };
+              },
+            )
+            .then((answer) => socket.end(`${JSON.stringify(answer)}\n`));
         } else if (op === 'snapshot') socket.end(`${JSON.stringify({ op: 'snapshot', snapshot: lastSnapshot })}\n`);
         else if (op === 'status') void statuses.answer(message.params).then((answer) => socket.end(`${answer}\n`));
         else if (op === 'tick') {

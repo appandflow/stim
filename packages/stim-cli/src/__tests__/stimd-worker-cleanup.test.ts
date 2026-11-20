@@ -11,6 +11,7 @@ test('a worker cleanup refusal stays visible after the lane settles', async () =
     abort: () => {},
     settle: () => {},
     close: async () => {},
+    gc: () => ({ result: new Promise(() => {}), leave: () => {} }),
   };
   const lane = createPassesLane(threads, () => {}, reported);
   Reflect.apply(lane.start, lane, [{}, false]);
