@@ -548,6 +548,7 @@
 [*] interface GcRunPayload { @@1 mode: "dry-run" | "delete";
 [*] interface GcRunPayload { @@1 outside: LevelRun["outside"];
 [*] interface GcRunPayload { @@1 pressure: DaemonPressure;
+[*] interface GcRunPayload { @@1 rescued?: RescuedCopy[];
 [*] interface GcRunPayload { @@1 results: GcResult[];
 [*] interface GcRunPayload { @@1 sections?: GcJsonSections;
 [*] interface GradleVersionEntry {
@@ -1089,6 +1090,15 @@
 [*] interface RemoteListing { @@2 reachability: Reachability;
 [*] interface RemoteListing { @@2 revoke: string[];
 [*] interface RemoteListing { @@2 serverKeyFingerprint: string | null;
+[*] interface RescuedCopy {
+[*] interface RescuedCopy { @@1 at: number;
+[*] interface RescuedCopy { @@1 dir: string;
+[*] interface RescuedCopy { @@1 from: string;
+[*] interface RescuedCopy { @@1 items: RescuedItem[];
+[*] interface RescuedItem {
+[*] interface RescuedItem { @@1 copy: string;
+[*] interface RescuedItem { @@1 size: number;
+[*] interface RescuedItem { @@1 source: string;
 [*] interface RunExtras {
 [*] interface RunExtras { @@1 cleanAppState?: boolean;
 [*] interface RunExtras { @@1 recordedBuild?: boolean;
