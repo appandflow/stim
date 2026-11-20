@@ -25,7 +25,7 @@ import * as ladder from '../daemon/ladder.ts';
 import * as measure from '../daemon/measure.ts';
 import * as reclaim from '../daemon/reclaim.ts';
 import { ensureStimd } from '../daemon/client.ts';
-import { acquireDisk, diskBoundary, HARD_FLOOR, LANE, releaseDisk } from '../daemon/disk-owner.ts';
+import { acquireDisk, diskBoundary, HARD_FLOOR, LADDER, LANE, releaseDisk } from '../daemon/disk-owner.ts';
 import { createMaintenanceLane, runDiskPass, runHomePasses } from '../daemon/passes.ts';
 import * as fsUtil from '../fs-util.ts';
 import { measureSizes } from '../stimd/passes/measure.ts';
@@ -345,6 +345,22 @@ describe('the disk owner', () => {
     }
 
     expect(order).toEqual(['clear /a/node_modules', 'pass hard floor', 'clear /b/node_modules']);
+  });
+
+  test('a unit boundary refuses to run while the lane does not hold the turn', async () => {
+    expect(() => diskBoundary()).toThrow('did not hold the disk');
+    await acquireDisk(LADDER);
+    try {
+      expect(() => diskBoundary()).toThrow('did not hold the disk');
+    } finally {
+      releaseDisk();
+    }
+    await acquireDisk(LANE);
+    try {
+      await diskBoundary();
+    } finally {
+      releaseDisk();
+    }
   });
 
   test('walks the lane runs side by side hand the turn over once, and each waits until the lane has it back', async () => {

@@ -3,7 +3,7 @@ export const HARD_FLOOR = 0;
 export const LADDER = 1;
 export const LANE = 2;
 
-let held = false;
+let holder: number | null = null;
 const waiting: { rank: number; grant: () => void }[] = [];
 
 /**
@@ -11,8 +11,8 @@ const waiting: { rank: number; grant: () => void }[] = [];
  * maintenance lane's dormant step and maintenance pass, runs while holding it.
  */
 export function acquireDisk(rank: number): Promise<void> {
-  if (!held) {
-    held = true;
+  if (holder === null) {
+    holder = rank;
     return Promise.resolve();
   }
   return new Promise((grant) => {
@@ -23,17 +23,19 @@ export function acquireDisk(rank: number): Promise<void> {
 
 export function releaseDisk(): void {
   const next = waiting.shift();
-  if (next) next.grant();
-  else held = false;
+  holder = next ? next.rank : null;
+  next?.grant();
 }
 
 let regained: Promise<void> | null = null;
 
 /**
- * A unit boundary of the lane: gives the turn to a waiting ladder pass, and takes it back after. Walks the lane runs
- * side by side share one hand-over: each waits until the lane has the turn back.
+ * A unit boundary of the lane, which holds the turn: gives the turn to a waiting ladder pass, and takes it back after.
+ * Walks the lane runs side by side share one hand-over: each waits until the lane has the turn back.
  */
 export function diskBoundary(): Promise<void> {
+  if (!regained && holder !== LANE)
+    throw new Error('a unit boundary ran while the maintenance lane did not hold the disk');
   if (!regained && waiting.some((entry) => entry.rank < LANE)) {
     releaseDisk();
     regained = acquireDisk(LANE).finally(() => {
