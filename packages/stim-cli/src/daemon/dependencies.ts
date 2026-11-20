@@ -447,7 +447,10 @@ export async function clearDependency(
 
 type TreeResult = { status: 'done' | 'kept' | 'failed'; bytes: number; detail: string };
 
-/** Deletes each source checkout's selected trees as one unit, in `trees` order; the outcome of every tree. */
+/**
+ * Deletes each source checkout's selected trees as one unit, in `trees` order, running `between` before each checkout;
+ * the outcome of every tree.
+ */
 export async function clearSourceCheckouts(
   trees: readonly RankedDependency[],
   idleMs: number,
@@ -456,11 +459,13 @@ export async function clearSourceCheckouts(
   operation: StimContext | undefined,
   setting: string,
   level: PressureLevel,
+  between: () => Promise<void>,
 ): Promise<Map<RankedDependency, TreeResult>> {
   const groups = new Map<string, RankedDependency[]>();
   for (const tree of trees) groups.set(tree.candidate.worktree, [...(groups.get(tree.candidate.worktree) ?? []), tree]);
   const results = new Map<RankedDependency, TreeResult>();
   for (const group of groups.values()) {
+    await between();
     const outcomes = await clearSourceDependencies(group, idleMs, protectedRoot, worktrees, level, operation, setting);
     group.forEach((tree, index) => {
       const outcome = outcomes[index];
@@ -726,7 +731,16 @@ async function takeIdleDependencies(
   const why = `${source ? 'idle.sourceDormantDays' : 'idle.dormantDays'} is ${afterMs / (24 * HOUR_MS)}`;
   const sourceResults =
     source && input.act
-      ? await clearSourceCheckouts(take, afterMs, input.protectedRoot ?? '', worktrees, operation, why, 'normal')
+      ? await clearSourceCheckouts(
+          take,
+          afterMs,
+          input.protectedRoot ?? '',
+          worktrees,
+          operation,
+          why,
+          'normal',
+          between,
+        )
       : new Map<RankedDependency, TreeResult>();
   for (const dependency of take) {
     if (!source) await between();

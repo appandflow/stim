@@ -86,6 +86,7 @@ export async function runDiskPass(
   if (!config) return { actions: [], pressure: input.pressure };
   // @ref LLP 0001#one-task-runs-every-gc-deletion -- the ladder and the lane never delete at the same time
   await acquireDisk(input.requested ? HARD_FLOOR : LADDER);
+  const closeGitReads = openGitReads(operation);
   try {
     operation.signal.throwIfAborted();
     const { thresholds } = diskThresholds(config);
@@ -116,6 +117,7 @@ export async function runDiskPass(
       input.pressure,
     );
   } finally {
+    closeGitReads();
     releaseDisk();
   }
 }

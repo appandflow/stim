@@ -18,6 +18,8 @@ import {
 import { readClaimSet } from '@stim-cli/core/ownership-claim';
 import * as engineFollow from '../stimd/engine-follow.ts';
 import * as dependencies from '../daemon/dependencies.ts';
+import { clearSourceCheckouts, type RankedDependency } from '../daemon/dependencies.ts';
+import * as artifacts from '../stimd/passes/artifacts.ts';
 import * as idlePass from '../daemon/idle.ts';
 import * as ladder from '../daemon/ladder.ts';
 import * as measure from '../daemon/measure.ts';
@@ -290,6 +292,59 @@ describe('the disk owner', () => {
 
     await expect(asked).rejects.toThrow('aborted');
     expect(rungs).not.toHaveBeenCalled();
+  });
+
+  test('a hard-floor pass asked while the first of two source checkouts is cleaned runs before the second', async () => {
+    saveConfig({ version: 2, projects: {}, repos: {} });
+    const order: string[] = [];
+    let entered!: () => void;
+    let finish!: () => void;
+    const clearing = new Promise<void>((resolve) => (entered = resolve));
+    const finished = new Promise<void>((resolve) => (finish = resolve));
+    vi.spyOn(artifacts, 'clearSourceTrees').mockImplementation(async (targets) => {
+      order.push(`clear ${targets.join(' ')}`);
+      if (order.length === 1) {
+        entered();
+        await finished;
+      }
+      return new Map(targets.map((target) => [target, { status: 'done' as const, bytes: 1, detail: '' }]));
+    });
+    vi.spyOn(ladder, 'runLadder').mockImplementation(async (_input, pressure) => {
+      order.push('pass hard floor');
+      return { actions: [], pressure };
+    });
+    const tree = (worktree: string): RankedDependency => ({
+      candidate: { worktree, path: join(worktree, 'node_modules'), keys: [], locked: false, reduceOnly: false },
+      source: true,
+      workspace: worktree,
+      bytes: 1,
+      privateBytes: 1,
+    });
+    await acquireDisk(LANE);
+    try {
+      const cleaned = clearSourceCheckouts(
+        [tree('/a'), tree('/b')],
+        0,
+        '',
+        [],
+        testContext(),
+        'idle.sourceDormantDays is 1',
+        'normal',
+        diskBoundary,
+      );
+      await clearing;
+      const floor = runDiskPass(
+        { act: true, pressure: critical('floor'), devices: [], sims: [], requested: true },
+        () => {},
+        testContext(),
+      );
+      finish();
+      await Promise.all([cleaned, floor]);
+    } finally {
+      releaseDisk();
+    }
+
+    expect(order).toEqual(['clear /a/node_modules', 'pass hard floor', 'clear /b/node_modules']);
   });
 
   test('walks the lane runs side by side hand the turn over once, and each waits until the lane has it back', async () => {
