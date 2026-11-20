@@ -404,6 +404,7 @@ other abort), timeoutMs (when the call had one), spawnToCancelMs, cancelToExitMs
 the cancel), exitCode, exitSignal, refusal (unverified, did_not_close or descendants; absent when the cleanup was not refused),
 killedUncaptured (true when the kill was sent), captured and captureReason.
 It changes nothing a pass does.
+report_child_left (warn, pid, command): a cancelled macOS ps listing still ran after its kill and was left.
 
 BUILD LEDGER
 stim logs --source builds reads $STIM_HOME/builds/builds.ndjson from any

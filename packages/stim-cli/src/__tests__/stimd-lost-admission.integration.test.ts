@@ -17,14 +17,7 @@ import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { StimContext } from '@stim-cli/core';
-import {
-  isJsonObject,
-  readMetroExit,
-  stimdBootsFile,
-  stimdClaimRoot,
-  stimdRecordFile,
-  stimdSocket,
-} from '@stim-cli/core/state';
+import { isJsonObject, stimdClaimRoot, stimdRecordFile, stimdSocket } from '@stim-cli/core/state';
 import { processGroupAlive, readClaimSet, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import { holdCIStimd } from '../stimd/attached.ts';
 import {
@@ -32,17 +25,19 @@ import {
   admittedOpToken,
   beforeCommand,
   cancelCliOp,
+  deviceLogReadinessWait,
   ensureMetroThroughStimd,
   ensureTunnelThroughStimd,
+  observeOwnedWeb,
   releaseDeviceTicket,
   releaseOrphanedTicket,
   startDeviceLogStream,
-  stimdBuildId,
+  stimdLive,
 } from '../daemon/client.ts';
 import { acquireRunLease } from '../engine/device-lease-run.ts';
+import { verifyLaunch } from '../engine/launch-verify.ts';
 import { listLeaseFiles, releaseRunLease, takeLease } from '../engine/device-lease.ts';
 import { operationState } from '../engine/operation-state.ts';
-import { getExecutor } from '../exec.ts';
 import { inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
 import * as spawnEntry from '../spawn-entry.ts';
 import { invocation } from '../stimd/forwarded.ts';
@@ -52,7 +47,7 @@ import { workspaceDir } from '../workspace/paths.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 
 const entry = fileURLToPath(new URL('../../bin/cli.ts', import.meta.url));
-const RESTARTED = 'Stim: stimd restarted; this command continues with the new stimd.';
+const RERUN = { code: 'STIM_DAEMON_UNAVAILABLE', remedy: expect.stringContaining('Run the command again') };
 
 let dir: string;
 let home: string;
@@ -107,29 +102,12 @@ function context(root: string, signal: AbortSignal = new AbortController().signa
     projectRoot: root,
     cwd: root,
     env: process.env,
-    runId: 'resume-test',
+    runId: 'lost-admission-test',
     signal,
     output: () => {},
   };
   operationState(operation).takesSignals = true;
   return operation;
-}
-
-/** A stimd entry that starts the real one `delayMs` after it ran, so a resume is in progress meanwhile. */
-function delayedEntry(delayMs: number): { path: string; marker: string } {
-  const path = join(dir, 'delayed-entry.mjs');
-  const marker = join(dir, 'delayed-entry.started');
-  writeFileSync(
-    path,
-    `import { writeFileSync } from 'node:fs';
-writeFileSync(${JSON.stringify(marker)}, 'started');
-setTimeout(() => {
-  process.argv[1] = ${JSON.stringify(entry)};
-  import(${JSON.stringify(entry)});
-}, ${delayMs});
-`,
-  );
-  return { path, marker };
 }
 
 async function admitCli(root: string): Promise<void> {
@@ -142,7 +120,7 @@ const leaseParams = (root: string) => ({
   root,
   platform: 'ios' as const,
   slot: 'default',
-  id: 'SIM-RESUME',
+  id: 'SIM-LOST',
   deviceName: null,
   idLabel: 'udid',
   waitSeconds: 30,
@@ -157,7 +135,7 @@ beforeEach(() => {
 });
 
 function makeScratch(base: string): void {
-  dir = realpathSync(mkdtempSync(join(base, 'stim-resume-')));
+  dir = realpathSync(mkdtempSync(join(base, 'stim-lost-admission-')));
   home = join(dir, 'home');
   mkdirSync(home);
   const bin = join(dir, 'bin');
@@ -185,33 +163,30 @@ afterEach(async () => {
   }
 });
 
-describe.skipIf(process.platform === 'win32')('a command waiting on stimd', () => {
+describe.skipIf(process.platform === 'win32')('a command waiting on stimd when stimd goes away', () => {
   test.each(['SIGKILL', 'SIGTERM'] as const)(
-    'a device lease wait continues with the stimd started after a %s and ends holding one lease',
+    'a device lease wait fails with the rerun error after a %s and starts no stimd',
     async (signal) => {
       const other = workspace('other');
       const root = workspace('app');
-      takeLease({ root: other, platform: 'ios', slot: 'default', id: 'SIM-RESUME', kind: 'run', durationMs: 5000 });
+      takeLease({ root: other, platform: 'ios', slot: 'default', id: 'SIM-LOST', kind: 'run', durationMs: 60_000 });
       const first = await startStimd();
+      const exited = once(first, 'exit');
       await admitCli(root);
       const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
-      const operation = context(root);
       let killed = false;
-      const result = await acquireDeviceTicket(leaseParams(root), operation, (line) => {
-        if (killed || !line.startsWith('waiting for')) return;
-        killed = true;
-        first.kill(signal);
-      });
+      await expect(
+        acquireDeviceTicket(leaseParams(root), context(root), (line) => {
+          if (killed || !line.startsWith('waiting for')) return;
+          killed = true;
+          first.kill(signal);
+        }),
+      ).rejects.toMatchObject(RERUN);
       expect(killed).toBe(true);
-      expect(result).toMatchObject({ status: 'leased', kind: 'run' });
-      expect(stimdPid()).not.toBe(first.pid);
-      expect(errors.mock.calls.filter(([line]) => line === RESTARTED)).toHaveLength(1);
-      const leases = listLeaseFiles().map((file) => file.lease);
-      expect(leases).toEqual([
-        expect.objectContaining({ holder: root, token: result.status === 'leased' && result.token }),
-      ]);
-      await releaseDeviceTicket(String(result.ticket), operation);
-      expect(listLeaseFiles()).toEqual([]);
+      await exited;
+      expect(stimdLive()).toBe(false);
+      expect(errors).not.toHaveBeenCalled();
+      expect(listLeaseFiles().map((file) => file.lease?.holder)).toEqual([other]);
     },
     60_000,
   );
@@ -227,34 +202,6 @@ describe.skipIf(process.platform === 'win32')('a command waiting on stimd', () =
     first.kill('SIGKILL');
     await releaseDeviceTicket(String(result.ticket), operation);
     expect(listLeaseFiles()).toEqual([]);
-  }, 60_000);
-
-  test('a second stimd that dies under the repeated step fails with the unavailable-daemon error after one retry', async () => {
-    const other = workspace('other');
-    const root = workspace('app');
-    takeLease({ root: other, platform: 'ios', slot: 'default', id: 'SIM-RESUME', kind: 'run', durationMs: 60_000 });
-    const first = await startStimd();
-    await admitCli(root);
-    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
-    let second: number | null = null;
-    await expect(
-      acquireDeviceTicket(leaseParams(root), context(root), (line) => {
-        if (!line.startsWith('waiting for')) return;
-        const pid = stimdPid();
-        if (second === null && pid === first.pid) first.kill('SIGKILL');
-        else if (second === null && pid !== null) {
-          second = pid;
-          process.kill(pid, 'SIGKILL');
-        }
-      }),
-    ).rejects.toMatchObject({
-      code: 'STIM_DAEMON_UNAVAILABLE',
-      message: expect.stringContaining('already continued after one restart'),
-    });
-    expect(second).not.toBeNull();
-    expect(errors.mock.calls.filter(([line]) => line === RESTARTED)).toHaveLength(1);
-    expect(stimdPid()).toBe(second);
-    expect(listLeaseFiles().map((file) => file.lease?.holder)).toEqual([other]);
   }, 60_000);
 
   test('releaseOrphanedTicket releases only when the issuing admission is lost, and only by its own token', async () => {
@@ -290,37 +237,7 @@ describe.skipIf(process.platform === 'win32')('a command waiting on stimd', () =
     expect(listLeaseFiles()).toEqual([]);
   }, 60_000);
 
-  test('a lease wait cancelled during the resume stops at once and is not admitted again', async () => {
-    const other = workspace('other');
-    const root = workspace('app');
-    takeLease({ root: other, platform: 'ios', slot: 'default', id: 'SIM-RESUME', kind: 'run', durationMs: 60_000 });
-    const first = await startStimd();
-    await admitCli(root);
-    const delayed = delayedEntry(3000);
-    vi.spyOn(spawnEntry, 'spawnEntry').mockReturnValue(delayed.path);
-    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const controller = new AbortController();
-    let killed = false;
-    const waiting = acquireDeviceTicket(leaseParams(root), context(root, controller.signal), (line) => {
-      if (killed || !line.startsWith('waiting for')) return;
-      killed = true;
-      first.kill('SIGKILL');
-    });
-    const outcome = waiting.then(
-      () => null,
-      (error: unknown) => error,
-    );
-    await vi.waitFor(() => expect(() => readFileSync(delayed.marker)).not.toThrow(), { timeout: 20_000, interval: 50 });
-    const aborted = Date.now();
-    controller.abort();
-    await expect(outcome).resolves.toMatchObject({ code: 'STIM_CANCELLED' });
-    expect(Date.now() - aborted).toBeLessThan(2000);
-    await vi.waitFor(() => expect(stimdPid()).not.toBe(first.pid), { timeout: 20_000, interval: 50 });
-    expect(errors.mock.calls.filter(([line]) => line === RESTARTED)).toHaveLength(0);
-    expect(listLeaseFiles().map((file) => file.lease?.holder)).toEqual([other]);
-  }, 60_000);
-
-  test('SIGINT cancels a spawned Android CLI waiting for a lease on the replacement stimd', async () => {
+  test('a spawned Android CLI whose stimd is killed during its lease wait exits with the rerun remedy and starts no stimd', async () => {
     rmSync(dir, { recursive: true });
     // Vitest removes its run root even when it cannot inspect leftover processes.
     makeScratch(dirname(realpathSync(tmpdir())));
@@ -436,34 +353,21 @@ esac
       );
       command = { child: cli, exited: once(cli, 'exit') };
       let output = '';
-      cli.stdout?.on('data', (chunk) => (output += String(chunk)));
       cli.stderr?.on('data', (chunk) => (output += String(chunk)));
       const waitsForHolder = () => output.split(`waiting for ${other} to release`).length - 1;
       await vi.waitFor(() => assert.equal(waitsForHolder(), 1, output), { timeout: 15_000, interval: 25 });
       assert(first.kill('SIGKILL'));
       await firstExit;
-      await vi.waitFor(
-        () => {
-          expect(output).toContain(RESTARTED);
-          assert.equal(waitsForHolder(), 2, output);
-        },
-        { timeout: 15_000, interval: 25 },
-      );
-      const [replacement] = replacementRecords();
-      assert(replacement && stimdPid() === replacement.pid);
-      const successor = replacement.pid;
-      assert(cli.kill('SIGINT'));
-      await vi.waitFor(() => assert.equal(cli.exitCode, 130, output), { timeout: 5000, interval: 25 });
-      await vi.waitFor(
-        () =>
-          expect(readFileSync(trace, 'utf8')).toMatch(
-            new RegExp(`"name":"stimd\\.lease\\.acquire"[^\\n]*"pid":${successor}\\}`),
-          ),
-        { timeout: 5000, interval: 25 },
-      );
+      await command.exited;
+      expect({ code: cli.exitCode, output }).toMatchObject({
+        code: 1,
+        output: expect.stringContaining("This Stim home's stimd stopped while this command was running."),
+      });
+      expect(output).toContain('Run the command again');
+      expect(output).not.toContain('stimd restarted');
+      expect(replacementRecords()).toEqual([]);
       expect(listLeaseFiles().map(({ lease }) => lease?.token)).toEqual([held.lease.token]);
       releaseRunLease({ root: other, platform: 'android', token: held.lease.token });
-      expect(listLeaseFiles()).toEqual([]);
     } finally {
       if (first.exitCode === null && first.signalCode === null) first.kill('SIGKILL');
       const cli = command?.child;
@@ -484,61 +388,9 @@ esac
       retainFixture = false;
     }
   }, 80_000);
-
-  test('a resume that meets the crash hold fails at once with the hold and its remedy', async () => {
-    const other = workspace('other');
-    const root = workspace('app');
-    takeLease({ root: other, platform: 'ios', slot: 'default', id: 'SIM-RESUME', kind: 'run', durationMs: 60_000 });
-    const first = await startStimd();
-    await admitCli(root);
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    const now = Date.now();
-    const boots = [3, 2, 1].map((ago) => ({
-      at: now - ago * 1000,
-      build: stimdBuildId(),
-      pid: 1,
-      abnormal: true,
-      cause: 'engine',
-      reason: 'thrown for the test',
-    }));
-    const started = Date.now();
-    let killed = false;
-    await expect(
-      acquireDeviceTicket(leaseParams(root), context(root), (line) => {
-        if (killed || !line.startsWith('waiting for')) return;
-        killed = true;
-        writeFileSync(stimdBootsFile(), JSON.stringify({ format: 1, boots }));
-        first.kill('SIGKILL');
-      }),
-    ).rejects.toMatchObject({ code: 'STIM_DAEMON_UNAVAILABLE', remedy: expect.stringContaining('stim doctor --fix') });
-    expect(Date.now() - started).toBeLessThan(15_000);
-    expect(stimdPid()).toBe(first.pid);
-  }, 60_000);
-
-  test('a wait whose stimd does not come back fails within the bound with the unavailable-daemon error', async () => {
-    const other = workspace('other');
-    const root = workspace('app');
-    takeLease({ root: other, platform: 'ios', slot: 'default', id: 'SIM-RESUME', kind: 'run', durationMs: 60_000 });
-    const first = await startStimd();
-    await admitCli(root);
-    vi.spyOn(spawnEntry, 'spawnEntry').mockReturnValue(join(dir, 'missing-entry.mjs'));
-    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const started = Date.now();
-    let killed = false;
-    await expect(
-      acquireDeviceTicket(leaseParams(root), context(root), (line) => {
-        if (killed || !line.startsWith('waiting for')) return;
-        killed = true;
-        first.kill('SIGKILL');
-      }),
-    ).rejects.toMatchObject({ code: 'STIM_DAEMON_UNAVAILABLE', message: expect.stringContaining('stopped') });
-    expect(Date.now() - started).toBeLessThan(20_000);
-    expect(errors.mock.calls.filter(([line]) => line === RESTARTED)).toHaveLength(0);
-    expect(listLeaseFiles().map((file) => file.lease?.holder)).toEqual([other]);
-  }, 60_000);
 });
 
-describe.skipIf(process.platform === 'win32')('a command not waiting on stimd when it restarts', () => {
+describe.skipIf(process.platform === 'win32')('a command not waiting on stimd when stimd goes away', () => {
   const killIdle = async (root: string) => {
     const first = await startStimd();
     await admitCli(root);
@@ -546,55 +398,39 @@ describe.skipIf(process.platform === 'win32')('a command not waiting on stimd wh
     await once(first, 'exit');
     return first;
   };
-  const logSpec = (root: string) => ({
-    root,
-    platform: 'ios' as const,
-    slot: 'default',
-    udid: 'U1',
-    bundleId: 'com.test.app',
-    appName: 'Test',
-  });
 
-  test('a device lease asked after the kill is admitted again by the new stimd', async () => {
+  test('its next device lease fails with the rerun error instead of a local lease or a new stimd', async () => {
     const root = workspace('app');
-    const first = await killIdle(root);
-    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const operation = context(root);
-    const result = await acquireDeviceTicket({ ...leaseParams(root), waitSeconds: 0 }, operation, () => {});
-    expect(result).toMatchObject({ status: 'leased' });
-    expect(stimdPid()).not.toBe(first.pid);
-    expect(errors.mock.calls.filter(([line]) => line === RESTARTED)).toHaveLength(1);
-    await releaseDeviceTicket(String(result.ticket), operation);
+    await killIdle(root);
+    await expect(
+      acquireRunLease({
+        root,
+        platform: 'ios',
+        id: 'SIM-LOST',
+        idLabel: 'udid',
+        waitSeconds: 0,
+        noWait: true,
+        installBoundMs: 0,
+        operation: context(root),
+      }),
+    ).rejects.toMatchObject(RERUN);
+    expect(stimdLive()).toBe(false);
     expect(listLeaseFiles()).toEqual([]);
   }, 60_000);
 
-  test('a log stream start after the kill reaches the new stimd instead of reporting no connection', async () => {
+  test('its next log stream start fails with the rerun error instead of a warning', async () => {
     const root = workspace('app');
     await killIdle(root);
-    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const reply = await startDeviceLogStream(logSpec(root), context(root));
-    expect(JSON.stringify(reply)).not.toContain('no stimd connection');
-    expect(errors.mock.calls.filter(([line]) => line === RESTARTED)).toHaveLength(1);
+    await expect(
+      startDeviceLogStream(
+        { root, platform: 'ios', slot: 'default', udid: 'U1', bundleId: 'com.test.app', appName: 'Test' },
+        context(root),
+      ),
+    ).rejects.toMatchObject(RERUN);
+    expect(stimdLive()).toBe(false);
   }, 60_000);
 
-  test('a log stream start that stimd cannot admit again answers the refusal with its remedy', async () => {
-    const root = workspace('app');
-    await killIdle(root);
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    const now = Date.now();
-    const boots = [3, 2, 1].map((ago) => ({
-      at: now - ago * 1000,
-      build: stimdBuildId(),
-      pid: 1,
-      abnormal: true,
-      cause: 'engine',
-      reason: 'thrown for the test',
-    }));
-    writeFileSync(stimdBootsFile(), JSON.stringify({ format: 1, boots }));
-    const reply = await startDeviceLogStream(logSpec(root), context(root));
-    expect(reply).toEqual({ error: expect.stringContaining('stim doctor --fix') });
-  }, 60_000);
-  test('a tunnel request after the kill starts a stimd even with the daemon mode off', async () => {
+  test('its next tunnel request answers the rerun error and starts no stimd', async () => {
     const root = workspace('app');
     const first = await startStimd();
     vi.stubEnv('STIM_DAEMON', 'off');
@@ -603,15 +439,35 @@ describe.skipIf(process.platform === 'win32')('a command not waiting on stimd wh
     await beforeCommand('start', process.env, { cwd: root, recordUse: false, pin: true, invocation: forwarded });
     first.kill('SIGKILL');
     await once(first, 'exit');
-    vi.spyOn(console, 'error').mockImplementation(() => {});
     const answer = await ensureTunnelThroughStimd(
       { root, port: 8081, mode: 'off', isExpo: false, ngrokUrl: null },
       10_000,
       context(root),
     );
-    expect(answer).not.toMatchObject({ code: 'STIM_DAEMON_UNAVAILABLE' });
-    expect(stimdPid()).not.toBe(first.pid);
+    expect(answer).toMatchObject({ op: 'error', ...RERUN });
+    expect(stimdLive()).toBe(false);
   }, 60_000);
+  test('with the daemon mode off, a Metro request after its tunnel request lost the stimd answers the rerun error and starts no stimd', async () => {
+    const root = workspace('app');
+    vi.stubEnv('STIM_DAEMON', 'off');
+    const operation = context(root);
+    await ensureTunnelThroughStimd({ root, port: 8081, mode: 'off', isExpo: false, ngrokUrl: null }, 10_000, operation);
+    const first = stimdPid();
+    assert(first !== null);
+    process.kill(first, 'SIGKILL');
+    await vi.waitFor(() => expect(alive(first)).toBe(false), { timeout: 10_000, interval: 50 });
+    const answer = await ensureMetroThroughStimd({ root, port: 8081 }, 10_000, operation);
+    expect(answer).toMatchObject({ op: 'error', ...RERUN });
+    expect(stimdLive()).toBe(false);
+  }, 60_000);
+
+  test('its owned browser observation fails with the rerun error and starts no stimd', async () => {
+    const root = workspace('app');
+    await killIdle(root);
+    await expect(observeOwnedWeb(root, process.pid, 'token', process.env)).rejects.toMatchObject(RERUN);
+    expect(stimdLive()).toBe(false);
+  }, 60_000);
+
   test('an API-scoped operation whose stimd is lost still fails a tunnel request as before with the daemon mode off', async () => {
     const root = workspace('app');
     const first = await startStimd();
@@ -634,70 +490,6 @@ describe.skipIf(process.platform === 'win32')('a command not waiting on stimd wh
     );
     expect(answer).toMatchObject({ code: 'STIM_DAEMON_UNAVAILABLE' });
     expect(stimdPid()).toBe(first.pid);
-  }, 60_000);
-
-  test('a device lease after the kill falls back to a local lease when stimd cannot admit it again', async () => {
-    const root = workspace('app');
-    await killIdle(root);
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    const now = Date.now();
-    const boots = [3, 2, 1].map((ago) => ({
-      at: now - ago * 1000,
-      build: stimdBuildId(),
-      pid: 1,
-      abnormal: true,
-      cause: 'engine',
-      reason: 'thrown for the test',
-    }));
-    writeFileSync(stimdBootsFile(), JSON.stringify({ format: 1, boots }));
-    const result = await acquireRunLease({
-      root,
-      platform: 'ios',
-      id: 'SIM-RESUME',
-      idLabel: 'udid',
-      waitSeconds: 0,
-      noWait: true,
-      installBoundMs: 0,
-      operation: context(root),
-    });
-    expect(result).toMatchObject({ status: 'leased' });
-    expect(listLeaseFiles().map((file) => file.lease?.holder)).toEqual([root]);
-  }, 60_000);
-  test('an API-scoped lost token under the crash hold still fails a device lease with the unavailable-daemon error', async () => {
-    const root = workspace('app');
-    const first = await startStimd();
-    await admitCli(root);
-    const token = admittedOpToken();
-    first.kill('SIGKILL');
-    await once(first, 'exit');
-    cancelCliOp();
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    const now = Date.now();
-    const boots = [3, 2, 1].map((ago) => ({
-      at: now - ago * 1000,
-      build: stimdBuildId(),
-      pid: 1,
-      abnormal: true,
-      cause: 'engine',
-      reason: 'thrown for the test',
-    }));
-    writeFileSync(stimdBootsFile(), JSON.stringify({ format: 1, boots }));
-    const operation = context(root);
-    operationState(operation).takesSignals = false;
-    operationState(operation).stimdOpToken = token;
-    await expect(
-      acquireRunLease({
-        root,
-        platform: 'ios',
-        id: 'SIM-RESUME',
-        idLabel: 'udid',
-        waitSeconds: 0,
-        noWait: true,
-        installBoundMs: 0,
-        operation,
-      }),
-    ).rejects.toMatchObject({ code: 'STIM_DAEMON_UNAVAILABLE' });
-    expect(listLeaseFiles()).toEqual([]);
   }, 60_000);
 });
 
@@ -799,101 +591,30 @@ async function stopMetro(root: string): Promise<void> {
   }
 }
 
-describe.skipIf(process.platform === 'win32')('Metro across a stimd restart', () => {
-  test('a Metro wait continues with the stimd started after a kill and answers the same Metro', async () => {
+describe.skipIf(process.platform === 'win32')('Metro when stimd goes away', () => {
+  test('a Metro wait fails with the rerun error, and the rerun answers the same Metro', async () => {
     const { root, helperAccepted, allowReady } = pausedMetroProject();
     const port = await freePort();
-    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
       const answer = ensureMetroThroughStimd({ root, port }, 45_000);
       const metro = await waitForAcceptedMetro(root, helperAccepted);
       const first = stimdPid();
       expect(first).not.toBeNull();
       process.kill(Number(first), 'SIGKILL');
-      await vi.waitFor(
-        () => {
-          const successor = stimdPid();
-          expect(successor).not.toBeNull();
-          expect(successor).not.toBe(first);
-          const claims = readClaimSet(join(workspaceDir(root), 'metro.claim'));
-          expect({
-            claims: claims.live,
-            exit: readMetroExit(root),
-          }).toMatchObject({
-            claims: [{ owner: { pid: successor }, child: { pid: metro }, details: { starting: true } }],
-            exit: null,
-          });
-        },
-        { timeout: 20_000, interval: 50 },
-      );
+      await expect(answer).resolves.toMatchObject({ op: 'error', ...RERUN });
+      expect(stimdLive()).toBe(false);
       allowReady();
-      await expect(answer).resolves.toMatchObject({ op: 'metro', state: 'started', pid: metro, port });
+      await expect(ensureMetroThroughStimd({ root, port }, 45_000)).resolves.toMatchObject({
+        op: 'metro',
+        state: 'started',
+        pid: metro,
+        port,
+      });
       expect(stimdPid()).not.toBe(first);
       expect(metroChildren(root)).toEqual([metro]);
-      expect(errors.mock.calls.filter(([line]) => line === RESTARTED)).toHaveLength(1);
     } finally {
       await stopStimd();
       await stopMetro(root);
-    }
-  }, 90_000);
-});
-
-describe.skipIf(process.platform === 'win32')('an operation held through the API', () => {
-  test('cancelled during a resume, it stops at once and is not admitted again', async () => {
-    const { root, helperAccepted } = pausedMetroProject();
-    const port = await freePort();
-    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const delayed = delayedEntry(3000);
-    const controller = new AbortController();
-    let starter: { child: ChildProcess; settled: Promise<unknown> } | undefined;
-    const executor = getExecutor();
-    const spawnChild = executor.spawn.bind(executor);
-    vi.spyOn(executor, 'spawn').mockImplementation((command, args, options) => {
-      const child = spawnChild(command, args, options);
-      if (args?.[0] === delayed.path) starter = { child, settled: once(child, 'exit').catch(() => {}) };
-      return child;
-    });
-    const answer = ensureMetroThroughStimd({ root, port }, 45_000, undefined, controller.signal);
-    try {
-      await waitForAcceptedMetro(root, helperAccepted);
-      const first = stimdPid();
-      expect(first).not.toBeNull();
-      vi.spyOn(spawnEntry, 'spawnEntry').mockReturnValue(delayed.path);
-      process.kill(Number(first), 'SIGKILL');
-      const replacement = await vi.waitFor(
-        () => {
-          assert(starter?.child.pid);
-          expect(() => readFileSync(delayed.marker)).not.toThrow();
-          return starter.child;
-        },
-        { timeout: 20_000, interval: 50 },
-      );
-      const aborted = Date.now();
-      controller.abort();
-      await expect(answer).resolves.toBeNull();
-      expect(Date.now() - aborted).toBeLessThan(2000);
-      await vi.waitFor(
-        () => {
-          expect(stimdPid()).toBe(replacement.pid);
-          expect(replacement.exitCode).toBeNull();
-          expect(replacement.signalCode).toBeNull();
-        },
-        { timeout: 20_000, interval: 50 },
-      );
-      expect(errors.mock.calls.filter(([line]) => line === RESTARTED)).toHaveLength(0);
-    } finally {
-      controller.abort();
-      try {
-        await answer;
-      } finally {
-        if (starter) {
-          const { child, settled } = starter;
-          if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
-          await settled;
-        }
-        await stopStimd();
-        await stopMetro(root);
-      }
     }
   }, 90_000);
 });
@@ -957,28 +678,6 @@ describe.skipIf(process.platform === 'win32')('a CI hold', () => {
     });
   });
 
-  test('reports that a replacement cannot be held when it belongs to another command', async () => {
-    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
-    await withCIHoldServer([{ op: 'op.begun' }, { ...otherBuildHold, attached: true }], async (connections) => {
-      const release = await holdCIStimd({ ...process.env }, dir, null);
-      try {
-        const first = connections[0];
-        assert(first);
-        first.end();
-        await vi.waitFor(() => {
-          expect(errors).toHaveBeenCalledWith(
-            expect.stringContaining(
-              "replacement cannot be held: This Stim home's stimd runs Stim 2.0.0-other as the child of another command.",
-            ),
-          );
-        });
-        expect(connections).toHaveLength(2);
-      } finally {
-        release();
-      }
-    });
-  });
-
   test('pins a fresh stimd when the one it asked ends instead of answering', async () => {
     const path = stimdSocket();
     mkdirSync(join(path, '..'), { recursive: true });
@@ -1000,24 +699,203 @@ describe.skipIf(process.platform === 'win32')('a CI hold', () => {
     }
   }, 60_000);
 
-  test('pins the stimd it starts after the held one is killed', async () => {
+  test('a held stimd that is killed is not replaced, and the hold says so', async () => {
     const first = await startStimd();
+    const exited = once(first, 'exit');
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
     const release = await holdCIStimd({ ...process.env }, dir, null);
     try {
       first.kill('SIGKILL');
+      await exited;
       await vi.waitFor(
         () =>
-          expect(errors.mock.calls.map(([line]) => line)).toContain(
-            'Stim: stimd restarted; the CI job holds the new stimd.',
+          expect(errors).toHaveBeenCalledWith(
+            "Stim: stimd stopped during the CI job; the job's next stim command starts one.",
           ),
-        { timeout: 30_000, interval: 50 },
+        { timeout: 10_000, interval: 50 },
       );
-      const pid = stimdPid();
-      expect(pid).not.toBe(first.pid);
-      expect(alive(Number(pid))).toBe(true);
+      await new Promise((done) => setTimeout(done, 1000));
+      expect(stimdLive()).toBe(false);
+      expect(errors).toHaveBeenCalledTimes(1);
     } finally {
       release();
     }
+  }, 60_000);
+});
+
+/** A stimd stand-in on this home's socket: `respond` gets each request line, with `reply` sending it after `hello`. */
+async function withFakeStimd(
+  respond: (request: Record<string, unknown>, socket: Socket, reply: (message: object) => void) => void,
+  run: () => Promise<void>,
+): Promise<void> {
+  const path = stimdSocket();
+  mkdirSync(join(path, '..'), { recursive: true });
+  const claim = tryAcquireClaim({ root: stimdClaimRoot(), mode: 'exclusive', label: 'test stimd' }).acquired;
+  assert(claim);
+  const sockets = new Set<Socket>();
+  const server = createServer((socket) => {
+    sockets.add(socket);
+    socket.setEncoding('utf8');
+    let input = '';
+    socket.on('data', (chunk: string) => {
+      input += chunk;
+      const lines = input.split('\n');
+      input = lines.pop() ?? '';
+      for (const line of lines.filter(Boolean)) {
+        const request: unknown = JSON.parse(line);
+        if (isJsonObject(request) && typeof request.op === 'string')
+          respond(request, socket, (message) =>
+            socket.write(`${JSON.stringify({ op: 'hello' })}\n${JSON.stringify(message)}\n`),
+          );
+      }
+    });
+  });
+  try {
+    await new Promise<void>((resolve, reject) => server.once('error', reject).listen(path, resolve));
+    await run();
+  } finally {
+    cancelCliOp();
+    for (const socket of sockets) socket.destroy();
+    if (server.listening) await new Promise<void>((resolve) => server.close(() => resolve()));
+    releaseClaim(claim);
+  }
+}
+
+describe.skipIf(process.platform === 'win32')('a step under way when its admission is lost', () => {
+  test('a Metro wait settles at once with the rerun error instead of waiting for its reply', async () => {
+    const root = workspace('app');
+    let admission: Socket | undefined;
+    await withFakeStimd(
+      (request, socket, reply) => {
+        if (request.op === 'op.begin') {
+          admission = socket;
+          reply({ op: 'op.begun', opToken: 'admission-1' });
+        } else if (request.op === 'metro.prepare') reply({ op: 'metro.prepared', ticket: 'ticket-1' });
+        else if (request.op === 'metro.wait') admission?.end();
+      },
+      async () => {
+        await admitCli(root);
+        const started = Date.now();
+        await expect(ensureMetroThroughStimd({ root, port: 8081 }, 30_000, context(root))).resolves.toMatchObject({
+          op: 'error',
+          ...RERUN,
+        });
+        expect(Date.now() - started).toBeLessThan(5000);
+      },
+    );
+  }, 60_000);
+
+  test('a lease the stimd granted before it went away without replying is released', async () => {
+    const root = workspace('app');
+    let admission: Socket | undefined;
+    await withFakeStimd(
+      (request, socket, reply) => {
+        if (request.op === 'op.begin') {
+          admission = socket;
+          reply({ op: 'op.begun', opToken: 'admission-1' });
+        } else if (request.op === 'lease.prepare') reply({ op: 'lease.prepared', ticket: 'ticket-1' });
+        else if (request.op === 'lease.acquire') {
+          takeLease({ root, platform: 'ios', slot: 'default', id: 'SIM-LOST', kind: 'run', durationMs: 60_000 });
+          admission?.end();
+          socket.end();
+        }
+      },
+      async () => {
+        await admitCli(root);
+        await expect(acquireDeviceTicket(leaseParams(root), context(root), () => {})).rejects.toMatchObject(RERUN);
+        expect(listLeaseFiles()).toEqual([]);
+      },
+    );
+  }, 60_000);
+
+  test('coverage read after its admission is lost fails the launch, even with no wait in between', async () => {
+    const root = workspace('app');
+    let admission: Socket | undefined;
+    let asks = 0;
+    let probes = 0;
+    await withFakeStimd(
+      (request, socket, reply) => {
+        if (request.op === 'op.begin') {
+          admission = socket;
+          reply({ op: 'op.begun', opToken: 'admission-1' });
+        } else if (request.op === 'readiness.wait')
+          reply(
+            ++asks === 1
+              ? { op: 'readiness.changed', revision: 1, coverage: 'pending' }
+              : { op: 'readiness.changed', revision: 2, coverage: 'covered' },
+          );
+      },
+      async () => {
+        await admitCli(root);
+        const since = Date.now();
+        const delivery = { src: 'metro', platform: 'ios', requestId: 'r1' };
+        const metro = [
+          { ...delivery, ts: since + 200, event: 'bundle_response_started' },
+          { ...delivery, ts: since + 400, event: 'bundle_response_finished', statusCode: 200 },
+        ];
+        await expect(
+          verifyLaunch({
+            since,
+            platform: 'ios',
+            metroPort: 8081,
+            requireBundleResponse: true,
+            readRecords: () => metro.filter((record) => record.ts <= Date.now()),
+            readDeviceRecords: () => [],
+            readClientRecords: () => [],
+            deviceStreamId: 'stream',
+            processAlive: async () => {
+              if (++probes === 2) {
+                admission?.end();
+                await new Promise((done) => setTimeout(done, 300));
+              }
+              return true;
+            },
+            sleep: deviceLogReadinessWait(root, 'ios', 'default', 'stream', since, context(root)),
+          }),
+        ).rejects.toMatchObject(RERUN);
+        expect(probes).toBeGreaterThanOrEqual(2);
+      },
+    );
+  }, 60_000);
+
+  test('a readiness wait whose admission is lost fails the launch with the rerun error, not unverified', async () => {
+    const root = workspace('app');
+    let admissions = 0;
+    let admission: Socket | undefined;
+    await withFakeStimd(
+      (request, socket, reply) => {
+        if (request.op === 'op.begin') {
+          admission = socket;
+          reply({ op: 'op.begun', opToken: `admission-${++admissions}` });
+        } else if (request.op === 'readiness.wait') {
+          admission?.end();
+          socket.end();
+        }
+      },
+      async () => {
+        await admitCli(root);
+        const since = Date.now();
+        const delivery = { src: 'metro', platform: 'ios', requestId: 'r1' };
+        const metro = [
+          { ...delivery, ts: since + 200, event: 'bundle_response_started' },
+          { ...delivery, ts: since + 400, event: 'bundle_response_finished', statusCode: 200 },
+        ];
+        await expect(
+          verifyLaunch({
+            since,
+            platform: 'ios',
+            metroPort: 8081,
+            requireBundleResponse: true,
+            readRecords: () => metro.filter((record) => record.ts <= Date.now()),
+            readDeviceRecords: () => [],
+            readClientRecords: () => [],
+            deviceStreamId: 'stream',
+            processAlive: async () => true,
+            sleep: deviceLogReadinessWait(root, 'ios', 'default', 'stream', since, context(root)),
+          }),
+        ).rejects.toMatchObject(RERUN);
+      },
+    );
+    expect(admissions).toBe(1);
   }, 60_000);
 });

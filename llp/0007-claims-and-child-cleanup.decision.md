@@ -38,19 +38,6 @@ cannot answer whether a record on disk still describes its writer.
 
 A process ID can be reused after a crash, and a busy build can outlive any age limit. The claim binds ownership to process identity. The claim-set lock closes the gap between a cleanup survey and a new claimant arriving. The shared protocol also lets cache packages recover claims without depending on the CLI. [Shared ownership claims](https://github.com/appandflow/stim/pull/681), [Claim-only directory locks](https://github.com/appandflow/stim/pull/5340).
 
-## One claim per Cargo target for each user account
-
-A trim of a Cargo `target/`, and the dormant reduction's whole delete of one,
-holds an exclusive claim named by the canonical target path, at
-`~/.stim/machine/cargo-trim/` (`cargoTargetTrimClaims`, core's state paths),
-whatever `STIM_HOME` is, so no two Stim homes of one user account trim or
-delete one target at once (LLP 0005). A claim it cannot take, or cannot prove dead, keeps the
-target, and the kept detail names the claim and the command that removes it;
-the trim does not raise `STIM_CLAIM_REFUSED` or `STIM_CLAIM_UNAVAILABLE`,
-because nothing was deleted and a run that goes on is safe. Release removes
-the claim; one left by a crash is reaped by the next trim once its owner is
-proven gone.
-
 ## A null child is never recovered
 
 A claim whose child file reads `{"record":null}` means an unidentified child may
@@ -107,6 +94,42 @@ would only move the wait to the claims.
 This rule was chosen by the coordinator and the lane that implemented #5499,
 not by the maintainer. The maintainer's requirement it serves, from #5499:
 Maintainer decision: "We really need to fix stimd crashing and not being able to restart automatically", 2026-11-11.
+
+## A killed macOS ps listing is left
+
+On macOS, a report child that a call names as a bare `ps`, with no claims
+declared for it, runs as `/bin/ps`. When its cleanup cannot be verified after
+its cancel, `exec.ts` does not refuse: it logs `report_child_left` (warn, with
+the pid and command), stops reading the child and lets the cancelled call fail
+with its own abort or timeout error. No refusal reaches stimd, so the child
+does not pin stimd, hold idle exit or an engine switch, or keep a claim. At most
+eight such children are left at once in each process or thread, counted until
+each one exits; the ninth is refused as before. A `ps` named by a path, any
+other program, a `ps` with declared claims and every other platform keep the
+refusal. A `ps` with declared claims keeps it because its claim must stay held
+until the child stops.
+
+`/bin/ps` is setuid root, so its identity is never captured. It is sent SIGKILL
+after its cancel (below), and some take minutes to exit. In this Mac's daemon
+logs from 2026-11-09 to 2026-11-20, all 31 refused report children were `ps`
+listings refused this way; 9 of them exited more than 35 s after their cancel,
+the slowest after 467 s. Each one held stimd until it exited. `ps` writes
+nothing, so a left one costs only a process. The cap bounds that cost when `ps`
+hangs for good, for example on a stuck mount.
+
+The 2026-11-15 revisit condition below is met: 22 refusals came after #5778
+landed. The issue #6025 lists "A read-only report child never blocks a
+successor."
+
+Maintainer decision: "I agree lets do this and ur recommendations from prev messages, also lets do the changes now that u flagged as after 2.0 id rather delay than ship what we have", 2026-11-20.
+
+The design read that as "every claimless report child". An audit found
+claimless report children that write (simctl location, privacy and push; adb
+changes; `adb reverse` during reload), so the coordinator of #6025 first
+generalized it to an allowlist of read commands. That allowlist is narrowed to
+the measured case, because classifying arbitrary children after their spawn
+could not prove which program ran. This choice was the coordinator's, not the
+maintainer's.
 
 ## Releasing a claim after a killed fingerprint child
 
@@ -223,6 +246,5 @@ Related: #5766, #5769, #5771.
 - `packages/stim-cli/src/fingerprint/detached-groups.ts`: the ledger and the
   owner's check.
 - `packages/stim-cli/bin/fingerprint-precompute.ts`: the bootstrap.
-- `packages/stim-cli/src/workspace/cargo-target.ts`: the Cargo target trim claim.
 - `packages/stim-cli/src/exec.ts` (`reportChild`): the kill of an uncaptured report child.
 - `packages/stim-cli/src/stimd/cleanup-watch.ts` and `packages/stim-cli/src/stimd/threads.ts`: what stimd stays up for.

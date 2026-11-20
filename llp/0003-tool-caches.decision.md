@@ -25,7 +25,8 @@ nothing by itself; the choices below record what was decided.
 
 ## Rung 9 runs only at critical
 
-Rung 9 runs only at the critical level and only after rungs 0 to 8. The daemon
+Rung 9 runs only at the critical level and only after the rungs that delete,
+0 to 8; only the report rungs 5 and 7 follow it (LLP 0001). The daemon
 runs it at most hourly. A `stim gc` that measured critical measures again after
 the earlier rungs and runs rung 9 only if the disk is still under the critical
 level; an explicit `stim gc --pressure critical` always runs it.

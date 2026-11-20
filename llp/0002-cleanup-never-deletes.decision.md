@@ -18,9 +18,8 @@ At every level, maintenance, the pressure ladder and `stim gc` never delete:
 - anything building, driven, leased, hosted, or pinned with `maintenance.keep`;
 - simulators and emulators a person created (`AGENTS.md`, invariant 2);
 - the dependencies (`node_modules` and Pods) of a source (main) checkout,
-  except after `idle.sourceDormantDays` without activity or at critical after
-  2 idle minutes, and always after every linked worktree's (LLP 0001, the main
-  checkout goes last);
+  except after `idle.sourceDormantDays` without activity, and always after
+  every linked worktree's (LLP 0001, the main checkout goes last);
 - a node_modules or Pods folder with detected hand edits (below).
 
 Only git-ignored regenerable directories go: a real directory inside the

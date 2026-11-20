@@ -1966,6 +1966,32 @@ test('the maintenance ladder collects .dd and CMake output of a registered workt
   expect(await clear(join(registered, 'android', 'app', '.cxx'))).toMatchObject({ status: 'done' });
 });
 
+test('the artifact pass sends a planned Cargo target/ through the Cargo delete even when it is no longer recognised', async () => {
+  const { worktrees } = gitRepoWithWorktrees(['registered'], 'repo', { '.gitignore': 'target/\n' });
+  const registered = realpathSync.native(worktrees.registered ?? '');
+  upsertProject(registered, { metroPort: null });
+  recordWorkspaceUse(registered, new Date(Date.now() - 10 * DAY_MS));
+  const target = join(registered, 'target');
+  mkdirSync(join(target, 'deploy'), { recursive: true });
+  writeFileSync(join(target, 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55\n');
+  writeFileSync(join(target, 'deploy', 'app-keypair.json'), '[1]');
+  writeFileSync(join(target, 'deploy', 'app.so'), 'x');
+
+  const result = await clearArtifact({ kind: 'would-clear-build-dirs', target, bytes: 0, reason: 'test' }, 'build', {
+    windowMs: 0,
+    protectedRoot: '',
+    pinned: () => false,
+    worktrees: artifactWorktrees(),
+    recheck: async () => {
+      rmSync(join(target, 'CACHEDIR.TAG'));
+      return null;
+    },
+  });
+
+  expect(result).toMatchObject({ status: 'kept', detail: expect.stringContaining('no longer a Cargo target/') });
+  expect(readFileSync(join(target, 'deploy', 'app-keypair.json'), 'utf8')).toBe('[1]');
+});
+
 function maintenanceArtifactFixture(sessions: Awaited<ReturnType<typeof agentSessions.discoverAgentSessions>>) {
   const { repo, worktrees } = gitRepoWithWorktrees(['registered']);
   const registered = realpathSync.native(worktrees.registered ?? '');

@@ -283,6 +283,86 @@ test.skipIf(process.platform === 'win32')(
   45_000,
 );
 
+/** Runs `start` for `root` against an attached stimd of `home` that is killed once admission has passed. */
+async function startLosingStimd(root: string, home: string, beforeStart?: () => void): Promise<void> {
+  const bin = join(scratch, 'bin');
+  mkdirSync(bin, { recursive: true });
+  for (const tool of ['launchctl', 'systemd-run']) {
+    writeFileSync(join(bin, tool), '#!/bin/sh\nexit 1\n');
+    chmodSync(join(bin, tool), 0o755);
+  }
+  const env = {
+    ...process.env,
+    PATH: `${bin}:${process.env.PATH}`,
+    STIM_HOME: home,
+    STIM_ENGINE_ROOT: join(home, 'engine'),
+    STIM_DAEMON: 'off',
+  };
+  vi.stubEnv('STIM_HOME', home);
+  vi.stubEnv('PATH', env.PATH);
+  const daemon = getExecutor().spawn(process.execPath, [spawnEntry('cli'), '__stimd', '--attached', '--no-handover'], {
+    env,
+    stdio: ['pipe', 'ignore', 'ignore'],
+  });
+  const exited = once(daemon, 'exit');
+  const stimdPid = () => {
+    try {
+      return Number(JSON.parse(readFileSync(join(home, 'run', 'stimd.json'), 'utf8')).pid);
+    } catch {
+      return null;
+    }
+  };
+  try {
+    await vi.waitFor(() => expect(stimdPid()).toBe(daemon.pid), { timeout: 15_000 });
+    beforeStart?.();
+    await expect(
+      createStim({ projectRoot: root, home, env }).start({
+        waitSeconds: 10,
+        beforeStart: () => daemon.kill('SIGKILL'),
+      }),
+    ).rejects.toMatchObject({
+      code: 'STIM_DAEMON_UNAVAILABLE',
+      remedy: expect.stringContaining('Run the command again'),
+    });
+    await exited;
+    expect(stimdPid()).toBe(daemon.pid);
+  } finally {
+    if (daemon.exitCode === null && daemon.signalCode === null) daemon.kill('SIGKILL');
+    const successor = stimdPid();
+    if (successor && successor !== daemon.pid) {
+      try {
+        process.kill(successor, 'SIGKILL');
+      } catch {}
+    }
+  }
+}
+
+test.skipIf(process.platform === 'win32')(
+  'start whose stimd goes away after admission rejects with the rerun remedy and starts no stimd',
+  async () => {
+    const root = join(scratch, 'lost-stimd');
+    const home = join(scratch, 'lost-stimd-home');
+    mkdirSync(root);
+    mkdirSync(home);
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.88.0' } }));
+    writeFileSync(
+      join(root, '.stim.json'),
+      JSON.stringify({ metro: { command: [process.execPath, '-e', '', '{port}'], tunnel: 'off' } }),
+    );
+    await startLosingStimd(root, home);
+  },
+  45_000,
+);
+
+test.skipIf(process.platform === 'win32')(
+  'start that finds an external Metro after its stimd went away rejects instead of reporting it running',
+  async () => {
+    const item = await metroFixture('lost-external', 999999904);
+    await startLosingStimd(item.root, item.home, () => useExistingMetros([item]));
+  },
+  45_000,
+);
+
 test('start admission resolves the app once and refuses before usage, config changes or Metro probes', async () => {
   const item = await metroFixture('refused', 999999903);
   const child = join(item.root, 'nested');

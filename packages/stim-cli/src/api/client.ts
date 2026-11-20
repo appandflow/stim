@@ -809,7 +809,9 @@ async function read<T>(
       const remedy =
         error instanceof SettingsRefusal
           ? error.remedy
-          : cleanupUnresolved && 'remedy' in error && typeof error.remedy === 'string'
+          : (cleanupUnresolved || error.code === 'STIM_DAEMON_UNAVAILABLE') &&
+              'remedy' in error &&
+              typeof error.remedy === 'string'
             ? error.remedy
             : null;
       throw new StimError(
@@ -891,7 +893,9 @@ async function start(context: StimContext, options: StimStartOptions): Promise<S
   if (problem) throw new StimError({ code: 'STIM_NO_PROJECT', ...problem });
   options.beforeStart?.(root);
   context.signal.throwIfAborted();
-  return withAmbientContext({ ...context, projectRoot: root }, async () => {
+  const startContext = { ...context, projectRoot: root };
+  operationState(startContext).stimdOpToken = operationState(context).stimdOpToken;
+  return withAmbientContext(startContext, async () => {
     const { context: settingsContext, settings } = await resolveProjectSettingsAsync(root, {
       env: context.env,
       signal: context.signal,

@@ -183,6 +183,12 @@ function describeReportCommand(file: string, args: readonly string[], redact?: r
 type CancelReason = 'timeout' | 'overflow' | 'exit' | 'close' | 'report_budget' | 'abort' | 'unknown';
 type Refusal = 'unverified' | 'did_not_close' | 'descendants';
 
+const MAX_LEFT_LISTINGS = 8;
+let leftListings = 0;
+
+const isListing = (program: string, claims: readonly unknown[], report: AbortSignal | undefined): boolean =>
+  report !== undefined && process.platform === 'darwin' && program === 'ps' && claims.length === 0;
+
 function reportChild(
   child: ChildProcess,
   signal?: AbortSignal,
@@ -191,18 +197,22 @@ function reportChild(
   selectedContext?: StimContext,
   command?: string,
   timeoutMs?: number,
-): { cancel: (reason?: CancelReason) => Promise<void>; closed: Promise<void> } | undefined {
+  listing = false,
+): { cancel: (reason?: CancelReason) => Promise<void>; closed: Promise<void>; left: () => boolean } | undefined {
   const context = selectedContext ?? ambientContext();
   const report = reportSignal(context);
   signal ??= report;
   if (!signal) return;
+  let resolveClosed: () => void;
   let rejectClosed: (error: unknown) => void;
   let ended = false;
+  let left = false;
   let finishNativeClose: () => void;
   const nativeClosed = new Promise<void>((resolve) => {
     finishNativeClose = resolve;
   });
   const closed = new Promise<void>((resolve, reject) => {
+    resolveClosed = resolve;
     rejectClosed = reject;
     child.once('close', () => {
       ended = true;
@@ -313,6 +323,33 @@ function reportChild(
           await delay(50);
           identity = observe();
         }
+        // @ref LLP 0007#a-killed-macos-ps-listing-is-left -- at most eight left at once, then refused as before
+        if (
+          identity === 'unknown' &&
+          listing &&
+          child.exitCode === null &&
+          child.signalCode === null &&
+          leftListings < MAX_LEFT_LISTINGS
+        ) {
+          leftListings += 1;
+          left = true;
+          child.once('exit', () => {
+            leftListings -= 1;
+          });
+          child.stdin?.destroy();
+          child.stdout?.destroy();
+          child.stderr?.destroy();
+          child.unref();
+          logReportChild(
+            `report child ${named} was left running after its cancel (${cancelReason}${killedUncaptured ? ', killed with SIGKILL' : ''})`,
+            { pid, command, cancelReason, ...(killedUncaptured ? { killedUncaptured } : {}), left: leftListings },
+            'report_child_left',
+            'warn',
+          );
+          recordExit();
+          resolveClosed();
+          return;
+        }
         if (identity === 'unknown') {
           refuse(
             `Cannot verify cleanup for report child ${named}${captured && !captured.ok ? ` (its identity was not captured at spawn: ${captured.reason})` : ''}; its process or descendants were left untouched.`,
@@ -389,7 +426,7 @@ function reportChild(
     void closed.then(settled, settled);
     if (callerSignal.aborted) abort();
   }
-  return { cancel, closed };
+  return { cancel, closed, left: () => left };
 }
 
 function budgetMs(timeoutMs: ExecOptions['timeoutMs']): number | undefined {
@@ -590,11 +627,13 @@ const defaultExecutor: Executor = {
               retainDeclaration = rejectDeclaration;
             })
           : undefined;
+      const listing = isListing(file, claims, report);
       const contained = startsInReportJob(file, opts, containProcessTree || Boolean(report), context);
       const base =
         contained && timeout !== undefined ? join(tmpdir(), `stim-report-${process.pid}-${randomUUID()}`) : null;
       const markers = base ? { started: `${base}.started`, closed: `${base}.closed` } : undefined;
-      const start = () => (contained ? spawnReportJob(file, args, opts, markers) : spawn(file, args, opts));
+      const start = () =>
+        contained ? spawnReportJob(file, args, opts, markers) : spawn(listing ? '/bin/ps' : file, args, opts);
       const observed = opts.detached ? detachedObserver : null;
       const watch = observed?.begin();
       let child: ChildProcess;
@@ -649,6 +688,7 @@ const defaultExecutor: Executor = {
           context,
           describeReportCommand(file, args, redact),
           timeout,
+          listing,
         );
         cancel = lifetime?.cancel;
         if (cleanupOnExit && cancel)
@@ -656,7 +696,9 @@ const defaultExecutor: Executor = {
             stopTimers();
             void cancel?.('exit').catch(reject);
           });
-        void lifetime?.closed.catch(reject);
+        void lifetime?.closed
+          .then(() => (lifetime?.left() ? finish(null, 'SIGKILL') : undefined), reject)
+          .catch(reject);
         if (observed && watch !== undefined && child.pid !== undefined)
           void lifetime?.closed.then(
             () => quietly(() => observed.settled(watch)),
@@ -803,12 +845,13 @@ const defaultExecutor: Executor = {
     if (report && process.platform !== 'win32') childOpts.detached = true;
     refuseUnsafeBatchArguments(cmd, args, childOpts.env ?? ambientEnv(), childOpts.cwd);
     const claims = report ? [...operationState(context).declaring] : [];
+    const listing = isListing(cmd, claims, report);
     const contained = startsInReportJob(cmd, childOpts, false);
     const observed = childOpts.detached ? detachedObserver : null;
     const watch = observed?.begin();
     let child: ChildProcess;
     try {
-      child = spawnReportProbe(cmd, args, childOpts);
+      child = spawnReportProbe(listing ? '/bin/ps' : cmd, args, childOpts);
     } catch (error) {
       if (observed && watch !== undefined) quietly(() => observed.settled(watch));
       throw error;
@@ -835,6 +878,8 @@ const defaultExecutor: Executor = {
       contained,
       undefined,
       describeReportCommand(cmd, args),
+      undefined,
+      listing,
     );
     if (observed && watch !== undefined && child.pid !== undefined)
       void lifetime?.closed.then(
