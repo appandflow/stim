@@ -951,15 +951,15 @@ function strandedReason(target: string): string | null {
 }
 
 /**
- * Records in `aside` that a directory could not be put back: its marker is renamed to `NOT-RESTORED.failed`, or, when
- * the rename fails, emptied, which a trim does not read as its own.
+ * Records in `aside` that a directory could not be put back: `failed` is appended to its marker, which keeps the name
+ * every Stim build refuses, or, when even the disk reserve leaves no room, the marker is renamed `NOT-RESTORED.failed`.
  */
-async function markPutBackFailed(aside: string): Promise<void> {
+async function markPutBackFailed(aside: string, released: () => void = () => {}): Promise<void> {
   try {
+    await retryWithReserve(() => writeFile(join(aside, STRANDED), 'failed\n', { flag: 'a' }), released);
+  } catch {
     await rename(join(aside, STRANDED), join(aside, PUT_BACK_FAILED));
-    return;
-  } catch {}
-  if (!existsSync(join(aside, PUT_BACK_FAILED))) await writeFile(join(aside, STRANDED), '');
+  }
 }
 
 /**
@@ -970,8 +970,8 @@ async function markPutBackFailed(aside: string): Promise<void> {
 async function clearUnfinished(
   target: string,
   launching: Launching,
-  signal?: AbortSignal,
-  lowPriority = false,
+  removed: string[],
+  { signal, lowPriority = false, stopped }: { signal?: AbortSignal; lowPriority?: boolean; stopped: () => boolean },
 ): Promise<string | null> {
   const aside = join(target, ASIDE);
   const marker = join(aside, STRANDED);
@@ -980,6 +980,8 @@ async function clearUnfinished(
     return null;
   if (!lstatSync(marker, { throwIfNoEntry: false })?.isFile() || readFileSync(marker, 'utf8') !== TRIM_STAGED)
     return null;
+  const notRestored = notRestoredReason(target);
+  if (notRestored) return notRestored;
   const use = await readTargetUse(target, launching, signal, lowPriority);
   if ('kept' in use) return use.kept;
   if (inUse(use.used, aside)) return `a process uses what ${aside} holds, so it stays for a person`;
@@ -993,15 +995,22 @@ async function clearUnfinished(
     staged.map((entry) => join(aside, entry.name)),
     (await lstat(target)).dev,
   );
+  signal?.throwIfAborted();
+  if (stopped()) return DEADLINE_KEPT;
+  if (walked.mount) return `${walked.mount} is another filesystem, so ${aside} stays for a person`;
   if (walked.keypairs.size) return `${aside} holds a Solana keypair, so it stays for a person`;
   await rm(marker);
+  removed.push(...staged.map((entry) => join(ASIDE, entry.name)));
   return null;
 }
 
 /** Why `target` must not be deleted whole: it holds a directory a trim could not put back. */
 function recoveryReason(target: string): string | null {
-  const stranded = strandedReason(target);
-  if (stranded) return stranded;
+  return strandedReason(target) ?? notRestoredReason(target);
+}
+
+/** Why `target` holds a copy a trim could not put back, in a `.stim-not-restored-*` entry. */
+function notRestoredReason(target: string): string | null {
   const entries = entriesOf(target);
   if (!entries) return `${target} cannot be listed`;
   const kept = entries.find((entry) => entry.name.startsWith(NOT_RESTORED));
@@ -1031,7 +1040,9 @@ async function trimClaimed(
   const measured = (path: string): Promise<number> =>
     measure ? sizeOf(path, signal, lowPriority) : Promise.resolve(0);
   const aside = join(target, ASIDE);
-  const blocked = (await clearUnfinished(target, launching, signal, lowPriority)) ?? strandedReason(target);
+  const blocked =
+    (await clearUnfinished(target, launching, result.removed, { signal, lowPriority, stopped })) ??
+    strandedReason(target);
   if (blocked) return { ...result, kept: [blocked] };
   try {
     await rm(aside, { recursive: true, force: true });
@@ -1163,21 +1174,25 @@ async function trimClaimed(
     if ('kept' in fresh) return { ...none, kept: fresh.kept };
     let swept = 0;
     let bytes = 0;
-    const recheck = (path?: string) => async (): Promise<void> => {
-      released();
-      const again = await readTargetUse(target, launching, signal, lowPriority);
-      if ('kept' in again) throw new KeptAfterRelease(again.kept, true);
-      if (path && inUse(again.used, join(profile, path))) throw new KeptAfterRelease(`${path}: a process uses it`);
-    };
+    let unitsUsed = fresh.used;
+    const recheck =
+      (paths: readonly string[] = [], batch?: string) =>
+      async (): Promise<void> => {
+        released();
+        const again = await readTargetUse(target, launching, signal, lowPriority);
+        if ('kept' in again) throw new KeptAfterRelease(again.kept, true);
+        unitsUsed = again.used;
+        const busy = paths.find(
+          (path) =>
+            inUse(unitsUsed, join(profile, path)) || (batch !== undefined && inUse(unitsUsed, join(batch, path))),
+        );
+        if (busy) throw new KeptAfterRelease(`${busy}: a process uses it`);
+      };
     // @ref LLP 0005#never-delete-what-a-build-took-back -- Exact serializes access-time resets and ledger replacement
     const locks = [join(target, `${EXACT_LEDGER}.lock`), ...PROFILE_LOCKS.map((name) => join(profile, name))];
     for (let at = 0; at < candidates.length; at += UNIT_CHUNK) {
       signal?.throwIfAborted();
       if (stopped()) return { units: swept, bytes, kept: DEADLINE_KEPT };
-      const chunk = candidates
-        .slice(at, at + UNIT_CHUNK)
-        .filter(([, paths]) => !paths.some((path) => inUse(fresh.used, join(profile, path))));
-      if (!chunk.length) continue;
       try {
         if (!(await stage(recheck()))) return { units: swept, bytes };
       } catch (error) {
@@ -1185,6 +1200,10 @@ async function trimClaimed(
         wholeKept ||= error.whole;
         return { units: swept, bytes, kept: error.message };
       }
+      const chunk = candidates
+        .slice(at, at + UNIT_CHUNK)
+        .filter(([, paths]) => !paths.some((path) => inUse(unitsUsed, join(profile, path))));
+      if (!chunk.length) continue;
       const batch = join(aside, `units-${moved++}`);
       const movedBatch = await withCargoLocks(
         locks,
@@ -1198,8 +1217,9 @@ async function trimClaimed(
           for (const path of removalOrder(idle.flatMap(([, paths]) => paths))) {
             try {
               // @ref LLP 0005#a-full-disk-releases-the-reserve -- the checks run again before the retry
-              await retryWithReserve(() => mkdir(dirname(join(batch, path)), { recursive: true }), recheck(path));
-              await retryWithReserve(() => rename(join(profile, path), join(batch, path)), recheck(path));
+              const again = recheck([...done, path], batch);
+              await retryWithReserve(() => mkdir(dirname(join(batch, path)), { recursive: true }), again);
+              await retryWithReserve(() => rename(join(profile, path), join(batch, path)), again);
               done.push(path);
             } catch (error) {
               if (errorCode(error) === 'ENOENT') continue;
@@ -1237,7 +1257,7 @@ async function trimClaimed(
         await rename(there, home);
       } catch {
         strand.kept = true;
-        await markPutBackFailed(aside).catch(() => {});
+        await markPutBackFailed(aside, released).catch(() => {});
         return `${path} is missing and could not be put back; it stays in ${batch} for a person to merge or delete`;
       }
     }

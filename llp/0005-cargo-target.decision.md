@@ -97,7 +97,7 @@ made meanwhile or any of those findings puts every moved entry back, and so does
 a cancellation or an error before those checks pass. An entry whose original
 name exists again is not put back over it; like one that cannot be put back,
 it moves to `.stim-not-restored-*` or stays in a `.stim-trimmed` whose
-marker is renamed `NOT-RESTORED.failed`, for a person. A file is put back with `link` then `unlink`, which
+marker records `failed`, for a person. A file is put back with `link` then `unlink`, which
 fails rather than replace a name a build recreated meanwhile. A directory is put
 back with `rename` after checking its name is free: `rename` fails onto a
 directory that is not empty, but replaces an empty one, so a directory a build
@@ -267,23 +267,26 @@ new path. A build that took a lock in
 between gets the directory back. A directory that cannot be put back is never
 deleted: it moves to `target/.stim-not-restored-*`, which later trims skip, for
 a person to merge or delete. If that move fails too, it stays in
-`.stim-trimmed`, its marker is renamed `NOT-RESTORED.failed` (or emptied when
-the rename fails), and later trims of that `target/` stop until a person
-removes it.
+`.stim-trimmed`, `failed` is appended to its marker (retried after releasing
+the disk reserve; when that still fails, the marker is renamed
+`NOT-RESTORED.failed`, which needs no space), and later trims of that
+`target/` stop until a person removes it. When the put-back, the append and
+the rename all fail, nothing records it, a known gap that main shares.
 
 The trim writes its own marker, `NOT-RESTORED` holding `staged`, before its
 first move, and removes it only when what it staged has passed its checks. A
 later trim that finds exactly that marker, in a `.stim-trimmed` that is a real
 directory, treats it as a trim that did not finish, such as one whose process
 was killed. Under the trim claim it reads the processes once, probes the Cargo
-and Exact lock files of each staged entry at its staged path, and looks for a
-`*-keypair.json` in them. When nothing uses, holds or keeps any of them, it
-removes the marker, deletes the staged entries and goes on. Anything else
-keeps the whole `.stim-trimmed` for a person: a process in use, a held lock, a
-keypair, a launcher or process evidence that cannot be read, a check that
-throws or is cancelled, and every other marker: the dormant delete's list of
-names, an emptied marker, `NOT-RESTORED.failed`, or a `.stim-not-restored-*`
-entry. Whatever deletes a `target/` whole (the dormant delete, the idle stage,
+and Exact lock files of each staged entry at its staged path, and walks them
+for a `*-keypair.json` and for another filesystem mounted inside. When nothing
+uses, holds or keeps any of them, it removes the marker, reports the staged
+entries as removed, deletes them and goes on. Anything else keeps the whole
+`.stim-trimmed` for a person: a process in use, a held lock, a keypair, a
+mount, a launcher or process evidence that cannot be read, a check that throws,
+is cancelled or reaches the build headroom deadline, a `.stim-not-restored-*`
+entry in the `target/`, and every other marker: the dormant delete's list of
+names, a marker holding `failed`, or `NOT-RESTORED.failed`. Whatever deletes a `target/` whole (the dormant delete, the idle stage,
 gc's workspace outputs) treats any marker as a veto.
 
 Maintainer decision: "Ok 2", 2026-11-19
