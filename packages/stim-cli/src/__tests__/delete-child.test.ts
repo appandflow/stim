@@ -1,5 +1,7 @@
 import { EventEmitter } from 'node:events';
 import {
+  chmodSync,
+  existsSync,
   readdirSync,
   lstatSync,
   mkdirSync,
@@ -20,6 +22,27 @@ import { runRmJob } from '../workspace/remover.ts';
 
 const POSIX = process.platform !== 'win32';
 
+function fakeChild(ready: boolean, exitsOnKill: boolean) {
+  const child = Object.assign(new EventEmitter(), {
+    pid: process.pid,
+    exitCode: null,
+    signalCode: null,
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    kill: vi.fn<(signal: string) => boolean>(() => {
+      if (exitsOnKill) child.emit('exit', null, 'SIGKILL');
+      return true;
+    }),
+  });
+  if (ready) child.stdout.write('{"ready":true}\n');
+  return child;
+}
+
+function plantFiles(dir: string): void {
+  mkdirSync(join(dir, 'nested'), { recursive: true });
+  writeFileSync(join(dir, 'nested', 'file'), 'x');
+}
+
 let base: string;
 
 beforeEach(() => {
@@ -34,15 +57,7 @@ afterEach(() => {
 test.skipIf(!POSIX)(
   'a cancelled delete child whose exit cannot be proven fails as a refusal and keeps the claim with the child',
   async () => {
-    const child = Object.assign(new EventEmitter(), {
-      pid: process.pid,
-      exitCode: null,
-      signalCode: null,
-      stdin: new PassThrough(),
-      stdout: new PassThrough(),
-      kill: vi.fn<(signal: string) => boolean>(() => true),
-    });
-    child.stdout.write('{"ready":true}\n');
+    const child = fakeChild(true, false);
     setExecutor({ ...getExecutor(), spawn: () => child });
     mkdirSync(join(base, 'tree'));
     writeFileSync(join(base, 'tree', 'file'), 'x');
@@ -52,7 +67,10 @@ test.skipIf(!POSIX)(
     const controller = new AbortController();
     const written = new Promise((resolve) => child.stdin.once('data', resolve));
 
-    const deleting = session.rm(join(base, 'tree'), claim, controller.signal);
+    const deleting = session.rm(join(base, 'tree'), claim, {
+      dev: lstatSync(base).dev,
+      signal: controller.signal,
+    });
     const refused = deleting.catch((error: unknown) => error);
     await written;
     controller.abort();
@@ -118,3 +136,110 @@ describe.skipIf(!POSIX)('a directory swapped for a link after its check', () => 
     expect(process.cwd()).toBe(cwd);
   });
 });
+
+describe.skipIf(!POSIX)('a delete child that is not ready', () => {
+  test('is killed after 5 s and the delete runs in this thread', async () => {
+    const child = fakeChild(false, true);
+    setExecutor({ ...getExecutor(), spawn: () => child });
+    plantFiles(join(base, 'tree'));
+    const opening = openDeleteSession();
+    await vi.advanceTimersByTimeAsync(5000);
+    const session = await opening;
+
+    expect(child.kill).toHaveBeenCalledWith('SIGKILL');
+    const claim = tryAcquireClaim({ root: join(base, 'claims'), mode: 'exclusive', label: 'test' }).acquired;
+    if (!claim) throw new Error('the test claim was not acquired');
+    expect(await session.rm(join(base, 'tree'), claim, { dev: lstatSync(base).dev })).toEqual({ done: { left: [] } });
+    expect(child.stdin.read()).toBeNull();
+    releaseClaim(claim);
+  });
+
+  test('is killed when the caller cancels, and the cancel is thrown', async () => {
+    const child = fakeChild(false, true);
+    setExecutor({ ...getExecutor(), spawn: () => child });
+    const controller = new AbortController();
+    const opening = openDeleteSession(controller.signal).catch((error: unknown) => error);
+    controller.abort(new Error('stop the sweep'));
+
+    expect(await opening).toMatchObject({ message: 'stop the sweep' });
+    expect(child.kill).toHaveBeenCalledWith('SIGKILL');
+  });
+});
+
+test.skipIf(!POSIX)('a delete keeps a tree with a mount point at or under it', async () => {
+  const tree = join(base, 'tree');
+  plantFiles(tree);
+  const mountInfo = () =>
+    `36 35 98:0 /data ${join(tree, 'nested').replaceAll(' ', '\\040')} rw,noatime - ext4 /dev/sda1 rw\n`;
+
+  const outcome = await runRmJob(
+    { id: 1, op: 'rm', path: tree, dev: lstatSync(tree).dev },
+    new AbortController().signal,
+    {
+      mountInfo,
+    },
+  );
+
+  expect(outcome).toEqual({ kept: `${join(tree, 'nested')} is a mount point` });
+  expect(readdirSync(join(tree, 'nested'))).toEqual(['file']);
+});
+
+test.skipIf(!POSIX || process.getuid?.() === 0)(
+  'a delete whose path cannot be inspected fails with the error instead of counting as done',
+  async () => {
+    setExecutor({
+      ...getExecutor(),
+      spawn: () => {
+        throw new Error('no delete child in unit tests');
+      },
+    });
+    const locked = join(base, 'locked');
+    plantFiles(locked);
+    chmodSync(locked, 0o000);
+    const claim = tryAcquireClaim({ root: join(base, 'claims'), mode: 'exclusive', label: 'test' }).acquired;
+    if (!claim) throw new Error('the test claim was not acquired');
+    try {
+      const session = await openDeleteSession();
+      const failure = await session
+        .rm(join(locked, 'nested', 'file'), claim, { dev: lstatSync(base).dev })
+        .catch((error: unknown) => error);
+      expect(failure).toMatchObject({ code: 'EACCES' });
+    } finally {
+      chmodSync(locked, 0o700);
+      releaseClaim(claim);
+    }
+  },
+);
+
+async function removesNamesThatAreNotUtf8(anchored: boolean, skip: (note: string) => void): Promise<void> {
+  const tree = join(base, 'tree');
+  mkdirSync(tree);
+  const raw = (name: number[]) => Buffer.concat([Buffer.from(`${tree}/`), Buffer.from(name)]);
+  try {
+    writeFileSync(raw([0x66, 0xff]), 'x');
+    mkdirSync(raw([0x64, 0xfe]));
+    writeFileSync(Buffer.concat([raw([0x64, 0xfe]), Buffer.from('/inner')]), 'y');
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'EILSEQ')
+      skip('this filesystem rejects such names');
+    throw error;
+  }
+
+  const outcome = await runRmJob(
+    { id: 1, op: 'rm', path: tree, dev: lstatSync(tree).dev },
+    new AbortController().signal,
+    anchored ? { cwd: { chdir: (path: string) => process.chdir(path), current: () => process.cwd() } } : {},
+  );
+
+  expect(outcome).toEqual({ done: { left: [] } });
+  expect(existsSync(tree)).toBe(false);
+}
+
+test.skipIf(!POSIX)('the delete child removes a file and a directory whose names are not valid UTF-8', ({ skip }) =>
+  removesNamesThatAreNotUtf8(true, skip),
+);
+
+test.skipIf(!POSIX)(
+  'a delete in the caller thread removes a file and a directory whose names are not valid UTF-8',
+  ({ skip }) => removesNamesThatAreNotUtf8(false, skip),
+);

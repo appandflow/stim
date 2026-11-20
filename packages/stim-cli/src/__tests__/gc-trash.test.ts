@@ -1,9 +1,21 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { collectTrash, deleteTrash } from '../commands/gc/trash.ts';
 import { takeGcResults } from '../commands/gc/results.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { executeAction } from '../stimd/passes/act.ts';
+import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
+import { testContext } from './_context.ts';
 import { goneClaimOwner, liveClaimOwner, plantClaim } from './_factories.ts';
 
 const POSIX = process.platform !== 'win32';
@@ -145,3 +157,48 @@ test.skipIf(!POSIX)('gc keeps a trash entry whose ownership claim cannot be veri
   });
   expect(existsSync(join(entry, 'entries', '0', 'file'))).toBe(true);
 });
+
+test.skipIf(!POSIX)(
+  'gc finishes an entry whose delete stopped after its manifest went, and only once its claim is free',
+  async () => {
+    const stopped = join(trash, 'remove-stopped');
+    plantClaim(join(stopped, 'claims'), 'exclusive', goneClaimOwner());
+    const finishing = join(trash, 'remove-finishing');
+    plantClaim(join(finishing, 'claims'), 'exclusive', liveClaimOwner());
+
+    const report = await collectTrash();
+    expect(report?.entries.find((item) => item.path === stopped)).toMatchObject({ willDelete: true, kept: null });
+    expect(report?.entries.find((item) => item.path === finishing)?.kept).toBe(
+      'a worktree removal is still moving or deleting it',
+    );
+
+    expect(await deleteTrash(undefined)).toMatchObject({ count: 1, failures: 0 });
+    expect(existsSync(stopped)).toBe(false);
+    expect(existsSync(join(finishing, 'claims'))).toBe(true);
+  },
+);
+
+test.skipIf(!POSIX)(
+  'cancelling the trash action stops a delete in this thread part way and keeps the entry',
+  async () => {
+    const entry = plantEntry('remove-cancelled', join(base, 'gone'));
+    for (let index = 0; index < 2000; index++) writeFileSync(join(entry, 'entries', '0', `f${index}`), 'x');
+    const controller = new AbortController();
+    const operation = testContext({ home: join(base, 'stim'), signal: controller.signal });
+    const watch = () => {
+      if (readdirSync(join(entry, 'entries', '0')).length < 2001)
+        controller.abort(new Error('cancel the trash action'));
+      else setImmediate(watch);
+    };
+    setImmediate(watch);
+
+    const outcome = await executeAction(
+      { kind: 'would-delete-trash', target: trash, bytes: 0, reason: '' },
+      { settings: resolveMaintenanceSettings(null, { STIM_DAEMON: 'on' }), protectedRoot: '', operation },
+    ).catch((error: unknown) => error);
+
+    expect(outcome).toMatchObject({ message: 'cancel the trash action' });
+    expect(existsSync(join(entry, 'trash.json'))).toBe(true);
+    expect(readdirSync(join(entry, 'entries', '0')).length).toBeGreaterThan(0);
+  },
+);

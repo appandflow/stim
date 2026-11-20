@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { lstat, mkdir, mkdtemp, rename, rm, rmdir, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readdir, rename, rm, rmdir, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
 import { captureProcessIdentity, childExitedWithin } from '@stim-cli/core/process-identity';
@@ -200,18 +200,20 @@ export async function restoreTrashedTrees(trash: WorktreeTrash): Promise<string[
 }
 
 /**
- * Deletes one trash entry through `session` while `claim` holds it: its trees first, then the manifest and the claims,
- * so an entry stopped part way keeps its manifest and a later gc deletes it.
+ * Deletes one trash entry through `session` while `claim` holds it, each step leaving a state gc finishes: everything but
+ * the claims and the manifest, then the manifest, then the claim, then the emptied entry. Only `dev`, the trash root's
+ * device, is deleted from. Throws, with the claim still held, when a step fails.
  */
 export async function deleteTrashEntry(
   dir: string,
   claim: ClaimHandle,
   session: DeleteSession,
-  signal?: AbortSignal,
+  options: { dev: number; signal?: AbortSignal },
 ): Promise<void> {
-  for (const path of [join(dir, TRASH_ENTRIES), dir]) {
-    const outcome = await session.rm(path, claim, signal);
-    if ('cancelled' in outcome) signal?.throwIfAborted();
+  for (const name of await readdir(dir)) {
+    if (name === TRASH_CLAIMS || name === TRASH_MANIFEST) continue;
+    const outcome = await session.rm(join(dir, name), claim, options);
+    if ('cancelled' in outcome) options.signal?.throwIfAborted();
     if ('done' in outcome && !outcome.done.left.length) continue;
     throw new Error(
       'kept' in outcome
@@ -223,6 +225,16 @@ export async function deleteTrashEntry(
             : 'the delete was cancelled',
     );
   }
+  await unlink(join(dir, TRASH_MANIFEST)).catch(ignoreMissing);
+  releaseClaim(claim);
+  await rmdir(dir).catch((error: unknown) => {
+    const code = error instanceof Error && 'code' in error ? error.code : undefined;
+    if (code !== 'ENOENT' && code !== 'ENOTEMPTY' && code !== 'EEXIST') throw error;
+  });
+}
+
+function ignoreMissing(error: unknown): void {
+  if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
 }
 
 async function deleteInBackground(trash: WorktreeTrash): Promise<'background' | 'deleted' | 'left'> {
@@ -284,17 +296,19 @@ export async function disposeTrash(
   operation?: StimContext,
 ): Promise<'background' | 'deleted' | 'left'> {
   if (!getExecutor().reportSignal?.()) return deleteInBackground(trash);
-  const session = await openDeleteSession();
+  let session: DeleteSession | undefined;
   let retained = false;
   try {
-    await deleteTrashEntry(trash.dir, trash.claim, session, operation?.signal);
+    const { dev } = await lstat(trashRoot());
+    session = await openDeleteSession(operation?.signal);
+    await deleteTrashEntry(trash.dir, trash.claim, session, { dev, signal: operation?.signal });
     return 'deleted';
   } catch (error) {
     retained = error instanceof WorkspaceProcessCleanupError;
     rethrowCancellation(error, operation?.signal);
     return 'left';
   } finally {
-    await session.close();
+    await session?.close();
     if (!retained) releaseClaim(trash.claim);
   }
 }

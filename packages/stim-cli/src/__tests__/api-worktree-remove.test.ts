@@ -134,17 +134,19 @@ test.skipIf(process.platform === 'win32')(
     writeFileSync(join(item.root, '.git', 'info', 'exclude'), 'node_modules/\n');
     mkdirSync(join(item.linked, 'node_modules', 'pkg'), { recursive: true });
     writeFileSync(join(item.linked, 'node_modules', 'pkg', 'index.js'), 'module.exports = 1;');
-    const execSpy = vi.spyOn(getExecutor(), 'runFileAsync');
-    const client = createStim({ projectRoot: item.linked, home: item.home, env: item.env });
+    const spawnSpy = vi.spyOn(getExecutor(), 'spawn');
+    try {
+      const client = createStim({ projectRoot: item.linked, home: item.home, env: item.env });
 
-    expect(await client.removeWorktree()).toEqual({ removed: true, exitCode: 0 });
+      expect(await client.removeWorktree()).toEqual({ removed: true, exitCode: 0 });
 
-    expect(existsSync(item.linked)).toBe(false);
-    expect(readdirSync(join(item.home, 'trash'))).toEqual([]);
-    expect(execSpy.mock.calls.filter(([file]) => file === 'rm').map(([, , options]) => options?.cwd)).toEqual([
-      join(item.home, 'trash'),
-    ]);
-    execSpy.mockRestore();
+      expect(existsSync(item.linked)).toBe(false);
+      expect(readdirSync(join(item.home, 'trash'))).toEqual([]);
+      const deleteChild = spawnSpy.mock.calls.find(([, args]) => args?.[0]?.endsWith('delete-child.mjs'));
+      expect(existsSync(String(deleteChild?.[2]?.cwd))).toBe(true);
+    } finally {
+      spawnSpy.mockRestore();
+    }
   },
   30_000,
 );

@@ -257,20 +257,34 @@ Related: #5766, #5769, #5771.
 Tree deletes run in a delete child (`bin/delete-child.ts`), one per sweep, fed
 one job at a time on stdin and ending at stdin EOF. Under LLP 0018 it is a child
 a restart of its parent may drop: at EOF it stops before its next entry, and the
-part-deleted tree stays for the next sweep. Its parent decides; the
-child only removes, through the one remover (`workspace/remover.ts`), which
-never follows a link and never enters another device. Its first caller is gc's
-trash deletion.
+part-deleted tree stays for the next sweep. Its parent decides; the child only
+removes, through the one remover (`workspace/remover.ts`). Its first caller is
+gc's trash deletion.
+
+What the remover never does:
+
+- It never follows a link: a link is unlinked.
+- It never deletes from a device other than the one its caller trusts. For the
+  trash that is the device of `$STIM_HOME/trash`, not of the tree, so a volume
+  mounted at the tree is kept.
+- On Linux it keeps a tree with a mount point at or under it in
+  `/proc/self/mountinfo`, since a bind mount keeps the device number of the
+  volume it exposes.
+- A name that is not valid UTF-8 is renamed to an ASCII name in its directory
+  before it is acted on, since Node's string paths cannot carry it.
+
+How the child anchors each delete:
 
 - The child anchors each delete to the directory it checked: it enters a
   directory with `chdir`, compares the device and inode of `.` with the
   `lstat` it took before, and unlinks single-component names there; going back
   up it compares `.` with the parent it recorded. A directory swapped for a link
-  after its check is then never acted through, and the delete stops. A
-  directory without owner read or write permission gets it through `.` once
-  entered. Only a directory without owner search permission gets it by name
-  before the check, so that `chmod` alone can reach through a swapped link. Node has
-  no `unlinkat`, so the working directory is the only anchor; it is
+  after its check is then never acted through, and the delete stops.
+- A directory without owner read or write permission gets them through `.` once
+  entered. A directory without owner search permission gets its mode set by
+  name before the check (`chmod(name, mode | 0o700)`); a link swapped in after
+  the `lstat` redirects that one call, which then sets the link target's whole
+  mode. Node has no `unlinkat`, so the working directory is the only anchor; it is
   process-wide, which is why the child runs one job at a time and why only the
   child's entry passes `chdir` to the remover.
 - The in-thread fallback cannot move the working directory (it is shared with
@@ -282,10 +296,16 @@ trash deletion.
   before removing it. No caller reaches it on Windows yet, since the trash is
   never created there, and it is not tested there.
 
+How the parent runs the child:
+
 - The parent captures the child's identity at spawn. A child that cannot be
-  spawned, exits before it is ready, or whose identity cannot be captured gets
-  no job and is killed, and the delete runs in the parent's thread through the
-  same remover, so a sweep at critical still deletes at once.
+  spawned, exits before it is ready, is not ready within 5 s, or whose identity
+  cannot be captured gets no job and is killed. The delete then runs in the
+  parent's thread through the same remover, so a sweep at critical still
+  deletes at once. The fallback is logged with its reason
+  (`daemon_delete_child_fallback` in stimd's log, `delete_child.fallback` in
+  the debug log). A cancel during the wait for readiness kills the child and is
+  thrown.
 - While a job runs, the claim of the tree it deletes records the child
   (`setClaimChild`), so a parent that dies leaves a claim that reads as held
   until the child, which stops at its next unlink after EOF, is gone. The record
@@ -294,9 +314,16 @@ trash deletion.
   sends SIGKILL; when no exit follows within another 5 s, the delete fails as
   a cleanup refusal that names this one child and how to tell it has stopped,
   and the claim stays held with the child recorded.
-- A child that exits during a job fails that delete. The tree is left part way
-  and stays recoverable: a trash entry's job removes its trees before its
-  manifest, so the next gc deletes the rest.
+- A child that exits during a job fails that delete, and the next entry of the
+  sweep gets a new child.
+
+How a trash entry is deleted:
+
+- Each step leaves a state gc finishes: everything but `claims/` and
+  `trash.json`, then `trash.json`, then the claim, then the emptied entry.
+- A `remove-*` entry that holds nothing but its claims is one whose delete
+  stopped after its manifest went, or before one was written. gc deletes it
+  once its claim is free, and keeps it while a live claim holds it.
 
 Reason: Node cannot set an I/O policy per thread, so a delete that should run
 at a lower I/O priority than the thread holding locks and claims needs its own

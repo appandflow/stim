@@ -459,8 +459,8 @@ async function deleteGradleVersionAction(action: MaintenanceAction, context: Act
   }
 }
 
-async function deleteTrashAction(): Promise<ActionOutcome> {
-  const { value: done } = await quietly(() => deleteTrash(undefined));
+async function deleteTrashAction(context: ActContext): Promise<ActionOutcome> {
+  const { value: done } = await quietly(() => deleteTrash(context.operation));
   if (done.failures) return { status: 'failed', bytes: done.bytes, detail: `${done.failures} could not be deleted` };
   return done.count
     ? { status: 'done', bytes: done.bytes, detail: `${done.count} deleted` }
@@ -570,7 +570,7 @@ export async function executeAction(action: MaintenanceAction, context: ActConte
     case 'would-delete-temp-leftovers':
       return deleteTempLeftoversAction();
     case 'would-delete-trash':
-      return deleteTrashAction();
+      return deleteTrashAction(context);
     case 'would-delete-status-caches':
       return deleteStatusCachesAction(action, context);
     case 'would-delete-process-locks':

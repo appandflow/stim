@@ -24,6 +24,8 @@ import { openDeleteSession } from '../delete-child.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { runReport } from '../report-runtime.ts';
+import { executeAction } from '../stimd/passes/act.ts';
+import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
 import { warmTrash } from '../workspace/worktree-trash.ts';
 import { testContext } from './_context.ts';
 
@@ -167,18 +169,41 @@ test.skipIf(!POSIX)('gc deletes trash entries through one delete child under a s
   expect(existsSync(second)).toBe(false);
 });
 
-test.skipIf(!POSIX)('a killed delete child fails the delete and leaves an entry the next gc deletes', async () => {
-  const entry = plantEntry('remove-killed', 2000);
-  const stop = whenChildRecorded(join(entry, 'claims'), (pid) => process.kill(pid, 'SIGKILL'));
+test.skipIf(!POSIX)(
+  'a killed delete child fails its entry, a new child deletes the next one, and the next gc finishes the first',
+  async () => {
+    const killed = plantEntry('remove-a-killed', 2000);
+    const next = plantEntry('remove-b-next');
+    const stop = whenChildRecorded(join(killed, 'claims'), (pid) => process.kill(pid, 'SIGKILL'));
 
-  const result = await deleteTrash(undefined);
+    const result = await deleteTrash(undefined);
+    stop();
+
+    expect(result).toMatchObject({ count: 1, failures: 1 });
+    expect(existsSync(next)).toBe(false);
+    expect(existsSync(join(killed, 'trash.json'))).toBe(true);
+    expect(readClaimSet(join(killed, 'claims')).live).toEqual([]);
+    expect(await deleteTrash(undefined)).toMatchObject({ count: 1, failures: 0 });
+    expect(existsSync(killed)).toBe(false);
+  },
+);
+
+test.skipIf(!POSIX)('cancelling the trash action stops the delete child and keeps the entry', async () => {
+  const entry = plantEntry('remove-cancelled', 2000);
+  const controller = new AbortController();
+  const operation = testContext({ home: join(base, 'home'), signal: controller.signal });
+  const stop = whenChildRecorded(join(entry, 'claims'), () => controller.abort(new Error('cancel the trash action')));
+
+  const outcome = await executeAction(
+    { kind: 'would-delete-trash', target: trash, bytes: 0, reason: '' },
+    { settings: resolveMaintenanceSettings(null, { STIM_DAEMON: 'on' }), protectedRoot: '', operation },
+  ).catch((error: unknown) => error);
   stop();
 
-  expect(result).toMatchObject({ count: 0, failures: 1 });
+  expect(outcome).toMatchObject({ message: 'cancel the trash action' });
   expect(existsSync(join(entry, 'trash.json'))).toBe(true);
-  expect(readClaimSet(join(entry, 'claims')).live).toEqual([]);
+  expect(recordedChild(join(entry, 'claims'))).toBeNull();
   expect(await deleteTrash(undefined)).toMatchObject({ count: 1, failures: 0 });
-  expect(existsSync(entry)).toBe(false);
 });
 
 test.skipIf(!POSIX)('a cancelled delete clears the child record and the child takes the next job', async () => {
@@ -190,13 +215,14 @@ test.skipIf(!POSIX)('a cancelled delete clears the child record and the child ta
   try {
     const controller = new AbortController();
     const stop = whenChildRecorded(join(base, 'claims'), () => controller.abort());
-    const cancelled = await session.rm(tree, claim, controller.signal);
+    const dev = lstatSync(tree).dev;
+    const cancelled = await session.rm(tree, claim, { dev, signal: controller.signal });
     stop();
 
     expect(cancelled).toEqual({ cancelled: { left: [tree] } });
     expect(readdirSync(join(tree, 'nested')).length).toBeGreaterThan(0);
     expect(recordedChild(join(base, 'claims'))).toBeNull();
-    expect(await session.rm(tree, claim)).toEqual({ done: { left: [] } });
+    expect(await session.rm(tree, claim, { dev })).toEqual({ done: { left: [] } });
     expect(existsSync(tree)).toBe(false);
   } finally {
     await session.close();

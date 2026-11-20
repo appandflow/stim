@@ -9,6 +9,7 @@ import { measuredDirectorySizeAsync } from '../fs-util.ts';
 import { withCargoLocks } from './cargo-lock.ts';
 import { cargoTargetDirsAsync } from './regenerable-dirs.ts';
 import { cargoUnitPaths, cargoUnitWasRead, idleCargoUnits, readCargoUnits, removalOrder } from './cargo-units.ts';
+import { LINUX_MOUNT_INFO, mountedUnder } from './remover.ts';
 
 const CARGO_PROFILE_IDLE_MS: number = 24 * 3_600_000;
 
@@ -566,26 +567,6 @@ interface DeleteOptions {
    * `st_dev` checks cannot see it; null where there is no such file. Defaults to the real file on Linux.
    */
   mountInfo?: (() => string) | null;
-}
-
-const LINUX_MOUNT_INFO = process.platform === 'linux' ? () => readFileSync('/proc/self/mountinfo', 'utf8') : null;
-
-/** Why a mount point lies at or under `target` by `mountInfo`, or null when none does. */
-function mountedUnder(target: string, mountInfo: (() => string) | null): string | null {
-  if (!mountInfo) return null;
-  let text: string;
-  try {
-    text = mountInfo();
-  } catch (error) {
-    return `the mounts cannot be read: ${error instanceof Error ? error.message : error}`;
-  }
-  for (const line of text.split('\n')) {
-    const field = line.split(' ')[4];
-    if (!field) continue;
-    const point = field.replace(/\\([0-7]{3})/g, (_, octal: string) => String.fromCharCode(Number.parseInt(octal, 8)));
-    if (point === target || point.startsWith(`${target}/`)) return `${point} is a mount point`;
-  }
-  return null;
 }
 
 async function deleteClaimed(

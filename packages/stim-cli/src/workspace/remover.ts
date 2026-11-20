@@ -1,6 +1,7 @@
-import { statSync, type Stats } from 'node:fs';
-import { chmod, lstat, readdir, realpath, rmdir, unlink } from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { readFileSync, statSync, type Stats } from 'node:fs';
+import { chmod, lstat, readdir, realpath, rename, rmdir, unlink } from 'node:fs/promises';
+import { basename, dirname, join, sep } from 'node:path';
 
 /** One delete the delete child runs: `path` and everything below it, on device `dev` only. */
 export interface RmJob {
@@ -36,13 +37,42 @@ async function stillInside(path: string): Promise<void> {
     throw new KeepTree(`${parent} no longer resolves to itself, so the delete stopped`);
 }
 
+/**
+ * Reads Linux's `/proc/self/mountinfo`, where a bind mount keeps the device number of the volume it exposes, so the
+ * `st_dev` checks cannot see it; null where there is no such file.
+ */
+export const LINUX_MOUNT_INFO: (() => string) | null =
+  process.platform === 'linux' ? () => readFileSync('/proc/self/mountinfo', 'utf8') : null;
+
+/** Why a mount point lies at or under `target` by `mountInfo`, or null when none does. */
+export function mountedUnder(target: string, mountInfo: (() => string) | null): string | null {
+  if (!mountInfo) return null;
+  let text: string;
+  try {
+    text = mountInfo();
+  } catch (error) {
+    return `the mounts cannot be read: ${error instanceof Error ? error.message : error}`;
+  }
+  for (const line of text.split('\n')) {
+    const field = line.split(' ')[4];
+    if (!field) continue;
+    const point = field.replace(/\\([0-7]{3})/g, (_, octal: string) => String.fromCharCode(Number.parseInt(octal, 8)));
+    if (point === target || point.startsWith(`${target}/`)) return `${point} is a mount point`;
+  }
+  return null;
+}
+
 /** How the walk names the entry it acts on, and how it enters and leaves a directory. */
 interface Anchor {
   name(path: string): Promise<string>;
   list(path: string): string;
+  /** Renames the entry `raw` of directory `dir`, whose name is not valid UTF-8, to an ASCII name, and returns that. */
+  rename(dir: string, raw: Buffer): Promise<string>;
   enter(path: string, seen: Identity): void;
   leave(parent: Identity): void;
 }
+
+const asciiName = () => `.stim-delete-${randomUUID()}`;
 
 /**
  * In the caller's thread, where the working directory is not the walk's to change: every call takes the absolute path,
@@ -54,6 +84,12 @@ const byPath: Anchor = {
     return path;
   },
   list: (path) => path,
+  async rename(dir, raw) {
+    const to = asciiName();
+    await stillInside(join(dir, to));
+    await rename(Buffer.concat([Buffer.from(`${dir}${sep}`), raw]), join(dir, to));
+    return to;
+  },
   enter() {},
   leave() {},
 };
@@ -72,6 +108,11 @@ export interface WorkingDirectory {
 const byWorkingDirectory = (cwd: WorkingDirectory): Anchor => ({
   name: async (path) => basename(path),
   list: () => '.',
+  async rename(_dir, raw) {
+    const to = asciiName();
+    await rename(raw, to);
+    return to;
+  },
   enter(path, seen) {
     cwd.chdir(basename(path));
     if (!same(statSync('.'), seen))
@@ -94,7 +135,10 @@ interface RemoveOptions {
 /**
  * Removes `path`, inside the directory `parent`, deepest first. A symbolic link is unlinked and never followed, a
  * directory on a device other than `dev` is not entered, a directory without owner read or write permission gets them
- * once entered (one without owner search permission gets it by name first, the one call made before the anchor), and a directory goes once it is empty. A path already gone counts as removed. Returns the
+ * once entered (one without owner search permission gets its mode set by name first: the one call made before the
+ * anchor, which a link swapped in after the `lstat` would redirect to the link target), an
+ * entry whose name is not valid UTF-8 is renamed to an ASCII name in its directory first, and a directory goes once it
+ * is empty. A path already gone counts as removed. Returns the
  * paths it left: directories on another device, and a directory refilled or replaced meanwhile.
  */
 async function removeInPlace(path: string, parent: Identity, options: RemoveOptions): Promise<string[]> {
@@ -116,11 +160,14 @@ async function removeInPlace(path: string, parent: Identity, options: RemoveOpti
   if (stat.dev !== options.dev) return [path];
   if (!(stat.mode & 0o100)) await chmod(name, stat.mode | 0o700);
   anchor.enter(path, stat);
-  if ((stat.mode & 0o600) !== 0o600) await chmod(anchor.list(path), stat.mode | 0o700);
   const left: string[] = [];
   try {
-    for (const child of await readdir(anchor.list(path)))
+    if ((stat.mode & 0o600) !== 0o600) await chmod(anchor.list(path), stat.mode | 0o700);
+    for (const raw of await readdir(anchor.list(path), { encoding: 'buffer' })) {
+      const decoded = raw.toString();
+      const child = Buffer.from(decoded).equals(raw) ? decoded : await anchor.rename(path, raw);
       left.push(...(await removeInPlace(join(path, child), stat, options)));
+    }
   } finally {
     anchor.leave(parent);
   }
@@ -144,11 +191,19 @@ async function removeInPlace(path: string, parent: Identity, options: RemoveOpti
 export async function runRmJob(
   job: RmJob,
   signal: AbortSignal,
-  { cwd, removed }: { cwd?: WorkingDirectory; removed?: () => void } = {},
+  {
+    cwd,
+    removed,
+    mountInfo = LINUX_MOUNT_INFO,
+  }: { cwd?: WorkingDirectory; removed?: () => void; mountInfo?: (() => string) | null } = {},
 ): Promise<DeleteOutcome> {
-  const start = cwd?.current();
+  let start: string | undefined;
   try {
+    start = cwd?.current();
     await stillInside(job.path);
+    // @ref LLP 0007#a-delete-child-holds-the-claim-of-the-tree-it-deletes -- never into a bind mount
+    const mounted = mountedUnder(job.path, mountInfo);
+    if (mounted) return { kept: mounted };
     const parent = await lstat(dirname(job.path));
     const stat = await lstat(job.path).catch(() => null);
     if (stat && stat.dev !== job.dev) return { kept: `${job.path} is no longer on the device it was planned on` };

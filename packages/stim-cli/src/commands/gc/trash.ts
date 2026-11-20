@@ -75,6 +75,12 @@ async function readManifest(dir: string): Promise<TrashManifest | null> {
   }
 }
 
+/** Whether `dir` holds nothing but its claims: a delete that stopped after its manifest went, or before one was written. */
+async function finishing(dir: string): Promise<boolean> {
+  const names = await readdir(dir).catch(() => null);
+  return names?.every((name) => name === TRASH_CLAIMS) === true;
+}
+
 /** The entries under `$STIM_HOME/trash`, each deletable only with a valid manifest, no live or unresolved ownership claim, and a worktree that is gone. */
 export async function collectTrash({
   signal,
@@ -93,9 +99,10 @@ export async function collectTrash({
     const stat = await lstat(path).catch(() => null);
     if (!stat?.isDirectory()) continue;
     const manifest = name.startsWith(TRASH_ENTRY_PREFIX) ? await readManifest(path) : null;
-    const claim = manifest
-      ? claimKept(path)
-      : { kept: 'it has no valid trash.json, so Stim did not create it', live: false };
+    const claim =
+      manifest || (name.startsWith(TRASH_ENTRY_PREFIX) && (await finishing(path)))
+        ? claimKept(path)
+        : { kept: 'it has no valid trash.json, so Stim did not create it', live: false };
     const live = claim.live;
     const kept = claim.kept ?? (manifest && manifest.kind !== 'warm' ? await worktreeKept(manifest.worktree) : null);
     entries.push({
@@ -117,9 +124,12 @@ export async function deleteTrash(
 ): Promise<{ count: number; bytes: number; failures: number }> {
   const report = await collectTrash({ signal: operation?.signal, operation });
   const done = { count: 0, bytes: 0, failures: 0 };
+  if (!report) return done;
+  const { dev } = await lstat(report.root);
+  const signal = operation?.signal;
   let session: DeleteSession | undefined;
   try {
-    for (const entry of report?.entries ?? []) {
+    for (const entry of report.entries) {
       if (!entry.willDelete) continue;
       let claim;
       try {
@@ -139,8 +149,12 @@ export async function deleteTrash(
       }
       let retained = false;
       try {
-        session ??= await openDeleteSession();
-        await deleteTrashEntry(entry.path, claim.acquired, session, operation?.signal);
+        if (session?.exited()) {
+          await session.close();
+          session = undefined;
+        }
+        session ??= await openDeleteSession(signal);
+        await deleteTrashEntry(entry.path, claim.acquired, session, { dev, signal });
         done.count++;
         done.bytes += entry.bytes ?? 0;
       } catch (error) {
@@ -164,7 +178,7 @@ export async function deleteTrash(
         `Deleted ${plural(done.count, 'worktree trash entry', 'worktree trash entries')} (${formatBytes(done.bytes)})`,
       ),
     );
-    output.record('trash', 'done', report?.root ?? trashRoot(), {
+    output.record('trash', 'done', report.root, {
       bytes: done.bytes,
       detail: `${plural(done.count, 'entry', 'entries')} deleted`,
     });
