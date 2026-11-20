@@ -26,6 +26,7 @@ import {
   targetEntries,
   trimCargoTarget,
 } from '../workspace/cargo-target.ts';
+import { cargoTargetDirsAsync } from '../workspace/regenerable-dirs.ts';
 
 const fsHooks = vi.hoisted(
   (): { dev?: (path: string) => number | undefined; afterLstat?: (path: string) => void } => ({}),
@@ -467,6 +468,17 @@ describe.skipIf(process.platform === 'win32')('deleting an idle Cargo target who
     expect(result.kept).toEqual([expect.stringContaining('app-keypair.json is a symbolic link')]);
     expect(readFileSync(join(dir, 'deploy', 'debug', 'wallet.json'), 'utf8')).toBe('[1,2,3]');
     expect(existsSync(join(dir, 'debug', 'app'))).toBe(true);
+  });
+
+  test("Cargo's CACHEDIR.TAG stays, so a tagged target with no Cargo.toml is still recognised after the delete", async () => {
+    writeFileSync(join(dir, 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55\n');
+    rmSync(join(target, 'Cargo.toml'));
+    ageTree(dir);
+
+    const result = await remove();
+
+    expect(result.removed.toSorted()).toEqual(['.rustc_info.json', 'debug', 'doc']);
+    expect(await cargoTargetDirsAsync(target)).toEqual([dir]);
   });
 
   test('a target with nothing left in it goes too', async () => {

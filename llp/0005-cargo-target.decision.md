@@ -83,8 +83,10 @@ recognised `target/` whole, tagged, Exact app's and untagged alike, in a
 workspace or discovered checkout that has had no activity for
 `idle.dormantDays` by the full evidence, and whose worktree is not locked with
 `git worktree lock`: every top-level entry but a `deploy/` directory holding a
-`*-keypair.json` and a symbolic link, and the `target/` itself once nothing is
-left in it. It runs the idle stage's
+`*-keypair.json`, a symbolic link and Cargo's `CACHEDIR.TAG`, and the `target/`
+itself once nothing is left in it. The tag stays because Cargo writes it only
+when it creates the `target/`, and a tagged `target/` with no `Cargo.toml`
+beside it is recognised by the tag alone. It runs the idle stage's
 checks above, the process check included, for all three kinds, then, under the
 workspace's claims and checked again right before the delete: the workspace is
 still idle and the directory is still a recognised `target/`. A path the plan took as a `target/` goes only

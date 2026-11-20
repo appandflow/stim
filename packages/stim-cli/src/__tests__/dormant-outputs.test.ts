@@ -305,7 +305,9 @@ describe.skipIf(process.platform === 'win32')(
         ]);
         expect(existsSync(join(root, 'target', 'debug'))).toBe(true);
         expect(await gc()).toEqual([expect.objectContaining({ target: root, outcome: 'done' })]);
-        expect(readdirSync(join(root, 'target'))).toEqual(['debug']);
+        expect(readdirSync(join(root, 'target')).toSorted()).toEqual(
+          kind === 'tagged' ? ['CACHEDIR.TAG', 'debug'] : ['debug'],
+        );
         expect(readdirSync(join(root, 'target', 'debug'))).toEqual(['.cargo-lock']);
         expect((await gc()).filter((action) => action.outcome !== 'kept')).toEqual([]);
       },

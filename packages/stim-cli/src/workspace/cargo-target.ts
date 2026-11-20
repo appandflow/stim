@@ -15,6 +15,7 @@ const CARGO_TRIPLE_FILES = new Set(['CACHEDIR.TAG', '.rustc_info.json', '.cargo-
 /** Cargo 1.97 locks the build and artifact directories separately and takes .cargo-lock for older Cargo. */
 const PROFILE_LOCKS = ['.cargo-lock', '.cargo-build-lock', '.cargo-artifact-lock'];
 const EXACT_LEDGER = '.exact-sweep.json';
+const CACHEDIR_TAG = 'CACHEDIR.TAG';
 const EXACT_APPLE_LOCKS = '.apple-cargo-locks';
 /** The lock files Cargo and Exact take in a `target/`, which a delete leaves in place. */
 const LOCK_FILES = new Set([...PROFILE_LOCKS, `${EXACT_LEDGER}.lock`]);
@@ -31,8 +32,8 @@ const isKeypairName = (name: string): boolean => name.toLowerCase().endsWith('-k
 
 /**
  * The top-level entries of `target` the dormant delete removes (`output`), and those it keeps (`kept`): a symbolic link,
- * which a delete must not go through, and a `deploy/` directory holding a `*-keypair.json`, both names in any letter
- * case. A `deploy` that is a symbolic link, or holds one, keeps every entry, since Stim cannot tell what of the target
+ * which a delete must not go through, a `deploy/` directory holding a `*-keypair.json`, both names in any letter case,
+ * and Cargo's `CACHEDIR.TAG`, which Cargo writes only when it creates the `target/` and by which Stim recognises it. A `deploy` that is a symbolic link, or holds one, keeps every entry, since Stim cannot tell what of the target
  * holds the keys it points at. Stim's own `.stim-*`
  * entries are in neither. Null when `target` cannot be listed.
  */
@@ -54,7 +55,7 @@ export function targetEntries(target: string): { output: string[]; kept: string[
       continue;
     }
     const keypairs = isKeypairDir(entry.name) && entry.isDirectory() && holdsKeypair(join(target, entry.name));
-    (entry.isSymbolicLink() || keypairs ? kept : output).push(entry.name);
+    (entry.isSymbolicLink() || keypairs || entry.name === CACHEDIR_TAG ? kept : output).push(entry.name);
   }
   return { output, kept };
 }
