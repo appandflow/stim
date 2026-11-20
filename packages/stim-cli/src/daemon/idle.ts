@@ -308,7 +308,12 @@ async function recordStage(path: string, minutes: number, shutDown: readonly str
  * collectors ended), then the workspace's regenerable build outputs, its in-tree build directories and its Metro
  * store deleted.
  */
-async function enterIdleStage(
+// @ref LLP 0021#stimd-runs-at-the-priority-of-an-app -- the idle stage holds the metro-start lock a stim start waits on
+function enterIdleStage(...args: Parameters<typeof idleStage>): ReturnType<typeof idleStage> {
+  return runControlPath(() => idleStage(...args));
+}
+
+async function idleStage(
   path: string,
   project: ProjectRecord,
   config: Config,
@@ -336,14 +341,12 @@ async function enterIdleStage(
             const minutes = again.candidate.minutes;
             const booted = new Set(again.candidate.booted.map((device) => `${device.kind}:${device.slot}`));
             const lines: string[] = [];
-            const stopped = await runControlPath(() =>
-              runIdleStop({
-                root: path,
-                idleMinutes: minutes,
-                report: (line) => lines.push(line),
-                operation: input.operation,
-              }),
-            );
+            const stopped = await runIdleStop({
+              root: path,
+              idleMinutes: minutes,
+              report: (line) => lines.push(line),
+              operation: input.operation,
+            });
             if (!stopped.ok) return { outcome: 'failed' as const, detail: stopped.summary };
             const shutDown = Object.entries(stopped.outcomes.device).flatMap(([key, outcome]) => {
               const [kind, slot = 'default'] = key.split(':');

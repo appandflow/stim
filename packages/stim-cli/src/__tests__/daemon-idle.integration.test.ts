@@ -15,7 +15,7 @@ import { forgetCreatedDevice, recordCreatedDevice } from '../devices/created-dev
 import { recordDeferredShutdown } from '../devices/deferred-shutdown.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
 import * as teardown from '../devices/teardown.ts';
-import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { getExecutor, resetExecutor, runMaintenanceWork, setExecutor } from '../exec.ts';
 import { runBootedParkedPass, shutDownDeferredIosSim } from '../daemon/booted-parked.ts';
 import { runIdlePass } from '../daemon/idle.ts';
 import { getProject, loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
@@ -132,6 +132,32 @@ test('a workspace idle past idle.minutes, whatever its device and app logs, ente
   expect(timeline).toContain('"event":"workspace_idle"');
   expect(timeline).toContain('Run stim ios or stim android to resume it.');
 });
+
+test.skipIf(process.platform === 'win32')(
+  'inside maintenance work the idle stage sizes its outputs at full priority while it holds the metro-start lock',
+  async () => {
+    vi.stubEnv('GIT_CONFIG_COUNT', undefined);
+    bootedWorkspace('locked', 20 * MINUTE_MS);
+    const log = join(home, 'du-calls');
+    const base = getExecutor();
+    setExecutor({
+      ...base,
+      runFileAsync: (file, args, opts) =>
+        file === 'du'
+          ? base.runFileAsync(
+              '/bin/sh',
+              ['-c', 'echo "${GIT_CONFIG_COUNT:-none}" >> "$0"; exec du "$@"', log, ...args],
+              opts,
+            )
+          : base.runFileAsync(file, args, opts),
+    });
+
+    expect(await runMaintenanceWork('normal', () => pass())).toEqual([expect.objectContaining({ outcome: 'idle' })]);
+    const calls = readFileSync(log, 'utf8').trim().split('\n');
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every((call) => call === 'none')).toBe(true);
+  },
+);
 
 test('the idle stage deletes the git-ignored .dd and CMake output of a workspace and leaves other-named xcodebuild output', async () => {
   const { root } = bootedWorkspace('outputs', 20 * MINUTE_MS);
