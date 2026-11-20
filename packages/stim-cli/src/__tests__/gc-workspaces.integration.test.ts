@@ -2707,6 +2707,50 @@ test('gc keeps a finished registered worktree with an unfinished pnpm patch', as
   expect(existsSync(worktrees.squashed ?? '')).toBe(false);
 }, 240_000);
 
+test('gc keeps a finished registered worktree whose ignored file sits in a tracked folder named like the root Cargo target', async () => {
+  const { repo, worktrees } = repoWithMergedBranches();
+  const merged = worktrees.merged ?? '';
+  writeFileSync(join(repo, '.git', 'info', 'exclude'), '/target/\n.env\n');
+  mkdirSync(join(merged, 'target', 'debug', '.fingerprint'), { recursive: true });
+  writeFileSync(join(merged, 'target', 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55\n');
+  mkdirSync(join(merged, 'infra', 'target'), { recursive: true });
+  writeFileSync(join(merged, 'infra', 'target', 'main.tf'), 'tracked');
+  execSync('git add infra/target/main.tf && git -c user.name=t -c user.email=t@t commit -q -m infra && git push -q', {
+    cwd: merged,
+  });
+  execSync(
+    'git fetch -q origin merged && git -c user.name=t -c user.email=t@t merge -q --no-ff origin/merged -m infra && git push -q origin main',
+    { cwd: join(projects, 'upstream') },
+  );
+  writeFileSync(join(merged, 'infra', 'target', '.env'), 'SECRET=mine');
+
+  await checkWorktrees();
+  await gcJson({ pressure: 'normal' });
+
+  expect(readFileSync(join(merged, 'infra', 'target', '.env'), 'utf8')).toBe('SECRET=mine');
+  expect(existsSync(worktrees.squashed ?? '')).toBe(false);
+}, 240_000);
+
+test('gc keeps a finished registered worktree whose hand-edited Pods sit in a wholly ignored iOS folder', async () => {
+  const { repo, worktrees } = repoWithMergedBranches();
+  const merged = worktrees.merged ?? '';
+  writeFileSync(join(repo, '.git', 'info', 'exclude'), 'apps/mobile/ios/\n');
+  const pods = join(merged, 'apps', 'mobile', 'ios', 'Pods');
+  mkdirSync(join(pods, 'Lib'), { recursive: true });
+  writeFileSync(join(pods, 'Lib', 'Lib.m'), 'original');
+  writeFileSync(join(pods, 'Manifest.lock'), 'PODFILE CHECKSUM: x');
+  const installed = new Date(Date.now() - 3_600_000);
+  for (const path of [join(pods, 'Lib', 'Lib.m'), join(pods, 'Lib'), join(pods, 'Manifest.lock')])
+    utimesSync(path, installed, installed);
+  writeFileSync(join(pods, 'Lib', 'Lib.m'), 'patched by hand');
+
+  await checkWorktrees();
+  await gcJson({ pressure: 'normal' });
+
+  expect(readFileSync(join(pods, 'Lib', 'Lib.m'), 'utf8')).toBe('patched by hand');
+  expect(existsSync(worktrees.squashed ?? '')).toBe(false);
+}, 240_000);
+
 test('gc removes a finished registered worktree whose only ignored files are nested Pods and a linked node_modules', async () => {
   const { repo, worktrees } = repoWithMergedBranches();
   const merged = worktrees.merged ?? '';

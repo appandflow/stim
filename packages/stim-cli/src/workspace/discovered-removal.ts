@@ -7,7 +7,7 @@ import { discoveredEvidence, SKIPPED_WHERE_IGNORED } from './discovered-activity
 import type { DiscoveredReads } from './discovered-reads.ts';
 import { gitQuietAsync } from './git.ts';
 import { hiddenEditHold } from './hidden-edits.ts';
-import { dependencyEditsHold } from './dependency-edits.ts';
+import { checkDependencyEdits, dependencyEditsHold } from './dependency-edits.ts';
 import { absent } from './scan-rules.ts';
 
 const MAX_IGNORED_FILES = 200;
@@ -15,13 +15,18 @@ const MAX_COMPARED_BYTES = 16 * 1024 * 1024;
 
 const outputNamed = (name: string) => name === 'node_modules' || SKIPPED_WHERE_IGNORED.has(name);
 
-/** Whether `rel` is `folder`, or lies inside it, at the checkout root or below, as `apps/mobile/ios/Pods` in a monorepo. */
-const within = (rel: string, folder: string) =>
-  rel === folder || rel.startsWith(`${folder}/`) || rel.endsWith(`/${folder}`) || rel.includes(`/${folder}/`);
+/** Whether `rel` is an `ios/Pods` folder, at the checkout root or below, as `apps/mobile/ios/Pods` in a monorepo. */
+const podsFolder = (rel: string) => rel === 'ios/Pods' || rel.endsWith('/ios/Pods');
+
+/** Whether `rel` is one of `folders`, checkout-relative, or lies inside one, or inside an `ios/Pods` folder. */
+const inFolder = (rel: string, folders: readonly string[]) =>
+  folders.some((folder) => rel === folder || rel.startsWith(`${folder}/`)) ||
+  rel.startsWith('ios/Pods/') ||
+  rel.includes('/ios/Pods/');
 
 /** Whether git reported the whole folder ignored and it is a dependency or build-output folder the stages recognise. */
 const regenerableFolder = (rel: string, folders: readonly string[]) =>
-  outputNamed(rel.split('/').at(-1) ?? '') || folders.some((folder) => within(rel, folder));
+  outputNamed(rel.split('/').at(-1) ?? '') || podsFolder(rel) || inFolder(rel, folders);
 
 /** Whether the ignored entry `rel` is a `node_modules` that is a symbolic link, as some package managers and tools make. */
 const linkedNodeModules = async (path: string, rel: string): Promise<boolean> =>
@@ -93,6 +98,17 @@ export async function ignoredFilesHold(path: string, main: string, signal?: Abor
       const stat = await lstat(join(path, child)).catch(() => null);
       if (!stat) return unreadable;
       const directory = stat.isDirectory() && !stat.isSymbolicLink();
+      if (directory && podsFolder(child)) {
+        // @ref LLP 0002#edits-inside-dependency-folders -- git lists only the ignored parent, so check the Pods here
+        const edits = await checkDependencyEdits(join(path, child), {
+          level: 'high',
+          worktree: path,
+          readOnly: true,
+          signal,
+        });
+        if ('keep' in edits) return `its ${child}: ${edits.keep}`;
+        continue;
+      }
       if (directory && regenerableFolder(child, folders)) continue;
       if (stat.isSymbolicLink() && name === 'node_modules') continue;
       const hold = directory ? await walk(child) : await check(child);
@@ -105,7 +121,7 @@ export async function ignoredFilesHold(path: string, main: string, signal?: Abor
     if (
       entry.endsWith('/')
         ? regenerableFolder(rel, folders)
-        : folders.some((folder) => within(dirname(rel), folder)) || (await linkedNodeModules(path, rel))
+        : inFolder(dirname(rel), folders) || (await linkedNodeModules(path, rel))
     )
       continue;
     const hold = entry.endsWith('/') ? await walk(rel) : await check(rel);
