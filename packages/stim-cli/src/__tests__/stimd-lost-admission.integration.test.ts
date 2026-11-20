@@ -170,6 +170,7 @@ describe.skipIf(process.platform === 'win32')('a command waiting on stimd when s
       const root = workspace('app');
       takeLease({ root: other, platform: 'ios', slot: 'default', id: 'SIM-LOST', kind: 'run', durationMs: 60_000 });
       const first = await startStimd();
+      const exited = once(first, 'exit');
       await admitCli(root);
       const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
       let killed = false;
@@ -181,7 +182,7 @@ describe.skipIf(process.platform === 'win32')('a command waiting on stimd when s
         }),
       ).rejects.toMatchObject(RERUN);
       expect(killed).toBe(true);
-      await once(first, 'exit').catch(() => {});
+      await exited;
       expect(stimdLive()).toBe(false);
       expect(errors).not.toHaveBeenCalled();
       expect(listLeaseFiles().map((file) => file.lease?.holder)).toEqual([other]);
@@ -679,10 +680,12 @@ describe.skipIf(process.platform === 'win32')('a CI hold', () => {
 
   test('a held stimd that is killed is not replaced, and the hold says so', async () => {
     const first = await startStimd();
+    const exited = once(first, 'exit');
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
     const release = await holdCIStimd({ ...process.env }, dir, null);
     try {
       first.kill('SIGKILL');
+      await exited;
       await vi.waitFor(
         () =>
           expect(errors).toHaveBeenCalledWith(
@@ -690,7 +693,6 @@ describe.skipIf(process.platform === 'win32')('a CI hold', () => {
           ),
         { timeout: 10_000, interval: 50 },
       );
-      await once(first, 'exit').catch(() => {});
       await new Promise((done) => setTimeout(done, 1000));
       expect(stimdLive()).toBe(false);
       expect(errors).toHaveBeenCalledTimes(1);
