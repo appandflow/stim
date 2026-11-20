@@ -446,6 +446,25 @@ function fullOnce(at: 'mkdir' | 'writeFile' | 'rename' | 'claim', match = '', co
   };
 }
 
+function makeIdleUnit(name: string): void {
+  makeProfile(name, 0);
+  const stamps: Record<string, number> = {};
+  for (const [n, ageMs] of [
+    [1, 5 * DAY],
+    [2, 3 * DAY],
+  ] as const) {
+    const hash = n.toString(16).padStart(16, '0');
+    const fp = join(target, name, '.fingerprint', `serde-${hash}`);
+    mkdirSync(fp, { recursive: true });
+    writeFileSync(join(fp, 'invoked.timestamp'), '');
+    utimesSync(join(fp, 'invoked.timestamp'), new Date(86_400_000), new Date(86_400_000));
+    for (const file of [`libserde-${hash}.rlib`, `serde-${hash}.d`, `libserde-${hash}.rmeta`])
+      writeFileSync(join(target, name, 'deps', file), 'x');
+    stamps[`${name}#${hash}`] = Date.now() - ageMs;
+  }
+  writeFileSync(join(target, '.exact-sweep.json'), JSON.stringify({ at: Date.now(), units: stamps }));
+}
+
 describe('trimming on a full disk', () => {
   stimHomeWithReserve();
   afterEach(() => resetExecutor());
@@ -505,23 +524,7 @@ describe('trimming on a full disk', () => {
     [
       'a unit batch whose move failed',
       () => {
-        makeProfile('debug', 0);
-        const profileDir = join(target, 'debug');
-        const stamps: Record<string, number> = {};
-        for (const [n, ageMs] of [
-          [1, 5 * DAY],
-          [2, 3 * DAY],
-        ] as const) {
-          const hash = n.toString(16).padStart(16, '0');
-          const fp = join(profileDir, '.fingerprint', `serde-${hash}`);
-          mkdirSync(fp, { recursive: true });
-          writeFileSync(join(fp, 'invoked.timestamp'), '');
-          utimesSync(join(fp, 'invoked.timestamp'), new Date(86_400_000), new Date(86_400_000));
-          for (const name of [`libserde-${hash}.rlib`, `serde-${hash}.d`, `libserde-${hash}.rmeta`])
-            writeFileSync(join(profileDir, 'deps', name), 'x');
-          stamps[`debug#${hash}`] = Date.now() - ageMs;
-        }
-        writeFileSync(join(target, '.exact-sweep.json'), JSON.stringify({ at: Date.now(), units: stamps }));
+        makeIdleUnit('debug');
         stubProcesses({});
         let moves = 0;
         const fail = fsHooks.rename;
@@ -532,26 +535,65 @@ describe('trimming on a full disk', () => {
         return { options: { units: 'all' as const }, staged: join('.stim-trimmed', 'units-0') };
       },
     ],
-  ])('when %s cannot be put back or marked, the next trim keeps it', async (_, arrange) => {
-    fsHooks.rename = (from) => {
-      if (from.includes('.stim-trimmed')) throw diskFull();
-    };
+  ])(
+    'when %s cannot be put back or marked on a full disk, a trim from a fresh process keeps it',
+    async (_, arrange) => {
+      let movedIn = false;
+      fsHooks.rename = (from, to) => {
+        if (from.includes('.stim-trimmed')) throw diskFull();
+        if (to.includes('.stim-trimmed')) movedIn = true;
+      };
+      fsHooks.writeFile = (path) => {
+        if (movedIn && path.endsWith('NOT-RESTORED')) throw diskFull();
+      };
+      const { options, staged } = arrange();
+
+      await trimCargoTarget(target, { launching: noLaunchers(target), needBytes: 0, ...options }).catch(() => null);
+      delete fsHooks.rename;
+      delete fsHooks.writeFile;
+      stubProcesses({});
+      vi.resetModules();
+      const fresh = await import('../workspace/cargo-target.ts');
+      const next = await fresh.trimCargoTarget(target, { launching: noLaunchers(target), needBytes: 0, ...options });
+
+      expect(next.removed).toEqual([]);
+      expect(next.kept).toEqual([expect.stringContaining('could not be put back')]);
+      expect(existsSync(join(target, staged))).toBe(true);
+    },
+  );
+
+  test('a trim whose marker cannot be written even after the reserve is released moves nothing', async () => {
+    stubProcesses({});
+    makeProfile('debug', 3 * DAY);
     fsHooks.writeFile = (path) => {
       if (path.endsWith('NOT-RESTORED')) throw diskFull();
     };
-    const { options, staged } = arrange();
-    const trim = () => trimCargoTarget(target, { launching: noLaunchers(target), needBytes: 0, ...options });
 
-    await trim().catch(() => null);
-    delete fsHooks.rename;
+    const result = await trimCargoTarget(target, { launching: noLaunchers(target), needBytes: 0 });
+
+    expect(result).toMatchObject({ removed: [], reserveReleased: true });
+    expect(result.kept).toEqual([expect.stringContaining('cannot be marked, so nothing was moved')]);
+    expect(existsSync(join(target, 'debug', 'deps', 'libx.rlib'))).toBe(true);
     delete fsHooks.writeFile;
-    stubProcesses({});
-    const next = await trim();
-
-    expect(next.removed).toEqual([]);
-    expect(next.kept).toEqual([expect.stringContaining('marker could not be written')]);
-    expect(existsSync(join(target, staged))).toBe(true);
+    expect((await trimCargoTarget(target, { launching: noLaunchers(target), needBytes: 0 })).removed).toEqual([
+      'debug',
+    ]);
   });
+
+  test.skipIf(process.platform === 'win32')(
+    'a unit move whose staging directory hits a full disk retries after the reserve is released',
+    async () => {
+      makeIdleUnit('release');
+      stubProcesses({});
+      fullOnce('mkdir', 'units-');
+
+      const result = await trimCargoTarget(target, { launching: noLaunchers(target), needBytes: 0, units: 'all' });
+
+      expect(result).toMatchObject({ removed: ['release: 1 idle units'], kept: [], reserveReleased: true });
+      expect(existsSync(reserveFile())).toBe(false);
+      expect(existsSync(join(target, 'release', 'deps', `libserde-${'1'.padStart(16, '0')}.rlib`))).toBe(false);
+    },
+  );
 
   test('a launcher the retry finds keeps every later profile of the target', async () => {
     makeProfile('debug', 3 * DAY);

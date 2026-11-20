@@ -297,27 +297,34 @@ maintainer.
 The trim and the dormant delete write before they free anything: the trim
 claim under `~/.stim/machine/cargo-trim/`, on the dormant path the
 workspace's `native-run` and `metro-start` claims, the `target/.stim-trimmed`
-directory, the rename into it, and the dormant delete's `NOT-RESTORED`
-marker. When one of those writes fails with `ENOSPC`, or `EDQUOT` over a
-quota, Stim deletes its 1 MiB maintenance disk reserve
-(`$STIM_HOME/maintenance/disk-reserve`, the file the maintenance pass and an
-acting `stim gc` already keep) and tries that write once more. The retry runs
-the same staged path with every check above unchanged. Before the trim retries
-its staging directory or a move, it reads the processes, the launchers and the
-profile's lock files again; the dormant delete checks that the `target/` is
-still the same directory before each try. For the workspace claims the whole
-removal of that output runs again. A run that released
-the reserve says so in its outcome. When the write fails again, or there was
-no reserve to release, the `target/` is kept as before. A marker that cannot
-be written is removed with its empty `.stim-trimmed`, and the `target/`
-gets its modification time back, so nothing blocks the next run. The
-`NOT-RESTORED` marker that protects a directory that could not be put back,
-from a profile, entry or unit batch, retries the same way. When it still
-cannot be written, the process that staged it refuses every later trim and
-delete of that `target/` while its `.stim-trimmed` exists, and says why; a
-restarted process no longer knows, which is the one case a full disk leaves
-open. The
-maintenance pass writes the reserve back at its end when there is room.
+directory, the `NOT-RESTORED` marker, and the trim's moves of profiles,
+`incremental/` directories and unit files into it. When one of those writes
+fails with `ENOSPC`, or `EDQUOT` over a quota, Stim deletes its 1 MiB
+maintenance disk reserve (`$STIM_HOME/maintenance/disk-reserve`, the file the
+maintenance pass and an acting `stim gc` already keep) and tries that write
+once more. The dormant delete's renames of each entry into `.stim-trimmed` are
+not retried: an entry that cannot be moved stays, as above. The retry runs the
+same staged path with every check above unchanged. Before the trim retries a
+staging write, it reads the processes and the launchers again, and for a
+profile its lock files; a launcher into the checkout or process evidence that
+cannot be read stops the rest of that run, and a path in use keeps that path.
+The dormant delete checks that the `target/` is still the same directory
+before each try. For the workspace claims the whole removal of that output
+runs again. A run that released the reserve says so in its outcome. When the
+write fails again, or there was no reserve to release, the `target/` is kept
+as before.
+
+The trim, like the dormant delete, writes the `NOT-RESTORED` marker before its
+first move and removes it only right before it deletes what it staged, or when
+the run stops with nothing it could not put back. A directory that could not
+be put back therefore stays marked for every later trim and delete, from any
+process. When the marker cannot be written even after the reserve is
+released, the trim moves nothing; the dormant delete removes a marker it could
+not finish writing with its empty `.stim-trimmed`, and the `target/` gets its
+modification time back, so nothing blocks the next run. A trim that stops
+with its marker in place, such as one whose process was killed, leaves the
+`target/` for a person, as an interrupted dormant delete does. The maintenance
+pass writes the reserve back at its end when there is room.
 
 Reason: on 2026-11-19 at 23:01 UTC, with the maintainer's disk full, a rung 3
 trim failed with `ENOSPC` creating `.stim-trimmed` and freed nothing (#6012),
