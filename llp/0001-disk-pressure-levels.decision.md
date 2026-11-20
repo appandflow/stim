@@ -285,7 +285,7 @@ so none ever runs beside another.
   boot reclaim. For the disk rungs it asks the passes thread for a disk pass
   and waits for its result, which pacing and the snapshot use as before.
 - The dormant step and the maintenance pass run in units: one checkout's
-  reads, the dormant outputs, the ranking, one dependency deletion, one
+  reads, each size walk or removal of the dormant outputs, the ranking, one dependency deletion, one
   maintenance check, each size walk of the size check, the plan, one plan
   action, or one source checkout's trees. Walks that run side by side hand the turn over once and each waits
   until the lane has it back. Between units a waiting disk pass goes
@@ -295,8 +295,7 @@ so none ever runs beside another.
   it acting on a stale reading.
 - A disk pass therefore waits at most one unit. The longest units are one
   size walk of the maintenance pass, bounded at 120 s, one deletion of a
-  dormant `target/` or dependency tree, and the dormant outputs of one pass,
-  which run as one unit.
+  dormant `target/` or dependency tree, and the maintenance plan.
 - The disk pass measures again before each rung, so a level that fell while
   it waited takes only what the new level needs.
 - The hard-floor rank does not change the order in the stim-daemon yet: only
@@ -310,8 +309,9 @@ so none ever runs beside another.
   still run. A disk pass whose cleanup refusal names one child crosses with
   that child, which stimd watches as it does one of the tick's. An abort of
   the passes thread reaches a disk pass as well as the lane's job.
-- Rung 9's hourly clock lives as long as stimd, like the dormant step's, so a
-  new passes thread does not empty the machine caches again within the hour.
+- The ladder's clocks live as long as stimd, like the dormant step's: rung 9's
+  hourly limit, each level's 10-minute Cargo trim limit and each report rung's
+  hourly limit. A new passes thread does not run them again early.
 
 The fingerprint precompute deletes nothing and runs beside a disk pass. The
 idle stage's output deletion and the dormant stage's device and archive work

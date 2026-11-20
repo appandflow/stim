@@ -18,7 +18,8 @@ import { diskUsageCacheFile, maintenanceDir, type DaemonLadderAction } from '@st
 import { writeCacheFile } from '../cache-file.ts';
 import { REAL_BYTES_THRESHOLD } from '../daemon/dependencies.ts';
 import { treeSignature } from '../private-size.ts';
-import { createMaintenanceLane, runDormantReduction, type HomePasses } from '../daemon/passes.ts';
+import { createMaintenanceLane, runDiskPass, runDormantReduction, type HomePasses } from '../daemon/passes.ts';
+import * as ladderModule from '../daemon/ladder.ts';
 import * as measure from '../daemon/measure.ts';
 import * as processLock from '../engine/workspace-process-lock.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
@@ -211,6 +212,50 @@ describe.skipIf(process.platform === 'win32')(
       expect(existsSync(join(root, 'node_modules'))).toBe(false);
       expect(existsSync(join(root, 'package.json'))).toBe(true);
       expect(existsSync(join(metroStoreRoot(root), 'shared'))).toBe(true);
+    });
+
+    test('a hard-floor pass asked during the first output walk of a workspace runs before its next walk', async () => {
+      const root = register(repo('app'));
+      idleFor(3, root);
+      const outputs = [join(root, BUILD), join(workspaceDir(root), 'derived-data')];
+      const order: string[] = [];
+      let entered!: () => void;
+      let finish!: () => void;
+      const walking = new Promise<void>((resolve) => (entered = resolve));
+      const finished = new Promise<void>((resolve) => (finish = resolve));
+      const walk = fsUtil.measuredDirectorySizeAsync;
+      vi.spyOn(fsUtil, 'measuredDirectorySizeAsync').mockImplementation(async (dir, options) => {
+        if (outputs.includes(dir)) {
+          order.push('walk');
+          if (order.length === 1) {
+            entered();
+            await finished;
+          }
+        }
+        return walk(dir, options);
+      });
+      vi.spyOn(ladderModule, 'runLadder').mockImplementation(async (_input, pressure) => {
+        order.push('pass');
+        return { actions: [], pressure };
+      });
+
+      const step = hourlyStep(true);
+      await walking;
+      const floor = runDiskPass(
+        {
+          act: true,
+          pressure: { level: 'critical', disk: 'critical', memory: 'normal', reasons: [], memoryWarningSince: null },
+          devices: [],
+          sims: [],
+          requested: true,
+        },
+        () => {},
+        testContext(),
+      );
+      finish();
+      await Promise.all([step, floor]);
+
+      expect(order).toEqual(['walk', 'pass', 'walk']);
     });
 
     test('a workspace claim that hits a full disk is taken again once the disk reserve is released', async () => {

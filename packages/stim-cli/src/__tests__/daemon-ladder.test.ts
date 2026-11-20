@@ -60,6 +60,7 @@ import * as archive from '../archive.ts';
 import { testContext } from './_context.ts';
 import * as settings from '../workspace/settings.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
+import { LADDER_CLOCK_SLOTS } from '../daemon/disk-owner.ts';
 import * as daemonMeasure from '../daemon/measure.ts';
 import * as budget from '../stimd/passes/budget.ts';
 
@@ -622,6 +623,27 @@ describe('the pressure ladder', () => {
       vi.setSystemTime(Date.now() + 11 * MINUTE_MS);
       await runLadder(input(true, remeasure), pressure('high'));
       expect(existsSync(incremental)).toBe(false);
+    },
+  );
+
+  test.skipIf(process.platform === 'win32')(
+    "the stim-daemon's Cargo trims wait 10 minutes per level by the clocks its disk passes share, whichever thread runs them",
+    async () => {
+      const { incremental } = cargoApp();
+      const remeasure = async () => pressure('high');
+      const slots = Object.keys(LADDER_CLOCK_SLOTS).length;
+
+      const trimmedRecently = new BigInt64Array(slots);
+      trimmedRecently[LADDER_CLOCK_SLOTS['cargo high']] = BigInt(Date.now() - 5 * MINUTE_MS);
+      await runLadder({ ...input(true, remeasure), clocks: trimmedRecently }, pressure('high'));
+      expect(existsSync(incremental)).toBe(true);
+
+      const neverTrimmed = new BigInt64Array(slots);
+      const before = Date.now();
+      await runLadder({ ...input(true, remeasure), clocks: neverTrimmed }, pressure('high'));
+      expect(existsSync(incremental)).toBe(false);
+      expect(Number(neverTrimmed[LADDER_CLOCK_SLOTS['cargo high']])).toBeGreaterThanOrEqual(before);
+      expect(neverTrimmed[LADDER_CLOCK_SLOTS['cargo critical']]).toBe(0n);
     },
   );
 
@@ -1577,13 +1599,14 @@ describe('the ladder stim gc forces', () => {
           )
         ).actions.filter((action) => action.kind === 'clean-tool-cache');
 
-      const ranRecently = new BigInt64Array([BigInt(Date.now() - 10 * MINUTE_MS)]);
+      const ranRecently = new BigInt64Array(Object.keys(LADDER_CLOCK_SLOTS).length);
+      ranRecently[LADDER_CLOCK_SLOTS.unowned] = BigInt(Date.now() - 10 * MINUTE_MS);
       expect(await cleaned(ranRecently)).toEqual([]);
 
-      const neverRan = new BigInt64Array(1);
+      const neverRan = new BigInt64Array(Object.keys(LADDER_CLOCK_SLOTS).length);
       const before = Date.now();
       expect(await cleaned(neverRan)).toEqual([expect.objectContaining({ rung: 9, outcome: 'would' })]);
-      expect(Number(neverRan[0])).toBeGreaterThanOrEqual(before);
+      expect(Number(neverRan[LADDER_CLOCK_SLOTS.unowned])).toBeGreaterThanOrEqual(before);
       expect(await cleaned(neverRan)).toEqual([]);
     },
   );

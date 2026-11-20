@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { readClaimSet } from '@stim-cli/core/ownership-claim';
 import * as entries from '../spawn-entry.ts';
 import { createThreadTable } from '../stimd/threads.ts';
+import { LADDER_CLOCK_SLOTS } from '../daemon/disk-owner.ts';
 import type { DiskPassInput } from '../daemon/passes.ts';
 import { captureProcessToken, inspectProcessIdentity } from '../process-identity.ts';
 import { signalProcessTree } from '../metro.ts';
@@ -207,13 +208,13 @@ parentPort.on('message', (message) => {
   }
 });
 
-test('the hourly machine cache cleanup clock survives retirement of the worker that ran the disk pass', async () => {
+test('the ladder clocks survive retirement of the worker that ran the disk pass', async () => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   const fake = fakeWorker(`
 import { parentPort, threadId, workerData } from 'node:worker_threads';
 parentPort.on('message', (message) => {
   if (message.type !== 'ladder') return;
-  const runs = Number(Atomics.add(workerData.unownedCadence, 0, 1n)) + 1;
+  const runs = Array.from(workerData.ladderClocks, (_, slot) => Number(Atomics.add(workerData.ladderClocks, slot, 1n)) + 1);
   parentPort.postMessage({ type: 'log', level: 'info', event: 'fixture', msg: '', fields: { threadId, runs } });
   parentPort.postMessage({ type: 'ladderDone', id: message.id, reading: false, result: { actions: [], pressure: message.input.pressure } });
 });
@@ -228,7 +229,8 @@ parentPort.on('message', (message) => {
     await ladder(diskInput(['first']));
     await vi.advanceTimersByTimeAsync(120_001);
     await ladder(diskInput(['replacement']));
-    expect(traces.map((trace) => trace.runs)).toEqual([1, 2]);
+    const slots = Object.keys(LADDER_CLOCK_SLOTS).length;
+    expect(traces.map((trace) => trace.runs)).toEqual([Array(slots).fill(1), Array(slots).fill(2)]);
     expect(traces[0]?.threadId).not.toBe(traces[1]?.threadId);
   } finally {
     vi.useRealTimers();

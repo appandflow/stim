@@ -1,6 +1,7 @@
 import { isMainThread, parentPort, Worker, workerData } from 'node:worker_threads';
 import type { DaemonLadderAction } from '@stim-cli/core/state';
 import type { DiskPassInput, DiskPassResult, MaintenanceLane } from '../daemon/passes.ts';
+import { LADDER_CLOCK_SLOTS } from '../daemon/disk-owner.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 import { childKey } from './cleanup-watch.ts';
 import { setReportChildLog } from '../report-child-log.ts';
@@ -88,7 +89,9 @@ const lostError = (name: ThreadName, error: Error) =>
 export function createThreadTable(log: Log, onLost: (error: Error) => void = () => {}): ThreadTable {
   const threads = new Map<ThreadName, Thread>();
   const dependencyCadence = new BigInt64Array(new SharedArrayBuffer(BigInt64Array.BYTES_PER_ELEMENT));
-  const unownedCadence = new BigInt64Array(new SharedArrayBuffer(BigInt64Array.BYTES_PER_ELEMENT));
+  const ladderClocks = new BigInt64Array(
+    new SharedArrayBuffer(Object.keys(LADDER_CLOCK_SLOTS).length * BigInt64Array.BYTES_PER_ELEMENT),
+  );
   let nextLadder = 0;
   const idleEnd = (name: ThreadName, thread: Thread) => {
     if (thread.idle) clearTimeout(thread.idle);
@@ -111,7 +114,7 @@ export function createThreadTable(log: Log, onLost: (error: Error) => void = () 
   const start = (name: ThreadName): Thread => {
     const worker = trackWorker(
       new Worker(spawnEntry('stimd-thread'), {
-        workerData: { stimdThread: name, ...(name === 'passes' ? { dependencyCadence, unownedCadence } : {}) },
+        workerData: { stimdThread: name, ...(name === 'passes' ? { dependencyCadence, ladderClocks } : {}) },
       }),
     );
     const thread: Thread = {
@@ -297,7 +300,7 @@ else if (thread && parentPort) {
   const log: Log = (level, event, msg, fields = {}) => port.postMessage({ type: 'log', level, event, msg, fields });
   setReportChildLog(log);
   const { processContext } = await import('../cli-operation.ts');
-  const unownedCadence: BigInt64Array | undefined = workerData.unownedCadence;
+  const ladderClocks: BigInt64Array | undefined = workerData.ladderClocks;
   let lane: MaintenanceLane | undefined;
   serveThreadJobs<ThreadInput, DiskPassInput, DiskPassResult>(
     port,
@@ -329,7 +332,7 @@ else if (thread && parentPort) {
     },
     async (input, operation) => {
       const { runDiskPass } = await import('../daemon/passes.ts');
-      return runDiskPass(input, log, operation, unownedCadence);
+      return runDiskPass(input, log, operation, ladderClocks);
     },
   );
 }

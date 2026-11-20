@@ -3,6 +3,15 @@ export const HARD_FLOOR = 0;
 export const LADDER = 1;
 export const LANE = 2;
 
+/** The slots of the stim-daemon's ladder clocks (`LadderInput.clocks`), which live as long as stimd. */
+export const LADDER_CLOCK_SLOTS = {
+  unowned: 0,
+  'cargo high': 1,
+  'cargo critical': 2,
+  'report 5': 3,
+  'report 7': 4,
+} as const;
+
 let holder: number | null = null;
 const waiting: { rank: number; grant: () => void }[] = [];
 

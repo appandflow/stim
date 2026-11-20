@@ -40,6 +40,7 @@ import { DEFAULT_WORKTREE_IDLE_DAYS } from '../commands/gc/worktrees.ts';
 import { causesOf, dormantAction, rungDecision, rungsFrom, type Cause, type Rung } from '../policy/pressure.ts';
 import type { Config, ProjectRecord } from '../workspace/config.ts';
 import { runBootedParkedPass } from './booted-parked.ts';
+import { LADDER_CLOCK_SLOTS } from './disk-owner.ts';
 import { measureDisk } from './measure.ts';
 import { diskThresholds, shortVolumeDevices } from './pressure.ts';
 import { collectInventory } from '../commands/gc/inventory.ts';
@@ -69,9 +70,22 @@ const SIZE_TIMEOUT_MS = 120_000;
 const DORMANT_HIGH_IDLE_MS = 10 * MINUTE_MS;
 const DEPENDENCIES_HIGH_IDLE_MS = 60 * MINUTE_MS;
 const UNOWNED_EVERY_MS = 60 * MINUTE_MS;
-const unownedRunAt = new BigInt64Array(1);
 const REPORT_EVERY_MS = 60 * MINUTE_MS;
-const reportedAt = new Map<string, number>();
+
+type ClockKey = keyof typeof LADDER_CLOCK_SLOTS;
+const processClocks = new Map<string, number>();
+
+/** When the step `key` last ran: from the stim-daemon's `clocks` when given, else this process's, per Stim home. */
+function lastRanAt(context: Pick<LadderInput, 'clocks'>, key: ClockKey): number | undefined {
+  if (!context.clocks) return processClocks.get(`${configDir()}\0${key}`);
+  const at = Number(Atomics.load(context.clocks, LADDER_CLOCK_SLOTS[key]));
+  return at === 0 ? undefined : at;
+}
+
+function ranAt(context: Pick<LadderInput, 'clocks'>, key: ClockKey, at: number): void {
+  if (context.clocks) Atomics.store(context.clocks, LADDER_CLOCK_SLOTS[key], BigInt(at));
+  else processClocks.set(`${configDir()}\0${key}`, at);
+}
 
 export interface LadderInput {
   config: Config;
@@ -108,8 +122,12 @@ export interface LadderInput {
   only?: Cause;
   /** Runs the report-only rungs 5 and 7: the stim-daemon's ladder, at most hourly and never at critical. */
   reports?: boolean;
-  /** When rung 9 last ran unforced, in epoch ms: the stim-daemon's clock, which outlives the thread that runs its ladder. */
-  unownedCadence?: BigInt64Array;
+  /**
+   * When each limited step last ran unforced, in epoch ms, by `LADDER_CLOCK_SLOTS`: the stim-daemon's clocks, which
+   * outlive the thread that runs its ladder. Rung 9 hourly, each level's Cargo trims every 10 minutes, each report rung
+   * hourly.
+   */
+  clocks?: BigInt64Array;
 }
 
 interface RungContext extends LadderInput {
@@ -436,14 +454,13 @@ function largestFirst(actions: readonly MaintenanceAction[]): MaintenanceAction[
 }
 
 const CARGO_TRIM_RETRY_MS = 10 * 60_000;
-const cargoTrimmedAt = new Map<string, number>();
 
 async function cargoTargetsStep(context: RungContext): Promise<void> {
   // @ref LLP 0001#pressure-acts-without-waiting-for-measurement-or-load -- the trim needs no size scan or load gate
   if (context.force) return;
   const now = Date.now();
-  const key = `${configDir()}\0${context.level}`;
-  const last = cargoTrimmedAt.get(key);
+  const key = context.level === 'critical' ? 'cargo critical' : 'cargo high';
+  const last = lastRanAt(context, key);
   if (last !== undefined && last <= now && now - last < CARGO_TRIM_RETRY_MS) return;
   if (!(await context.stillShort())) return;
   const protectedRoot = context.protectedRoot ? (canonicalOrNull(context.protectedRoot) ?? '') : '';
@@ -476,7 +493,7 @@ async function cargoTargetsStep(context: RungContext): Promise<void> {
     if (context.act) triedAt.set(action.target, Date.now());
     await run(context, action);
   }
-  cargoTrimmedAt.set(key, now);
+  ranAt(context, key, now);
 }
 
 /**
@@ -699,11 +716,11 @@ function canonicalOrNull(path: string): string | null {
 function reportDue(context: RungContext): boolean {
   if (context.force) return true;
   if (!context.reports || context.pressure.level === 'critical') return false;
-  const key = `${configDir()}\0${context.rung}`;
+  const key = context.rung === 7 ? 'report 7' : 'report 5';
   const now = Date.now();
-  const last = reportedAt.get(key);
+  const last = lastRanAt(context, key);
   if (last !== undefined && last <= now && now - last < REPORT_EVERY_MS) return false;
-  reportedAt.set(key, now);
+  ranAt(context, key, now);
   return true;
 }
 
@@ -951,11 +968,11 @@ async function historyRung(context: RungContext): Promise<void> {
 async function unownedRung(context: RungContext): Promise<void> {
   // @ref LLP 0003#rung-9-runs-only-at-critical -- at high it would wipe tool caches on every pass
   if (context.level !== 'critical' || isScopedHome(context.operation?.env ?? process.env)) return;
-  const cadence = context.unownedCadence ?? unownedRunAt;
-  if (!context.force && Date.now() - Number(Atomics.load(cadence, 0)) < UNOWNED_EVERY_MS) return;
+  const last = lastRanAt(context, 'unowned');
+  if (!context.force && last !== undefined && Date.now() - last < UNOWNED_EVERY_MS) return;
   const critical = context.force && !context.force.measured ? null : await shortDevices(context, 'critical');
   if (critical?.size === 0) return;
-  if (!context.force) Atomics.store(cadence, 0, BigInt(Date.now()));
+  if (!context.force) ranAt(context, 'unowned', Date.now());
   for (const plan of await surveyToolCaches(context.operation)) {
     // @ref LLP 0003#only-on-the-short-volume -- a full external disk must not empty another volume
     const result = onShortVolume(plan.cache.paths, critical)

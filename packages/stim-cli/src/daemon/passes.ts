@@ -80,7 +80,7 @@ export async function runDiskPass(
   input: DiskPassInput,
   log: IdlePassInput['log'],
   operation: StimContext,
-  unownedCadence?: BigInt64Array,
+  clocks?: BigInt64Array,
 ): Promise<DiskPassResult> {
   const config = loadConfig();
   if (!config) return { actions: [], pressure: input.pressure };
@@ -102,7 +102,7 @@ export async function runDiskPass(
         operation,
         reports: true,
         only: 'disk',
-        ...(unownedCadence ? { unownedCadence } : {}),
+        ...(clocks ? { clocks } : {}),
         remeasure: remeasurer(config, operation, (measurement) => {
           const pressure = classifyPressure({
             ...measurement,
