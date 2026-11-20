@@ -854,6 +854,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       return builds.drained ?? (builds.removing(client) ? 'This machine is removing this build client.' : null);
     },
     idle: (client) => builds.pruneBlobs(client),
+    ...(options.offloadJobs ? { counted: options.offloadJobs } : {}),
   });
   const presence = new PresenceHub();
   const localAgents = new LocalAgentPresence({

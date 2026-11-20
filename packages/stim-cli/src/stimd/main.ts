@@ -996,6 +996,8 @@ async function runStimdInner(
   process.title = 'stimd';
   const key = writeDesktopKey(desktopKey);
   const script = realpathSync(process.argv[1] ?? '');
+  /** The offload jobs the net thread runs, an artifact delivery included, which a takeback waits for. */
+  let offloadJobs = 0;
   const net = createNetThread(
     log,
     (failure) => {
@@ -1012,6 +1014,10 @@ async function runStimdInner(
       restartWhy ??= why;
       void checkEngine();
     },
+    (count) => {
+      offloadJobs = count;
+      if (count === 0) void checkEngine();
+    },
   );
   let restartingNet = false;
   const netAskers = new Set<Socket>();
@@ -1021,6 +1027,7 @@ async function runStimdInner(
   const jobWaiters = new Map<Socket, string>();
   const netGone = () => {
     recordNet(null);
+    offloadJobs = 0;
     for (const socket of netAskers) socket.end();
     netAskers.clear();
     handleNetStop(serve, closing, attached !== undefined, requestEnd, shutdown, requestTick);
@@ -1290,7 +1297,7 @@ async function runStimdInner(
       !hasActiveCommands() &&
       !pinned() &&
       !net.running()?.shareOnly &&
-      !(takeBack && foregroundAskers.size > 0)
+      !(takeBack && (foregroundAskers.size > 0 || offloadJobs > 0))
     ) {
       log('info', 'service_restart', restartWhy);
       // @ref LLP 0009#service-and-engine-updates -- the job resumes the device log streams of the stimd it takes back from

@@ -456,6 +456,7 @@ export async function start(
     /** The bundled Desktop's private key; the test key by default, null for a server Desktop did not start. */
     desktopBootstrap?: ServerOptions['desktopBootstrap'] | null;
     setupDeps?: ServerOptions['setupDeps'];
+    offloadJobs?: ServerOptions['offloadJobs'];
   } = {},
 ): Promise<number> {
   const stimCli = join(root, 'fake-stim.mjs');
@@ -527,6 +528,7 @@ export async function start(
     startupProbeMs: overrides.startupProbeMs,
     startupRetryMs: overrides.startupRetryMs,
     setupDeps: overrides.setupDeps,
+    ...(overrides.offloadJobs ? { offloadJobs: overrides.offloadJobs } : {}),
   });
   if (overrides.settle !== false) await server!.ready;
   return server.addresses[0]!.port;

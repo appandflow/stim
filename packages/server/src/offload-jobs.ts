@@ -76,6 +76,8 @@ export interface OffloadJobsOptions {
   admit: (client: string) => string | null;
   /** Called after the last job of `client` exits. */
   idle: (client: string) => void;
+  /** Called with the number of jobs running, each time one starts or exits. */
+  counted?: (count: number) => void;
 }
 
 // compat C14 permanent
@@ -230,6 +232,8 @@ export class OffloadJobs {
     if (late) return refused('build-busy', late);
     if (socket.readyState !== socket.OPEN) return refused('build-refused', 'The connection closed.');
     const job = this.spawn(kind, client, repo, entry);
+    this.options.counted?.(this.jobs.size);
+    void job.exited?.then(() => this.options.counted?.(this.jobs.size));
     this.attachSocket(job, socket);
     return { result: { job: job.id } };
   }
