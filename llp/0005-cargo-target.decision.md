@@ -271,7 +271,10 @@ a directory on a device other than the `target/`'s and Exact's
 (`.cargo-lock`, `.cargo-build-lock`, `.cargo-artifact-lock`,
 `.exact-sweep.json.lock`) and a `*-keypair.json` (any case) are never unlinked,
 and a directory goes once it is empty. In a profile it removes `.fingerprint`
-first, so a build that starts while the profile is half removed rebuilds it. A
+first, so a build that starts while the profile is half removed rebuilds it.
+Removing it last would keep a half removed profile listed, but Cargo 1.97 then
+fails: with the fingerprint kept and a build script's `OUT_DIR` file gone, it
+recompiles the library without running the script again. A
 path already gone counts as removed. What it left for those rules is reported,
 lock files aside. Right before each unlink and each directory removal, the
 parent directory must still resolve through `realpath` to the path the remover
