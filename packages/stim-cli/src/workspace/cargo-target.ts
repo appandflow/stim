@@ -1,5 +1,5 @@
 import { lstatSync, readFileSync, readdirSync, realpathSync, statSync, type Dirent } from 'node:fs';
-import { lstat, readdir, rmdir, unlink } from 'node:fs/promises';
+import { lstat, readdir, realpath, rmdir, unlink } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { releaseReserveWhenFull } from '../disk-reserve.ts';
 import { getExecutor } from '../exec.ts';
@@ -356,13 +356,24 @@ const kept = (name: string): boolean => LOCK_FILES.has(name) || isKeypairName(na
 const reported = (left: readonly string[]): string[] =>
   left.filter((path) => !LOCK_FILES.has(basename(path)) && basename(path) !== EXACT_APPLE_LOCKS);
 
+/** Raised when a directory the remover is emptying stops being a real directory inside the target; the delete stops. */
+class LeftTarget extends Error {}
+
+/** Throws `LeftTarget` unless the parent of `path`, built from the canonical target, is still its own canonical path. */
+async function stillInside(path: string): Promise<void> {
+  const parent = dirname(path);
+  if ((await realpath(parent).catch(() => null)) !== parent)
+    throw new LeftTarget(`${parent} is no longer a directory inside the target/, so the delete stopped`);
+}
+
 // @ref LLP 0005#one-remover -- never through a link, never onto another device, never a lock file or a keypair
 /**
  * Removes `path` in place, deepest first: a symbolic link is unlinked and never followed, a directory on a device other
  * than `dev` and Exact's `.apple-cargo-locks` are not entered, a lock file Cargo or Exact takes and a `*-keypair.json`
- * (any case) are never unlinked, and a directory goes once it is empty. A `.fingerprint` goes before its siblings, so a
- * build that starts while a profile is half removed rebuilds it. A path already gone counts as removed. Returns the paths
- * it left because of those rules; a directory a build filled again meanwhile stays too.
+ * (any case) are never unlinked, and a directory goes once it is empty. Right before each unlink and each directory
+ * removal its parent must still resolve to itself, or `LeftTarget` stops the delete. A `.fingerprint` goes before its
+ * siblings, so a build that starts while a profile is half removed rebuilds it. A path already gone counts as removed.
+ * Returns the paths it left because of those rules; a directory a build filled again meanwhile stays too.
  */
 async function removeInPlace(path: string, dev: number, signal?: AbortSignal): Promise<string[]> {
   signal?.throwIfAborted();
@@ -374,6 +385,7 @@ async function removeInPlace(path: string, dev: number, signal?: AbortSignal): P
   const name = basename(path);
   if (!stat.isDirectory()) {
     if (kept(name)) return [path];
+    await stillInside(path);
     await unlink(path).catch((error: unknown) => {
       if (errorCode(error) !== 'ENOENT') throw error;
     });
@@ -389,6 +401,7 @@ async function removeInPlace(path: string, dev: number, signal?: AbortSignal): P
   for (const child of names.toSorted((a, b) => Number(b === '.fingerprint') - Number(a === '.fingerprint')))
     left.push(...(await removeInPlace(join(path, child), dev, signal)));
   if (left.length) return left;
+  await stillInside(path);
   await rmdir(path).catch((error: unknown) => {
     const code = errorCode(error);
     if (code !== 'ENOENT' && code !== 'ENOTEMPTY' && code !== 'EEXIST') throw error;
@@ -565,13 +578,18 @@ export async function trimCargoTarget(
       await step(next);
     }
   };
-  if (!idleOnly) {
-    await trim();
-    return result;
-  }
   if (!steps.length) return result;
-  const held = await withCargoLocks(targetLocks(target), trim, signal);
-  return 'kept' in held ? keep(`${held.kept}, and the cap trims an idle target/ only`) : result;
+  try {
+    if (!idleOnly) {
+      await trim();
+      return result;
+    }
+    const held = await withCargoLocks(targetLocks(target), trim, signal);
+    return 'kept' in held ? keep(`${held.kept}, and the cap trims an idle target/ only`) : result;
+  } catch (error) {
+    if (error instanceof LeftTarget) return keep(error.message);
+    throw error;
+  }
 }
 
 /**
@@ -707,15 +725,21 @@ export async function deleteCargoTarget(
   if (first.used.length) return keep(`a process uses ${first.used[0]}`);
   const exactHeld = await heldExactLock(target, signal);
   if (exactHeld) return keep(`a build holds ${exactHeld}`);
-  const done = await withCargoLocks(
-    targetLocks(target),
-    async () => {
-      const left: string[] = [];
-      for (const name of names) left.push(...(await removeInPlace(join(target, name), dev, signal)));
-      return left;
-    },
-    signal,
-  );
+  let done: Awaited<ReturnType<typeof withCargoLocks<string[]>>>;
+  try {
+    done = await withCargoLocks(
+      targetLocks(target),
+      async () => {
+        const left: string[] = [];
+        for (const name of names) left.push(...(await removeInPlace(join(target, name), dev, signal)));
+        return left;
+      },
+      signal,
+    );
+  } catch (error) {
+    if (error instanceof LeftTarget) return keep(error.message);
+    throw error;
+  }
   if ('kept' in done) return keep(done.kept);
   result.removed.push(...names);
   result.bytes = names.reduce((sum, name) => sum + (walked.bytes.get(join(target, name)) ?? 0), 0);

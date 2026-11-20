@@ -7,6 +7,7 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
+  renameSync,
   rmSync,
   symlinkSync,
   utimesSync,
@@ -26,7 +27,9 @@ import {
   trimCargoTarget,
 } from '../workspace/cargo-target.ts';
 
-const fsHooks = vi.hoisted((): { dev?: (path: string) => number | undefined } => ({}));
+const fsHooks = vi.hoisted(
+  (): { dev?: (path: string) => number | undefined; afterLstat?: (path: string) => void } => ({}),
+);
 vi.mock('node:fs/promises', async (importOriginal) => {
   const fs = await importOriginal<typeof import('node:fs/promises')>();
   return {
@@ -34,12 +37,14 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     lstat: async (...args: Parameters<typeof fs.lstat>) => {
       const stat = await fs.lstat(...args);
       const dev = fsHooks.dev?.(String(args[0]));
+      fsHooks.afterLstat?.(String(args[0]));
       return dev === undefined ? stat : Object.assign(stat, { dev });
     },
   };
 });
 afterEach(() => {
   delete fsHooks.dev;
+  delete fsHooks.afterLstat;
   resetExecutor();
 });
 
@@ -273,6 +278,27 @@ describe.skipIf(process.platform === 'win32')('trimming in place (Cargo locks ne
         /^debug: left .*App-Keypair\.json, .*mounted$|^debug: left .*mounted, .*App-Keypair\.json$/,
       ),
     ]);
+  });
+
+  test('the remover stops when a directory it is emptying becomes a link, and never deletes through it', async () => {
+    makeProfile('debug', 3 * DAY);
+    const deps = join(realpathSync.native(target), 'debug', 'deps');
+    const outside = join(tmpdir(), `${realpathSync(target).split('/').at(-1)}-swapped`);
+    mkdirSync(outside);
+    onTestFinished(() => rmSync(outside, { recursive: true, force: true }));
+    writeFileSync(join(outside, 'libx.rlib'), 'theirs');
+    fsHooks.afterLstat = (path) => {
+      if (path !== join(deps, 'libx.rlib')) return;
+      delete fsHooks.afterLstat;
+      renameSync(deps, `${deps}-aside`);
+      symlinkSync(outside, deps);
+    };
+
+    const result = await trimCargoTarget(target, { needBytes: 0 });
+
+    expect(readFileSync(join(outside, 'libx.rlib'), 'utf8')).toBe('theirs');
+    expect(result.removed).toEqual([]);
+    expect(result.kept).toEqual([expect.stringContaining(`${deps} is no longer a directory inside`)]);
   });
 
   test.each(['.stim-trimmed', '.stim-not-restored-1-0'])(
