@@ -60,6 +60,8 @@ function closeFailures(error: unknown): CloseFailure[] {
     : [error instanceof Error ? error : new Error(String(error))];
 }
 
+const failureText = (failures: CloseFailure[]): string => failures.map((failure) => failure.message).join('; ');
+
 async function run(port: MessagePort, options: NetOptions): Promise<void> {
   const post = (message: FromNet) => port.postMessage(message);
   const connections = new Map<number, Bridged>();
@@ -78,7 +80,12 @@ async function run(port: MessagePort, options: NetOptions): Promise<void> {
   } catch (error) {
     post({
       type: 'refused',
-      message: error instanceof NetRefusal ? error.message : String((error as Error).stack),
+      message:
+        error instanceof NetRefusal
+          ? error.message
+          : error instanceof AggregateError
+            ? failureText(closeFailures(error))
+            : String((error as Error).stack),
       clean: error instanceof NetRefusal,
     });
     port.close();
@@ -105,7 +112,7 @@ async function run(port: MessagePort, options: NetOptions): Promise<void> {
             const readOnly = leaves.length > 0 && leaves.every((failure) => failure.readOnly === true);
             post({
               type: 'closed',
-              error: failures.map((failure) => failure.message).join('; '),
+              error: failureText(failures),
               ...(readOnly
                 ? {
                     readOnly: true,
