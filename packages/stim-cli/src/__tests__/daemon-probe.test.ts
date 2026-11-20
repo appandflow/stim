@@ -57,6 +57,19 @@ test('Device Hub in front, or Simulator with no readable current device, names n
   expect(await probeFocusedDeviceUse({ platform: 'darwin', exec: frontmost('com.apple.Terminal', null) })).toBe(null);
 });
 
+test('a standalone QEMU window whose arguments name no AVD is no emulator use', async () => {
+  const exec = {
+    ...getExecutor(),
+    async runFileAsync(file: string, args: string[] = []) {
+      if (file === 'ioreg') return '    | | |   "HIDIdleTime" = 4682113625\n';
+      if (file === 'lsappinfo' && args[0] === 'front') return 'ASN:0x0-0x1565063b:\n';
+      if (file === 'lsappinfo') return 'executable path="/opt/homebrew/bin/qemu-system-aarch64"\npid = 24393\n';
+      return 'qemu-system-aarch64 -machine virt -drive file=linux.qcow2\n';
+    },
+  };
+  expect(await probeFocusedDeviceUse({ platform: 'darwin', exec })).toBe(null);
+});
+
 test('an emulator window whose AVD cannot be read, as when its ps times out, keeps every owned emulator in use', async () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-probe-'));
   process.env.STIM_HOME = home;
