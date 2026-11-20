@@ -335,12 +335,20 @@ implementer's reading of it on #6029.
 The dormant step's hourly walk of registered workspaces and discovered
 checkouts at `idle.dormantDays` writes one mark per checkout it reads, inside that checkout's unit, to
 `$STIM_HOME/gc/marks/<hash>.json`, keyed by the canonical root. A mark holds
-the newest activity the walk read and the outputs rung 1 would delete there,
-with each Cargo `target/` as its own kind and sizes from the disk-usage
-cache; the mark starts no size walk. A checkout kept for something other than
-recent activity (something of it runs, `maintenance.keep`, unreadable
-evidence) records that reason on each candidate.
+the outputs rung 1 would delete there, with each Cargo `target/` as its own
+kind and sizes from the disk-usage cache; the mark starts no size walk. It
+also holds the newest activity the walk read, and the walk reads at
+`idle.dormantDays`, not at rung 1's 2-minute threshold:
 
+- A checkout with something running records that as the keep reason on each
+  candidate.
+- A checkout idle past `idle.dormantDays` has its full reading, and a keep
+  reason on each candidate when something other than activity keeps it
+  (`maintenance.keep`, `idle.minutes` 0, unreadable evidence).
+- A newer checkout records the newest activity read, or only its last Stim
+  command when one ran within `idle.dormantDays`, which is a lower bound. Its
+  settings are not read. A sweep reads activity and keeps again before it
+  deletes.
 - A mark is rebuildable: an unknown version or a file that does not parse
   reads as absent and the next walk rewrites it, so deleting the folder is
   safe. It is written with a temporary file and a rename.

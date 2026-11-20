@@ -14,6 +14,7 @@ import { dirname, join } from 'node:path';
 import { diskUsageCacheFile, gcMarkFile, readGcMark, type Config } from '@stim-cli/core/state';
 import { runDormantDependencies } from '../daemon/dependencies.ts';
 import { stoppedOutputCandidates, stoppedOutputs } from '../daemon/stages.ts';
+import type { OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { saveConfig } from '../workspace/config.ts';
 import { testContext } from './_context.ts';
 
@@ -57,12 +58,13 @@ describe('gc marks written by the lane', () => {
     return path;
   };
 
-  const lane = (marks?: true) =>
+  const lane = (marks?: true, devices: OwnedDeviceActivity[] = []) =>
     runDormantDependencies({
       config,
       act: false,
       log: () => {},
       ...reading,
+      devices,
       operation: testContext(),
       ...(marks ? { marks } : {}),
     });
@@ -106,6 +108,25 @@ describe('gc marks written by the lane', () => {
       { kind: 'outputs', path: join(active, 'android', 'app', 'build'), bytes: null, measuredAt: null },
     ]);
     expect(Date.parse(busy?.lastActivityAt ?? '')).toBeGreaterThan(Date.now() - day);
+  }, 20_000);
+
+  it('records why a checkout with something running is kept on each of its candidates', async () => {
+    const idle = checkout('idle', 3 * day);
+    saveConfig(config);
+    const device: OwnedDeviceActivity = {
+      kind: 'ios',
+      id: 'sim',
+      name: 'sim',
+      project: idle,
+      slot: 'default',
+      activity: { state: 'idle', basis: [] },
+    };
+
+    await lane(true, [device]);
+
+    expect(readGcMark(idle)?.candidates).toEqual([
+      expect.objectContaining({ kind: 'outputs', keep: { reason: 'something of it runs', at: expect.any(String) } }),
+    ]);
   }, 20_000);
 
   it('writes no mark from a walk that does not ask for marks', async () => {
