@@ -274,6 +274,7 @@ async function homePasses(
           log,
           ...reading,
           sims: measured.sims,
+          reports: true,
           remeasure: async () => {
             const results = await Promise.allSettled([
               measureDisk(config, operation.signal),

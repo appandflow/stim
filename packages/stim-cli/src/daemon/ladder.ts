@@ -106,6 +106,8 @@ export interface LadderInput {
   stop?: AbortSignal;
   /** The device id of the one volume a build's headroom run frees; without it, the volumes under `disk.minFreeGb`. */
   volume?: number;
+  /** Runs the report-only rungs 5 and 7: the stim-daemon's ladder, at most hourly and never at critical. */
+  reports?: true;
 }
 
 interface RungContext extends LadderInput {
@@ -705,12 +707,12 @@ function canonicalOrNull(path: string): string | null {
 }
 
 /**
- * Whether a report-only step runs now: in `stim gc` each time, never in a build's headroom run, which a report cannot
- * help, and in the stim-daemon at most hourly per rung and Stim home.
+ * Whether a report-only rung runs now: in `stim gc` each time; in the stim-daemon's ladder at most hourly per rung and
+ * Stim home, never at critical; never in a command's ladder.
  */
 function reportDue(context: RungContext): boolean {
   if (context.force) return true;
-  if (context.volume !== undefined) return false;
+  if (!context.reports || context.level === 'critical') return false;
   const key = `${configDir()}\0${context.rung}`;
   const now = Date.now();
   const last = reportedAt.get(key);
@@ -772,6 +774,7 @@ async function dependenciesRung(context: RungContext): Promise<void> {
       context.why,
     );
   for (const dependency of take) reportDependency(context, dependency, context.why);
+  await sourceDependenciesStep({ ...context, rung: 8 });
 }
 
 /**
@@ -864,11 +867,11 @@ async function worktreesRung(context: RungContext): Promise<void> {
 }
 
 /**
- * Rung 8's first step, at critical only and report only: the node_modules and Pods of source checkouts idle 2 minutes,
- * longest-idle first, only on a volume still under the critical level.
+ * Rung 8's report, at critical only, which rung 5 runs after its own: the node_modules and Pods of source checkouts idle
+ * 2 minutes, longest-idle first, only on a volume still under the critical level.
  */
 async function sourceDependenciesStep(context: RungContext): Promise<void> {
-  if (!reportDue(context)) return;
+  if (context.level !== 'critical') return;
   const keeps = new Map<string, string>();
   const idle = await idleStageCandidates(context.config, context, PRESSURE_IDLE_MS, {
     full: true,
@@ -936,10 +939,9 @@ async function sourceDependenciesStep(context: RungContext): Promise<void> {
       reportDependency(context, dependency, `${context.why}; the source checkout's dependencies go last`);
 }
 
-/** Rung 8, at critical only: a source checkout's dependencies, then every device recording not being written, and the logs, recordings and agent actions of every archive. */
+/** Rung 8, at critical only: every device recording not being written, and the logs, recordings and agent actions of every archive. */
 async function historyRung(context: RungContext): Promise<void> {
   if (context.level !== 'critical') return;
-  await sourceDependenciesStep(context);
   const critical = context.force && !context.force.measured ? null : await shortDevices(context, 'critical');
   if (!onShortVolume([configDir()], critical)) return;
   const history = await timedStep(context.log, 'plan_history', () => planHistory(context.operation), {

@@ -1593,10 +1593,10 @@ describe('rung 5', () => {
   function register(root: string, record: Parameters<typeof upsertProject>[1] = { metroPort: null }) {
     upsertProject(root, record);
     ensureWorkspaceStorage(root);
-    recordWorkspaceUse(root, new Date(Date.now() - HOUR_MS));
+    recordWorkspaceUse(root, new Date(Date.now() - 2 * HOUR_MS));
   }
 
-  const ladder = (level: 'high' | 'critical', protectedRoot?: string) =>
+  const ladder = (level: 'high' | 'critical', protectedRoot?: string, daemon = true) =>
     runLadder(
       {
         config: loadConfig()!,
@@ -1606,12 +1606,13 @@ describe('rung 5', () => {
         simsFailed: false,
         remeasure: async () => pressure(level),
         fromRung: 5,
+        ...(daemon ? { reports: true as const } : {}),
         ...(protectedRoot ? { protectedRoot } : {}),
       },
       pressure(level),
     );
 
-  test('at critical it keeps node_modules and Pods of an idle linked worktree while the running processes cannot be listed, as on win32', async () => {
+  test('it reports nothing of an idle linked worktree while the running processes cannot be listed, as on win32', async () => {
     const listed = getExecutor();
     setExecutor({
       ...listed,
@@ -1620,7 +1621,7 @@ describe('rung 5', () => {
     });
     const { idle } = linkedWorktrees(['idle']);
     register(idle);
-    const { actions } = await ladder('critical');
+    const { actions } = await ladder('high');
     expect(existsSync(join(idle, 'node_modules'))).toBe(true);
     expect(existsSync(join(idle, 'ios', 'Pods'))).toBe(true);
     expect(actions.filter((action) => action.rung === 5)).toEqual([]);
@@ -1634,34 +1635,39 @@ describe('rung 5', () => {
           .filter((action) => action.rung === 5)
           .map(({ target, outcome, detail }) => [target, outcome, detail.startsWith('report only')]);
 
-      test('it deletes nothing and reports at most hourly the node_modules and Pods of a linked worktree idle 1 hour at high, and 2 minutes at critical', async () => {
+      test("at high the daemon's ladder deletes nothing and reports at most hourly the node_modules and Pods of a linked worktree idle 1 hour, never at critical or in a command's ladder", async () => {
         const { idle, recent } = linkedWorktrees(['idle', 'recent']);
         register(idle);
         register(recent);
-        recordWorkspaceUse(idle, new Date(Date.now() - 2 * HOUR_MS));
         recordWorkspaceUse(recent, new Date(Date.now() - 30 * MINUTE_MS));
 
         const high = await ladder('high');
-        const within = await ladder('critical');
+        const within = await ladder('high');
         vi.setSystemTime(Date.now() + HOUR_MS);
         const critical = await ladder('critical');
+        const command = await ladder('high', undefined, false);
+        const later = await ladder('high');
 
         for (const root of [idle, recent]) {
           expect(existsSync(join(root, 'node_modules'))).toBe(true);
           expect(existsSync(join(root, 'ios', 'Pods'))).toBe(true);
         }
-        expect(reports(high.actions).toSorted()).toEqual(
-          [join(idle, 'ios', 'Pods'), join(idle, 'node_modules')].map((target) => [target, 'kept', true]),
-        );
+        const idleTrees = [join(idle, 'ios', 'Pods'), join(idle, 'node_modules')];
+        expect(reports(high.actions).toSorted()).toEqual(idleTrees.map((target) => [target, 'kept', true]));
         expect(reports(within.actions)).toEqual([]);
-        expect(reports(critical.actions).filter(([target]) => String(target).startsWith(recent))).toHaveLength(2);
+        expect(reports(critical.actions)).toEqual([]);
+        expect(reports(command.actions)).toEqual([]);
+        expect(reports(later.actions).length).toBeGreaterThanOrEqual(2);
       });
 
-      test('it reports nothing of a worktree used a minute ago', async () => {
-        const { recent } = linkedWorktrees(['recent']);
+      test('it reports nothing of a worktree used a minute ago, and reports one used two hours ago', async () => {
+        const { recent, idle } = linkedWorktrees(['recent', 'idle']);
         register(recent);
+        register(idle);
         recordWorkspaceUse(recent, new Date(Date.now() - MINUTE_MS));
-        expect(reports((await ladder('critical')).actions)).toEqual([]);
+        const targets = reports((await ladder('high')).actions).map(([target]) => String(target));
+        expect(targets.filter((target) => target.startsWith(`${recent}/`))).toEqual([]);
+        expect(targets.filter((target) => target.startsWith(`${idle}/`))).toHaveLength(2);
       });
 
       function measured(path: string, privateBytes: number, signature = treeSignature(path)) {
@@ -1674,7 +1680,7 @@ describe('rung 5', () => {
         });
       }
 
-      test('at critical it keeps a clone under the private-bytes threshold and reports the rest, most private first, unknown last', async () => {
+      test('at high it keeps a clone under the private-bytes threshold and reports the rest, most private first, unknown last', async () => {
         const { clone, reinstalled, unknown } = linkedWorktrees(['clone', 'reinstalled', 'unknown']);
         for (const root of [clone, reinstalled, unknown]) register(root);
         measured(join(clone, 'node_modules'), REAL_BYTES_THRESHOLD - 1);
@@ -1682,7 +1688,7 @@ describe('rung 5', () => {
         measured(join(reinstalled, 'node_modules'), 2 * REAL_BYTES_THRESHOLD);
         measured(join(reinstalled, 'ios', 'Pods'), 3 * REAL_BYTES_THRESHOLD, 'an older install');
 
-        const rung5 = reports((await ladder('critical')).actions);
+        const rung5 = reports((await ladder('high')).actions);
 
         expect(existsSync(join(reinstalled, 'node_modules'))).toBe(true);
         expect(rung5.slice(0, 3)).toEqual([
@@ -1702,7 +1708,7 @@ describe('rung 5', () => {
         register(realpathSync.native(join(projects, 'repo')));
         register(own);
         register(serving, { metroPort: 59125, supervisor: { pid: process.pid, port: 59999 } });
-        const { actions } = await ladder('critical', own);
+        const { actions } = await ladder('high', own);
         for (const root of [stranger, own, serving]) expect(existsSync(join(root, 'node_modules'))).toBe(true);
         expect(actions.filter((action) => action.rung === 5)).toEqual([]);
       });
