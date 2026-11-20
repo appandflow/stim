@@ -157,7 +157,8 @@ async function readSystemdServices(): Promise<InstalledServerService[]> {
 
 /**
  * The running managed services that start the engine's `bin/stimd` shim, which `parseServerProcesses` cannot see: the
- * shim's process is titled `stimd`. Each is read at its installed port, under its launchd or systemd job's pid.
+ * shim's process is titled `stimd`. Each is read at its installed port, under its launchd or systemd job's pid, unless a
+ * scanned server already listens there, such as a `stim serve` attached to it.
  */
 function shimServers(
   services: readonly InstalledServerService[],
@@ -169,7 +170,12 @@ function shimServers(
     const pid = job?.pid;
     if (!installed.managed || !installed.script?.endsWith('/bin/stimd') || pid == null || installed.port === null)
       return [];
-    if (found.some((server) => server.kind === 'service' && server.label === service.label)) return [];
+    if (
+      found.some(
+        (server) => server.port === installed.port || (server.kind === 'service' && server.label === service.label),
+      )
+    )
+      return [];
     const row = rows.find((each) => each.pid === pid);
     return [
       {
