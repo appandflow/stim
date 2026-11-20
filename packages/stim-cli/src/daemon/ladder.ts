@@ -527,18 +527,8 @@ async function cachesRung(context: RungContext): Promise<void> {
   try {
     await sharedCachesStep(context);
   } catch (error) {
-    if (isClaimUnavailable(error)) throw error;
-    context.operation?.signal.throwIfAborted();
-    const message = error instanceof Error ? error.message : String(error);
-    context.log('warn', 'pressure_rung_failed', `rung 3 shared caches failed: ${message}`);
-    context.actions.push({
-      rung: 3,
-      kind: 'rung',
-      target: 'rung 3 shared caches',
-      outcome: 'failed',
-      bytes: 0,
-      detail: message,
-    });
+    if (!isClaimUnavailable(error) && !context.operation?.signal.aborted) await cargoTargetsStep(context);
+    throw error;
   }
   await cargoTargetsStep(context);
 }

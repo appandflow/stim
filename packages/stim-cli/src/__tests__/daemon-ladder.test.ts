@@ -758,7 +758,12 @@ describe('the pressure ladder', () => {
         pressure('critical'),
       );
 
-      expect(actions.filter((action) => action.rung === 3).map((action) => [action.kind, action.outcome])).toEqual([
+      expect(
+        actions
+          .filter((action) => action.rung === 3)
+          .map((action) => [action.kind, action.outcome])
+          .toSorted(),
+      ).toEqual([
         ['rung', 'failed'],
         ['trim-cargo', 'done'],
       ]);
