@@ -590,8 +590,9 @@ function dormantMs(operation?: StimContext): number {
 }
 
 /**
- * Why a finished registered worktree stays, or null: an unfinished `pnpm patch` in its `node_modules`, or a git-ignored
- * file outside its dependency and build-output folders that its main checkout lacks or holds differently.
+ * Why a finished registered worktree stays, or null: a pnpm patch or Solana keypair that cannot be copied aside first
+ * (`worktreeRescue`), or a git-ignored file outside its dependency and build-output folders that its main checkout
+ * lacks or holds differently.
  */
 async function registeredRemovalHold(path: string, operation?: StimContext): Promise<string | null> {
   const { ignoredFilesHold, worktreeRescue } = await import('../../workspace/discovered-removal.ts');

@@ -568,10 +568,11 @@ interface DeleteOptions {
   mountInfo?: (() => string) | null;
 }
 
-const LINUX_MOUNT_INFO = process.platform === 'linux' ? () => readFileSync('/proc/self/mountinfo', 'utf8') : null;
+export const LINUX_MOUNT_INFO: (() => string) | null =
+  process.platform === 'linux' ? () => readFileSync('/proc/self/mountinfo', 'utf8') : null;
 
 /** Why a mount point lies at or under `target` by `mountInfo`, or null when none does. */
-function mountedUnder(target: string, mountInfo: (() => string) | null): string | null {
+export function mountedUnder(target: string, mountInfo: (() => string) | null): string | null {
   if (!mountInfo) return null;
   let text: string;
   try {

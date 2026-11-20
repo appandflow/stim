@@ -1,11 +1,11 @@
 import { constants } from 'node:fs';
-import { copyFile, lstat, mkdir, mkdtemp, readdir, realpath, rm, writeFile } from 'node:fs/promises';
-import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
+import { copyFile, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { workspaceId } from '@stim-cli/core';
 import { readRescuedCopies, rescuedRoot, type RescuedCopy, type RescuedItem } from '@stim-cli/core/state';
 import type { Finding } from '../diagnostics/doctor.ts';
 import { answered } from './bounded-read.ts';
-import { isKeypairName } from './cargo-target.ts';
+import { isKeypairName, LINUX_MOUNT_INFO, mountedUnder } from './cargo-target.ts';
 import { absent } from './scan-rules.ts';
 
 const RESCUE_CAP_BYTES = 50 * 1024 * 1024;
@@ -20,7 +20,8 @@ const MAX_RESCUE_ENTRIES = 1_000_000;
  * folder in `trees`, and with `whole`, in every node_modules of `root` and every `*-keypair.json` in any letter case
  * anywhere in it outside `.git` and node_modules, at their paths relative to `root`. Without `act` it only checks.
  * Returns why the delete must not go ahead, or null. It copies only plain files: a link where a protected file is, a
- * link in a `.pnpm_patches`, another volume than `deleting`'s, a rescue store inside
+ * link in a `.pnpm_patches`, a `state.json` naming an edit folder elsewhere in `deleting` (`pnpm patch --edit-dir`), a
+ * linked node_modules whose target holds a `.pnpm_patches`, a mount at or under `deleting` by `mountInfo`, another volume than `deleting`'s, a rescue store inside
  * `deleting` or reached through a link, more than RESCUE_CAP_BYTES, more than MAX_RESCUE_ENTRIES entries, or a read or
  * copy that fails or does not finish within RESCUE_MS keeps the folder.
  */
@@ -28,7 +29,11 @@ export async function rescueBeforeDelete(
   root: string,
   deleting: string,
   { trees, whole = false }: { trees: readonly string[]; whole?: boolean },
-  { act, signal }: { act: boolean; signal?: AbortSignal | undefined },
+  {
+    act,
+    signal,
+    mountInfo = LINUX_MOUNT_INFO,
+  }: { act: boolean; signal?: AbortSignal | undefined; mountInfo?: (() => string) | null },
 ): Promise<string | null> {
   const deadline = performance.now() + RESCUE_MS;
   const bounded = <T>(label: string, start: () => Promise<T>) => {
@@ -51,6 +56,8 @@ export async function rescueBeforeDelete(
     store = join((await real(dirname(rescuedRoot()))) ?? dirname(rescuedRoot()), basename(rescuedRoot()));
     inside = store === doomed || store.startsWith(`${doomed}${sep}`);
     const dev = (await bounded(doomed, () => lstat(doomed))).dev;
+    const mounted = mountedUnder(doomed, mountInfo);
+    if (mounted) throw new Error(mounted);
     let entries = 0;
     const walk = async (top: string, protectedName: (name: string) => boolean, worktree: boolean) => {
       const queue = [top];
@@ -62,28 +69,51 @@ export async function rescueBeforeDelete(
             throw new Error(`more than ${MAX_RESCUE_ENTRIES} entries to look through`);
           const source = join(here, entry.name);
           const rel = relative(checkout, source);
-          if (rel.startsWith('..') || isAbsolute(rel)) throw new Error(`${source} is outside ${checkout}`);
+          if (rel.split(sep)[0] === '..' || isAbsolute(rel)) throw new Error(`${source} is outside ${checkout}`);
           if (worktree && entry.name === '.git') continue;
-          if (entry.isDirectory()) {
-            if (worktree && entry.name === 'node_modules') await patches(source);
-            else queue.push(source);
+          if (worktree && entry.name === 'node_modules' && entry.isSymbolicLink()) await linkedPatches(source);
+          else if (entry.isDirectory()) {
+            if (!worktree || entry.name !== 'node_modules') queue.push(source);
+            else if ((await bounded(source, () => lstat(source))).dev !== dev)
+              throw new Error(`${source} is on another volume`);
+            else await patches(source);
           } else if (!protectedName(entry.name)) continue;
-          else if (!entry.isFile()) throw new Error(`${source} is not a plain file`);
+          else if (!entry.isFile())
+            throw new Error(
+              `${source} is not a plain file, so it is not copied and the folder stays until it is moved or made a plain file`,
+            );
           else found.push({ source, size: (await bounded(source, () => lstat(source))).size });
         }
       }
     };
-    const patches = async (modules: string) => {
-      const dir = join(modules, '.pnpm_patches');
-      const stat = await bounded(dir, () => lstat(dir)).catch((error: unknown) => {
+    const lstatOrNull = (path: string) =>
+      bounded(path, () => lstat(path)).catch((error: unknown) => {
         if (absent(error)) return null;
         throw error;
       });
+    const linkedPatches = async (link: string) => {
+      const dir = join(link, '.pnpm_patches');
+      const stat = await lstatOrNull(dir);
+      if (stat && (!stat.isDirectory() || (await bounded(dir, () => readdir(dir))).length))
+        throw new Error(`${link} is a link to a node_modules holding a .pnpm_patches`);
+    };
+    const patches = async (modules: string) => {
+      const dir = join(modules, '.pnpm_patches');
+      const stat = await lstatOrNull(dir);
       if (stat?.isSymbolicLink()) throw new Error(`${dir} is a link`);
       if (!stat?.isDirectory()) return;
       const listed = await bounded(dir, () => readdir(dir, { withFileTypes: true }));
       const link = listed.find((entry) => entry.isSymbolicLink());
       if (link) throw new Error(`${join(dir, link.name)} is a link`);
+      if (listed.some((entry) => entry.isFile() && entry.name === 'state.json')) {
+        const state: unknown = JSON.parse(await bounded(dir, () => readFile(join(dir, 'state.json'), 'utf8')));
+        for (const named of Object.keys(state && typeof state === 'object' ? state : {})) {
+          const edit = resolve(modules, '..', named);
+          const under = (base: string) => edit === base || edit.startsWith(`${base}${sep}`);
+          if (under(doomed) && !under(dir) && (await lstatOrNull(edit)))
+            throw new Error(`pnpm patch edits in ${edit} lie outside ${dir}`);
+        }
+      }
       if (listed.some((entry) => entry.isDirectory())) await walk(dir, () => true, false);
     };
     if (whole) await walk(checkout, isKeypairName, true);

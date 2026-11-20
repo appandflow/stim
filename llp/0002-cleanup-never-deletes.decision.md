@@ -53,8 +53,14 @@ time. Then the delete goes ahead.
   entries outside node_modules and `.git`, one with a 6.6 GB Cargo `target/`.
 - Only plain files are copied, and no link is followed: a linked `target/` or
   node_modules is removed as a link, as before. Anything unusual keeps the folder
-  or worktree, with the reason: a link named like a keypair, a linked
-  `.pnpm_patches` or any link inside one,
+  or worktree, with the reason: a link named like a keypair (anywhere in a
+  worktree, so it keeps the worktree until the link is moved or replaced by
+  the file), a linked
+  `.pnpm_patches` or any link inside one, a `state.json` naming an edit folder
+  elsewhere inside the folder being deleted (`pnpm patch --edit-dir`), a
+  node_modules link whose target holds a `.pnpm_patches`, a node_modules on
+  another volume, a mount at or under the folder being deleted (Linux mount
+  table),
   a scan root on another volume than the folder being deleted, a rescue store
   inside that folder when there is something to copy, a rescue store or workspace folder that is a link, more
   than 50 MB to copy for one delete, more than 1,000,000 entries, or a search

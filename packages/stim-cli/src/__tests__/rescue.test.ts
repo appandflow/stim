@@ -112,6 +112,60 @@ describe.skipIf(process.platform === 'win32')('links', () => {
   });
 });
 
+test('a pnpm --edit-dir inside the deleted folder that state.json names keeps it; one elsewhere does not', async () => {
+  const edit = join(tree, '.cache', 'pkg');
+  mkdirSync(edit, { recursive: true });
+  writeFileSync(join(edit, 'index.js'), 'patched');
+  mkdirSync(join(tree, '.pnpm_patches'));
+  const state = (named: string) =>
+    writeFileSync(join(tree, '.pnpm_patches', 'state.json'), JSON.stringify({ [named]: { applyToAll: false } }));
+
+  state(edit);
+  expect(await rescue()).toContain(`edits in ${edit} lie outside`);
+
+  state(join(base, 'main', 'node_modules', '.pnpm_patches', 'pkg@1.0.0'));
+  mkdirSync(join(base, 'main', 'node_modules', '.pnpm_patches', 'pkg@1.0.0'), { recursive: true });
+  expect(await rescue()).toBeNull();
+});
+
+test.skipIf(process.platform === 'win32')(
+  'a node_modules linked to a folder holding a pnpm patch keeps the worktree',
+  async () => {
+    mkdirSync(join(root, '.cache', 'deps', '.pnpm_patches', 'pkg@1.0.0'), { recursive: true });
+    writeFileSync(join(root, '.cache', 'deps', '.pnpm_patches', 'pkg@1.0.0', 'index.js'), 'patched');
+    symlinkSync('.cache/deps', join(root, 'node_modules'));
+
+    expect(await rescueBeforeDelete(root, root, { trees: [], whole: true }, { act: true })).toContain(
+      'is a link to a node_modules holding a .pnpm_patches',
+    );
+  },
+);
+
+test('a node_modules on another volume, or a mount under the folder being deleted, keeps the worktree', async () => {
+  patchFile('index.js');
+  const whole = (mountInfo: (() => string) | null) =>
+    rescueBeforeDelete(root, root, { trees: [], whole: true }, { act: true, mountInfo });
+
+  expect(await whole(() => `36 35 98:0 / ${realpathSync(root)}/node_modules rw - ext4 /dev/sdb rw\n`)).toContain(
+    'is a mount point',
+  );
+
+  const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+  vi.mocked(lstat).mockImplementation(async (path, options) => {
+    const stat = await actual.lstat(path, options);
+    return String(path).endsWith(`${'/'}node_modules`) ? Object.assign(stat, { dev: Number(stat.dev) + 1 }) : stat;
+  });
+  expect(await whole(null)).toContain('node_modules is on another volume');
+});
+
+test('a folder whose name starts with two dots is inside the checkout', async () => {
+  mkdirSync(join(root, '..cache'), { recursive: true });
+  writeFileSync(join(root, '..cache', 'program-keypair.json'), '[1]');
+
+  expect(await rescueBeforeDelete(root, root, { trees: [], whole: true }, { act: true })).toBeNull();
+  expect(readRescuedCopies()[0]?.items).toEqual([expect.objectContaining({ size: 3 })]);
+});
+
 test('a rescue store inside the folder being deleted keeps it', async () => {
   vi.stubEnv('STIM_HOME', join(tree, '.cache', 'stim'));
   mkdirSync(join(tree, '.cache', 'stim'), { recursive: true });
