@@ -122,21 +122,6 @@ export function stimdSuccessorMissingFile(home?: string): string {
   return join(stimdRunDir(home), 'successor-missing.json');
 }
 
-/**
- * `run/service.json`: the service unit whose job starts this home's stimd, which `stim service install` and the job's
- * stimd write and uninstall removes. Other stimds read it at boot to leave the home to that job.
- */
-export function stimdServiceFile(home?: string): string {
-  return join(stimdRunDir(home), 'service.json');
-}
-
-export function readStimdService(home?: string): { label: string; port: number } | null {
-  const record = readJsonObject(stimdServiceFile(home));
-  return typeof record?.label === 'string' && typeof record.port === 'number'
-    ? { label: record.label, port: record.port }
-    : null;
-}
-
 export type SuccessorMissing = { at: number; pid: number; build: string; reason: string };
 
 export function readSuccessorMissing(home?: string): SuccessorMissing | null {

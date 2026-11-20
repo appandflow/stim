@@ -33,7 +33,6 @@ import {
 import { claimRemoveCommand, readClaimSet, type ClaimProblem } from '@stim-cli/core/ownership-claim';
 import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
 import { windowsLauncherArgs } from '../detached-entry.ts';
-import { deferringService, startServiceJob, type ServiceStarter } from '../stimd/service-unit.ts';
 import { ANDROID_LOCATION_VARIABLES } from '../devices/android-locations.ts';
 import { endForSwitch, engineShim, ownStoreEngine, switchedEngine } from './engine-switch.ts';
 import { legacyDaemonHolder, legacyDaemonStop } from './legacy-daemon.ts';
@@ -954,39 +953,6 @@ export function launchStimd(
   return { settled, exited: () => exited };
 }
 
-/** The service job that starts this home's stimd (LLP 0009, Service and engine updates), or null. */
-function homeStarter(): ServiceStarter | null {
-  return deferringService(dirname(stimdRunDir()), engineRoot(process.env));
-}
-
-/**
- * Whether `ready` holds within the restart delay and boot of the job of `starter`, which is asked to start once no
- * stimd holds the home; the ask only shortens the wait.
- */
-async function awaitServiceJob(starter: ServiceStarter, ready: () => boolean | Promise<boolean>): Promise<boolean> {
-  let asked = false;
-  for (const deadline = Date.now() + starter.waitMs; ;) {
-    if (await ready()) return true;
-    if (!asked && !stimdLive()) {
-      asked = true;
-      try {
-        startServiceJob(starter.label);
-      } catch {}
-    }
-    if (Date.now() >= deadline) return false;
-    await new Promise((done) => setTimeout(done, CLAIM_POLL_MS * 10));
-  }
-}
-
-function serviceDown(starter: ServiceStarter): Error {
-  return Object.assign(
-    new Error(
-      `The ${starter.label} service did not start this Stim home's stimd within ${Math.round(starter.waitMs / 1000)} s.`,
-    ),
-    { code: 'STIM_DAEMON_UNAVAILABLE', remedy: 'Run stim service status.' },
-  );
-}
-
 /** Whether a live stimd claim shows up within `waitMs`, checking again as soon as the started stimd exits. */
 async function claimTaken(
   { settled, exited }: ReturnType<typeof launchStimd>,
@@ -1048,21 +1014,13 @@ export async function ensureStimd(
     // @ref LLP 0012#a-command-does-not-continue-across-a-stimd-restart -- a command that lost its stimd starts none
     if (admittedBefore(operation)) throw daemonRestarted();
     let launched: ReturnType<typeof launchStimd>;
-    const starter = currentCrashHold() ? null : homeStarter();
-    // @ref LLP 0009#service-and-engine-updates -- a build the job holds meets the hold, not the job's wait
-    const jobHeld = starter && crashLoop(readStimdBoots(), stimdBuildId(), Date.now());
-    const hold = currentCrashHold() ?? (jobHeld || null);
-    if (starter && !jobHeld) {
-      if (!(await awaitServiceJob(starter, stimdLive))) throw serviceDown(starter);
-      if (pin) await admitExisting(held, command, false, invocation, operation);
-      return true;
-    }
+    const hold = currentCrashHold();
     try {
       if (hold) {
         if (!holdAnnounced) {
           holdAnnounced = true;
           const { crashHoldRemedy } = await import('../stimd/crash-hold.ts');
-          console.error(`Stim: ${crashHoldRemedy(hold, Boolean(jobHeld) && ownStoreEngine() !== null)}`);
+          console.error(`Stim: ${crashHoldRemedy(hold, false)}`);
         }
         launched = { settled: Promise.resolve(), exited: () => true };
       } else launched = launchStimd(env, daemonMode(env), platform);
@@ -1073,7 +1031,7 @@ export async function ensureStimd(
     }
     let taken = await claimTaken(launched, ATTACH_AFTER_MS);
     let attachedAttempt = false;
-    if (!taken && !held && !jobHeld && allowAttached && Reflect.get(globalThis, Symbol.for('stim.cli'))) {
+    if (!taken && !held && allowAttached && Reflect.get(globalThis, Symbol.for('stim.cli'))) {
       attachedAttempt = true;
       const { hostStimd } = await import('../stimd/attached.ts');
       const host = await hostStimd(env);
@@ -1719,28 +1677,18 @@ function successorExpected(): boolean {
 
 /**
  * Whether a stimd of this build replaced the one of an older build that refused it, within `HANDOVER_WAIT_MS` when
- * that one said it hands over (it drains, exits, and its successor boots) and `CLAIM_WAIT_MS` otherwise. Once the old
- * one is gone it starts a stimd itself when no successor started (`successor-missing.json`), or, when a service unit's
- * job starts this home's stimd (`deferringService`), waits for that job within its restart delay and a boot. Once a wait
+ * that one said it hands over (it drains, exits, and its successor boots) and `CLAIM_WAIT_MS` otherwise. Once a wait
  * ran out, it answers false at once for the rest of this process.
  */
 async function successorBound(): Promise<boolean> {
   if (successorMissed) return false;
   const deadline = Date.now() + (refusal?.handover ? HANDOVER_WAIT_MS : CLAIM_WAIT_MS);
   let started = false;
-  const bound = () => readJsonObject(stimdRecordFile())?.build === stimdBuildId();
   for (;;) {
-    if (bound()) {
+    if (readJsonObject(stimdRecordFile())?.build === stimdBuildId()) {
       refusedBuild = null;
       refusal = null;
       return true;
-    }
-    const starter = started || stimdLive() || currentCrashHold() ? null : homeStarter();
-    // @ref LLP 0009#service-and-engine-updates -- on a service home the job starts the successor
-    if (starter) {
-      started = true;
-      if (await awaitServiceJob(starter, bound)) continue;
-      break;
     }
     if (!started && !stimdLive() && readSuccessorMissing() && !currentCrashHold()) {
       started = true;
@@ -1897,12 +1845,7 @@ function netAnswer(reply: Record<string, unknown> | null): NetAnswer | null {
  * `daemon.mode` lets commands start one. Null when no stimd answers.
  */
 export async function ensureNet(share: boolean, env: NodeJS.ProcessEnv = process.env): Promise<NetAnswer | null> {
-  const starter = stimdLive() ? null : homeStarter();
-  if (
-    !stimdLive() &&
-    (!(share || spawnsDaemon(env)) ||
-      !(await (starter ? awaitServiceJob(starter, stimdLive) : claimTaken(launchStimd(env, daemonMode(env))))))
-  )
+  if (!stimdLive() && (!(share || spawnsDaemon(env)) || !(await claimTaken(launchStimd(env, daemonMode(env))))))
     return null;
   return netAnswer(
     await askHeldStimd(() => askStimd('net.ensure', NET_START_MS, { params: netEnsureParams({ shareOnly: share }) })),
@@ -1955,12 +1898,6 @@ export function serveThroughStimd(
  */
 export async function connectNet(timeoutMs: number): Promise<Socket | null> {
   const socket = await openNet(timeoutMs);
-  const starter = socket ? null : homeStarter();
-  if (starter) {
-    let connected: Socket | null = null;
-    await awaitServiceJob(starter, async () => (connected = await openNet(timeoutMs)) !== null);
-    return connected;
-  }
   if (socket || !stimdRefused() || !successorExpected() || !(await successorBound())) return socket;
   return openNet(timeoutMs);
 }

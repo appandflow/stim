@@ -7,7 +7,17 @@ import {
   type ExecFileOptionsWithStringEncoding,
 } from 'node:child_process';
 import { once } from 'node:events';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { connect, createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -115,20 +125,9 @@ function fixture(label: string, port: number, shim = false) {
   const home = join(scratch, 'home');
   const store = join(scratch, 'engine');
   const bin = join(scratch, 'bin');
-  const jobStarts = join(scratch, 'job-starts');
   mkdirSync(store, { recursive: true });
   mkdirSync(bin);
-  // Stand in for the service manager the stimds ask: the job of `label` is loaded and set to restart, and a start is recorded.
-  writeFileSync(
-    join(bin, 'launchctl'),
-    `#!/bin/sh\ncase "$1 $2" in\n  "print "*/${label}) exit 0 ;;\n  "kickstart "*/${label}) echo "$2" >> '${jobStarts}'; exit 0 ;;\nesac\nexit 1\n`,
-    { mode: 0o755 },
-  );
-  writeFileSync(
-    join(bin, 'systemctl'),
-    `#!/bin/sh\ncase "$*" in\n  *KillMode*) echo process ;;\n  *ActiveState*) printf '%s\\n' ActiveState=activating SubState=auto-restart RestartUSec=0 'Environment=STIM_HOME=${home}' 'ExecStart={ path=${store}/bin/stimd ; argv[]=${store}/bin/stimd --service --port ${port} ; }' ;;\n  "--user start --no-block ${label}.service") echo "$4" >> '${jobStarts}' ;;\n  *) exit 1 ;;\nesac\n`,
-    { mode: 0o755 },
-  );
+  writeFileSync(join(bin, 'launchctl'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
   const pkg = join(repo, 'packages/stim-cli');
   const makeBuild = (name: string) => {
     const dir = join(store, name);
@@ -286,13 +285,14 @@ function fixture(label: string, port: number, shim = false) {
     cli(next, commandFirst ? ['__stimd', '--mode', 'on'] : [...serviceArgs, '--unit-successor', label]);
     const successor = await until('the stimd outside the job', () => record());
     if (!commandFirst) await answers('the successor');
-    keepJob();
+    keepJob(shim ? 60_000 : 0);
     const waiter = await until('the job process', () => jobPid());
+    if (shim) return { ...successor, waiter };
     await new Promise((done) => setTimeout(done, 8000));
     assert.equal(jobPid(), waiter, 'the job process exited instead of waiting on the successor');
     assert.equal(record()?.pid, successor.pid);
     await answers('the stimd outside the job');
-    return successor;
+    return { ...successor, waiter };
   };
 
   const stopHome = async () => {
@@ -391,27 +391,10 @@ function fixture(label: string, port: number, shim = false) {
     return started;
   };
 
-  /** Starts an attached stimd as `stim ci` does and resolves with its first answer line. */
-  const attached = async () => {
-    const child = spawn(process.execPath, [join(store, first, 'dist', 'cli.mjs'), '__stimd', '--attached'], {
-      env,
-      stdio: ['pipe', 'pipe', 'ignore'],
-    });
-    child.stdout.setEncoding('utf8');
-    let output = '';
-    for await (const chunk of child.stdout) {
-      output += String(chunk);
-      if (output.includes('\n')) break;
-    }
-    child.stdin.end();
-    return JSON.parse(output.split('\n')[0] ?? '') as unknown;
-  };
-
   return {
     home,
+    label,
     last,
-    jobStarts,
-    attached,
     answers,
     command: () => cli(next, ['__stimd', '--mode', 'on']),
     jobPid,
@@ -608,7 +591,10 @@ describe.skipIf(process.platform === 'win32')("an engine switch under a service 
     const port = await freePort();
     const service = fixture(label, port, true);
     try {
+      mkdirSync(join(service.home, 'run'), { recursive: true });
+      writeFileSync(join(service.home, 'run', 'job-restart.json'), JSON.stringify({ at: Date.now(), pid: 1, label }));
       const initial = await service.runJob();
+      expect(existsSync(join(service.home, 'run', 'job-restart.json'))).toBe(false);
       const job = service.jobPid();
       const successor = await service.switchEngine(initial);
       await service.answers('the restarted job');
@@ -620,91 +606,59 @@ describe.skipIf(process.platform === 'win32')("an engine switch under a service 
     }
   }, 240_000);
 
-  it('a successor an earlier build started outside the job leaves the home to the job at its own switch', async () => {
-    const label = 'dev.stim.handoff-job-heal';
+  /** The job's process `waiter` took the home itself, without the service manager restarting it. */
+  const takenBackInJob = async (service: ReturnType<typeof fixture>, outside: { pid: number }, waiter: number) => {
+    const held = await until('the job to take the home back', () => {
+      const holder = homeClaim(service.home);
+      return holder?.details.serviceUnit === service.label && holder.owner.pid !== outside.pid ? holder : null;
+    });
+    expect(parentOf(held.owner.pid)).toBe(waiter);
+    expect(service.jobPid()).toBe(waiter);
+    await until('the stimd outside the job to exit', () => gone(outside.pid));
+    await service.answers('the job stimd');
+    const events = readFileSync(join(service.home, 'daemon', 'daemon.ndjson'), 'utf8');
+    expect(events).toContain('takes this Stim home back once no command runs');
+    expect(events).not.toContain('"event":"successor_bound"');
+    return held.owner.pid;
+  };
+
+  it('a successor an earlier build started outside the job leaves the home to the job once idle', async () => {
     const port = await freePort();
-    const service = fixture(label, port, true);
+    const service = fixture('dev.stim.handoff-job-heal', port, true);
     try {
       const outside = await service.handOver();
-      expect(parentOf(outside.pid)).not.toBe(service.jobPid());
-      const successor = await service.switchEngine(outside, service.last);
-      await service.answers('the restarted job');
-      expectServedInJob(service, outside, successor.build, label);
+      expect(await takenBackInJob(service, outside, outside.waiter)).toBe(service.record()?.pid);
     } finally {
       await service.cleanup();
     }
   }, 240_000);
 
-  it('a stimd a command started before the unit leaves the home to the job at its switch', async () => {
-    const label = 'dev.stim.handoff-job-command-first';
+  it('a stimd a command started before the unit leaves the home to the job once idle', async () => {
     const port = await freePort();
-    const service = fixture(label, port, true);
+    const service = fixture('dev.stim.handoff-job-command-first', port, true);
     try {
       const outside = await service.handOver(true);
-      expect(parentOf(outside.pid)).not.toBe(service.jobPid());
-      const successor = await service.switchEngine(outside, service.last);
-      await service.answers('the restarted job');
-      expectServedInJob(service, outside, successor.build, label);
+      expect(await takenBackInJob(service, outside, outside.waiter)).toBe(service.record()?.pid);
     } finally {
       await service.cleanup();
     }
   }, 240_000);
 
-  it('a stimd a command starts while the job restarts leaves the home to the job', async () => {
-    const label = 'dev.stim.handoff-job-gap';
+  it('a stimd a command starts while the job restarts serves until idle, then the job takes the home back', async () => {
     const port = await freePort();
-    const service = fixture(label, port, true);
+    const service = fixture('dev.stim.handoff-job-gap', port, true);
     try {
       const initial = await service.runJob(3000);
-      const switched = service.switchEngine(initial);
+      void service.switchEngine(initial).catch(() => {});
       await until('the job stimd to exit', () => gone(initial.pid));
       const command = service.command();
-      const exited = once(command, 'exit');
-      const successor = await switched;
-      await service.answers('the restarted job');
-      expectServedInJob(service, initial, successor.build, label);
-      await exited;
-      expect(homeClaim(service.home)?.owner.pid).toBe(successor.pid);
-      expect(readFileSync(join(service.home, 'daemon', 'daemon.ndjson'), 'utf8')).toContain(
-        '"event":"stimd_deferred_to_job"',
-      );
-      expect(readFileSync(service.jobStarts, 'utf8')).toContain(label);
-    } finally {
-      await service.cleanup();
-    }
-  }, 240_000);
-
-  it("an attached stimd, such as stim ci's, uses the job's stimd instead of taking the home", async () => {
-    const label = 'dev.stim.handoff-job-attached';
-    const port = await freePort();
-    const service = fixture(label, port, true);
-    try {
-      const job = await service.runJob();
-      expect(await service.attached()).toEqual({ op: 'attached-held' });
-      expect(homeClaim(service.home)?.owner.pid).toBe(job.pid);
-      expect(readFileSync(service.jobStarts, 'utf8')).toContain(label);
-    } finally {
-      await service.cleanup();
-    }
-  }, 240_000);
-
-  it("an attached stimd on a home whose job does not start names the service's status as the remedy", async () => {
-    const label = 'dev.stim.handoff-job-down';
-    const port = await freePort();
-    const service = fixture(label, port, true);
-    try {
-      mkdirSync(join(service.home, 'run'), { recursive: true });
-      writeFileSync(join(service.home, 'run', 'service.json'), JSON.stringify({ label, port }));
-      expect(await service.attached()).toEqual({
-        op: 'attached-claim-refusal',
-        refusal: {
-          code: 'STIM_DAEMON_UNAVAILABLE',
-          message: `The ${label} service did not start this Stim home's stimd within 5 s.`,
-          remedy: 'Run stim service status.',
-        },
+      const outside = await until('the command stimd', () => {
+        const held = service.record();
+        return held && held.pid !== initial.pid ? held : null;
       });
-      expect(homeClaim(service.home)).toBeUndefined();
-      expect(readFileSync(service.jobStarts, 'utf8')).toContain(label);
+      const waiter = await until('the restarted job process', () => service.jobPid());
+      expect(await takenBackInJob(service, outside, waiter)).toBe(service.record()?.pid);
+      await once(command, 'exit');
     } finally {
       await service.cleanup();
     }

@@ -160,7 +160,7 @@ When a stimd hands the home over and its successor does not bind within 10 s, or
 relaunch is skipped because cleanup was not verified, it logs `successor_missing`
 with the reason and writes `run/successor-missing.json`. A client that was refused
 by the old stimd and finds the marker with no stimd running starts one at once
-instead of waiting out the handover wait. The next stimd removes the marker. A service unit's stimd that hands the home to its unit's job starts no successor and writes neither, unless a forced exit ends its shutdown; it logs `successor_job` instead (LLP 0009, Service and engine updates). The
+instead of waiting out the handover wait. The next stimd removes the marker. A service unit's stimd that hands the home to its unit's job starts no successor and writes neither, unless a forced exit ends its shutdown; it logs `successor_job` instead (LLP 0009, Service and engine updates). A stimd that exits once idle because a service unit's job takes the home back starts no successor and writes no marker; it logs `service_restart`. The
 Desktop poll already starts a stimd when `run/stimd.json` is missing, so it needs no
 marker.
 
