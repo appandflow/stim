@@ -696,7 +696,7 @@ const defaultExecutor: Executor = {
           },
           contained,
           context,
-          describeReportCommand(file, args, redact),
+          describeReportCommand(program, programArgs, redact),
           timeout,
         );
         cancel = lifetime?.cancel;
