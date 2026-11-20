@@ -148,11 +148,13 @@ one, keeps the whole `target/`, since its keys may live anywhere in it. The same
 holds at any depth: a symbolic link named `deploy` or `*-keypair.json`, or one
 directly in a `deploy` directory, keeps all of the `target/`, and so does a
 directory that cannot be listed to look. The walk runs under the Cargo locks
-right before deleting: over the whole `target/` for the dormant delete, and
-over what the step removes for a trim step, so a trim does not walk the whole
-`target/` once per step. A link outside what a trim step removes that points
-into it, and a key a tool publishes with no Cargo lock held after the walk, are
-not covered. Reason: a `deploy/debug/app-keypair.json` that links to a wallet file
+right before deleting: over the whole `target/` for the dormant delete and for
+the first step of a trim that removes something, and over what the step removes
+for each later step, so a trim walks the whole `target/` once, not once per
+step. A link that appears elsewhere in the `target/` after that first walk falls
+under the gap for a key a tool publishes with no Cargo lock held, such as a
+`deploy/` a tool writes itself rather than through Cargo; no walk under Cargo's
+locks can rule that out. Reason: a `deploy/debug/app-keypair.json` that links to a wallet file
 beside it would survive while the wallet went. Chosen by the review of #6032,
 not by the maintainer. Both `deploy` and `*-keypair.json` match in any letter
 case. Anywhere else the

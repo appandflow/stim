@@ -430,6 +430,22 @@ describe.skipIf(process.platform === 'win32')('trimming in place (Cargo locks ne
     expect(existsSync(join(target, 'release', 'deps', 'libx.rlib'))).toBe(true);
   });
 
+  test('a deploy link beside a stale profile, pointing into it, keeps the target, and the key stays readable', async () => {
+    makeProfile('debug', 3 * DAY);
+    makeProfile('release', 3 * DAY);
+    writeFileSync(join(target, 'debug', 'wallet.json'), '[7]');
+    const old = new Date(Date.now() - 3 * DAY);
+    utimesSync(join(target, 'debug'), old, old);
+    mkdirSync(join(target, 'deploy'));
+    symlinkSync(join('..', 'debug', 'wallet.json'), join(target, 'deploy', 'app-keypair.json'));
+
+    const result = await trimCargoTarget(target, { needBytes: 0 });
+
+    expect(result.removed).toEqual([]);
+    expect(result.kept).toEqual([expect.stringContaining('app-keypair.json is a symbolic link')]);
+    expect(readFileSync(join(target, 'deploy', 'app-keypair.json'), 'utf8')).toBe('[7]');
+  });
+
   test('a link named like a keypair anywhere in the target keeps it whole, and what it points at stays', async () => {
     makeProfile('debug', 3 * DAY);
     const deps = join(target, 'debug', 'deps');
