@@ -1,4 +1,3 @@
-import { runControlPath } from '../../exec.ts';
 import { existsSync } from 'node:fs';
 import { dirname, sep } from 'node:path';
 import { buildCacheRoot, metroCacheRoot, type StimContext } from '@stim-cli/core';
@@ -523,25 +522,7 @@ function unregisterCache(action: MaintenanceAction): ActionOutcome {
   return unregister(dir) ? { status: 'done', bytes: 0, detail: dir } : kept('it was already unregistered');
 }
 
-const CONTROL_PATH_ACTIONS: ReadonlySet<MaintenanceAction['kind']> = new Set([
-  'would-delete-parked-device',
-  'would-delete-devices',
-  'would-delete-hosted-devices',
-  'would-stop-workspace',
-  'would-stop-gradle-daemons',
-  'would-stop-watchman',
-  'would-delete-runtime',
-  'would-delete-unavailable-sim',
-]);
-
-/** Runs `action`; a stop or a device teardown keeps the caller's priority inside maintenance work. */
-export function executeAction(action: MaintenanceAction, context: ActContext): Promise<ActionOutcome> {
-  return CONTROL_PATH_ACTIONS.has(action.kind)
-    ? runControlPath(() => runAction(action, context))
-    : runAction(action, context);
-}
-
-async function runAction(action: MaintenanceAction, context: ActContext): Promise<ActionOutcome> {
+export async function executeAction(action: MaintenanceAction, context: ActContext): Promise<ActionOutcome> {
   forgetGitReads(context.operation);
   switch (action.kind) {
     case 'would-clear-outputs':

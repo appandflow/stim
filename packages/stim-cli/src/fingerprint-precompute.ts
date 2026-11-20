@@ -1,3 +1,4 @@
+import { setPriority } from 'node:os';
 import type { ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { closeSync, openSync, readSync } from 'node:fs';
@@ -111,6 +112,9 @@ async function runFingerprintChild(
                 const captured = captureProcessIdentity(started.pid);
                 if (captured.ok) identity = { pid: started.pid, processToken: captured.token };
               }
+              try {
+                if (started.pid) setPriority(started.pid, 10);
+              } catch {}
               if (interruption !== undefined) signalChild();
             },
           },

@@ -6,11 +6,9 @@ import { readClaimSet, releaseClaim, type ClaimHandle } from '../ownership-claim
 import { testContext } from './_context.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { ensureConfig, getProject, upsertProject } from '../workspace/config.ts';
-import { getExecutor, setExecutor, resetExecutor, runMaintenanceWork, type ExecOptions } from '../exec.ts';
-import { measuredDirectorySizeAsync } from '../fs-util.ts';
+import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
 import { parkSim, readParked } from '../devices/sim-pool.ts';
 import { shutDownBootedParkedIosSim, teardownOwnedIosSim, teardownOwnedAvd } from '../devices/teardown.ts';
 import { readCreatedDevices, recordCreatedDevice } from '../devices/created-devices.ts';
@@ -153,38 +151,6 @@ test('cancelling iOS teardown after shutdown prevents deletion and keeps its led
   expect(exec.calls).not.toContain('xcrun simctl delete U1');
   expect(readCreatedDevices().ios).toContain('U1');
 });
-
-test.skipIf(process.platform === 'win32')(
-  'inside maintenance work at normal pressure a size walk is lowered and a device teardown keeps the caller priority',
-  async () => {
-    const field = process.platform === 'darwin' ? 'pri' : 'ni';
-    const own = Number(execFileSync('ps', ['-o', `${field}=`, '-p', String(process.pid)], { encoding: 'utf8' }).trim());
-    const log = join(avdHome, 'priorities');
-    writeFileSync(log, '');
-    const real = getExecutor();
-    const exec = iosExecutor({ sims: [OWNED] });
-    const observed = async (file: string, args: string[], opts: ExecOptions) => {
-      const command = [file, ...args].join(' ');
-      if (file === 'du' || /simctl delete U1/.test(command))
-        await real.runFileAsync('/bin/sh', ['-c', `echo "${file} $(ps -o ${field}= -p $$)" >> "$0"`, log], opts);
-      return exec.runFile(file, args);
-    };
-    setExecutor({ ...exec, runFileAsync: observed, runFileQuietAsync: observed });
-    const operation = testContext({ home: join(avdHome, 'stim'), cwd: avdHome, projectRoot: avdHome });
-    await runMaintenanceWork('normal', async () => {
-      await measuredDirectorySizeAsync(avdHome, { timeoutMs: 30_000 });
-      expect((await teardownOwnedIosSim('U1', { del: true, operation })).status).toBe('torn-down');
-    });
-    const priorities = Object.fromEntries(
-      readFileSync(log, 'utf8')
-        .trim()
-        .split('\n')
-        .map((line) => line.split(/\s+/))
-        .map(([tool, value]) => [tool, Number(value)]),
-    );
-    expect(priorities).toEqual({ du: process.platform === 'darwin' ? Math.min(own, 20) : 19, xcrun: own });
-  },
-);
 
 test('teardownOwnedIosSim shuts down WITHOUT deleting when del is false', async () => {
   const exec = iosExecutor({ sims: [OWNED] });

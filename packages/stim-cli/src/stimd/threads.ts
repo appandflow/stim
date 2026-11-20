@@ -260,20 +260,17 @@ else if (thread && parentPort) {
         return lane.take();
       }
       const { measureBuildEnds, measureDependencyTrees } = await import('../daemon/dependencies.ts');
-      const { runMaintenanceWork } = await import('../exec.ts');
       if (input.buildEnd) {
         const { timedStep } = await import('../daemon/step-timing.ts');
-        await runMaintenanceWork(undefined, () =>
-          timedStep(
-            log,
-            'build_end_measure',
-            async (tally) => {
-              tally.items = await measureBuildEnds(operation);
-            },
-            { signal: operation.signal },
-          ),
+        await timedStep(
+          log,
+          'build_end_measure',
+          async (tally) => {
+            tally.items = await measureBuildEnds(operation);
+          },
+          { signal: operation.signal },
         );
-      } else await runMaintenanceWork(undefined, () => measureDependencyTrees(operation));
+      } else await measureDependencyTrees(operation);
       return [];
     },
     () => {

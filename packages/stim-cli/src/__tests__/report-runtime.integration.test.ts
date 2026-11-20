@@ -292,48 +292,6 @@ test('an uncaptured child whose kill fails is refused and recorded with the time
   }
 });
 
-test.skipIf(process.platform === 'win32')(
-  'the record of a lowered report child redacts by the program it runs, not by its priority wrapper',
-  async () => {
-    const curl = join(scratch, 'curl');
-    writeFileSync(curl, '#!/bin/sh\necho ready\nexec sleep 30\n', { mode: 0o755 });
-    const controller = new AbortController();
-    const records: { fields: Record<string, unknown> }[] = [];
-    setReportChildLog((_level, _event, _msg, fields) => void records.push({ fields }));
-    const capture = vi
-      .spyOn(identities, 'captureProcessIdentity')
-      .mockReturnValue({ ok: false, reason: 'ACCESS_DENIED' });
-    let ready: () => void = () => {};
-    const started = new Promise<void>((resolve) => {
-      ready = resolve;
-    });
-    let nativeClosed: Promise<void> = Promise.resolve();
-    try {
-      const reading = runReport(context(controller.signal), async () =>
-        getExecutor().runFileAsync(curl, ['-u', 'user:curl-secret', 'https://example.com'], {
-          timeoutMs: 'unbounded',
-          signal: controller.signal,
-          lowPriority: true,
-          onSpawn: (child) => {
-            nativeClosed = new Promise<void>((resolve) => child.once('close', resolve));
-            child.stdout?.once('data', () => ready());
-          },
-        }),
-      ).catch((error: unknown) => error);
-      await started;
-      controller.abort(new Error('cancel fixture'));
-      await reading;
-      await nativeClosed;
-      await vi.waitFor(() => expect(records).toHaveLength(1), { timeout: 10_000 });
-      expect(records[0]?.fields.command).toBe('curl -u [redacted] https://example.com');
-    } finally {
-      setReportChildLog(undefined);
-      capture.mockRestore();
-      await nativeClosed;
-    }
-  },
-);
-
 test('a cancelled uncaptured child is killed from a macrotask and the report settles', async () => {
   if (process.platform === 'win32') return;
   const controller = new AbortController();

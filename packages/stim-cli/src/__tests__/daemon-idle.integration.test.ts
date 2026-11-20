@@ -15,13 +15,9 @@ import { forgetCreatedDevice, recordCreatedDevice } from '../devices/created-dev
 import { recordDeferredShutdown } from '../devices/deferred-shutdown.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
 import * as teardown from '../devices/teardown.ts';
-import { getExecutor, resetExecutor, runMaintenanceWork, setExecutor } from '../exec.ts';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { runBootedParkedPass, shutDownDeferredIosSim } from '../daemon/booted-parked.ts';
 import { runIdlePass } from '../daemon/idle.ts';
-import * as measure from '../daemon/measure.ts';
-import { runHomePasses } from '../daemon/passes.ts';
-import { takeWaitTicket } from '../engine/wait-queue.ts';
-import { releaseClaim } from '../ownership-claim.ts';
 import { getProject, loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState, recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
@@ -136,93 +132,6 @@ test('a workspace idle past idle.minutes, whatever its device and app logs, ente
   expect(timeline).toContain('"event":"workspace_idle"');
   expect(timeline).toContain('Run stim ios or stim android to resume it.');
 });
-
-test.skipIf(process.platform === 'win32')(
-  'inside maintenance work the idle stage sizes its outputs at full priority while it holds the metro-start lock',
-  async () => {
-    vi.stubEnv('GIT_CONFIG_COUNT', undefined);
-    bootedWorkspace('locked', 20 * MINUTE_MS);
-    const log = join(home, 'du-calls');
-    const base = getExecutor();
-    setExecutor({
-      ...base,
-      runFileAsync: (file, args, opts) =>
-        file === 'du'
-          ? base.runFileAsync(
-              '/bin/sh',
-              ['-c', 'echo "${GIT_CONFIG_COUNT:-none}" >> "$0"; exec du "$@"', log, ...args],
-              opts,
-            )
-          : base.runFileAsync(file, args, opts),
-    });
-
-    expect(await runMaintenanceWork('normal', () => pass())).toEqual([expect.objectContaining({ outcome: 'idle' })]);
-    const calls = readFileSync(log, 'utf8').trim().split('\n');
-    expect(calls.length).toBeGreaterThan(0);
-    expect(calls.every((call) => call === 'none')).toBe(true);
-  },
-);
-
-test.skipIf(process.platform === 'win32')(
-  'a tick runs its idle pass git reads lowered, and at full priority when a boot queues on its reclaim during the measurement',
-  async () => {
-    vi.stubEnv('GIT_CONFIG_COUNT', undefined);
-    bootedWorkspace('waited', 20 * MINUTE_MS);
-    const config = loadConfig();
-    const devices = await collectOwnedDeviceActivityAsync(config, sims, Date.now());
-    let ticket: ReturnType<typeof takeWaitTicket> | null = null;
-    let queueBoot = false;
-    const measured: measure.TickMeasurement = {
-      measurement: {
-        disk: [{ volume: '/', freeMb: 500_000 }],
-        memory: { level: 'normal', availableBytes: 8 * 1024 ** 3, totalBytes: 16 * 1024 ** 3 },
-        load1: 0,
-        cores: 8,
-        bootedSimulators: 1,
-        runningEmulators: null,
-        interaction: null,
-      },
-      sims,
-      simsError: null,
-      devices,
-    };
-    vi.spyOn(measure, 'measureTick').mockImplementation(async () => {
-      if (queueBoot)
-        ticket = takeWaitTicket('boot', { platform: 'ios', key: 'new', root: home, displayName: 'waiter' }, []);
-      return measured;
-    });
-    const realGit = execSync('command -v git', { encoding: 'utf8' }).trim();
-    const bin = join(home, 'bin');
-    const log = join(home, 'git-calls');
-    mkdirSync(bin);
-    writeFileSync(
-      join(bin, 'git'),
-      `#!/bin/sh\necho "\${GIT_CONFIG_COUNT:-none}" >> '${log}'\nexec '${realGit}' "$@"\n`,
-      {
-        mode: 0o755,
-      },
-    );
-    vi.stubEnv('PATH', `${bin}:${process.env.PATH ?? ''}`);
-    const calls = async () => {
-      writeFileSync(log, '');
-      await runHomePasses({ act: false, log: () => {} });
-      return readFileSync(log, 'utf8').split('\n').filter(Boolean);
-    };
-
-    const quiet = await calls();
-    queueBoot = true;
-    let waiting: string[];
-    try {
-      waiting = await calls();
-    } finally {
-      if (ticket) releaseClaim(ticket);
-    }
-    expect(ticket).not.toBeNull();
-    expect(quiet).toContain('1');
-    expect(waiting).toContain('none');
-    expect(waiting).not.toContain('1');
-  },
-);
 
 test('the idle stage deletes the git-ignored .dd and CMake output of a workspace and leaves other-named xcodebuild output', async () => {
   const { root } = bootedWorkspace('outputs', 20 * MINUTE_MS);

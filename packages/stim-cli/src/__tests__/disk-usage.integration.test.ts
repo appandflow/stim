@@ -30,7 +30,7 @@ beforeEach(() => {
   setExecutor({
     ...real,
     runFileAsync: (file, args, opts) => {
-      if (!opts.lowPriority) return real.runFileAsync(file, args, opts);
+      if (file !== 'nice') return real.runFileAsync(file, args, opts);
       walks++;
       return failing
         ? Promise.reject(Object.assign(new Error('Command timed out'), { code: 'ETIMEDOUT' }))
@@ -177,7 +177,7 @@ test('a walk records how long it took, and an entry written without it still rea
   setExecutor({
     ...real,
     runFileAsync: (file, args, opts) => {
-      if (opts.lowPriority) clock += 1234;
+      if (file === 'nice') clock += 1234;
       return real.runFileAsync(file, args, opts);
     },
   });

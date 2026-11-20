@@ -1,12 +1,12 @@
 import assert from 'node:assert';
-import { execFileSync, type ChildProcess } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { withAmbientContext } from '@stim-cli/core';
 import { runId } from '@stim-cli/core/state';
-import { getExecutor, isUnsafeBatchSpawn, resetExecutor, runControlPath, runMaintenanceWork } from '../exec.ts';
+import { getExecutor, isUnsafeBatchSpawn, resetExecutor } from '../exec.ts';
 import { testContext } from './_context.ts';
 
 vi.mock('../process-group-exit.ts', async (importOriginal) => ({
@@ -456,106 +456,3 @@ test('a cancelled child whose pipes close after the stalled event loop resumes i
     }),
   ).resolves.toBeUndefined();
 }, 30_000);
-
-describe.skipIf(process.platform === 'win32')('maintenance work priority', () => {
-  const darwin = process.platform === 'darwin';
-  const field = darwin ? 'pri' : 'ni';
-  let home: string;
-  beforeEach(() => {
-    home = mkdtempSync(join(tmpdir(), 'stim-exec-priority-'));
-    process.env.STIM_HOME = home;
-  });
-  afterEach(() => {
-    delete process.env.STIM_HOME;
-    rmSync(home, { recursive: true, force: true });
-  });
-  const atLevel = (level: 'normal' | 'high' | 'critical') => {
-    mkdirSync(join(home, 'daemon'), { recursive: true });
-    const now = new Date().toISOString();
-    writeFileSync(
-      join(home, 'daemon', 'snapshot.json'),
-      JSON.stringify({
-        version: 1,
-        pid: process.pid,
-        startedAt: now,
-        tickAt: now,
-        intervalMs: 60_000,
-        pressure: { level },
-      }),
-    );
-  };
-  const priorities = async (file = '/bin/sh', lowPriority?: boolean) =>
-    (
-      await getExecutor().runFileAsync(
-        file,
-        file === '/bin/sh' ? ['-c', `ps -o ${field}= -p $$; /bin/sh -c 'ps -o ${field}= -p $$'`] : [],
-        { timeoutMs: 30_000, ...(lowPriority ? { lowPriority } : {}) },
-      )
-    )
-      .trim()
-      .split(/\s+/)
-      .map(Number);
-
-  test('a git that a lowered child starts sees an empty core.fsmonitor after the configuration the caller set', async () => {
-    resetExecutor();
-    const bin = join(home, 'gitbin');
-    const log = join(home, 'git-env');
-    mkdirSync(bin);
-    writeFileSync(
-      join(bin, 'git'),
-      `#!/bin/sh\necho "$GIT_CONFIG_COUNT $GIT_CONFIG_KEY_0=$GIT_CONFIG_VALUE_0 $GIT_CONFIG_KEY_1=$GIT_CONFIG_VALUE_1" > '${log}'\n`,
-      { mode: 0o755 },
-    );
-    vi.stubEnv('PATH', `${bin}:${process.env.PATH ?? ''}`);
-    vi.stubEnv('GIT_CONFIG_COUNT', '1');
-    vi.stubEnv('GIT_CONFIG_KEY_0', 'user.name');
-    vi.stubEnv('GIT_CONFIG_VALUE_0', 'fixture');
-    try {
-      await runMaintenanceWork('normal', () =>
-        getExecutor().runFileAsync(
-          process.execPath,
-          ['-e', "require('node:child_process').execFileSync('git', ['status'], { stdio: 'inherit' })"],
-          { timeoutMs: 30_000 },
-        ),
-      );
-    } finally {
-      vi.unstubAllEnvs();
-    }
-    expect(readFileSync(log, 'utf8').trim()).toBe('2 user.name=fixture core.fsmonitor=');
-  });
-
-  test('a child of maintenance work and its descendants run throttled at normal pressure, unless the work is a control path, the tool is adb or the pressure is high or critical', async () => {
-    resetExecutor();
-    const own = Number(execFileSync('ps', ['-o', `${field}=`, '-p', String(process.pid)], { encoding: 'utf8' }).trim());
-    const adb = join(home, 'bin', 'adb');
-    mkdirSync(dirname(adb));
-    writeFileSync(adb, `#!/bin/sh\nps -o ${field}= -p $$\n`, { mode: 0o755 });
-    const command = await priorities();
-    const maintenance = await runMaintenanceWork('normal', () => priorities());
-    const control = await runMaintenanceWork('normal', () => runControlPath(() => priorities()));
-    const adbChild = await runMaintenanceWork('normal', () => priorities(adb));
-    const high = await runMaintenanceWork('high', () => priorities());
-    const critical = await runMaintenanceWork('critical', () => priorities());
-    const noSnapshot = await runMaintenanceWork(undefined, () => priorities());
-    atLevel('high');
-    const highSnapshot = await runMaintenanceWork(undefined, () => priorities());
-    const askedAtHigh = await priorities('/bin/sh', true);
-    atLevel('normal');
-    const asked = await priorities('/bin/sh', true);
-    const throttled = darwin ? Math.min(own, 20) : 19;
-    expect({ command, control, adbChild, high, critical, highSnapshot, askedAtHigh }).toEqual({
-      command: [own, own],
-      control: [own, own],
-      adbChild: [own],
-      high: [own, own],
-      critical: [own, own],
-      highSnapshot: [own, own],
-      askedAtHigh: [own, own],
-    });
-    expect({ maintenance, noSnapshot, asked }).toEqual({
-      maintenance: [throttled, throttled],
-      noSnapshot: [throttled, throttled],
-      asked: [throttled, throttled],
-    });
-  });
-});

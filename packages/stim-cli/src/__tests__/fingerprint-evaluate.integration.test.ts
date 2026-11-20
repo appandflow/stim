@@ -1,11 +1,10 @@
 import { SLOW, temps, write, expoApp, baseEnv, key, refusal } from './fingerprint-evaluate-harness.ts';
-import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { describe, expect, test, vi } from 'vitest';
-import { getExecutor, runMaintenanceWork, setExecutor } from '../exec.ts';
-import { readFingerprint, runFingerprintPrecompute, runFingerprintVerification } from '../fingerprint-precompute.ts';
+import { getExecutor, setExecutor } from '../exec.ts';
+import { readFingerprint, runFingerprintVerification } from '../fingerprint-precompute.ts';
 import { fingerprintPendingVerifyDir } from '@stim-cli/core/state';
 import { writeWorkspaceEnv } from '../fingerprint/index-store.ts';
 import { workspaceEnv } from '../fingerprint/env.ts';
@@ -955,77 +954,4 @@ describe('fingerprint evaluators on a bare React Native app', () => {
       remedy: 'npx react-native config',
     });
   });
-});
-
-describe.skipIf(process.platform === 'win32')('fingerprint child priority', () => {
-  const priority = (pid: number) => {
-    const [pri = Number.NaN, ni = Number.NaN] = execFileSync('ps', ['-o', 'pri=,ni=', '-p', String(pid)], {
-      encoding: 'utf8',
-    })
-      .trim()
-      .split(/\s+/)
-      .map(Number);
-    return { pri, ni };
-  };
-  const recorded = (observation: string) => JSON.parse(readFileSync(observation, 'utf8'));
-  const app = (observation: string) =>
-    expoApp({
-      'app.config.js': `const [pri, ni] = require('node:child_process').execFileSync('ps', ['-o', 'pri=,ni=', '-p', String(process.pid)], { encoding: 'utf8' }).trim().split(/\\s+/).map(Number); require('node:fs').writeFileSync(${JSON.stringify(observation)}, JSON.stringify({ pri, ni })); module.exports = { expo: { name: 'fp', slug: 'fp' } };`,
-    });
-
-  test(
-    'a fingerprint a build reads runs at the caller priority, and the precompute and queued verification the maintenance lane runs are throttled at normal pressure',
-    SLOW,
-    async () => {
-      const own = priority(process.pid);
-      const dir = realpathSync(mkdtempSync(join(tmpdir(), 'stim-fp-priority-')));
-      temps.push(dir);
-      const read = join(dir, 'read');
-      const readRoot = app(read);
-      await readFingerprint(testContext({ projectRoot: readRoot, cwd: readRoot, env: baseEnv() }), {
-        root: readRoot,
-        platform: 'ios',
-        embedMode: 'development',
-      });
-      const precomputed = join(dir, 'precomputed');
-      const precomputeRoot = app(precomputed);
-      writeWorkspaceEnv(precomputeRoot, workspaceEnv(baseEnv()));
-      expect(
-        await runMaintenanceWork(undefined, () =>
-          runFingerprintPrecompute(testContext({ projectRoot: precomputeRoot, cwd: precomputeRoot, env: baseEnv() }), {
-            root: precomputeRoot,
-            platform: 'ios',
-          }),
-        ),
-      ).toEqual({ outcome: 'recorded' });
-      const verified = join(dir, 'verified');
-      const verifyRoot = app(verified);
-      const directory = fingerprintPendingVerifyDir();
-      mkdirSync(directory, { recursive: true });
-      writeFileSync(
-        join(directory, 'pending.json'),
-        JSON.stringify({
-          root: verifyRoot,
-          target: { platform: 'ios' },
-          embedMode: 'development',
-          hash: 'a'.repeat(64),
-          inputs: [],
-          envRef: { id: 'fixture', digest: writeWorkspaceEnv(verifyRoot, workspaceEnv(baseEnv())) },
-        }),
-      );
-      await runMaintenanceWork(undefined, () =>
-        runFingerprintVerification(testContext({ projectRoot: verifyRoot, cwd: verifyRoot, env: baseEnv() }), {
-          root: verifyRoot,
-          platform: 'ios',
-          pendingFile: 'pending.json',
-        }),
-      );
-      const lowered = recorded(precomputed);
-      expect(recorded(read)).toEqual(own);
-      expect(recorded(verified)).toEqual(lowered);
-      expect(lowered).toEqual(
-        process.platform === 'darwin' ? { pri: Math.min(own.pri, 20), ni: own.ni } : { pri: lowered.pri, ni: 19 },
-      );
-    },
-  );
 });

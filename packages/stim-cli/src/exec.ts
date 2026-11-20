@@ -4,8 +4,7 @@ import which from 'which';
 import { basename, delimiter, join, resolve as resolvePath, win32 } from 'path';
 import { randomUUID } from 'node:crypto';
 import { existsSync, rmSync } from 'node:fs';
-import { AsyncLocalStorage } from 'node:async_hooks';
-import { constants, setPriority, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { ambientEnv, ambientContext, type StimContext } from '@stim-cli/core';
@@ -13,14 +12,7 @@ import { spawnDeclared } from './engine/spawn-claims.ts';
 import { operationState } from './engine/operation-state.ts';
 import { WorkspaceProcessCleanupError } from './engine/workspace-process-lock.ts';
 import { groupExitBudgetMs, waitForGroupExit } from './process-group-exit.ts';
-import {
-  readDaemonSnapshot,
-  redactArgv,
-  redactCommandLine,
-  tailscaleEnv,
-  trace,
-  type PressureLevel,
-} from '@stim-cli/core/state';
+import { redactArgv, redactCommandLine, tailscaleEnv, trace } from '@stim-cli/core/state';
 import { debugLog } from './debug-log.ts';
 import { reportSignal, trackReportResource } from './report-runtime.ts';
 import { logReportChild } from './report-child-log.ts';
@@ -65,8 +57,6 @@ export interface ExecOptions {
   detachedSilent?: boolean;
   /** `runFileAsync` only: put the Windows child tree in a kill-on-close Job Object. */
   containProcessTree?: boolean;
-  /** `runFileAsync` only: run the child as maintenance work even outside {@link runMaintenanceWork}. */
-  lowPriority?: boolean;
   /** `runFileAsync` with a cancellation signal: begin verified tree cleanup at leader exit, before inherited pipes close. */
   cleanupOnExit?: boolean;
   /**
@@ -489,57 +479,6 @@ function tailscaleEnvironment(file: string, env?: NodeJS.ProcessEnv): NodeJS.Pro
   return basename(file).toLowerCase() === 'tailscale' ? tailscaleEnv(env ?? ambientEnv()) : env;
 }
 
-const priorityScope = new AsyncLocalStorage<{ level?: PressureLevel } | 'control'>();
-
-/**
- * Runs `fn` as maintenance work: every child `runFileAsync` starts in it runs at low priority while the pressure level
- * is normal, unless it runs inside {@link runControlPath}. Called inside {@link runControlPath}, `fn` stays control
- * path. `level` is the pressure level the work started at; without one, each child reads it from the home's daemon
- * snapshot.
- */
-export function runMaintenanceWork<T>(level: PressureLevel | undefined, fn: () => T): T {
-  if (priorityScope.getStore() === 'control') return fn();
-  return priorityScope.run(level ? { level } : {}, fn);
-}
-
-/** Runs `fn` as work something waits on, such as a stop or a device teardown: its children keep the caller's priority. */
-export function runControlPath<T>(fn: () => T): T {
-  return priorityScope.run('control', fn);
-}
-
-// @ref LLP 0021#stimd-runs-at-the-priority-of-an-app -- maintenance children run throttled only at normal pressure
-// adb starts its shared server from the client when none runs, and that server would keep the client's priority.
-function lowers(file: string, lowPriority: boolean | undefined): boolean {
-  const scope = priorityScope.getStore();
-  if (scope === 'control' || (!scope && !lowPriority) || /^adb(\.exe)?$/i.test(basename(file))) return false;
-  return (scope?.level ?? readDaemonSnapshot()?.pressure?.level ?? 'normal') === 'normal';
-}
-
-// taskpolicy(8): -c runs the program under a QoS clamp, which its descendants inherit. Windows lowers the child after
-// it starts.
-const lowered = (file: string, args: string[]): [string, string[]] =>
-  process.platform === 'darwin'
-    ? ['/usr/sbin/taskpolicy', ['-c', 'utility', file, ...args]]
-    : process.platform === 'win32'
-      ? [file, args]
-      : ['nice', ['-n', '19', file, ...args]];
-
-// git(1) with core.fsmonitor set starts the worktree's shared fsmonitor daemon from the command that finds none, and
-// that daemon would keep the lowered priority for every later git call there. git-config(1) GIT_CONFIG_COUNT, read by
-// git 2.31 and later, reaches every git that inherits the lowered child's environment; an inherited
-// GIT_CONFIG_PARAMETERS takes precedence. The value is empty because git before 2.36 reads core.fsmonitor as a hook
-// path, so false would run as a hook; empty means off from 2.31 on.
-function withoutFsmonitor(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const count = Number.parseInt(env.GIT_CONFIG_COUNT ?? '', 10);
-  const at = Number.isInteger(count) && count > 0 ? count : 0;
-  return {
-    ...env,
-    GIT_CONFIG_COUNT: String(at + 1),
-    [`GIT_CONFIG_KEY_${at}`]: 'core.fsmonitor',
-    [`GIT_CONFIG_VALUE_${at}`]: '',
-  };
-}
-
 const defaultExecutor: Executor = {
   reportSignal: () => reportSignal(ambientContext()),
   run(cmd, { timeoutMs, killSignal, cwd, env }) {
@@ -601,10 +540,9 @@ const defaultExecutor: Executor = {
     return untrimmed ? String(result.stdout) : String(result.stdout).trim();
   },
   runFileAsync(
-    program,
-    programArgs = [],
+    file,
+    args = [],
     {
-      lowPriority,
       timeoutMs,
       killSignal,
       cwd,
@@ -623,8 +561,6 @@ const defaultExecutor: Executor = {
       context: selectedContext,
     },
   ) {
-    const low = lowers(program, lowPriority);
-    const [file, args] = low ? lowered(program, programArgs) : [program, programArgs];
     const command = [file, ...args].join(' ');
     return new Promise((resolve, reject) => {
       const context = selectedContext ?? ambientContext();
@@ -642,9 +578,8 @@ const defaultExecutor: Executor = {
         for (const key of omitEnv ?? []) delete childEnv[key];
         opts.env = childEnv;
       }
-      opts.env = tailscaleEnvironment(program, opts.env);
-      if (low) opts.env = withoutFsmonitor(opts.env ?? ambientEnv());
-      refuseUnsafeBatchArguments(program, programArgs, opts.env, opts.cwd);
+      opts.env = tailscaleEnvironment(file, opts.env);
+      refuseUnsafeBatchArguments(file, args, opts.env, opts.cwd);
       const claims = declareFor ? [...operationState(declareFor).declaring] : [];
       let clearDeclaration: (() => void) | undefined;
       let retainDeclaration: ((error: unknown) => void) | undefined;
@@ -655,7 +590,7 @@ const defaultExecutor: Executor = {
               retainDeclaration = rejectDeclaration;
             })
           : undefined;
-      const contained = startsInReportJob(program, opts, containProcessTree || Boolean(report), context);
+      const contained = startsInReportJob(file, opts, containProcessTree || Boolean(report), context);
       const base =
         contained && timeout !== undefined ? join(tmpdir(), `stim-report-${process.pid}-${randomUUID()}`) : null;
       const markers = base ? { started: `${base}.started`, closed: `${base}.closed` } : undefined;
@@ -674,9 +609,6 @@ const defaultExecutor: Executor = {
         if (pid === undefined) quietly(() => observed.settled(watch));
         else quietly(() => observed.started(watch, pid));
       }
-      const started = child.pid;
-      if (low && process.platform === 'win32' && started !== undefined)
-        quietly(() => setPriority(started, constants.priority.PRIORITY_BELOW_NORMAL));
       let lifetime: ReturnType<typeof reportChild>;
       let cancel: ((reason?: Parameters<NonNullable<typeof lifetime>['cancel']>[0]) => Promise<void>) | undefined;
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -715,7 +647,7 @@ const defaultExecutor: Executor = {
           },
           contained,
           context,
-          describeReportCommand(program, programArgs, redact),
+          describeReportCommand(file, args, redact),
           timeout,
         );
         cancel = lifetime?.cancel;

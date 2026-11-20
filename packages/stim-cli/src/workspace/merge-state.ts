@@ -1,5 +1,5 @@
 import { statSync } from 'node:fs';
-import { isTimeoutError, runControlPath, type ExecOptions } from '../exec.ts';
+import { isTimeoutError, type ExecOptions } from '../exec.ts';
 import { git as runGit, gitAsync, gitQuietAsync } from './git.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 
@@ -281,19 +281,16 @@ export async function fetchDefaultBranchAsync(
   if (at !== null && now - at < FETCH_FRESH_MS) return target;
   const branch = target.ref.slice(REMOTE_PREFIX.length);
   try {
-    // @ref LLP 0021#stimd-runs-at-the-priority-of-an-app -- a fetch can start an ssh master or credential cache that outlives it
-    await runControlPath(() =>
-      gitAsync(
-        repo,
-        ['fetch', '--quiet', '--no-tags', '--no-recurse-submodules', 'origin', `+refs/heads/${branch}:${target.ref}`],
-        {
-          ...execution,
-          write: true,
-          timeoutMs: FETCH_TIMEOUT_MS,
-          env: { ...execution.env, GIT_TERMINAL_PROMPT: '0' },
-          omitEnv: execution.omitEnv?.filter((name) => name !== 'GIT_TERMINAL_PROMPT'),
-        },
-      ),
+    await gitAsync(
+      repo,
+      ['fetch', '--quiet', '--no-tags', '--no-recurse-submodules', 'origin', `+refs/heads/${branch}:${target.ref}`],
+      {
+        ...execution,
+        write: true,
+        timeoutMs: FETCH_TIMEOUT_MS,
+        env: { ...execution.env, GIT_TERMINAL_PROMPT: '0' },
+        omitEnv: execution.omitEnv?.filter((name) => name !== 'GIT_TERMINAL_PROMPT'),
+      },
     );
   } catch (error) {
     if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))

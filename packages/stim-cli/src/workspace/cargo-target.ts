@@ -340,7 +340,9 @@ async function lockOutcome(profile: string, signal?: AbortSignal, lowPriority = 
     try {
       const exec = getExecutor();
       outcome = {
-        stdout: await exec.runFileAsync('lsof', ['-t', '--', lock], { timeoutMs: 5000, signal, lowPriority }),
+        stdout: await (lowPriority
+          ? exec.runFileAsync('nice', ['-n', '19', 'lsof', '-t', '--', lock], { timeoutMs: 5000, signal })
+          : exec.runFileAsync('lsof', ['-t', '--', lock], { timeoutMs: 5000, signal })),
       };
     } catch (error) {
       outcome = isRecord(error) ? { status: error.status, stdout: error.stdout } : { status: null, stdout: null };
@@ -394,7 +396,9 @@ async function readTargetUse(
   const exec = getExecutor();
   try {
     const run = (file: string, args: string[], timeoutMs: number) =>
-      exec.runFileAsync(file, args, { timeoutMs, signal, lowPriority });
+      lowPriority
+        ? exec.runFileAsync('nice', ['-n', '19', file, ...args], { timeoutMs, signal })
+        : exec.runFileAsync(file, args, { timeoutMs, signal });
     const lsof = await run('lsof', ['-nP', '-w', '-Fn'], 60_000);
     const ps = await run('ps', ['-axww', '-o', 'args='], 30_000);
     const used = targetPathsInUse(target, lsof, ps);

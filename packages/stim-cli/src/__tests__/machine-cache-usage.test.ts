@@ -119,7 +119,8 @@ beforeEach(() => {
       }
       calls.push([file, ...args]);
       if (file === 'du') return `2048\t${args.at(-1)}\n`;
-      if (file === PRIVATE_SIZE_HELPER) return '4194304 1048576 0\n';
+      if (file === PRIVATE_SIZE_HELPER || (file === 'nice' && args[2] === PRIVATE_SIZE_HELPER))
+        return '4194304 1048576 0\n';
       const result = tools[[file, ...args].join(' ')];
       if (result === undefined || result instanceof Error) throw result ?? new Error('unexpected');
       return result;

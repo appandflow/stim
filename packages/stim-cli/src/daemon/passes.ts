@@ -1,5 +1,3 @@
-import { runControlPath, runMaintenanceWork } from '../exec.ts';
-import { liveWaiters } from '../engine/wait-queue.ts';
 import { isClaimUnavailable, releaseClaim, tryAcquireClaim, type ClaimHandle } from '@stim-cli/core/ownership-claim';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { LOG_ROTATE_BYTES, type StimContext } from '@stim-cli/core';
@@ -111,19 +109,6 @@ export async function runHomePasses(input: HomePassesInput): Promise<HomePasses>
   }
 }
 
-function bootWaiting(): boolean {
-  try {
-    return liveWaiters('boot').length > 0;
-  } catch {
-    return false;
-  }
-}
-
-// @ref LLP 0021#stimd-runs-at-the-priority-of-an-app -- a queued boot waits on the reclaim after the tick's passes
-function tickPass<T>(level: PressureLevel, fn: () => Promise<T>): Promise<T> {
-  return bootWaiting() ? runControlPath(fn) : runMaintenanceWork(level, fn);
-}
-
 interface HomePassesInput {
   act: boolean;
   log: IdlePassInput['log'];
@@ -177,25 +162,23 @@ async function homePasses(
   );
   operation.signal.throwIfAborted();
   const workspaces = await watchedStep(log, 'idle_stage', () =>
-    tickPass(pressure.level, () =>
-      runIdlePass({
-        config,
-        now,
-        sims: measured.sims,
-        simsError: measured.simsError,
-        devices: measured.devices,
-        act,
-        log,
-        operation,
-        // @ref LLP 0001#the-2-minute-idle-stop-is-for-memory -- a stop frees memory, not disk
-        ...(pressure.memory !== 'normal'
-          ? { pressure: { level: pressure.memory, reasons: pressure.reasons } }
-          : pressure.disk !== 'normal'
-            ? // @ref LLP 0001#each-rung-frees-only-the-volumes-under-pressure -- memory pressure idles every workspace
-              { disk: { volumes: shortVolumeDevices(measured.measurement.disk, thresholds, 'high') } }
-            : {}),
-      }),
-    ),
+    runIdlePass({
+      config,
+      now,
+      sims: measured.sims,
+      simsError: measured.simsError,
+      devices: measured.devices,
+      act,
+      log,
+      operation,
+      // @ref LLP 0001#the-2-minute-idle-stop-is-for-memory -- a stop frees memory, not disk
+      ...(pressure.memory !== 'normal'
+        ? { pressure: { level: pressure.memory, reasons: pressure.reasons } }
+        : pressure.disk !== 'normal'
+          ? // @ref LLP 0001#each-rung-frees-only-the-volumes-under-pressure -- memory pressure idles every workspace
+            { disk: { volumes: shortVolumeDevices(measured.measurement.disk, thresholds, 'high') } }
+          : {}),
+    }),
   );
   operation.signal.throwIfAborted();
   const actions: DaemonLadderAction[] = [
@@ -222,7 +205,7 @@ async function homePasses(
   const idleMs = lap();
   if (act) forgetGitReads(operation);
   const reading = { devices: measured.devices, simsFailed: measured.sims === null, operation };
-  actions.push(...(await tickPass(pressure.level, () => runDormantPass({ config, act, log, ...reading }))));
+  actions.push(...(await runDormantPass({ config, act, log, ...reading })));
   operation.signal.throwIfAborted();
   const dormantMs = lap();
   let ladderPass: LadderPass | null = null;
@@ -339,7 +322,7 @@ export function createMaintenanceLane(
       };
       const loopDelay = monitorEventLoopDelay();
       loopDelay.enable();
-      current = runMaintenanceWork(pressure.level, async () => {
+      current = (async () => {
         const reading = { devices: measured.devices, simsFailed: measured.sims === null, operation };
         await watchedStep(log, 'fingerprint_precompute', () =>
           precompute.run({ config, workspaces, pressure, operation }, act),
@@ -367,7 +350,7 @@ export function createMaintenanceLane(
           },
           ...(skipped ? { skipped } : {}),
         });
-      })
+      })()
         .catch((error: unknown) => {
           const cleanup = error instanceof Error && 'reportCleanup' in error;
           if (cleanup) failure = error;
