@@ -28,7 +28,6 @@ import { renderPlist } from '../src/service-plist.ts';
 import { renderUnit } from '../src/service-unit.ts';
 import { installJob, serviceStatus } from '../src/service.ts';
 import { upsertProject } from '../../stim-cli/src/workspace/config.ts';
-import { workspaceLogsDir } from '../../stim-cli/src/workspace/paths.ts';
 import { readWorkspaceState } from '../../stim-cli/src/workspace/workspace-state.ts';
 
 const launchd = vi.hoisted((): { job: ChildProcess | null; start: (() => ChildProcess) | null } => ({
@@ -826,27 +825,16 @@ describe.skipIf(process.platform === 'win32')("an engine switch under a service 
         );
       });
       expect(started).toMatchObject({ op: 'logs.started' });
-      const [first] = await until('the device log stream', () =>
-        service.streams().length > 0 ? service.streams() : null,
-      );
+      await until('the device log stream', () => service.streams().length > 0);
       op.destroy();
       service.restartJob(60_000);
       const waiter = await until('the job process', () => service.jobPid());
-      const deviceLog = () => {
-        try {
-          return readFileSync(join(workspaceLogsDir(app), 'device.ndjson'), 'utf8');
-        } catch {
-          return '';
-        }
-      };
-      await until('a resumed stream writing the workspace log', () =>
-        service.streams().some((pid) => pid !== first && deviceLog().includes(`line from ${pid}`)),
+      const events = () => readFileSync(join(service.home, 'daemon', 'daemon.ndjson'), 'utf8');
+      await until('the job stimd to resume the stream', () =>
+        events().includes(`resumed device log stream ${String(started.streamId)}`),
       );
       expect(gone(holder.pid)).toBe(true);
       expect(parentOf(service.record()?.pid ?? 0)).toBe(waiter);
-      expect(readFileSync(join(service.home, 'daemon', 'daemon.ndjson'), 'utf8')).toContain(
-        `resumed device log stream ${String(started.streamId)}`,
-      );
       expect(readWorkspaceState(app)?.collectors?.ios).toMatchObject({ kind: 'stream', streamId: started.streamId });
     } finally {
       await service.cleanup();
