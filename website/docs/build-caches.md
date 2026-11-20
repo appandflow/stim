@@ -656,9 +656,9 @@ rung 1, and the report rungs last. Rungs 5 and 7 only report what they would
 free, as kept actions, and delete nothing; the `stim-daemon` runs them at most
 hourly and never at critical, the ladder a command runs never, and `stim gc`
 each time, rung 5 then also reporting idle source checkouts at critical. The
-hourly dormant step never runs beside a pass's disk rungs: while it runs, a
-pass leaves them out for up to 10 minutes, and a command at the hard floor
-stops it:
+disk rungs, the hourly dormant step and automatic maintenance take turns in
+one background task, so a pass waits at most one unit of them, a hard-floor
+pass first:
 
 | Rung | High                                                                                                                                                                                                                            | Critical                                                                                                                                                                                      |
 | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
