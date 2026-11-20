@@ -564,10 +564,10 @@ thread ran the walk (`daemon/size-failures.json` holds the times), so a folder
 that fails the same way on every pass shows up four times a day. The entries
 of a cache being trimmed share one record per reason, with `root` naming the
 cache. The failure record beside the
-size cache (`disk-usage/*.failed.json`) carries the same `reason` fields. When
-pressure ladder rung 3 has no recorded size for the build or Metro cache at
-high, or the Swift compilation cache, and cannot size it either, it records a
-kept action that says why instead of skipping the cache silently.
+size cache (`disk-usage/*.failed.json`) carries the same `reason` fields.
+Pressure ladder rung 3 never walks a shared cache: it frees each from the size
+the hourly size scan recorded, and at high leaves one with no recorded size
+until the scan has measured it.
 
 For local device lease contention, look for `device_lease_acquire` when the
 request was refused or spent at least five seconds waiting. `waitMs` counts

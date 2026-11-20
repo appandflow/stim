@@ -87,14 +87,13 @@ stops once no volume is under pressure.
 
 Rung 3 runs its Cargo trims even when its shared caches failed (a lock that did
 not answer, a full disk), recording that failure as a failed action. It trims
-the targets largest first, by the last size Stim recorded for each: the
-maintenance size scan or the disk-usage cache, whichever is newer. The size
-scan measures every registered target but only six discovered ones per pass,
-and it writes each size into the disk-usage cache too, so a size survives the
-later scans that measure other targets; the caps still plan from the scan's own
-list. A target with no recorded size, or none newer than this process's last
-attempt to trim it, follows in plan order, so a target the ladder tried does
-not stay first. Before each trim the daemon's ladder measures that target's
+the targets largest first, by the size the disk-usage cache records for each.
+The size scan measures every registered target but only six discovered ones
+per pass, and writes each size into the disk-usage cache, so a size survives
+the later scans that measure other targets; the caps still plan from the scan's
+own list. A target with no recorded size, or none newer than this process's
+last attempt to trim it, follows in plan order, so a target the ladder tried
+does not stay first. Before each trim the daemon's ladder measures that target's
 volume again and skips the target once its volume is no longer short, since a
 larger target's trim may have cleared it; a build's headroom run keeps its own
 free-space target.
@@ -133,11 +132,12 @@ scan, a `du` of what it frees, or host load to drop. A step whose decision
 needs no byte count (the Cargo `target/` trim, LLP 0005) plans from structure
 and runs in the same ladder pass, after the shared caches of rung 3 (The ladder
 runs by yield); a step that needs sizes measures them at once. The shared
-caches are freed from the size Stim last recorded for them, with no walk
-first: at high the build, Metro and compilation caches are trimmed from that
-size, and only a cache with no recorded size is walked, at most 120 s; at
-critical the compilation cache and the fingerprint index and memo are emptied
-with no walk, and report the bytes their volume gained. Host load
+caches are freed with no walk, from the size the disk-usage cache records,
+which the size scan writes for each shared cache it measures. At high the
+build, Metro and compilation caches are trimmed from that size; a cache with
+no recorded size, or one already trimmed since its last measurement, is left
+until the next scan. At critical they are emptied whatever their size and
+report their recorded size, 0 when none is recorded. Host load
 defers the size, idle, worktree and sweep checks only while every volume is at
 normal. The walk itself keeps its protections (one at a time, the walk claim,
 time limits, abort on handover). Walks above normal run at normal priority:
@@ -173,9 +173,8 @@ bytes. An action that freed no bytes, such as a Gradle stop, a parked simulator
 shut down for memory, or a Cargo trim whose volume gained nothing because other
 writers filled it meanwhile, does not count, and it does not drop the git reads
 the rungs share. Rung 1 records `kept`, not `done`, when its deletion kept every
-output it was given. An emptied cache that reports the bytes its volume gained
-reports 0 on a disk other writers fill at the same time, so such a pass can
-count as freeing nothing and wait.
+output it was given. A cache emptied with no recorded size reports 0 bytes, so a
+pass that only emptied such caches counts as freeing nothing and waits.
 
 After a daemon ladder pass that freed nothing, the next pass waits four times
 that pass's duration, at most 15 minutes, or at most one minute at critical. A
@@ -292,7 +291,10 @@ time as a ladder pass for disk. The tick and the maintenance lane share a turn:
   pacing does not count it.
 
 A step stopped part way leaves what it already removed removed and the rest in
-place; each removal holds its workspace's claims, which the stop releases.
+place; each removal holds its workspace's claims, which the stop releases. A passes thread that ends while its step holds the turn gives the turn back.
+The rule covers the dormant step only: the lane's fingerprint precompute and
+maintenance pass, with its size scan and worktree check, may still run beside
+a ladder pass.
 
 Reason: on 2026-11-19 the lane's dormant step started at normal and ran for 49
 minutes beside both slow rung 1 passes and rung 3, walking the same 171
@@ -382,8 +384,8 @@ drops a marker for any other root, an unreadable marker file, or a marker over
 an hour old, without a read inside that root. A workspace layout that cannot be
 read keeps the marker and measures nothing for that root. An expired marker is
 dropped, and those folders are measured again at the next build end or when
-`stim gc` reports; the hourly size scan refreshes only the Cargo `target/` sizes
-it measures (The ladder runs by yield). The disk-usage cache is keyed by the exact path string, so each folder is
+`stim gc` reports; the hourly size scan refreshes only the Cargo `target/` and
+shared cache sizes it measures (The ladder runs by yield). The disk-usage cache is keyed by the exact path string, so each folder is
 walked and keyed as the gc worktree report spells it, the registered root joined
 with the name as enumerated; the canonical path only bounds what may be walked. A
 case-only redirect through a replaced ancestor on a case-sensitive volume is not

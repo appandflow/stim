@@ -2620,10 +2620,10 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
        Stim registered emptied whole (ccache, the macOS artifact cache and the
        React Native and Android caches; \`guide cleanup\` lists them), except
        report-only caches, caches inside a workspace, caches Stim does not own,
-       caches outside a scoped STIM_HOME and one a build holds. A capped cache
-       is sized from what the size scan recorded, with no walk first; one with
-       no recorded size whose walk fails is kept: build and Metro at high,
-       Swift compilation at high. Then the Cargo trims (\`guide cleanup
+       caches outside a scoped STIM_HOME and one a build holds. No cache is
+       walked: each is freed from the size the size scan recorded, and at high
+       one with no recorded size is left until the scan records one. Then the
+       Cargo trims (\`guide cleanup
        disk\`), largest target first by its last recorded size, each only while
        its own volume is still short, even when a cache step failed
     1. idle stage: memory pressure idles every workspace idle 2 minutes or

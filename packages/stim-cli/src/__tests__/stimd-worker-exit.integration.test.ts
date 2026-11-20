@@ -139,7 +139,7 @@ parentPort.on('message', (message) => {
   const entry = vi.spyOn(entries, 'spawnEntry').mockReturnValue(fixture);
   const threads = createThreadTable(() => {});
   try {
-    await expect(threads.run('passes', { cwd: root })).rejects.toThrow();
+    await expect(threads.run('passes', { cwd: root })).rejects.toThrow('the passes thread exited with code 1');
     const gate = threads.dormant?.gate;
     if (!gate) throw new Error('no dormant gate');
     expect(admitStep(gate)).toBe(true);
