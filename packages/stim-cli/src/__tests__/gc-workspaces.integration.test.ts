@@ -2757,6 +2757,31 @@ test('gc keeps a finished registered worktree whose ignored source sits beside a
   expect(existsSync(worktrees.squashed ?? '')).toBe(false);
 }, 240_000);
 
+test('gc keeps a finished registered worktree whose nested Pods, ignored as a whole, hold a hand edit', async () => {
+  const { repo, worktrees } = repoWithMergedBranches();
+  const merged = worktrees.merged ?? '';
+  writeFileSync(join(repo, '.git', 'info', 'exclude'), 'Pods/\n');
+  const pods = join(merged, 'apps', 'mobile', 'ios', 'Pods');
+  mkdirSync(join(pods, 'Lib'), { recursive: true });
+  writeFileSync(join(pods, 'Lib', 'Lib.m'), 'original');
+  writeFileSync(join(pods, 'Manifest.lock'), 'PODFILE CHECKSUM: x');
+  const installed = new Date(Date.now() - 3_600_000);
+  for (const path of [join(pods, 'Lib', 'Lib.m'), join(pods, 'Lib'), join(pods, 'Manifest.lock')])
+    utimesSync(path, installed, installed);
+  writeFileSync(join(pods, 'Lib', 'Lib.m'), 'patched by hand');
+
+  await checkWorktrees();
+  const { payload } = await gcJson({ dryRun: true, pressure: 'normal' });
+  const entry = payload.sections.linkedWorktrees.find(
+    (w: { path: string }) => realpathSync.native(w.path) === realpathSync.native(merged),
+  );
+  expect(entry).toMatchObject({ willRemove: false, detail: expect.stringContaining('apps/mobile/ios/Pods') });
+  await gcJson({ pressure: 'normal' });
+
+  expect(readFileSync(join(pods, 'Lib', 'Lib.m'), 'utf8')).toBe('patched by hand');
+  expect(existsSync(worktrees.squashed ?? '')).toBe(false);
+}, 240_000);
+
 test('gc keeps a finished registered worktree whose hand-edited Pods sit in a wholly ignored iOS folder', async () => {
   const { repo, worktrees } = repoWithMergedBranches();
   const merged = worktrees.merged ?? '';
