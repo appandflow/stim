@@ -183,8 +183,72 @@ function describeReportCommand(file: string, args: readonly string[], redact?: r
 type CancelReason = 'timeout' | 'overflow' | 'exit' | 'close' | 'report_budget' | 'abort' | 'unknown';
 type Refusal = 'unverified' | 'did_not_close' | 'descendants';
 
+// @ref LLP 0007#read-only-report-children-do-not-hold-stimd -- only audited command shapes qualify
+function readOnlyReportCommand(file: string, args: readonly string[]): boolean {
+  const program = basename(file);
+  if (program === 'nice' && args[0] === '-n' && args[1] === '19')
+    return readOnlyReportCommand(args[2] ?? '', args.slice(3));
+  if (program === 'ps')
+    return (
+      (args.length === 3 && args[0] === '-axww' && args[1] === '-o') ||
+      (args.length === 2 && args[0] === '-axo') ||
+      (args.length === 4 && args[0] === '-o' && args[2] === '-p' && /^\d+$/.test(args[3] ?? ''))
+    );
+  if (program === 'lsof') {
+    const end = args.indexOf('--');
+    return (
+      args.length > 0 &&
+      args.every((arg, index) =>
+        end >= 0 && index > end
+          ? arg.startsWith('/')
+          : /^(?:--|-nP|-w|-a|-t|-d|-p|cwd|-F[pn]+|-iTCP(?::\d+(?:,\d+)*)?|-sTCP:(?:LISTEN|ESTABLISHED)|\d+(?:,\d+)*)$/.test(
+              arg,
+            ),
+      )
+    );
+  }
+  if (program === 'du')
+    return args[0] === '-sk' && args.length > 1 && args.slice(1).every((arg) => arg.startsWith('/'));
+  if (program === 'git' && args[0] === '--no-optional-locks' && args[1] === '-C' && args[3] === 'rev-parse') {
+    const rest = args.slice(4);
+    return (
+      rest.length > 0 &&
+      rest.every(
+        (arg) =>
+          !arg.startsWith('-') ||
+          [
+            '--show-toplevel',
+            '--git-dir',
+            '--git-common-dir',
+            '--path-format=absolute',
+            '--git-path',
+            '--verify',
+            '--abbrev-ref',
+            '--symbolic-full-name',
+            '--is-inside-work-tree',
+          ].includes(arg),
+      )
+    );
+  }
+  if (program === 'xcrun' && args[0] === 'simctl')
+    return (
+      (args[1] === 'list' &&
+        args.slice(2).every((arg) => ['devices', 'runtimes', 'devicetypes', '-j', '--json'].includes(arg))) ||
+      (args.length === 4 && args[1] === 'runtime' && args[2] === 'list' && args[3] === '-j')
+    );
+  if (program === 'adb' || program === 'adb.exe') {
+    const query = args[0] === '-s' ? args.slice(2) : args;
+    return (
+      (query.length === 1 && ['devices', 'get-state', 'get-serialno'].includes(query[0] ?? '')) ||
+      (query.length === 2 && query[0] === 'reverse' && query[1] === '--list')
+    );
+  }
+  return false;
+}
+
 function reportChild(
   child: ChildProcess,
+  readOnly: boolean,
   signal?: AbortSignal,
   failed?: (error: Error) => Error,
   contained = false,
@@ -269,8 +333,11 @@ function reportChild(
       remedy: `Check whether the report child${pid === undefined ? '' : ` ${pid}${process.platform === 'win32' ? '' : ` (\`ps -p ${pid}\`)`}`} and its descendants are still running and stop them if they are`,
     });
     const error = Object.assign(failed?.(failure) ?? failure, {
+      ...(readOnly ? { readOnly: true } : {}),
       reportResourceSettled: cleanupSettled,
-      ...(pid === undefined ? {} : { reportChild: { pid, processToken: captured?.ok ? captured.token : null } }),
+      ...(pid === undefined
+        ? {}
+        : { reportChild: { pid, processToken: captured?.ok ? captured.token : null, command } }),
     });
     child.stdin?.destroy();
     child.stdout?.destroy();
@@ -630,6 +697,7 @@ const defaultExecutor: Executor = {
       try {
         lifetime = reportChild(
           child,
+          claims.length === 0 && readOnlyReportCommand(file, args),
           report,
           (error) => {
             const failure = claims.length
@@ -820,6 +888,7 @@ const defaultExecutor: Executor = {
     }
     const lifetime = reportChild(
       child,
+      claims.length === 0 && readOnlyReportCommand(cmd, args),
       undefined,
       (error) =>
         claims.length

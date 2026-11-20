@@ -65,8 +65,9 @@ command that removes the claim and child files.
 
 ## stimd stays up for a child it can watch
 
-A cleanup refusal that names one child and carries a way to tell when that
-child has stopped does not end stimd, whether it comes from the tick, a Metro or
+For a child outside the read-only report rule below, a cleanup refusal that
+names one child and carries a way to tell when that child has stopped does not
+end stimd, whether it comes from the tick, a Metro or
 tunnel stop, or a job on the passes or measure thread. stimd logs
 `daemon_cleanup_unverified`, holds idle exit and engine switches, and checks
 the child again on every tick; once it has stopped, the claims only that
@@ -107,6 +108,53 @@ would only move the wait to the claims.
 This rule was chosen by the coordinator and the lane that implemented #5499,
 not by the maintainer. The maintainer's requirement it serves, from #5499:
 Maintainer decision: "We really need to fix stimd crashing and not being able to restart automatically", 2026-11-11.
+
+## Read-only report children do not hold stimd
+
+A report child is read-only only when it has no declared claims at spawn and
+matches the command allowlist in `exec.ts` (`readOnlyReportCommand`). The
+allowlist accepts audited argument shapes of `ps`, `lsof`, `du`, `git
+--no-optional-locks -C <dir> rev-parse`, `xcrun simctl list` and `runtime list`,
+and adb device queries and `reverse --list`. `nice -n 19` may wrap a listed read.
+Unknown commands, unlisted arguments and every child with declared claims keep
+the existing cleanup refusal. In particular, a report context alone does not
+establish that a child reads: device tools mutate through simctl and adb, and
+reload may restore an adb reverse without declaring a claim.
+
+When cleanup cannot verify a listed child, its refusal carries `readOnly: true`
+across worker threads. stimd logs `report_child_left` at warn level with the pid
+and bounded, redacted command, then forgets it. It holds neither idle exit nor
+an engine switch and retains neither the stimd nor daemon claim. The child may
+outlive stimd; no protected write can continue. A failure from any other
+resource in the same report or server close still retains its existing refusal.
+Server close failures log every aggregate member in `startup_refused` and
+`daemon_claims_kept`; an aggregate is read-only only when every member is.
+
+The 2026-11-15 revisit condition below is met: the investigation for #6025
+counted 22 refusals after #5778 landed. The accepted lifecycle decision in
+[#6025](https://github.com/appandflow/stim/issues/6025) is "A read-only report
+child never blocks a successor."
+
+Maintainer decision: "I agree lets do this and ur recommendations from prev messages, also lets do the changes now that u flagged as after 2.0 id rather delay than ship what we have", 2026-11-20.
+
+The allowlist, rather than "a report child with no declared claims", was chosen
+by the coordinator of #6025, not by the maintainer: the spawn audit below found
+claimless report children that write.
+
+### Report spawn audit
+
+Both report spawn paths are in `exec.ts`: `runFileAsync` and `spawn` call
+`reportChild`, under a report's signal or an explicit probe signal. The
+classification is by command shape, so it holds at every site that runs one.
+Every listed shape only reads: `simctl list` and `runtime list` boot nothing,
+and `adb reverse --list` changes no forward. Any adb call may start the adb
+server; that is not state a claim guards.
+
+The audit found claimless report children that write: `commands/device-tools.ts`
+(simctl location, privacy and push; adb geo, permission and network changes) and
+`reverseMetroPorts` in `engine/app-install.ts`, which reload reaches. `git status`
+and `git ls-files` are left out because they run a repository's
+`core.fsmonitor` hook, which is project code, even with `--no-optional-locks`.
 
 ## Releasing a claim after a killed fingerprint child
 

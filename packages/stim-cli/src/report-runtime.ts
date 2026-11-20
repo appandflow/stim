@@ -11,6 +11,9 @@ interface ReportState {
 
 const reports = new WeakMap<StimContext, ReportState>();
 
+const isReadOnly = (error: unknown): boolean =>
+  error instanceof Error && 'readOnly' in error && error.readOnly === true;
+
 export function reportSignal(context: StimContext | undefined): AbortSignal | undefined {
   return context && reports.has(context) ? context.signal : undefined;
 }
@@ -32,13 +35,15 @@ export function trackReportResource(
   if (!context || !state || !signal) return;
   const { pending } = state;
   const failed = (error: unknown) => {
-    state.failure ??= error;
+    const readOnly = isReadOnly(error);
+    if (state.failure === undefined || (isReadOnly(state.failure) && !readOnly)) state.failure = error;
     const resourceSettled =
       error instanceof Error && 'reportResourceSettled' in error ? error.reportResourceSettled : undefined;
-    state.recoveries.set(
-      closed,
-      cleanupSettled ?? (typeof resourceSettled === 'function' ? () => resourceSettled() === true : undefined),
-    );
+    if (!readOnly)
+      state.recoveries.set(
+        closed,
+        cleanupSettled ?? (typeof resourceSettled === 'function' ? () => resourceSettled() === true : undefined),
+      );
     state.abort(error);
   };
   const abort = () => {
@@ -117,13 +122,14 @@ export async function runReport<T>(
     const cleanupDeadline = performance.now() + 35_000;
     const expireCleanup = () => {
       if (pending.size === 0) return;
-      state.failure ??=
-        [...pending.values()].find((failure) => failure !== undefined) ??
+      const failure =
+        [...pending.values()].find((pendingFailure) => pendingFailure !== undefined) ??
         Object.assign(new Error('Report cleanup did not finish within 35 seconds.'), {
           code: 'STIM_CLAIM_UNAVAILABLE',
           reportCleanup: true,
           remedy: 'Check that the child processes the report started and their descendants have stopped',
         });
+      if (state.failure === undefined || isReadOnly(state.failure)) state.failure = failure;
     };
     let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
     try {

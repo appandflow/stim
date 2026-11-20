@@ -4,13 +4,18 @@ import { claimRemoveCommand, type ClaimHandle } from '../ownership-claim.ts';
 export interface ReportChild {
   pid: number;
   processToken: string | null;
+  command?: string;
 }
 
 export function reportChildOf(error: unknown): ReportChild | null {
   const child = error && typeof error === 'object' && 'reportChild' in error ? error.reportChild : undefined;
   if (!child || typeof child !== 'object' || !('pid' in child) || typeof child.pid !== 'number') return null;
   const token = 'processToken' in child && typeof child.processToken === 'string' ? child.processToken : null;
-  return { pid: child.pid, processToken: token };
+  return {
+    pid: child.pid,
+    processToken: token,
+    ...('command' in child && typeof child.command === 'string' ? { command: child.command } : {}),
+  };
 }
 
 /**
