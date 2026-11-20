@@ -197,6 +197,8 @@ let refusal: {
   handover: boolean;
   heldBy: 'shares' | 'dev-servers' | null;
   workspaces: string[];
+  /** The refusing stimd leaves the home to a service unit's job, which starts no successor. */
+  toJob: boolean;
 } | null = null;
 let opSocket: Socket | null = null;
 let lostOpToken: string | undefined;
@@ -242,6 +244,7 @@ function noteRefusal(message: Record<string, unknown>): void {
     workspaces: Array.isArray(message.workspaces)
       ? message.workspaces.filter((entry): entry is string => typeof entry === 'string')
       : [],
+    toJob: message.job === true,
   };
 }
 
@@ -1690,7 +1693,9 @@ async function successorBound(): Promise<boolean> {
       refusal = null;
       return true;
     }
-    if (!started && !stimdLive() && readSuccessorMissing() && !currentCrashHold()) {
+    // @ref LLP 0009#service-and-engine-updates -- a command of the selected build may start the stimd the job takes back later
+    const starts = readSuccessorMissing() || (refusal?.toJob === true && refusedBuild === stimdBuildId());
+    if (!started && !stimdLive() && starts && !currentCrashHold()) {
       started = true;
       try {
         launchStimd(process.env, daemonMode(process.env), process.platform);
@@ -1841,15 +1846,18 @@ function netAnswer(reply: Record<string, unknown> | null): NetAnswer | null {
 
 /**
  * Asks this home's stimd to start its net thread, for a web share (`share`: loopback only, ending with its last share)
- * or a pairing. A web share starts a stimd first when none runs, whatever `daemon.mode` says; a pairing only where
+ * or a pairing, on `port` when one is given. A web share starts a stimd first when none runs, whatever `daemon.mode` says; a pairing only where
  * `daemon.mode` lets commands start one. Null when no stimd answers.
  */
-export async function ensureNet(share: boolean, env: NodeJS.ProcessEnv = process.env): Promise<NetAnswer | null> {
+export async function ensureNet(
+  share: boolean,
+  env: NodeJS.ProcessEnv = process.env,
+  port?: number,
+): Promise<NetAnswer | null> {
   if (!stimdLive() && (!(share || spawnsDaemon(env)) || !(await claimTaken(launchStimd(env, daemonMode(env))))))
     return null;
-  return netAnswer(
-    await askHeldStimd(() => askStimd('net.ensure', NET_START_MS, { params: netEnsureParams({ shareOnly: share }) })),
-  );
+  const params = netEnsureParams({ shareOnly: share, ...(port === undefined ? {} : { port }) });
+  return netAnswer(await askHeldStimd(() => askStimd('net.ensure', NET_START_MS, { params })));
 }
 
 /** The `net.ensure` params stimd reads, named field by field so no caller's option names reach the wire. */

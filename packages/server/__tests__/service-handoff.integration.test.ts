@@ -391,9 +391,26 @@ function fixture(label: string, port: number, shim = false) {
     return started;
   };
 
+  /** Sends `lines` to the stimd at `socket` as a command of `build` would, and resolves once it answers `op`. */
+  const talk = (socket: string, build: string, lines: object[], op: string) =>
+    new Promise<ReturnType<typeof connect>>((resolve, reject) => {
+      const client = connect(socket);
+      let buffer = '';
+      client.setEncoding('utf8');
+      client.on('error', reject);
+      client.on('data', (chunk: string) => {
+        buffer += chunk;
+        if (buffer.includes(`"op":"${op}"`)) resolve(client);
+      });
+      client.write([{ kind: 'cli', build }, ...lines].map((line) => `${JSON.stringify(line)}\n`).join(''));
+    });
+
   return {
     home,
     label,
+    talk,
+    stopJobOnly: () => stopJob(),
+    restartJob: (restartMs: number) => keepJob(restartMs),
     last,
     answers,
     command: () => cli(next, ['__stimd', '--mode', 'on']),
@@ -660,6 +677,70 @@ describe.skipIf(process.platform === 'win32')("an engine switch under a service 
       const waiter = await until('the restarted job process', () => service.jobPid());
       expect(await takenBackInJob(service, outside, waiter)).toBe(service.record()?.pid);
       await exited;
+    } finally {
+      await service.cleanup();
+    }
+  }, 240_000);
+
+  it('a stimd whose net thread a pairing started on another port leaves the home to the job once idle', async () => {
+    const port = await freePort();
+    const other = await freePort();
+    const service = fixture('dev.stim.handoff-job-port', port, true);
+    try {
+      const initial = await service.runJob(3000);
+      void service.switchEngine(initial).catch(() => {});
+      await until('the job stimd to exit', () => gone(initial.pid));
+      const command = service.command();
+      const exited = once(command, 'exit');
+      const outside = await until('the command stimd', () => {
+        const held = service.record();
+        return held && held.pid !== initial.pid ? held : null;
+      });
+      (
+        await service.talk(outside.socket, outside.build, [{ op: 'net.ensure', params: { port: other } }], 'net')
+      ).destroy();
+      await exited;
+      const held = await until('the job to take the home back', () => {
+        const holder = homeClaim(service.home);
+        return holder?.details.serviceUnit === service.label ? holder : null;
+      });
+      expect(parentOf(held.owner.pid)).toBe(service.jobPid());
+      await service.answers('the job stimd');
+    } finally {
+      await service.cleanup();
+    }
+  }, 240_000);
+
+  it('a job waiting on a holder whose engine switches exits for the new build instead of taking the home back', async () => {
+    const port = await freePort();
+    const service = fixture('dev.stim.handoff-job-rebuild', port, true);
+    try {
+      const initial = await service.runJob();
+      const holder = await service.switchEngine(initial);
+      expect(parentOf(holder.pid)).toBe(service.jobPid());
+      await service.stopJobOnly();
+      await until('the job stimd to exit', () => gone(holder.pid));
+      service.command();
+      const outside = await until('the command stimd', () => service.record());
+      const op = await service.talk(outside.socket, outside.build, [{ op: 'op.begin', command: 'test' }], 'op.begun');
+      op.write(`${JSON.stringify({ op: 'op.wait' })}\n`);
+      service.restartJob(2000);
+      await service.answers('the job asks the command stimd for its net thread');
+      const waiter = service.jobPid();
+      const retakes: number[] = [];
+      const watch = setInterval(() => {
+        const held = service.record();
+        if (held && held.pid !== outside.pid && held.build === outside.build) retakes.push(held.pid);
+      }, 25);
+      try {
+        const after = await service.switchEngine(outside, service.last);
+        expect(retakes).toEqual([]);
+        expect(gone(outside.pid)).toBe(true);
+        expect(parentOf(after.pid)).toBe(service.jobPid());
+        expect(service.jobPid()).not.toBe(waiter);
+      } finally {
+        clearInterval(watch);
+      }
     } finally {
       await service.cleanup();
     }

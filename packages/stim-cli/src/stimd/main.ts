@@ -155,7 +155,7 @@ import {
   updateBoot,
 } from './crash-hold.ts';
 import { ASKED_MS, autoUpdateOn, checkForUpdate, DAILY_MS, lastUpdateCheck, updateDue } from './auto-update.ts';
-import { ownStoreEngine, requireCurrentEngine, type StoreEngine } from '../daemon/engine-switch.ts';
+import { ownStoreEngine, requireCurrentEngine, switchedEngine, type StoreEngine } from '../daemon/engine-switch.ts';
 import { readRecords } from '../engine-store/store.ts';
 import {
   ATTACHED_ARG,
@@ -1189,6 +1189,8 @@ async function runStimdInner(
     if (follower) engineDirs = workspaceEngineDirs(loadConfig());
   } catch {}
   let netServes: ServeOptions | null = serve ?? null;
+  /** Whether Stim Desktop's ask started the net thread, which a service's ask on other options does not replace (#5095). */
+  let netForDesktop = false;
   let serviceNet = service;
   let serviceListening = false;
   const writeRecord = (netPort: number | null) =>
@@ -1211,7 +1213,7 @@ async function runStimdInner(
       return answer;
     });
   let restartWhy: string | null = null;
-  let switchedTo: { build: string; version: string } | null = null;
+  let switchedTo: { build: string; version: string; job?: true } | null = null;
   let updatedInPlace: { build: string; version: string } | null = null;
   const checkedClients = new Map<string, string>();
   const noteClientBuild = (client: unknown) => {
@@ -1333,7 +1335,8 @@ async function runStimdInner(
     const candidate = (inJob ? unit : undefined) ?? waiter ?? null;
     const job =
       candidate && follower !== null && (await shimWritten(follower.engine.root, next.build)) ? candidate : null;
-    const changed = `${JSON.stringify({ op: 'engine-changed', ...next, pid: process.pid })}\n`;
+    if (job) switchedTo = { ...next, job: true };
+    const changed = `${JSON.stringify({ op: 'engine-changed', ...switchedTo, pid: process.pid })}\n`;
     for (const list of [waiters.build, waiters.boot, waiters.test, tickReplies]) list.length = 0;
     for (const socket of open) socket.end(changed);
     const running = net.running();
@@ -1537,9 +1540,11 @@ async function runStimdInner(
               const wasService = serviceNet;
               const previous = netServes?.shareOnly ? netServes : null;
               if (!running) netServes = options;
+              if (!running) netForDesktop = kind === 'desktop';
               if (reserved) serviceNet = true;
               const restartNet = () => {
                 netServes = options;
+                netForDesktop = kind === 'desktop';
                 log(
                   'info',
                   'net_restart',
@@ -1596,27 +1601,29 @@ async function runStimdInner(
                     if (reserved) serviceNet = wasService;
                   },
                 );
+              const job =
+                forService &&
+                typeof params.unit === 'string' &&
+                isServiceLabel(params.unit) &&
+                (unit === undefined || params.unit === unit)
+                  ? params.unit
+                  : null;
               return answer.then(
                 (state) => {
                   lastContact = Date.now();
                   if (state.listening && !socket.destroyed) {
                     netAskers.add(socket);
                     socket.once('close', () => netAskers.delete(socket));
-                    if (
-                      forService &&
-                      typeof params.unit === 'string' &&
-                      isServiceLabel(params.unit) &&
-                      (unit === undefined || params.unit === unit)
-                    ) {
-                      jobWaiters.set(socket, params.unit);
+                    if (job) {
+                      jobWaiters.set(socket, job);
                       socket.once('close', () => jobWaiters.delete(socket));
-                      // @ref LLP 0009#service-and-engine-updates -- the job ends up the owner once this stimd is idle
-                      if (!inJob && !attached) {
-                        restartWhy ??= `the ${params.unit} service takes this Stim home back once no command runs`;
-                        socket.write(`${JSON.stringify({ op: 'net', ...state })}\n`, () => void checkEngine());
-                        return true;
-                      }
                     }
+                  }
+                  // @ref LLP 0009#service-and-engine-updates -- the job ends up the owner once this stimd is idle
+                  if (job && (state.listening || (mismatch && !netForDesktop)) && !inJob && !attached) {
+                    restartWhy ??= `the ${job} service takes this Stim home back once no command runs`;
+                    socket.write(`${JSON.stringify({ op: 'net', ...state })}\n`, () => void checkEngine());
+                    return true;
                   }
                   return reply({ op: 'net', ...state });
                 },
@@ -2389,7 +2396,8 @@ async function claimReleased(claimId: string | undefined): Promise<void> {
 /**
  * For a stimd that found its home held: serves its net thread through the holder until the holder closes the connection.
  * In the job of `unit`, which follows the engine, it then takes the home back once that holder, which accepted the
- * job's ask, has released it, and serves through whichever stimd took it first instead.
+ * job's ask, has released it, and serves through whichever stimd took it first instead. When the engine selected another
+ * build meanwhile, it exits instead, and the service manager starts the selected build through the shim.
  */
 async function serveThroughHolder(
   serve: ServeOptions,
@@ -2409,6 +2417,7 @@ async function serveThroughHolder(
     const accepted = first?.listening === true && (serve.port === 0 || first.port === serve.port);
     if (!unit || !accepted) return;
     await claimReleased(holder);
+    if (switchedEngine()) return;
     served = await retake();
   }
 }
