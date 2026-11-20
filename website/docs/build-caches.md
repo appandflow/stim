@@ -655,9 +655,10 @@ table, by yield: Stim's own devices and caches, then the Cargo trims, before
 rung 1, and the report rungs last. Rungs 5 and 7 only report what they would
 free, as kept actions, and delete nothing; the `stim-daemon` runs them at most
 hourly and never at critical, the ladder a command runs never, and `stim gc`
-each time, rung 5 then also reporting idle source checkouts at critical. While
-the disk is above normal, the dormant step runs in the tick right after the
-ladder pass, never beside it:
+each time, rung 5 then also reporting idle source checkouts at critical. The
+hourly dormant step never runs beside a pass's disk rungs: while it runs, a
+pass leaves them out for up to 10 minutes, and a command at the hard floor
+stops it:
 
 | Rung | High                                                                                                                                                                                                                            | Critical                                                                                                                                                                                      |
 | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

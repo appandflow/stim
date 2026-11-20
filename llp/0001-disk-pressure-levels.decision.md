@@ -136,8 +136,7 @@ caches at high are measured with one walk each, bounded at 120 s, and trimmed
 to half their cap; each directory entry evicted is sized with a bounded walk
 that does not block the event loop. A cache whose walk fails is kept with a
 kept action. At critical the caches are emptied whatever their size, with no
-walk of the cache or of any entry, and report the size the disk-usage cache
-records for them, 0 when none is recorded; the size scan writes those sizes.
+walk of the cache or of any entry, and report 0 bytes freed.
 A recorded size is not used to choose what to trim at high: a `stim gc`
 running beside the daemon would evict against the same number. Host load
 defers the size, idle, worktree and sweep checks only while every volume is at
@@ -175,9 +174,9 @@ bytes. An action that freed no bytes, such as a Gradle stop, a parked simulator
 shut down for memory, or a Cargo trim whose volume gained nothing because other
 writers filled it meanwhile, does not count, and it does not drop the git reads
 the rungs share. Rung 1 records `kept`, not `done`, when its deletion kept every
-output it was given. A cache emptied at critical with no recorded size reports
-0 bytes, and its directory entries count 0, so a pass that only emptied such
-caches counts as freeing nothing and waits.
+output it was given. A cache emptied at critical reports 0 bytes, so a pass that
+only emptied caches counts as freeing nothing and waits, at most a minute at
+critical.
 
 After a daemon ladder pass that freed nothing, the next pass waits four times
 that pass's duration, at most 15 minutes, or at most one minute at critical. A
@@ -277,44 +276,48 @@ person asked for the report.
 ## The dormant step never runs beside the ladder
 
 The stim-daemon's dormant step, the hourly reduction of workspaces idle
-`idle.dormantDays` (One idle day reduces a workspace), never runs at the same
-time as a ladder pass for disk. The tick and the maintenance lane share a turn:
+`idle.dormantDays` (One idle day reduces a workspace), runs only in the
+maintenance lane's thread, never in the tick, and never at the same time as a
+ladder pass for disk. The tick and the lane share a turn:
 
-- The lane takes the turn when the step starts, only while the disk level the
-  tick last measured is normal and no ladder pass holds it. Memory pressure
-  alone does not hold it back.
+- The lane takes the turn when the step starts, at any level, while no ladder
+  pass holds it, so idle outputs and whole idle targets still go while the
+  disk stays short.
 - A ladder pass takes the turn before its first rung that relieves disk, also
   when the tick started on memory pressure alone, and holds it to the end of
-  the pass. When the lane's step holds it,
-  the tick stops the lane's running job, which ends its precompute or
-  maintenance pass too, waits for it to settle, and gives the step its hour
-  back.
-- While the disk stays above normal after the pass, the tick runs the step
-  itself, right after the pass and before it answers waiting commands, with
-  the same idle and ownership checks. A tick a command asked for skips it. Its
-  time is the tick's `dormantStepMs` phase, not part of the ladder pass, so
-  pacing does not count it.
+  the pass. While the lane's step holds it, the pass leaves its disk rungs out
+  and runs only what relieves memory; the rest of the tick, idle stage, boot
+  waiters and replies included, runs as usual.
+- The step holds the turn against a ladder pass for at most 10 minutes. Past
+  that, the next tick that needs a disk rung stops the lane's job, waits for
+  it to settle, and runs the pass; the step resumes at its next hour.
+- A tick a command asked for at the hard floor stops the step at once and
+  gives it its hour back.
+- A passes thread that ends while its step holds the turn gives the turn back.
 
-A step stopped part way leaves what it already removed removed and the rest in
-place; each removal holds its workspace's claims, which the stop releases. A passes thread that ends while its step holds the turn gives the turn back.
-The rule covers the dormant step only: the lane's fingerprint precompute and
-maintenance pass, with its size scan and worktree check, may still run beside
-a ladder pass.
+Stopping the step stops the lane's whole job, its precompute or maintenance
+pass included. A step stopped part way leaves what it already removed removed
+and the rest in place; each removal holds its workspace's claims, which the
+stop releases. The rule covers the dormant step only: the lane's fingerprint
+precompute and maintenance pass, with its size scan and worktree check, may
+still run beside a ladder pass. An error in the step ends the lane's job and
+is logged as `daemon_maintenance_failed`, as any lane failure.
 
 Reason: on 2026-11-19 the lane's dormant step started at normal and ran for 49
 minutes beside both slow rung 1 passes and rung 3, walking the same 171
 checkouts with its own `ps`, `lsof`, `git` and `du`, in another thread that
 shares no caches with the ladder. At critical the step is also what deletes an
 idle target whole, which no rung reclaims, so it must still run while the disk
-stays short.
+stays short. Run in the tick it would hold every reply, boot waiter and memory
+rung for as long as it took, with its deletions on stimd's main thread.
 
 Maintainer decision: "I agree lets do this and ur recommendations from prev
 messages, also lets do the changes now that u flagged as after 2.0 id rather
 delay than ship what we have", 2026-11-20, on #6025, whose decided list
-includes never running the maintenance lane beside the ladder. The serial run
-after the ladder pass, stopping a running step, gating on the disk level only
-and skipping it on a requested tick are the coordinator's reading of #6025,
-after the first review of #6029, not the maintainer's.
+includes never running the maintenance lane beside the ladder. The exclusive
+turn, the 10-minute limit, the hard-floor stop and limiting the rule to the
+dormant step are the coordinator's reading of #6025, after the reviews of
+#6029, not the maintainer's.
 
 ## Each rung frees only the volumes under pressure
 
@@ -389,8 +392,8 @@ drops a marker for any other root, an unreadable marker file, or a marker over
 an hour old, without a read inside that root. A workspace layout that cannot be
 read keeps the marker and measures nothing for that root. An expired marker is
 dropped, and those folders are measured again at the next build end or when
-`stim gc` reports; the hourly size scan refreshes only the Cargo `target/` and
-shared cache sizes it measures (The ladder runs by yield). The disk-usage cache is keyed by the exact path string, so each folder is
+`stim gc` reports; the hourly size scan refreshes only the Cargo `target/` sizes
+it measures (The ladder runs by yield). The disk-usage cache is keyed by the exact path string, so each folder is
 walked and keyed as the gc worktree report spells it, the registered root joined
 with the name as enumerated; the canonical path only bounds what may be walked. A
 case-only redirect through a replaced ancestor on a case-sensitive volume is not
@@ -410,8 +413,7 @@ next period. The walk is the same one the thread already runs: one at a time,
 under the walk claim, with a time limit. The cache numbers feed `stim status`,
 Desktop and the `stim gc` worktree report. No deletion, reduction, refusal or
 build admission reads them, only the order of the pressure ladder's Cargo
-trims and the bytes its critical cache emptying reports (Pressure acts without
-waiting for measurement or load): the
+trims: the
 caps read the maintenance size scan, the
 dependency ranking reads only `node_modules` and Pods entries, which this job
 never writes, and the headroom estimate (LLP 0006) reads the build ledger.
@@ -432,9 +434,9 @@ its minimal size at every level: build outputs, owned devices, logs archived,
 and in a linked worktree `node_modules` and Pods.
 
 The stim-daemon runs the build output step and then the dependency step at most
-hourly at every level, beside its tick at normal and right after a ladder pass
-while the disk is above normal (The dormant step never runs beside the ladder),
-and `stim gc` on each run. Build outputs go only by the
+hourly at every level, in its maintenance lane and never beside a ladder pass
+for disk (The dormant step never runs beside the ladder), and `stim gc` on each
+run. Build outputs go only by the
 full evidence, for a registered workspace as for a discovered checkout: Stim
 activity, source and git writes, and processes running from or working in the
 checkout, its git checkout as a whole for an app nested in one. A locked

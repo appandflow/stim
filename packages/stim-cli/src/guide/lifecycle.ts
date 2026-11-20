@@ -2597,9 +2597,9 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
 
   The daemon line of \`stim status\` and \`daemon.pressure\` in its --json show
   the level and why. Above normal, the tick runs the ladder in the order below,
-  by yield (rung numbers stay), until the level clears, then, while the disk is
-  still short and no command asked for the tick, the hourly dormant step, which
-  never runs beside a disk ladder pass; after a pass that freed
+  by yield (rung numbers stay), until the level clears. The hourly dormant step
+  runs in the background, never beside a pass's disk rungs: while it runs, a
+  pass skips them for up to 10 minutes (a hard-floor request stops it); after a pass that freed
   no bytes, the next waits 4 times its
   length (max 15 min; 1 min at critical) unless pressure or disk use rose
   or a run asks.
