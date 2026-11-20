@@ -110,14 +110,14 @@ normal are not niced.
 
 ## A ladder pass that frees nothing waits
 
-After a daemon ladder pass that took no action at high, the next pass waits
-four times that pass's duration, at most 15 minutes. At critical the ladder
-runs every tick. A rise of the disk or the memory level, any measured volume
-that is new or reached a higher level since that pass, a volume under pressure
-that lost 256 MB, any other volume that lost 1 GB, or a command that asks the
-daemon for a tick (the hard floor) runs it at once. The rest of the tick, the
-idle and dormant stages included, still runs every minute. A build's headroom
-ladder and `stim gc` are not paced.
+After a daemon ladder pass that took no action, the next pass waits four times
+that pass's duration, at most 15 minutes, or one minute at critical. A rise of
+the disk or the memory level, any measured volume that is new or reached a
+higher level since that pass, a volume under pressure that lost 256 MB, any
+other volume that lost 1 GB, or a command that asks the daemon for a tick (the
+hard floor) runs it at once. The rest of the tick, the idle and dormant stages
+included, still runs every minute. A build's headroom ladder and `stim gc` are
+not paced.
 
 Reason: on a Linux worker held at critical by space Stim cannot free, 615 of
 657 ladder passes in a day freed nothing, and the ladder ran about 53% of the
@@ -126,23 +126,30 @@ a core for days (#5933). The factor keeps a pass that frees nothing under a
 fifth of the time; the cap bounds how late a newly idle tree is taken, and
 the bypasses keep a disk that is filling, or new memory pressure, from waiting.
 
-Critical is not paced, and a volume under pressure ends the wait after 256 MB:
-on 2026-11-19 a MacBook went from 29 GB free to a full disk while native builds
-grew Cargo targets past 20 GB. stimd paced the ladder at high after a pass that
-took 335 seconds and freed nothing; the next pass started one tick later and was
-still in rung 3 when a trim failed with ENOSPC at 23:01 UTC (#6011). 256 MB is
-a quarter of the 1 GB a volume with room needs, and a falling volume gets at
-most one fruitless pass per 256 MB it loses. A slow drift ends a long wait
-early: the same machine's readings fell 0.4 GB in the 30 minutes before it
-dropped to critical. A worker held at critical, the #5933 case, runs the
-ladder every tick again; pacing covers a volume held at high.
+Critical waits at most one minute, and a volume under pressure ends the wait
+after 256 MB: on 2026-11-19 a MacBook filled to 121 MB free while native builds
+grew Cargo targets past 20 GB. At 22:46 UTC stimd paced the ladder at high after
+a pass that took 335 seconds and freed nothing; the next pass was still in rung
+3 when a trim failed with ENOSPC at 23:01 UTC (#6011). 256 MB is a quarter of
+the 1 GB a volume with room needs, and a falling volume gets at most one
+fruitless pass per 256 MB it loses. A worker held at critical, the #5933 case,
+runs the ladder about once a minute again; the long wait covers a volume held
+at high.
 
-Maintainer decisions: "Good for both points", 2026-11-18, in answer to whether
+Chosen by the implementer of #6011, not the maintainer: the one-minute wait at
+critical is the daemon's tick, so the ladder still runs every scheduled tick.
+A build, boot or test slot request or release asks stimd for a tick at once, and
+without the wait a pass that freed nothing at critical would start again as
+soon as it ended.
+
+Maintainer decision: "Good for both points", 2026-11-18, in answer to whether
 a wait of up to 15 minutes after a pass that freed nothing is acceptable, given
-that disk space comes before CPU use (#5933, pull request #5939). "yes file both
-and start agents on", 2026-11-19, approving the fix for 2.0; #6011 states the
-rule: no wait at critical or while free space falls, and pacing still applies
-while free space is stable or rising.
+that disk space comes before CPU use (#5933, pull request #5939).
+
+Maintainer decision: "lets do both", 2026-11-20, in answer to whether to keep
+both the bypass at critical and the bypass for a volume under pressure that
+lost 256 MB
+([#6011 comment](https://github.com/appandflow/stim/issues/6011#issuecomment-7031008184)).
 
 ## Each rung frees only the volumes under pressure
 
