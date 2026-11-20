@@ -2399,12 +2399,13 @@ async function serveThroughHolder(
   // @ref LLP 0009#service-and-engine-updates -- the job's process takes the home back when the holder ends
   for (let served = false; !served && stimdLive();) {
     const holder = homeClaimId();
-    let accepted = false;
-    const report = reportServiceNet(serve.port, service);
+    let first: NetAnswer | null | undefined;
     await serveThroughStimd({ ...serve, service, ...(unit ? { unit } : {}) }, (answer) => {
-      accepted = answer?.listening === true && (serve.port === 0 || answer.port === serve.port);
-      report(answer);
+      if (first !== undefined) return;
+      first = answer;
+      reportServiceNet(serve.port, service)(answer);
     });
+    const accepted = first?.listening === true && (serve.port === 0 || first.port === serve.port);
     if (!unit || !accepted) return;
     await claimReleased(holder);
     served = await retake();
