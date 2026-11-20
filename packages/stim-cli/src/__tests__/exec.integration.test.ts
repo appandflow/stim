@@ -496,6 +496,34 @@ describe.skipIf(process.platform === 'win32')('maintenance work priority', () =>
       .split(/\s+/)
       .map(Number);
 
+  test('a git that a lowered child starts sees an empty core.fsmonitor after the configuration the caller set', async () => {
+    resetExecutor();
+    const bin = join(home, 'gitbin');
+    const log = join(home, 'git-env');
+    mkdirSync(bin);
+    writeFileSync(
+      join(bin, 'git'),
+      `#!/bin/sh\necho "$GIT_CONFIG_COUNT $GIT_CONFIG_KEY_0=$GIT_CONFIG_VALUE_0 $GIT_CONFIG_KEY_1=$GIT_CONFIG_VALUE_1" > '${log}'\n`,
+      { mode: 0o755 },
+    );
+    vi.stubEnv('PATH', `${bin}:${process.env.PATH ?? ''}`);
+    vi.stubEnv('GIT_CONFIG_COUNT', '1');
+    vi.stubEnv('GIT_CONFIG_KEY_0', 'user.name');
+    vi.stubEnv('GIT_CONFIG_VALUE_0', 'fixture');
+    try {
+      await runMaintenanceWork('normal', () =>
+        getExecutor().runFileAsync(
+          process.execPath,
+          ['-e', "require('node:child_process').execFileSync('git', ['status'], { stdio: 'inherit' })"],
+          { timeoutMs: 30_000 },
+        ),
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    expect(readFileSync(log, 'utf8').trim()).toBe('2 user.name=fixture core.fsmonitor=');
+  });
+
   test('a child of maintenance work and its descendants run throttled at normal pressure, unless the work is a control path, the tool is adb or the pressure is high or critical', async () => {
     resetExecutor();
     const own = Number(execFileSync('ps', ['-o', `${field}=`, '-p', String(process.pid)], { encoding: 'utf8' }).trim());

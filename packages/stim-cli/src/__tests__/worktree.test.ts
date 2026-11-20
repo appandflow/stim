@@ -340,7 +340,7 @@ function copyContext(target: string) {
 }
 
 describe.skipIf(process.platform === 'win32')('a git read in maintenance work', () => {
-  test('passes core.fsmonitor=false only when it runs lowered', async () => {
+  test('runs with an empty core.fsmonitor in its environment only when it runs lowered', async () => {
     resetExecutor();
     const base = mkdtempSync(join(tmpdir(), 'stim-test-git-fsmonitor-args-'));
     try {
@@ -349,7 +349,7 @@ describe.skipIf(process.platform === 'win32')('a git read in maintenance work', 
       mkdirSync(bin);
       writeFileSync(
         join(bin, 'git'),
-        `#!/bin/sh\necho "$*" >> '${log}'\nprintf '# branch.oid (initial)\\n# branch.head main\\n'\n`,
+        `#!/bin/sh\necho "\${GIT_CONFIG_COUNT:-none} \${GIT_CONFIG_KEY_0:-}=\${GIT_CONFIG_VALUE_0:-} $*" >> '${log}'\nprintf '# branch.oid (initial)\\n# branch.head main\\n'\n`,
         { mode: 0o755 },
       );
       vi.stubEnv('PATH', `${bin}:${process.env.PATH ?? ''}`);
@@ -357,8 +357,12 @@ describe.skipIf(process.platform === 'win32')('a git read in maintenance work', 
       await runMaintenanceWork('normal', () => branchStatusAsync(base));
       await runMaintenanceWork('high', () => branchStatusAsync(base));
       const calls = readFileSync(log, 'utf8').trim().split('\n');
-      expect(calls.map((call) => call.includes('-c core.fsmonitor=false'))).toEqual([false, true, false]);
-      expect(calls.every((call) => call.includes('status --porcelain=v2 --branch'))).toBe(true);
+      expect(calls.map((call) => call.split(' ').slice(0, 2).join(' '))).toEqual([
+        'none =',
+        '1 core.fsmonitor=',
+        'none =',
+      ]);
+      expect(calls.every((call) => call.endsWith('status --porcelain=v2 --branch'))).toBe(true);
     } finally {
       vi.unstubAllEnvs();
       rmSync(base, { recursive: true, force: true });

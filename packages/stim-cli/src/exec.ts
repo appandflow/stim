@@ -514,12 +514,27 @@ function lowers(file: string, lowPriority: boolean | undefined): boolean {
 }
 
 // taskpolicy(8): -c runs the program under a QoS clamp, which its descendants inherit. Windows lowers the child after
-// it starts. git(1) with core.fsmonitor set starts a shared fsmonitor daemon from the command that finds none, and that
-// daemon would keep the lowered priority for every later git call in the worktree.
-function lowered(file: string, programArgs: string[]): [string, string[]] {
-  const args = /^git(\.exe)?$/i.test(basename(file)) ? ['-c', 'core.fsmonitor=false', ...programArgs] : programArgs;
-  if (process.platform === 'darwin') return ['/usr/sbin/taskpolicy', ['-c', 'utility', file, ...args]];
-  return process.platform === 'win32' ? [file, args] : ['nice', ['-n', '19', file, ...args]];
+// it starts.
+const lowered = (file: string, args: string[]): [string, string[]] =>
+  process.platform === 'darwin'
+    ? ['/usr/sbin/taskpolicy', ['-c', 'utility', file, ...args]]
+    : process.platform === 'win32'
+      ? [file, args]
+      : ['nice', ['-n', '19', file, ...args]];
+
+// git(1) with core.fsmonitor set starts the worktree's shared fsmonitor daemon from the command that finds none, and
+// that daemon would keep the lowered priority for every later git call there. git-config(1) GIT_CONFIG_COUNT reaches
+// every git a lowered child starts, at any depth. The value is empty because git before 2.36 reads core.fsmonitor as a
+// hook path, so false would run as a hook; empty means off on every version.
+function withoutFsmonitor(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const count = Number.parseInt(env.GIT_CONFIG_COUNT ?? '', 10);
+  const at = Number.isInteger(count) && count > 0 ? count : 0;
+  return {
+    ...env,
+    GIT_CONFIG_COUNT: String(at + 1),
+    [`GIT_CONFIG_KEY_${at}`]: 'core.fsmonitor',
+    [`GIT_CONFIG_VALUE_${at}`]: '',
+  };
 }
 
 const defaultExecutor: Executor = {
@@ -625,6 +640,7 @@ const defaultExecutor: Executor = {
         opts.env = childEnv;
       }
       opts.env = tailscaleEnvironment(program, opts.env);
+      if (low) opts.env = withoutFsmonitor(opts.env ?? ambientEnv());
       refuseUnsafeBatchArguments(program, programArgs, opts.env, opts.cwd);
       const claims = declareFor ? [...operationState(declareFor).declaring] : [];
       let clearDeclaration: (() => void) | undefined;
