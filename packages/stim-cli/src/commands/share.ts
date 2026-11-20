@@ -2,7 +2,7 @@ import chalk from 'chalk';
 import { defineOp, type Op } from '../cli/define-op.ts';
 import { phaseLine, refuseNoProject } from '../command-output.ts';
 import { RESERVED_SHARE_SLUGS, SHARE_SLUG_PATTERN, type Methods, type WebShareRow } from '@stim-cli/core/protocol';
-import { shareLinkKey, splitShareUrl, type SavedShare } from '@stim-cli/core/state';
+import { readLiveShareLinks, shareLinkKey, splitShareUrl, type SavedShare } from '@stim-cli/core/state';
 import { ensureNet, otherBuildRefusal, type NetAnswer } from '../daemon/client.ts';
 import {
   LocalServerUnavailable,
@@ -93,10 +93,14 @@ async function ask<M extends ShareMethod>(
       const refused = deps.otherBuild();
       if (refused && !start) return refused;
       if (!start) {
+        // @ref LLP 0009#service-and-engine-updates -- saved links resume when the service or a command starts stimd
+        const live = readLiveShareLinks().length;
         return failure(
           'STIM_SERVER_NOT_RUNNING',
           `No stim-server runs for this Stim home (${cause.message}).`,
-          'Nothing is shared. stim share ios|android starts a stim-server when none runs.',
+          live > 0
+            ? `${live} saved web share ${live === 1 ? 'link is live and resumes' : 'links are live and resume'} when Stim's service or the next stim command starts stimd; run stim share list again then.`
+            : 'Nothing is shared. stim share ios|android starts a stim-server when none runs.',
         );
       }
       const started = await deps.startServer();
