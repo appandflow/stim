@@ -596,6 +596,33 @@ signature, and it only needs a new version when the launcher changes.
 `packages/server/host/release.sh <version>` builds the same zip locally, ad hoc
 signed unless `HOST_SIGNING_IDENTITY` is set.
 
+## FSEvents helper releases
+
+`stim-fsevents` (`packages/stim-cli/native/fsevents/`) is a macOS command-line
+helper that reports which watched directories changed, replaying FSEvents
+history from a stored event id. The npm publish job runs on Linux and cannot
+build or sign a Mach-O, so the helper ships as its own signed GitHub release,
+like Stim Host. It only needs a new version when its source changes. Nothing in
+`stim` downloads or runs it yet.
+
+1. Tag a commit on `main` with `fsevents-v<version>` and push the tag. The
+   `FSEvents helper release` workflow runs the helper's tests on macOS, then
+   builds one universal binary, signs it with the Desktop Developer ID
+   certificate and the hardened runtime (identifier `dev.stim.fsevents`),
+   notarizes a zip of it, and attaches `stim-fsevents-<version>.zip` and
+   `SHA256SUMS` to a `fsevents-v<version>` GitHub release. `SHA256SUMS` lists
+   the zip and the `stim-fsevents` binary inside it. A bare executable cannot
+   be stapled, so Gatekeeper checks its notarization ticket online. It uses
+   the `release` environment and the same Desktop signing and App Store
+   Connect secrets as Stim Host. A tag refuses to publish a build that is not
+   signed and notarized; a dispatched run is a dry run that uploads the build
+   as a workflow artifact only.
+2. Never replace a published zip: a pinned digest would stop matching. Fix a
+   bad release with a new version.
+
+`packages/stim-cli/native/fsevents/release.sh <version>` builds the same zip
+locally, ad hoc signed unless `FSEVENTS_SIGNING_IDENTITY` is set.
+
 ## Don't
 
 - Force-push tags. Cut a new version.
