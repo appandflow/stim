@@ -136,3 +136,26 @@ test('a size walk stopped by a signal, or that could not run, writes its reason'
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+test.each(['darwin', 'linux'] as const)(
+  'on %s a low-priority walk throttles no I/O unless its caller asks for it',
+  async (platform) => {
+    const actual = process.platform;
+    Object.defineProperty(process, 'platform', { value: platform });
+    const walks: string[][] = [];
+    setExecutor({
+      findExecutable: (name) => (name === 'ionice' ? '/usr/bin/ionice' : null),
+      runFileAsync: async (file, args) => {
+        walks.push([file, ...args]);
+        return `4\t${args.at(-1)}\n`;
+      },
+    });
+    try {
+      await measuredDirectorySizeAsync('/cargo/target', { timeoutMs: 10_000, lowPriority: true });
+      expect(walks).toEqual([['nice', '-n', '19', 'du', '-sk', '/cargo/target']]);
+    } finally {
+      Object.defineProperty(process, 'platform', { value: actual });
+      resetExecutor();
+    }
+  },
+);
