@@ -177,6 +177,7 @@ describe('the Cargo target trim under disk pressure', () => {
 
     it.each([
       ['missing', Object.assign(new Error('spawn ionice ENOENT'), { code: 'ENOENT' })],
+      ['denied a spawn', Object.assign(new Error('spawn ionice EACCES'), { code: 'EACCES' })],
       ['rejecting its arguments', Object.assign(new Error('ionice: invalid option'), { status: 1, stdout: '' })],
     ])('retries each walk under nice alone when ionice is %s, and plans the same bytes', async (_, error) => {
       const plain = await plan('linux', null);

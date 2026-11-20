@@ -16,12 +16,12 @@ export function lowPriorityCommand(file: string, args: readonly string[], thrott
 }
 
 /**
- * Whether a walk failed before it printed a size: its wrapper is missing, or it exited nonzero with nothing on stdout,
+ * Whether a walk failed before it printed a size: its wrapper could not be spawned, or it exited nonzero with nothing on stdout,
  * as an `ionice` that rejects its arguments or is refused the class does. A walk killed at its deadline is not.
  */
 function failedBeforeOutput(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
-  if ('code' in error && error.code === 'ENOENT') return true;
+  if ('code' in error && ['ENOENT', 'EACCES', 'EPERM'].includes(String(error.code))) return true;
   const status = 'status' in error ? error.status : undefined;
   const stdout = 'stdout' in error ? error.stdout : undefined;
   return typeof status === 'number' && status !== 0 && !(typeof stdout === 'string' && stdout.trim());

@@ -247,7 +247,7 @@ whose root is on a device a pressure sample read at normal also runs at a
 throttled I/O policy: `/usr/sbin/taskpolicy -d utility` on macOS, by its
 absolute path so a walk's PATH cannot drop it, and `ionice -c3` on Linux when
 `ionice` is on PATH. A throttled walk that fails before printing a size (its
-wrapper missing, or exiting nonzero with nothing on stdout, as an `ionice` does
+wrapper missing or refused a spawn with ENOENT, EACCES or EPERM, or exiting nonzero with nothing on stdout, as an `ionice` does
 when it rejects its arguments or is refused the class) runs once more under
 `nice` alone; a walk killed at its deadline, or one that printed a partial
 size, does not. Windows keeps `nice` alone. Any other low-priority walk,
