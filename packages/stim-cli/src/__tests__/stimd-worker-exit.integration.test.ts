@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { readClaimSet } from '@stim-cli/core/ownership-claim';
 import * as entries from '../spawn-entry.ts';
 import { createThreadTable } from '../stimd/threads.ts';
+import { isUnverifiedCleanup } from '../stimd/cleanup-watch.ts';
 import { captureProcessToken, inspectProcessIdentity } from '../process-identity.ts';
 import { signalProcessTree } from '../metro.ts';
 import { waitForProcessExit } from '@stim-cli/core/process-identity';
@@ -249,7 +250,7 @@ describe.skipIf(process.platform === 'win32')('a job whose child cleanup is unve
     const lost = vi.fn<(error: Error) => void>();
     const threads = createThreadTable(() => {}, lost);
     try {
-      const input = { cwd: process.cwd(), readOnly: true };
+      const input = { cwd: process.cwd(), children: 0, readOnly: true };
       await expect(threads.run('measure', input)).rejects.toMatchObject({
         code: 'STIM_CLAIM_UNAVAILABLE',
         reportCleanup: true,
@@ -261,6 +262,29 @@ describe.skipIf(process.platform === 'win32')('a job whose child cleanup is unve
     } finally {
       await threads.close();
       entry.mockRestore();
+    }
+  });
+
+  test('a read-only refusal while a declared child still runs crosses as unverified and keeps the claim', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'stim-worker-job-'));
+    const entry = vi
+      .spyOn(entries, 'spawnEntry')
+      .mockReturnValue(fileURLToPath(new URL('./fixtures/thread-jobs-worker.ts', import.meta.url)));
+    const threads = createThreadTable(() => {});
+    const sleepers: { pid: number; token: string | null }[] = [];
+    try {
+      const input = { cwd: root, children: 1, readOnly: true };
+      const failure: unknown = await threads.run('measure', input).catch((error: unknown) => error);
+      for (const pid of readFileSync(join(root, 'pids'), 'utf8').split(' ').map(Number))
+        sleepers.push({ pid, token: captureProcessToken(pid) });
+      expect(isUnverifiedCleanup(failure)).toBe(true);
+      expect(failure).not.toHaveProperty('readOnly');
+      expect(readClaimSet(join(root, 'work.lock')).live).toHaveLength(1);
+    } finally {
+      entry.mockRestore();
+      await threads.close();
+      for (const { pid, token } of sleepers) if (token) await stopFixture(pid, token);
+      rmSync(root, { recursive: true, force: true });
     }
   });
 

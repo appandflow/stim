@@ -38,9 +38,9 @@ export function serveThreadJobs<Input>(
       port.postMessage({ type: 'done', result, reading: hungRead() !== null });
     } catch (error) {
       const cleanup = error instanceof Error && 'reportCleanup' in error;
-      const readOnly = cleanup && 'readOnly' in error && error.readOnly === true;
       const child = reportChildOf(error);
       const others = [...operationState(operation).running].some((running) => running.pid !== child?.pid);
+      const readOnly = cleanup && !others && 'readOnly' in error && error.readOnly === true;
       const contained = !readOnly && child && !others && watch.contain(error, signal.aborted) ? child : null;
       if (contained || readOnly) forget();
       port.postMessage({

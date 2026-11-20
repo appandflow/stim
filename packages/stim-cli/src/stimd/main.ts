@@ -1000,7 +1000,7 @@ async function runStimdInner(
   };
   let refused = false;
   markAbnormal = (reason, cause, kind) => {
-    if (!own || keepOwn || refused || isReadOnlyCleanup(cause)) return;
+    if (!own || keepOwn || refused) return;
     refused = recordBoot(reason, cause, kind) === 'refusal';
     keepClaim();
   };
