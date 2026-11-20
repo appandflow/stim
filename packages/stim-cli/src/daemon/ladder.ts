@@ -105,6 +105,8 @@ export interface LadderInput {
   stop?: AbortSignal;
   /** The device id of the one volume a build's headroom run frees; without it, the volumes under `disk.minFreeGb`. */
   volume?: number;
+  /** Runs before the first rung that relieves disk, once its measurement has admitted it. */
+  beforeDiskRung?: () => Promise<void>;
   /** Runs the report-only rungs 5 and 7: the stim-daemon's ladder, at most hourly and never at critical. */
   reports?: boolean;
 }
@@ -1103,6 +1105,7 @@ export async function runLadder(
     const decision = rungDecision(current, relieves);
     if (decision === 'stop') break;
     if (decision === 'skip') continue;
+    if (decision.causes.includes('disk')) await input.beforeDiskRung?.();
     const stillShort = async () => {
       current = await input.remeasure();
       return causesOf(current, relieves).length > 0;

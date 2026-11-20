@@ -262,8 +262,12 @@ async function homePasses(
     );
   } else if (config && level !== 'normal') {
     // @ref LLP 0001#the-dormant-step-never-runs-beside-the-ladder -- both walk the same checkouts
-    const turn = dormant && pressure.disk !== 'normal' ? dormant : undefined;
-    if (turn) await holdForLadder(turn);
+    let turn: DormantTurn | undefined;
+    const holdTurn = async () => {
+      if (!dormant || turn) return;
+      await holdForLadder(dormant);
+      turn = dormant;
+    };
     try {
       const before = pressure;
       const started = Date.now();
@@ -275,6 +279,7 @@ async function homePasses(
           ...reading,
           sims: measured.sims,
           reports: true,
+          beforeDiskRung: holdTurn,
           remeasure: async () => {
             const results = await Promise.allSettled([
               measureDisk(config, operation.signal),

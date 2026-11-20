@@ -168,7 +168,8 @@ describe('the dormant step and the disk ladder', () => {
       order.push(ladderRuns ? 'step during the ladder' : 'step');
       return [];
     });
-    vi.spyOn(ladder, 'runLadder').mockImplementation(async (_input, pressure) => {
+    vi.spyOn(ladder, 'runLadder').mockImplementation(async (input, pressure) => {
+      await input.beforeDiskRung?.();
       ladderRuns = true;
       order.push('ladder');
       release();
@@ -183,6 +184,36 @@ describe('the dormant step and the disk ladder', () => {
     expect(order).toEqual(['ladder', 'step']);
   });
 
+  test('a tick that starts on memory pressure takes the turn once a fresh measurement admits a disk rung', async () => {
+    quietTick();
+    const order: string[] = [];
+    const gate = createDormantGate();
+    const cadence = new BigInt64Array(1);
+    expect(admitStep(gate)).toBe(true);
+    const yieldLane = vi.fn<() => Promise<void>>(async () => {
+      order.push('lane stopped');
+      releaseStep(gate);
+    });
+    const tick = await measure.measureTick(null, Date.now());
+    vi.spyOn(measure, 'measureTick').mockResolvedValue({
+      ...tick,
+      measurement: {
+        ...tick.measurement,
+        disk: [{ volume: '/', freeMb: 500_000 }],
+        memory: { level: 'critical', availableBytes: null, totalBytes: 16 * 1024 ** 3 },
+      },
+    });
+    vi.spyOn(measure, 'measureDisk').mockResolvedValue([{ volume: '/', freeMb: 1024 }]);
+    vi.spyOn(dependencies, 'runDormantDependencies').mockImplementation(async () => {
+      order.push('step');
+      return [];
+    });
+
+    await runHomePasses({ act: true, log: () => {}, dormant: { cadence, gate, yieldLane } });
+
+    expect(order).toEqual(['lane stopped', 'step']);
+  });
+
   test('a critical tick stops a dormant step the lane runs, gives its hour back and runs it after the ladder', async () => {
     quietTick();
     const order: string[] = [];
@@ -193,7 +224,8 @@ describe('the dormant step and the disk ladder', () => {
       order.push('lane stopped');
       releaseStep(gate);
     });
-    vi.spyOn(ladder, 'runLadder').mockImplementation(async (_input, pressure) => {
+    vi.spyOn(ladder, 'runLadder').mockImplementation(async (input, pressure) => {
+      await input.beforeDiskRung?.();
       order.push('ladder');
       return { actions: [], pressure };
     });
