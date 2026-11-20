@@ -142,8 +142,11 @@ export async function main(argv: string[], ctx: MainContext = {}): Promise<void>
     } else {
       const code = (err as { code?: unknown })?.code;
       const message = err instanceof Error ? err.message : String(err);
-      if (typeof code === 'string' && code.startsWith('STIM_')) console.error(`${code}: ${message}`);
-      else console.error(`Unexpected error: ${message.replace(/\.$/, '')}. Report it at ${pkg.bugs.url}`);
+      if (typeof code === 'string' && code.startsWith('STIM_')) {
+        const remedy = err instanceof Error && 'remedy' in err && typeof err.remedy === 'string' ? err.remedy : null;
+        console.error(`${code}: ${message}`);
+        if (remedy && !message.endsWith(remedy)) console.error(remedy);
+      } else console.error(`Unexpected error: ${message.replace(/\.$/, '')}. Report it at ${pkg.bugs.url}`);
       exitCode = 1;
     }
   } finally {

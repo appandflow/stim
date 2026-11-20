@@ -53,6 +53,7 @@ import { stopOwnedMetroForReset } from '../stimd/metro/cache-reset.ts';
 import {
   ensureMetroThroughStimd,
   ensureTunnelThroughStimd,
+  lostAdmission,
   stopTunnelThroughStimd,
   type TunnelStop,
 } from '../daemon/client.ts';
@@ -1085,6 +1086,8 @@ export async function startDevServer(
           port,
         });
         const answer = supervisor ? request.answer : await answered(request);
+        if (answer?.op === 'error' && answer.code === 'STIM_DAEMON_UNAVAILABLE')
+          return fail(metroRefusal(answer, port));
         if (answer?.op === 'error')
           return fail({
             code: 'STIM_SUPERVISOR_EXITED',
@@ -1118,6 +1121,8 @@ export async function startDevServer(
       );
       metro.request?.cancel.abort();
       if ('error' in outcome) throw outcome.error;
+      const lost = lostAdmission(ambientContext());
+      if (lost) return fail(lost);
       return outcome.facts;
     };
 
