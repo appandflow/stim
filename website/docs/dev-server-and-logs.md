@@ -565,9 +565,9 @@ that fails the same way on every pass shows up four times a day. The entries
 of a cache being trimmed share one record per reason, with `root` naming the
 cache. The failure record beside the
 size cache (`disk-usage/*.failed.json`) carries the same `reason` fields.
-Pressure ladder rung 3 never walks a shared cache: it frees each from the size
-the hourly size scan recorded, and at high leaves one with no recorded size
-until the scan has measured it.
+When pressure ladder rung 3 cannot size the build or Metro cache, or the Swift
+compilation cache, at high, it records a kept action that says why instead of
+skipping the cache silently. At critical it empties them without sizing them.
 
 For local device lease contention, look for `device_lease_acquire` when the
 request was refused or spent at least five seconds waiting. `waitMs` counts

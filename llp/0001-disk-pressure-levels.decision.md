@@ -132,12 +132,14 @@ scan, a `du` of what it frees, or host load to drop. A step whose decision
 needs no byte count (the Cargo `target/` trim, LLP 0005) plans from structure
 and runs in the same ladder pass, after the shared caches of rung 3 (The ladder
 runs by yield); a step that needs sizes measures them at once. The shared
-caches are freed with no walk, from the size the disk-usage cache records,
-which the size scan writes for each shared cache it measures. At high the
-build, Metro and compilation caches are trimmed from that size; a cache with
-no recorded size, or one already trimmed since its last measurement, is left
-until the next scan. At critical they are emptied whatever their size and
-report their recorded size, 0 when none is recorded. Host load
+caches at high are measured with one walk each, bounded at 120 s, and trimmed
+to half their cap; each directory entry evicted is sized with a bounded walk
+that does not block the event loop. A cache whose walk fails is kept with a
+kept action. At critical the caches are emptied whatever their size, with no
+walk of the cache or of any entry, and report the size the disk-usage cache
+records for them, 0 when none is recorded; the size scan writes those sizes.
+A recorded size is not used to choose what to trim at high: a `stim gc`
+running beside the daemon would evict against the same number. Host load
 defers the size, idle, worktree and sweep checks only while every volume is at
 normal. The walk itself keeps its protections (one at a time, the walk claim,
 time limits, abort on handover). Walks above normal run at normal priority:
@@ -173,8 +175,9 @@ bytes. An action that freed no bytes, such as a Gradle stop, a parked simulator
 shut down for memory, or a Cargo trim whose volume gained nothing because other
 writers filled it meanwhile, does not count, and it does not drop the git reads
 the rungs share. Rung 1 records `kept`, not `done`, when its deletion kept every
-output it was given. A cache emptied with no recorded size reports 0 bytes, so a
-pass that only emptied such caches counts as freeing nothing and waits.
+output it was given. A cache emptied at critical with no recorded size reports
+0 bytes, and its directory entries count 0, so a pass that only emptied such
+caches counts as freeing nothing and waits.
 
 After a daemon ladder pass that freed nothing, the next pass waits four times
 that pass's duration, at most 15 minutes, or at most one minute at critical. A
@@ -244,8 +247,8 @@ it would have taken, what that would free when the size is known, and why. This
 holds in the stim-daemon, in `stim gc` and in `stim gc --dry-run`. Rung 8 itself,
 device recordings and archived history, still acts; rung 5 runs the main
 checkout report after its own. Rungs 5 and 7 run last, after rung 9. The
-stim-daemon runs them at most once an hour per Stim home and never at
-critical; the ladder a command runs, a build's headroom run included, never
+stim-daemon runs them at most once an hour per Stim home and never while the
+overall level is critical, whichever of disk or memory set it; the ladder a command runs, a build's headroom run included, never
 runs them; `stim gc` runs them each time, at critical too. The
 pressure path neither samples hard links nor checks dependency trees for hand
 edits; the dormant steps still do both before they delete. The dormant steps,
@@ -280,7 +283,9 @@ time as a ladder pass for disk. The tick and the maintenance lane share a turn:
 - The lane takes the turn when the step starts, only while the disk level the
   tick last measured is normal and no ladder pass holds it. Memory pressure
   alone does not hold it back.
-- A ladder pass for disk takes the turn first. When the lane's step holds it,
+- A ladder pass takes the turn before its first rung that relieves disk, also
+  when the tick started on memory pressure alone, and holds it to the end of
+  the pass. When the lane's step holds it,
   the tick stops the lane's running job, which ends its precompute or
   maintenance pass too, waits for it to settle, and gives the step its hour
   back.
@@ -404,8 +409,9 @@ level and waits only for the walk claim: a held claim keeps every marker for the
 next period. The walk is the same one the thread already runs: one at a time,
 under the walk claim, with a time limit. The cache numbers feed `stim status`,
 Desktop and the `stim gc` worktree report. No deletion, reduction, refusal or
-build admission reads them, only the order and the trim amount of the pressure
-ladder's rung 3 (Pressure acts without waiting for measurement or load): the
+build admission reads them, only the order of the pressure ladder's Cargo
+trims and the bytes its critical cache emptying reports (Pressure acts without
+waiting for measurement or load): the
 caps read the maintenance size scan, the
 dependency ranking reads only `node_modules` and Pods entries, which this job
 never writes, and the headroom estimate (LLP 0006) reads the build ledger.
