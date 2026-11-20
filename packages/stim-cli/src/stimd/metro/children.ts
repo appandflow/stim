@@ -1050,7 +1050,7 @@ async function ensure(
     if (launch && child.digest !== injectedDigest())
       await stopChild(child, 'a launch restarts a Metro of other injected files');
     // compat end
-    // @ref LLP 0012#a-command-continues-across-a-stimd-restart -- an adopted Metro that was still starting is waited for, not restarted
+    // @ref LLP 0012#a-command-does-not-continue-across-a-stimd-restart -- an adopted Metro that was still starting is waited for, not restarted
     else if (!child.ready && !child.helperProcess) return awaitReady(child, outputFiles(root).stderr, signal);
     else if (heartbeatFresh(child) || (await isMetroRunning(port, AbortSignal.timeout(PROBE_MS)))) {
       markReady(child);

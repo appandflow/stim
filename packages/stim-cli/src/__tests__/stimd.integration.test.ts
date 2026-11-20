@@ -275,6 +275,49 @@ test('shutdown retains the daemon claim until the net thread and observers close
   }
 });
 
+test('net close failure details reach both refusal and retained-claim records', async () => {
+  const oldExit = process.exitCode;
+  const failure = Object.assign(
+    new Error('Net thread cleanup could not be verified: build cleanup failed; hosted device still running'),
+    { code: 'STIM_CLAIM_UNAVAILABLE', reportCleanup: true },
+  );
+  let netEnded: (failure?: Error) => void = () => {};
+  const net = vi.spyOn(netThread, 'createNetThread').mockImplementation((_log, onExit) => {
+    netEnded = onExit;
+    return {
+      ensure: async () => ({ listening: false, message: 'unused' }),
+      restart: async () => ({ listening: false, message: 'unused' }),
+      running: () => null,
+      connect: () => false,
+      presence: () => false,
+      close: async () => {
+        throw failure;
+      },
+    };
+  });
+  const run = runStimd({ tickMs: 60_000, mode: 'report' });
+  try {
+    await listening();
+    netEnded(failure);
+    await run;
+    const records: { event: string; msg: string }[] = daemonLog()
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+    for (const event of ['startup_refused', 'daemon_claims_kept']) {
+      const record = records.find((logged) => logged.event === event);
+      expect(record?.msg).toContain('build cleanup failed');
+      expect(record?.msg).toContain('hosted device still running');
+    }
+    expect(readClaimSet(stimdClaimRoot()).live).toHaveLength(1);
+    expect(readClaimSet(daemonClaimRoot()).live).toHaveLength(1);
+  } finally {
+    await run.catch(() => {});
+    net.mockRestore();
+    process.exitCode = oldExit;
+  }
+});
+
 test.skipIf(process.platform === 'win32')(
   'a restart request from the net thread waits for an open command, then stimd exits cleanly and releases its claims',
   async () => {
