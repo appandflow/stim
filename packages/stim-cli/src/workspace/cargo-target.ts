@@ -658,6 +658,7 @@ export async function trimCargoTarget(
         await refuseMoved(registeredTarget, admitted);
         await refuseKeypairLink(walkedWhole ? dir : target, dev, signal, stop);
         walkedWhole = true;
+        await refuseMoved(registeredTarget, admitted);
         return removeInPlace(dir, dev, signal);
       },
       signal,

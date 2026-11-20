@@ -428,6 +428,25 @@ describe.skipIf(process.platform === 'win32')('trimming in place (Cargo locks ne
     expect(existsSync(join(target, 'release', 'deps', 'libx.rlib'))).toBe(true);
   });
 
+  test('a target replaced during the keypair link walk stays, and the profile of its replacement stays', async () => {
+    makeProfile('debug', 3 * DAY);
+    const debug = join(realpathSync.native(target), 'debug');
+    onTestFinished(() => rmSync(`${target}-moved`, { recursive: true, force: true }));
+    fsHooks.beforeReaddir = (path) => {
+      if (path !== debug) return;
+      delete fsHooks.beforeReaddir;
+      renameSync(target, `${target}-moved`);
+      mkdirSync(join(target, 'debug', 'deps'), { recursive: true });
+      writeFileSync(join(target, 'debug', 'deps', 'theirs'), 'theirs');
+    };
+
+    const result = await trimCargoTarget(target, { needBytes: 0 });
+
+    expect(result.removed).toEqual([]);
+    expect(result.kept).toEqual([expect.stringContaining('is no longer the directory Stim checked')]);
+    expect(readFileSync(join(target, 'debug', 'deps', 'theirs'), 'utf8')).toBe('theirs');
+  });
+
   test('a deploy link beside a stale profile, pointing into it, keeps the target, and the key stays readable', async () => {
     makeProfile('debug', 3 * DAY);
     makeProfile('release', 3 * DAY);
