@@ -1878,7 +1878,7 @@ async function runStimdInner(
                   failBackground(error, 'gc cleanup could not be verified');
                 return {
                   op: 'error',
-                  code: error instanceof Error && 'code' in error ? error.code : 'STIM_DAEMON_UNAVAILABLE',
+                  code: error instanceof Error && 'code' in error ? error.code : 'STIM_RUN_FAILED',
                   message: error instanceof Error ? error.message : String(error),
                   remedy: error instanceof Error && 'remedy' in error ? error.remedy : 'Run the command again.',
                 };

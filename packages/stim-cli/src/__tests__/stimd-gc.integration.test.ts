@@ -9,7 +9,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { delimiter, dirname, join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { withAmbientContext } from '@stim-cli/core';
 import { readClaimSet } from '@stim-cli/core/ownership-claim';
 import { stimdClaimRoot } from '@stim-cli/core/state';
@@ -55,7 +55,7 @@ function fixture(du?: string) {
     HOME: scratch,
     STIM_HOME: home,
     STIM_ENGINE_ROOT: join(home, 'engine'),
-    PATH: [bin, dirname(process.execPath), '/usr/bin', '/bin'].join(delimiter),
+    PATH: [bin, process.env.PATH].join(delimiter),
   };
   return { root, home, cache, env };
 }

@@ -2178,7 +2178,7 @@ export async function runGcThroughStimd(
           Object.assign(
             new Error(typeof message.message === 'string' ? message.message : 'stimd refused the gc pass'),
             {
-              code: typeof message.code === 'string' ? message.code : 'STIM_DAEMON_UNAVAILABLE',
+              code: typeof message.code === 'string' ? message.code : 'STIM_RUN_FAILED',
               remedy: typeof message.remedy === 'string' ? message.remedy : 'Run the command again.',
             },
           ),

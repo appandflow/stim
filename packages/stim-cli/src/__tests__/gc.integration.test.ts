@@ -2546,7 +2546,7 @@ test('a config scoped by STIM_HOME never sweeps machine-global devices through t
   });
 
   const configBefore = currentConfig();
-  const { stdout } = await captureJson(() => cli(['--pressure', 'normal', '--json']));
+  const { stdout } = await captureJson(() => runGc({ pressure: 'normal', json: true }));
   const payload = JSON.parse(stdout.at(-1) ?? '');
 
   expect(payload.actions.some((action: GcPayloadAction) => action.kind === 'delete-orphaned-devices')).toBe(false);
@@ -2906,7 +2906,7 @@ describe('gc and the Swift compilation cache cap', () => {
     );
     expect(existsSync(leaf())).toBe(true);
 
-    await captureLog(() => cli(['--pressure', 'normal']));
+    await captureLog(() => runGc({ pressure: 'normal' }));
     expect(existsSync(leaf())).toBe(false);
     expect(existsSync(join(casDir(), 'v4.actions'))).toBe(false);
   });
@@ -2926,13 +2926,13 @@ describe('gc and the Swift compilation cache cap', () => {
 
   test('keeps it under the cap', async () => {
     process.env.STIM_CACHES_SWIFT_COMPILATION_CACHE_MAX_GB = '1';
-    await captureLog(() => cli(['--pressure', 'normal']));
+    await captureLog(() => runGc({ pressure: 'normal' }));
     expect(existsSync(leaf())).toBe(true);
   });
 
   test('keeps it when the cap is 0', async () => {
     process.env.STIM_CACHES_SWIFT_COMPILATION_CACHE_MAX_GB = '0';
-    await captureLog(() => cli(['--pressure', 'normal']));
+    await captureLog(() => runGc({ pressure: 'normal' }));
     expect(existsSync(leaf())).toBe(true);
   });
 });
@@ -3107,7 +3107,7 @@ describe('gc --json', () => {
   test('an acting run prints the actions it took and the failure count', async () => {
     const lock = writeLock({ platform: 'android', key: 'def-debug-sim', pid: IMPOSSIBLE_PID, projectRoot: '/w/dead' });
 
-    const { stdout } = await captureJson(() => cli(['--pressure', 'normal', '--json']));
+    const { stdout } = await captureJson(() => runGc({ pressure: 'normal', json: true }));
 
     expect(stdout).toHaveLength(1);
     const payload = JSON.parse(stdout[0] ?? '');
@@ -4138,7 +4138,7 @@ describe('parked hosted device GC', () => {
     journal([session()]);
     const before = readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8');
     const requests = worker({ state: 'stopped', device: session().device });
-    const { stdout } = await captureJson(() => cli(['--pressure', 'normal', '--json']));
+    const { stdout } = await captureJson(() => runGc({ pressure: 'normal', json: true }));
     expect(stdout).toHaveLength(1);
     const payload = JSON.parse(stdout[0]!);
     expect(payload.mode).toBe('delete');
