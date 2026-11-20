@@ -143,7 +143,7 @@ function loadedRestartMs(
     (value('ActiveState') === 'activating' && value('SubState') === 'auto-restart');
   const environment = unitWords(value('Environment'), false) ?? [];
   const loadedHome = environment.find((entry) => entry.startsWith('STIM_HOME='))?.slice('STIM_HOME='.length);
-  const path = /\bpath=(\S+)/.exec(value('ExecStart'))?.[1];
+  const path = /\bpath=(.*?) ; argv\[\]=/.exec(value('ExecStart'))?.[1];
   const argv = /argv\[\]=([^;]*)/.exec(value('ExecStart'))?.[1]?.trim().split(/\s+/) ?? [];
   if (
     !restarts ||

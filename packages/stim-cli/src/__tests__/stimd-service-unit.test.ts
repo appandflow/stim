@@ -162,6 +162,54 @@ esac
       expect(defers({ STIM_SERVICE_LABEL: 'dev.stim.server' })).toBeNull();
     });
 
+    it.each([
+      ['engine', 'my home'],
+      ['eng ine', 'my home'],
+    ])(
+      'reads what systemd 255 prints for a unit whose shim is under %j and whose Stim home is %j',
+      (engineDir, homeDir) => {
+        const root = join(home, engineDir);
+        const stimHome = join(home, homeDir);
+        const stimd = join(root, 'bin', 'stimd');
+        mkdirSync(join(root, 'bin'), { recursive: true });
+        writeFileSync(stimd, shim('b1'));
+        writeFileSync(join(root, 'current.json'), JSON.stringify({ format: 1, dir: 'b1', version: 'b1' }));
+        mkdirSync(join(stimHome, 'run'), { recursive: true });
+        writeFileSync(join(stimHome, 'run', 'service.json'), JSON.stringify({ label: 'dev.stim.server', port: 17787 }));
+        writeFileSync(
+          join(home, '.config', 'systemd', 'user', 'dev.stim.server.service'),
+          renderUnit({
+            label: 'dev.stim.server',
+            host: null,
+            node: '/usr/bin/node',
+            script: stimd,
+            stimd,
+            port: 17787,
+            env: ['TOKEN', 'JAVA_HOME'],
+            pathPrepend: ['/opt/android sdk/platform-tools', '/usr/local/bin'],
+            environment: { STIM_HOME: stimHome },
+            logPath: join(home, 'server.log'),
+            workingDirectory: home,
+            serve: null,
+          }),
+        );
+        // The output of `systemctl --user show -p ActiveState -p SubState -p RestartUSec -p Environment -p ExecStart`
+        // captured from systemd 255 on Ubuntu, with this test's paths.
+        writeFileSync(
+          join(home, 'unit-state'),
+          [
+            'RestartUSec=30s',
+            `ExecStart={ path=${stimd} ; argv[]=${stimd} --service --port 17787 --env TOKEN --env JAVA_HOME --path-prepend /opt/android sdk/platform-tools --path-prepend /usr/local/bin ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }`,
+            `Environment="STIM_HOME=${stimHome}" SHELL=/bin/bash "TOKEN=a\\"b\\\\c%d\\$e f" "JAVA_HOME=/usr/lib/jvm/java 17" STIM_SERVICE_LABEL=dev.stim.server`,
+            'ActiveState=activating',
+            'SubState=auto-restart',
+            '',
+          ].join('\n'),
+        );
+        expect(deferringService(stimHome, root, {}, 'linux')).toEqual({ label: 'dev.stim.server', waitMs: 75_000 });
+      },
+    );
+
     it('starts the unit through systemctl', () => {
       startServiceJob('dev.stim.server', 'linux');
       expect(readFileSync(join(home, 'started'), 'utf8')).toBe('--user start --no-block dev.stim.server.service\n');
