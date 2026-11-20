@@ -32,6 +32,13 @@
  *     Every change before `eventId` has been reported.
  * `eventId` never decreases for a device within one watch.
  *
+ * Known limits: a replay can miss a change, so the caller must still expire
+ * its marks on a schedule. A root's parent renamed away and back while no
+ * helper ran, with an edit made under the temporary name, leaves no event
+ * under the root's path. A volume restored to a snapshot with the same
+ * FSEvents uuid within 2 hours of `sinceAt` passes every check while other
+ * volumes keep the host's event id above `since`.
+ *
  * Exit status: 64 usage, 65 malformed input, 70 stream failure, 74 I/O error.
  */
 #include <CoreServices/CoreServices.h>
