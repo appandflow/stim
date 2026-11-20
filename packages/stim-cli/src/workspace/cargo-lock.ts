@@ -9,10 +9,11 @@ const NFS_SUPER_MAGIC = 0x6969;
 
 // flock(2) owns the lock on the open file description shared by parent and child.
 // Closing the helper's inherited descriptor leaves the Node handle locked.
+// An exit status keeps only 8 bits, so the busy index goes to stderr.
 const flockScript = (count: number) => `
   for my $i (0 .. ${count - 1}) {
     open(my $fd, '+<&=' . ($i + 3)) or exit 1;
-    flock($fd, LOCK_EX | LOCK_NB) or exit($!{EWOULDBLOCK} ? ${LOCK_BUSY} + $i : 1);
+    flock($fd, LOCK_EX | LOCK_NB) or do { exit 1 unless $!{EWOULDBLOCK}; print STDERR $i; exit ${LOCK_BUSY} };
   }
 `;
 
@@ -62,12 +63,16 @@ export async function withCargoLocks<T>(
     const child = getExecutor().spawn(
       process.platform === 'darwin' ? '/usr/bin/perl' : 'perl',
       ['-T', '-MFcntl=:flock', '-e', flockScript(handles.length)],
-      { stdio: ['ignore', 'ignore', 'ignore', ...handles.map(({ file }) => file.fd)] },
+      { stdio: ['ignore', 'ignore', 'pipe', ...handles.map(({ file }) => file.fd)] },
     );
+    let busyIndex = '';
+    child.stderr?.on('data', (chunk: Buffer) => (busyIndex += chunk.toString()));
     const timer = setTimeout(() => child.kill('SIGKILL'), 5000);
     const [status] = await once(child, 'close').finally(() => clearTimeout(timer));
-    const busyPath = typeof status === 'number' ? handles[status - LOCK_BUSY]?.path : undefined;
-    if (busyPath) return { kept: `a build holds ${busyPath}` };
+    if (status === LOCK_BUSY) {
+      const busy = /^\d+$/.test(busyIndex) ? handles[Number(busyIndex)]?.path : undefined;
+      return { kept: `a build holds ${busy ?? 'one of its Cargo locks'}` };
+    }
     if (status !== 0) return { kept };
     for (const { path, file } of handles) {
       const current = await lstat(path, { bigint: true });

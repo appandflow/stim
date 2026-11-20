@@ -201,6 +201,22 @@ describe.skipIf(process.platform === 'win32')('trimming in place (Cargo locks ne
     },
   );
 
+  test('a build holding the 193rd of many lock files keeps everything and is named', async () => {
+    const paths = Array.from({ length: 193 }, (_, index) => join(target, `lock-${index}`));
+    for (const path of paths) writeFileSync(path, '');
+    const busy = paths.at(-1) ?? '';
+    let ran = false;
+
+    const held = await locked([busy], () =>
+      withCargoLocks(paths, async () => {
+        ran = true;
+      }),
+    );
+
+    expect(held).toEqual({ value: { kept: `a build holds ${busy}` } });
+    expect(ran).toBe(false);
+  });
+
   test('a profile with no .cargo-lock stays, and a missing build lock is never created', async () => {
     makeProfile('debug', 3 * DAY);
     rmSync(join(target, 'debug', '.cargo-lock'));
