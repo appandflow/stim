@@ -553,7 +553,7 @@ describe('discoverCheckouts', () => {
         truncation: 'none',
       }),
     );
-    const config: Config = { maintenance: { discoverRoots: [root] }, projects: {}, repos: {} };
+    const config: Config = { maintenance: { autoDiscover: true, discoverRoots: [root] }, projects: {}, repos: {} };
     expect((await discoverCheckouts(config, [])).map(({ path, origin }) => [path, origin])).toEqual([
       [join(root, 'app'), 'root'],
     ]);
@@ -567,7 +567,7 @@ describe('discoverCheckouts', () => {
     git(repo, 'init', '-q', '-b', 'main');
     git(repo, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init');
     app(join(base, 'home', 'neighbour'));
-    const config: Config = { projects: { [repo]: {} }, repos: {} };
+    const config: Config = { projects: { [repo]: {} }, repos: {}, maintenance: { autoDiscover: true } };
     expect(await discoverCheckouts(config, [repo])).toEqual([]);
   });
 });

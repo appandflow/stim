@@ -35,7 +35,7 @@ import {
 import { stoppedOutputCandidates } from '../daemon/stages.ts';
 import { saveConfig } from '../workspace/config.ts';
 import { collectWorktreeSweep, removeWorktrees } from '../commands/gc/worktrees.ts';
-import { discoverCheckouts, discoveredOutside } from '../workspace/discovery.ts';
+import { discoverCheckouts, discoveredOutside, unmanagedScanFinds } from '../workspace/discovery.ts';
 import * as gitModule from '../workspace/git.ts';
 
 vi.mock('../workspace/protected-locations.ts', async (original) => {
@@ -140,6 +140,18 @@ describe('checkouts found through a tool folder or the full scan', () => {
     };
     writeFileSync(join(base, 'home', '.stim', 'maintenance', 'discovery-scan.json'), JSON.stringify(scan));
   };
+
+  it('with maintenance.autoDiscover off, discovers none of them and lists the sibling as untracked, never the tool-folder worktree', async () => {
+    const codex = worktree(join(base, 'home', '.codex', 'worktrees', 'ab12', 'main'), 'codex');
+    const sibling = worktree(join(base, 'dev', 'sibling-wt'), 'sibling');
+    writeScan([]);
+    const config = { projects: { [main]: {} }, repos: {} };
+    expect(await discoverCheckouts(config, [main])).toEqual([]);
+    const finds = await unmanagedScanFinds(config, [main], testContext({ env: {} }));
+    expect(finds?.untracked).toEqual([sibling]);
+    expect(finds?.untracked).not.toContain(codex);
+    expect(finds?.autoDiscover).toBe(false);
+  });
 
   it('never selects a checkout under a home dot-folder from the scan result, only through maintenance.discoverRoots', async () => {
     const exact = join(base, 'home', '.exact', 'exact2');
@@ -764,6 +776,18 @@ describe('checkouts found through a tool folder or the full scan', () => {
         expect.objectContaining({ target: join(codex, 'target'), reason: expect.stringContaining('on PATH') }),
       ]),
     );
+  });
+
+  it('keeps a finished worktree of a registered repository no stim command ran in while maintenance.autoDiscover is off, and plans its removal once on', async () => {
+    const sibling = worktree(join(base, 'dev', 'sibling-wt'), 'sibling');
+    const plan = async () =>
+      (await collectWorktreeSweep({ idle: false, olderThan: null, now: Date.now(), refresh: false })).worktrees.find(
+        (entry) => entry.path === sibling,
+      );
+    saveConfig({ version: 2, projects: { [main]: {} }, repos: {} });
+    expect(await plan()).toMatchObject({ skipCode: 'not-registered' });
+    saveConfig({ version: 2, projects: { [main]: {} }, repos: {}, maintenance: { autoDiscover: true } });
+    expect(await plan()).toMatchObject({ skipped: null });
   });
 
   it('plans a reduce-only worktree as kept, and keeps it at removal even when the plan said it was removable', async () => {

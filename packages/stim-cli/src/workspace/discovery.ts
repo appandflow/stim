@@ -417,7 +417,8 @@ export interface UnmanagedScanFinds {
   dotFolder: string[];
   /**
    * With `maintenance.autoDiscover` off, the checkouts automatic discovery would reach (siblings, linked worktrees of
-   * known repositories, tool folder worktrees, scan finds) that no route reaches now: Stim does nothing with them.
+   * known repositories, scan finds) that no route reaches now: Stim does nothing with them. Tool folder worktrees are
+   * left out, as they are from the listing with it on.
    */
   untracked: string[];
   /** Finds, of either kind, whose validity a read that did not answer left unestablished: neither managed nor gone. */
@@ -472,7 +473,10 @@ export async function unmanagedScanFinds(
   // @ref LLP 0004#automatic-discovery-is-off-by-default -- the census lists what turning it on would add
   const wouldFind = automatic ? null : await computeDiscovered(config, known, scan, operation, true);
   const untracked = (wouldFind?.found ?? [])
-    .filter((checkout) => !checkout.node && !managed.has(checkout.path))
+    .filter(
+      (checkout) =>
+        !checkout.node && !managed.has(checkout.path) && !(checkout.origin === 'worktree' && checkout.reduceOnly),
+    )
     .map(({ path }) => path);
   const scanPending = wouldFind?.scanPending ?? pendingNow;
   const home = canonicalPath(homedir());

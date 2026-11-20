@@ -4,7 +4,7 @@
 **Status:** Active
 **Systems:** Cleanup
 **Author:** Janic Duplessis / Claude
-**Date:** 2026-11-20
+**Date:** 2026-11-12
 **Related:** LLP 0001, LLP 0002, LLP 0005
 
 ## Discovery
@@ -61,7 +61,7 @@ The daemon keeps running the full scan and the census whatever the setting, so
 doctor has sizes to read. With the setting off, the census also computes what
 automatic discovery would select (one `computeDiscovered` with it forced on, in the
 census run only, at most hourly while pending and daily otherwise) and lists every
-checkout that adds as `untracked`, grouped by its parent folder like the other
+checkout that adds, except the `~/.codex/worktrees` worktrees, as `untracked`, grouped by its parent folder like the other
 kinds, with the command that adds the folder to `maintenance.discoverRoots`. The
 census records the value it classified under (`autoDiscover`; a file without it was
 written with discovery on); a change makes the census due and the report treats the
@@ -88,7 +88,8 @@ a `costs time` finding.
 
 ## Scope
 
-A discovered linked worktree is acted on only inside its repository's main
+This section describes automatic discovery, which `maintenance.autoDiscover` turns
+on. A discovered linked worktree is acted on only inside its repository's main
 checkout folder, a folder that holds a known project, or a
 `maintenance.discoverRoots` folder. Nothing under the system temporary directory
 or a dot-folder directly inside the home directory is ever touched, unless it
@@ -428,7 +429,9 @@ maintainer:
   root discovery ignores (a broad one such as `~`) is an ordinary group.
 - Two kinds, worded differently because they are different facts: reduce-only
   scan finds (Stim reduces their outputs and never removes them), and finds under
-  a home dot-folder (Stim does nothing with them). Both are grouped by the
+  a home dot-folder (Stim does nothing with them). A third, `untracked`, exists
+  only while automatic discovery is off (see "Automatic discovery is off by
+  default"); the `~/.codex/worktrees` worktrees are never in it. Both are grouped by the
   folder that holds them, the only folder `maintenance.discoverRoots` can name to
   adopt them, with a command built from the current value plus that folder and
   quoted for the shell. The home folder and a folder holding it cannot be named, so
