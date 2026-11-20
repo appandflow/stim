@@ -161,9 +161,7 @@ In on mode a pass runs, cheapest to rebuild first:
      into target/.stim-trimmed after a check, checked again at its new path,
      moved back if a build took one of the profile's lock files (.cargo-lock,
      .cargo-build-lock, .cargo-artifact-lock) meanwhile, then deleted; a
-     leftover .stim-trimmed is deleted first. When the disk has no room to
-     stage, a directory is deleted in place while Stim holds those lock
-     files, with no move back. A profile whose lock file a
+     leftover .stim-trimmed is deleted first. A profile whose lock file a
      build holds, and any path a process executes from or holds open (one lsof
      and one ps read; unreadable keeps everything), stay, so a server running
      from target/exact-filesystem-tool does not protect the rest

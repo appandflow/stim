@@ -261,8 +261,7 @@ crate were added by the reviews of #5539. Not decided: whether
 
 Each whole profile or incremental removal, and each top-level entry of a
 `target/` the dormant reduction deletes, renames a directory into
-`target/.stim-trimmed/` after the lock check, unless the disk is full (next
-section), and checks the locks again at the
+`target/.stim-trimmed/` after the lock check and checks the locks again at the
 new path. A build that took a lock in
 between gets the directory back. A directory that cannot be put back is never
 deleted: it moves to `target/.stim-not-restored-*`, which later trims skip, for
@@ -293,57 +292,9 @@ deleting it breaks the build rather than slowing the next one.
 Chosen by the coordinator and the reviews of #5518 and #5539, not by the
 maintainer.
 
-## A full disk deletes in place
-
-Staging needs space: the trim creates `target/.stim-trimmed/` and renames into
-it, and the dormant delete also writes the `NOT-RESTORED` marker before it moves
-anything. When one of those writes fails with `ENOSPC`, or `EDQUOT` over a
-quota, and only then, the directory is deleted where it is instead:
-
-- The trim reads the processes again, keeps a directory a process uses, then
-  deletes it under exclusive `flock` locks on the Cargo lock files already in
-  its profiles, without entering another filesystem. The next directory tries
-  staging again.
-- The dormant delete removes a marker the failed write left, then deletes one
-  entry at a time. Before each, it makes the checks again: the `target/` is
-  the same directory, no process uses it, no build holds a Cargo or Exact
-  lock, the entry is still one the delete removes (a `deploy` that became a
-  symbolic link keeps every entry), it holds no keypair at any depth, no file
-  in it was written within the idle time, and no mount lies under the
-  `target/`. It tries staging again before the next entry, and once staging
-  fits the rest is staged as above. A check that stops it gives the
-  `target/` its modification time back, as a rollback does.
-
-Only a full disk takes this path: staging that fails for another reason, such
-as a `.stim-trimmed` that already exists as a symbolic link, keeps everything
-as before, and an in-place delete never goes through `.stim-trimmed`.
-
-The trade-off: an in-place delete has no rollback. On the staged path a build
-that takes a lock during the move gets its directory back. In place, Stim holds
-the lock files itself, so a Cargo build that starts meanwhile waits, then
-rebuilds what is gone. Nothing protects a directory from a build that takes no
-lock file in it, and a delete that fails midway leaves the directory partly
-deleted. Where Stim cannot take the locks (Linux NFS, Windows) the directory
-stays. Stim creates no missing lock file, since that needs space too. What goes
-is regenerable output the checks found unused.
-
-Claim writes still come first. The trim claim (`~/.stim/machine/cargo-trim/`)
-creates a directory and a file, and the dormant delete also takes the
-workspace's `native-run` and `metro-start` claims, so on a disk with no room at
-all the trim and the delete keep everything because a claim cannot be taken.
-The unit sweep stages only, and keeps its units when staging fails.
-
-Reason: on 2026-11-19 at 23:01 UTC, with the maintainer's disk full, a rung 3
-trim failed with `ENOSPC` creating `.stim-trimmed` and freed nothing (#6012).
-The step that frees space must not need space first. Holding the lock files
-during the delete stands in for the post-move lock check of the staged path.
-
-Asked for in #6012; the in-place mechanism was chosen by the agent that fixed
-it, not by the maintainer.
-
 ## Links
 
-- Issues: #5512, #5516, #5523, #5528, #5530, #5979, #6012. Pull requests: #5518, #5519,
+- Issues: #5512, #5516, #5523, #5528, #5530, #5979. Pull requests: #5518, #5519,
   #5527, #5539. Locking follow-up: #5542.
 - Code: `packages/stim-cli/src/workspace/cargo-target.ts`,
   `packages/stim-cli/src/daemon/dormant-outputs.ts`,
