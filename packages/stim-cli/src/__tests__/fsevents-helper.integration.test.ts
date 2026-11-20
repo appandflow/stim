@@ -33,8 +33,13 @@ function paddedLine(bytes: number): string {
   return empty.replace('""', `"${'x'.repeat(bytes - empty.length)}"`);
 }
 
-function startHelper(watch: object): Helper {
-  const child = spawn(binary, ['0.1'], { stdio: ['pipe', 'pipe', 'inherit'] });
+function startHelper(watch: object, softDescriptorLimit?: number): Helper {
+  const child =
+    softDescriptorLimit === undefined
+      ? spawn(binary, ['0.1'], { stdio: ['pipe', 'pipe', 'inherit'] })
+      : spawn('/bin/sh', ['-c', `ulimit -Sn ${softDescriptorLimit} && exec "$0" 0.1`, binary], {
+          stdio: ['pipe', 'pipe', 'inherit'],
+        });
   children.push(child);
   const seen: HelperLine[] = [];
   const waiters: { match: (line: HelperLine) => boolean; resolve: (line: HelperLine) => void }[] = [];
@@ -168,6 +173,18 @@ describe.skipIf(process.platform !== 'darwin')('stim-fsevents helper', () => {
     await helper.next(() => roots.every((root) => dirtyRoots(helper.seen, { 1: watched }).has(root)));
     expect(dirtyRoots(helper.seen, { 1: watched }).has(outside)).toBe(false);
     for (const line of helper.seen.filter((seen) => seen.dirty)) expect(line.eventId).toBe(done.eventId);
+    expect(await helper.closeInput()).toBe(0);
+  }, 30_000);
+
+  test('raises a 256 soft descriptor limit so every deep root reports a parent rename', async () => {
+    const { dev, parent } = fixture();
+    const roots = Array.from({ length: 40 }, (_, i) => join(parent, 'deep', `d${i}`, 'x', 'y', 'z'));
+    for (const root of roots) mkdirSync(root, { recursive: true });
+    const helper = startHelper({ dev, roots }, 256);
+    await helper.next((line) => line.historyDone === true);
+    expect(helper.seen.some((line) => line.purged === 'fd-limit')).toBe(false);
+    renameSync(join(parent, 'deep'), join(parent, 'deep-moved'));
+    await helper.next(() => dirtyRoots(helper.seen, { 1: roots }).size === roots.length);
     expect(await helper.closeInput()).toBe(0);
   }, 30_000);
 

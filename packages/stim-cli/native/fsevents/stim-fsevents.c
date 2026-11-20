@@ -52,6 +52,8 @@
 #include <string.h>
 #include <strings.h>
 #include <sys/resource.h>
+#include <sys/stat.h>
+#include <sys/sysctl.h>
 #include <sys/syslimits.h>
 #include <time.h>
 #include <unistd.h>
@@ -553,6 +555,7 @@ static void handle_line(const char *line, size_t length) {
 
 static char *input;
 static size_t input_used, input_size;
+static bool input_is_file;
 
 static void on_input(void *context) {
   (void)context;
@@ -563,6 +566,7 @@ static void on_input(void *context) {
   }
   ssize_t n = read(STDIN_FILENO, input + input_used, input_size - input_used);
   if (n == 0) exit(0);
+  if (input_is_file) dispatch_async_f(queue, NULL, on_input);
   if (n < 0) {
     if (errno == EINTR || errno == EAGAIN) return;
     exit(74);
@@ -601,12 +605,23 @@ int main(int argc, char **argv) {
     fprintf(stderr, "stim-fsevents: could not read the file descriptor limit.\n");
     return 70;
   }
-  if (files.rlim_cur < OPEN_MAX) {
-    files.rlim_cur = files.rlim_max < OPEN_MAX ? files.rlim_max : OPEN_MAX;
-    setrlimit(RLIMIT_NOFILE, &files);
+  int per_process = 0;
+  size_t per_process_size = sizeof per_process;
+  rlim_t wanted = files.rlim_max;
+  if (sysctlbyname("kern.maxfilesperproc", &per_process, &per_process_size, NULL, 0) == 0 && per_process > 0 &&
+      (rlim_t)per_process < wanted)
+    wanted = (rlim_t)per_process;
+  if (files.rlim_cur < wanted) {
+    files.rlim_cur = wanted;
+    if (setrlimit(RLIMIT_NOFILE, &files) != 0 && wanted > OPEN_MAX) {
+      files.rlim_cur = OPEN_MAX;
+      setrlimit(RLIMIT_NOFILE, &files);
+    }
   }
   if (getrlimit(RLIMIT_NOFILE, &files) != 0) return 70;
   descriptor_limit = files.rlim_cur;
+  struct stat input_stat;
+  input_is_file = fstat(STDIN_FILENO, &input_stat) == 0 && S_ISREG(input_stat.st_mode);
   queue = dispatch_queue_create("dev.stim.fsevents", DISPATCH_QUEUE_SERIAL);
   dispatch_source_t source = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, STDIN_FILENO, 0, queue);
   dispatch_source_set_event_handler_f(source, on_input);
