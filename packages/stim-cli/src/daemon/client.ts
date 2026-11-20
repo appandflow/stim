@@ -1694,7 +1694,8 @@ async function successorBound(): Promise<boolean> {
       return true;
     }
     // @ref LLP 0009#service-and-engine-updates -- a command of the selected build may start the stimd the job takes back later
-    const starts = readSuccessorMissing() || (refusal?.toJob === true && refusedBuild === stimdBuildId());
+    const toJob = refusal?.toJob === true || legacyJobRestart();
+    const starts = readSuccessorMissing() || (toJob && refusedBuild === stimdBuildId());
     if (!started && !stimdLive() && starts && !currentCrashHold()) {
       started = true;
       try {
@@ -1709,6 +1710,24 @@ async function successorBound(): Promise<boolean> {
   successorMissed = true;
   return false;
 }
+
+// compat C34 until 2.1.0
+/**
+ * Whether `run/job-restart.json`, which a stimd of a build before the takeback wrote when it left the home to its
+ * service job, still holds: 75 s after that stimd left, or while it still runs, at most 25 minutes after it was written.
+ */
+function legacyJobRestart(now = Date.now()): boolean {
+  const record = readJsonObject(join(stimdRunDir(), 'job-restart.json'));
+  if (typeof record?.at !== 'number' || typeof record.pid !== 'number') return false;
+  if (typeof record.left === 'number') return now < record.left + 75_000;
+  try {
+    process.kill(record.pid, 0);
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'EPERM')) return false;
+  }
+  return now < record.at + 25 * 60_000;
+}
+// compat end
 
 /** Tells stimd that this command's op waits at a build slot (`true`), so its work is not pinned, or runs again. */
 export function opWaiting(waiting: boolean): void {

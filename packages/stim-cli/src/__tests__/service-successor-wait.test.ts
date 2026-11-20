@@ -95,6 +95,14 @@ describe('a command that a stimd of another build refused', () => {
     expect(waited).toBeLessThan(5000);
   });
 
+  it('starts it too after a refusal from a build before job: true while that build left a job record', async () => {
+    writeFileSync(
+      join(stimdRunDir(), 'job-restart.json'),
+      JSON.stringify({ at: Date.now(), pid: process.pid, label: 'dev.stim.server', left: Date.now() }),
+    );
+    expect((await refuse(false)).launched).toBe(true);
+  });
+
   it('waits for the successor a stimd starts when it hands over without a service job', async () => {
     expect((await refuse(false)).launched).toBe(false);
   });

@@ -106,9 +106,9 @@
       "mechanism": "createStim and stim/ci refuse the renamed buildCache, run wait, diagnostics errors and gc() for 30 days, naming the new name"
     },
     "C34": {
-      "loc": 1,
+      "loc": 16,
       "end": "2.1.0",
-      "mechanism": "stimd removes the run/job-restart.json that a stimd of an earlier 2.0 prerelease wrote when it left the home to its service job"
+      "mechanism": "stimd removes the run/job-restart.json that a stimd of an earlier build wrote when it left the home to its service job, and a command that such a stimd refused starts the stimd of its build itself while the record holds"
     }
   },
   "words": {
