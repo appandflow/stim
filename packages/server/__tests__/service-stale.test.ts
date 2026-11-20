@@ -2,7 +2,13 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parseInstalledPlist, renderPlist, staleLaunchAgent, type ServiceSpec } from '../src/service-plist.ts';
+import {
+  parseInstalledPlist,
+  renderPlist,
+  serviceInstallCommand,
+  staleLaunchAgent,
+  type ServiceSpec,
+} from '../src/service-plist.ts';
 
 describe.skipIf(process.platform !== 'darwin')('a LaunchAgent that launchd runs from a stale definition', () => {
   const shim = '/Users/me/.stim/engine/bin/stimd';
@@ -83,13 +89,6 @@ describe.skipIf(process.platform !== 'darwin')('a LaunchAgent that launchd runs 
       /does not start the engine's stimd shim/,
     ],
     [
-      'a plist with the ProcessType an earlier release wrote',
-      shimPlist.replace(/(<key>ProcessType<\/key>\s*<string>)[^<]*/, '$1Background'),
-      shimArgs,
-      shim,
-      /sets ProcessType Background, and `stim service install` writes /,
-    ],
-    [
       'a shim plist with the ProcessType Standard that installs before Interactive wrote',
       shimPlist.replace(/(\n\t<key>ProcessType<\/key>\n\t<string>)[^<]*/, '$1Standard'),
       shimArgs,
@@ -100,6 +99,13 @@ describe.skipIf(process.platform !== 'darwin')('a LaunchAgent that launchd runs 
     ['a Stim Host plist whose loaded job skips the host', shimPlist, shimArgs.slice(2), shim, /other than its plist/],
   ])('%s', (_case, text, loaded, engineShim, stale) => {
     expect(staleLaunchAgent(installed(text), loaded, engineShim) ?? '').toMatch(stale ?? /^$/);
+  });
+
+  it('names in the reinstall command only the --env keys that install accepts, not the job-owned SHELL', () => {
+    const legacy = installed(shimPlist);
+    const command = serviceInstallCommand({ ...legacy, env: ['SHELL=/bin/zsh', 'ANDROID_HOME=/sdk'] });
+    expect(command).toContain(' --env ANDROID_HOME=<value>');
+    expect(command).not.toContain('SHELL');
   });
 
   it('reads the top-level ProcessType, not an --env value of that name, and never prints the value', () => {

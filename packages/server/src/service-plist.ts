@@ -234,7 +234,7 @@ export function serviceInstallCommand(installed: InstalledService): string {
   const home = installed.stimHome ? `STIM_HOME=${shellWord(installed.stimHome)} ` : 'env -u STIM_HOME ';
   const label = installed.label === DEFAULT_LABEL ? '' : ` --label ${shellWord(installed.label)}`;
   const paths = installed.pathPrepend.map((dir) => ` --path-prepend ${shellWord(dir)}`).join('');
-  const env = installed.env.map((entry) => ` --env ${entry.slice(0, entry.indexOf('='))}=<value>`).join('');
+  const env = [...environmentValues(installed.env).keys()].map((name) => ` --env ${name}=<value>`).join('');
   return `${home}stim service install${label} --port ${installed.port ?? DEFAULT_PORT}${paths}${env}`;
 }
 
