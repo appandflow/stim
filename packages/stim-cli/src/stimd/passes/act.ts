@@ -526,6 +526,7 @@ function unregisterCache(action: MaintenanceAction): ActionOutcome {
 const CONTROL_PATH_ACTIONS: ReadonlySet<MaintenanceAction['kind']> = new Set([
   'would-delete-parked-device',
   'would-delete-devices',
+  'would-delete-hosted-devices',
   'would-stop-workspace',
   'would-stop-gradle-daemons',
   'would-stop-watchman',
