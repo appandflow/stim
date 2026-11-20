@@ -8,7 +8,8 @@ import { fileURLToPath } from 'node:url';
 import type { StimContext } from '@stim-cli/core';
 import type { StreamSpec } from '../stimd/logs/streams.ts';
 import type { ServeOptions } from '../stimd/main.ts';
-import { releaseRunLease } from '../engine/device-lease.ts';
+import { fileLeaseIo, releaseRunLease } from '../engine/device-lease.ts';
+import { deviceSlotKey } from '../devices/device-slots.ts';
 import { operationState } from '../engine/operation-state.ts';
 import type { PresencePublishParams } from '@stim-cli/core/protocol';
 import {
@@ -155,13 +156,18 @@ async function admitExisting(
   command: string | undefined,
   knownAttached: boolean,
   invocation: (Invocation & { workspace?: string | null }) | undefined,
+  owner: StimContext | undefined,
 ): Promise<void> {
   const attached =
     knownAttached || readClaimSet(stimdClaimRoot()).live.some((claim) => claim.details.attached === true);
   const admitted = await admit(held, command, invocation);
   const socket = held ? held.at(-1) : opSocket;
   const token = admitted && socket ? opTokens.get(socket) : undefined;
-  if (socket && token) track(socket, token);
+  if (socket && token) {
+    track(socket, token, owner);
+    if (owner) admittedOperations.add(owner);
+    else if (!held) cliAdmitted = true;
+  }
   if (!admitted && attached)
     throw Object.assign(new Error('The attached Stim daemon could not admit this command.'), {
       code: 'STIM_DAEMON_UNAVAILABLE',
@@ -463,7 +469,17 @@ async function admitOperation(
   const env = operation?.env ?? process.env;
   const context = (await import('../stimd/forwarded.ts')).invocation(root, env);
   if ('code' in context) return { answer: { op: 'error', ...context } };
-  await ensureStimd(env, process.platform, true, held, 'stim start', true, { ...context, workspace: root }, true);
+  await ensureStimd(
+    env,
+    process.platform,
+    true,
+    held,
+    'stim start',
+    true,
+    { ...context, workspace: root },
+    true,
+    operation,
+  );
   const opToken = admittedOpToken(held);
   if (opToken) return { opToken };
   const refused = otherBuildRefusal() ?? legacyDaemonRefusal(true);
@@ -989,11 +1005,12 @@ export async function ensureStimd(
   allowAttached = true,
   invocation?: Invocation & { workspace?: string | null },
   required = false,
+  operation?: StimContext,
 ): Promise<boolean> {
   if (pin) requireResolvedStimdHome();
   if (!spawnsDaemon(env) && !required) {
     if (pin) await awaitJobRestart();
-    if (pin && stimdLive()) await admitExisting(held, command, false, invocation);
+    if (pin && stimdLive()) await admitExisting(held, command, false, invocation, operation);
     return false;
   }
   try {
@@ -1015,9 +1032,11 @@ export async function ensureStimd(
     if (!currentCrashHold()) await awaitJobRestart();
     if (stimdLive()) {
       if (!pin) await askStimd('hello', CONTACT_TIMEOUT_MS);
-      else await admitExisting(held, command, false, invocation);
+      else await admitExisting(held, command, false, invocation, operation);
       return true;
     }
+    // @ref LLP 0012#a-command-does-not-continue-across-a-stimd-restart -- a command that lost its stimd starts none
+    if (admittedBefore(operation)) throw daemonRestarted();
     let launched: ReturnType<typeof launchStimd>;
     // @ref LLP 0009#service-and-engine-updates -- a build the job holds meets the hold, not the job's wait
     const jobHold = jobRestartHold();
@@ -1077,7 +1096,7 @@ export async function ensureStimd(
         code: 'STIM_DAEMON_UNAVAILABLE',
         remedy: 'Retry the command; if the daemon still cannot start, run stim doctor.',
       });
-    if (taken && pin) await admitExisting(held, command, attachedAttempt, invocation);
+    if (taken && pin) await admitExisting(held, command, attachedAttempt, invocation, operation);
     return taken;
   } catch (error) {
     if (
@@ -1229,6 +1248,7 @@ export function operationToken(operation?: StimContext): string | undefined {
 
 export function cancelCliOp(): void {
   lostOpToken = undefined;
+  cliAdmitted = false;
   opSocket?.destroy();
 }
 
@@ -1241,13 +1261,18 @@ interface Admission {
 }
 
 const admissions = new Map<string, Admission>();
+/** Operations an admission of which stimd closed, whichever admission it was: the operation's own or one for a request. */
+const lostOperations = new WeakSet<StimContext>();
+/** Operations that took an admission for a request, and whether this CLI process took its own. */
+const admittedOperations = new WeakSet<StimContext>();
+let cliAdmitted = false;
 
 /** Ends an API operation's admission by closing its held connections. */
 export function releaseHeldAdmission(held: Socket[]): void {
   for (const socket of held) socket.destroy();
 }
 
-function track(socket: Socket, token: string): void {
+function track(socket: Socket, token: string, owner: StimContext | undefined): void {
   const loss = new AbortController();
   const record: Admission = {
     lost: false,
@@ -1256,6 +1281,7 @@ function track(socket: Socket, token: string): void {
   };
   const lose = () => {
     record.lost = true;
+    if (owner) lostOperations.add(owner);
     loss.abort();
   };
   socket.once('end', lose);
@@ -1278,21 +1304,45 @@ async function admissionLost(token: string, wait: boolean): Promise<boolean> {
   return admission.lost;
 }
 
+const RESTARTED_MESSAGE = "This Stim home's stimd stopped while this command was running.";
+
 const daemonRestarted = () =>
-  Object.assign(new Error("This Stim home's stimd stopped while this command was running."), {
+  Object.assign(new Error(RESTARTED_MESSAGE), {
     code: 'STIM_DAEMON_UNAVAILABLE',
     remedy: 'Run the command again; `stim status` shows whether a stimd runs.',
   });
+
+const isDaemonRestarted = (error: unknown) => error instanceof Error && error.message === RESTARTED_MESSAGE;
 
 // @ref LLP 0012#a-command-does-not-continue-across-a-stimd-restart -- a command whose stimd went away fails at its next step
 function requireLive(opToken: string): void {
   if (admissions.get(opToken)?.lost) throw daemonRestarted();
 }
 
+/**
+ * Whether a stimd that admitted this command went away: the CLI's own admission, `operation`'s, or one an earlier
+ * request of `operation` took. Such a command starts no stimd and reports no success.
+ */
+function admissionGone(operation: StimContext | undefined): boolean {
+  const token = operationToken(operation);
+  return (
+    lostOpToken !== undefined ||
+    (token !== undefined && admissions.get(token)?.lost === true) ||
+    (operation !== undefined && lostOperations.has(operation))
+  );
+}
+
+/**
+ * Whether this command already held an admission, its own or one for a request, so a stimd it needs now could only
+ * replace one that went away under it.
+ */
+function admittedBefore(operation?: StimContext): boolean {
+  return cliAdmitted || (operation !== undefined && admittedOperations.has(operation)) || admissionGone(operation);
+}
+
 /** The refusal of `operation` when the stimd that admitted it went away, so it does not report success; else null. */
 export function lostAdmission(operation?: StimContext): { code: string; message: string; remedy: string } | null {
-  const token = operationToken(operation);
-  if (!token || !admissions.get(token)?.lost) return null;
+  if (!admissionGone(operation)) return null;
   const { code, message, remedy } = daemonRestarted();
   return { code, message, remedy };
 }
@@ -1337,12 +1387,16 @@ export async function acquireDeviceTicket(
   const opToken = operationToken(operation);
   if (!opToken) throw new Error('the operation has no stimd connection');
   let ticket: string | undefined;
+  const slotKey = deviceSlotKey(params.platform, params.slot);
+  const heldBefore = () => fileLeaseIo.readHolder(params.root)[slotKey]?.token;
+  let before: string | undefined;
   const answer = await admittedStep(opToken, operation.signal, async (token, stepSignal) => {
     const prepared = await askStimd('lease.prepare', 10_000, { opToken: token, params }, stepSignal);
     throwIfCancelled(operation.signal, 'device lease wait');
     if (prepared?.op !== 'lease.prepared' || typeof prepared.ticket !== 'string')
       return prepared && { op: 'error', message: prepared.message ?? 'stimd did not prepare the device lease' };
     ticket = prepared.ticket;
+    before = heldBefore();
     const reply = await askStimd(
       'lease.acquire',
       params.waitSeconds * 1000 + 10_000,
@@ -1352,6 +1406,11 @@ export async function acquireDeviceTicket(
     );
     throwIfCancelled(operation.signal, 'device lease wait');
     return reply;
+  }).catch((error: unknown) => {
+    const granted = ticket ? heldBefore() : undefined;
+    if (isDaemonRestarted(error) && granted !== undefined && granted !== before)
+      releaseRunLease({ root: params.root, platform: params.platform, slot: params.slot, token: granted });
+    throw error;
   });
   throwIfCancelled(operation.signal, 'device lease wait');
   if (answer?.op !== 'lease.acquired' || !isJsonObject(answer.result) || !ticket)
@@ -1571,7 +1630,12 @@ export function deviceLogReadinessWait(
     if (!answered && !current.controller.signal.aborted && remaining() > 0) await rest();
   };
   return Object.assign(wait, {
-    coverage: () => coverage,
+    coverage: () => {
+      if (lost) throw lost;
+      const token = operationToken(operation);
+      if (token) requireLive(token);
+      return coverage;
+    },
     coverThrough: (at: number) => {
       if (at > through) {
         through = Math.ceil(at);
@@ -1765,6 +1829,7 @@ async function ownedRequest(
   env: NodeJS.ProcessEnv,
   target?: { pid: number; token: string },
 ): Promise<string | null> {
+  if (!stimdLive() && admittedBefore()) throw daemonRestarted();
   if (!stimdLive() && !(await claimTaken(launchStimd(env, daemonMode(env))))) return 'no stimd runs in this Stim home';
   const reply = await askHeldStimd(() => askStimd(op, OBSERVE_MS, { params: { root, ...target } }));
   const expected =

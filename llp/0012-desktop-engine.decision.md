@@ -60,18 +60,22 @@ of this build. Once a stimd has admitted it, a command whose stimd goes away (a
 crash, a kill, a service restart) fails at its next step that uses the
 admission with `STIM_DAEMON_UNAVAILABLE`, a message that says stimd stopped
 while the command was running, and the remedy to run the command again; a step
-under way settles as soon as the admission's connection ends, and under
-`--json` the command prints that error as its one payload. Those steps are the
+under way settles as soon as the admission's connection ends. Those steps are the
 device lease (`lease.prepare`/`lease.acquire`), Metro
 (`metro.prepare`/`metro.wait`), the managed tunnel (`tunnel.ensure`), the
 device log stream (`logs.start`) and launch verification (`readiness.wait`).
 A command queued at a build, boot or test slot keeps its place, since that
 queue is claim files, and fails at its next such step. The CLI does not admit
-the command again and repeats no step; only a stop path that needs a stimd to
-stop what one left behind starts one. `stim start` does not report a dev server
-as started once its admission is lost. The device lease does not fall back to a local lease, and a launch whose
-readiness wait loses its stimd fails instead of ending `unverified`, since a
-lost stimd is not missing evidence (invariant 11).
+the command again and repeats no step. A command that already held an
+admission, its own or one it took for a single request such as the managed
+tunnel's, starts no stimd for the rest of its run: wherever it would start one,
+including to observe its owned browser, it fails with the same error instead.
+`stim start` does not report a dev server as started, or as already running,
+once its admission is lost. A lease the lost stimd granted while its reply
+was under way is released by the CLI. The device lease does not fall back to a
+local lease, and a launch whose readiness wait or final coverage read finds
+its admission lost fails instead of ending `unverified`, since a lost stimd is
+not missing evidence (invariant 11).
 
 A rerun costs little: the build is cached, the next stimd adopts a running Metro
 by its claim (one still starting is waited for, not restarted) and resumes the

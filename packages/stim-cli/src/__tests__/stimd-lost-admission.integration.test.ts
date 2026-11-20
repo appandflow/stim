@@ -28,6 +28,7 @@ import {
   deviceLogReadinessWait,
   ensureMetroThroughStimd,
   ensureTunnelThroughStimd,
+  observeOwnedWeb,
   releaseDeviceTicket,
   releaseOrphanedTicket,
   startDeviceLogStream,
@@ -343,18 +344,7 @@ esac
       await vi.waitFor(() => expect(stimdPid()).toBe(first.pid), { timeout: 15_000, interval: 50 });
       const cli = spawn(
         process.execPath,
-        [
-          '--import',
-          cliPreload,
-          entry,
-          'android',
-          '--device',
-          device,
-          '--no-metro-check',
-          '--remote-build',
-          'local',
-          '--json',
-        ],
+        ['--import', cliPreload, entry, 'android', '--device', device, '--no-metro-check', '--remote-build', 'local'],
         {
           cwd: root,
           env: { ...process.env, STIM_TRACE: trace },
@@ -363,8 +353,6 @@ esac
       );
       command = { child: cli, exited: once(cli, 'exit') };
       let output = '';
-      let stdout = '';
-      cli.stdout?.on('data', (chunk) => (stdout += String(chunk)));
       cli.stderr?.on('data', (chunk) => (output += String(chunk)));
       const waitsForHolder = () => output.split(`waiting for ${other} to release`).length - 1;
       await vi.waitFor(() => assert.equal(waitsForHolder(), 1, output), { timeout: 15_000, interval: 25 });
@@ -377,13 +365,6 @@ esac
       });
       expect(output).toContain('Run the command again');
       expect(output).not.toContain('stimd restarted');
-      const payloads = stdout.split('\n').filter(Boolean);
-      expect(payloads).toHaveLength(1);
-      expect(JSON.parse(payloads[0] ?? '')).toEqual({
-        code: 'STIM_DAEMON_UNAVAILABLE',
-        message: "This Stim home's stimd stopped while this command was running.",
-        remedy: expect.stringContaining('Run the command again'),
-      });
       expect(replacementRecords()).toEqual([]);
       expect(listLeaseFiles().map(({ lease }) => lease?.token)).toEqual([held.lease.token]);
       releaseRunLease({ root: other, platform: 'android', token: held.lease.token });
@@ -466,6 +447,27 @@ describe.skipIf(process.platform === 'win32')('a command not waiting on stimd wh
     expect(answer).toMatchObject({ op: 'error', ...RERUN });
     expect(stimdLive()).toBe(false);
   }, 60_000);
+  test('with the daemon mode off, a Metro request after its tunnel request lost the stimd answers the rerun error and starts no stimd', async () => {
+    const root = workspace('app');
+    vi.stubEnv('STIM_DAEMON', 'off');
+    const operation = context(root);
+    await ensureTunnelThroughStimd({ root, port: 8081, mode: 'off', isExpo: false, ngrokUrl: null }, 10_000, operation);
+    const first = stimdPid();
+    assert(first !== null);
+    process.kill(first, 'SIGKILL');
+    await vi.waitFor(() => expect(alive(first)).toBe(false), { timeout: 10_000, interval: 50 });
+    const answer = await ensureMetroThroughStimd({ root, port: 8081 }, 10_000, operation);
+    expect(answer).toMatchObject({ op: 'error', ...RERUN });
+    expect(stimdLive()).toBe(false);
+  }, 60_000);
+
+  test('its owned browser observation fails with the rerun error and starts no stimd', async () => {
+    const root = workspace('app');
+    await killIdle(root);
+    await expect(observeOwnedWeb(root, process.pid, 'token', process.env)).rejects.toMatchObject(RERUN);
+    expect(stimdLive()).toBe(false);
+  }, 60_000);
+
   test('an API-scoped operation whose stimd is lost still fails a tunnel request as before with the daemon mode off', async () => {
     const root = workspace('app');
     const first = await startStimd();
@@ -779,6 +781,79 @@ describe.skipIf(process.platform === 'win32')('a step under way when its admissi
           ...RERUN,
         });
         expect(Date.now() - started).toBeLessThan(5000);
+      },
+    );
+  }, 60_000);
+
+  test('a lease the stimd granted before it went away without replying is released', async () => {
+    const root = workspace('app');
+    let admission: Socket | undefined;
+    await withFakeStimd(
+      (request, socket, reply) => {
+        if (request.op === 'op.begin') {
+          admission = socket;
+          reply({ op: 'op.begun', opToken: 'admission-1' });
+        } else if (request.op === 'lease.prepare') reply({ op: 'lease.prepared', ticket: 'ticket-1' });
+        else if (request.op === 'lease.acquire') {
+          takeLease({ root, platform: 'ios', slot: 'default', id: 'SIM-LOST', kind: 'run', durationMs: 60_000 });
+          admission?.end();
+          socket.end();
+        }
+      },
+      async () => {
+        await admitCli(root);
+        await expect(acquireDeviceTicket(leaseParams(root), context(root), () => {})).rejects.toMatchObject(RERUN);
+        expect(listLeaseFiles()).toEqual([]);
+      },
+    );
+  }, 60_000);
+
+  test('coverage read after its admission is lost fails the launch, even with no wait in between', async () => {
+    const root = workspace('app');
+    let admission: Socket | undefined;
+    let asks = 0;
+    let probes = 0;
+    await withFakeStimd(
+      (request, socket, reply) => {
+        if (request.op === 'op.begin') {
+          admission = socket;
+          reply({ op: 'op.begun', opToken: 'admission-1' });
+        } else if (request.op === 'readiness.wait')
+          reply(
+            ++asks === 1
+              ? { op: 'readiness.changed', revision: 1, coverage: 'pending' }
+              : { op: 'readiness.changed', revision: 2, coverage: 'covered' },
+          );
+      },
+      async () => {
+        await admitCli(root);
+        const since = Date.now();
+        const delivery = { src: 'metro', platform: 'ios', requestId: 'r1' };
+        const metro = [
+          { ...delivery, ts: since + 200, event: 'bundle_response_started' },
+          { ...delivery, ts: since + 400, event: 'bundle_response_finished', statusCode: 200 },
+        ];
+        await expect(
+          verifyLaunch({
+            since,
+            platform: 'ios',
+            metroPort: 8081,
+            requireBundleResponse: true,
+            readRecords: () => metro.filter((record) => record.ts <= Date.now()),
+            readDeviceRecords: () => [],
+            readClientRecords: () => [],
+            deviceStreamId: 'stream',
+            processAlive: async () => {
+              if (++probes === 2) {
+                admission?.end();
+                await new Promise((done) => setTimeout(done, 300));
+              }
+              return true;
+            },
+            sleep: deviceLogReadinessWait(root, 'ios', 'default', 'stream', since, context(root)),
+          }),
+        ).rejects.toMatchObject(RERUN);
+        expect(probes).toBeGreaterThanOrEqual(2);
       },
     );
   }, 60_000);

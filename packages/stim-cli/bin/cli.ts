@@ -144,7 +144,6 @@ export async function main(argv: string[], ctx: MainContext = {}): Promise<void>
       const message = err instanceof Error ? err.message : String(err);
       if (typeof code === 'string' && code.startsWith('STIM_')) {
         const remedy = err instanceof Error && 'remedy' in err && typeof err.remedy === 'string' ? err.remedy : null;
-        if (argv.includes('--json')) console.log(JSON.stringify({ code, message, remedy }));
         console.error(`${code}: ${message}`);
         if (remedy && !message.endsWith(remedy)) console.error(remedy);
       } else console.error(`Unexpected error: ${message.replace(/\.$/, '')}. Report it at ${pkg.bugs.url}`);

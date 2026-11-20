@@ -809,7 +809,9 @@ async function read<T>(
       const remedy =
         error instanceof SettingsRefusal
           ? error.remedy
-          : cleanupUnresolved && 'remedy' in error && typeof error.remedy === 'string'
+          : (cleanupUnresolved || error.code === 'STIM_DAEMON_UNAVAILABLE') &&
+              'remedy' in error &&
+              typeof error.remedy === 'string'
             ? error.remedy
             : null;
       throw new StimError(
