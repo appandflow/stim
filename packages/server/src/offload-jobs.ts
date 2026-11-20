@@ -76,7 +76,10 @@ export interface OffloadJobsOptions {
   admit: (client: string) => string | null;
   /** Called after the last job of `client` exits. */
   idle: (client: string) => void;
-  /** Called with the number of jobs running, each time one starts or exits. */
+  /**
+   * Called with the number of offloads under way, each time it changes: a job that runs, and a connection whose
+   * `job.start` is in progress or whose package upload the server accepted.
+   */
   counted?: (count: number) => void;
 }
 
@@ -100,6 +103,10 @@ export class OffloadJobs {
   private readonly jobs = new Map<string, Job>();
   private readonly spliced = new WeakMap<object, Job>();
   private readonly uploads = new WeakMap<object, Upload>();
+  private readonly starting = new Set<object>();
+  private count(): void {
+    this.options.counted?.(this.jobs.size + this.starting.size);
+  }
   private readonly fetches = new Map<string, Promise<InstallFailure>>();
   private readonly failed = new Map<string, { failure: InstallFailure; at: number }>();
   private readonly options: OffloadJobsOptions;
@@ -157,6 +164,7 @@ export class OffloadJobs {
     const upload = this.uploads.get(socket);
     if (upload) rmSync(upload.dir, { recursive: true, force: true });
     this.uploads.delete(socket);
+    if (this.starting.delete(socket)) this.count();
     const job = this.spliced.get(socket);
     if (!job) return;
     this.spliced.delete(socket);
@@ -167,6 +175,17 @@ export class OffloadJobs {
   }
 
   async start(client: JobClient, socket: NoiseSocket, params: unknown): Promise<Answer> {
+    this.starting.add(socket);
+    this.count();
+    try {
+      return await this.begin(client, socket, params);
+    } finally {
+      if (!this.uploads.has(socket)) this.starting.delete(socket);
+      this.count();
+    }
+  }
+
+  private async begin(client: JobClient, socket: NoiseSocket, params: unknown): Promise<Answer> {
     if (this.options.attached)
       return refused(
         'build-busy',
@@ -232,8 +251,7 @@ export class OffloadJobs {
     if (late) return refused('build-busy', late);
     if (socket.readyState !== socket.OPEN) return refused('build-refused', 'The connection closed.');
     const job = this.spawn(kind, client, repo, entry);
-    this.options.counted?.(this.jobs.size);
-    void job.exited?.then(() => this.options.counted?.(this.jobs.size));
+    void job.exited?.then(() => this.count());
     this.attachSocket(job, socket);
     return { result: { job: job.id } };
   }

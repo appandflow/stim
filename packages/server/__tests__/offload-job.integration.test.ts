@@ -38,8 +38,12 @@ afterEach(async () => {
   removeTree(home);
 });
 
-async function paired(attached = false): Promise<{ endpoint: Endpoint; credential: MachineCredential }> {
+async function paired(
+  attached = false,
+  offloadJobs?: (count: number) => void,
+): Promise<{ endpoint: Endpoint; credential: MachineCredential }> {
   server = await startServer({
+    ...(offloadJobs ? { offloadJobs } : {}),
     hosts: ['127.0.0.1'],
     port: 0,
     stimCli,
@@ -96,6 +100,24 @@ async function open(endpoint: Endpoint, credential: MachineCredential): Promise<
 
 const runningJobs = async (): Promise<number> =>
   ((await (await fetch(`http://127.0.0.1:${port}/health`)).json()) as { busy: { builds: number } }).busy.builds;
+
+test('counts an offload from the accepted package upload until its connection ends', async () => {
+  const counts: number[] = [];
+  const { endpoint, credential } = await paired(false, (count) => counts.push(count));
+  writeFileSync(join(home, 'config.json'), JSON.stringify({ server: { acceptClientBuilds: true } }));
+  const connection = await open(endpoint, credential);
+  const base = { kind: 'offload-probe', stim: version, build: 'a'.repeat(12), repo: 'app' };
+  const asked = await connection.request('job.start', {
+    ...base,
+    package: { name: 'stim.tgz', size: 2, sha256: 'a'.repeat(64) },
+  });
+  expect(asked).toHaveProperty('result.upload');
+  await connection.sendBinary(Buffer.from('a'));
+  expect(counts.at(-1)).toBe(1);
+  connection.close();
+  for (let i = 0; i < 500 && counts.at(-1) !== 0; i++) await new Promise((done) => setTimeout(done, 10));
+  expect(counts.at(-1)).toBe(0);
+});
 
 test('an attached server refuses each offload job before starting it or accepting a package', async () => {
   const { endpoint, credential } = await paired(true);
