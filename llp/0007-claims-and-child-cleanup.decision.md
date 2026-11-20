@@ -252,6 +252,58 @@ quoted proof fails inside a reap batch, not by the maintainer.
 
 Related: #5766, #5769, #5771.
 
+## A delete child holds the claim of the tree it deletes
+
+Tree deletes run in a delete child (`bin/delete-child.ts`), one per sweep, fed
+one job at a time on stdin and ending at stdin EOF. Its parent decides; the
+child only removes, through the one remover (`workspace/remover.ts`), which
+never follows a link and never enters another device. Its first caller is gc's
+trash deletion.
+
+- The child anchors each delete to the directory it checked: it enters a
+  directory with `chdir`, compares the device and inode of `.` with the
+  `lstat` it took before, and unlinks single-component names there; going back
+  up it compares `.` with the parent it recorded. A directory swapped for a link
+  after its check is then never acted through, and the delete stops. Node has
+  no `unlinkat`, so the working directory is the only anchor; it is
+  process-wide, which is why the child runs one job at a time and why only the
+  child's entry passes `chdir` to the remover.
+- The in-thread fallback cannot move the working directory (it is shared with
+  the rest of the process, and stimd's worker threads cannot change it). It
+  checks instead, before each unlink and directory removal, that the parent
+  still resolves to itself, which leaves a window between check and unlink.
+- On Windows the child runs the same anchored walk: `process.chdir` and the
+  device and inode `stat` reports exist there, and the walk leaves a directory
+  before removing it. No caller reaches it on Windows yet, since the trash is
+  never created there, and it is not tested there.
+
+- The parent captures the child's identity at spawn. A child that cannot be
+  spawned, exits before it is ready, or whose identity cannot be captured gets
+  no job and is killed, and the delete runs in the parent's thread through the
+  same remover, so a sweep at critical still deletes at once.
+- While a job runs, the claim of the tree it deletes records the child
+  (`setClaimChild`), so a parent that dies leaves a claim that reads as held
+  until the child, which stops at its next unlink after EOF, is gone. The record
+  is cleared when the child replies or its exit is seen.
+- A cancel is checked between unlinks. With no reply within 5 s the parent
+  sends SIGKILL; when no exit follows within another 5 s, the delete fails as
+  a cleanup refusal that names this one child and how to tell it has stopped,
+  and the claim stays held with the child recorded.
+- A child that exits during a job fails that delete. The tree is left part way
+  and stays recoverable: a trash entry's job removes its trees before its
+  manifest, so the next gc deletes the rest.
+
+Reason: Node cannot set an I/O policy per thread, so a delete that should run
+at a lower I/O priority than the thread holding locks and claims needs its own
+process; the claim record keeps that process covered like any other child.
+
+Maintainer decision: "Move deletes to a child process", 2026-11-20 (#6048). The
+in-thread fallback when the child cannot start was chosen by the coordinator,
+not by the maintainer. The working-directory anchor follows the threat model
+decided on #6032, as relayed by the coordinator: cleanup does not guard
+against a same-user process swapping directories during a delete, and the
+structural fix belongs in the delete child.
+
 ## Code
 
 - [Ownership claims](../packages/core/ownership-claim.ts) and [short transactions](../packages/core/dir-lock.ts).
@@ -262,3 +314,4 @@ Related: #5766, #5769, #5771.
 - `packages/stim-cli/src/workspace/cargo-target.ts`: the Cargo target trim claim.
 - `packages/stim-cli/src/exec.ts` (`reportChild`): the kill of an uncaptured report child.
 - `packages/stim-cli/src/stimd/cleanup-watch.ts` and `packages/stim-cli/src/stimd/threads.ts`: what stimd stays up for.
+- `packages/stim-cli/src/delete-child.ts` and `packages/stim-cli/bin/delete-child.ts`: the delete child.

@@ -14,6 +14,7 @@ import {
 import { directorySizeAsync, formatBytes } from '../../fs-util.ts';
 import { plural } from '../../command-output.ts';
 import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
+import { openDeleteSession, type DeleteSession } from '../../delete-child.ts';
 import {
   deleteTrashEntry,
   TRASH_CLAIMS,
@@ -116,39 +117,46 @@ export async function deleteTrash(
 ): Promise<{ count: number; bytes: number; failures: number }> {
   const report = await collectTrash({ signal: operation?.signal, operation });
   const done = { count: 0, bytes: 0, failures: 0 };
-  for (const entry of report?.entries ?? []) {
-    if (!entry.willDelete) continue;
-    let claim;
-    try {
-      claim = tryAcquireClaim({ root: join(entry.path, TRASH_CLAIMS), mode: 'exclusive', label: CLAIM_LABEL });
-    } catch (error) {
-      if (!isClaimRefusal(error) && !isClaimUnavailable(error)) throw error;
-      output.record('trash', 'kept', entry.path, { bytes: entry.bytes ?? 0, detail: error.reason });
-      continue;
+  let session: DeleteSession | undefined;
+  try {
+    for (const entry of report?.entries ?? []) {
+      if (!entry.willDelete) continue;
+      let claim;
+      try {
+        claim = tryAcquireClaim({ root: join(entry.path, TRASH_CLAIMS), mode: 'exclusive', label: CLAIM_LABEL });
+      } catch (error) {
+        if (!isClaimRefusal(error) && !isClaimUnavailable(error)) throw error;
+        output.record('trash', 'kept', entry.path, { bytes: entry.bytes ?? 0, detail: error.reason });
+        continue;
+      }
+      if (!claim.acquired) {
+        if (claim.pending) releaseClaim(claim.pending);
+        output.record('trash', 'kept', entry.path, {
+          bytes: entry.bytes ?? 0,
+          detail: 'a worktree removal is still moving or deleting it',
+        });
+        continue;
+      }
+      let retained = false;
+      try {
+        session ??= await openDeleteSession();
+        await deleteTrashEntry(entry.path, claim.acquired, session, operation?.signal);
+        done.count++;
+        done.bytes += entry.bytes ?? 0;
+      } catch (error) {
+        retained = error instanceof WorkspaceProcessCleanupError;
+        if (retained || (error instanceof Error && 'reportCleanup' in error)) throw error;
+        operation?.signal.throwIfAborted();
+        done.failures++;
+        const detail = error instanceof Error ? error.message : String(error);
+        output.log(chalk.red(`Could not delete ${entry.path}: ${detail}`));
+        output.record('trash', 'failed', entry.path, { bytes: entry.bytes ?? 0, detail });
+      } finally {
+        if (!retained) releaseClaim(claim.acquired);
+      }
     }
-    if (!claim.acquired) {
-      if (claim.pending) releaseClaim(claim.pending);
-      output.record('trash', 'kept', entry.path, {
-        bytes: entry.bytes ?? 0,
-        detail: 'a worktree removal is still moving or deleting it',
-      });
-      continue;
-    }
-    try {
-      await deleteTrashEntry(entry.path, operation);
-      done.count++;
-      done.bytes += entry.bytes ?? 0;
-    } catch (error) {
-      if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
-        throw error;
-      operation?.signal.throwIfAborted();
-      done.failures++;
-      const detail = error instanceof Error ? error.message : String(error);
-      output.log(chalk.red(`Could not delete ${entry.path}: ${detail}`));
-      output.record('trash', 'failed', entry.path, { bytes: entry.bytes ?? 0, detail });
-    } finally {
-      releaseClaim(claim.acquired);
-    }
+  } finally {
+    await session?.close();
   }
   if (done.count) {
     output.log(

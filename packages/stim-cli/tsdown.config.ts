@@ -37,6 +37,7 @@ export default defineConfig({
     'device-host-worker': 'src/device-host/run.ts',
     'status-worker': 'src/status-worker.ts',
     'fingerprint-precompute': 'bin/fingerprint-precompute.ts',
+    'delete-child': 'bin/delete-child.ts',
     'windows-report': 'bin/windows-report.ts',
     'engine-select': 'bin/engine-select.ts',
     'engine-flip': 'bin/engine-flip.ts',

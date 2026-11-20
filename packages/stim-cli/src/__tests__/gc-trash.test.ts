@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { collectTrash, deleteTrash } from '../commands/gc/trash.ts';
 import { takeGcResults } from '../commands/gc/results.ts';
-import { resetExecutor } from '../exec.ts';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { goneClaimOwner, liveClaimOwner, plantClaim } from './_factories.ts';
 
 const POSIX = process.platform !== 'win32';
@@ -13,6 +13,12 @@ let trash: string;
 
 beforeEach(() => {
   resetExecutor();
+  setExecutor({
+    ...getExecutor(),
+    spawn: () => {
+      throw new Error('the delete child runs only in integration tests');
+    },
+  });
   base = realpathSync(mkdtempSync(join(tmpdir(), 'stim-test-trash-')));
   process.env.STIM_HOME = join(base, 'stim');
   trash = join(base, 'stim', 'trash');

@@ -13,8 +13,8 @@ import {
   tryAcquireClaim,
   type ClaimHandle,
 } from '../ownership-claim.ts';
-import { filesystemDevice, removeTemporaryEntryAsync } from '../temporary.ts';
-import { runOperationFile } from '../engine/operation-exec.ts';
+import { filesystemDevice } from '../temporary.ts';
+import { openDeleteSession, type DeleteSession } from '../delete-child.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { gitAsync } from './git.ts';
 import { childEnvironment } from './git-read.ts';
@@ -199,20 +199,30 @@ export async function restoreTrashedTrees(trash: WorktreeTrash): Promise<string[
   return kept;
 }
 
-/** Deletes one trash entry: `rm -rf` for the bulk, then a walk that also clears read-only directories. */
-export async function deleteTrashEntry(dir: string, operation?: StimContext): Promise<void> {
-  if (process.platform !== 'win32') {
-    try {
-      await runOperationFile(operation, getExecutor(), 'rm', ['-rf', '--', join(dir, TRASH_ENTRIES)], {
-        timeoutMs: 'unbounded',
-        signal: operation?.signal,
-        cwd: dirname(dir),
-      });
-    } catch (error) {
-      rethrowCancellation(error, operation?.signal);
-    }
+/**
+ * Deletes one trash entry through `session` while `claim` holds it: its trees first, then the manifest and the claims,
+ * so an entry stopped part way keeps its manifest and a later gc deletes it.
+ */
+export async function deleteTrashEntry(
+  dir: string,
+  claim: ClaimHandle,
+  session: DeleteSession,
+  signal?: AbortSignal,
+): Promise<void> {
+  for (const path of [join(dir, TRASH_ENTRIES), dir]) {
+    const outcome = await session.rm(path, claim, signal);
+    if ('cancelled' in outcome) signal?.throwIfAborted();
+    if ('done' in outcome && !outcome.done.left.length) continue;
+    throw new Error(
+      'kept' in outcome
+        ? outcome.kept
+        : 'failed' in outcome
+          ? outcome.failed.message
+          : 'done' in outcome
+            ? `${outcome.done.left[0]} is on another device or was filled again`
+            : 'the delete was cancelled',
+    );
   }
-  await removeTemporaryEntryAsync(dir, operation?.signal);
 }
 
 async function deleteInBackground(trash: WorktreeTrash): Promise<'background' | 'deleted' | 'left'> {
@@ -274,13 +284,17 @@ export async function disposeTrash(
   operation?: StimContext,
 ): Promise<'background' | 'deleted' | 'left'> {
   if (!getExecutor().reportSignal?.()) return deleteInBackground(trash);
+  const session = await openDeleteSession();
+  let retained = false;
   try {
-    await deleteTrashEntry(trash.dir, operation);
+    await deleteTrashEntry(trash.dir, trash.claim, session, operation?.signal);
     return 'deleted';
   } catch (error) {
+    retained = error instanceof WorkspaceProcessCleanupError;
     rethrowCancellation(error, operation?.signal);
     return 'left';
   } finally {
-    releaseClaim(trash.claim);
+    await session.close();
+    if (!retained) releaseClaim(trash.claim);
   }
 }
