@@ -367,19 +367,11 @@ const reported = (left: readonly string[]): string[] =>
 /** Raised under the Cargo locks to stop a trim or delete and keep the rest of the target, with the reason as message. */
 class KeepTarget extends Error {}
 
-/** Throws `KeepTarget` unless the parent of `path`, built from the canonical target, is still its own canonical path. */
-async function stillInside(path: string): Promise<void> {
-  const parent = dirname(path);
-  if ((await realpath(parent).catch(() => null)) !== parent)
-    throw new KeepTarget(`${parent} is no longer a directory inside the target/, so the delete stopped`);
-}
-
 // @ref LLP 0005#one-remover -- never through a link, never onto another device, never a lock file or a keypair
 /**
  * Removes `path` in place, deepest first: a symbolic link is unlinked and never followed, a directory on a device other
  * than `dev` and Exact's `.apple-cargo-locks` are not entered, a lock file Cargo or Exact takes and a `*-keypair.json`
- * (any case) are never unlinked, and a directory goes once it is empty. Right before each unlink and each directory
- * removal its parent must still resolve to itself, or `KeepTarget` stops the delete. The contents of a `.fingerprint`
+ * (any case) are never unlinked, and a directory goes once it is empty. The contents of a `.fingerprint`
  * go before its siblings, so a build after a delete stopped part way rebuilds every unit and reruns its build scripts,
  * and the emptied `.fingerprint` goes after them, so such a profile is still listed and trimmed again. A path already
  * gone counts as removed. Returns the paths it left because of those rules; a directory a build filled again meanwhile
@@ -395,7 +387,6 @@ async function removeInPlace(path: string, dev: number, signal?: AbortSignal, ke
   const name = basename(path);
   if (!stat.isDirectory()) {
     if (kept(name)) return [path];
-    await stillInside(path);
     await unlink(path).catch((error: unknown) => {
       if (errorCode(error) !== 'ENOENT') throw error;
     });
@@ -412,7 +403,6 @@ async function removeInPlace(path: string, dev: number, signal?: AbortSignal, ke
   for (const child of names.toSorted((a, b) => Number(a === FINGERPRINT) - Number(b === FINGERPRINT)))
     left.push(...(await removeInPlace(join(path, child), dev, signal)));
   if (left.length || keepDir) return left;
-  await stillInside(path);
   await rmdir(path).catch((error: unknown) => {
     const code = errorCode(error);
     if (code !== 'ENOENT' && code !== 'ENOTEMPTY' && code !== 'EEXIST') throw error;
@@ -421,18 +411,18 @@ async function removeInPlace(path: string, dev: number, signal?: AbortSignal, ke
 }
 
 /**
- * Why the whole of `target` stays because of a symbolic link a Solana key may stand behind, found at any depth without
- * following links: one named `deploy` or `*-keypair.json`, or one directly in a `deploy` directory, all in any letter
+ * Why the whole target stays because of a symbolic link a Solana key may stand behind, found at any depth of `root` (the
+ * whole target for the delete, what a trim step removes for a trim) without following links: one named `deploy` or `*-keypair.json`, or one directly in a `deploy` directory, all in any letter
  * case. A directory that cannot be listed keeps it too; one a build removed meanwhile, or one on a device other than
  * `dev`, is skipped. Stops with `DEADLINE_KEPT` once `stop` fires. Null when there is none.
  */
 async function keypairLink(
-  target: string,
+  root: string,
   dev: number,
   signal?: AbortSignal,
   stop?: AbortSignal,
 ): Promise<string | null> {
-  const queue = [target];
+  const queue = [root];
   for (let dir = queue.pop(); dir !== undefined; dir = queue.pop()) {
     signal?.throwIfAborted();
     if (stop?.aborted === true) return DEADLINE_KEPT;
@@ -496,9 +486,9 @@ async function refuseMoved(registered: string, admitted: AdmittedTarget): Promis
   if (moved) throw new KeepTarget(moved);
 }
 
-/** Throws `KeepTarget` when `keypairLink` finds a link; run under the Cargo locks that cover the delete. */
-async function refuseKeypairLink(target: string, dev: number, signal?: AbortSignal, stop?: AbortSignal): Promise<void> {
-  const link = await keypairLink(target, dev, signal, stop);
+/** Throws `KeepTarget` when `keypairLink` finds a link under `root`; run under the Cargo locks that cover the delete. */
+async function refuseKeypairLink(root: string, dev: number, signal?: AbortSignal, stop?: AbortSignal): Promise<void> {
+  const link = await keypairLink(root, dev, signal, stop);
   if (link) throw new KeepTarget(link);
 }
 
@@ -662,7 +652,7 @@ export async function trimCargoTarget(
       idleOnly ? [] : locks,
       async () => {
         await refuseMoved(registeredTarget, admitted);
-        await refuseKeypairLink(target, dev, signal, stop);
+        await refuseKeypairLink(dir, dev, signal, stop);
         return removeInPlace(dir, dev, signal);
       },
       signal,

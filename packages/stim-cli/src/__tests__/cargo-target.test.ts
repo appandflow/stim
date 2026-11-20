@@ -352,27 +352,6 @@ describe.skipIf(process.platform === 'win32')('trimming in place (Cargo locks ne
     ]);
   });
 
-  test('the remover stops when a directory it is emptying becomes a link, and never deletes through it', async () => {
-    makeProfile('debug', 3 * DAY);
-    const deps = join(realpathSync.native(target), 'debug', 'deps');
-    const outside = join(tmpdir(), `${realpathSync(target).split('/').at(-1)}-swapped`);
-    mkdirSync(outside);
-    onTestFinished(() => rmSync(outside, { recursive: true, force: true }));
-    writeFileSync(join(outside, 'libx.rlib'), 'theirs');
-    fsHooks.afterLstat = (path) => {
-      if (path !== join(deps, 'libx.rlib')) return;
-      delete fsHooks.afterLstat;
-      renameSync(deps, `${deps}-aside`);
-      symlinkSync(outside, deps);
-    };
-
-    const result = await trimCargoTarget(target, { needBytes: 0 });
-
-    expect(readFileSync(join(outside, 'libx.rlib'), 'utf8')).toBe('theirs');
-    expect(result.removed).toEqual([]);
-    expect(result.kept).toEqual([expect.stringContaining(`${deps} is no longer a directory inside`)]);
-  });
-
   test('a directory a build removes while the keypair link check walks the target does not keep it', async () => {
     makeProfile('debug', 3 * DAY);
     const incremental = join(realpathSync.native(target), 'debug', 'incremental');
@@ -398,8 +377,7 @@ describe.skipIf(process.platform === 'win32')('trimming in place (Cargo locks ne
       runFileAsync: async (file, args, options) =>
         file === 'lsof' || file === 'ps' ? '' : real.runFileAsync(file, args, options),
       spawn: (...args: Parameters<typeof real.spawn>) => {
-        mkdirSync(join(target, 'deploy'), { recursive: true });
-        symlinkSync(join('..', 'debug', 'deps', 'wallet.json'), join(target, 'deploy', 'app-keypair.json'));
+        symlinkSync('wallet.json', join(target, 'debug', 'deps', 'app-keypair.json'));
         return real.spawn(...args);
       },
     });
@@ -435,15 +413,17 @@ describe.skipIf(process.platform === 'win32')('trimming in place (Cargo locks ne
 
   test('the keypair link walk stays off another device and stops at the deadline', async () => {
     makeProfile('debug', 3 * DAY);
-    mkdirSync(join(target, 'mounted'));
-    symlinkSync('/nonexistent', join(target, 'mounted', 'app-keypair.json'));
+    mkdirSync(join(target, 'debug', 'deps', 'mounted'));
+    symlinkSync('/nonexistent', join(target, 'debug', 'deps', 'mounted', 'app-keypair.json'));
+    const old = new Date(Date.now() - 3 * DAY);
+    for (const path of [join(target, 'debug', 'deps'), join(target, 'debug')]) utimesSync(path, old, old);
     fsHooks.dev = (path) => (path.endsWith('/mounted') ? -1 : undefined);
     expect((await trimCargoTarget(target, { needBytes: 0 })).removed).toEqual(['debug']);
 
     makeProfile('release', 3 * DAY);
     const deadline = new AbortController();
     fsHooks.beforeReaddir = (path) => {
-      if (path === realpathSync.native(target)) deadline.abort();
+      if (path === join(realpathSync.native(target), 'release')) deadline.abort();
     };
     const stopped = await trimCargoTarget(target, { needBytes: 0, stop: deadline.signal });
     expect(stopped).toMatchObject({ removed: [], kept: ['the rest was left at the build headroom deadline'] });

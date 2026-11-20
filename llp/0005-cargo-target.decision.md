@@ -145,11 +145,14 @@ program's private key there, and a new key is a new program ID. Everything else
 in an idle `target/` goes, Exact's folders and records included. A top-level
 symbolic link stays, and a `deploy` that is itself a symbolic link, or holds
 one, keeps the whole `target/`, since its keys may live anywhere in it. The same
-holds at any depth, in the delete and in every trim: a symbolic link named
-`deploy` or `*-keypair.json`, or one directly in a `deploy` directory, anywhere in
-the `target/` keeps all of it, and so does a directory that cannot be listed to
-look. The walk runs under the Cargo locks, right before each delete step. A key
-a tool publishes with no Cargo lock held, after that walk, is not covered. Reason: a `deploy/debug/app-keypair.json` that links to a wallet file
+holds at any depth: a symbolic link named `deploy` or `*-keypair.json`, or one
+directly in a `deploy` directory, keeps all of the `target/`, and so does a
+directory that cannot be listed to look. The walk runs under the Cargo locks
+right before deleting: over the whole `target/` for the dormant delete, and
+over what the step removes for a trim step, so a trim does not walk the whole
+`target/` once per step. A link outside what a trim step removes that points
+into it, and a key a tool publishes with no Cargo lock held after the walk, are
+not covered. Reason: a `deploy/debug/app-keypair.json` that links to a wallet file
 beside it would survive while the wallet went. Chosen by the review of #6032,
 not by the maintainer. Both `deploy` and `*-keypair.json` match in any letter
 case. Anywhere else the
@@ -244,8 +247,9 @@ before it measures anything. It reports the bytes the trim removed. Cap 0,
 `maintenance.keep` and the lock, `lsof` and `ps` checks apply unchanged. Two
 Stims that trim the same `target/` at once need no claim: each takes the Cargo
 locks it deletes under, and the remover counts a path already gone as removed.
-Under a headroom deadline the trim stops between steps; at high and critical it
-walks nothing before removing, and reports the free space it gained of the
+Under a headroom deadline the trim stops between steps, and between directories
+of a step's keypair link walk before that step deletes anything; at high and
+critical it measures nothing before removing, and reports the free space it gained of the
 target's own volume, or 0 when either sample is missing. The deadline stop, the
 free-space report and the absence of a per-run limit on targets were chosen by
 the coordinator and the reviews of #5763, not by the maintainer.
@@ -284,21 +288,18 @@ recompiles the library without running the script again and fails, while with
 keeps such a profile listed, so a later trim removes the rest. Chosen by the
 review of #6032, not by the maintainer. A
 path already gone counts as removed. What it left for those rules is reported,
-lock files aside. Right before each unlink and each directory removal, the
-parent directory must still resolve through `realpath` to the path the remover
-built from the canonical `target/`; otherwise the delete stops and keeps the
-rest.
+lock files aside.
 
 Threat model: cleanup guards against builds, static links, a moved or replaced
 `target/` and crashes; it does not guard against a process of the same user
 that swaps directories inside a `target/` during a delete. The maintainer chose
 this in the coordinating session of #6025 on 2026-11-20, answering "Sign it" to
-that statement. The checks above stay. Known limit that follows: Node offers no
-`openat` or `unlinkat`, so such a process that replaces a directory inside the
-`target/` with a link between the `realpath` check and the unlink can still
-redirect that one unlink; a recursive `rm` would not close it, since Node's
-walks by path name too. The structural fix, deletes anchored to the checked
-directory, comes with the delete child of the GC redesign.
+that statement. So the remover checks the admitted `target/` itself (path,
+device and inode) under the locks before each top-level entry and each trim
+step, but not each unlink: Node offers no `openat` or `unlinkat`, and a
+`realpath` per unlink cost a large trim more than half its time while leaving a
+window anyway. The structural fix, deletes anchored to the checked directory,
+comes with the delete child of the GC redesign.
 
 Each trim step takes the Cargo locks of the profiles it deletes from, the lock
 files that exist and never a new one, exclusively and without waiting, through
