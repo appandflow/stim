@@ -1,9 +1,9 @@
 import { execSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { type ExecOptions, getExecutor, resetExecutor, setExecutor } from '../exec.ts';
-import { mergeState, mergeStateAsync } from '../workspace/merge-state.ts';
+import { type ExecOptions, getExecutor, resetExecutor, runMaintenanceWork, setExecutor } from '../exec.ts';
+import { fetchDefaultBranchAsync, mergeState, mergeStateAsync } from '../workspace/merge-state.ts';
 
 let projects: string;
 
@@ -173,3 +173,33 @@ describe('merge state', () => {
     }
   });
 });
+
+test.skipIf(process.platform === 'win32')(
+  'inside maintenance work the default-branch fetch runs at full priority while the local reads around it are lowered',
+  async () => {
+    const origin = initRepo('origin');
+    git(projects, `clone -q "${origin}" clone`);
+    const clone = join(projects, 'clone');
+    const realGit = execSync('command -v git', { encoding: 'utf-8' }).trim();
+    const bin = join(projects, 'bin');
+    const log = join(projects, 'git-calls');
+    mkdirSync(bin);
+    writeFileSync(
+      join(bin, 'git'),
+      `#!/bin/sh\nfor a; do case "$a" in -*|/*) ;; *) echo "$a \${GIT_CONFIG_COUNT:-none}" >> '${log}'; break;; esac; done\nexec '${realGit}' "$@"\n`,
+      { mode: 0o755 },
+    );
+    vi.stubEnv('PATH', `${bin}:${process.env.PATH ?? ''}`);
+    try {
+      expect(await runMaintenanceWork('normal', () => fetchDefaultBranchAsync(clone))).toMatchObject({
+        ref: 'refs/remotes/origin/main',
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    const calls = readFileSync(log, 'utf8').trim().split('\n');
+    expect(calls).toContain('fetch none');
+    expect(calls.filter((call) => !call.startsWith('fetch')).every((call) => call.endsWith(' 1'))).toBe(true);
+    expect(calls.length).toBeGreaterThan(1);
+  },
+);
