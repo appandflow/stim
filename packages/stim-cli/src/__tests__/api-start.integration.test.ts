@@ -297,7 +297,10 @@ test.skipIf(process.platform === 'win32')(
       chmodSync(join(bin, tool), 0o755);
     }
     writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.88.0' } }));
-    writeFileSync(join(root, '.stim.json'), JSON.stringify({ metro: { command: [process.execPath, '-e', ''] } }));
+    writeFileSync(
+      join(root, '.stim.json'),
+      JSON.stringify({ metro: { command: [process.execPath, '-e', '', '{port}'], tunnel: 'off' } }),
+    );
     const env = {
       ...process.env,
       PATH: `${bin}:${process.env.PATH}`,
