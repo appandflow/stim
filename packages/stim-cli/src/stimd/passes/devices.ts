@@ -30,6 +30,8 @@ export interface OwnedDeviceReads {
   avds?: () => string[] | Promise<string[]>;
   avdDirectory?: (name: string) => string | null;
   size?: (dir: string) => number | null | Promise<number | null>;
+  /** Runs before each walk of a device's folder: a unit boundary of the stim-daemon's disk owner. */
+  between?: () => Promise<void>;
 }
 
 export interface OwnedDeviceUsage {
@@ -48,6 +50,7 @@ export async function ownedDeviceUsage(
     avds = () => listAvds({ timeoutMs: DEVICE_LIST_TIMEOUT_MS }),
     avdDirectory = ownedAvdDirectory,
     size = (dir) => measuredDirectorySizeAsync(dir, { timeoutMs: AVD_SIZE_TIMEOUT_MS }),
+    between,
   }: OwnedDeviceReads = {},
 ): Promise<OwnedDeviceUsage[]> {
   const config = loadConfig();
@@ -90,6 +93,7 @@ export async function ownedDeviceUsage(
     }
     const dir = avdNames?.includes(device.id) ? avdDirectory(device.id) : null;
     if (!dir) continue;
+    await between?.();
     const bytes = await size(dir);
     if (bytes === null) failure(dir, device.workspace);
     else usage.push({ kind: 'android', name: device.id, dir, bytes, ...workspace });

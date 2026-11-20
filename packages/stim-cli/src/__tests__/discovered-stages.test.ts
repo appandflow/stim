@@ -382,14 +382,12 @@ describe('a discovered checkout in the idle stages', () => {
     const config: Config = { maintenance: { discoverRoots: [join(base, 'roots')] }, projects: {}, repos: {} };
     saveConfig(config);
 
-    const candidates = await stoppedOutputCandidates(config, reading, day);
-    expect(candidates.map((entry) => entry.path)).toEqual([root]);
-    expect(await clearStoppedOutputs(candidates[0] ?? fail(), config, day)).toBeNull();
+    expect(await stoppedOutputCandidates(config, reading, day)).toEqual([]);
     expect(existsSync(join(root, 'target', extra))).toBe(true);
     expect(existsSync(join(root, 'target', 'debug', 'app'))).toBe(true);
   });
 
-  it('leaves a Cargo target with CACHEDIR.TAG at a monorepo root to the Cargo trim, clears the node_modules of a linked worktree, recording nothing', async () => {
+  it('leaves a monorepo root whose only output is a Cargo target with CACHEDIR.TAG out of rung 1, clears the node_modules of a linked worktree, recording nothing', async () => {
     const roots = join(base, 'roots');
     const mono = join(roots, 'mono');
     mkdirSync(join(mono, 'apps', 'web'), { recursive: true });
@@ -427,10 +425,7 @@ describe('a discovered checkout in the idle stages', () => {
     const config: Config = { maintenance: { discoverRoots: [roots] }, projects: {}, repos: {} };
 
     saveConfig(config);
-    const candidates = await stoppedOutputCandidates(config, reading, day);
-    expect(candidates.map((entry) => entry.path)).toEqual([mono]);
-    const target = candidates.find((entry) => entry.path === mono) ?? fail();
-    expect(await clearStoppedOutputs(target, config, day)).toBeNull();
+    expect(await stoppedOutputCandidates(config, reading, day)).toEqual([]);
     expect(existsSync(join(mono, 'target'))).toBe(true);
 
     const actions = await runDormantDependencies({

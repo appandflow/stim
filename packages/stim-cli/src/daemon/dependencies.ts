@@ -106,13 +106,11 @@ function linkedDetail({ linked, sampled }: { linked: number; sampled: number }):
 /**
  * Which dependency trees to delete, given in the order their workspaces went idle: those whose private bytes reach
  * REAL_BYTES_THRESHOLD, most private bytes first; trees below it are kept. A tree of unknown size is taken after the
- * measured ones in the given order (`unknown: 'take'`) or kept (`'keep'`); one a sample found mostly hard links is kept,
- * or with `links: 'last'`, at critical, taken after every other tree.
+ * measured ones in the given order (`unknown: 'take'`) or kept (`'keep'`); one a sample found mostly hard links is kept.
  */
 export function selectDependencies(
   ranked: readonly RankedDependency[],
   unknown: 'take' | 'keep',
-  links: 'keep' | 'last' = 'keep',
 ): { take: RankedDependency[]; kept: { dependency: RankedDependency; detail: string }[] } {
   const known = ranked.filter((dependency): dependency is Measured => dependency.privateBytes !== null);
   const unmeasured = ranked.filter((dependency) => dependency.privateBytes === null && !dependency.links);
@@ -128,8 +126,7 @@ export function selectDependencies(
   );
   if (unknown === 'take') take.push(...unmeasured);
   else kept.push(...unmeasured.map((dependency) => ({ dependency, detail: dependency.unknown ?? NOT_MEASURED })));
-  if (links === 'last') take.push(...linked);
-  else kept.push(...linked.map((dependency) => ({ dependency, detail: linkedDetail(dependency.links) })));
+  kept.push(...linked.map((dependency) => ({ dependency, detail: linkedDetail(dependency.links) })));
   return { take, kept };
 }
 
@@ -450,7 +447,10 @@ export async function clearDependency(
 
 type TreeResult = { status: 'done' | 'kept' | 'failed'; bytes: number; detail: string };
 
-/** Deletes each source checkout's selected trees as one unit, in `trees` order; the outcome of every tree. */
+/**
+ * Deletes each source checkout's selected trees as one unit, in `trees` order, running `between` before each checkout;
+ * the outcome of every tree.
+ */
 export async function clearSourceCheckouts(
   trees: readonly RankedDependency[],
   idleMs: number,
@@ -459,11 +459,13 @@ export async function clearSourceCheckouts(
   operation: StimContext | undefined,
   setting: string,
   level: PressureLevel,
+  between: () => Promise<void>,
 ): Promise<Map<RankedDependency, TreeResult>> {
   const groups = new Map<string, RankedDependency[]>();
   for (const tree of trees) groups.set(tree.candidate.worktree, [...(groups.get(tree.candidate.worktree) ?? []), tree]);
   const results = new Map<RankedDependency, TreeResult>();
   for (const group of groups.values()) {
+    await between();
     const outcomes = await clearSourceDependencies(group, idleMs, protectedRoot, worktrees, level, operation, setting);
     group.forEach((tree, index) => {
       const outcome = outcomes[index];
@@ -539,7 +541,13 @@ export async function wouldDelete(
  */
 export async function runDormantDependencies(
   input: Pick<IdlePassInput, 'config' | 'act' | 'log'> &
-    DeviceReading & { force?: boolean; cadence?: BigInt64Array; walkUnknown?: false },
+    DeviceReading & {
+      force?: boolean;
+      cadence?: BigInt64Array;
+      walkUnknown?: false;
+      /** Runs between checkouts, phases and deletions: a unit boundary of the disk owner. */
+      between?: () => Promise<void>;
+    },
 ): Promise<DaemonLadderAction[]> {
   const { config, cadence } = input;
   const afterMs = dormantAfterMs(config);
@@ -606,12 +614,14 @@ async function sourceTreesOf(path: string, operation?: StimContext): Promise<boo
 }
 
 async function takeIdleDependencies(
-  input: Pick<IdlePassInput, 'act' | 'log'> & DeviceReading & { force?: boolean; walkUnknown?: false },
+  input: Pick<IdlePassInput, 'act' | 'log'> &
+    DeviceReading & { force?: boolean; walkUnknown?: false; between?: () => Promise<void> },
   config: Config,
   afterMs: number,
   source: boolean,
 ): Promise<DaemonLadderAction[]> {
   const keeps = new Map<string, string>();
+  const between = input.between ?? (async () => {});
   const candidates = await idleStageCandidates(
     config,
     input,
@@ -627,9 +637,11 @@ async function takeIdleDependencies(
               keeps.set(canonicalOrNull(path) ?? path, 'its node_modules or ios/Pods did not answer this pass');
             return trees === true;
           },
+          between,
         }
-      : {},
+      : { between },
   );
+  await between();
   const { operation } = input;
   const actions: DaemonLadderAction[] = source
     ? []
@@ -637,6 +649,7 @@ async function takeIdleDependencies(
         signal: operation?.signal,
         items: (taken) => taken?.length,
       });
+  await between();
   const idle = candidates.filter((candidate) => source || candidate.role === 'linked');
   let take: RankedDependency[];
   if (source) {
@@ -713,13 +726,24 @@ async function takeIdleDependencies(
             detail,
           });
   }
+  await between();
   const worktrees = take.length ? await artifactWorktreesFor(operation) : [];
   const why = `${source ? 'idle.sourceDormantDays' : 'idle.dormantDays'} is ${afterMs / (24 * HOUR_MS)}`;
   const sourceResults =
     source && input.act
-      ? await clearSourceCheckouts(take, afterMs, input.protectedRoot ?? '', worktrees, operation, why, 'normal')
+      ? await clearSourceCheckouts(
+          take,
+          afterMs,
+          input.protectedRoot ?? '',
+          worktrees,
+          operation,
+          why,
+          'normal',
+          between,
+        )
       : new Map<RankedDependency, TreeResult>();
   for (const dependency of take) {
+    if (!source) await between();
     const target = dependency.candidate.path;
     const reason =
       dependency.privateBytes === null
