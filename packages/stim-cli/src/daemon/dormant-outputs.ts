@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { rm, stat, utimes } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
@@ -94,6 +95,11 @@ export async function reduceDormantOutputs(
   return actions;
 }
 
+/** `path`, or its nearest ancestor that exists, whose volume is the one a write at `path` lands on. */
+function nearestExisting(path: string): string {
+  for (let at = path; ; at = dirname(at)) if (existsSync(at) || dirname(at) === at) return at;
+}
+
 async function reduceWorkspace(
   candidate: StageCandidate,
   config: Config,
@@ -145,7 +151,7 @@ async function reduceWorkspace(
     failures.push(`${output}: ${error instanceof Error ? error.message : String(error)}`);
   };
   // @ref LLP 0005#a-full-disk-releases-the-reserve -- the workspace claims are writes too
-  let released = await releaseReserveWhenFull(path);
+  let released = await releaseReserveWhenFull(nearestExisting(workspaceDir(path)));
   for (const output of plan.paths) {
     let outcome: string | CargoTrimResult | null;
     try {

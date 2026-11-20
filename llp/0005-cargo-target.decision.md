@@ -337,7 +337,9 @@ Before a trim or a delete, and before the dormant reduction takes a workspace's
 reserve (`$STIM_HOME/maintenance/disk-reserve`, the file the maintenance pass
 and an acting `stim gc` already keep) once when the volume it acts on has less
 than 64 MiB free, so those claims and the unlinks, which can need space on
-APFS, have room. A run that released the reserve says so in its outcome. The
+APFS, have room. For the dormant reduction that volume is the one holding the
+workspace's directory under `$STIM_HOME` (or its nearest existing parent),
+where the claims are written, not the checkout's. A run that released the reserve says so in its outcome. The
 maintenance pass writes the reserve back at its end when there is room.
 
 Reason: on 2026-11-19 at 23:01 UTC, with the maintainer's disk full, a rung 3

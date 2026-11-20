@@ -33,6 +33,21 @@ import { metroStoreRoot } from '../stimd/metro/metro-store.ts';
 import * as runningFrom from '../workspace/running-from.ts';
 import type { RunningProcesses } from '../workspace/running-from.ts';
 import { testContext } from './_context.ts';
+import { keepReserve, RESERVE_RELEASED } from '../disk-reserve.ts';
+
+const volumes = vi.hoisted((): { freeBytes?: (path: string) => number | undefined } => ({}));
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...fs,
+    statfs: async (...args: Parameters<typeof fs.statfs>) => {
+      const free = volumes.freeBytes?.(String(args[0]));
+      return free === undefined
+        ? fs.statfs(...args)
+        : { ...(await fs.statfs(...args)), bavail: free / 4096, bsize: 4096 };
+    },
+  };
+});
 
 const DAY_MS = 86_400_000;
 const BUILD = join('android', 'app', 'build');
@@ -210,6 +225,21 @@ describe.skipIf(process.platform === 'win32')(
       expect(existsSync(join(root, 'node_modules'))).toBe(false);
       expect(existsSync(join(root, 'package.json'))).toBe(true);
       expect(existsSync(join(metroStoreRoot(root), 'shared'))).toBe(true);
+    });
+
+    test('a full disk under STIM_HOME releases the reserve before the workspace claims, whatever the checkout volume has', async () => {
+      register(repo('app'));
+      idleFor(3, join(base, 'app'));
+      keepReserve();
+      const home = join(base, 'home');
+      volumes.freeBytes = (path) => (path === home || path.startsWith(`${home}/`) ? 1024 * 1024 : undefined);
+      onTestFinished(() => {
+        delete volumes.freeBytes;
+      });
+
+      const [action] = await gc();
+
+      expect(action).toMatchObject({ outcome: 'done', detail: expect.stringContaining(RESERVE_RELEASED) });
     });
 
     test('a workspace claim that hits a full disk fails that output, with no retry', async () => {
