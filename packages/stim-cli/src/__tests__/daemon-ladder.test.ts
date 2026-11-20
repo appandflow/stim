@@ -658,6 +658,28 @@ describe('the pressure ladder', () => {
   );
 
   test.skipIf(process.platform === 'win32')(
+    'rung 3 skips a Cargo target whose own volume is no longer short when its turn comes',
+    async () => {
+      const recovered = cargoApp('recovered-app');
+      const short = cargoApp('short-app');
+      vi.spyOn(cargoTargetPasses, 'measuredDiskLevel').mockImplementation(async (dir) =>
+        dir === recovered.target ? 'normal' : 'high',
+      );
+
+      const { actions } = await runLadder(
+        input(true, async () => pressure('high')),
+        pressure('high'),
+      );
+
+      expect(existsSync(recovered.incremental)).toBe(true);
+      expect(existsSync(short.incremental)).toBe(false);
+      expect(actions.filter((action) => action.kind === 'trim-cargo').map((action) => action.target)).toEqual([
+        short.target,
+      ]);
+    },
+  );
+
+  test.skipIf(process.platform === 'win32')(
     'rung 3 still trims the Cargo targets after its shared caches fail, and records the failure',
     async () => {
       const { target } = cargoApp();

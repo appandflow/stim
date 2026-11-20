@@ -467,6 +467,12 @@ async function cargoTargetsStep(context: RungContext): Promise<void> {
     if (protectedRoot && (workspace === protectedRoot || action.target.startsWith(`${protectedRoot}${sep}`))) continue;
     if (!onShort(context, [action.target])) continue;
     if (!(await context.stillShort())) return;
+    // @ref LLP 0001#the-ladder-runs-by-yield -- a larger target's trim may already have cleared this one's volume
+    if (
+      context.volume === undefined &&
+      (await measuredDiskLevel(action.target, context.operation?.signal)) === 'normal'
+    )
+      continue;
     await run(context, action);
   }
   cargoTrimmedAt.set(key, now);
