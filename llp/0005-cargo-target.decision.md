@@ -25,7 +25,8 @@ any of the three. Before that the idle stage checks that the directory is real, 
 mount point, holds no file git tracks and only files git ignores; that no PATH
 launcher resolves into the checkout; that no other process runs from or works
 in the app; and that it holds no copy a trim could not put back
-(`.stim-not-restored-*`, or `.stim-trimmed` marked `NOT-RESTORED`). It reads
+(`.stim-not-restored-*`, or a `.stim-trimmed` whose `NOT-RESTORED` marker is
+empty). It reads
 no Cargo lock file. The trims run the git, link, mount and launcher checks but
 not the whole-app process check; instead they keep each path a process
 executes from or holds open and each profile whose lock a build holds (below).
@@ -95,8 +96,8 @@ again. A lock a build took, any path in the `target/` a process used, a write
 made meanwhile or any of those findings puts every moved entry back, and so does
 a cancellation or an error before those checks pass. An entry whose original
 name exists again is not put back over it; like one that cannot be put back,
-it moves to `.stim-not-restored-*` or stays in a `.stim-trimmed` marked
-`NOT-RESTORED`, for a person. A file is put back with `link` then `unlink`, which
+it moves to `.stim-not-restored-*` or stays in a `.stim-trimmed` whose
+`NOT-RESTORED` marker is emptied, for a person. A file is put back with `link` then `unlink`, which
 fails rather than replace a name a build recreated meanwhile. A directory is put
 back with `rename` after checking its name is free: `rename` fails onto a
 directory that is not empty, but replaces an empty one, so a directory a build
@@ -266,8 +267,26 @@ new path. A build that took a lock in
 between gets the directory back. A directory that cannot be put back is never
 deleted: it moves to `target/.stim-not-restored-*`, which later trims skip, for
 a person to merge or delete. If that move fails too, it stays in
-`.stim-trimmed` with a marker, and later trims of that `target/` stop until a
-person removes it.
+`.stim-trimmed` and its `NOT-RESTORED` marker is emptied, and later trims of
+that `target/` stop until a person removes it.
+
+The trim and the dormant delete write that marker, with content, before their
+first move, and remove it only when what they staged has passed its checks. A
+marker with content that a later trim or delete finds is from a run that did
+not finish, such as one whose process was killed. That run reads the processes
+once and probes the Cargo and Exact lock files of each staged entry at its
+staged path. When nothing uses or holds any of them, it removes the marker,
+deletes the staged entries and goes on. A process in use, a held lock, or a
+launcher or process evidence that cannot be read keeps the whole
+`.stim-trimmed`, and so does an empty marker or a `.stim-not-restored-*`
+entry, which record a put-back that failed; those stay for a person.
+
+Maintainer decision: "Ok 2", 2026-11-19
+[Pull request comment](https://github.com/appandflow/stim/pull/6013#issuecomment-7027224653),
+given in answer to how a leftover marker is handled. Option 2 was: a leftover
+marker means check before deleting rather than wait for a person; the next trim
+checks the staged folders' Cargo locks and processes, deletes them if nothing
+holds them, and keeps them if something does.
 
 A unit sweep takes exclusive, non-blocking locks on Exact's ledger lock and the
 profile's `.cargo-lock`, `.cargo-build-lock` and `.cargo-artifact-lock` before
@@ -321,9 +340,8 @@ be put back therefore stays marked for every later trim and delete, from any
 process. When the marker cannot be written even after the reserve is
 released, the trim moves nothing; the dormant delete removes a marker it could
 not finish writing with its empty `.stim-trimmed`, and the `target/` gets its
-modification time back, so nothing blocks the next run. A trim that stops
-with its marker in place, such as one whose process was killed, leaves the
-`target/` for a person, as an interrupted dormant delete does. The maintenance
+modification time back, so nothing blocks the next run. A marker a stopped
+run left is checked by the next run, as above. The maintenance
 pass writes the reserve back at its end when there is room.
 
 Reason: on 2026-11-19 at 23:01 UTC, with the maintainer's disk full, a rung 3

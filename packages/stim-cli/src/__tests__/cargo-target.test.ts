@@ -16,7 +16,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, onTestFinished, test, vi } from 'vitest';
 import { cargoTargetTrimClaims, maintenanceDir } from '@stim-cli/core/state';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import {
@@ -446,6 +446,19 @@ function fullOnce(at: 'mkdir' | 'writeFile' | 'rename' | 'claim', match = '', co
   };
 }
 
+async function freshTrim(lsof: (args: string[]) => string = () => '') {
+  vi.resetModules();
+  const exec = await import('../exec.ts');
+  const real = exec.getExecutor();
+  exec.setExecutor({
+    ...real,
+    runFileAsync: async (file, args, options) =>
+      file === 'lsof' ? lsof(args) : file === 'ps' ? '' : real.runFileAsync(file, args, options),
+  });
+  onTestFinished(() => exec.resetExecutor());
+  return (await import('../workspace/cargo-target.ts')).trimCargoTarget;
+}
+
 function makeIdleUnit(name: string): void {
   makeProfile(name, 0);
   const stamps: Record<string, number> = {};
@@ -535,30 +548,41 @@ describe('trimming on a full disk', () => {
         return { options: { units: 'all' as const }, staged: join('.stim-trimmed', 'units-0') };
       },
     ],
+  ])('when %s cannot be put back on a full disk, a trim from a fresh process keeps it', async (_, arrange) => {
+    fsHooks.rename = (from) => {
+      if (from.includes('.stim-trimmed')) throw diskFull();
+    };
+    const { options, staged } = arrange();
+
+    await trimCargoTarget(target, { launching: noLaunchers(target), needBytes: 0, ...options }).catch(() => null);
+    delete fsHooks.rename;
+    delete fsHooks.writeFile;
+    const fresh = await freshTrim();
+    const next = await fresh(target, { launching: noLaunchers(target), needBytes: 0, ...options });
+
+    expect(next.removed).toEqual([]);
+    expect(next.kept).toEqual([expect.stringContaining('could not be put back')]);
+    expect(existsSync(join(target, staged))).toBe(true);
+  });
+
+  test.each([
+    ['nothing holds it', '', true, ['debug'], []],
+    ['a build holds its staged .cargo-lock', '4242\n', false, [], ['a build holds']],
   ])(
-    'when %s cannot be put back or marked on a full disk, a trim from a fresh process keeps it',
-    async (_, arrange) => {
-      let movedIn = false;
-      fsHooks.rename = (from, to) => {
-        if (from.includes('.stim-trimmed')) throw diskFull();
-        if (to.includes('.stim-trimmed')) movedIn = true;
-      };
-      fsHooks.writeFile = (path) => {
-        if (movedIn && path.endsWith('NOT-RESTORED')) throw diskFull();
-      };
-      const { options, staged } = arrange();
+    'a killed trim left a marked staged profile and %s: a trim from a fresh process checks it',
+    async (_, holder, cleared, removed, kept) => {
+      makeProfile('debug', 3 * DAY);
+      makeProfile('host-dev', 3 * DAY);
+      mkdirSync(join(target, '.stim-trimmed'));
+      renameSync(join(target, 'host-dev'), join(target, '.stim-trimmed', '0'));
+      writeFileSync(join(target, '.stim-trimmed', 'NOT-RESTORED'), 'staged\n');
+      const fresh = await freshTrim((args) => (args.some((arg) => arg.includes('.stim-trimmed')) ? holder : ''));
 
-      await trimCargoTarget(target, { launching: noLaunchers(target), needBytes: 0, ...options }).catch(() => null);
-      delete fsHooks.rename;
-      delete fsHooks.writeFile;
-      stubProcesses({});
-      vi.resetModules();
-      const fresh = await import('../workspace/cargo-target.ts');
-      const next = await fresh.trimCargoTarget(target, { launching: noLaunchers(target), needBytes: 0, ...options });
+      const result = await fresh(target, { launching: noLaunchers(target), needBytes: 0 });
 
-      expect(next.removed).toEqual([]);
-      expect(next.kept).toEqual([expect.stringContaining('could not be put back')]);
-      expect(existsSync(join(target, staged))).toBe(true);
+      expect(existsSync(join(target, '.stim-trimmed', '0', 'deps', 'libx.rlib'))).toBe(!cleared);
+      expect(result.removed).toEqual(removed);
+      expect(result.kept).toEqual(kept.map((why) => expect.stringContaining(why)));
     },
   );
 
@@ -958,7 +982,7 @@ describe.skipIf(process.platform === 'win32')(
       expect(existsSync(join(dir, 'doc', 'index.html'))).toBe(true);
     });
 
-    test('a delete that stops after staging leaves a marker that later trims and deletes refuse', async () => {
+    test('a delete that stops after staging leaves a marker the next trim checks and clears', async () => {
       let reached!: () => void;
       const staged = new Promise<void>((resolve) => (reached = resolve));
       fsHooks.rename = (from) => {
@@ -972,14 +996,9 @@ describe.skipIf(process.platform === 'win32')(
       rmSync(cargoTargetTrimClaims(real), { recursive: true, force: true });
 
       const trim = await trimCargoTarget(dir, { launching: noLaunchers(target), needBytes: 0 });
-      const again = await remove();
 
-      expect(trim.kept).toEqual([expect.stringContaining('could not be put back')]);
-      expect(again).toMatchObject({ removed: [], kept: [expect.any(String)] });
-      expect(readFileSync(join(dir, '.stim-trimmed', '1', 'app'), 'utf8')).toBe('binary');
-      expect(JSON.parse(readFileSync(join(dir, '.stim-trimmed', 'NOT-RESTORED'), 'utf8'))).toMatchObject({
-        1: 'debug',
-      });
+      expect(trim.kept).toEqual([]);
+      expect(existsSync(join(dir, '.stim-trimmed'))).toBe(false);
       expect(existsSync(join(dir, 'doc', 'index.html'))).toBe(true);
     });
 
