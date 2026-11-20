@@ -73,14 +73,19 @@ export async function removableEntries(target: string): Promise<string[] | null>
   return output;
 }
 
-/** Whether the remover would leave everything at `path`: it holds nothing but lock files, keypairs and links. */
+/**
+ * Whether the remover would leave everything at `path`: it holds nothing but lock files, keypairs and links, and is not
+ * an empty directory, which the remover removes.
+ */
 async function leftAlone(path: string): Promise<boolean> {
   const stat = await lstat(path).catch(() => null);
   if (!stat) return true;
   if (!stat.isDirectory()) return kept(basename(path));
   if (basename(path) === EXACT_APPLE_LOCKS) return true;
-  for (const name of (await readdir(path).catch(() => null)) ?? [])
-    if (!(await leftAlone(join(path, name)))) return false;
+  const names = await readdir(path).catch(() => null);
+  if (!names) return true;
+  if (!names.length) return false;
+  for (const name of names) if (!(await leftAlone(join(path, name)))) return false;
   return true;
 }
 
@@ -746,7 +751,7 @@ function mountedUnder(target: string, mountInfo: (() => string) | null): string 
 // @ref LLP 0005#the-dormant-reduction-deletes-an-idle-target-whole -- in place under every profile's Cargo locks
 /**
  * Deletes everything in `target` the remover may delete, every top-level entry but a symbolic link and a `deploy` that
- * is or holds one (`targetEntries`), in place under all its Cargo locks, once it is still a Cargo `target/` Stim
+ * is or holds one, that holds anything the remover removes (`removableEntries`), in place under all its Cargo locks, once it is still a Cargo `target/` Stim
  * recognises, shows no use within `idleMs` (`recentTargetUse`), has no other filesystem mounted inside or a leftover of
  * an earlier engine's staging, no process uses any path in it and no build holds an Exact lock file in it. Lock files
  * and keypairs stay, and so does the `target/` while anything is left in it.
@@ -772,9 +777,8 @@ export async function deleteCargoTarget(
   if (blocked) return keep(blocked);
   if (await releaseReserveWhenFull(target)) result.reserveReleased = true;
   const { dev } = await lstat(target);
-  const entries = targetEntries(target);
-  if (!entries) return keep(`${target} cannot be listed`);
-  const names = entries.output;
+  const names = await removableEntries(target);
+  if (!names) return keep(`${target} cannot be listed`);
   if (!names.length) return result;
   const walked = await walkEntries(
     names.map((name) => join(target, name)),

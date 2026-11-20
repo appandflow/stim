@@ -574,6 +574,7 @@ describe.skipIf(process.platform === 'win32')('deleting an idle Cargo target who
 
     expect(result.removed.toSorted()).toEqual(['.rustc_info.json', 'debug', 'doc']);
     expect(await cargoTargetDirsAsync(target)).toEqual([dir]);
+    expect(await deleteCargoTarget(dir, { mountInfo: null })).toEqual({ bytes: 0, removed: [], kept: [] });
   });
 
   test('a keypair link a build publishes after the checks still keeps it whole', async () => {
