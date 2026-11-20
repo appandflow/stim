@@ -80,6 +80,29 @@ test('while host load defers the size scan, the cap still measures and plans an 
   expect(maintenanceStatus().deferred).toContainEqual({ check: 'size', since: expect.any(Number) });
 });
 
+test('while host load defers the size scan, the cap gives the disk owner a unit boundary before each target walk', async () => {
+  const other = join(base, 'other');
+  mkdirSync(join(other, 'target', 'debug', 'incremental'), { recursive: true });
+  writeFileSync(join(other, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+  writeFileSync(join(other, '.gitignore'), 'target/\n');
+  writeFileSync(join(other, 'target', 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55\n');
+  git(other, 'init', '-q', '-b', 'main');
+  git(other, 'add', '-A');
+  git(other, 'commit', '-q', '-m', 'init');
+  upsertProject(other, { metroPort: null });
+  const order: string[] = [];
+  const walk = fsUtil.measuredDirectorySizeAsync;
+  vi.spyOn(fsUtil, 'measuredDirectorySizeAsync').mockImplementation(async (dir, options) => {
+    order.push(dir.endsWith('target') ? 'walk' : 'other');
+    return walk(dir, options);
+  });
+
+  await runMaintenance('test', { between: async () => void order.push('boundary') });
+
+  const walks = order.flatMap((entry, at) => (entry === 'walk' ? [order[at - 1]] : []));
+  expect(walks).toEqual(['boundary', 'boundary']);
+});
+
 test('the cap writes its Cargo size over an older disk-usage record, keeping its other fields but the private sizes, and leaves a newer one', async () => {
   const record = (at: number) => ({
     path: target,

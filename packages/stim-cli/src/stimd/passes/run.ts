@@ -314,6 +314,7 @@ async function deferIfLoaded(
   ) => void,
   keepState: () => void,
   cap: { ran: boolean },
+  between?: () => Promise<void>,
 ): Promise<boolean> {
   if (!deferCheck(state, check, Date.now(), sizeScanDeferred(), recordedDiskLevel(state, operation?.env))) return false;
   record('maintenance_skip', 'debug', `${check} check deferred: host load exceeds 4 per core`, {
@@ -324,7 +325,7 @@ async function deferIfLoaded(
   keepState();
   if (check !== 'size') return true;
   try {
-    cap.ran = await measureCapOnly(state, Date.now(), operation);
+    cap.ran = await measureCapOnly(state, Date.now(), operation, between);
   } catch (error) {
     throwUnverifiedCleanup(error);
     operation?.signal.throwIfAborted();
@@ -345,10 +346,14 @@ async function measureCapOnly(
   state: MaintenanceState,
   now: number,
   operation: StimContext | undefined,
+  between: (() => Promise<void>) | undefined,
 ): Promise<boolean> {
   if (!capDue(state, now)) return false;
   state.capAt = now;
-  const cargo = await measureCargoTargets(now, operation, state.sizes, { lowPriority: true });
+  const cargo = await measureCargoTargets(now, operation, state.sizes, {
+    lowPriority: true,
+    ...(between ? { between } : {}),
+  });
   state.sizes = [...state.sizes.filter((size) => size.name !== 'Cargo target'), ...cargo];
   keepScannedSizes(cargo);
   return true;
@@ -503,7 +508,7 @@ export async function runMaintenance(
     const cap = { ran: false };
     for (const check of checks) {
       await unitBoundary(between);
-      if (check !== 'pressure' && (await deferIfLoaded(state, check, tick?.operation, record, keepState, cap)))
+      if (check !== 'pressure' && (await deferIfLoaded(state, check, tick?.operation, record, keepState, cap, between)))
         continue;
       state.lastAt[check] = Date.now();
       ran.add(check);

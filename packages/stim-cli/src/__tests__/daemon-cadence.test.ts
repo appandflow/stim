@@ -274,6 +274,24 @@ describe('the disk owner', () => {
     expect(order).toEqual(['pass', 'discovery scan']);
   });
 
+  test('a disk pass aborted while it waits for the turn stops before its first rung', async () => {
+    saveConfig({ version: 2, projects: {}, repos: {} });
+    const rungs = vi.spyOn(ladder, 'runLadder');
+    const controller = new AbortController();
+    await acquireDisk(LANE);
+    const asked = runDiskPass(
+      { act: true, pressure: critical('aborted'), devices: [], sims: [], requested: false },
+      () => {},
+      testContext({ signal: controller.signal }),
+    );
+    void asked.catch(() => {});
+    controller.abort();
+    releaseDisk();
+
+    await expect(asked).rejects.toThrow('aborted');
+    expect(rungs).not.toHaveBeenCalled();
+  });
+
   test('walks the lane runs side by side hand the turn over once, and each waits until the lane has it back', async () => {
     const order: string[] = [];
     await acquireDisk(LANE);
