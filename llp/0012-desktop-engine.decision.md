@@ -63,7 +63,8 @@ not waiting is admitted again at its next stimd step that takes the command's
 own admission (a lease, a log stream or a readiness check), with the same line;
 a Metro or tunnel request takes a request-scoped admission of its own and
 prints none. It does this once per operation, and the whole resume (every wait
-in it) takes at most 30 seconds. A cancelled operation stops resuming at once
+in it) takes at most 30 seconds, or as long as a service unit's job-restart
+record holds the home (LLP 0009, Service and engine updates). A cancelled operation stops resuming at once
 and is not admitted again. With no stimd admitting it again, or when the stimd
 that replaced the first one also goes away under the repeated step, the command
 fails with `STIM_DAEMON_UNAVAILABLE`, a message that says stimd stopped while
