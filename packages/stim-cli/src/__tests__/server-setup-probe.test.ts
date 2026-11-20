@@ -8,11 +8,10 @@ import { getExecutor, resetExecutor, setExecutor, type ExecOptions } from '../ex
 
 describe.skipIf(process.platform !== 'darwin')('doctor on a LaunchAgent that install wrote for the engine shim', () => {
   let home: string;
-  let servers = 0;
+  let labels: string[] = [];
   afterEach(() => {
     resetExecutor();
     vi.unstubAllEnvs();
-    vi.unstubAllGlobals();
     rmSync(home, { recursive: true, force: true });
   });
 
@@ -20,7 +19,7 @@ describe.skipIf(process.platform !== 'darwin')('doctor on a LaunchAgent that ins
   const readUnit = async (
     withHost: boolean,
     loaded: (node: string, script: string, args: string[]) => string[],
-    { binary = false, unmanaged = false, lastExit = '(never exited)', ps = '', ports = ['7787'] } = {},
+    { binary = false, unmanaged = false } = {},
   ) => {
     home = mkdtempSync(join(tmpdir(), 'stim-probe-'));
     vi.stubEnv('HOME', home);
@@ -63,29 +62,13 @@ describe.skipIf(process.platform !== 'darwin')('doctor on a LaunchAgent that ins
       runFileQuiet: (file: string, argv: string[], options: ExecOptions) => {
         if (file === 'plutil') return real.runFileQuiet(file, argv, options);
         if (file === 'launchctl' && argv[0] === 'print')
-          return `\tstate = running\n\tpid = 4242\n\truns = 2\n\tlast exit code = ${lastExit}\n\targuments = {\n${args.map((arg) => `\t\t${arg}\n`).join('')}\t}\n`;
-        if (file === 'ps') return `4242 1 ${args.join(' ')}\n4243 4242 stimd\n${ps}`;
+          return `\tstate = running\n\tpid = 4242\n\tlast exit code = (never exited)\n\targuments = {\n${args.map((arg) => `\t\t${arg}\n`).join('')}\t}\n`;
+        if (file === 'ps') return `4242 1 ${args.join(' ')}\n4243 4242 stimd\n`;
         return null;
       },
     });
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (url: string) => {
-        if (!ports.includes(new URL(url).port)) throw new Error('connection refused');
-        return new Response(
-          JSON.stringify({
-            server: 'stim-server',
-            version: '2.0.0',
-            stim: '2.0.0',
-            stimHome: join(home, 'state'),
-            startup: { state: 'ready' },
-          }),
-        );
-      }),
-    );
     const setup = await readServerSetup('2.0.0');
-    servers = setup?.servers.length ?? 0;
-    expect(setup?.services.map((service) => service.label)).toEqual(['dev.stim.server']);
+    labels = [...(setup?.services ?? []), ...(setup?.staleServices ?? [])].map((service) => service.label);
     return setup ? serverSetupFindings(setup) : [];
   };
 
@@ -105,29 +88,8 @@ describe.skipIf(process.platform !== 'darwin')('doctor on a LaunchAgent that ins
 
   it('keeps an unmanaged stim-server agent in doctor without the reinstall remedy', async () => {
     const findings = await readUnit(false, (node) => [node, 'other.mjs'], { unmanaged: true });
+    expect(labels).toEqual(['dev.stim.server']);
     expect(findings.map((finding) => finding.code)).not.toContain('server-service-stale');
-  });
-
-  it('reads the health of a running shim service, so an earlier nonzero exit is no crash finding', async () => {
-    const findings = await readUnit(false, (_node, _script, shimArgs) => shimArgs, { lastExit: '1' });
-    expect(findings.map((finding) => finding.code)).not.toContain('server-service-crash');
-  });
-
-  it('counts a stim serve attached to a running shim service once, with no server-multiple', async () => {
-    const attached = `5000 4000 ${process.execPath} /usr/local/lib/node_modules/stim/bin/stim.mjs serve --port 7787\n`;
-    const findings = await readUnit(false, (_node, _script, shimArgs) => shimArgs, { ps: attached });
-    expect(servers).toBe(1);
-    expect(findings.map((finding) => finding.code)).not.toContain('server-multiple');
-  });
-
-  it('still reports server-multiple for a second listener on another port that serves the same home', async () => {
-    const second = `5000 4000 ${process.execPath} /usr/local/lib/node_modules/stim/bin/stim.mjs serve --port 7790\n`;
-    const findings = await readUnit(false, (_node, _script, shimArgs) => shimArgs, {
-      ps: second,
-      ports: ['7787', '7790'],
-    });
-    expect(servers).toBe(2);
-    expect(findings.map((finding) => finding.code)).toContain('server-multiple');
   });
 
   it.each([

@@ -68,8 +68,13 @@ export interface InstalledServerService {
   job: LaunchdJob | UnitJob | null;
   /** The systemd drop-in that sets `ExecStart=`, which the unit's own command never runs under. */
   override?: string | undefined;
-  /** Why the LaunchAgent does not run what `stim service install` writes now (`staleLaunchAgent`). */
-  stale?: string | null;
+}
+
+/** A LaunchAgent `stim service install` wrote whose definition is not what install writes now (`staleLaunchAgent`). */
+export interface StaleService {
+  label: string;
+  installed: InstalledService;
+  reason: string;
 }
 
 export interface ServerReading extends ServerProcess {
@@ -90,6 +95,8 @@ export interface ServerSetup {
   version: string;
   build: string | null;
   services: InstalledServerService[];
+  /** Managed LaunchAgents with a stale definition; only the stale report reads them. */
+  staleServices: StaleService[];
   servers: ServerReading[];
   local: LocalServerReading | null;
   clients: { build: number; deviceHost: number };
@@ -303,24 +310,22 @@ function overrideFindings(service: InstalledServerService): Finding[] {
   ];
 }
 
-function staleFindings(service: InstalledServerService): Finding[] {
-  if (!service.stale) return [];
-  const fill = service.installed.env.length ? ', with each <value> set to what the service sets now' : '';
-  return [
-    {
+function staleFindings(setup: ServerSetup): Finding[] {
+  return setup.staleServices.map((service) => {
+    const fill = service.installed.env.length ? ', with each <value> set to what the service sets now' : '';
+    return {
       code: 'server-service-stale',
       level: 'note',
       title: `The ${service.label} service does not run what \`stim service install\` writes now`,
-      detail: `${service.stale[0]?.toUpperCase()}${service.stale.slice(1)}.`,
+      detail: `${service.reason[0]?.toUpperCase()}${service.reason.slice(1)}.`,
       fix: `Run \`${serviceInstallCommand(service.installed)}\` once when no build runs${fill}.`,
-    },
-  ];
+    };
+  });
 }
 
 function serviceStateFindings(setup: ServerSetup): Finding[] {
   return setup.services.flatMap((service): Finding[] => [
     ...overrideFindings(service),
-    ...staleFindings(service),
     ...crashFindings(setup, service),
   ]);
 }
@@ -487,6 +492,7 @@ export function serverSetupFindings(setup: ServerSetup): Finding[] {
   return [
     ...multipleFindings(setup),
     ...serviceStateFindings(setup),
+    ...staleFindings(setup),
     ...versionFindings(setup),
     ...homeFindings(setup),
     ...desktopAuthorityFindings(setup),

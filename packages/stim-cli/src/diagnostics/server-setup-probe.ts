@@ -40,7 +40,7 @@ import {
   parseProcessRows,
   parseServerProcesses,
   type InstalledServerService,
-  type ProcessRow,
+  type StaleService,
   type ServerHealthReading,
   type ServerReading,
   type NetworkReading,
@@ -82,14 +82,15 @@ function mentionsServer(file: string, marker = 'stim-server'): boolean {
   }
 }
 
-async function readLaunchdServices(): Promise<InstalledServerService[]> {
+/** The server services, as `isServerService` finds them, and the managed LaunchAgents whose definition is stale. */
+async function readLaunchdServices(): Promise<{ services: InstalledServerService[]; stale: StaleService[] }> {
   const dir = join(homedir(), 'Library', 'LaunchAgents');
   const files = existsSync(dir)
     ? readdirSync(dir).filter((name) => name.endsWith('.plist') && mentionsServer(join(dir, name), 'StimService'))
     : [];
   const exec = getExecutor();
-  const services = await Promise.all(
-    files.map(async (name): Promise<InstalledServerService | null> => {
+  const read = await Promise.all(
+    files.map(async (name): Promise<(InstalledServerService & { stale: string | null }) | null> => {
       const json = await exec.runFileQuietAsync('plutil', ['-convert', 'json', '-o', '-', join(dir, name)], {
         timeoutMs: PROBE_TIMEOUT_MS,
       });
@@ -116,7 +117,13 @@ async function readLaunchdServices(): Promise<InstalledServerService[]> {
       };
     }),
   );
-  return services.filter((service) => service !== null);
+  const found = read.filter((service) => service !== null);
+  return {
+    services: found
+      .filter(({ installed }) => isServerService(installed))
+      .map(({ stale: _stale, ...service }) => service),
+    stale: found.flatMap(({ label, installed, stale }) => (stale ? [{ label, installed, reason: stale }] : [])),
+  };
 }
 
 async function readSystemdServices(): Promise<InstalledServerService[]> {
@@ -153,43 +160,6 @@ async function readSystemdServices(): Promise<InstalledServerService[]> {
     }),
   );
   return services.filter((service) => service !== null);
-}
-
-/**
- * The running managed services that start the engine's `bin/stimd` shim, which `parseServerProcesses` cannot see: the
- * shim's process is titled `stimd`. Each is read at its installed port, under its launchd or systemd job's pid, unless a
- * scanned server already listens there, such as a `stim serve` attached to it.
- */
-function shimServers(
-  services: readonly InstalledServerService[],
-  found: readonly ReturnType<typeof classifyServers>[number][],
-  rows: readonly ProcessRow[],
-): ReturnType<typeof classifyServers> {
-  return services.flatMap((service) => {
-    const { installed, job } = service;
-    const pid = job?.pid;
-    if (!installed.managed || !installed.script?.endsWith('/bin/stimd') || pid == null || installed.port === null)
-      return [];
-    if (
-      found.some(
-        (server) => server.port === installed.port || (server.kind === 'service' && server.label === service.label),
-      )
-    )
-      return [];
-    const row = rows.find((each) => each.pid === pid);
-    return [
-      {
-        pid,
-        ppid: row?.ppid ?? 1,
-        command: row?.command ?? installed.script,
-        script: installed.script,
-        port: installed.port,
-        share: false,
-        kind: 'service' as const,
-        label: service.label,
-      },
-    ];
-  });
 }
 
 async function readHealth(port: number): Promise<ServerHealthReading | null> {
@@ -373,11 +343,11 @@ export async function readServerSetup(
   });
   const rows = parseProcessRows(ps ?? '');
   const processes = parseServerProcesses(ps ?? '');
-  const services = platform === 'darwin' ? await readLaunchdServices() : await readSystemdServices();
+  const { services, stale } =
+    platform === 'darwin' ? await readLaunchdServices() : { services: await readSystemdServices(), stale: [] };
   const socket = existsSync(cliSocket());
-  if (processes.length === 0 && services.length === 0 && !socket) return null;
-  const found = classifyServers(processes, rows, services);
-  const classified = [...found, ...shimServers(services, found, rows)];
+  if (processes.length === 0 && services.length === 0 && stale.length === 0 && !socket) return null;
+  const classified = classifyServers(processes, rows, services);
   const [servers, local, network, permissions, linger] = await Promise.all([
     Promise.all(
       classified.map(async (server): Promise<ServerReading> =>
@@ -395,6 +365,7 @@ export async function readServerSetup(
     version,
     build: stimBuildDigest(dirname(fileURLToPath(import.meta.url))),
     services,
+    staleServices: stale,
     servers,
     local,
     clients: readServerClientCounts(),

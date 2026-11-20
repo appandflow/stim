@@ -260,15 +260,19 @@ describe('serverSetupFindings', () => {
     });
 
     it('tells a stale LaunchAgent to install once with its own options', () => {
-      const stale = service({ stale: 'its plist sets ProcessType Background' });
-      stale.installed = { ...stale.installed, env: ['TOKEN=secret'], pathPrepend: ['/opt/jdk bin'] };
-      const [finding] = serverSetupFindings(setup({ services: [stale] }));
+      const { label, installed } = service();
+      const stale = {
+        label,
+        installed: { ...installed, env: ['TOKEN=secret'], pathPrepend: ['/opt/jdk bin'] },
+        reason: 'its plist sets ProcessType Standard',
+      };
+      const [finding] = serverSetupFindings(setup({ staleServices: [stale] }));
       expect(finding).toMatchObject({ code: 'server-service-stale', level: 'note' });
       expect(finding?.fix).toContain(
         "STIM_HOME=/Users/me/.stim stim service install --port 7788 --path-prepend '/opt/jdk bin' --env TOKEN=<value>",
       );
       expect(finding?.fix).not.toContain('secret');
-      expect(serverSetupFindings(setup({ services: [service({ stale: null })] }))).toEqual([]);
+      expect(serverSetupFindings(setup())).toEqual([]);
     });
 
     it('keeps the crash finding next to the drop-in note, and says nothing for a unit already on the shim', () => {
