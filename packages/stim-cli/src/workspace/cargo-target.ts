@@ -12,6 +12,9 @@ import { cargoTargetDirsAsync } from './regenerable-dirs.ts';
 import { cargoUnitPaths, cargoUnitWasRead, idleCargoUnits, readCargoUnits, removalOrder } from './cargo-units.ts';
 
 const CARGO_PROFILE_IDLE_MS: number = 24 * 3_600_000;
+
+/** Why a staging write found the disk full and the checks made after releasing the reserve keep the entry. */
+class KeptAfterRelease extends Error {}
 const ASIDE = '.stim-trimmed';
 const PROFILE_PARTS = ['.fingerprint', 'deps', 'build', 'incremental'];
 /** The files Cargo itself writes in a target triple directory; any other entry there belongs to something else. */
@@ -456,7 +459,9 @@ async function withTrimClaim<T>(
           label: 'Cargo target trim',
           details: { target },
         }),
-      () => (released = true),
+      () => {
+        released = true;
+      },
     );
     if (attempt.pending) releaseClaim(attempt.pending);
     claim = attempt.acquired;
@@ -647,7 +652,7 @@ async function deleteClaimed(
     const stranded: string[] = [];
     let marked = false;
     for (let entry = moved.pop(); entry !== undefined; entry = moved.pop()) {
-      const back = await restoreOrStrand(target, entry.there, entry.dir, moved.length);
+      const back = await restoreOrStrand(target, entry.there, entry.dir, moved.length, released);
       marked ||= back.marked;
       if (back.home !== entry.dir) stranded.push(back.home);
     }
@@ -661,12 +666,17 @@ async function deleteClaimed(
     }
     return { ...result, bytes: 0, kept: [...result.kept, `${why}${left}`] };
   };
-  const released = () => (result.reserveReleased = true);
-  if (!(await sameTarget())) return keep(replaced);
+  const released = (): void => {
+    result.reserveReleased = true;
+  };
   try {
     // @ref LLP 0005#a-full-disk-releases-the-reserve -- staging retries once after the reserve is released
-    await retryWithReserve(() => mkdir(aside), released);
+    await retryWithReserve(async () => {
+      if (!(await sameTarget())) throw new KeptAfterRelease(replaced);
+      await mkdir(aside);
+    }, released);
   } catch (error) {
+    if (error instanceof KeptAfterRelease) return keep(error.message);
     return keep(`${aside} cannot be made: ${error instanceof Error ? error.message : error}`);
   }
   // @ref LLP 0005#never-delete-what-a-build-took-back -- staged entries carry the NOT-RESTORED marker until the checks pass
@@ -859,6 +869,7 @@ async function restoreOrStrand(
   there: string,
   dir: string,
   n: number,
+  released: () => void,
 ): Promise<{ home: string; marked: boolean }> {
   try {
     const staged = lstatSync(there);
@@ -879,15 +890,11 @@ async function restoreOrStrand(
     await rename(there, stranded);
     return { home: stranded, marked: false };
   } catch {}
-  const aside = join(target, ASIDE);
-  try {
-    await writeFile(join(aside, STRANDED), '', { flag: 'a' });
-  } catch (error) {
+  const failed = await markStranded(target, released);
+  if (failed)
     throw new Error(
-      `${there} could not be put back and ${aside} could not be marked for a person: ${error instanceof Error ? error.message : error}`,
-      { cause: error },
+      `${there} could not be put back and ${join(target, ASIDE)} could not be marked for a person: ${failed}`,
     );
-  }
   return { home: there, marked: true };
 }
 
@@ -911,12 +918,41 @@ interface CargoTrimOptions {
   launching: Launching;
 }
 
+/**
+ * The targets whose `.stim-trimmed` holds a directory that could not be put back and whose NOT-RESTORED marker could
+ * not be written either, with why; this process refuses them until a person removes that `.stim-trimmed`.
+ */
+const unmarkedStaging = new Map<string, string>();
+
 /** Why no trim of `target` runs until a person acts: its `.stim-trimmed` holds a directory that could not be put back. */
 function strandedReason(target: string): string | null {
   const aside = join(target, ASIDE);
-  return existsSync(join(aside, STRANDED))
-    ? `${aside} holds a directory that could not be put back; a person must merge or delete it`
-    : null;
+  if (existsSync(join(aside, STRANDED)))
+    return `${aside} holds a directory that could not be put back; a person must merge or delete it`;
+  const unmarked = unmarkedStaging.get(target);
+  if (unmarked && existsSync(aside)) return unmarked;
+  unmarkedStaging.delete(target);
+  return null;
+}
+
+/**
+ * Writes the NOT-RESTORED marker of `target`'s `.stim-trimmed`, retried once after the disk reserve is released. When
+ * it still fails, `unmarkedStaging` keeps `target` from trims and deletes in this process, and the error is returned.
+ */
+async function markStranded(target: string, released: () => void): Promise<string | null> {
+  const aside = join(target, ASIDE);
+  try {
+    // @ref LLP 0005#a-full-disk-releases-the-reserve -- the recovery marker retries too, and a failed one is remembered
+    await retryWithReserve(() => writeFile(join(aside, STRANDED), '', { flag: 'a' }), released);
+    return null;
+  } catch (error) {
+    const why = error instanceof Error ? error.message : String(error);
+    unmarkedStaging.set(
+      target,
+      `${aside} holds a directory that could not be put back, and its ${STRANDED} marker could not be written (${why}); a person must merge or delete it`,
+    );
+    return why;
+  }
 }
 
 /** Why `target` must not be deleted whole: it holds a directory a trim could not put back. */
@@ -968,7 +1004,9 @@ async function trimClaimed(
   const stale = staleCargoTargetPaths(target, now, profileIdleMs);
   if ('refusal' in stale) return { ...result, kept: [stale.refusal] };
   let moved = 0;
-  const released = () => (result.reserveReleased = true);
+  const released = (): void => {
+    result.reserveReleased = true;
+  };
   const profilesAt = async (dir: string) => (fingerprintDir(dir) ? [dir] : await childProfiles(dir));
   const move = async (
     dir: string,
@@ -993,13 +1031,34 @@ async function trimClaimed(
         return false;
       }
     }
-    // @ref LLP 0005#a-full-disk-releases-the-reserve -- staging retries once after the reserve is released
-    await retryWithReserve(() => mkdir(aside, { recursive: true }), released);
+    const recheck = async (): Promise<void> => {
+      released();
+      const fresh = await readTargetUse(target, launching, signal, lowPriority);
+      if ('kept' in fresh) throw new KeptAfterRelease(fresh.kept);
+      used = fresh.used;
+      if (inUse(used, dir)) throw new KeptAfterRelease('a process uses it');
+      for (const profile of profiles) {
+        const held = await lockOutcome(profile, signal, lowPriority);
+        if (lockHeld(held)) throw new KeptAfterRelease(`a build holds its ${held.file ?? '.cargo-lock'}`);
+      }
+    };
+    try {
+      // @ref LLP 0005#a-full-disk-releases-the-reserve -- the checks run again before the retry
+      await retryWithReserve(() => mkdir(aside, { recursive: true }), recheck);
+    } catch (error) {
+      if (!(error instanceof KeptAfterRelease)) throw error;
+      result.kept.push(`${label}: ${error.message}`);
+      return false;
+    }
     const there = join(aside, String(moved++));
     try {
-      await retryWithReserve(() => rename(dir, there), released);
+      await retryWithReserve(() => rename(dir, there), recheck);
     } catch (error) {
-      result.kept.push(`${label}: it could not be moved aside: ${error instanceof Error ? error.message : error}`);
+      result.kept.push(
+        error instanceof KeptAfterRelease
+          ? `${label}: ${error.message}`
+          : `${label}: it could not be moved aside: ${error instanceof Error ? error.message : error}`,
+      );
       return false;
     }
     for (const profile of await locks(there)) {
@@ -1007,7 +1066,7 @@ async function trimClaimed(
       const lockName = after.file ?? '.cargo-lock';
       if (!renameStands(after)) {
         // @ref LLP 0005#never-delete-what-a-build-took-back -- a build locked it during the move
-        const back = await restoreOrStrand(target, there, dir, moved);
+        const back = await restoreOrStrand(target, there, dir, moved, released);
         keepAside ||= back.marked;
         result.kept.push(
           back.home === dir
@@ -1091,8 +1150,8 @@ async function trimClaimed(
         await rename(there, home);
       } catch {
         keepAside = true;
-        await writeFile(join(aside, STRANDED), '').catch(() => {});
-        return `${path} is missing and could not be put back; it stays in ${batch} for a person to merge or delete`;
+        const failed = await markStranded(target, released);
+        return `${path} is missing and could not be put back; it stays in ${batch} for a person to merge or delete${failed ? `, and its marker could not be written (${failed}), so this process keeps the target from trims until then` : ''}`;
       }
     }
     return null;

@@ -41,15 +41,16 @@ export function diskFull(error: unknown): boolean {
 }
 
 /**
- * Runs `write`; when it fails with ENOSPC or EDQUOT and this call releases the maintenance disk reserve, calls
- * `released` and runs `write` once more. Any other failure, or a second one, is thrown.
+ * Runs `write`; when it fails with ENOSPC or EDQUOT and this call releases the maintenance disk reserve, awaits
+ * `released` and runs `write` once more. A throw from `released` ends the retry with that error. Any other failure,
+ * or a second one, is thrown.
  */
-export async function retryWithReserve<T>(write: () => Promise<T>, released: () => void): Promise<T> {
+export async function retryWithReserve<T>(write: () => Promise<T>, released: () => void | Promise<void>): Promise<T> {
   try {
     return await write();
   } catch (error) {
     if (!diskFull(error) || !releaseReserve()) throw error;
-    released();
+    await released();
     return await write();
   }
 }

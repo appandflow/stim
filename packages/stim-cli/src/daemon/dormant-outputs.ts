@@ -156,7 +156,9 @@ async function reduceWorkspace(
       // @ref LLP 0005#a-full-disk-releases-the-reserve -- the workspace claims are writes too
       outcome = await retryWithReserve(
         () => removeOutput(path, checkout, output, plan.targets.has(output), afterMs, operation),
-        () => (released = true),
+        () => {
+          released = true;
+        },
       );
     } catch (error) {
       failed(output, error);

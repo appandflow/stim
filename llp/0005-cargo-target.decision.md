@@ -302,12 +302,21 @@ marker. When one of those writes fails with `ENOSPC`, or `EDQUOT` over a
 quota, Stim deletes its 1 MiB maintenance disk reserve
 (`$STIM_HOME/maintenance/disk-reserve`, the file the maintenance pass and an
 acting `stim gc` already keep) and tries that write once more. The retry runs
-the same staged path with every check above unchanged; for the workspace
-claims it runs the whole removal of that output again. A run that released
+the same staged path with every check above unchanged. Before the trim retries
+its staging directory or a move, it reads the processes, the launchers and the
+profile's lock files again; the dormant delete checks that the `target/` is
+still the same directory before each try. For the workspace claims the whole
+removal of that output runs again. A run that released
 the reserve says so in its outcome. When the write fails again, or there was
 no reserve to release, the `target/` is kept as before. A marker that cannot
 be written is removed with its empty `.stim-trimmed`, and the `target/`
 gets its modification time back, so nothing blocks the next run. The
+`NOT-RESTORED` marker that protects a directory that could not be put back,
+from a profile, entry or unit batch, retries the same way. When it still
+cannot be written, the process that staged it refuses every later trim and
+delete of that `target/` while its `.stim-trimmed` exists, and says why; a
+restarted process no longer knows, which is the one case a full disk leaves
+open. The
 maintenance pass writes the reserve back at its end when there is room.
 
 Reason: on 2026-11-19 at 23:01 UTC, with the maintainer's disk full, a rung 3

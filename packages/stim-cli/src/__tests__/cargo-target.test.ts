@@ -476,6 +476,83 @@ describe('trimming on a full disk', () => {
     expect(existsSync(join(target, '.stim-trimmed'))).toBe(false);
   });
 
+  test('a process that starts using the profile while the reserve is released keeps it in place', async () => {
+    makeProfile('debug', 3 * DAY);
+    const real = realpathSync.native(target);
+    let started = false;
+    stubProcesses({ lsof: (args) => (args.includes('-Fn') && started ? `p100\nn${real}/debug/tool\n` : '') });
+    fsHooks.rename = (_, to) => {
+      if (started || !to.includes('.stim-trimmed')) return;
+      started = true;
+      throw diskFull('EDQUOT');
+    };
+
+    const result = await trimCargoTarget(target, { launching: noLaunchers(target), needBytes: 0 });
+
+    expect(result).toMatchObject({ removed: [], kept: ['debug: a process uses it'], reserveReleased: true });
+    expect(existsSync(join(target, 'debug', 'deps', 'libx.rlib'))).toBe(true);
+  });
+
+  test.each([
+    [
+      'a profile a build took back',
+      () => {
+        makeProfile('debug', 3 * DAY);
+        stubProcesses({ lsof: (args) => (args.some((arg) => arg.includes('.stim-trimmed')) ? '4242\n' : '') });
+        return { options: {}, staged: join('.stim-trimmed', '0', 'deps', 'libx.rlib') };
+      },
+    ],
+    [
+      'a unit batch whose move failed',
+      () => {
+        makeProfile('debug', 0);
+        const profileDir = join(target, 'debug');
+        const stamps: Record<string, number> = {};
+        for (const [n, ageMs] of [
+          [1, 5 * DAY],
+          [2, 3 * DAY],
+        ] as const) {
+          const hash = n.toString(16).padStart(16, '0');
+          const fp = join(profileDir, '.fingerprint', `serde-${hash}`);
+          mkdirSync(fp, { recursive: true });
+          writeFileSync(join(fp, 'invoked.timestamp'), '');
+          utimesSync(join(fp, 'invoked.timestamp'), new Date(86_400_000), new Date(86_400_000));
+          for (const name of [`libserde-${hash}.rlib`, `serde-${hash}.d`, `libserde-${hash}.rmeta`])
+            writeFileSync(join(profileDir, 'deps', name), 'x');
+          stamps[`debug#${hash}`] = Date.now() - ageMs;
+        }
+        writeFileSync(join(target, '.exact-sweep.json'), JSON.stringify({ at: Date.now(), units: stamps }));
+        stubProcesses({});
+        let moves = 0;
+        const fail = fsHooks.rename;
+        fsHooks.rename = async (from, to) => {
+          await fail?.(from, to);
+          if (to.includes('units-') && ++moves === 2) throw Object.assign(new Error('EACCES'), { code: 'EACCES' });
+        };
+        return { options: { units: 'all' as const }, staged: join('.stim-trimmed', 'units-0') };
+      },
+    ],
+  ])('when %s cannot be put back or marked, the next trim keeps it', async (_, arrange) => {
+    fsHooks.rename = (from) => {
+      if (from.includes('.stim-trimmed')) throw diskFull();
+    };
+    fsHooks.writeFile = (path) => {
+      if (path.endsWith('NOT-RESTORED')) throw diskFull();
+    };
+    const { options, staged } = arrange();
+    const trim = () => trimCargoTarget(target, { launching: noLaunchers(target), needBytes: 0, ...options });
+
+    await trim().catch(() => null);
+    delete fsHooks.rename;
+    delete fsHooks.writeFile;
+    stubProcesses({});
+    const next = await trim();
+
+    expect(next.removed).toEqual([]);
+    expect(next.kept).toEqual([expect.stringContaining('marker could not be written')]);
+    expect(existsSync(join(target, staged))).toBe(true);
+  });
+
   test('without a reserve to release, a full disk keeps the profile', async () => {
     stubProcesses({});
     makeProfile('debug', 3 * DAY);
@@ -552,6 +629,24 @@ describe.skipIf(process.platform === 'win32')(
         expect(result.removed.toSorted()).toEqual(['.rustc_info.json', 'debug', 'doc']);
         expect(existsSync(reserveFile())).toBe(false);
         expect(existsSync(dir)).toBe(false);
+      });
+
+      test('a target swapped after the staging directory hit a full disk gets no staging directory or marker', async () => {
+        const moved = `${dir}-moved`;
+        let full = true;
+        fsHooks.mkdir = (path) => {
+          if (!full || !path.endsWith('.stim-trimmed')) return;
+          full = false;
+          renameSync(dir, moved);
+          mkdirSync(dir);
+          throw diskFull();
+        };
+
+        const result = await remove();
+
+        expect(result.kept).toEqual([expect.stringContaining('was replaced during the delete')]);
+        expect(readdirSync(dir)).toEqual([]);
+        expect(readdirSync(moved).toSorted()).toEqual(['.rustc_info.json', 'debug', 'doc']);
       });
 
       test('a marker that still cannot be written keeps everything and leaves nothing that blocks the next run', async () => {
