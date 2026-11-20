@@ -1547,7 +1547,8 @@ onto this Stim stays on its build until \`stim service install\` or a restart
 of the service. The engine switch then works: \`stim engine update\` there moves it
 to the newest release on the engine's channel and \`stim engine rollback\`
 back to the previous build, each switching once running builds and hosted
-native steps have drained. A client machine approved for builds or device
+native steps have drained; a shim service's job restarts stimd on the new
+build (systemd after 30 s). A client machine approved for builds or device
 hosting there can ask for an update over its tailnet connection
 (\`stim remote update <mac>\`): an npm release always, and its own packed
 build only while \`server.acceptClientBuilds\` is true on that machine

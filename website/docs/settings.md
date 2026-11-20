@@ -727,7 +727,11 @@ stim engine rollback        # back to the previous build, pinned until stim engi
 
 The engine fetches a release from the public npm registry, runs its self-test,
 and switches once running builds and hosted native steps have drained; the
-service's stimd restarts on the new build. It never changes pairings,
+service's stimd exits and the service starts it again on the new build, inside
+the service's job (on Linux after systemd's 30 s restart delay). The first switch
+onto a Stim with this behavior is still made by the older build, so it can leave
+one stimd outside the job until the next switch. A Linux service installed by an
+earlier Stim keeps the older handover until you run `stim service install` again. It never changes pairings,
 approvals, Stim Host, the pinned `--env` and `--path-prepend` values or the
 serve route. A client approved for builds or device hosting can ask for the
 same update from its machine with `stim remote update <mac>`. A build whose
