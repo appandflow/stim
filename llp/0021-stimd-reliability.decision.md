@@ -252,81 +252,31 @@ shim; one already on the shim keeps `Standard` until `stim service install`
 runs again, and launchd reads a plist only at bootstrap, so after a reboot or a
 login such a unit starts stimd at 20 again.
 
-Maintenance work runs its child tools at low priority by default. Maintenance
-work is the daemon's slow passes lane (the fingerprint precompute and queued
-verification, the dormant stage's dependency step and the maintenance pass),
-the measure thread, and the tick's idle and dormant stages. A child that
-`runFileAsync` starts inside it, at any depth, runs at low priority while the
-pressure level is normal: on macOS under `taskpolicy -c utility`
-(taskpolicy(8)), a QoS clamp on CPU and I/O that its descendants inherit,
-priority 20, the class stimd had before; on Linux under `nice -n 19`; on
-Windows at below-normal priority, set on the child after it starts. On macOS
-`nice -n 19` lowers only CPU and leaves the child at 31. The level is the one
-the ladder uses: the level the work started at, or for the measure thread the
-one in the home's daemon snapshot. At high or critical pressure the same
-children run at full priority, since freeing disk or memory is then the urgent
-work.
-
-Inside maintenance work, a stop, a device teardown and work that holds a lock a
-command waits on keep full priority. Everything that runs while a workspace's
-`native-run` lock is held through `withIdleWorkspace`, its in-use check
-included, runs as control path. That covers the idle stage, the output
-clearing of stopped workspaces (`clearStoppedOutputs`), the dormant output
-removal, the dormant stage and `reclaimProject`; the first three also hold
-`metro-start`. Size walks a pass runs
-before it takes the lock stay lowered, except while a boot waits. While a boot waits in the queue, the
-tick's passes run as control path, since the reclaim that frees a device for it
-runs after them. The fingerprint precompute and the queued fingerprint
-verification hold `native-run` while they run lowered; this is accepted, since
-they ran at nice 10 before.
-The exported teardowns of `devices/teardown.ts`, which every shutdown, delete
-and park goes through, run as control path wherever they are called from, and
-so do the maintenance actions that stop a workspace, Gradle or watchman or delete a device,
-a hosted device or a runtime. `adb` is never lowered, because a client that
-finds no server starts the shared adb server, which would keep the client's
-priority for every later install.
-
-Every lowered child gets an empty `core.fsmonitor` in its environment, appended through
-`GIT_CONFIG_COUNT` after any configuration the caller set, so every git that
-inherits that environment sees it: with `core.fsmonitor` set, the git command
-that finds no daemon starts the worktree's fsmonitor daemon, which would keep
-the lowered priority for every later git call there. git 2.31 and later read
-`GIT_CONFIG_COUNT`; older git ignores it. An inherited `GIT_CONFIG_PARAMETERS`
-takes precedence over it. The value is empty because git before 2.36 reads
-`core.fsmonitor` as a hook path, where `false` would run as a hook; from 2.31 on
-an empty value means off. Two gaps are
-left for #6018: a git the fingerprint evaluator starts with an environment it
-rebuilds, and a lazy fetch in a partial clone, which runs lowered.
-
-The scheduled `git fetch` of the maintenance worktree check runs as control
-path: a fetch can start an ssh `ControlPersist` master or a credential
-cache daemon that later pushes and pulls go through. Fingerprint children no
-longer run at nice 10: a fingerprint a build reads runs at the caller's
-priority, and the precompute and queued verification follow the maintenance
-rule.
-Commands keep the caller's priority, `stim gc` included; a call that passes
-`lowPriority`, such as a size walk under a walk claim, is lowered there too.
-Control path wins over both: inside it neither `lowPriority` nor nested
-maintenance work lowers a child.
-Only `runFileAsync` applies the rule; a child started with `spawn` or the
-synchronous runners keeps the caller's priority.
-
-stimd's own job stays `Interactive` at every level: launchd sets a job's class
-from its plist when it bootstraps the job, so a level stimd reads later cannot
-change it. A snapshot that a stopped stimd left at high or critical keeps the
-measure thread's children at full priority until a stimd ticks again. Worker
-threads cannot lower themselves: Node's `os.setPriority` acts on a whole
-process, so the rule goes on the child tools.
+Maintenance children keep the priority they had: they run at stimd's priority,
+now 31, except the size walks that already ran under `nice -n 19` and the
+fingerprint children at nice 10. On macOS `nice` lowers only CPU, not I/O. A
+QoS clamp that lowered every maintenance child at normal pressure was built for
+this change and dropped before 2.0 (#6025). It had to exempt every child that
+holds a lock a command waits on, and every child that may start a long-lived
+shared process, such as git's fsmonitor daemon, an ssh `ControlPersist` master
+or the adb server, which keeps the clamp for later foreground work. That list
+cannot be completed from inside Stim. After 2.0, in this order: run less
+maintenance (pace the ladder on bytes freed, never run the maintenance lane
+beside it); measure a foreground build with the lane running; and only if that
+shows a cost, do not start maintenance at normal pressure while foreground work
+runs, never holding it back at high or critical pressure.
 
 Maintainer decision: "yea stim itself is fine at interactive I am good with", 2026-11-19.
 [Decision on #5925](https://github.com/appandflow/stim/issues/5925#issuecomment-7023460880).
 
-Maintainer decision: "Can priority be based on disk / ram load, so if high/critical it becomes very important", 2026-11-19.
-[Decision on #5925](https://github.com/appandflow/stim/issues/5925#issuecomment-7023456720).
+The request "Can priority be based on disk / ram load, so if high/critical it
+becomes very important" (2026-11-19,
+[#5925](https://github.com/appandflow/stim/issues/5925#issuecomment-7023456720))
+is met at high and critical pressure, where maintenance runs at 31, and deferred
+at normal pressure by #6025.
 
-The implementing lane and its coordinating session chose `taskpolicy -c
-utility` as the low priority, the maintenance scope as the default, and the
-control-path exceptions.
+Maintainer decision: "I agree lets do this and ur recommendations from prev messages, also lets do the changes now that u flagged as after 2.0 id rather delay than ship what we have", 2026-11-20.
+[Decision on #6025](https://github.com/appandflow/stim/issues/6025).
 
 ## Collect diagnostics with the existing reports
 
