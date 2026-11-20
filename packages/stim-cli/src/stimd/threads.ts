@@ -64,7 +64,7 @@ export interface ThreadTable {
   /** Waits for every running job, then ends every thread. */
   close(): Promise<void>;
   /** The dormant step's hourly clock and turn, shared with the passes thread. */
-  dormant?: { cadence: BigInt64Array; gate: Int32Array };
+  dormant?: { cadence: BigInt64Array; gate: BigInt64Array };
 }
 
 /**
@@ -250,7 +250,7 @@ if (thread === 'logs') await import('./logs/writer-thread.ts');
 else if (thread && parentPort) {
   const port = parentPort;
   const dependencyCadence: BigInt64Array | undefined = workerData.dependencyCadence;
-  const dormantGate: Int32Array | undefined = workerData.dormantGate;
+  const dormantGate: BigInt64Array | undefined = workerData.dormantGate;
   const log: Log = (level, event, msg, fields = {}) => port.postMessage({ type: 'log', level, event, msg, fields });
   setReportChildLog(log);
   const { processContext } = await import('../cli-operation.ts');

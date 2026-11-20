@@ -131,7 +131,7 @@ test('a passes worker that exits inside the dormant step gives the turn back', a
 import { parentPort, workerData } from 'node:worker_threads';
 parentPort.on('message', (message) => {
   if (message.type !== 'run') return;
-  Atomics.compareExchange(workerData.dormantGate, 0, 0, 2);
+  Atomics.compareExchange(workerData.dormantGate, 0, 0n, 2n);
   process.exit(1);
 });
 `,

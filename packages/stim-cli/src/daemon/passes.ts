@@ -33,9 +33,9 @@ import {
   admitStep,
   createDormantGate,
   holdLadder,
-  noteDiskLevel,
   releaseLadder,
   releaseStep,
+  stepHeldMs,
   takeLadder,
 } from './dormant-gate.ts';
 
@@ -45,20 +45,39 @@ const LADDER_PACE_DISK_DROP_MB = 1024;
 const LADDER_PACE_SHORT_DROP_MB = 256;
 const LADDER_CRITICAL_WAIT_MS = 60_000;
 const RANK: Record<PressureLevel, number> = { normal: 0, high: 1, critical: 2 };
+/** How long the lane's dormant step may keep a ladder pass for disk waiting. */
+const DORMANT_STEP_LIMIT_MS = 10 * 60_000;
+
 /** What a stimd tick shares with its maintenance lane so the dormant step never runs beside a disk ladder pass. */
 interface DormantTurn {
-  gate: Int32Array;
+  gate: BigInt64Array;
   cadence: BigInt64Array;
   /** Stops the lane's running job and resolves once it has settled. */
   yieldLane: () => Promise<void>;
 }
 
-/** Takes the gate for a disk ladder pass, stopping a dormant step the lane runs and giving its hour back. */
-async function holdForLadder({ gate, cadence, yieldLane }: DormantTurn): Promise<void> {
-  if (holdLadder(gate)) return;
+/**
+ * Takes the turn for a ladder pass's disk rungs. While the lane's dormant step holds it the pass leaves its disk rungs
+ * out, unless a command at the hard floor asked for the tick, which stops the step and gives its hour back, or the step
+ * has held the turn DORMANT_STEP_LIMIT_MS, which stops it at its next check and leaves it to its next hour.
+ */
+async function holdForLadder(
+  { gate, cadence, yieldLane }: DormantTurn,
+  requested: boolean,
+  log: IdlePassInput['log'],
+): Promise<boolean> {
+  if (holdLadder(gate)) return true;
+  const heldMs = stepHeldMs(gate);
+  if (!requested && heldMs < DORMANT_STEP_LIMIT_MS) {
+    log('debug', 'pressure_ladder_deferred', 'the dormant step holds the turn; the disk rungs wait for it', {
+      heldMs,
+    });
+    return false;
+  }
   await yieldLane();
-  Atomics.store(cadence, 0, 0n);
+  if (requested) Atomics.store(cadence, 0, 0n);
   takeLadder(gate);
+  return true;
 }
 
 interface HomePassPhases {
@@ -66,8 +85,6 @@ interface HomePassPhases {
   idleMs: number;
   dormantMs: number;
   ladderMs: number;
-  /** The dormant step run in the tick after a disk ladder pass; 0 when it did not run. */
-  dormantStepMs: number;
 }
 
 /**
@@ -127,8 +144,8 @@ function ladderDue(last: LadderPass, pressure: DaemonPressure, volumes: LadderPa
  * four times that pass's duration, at most 15 minutes or, while the level is critical, one minute, before it runs again,
  * unless the disk or memory level rose, a measured volume is new, reached a higher level or lost free space since that
  * pass (256 MB on a volume under pressure, 1 GB on any other), or `requested` says a command asked for this tick.
- * With `dormant`, a disk ladder pass holds the dormant step's turn, and while the disk stays above normal after it the
- * dormant step runs here, after the pass, unless a command asked for this tick.
+ * With `dormant`, a ladder pass takes the turn before its first disk rung, and leaves its disk rungs out while the
+ * maintenance lane's dormant step holds it (`holdForLadder`).
  */
 export async function runHomePasses(input: HomePassesInput): Promise<HomePasses> {
   const operation = processContext(process.cwd(), input.signal ?? new AbortController().signal);
@@ -241,9 +258,7 @@ async function homePasses(
   actions.push(...(await runDormantPass({ config, act, log, ...reading })));
   operation.signal.throwIfAborted();
   const dormantMs = lap();
-  if (dormant) noteDiskLevel(dormant.gate, RANK[pressure.disk]);
   let ladderPass: LadderPass | null = null;
-  let dormantStepMs = 0;
   const level = pressure.level;
   const volumes = volumeReadings(measured.measurement, thresholds);
   if (
@@ -264,9 +279,9 @@ async function homePasses(
     // @ref LLP 0001#the-dormant-step-never-runs-beside-the-ladder -- both walk the same checkouts
     let turn: DormantTurn | undefined;
     const holdTurn = async () => {
-      if (!dormant || turn) return;
-      await holdForLadder(dormant);
-      turn = dormant;
+      if (!dormant) return true;
+      if (await holdForLadder(dormant, requested, log)) turn = dormant;
+      return turn !== undefined;
     };
     try {
       const before = pressure;
@@ -308,18 +323,12 @@ async function homePasses(
         durationMs: endedAt - started,
         endedAt,
       };
-      if (turn && !requested && pressure.disk !== 'normal') {
-        const stepStarted = performance.now();
-        actions.push(...(await runDormantDependencies({ config, act, log, ...reading, cadence: turn.cadence })));
-        dormantStepMs = Math.round(performance.now() - stepStarted);
-      }
     } finally {
       if (turn) releaseLadder(turn.gate);
     }
   }
-  if (dormant) noteDiskLevel(dormant.gate, RANK[pressure.disk]);
   operation.signal.throwIfAborted();
-  const ladderMs = lap() - dormantStepMs;
+  const ladderMs = lap();
   logLauncherProblems(operation, log);
   return {
     config,
@@ -328,7 +337,7 @@ async function homePasses(
     workspaces,
     pressure,
     actions,
-    phases: { measureMs, idleMs, dormantMs, ladderMs, dormantStepMs },
+    phases: { measureMs, idleMs, dormantMs, ladderMs },
     operation,
     ladder: ladderPass,
   };
@@ -346,8 +355,8 @@ export interface MaintenanceLane {
 
 /**
  * The daemon's slow passes, beside its tick instead of in it: the fingerprint precompute of the live workspaces whose
- * HEAD, lockfile or install stamp changed, the dormant stage's dependency step while the disk the tick last measured is at
- * normal and no disk ladder pass holds `gate`, and an automatic maintenance pass, from the
+ * HEAD, lockfile or install stamp changed, the dormant stage's dependency step, at any level while no ladder pass holds
+ * `gate`, and an automatic maintenance pass, from the
  * measurement of the tick that started them, one at a time, so a slow git fetch, `gh` call or size scan never holds
  * the tick that serves waiting runs. Each logs a `daemon_maintenance` record with its phases; one that throws is
  * logged and the next tick starts them again.
@@ -361,7 +370,7 @@ export function createMaintenanceLane(
   ) => void,
   precompute: { run(input: PrecomputeInput, act: boolean): Promise<void> } = createFingerprintPrecompute(log),
   dependencyCadence: BigInt64Array = new BigInt64Array(1),
-  gate: Int32Array = createDormantGate(),
+  gate: BigInt64Array = createDormantGate(),
 ): MaintenanceLane {
   let current: Promise<void> | null = null;
   let failure: unknown;

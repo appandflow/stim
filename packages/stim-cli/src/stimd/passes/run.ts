@@ -9,6 +9,7 @@ import {
   maintenanceRunClaims,
   maintenanceStateFile,
   diskUsageCacheFile,
+  readJsonObject,
   readMaintenanceState,
   type MaintenanceAction,
   type MaintenanceCheck,
@@ -352,27 +353,27 @@ async function measureCapOnly(
   return true;
 }
 
-const KEPT_CATEGORIES: ReadonlySet<MaintenanceSize['category']> = new Set([
-  'build-cache',
-  'metro-cache',
-  'compilation-cache',
-]);
-
 /**
- * Writes the size of each Cargo target and shared cache the scan measured into the disk-usage cache, which keeps it
- * across scans that measure other targets, for the pressure ladder to free them without a walk; the caps still plan
- * from the scan's own list.
+ * Writes the size of each Cargo target the scan measured into the disk-usage cache, which keeps it across scans that
+ * measure other targets, for the pressure ladder's largest-first order; the caps still plan from the scan's own list.
+ * A newer record stays, and an older one keeps its other fields.
  */
 function keepScannedSizes(sizes: readonly MaintenanceSize[]): void {
-  for (const size of sizes)
-    if ((size.name === 'Cargo target' || KEPT_CATEGORIES.has(size.category)) && existsSync(size.dir))
-      try {
-        writeCacheFile(diskUsageCacheFile(size.dir), {
-          path: size.dir,
-          measuredAt: new Date(size.measuredAt).toISOString(),
-          bytes: size.bytes,
-        });
-      } catch {}
+  for (const size of sizes) {
+    if (size.name !== 'Cargo target' || !existsSync(size.dir)) continue;
+    const file = diskUsageCacheFile(size.dir);
+    const recorded = readJsonObject(file);
+    const recordedAt = Date.parse(String(recorded?.measuredAt ?? ''));
+    if (recorded?.path === size.dir && Number.isFinite(recordedAt) && recordedAt >= size.measuredAt) continue;
+    try {
+      writeCacheFile(file, {
+        ...(recorded?.path === size.dir ? recorded : {}),
+        path: size.dir,
+        measuredAt: new Date(size.measuredAt).toISOString(),
+        bytes: size.bytes,
+      });
+    } catch {}
+  }
 }
 
 async function measureAllSizes(

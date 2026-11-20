@@ -1064,9 +1064,9 @@ describe('the pressure ladder', () => {
       );
       expect(existsSync(entry)).toBe(false);
       expect(seen.sync).toEqual([]);
-      expect(seen.async.filter((path) => path.startsWith(`${buildCache()}/`))).toEqual(
-        level === 'critical' ? [] : [entry],
-      );
+      const entryWalks = seen.async.filter((path) => path.startsWith(`${buildCache()}/`));
+      expect(entryWalks.includes(entry)).toBe(level === 'high');
+      expect(entryWalks.length === 0).toBe(level === 'critical');
     }
   });
 

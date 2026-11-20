@@ -105,8 +105,11 @@ export interface LadderInput {
   stop?: AbortSignal;
   /** The device id of the one volume a build's headroom run frees; without it, the volumes under `disk.minFreeGb`. */
   volume?: number;
-  /** Runs before the first rung that relieves disk, once its measurement has admitted it. */
-  beforeDiskRung?: () => Promise<void>;
+  /**
+   * Asked once, before the first rung that relieves disk, once its measurement has admitted it; false leaves the pass's
+   * disk work out, so only what relieves memory runs.
+   */
+  beforeDiskRung?: () => Promise<boolean>;
   /** Runs the report-only rungs 5 and 7: the stim-daemon's ladder, at most hourly and never at critical. */
   reports?: boolean;
 }
@@ -424,8 +427,8 @@ async function trim(
 const triedAt = new Map<string, number>();
 
 /**
- * The size the disk-usage cache records for `dir`, which the size scan writes for every Cargo target and shared cache
- * it measures; null when none is recorded, or none since this process last tried to trim the Cargo target at `dir`.
+ * The size the disk-usage cache records for the Cargo target at `dir`, which the size scan writes for every target it
+ * measures; null when none is recorded, or none since this process last tried to trim it.
  */
 function recordedBytes(dir: string): number | null {
   // @ref LLP 0001#pressure-acts-without-waiting-for-measurement-or-load -- no size walk before a cache is freed
@@ -554,7 +557,7 @@ async function sharedCachesStep(context: RungContext): Promise<void> {
   if (existsSync(compilation) && onShort(context, [compilation]) && (await context.stillShort())) {
     const capGb = context.settings.swiftCompilationCacheMaxGb;
     const bytes = critical
-      ? (recordedBytes(compilation) ?? 0)
+      ? 0
       : capGb > 0
         ? await measuredDirectorySizeAsync(compilation, { timeoutMs: SIZE_TIMEOUT_MS })
         : 0;
@@ -600,7 +603,10 @@ async function sharedCachesStep(context: RungContext): Promise<void> {
   ] as const) {
     if (!critical || !existsSync(directory) || !onShort(context, [directory]) || !(await context.stillShort()))
       continue;
-    const bytes = recordedBytes(directory) ?? 0;
+    const bytes =
+      !context.act && context.measure
+        ? ((await measuredDirectorySizeAsync(directory, { timeoutMs: SIZE_TIMEOUT_MS })) ?? 0)
+        : 0;
     if (context.act) withDirLock(lock, () => rmSync(directory, { recursive: true, force: true }));
     recordAction(
       context,
@@ -1100,12 +1106,17 @@ export async function runLadder(
   }
   if (pressure.level === 'normal') return { actions, pressure };
   let current = pressure;
-  for (const { rung, relieves } of rungsFrom(input.fromRung).filter((entry) => entry.rung <= (input.lastRung ?? 9))) {
+  let diskAllowed: boolean | undefined;
+  for (const { rung, relieves: rungRelieves } of rungsFrom(input.fromRung).filter(
+    (entry) => entry.rung <= (input.lastRung ?? 9),
+  )) {
     current = await input.remeasure();
+    if (rungDecision(current, rungRelieves) === 'stop') break;
+    if (causesOf(current, rungRelieves).includes('disk')) diskAllowed ??= (await input.beforeDiskRung?.()) ?? true;
+    const relieves = diskAllowed === false ? rungRelieves.filter((cause) => cause !== 'disk') : rungRelieves;
     const decision = rungDecision(current, relieves);
     if (decision === 'stop') break;
     if (decision === 'skip') continue;
-    if (decision.causes.includes('disk')) await input.beforeDiskRung?.();
     const stillShort = async () => {
       current = await input.remeasure();
       return causesOf(current, relieves).length > 0;

@@ -2,7 +2,15 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { maintenanceStateFile, readDiskUsage, readMaintenanceState, type MaintenanceState } from '@stim-cli/core/state';
+import {
+  diskUsageCacheFile,
+  maintenanceStateFile,
+  readDiskUsage,
+  readJsonObject,
+  readMaintenanceState,
+  type MaintenanceState,
+} from '@stim-cli/core/state';
+import { writeCacheFile } from '../cache-file.ts';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { planCargoTargetsAtPressure, trimCargoTargetAction } from '../stimd/passes/cargo-target.ts';
 import { deferCheck } from '../stimd/passes/defer.ts';
@@ -70,6 +78,21 @@ test('while host load defers the size scan, the cap still measures and plans an 
   expect(readDiskUsage(target)?.bytes).toBe(state?.sizes[0]?.bytes);
   expect(state?.plan.map(({ kind, target: dir }) => [kind, dir])).toEqual([['would-clear-build-dirs', target]]);
   expect(maintenanceStatus().deferred).toContainEqual({ check: 'size', since: expect.any(Number) });
+});
+
+test('the cap writes its Cargo size over an older disk-usage record, keeping its other fields, and leaves a newer one', async () => {
+  const record = (at: number) => ({ path: target, measuredAt: new Date(at).toISOString(), bytes: 1, walkMs: 5 });
+  writeCacheFile(diskUsageCacheFile(target), record(Date.now() + 60_000));
+  await runMaintenance('test');
+  expect(readJsonObject(diskUsageCacheFile(target))).toMatchObject({ bytes: 1, walkMs: 5 });
+
+  writeCacheFile(diskUsageCacheFile(target), record(Date.now() - 2 * 3_600_000));
+  writeFileSync(maintenanceStateFile(), '{}');
+  await runMaintenance('test');
+  expect(readJsonObject(diskUsageCacheFile(target))).toMatchObject({
+    bytes: readMaintenanceState()?.sizes[0]?.bytes,
+    walkMs: 5,
+  });
 });
 
 test('a size scan deferred for the ceiling runs anyway, and the status field clears', async () => {
