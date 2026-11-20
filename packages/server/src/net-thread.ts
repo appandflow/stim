@@ -49,6 +49,18 @@ class Bridged extends Duplex {
   }
 }
 
+function closeFailures(error: unknown): Error[] {
+  return error instanceof AggregateError
+    ? [error, ...error.errors.flatMap(closeFailures)]
+    : [error instanceof Error ? error : new Error(String(error))];
+}
+
+const failureText = (failures: Error[]): string =>
+  failures
+    .map((failure) => failure.message)
+    .filter(Boolean)
+    .join('; ');
+
 async function run(port: MessagePort, options: NetOptions): Promise<void> {
   const post = (message: FromNet) => port.postMessage(message);
   const connections = new Map<number, Bridged>();
@@ -67,7 +79,12 @@ async function run(port: MessagePort, options: NetOptions): Promise<void> {
   } catch (error) {
     post({
       type: 'refused',
-      message: error instanceof NetRefusal ? error.message : String((error as Error).stack),
+      message:
+        error instanceof NetRefusal
+          ? error.message
+          : error instanceof AggregateError
+            ? failureText(closeFailures(error))
+            : String((error as Error).stack),
       clean: error instanceof NetRefusal,
     });
     port.close();
@@ -88,7 +105,7 @@ async function run(port: MessagePort, options: NetOptions): Promise<void> {
       void close()
         .then(
           () => post({ type: 'closed' }),
-          (error: unknown) => post({ type: 'closed', error: error instanceof Error ? error.message : String(error) }),
+          (error: unknown) => post({ type: 'closed', error: failureText(closeFailures(error)) }),
         )
         .finally(() => port.close());
   };
