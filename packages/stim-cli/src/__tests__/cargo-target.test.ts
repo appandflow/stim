@@ -701,6 +701,24 @@ describe('trimming on a full disk', () => {
     expect(existsSync(join(target, 'debug', 'deps', 'libx.rlib'))).toBe(true);
   });
 
+  test('a file that appears in a stale target triple before the retry keeps the triple', async () => {
+    stubProcesses({});
+    makeProfile('aarch64-linux-android/host-dev', 3 * DAY);
+    let full = true;
+    fsHooks.rename = (_, to) => {
+      if (!full || !to.includes('.stim-trimmed')) return;
+      full = false;
+      writeFileSync(join(target, 'aarch64-linux-android', 'notes.txt'), 'mine');
+      throw diskFull();
+    };
+
+    const result = await trimCargoTarget(target, { launching: noLaunchers(target), needBytes: 0 });
+
+    expect(result).toMatchObject({ removed: [], reserveReleased: true });
+    expect(result.kept).toEqual(['aarch64-linux-android: it is no longer stale as a whole']);
+    expect(readFileSync(join(target, 'aarch64-linux-android', 'notes.txt'), 'utf8')).toBe('mine');
+  });
+
   test('without a reserve to release, a full disk keeps the profile', async () => {
     stubProcesses({});
     makeProfile('debug', 3 * DAY);

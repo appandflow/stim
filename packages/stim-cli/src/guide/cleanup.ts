@@ -303,7 +303,8 @@ with the holder and recovery guidance instead of waiting. A dry run takes no
 claim.
 Each pass keeps a 1 MiB file, maintenance/disk-reserve. When taking the run
 claim fails with ENOSPC or EDQUOT, the pass deletes it and retries once, and
-so does a Cargo trim or delete whose claim or staging write fails that way; an
+so does a Cargo trim or delete whose claim or staging write fails that way, and
+the dormant step for any output whose workspace claims fail that way; an
 acting gc gives it back before taking the claim. Either starts deleting at zero
 free disk as long as an earlier run left the reserve, and writes the reserve
 again at its end when there is room.

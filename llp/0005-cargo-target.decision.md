@@ -274,7 +274,8 @@ unmarked `.stim-trimmed`, which the next trim deletes at its start. The
 trim notes the device and inode of the `.stim-trimmed` it made; at the end it
 checks that `.stim-trimmed` is still that real directory, deletes only the
 entries it staged, and removes `.stim-trimmed` only when that leaves it empty,
-so anything else that appeared there stays and is reported. Two gaps are
+so anything else that appeared there stays and is reported, until the next
+trim deletes a leftover `.stim-trimmed` at its start, as before. Two gaps are
 accepted, both shared with earlier versions: a kill between a build taking a
 profile back during the move and the trim's own check after the move, and a
 put-back whose marking fails too.

@@ -230,17 +230,17 @@ describe.skipIf(process.platform === 'win32')(
       expect(existsSync(reserveFile)).toBe(false);
     });
 
-    test('without a disk reserve, a workspace claim that hits a full disk keeps the output', async () => {
+    test('without a disk reserve, a workspace claim that hits a full disk is not retried', async () => {
       register(repo('app'));
       idleFor(3, join(base, 'app'));
-      vi.spyOn(processLock, 'withWorkspaceProcessLock').mockImplementation(async () => {
+      vi.spyOn(processLock, 'withWorkspaceProcessLock').mockImplementationOnce(async () => {
         throw Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' });
       });
 
-      expect(await gc()).toEqual([
-        expect.objectContaining({ outcome: 'failed', detail: expect.stringContaining('ENOSPC') }),
-      ]);
-      expect(existsSync(join(base, 'app', BUILD, 'app.apk'))).toBe(true);
+      const [action] = await gc();
+
+      expect(action).toMatchObject({ outcome: 'failed', detail: expect.stringContaining('ENOSPC') });
+      expect(action?.detail).not.toContain('disk reserve');
     });
 
     test('a Gradle build working in the checkout keeps its outputs, whatever Stim last saw', async () => {
