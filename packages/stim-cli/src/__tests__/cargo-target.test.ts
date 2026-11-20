@@ -232,6 +232,21 @@ describe.skipIf(process.platform === 'win32')('trimming in place (Cargo locks ne
     expect(existsSync(join(target, 'release', '.cargo-build-lock'))).toBe(false);
   });
 
+  test('a stale profile with no .cargo-lock does not count toward the need, so incremental data still goes', async () => {
+    makeProfile('debug', 3 * DAY);
+    rmSync(join(target, 'debug', '.cargo-lock'));
+    writeFileSync(join(target, 'debug', 'deps', 'big'), 'x'.repeat(200_000));
+    const old = new Date(Date.now() - 3 * DAY);
+    for (const dir of ['deps', '.']) utimesSync(join(target, 'debug', dir), old, old);
+    makeProfile('release', 0);
+    writeFileSync(join(target, 'release', 'incremental', 'data'), 'x'.repeat(10_000));
+
+    const result = await trimCargoTarget(target, { needBytes: 1 });
+
+    expect(result.removed).toEqual(['release/incremental']);
+    expect(result.kept).toEqual(['debug: debug has no .cargo-lock to take']);
+  });
+
   test('at normal the cap trims only an idle target: a process anywhere in it or a held lock keeps it whole', async () => {
     makeProfile('debug', 3 * DAY);
     makeProfile('release', 0);

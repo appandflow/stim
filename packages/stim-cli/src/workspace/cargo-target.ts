@@ -543,7 +543,9 @@ export async function trimCargoTarget(
       bytes: measure ? await sizeOf(dir, signal, lowPriority) : 0,
     });
   }
-  const planned = steps.reduce((sum, { bytes }) => sum + bytes, 0);
+  const planned = steps
+    .filter(({ dir, profiles }) => !inUse(used, dir) && profiles.every((profile) => profileLocks(profile)))
+    .reduce((sum, { bytes }) => sum + bytes, 0);
   if (incremental === 'all' || planned < needBytes) {
     const gone = stale.paths.map((path) => join(target, path));
     const candidates: { path: string; bytes: number }[] = [];
