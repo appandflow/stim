@@ -43,15 +43,20 @@ check) or removes a finished or discovered worktree, Stim copies them to
 checkout, with a `manifest.json` naming each source path, its size and the
 time. Then the delete goes ahead.
 
-- What is copied: every file of a `.pnpm_patches` that holds at least one edit
-  folder (the edit folders and `state.json`), and every `*-keypair.json` in any
-  letter case, at any depth, in each recognised root Cargo `target/` of a
-  removed worktree, and in a root `target/` holding a `deploy/` that a dormant
-  trim left.
-- Only plain files are copied. Anything unusual keeps the folder or worktree,
-  with the reason: a link where a protected file is, a linked `.pnpm_patches`,
+- What is copied: for a node_modules delete, every file of its `.pnpm_patches`
+  when that holds at least one edit folder (the edit folders and `state.json`).
+  For a worktree removal, one walk of the whole worktree, which does not ask git
+  or recognise Cargo targets: it skips `.git`, looks into each node_modules only
+  for its `.pnpm_patches` as above, and copies every `*-keypair.json` in any
+  letter case anywhere else. A keypair-named fixture is copied too, which costs
+  little. The walk took 190 to 310 ms on three checkouts of 28,000 to 33,000
+  entries outside node_modules and `.git`, one with a 6.6 GB Cargo `target/`.
+- Only plain files are copied, and no link is followed: a linked `target/` or
+  node_modules is removed as a link, as before. Anything unusual keeps the folder
+  or worktree, with the reason: a link named like a keypair, a linked
+  `.pnpm_patches` or any link inside one,
   a scan root on another volume than the folder being deleted, a rescue store
-  inside that folder, a rescue store or workspace folder that is a link, more
+  inside that folder when there is something to copy, a rescue store or workspace folder that is a link, more
   than 50 MB to copy for one delete, more than 1,000,000 entries, or a search
   and copy that fails or does not finish in 30 s through the bounded reader.
 - Each rescue gets its own new folder, a partial copy is removed, and expiry
@@ -70,9 +75,7 @@ coordinator's choices, constants in the code rather than settings.
 
 Not covered:
 
-- a keypair in a Cargo `target/` Stim does not recognise, such as a nested one;
-- a pnpm patch in a node_modules the worktree removal does not list as a
-  dependency tree, such as one under an ignored parent folder;
+- a keypair inside a node_modules, which an install restores;
 - build folders other than Cargo targets, which are deleted with a plain
   recursive delete;
 - `stim worktree remove`, which is explicit and runs none of these checks;

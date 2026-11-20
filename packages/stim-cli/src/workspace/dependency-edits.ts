@@ -437,7 +437,7 @@ export async function checkDependencyEdits(
   const held = await rescueBeforeDelete(
     options.worktree,
     path,
-    { trees: [path], targets: [] },
+    { trees: [path] },
     { act: !options.readOnly, signal: options.signal },
   );
   return held ? { keep: held } : check;
@@ -484,7 +484,7 @@ function inside(root: string, path: string): boolean {
  * lists, which include the nested ones of npm and Yarn workspaces, and those the cleanup paths take at the worktree's
  * root and its workspaces `keys`.
  */
-export async function removedTrees(worktree: string, signal?: AbortSignal): Promise<string[]> {
+async function removedTrees(worktree: string, signal?: AbortSignal): Promise<string[]> {
   const root = canonicalOr(worktree);
   const trees = new Set<string>();
   const listed = await gitQuietAsync(

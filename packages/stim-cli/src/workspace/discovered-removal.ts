@@ -2,12 +2,12 @@ import { lstat, readFile, readdir, readlink } from 'node:fs/promises';
 import { dirname, join, relative, sep } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
 import { decideIdleStop } from '../policy/idle.ts';
-import { ARTIFACT_DIRS, cargoTargetDirsAsync, existingBuildDirsAsync } from './regenerable-dirs.ts';
+import { ARTIFACT_DIRS, existingBuildDirsAsync } from './regenerable-dirs.ts';
 import { discoveredEvidence, SKIPPED_WHERE_IGNORED } from './discovered-activity.ts';
 import type { DiscoveredReads } from './discovered-reads.ts';
 import { gitQuietAsync } from './git.ts';
 import { hiddenEditHold } from './hidden-edits.ts';
-import { checkDependencyEdits, dependencyEditsHold, removedTrees } from './dependency-edits.ts';
+import { checkDependencyEdits, dependencyEditsHold } from './dependency-edits.ts';
 import { rescueBeforeDelete } from './rescue.ts';
 import { absent } from './scan-rules.ts';
 
@@ -141,17 +141,9 @@ async function enclosingCheckout(path: string): Promise<string | null> {
   return null;
 }
 
-/**
- * `rescueBeforeDelete` for removing the worktree at `path`: the pnpm patches of the dependency trees removing it
- * deletes, and the Solana keypairs of its Cargo `target/`, or of a root `target/` holding a `deploy/` that a dormant
- * trim left. Without `act` it only checks that they can be copied.
- */
+/** `rescueBeforeDelete` for removing the whole worktree at `path`. Without `act` it only checks. */
 export async function worktreeRescue(path: string, act: boolean, signal?: AbortSignal): Promise<string | null> {
-  const trees = await removedTrees(path, signal);
-  const targets = await cargoTargetDirsAsync(path);
-  const deploy = await lstat(join(path, 'target', 'deploy')).catch(() => null);
-  if (deploy?.isDirectory()) targets.push(join(path, 'target'));
-  return rescueBeforeDelete(path, path, { trees, targets }, { act, signal });
+  return rescueBeforeDelete(path, path, { trees: [], whole: true }, { act, signal });
 }
 
 // @ref LLP 0004#removing-a-discovered-worktree-needs-more-evidence -- no Stim record of its files

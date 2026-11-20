@@ -16,17 +16,18 @@ const MAX_RESCUE_ENTRIES = 1_000_000;
 // @ref LLP 0002#rescue-copies -- what cleanup cannot restore is copied aside before the delete
 /**
  * Copies what deleting `deleting` inside the checkout `root` would lose for good, before it is deleted, into a new
- * folder under the rescue store, with a `manifest.json`: every file of a `.pnpm_patches` in `trees` that holds a
- * `pnpm patch` edit folder, and every `*-keypair.json` in any letter case in `targets`, at their paths relative to
- * `root`. Without `act` it only checks. Returns why the delete must not go ahead, or null. It copies only plain files:
- * a link where a protected file is, a linked `.pnpm_patches`, another volume than `deleting`'s, a rescue store inside
+ * folder under the rescue store, with a `manifest.json`: every file of a `.pnpm_patches` that holds a `pnpm patch` edit
+ * folder in `trees`, and with `whole`, in every node_modules of `root` and every `*-keypair.json` in any letter case
+ * anywhere in it outside `.git` and node_modules, at their paths relative to `root`. Without `act` it only checks.
+ * Returns why the delete must not go ahead, or null. It copies only plain files: a link where a protected file is, a
+ * link in a `.pnpm_patches`, another volume than `deleting`'s, a rescue store inside
  * `deleting` or reached through a link, more than RESCUE_CAP_BYTES, more than MAX_RESCUE_ENTRIES entries, or a read or
  * copy that fails or does not finish within RESCUE_MS keeps the folder.
  */
 export async function rescueBeforeDelete(
   root: string,
   deleting: string,
-  { trees, targets }: { trees: readonly string[]; targets: readonly string[] },
+  { trees, whole = false }: { trees: readonly string[]; whole?: boolean },
   { act, signal }: { act: boolean; signal?: AbortSignal | undefined },
 ): Promise<string | null> {
   const deadline = performance.now() + RESCUE_MS;
@@ -43,15 +44,15 @@ export async function rescueBeforeDelete(
   const found: { source: string; size: number }[] = [];
   let checkout = root;
   let store = '';
+  let inside = false;
   try {
     checkout = (await real(root)) ?? root;
     const doomed = (await real(deleting)) ?? deleting;
     store = join((await real(dirname(rescuedRoot()))) ?? dirname(rescuedRoot()), basename(rescuedRoot()));
-    if (store === doomed || store.startsWith(`${doomed}${sep}`))
-      throw new Error(`the rescue store ${store} lies inside ${doomed}`);
+    inside = store === doomed || store.startsWith(`${doomed}${sep}`);
     const dev = (await bounded(doomed, () => lstat(doomed))).dev;
     let entries = 0;
-    const walk = async (top: string, protectedName: (name: string) => boolean) => {
+    const walk = async (top: string, protectedName: (name: string) => boolean, worktree: boolean) => {
       const queue = [top];
       for (let dir = queue.pop(); dir !== undefined; dir = queue.pop()) {
         const here = dir;
@@ -62,33 +63,34 @@ export async function rescueBeforeDelete(
           const source = join(here, entry.name);
           const rel = relative(checkout, source);
           if (rel.startsWith('..') || isAbsolute(rel)) throw new Error(`${source} is outside ${checkout}`);
-          if (entry.isDirectory()) queue.push(source);
-          else if (!protectedName(entry.name)) continue;
+          if (worktree && entry.name === '.git') continue;
+          if (entry.isDirectory()) {
+            if (worktree && entry.name === 'node_modules') await patches(source);
+            else queue.push(source);
+          } else if (!protectedName(entry.name)) continue;
           else if (!entry.isFile()) throw new Error(`${source} is not a plain file`);
           else found.push({ source, size: (await bounded(source, () => lstat(source))).size });
         }
       }
     };
-    const resolve = async (paths: readonly string[]) => {
-      const resolved = new Set<string>();
-      for (const path of paths) {
-        const canonical = await real(path);
-        if (canonical) resolved.add(canonical);
-      }
-      return resolved;
-    };
-    for (const tree of await resolve(trees)) {
-      const patches = join(tree, '.pnpm_patches');
-      const stat = await bounded(patches, () => lstat(patches)).catch((error: unknown) => {
+    const patches = async (modules: string) => {
+      const dir = join(modules, '.pnpm_patches');
+      const stat = await bounded(dir, () => lstat(dir)).catch((error: unknown) => {
         if (absent(error)) return null;
         throw error;
       });
-      if (stat?.isSymbolicLink()) throw new Error(`${patches} is a link`);
-      if (!stat?.isDirectory()) continue;
-      const listed = await bounded(patches, () => readdir(patches, { withFileTypes: true }));
-      if (listed.some((entry) => entry.isDirectory())) await walk(patches, () => true);
+      if (stat?.isSymbolicLink()) throw new Error(`${dir} is a link`);
+      if (!stat?.isDirectory()) return;
+      const listed = await bounded(dir, () => readdir(dir, { withFileTypes: true }));
+      const link = listed.find((entry) => entry.isSymbolicLink());
+      if (link) throw new Error(`${join(dir, link.name)} is a link`);
+      if (listed.some((entry) => entry.isDirectory())) await walk(dir, () => true, false);
+    };
+    if (whole) await walk(checkout, isKeypairName, true);
+    for (const tree of trees) {
+      const canonical = await real(tree);
+      if (canonical) await patches(canonical);
     }
-    for (const target of await resolve(targets)) await walk(target, isKeypairName);
     if (deadline - performance.now() <= 0) throw new Error(`it took over ${RESCUE_MS / 1000} s`);
   } catch (error) {
     signal?.throwIfAborted();
@@ -97,6 +99,8 @@ export async function rescueBeforeDelete(
   const bytes = found.reduce((sum, item) => sum + item.size, 0);
   if (bytes > RESCUE_CAP_BYTES)
     return `its pnpm patches and Solana keypairs hold over ${RESCUE_CAP_BYTES / 1024 / 1024} MB, more than cleanup copies aside`;
+  if (found.length && inside)
+    return `its pnpm patches and Solana keypairs cannot be copied aside: the rescue store ${store} lies inside the folder being deleted`;
   if (!found.length || !act) return null;
   let dir: string | null = null;
   try {
@@ -109,6 +113,7 @@ export async function rescueBeforeDelete(
       else if (!stat.isDirectory()) throw new Error(`${path} is not a real directory`);
     };
     const workspace = join(store, workspaceId(checkout));
+    await realDirectory(dirname(store));
     await realDirectory(store);
     await realDirectory(workspace);
     const stamp = `${new Date().toISOString().replace(/[:.]/g, '-')}-`;
@@ -141,7 +146,9 @@ const message = (error: unknown) => (error instanceof Error ? error.message : St
  * rescue store under the canonical Stim home, so a linked store or workspace folder leads to no removal outside it.
  */
 export async function expireRescued(now: number): Promise<void> {
-  const store = join(await realpath(dirname(rescuedRoot())), basename(rescuedRoot()));
+  const home = await realpath(dirname(rescuedRoot())).catch(() => null);
+  if (!home) return;
+  const store = join(home, basename(rescuedRoot()));
   for (const copy of readRescuedCopies()) {
     if (now - copy.at <= RESCUE_KEEP_MS) continue;
     const resolved = await realpath(copy.dir).catch(() => null);

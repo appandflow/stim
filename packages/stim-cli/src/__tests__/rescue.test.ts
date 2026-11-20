@@ -11,7 +11,7 @@ import {
   truncateSync,
   writeFileSync,
 } from 'node:fs';
-import { lstat, readdir } from 'node:fs/promises';
+import { lstat, mkdir, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readRescuedCopies, rescuedRoot } from '@stim-cli/core/state';
@@ -23,6 +23,8 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     ...actual,
     lstat: vi.fn<typeof actual.lstat>(actual.lstat),
     readdir: vi.fn<typeof actual.readdir>(actual.readdir),
+    mkdir: vi.fn<typeof actual.mkdir>(actual.mkdir),
+    writeFile: vi.fn<typeof actual.writeFile>(actual.writeFile),
   };
 });
 
@@ -38,7 +40,7 @@ function patchFile(name: string, text = 'patched'): string {
   return file;
 }
 
-const rescue = (act = true) => rescueBeforeDelete(root, tree, { trees: [tree], targets: [] }, { act });
+const rescue = (act = true) => rescueBeforeDelete(root, tree, { trees: [tree] }, { act });
 
 beforeEach(() => {
   base = realpathSync(mkdtempSync(join(tmpdir(), 'stim-test-')));
@@ -52,6 +54,9 @@ afterEach(async () => {
   const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
   vi.mocked(lstat).mockImplementation(actual.lstat);
   vi.mocked(readdir).mockImplementation(actual.readdir);
+  vi.mocked(mkdir).mockImplementation(actual.mkdir);
+  vi.mocked(writeFile).mockImplementation(actual.writeFile);
+  vi.mocked(writeFile).mockClear();
   vi.unstubAllEnvs();
   rmSync(base, { recursive: true, force: true });
 });
@@ -83,17 +88,24 @@ describe.skipIf(process.platform === 'win32')('links', () => {
     ['a keypair-named link in a target', 'target'],
     ['a link inside an edit folder', 'edit'],
     ['a linked .pnpm_patches', 'patches'],
+    ['a .pnpm_patches whose only package entry is a link', 'entry'],
   ])('%s keeps the folder and copies nothing', async (_, layout) => {
     const target = join(root, 'target');
     mkdirSync(join(target, 'debug'), { recursive: true });
     if (layout === 'target') symlinkSync('../keys/app.json', join(target, 'debug', 'program-keypair.json'));
     if (layout === 'edit') symlinkSync('/elsewhere/index.js', patchFile('index.js').replace('index.js', 'linked.js'));
+    if (layout === 'entry') {
+      mkdirSync(join(tree, '.patch-work', 'pkg@1.0.0'), { recursive: true });
+      mkdirSync(join(tree, '.pnpm_patches'), { recursive: true });
+      writeFileSync(join(tree, '.pnpm_patches', 'state.json'), '{}');
+      symlinkSync('../.patch-work/pkg@1.0.0', join(tree, '.pnpm_patches', 'pkg@1.0.0'));
+    }
     if (layout === 'patches') {
       mkdirSync(join(tree, '.patch-work', 'pkg@1.0.0'), { recursive: true });
       symlinkSync('.patch-work', join(tree, '.pnpm_patches'));
     }
 
-    expect(await rescueBeforeDelete(root, root, { trees: [tree], targets: [target] }, { act: true })).toMatch(
+    expect(await rescueBeforeDelete(root, root, { trees: [], whole: true }, { act: true })).toMatch(
       /is a link|is not a plain file/,
     );
     expect(readRescuedCopies()).toEqual([]);
@@ -133,21 +145,68 @@ test('a scan root on another volume than the folder being deleted keeps it', asy
   const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
   vi.mocked(lstat).mockImplementation(async (path, options) => {
     const stat = await actual.lstat(path, options);
-    return String(path).endsWith('.pnpm_patches') ? Object.assign(stat, { dev: Number(stat.dev) + 1 }) : stat;
+    return String(path).includes('.pnpm_patches') ? Object.assign(stat, { dev: Number(stat.dev) + 1 }) : stat;
   });
 
   expect(await rescue()).toContain('another volume');
 });
 
-test('a scan whose many fast reads add up past 30 s keeps the tree', async () => {
+test('a search whose last read ends past 30 s keeps the tree', async () => {
+  const last = patchFile('index.js');
+  const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+  vi.mocked(lstat).mockImplementation(async (path, options) => {
+    if (String(path) === last) vi.advanceTimersByTime(31_000);
+    return actual.lstat(path, options);
+  });
+
+  expect(await rescue(false)).toContain('over 30 s');
+});
+
+test('a copy that runs past 30 s stops before its next write and keeps the tree', async () => {
   patchFile('index.js');
   const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
-  vi.mocked(readdir).mockImplementation(async (path, options) => {
+  vi.mocked(mkdir).mockImplementationOnce(async (path, options) => {
     vi.advanceTimersByTime(31_000);
-    return actual.readdir(path, options);
+    return actual.mkdir(path, options);
   });
 
   expect(await rescue()).toContain('over 30 s');
+  expect(vi.mocked(writeFile)).not.toHaveBeenCalled();
+});
+
+test('a manifest written past 30 s keeps the tree and leaves no copy', async () => {
+  patchFile('index.js');
+  const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+  vi.mocked(writeFile).mockImplementation(async (path, data, options) => {
+    vi.advanceTimersByTime(31_000);
+    return actual.writeFile(path, data, options);
+  });
+
+  expect(await rescue()).toContain('over 30 s');
+  expect(readRescuedCopies()).toEqual([]);
+});
+
+test.skipIf(process.platform === 'win32')('a linked target/ is not followed and holds nothing', async () => {
+  mkdirSync(join(base, 'elsewhere', 'deploy'), { recursive: true });
+  writeFileSync(join(base, 'elsewhere', 'deploy', 'program-keypair.json'), '[1]');
+  mkdirSync(root, { recursive: true });
+  symlinkSync(join(base, 'elsewhere'), join(root, 'target'));
+
+  expect(await rescueBeforeDelete(root, root, { trees: [], whole: true }, { act: true })).toBeNull();
+  expect(readRescuedCopies()).toEqual([]);
+});
+
+test('a Stim home inside a node_modules with no pnpm patch does not hold its delete', async () => {
+  vi.stubEnv('STIM_HOME', join(tree, '.cache', 'stim'));
+  mkdirSync(join(tree, '.cache', 'stim'), { recursive: true });
+
+  expect(await rescue()).toBeNull();
+});
+
+test('expiry with no Stim home folder yet removes nothing and does not fail', async () => {
+  vi.stubEnv('STIM_HOME', join(base, 'missing'));
+
+  await expect(expireRescued(Date.now())).resolves.toBeUndefined();
 });
 
 test('two rescues in the same millisecond get their own folders', async () => {
