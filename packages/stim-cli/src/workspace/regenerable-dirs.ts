@@ -186,17 +186,10 @@ function* cargoTargetDirsReads(root: string, staged: boolean): DirReads<string[]
   return untagged.length || !staged ? untagged : yield* stagedTargetDirs(root);
 }
 
-/**
- * Whether the NOT-RESTORED marker of `target`'s `.stim-trimmed` records a directory that could not be put back: a trim
- * or delete writes it with content before its first move and empties it only for that.
- */
-export function putBackFailed(target: string): boolean {
-  return lstatSync(join(target, TRIM_ASIDE, STRANDED), { throwIfNoEntry: false })?.size === 0;
-}
-
 /** Why a Cargo `target/` must not be deleted whole: it holds a copy a Cargo trim could not put back. */
 function* recoveryCopyProblem(path: string): DirReads<string | null> {
-  return (yield* namesIn(path)).some((name) => name.startsWith(NOT_RESTORED)) || putBackFailed(path)
+  return (yield* namesIn(path)).some((name) => name.startsWith(NOT_RESTORED)) ||
+    (yield* namesIn(join(path, TRIM_ASIDE))).some((name) => name.startsWith(STRANDED))
     ? 'it holds a directory a Cargo trim could not put back; a person must merge or delete it'
     : null;
 }

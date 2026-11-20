@@ -374,6 +374,7 @@ describe('a discovered checkout in the idle stages', () => {
   it.each([
     ['a Cargo trim recovery copy', '.stim-not-restored-1-debug/.fingerprint/unit'],
     ['a stranded .stim-trimmed', '.stim-trimmed/NOT-RESTORED'],
+    ['a .stim-trimmed whose put-back failed', '.stim-trimmed/NOT-RESTORED.failed'],
   ])('dormant gc keeps a tagged target/ holding %s whole', async (_, extra) => {
     const root = cargoWorkspace();
     writeFileSync(join(root, 'target', 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55\n');

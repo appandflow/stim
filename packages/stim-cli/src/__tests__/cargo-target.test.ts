@@ -525,17 +525,17 @@ describe('trimming on a full disk', () => {
     expect(existsSync(join(target, 'debug', 'deps', 'libx.rlib'))).toBe(true);
   });
 
+  const tookBack = () => {
+    makeProfile('debug', 3 * DAY);
+    stubProcesses({ lsof: (args) => (args.some((arg) => arg.includes('.stim-trimmed')) ? '4242\n' : '') });
+    return { options: {}, staged: join('.stim-trimmed', '0', 'deps', 'libx.rlib') };
+  };
   test.each([
+    ['a profile a build took back', true, tookBack],
+    ['a profile a build took back, whose marker cannot be renamed', false, tookBack],
     [
-      'a profile a build took back',
-      () => {
-        makeProfile('debug', 3 * DAY);
-        stubProcesses({ lsof: (args) => (args.some((arg) => arg.includes('.stim-trimmed')) ? '4242\n' : '') });
-        return { options: {}, staged: join('.stim-trimmed', '0', 'deps', 'libx.rlib') };
-      },
-    ],
-    [
-      'a unit batch whose move failed',
+      'a unit batch whose move failed, whose marker cannot be renamed',
+      false,
       () => {
         makeIdleUnit('debug');
         stubProcesses({});
@@ -548,9 +548,9 @@ describe('trimming on a full disk', () => {
         return { options: { units: 'all' as const }, staged: join('.stim-trimmed', 'units-0') };
       },
     ],
-  ])('when %s cannot be put back on a full disk, a trim from a fresh process keeps it', async (_, arrange) => {
+  ])('when %s cannot be put back on a full disk, a trim from a fresh process keeps it', async (_, renames, arrange) => {
     fsHooks.rename = (from) => {
-      if (from.includes('.stim-trimmed')) throw diskFull();
+      if (from.includes('.stim-trimmed') && !(renames && from.endsWith('NOT-RESTORED'))) throw diskFull();
     };
     const { options, staged } = arrange();
 
@@ -585,6 +585,32 @@ describe('trimming on a full disk', () => {
       expect(result.kept).toEqual(kept.map((why) => expect.stringContaining(why)));
     },
   );
+
+  test('a killed trim whose staged profile holds a keypair is kept, and a cancelled check keeps the marker', async () => {
+    makeProfile('host-dev', 3 * DAY);
+    mkdirSync(join(target, 'host-dev', 'deploy'));
+    writeFileSync(join(target, 'host-dev', 'deploy', 'app-keypair.json'), '[1]');
+    mkdirSync(join(target, '.stim-trimmed'));
+    renameSync(join(target, 'host-dev'), join(target, '.stim-trimmed', '0'));
+    writeFileSync(join(target, '.stim-trimmed', 'NOT-RESTORED'), 'staged\n');
+    const cancel = new AbortController();
+    let cancelled = false;
+    const fresh = await freshTrim((args) => {
+      if (!args.includes('-Fn') || cancelled) return '';
+      cancelled = true;
+      cancel.abort();
+      throw new Error('lsof was cancelled');
+    });
+
+    await expect(
+      fresh(target, { launching: noLaunchers(target), needBytes: 0, signal: cancel.signal }),
+    ).rejects.toThrow('aborted');
+    expect(readFileSync(join(target, '.stim-trimmed', 'NOT-RESTORED'), 'utf8')).toBe('staged\n');
+    const result = await fresh(target, { launching: noLaunchers(target), needBytes: 0 });
+
+    expect(result.kept).toEqual([expect.stringContaining('holds a Solana keypair')]);
+    expect(readFileSync(join(target, '.stim-trimmed', '0', 'deploy', 'app-keypair.json'), 'utf8')).toBe('[1]');
+  });
 
   test('a trim whose marker cannot be written even after the reserve is released moves nothing', async () => {
     stubProcesses({});
@@ -982,7 +1008,7 @@ describe.skipIf(process.platform === 'win32')(
       expect(existsSync(join(dir, 'doc', 'index.html'))).toBe(true);
     });
 
-    test('a delete that stops after staging leaves a marker the next trim checks and clears', async () => {
+    test('a delete that stops after staging leaves a marker that later trims and deletes refuse', async () => {
       let reached!: () => void;
       const staged = new Promise<void>((resolve) => (reached = resolve));
       fsHooks.rename = (from) => {
@@ -996,9 +1022,14 @@ describe.skipIf(process.platform === 'win32')(
       rmSync(cargoTargetTrimClaims(real), { recursive: true, force: true });
 
       const trim = await trimCargoTarget(dir, { launching: noLaunchers(target), needBytes: 0 });
+      const again = await remove();
 
-      expect(trim.kept).toEqual([]);
-      expect(existsSync(join(dir, '.stim-trimmed'))).toBe(false);
+      expect(trim.kept).toEqual([expect.stringContaining('could not be put back')]);
+      expect(again).toMatchObject({ removed: [], kept: [expect.any(String)] });
+      expect(readFileSync(join(dir, '.stim-trimmed', '1', 'app'), 'utf8')).toBe('binary');
+      expect(JSON.parse(readFileSync(join(dir, '.stim-trimmed', 'NOT-RESTORED'), 'utf8'))).toMatchObject({
+        1: 'debug',
+      });
       expect(existsSync(join(dir, 'doc', 'index.html'))).toBe(true);
     });
 
@@ -1128,6 +1159,13 @@ describe.skipIf(process.platform === 'win32')(
       expect(result.kept).toEqual([expect.stringContaining('cannot be made')]);
       expect(readdirSync(outside)).toEqual(['mine.txt']);
       expect(existsSync(join(dir, 'debug', 'app'))).toBe(true);
+
+      writeFileSync(join(outside, 'NOT-RESTORED'), 'staged\n');
+      const trim = await trimCargoTarget(dir, { launching: noLaunchers(target), needBytes: 0 });
+
+      expect(trim.kept).toEqual([expect.stringContaining('could not be put back')]);
+      expect(readFileSync(join(outside, 'NOT-RESTORED'), 'utf8')).toBe('staged\n');
+      expect(readdirSync(outside).toSorted()).toEqual(['NOT-RESTORED', 'mine.txt']);
     });
 
     test('a deploy that is a symbolic link keeps the whole target', async () => {
