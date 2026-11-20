@@ -90,6 +90,7 @@ it('classifies each environment-named setting by the process that makes its deci
     'maintenance.olderThanDays',
     'maintenance.protectRecentHours',
     'maintenance.gradleVersionIdleDays',
+    'maintenance.autoDiscover',
     'maintenance.removeFinishedWorktrees',
     'maintenance.removeIdleWorktrees',
     'maintenance.workspaceOutputsMaxGb',

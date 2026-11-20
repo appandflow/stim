@@ -68,10 +68,22 @@ export interface InstalledServerService {
   job: LaunchdJob | UnitJob | null;
   /** The systemd drop-in that sets `ExecStart=`, which the unit's own command never runs under. */
   override?: string | undefined;
-  /** Why the service does not run what `stim service install` writes now. */
-  stale?: string | null;
-  /** The `KillMode=` systemd has loaded for a unit whose file sets `KillMode=process`; null when unread. */
-  loadedKillMode?: string | null;
+}
+
+/**
+ * A LaunchAgent or systemd unit `stim service install` wrote whose definition is not what install writes now
+ * (`staleLaunchAgent`, `staleSystemdUnit`).
+ */
+export interface StaleService {
+  label: string;
+  installed: InstalledService;
+  reason: string;
+}
+
+/** A systemd unit install wrote whose file sets `KillMode=process` while systemd has `loaded` another mode. */
+export interface KillModeOverride {
+  label: string;
+  loaded: string;
 }
 
 export interface ServerReading extends ServerProcess {
@@ -92,6 +104,10 @@ export interface ServerSetup {
   version: string;
   build: string | null;
   services: InstalledServerService[];
+  /** Managed LaunchAgents and systemd units with a stale definition; only the stale report reads them. */
+  staleServices: StaleService[];
+  /** Managed systemd units whose loaded `KillMode=` is not the unit's `KillMode=process`. */
+  killModeOverrides: KillModeOverride[];
   servers: ServerReading[];
   local: LocalServerReading | null;
   clients: { build: number; deviceHost: number };
@@ -220,7 +236,7 @@ function updateRemedy(server: ServerReading, setup: ServerSetup): string {
     if (installed?.script?.endsWith('/bin/stimd') && !earlierMajor)
       return `Run \`stim engine update\` there, or \`stim engine use ${setup.version}\` for exactly this version.`;
     const command = installed
-      ? serviceInstallCommand(installed)
+      ? serviceInstallCommand({ ...installed, port: installed.port ?? server.port })
       : `env -u STIM_HOME stim service install${labelFlag(server.label ?? 'dev.stim.server')} --port ${server.port}`;
     const fill = installed?.env.length ? ', with each <value> set to what the service sets now' : '';
     const run = earlierMajor
@@ -292,17 +308,14 @@ const lastExit = (job: LaunchdJob | UnitJob | null): { failed: boolean; text: st
   return text.startsWith('signal') ? { failed: true, text } : null;
 };
 
-function killModeFindings(service: InstalledServerService): Finding[] {
-  if (!service.loadedKillMode || service.loadedKillMode === 'process') return [];
-  return [
-    {
-      code: 'server-service-override',
-      level: 'note',
-      title: `systemd runs the ${service.label} service with KillMode=${service.loadedKillMode}, not its unit's KillMode=process`,
-      detail: `A drop-in in ~/.config/systemd/user/${service.label}.service.d/ sets it, or systemd has not reloaded the unit, so its stimd keeps the successor handover at an engine switch.`,
-      fix: `Remove KillMode= from that drop-in, then run \`systemctl --user daemon-reload\`; Stim never edits a drop-in.`,
-    },
-  ];
+function killModeFindings(setup: ServerSetup): Finding[] {
+  return setup.killModeOverrides.map(({ label, loaded }) => ({
+    code: 'server-service-override',
+    level: 'note',
+    title: `systemd runs the ${label} service with KillMode=${loaded}, not its unit's KillMode=process`,
+    detail: `A drop-in in ~/.config/systemd/user/${label}.service.d/ sets it, or systemd has not reloaded the unit, so its stimd keeps the successor handover at an engine switch.`,
+    fix: `Remove KillMode= from that drop-in, then run \`systemctl --user daemon-reload\`; Stim never edits a drop-in.`,
+  }));
 }
 
 function overrideFindings(service: InstalledServerService): Finding[] {
@@ -318,25 +331,22 @@ function overrideFindings(service: InstalledServerService): Finding[] {
   ];
 }
 
-function staleFindings(service: InstalledServerService): Finding[] {
-  if (!service.stale) return [];
-  const fill = service.installed.env.length ? ', with each <value> set to what the service sets now' : '';
-  return [
-    {
+function staleFindings(setup: ServerSetup): Finding[] {
+  return setup.staleServices.map((service) => {
+    const fill = service.installed.env.length ? ', with each <value> set to what the service sets now' : '';
+    return {
       code: 'server-service-stale',
       level: 'note',
       title: `The ${service.label} service does not run what \`stim service install\` writes now`,
-      detail: `${service.stale[0]?.toUpperCase()}${service.stale.slice(1)}.`,
+      detail: `${service.reason[0]?.toUpperCase()}${service.reason.slice(1)}.`,
       fix: `Run \`${serviceInstallCommand(service.installed)}\` once when no build runs${fill}.`,
-    },
-  ];
+    };
+  });
 }
 
 function serviceStateFindings(setup: ServerSetup): Finding[] {
   return setup.services.flatMap((service): Finding[] => [
     ...overrideFindings(service),
-    ...killModeFindings(service),
-    ...staleFindings(service),
     ...crashFindings(setup, service),
   ]);
 }
@@ -503,6 +513,8 @@ export function serverSetupFindings(setup: ServerSetup): Finding[] {
   return [
     ...multipleFindings(setup),
     ...serviceStateFindings(setup),
+    ...staleFindings(setup),
+    ...killModeFindings(setup),
     ...versionFindings(setup),
     ...homeFindings(setup),
     ...desktopAuthorityFindings(setup),

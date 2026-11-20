@@ -15,7 +15,7 @@
     "logs": 51300,
     "lifecycle": 20750,
     "cleanup": 29350,
-    "settings": 136142,
+    "settings": 136512,
     "share": 29250,
     "macos": 35750
   },
@@ -38,7 +38,7 @@
     "lifecycle budget": 18150,
     "lifecycle options": 25100,
     "lifecycle devices": 11000,
-    "cleanup gc": 73600,
+    "cleanup gc": 74300,
     "cleanup disk": 16250
   }
 }

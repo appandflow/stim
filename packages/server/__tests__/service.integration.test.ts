@@ -55,7 +55,13 @@ describe('service plist', () => {
           const file = join(dir, 'job.plist');
           writeFileSync(file, renderPlist({ ...SPEC, host }));
           const json = JSON.parse(execFileSync('plutil', ['-convert', 'json', '-o', '-', file], { encoding: 'utf8' }));
-          expect(json).toMatchObject({ Label: SPEC.label, RunAtLoad: true, KeepAlive: true, ThrottleInterval: 30 });
+          expect(json).toMatchObject({
+            Label: SPEC.label,
+            RunAtLoad: true,
+            KeepAlive: true,
+            ThrottleInterval: 30,
+            ProcessType: 'Interactive',
+          });
           expect(parseInstalledPlist(json)).toEqual({
             label: SPEC.label,
             host,
@@ -69,6 +75,7 @@ describe('service plist', () => {
             managed: true,
             serve: { port: 7443, created: true },
             previousScript: null,
+            processType: json.ProcessType,
             programArguments: [
               ...(host ? [host, 'run'] : []),
               SPEC.node,

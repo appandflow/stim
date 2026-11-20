@@ -1591,8 +1591,9 @@ list, a \`note\` finding only the doctor report:
   server-service-override   note: a systemd drop-in sets ExecStart=, so the unit
                          cannot move onto the engine, or KillMode=, so stimd
                          keeps the successor handover; it names the drop-in
-  server-service-stale   note: the service does not run what \`stim service install\`
-                         writes now; run the printed install once
+  server-service-stale   note: launchd runs an outdated LaunchAgent definition, or
+                         a systemd unit lacks KillMode=process; run
+                         \`stim service install\` once
   server-desktop-authority  cost: the server stimd's socket reaches (not Desktop's own)
                          sends no desktopApi or a lower one than this stim's, so
                          Desktop cannot run actions through it; update it

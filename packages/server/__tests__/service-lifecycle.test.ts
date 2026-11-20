@@ -21,6 +21,7 @@ import {
   installService,
   recordServiceRoute,
   rewriteUnitToShim,
+  serviceStale,
   serviceStatus,
   uninstallService,
 } from '../src/service.ts';
@@ -329,6 +330,42 @@ describe.skipIf(process.platform !== 'darwin')('service lifecycle', () => {
     ).toEqual(['ANDROID_HOME=/sdk']);
   });
 
+  it('setup keeps a healthy service with a stale ProcessType running and names the install that fixes it', async () => {
+    const options = { label, port: launchd.port, env: [], pathPrepend: [], serve: false };
+    const setup = { script: process.argv[1] ?? '', host: null, requestPermissions: false as const };
+    await finish(installJob(options, setup));
+    const bootstraps = launchd.bootstraps.length;
+    execFileSync('plutil', ['-replace', 'ProcessType', '-string', 'Standard', plist]);
+    expect((await finish(installJob(options, setup)))[0]).toMatch(/already runs/);
+    expect(launchd.job).toBe('new');
+    expect(launchd.bootstraps).toHaveLength(bootstraps);
+    expect((await serviceStale(label))?.remedy).toMatch(/stim service install --label dev\.stim\.lifecycle/);
+  });
+
+  it('setup reinstalls a managed node unit with the same options onto the engine shim once the shim exists', async () => {
+    const script = realpathSync(join(home, 'new-server.mjs'));
+    launchd.original = renderPlist({
+      label,
+      host: null,
+      node: process.execPath,
+      script,
+      port: launchd.port,
+      env: [],
+      pathPrepend: [],
+      environment: { STIM_HOME: join(home, 'state') },
+      logPath: join(home, 'server.log'),
+      workingDirectory: home,
+      serve: null,
+    });
+    writeFileSync(plist, launchd.original);
+    const shim = engineShim();
+    const options = { label, port: launchd.port, env: [], pathPrepend: [], serve: false };
+    const setup = { script, host: null, requestPermissions: false as const };
+    expect((await finish(installJob(options, setup)))[0]).not.toMatch(/already runs/);
+    expect(launchd.bootstraps).toHaveLength(1);
+    expect(installedPlist()).toMatchObject({ node: null, script: shim });
+  });
+
   const installedPlist = () =>
     parseInstalledPlist(
       JSON.parse(execFileSync('plutil', ['-convert', 'json', '-o', '-', plist], { encoding: 'utf8' })),
@@ -463,6 +500,16 @@ describe.skipIf(process.platform !== 'darwin')('service lifecycle', () => {
     expect(readFileSync(plist, 'utf8')).toBe(launchd.original);
     expect(launchd.bootstraps.map((attempt) => attempt.plist === launchd.original)).toEqual([false, true]);
     expect(launchd.job).toBe('old');
+  });
+
+  it('restores a binary previous plist byte for byte when the replacement exits immediately', async () => {
+    execFileSync('plutil', ['-convert', 'binary1', plist]);
+    const before = readFileSync(plist);
+    launchd.original = before.toString('utf8');
+    launchd.failNew = true;
+    await Promise.all([expect(install()).rejects.toThrow('is not running (last exit code 1)'), vi.runAllTimersAsync()]);
+    expect(readFileSync(plist).equals(before)).toBe(true);
+    expect(execFileSync('plutil', ['-lint', plist], { encoding: 'utf8' })).toContain('OK');
   });
 
   it('keeps the startup error and restores the previous job when cleanup cannot release the new port', async () => {

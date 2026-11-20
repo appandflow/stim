@@ -240,7 +240,7 @@ describe('an executable on PATH that links into a checkout keeps it, whichever w
     age(beside);
     ageGit(join(main, '.git', 'worktrees', 'beside'));
     vi.stubEnv('STIM_HOME', '');
-    const config: Config = { version: 2, projects: { [main]: {} }, repos: {} };
+    const config: Config = { version: 2, projects: { [main]: {} }, repos: {}, maintenance: { autoDiscover: true } };
     saveConfig(config);
 
     const idle = await stoppedOutputCandidates(config, reading, day);

@@ -219,17 +219,17 @@ test('preflight refusal has no claim, journal or install effects', async () => {
   expect(f.actions).toEqual([]);
 });
 
-test('plain setup prints the install that fixes a stale unit it keeps running', async () => {
+test('plain setup prints the install that fixes a stale LaunchAgent it keeps running', async () => {
   const remedy = 'run `env -u STIM_HOME stim service install --port 7787` once when no build runs';
-  const f = fixture({ stale: async () => ({ reason: 'its unit sets no KillMode=', remedy }) });
+  const f = fixture({ stale: async () => ({ reason: "its plist does not start the engine's stimd shim", remedy }) });
   expect(await runSetup([...args, '--yes'], '1.16.0', f.deps)).toBe(0);
   expect(f.stdout.join('\n')).toContain(remedy);
 });
 
-test('setup finishes when the stale check cannot read the unit', async () => {
+test('setup finishes when the stale check cannot read launchd', async () => {
   const f = fixture({
     stale: async () => {
-      throw new Error('EACCES: permission denied');
+      throw new Error('launchctl print dev.stim.server failed: Operation not permitted');
     },
   });
   expect(await runSetup([...args, '--yes'], '1.16.0', f.deps)).toBe(0);

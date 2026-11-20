@@ -33,6 +33,7 @@ import {
   validateLabel,
   normalizeEnv,
   serviceInstallCommand,
+  staleLaunchAgent,
   staleSystemdUnit,
   ServiceError,
   type InstalledService,
@@ -466,6 +467,22 @@ export async function rewriteUnitToShim(label: string): Promise<boolean> {
 }
 
 /**
+ * Why the LaunchAgent `installed` describes is stale (`staleLaunchAgent`), with the install that writes and loads it
+ * again; null when it is current or the service is not a LaunchAgent. Reads only.
+ */
+async function launchdStale(
+  installed: InstalledService,
+  job?: ServiceJob | null,
+): Promise<{ reason: string; remedy: string } | null> {
+  if (serviceManager().name !== 'launchd' || !installed.managed) return null;
+  const loadedJob = job === undefined ? await loaded(installed.label) : job;
+  const reason = staleLaunchAgent(installed, loadedJob?.arguments ?? null, unitShim());
+  if (!reason) return null;
+  const fill = installed.env.length ? ', with each <value> set to what the service sets now' : '';
+  return { reason, remedy: `run \`${serviceInstallCommand(installed)}\` once when no build runs${fill}` };
+}
+
+/**
  * Why the systemd unit `installed` describes does not set what `stim service install` writes now (`staleSystemdUnit`),
  * with the install that writes it again; null when it is current, not one install wrote, or not a systemd unit. Reads only.
  */
@@ -477,10 +494,10 @@ function systemdStale(installed: InstalledService): { reason: string; remedy: st
   return { reason, remedy: `run \`${serviceInstallCommand(installed)}\` once when no build runs${fill}` };
 }
 
-/** Why the service `label` does not set what `stim service install` writes now, and the install that fixes it; null when it is current. */
+/** Why the LaunchAgent or systemd unit `label` is stale and the install that fixes it; null when it is current. */
 export async function serviceStale(label: string): Promise<{ reason: string; remedy: string } | null> {
   const installed = await readInstalled(label);
-  return installed ? systemdStale(installed) : null;
+  return installed ? ((await launchdStale(installed)) ?? systemdStale(installed)) : null;
 }
 
 /** The server directory of the Stim home a service runs with `STIM_HOME` set to `stimHome`. */
@@ -545,7 +562,7 @@ export async function installJob(
       return [`${options.label} already runs stim-server ${health.version}.`];
     }
   }
-  const oldPlist = previous ? readFileSync(path, 'utf8') : null;
+  const oldPlist = previous ? readFileSync(path) : null;
   mkdirSync(dirname(path), { recursive: true });
   mkdirSync(dirname(spec.logPath), { recursive: true });
 
@@ -744,7 +761,7 @@ export interface ServiceStatus {
    * build's launcher, null without an engine store or when it names a copy outside it.
    */
   followsEngine: boolean | null;
-  /** Why the unit does not set what `stim service install` writes now, and the install that fixes it; null otherwise. */
+  /** Why the LaunchAgent or systemd unit does not run what `stim service install` writes now, and the install that fixes it; null otherwise. */
   stale: { reason: string; remedy: string } | null;
   /** Whether systemd keeps this user's services running without a login; null under launchd. */
   linger: boolean | null;
@@ -859,7 +876,7 @@ export async function serviceStatus(label: string): Promise<ServiceStatus> {
     stimBuild: { service, cli, match: service && cli ? service === cli : null },
     stimd: installed ? homeStimd(home) : null,
     followsEngine: installed?.script ? followsEngine(installed.script) : null,
-    stale: installed ? systemdStale(installed) : null,
+    stale: installed ? ((await launchdStale(installed, job)) ?? systemdStale(installed)) : null,
     linger: await manager.linger(),
   };
 }

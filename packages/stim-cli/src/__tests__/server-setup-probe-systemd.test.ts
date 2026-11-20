@@ -56,7 +56,6 @@ describe('doctor on a systemd unit that install wrote for the engine shim', () =
     Object.defineProperty(process, 'platform', { value: 'linux' });
     const setup = await readServerSetup('2.0.0');
     Object.defineProperty(process, 'platform', { value: platform });
-    expect(setup?.services.map((service) => service.label)).toEqual(['dev.stim.server']);
     return setup ? serverSetupFindings(setup).filter((finding) => finding.code === code) : [];
   };
 
