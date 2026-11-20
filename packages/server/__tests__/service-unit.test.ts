@@ -48,7 +48,7 @@ describe('systemd unit', () => {
 describe('systemd unit naming the engine shim', () => {
   const stimd = '/home/me/.stim/engine/bin/stimd';
 
-  it('runs the stimd shim with the server options in place of node and the script, keeping Restart=always', () => {
+  it('runs the stimd shim with the server options in place of node and the script, keeping Restart=always and the children it leaves', () => {
     const text = renderUnit({ ...SPEC, stimd });
     expect(parseUnit(text)).toMatchObject({
       node: null,
@@ -58,6 +58,7 @@ describe('systemd unit naming the engine shim', () => {
       pathPrepend: ['/opt/android sdk/platform-tools'],
     });
     expect(text).toContain('Restart=always');
+    expect(text).toContain('KillMode=process');
     expect(text).not.toContain(SPEC.node);
   });
 

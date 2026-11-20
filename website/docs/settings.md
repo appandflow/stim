@@ -727,7 +727,11 @@ stim engine rollback        # back to the previous build, pinned until stim engi
 
 The engine fetches a release from the public npm registry, runs its self-test,
 and switches once running builds and hosted native steps have drained; the
-service's stimd restarts on the new build. It never changes pairings,
+service's stimd exits and the service starts it again on the new build, inside
+the service's job (on Linux after systemd's 30 s restart delay). The first switch
+onto a Stim with this behavior is still made by the older build, so it can leave
+one stimd outside the job until the next switch. A Linux service installed by an
+earlier Stim keeps the older handover until you run `stim service install` again. It never changes pairings,
 approvals, Stim Host, the pinned `--env` and `--path-prepend` values or the
 serve route. A client approved for builds or device hosting can ask for the
 same update from its machine with `stim remote update <mac>`. A build whose
@@ -792,7 +796,8 @@ writes to and from memory: **high** under `disk.minFreeGb` (40 GB), after
 available; **critical** under `disk.criticalFreeGb` (20 GB), or under
 `disk.hardFloorGb` when that is higher, or with critical memory pressure.
 Above normal it runs one pressure ladder until the level
-clears: idle stage for every workspace idle 2 minutes, parked devices, the
+clears: idle stage for every workspace idle 2 minutes under memory pressure
+(at `idle.minutes` under disk pressure alone), parked devices, the
 shared caches, the dormant stage, the `node_modules` and Pods of idle worktrees
 that `stim worktree warm` can restore (idle 1 hour at high, 2 minutes at critical),
 then Gradle daemons, unpinned Gradle versions, TMPDIR leftovers and the worktree

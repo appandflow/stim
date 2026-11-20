@@ -302,7 +302,9 @@ The run claim serializes passes with an acting gc; gc refuses a held claim
 with the holder and recovery guidance instead of waiting. A dry run takes no
 claim.
 Each pass keeps a 1 MiB file, maintenance/disk-reserve. When taking the run
-claim fails with ENOSPC or EDQUOT, the pass deletes it and retries once; an
+claim fails with ENOSPC or EDQUOT, the pass deletes it and retries once, and
+so does a Cargo trim or delete whose claim or staging write fails that way, and
+the dormant step for any output whose workspace claims fail that way; an
 acting gc gives it back before taking the claim. Either starts deleting at zero
 free disk as long as an earlier run left the reserve, and writes the reserve
 again at its end when there is room.
@@ -509,8 +511,8 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
             simulator runtimes, finished linked worktrees past
             gc.worktreeGraceMinutes
   high      plus the pressure ladder at high (\`guide lifecycle budget\`):
-            idle stage at 2 minutes, parked devices until the level clears,
-            shared caches trimmed to half their caps, the dormant stage and
+            idle stage at 2 minutes (memory pressure), parked devices until
+            the level clears, shared caches trimmed to half their caps, the dormant stage and
             node_modules and Pods of idle linked worktrees at 10 minutes, idle
             daemons, clean finished worktrees without the grace period, and,
             while free disk stays under disk.minFreeGb, other tools' caches
@@ -556,17 +558,18 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
     maintenance worktree check, N. Kept: uncommitted (archived first) or
     unpushed work, in use, leased, locked, pinned, cannot prove finished.
   Workspace idle idle.dormantDays (default 1): build outputs (android/build,
-  android/.gradle, .build, .cxx, .dd DerivedData, an Exact app's target/ beside
-  exact.mjs trimmed by profile), owned devices, logs archived
+  android/.gradle, .build, .cxx, .dd DerivedData, a Cargo target/ but a Solana
+  deploy/ keypair folder), owned devices, logs archived
     dormant reduction, N. Kept: running dev server or build, a process in
     the checkout, booted device, leased, driven, locked, hosted, pinned,
-    idle.minutes 0.
+    idle.minutes 0; a target/ used in that time, locked, open, holding a
+    mount or trim recovery.
   The same: node_modules and ios/Pods of a linked worktree, recorded so the next
   Stim command restores them with worktree warm, or asks for an install
     dormant reduction, N. Kept: source checkout, under 256 MB of its own (a
     copy-on-write clone), in use, a running process inside, pinned.
   Idle dev servers and their outputs (idle 2 minutes)
-    idle stage and rung 1, H. Kept: as above; rung 1 keeps a Cargo target/
+    idle stage (memory pressure) and rung 1, H. Kept: as above; rung 1 keeps a Cargo target/
     for rung 3.
   Parked devices
     rung 2, H until the level clears, C all.
@@ -1122,6 +1125,7 @@ THE PRESSURE LADDER
   rung to its end:
     0  booted parked simulators
     1  idle outputs: the idle stage for every workspace idle 2 minutes or more
+       under memory pressure (at idle.minutes under disk pressure alone)
     2  parked devices (high until the level clears, critical all)
     3  shared caches: trimmed to half their caps at high; at critical emptied
        (compilation cache, ccache, build cache except entries in use, Metro
@@ -1857,6 +1861,8 @@ WORKSPACE BUILD OUTPUTS
   pressure ladder at high or critical: for a workspace with
   nothing running idle 2 minutes or more, and in the idle stage of a running
   one. It prints the bytes freed per category.
+  Idle idle.dormantDays, a Cargo target/ goes but its keypairs (\`stim
+  guide cleanup gc\`).
   A workspace whose worktree is locked with git worktree lock is never
   lightened: not its outputs, not its project's build directories, at any
   disk pressure level, including the age sweep and the pressure ladder, and gc and
@@ -1876,7 +1882,7 @@ WORKSPACE BUILD OUTPUTS
   other macOS files, locks and device records stay. The workspace keeps its
   devices, ports and running dev server. The pressure ladder's idle stage
   (stim guide lifecycle budget) clears them for a workspace idle 2 minutes
-  under disk pressure. A running, building, unverified or hosted macOS app
+  under memory pressure. A running, building, unverified or hosted macOS app
   keeps its workspace untouched.
   Last use is the newest of the lastUsedAt that start, ios, android, reload,
   logs and worktree warm record in state.json, lastBuild.startedAt,

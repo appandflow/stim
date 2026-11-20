@@ -25,7 +25,9 @@ At every level, maintenance, the pressure ladder and `stim gc` never delete:
 
 Only git-ignored regenerable directories go: a real directory inside the
 checkout whose files git ignores, with no tracked or unignored file, not reached
-through a link, and not a mount point.
+through a link, and not a mount point. When the dormant reduction deletes a
+recognised Cargo `target/`, it counts as one regenerable directory, apart from
+a `deploy/` folder holding a Solana `*-keypair.json` (LLP 0005).
 
 Reason: everything Stim deletes must come back by rebuilding or reinstalling.
 Work a person made cannot.

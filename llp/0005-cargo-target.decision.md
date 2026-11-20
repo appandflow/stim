@@ -18,9 +18,10 @@ directories never count as that evidence. All three count in a registered
 workspace and in a discovered checkout (LLP 0004), and all three get the size
 cap and the pressure trims below.
 
-Only the first two are ever listed as build output, and only the idle stage,
-for an idle workspace whose dev server or devices it stops, deletes one whole.
-Before that it checks that the directory is real, inside its checkout, not a
+Only the first two are listed as build output. Two steps delete a `target/`
+whole: the idle stage, for an idle workspace whose dev server or devices it
+stops, deletes one of the first two, and the dormant reduction (below) deletes
+any of the three. Before that the idle stage checks that the directory is real, inside its checkout, not a
 mount point, holds no file git tracks and only files git ignores; that no PATH
 launcher resolves into the checkout; that no other process runs from or works
 in the app; and that it holds no copy a trim could not put back
@@ -30,15 +31,7 @@ not the whole-app process check; instead they keep each path a process
 executes from or holds open and each profile whose lock a build holds (below).
 
 Ladder rung 1, for a workspace with nothing running, leaves a `target/` to the
-trim of rung 3. The dormant reduction (`stim gc` and the daemon's hourly step)
-runs the trim below on every profile no build wrote for `idle.dormantDays`,
-under the trim claim and the profile lock checks, and leaves `.stim-trimmed`,
-`.stim-not-restored-*` and everything that is not a profile in place. A process
-running from or working in the checkout keeps all of it.
-
-Reason: a whole delete took the recovery data of a trim that could not put a
-directory back, and raced a Cargo build that holds a profile lock. Chosen by
-the coordinator and the review of #5966 (#5968), not by the maintainer.
+trim of rung 3.
 
 Maintainer decision: "Yes leys have same rules for cargo as exact", 2026-11-19
 (#5958). Reason for the third kind: a Cargo `target/` can lack the root tag.
@@ -48,10 +41,141 @@ held `.rustc_info.json` and a profile with `.fingerprint`, and one carried the
 tag only in `target/wasm32-unknown-unknown/`. The check takes only Cargo's own
 files as evidence, so a project's `target/` folder that Cargo never wrote stays
 out. A `CACHEDIR.TAG` in a child is not evidence: it is a generic standard any
-tool may write. Reason the third kind is trimmed and never deleted whole: such
-a `target/` can also hold another tool's output, as Exact's `bake/` and `web/`
-are, and Cargo's files in it do not show the rest is build output; the trims
-remove only Cargo's profiles and keep the rest and any recovery copy.
+tool may write. Reason the third kind is never listed as build output: such a
+`target/` can also hold another tool's output, as Exact's `bake/` and `web/`
+are, and Cargo's files in it do not show the rest is build output, so the idle
+stage leaves it and the trims remove only Cargo's profiles from it. Only the dormant
+reduction deletes it whole, under the maintainer decision in the next section.
+
+## The dormant reduction deletes an idle target whole
+
+The dormant reduction (`stim gc` and the daemon's hourly step) deletes every
+recognised `target/` whole, tagged, Exact app's and untagged alike, in a
+workspace or discovered checkout that has had no activity for
+`idle.dormantDays` by the full evidence, and whose worktree is not locked with
+`git worktree lock`: every top-level entry but a `deploy/` directory holding a
+`*-keypair.json` and a symbolic link, and the `target/` itself once nothing is
+left in it. It runs the idle stage's
+checks above, the process check included, for all three kinds, then, under the
+workspace's claims and checked again right before the delete: the workspace is
+still idle, the directory is still a recognised `target/`, and no PATH launcher
+resolves into the checkout. A path the plan took as a `target/` goes only
+through the Cargo delete, never through the plain removal of other outputs.
+
+Under the target's trim claim the Cargo delete then keeps the whole `target/`
+when it is no longer recognised, when it holds a copy a trim could not put back,
+when it shows use within `idle.dormantDays` or that use cannot be told, when
+another filesystem is mounted anywhere in it (on Linux also any mount point at
+or under it in `/proc/self/mountinfo`, since a bind mount keeps the device
+number; mounts that cannot be read keep it), when a process executes from,
+works in or holds open any path in it, the `target/` itself and the entries
+that stay included, or when a build holds a lock file: a `.cargo-lock`,
+`.cargo-build-lock` or `.cargo-artifact-lock` in a top-level entry or a
+directory directly in one, Exact's `.exact-sweep.json.lock`, or a file under
+`.apple-cargo-locks/` up to two levels down. Use means a modification time
+within that time, or one that cannot be read, on the `target/` itself, on any
+top-level entry but Stim's own `.stim-*`, on each direct child of a top-level
+directory, or on a profile directory and its `.fingerprint`, `deps`, `build` and
+`incremental`; or a unit stamp within that time in Exact's ledger. The times
+are read two levels down by the eligibility check; the delete itself also takes
+the newest modification time of everything in each entry in the walk that checks
+devices and keypairs, before the move and on the moved entries before the
+delete, so a file rewritten in place deep inside, such as a Criterion baseline,
+keeps the `target/`. A `target/` with no Cargo profile, such as an
+Exact app's, is dated the same way.
+
+Then, as the trims do (Never delete what a build took back, below), it renames
+each entry into `target/.stim-trimmed/` and reads that entry's lock
+files again at the new path. Once every entry is moved it measures them, reads
+the processes again and dates the moved entries again the same way. Right before the delete it
+checks that a staged `deploy/` still holds no keypair, lists the `target/` again
+(an entry's original name that reappeared, or a new entry, means a build is
+back), dates the entries that stayed in place, and on Linux reads the mounts
+again. A lock a build took, any path in the `target/` a process used, a write
+made meanwhile or any of those findings puts every moved entry back, and so does
+a cancellation or an error before those checks pass. An entry whose original
+name exists again is not put back over it; like one that cannot be put back,
+it moves to `.stim-not-restored-*` or stays in a `.stim-trimmed` marked
+`NOT-RESTORED`, for a person. A file is put back with `link` then `unlink`, which
+fails rather than replace a name a build recreated meanwhile. A directory is put
+back with `rename` after checking its name is free: `rename` fails onto a
+directory that is not empty, but replaces an empty one, so a directory a build
+recreates empty in that instant is replaced. An entry that
+cannot be renamed, such as one on another device (`EXDEV`), stays and the rest
+goes. The moved entries are deleted without entering a directory on another
+device, and the emptied `target/` goes too. Report mode runs the checks that
+need no claim, the use dating among them, and reports the size of what would
+go, and gc names a `target/` it keeps and why. Putting entries back after a
+cancellation, an error, a lock or a process, and a delete that ends with entries
+left, give the `target/` its own modification time back, so Stim's own moves
+do not count as use on the next run; a rollback caused by a write or a new
+entry does not. For the dormant reduction only, a `target/` holding a `.stim-trimmed` directory
+counts as a recognised `target/` even when its Cargo files were staged; the
+size cap and the pressure trims do not see such a `target/`, as before: a staging tree
+whose marker is cleared was committed for deletion, and the next run removes
+it after the same idle, process, lock and mount checks.
+
+Maintainer decision: "lets full delete it instead of trim on idle", 2026-11-19
+(#5979). Reason: a trim by profile left everything that is not a profile, such
+as Exact's `clients/` and `web-js-modules/`, on an idle checkout, and left an
+untagged `target/` at its full size. Reason the size cap and the pressure trims
+stay trims: they also reach a `target/` in use.
+
+Maintainer decision: "yea lets do that", 2026-11-19 (#5979), in reply to
+"switch #5996 to that, full delete except Solana keypairs", after the worst
+cases were listed: Solana keypairs, Exact's receipts and development tokens,
+benchmark baselines and Cargo's reports. A `deploy/` directory holding a
+`*-keypair.json`, or one that cannot be read to tell, stays because Solana's `cargo build-sbf` and Anchor keep a
+program's private key there, and a new key is a new program ID. Everything else
+in an idle `target/` goes, Exact's folders and records included. A symbolic
+link stays because deleting through it would reach what it points at, and a
+`deploy` that is itself a symbolic link, or holds one, keeps the whole
+`target/`, since its keys may live anywhere in it. Both `deploy` and
+`*-keypair.json` match in any letter case. Any other top-level entry holding a
+`*-keypair.json` at any depth stays too, found in the same walk that checks
+devices, before the move and again on the moved entries before the delete: a
+debug-only `cargo build-sbf --debug` writes the key under `deploy/debug/`, and
+`--sbf-out-dir` can put it in any folder. A dry run leaves such entries out of
+the size it reports. A `.stim-trimmed` that is not a real directory
+keeps the `target/` too: the staging directory is made fresh, never reused. An
+earlier version deleted only entries recognised as Cargo or Exact build
+output; it freed almost nothing from Exact app targets, whose size sits in
+folders that also hold records.
+
+The delete notes the `target/`'s device and inode first and checks them again
+before it makes the staging directory, before each move and before the final
+delete. If the `target/` is no longer that real directory, it stops without
+putting anything back through the new path; what was staged stays in the
+original directory's `.stim-trimmed`, marked `NOT-RESTORED`, for a person. A
+swap made deliberately between one of those checks and the call that follows is
+not covered.
+
+Known limit: a Linux bind mount that exposes part of the `target/` elsewhere,
+such as `target/doc` mounted at `/srv/docs` for a server outside the checkout,
+is not detected; the mount checks look only for mount points at or under the
+`target/`.
+
+Known limit: the process checks see a path in the `target/` only when a process
+runs from it, works in it, holds a file in it open or names it absolutely on
+its command line. A process whose working directory is outside the checkout
+and that names the `target/` only by a relative path, such as a static file
+server for `target/doc` started from elsewhere, is not seen, and its files can
+go while it serves them.
+
+Chosen by the coordinator and the reviews of #5996, not by the maintainer: the
+use dating, the move aside with its recheck and roll back, the mount checks and
+the NOT-RESTORED marker written before the first move. Reason for the dating: the idle evidence skips
+writes in a `target/` git ignores, so a build that ran without a source edit
+shows only in the target's own times; two levels of times are what a check that
+must not walk a large `target/` can read, and on this Mac most Exact app targets
+hold no Cargo profile at all. Reason for the move aside: the trim claim
+excludes only other Stim processes, and a Cargo build sharing the target can
+take a profile lock while later profiles are checked. Reason for the marker:
+it records each staged entry's original name in `.stim-trimmed/NOT-RESTORED`
+before the first move and is cleared only once the final checks pass or every
+entry is back, so a delete that dies midway leaves a `target/` that later trims
+and deletes refuse until a person acts, instead of one whose staged entries the
+next trim deletes unchecked.
 
 ## The size cap
 
@@ -135,13 +259,35 @@ crate were added by the reviews of #5539. Not decided: whether
 
 ## Never delete what a build took back
 
-Each whole profile or incremental removal renames a directory into `target/.stim-trimmed/` after the lock
-check and checks the locks again at the new path. A build that took a lock in
+Each whole profile or incremental removal, and each top-level entry of a
+`target/` the dormant reduction deletes, renames a directory into
+`target/.stim-trimmed/` after the lock check and checks the locks again at the
+new path. A build that took a lock in
 between gets the directory back. A directory that cannot be put back is never
 deleted: it moves to `target/.stim-not-restored-*`, which later trims skip, for
 a person to merge or delete. If that move fails too, it stays in
 `.stim-trimmed` with a marker, and later trims of that `target/` stop until a
 person removes it.
+
+The trim writes no marker before it moves: a trim that is killed leaves an
+unmarked `.stim-trimmed`, which the next trim deletes at its start. The
+trim notes the device and inode of the `.stim-trimmed` it made; at the end it
+checks that `.stim-trimmed` is still that real directory, deletes only the
+entries it staged, and removes `.stim-trimmed` only when that leaves it empty,
+so anything else that appeared there stays and is reported, until the next
+trim deletes a leftover `.stim-trimmed` at its start, as before. Two gaps are
+accepted, both shared with earlier versions: a kill between a build taking a
+profile back during the move and the trim's own check after the move, and a
+put-back whose marking fails too.
+
+Maintainer decision: "ok", 2026-11-19
+[Pull request comment](https://github.com/appandflow/stim/pull/6013#issuecomment-7029140328),
+choosing option 3 for a killed trim's staging: no marker before the move, so
+the next trim removes an unmarked `.stim-trimmed`; a failed put-back is
+recorded with the `NOT-RESTORED` marker for a person; and the gap when the
+marking fails too is accepted. Reason given: everything the trim stages is
+regenerable Cargo build output, Solana keypairs are never staged, and the
+remaining kill window exists on earlier versions.
 
 A unit sweep takes exclusive, non-blocking locks on Exact's ledger lock and the
 profile's `.cargo-lock`, `.cargo-build-lock` and `.cargo-artifact-lock` before
@@ -166,11 +312,56 @@ deleting it breaks the build rather than slowing the next one.
 Chosen by the coordinator and the reviews of #5518 and #5539, not by the
 maintainer.
 
+## A full disk releases the reserve
+
+The trim and the dormant delete write before they free anything: the trim
+claim under `~/.stim/machine/cargo-trim/`, on the dormant path the
+workspace's `native-run` and `metro-start` claims, the `target/.stim-trimmed`
+directory, the dormant delete's `NOT-RESTORED` marker, and the trim's moves of profiles,
+`incremental/` directories and unit files into it. When one of those writes
+fails with `ENOSPC`, or `EDQUOT` over a quota, Stim deletes its 1 MiB
+maintenance disk reserve (`$STIM_HOME/maintenance/disk-reserve`, the file the
+maintenance pass and an acting `stim gc` already keep) and tries that write
+once more. The dormant delete's renames of each entry into `.stim-trimmed` are
+not retried: an entry that cannot be moved stays, as above. The retry runs the
+same staged path with every check above unchanged. Before the trim retries a
+staging write, it reads the processes and the launchers again, for a profile
+its lock files, and, for a stale profile or target triple, whether it is still
+stale as a whole, which also decides the stale paths still to come: a refusal
+of that scan stops the remaining stale moves, and each path skipped is
+reported. A launcher into the checkout or process evidence that cannot be read
+stops the rest of that run, and a path in use keeps that path; in a unit batch,
+one busy path, moved or not yet moved, puts the whole batch back. The dormant
+delete checks that the `target/` is still the same directory before each try,
+the marker's included, and creates its marker exclusively, so it never replaces
+a marker already there; a failed write removes only the file that attempt
+created. For the workspace claims the whole removal of that output runs again.
+A run that released the reserve says so in its outcome. When the write fails
+again, or there was no reserve to release, the `target/` is kept as before.
+
+A failed put-back's `NOT-RESTORED` marker retries the same way. The dormant
+delete removes a marker it could not finish writing with its empty
+`.stim-trimmed` and keeps the `target/`; its modification time stays as the
+attempt left it, so a file that arrived meanwhile still counts as use, and no
+marker blocks the next run. The maintenance pass writes the reserve back at its
+end when there is room.
+
+Reason: on 2026-11-19 at 23:01 UTC, with the maintainer's disk full, a rung 3
+trim failed with `ENOSPC` creating `.stim-trimmed` and freed nothing (#6012),
+and on a disk with no free bytes the claims fail first (#6016). Deleting in
+place without staging would need every guarantee of the staged path proven
+again; the reserve gives the staged path the room it needs instead.
+
+Asked for in #6012 and #6016; reusing the reserve was chosen by the
+coordinator of that work, not by the maintainer.
+
 ## Links
 
-- Issues: #5512, #5516, #5523, #5528, #5530. Pull requests: #5518, #5519,
+- Issues: #5512, #5516, #5523, #5528, #5530, #5979, #6012, #6016. Pull requests: #5518, #5519,
   #5527, #5539. Locking follow-up: #5542.
 - Code: `packages/stim-cli/src/workspace/cargo-target.ts`,
+  `packages/stim-cli/src/daemon/dormant-outputs.ts`,
+  `packages/stim-cli/src/disk-reserve.ts`,
   `packages/stim-cli/src/stimd/passes/cargo-target.ts`,
   `packages/stim-cli/src/stimd/passes/defer.ts`,
   `packages/stim-cli/src/daemon/ladder.ts` (`cargoTargetsStep`),
