@@ -61,7 +61,9 @@ time. Then the delete goes ahead.
   the file), a linked
   `.pnpm_patches` or any link inside one, a `state.json` naming an edit folder
   elsewhere inside the folder being deleted (`pnpm patch --edit-dir`), a
-  node_modules link whose target holds a `.pnpm_patches`, a node_modules on
+  `state.json` in a removed worktree naming an edit folder that cannot be
+  found, as after `git worktree move`, a node_modules link whose target holds a
+  `.pnpm_patches`, a node_modules on
   another volume, a mount at or under the folder being deleted (Linux mount
   table),
   a scan root on another volume than the folder being deleted, a rescue store

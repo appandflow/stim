@@ -21,7 +21,8 @@ const MAX_RESCUE_ENTRIES = 1_000_000;
  * anywhere in it outside `.git` and node_modules, at their paths relative to `root`. Without `act` it only checks.
  * Returns why the delete must not go ahead, or null. It copies only plain files: a link where a protected file is, a
  * link in a `.pnpm_patches`, a `state.json` naming an edit folder elsewhere in `deleting` (`pnpm patch --edit-dir`;
- * one outside `deleting` gets its `state.json` copied, so `pnpm patch-commit` still finds it after a restore), a
+ * one outside `deleting` gets its `state.json` copied, so `pnpm patch-commit` still finds it after a restore, and in a
+ * `whole` worktree one that cannot be found, as after `git worktree move`, keeps it), a
  * linked node_modules whose target holds a `.pnpm_patches`, a mount at or under `deleting` by `mountInfo`, another volume than `deleting`'s, a rescue store inside
  * `deleting` or reached through a link, more than RESCUE_CAP_BYTES, more than MAX_RESCUE_ENTRIES entries, or a read or
  * copy that fails or does not finish within RESCUE_MS keeps the folder.
@@ -77,7 +78,7 @@ export async function rescueBeforeDelete(
             if (!worktree || entry.name !== 'node_modules') queue.push(source);
             else if ((await bounded(source, () => lstat(source))).dev !== dev)
               throw new Error(`${source} is on another volume`);
-            else await patches(source);
+            else await patches(source, true);
           } else if (!protectedName(entry.name)) continue;
           else if (!entry.isFile())
             throw new Error(
@@ -98,7 +99,7 @@ export async function rescueBeforeDelete(
       if (stat && (!stat.isDirectory() || (await bounded(dir, () => readdir(dir))).length))
         throw new Error(`${link} is a link to a node_modules holding a .pnpm_patches`);
     };
-    const patches = async (modules: string) => {
+    const patches = async (modules: string, worktree: boolean) => {
       const dir = join(modules, '.pnpm_patches');
       const stat = await lstatOrNull(dir);
       if (stat?.isSymbolicLink()) throw new Error(`${dir} is a link`);
@@ -113,6 +114,7 @@ export async function rescueBeforeDelete(
         let elsewhere = false;
         for (const named of Object.keys(state && typeof state === 'object' ? state : {})) {
           const edit = await real(resolve(modules, '..', named));
+          if (!edit && worktree) throw new Error(`pnpm patch edits recorded at ${named} cannot be found`);
           if (!edit) continue;
           const under = (base: string) => edit === base || edit.startsWith(`${base}${sep}`);
           if (under(doomed) && !under(dir)) throw new Error(`pnpm patch edits in ${edit} lie outside ${dir}`);
@@ -126,7 +128,7 @@ export async function rescueBeforeDelete(
     if (whole) await walk(checkout, isKeypairName, true);
     for (const tree of trees) {
       const canonical = await real(tree);
-      if (canonical) await patches(canonical);
+      if (canonical) await patches(canonical, false);
     }
     if (deadline - performance.now() <= 0) throw new Error(`it took over ${RESCUE_MS / 1000} s`);
   } catch (error) {

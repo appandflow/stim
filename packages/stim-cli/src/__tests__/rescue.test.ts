@@ -142,6 +142,20 @@ test.skipIf(process.platform === 'win32')(
   },
 );
 
+test('a moved worktree whose state.json names an edit folder that no longer resolves is kept; a dependency delete is not', async () => {
+  const edit = join(tree, '.cache', 'pkg');
+  mkdirSync(edit, { recursive: true });
+  writeFileSync(join(edit, 'index.js'), 'patched');
+  mkdirSync(join(tree, '.pnpm_patches'));
+  const moved = join(base, 'before-move', 'node_modules', '.cache', 'pkg');
+  writeFileSync(join(tree, '.pnpm_patches', 'state.json'), JSON.stringify({ [moved]: { applyToAll: false } }));
+
+  expect(await rescueBeforeDelete(root, root, { trees: [], whole: true }, { act: true })).toContain(
+    `recorded at ${moved} cannot be found`,
+  );
+  expect(await rescue()).toBeNull();
+});
+
 test('a pnpm --edit-dir outside the deleted folder gets its state.json copied, which restores the registration', async () => {
   const edit = join(base, 'elsewhere', 'pkg');
   mkdirSync(edit, { recursive: true });
