@@ -771,6 +771,14 @@ or starting the new one fails, install restores the previous plist and attempts
 to restart a previously loaded LaunchAgent; if it cannot, it prints the
 launchctl bootout/bootstrap remedy. A running LaunchAgent does not prove server readiness: check its health in
 `stim service status` and the reported log when readiness is unavailable.
+launchd reads a LaunchAgent only when it loads it. When a LaunchAgent that
+`stim service install` wrote does not match what install writes now (its
+`ProgramArguments` or `ProcessType`, or the arguments launchd loaded),
+`stim service status` adds a `stale:` line with the reason and the
+`stim service install` command that fixes it, and `--json` reports the same
+as `stale` (`{ reason, remedy }`, null otherwise). `stim doctor` reports it as
+`server-service-stale` and `stim setup` prints it as a warning. Run that
+install once when no build runs.
 The server listens before it touches the Stim home. A read-only child process
 reads the Stim home, server and recording directories; until it returns,
 `/health` answers 503 with `startup.state` `pending`. A read that does not

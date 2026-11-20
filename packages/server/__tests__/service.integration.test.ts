@@ -75,6 +75,7 @@ describe('service plist', () => {
             managed: true,
             serve: { port: 7443, created: true },
             previousScript: null,
+            processType: json.ProcessType,
             programArguments: [
               ...(host ? [host, 'run'] : []),
               SPEC.node,
@@ -222,6 +223,7 @@ describe('service status permissions', () => {
     stimBuild: { service: null, cli: null, match: null },
     stimd: null,
     followsEngine: null,
+    stale: null,
     linger: null,
   };
 

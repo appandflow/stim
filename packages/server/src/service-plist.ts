@@ -223,6 +223,64 @@ export function renderPlist(spec: ServiceSpec): string {
   return lines.join('\n');
 }
 
+const shellWord = (value: string): string =>
+  /^[\w./:@%+=,-]+$/.test(value) ? value : `'${value.replace(/'/g, `'\\''`)}'`;
+
+/**
+ * The `stim service install` command that writes `installed` again with its label, port, Stim home, `--path-prepend`
+ * directories and `--env` names; each `--env` value stays a `<value>` placeholder, since the plist may hold a secret.
+ */
+export function serviceInstallCommand(installed: InstalledService): string {
+  const home = installed.stimHome ? `STIM_HOME=${shellWord(installed.stimHome)} ` : 'env -u STIM_HOME ';
+  const label = installed.label === DEFAULT_LABEL ? '' : ` --label ${shellWord(installed.label)}`;
+  const paths = installed.pathPrepend.map((dir) => ` --path-prepend ${shellWord(dir)}`).join('');
+  const env = [...environmentValues(installed.env).keys()].map((name) => ` --env ${name}=<value>`).join('');
+  return `${home}stim service install${label} --port ${installed.port ?? DEFAULT_PORT}${paths}${env}`;
+}
+
+/**
+ * Why the LaunchAgent `installed` describes does not run what `stim service install` writes now, or null. launchd
+ * reads a plist only at bootstrap, so a plist Stim rewrote in place, or one an earlier release wrote, takes effect only
+ * through an install. Checked: the plist's `ProgramArguments` and `ProcessType` against `renderPlist` for its options
+ * and `shim`, the engine's `bin/stimd` when the engine store exists, and `loaded`, the arguments launchd loaded.
+ */
+export function staleLaunchAgent(
+  installed: InstalledService,
+  loaded: string[] | null,
+  shim: string | null,
+): string | null {
+  if (installed.port === null || installed.script === null) return null;
+  if (installed.node === null && !shim)
+    return "its plist starts an engine stimd, and this machine's engine store has no bin/stimd shim to start";
+  const spec: ServiceSpec = {
+    label: installed.label,
+    host: installed.host,
+    node: installed.node ?? installed.script,
+    script: installed.script,
+    ...(shim ? { stimd: shim } : {}),
+    port: installed.port,
+    env: installed.env,
+    pathPrepend: installed.pathPrepend,
+    environment: {},
+    logPath: '',
+    workingDirectory: '',
+    serve: null,
+  };
+  const args = [...(installed.host ? [installed.host, 'run'] : []), ...jobArguments(spec)];
+  if (JSON.stringify(args) !== JSON.stringify(installed.programArguments))
+    return shim && !installed.programArguments.includes(shim)
+      ? "its plist does not start the engine's stimd shim"
+      : 'its plist starts the server with arguments that `stim service install` no longer writes';
+  const processType = /^\t<key>ProcessType<\/key>\n\t<string>([^<]*)<\/string>$/m.exec(renderPlist(spec))?.[1] ?? null;
+  if ((installed.processType ?? null) !== processType)
+    return `its plist sets ProcessType ${installed.processType ?? '(none)'}, and \`stim service install\` writes ${processType ?? 'none'}`;
+  if (loaded && JSON.stringify(loaded) !== JSON.stringify(args))
+    return shim && !loaded.includes(shim)
+      ? "launchd still runs the definition it loaded before the plist named the engine's stimd shim, because it reads a plist only at bootstrap"
+      : 'launchd still runs a definition other than its plist, because it reads a plist only at bootstrap';
+  return null;
+}
+
 /** The job's `ProgramArguments` with the server script, which follows the launcher, `run` and node, set to `script`. */
 export function argumentsWithScript(
   service: Pick<InstalledService, 'host' | 'programArguments'>,
