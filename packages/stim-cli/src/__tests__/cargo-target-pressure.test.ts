@@ -7,16 +7,16 @@ import { resetExecutor, setExecutor } from '../exec.ts';
 import { planCargoTargets } from '../stimd/passes/cargo-target.ts';
 import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
 
-const hooks = vi.hoisted(() => ({ lstat: null as ((path: string) => void) | null }));
+const hooks = vi.hoisted((): { lstat: ((path: string) => void) | null } => ({ lstat: null }));
 
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>();
   return {
     ...actual,
-    lstatSync: ((path, options) => {
-      hooks.lstat?.(String(path));
-      return actual.lstatSync(path, options);
-    }) as typeof actual.lstatSync,
+    lstatSync: (...args: Parameters<typeof actual.lstatSync>) => {
+      hooks.lstat?.(String(args[0]));
+      return actual.lstatSync(...args);
+    },
   };
 });
 
