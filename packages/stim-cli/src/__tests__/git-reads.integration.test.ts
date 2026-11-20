@@ -14,7 +14,6 @@ import { join } from 'node:path';
 import { runGc } from '../commands/gc.ts';
 import { executeAction } from '../stimd/passes/act.ts';
 import { artifactWorktreesFor, clearSourceTrees } from '../stimd/passes/artifacts.ts';
-import { freshLaunchers } from '../workspace/launchers.ts';
 import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
 import { ensureWorkspaceStorage } from '../workspace/paths.ts';
 import { runHomePasses } from '../daemon/passes.ts';
@@ -330,7 +329,6 @@ describe('an acting run asks git again under the claim', () => {
         worktrees,
         recheck: async () => null,
         level: 'critical',
-        launchers: freshLaunchers(operation, operation.signal),
         operation,
       });
       expect(results.get(target)?.status).toBe(status);
@@ -361,7 +359,6 @@ describe('an acting run asks git again under the claim', () => {
         worktrees,
         recheck: async () => null,
         level: 'critical',
-        launchers: freshLaunchers(operation, operation.signal),
         operation,
       });
       expect(results.get(target)?.status).toBe('kept');

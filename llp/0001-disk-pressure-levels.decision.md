@@ -394,7 +394,7 @@ every use of a `links` verdict, a recorded one included, then reads the
 `android/app` when present) for build output folders, and a build output
 folder or a check that does not answer or fails ends it. No read starts with
 less than 500 ms of its budget left, so a read near the end of the budget does
-not become the pending read that makes the launcher scan incomplete; one that
+not become the pending read that stops the discovery and source scans; one that
 does not answer in the time it got is the pending read, as any other, and a
 sample that the step's limit left less than its full 2 seconds records no
 `timeout` verdict, so it is sampled again on the next run. The verdict and the

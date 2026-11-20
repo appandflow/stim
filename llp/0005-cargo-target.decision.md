@@ -22,11 +22,10 @@ Only the first two are listed as build output. Two steps delete a `target/`
 whole: the idle stage, for an idle workspace whose dev server or devices it
 stops, deletes one of the first two, and the dormant reduction (below) deletes
 any of the three. Before that the idle stage checks that the directory is real, inside its checkout, not a
-mount point, holds no file git tracks and only files git ignores; that no PATH
-launcher resolves into the checkout; that no other process runs from or works
-in the app; and that it holds no copy a trim could not put back
+mount point, holds no file git tracks and only files git ignores; that no
+other process runs from or works in the app; and that it holds no copy a trim could not put back
 (`.stim-not-restored-*`, or `.stim-trimmed` marked `NOT-RESTORED`). It reads
-no Cargo lock file. The trims run the git, link, mount and launcher checks but
+no Cargo lock file. The trims run the git, link and mount checks but
 not the whole-app process check; instead they keep each path a process
 executes from or holds open and each profile whose lock a build holds (below).
 
@@ -47,6 +46,36 @@ are, and Cargo's files in it do not show the rest is build output, so the idle
 stage leaves it and the trims remove only Cargo's profiles from it. Only the dormant
 reduction deletes it whole, under the maintainer decision in the next section.
 
+## The loss budget for regenerable build output
+
+Regenerable build output may be deleted while a build could start after the
+last check: Cargo's `incremental/` data, stale profiles and target triples, a
+dormant `target/`, and a workspace's build outputs. A build or a process that
+starts using that output after the check loses it and rebuilds; that costs a
+rebuild, and it is accepted. Stim still takes the checks this document lists
+(locks, processes, idleness, git, links and mounts) right before the delete, and
+keeps the output when one of them shows use. Never covered, whatever the level:
+source, worktrees, dependency folders (`node_modules`, Pods), and anything Stim
+does not recognise as build output. Those keep the rules of LLP 0002, and a
+Solana keypair in a `target/` is never deleted (below).
+
+A command installed as a link into build output is one such use: Stim does not
+read PATH (LLP 0004, Cleanup does not read PATH), so the command breaks when the
+output goes and is fixed by rebuilding it. A review finding of the form "a build
+or process that starts after the check loses output" does not block a change to
+these deletes.
+
+Maintainer decision: "I agree lets do this and ur recommendations from prev
+messages, also lets do the changes now that u flagged as after 2.0 id rather
+delay than ship what we have", 2026-11-20 (#6025), adopting the loss budget the
+step-back review of the cleanup work recommended.
+
+Reason: earlier maintainer decisions already accepted such windows ("ok",
+2026-11-19, for a killed trim's staging, because everything it stages is
+regenerable Cargo build output; LLP 0002's "best effort" for dependency edits),
+and Cargo's own `cargo clean` removes a whole target with no lock. Protecting
+against the window drew most of the review findings on #5996 and #6013.
+
 ## The dormant reduction deletes an idle target whole
 
 The dormant reduction (`stim gc` and the daemon's hourly step) deletes every
@@ -58,8 +87,7 @@ workspace or discovered checkout that has had no activity for
 left in it. It runs the idle stage's
 checks above, the process check included, for all three kinds, then, under the
 workspace's claims and checked again right before the delete: the workspace is
-still idle, the directory is still a recognised `target/`, and no PATH launcher
-resolves into the checkout. A path the plan took as a `target/` goes only
+still idle and the directory is still a recognised `target/`. A path the plan took as a `target/` goes only
 through the Cargo delete, never through the plain removal of other outputs.
 
 Under the target's trim claim the Cargo delete then keeps the whole `target/`
@@ -325,12 +353,10 @@ maintenance pass and an acting `stim gc` already keep) and tries that write
 once more. The dormant delete's renames of each entry into `.stim-trimmed` are
 not retried: an entry that cannot be moved stays, as above. The retry runs the
 same staged path with every check above unchanged. Before the trim retries a
-staging write, it reads the processes and the launchers again, for a profile
-its lock files, and, for a stale profile or target triple, whether it is still
+staging write, it reads the processes again, for a profile its lock files, and, for a stale profile or target triple, whether it is still
 stale as a whole, which also decides the stale paths still to come: a refusal
 of that scan stops the remaining stale moves, and each path skipped is
-reported. A launcher into the checkout or process evidence that cannot be read
-stops the rest of that run, and a path in use keeps that path; in a unit batch,
+reported. Process evidence that cannot be read stops the rest of that run, and a path in use keeps that path; in a unit batch,
 one busy path, moved or not yet moved, puts the whole batch back. The dormant
 delete checks that the `target/` is still the same directory before each try,
 the marker's included, and creates its marker exclusively, so it never replaces
@@ -357,7 +383,7 @@ coordinator of that work, not by the maintainer.
 
 ## Links
 
-- Issues: #5512, #5516, #5523, #5528, #5530, #5979, #6012, #6016. Pull requests: #5518, #5519,
+- Issues: #5512, #5516, #5523, #5528, #5530, #5979, #6012, #6016, #6024, #6025. Pull requests: #5518, #5519,
   #5527, #5539. Locking follow-up: #5542.
 - Code: `packages/stim-cli/src/workspace/cargo-target.ts`,
   `packages/stim-cli/src/daemon/dormant-outputs.ts`,

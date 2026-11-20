@@ -188,7 +188,6 @@ describe('scanSourceWrites', () => {
       now: Date.now(),
       idleMs: 86_400_000,
       reads: discoveredReads(),
-      reduceOnly: false,
     });
     await vi.advanceTimersByTimeAsync(15_000);
     expect(await evidence).toEqual({ activity: [], keep: [OUT_OF_TIME.unknown] });
@@ -225,9 +224,8 @@ describe('scanSourceWrites', () => {
       discoveredEvidence(root, {
         now: Date.now(),
         idleMs: 86_400_000,
-        reads: discoveredReads(operation.signal, operation),
+        reads: discoveredReads(operation.signal),
         operation,
-        reduceOnly: false,
       });
 
     const pass = testContext();

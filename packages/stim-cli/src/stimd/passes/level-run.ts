@@ -251,7 +251,7 @@ export async function runMaintenanceAtLevel({
     for (const action of ladder?.levels.flatMap((entry) => entry.actions) ?? []) take(fromLadder(action));
   }
   const idleMs = level === 'normal' ? dormantAfterMs(loadConfig(), env) : PRESSURE_IDLE_MS;
-  const reads = discoveredReads(operation?.signal, operation);
+  const reads = discoveredReads(operation?.signal);
   const discovered: LevelRun['discovered'] = [];
   const ownerOf = (path: string) =>
     found
@@ -263,7 +263,7 @@ export async function runMaintenanceAtLevel({
     const kept =
       taken || idleMs <= 0 || !existsSync(checkout.path)
         ? null
-        : await discoveredKeepReason(checkout.path, idleMs, checkout.reduceOnly === true, operation, reads);
+        : await discoveredKeepReason(checkout.path, idleMs, operation, reads);
     if (kept && /every source entry within|cannot be read/.test(kept))
       blocked.push(
         `Discovered checkout ${checkout.path}: ${kept}, so it is kept this pass and checked again on a later one`,
