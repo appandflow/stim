@@ -327,12 +327,15 @@ not retried: an entry that cannot be moved stays, as above. The retry runs the
 same staged path with every check above unchanged. Before the trim retries a
 staging write, it reads the processes and the launchers again, for a
 profile its lock files, and, for a stale profile or target triple, whether it
-is still stale as a whole, which also decides the stale paths still to come; a launcher into the checkout or process evidence that
-cannot be read stops the rest of that run, and a path in use keeps that path;
+is still stale as a whole, which also decides the stale paths still to come:
+a refusal of that scan stops the remaining stale moves, and each path skipped
+is reported. A launcher into the checkout or process evidence that cannot be
+read stops the rest of that run, and a path in use keeps that path;
 in a unit batch, one busy path, moved or not yet moved, puts the whole batch
 back.
 The dormant delete checks that the `target/` is still the same directory
-before each try. For the workspace claims the whole removal of that output
+before each try, and publishes its marker by linking a uniquely named
+temporary file, so it never replaces or removes a marker already there. For the workspace claims the whole removal of that output
 runs again. A run that released the reserve says so in its outcome. When the
 write fails again, or there was no reserve to release, the `target/` is kept
 as before.

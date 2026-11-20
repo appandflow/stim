@@ -1,5 +1,6 @@
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync, type Dirent } from 'node:fs';
 import { link, lstat, mkdir, readdir, rename, rm, rmdir, unlink, utimes, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
 import { cargoTargetTrimClaims } from '@stim-cli/core/state';
 import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-claim.ts';
@@ -693,22 +694,24 @@ async function deleteClaimed(
     return keep(`${aside} cannot be made: ${error instanceof Error ? error.message : error}`);
   }
   // @ref LLP 0005#never-delete-what-a-build-took-back -- staged entries carry the NOT-RESTORED marker until the checks pass
+  const draft = `${marker}.${process.pid}.${randomUUID()}.tmp`;
   try {
     await retryWithReserve(async () => {
       try {
         await writeFile(
-          marker,
+          draft,
           `${JSON.stringify(Object.fromEntries(names.map((name, n) => [String(n), name])), null, 2)}\n`,
         );
-      } catch (error) {
-        await rm(marker, { force: true });
-        throw error;
+        await link(draft, marker);
+      } finally {
+        await rm(draft, { force: true });
       }
     }, released);
   } catch (error) {
     await rmdir(aside).catch(() => {});
+    if (errorCode(error) === 'EEXIST') return keep(`${marker} already exists, so the target stays`);
     if (!diskFull(error)) throw error;
-    await keepTimes();
+    if (await sameTarget()) await keepTimes();
     return keep(`${marker} cannot be written: ${error instanceof Error ? error.message : error}`);
   }
   try {
@@ -1226,8 +1229,10 @@ async function trimClaimed(
     return null;
   };
   for (const path of stale.paths) {
-    if ('refusal' in latestStale) break;
-    if (latestStale.paths.includes(path)) await move(join(target, path), path, null, profilesAt, true);
+    const latest: { paths: string[] } | { refusal: string } = latestStale;
+    if ('refusal' in latest) result.kept.push(`${path}: ${latest.refusal}`);
+    else if (!latest.paths.includes(path)) result.kept.push(`${path}: no longer stale as a whole after the rescan`);
+    else await move(join(target, path), path, null, profilesAt, true);
   }
   const removedStale = new Set(stale.paths.map((path) => join(target, path)));
   const remaining = (cargoProfileDirs(target) ?? []).filter(

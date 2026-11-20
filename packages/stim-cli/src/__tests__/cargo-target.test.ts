@@ -758,8 +758,12 @@ describe('trimming on a full disk', () => {
 
     const result = await trimCargoTarget(target, { launching: noLaunchers(target), needBytes: 0 });
 
-    expect(result).toMatchObject({ removed: [], kept: [`${first}: a process uses it`], reserveReleased: true });
     const other = triples.find((triple) => triple !== first) ?? '';
+    expect(result).toMatchObject({
+      removed: [],
+      kept: [`${first}: a process uses it`, `${other}: no longer stale as a whole after the rescan`],
+      reserveReleased: true,
+    });
     expect(readFileSync(join(target, other, 'notes.txt'), 'utf8')).toBe('mine');
   });
 
@@ -825,7 +829,7 @@ describe.skipIf(process.platform === 'win32')(
             fullOnce('writeFile', 'NOT-RESTORED');
             const fail = fsHooks.writeFile;
             fsHooks.writeFile = (path) => {
-              if (path.endsWith('NOT-RESTORED') && !existsSync(path)) writeFileSync(path, '');
+              if (path.includes('NOT-RESTORED') && !existsSync(path)) writeFileSync(path, '');
               fail?.(path);
             };
           },
@@ -859,9 +863,33 @@ describe.skipIf(process.platform === 'win32')(
         expect(readdirSync(moved).toSorted()).toEqual(['.rustc_info.json', 'debug', 'doc']);
       });
 
+      test('a target swapped in while the marker cannot be written keeps its own marker and staged files', async () => {
+        const moved = `${dir}-moved`;
+        let swapped = false;
+        fsHooks.writeFile = (path) => {
+          if (!path.includes('NOT-RESTORED')) return;
+          if (!swapped) {
+            swapped = true;
+            renameSync(dir, moved);
+            mkdirSync(join(dir, '.stim-trimmed', '0'), { recursive: true });
+            writeFileSync(join(dir, '.stim-trimmed', 'NOT-RESTORED'), 'theirs');
+            writeFileSync(join(dir, '.stim-trimmed', '0', 'app'), 'staged');
+          }
+          throw diskFull();
+        };
+
+        await remove();
+        delete fsHooks.writeFile;
+        const trim = await trimCargoTarget(dir, { launching: noLaunchers(target), needBytes: 0 });
+
+        expect(readFileSync(join(dir, '.stim-trimmed', 'NOT-RESTORED'), 'utf8')).toBe('theirs');
+        expect(readFileSync(join(dir, '.stim-trimmed', '0', 'app'), 'utf8')).toBe('staged');
+        expect(trim.kept).toEqual([expect.stringContaining('could not be put back')]);
+      });
+
       test('a marker that still cannot be written keeps everything and leaves nothing that blocks the next run', async () => {
         fsHooks.writeFile = (path) => {
-          if (!path.endsWith('NOT-RESTORED')) return;
+          if (!path.includes('NOT-RESTORED')) return;
           writeFileSync(path, '');
           throw diskFull();
         };
@@ -869,6 +897,7 @@ describe.skipIf(process.platform === 'win32')(
         const result = await remove();
 
         expect(result.kept).toEqual([expect.stringContaining('cannot be written: ENOSPC')]);
+        expect(readdirSync(dir)).not.toContain('.stim-trimmed');
         expect(readdirSync(dir).toSorted()).toEqual(['.rustc_info.json', 'debug', 'doc']);
         delete fsHooks.writeFile;
         expect((await remove()).kept).toEqual([]);
