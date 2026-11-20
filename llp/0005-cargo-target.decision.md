@@ -48,27 +48,25 @@ reduction deletes it whole, under the maintainer decision in the next section.
 
 ## The loss budget for regenerable build output
 
-Regenerable build output may be deleted while a build could start after the
-last check: Cargo's `incremental/` data, stale profiles and target triples, a
-dormant `target/`, and a workspace's build outputs. A build or a process that
-starts using that output after the check loses it and rebuilds; that costs a
-rebuild, and it is accepted. Stim still takes the checks this document lists
-(locks, processes, idleness, git, links and mounts) right before the delete, and
-keeps the output when one of them shows use. Never covered, whatever the level:
-source, worktrees, dependency folders (`node_modules`, Pods), and anything Stim
-does not recognise as build output. Those keep the rules of LLP 0002, and a
-Solana keypair in a `target/` is never deleted (below).
-
-A command installed as a link into build output is one such use: Stim does not
-read PATH (LLP 0004, Cleanup does not read PATH), so the command breaks when the
-output goes and is fixed by rebuilding it. A review finding of the form "a build
-or process that starts after the check loses output" does not block a change to
-these deletes.
+Regenerable build output (Cargo `incremental/`, stale profiles, workspace build
+outputs) may be deleted while a build could start after the check; that build
+rebuilds. Never covered: source, worktrees, dependency folders, and anything
+Stim does not recognise. Stim still runs the checks this document lists right
+before the delete and keeps the output when one of them shows use; the budget
+covers only what starts after them. A Solana keypair in a `target/` is never
+deleted (below).
 
 Maintainer decision: "I agree lets do this and ur recommendations from prev
 messages, also lets do the changes now that u flagged as after 2.0 id rather
-delay than ship what we have", 2026-11-20 (#6025), adopting the loss budget the
-step-back review of the cleanup work recommended.
+delay than ship what we have", 2026-11-20 (#6025), whose list of decisions
+states the budget in the words of the paragraph above.
+
+Chosen by the lane of #6025, not by the maintainer: stale target triples and
+the dormant reduction's whole `target/` count as covered output, the way stale
+profiles do; a command installed as a link into build output is such a later
+use, since cleanup does not read PATH (LLP 0004, Cleanup does not read PATH); and
+a review finding that a build or process starting after the check loses output
+does not block a change to these deletes.
 
 Reason: earlier maintainer decisions already accepted such windows ("ok",
 2026-11-19, for a killed trim's staging, because everything it stages is
