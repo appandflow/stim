@@ -2153,7 +2153,8 @@ export async function runGcThroughStimd(
     };
     return Object.assign(new Error(why.message), why);
   };
-  if (!started) throw refused();
+  if (!started || (await waitForStimdHello()) === null) throw refused();
+  signal?.throwIfAborted();
   return new Promise((resolve, reject) => {
     let settled = false;
     const finish = (error: Error | null, reply?: GcPassReply) => {
