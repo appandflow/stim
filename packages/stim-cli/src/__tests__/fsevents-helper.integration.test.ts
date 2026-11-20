@@ -232,6 +232,19 @@ describe.skipIf(process.platform !== 'darwin')('stim-fsevents helper', () => {
     expect(result.status).toBe(65);
     expect(result.stdout).toBe('');
   });
+  test.each([
+    ['an empty file', ''],
+    ['a file with one watch line', '{"generation":1,"watch":[]}\n'],
+  ])('exits 0 at the end of %s on stdin', (_name, content) => {
+    const input = join(scratch, `stdin-${content.length}.json`);
+    writeFileSync(input, content);
+    const result = spawnSync('/bin/sh', ['-c', 'exec "$0" 0.1 < "$1"', binary, input], {
+      encoding: 'utf8',
+      timeout: 10_000,
+    });
+    expect(result.status).toBe(0);
+  });
+
   test('accepts a valid line of exactly 4 MiB', () => {
     const result = spawnSync(binary, ['0.1'], {
       input: `${paddedLine(MAX_RECORD_BYTES)}\n`,

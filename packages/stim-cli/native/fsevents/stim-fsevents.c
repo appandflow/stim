@@ -628,5 +628,6 @@ int main(int argc, char **argv) {
   dispatch_source_t source = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, STDIN_FILENO, 0, queue);
   dispatch_source_set_event_handler_f(source, on_input);
   dispatch_resume(source);
+  if (input_is_file) dispatch_async_f(queue, NULL, on_input);
   dispatch_main();
 }
