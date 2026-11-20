@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { othersAmong, runningFromReason, type RunningProcesses } from '../workspace/running-from.ts';
 
 const SELF = 300;
@@ -47,3 +50,22 @@ test.each([
   const reason = runningFromReason('/repo/main', running);
   expect(reason === 'process 1 runs from it').toBe(named);
 });
+
+test.skipIf(process.platform === 'win32')(
+  'a command that names a link resolving into the checkout runs from it, and one whose link points elsewhere does not',
+  () => {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), 'stim-running-from-')));
+    onTestFinished(() => rmSync(base, { recursive: true, force: true }));
+    const checkout = join(base, 'wt');
+    mkdirSync(join(checkout, 'node_modules', '.bin'), { recursive: true });
+    writeFileSync(join(checkout, 'node_modules', '.bin', 'tool'), '');
+    mkdirSync(join(base, 'bin'));
+    writeFileSync(join(base, 'other'), '');
+    symlinkSync(join(checkout, 'node_modules', '.bin', 'tool'), join(base, 'bin', 'tool'));
+    symlinkSync(join(base, 'other'), join(base, 'bin', 'other'));
+    const run = (line: string) => runningFromReason(checkout, { commands: [{ pid: 7, line }], cwds: [] });
+
+    expect(run(`node ${join(base, 'bin', 'tool')} --watch`)).toMatch(/^process 7 runs .*tool from it$/);
+    expect(run(`node ${join(base, 'bin', 'other')}`)).toBeNull();
+  },
+);
