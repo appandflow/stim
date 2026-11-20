@@ -556,11 +556,12 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
     maintenance worktree check, N. Kept: uncommitted (archived first) or
     unpushed work, in use, leased, locked, pinned, cannot prove finished.
   Workspace idle idle.dormantDays (default 1): build outputs (android/build,
-  android/.gradle, .build, .cxx, .dd DerivedData, an Exact app's target/ beside
-  exact.mjs trimmed by profile), owned devices, logs archived
+  android/.gradle, .build, .cxx, .dd DerivedData, a Cargo target/ but a Solana
+  deploy/ keypair folder), owned devices, logs archived
     dormant reduction, N. Kept: running dev server or build, a process in
     the checkout, booted device, leased, driven, locked, hosted, pinned,
-    idle.minutes 0.
+    idle.minutes 0; a target/ used in that time, locked, open, holding a
+    mount or trim recovery.
   The same: node_modules and ios/Pods of a linked worktree, recorded so the next
   Stim command restores them with worktree warm, or asks for an install
     dormant reduction, N. Kept: source checkout, under 256 MB of its own (a
@@ -1858,6 +1859,8 @@ WORKSPACE BUILD OUTPUTS
   pressure ladder at high or critical: for a workspace with
   nothing running idle 2 minutes or more, and in the idle stage of a running
   one. It prints the bytes freed per category.
+  Idle idle.dormantDays, a Cargo target/ goes but its keypairs (\`stim
+  guide cleanup gc\`).
   A workspace whose worktree is locked with git worktree lock is never
   lightened: not its outputs, not its project's build directories, at any
   disk pressure level, including the age sweep and the pressure ladder, and gc and

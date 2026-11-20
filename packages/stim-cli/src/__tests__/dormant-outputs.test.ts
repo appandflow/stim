@@ -4,6 +4,7 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   readdirSync,
   realpathSync,
   rmSync,
@@ -37,6 +38,7 @@ const EXTERNAL_PID = 4242;
 let base: string;
 let externalCwd: string | null;
 let processesListed: boolean;
+let heldLock: string | null;
 
 const measured: HomePasses['measured'] = {
   measurement: {
@@ -61,6 +63,7 @@ beforeEach(() => {
   saveConfig({ version: 2, projects: {}, repos: {} });
   externalCwd = null;
   processesListed = true;
+  heldLock = null;
   const table = (): RunningProcesses | null => {
     if (!processesListed) return null;
     const external = externalCwd === null ? [] : [{ pid: EXTERNAL_PID, line: 'java GradleDaemon' }];
@@ -81,8 +84,10 @@ beforeEach(() => {
       file === 'ps' && args.includes('pid=,ppid=')
         ? `${process.pid} 1\n${externalCwd === null ? '' : `${EXTERNAL_PID} 1\n`}`
         : real.runFileQuietAsync(file, args, opts),
-    runFileAsync: async (file, args, opts) =>
-      file === 'lsof' || file === 'ps' ? '' : real.runFileAsync(file, args, opts),
+    runFileAsync: async (file, args, opts) => {
+      if (file === 'lsof' && heldLock !== null && args.includes(heldLock)) return `${EXTERNAL_PID}\n`;
+      return file === 'lsof' || file === 'ps' ? '' : real.runFileAsync(file, args, opts);
+    },
   });
   vi.spyOn(maintenanceRun, 'runMaintenance').mockResolvedValue(undefined);
   vi.spyOn(measure, 'measureTick').mockResolvedValue(measured);
@@ -122,6 +127,29 @@ function register(root: string): string {
   return root;
 }
 
+function cargo(name: string, kind: 'exact' | 'tagged' | 'untagged'): string {
+  const root = repo(name);
+  const target = join(root, 'target');
+  mkdirSync(join(target, 'debug', '.fingerprint'), { recursive: true });
+  writeFileSync(join(target, 'debug', '.fingerprint', 'unit'), 'x');
+  writeFileSync(join(target, 'debug', '.cargo-lock'), '');
+  mkdirSync(join(target, 'doc'));
+  writeFileSync(join(target, 'doc', 'index.html'), 'x');
+  if (kind === 'exact') writeFileSync(join(root, 'exact.mjs'), '');
+  if (kind === 'tagged') writeFileSync(join(target, 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55\n');
+  if (kind === 'untagged') {
+    writeFileSync(join(root, 'Cargo.toml'), '');
+    writeFileSync(join(target, '.rustc_info.json'), '{}');
+  }
+  return register(root);
+}
+
+function onlyTarget(root: string): string {
+  rmSync(join(root, 'android'), { recursive: true });
+  rmSync(join(workspaceDir(root), 'derived-data'), { recursive: true });
+  return root;
+}
+
 function age(path: string, when: Date) {
   if (lstatSync(path).isDirectory()) for (const name of readdirSync(path)) age(join(path, name), when);
   utimesSync(path, when, when);
@@ -148,8 +176,8 @@ async function hourlyStep(act: boolean): Promise<DaemonLadderAction[]> {
   return lane.take().filter((action) => action.kind === 'delete-build-outputs');
 }
 
-const gc = async () =>
-  (await runDormantReduction({ act: true, trigger: 'gc', operation: testContext() })).filter(
+const gc = async (act = true) =>
+  (await runDormantReduction({ act, trigger: 'gc', operation: testContext() })).filter(
     (action) => action.kind === 'delete-build-outputs',
   );
 
@@ -254,27 +282,102 @@ describe.skipIf(process.platform === 'win32')(
       expect(existsSync(join(linked, BUILD, 'app.apk'))).toBe(true);
     });
 
-    test('a Cargo target/ goes through the Cargo trim: a stranded .stim-trimmed stays, a stale profile goes', async () => {
-      const cargo = (name: string) => {
-        const root = repo(name);
-        writeFileSync(join(root, 'exact.mjs'), '');
-        mkdirSync(join(root, 'target', 'debug', '.fingerprint'), { recursive: true });
-        writeFileSync(join(root, 'target', 'debug', '.fingerprint', 'unit'), 'x');
-        return register(root);
-      };
-      const stranded = cargo('stranded');
-      mkdirSync(join(stranded, 'target', '.stim-trimmed', '0'), { recursive: true });
-      writeFileSync(join(stranded, 'target', '.stim-trimmed', 'NOT-RESTORED'), '');
-      const trimmed = cargo('trimmed');
-      idleFor(3, stranded, trimmed);
+    test.each(['exact', 'tagged', 'untagged'] as const)(
+      'an idle %s Cargo target/ that is the only output is predicted, then deleted whole',
+      async (kind) => {
+        const root = onlyTarget(cargo('app', kind));
+        idleFor(3, root);
 
-      await gc();
+        expect(await hourlyStep(false)).toEqual([
+          expect.objectContaining({ target: root, outcome: 'would', bytes: expect.any(Number) }),
+        ]);
+        expect(existsSync(join(root, 'target', 'debug'))).toBe(true);
+        expect(await gc()).toEqual([expect.objectContaining({ target: root, outcome: 'done' })]);
+        expect(existsSync(join(root, 'target'))).toBe(false);
+      },
+    );
 
-      expect(existsSync(join(stranded, 'target', '.stim-trimmed', 'NOT-RESTORED'))).toBe(true);
-      expect(existsSync(join(stranded, 'target', '.stim-trimmed', '0'))).toBe(true);
-      expect(existsSync(join(stranded, 'target', 'debug'))).toBe(true);
-      expect(existsSync(join(trimmed, 'target', 'debug'))).toBe(false);
-      expect(existsSync(join(trimmed, 'target'))).toBe(true);
+    test('a dry run leaves out a folder holding a Solana keypair deeper inside', async () => {
+      const root = onlyTarget(cargo('app', 'untagged'));
+      mkdirSync(join(root, 'target', 'deploy', 'debug'), { recursive: true });
+      writeFileSync(join(root, 'target', 'deploy', 'debug', 'app-keypair.json'), 'k'.repeat(4 * 1024 * 1024));
+      idleFor(3, root);
+
+      const [action] = await gc(false);
+
+      expect(action).toMatchObject({ target: root, outcome: 'would' });
+      expect(action?.bytes).toBeLessThan(1024 * 1024);
+    });
+
+    test('gc deletes all of an idle target but a deploy/ folder holding a Solana keypair', async () => {
+      const root = onlyTarget(cargo('app', 'untagged'));
+      mkdirSync(join(root, 'target', 'deploy'));
+      writeFileSync(join(root, 'target', 'deploy', 'app-keypair.json'), '[1,2,3]');
+      idleFor(3, root);
+
+      expect(await gc(false)).toEqual([expect.objectContaining({ target: root, outcome: 'would' })]);
+      expect(await gc()).toEqual([expect.objectContaining({ target: root, outcome: 'done' })]);
+      expect(readdirSync(join(root, 'target'))).toEqual(['deploy']);
+      expect(readFileSync(join(root, 'target', 'deploy', 'app-keypair.json'), 'utf8')).toBe('[1,2,3]');
+    });
+
+    test.each([
+      [
+        'a build wrote a profile in that time',
+        (target: string) => utimesSync(join(target, 'debug'), new Date(), new Date()),
+        'was written in that time',
+        'kept',
+      ],
+      [
+        'a build holds a profile lock',
+        (target: string) => {
+          heldLock = join(target, 'debug', '.cargo-lock');
+        },
+        'a build holds',
+        'would',
+      ],
+      [
+        'a trim left a directory marked not restored',
+        (target: string) => {
+          mkdirSync(join(target, '.stim-trimmed', '0'), { recursive: true });
+          writeFileSync(join(target, '.stim-trimmed', 'NOT-RESTORED'), '');
+        },
+        'could not put back',
+        'kept',
+      ],
+      [
+        'a trim moved a directory aside for a person',
+        (target: string) => mkdirSync(join(target, '.stim-not-restored-1-0')),
+        'could not put back',
+        'kept',
+      ],
+    ])('an idle untagged Cargo target/ stays whole, and gc says why, when %s', async (_, arrange, why, report) => {
+      const root = onlyTarget(cargo('app', 'untagged'));
+      idleFor(3, root);
+      arrange(join(root, 'target'));
+      expect(await gc(false)).toEqual([expect.objectContaining({ target: root, outcome: report })]);
+      expect(await gc()).toEqual([
+        expect.objectContaining({
+          target: root,
+          outcome: 'kept',
+          detail: expect.stringMatching(new RegExp(`${join(root, 'target')}.*${why}`)),
+        }),
+      ]);
+      expect(existsSync(join(root, 'target', 'debug', '.fingerprint', 'unit'))).toBe(true);
+    });
+
+    test('a Cargo target/ of a workspace used today stays, and a target/ beside Cargo.toml that Cargo did not write is no output', async () => {
+      const used = onlyTarget(cargo('used', 'untagged'));
+      const other = onlyTarget(cargo('other', 'untagged'));
+      rmSync(join(other, 'target'), { recursive: true });
+      mkdirSync(join(other, 'target'));
+      writeFileSync(join(other, 'target', '.fingerprint'), 'x');
+      idleFor(3, used, other);
+      recordWorkspaceUse(used, new Date());
+
+      expect(await gc()).toEqual([]);
+      expect(existsSync(join(used, 'target', 'debug', '.fingerprint', 'unit'))).toBe(true);
+      expect(existsSync(join(other, 'target', '.fingerprint'))).toBe(true);
     });
 
     test('report mode predicts the workspace acting mode would reduce, and not the one it would keep', async () => {

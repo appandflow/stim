@@ -40,10 +40,11 @@ A process ID can be reused after a crash, and a busy build can outlive any age l
 
 ## One claim per Cargo target for each user account
 
-A trim of a Cargo `target/` holds an exclusive claim named by the canonical
-target path, at `~/.stim/machine/cargo-trim/` (`cargoTargetTrimClaims`, core's
-state paths), whatever `STIM_HOME` is, so no two Stim homes of one user account
-trim one target at once (LLP 0005). A claim it cannot take, or cannot prove dead, keeps the
+A trim of a Cargo `target/`, and the dormant reduction's whole delete of one,
+holds an exclusive claim named by the canonical target path, at
+`~/.stim/machine/cargo-trim/` (`cargoTargetTrimClaims`, core's state paths),
+whatever `STIM_HOME` is, so no two Stim homes of one user account trim or
+delete one target at once (LLP 0005). A claim it cannot take, or cannot prove dead, keeps the
 target, and the kept detail names the claim and the command that removes it;
 the trim does not raise `STIM_CLAIM_REFUSED` or `STIM_CLAIM_UNAVAILABLE`,
 because nothing was deleted and a run that goes on is safe. Release removes
