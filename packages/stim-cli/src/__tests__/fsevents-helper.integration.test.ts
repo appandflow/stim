@@ -22,9 +22,16 @@ interface Helper {
 }
 
 const source = resolve('packages/stim-cli/native/fsevents/stim-fsevents.c');
+const MAX_RECORD_BYTES = 4 * 1024 * 1024;
+const nowSeconds = () => Math.floor(Date.now() / 1000);
 let scratch = '';
 let binary = '';
 const children: ChildProcess[] = [];
+
+function paddedLine(bytes: number): string {
+  const empty = '{"generation":1,"watch":[],"pad":""}';
+  return empty.replace('""', `"${'x'.repeat(bytes - empty.length)}"`);
+}
 
 function startHelper(watch: object): Helper {
   const child = spawn(binary, ['0.1'], { stdio: ['pipe', 'pipe', 'inherit'] });
@@ -124,7 +131,7 @@ describe.skipIf(process.platform !== 'darwin')('stim-fsevents helper', () => {
     await observer.next(() => observer.seen.flatMap((line) => line.dirty ?? []).includes(2));
     await observer.closeInput();
 
-    const helper = startHelper({ dev, uuid: stored.uuid, since: stored.eventId, roots });
+    const helper = startHelper({ dev, uuid: stored.uuid, since: stored.eventId, sinceAt: nowSeconds(), roots });
     const done = await helper.next((line) => line.historyDone === true);
     const replayed = new Set(helper.seen.flatMap((line) => line.dirty ?? []));
     expect(replayed).toEqual(new Set([1, 2]));
@@ -144,7 +151,7 @@ describe.skipIf(process.platform !== 'darwin')('stim-fsevents helper', () => {
     const helper = startHelper({ dev, roots: first });
     const done = await helper.next((line) => line.historyDone === true);
     writeFileSync(join(roots[0], 'file'), 'x');
-    helper.replace(2, { dev, uuid: done.uuid, since: done.eventId, roots: second });
+    helper.replace(2, { dev, uuid: done.uuid, since: done.eventId, sinceAt: nowSeconds(), roots: second });
     await helper.next((line) => line.generation === 2 && line.historyDone === true);
     await helper.next(() => dirtyRoots(helper.seen, { 1: first, 2: second }).has(roots[0]));
     expect(dirtyRoots(helper.seen, { 1: first, 2: second })).toEqual(new Set([roots[0]]));
@@ -167,12 +174,21 @@ describe.skipIf(process.platform !== 'darwin')('stim-fsevents helper', () => {
   test.each([
     ['a uuid from another FSEvents database', { uuid: '00000000-0000-0000-0000-000000000000' }, 'uuid-changed'],
     ['an event id ahead of the current one', { since: Number.MAX_SAFE_INTEGER }, 'id-ahead'],
+    ['a checkpoint stored more than two hours ago', { sinceAt: nowSeconds() - 2 * 3600 - 60 }, 'too-old'],
+    ['a checkpoint without its time', { sinceAt: null }, 'too-old'],
   ])(
     'reports purged history for %s',
     async (_name, override, reason) => {
       const { dev, roots } = fixture();
       const stored = await storedState(dev, roots);
-      const helper = startHelper({ dev, uuid: stored.uuid, since: stored.eventId, roots, ...override });
+      const helper = startHelper({
+        dev,
+        uuid: stored.uuid,
+        since: stored.eventId,
+        sinceAt: nowSeconds(),
+        roots,
+        ...override,
+      });
       const purged = await helper.next((line) => line.purged !== undefined);
       expect(purged).toMatchObject({ dev, purged: reason, uuid: stored.uuid });
       expect(purged.eventId).toBeGreaterThanOrEqual(stored.eventId);
@@ -188,14 +204,47 @@ describe.skipIf(process.platform !== 'darwin')('stim-fsevents helper', () => {
     ['a number with a leading zero', '{"generation":1,"watch":[],"other":01}'],
     ['a NUL byte inside a number', '{"generation":1,"watch":[],"other":1\u00002}'],
     ['a relative root', '{"generation":1,"watch":[{"dev":1,"roots":["relative"]}]}'],
+    ['a device listed twice', '{"generation":1,"watch":[{"dev":1,"roots":["/a"]},{"dev":1,"roots":["/b"]}]}'],
     [
       'more roots than one stream accepts',
       JSON.stringify({ generation: 1, watch: [{ dev: 1, roots: Array.from({ length: 1025 }, (_, i) => `/r${i}`) }] }),
     ],
-    ['a line over 4 MiB', 'x'.repeat(5 * 1024 * 1024)],
+    ['a valid line one byte over 4 MiB', paddedLine(MAX_RECORD_BYTES + 1)],
   ])('refuses %s with exit status 65 and no output', (_name, input) => {
     const result = spawnSync(binary, ['0.1'], { input: `${input}\n`, encoding: 'utf8', timeout: 10_000 });
     expect(result.status).toBe(65);
     expect(result.stdout).toBe('');
+  });
+  test('accepts a valid line of exactly 4 MiB', () => {
+    const result = spawnSync(binary, ['0.1'], {
+      input: `${paddedLine(MAX_RECORD_BYTES)}\n`,
+      encoding: 'utf8',
+      timeout: 10_000,
+    });
+    expect(result.status).toBe(0);
+  });
+
+  test('purges with fd-limit when the watch needs more descriptors than the limit allows', async () => {
+    const parent = mkdtempSync(join(scratch, 'deep-'));
+    const roots = Array.from({ length: 10 }, (_, i) => join(parent, `r${i}`));
+    for (const root of roots) mkdirSync(root);
+    const dev = statSync(parent).dev;
+    const run = (watched: string[]) =>
+      spawnSync('/bin/sh', ['-c', 'ulimit -n 100 && exec "$0" 0.1', binary], {
+        input: `${JSON.stringify({ generation: 1, watch: [{ dev, roots: watched }] })}\n`,
+        encoding: 'utf8',
+        timeout: 10_000,
+      });
+    const tooMany = run(roots);
+    expect(tooMany.status).toBe(0);
+    expect(
+      tooMany.stdout
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line)),
+    ).toEqual([expect.objectContaining({ dev, purged: 'fd-limit' })]);
+    const one = run(roots.slice(0, 1));
+    expect(one.status).toBe(0);
+    expect(JSON.parse(one.stdout.split('\n')[0] ?? '')).toMatchObject({ dev, purged: 'no-since' });
   });
 });

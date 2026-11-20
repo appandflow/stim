@@ -6,17 +6,23 @@
  *
  * Stdin, one JSON object per line of at most 4 MiB. Each line replaces every
  * watch:
- *   {"generation": N, "watch": [{"dev": N, "uuid": "..." | null, "since": N | null, "roots": ["/abs/path", ...]}]}
- * Roots are canonical absolute paths on device `dev`, at most 1024 per device:
- * FSEventStreamStart fails on one stream with a few thousand paths. Stdin EOF
- * ends the program with status 0.
+ *   {"generation": N, "watch": [{"dev": N, "uuid": "..." | null, "since": N | null,
+ *                                "sinceAt": N | null, "roots": ["/abs/path", ...]}]}
+ * `sinceAt` is the Unix time in seconds at which the caller stored `since`.
+ * A device appears at most once. Roots are canonical absolute paths on device
+ * `dev`, at most 1024 per device: FSEventStreamStart fails on one stream with
+ * a few thousand paths. Stdin EOF ends the program with status 0.
  *
  * Stdout, one JSON object per line, each starting with the `generation` of
  * the watch line it answers; root indexes refer to that line:
  *   {"generation": N, "dev": N, "purged": "<reason>", "uuid": "..." | null, "eventId": N}
  *     History from `since` cannot be trusted: treat every root of `dev` as
  *     changed and store `uuid` and `eventId`. Reasons: no-since, no-uuid,
- *     uuid-changed, id-ahead, dropped, ids-wrapped.
+ *     uuid-changed, id-ahead, too-old (`sinceAt` missing, in the future or
+ *     more than 2 hours ago, since FSEvents drops old history without saying
+ *     so), dropped, ids-wrapped, and fd-limit (the watch needs more file
+ *     descriptors than the helper may open; no stream runs for that watch line
+ *     and nothing follows the purge).
  *   {"generation": N, "dev": N, "dirty": [rootIndex, ...], "eventId": N}
  *     Roots that changed up to `eventId`, including a root that was renamed,
  *     moved or deleted with one of its parents.
@@ -40,6 +46,7 @@
 #include <strings.h>
 #include <sys/resource.h>
 #include <sys/syslimits.h>
+#include <time.h>
 #include <unistd.h>
 
 typedef enum { J_NULL, J_BOOL, J_NUMBER, J_STRING, J_ARRAY, J_OBJECT } json_kind;
@@ -286,10 +293,13 @@ typedef struct {
 
 #define MAX_RECORD_BYTES (4u << 20)
 #define MAX_ROOTS 1024
+#define MAX_HISTORY_AGE_SECONDS 7200
+#define RESERVED_DESCRIPTORS 64
 
 static dispatch_queue_t queue;
 static CFTimeInterval latency_seconds;
 static uint64_t generation;
+static rlim_t descriptor_limit;
 static device *devices;
 static size_t device_count;
 
@@ -399,22 +409,30 @@ static void stop_all(void) {
   device_count = 0;
 }
 
-static void start(device *d, const json *since_value, const json *uuid_value) {
+static void read_uuid(device *d) {
   CFUUIDRef uuid = FSEventsCopyUUIDForDevice((dev_t)d->dev_id);
-  if (uuid) {
-    CFStringRef text = CFUUIDCreateString(NULL, uuid);
-    CFStringGetCString(text, d->uuid, sizeof d->uuid, kCFStringEncodingASCII);
-    CFRelease(text);
-    CFRelease(uuid);
-  }
-  uint64_t since = 0;
+  if (!uuid) return;
+  CFStringRef text = CFUUIDCreateString(NULL, uuid);
+  CFStringGetCString(text, d->uuid, sizeof d->uuid, kCFStringEncodingASCII);
+  CFRelease(text);
+  CFRelease(uuid);
+}
+
+static void start(device *d, const json *entry) {
+  read_uuid(d);
+  const json *uuid_value = member(entry, "uuid");
+  uint64_t since = 0, since_at = 0;
+  uint64_t now = (uint64_t)time(NULL);
   FSEventStreamEventId current = FSEventsGetCurrentEventId();
   const char *purged = NULL;
-  if (!whole_number(since_value, &since) || since == 0) purged = "no-since";
+  if (!whole_number(member(entry, "since"), &since) || since == 0) purged = "no-since";
   else if (!d->uuid[0]) purged = "no-uuid";
   else if (!uuid_value || uuid_value->kind != J_STRING || strcasecmp(uuid_value->text, d->uuid) != 0)
     purged = "uuid-changed";
   else if (since > current) purged = "id-ahead";
+  else if (!whole_number(member(entry, "sinceAt"), &since_at) || since_at > now ||
+           now - since_at > MAX_HISTORY_AGE_SECONDS)
+    purged = "too-old";
   d->last = purged ? current : since;
 
   CFMutableArrayRef paths = CFArrayCreateMutable(NULL, (CFIndex)d->count, &kCFTypeArrayCallBacks);
@@ -470,6 +488,14 @@ static bool load_device(device *d, const json *entry) {
   return true;
 }
 
+/* kFSEventStreamCreateFlagWatchRoot keeps descriptors open on the ancestors
+   of every root: measured as one per path component plus three per root. */
+static uint64_t watch_root_descriptors(const char *root) {
+  uint64_t count = 3;
+  for (const char *at = root; *at; at++) count += *at == '/';
+  return count;
+}
+
 static void handle_line(const char *line, size_t length) {
   cursor c = {line, line + length};
   json message = {0};
@@ -486,16 +512,35 @@ static void handle_line(const char *line, size_t length) {
   devices = calloc(watch->count + 1, sizeof *devices);
   if (!devices) exit(70);
   device_count = watch->count;
+  uint64_t descriptors = RESERVED_DESCRIPTORS;
   for (size_t i = 0; i < watch->count; i++) {
     if (watch->items[i].kind != J_OBJECT || !load_device(&devices[i], &watch->items[i])) {
       fprintf(stderr, "stim-fsevents: watch entry %zu needs a dev number and an array of absolute roots.\n", i);
       exit(65);
     }
+    for (size_t j = 0; j < i; j++) {
+      if (devices[j].dev_id == devices[i].dev_id) {
+        fprintf(stderr, "stim-fsevents: device %" PRIu64 " appears twice in one watch line.\n", devices[i].dev_id);
+        exit(65);
+      }
+    }
+    for (size_t r = 0; r < devices[i].count; r++) descriptors += watch_root_descriptors(devices[i].roots[r]);
   }
+  bool fits = descriptors <= descriptor_limit;
   for (size_t i = 0; i < device_count; i++) {
-    if (devices[i].count == 0) continue;
-    start(&devices[i], member(&watch->items[i], "since"), member(&watch->items[i], "uuid"));
+    device *d = &devices[i];
+    if (d->count == 0) continue;
+    if (fits) {
+      start(d, &watch->items[i]);
+      continue;
+    }
+    read_uuid(d);
+    d->last = FSEventsGetCurrentEventId();
+    emit_purged(d, "fd-limit");
   }
+  if (!fits)
+    fprintf(stderr, "stim-fsevents: the watch needs about %" PRIu64 " file descriptors; the limit is %llu.\n",
+            descriptors, (unsigned long long)descriptor_limit);
   json_free(&message);
 }
 
@@ -519,6 +564,10 @@ static void on_input(void *context) {
   char *start = input;
   char *newline;
   while ((newline = memchr(start, '\n', input_used - (size_t)(start - input)))) {
+    if ((size_t)(newline - start) > MAX_RECORD_BYTES) {
+      fprintf(stderr, "stim-fsevents: an input line is longer than %u bytes.\n", MAX_RECORD_BYTES);
+      exit(65);
+    }
     handle_line(start, (size_t)(newline - start));
     start = newline + 1;
   }
@@ -538,15 +587,19 @@ int main(int argc, char **argv) {
     return 64;
   }
   signal(SIGPIPE, SIG_IGN);
-  /* kFSEventStreamCreateFlagWatchRoot keeps a descriptor open on every
-     ancestor of every root (about 1,300 for 170 roots), and launchd's default
-     soft limit is 256; past the limit FSEvents stops reporting root changes
-     without an error. */
+  /* Past the descriptor limit FSEvents stops reporting root changes without
+     an error, and launchd's default soft limit is 256. */
   struct rlimit files;
-  if (getrlimit(RLIMIT_NOFILE, &files) == 0 && files.rlim_cur < OPEN_MAX) {
+  if (getrlimit(RLIMIT_NOFILE, &files) != 0) {
+    fprintf(stderr, "stim-fsevents: could not read the file descriptor limit.\n");
+    return 70;
+  }
+  if (files.rlim_cur < OPEN_MAX) {
     files.rlim_cur = files.rlim_max < OPEN_MAX ? files.rlim_max : OPEN_MAX;
     setrlimit(RLIMIT_NOFILE, &files);
   }
+  if (getrlimit(RLIMIT_NOFILE, &files) != 0) return 70;
+  descriptor_limit = files.rlim_cur;
   queue = dispatch_queue_create("dev.stim.fsevents", DISPATCH_QUEUE_SERIAL);
   dispatch_source_t source = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, STDIN_FILENO, 0, queue);
   dispatch_source_set_event_handler_f(source, on_input);
