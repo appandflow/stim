@@ -371,9 +371,7 @@ test.skipIf(process.platform === 'win32')(
 
     expect(existsSync(modules)).toBe(false);
     const [copy] = readRescuedCopies();
-    expect(copy?.items).toEqual([
-      expect.objectContaining({ source: patched, size: 'patched by hand'.length, link: null }),
-    ]);
+    expect(copy?.items).toEqual([expect.objectContaining({ source: patched, size: 'patched by hand'.length })]);
     expect(readFileSync(join(copy?.dir ?? '', 'node_modules', '.pnpm_patches', 'pkg@1.0.0', 'index.js'), 'utf8')).toBe(
       'patched by hand',
     );

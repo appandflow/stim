@@ -594,8 +594,8 @@ registered worktree does, at every pressure level, critical included:
   discovered one gets no such exclusion;
 - no tracked file marked `assume-unchanged`, or `skip-worktree` with the file
   on disk;
-- no entry in `node_modules/.pnpm_patches`, where `pnpm patch` keeps an edit until
-  `pnpm patch-commit`;
+- its `pnpm patch` edit folders and Solana keypairs copied aside first (LLP 0002,
+  rescue copies);
 - every git-ignored file present byte for byte in the main checkout, except
   inside directories git ignores that are named like build output or
   `node_modules`;
@@ -715,9 +715,9 @@ names the folder at that read keeps it; one started through a link elsewhere
 does not. The removal of a registered worktree and a registered workspace's
 other build outputs have no process read. A finished registered worktree stays,
 at planning and at removal, while a git-ignored file outside its dependency and
-build-output folders is missing from the main checkout or differs there, and
-while an unfinished `pnpm patch` is in its `node_modules`, the rules discovered
-worktrees already had.
+build-output folders is missing from the main checkout or differs there, the
+rule discovered worktrees already had, and its pnpm patches and keypairs are
+copied aside before it goes (LLP 0002).
 
 Maintainer decision: "Like remove this whole look at stuff on path", 2026-11-20
 (#6024).

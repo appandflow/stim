@@ -90,6 +90,7 @@ import {
   readRescuedCopies,
   worktreeArchiveRoot,
 } from '@stim-cli/core/state';
+import { deleteCargoTarget } from '../workspace/cargo-target.ts';
 import { IMPOSSIBLE_PID, goneClaimOwner, liveClaimOwner, plantClaim, writeDerivedData } from './_factories.ts';
 import { gcReportSections } from '../commands/gc/report.ts';
 
@@ -2692,6 +2693,40 @@ test('gc keeps a finished registered worktree whose git-ignored hand-written fil
   expect(entry).toMatchObject({ willRemove: false, detail: expect.stringContaining('.claude/tool.sh') });
   expect(existsSync(join(merged, '.claude', 'tool.sh'))).toBe(true);
   expect(existsSync(worktrees.squashed ?? '')).toBe(false);
+}, 240_000);
+
+test('gc copies aside the keypair a dormant Cargo trim left before it removes the worktree', async () => {
+  const { repo, worktrees } = repoWithMergedBranches();
+  const merged = worktrees.merged ?? '';
+  writeFileSync(join(repo, '.git', 'info', 'exclude'), 'target/\n');
+  const target = join(merged, 'target');
+  mkdirSync(join(target, 'debug', '.fingerprint'), { recursive: true });
+  mkdirSync(join(target, 'deploy'), { recursive: true });
+  writeFileSync(join(target, 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55\n');
+  writeFileSync(join(target, 'debug', '.cargo-lock'), '');
+  writeFileSync(join(target, 'debug', 'app'), 'binary');
+  writeFileSync(join(target, 'deploy', 'program-keypair.json'), '[1,2,3]');
+  const old = new Date(Date.now() - 2 * DAY_MS);
+  for (const path of [
+    'debug/.fingerprint',
+    'debug/.cargo-lock',
+    'debug/app',
+    'debug',
+    'deploy/program-keypair.json',
+    'deploy',
+    'CACHEDIR.TAG',
+    '.',
+  ])
+    utimesSync(join(target, path), old, old);
+  await deleteCargoTarget(target, { idleMs: DAY_MS });
+  expect(readFileSync(join(target, 'deploy', 'program-keypair.json'), 'utf8')).toBe('[1,2,3]');
+
+  await checkWorktrees();
+  await gcJson({ pressure: 'normal' });
+
+  expect(existsSync(merged)).toBe(false);
+  const copy = readRescuedCopies().find((entry) => entry.from === merged);
+  expect(readFileSync(join(copy?.dir ?? '', 'target', 'deploy', 'program-keypair.json'), 'utf8')).toBe('[1,2,3]');
 }, 240_000);
 
 test('gc copies a pnpm patch and a Solana keypair aside before it removes a finished registered worktree', async () => {

@@ -8,12 +8,11 @@ export function rescuedRoot(): string {
   return join(configDir(), 'rescued');
 }
 
-/** One copied file, by the path it had (`source`) and its path in the copy (`copy`); `link` is a link's target. */
+/** One copied file, by the path it had (`source`) and its path in the copy (`copy`). */
 export interface RescuedItem {
   source: string;
   copy: string;
   size: number;
-  link: string | null;
 }
 
 /** One rescue: its folder `dir`, the folder whose deletion it preceded (`from`), and when (`at`, epoch ms). */
@@ -47,11 +46,6 @@ function names(dir: string): string[] {
 
 function isItem(value: unknown): value is RescuedItem {
   if (!isJsonObject(value)) return false;
-  const { source, copy, size, link } = value;
-  return (
-    typeof source === 'string' &&
-    typeof copy === 'string' &&
-    typeof size === 'number' &&
-    (link === null || typeof link === 'string')
-  );
+  const { source, copy, size } = value;
+  return typeof source === 'string' && typeof copy === 'string' && typeof size === 'number';
 }

@@ -46,11 +46,17 @@ time. Then the delete goes ahead.
 - What is copied: every file of a `.pnpm_patches` that holds at least one edit
   folder (the edit folders and `state.json`), and every `*-keypair.json` in any
   letter case, at any depth, in each recognised root Cargo `target/` of a
-  removed worktree. Links are copied as links and never followed.
-- The search and the copy read through the bounded reader. More than 50 MB to
-  copy for one delete, another volume, more than 1,000,000 entries, or a copy
-  that fails or does not finish in 30 s keeps the folder or worktree, with the
-  reason.
+  removed worktree, and in a root `target/` holding a `deploy/` that a dormant
+  trim left.
+- Only plain files are copied. Anything unusual keeps the folder or worktree,
+  with the reason: a link where a protected file is, a linked `.pnpm_patches`,
+  a scan root on another volume than the folder being deleted, a rescue store
+  inside that folder, a rescue store or workspace folder that is a link, more
+  than 50 MB to copy for one delete, more than 1,000,000 entries, or a search
+  and copy that fails or does not finish in 30 s through the bounded reader.
+- Each rescue gets its own new folder, a partial copy is removed, and expiry
+  removes only folders that resolve to their own place in the store under the
+  canonical Stim home.
 - `stim gc` removes rescued copies older than 30 days, lists what it copied in
   that run (`rescued` in `--json`), and `stim doctor` lists every rescued copy
   with its source and age, so an agent restores a file by copying it back.

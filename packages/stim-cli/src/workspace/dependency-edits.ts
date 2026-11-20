@@ -436,7 +436,8 @@ export async function checkDependencyEdits(
   if ('keep' in check) return check;
   const held = await rescueBeforeDelete(
     options.worktree,
-    { trees: [canonicalOr(path)], targets: [] },
+    path,
+    { trees: [path], targets: [] },
     { act: !options.readOnly, signal: options.signal },
   );
   return held ? { keep: held } : check;

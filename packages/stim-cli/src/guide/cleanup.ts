@@ -666,7 +666,8 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
   pressure level, critical included, so its disk is not freed; stim gc
   --dry-run shows it kept. Automatic removal of a finished or discovered
   worktree also waits while one of its dependency folders has detected edits.
-  stim worktree remove runs no check. The kept action, \`stim status\` (--json
+  A pnpm patch edit folder is copied to $STIM_HOME/rescued before its
+  node_modules goes. stim worktree remove runs no check. The kept action, \`stim status\` (--json
   dependencyEdits) and \`stim doctor\` name the files; make the change a patch
   (pnpm patch, yarn patch or patch-package) or reinstall to release the
   folder. Detection is best effort, from file times alone: a file modified

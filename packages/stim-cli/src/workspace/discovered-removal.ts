@@ -143,11 +143,15 @@ async function enclosingCheckout(path: string): Promise<string | null> {
 
 /**
  * `rescueBeforeDelete` for removing the worktree at `path`: the pnpm patches of the dependency trees removing it
- * deletes, and the Solana keypairs of its Cargo `target/`. Without `act` it only checks that they can be copied.
+ * deletes, and the Solana keypairs of its Cargo `target/`, or of a root `target/` holding a `deploy/` that a dormant
+ * trim left. Without `act` it only checks that they can be copied.
  */
 export async function worktreeRescue(path: string, act: boolean, signal?: AbortSignal): Promise<string | null> {
   const trees = await removedTrees(path, signal);
-  return rescueBeforeDelete(path, { trees, targets: await cargoTargetDirsAsync(path) }, { act, signal });
+  const targets = await cargoTargetDirsAsync(path);
+  const deploy = await lstat(join(path, 'target', 'deploy')).catch(() => null);
+  if (deploy?.isDirectory()) targets.push(join(path, 'target'));
+  return rescueBeforeDelete(path, path, { trees, targets }, { act, signal });
 }
 
 // @ref LLP 0004#removing-a-discovered-worktree-needs-more-evidence -- no Stim record of its files
