@@ -2707,24 +2707,50 @@ test('gc keeps a finished registered worktree with an unfinished pnpm patch', as
   expect(existsSync(worktrees.squashed ?? '')).toBe(false);
 }, 240_000);
 
-test('gc keeps a finished registered worktree whose Cargo target holds a Solana keypair', async () => {
+test('gc keeps a finished registered worktree whose untagged Cargo target holds a Solana keypair below debug', async () => {
   const { repo, worktrees } = repoWithMergedBranches();
+  const merged = worktrees.merged ?? '';
   writeFileSync(join(repo, '.git', 'info', 'exclude'), 'target/\n');
-  const target = join(worktrees.merged ?? '', 'target');
-  mkdirSync(join(target, 'deploy'), { recursive: true });
-  writeFileSync(join(target, 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55');
-  writeFileSync(join(target, 'deploy', 'program-keypair.json'), '[1,2,3]');
+  writeFileSync(join(merged, 'Cargo.toml'), '[package]\nname = "program"\n');
+  execSync('git add Cargo.toml && git -c user.name=t -c user.email=t@t commit -q -m cargo && git push -q', {
+    cwd: merged,
+  });
+  execSync(
+    'git fetch -q origin merged && git -c user.name=t -c user.email=t@t merge -q --no-ff origin/merged -m cargo && git push -q origin main',
+    { cwd: join(projects, 'upstream') },
+  );
+  const keypair = join(merged, 'target', 'debug', 'program-keypair.json');
+  mkdirSync(dirname(keypair), { recursive: true });
+  writeFileSync(join(merged, 'target', '.rustc_info.json'), '{}');
+  writeFileSync(keypair, '[1,2,3]');
 
   await checkWorktrees();
   const { payload } = await gcJson({ dryRun: true, pressure: 'normal' });
   const entry = payload.sections.linkedWorktrees.find(
-    (w: { path: string }) => realpathSync.native(w.path) === realpathSync.native(worktrees.merged ?? ''),
+    (w: { path: string }) => realpathSync.native(w.path) === realpathSync.native(merged),
   );
-  expect(entry).toMatchObject({ willRemove: false, detail: expect.stringContaining('Solana keypair folder') });
+  expect(entry).toMatchObject({
+    willRemove: false,
+    detail: expect.stringContaining('debug/program-keypair.json is a Solana keypair'),
+  });
   await gcJson({ pressure: 'normal' });
 
-  expect(existsSync(join(target, 'deploy', 'program-keypair.json'))).toBe(true);
+  expect(readFileSync(keypair, 'utf8')).toBe('[1,2,3]');
   expect(existsSync(worktrees.squashed ?? '')).toBe(false);
+}, 240_000);
+
+test('gc removes a finished registered worktree whose tagged Cargo target holds only build output', async () => {
+  const { repo, worktrees } = repoWithMergedBranches();
+  const merged = worktrees.merged ?? '';
+  writeFileSync(join(repo, '.git', 'info', 'exclude'), 'target/\n');
+  mkdirSync(join(merged, 'target', 'debug', '.fingerprint'), { recursive: true });
+  writeFileSync(join(merged, 'target', 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55\n');
+  writeFileSync(join(merged, 'target', 'debug', 'app'), 'binary');
+
+  await checkWorktrees();
+  await gcJson({ pressure: 'normal' });
+
+  expect(existsSync(merged)).toBe(false);
 }, 240_000);
 
 test('gc keeps a finished registered worktree whose ignored file sits in a tracked folder named like the root Cargo target', async () => {

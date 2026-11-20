@@ -1,9 +1,21 @@
-import { chmodSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
   checkDependencyEdits,
   noteEditsBeforeInstall,
+  pnpmPatchHold,
   recordDependencyInstall,
 } from '../workspace/dependency-edits.ts';
 import { updateDependencyInstall } from '../workspace/dependency-install-records.ts';
@@ -89,21 +101,59 @@ test('a pnpm patch edit folder with no patch file keeps the tree at critical too
   expect(await keptFiles()).toContain('pnpm patch not yet committed in node_modules/.pnpm_patches/pkg@1.0.0');
 });
 
-function committedPatch(declared: 'pnpm-workspace.yaml' | 'package.json'): string {
-  installAt(ago(HOUR));
-  const edit = join(tree, '.pnpm_patches', '@scope', 'pkg@1.0.0');
-  write(join(edit, 'index.js'), 'patched by hand', ago(2 * HOUR));
-  utimesSync(edit, ago(2 * HOUR), ago(2 * HOUR));
-  write(join(tree, '.pnpm_patches', 'state.json'), '{}');
-  write(join(worktree, 'patches', '@scope__pkg@1.0.0.patch'), 'diff', ago(90 * 60_000));
+function editFolder(name: string, version: string, applyToAll: boolean, at: Date): string {
+  const edit = join(tree, '.pnpm_patches', `${name}@${version}`);
+  write(join(edit, 'package.json'), JSON.stringify({ name, version }), at);
+  write(join(edit, 'index.js'), 'patched by hand', at);
+  utimesSync(edit, at, at);
+  const state = join(tree, '.pnpm_patches', 'state.json');
+  const states: unknown = existsSync(state) ? JSON.parse(readFileSync(state, 'utf8')) : {};
+  write(state, JSON.stringify({ ...Object(states), [edit]: { patchedPkg: `${name}@${version}`, applyToAll } }));
+  return edit;
+}
+
+function declarePatch(declared: 'pnpm-workspace.yaml' | 'package.json', key: string, file: string): void {
+  write(join(worktree, 'patches', file), 'diff', ago(90 * 60_000));
   write(
     join(worktree, declared),
     declared === 'package.json'
-      ? JSON.stringify({ pnpm: { patchedDependencies: { '@scope/pkg@1.0.0': 'patches/@scope__pkg@1.0.0.patch' } } })
-      : "patchedDependencies:\n  '@scope/pkg@1.0.0': patches/@scope__pkg@1.0.0.patch\n",
+      ? JSON.stringify({ pnpm: { patchedDependencies: { [key]: `patches/${file}` } } })
+      : `patchedDependencies:\n  '${key}': patches/${file}\n`,
   );
+}
+
+function committedPatch(declared: 'pnpm-workspace.yaml' | 'package.json'): string {
+  installAt(ago(HOUR));
+  const edit = editFolder('@scope/pkg', '1.0.0', false, ago(2 * HOUR));
+  declarePatch(declared, '@scope/pkg@1.0.0', '@scope__pkg@1.0.0.patch');
   return edit;
 }
+
+test('a committed pnpm patch declared in the workspace root covers a package node_modules', async () => {
+  const app = join(worktree, 'packages', 'app', 'node_modules');
+  write(
+    join(app, '.pnpm_patches', 'pkg@1.0.0', 'package.json'),
+    JSON.stringify({ name: 'pkg', version: '1.0.0' }),
+    ago(2 * HOUR),
+  );
+  utimesSync(join(app, '.pnpm_patches', 'pkg@1.0.0'), ago(2 * HOUR), ago(2 * HOUR));
+  write(
+    join(app, '.pnpm_patches', 'state.json'),
+    JSON.stringify({ [join(app, '.pnpm_patches', 'pkg@1.0.0')]: { patchedPkg: 'pkg@1.0.0', applyToAll: false } }),
+  );
+  declarePatch('pnpm-workspace.yaml', 'pkg@1.0.0', 'pkg@1.0.0.patch');
+
+  expect(await pnpmPatchHold(app)).toBeNull();
+});
+
+test('an edit folder of one version stays uncommitted when an all-versions patch is committed from another', async () => {
+  installAt(ago(HOUR));
+  editFolder('pkg', '1.0.0', false, ago(2 * HOUR));
+  editFolder('pkg', '2.0.0', true, ago(2 * HOUR));
+  declarePatch('pnpm-workspace.yaml', 'pkg', 'pkg.patch');
+
+  expect(await keptFiles()).toContain('pnpm patch not yet committed in node_modules/.pnpm_patches/pkg@1.0.0');
+});
 
 test.each(['pnpm-workspace.yaml', 'package.json'] as const)(
   'a committed pnpm patch, declared in %s, whose edit folder pnpm leaves behind does not keep the tree',

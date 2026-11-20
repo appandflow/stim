@@ -316,7 +316,9 @@ describe('a worktree of a plain Node repository on the removal path', () => {
     writeFileSync(keypair, '[1,2,3]');
     age(keyed);
     const planned = await collectWorktreeSweep({ idle: false, olderThan: null, now: Date.now(), refresh: false });
-    expect(planned.worktrees.find((entry) => entry.path === keyed)?.skipped).toContain('Solana keypair folder');
+    expect(planned.worktrees.find((entry) => entry.path === keyed)?.skipped).toContain(
+      'deploy/Program-Keypair.json is a Solana keypair',
+    );
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
     await removeWorktrees(planned, { now: Date.now() });

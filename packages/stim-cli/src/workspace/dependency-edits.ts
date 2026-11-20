@@ -18,6 +18,7 @@ import { ARTIFACT_DIRS, existingDirsOf } from './regenerable-dirs.ts';
 import { absent } from './scan-rules.ts';
 import { answered } from './bounded-read.ts';
 import { yamlBlock } from '../fingerprint/inputs.ts';
+import { field as jsonField } from '../fingerprint/walk.ts';
 
 /**
  * How long after a package manager's stamp the root project's own install-time script (`preinstall`, `install`,
@@ -392,11 +393,52 @@ async function patchFiles(root: string, read: <T>(path: string, start: () => Pro
   return files;
 }
 
+/** The nearest folder above `project` that holds a `pnpm-workspace.yaml`, or null. */
+async function workspaceRoot(
+  project: string,
+  read: <T>(path: string, start: () => Promise<T>) => Promise<T>,
+): Promise<string | null> {
+  for (let dir = dirname(project); dir !== dirname(dir); dir = dirname(dir)) {
+    const file = join(dir, 'pnpm-workspace.yaml');
+    const found = await read(file, () => lstat(file)).catch((error: unknown) => {
+      if (absent(error)) return null;
+      throw error;
+    });
+    if (found) return dir;
+  }
+  return null;
+}
+
+/**
+ * The `patchedDependencies` key `pnpm patch-commit` writes for the edit folder `edit` (`folder` in `.pnpm_patches`): its
+ * package's `name@version`, or `name` alone when pnpm recorded the edit as applying to every version. Empty when
+ * `state.json` holds no single record of it, which leaves the folder uncommitted.
+ */
+async function patchKey(
+  edit: string,
+  folder: string,
+  states: unknown,
+  read: <T>(path: string, start: () => Promise<T>) => Promise<T>,
+): Promise<string> {
+  const records = Object.entries(states && typeof states === 'object' ? states : {}).filter(
+    ([key]) => key === edit || key.endsWith(`${sep}.pnpm_patches${sep}${folder}`),
+  );
+  const all = new Set(records.map(([, record]: [string, unknown]) => jsonField(record, 'applyToAll')));
+  const [applyToAll] = all;
+  if (all.size !== 1 || typeof applyToAll !== 'boolean') return '';
+  const manifest: unknown = JSON.parse(await read(edit, () => readFile(join(edit, 'package.json'), 'utf8')));
+  const name = jsonField(manifest, 'name');
+  const version = jsonField(manifest, 'version');
+  if (typeof name !== 'string' || typeof version !== 'string') return '';
+  return applyToAll ? name : `${name}@${version}`;
+}
+
 /**
  * Why a `pnpm patch` not yet committed keeps the node_modules `tree`, or null. `pnpm patch` copies a package into an
  * edit folder in `.pnpm_patches`, which the edit scan skips with the tools' caches, and `pnpm patch-commit` writes the
- * patch file `patchedDependencies` names but leaves the edit folder and `state.json` in place (pnpm/pnpm#8401). An
- * edit folder with no patch file, or with anything modified after its patch file, keeps the tree. Never follows a
+ * patch file `patchedDependencies` names, in the project or its workspace root, but leaves the edit folder and
+ * `state.json` in place (pnpm/pnpm#8401). An edit folder with no patch file under the exact key pnpm writes for it, or
+ * with anything modified after its patch file, keeps the tree; a hand-written range key does not count. Never follows a
  * link; a read that does not answer within PATCH_PROBE_MS, or more than MAX_PATCH_ENTRIES entries, keeps it too.
  */
 export async function pnpmPatchHold(tree: string, signal?: AbortSignal): Promise<string | null> {
@@ -424,10 +466,17 @@ export async function pnpmPatchHold(tree: string, signal?: AbortSignal): Promise
     }
     if (!folders.length) return null;
     const files = await patchFiles(dirname(tree), read);
+    const shared = await workspaceRoot(dirname(tree), read);
+    if (shared) for (const [key, file] of await patchFiles(shared, read)) if (!files.has(key)) files.set(key, file);
+    const states = await read(join(dir, 'state.json'), () => readFile(join(dir, 'state.json'), 'utf8'))
+      .then((text): unknown => JSON.parse(text))
+      .catch((error: unknown) => {
+        if (absent(error) || error instanceof SyntaxError) return null;
+        throw error;
+      });
     let entries = 0;
     for (const folder of folders) {
-      const version = folder.lastIndexOf('@');
-      const file = files.get(folder) ?? files.get(version > 0 ? folder.slice(0, version) : folder);
+      const file = files.get(await patchKey(join(dir, folder), folder, states, read));
       const committed = file
         ? await read(file, () => statFile(file)).catch((error: unknown) => {
             if (absent(error)) return null;

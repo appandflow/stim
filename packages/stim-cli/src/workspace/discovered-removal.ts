@@ -3,7 +3,8 @@ import { dirname, join, relative, sep } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
 import { decideIdleStop } from '../policy/idle.ts';
 import { ARTIFACT_DIRS, cargoTargetDirsAsync, existingBuildDirsAsync } from './regenerable-dirs.ts';
-import { targetEntries } from './cargo-target.ts';
+import { isKeypairName } from './cargo-target.ts';
+import { answered } from './bounded-read.ts';
 import { discoveredEvidence, SKIPPED_WHERE_IGNORED } from './discovered-activity.ts';
 import type { DiscoveredReads } from './discovered-reads.ts';
 import { gitQuietAsync } from './git.ts';
@@ -48,6 +49,44 @@ async function sameAsMain(path: string, main: string, rel: string, budget: { byt
   return (await readFile(join(path, rel))).equals(await readFile(join(main, rel)));
 }
 
+const KEYPAIR_WALK_MS = 30_000;
+const MAX_KEYPAIR_ENTRIES = 1_000_000;
+
+// @ref LLP 0002#pnpm-patches-and-solana-keypairs -- worktree removal does not go through the Cargo remover
+/**
+ * Why removing the Cargo `target` would lose a Solana keypair, or null: a `*-keypair.json` at any depth, in any letter
+ * case, or a link named like one or named `deploy`. The walk never follows a link; another volume, more than
+ * MAX_KEYPAIR_ENTRIES entries, a read that does not answer within KEYPAIR_WALK_MS or one that fails keeps it too.
+ */
+async function keypairHold(target: string, signal?: AbortSignal): Promise<string | null> {
+  const started = performance.now();
+  const read = <T>(path: string, start: () => Promise<T>) =>
+    answered(path, start, Math.max(1, KEYPAIR_WALK_MS - (performance.now() - started)), signal);
+  let entries = 0;
+  try {
+    const dev = (await read(target, () => lstat(target))).dev;
+    const queue = [target];
+    for (let dir = queue.pop(); dir !== undefined; dir = queue.pop()) {
+      const at = dir;
+      if (at !== target && (await read(at, () => lstat(at))).dev !== dev)
+        return `${relative(target, at)} is on another volume, so it cannot be checked for Solana keypairs`;
+      for (const entry of await read(at, () => readdir(at, { withFileTypes: true }))) {
+        if (++entries > MAX_KEYPAIR_ENTRIES)
+          return `it holds over ${MAX_KEYPAIR_ENTRIES} entries to check for Solana keypairs`;
+        const rel = relative(target, join(at, entry.name));
+        if (isKeypairName(entry.name) && !entry.isDirectory()) return `${rel} is a Solana keypair`;
+        if (entry.isSymbolicLink() && entry.name.toLowerCase() === 'deploy')
+          return `${rel} is a link, which can lead to Solana keypairs`;
+        if (entry.isDirectory()) queue.push(join(at, entry.name));
+      }
+    }
+  } catch {
+    signal?.throwIfAborted();
+    return `it cannot be checked for Solana keypairs within ${KEYPAIR_WALK_MS / 1000} s`;
+  }
+  return null;
+}
+
 /**
  * Why removing the worktree would lose a git-ignored file git cannot recover, or null: every ignored path outside the
  * regenerable folders (a directory git reports ignored whose name is node_modules or build output, or a folder the stages recognise) must exist, byte for byte, at the same place in the repository's main checkout. More than
@@ -63,10 +102,8 @@ export async function ignoredFilesHold(path: string, main: string, signal?: Abor
   );
   if (listed === null) return 'git cannot list its ignored files';
   for (const target of await cargoTargetDirsAsync(path)) {
-    const entries = targetEntries(target);
-    if (!entries) return `its ${relative(path, target)} cannot be listed`;
-    if (entries.kept.length)
-      return `its ${relative(path, target)} holds ${entries.kept.join(', ')}, a Solana keypair folder or a link`;
+    const keypair = await keypairHold(target, signal);
+    if (keypair) return `its ${relative(path, target)}: ${keypair}`;
   }
   const folders = [
     ...ARTIFACT_DIRS.dependencies.filter((folder) => !podsFolder(folder)),

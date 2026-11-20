@@ -40,24 +40,40 @@ Two rules keep what no rebuild or reinstall restores.
   folder in `.pnpm_patches`, and `pnpm patch-commit` writes the patch file
   that `patchedDependencies` (in `pnpm-workspace.yaml`, or `package.json`
   before pnpm 10) names but leaves the edit folder and `state.json` in place
-  ([pnpm/pnpm#8401](https://github.com/pnpm/pnpm/pull/8401)). An edit folder
-  with no patch file, or with anything modified after its patch file, keeps
-  its node_modules from deletion, and a finished or discovered worktree whose
-  root node_modules holds one is not removed. A committed edit folder does
-  not keep anything, so cleanup stays automatic. The probe does not follow
-  links and reads through the bounded reader; a read that does not answer in
-  5 s, or more than 5,000 entries, keeps the folder.
+  ([pnpm/pnpm#8401](https://github.com/pnpm/pnpm/pull/8401)). The key is the
+  one pnpm writes for that folder: `name@version` from the folder's
+  `package.json`, or `name` alone when `state.json` records the edit as
+  applying to every version. It is looked up in the project and in the
+  nearest workspace root above it. An edit folder with no patch file under
+  that key, with no single `state.json` record, or with anything modified
+  after its patch file, keeps its node_modules from deletion, and a finished
+  or discovered worktree whose root node_modules holds one is not removed. A
+  committed edit folder does not keep anything, so cleanup stays automatic.
+  The probe does not follow links and reads through the bounded reader; a
+  read that does not answer in 5 s, or more than 5,000 entries, keeps the
+  folder.
 - A Solana keypair: Cargo `target/` deletes go through one remover that never
-  unlinks a `*-keypair.json` (LLP 0005). A finished or discovered worktree whose
-  recognised root Cargo `target/` holds a `deploy/` with a keypair, or a link,
-  is not removed, because worktree removal does not go through that remover.
+  unlinks a `*-keypair.json` (LLP 0005). Worktree removal does not go through
+  that remover, so a finished or discovered worktree whose recognised root
+  Cargo `target/` holds a `*-keypair.json` at any depth, or a link named like
+  one or named `deploy`, is not removed. The walk does not follow links and
+  stops after 30 s or 1,000,000 entries; another volume or a walk that
+  cannot finish keeps the worktree.
 
-Not covered: a keypair in a Cargo `target/` Stim does not recognise, such as a
-nested one; an uncommitted edit made before something rewrote the patch file,
-such as a branch switch, since the probe compares modification times; a pnpm patch in a node_modules no workspace package root owns;
-build folders other than Cargo targets, which are deleted with a plain
-recursive delete; and `stim worktree remove`, which is explicit and runs none
-of these checks.
+Not covered:
+
+- a keypair in a Cargo `target/` Stim does not recognise, such as a nested
+  one;
+- an uncommitted edit made before something rewrote the patch file with a
+  newer modification time, such as a branch switch, or copied the edit folder
+  while keeping its times, such as `cp -p`, `rsync -a` or `tar`, since the
+  probe compares modification times;
+- a hand-written range key such as `is-number@^7`, which keeps the edit
+  folder because the probe matches only the keys pnpm writes;
+- a pnpm patch in a node_modules no workspace package root owns;
+- build folders other than Cargo targets, which are deleted with a plain
+  recursive delete;
+- `stim worktree remove`, which is explicit and runs none of these checks.
 
 ## Edits git status does not show
 
