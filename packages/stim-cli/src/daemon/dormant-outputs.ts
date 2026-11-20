@@ -131,7 +131,7 @@ async function reduceWorkspace(
     for (const output of plan.paths) {
       if (!plan.targets.has(output)) sizes.set(output, await sizeOf(output));
       else if (!input.act)
-        for (const name of removableEntries(output) ?? [])
+        for (const name of (await removableEntries(output)) ?? [])
           sizes.set(join(output, name), await sizeOf(join(output, name)));
     }
   if (!input.act) {
@@ -209,7 +209,7 @@ async function eligible(
     const target = targets.includes(output);
     const recent = target
       ? (recentTargetUse(output, Date.now(), afterMs) ??
-        (removableEntries(output)?.length ? null : 'it holds nothing the dormant delete removes'))
+        ((await removableEntries(output))?.length ? null : 'it holds nothing the dormant delete removes'))
       : null;
     if (recent) {
       plan.kept.push(`kept ${output}: ${recent}`);

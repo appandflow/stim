@@ -63,15 +63,19 @@ export function targetEntries(target: string): { output: string[]; kept: string[
 }
 
 /**
- * The top-level entries of `target` the dormant delete would remove: `targetEntries`' output, and a `.stim-trimmed`
- * staging directory an earlier delete committed but did not finish removing. Null when `target` cannot be listed.
+ * The top-level entries of `target` the dormant delete would remove: `targetEntries`' output but an entry holding a
+ * `*-keypair.json` at any depth, and a `.stim-trimmed` staging directory an earlier delete committed but did not finish
+ * removing. Null when `target` cannot be listed.
  */
-export function removableEntries(target: string): string[] | null {
+export async function removableEntries(target: string): Promise<string[] | null> {
   const entries = targetEntries(target);
   if (!entries) return null;
-  return lstatSync(join(target, ASIDE), { throwIfNoEntry: false })?.isDirectory()
-    ? [...entries.output, ASIDE]
-    : entries.output;
+  const walked = await walkEntries(
+    entries.output.map((name) => join(target, name)),
+    lstatSync(target).dev,
+  ).catch(() => null);
+  const output = entries.output.filter((name) => !walked?.keypairs.has(join(target, name)));
+  return lstatSync(join(target, ASIDE), { throwIfNoEntry: false })?.isDirectory() ? [...output, ASIDE] : output;
 }
 
 /** Whether the directory at `path` holds a `*-keypair.json` in any letter case or a symbolic link, or cannot be read to tell. */
@@ -599,6 +603,8 @@ async function deleteClaimed(
   );
   if (walked.mount) return keep(`${walked.mount} is another filesystem`);
   if (walked.keypairs.has(aside)) return keep(`${aside} holds a Solana keypair`);
+  const fresh = writtenWithin(walked.newest, Date.now(), idleMs, aside);
+  if (fresh) return keep(`${fresh} holds a file written in that time`);
   const keyed = entries.output.filter((name) => walked.keypairs.has(join(target, name)));
   const names = entries.output.filter((name) => !keyed.includes(name));
   const first = await readTargetUse(target, launching, signal);
@@ -678,18 +684,19 @@ async function deleteClaimed(
     if ('kept' in after) return await putBackAll(after.kept);
     if (after.used.length) return await putBackAll(`a process took ${after.used[0]} during the move`);
     const now = Date.now();
-    const stagedKeypairs = (
-      await walkEntries(
-        moved.map(({ there }) => there),
-        dev,
-      )
-    ).keypairs;
+    const staged = await walkEntries(
+      moved.map(({ there }) => there),
+      dev,
+    );
+    const stagedKeypairs = staged.keypairs;
     for (const entry of moved) {
       if (stagedKeypairs.has(entry.there) || (isKeypairDir(entry.name) && holdsKeypair(entry.there)))
         return await putBackAll(`${entry.dir} holds a Solana keypair now`, true);
       const used = recentEntryUse(entry.there, entry.name, now, idleMs);
       if (used) return await putBackAll(`${entry.dir} was used during the move: ${used}`, true);
     }
+    const stagedFresh = writtenWithin(staged.newest, now, idleMs);
+    if (stagedFresh) return await putBackAll(`${stagedFresh} holds a file written during the move`, true);
     const listed = entriesOf(target);
     if (!listed) return await putBackAll(`${target} cannot be listed`);
     const appeared = listed.find(({ name }) => !name.startsWith(OWN_PREFIX) && !unmoved.includes(name));
@@ -764,28 +771,35 @@ async function fileHeld(file: string, signal?: AbortSignal): Promise<boolean> {
 }
 
 /**
- * One walk of `paths`, never through a symbolic link: the first directory on a device other than `dev` (`mount`), and
- * each of `paths` that holds a `*-keypair.json` at any depth, in any letter case (`keypairs`).
+ * One walk of `paths`, never through a symbolic link: the first directory on a device other than `dev` (`mount`), each
+ * of `paths` that holds a `*-keypair.json` at any depth, in any letter case (`keypairs`), and the newest modification
+ * time of anything in each of `paths` (`newest`).
  */
 async function walkEntries(
   paths: readonly string[],
   dev: number,
-): Promise<{ mount: string | null; keypairs: Set<string> }> {
+): Promise<{ mount: string | null; keypairs: Set<string>; newest: Map<string, number> }> {
   const keypairs = new Set<string>();
+  const newest = new Map<string, number>();
   const queue = paths.map((path) => ({ path, top: path }));
   for (let item = queue.pop(); item !== undefined; item = queue.pop()) {
     const { path, top } = item;
     const stat = await lstat(path);
+    newest.set(top, Math.max(newest.get(top) ?? 0, stat.mtimeMs));
     if (!stat.isDirectory()) {
       if (isKeypairName(basename(path))) keypairs.add(top);
       continue;
     }
-    if (stat.dev !== dev) return { mount: path, keypairs };
-    for (const entry of await readdir(path, { withFileTypes: true }))
-      if (entry.isDirectory()) queue.push({ path: join(path, entry.name), top });
-      else if (isKeypairName(entry.name)) keypairs.add(top);
+    if (stat.dev !== dev) return { mount: path, keypairs, newest };
+    for (const entry of await readdir(path, { withFileTypes: true })) queue.push({ path: join(path, entry.name), top });
   }
-  return { mount: null, keypairs };
+  return { mount: null, keypairs, newest };
+}
+
+/** The first of `newest`'s entries but `skip` whose newest time is within `idleMs` of `now`. */
+function writtenWithin(newest: Map<string, number>, now: number, idleMs: number, skip?: string): string | null {
+  for (const [path, at] of newest) if (path !== skip && now - at <= idleMs) return path;
+  return null;
 }
 
 /** Deletes `path` without entering a directory on a device other than `dev`; returns those it left. */

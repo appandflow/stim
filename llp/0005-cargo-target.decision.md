@@ -77,8 +77,11 @@ within that time, or one that cannot be read, on the `target/` itself, on any
 top-level entry but Stim's own `.stim-*`, on each direct child of a top-level
 directory, or on a profile directory and its `.fingerprint`, `deps`, `build` and
 `incremental`; or a unit stamp within that time in Exact's ledger. The times
-are read two levels down and no deeper, so a write deeper inside a folder that
-is not a profile is not seen. A `target/` with no Cargo profile, such as an
+are read two levels down by the eligibility check; the delete itself also takes
+the newest modification time of everything in each entry in the walk that checks
+devices and keypairs, before the move and on the moved entries before the
+delete, so a file rewritten in place deep inside, such as a Criterion baseline,
+keeps the `target/`. A `target/` with no Cargo profile, such as an
 Exact app's, is dated the same way.
 
 Then, as the trims do (Never delete what a build took back, below), it renames
@@ -132,7 +135,8 @@ link stays because deleting through it would reach what it points at, and a
 `*-keypair.json` at any depth stays too, found in the same walk that checks
 devices, before the move and again on the moved entries before the delete: a
 debug-only `cargo build-sbf --debug` writes the key under `deploy/debug/`, and
-`--sbf-out-dir` can put it in any folder. A `.stim-trimmed` that is not a real directory
+`--sbf-out-dir` can put it in any folder. A dry run leaves such entries out of
+the size it reports. A `.stim-trimmed` that is not a real directory
 keeps the `target/` too: the staging directory is made fresh, never reused. An
 earlier version deleted only entries recognised as Cargo or Exact build
 output; it freed almost nothing from Exact app targets, whose size sits in

@@ -597,6 +597,16 @@ describe.skipIf(process.platform === 'win32')(
       ],
       ['it is no longer a Cargo target', () => rmSync(join(target, 'Cargo.toml')), 'no longer a Cargo target'],
       [
+        'Criterion rewrites a saved baseline deep inside while its folders stay old',
+        () => {
+          mkdirSync(join(dir, 'criterion', 'bench', 'base'), { recursive: true });
+          writeFileSync(join(dir, 'criterion', 'bench', 'base', 'sample.json'), '{}');
+          ageTree(dir);
+          utimesSync(join(dir, 'criterion', 'bench', 'base', 'sample.json'), new Date(), new Date());
+        },
+        'criterion holds a file written in that time',
+      ],
+      [
         'a process works in the target itself',
         () => stubProcesses({ lsof: (args) => (args.includes('-Fn') ? `p100\nn${real}\n` : '') }),
         'a process uses',
@@ -695,6 +705,16 @@ describe.skipIf(process.platform === 'win32')(
           return () => writeFileSync(join(dir, '.stim-trimmed', '2', 'app-keypair.json'), '[1]');
         },
         'holds a Solana keypair now',
+      ],
+      [
+        'a build rewrites a file deep inside a moved profile',
+        () => {
+          writeFileSync(join(dir, 'debug', '.fingerprint', 'unit', 'lib'), 'x');
+          ageTree(dir);
+          return () =>
+            utimesSync(join(dir, '.stim-trimmed', '1', '.fingerprint', 'unit', 'lib'), new Date(), new Date());
+        },
+        'holds a file written during the move',
       ],
       ['a build recreates a moved profile', () => () => mkdirSync(join(dir, 'debug')), 'appeared during the move'],
       [
