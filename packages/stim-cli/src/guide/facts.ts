@@ -566,7 +566,7 @@ leased until <time>" for each one.`,
   discovery       unmanaged checkouts the home scan found (internal): { scan,
                   census, censusAt, censusCurrent, complete (false: figures read
                   "at least"), rootsChangedSinceCensus, groups: [{ folder, kind
-                  reduce-only | dot-folder | unchecked, checkouts, bytes,
+                  reduce-only | dot-folder | untracked | unchecked, checkouts, bytes,
                   measured, partial, failed, notMeasuredYet, command,
                   commandProblem, oldestMeasuredAt, members }] }
   deviceHosts     one { machine, state, dnsName?, fingerprint?, deviceId?, requestedAt?,

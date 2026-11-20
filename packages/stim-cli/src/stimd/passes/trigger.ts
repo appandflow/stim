@@ -6,7 +6,12 @@ import {
   readDiscoveryCensusFile,
   readDiscoveryScanFile,
 } from '@stim-cli/core/state';
-import { DISCOVER_ROOTS_KEY, discoveryReport, lowDiskLine } from '../../workspace/discovery-report.ts';
+import {
+  AUTO_DISCOVER_KEY,
+  DISCOVER_ROOTS_KEY,
+  discoveryReport,
+  lowDiskLine,
+} from '../../workspace/discovery-report.ts';
 
 const WARNING_FRESH_MS = 10 * 60_000;
 
@@ -35,11 +40,13 @@ export function warnCriticalDisk(argv: readonly string[] = process.argv.slice(2)
       `Stim: disk pressure is critical (${snapshot.pressure.reasons.join('; ')}). ${acting}; run \`stim status\` to see it, and free space outside Stim.`,
     );
     const home = homedir();
+    const config = loadConfig();
     const line = lowDiskLine(
       discoveryReport({
         scan: readDiscoveryScanFile(),
         census: readDiscoveryCensusFile(),
-        setting: machineSettingValue(DISCOVER_ROOTS_KEY, { config: loadConfig(), env: process.env }),
+        setting: machineSettingValue(DISCOVER_ROOTS_KEY, { config, env: process.env }),
+        autoDiscover: machineSettingValue(AUTO_DISCOVER_KEY, { config, env: process.env }).value === true,
         home,
         canonical: null,
       }),
