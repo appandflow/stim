@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '@stim-cli/core/ownership-claim';
 import { stimdClaimRoot, stimdRecordFile, stimdRunDir, stimdSocket } from '@stim-cli/core/state';
 
@@ -73,7 +73,7 @@ describe('a command that a stimd of another build refused', () => {
       ...real,
       runFile: (...call: Parameters<typeof real.runFile>) => {
         const [command, args = []] = call;
-        if (command !== 'launchctl' && command !== 'systemd-run') return real.runFile(...call);
+        if (!['launchctl', 'systemd-run'].includes(basename(command))) return real.runFile(...call);
         launched(command, args);
         return '';
       },
