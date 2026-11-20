@@ -4,19 +4,30 @@ import { getExecutor } from './exec.ts';
 
 /**
  * The command line that runs a size walk at low priority: under `nice -n 19`, and with `throttleIo` also at a throttled
- * I/O policy, `/usr/sbin/taskpolicy -d utility` on macOS (`nice` lowers only CPU there) and `ionice -t -c3` on Linux
- * when it is on PATH (`-t` runs the walker even when the kernel refuses the class). Each wrapper execs the next, so a
- * timeout or cancel signals the walker itself.
+ * I/O policy, `/usr/sbin/taskpolicy -d utility` on macOS (`nice` lowers only CPU there) and `ionice -c3` on Linux when
+ * it is on PATH. Each wrapper execs the next, so a timeout or cancel signals the walker itself.
  */
 export function lowPriorityCommand(file: string, args: readonly string[], throttleIo: boolean): [string, string[]] {
   const niced = ['-n', '19', file, ...args];
   if (throttleIo && process.platform === 'darwin') return ['/usr/sbin/taskpolicy', ['-d', 'utility', 'nice', ...niced]];
   if (throttleIo && process.platform === 'linux' && getExecutor().findExecutable('ionice') !== null)
-    return ['ionice', ['-t', '-c3', 'nice', ...niced]];
+    return ['ionice', ['-c3', 'nice', ...niced]];
   return ['nice', niced];
 }
 
-/** Runs `walk` on the low-priority command line, and once more under `nice` alone when the I/O wrapper is missing. */
+/**
+ * Whether a walk failed before it printed a size: its wrapper is missing, or it exited nonzero with nothing on stdout,
+ * as an `ionice` that rejects its arguments or is refused the class does. A walk killed at its deadline is not.
+ */
+function failedBeforeOutput(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if ('code' in error && error.code === 'ENOENT') return true;
+  const status = 'status' in error ? error.status : undefined;
+  const stdout = 'stdout' in error ? error.stdout : undefined;
+  return typeof status === 'number' && status !== 0 && !(typeof stdout === 'string' && stdout.trim());
+}
+
+/** Runs `walk` on the low-priority command line, and once more under `nice` alone when a throttled walk printed nothing. */
 export async function runLowPriority(
   walk: (file: string, args: string[]) => Promise<string>,
   file: string,
@@ -27,7 +38,7 @@ export async function runLowPriority(
   try {
     return await walk(command, argv);
   } catch (error) {
-    if (command === 'nice' || !(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+    if (command === 'nice' || !failedBeforeOutput(error)) throw error;
     return walk(...lowPriorityCommand(file, args, false));
   }
 }
