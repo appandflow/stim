@@ -138,8 +138,14 @@ benchmark baselines and Cargo's reports. A `deploy/` directory holding a
 program's private key there, and a new key is a new program ID. Everything else
 in an idle `target/` goes, Exact's folders and records included. A top-level
 symbolic link stays, and a `deploy` that is itself a symbolic link, or holds
-one, keeps the whole `target/`, since its keys may live anywhere in it. Both
-`deploy` and `*-keypair.json` match in any letter case. Anywhere else the
+one, keeps the whole `target/`, since its keys may live anywhere in it. The same
+holds at any depth, in the delete and in every trim: a symbolic link named
+`deploy` or `*-keypair.json`, or one directly in a `deploy` directory, anywhere in
+the `target/` keeps all of it, and so does a directory that cannot be listed to
+look. Reason: a `deploy/debug/app-keypair.json` that links to a wallet file
+beside it would survive while the wallet went. Chosen by the review of #6032,
+not by the maintainer. Both `deploy` and `*-keypair.json` match in any letter
+case. Anywhere else the
 remover never unlinks a `*-keypair.json`: a debug-only `cargo build-sbf --debug`
 writes the key under `deploy/debug/`, and `--sbf-out-dir` can put it in any
 folder. A dry run leaves an entry that would keep only such files out of the
@@ -176,7 +182,9 @@ trim; a used path or a busy lock keeps the whole `target/` until the next pass.
 Under pressure (below) it reaches a `target/` in use. Over the cap, maintenance removes the profile and target-triple
 directories no build wrote in the last day, then, if still over, the
 `incremental/` directory of each remaining profile, largest first, until the
-overage is covered. 0 means no cap and no pressure trim either.
+overage is covered; a stale step the trim already knows it will skip, a used
+path or a profile with no `.cargo-lock`, does not count toward it. 0 means no cap
+and no pressure trim either.
 
 "Wrote in the last day" comes from directory modification times and the unit
 stamps in Exact's `.exact-sweep.json`, never from access times. Reason: reads
@@ -263,7 +271,14 @@ a directory on a device other than the `target/`'s and Exact's
 and a directory goes once it is empty. In a profile it removes `.fingerprint`
 first, so a build that starts while the profile is half removed rebuilds it. A
 path already gone counts as removed. What it left for those rules is reported,
-lock files aside.
+lock files aside. Right before each unlink and each directory removal, the
+parent directory must still resolve through `realpath` to the path the remover
+built from the canonical `target/`; otherwise the delete stops and keeps the
+rest. Known limit: Node offers no `openat` or `unlinkat`, so another local
+process that replaces a directory inside the `target/` with a link between that
+check and the unlink can still redirect that one unlink. A recursive `rm` would
+not close it: Node's walks by path name too. Chosen by the review of #6032, not
+by the maintainer.
 
 Each trim step takes the Cargo locks of the profiles it deletes from, the lock
 files that exist and never a new one, exclusively and without waiting, through
