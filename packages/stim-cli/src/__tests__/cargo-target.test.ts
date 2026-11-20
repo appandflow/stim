@@ -377,7 +377,8 @@ describe.skipIf(process.platform === 'win32')('trimming in place (Cargo locks ne
       runFileAsync: async (file, args, options) =>
         file === 'lsof' || file === 'ps' ? '' : real.runFileAsync(file, args, options),
       spawn: (...args: Parameters<typeof real.spawn>) => {
-        symlinkSync('wallet.json', join(target, 'debug', 'deps', 'app-keypair.json'));
+        mkdirSync(join(target, 'deploy'), { recursive: true });
+        symlinkSync(join('..', 'debug', 'deps', 'wallet.json'), join(target, 'deploy', 'app-keypair.json'));
         return real.spawn(...args);
       },
     });

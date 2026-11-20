@@ -151,12 +151,15 @@ directory that cannot be listed to look. The walk runs under the Cargo locks
 right before deleting: over the whole `target/` for the dormant delete and for
 the first step of a trim that removes something, and over what the step removes
 for each later step, so a trim walks the whole `target/` once, not once per
-step. A link that appears elsewhere in the `target/` after that first walk falls
-under the gap for a key a tool publishes with no Cargo lock held, such as a
-`deploy/` a tool writes itself rather than through Cargo; no walk under Cargo's
-locks can rule that out. Reason: a `deploy/debug/app-keypair.json` that links to a wallet file
-beside it would survive while the wallet went. Chosen by the review of #6032,
-not by the maintainer. Both `deploy` and `*-keypair.json` match in any letter
+step. Every such link already in the `target/` when a delete or trim starts is
+covered wherever it points, a `deploy/app-keypair.json` beside a stale `debug/`
+that links into it included: these are the static links of the threat model
+under One remover, which the maintainer signed. A link that appears elsewhere in
+the `target/` after that first walk falls under the gap for a key a tool
+publishes with no Cargo lock held, such as a `deploy/` a tool writes itself
+rather than through Cargo; no walk under Cargo's locks can rule that out.
+Reason: a `deploy/debug/app-keypair.json` that links to a wallet file beside it
+would survive while the wallet went. Both `deploy` and `*-keypair.json` match in any letter
 case. Anywhere else the
 remover never unlinks a `*-keypair.json`: a debug-only `cargo build-sbf --debug`
 writes the key under `deploy/debug/`, and `--sbf-out-dir` can put it in any
