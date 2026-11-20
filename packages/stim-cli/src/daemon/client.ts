@@ -22,6 +22,7 @@ import {
   readJsonObject,
   stimdClaimRoot,
   readStimdBoots,
+  readStimdService,
   readSuccessorMissing,
   stimdRecordFile,
   stimdRunDir,
@@ -1677,8 +1678,10 @@ function successorExpected(): boolean {
 
 /**
  * Whether a stimd of this build replaced the one of an older build that refused it, within `HANDOVER_WAIT_MS` when
- * that one said it hands over (it drains, exits, and its successor boots) and `CLAIM_WAIT_MS` otherwise. Once a wait
- * ran out, it answers false at once for the rest of this process.
+ * that one said it hands over (it drains, exits, and its successor boots) and `CLAIM_WAIT_MS` otherwise. Once the old
+ * one is gone it starts a stimd itself when no successor started (`successor-missing.json`) or a service unit's job
+ * starts this home's stimd (`run/service.json`), which that stimd asks to start. Once a wait ran out, it answers false at
+ * once for the rest of this process.
  */
 async function successorBound(): Promise<boolean> {
   if (successorMissed) return false;
@@ -1690,7 +1693,8 @@ async function successorBound(): Promise<boolean> {
       refusal = null;
       return true;
     }
-    if (!started && !stimdLive() && readSuccessorMissing() && !currentCrashHold()) {
+    // @ref LLP 0009#service-and-engine-updates -- on a service home the stimd started here asks the job to start
+    if (!started && !stimdLive() && (readSuccessorMissing() || readStimdService()) && !currentCrashHold()) {
       started = true;
       try {
         launchStimd(process.env, daemonMode(process.env), process.platform);
