@@ -1,5 +1,6 @@
 import { testContext } from './_context.ts';
 import { operationState } from '../engine/operation-state.ts';
+import type { NdjsonRecord } from '../ndjson.ts';
 
 type Sent = { params: { after: number; checkCoverage: boolean; through: number; timeoutMs: number } };
 
@@ -55,7 +56,11 @@ async function readinessWait() {
   return deviceLogReadinessWait('/workspace', 'ios', 'default', 'stream', 1, context);
 }
 
-async function verifyIosLaunch(sleep: Awaited<ReturnType<typeof readinessWait>>) {
+async function verifyIosLaunch(
+  sleep: Awaited<ReturnType<typeof readinessWait>>,
+  device: (since: number) => NdjsonRecord[] = () => [],
+  processAlive: (since: number) => Promise<boolean> = async () => true,
+) {
   const { verifyLaunch } = await import('../engine/launch-verify.ts');
   const since = Date.now();
   const delivery = { src: 'metro', platform: 'ios', requestId: 'r1' };
@@ -69,10 +74,10 @@ async function verifyIosLaunch(sleep: Awaited<ReturnType<typeof readinessWait>>)
     metroPort: 8081,
     requireBundleResponse: true,
     readRecords: () => metro.filter((record) => record.ts <= Date.now()),
-    readDeviceRecords: () => [],
+    readDeviceRecords: () => device(since),
     readClientRecords: () => [],
     deviceStreamId: 'stream',
-    processAlive: async () => true,
+    processAlive: () => processAlive(since),
     sleep,
   });
   await vi.advanceTimersByTimeAsync(30_000);
@@ -151,3 +156,46 @@ test('a launch that stimd never answers ends unverified and closes its readiness
   expect(mock.sent.length).toBeGreaterThan(0);
   expect(mock.open.size).toBe(0);
 });
+
+test.each([
+  ['no JavaScript start', false],
+  ['an earlier JavaScript start', true],
+])(
+  'coverage proven during a probe that ends past the deadline verifies the launch, read again with %s',
+  async (_, running) => {
+    const wait = await readinessWait();
+    let proven = false;
+    let probed = false;
+    const result = await verifyIosLaunch(
+      wait,
+      (since) =>
+        running && proven
+          ? [
+              {
+                ts: since + 1000,
+                src: 'device',
+                platform: 'ios',
+                level: 'info',
+                streamId: 'stream',
+                msg: 'Running "main"',
+              },
+            ]
+          : [],
+      async (since) => {
+        if (probed || Date.now() < since + 19_000) return true;
+        probed = true;
+        setTimeout(
+          () => {
+            proven = true;
+            mock.replies.at(-1)?.({ op: 'readiness.changed', revision: 1, coverage: 'covered' });
+          },
+          since + 19_710 - Date.now(),
+        );
+        await new Promise((done) => setTimeout(done, since + 20_300 - Date.now()));
+        return true;
+      },
+    );
+    expect(probed).toBe(true);
+    expect(result).toMatchObject({ verified: true, ...(running ? { jsRunning: true } : {}) });
+  },
+);

@@ -716,32 +716,6 @@ describe('verifyLaunch: the stability window ends on evidence that the app JavaS
     expect(result.verified).toBe(false);
   });
 
-  test('history proven during a probe that ends past the coverage deadline is read before the timeout', async () => {
-    const clock = fakeClock();
-    let coverage: 'pending' | 'covered' = 'pending';
-    const sleep = Object.assign(clock.sleep, { coverage: () => coverage });
-    const result = await verifyLaunch({
-      since,
-      platform: 'android',
-      now: clock.now,
-      sleep,
-      readRecords: () => metro('android').filter((r) => Number(r.ts) <= clock.at()),
-      readDeviceRecords: () =>
-        coverage === 'covered' ? [{ ...device('android', 2500, 'Running "main"'), proc: 'ReactNativeJS(1)' }] : [],
-      readClientRecords: () => [],
-      processAlive: () => {
-        if (coverage === 'pending' && clock.at() >= since + 19_000) {
-          clock.advance(since + 19_710 - clock.at());
-          coverage = 'covered';
-          clock.advance(590);
-        }
-        return true;
-      },
-    });
-    expect(clock.at()).toBe(since + 20_300);
-    expect(result).toMatchObject({ verified: true, jsRunning: true });
-  });
-
   test('Android: a Running line from before the JavaScript bundle began loading is not evidence', async () => {
     const result = await run('android', {
       device: [
