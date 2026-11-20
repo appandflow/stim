@@ -652,13 +652,14 @@ describe.skipIf(process.platform === 'win32')("an engine switch under a service 
       void service.switchEngine(initial).catch(() => {});
       await until('the job stimd to exit', () => gone(initial.pid));
       const command = service.command();
+      const exited = once(command, 'exit');
       const outside = await until('the command stimd', () => {
         const held = service.record();
         return held && held.pid !== initial.pid ? held : null;
       });
       const waiter = await until('the restarted job process', () => service.jobPid());
       expect(await takenBackInJob(service, outside, waiter)).toBe(service.record()?.pid);
-      await once(command, 'exit');
+      await exited;
     } finally {
       await service.cleanup();
     }
