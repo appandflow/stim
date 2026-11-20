@@ -494,46 +494,21 @@ export async function trimCargoTarget(
   if (idleOnly && used.length) return keep(`a process uses ${used[0]}, and the cap trims an idle target/ only`);
   const stale = staleCargoTargetPaths(target, now, profileIdleMs);
   if ('refusal' in stale) return keep(stale.refusal);
-  const stopped = (): boolean => {
-    if (stop?.aborted !== true) return false;
-    if (!result.kept.includes(DEADLINE_KEPT)) result.kept.push(DEADLINE_KEPT);
-    return true;
-  };
   const profilesAt = (dir: string): string[] =>
     fingerprintDir(dir) ? [dir] : (subdirectories(dir) ?? []).map((entry) => join(dir, entry.name));
-  const step = async (dir: string, label: string, profiles: readonly string[], bytes: number): Promise<void> => {
-    signal?.throwIfAborted();
-    if (inUse(used, dir)) {
-      result.kept.push(`${label}: a process uses it`);
-      return;
-    }
-    const locks: string[] = [];
-    if (!idleOnly)
-      for (const profile of profiles) {
-        const found = profileLocks(profile);
-        if (!found) {
-          result.kept.push(`${label}: ${basename(profile)} has no .cargo-lock to take`);
-          return;
-        }
-        locks.push(...found);
-      }
-    const done = await withCargoLocks(locks, () => removeInPlace(dir, dev, signal), signal);
-    if ('kept' in done) {
-      result.kept.push(`${label}: ${done.kept}`);
-      return;
-    }
-    result.bytes += bytes;
-    result.removed.push(label);
-    const left = reported(done.value);
-    if (left.length) result.kept.push(`${label}: left ${left.join(', ')}`);
-  };
-  const trim = async (): Promise<void> => {
-    for (const path of stale.paths) {
-      if (stopped()) return;
-      const dir = join(target, path);
-      await step(dir, path, profilesAt(dir), measure ? await sizeOf(dir, signal, lowPriority) : 0);
-    }
-    if (incremental === 'toNeed' && result.bytes >= needBytes) return;
+  type Step = { dir: string; label: string; profiles: string[]; bytes: number };
+  const steps: Step[] = [];
+  for (const path of stale.paths) {
+    const dir = join(target, path);
+    steps.push({
+      dir,
+      label: path,
+      profiles: profilesAt(dir),
+      bytes: measure ? await sizeOf(dir, signal, lowPriority) : 0,
+    });
+  }
+  const planned = steps.reduce((sum, { bytes }) => sum + bytes, 0);
+  if (incremental === 'all' || planned < needBytes) {
     const gone = stale.paths.map((path) => join(target, path));
     const candidates: { path: string; bytes: number }[] = [];
     for (const profile of cargoProfileDirs(target) ?? []) {
@@ -547,21 +522,55 @@ export async function trimCargoTarget(
       });
     }
     const chosen =
-      incremental === 'all'
-        ? candidates.map(({ path }) => path)
-        : selectIncremental(candidates, needBytes - result.bytes);
-    for (const path of chosen) {
-      if (stopped()) return;
-      const bytes = candidates.find((candidate) => candidate.path === path)?.bytes ?? 0;
-      await step(path, path.slice(target.length + 1), [dirname(path)], bytes);
+      incremental === 'all' ? candidates.map(({ path }) => path) : selectIncremental(candidates, needBytes - planned);
+    for (const path of chosen)
+      steps.push({
+        dir: path,
+        label: path.slice(target.length + 1),
+        profiles: [dirname(path)],
+        bytes: candidates.find((candidate) => candidate.path === path)?.bytes ?? 0,
+      });
+  }
+  const step = async ({ dir, label, profiles, bytes }: Step): Promise<void> => {
+    signal?.throwIfAborted();
+    if (inUse(used, dir)) {
+      result.kept.push(`${label}: a process uses it`);
+      return;
+    }
+    const locks: string[] = [];
+    for (const profile of profiles) {
+      const found = profileLocks(profile);
+      if (!found) {
+        result.kept.push(`${label}: ${basename(profile)} has no .cargo-lock to take`);
+        return;
+      }
+      locks.push(...found);
+    }
+    const done = await withCargoLocks(idleOnly ? [] : locks, () => removeInPlace(dir, dev, signal), signal);
+    if ('kept' in done) {
+      result.kept.push(`${label}: ${done.kept}`);
+      return;
+    }
+    result.bytes += bytes;
+    result.removed.push(label);
+    const left = reported(done.value);
+    if (left.length) result.kept.push(`${label}: left ${left.join(', ')}`);
+  };
+  const trim = async (): Promise<void> => {
+    for (const planned of steps) {
+      if (stop?.aborted === true) {
+        result.kept.push(DEADLINE_KEPT);
+        return;
+      }
+      await step(planned);
     }
   };
   if (!idleOnly) {
     await trim();
     return result;
   }
-  const locks = targetLocks(target);
-  const held = await withCargoLocks(locks, trim, signal);
+  if (!steps.length) return result;
+  const held = await withCargoLocks(targetLocks(target), trim, signal);
   return 'kept' in held ? keep(`${held.kept}, and the cap trims an idle target/ only`) : result;
 }
 

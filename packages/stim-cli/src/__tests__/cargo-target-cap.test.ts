@@ -1,5 +1,14 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -81,6 +90,7 @@ describe('the Cargo target cap over a root target/', () => {
     for (const part of ['.fingerprint', 'deps', 'build', 'incremental'])
       mkdirSync(join(dir, part), { recursive: true });
     writeFileSync(join(dir, 'deps', 'libx.rlib'), 'x'.repeat(5000));
+    writeFileSync(join(dir, '.cargo-lock'), '');
     const at = new Date(Date.now() - ageMs);
     for (const part of ['.fingerprint', 'deps', 'build', 'incremental', '']) utimesSync(join(dir, part), at, at);
   }
@@ -157,9 +167,9 @@ describe('the Cargo target cap over a root target/', () => {
 
     const outcome = await trimCargoTargetAction(action);
 
-    expect(outcome.status).toBe('done');
-    expect(existsSync(join(target, 'debug'))).toBe(false);
-    expect(existsSync(join(target, 'exact-filesystem-tool', 'debug'))).toBe(false);
+    expect(outcome).toMatchObject({ status: 'done' });
+    expect(readdirSync(join(target, 'debug'))).toEqual(['.cargo-lock']);
+    expect(readdirSync(join(target, 'exact-filesystem-tool', 'debug'))).toEqual(['.cargo-lock']);
     const stayed = [
       'exact-filesystem-tool/exact-filesystem-bad498',
       'exact-filesystem-tool/.bootstrap.claims',
@@ -186,7 +196,7 @@ describe('the Cargo target cap over a root target/', () => {
     if (!action) throw new Error('no trim was planned');
 
     expect(await trimCargoTargetAction(action)).toMatchObject({ status: 'done' });
-    expect(existsSync(join(target, 'debug'))).toBe(false);
+    expect(readdirSync(join(target, 'debug'))).toEqual(['.cargo-lock']);
     expect(['release', 'bake/out.bin', 'clients'].filter((path) => !existsSync(join(target, path)))).toEqual([]);
   });
 
