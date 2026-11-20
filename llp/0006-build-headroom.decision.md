@@ -29,9 +29,11 @@ Maintainer decision: "headroom should never refuse builds tho", 2026-11-11.
 The run uses the high level only, rungs 2 to 8, never rung 9 (LLP 0003). It
 stops once the build's volume, found by its device id, has the target free,
 whether the target is under or over `disk.minFreeGb`. Other volumes and memory
-do not count. It ends after any action that leaves the build volume's free
-space no higher, after 60 seconds, or when another process holds the ladder
-claim.
+do not count. It ends after any action that removed something, or failed, and
+left the build volume's free space no higher, after 60 seconds, or when another
+process holds the ladder claim. An action that kept everything does not end it,
+so a cache with nothing to evict does not stop the run before the Cargo trims,
+which rung 3 runs after the caches (LLP 0001, The ladder runs by yield).
 
 Reason: only space on the build's own volume helps the build, and a build holds
 its build slot while it waits, so the run must be bounded and must not delete

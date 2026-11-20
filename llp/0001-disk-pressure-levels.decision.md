@@ -60,18 +60,55 @@ Each level includes the ones below it.
   records, finished linked worktrees after `gc.worktreeGraceMinutes`, unused
   simulator runtimes), and every workspace idle `idle.dormantDays` reduced to
   its minimal size.
-- high: the pressure ladder, rungs 0 to 7, including the `node_modules` and
-  Pods of linked worktrees idle an hour; every Cargo `target/` on the volume
-  loses its stale profiles and `incremental/` data (LLP 0005).
+- high: the pressure ladder, rungs 0 to 7; every Cargo `target/` on the
+  volume loses its stale profiles and `incremental/` data (LLP 0005). The
+  `node_modules` and Pods of linked worktrees idle an hour are reported, not
+  deleted (Rungs 5, 7 and 8 only report).
 - critical: rungs 0 to 8 with shorter idle times and no grace, idle Cargo
   build units (LLP 0005), then rung 9, the caches of tools Stim does not own
   (LLP 0003).
 
 Maintainer decision: "1 hour", 2026-11-11, for the idle time before a linked
-worktree loses `node_modules` and Pods at high.
+worktree loses `node_modules` and Pods at high. Since #6025 it is the idle time
+at which rung 5 reports them.
 
 Maintainer decision: "make sure all things we can delete are actually deleted
-at max pressure level", 2026-11-11.
+at max pressure level", 2026-11-11. #6025 narrows it: the dependency and
+worktree steps of the ladder only report.
+
+## The ladder runs by yield
+
+The ladder runs its rungs in this order: rung 0 (memory), rung 2 (parked
+devices), rung 3 (Stim's shared caches, then the Cargo trims), rung 1 (the
+build outputs of stopped workspaces), then rungs 4 to 9. The rung numbers name
+the steps and do not change. Each rung measures again before it starts and the
+ladder stops once no volume is under pressure.
+
+Rung 3 trims the Cargo targets largest first, by the last size Stim recorded
+for each: the maintenance size scan or a walk into the disk-usage cache,
+whichever is newer. Targets with no recorded size follow in plan order. The
+size scan measures every registered target but only six discovered ones per
+pass, so a discovered target is often unsized.
+
+Rung 1 leaves out a checkout whose only output is a Cargo `target/`: rung 1
+never deletes a `target/`, so reading the evidence of that checkout bought
+nothing.
+
+Reason: on 2026-11-19 a pass at high spent 327 s and then 132 s in rung 1's
+evidence reads of 174 checkouts and took nothing. Rung 3 then spent 622 of its
+727 s on three Cargo targets that freed nothing; about 47 GB of its 51.5 GB came
+from three targets it reached in its last 86 s. Over 2026-11-16 to 2026-11-20
+rungs 2 and 3 freed 3.8 and 245.9 GiB at 22.6 and 3.8 GiB per minute, and rung
+1 freed 31 GiB at 0.25.
+
+Maintainer decision: "I agree lets do this and ur recommendations from prev
+messages, also lets do the changes now that u flagged as after 2.0 id rather
+delay than ship what we have", 2026-11-20, on #6025, whose decided list
+includes this order and leaving target-only checkouts out of rung 1.
+
+Chosen by the implementer of #6025, not the maintainer: the rung numbers stay,
+rung 4 stays after rung 1 because it needs the same evidence reads, and an
+unsized target goes after the sized ones.
 
 The full table lives in `website/docs/commands.md` (the `gc` section) and in
 `stim guide cleanup`; this document records why the levels are shaped this
@@ -102,15 +139,22 @@ to be able to remove caches", 2026-11-14.
 Maintainer decision: "Lets make sure that if disk space is low we do any needed
 measurement right away since disk space is prio over cpu use", 2026-11-14.
 
-Chosen by the coordinator, not the maintainer: the Cargo trim runs as the first
-step of ladder rung 3, at most every 10 minutes per level in the long-lived daemon (a build command's
+Chosen by the coordinator, not the maintainer: the Cargo trim runs as the last
+step of ladder rung 3, after the shared caches (The ladder runs by yield), at most every 10 minutes per level in the long-lived daemon (a build command's
 ladder runs it once, and leaves its own workspace's `target/` alone), so a
 checkout in use does not lose its `incremental/` data every tick; walks above
 normal are not niced.
 
 ## A ladder pass that frees nothing waits
 
-After a daemon ladder pass that took no action, the next pass waits four times
+A pass frees something when one of its actions removed something it counted in
+bytes. An action that freed no bytes, such as a Gradle stop, a parked simulator
+shut down for memory, or a Cargo trim whose volume gained nothing because other
+writers filled it meanwhile, does not count, and it does not drop the git reads
+the rungs share. Rung 1 records `kept`, not `done`, when its deletion kept every
+output it was given.
+
+After a daemon ladder pass that freed nothing, the next pass waits four times
 that pass's duration, at most 15 minutes, or at most one minute at critical. A
 rise of the disk or the memory level, any measured volume that is new or reached
 a higher level since that pass, a volume at high or critical that lost 256 MB, a
@@ -153,6 +197,13 @@ a pass that freed nothing at critical would start again as soon as it ended.
 Chosen by the implementers, not the maintainer: the 1 GB drop for a volume at
 normal (#5939) and the 256 MB drop for a volume at high or critical (#6011).
 
+Pacing on bytes is part of #6025's decision. On 2026-11-19, on a build with
+pacing, passes whose only actions freed 0 bytes or 2 KB let the next pass start
+at once, three times in under an hour. Chosen by the implementer of #6025, not
+the maintainer: any byte counts, and a pass under memory pressure alone that
+only stopped processes is paced too; its rungs take seconds, so its wait is
+about a tick, and a memory level that rises still runs the ladder at once.
+
 Maintainer decision: "Good for both points", 2026-11-18, in answer to whether
 a wait of up to 15 minutes after a pass that freed nothing is acceptable, given
 that disk space comes before CPU use (#5933, pull request #5939).
@@ -161,6 +212,54 @@ Maintainer decision: "lets do both", 2026-11-20, in answer to whether to keep
 both the critical-pressure bypass and the falling-free-space bypass of the
 ladder's pacing wait
 ([#6011 comment](https://github.com/appandflow/stim/issues/6011#issuecomment-7031008184)).
+
+## Rungs 5, 7 and 8 only report
+
+Rung 5 (the `node_modules` and Pods of idle linked worktrees), rung 7
+(finished worktrees) and the first step of rung 8 (the `node_modules` and Pods
+of idle main checkouts) delete nothing. Each records, as a `kept` action, what
+it would have taken, what that would free when the size is known, and why. This
+holds in the stim-daemon, in `stim gc` and in `stim gc --dry-run`. The rest of
+rung 8, device recordings and archived history, still acts. The stim-daemon
+runs each of these reports at most once an hour per Stim home, and a build's
+headroom run never runs them, since a report frees nothing for the build. The
+pressure path neither samples hard links nor checks dependency trees for hand
+edits; the dormant steps still do both before they delete. The dormant steps,
+`stim worktree remove` and the worktree check of the maintenance pass are what
+delete dependencies and worktrees.
+
+Reason: over 2026-11-16 to 2026-11-20 on the maintainer's MacBook, rungs 5, 7
+and 8 took 30,179 s, 71% of all rung time, and freed 1.3 GiB, 0.4% of the
+bytes. Rung 5 ran 758 actions and kept every one; 79% of its time was its
+evidence loop over every checkout.
+
+Maintainer decision: "I agree lets do this and ur recommendations from prev
+messages, also lets do the changes now that u flagged as after 2.0 id rather
+delay than ship what we have", 2026-11-20, on #6025, whose decided list makes
+rungs 5, 7 and 8 report-only and drops hard-link sampling and dependency-edit
+detection from the pressure path.
+
+Chosen by the implementer of #6025, not the maintainer: `stim gc` reports them
+too, so the daemon and `stim gc` keep one model, and the hourly limit, which
+keeps a report that frees nothing from walking every checkout each pass.
+
+## The maintenance lane never runs beside the ladder
+
+The stim-daemon's maintenance lane starts its dormant dependency step only when
+the tick that started the lane ended at normal pressure. Above normal the step
+does not start, its hourly clock is not stamped, and it runs on the first lane
+after the level returns to normal. A step that already runs when the level
+rises runs to its end.
+
+Reason: on 2026-11-19 the lane's dormant dependency step ran for 49 minutes
+beside both slow rung 1 passes and rung 3, walking the same 171 checkouts with
+its own `ps`, `lsof`, `git` and `du`, in another thread that shares no caches
+with the ladder.
+
+Maintainer decision: the 2026-11-20 decision on #6025 quoted above; the
+issue's decided list includes never running the maintenance lane beside the
+ladder. Chosen by the implementer, not the maintainer: a step already running
+is not stopped.
 
 ## Each rung frees only the volumes under pressure
 
@@ -312,13 +411,11 @@ checkout's dependencies are deleted, `stim worktree warm` in a linked worktree
 says on stderr that the source has no installed dependencies to copy, and
 `stim status` shows the same, until they are installed again.
 
-A main checkout's `node_modules` and Pods go in two cases only, after those of
-every linked worktree:
-
-- no activity for `idle.sourceDormantDays` (default 7, 0 for never), at any
-  level;
-- at critical, at the start of rung 8, once it is idle 2 minutes and its volume
-  is still under the critical level.
+A main checkout's `node_modules` and Pods go in one case only, after those of
+every linked worktree: no activity for `idle.sourceDormantDays` (default 7, 0
+for never), at any level. At critical, rung 8 reports those of a main checkout
+idle 2 minutes whose volume is still under the critical level, and deletes
+nothing (Rungs 5, 7 and 8 only report).
 
 Activity is the newest of a Stim command, a source file write, a git index,
 HEAD or reflog write and the last commit, in the checkout and in every Stim
@@ -349,7 +446,8 @@ worktree are created from, ideally it will also be clear that when a main
 checkout is cleaned it should be rebuilt first", 2026-11-12.
 
 Maintainer decision: "I think we should consider deleting main checkout deps
-and pods on critical", 2026-11-12.
+and pods on critical", 2026-11-12. Superseded by #6025: rung 8 only reports
+them.
 
 Maintainer decision: "I think a main checkout could also be considered idle but
 with maybe like 7 d", 2026-11-12. Maintainer decision: "I meant deps yes",
@@ -358,7 +456,7 @@ with maybe like 7 d", 2026-11-12. Maintainer decision: "I meant deps yes",
 Maintainer decision: "2 min is good, yes to rest", 2026-11-12, for the idle
 window at critical and the editor-reading rule.
 
-The setting name, the placement at the start of rung 8, the definition of
+The setting name, the definition of
 activity, the 7-day floor on the runtime keep and the mount-point rule were
 chosen by the coordinator and the reviews of #5540, not by the maintainer.
 
@@ -405,11 +503,10 @@ output outside those folders is not seen: a `.build` folder that appears after
 the listing in a package with none of them, `android/<module>/build` or
 `android/<module>/.cxx` of a library with several modules, or
 `node_modules/react-native/ReactAndroid/build` and `.cxx` when React Native is
-built from source. Such a tree is kept at normal and high by the 7-day
-source rule, the dormant step and rung 5, with a kept reason that gives the
-counts; at critical, rung 5 takes it after every measured tree and every other
-tree of unknown size, and rung 8 takes it in the same batch as the other trees
-of the source checkouts it clears. Anything else (no recorded or existing store, as for
+built from source. Such a tree is kept by the 7-day source rule and the
+dormant step, with a kept reason that gives the counts. The pressure ladder
+does not sample: rungs 5 and 8 only report (Rungs 5, 7 and 8 only report), and
+report a tree of unknown size as freeing an unknown amount. Anything else (no recorded or existing store, as for
 every tree pnpm did not install, too few files, or reads that did not answer)
 leaves the tree unknown and the rules above unchanged. The verdict is recorded
 beside the size cache with the install signature and the store, and reused for
@@ -433,9 +530,7 @@ content, so the sample does not do it. The case it leaves is a store that still
 exists but no longer holds these files while copies inside the tree link to
 each other; the 6 hour reuse and the store check bound how long a verdict
 outlives a removed store. A sample sees a few packages, so a package outside it
-can still hold gigabytes of its own files; that is why the verdict keeps a tree
-only below critical, and at critical only orders it last, so the maintainer's
-rule that everything goes at maximum pressure holds. A tree copied with `cp`,
+can still hold gigabytes of its own files. A tree copied with `cp`,
 as `stim worktree warm` copies where the volume cannot clone, has files with one
 link, and the tests check a `cp -R` copy. The implementer expects the same of
 `package-import-method=copy`, a store on another volume and APFS clones, and
@@ -446,12 +541,12 @@ Maintainer decision: "Like if wr detect it is links", 2026-11-18, quoted in
 
 The sample size, the per-package spread, the 90% share, the 20 file and 5
 package minimums, the store, cache and build output checks, the 2 and 10 second
-limits, the 6 hour reuse and the critical ordering were chosen by the
+limits and the 6 hour reuse were chosen by the
 implementer of #5942 and its reviews, not by the maintainer.
 
 ## Links
 
-- Issues: #5492, #5512, #5524, #5877, #5933, #5942, #5998, #6011. Pull requests: #5514, #5540.
+- Issues: #5492, #5512, #5524, #5877, #5933, #5942, #5998, #6011, #6025. Pull requests: #5514, #5540.
 - Code: `packages/stim-cli/src/policy/checkout-order.ts`,
   `packages/stim-cli/src/workspace/source-dependencies.ts`,
   `packages/stim-cli/src/stimd/passes/artifacts.ts`,
