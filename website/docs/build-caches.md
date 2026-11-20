@@ -583,8 +583,8 @@ restages the app.
 ### Worktree dependencies
 
 A linked worktree that has a Stim workspace loses its `node_modules` and
-`ios/Pods`, never the source checkout's, in one way. `stim gc` and the
-`stim-daemon` delete them at every level once the workspace has had no activity
+`ios/Pods`, never the source checkout's, in one way. `stim gc` at every level and
+the `stim-daemon` at normal pressure delete them once the workspace has had no activity
 for `idle.dormantDays` (1 day); the [pressure ladder](#disk-pressure)
 only reports them at high (idle 1 hour) and critical (idle 2 minutes) disk
 pressure, without deleting them. A worktree locked with

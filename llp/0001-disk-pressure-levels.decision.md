@@ -119,7 +119,10 @@ way, not the table.
 While any volume is at high or critical, no cleanup step waits for a size
 scan, a `du` of what it frees, or host load to drop. A step whose decision
 needs no byte count (the Cargo `target/` trim, LLP 0005) plans from structure
-and runs at once; a step that needs sizes measures them at once. Host load
+and runs in the same ladder pass, after the shared caches of rung 3 (The ladder
+runs by yield); a step that needs sizes measures them at once. At high the
+build and Metro caches are sized first, each walk bounded at 120 s, so the trim
+can wait for those walks, never for a size scan. Host load
 defers the size, idle, worktree and sweep checks only while every volume is at
 normal. The walk itself keeps its protections (one at a time, the walk claim,
 time limits, abort on handover). Walks above normal run at normal priority:
@@ -131,7 +134,10 @@ GB free three times, and emptied Stim's own shared caches before it trimmed 40
 GB of Cargo data it was allowed to remove. The Cargo trim was planned only by
 the maintenance pass, which starts after the daemon tick's pressure ladder
 (112 minutes that evening) and after the lane's dormant dependency step (69
-minutes), so it waited 3 h 26 min from the previous Cargo measurement.
+minutes), so it waited 3 h 26 min from the previous Cargo measurement. Since
+#6025 the shared caches again go before the Cargo trim, but within one pass:
+Stim's caches free their bytes in seconds, and the trim follows in the same
+pass instead of hours later.
 
 Maintainer decision: "we def should not have to wait on full disk measurement
 to be able to remove caches", 2026-11-14.
@@ -245,21 +251,28 @@ keeps a report that frees nothing from walking every checkout each pass.
 
 ## The maintenance lane never runs beside the ladder
 
-The stim-daemon's maintenance lane starts its dormant dependency step only when
-the tick that started the lane ended at normal pressure. Above normal the step
-does not start, its hourly clock is not stamped, and it runs on the first lane
-after the level returns to normal. A step that already runs when the level
-rises runs to its end.
+The stim-daemon's maintenance lane starts its dormant step, the build outputs
+and then the dependencies of workspaces idle `idle.dormantDays` (One idle day
+reduces a workspace), only when the tick that started the lane ended at normal
+pressure. Above normal the step does not start, its hourly clock is not
+stamped, and it runs on the first lane after the level returns to normal. A
+step that already runs when the level rises runs to its end. The lane's
+fingerprint precompute and automatic maintenance pass still run. A machine held
+above normal therefore has no daemon step that deletes dependencies or the
+outputs of workspaces idle `idle.dormantDays`; `stim gc` still deletes them.
 
 Reason: on 2026-11-19 the lane's dormant dependency step ran for 49 minutes
 beside both slow rung 1 passes and rung 3, walking the same 171 checkouts with
 its own `ps`, `lsof`, `git` and `du`, in another thread that shares no caches
 with the ladder.
 
-Maintainer decision: the 2026-11-20 decision on #6025 quoted above; the
-issue's decided list includes never running the maintenance lane beside the
-ladder. Chosen by the implementer, not the maintainer: a step already running
-is not stopped.
+Maintainer decision: "I agree lets do this and ur recommendations from prev
+messages, also lets do the changes now that u flagged as after 2.0 id rather
+delay than ship what we have", 2026-11-20, on #6025, whose decided list
+includes never running the maintenance lane beside the ladder. Chosen by the
+implementer, not the maintainer: the whole dormant step is gated, a step
+already running is not stopped, and the precompute and maintenance pass are
+not gated.
 
 ## Each rung frees only the volumes under pressure
 
@@ -374,7 +387,8 @@ its minimal size at every level: build outputs, owned devices, logs archived,
 and in a linked worktree `node_modules` and Pods.
 
 The stim-daemon runs the build output step and then the dependency step at most
-hourly at every level, and `stim gc` on each run. Build outputs go only by the
+hourly, only while the level is normal (The maintenance lane never runs beside
+the ladder), and `stim gc` at every level on each run. Build outputs go only by the
 full evidence, for a registered workspace as for a discovered checkout: Stim
 activity, source and git writes, and processes running from or working in the
 checkout, its git checkout as a whole for an app nested in one. A locked

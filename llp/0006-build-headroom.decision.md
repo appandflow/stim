@@ -33,7 +33,9 @@ do not count. It ends after any action that removed something, or failed, and
 left the build volume's free space no higher, after 60 seconds, or when another
 process holds the ladder claim. An action that kept everything does not end it,
 so a cache with nothing to evict does not stop the run before the Cargo trims,
-which rung 3 runs after the caches (LLP 0001, The ladder runs by yield).
+which rung 3 runs after the caches (LLP 0001, The ladder runs by yield). The
+cost: a run whose every action keeps goes on to the end of its rungs or the
+60 seconds. Chosen by the implementer of #6025, not the maintainer.
 
 Reason: only space on the build's own volume helps the build, and a build holds
 its build slot while it waits, so the run must be bounded and must not delete

@@ -511,13 +511,13 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
             gc.worktreeGraceMinutes
   high      plus the pressure ladder at high (\`guide lifecycle budget\`):
             idle stage at 2 minutes (memory pressure), parked devices until
-            the level clears, shared caches trimmed to half their caps, the dormant stage and
-            node_modules and Pods of idle linked worktrees at 10 minutes, idle
-            daemons, clean finished worktrees without the grace period, and,
-            while free disk stays under disk.minFreeGb, other tools' caches
+            the level clears, shared caches trimmed to half their caps, the dormant stage
+            at 10 minutes, idle daemons; it only reports dependencies and
+            finished worktrees; and, while free disk stays under
+            disk.minFreeGb, other tools' caches
   critical  plus every parked device, every shared cache Stim registered
-            emptied, the dormant stage and node_modules and Pods at 2 minutes,
-            every unpinned Gradle version, clean pushed worktrees idle 7 days,
+            emptied, the dormant stage at 2 minutes,
+            every unpinned Gradle version,
             every device recording not being written, archived logs,
             recordings and agent actions, and other tools' caches
   Never: anything building, driven, leased, hosted or pinned by
@@ -628,8 +628,7 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
 
   The dormant reduction and the dormant stage are the same work: a workspace
   with no activity for idle.dormantDays is reduced to its minimal size, by
-  stim gc at every level and by the stim-daemon (hourly for build outputs
-  and dependencies). Its node_modules and
+  stim gc at every level and by the stim-daemon (hourly at normal pressure). Its node_modules and
   ios/Pods go only in a linked worktree, are recorded, and the next Stim
   command in it restores them with \`stim worktree warm\`, or, when warm cannot
   restore the same versions (its lockfile differs from the source checkout's,
@@ -1016,8 +1015,7 @@ SWEEPING FINISHED WORKTREES
   neither does a fast-forwarded branch or a stacked pull request merged after
   the one below it; the pull request check covers those. When origin/HEAD is not set, the fetch fails, or git
   cannot answer, the state is unknown and never counts as merged (reason
-  merge-unknown, with the remedy); at critical an idle worktree is still
-  removed. A squash- or rebase-merged branch whose upstream is gone (deleted
+  merge-unknown, with the remedy). A squash- or rebase-merged branch whose upstream is gone (deleted
   after the merge and pruned locally) has commits only it reaches; they do
   not block removal, because their change is on the default branch, and the
   branch is kept.
@@ -1094,7 +1092,7 @@ SWEEPING FINISHED WORKTREES
   pull request whose head is or contains HEAD.
     stim gc --dry-run    # report merged worktrees from local state
     stim gc              # refresh, then remove them
-    stim gc --pressure critical   # also the finished ones without the grace period, and the clean idle ones while maintenance.removeIdleWorktrees is true
+    stim gc --pressure critical   # also reports the finished ones without the grace period, and the clean idle ones while maintenance.removeIdleWorktrees is true
   An acting gc runs the \`stim worktree remove\` pipeline, never --force,
   on each removable worktree. That pipeline re-inspects the worktree and
   re-checks use and recent activity under the removal locks, and idleness
