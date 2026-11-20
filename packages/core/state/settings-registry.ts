@@ -843,12 +843,21 @@ export const SETTINGS: readonly SettingDefinition[] = [
       'In the age sweep, also remove clean, pushed linked worktrees whose branch is not merged once no Stim command has used them for maintenance.olderThanDays, with their git-ignored files; needs maintenance.removeFinishedWorktrees',
   },
   {
+    key: 'maintenance.autoDiscover',
+    type: BOOLEAN,
+    scopes: MACHINE,
+    default: false,
+    env: 'STIM_MAINTENANCE_AUTO_DISCOVER',
+    description:
+      'Also let Maintenance and stim gc find checkouts no stim command ran in outside maintenance.discoverRoots: linked worktrees of repositories Stim knows, direct children of folders holding a known project, ~/.codex/worktrees and the home folder scan. Off, they act only on registered workspaces and maintenance.discoverRoots',
+  },
+  {
     key: 'maintenance.discoverRoots',
     type: { kind: 'strings', absolutePaths: true },
     scopes: MACHINE,
     default: [],
     description:
-      'Absolute folders (a leading ~ is the home folder) whose direct children Maintenance and stim gc treat as checkouts, even when no stim command ever ran in them, when Stim recognises them as a project it handles. Linked worktrees of repositories Stim knows, and the direct children of folders that hold a known project, are found without this setting; it adds folders neither covers. A folder named here is always considered, even under a home dot-folder or the system temporary directory. A discovered checkout follows the rules of a registered workspace, and a scoped STIM_HOME discovers only from this list',
+      'Absolute folders (a leading ~ is the home folder) whose direct children Maintenance and stim gc treat as checkouts, even when no stim command ever ran in them, when Stim recognises them as a project it handles, with their linked worktrees inside the folder, whatever maintenance.autoDiscover says. A folder named here is always considered, even under a home dot-folder or the system temporary directory. A discovered checkout follows the rules of a registered workspace, and a scoped STIM_HOME discovers only from this list',
   },
   {
     key: 'maintenance.keep',

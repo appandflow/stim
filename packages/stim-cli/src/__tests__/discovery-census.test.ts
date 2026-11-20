@@ -81,7 +81,12 @@ describe('runDiscoveryCensusIfDue', () => {
     vi.stubEnv('STIM_HOME', '');
     vi.stubEnv('HOME', home);
     vi.stubEnv('USERPROFILE', home);
-    saveConfig({ version: 2, projects: {}, repos: {}, maintenance: { discoverRoots: [join(home, 'dev', 'tools')] } });
+    saveConfig({
+      version: 2,
+      projects: {},
+      repos: {},
+      maintenance: { autoDiscover: true, discoverRoots: [join(home, 'dev', 'tools')] },
+    });
     checkout(join(home, 'dev', 'old'), 8192);
     checkout(join(home, 'dev', 'fresh'));
     checkout(join(home, 'dev', 'tools', 'managed'));
@@ -119,6 +124,27 @@ describe('runDiscoveryCensusIfDue', () => {
     expect(census?.pending).toBe(false);
   });
 
+  it('lists what automatic discovery would add as untracked while it is off, and classifies again when it is turned on', async () => {
+    const roots = { discoverRoots: [join(home, 'dev', 'tools')] };
+    saveConfig({ version: 2, projects: {}, repos: {}, maintenance: roots });
+    const { census: off } = await run(t0);
+    expect(off?.autoDiscover).toBe(false);
+    expect(off?.finds.map(({ path, kind }) => [path.slice(home.length), kind])).toEqual([
+      ['/.exact/exact2/a', 'dot-folder'],
+      ['/.exact/exact2/b', 'dot-folder'],
+      ['/.mytool', 'dot-folder'],
+      ['/dev/fresh', 'untracked'],
+      ['/dev/old', 'untracked'],
+    ]);
+    expect(off?.finds.find(({ path }) => path.endsWith('/dev/old'))?.bytes).toBeGreaterThanOrEqual(8192);
+
+    saveConfig({ version: 2, projects: {}, repos: {}, maintenance: { ...roots, autoDiscover: true } });
+    const { census: on } = await run(t0 + hour);
+    expect(on?.autoDiscover).toBe(true);
+    expect(on?.finds.filter(({ kind }) => kind === 'reduce-only')).toHaveLength(2);
+    expect(on?.finds.some(({ kind }) => kind === 'untracked')).toBe(false);
+  });
+
   it('still lists an app the scan found under a home dot-folder inside a plain Node checkout that a root leads to', async () => {
     const cli = join(home, '.tools', 'cli');
     mkdirSync(join(cli, '.git'), { recursive: true });
@@ -128,7 +154,7 @@ describe('runDiscoveryCensusIfDue', () => {
       version: 2,
       projects: {},
       repos: {},
-      maintenance: { discoverRoots: [join(home, 'dev', 'tools'), join(home, '.tools')] },
+      maintenance: { autoDiscover: true, discoverRoots: [join(home, 'dev', 'tools'), join(home, '.tools')] },
     });
     await runDiscoveryScanIfDue(tick(), { home, now: t0 + 8 * day, attempted: { at: 0 } });
     const { census } = await run(t0 + 8 * day);
@@ -164,6 +190,7 @@ describe('runDiscoveryCensusIfDue', () => {
   it('keeps the census pending while the bound leaves expired measurements, refreshes the longest-waiting first, and finishes the rest in the next runs', async () => {
     const complete = () =>
       discoveryReport({
+        autoDiscover: true,
         scan: readDiscoveryScanFile(),
         census: readDiscoveryCensusFile(),
         setting: { value: [join(home, 'dev', 'tools')], error: null },
@@ -211,6 +238,7 @@ describe('runDiscoveryCensusIfDue', () => {
     };
     const complete = () =>
       discoveryReport({
+        autoDiscover: true,
         scan: readDiscoveryScanFile(),
         census: readDiscoveryCensusFile(),
         setting: { value: [join(home, 'dev', 'tools')], error: null },
@@ -238,7 +266,7 @@ describe('runDiscoveryCensusIfDue', () => {
       version: 2,
       projects: {},
       repos: {},
-      maintenance: { discoverRoots: [join(home, 'dev', 'tools'), join(home, 'dev')] },
+      maintenance: { autoDiscover: true, discoverRoots: [join(home, 'dev', 'tools'), join(home, 'dev')] },
     });
     const { census } = await run(t0 + hour);
     expect(census?.finds.filter(({ kind }) => kind === 'reduce-only')).toEqual([]);
@@ -511,6 +539,7 @@ describe('runDiscoveryCensusIfDue', () => {
       ).toEqual(['/.mytool', '/dev/fresh']);
       expect(census?.pending).toBe(true);
       const report = discoveryReport({
+        autoDiscover: true,
         scan: readDiscoveryScanFile(),
         census: readDiscoveryCensusFile(),
         setting: { value: [join(home, 'dev', 'tools')], error: null },
@@ -532,6 +561,7 @@ describe('runDiscoveryCensusIfDue', () => {
       ).toEqual(['/dev/fresh']);
       expect(census?.pending).toBe(true);
       const report = discoveryReport({
+        autoDiscover: true,
         scan: readDiscoveryScanFile(),
         census: readDiscoveryCensusFile(),
         setting: { value: [join(home, 'dev', 'tools')], error: null },
@@ -559,6 +589,7 @@ describe('runDiscoveryCensusIfDue', () => {
       expect(census?.pending).toBe(true);
       expect(
         discoveryReport({
+          autoDiscover: true,
           scan: scanned,
           census: readDiscoveryCensusFile(),
           setting: { value: [join(home, 'dev', 'tools')], error: null },
@@ -616,6 +647,7 @@ describe('runDiscoveryCensusIfDue', () => {
       });
       expect(readDiskUsage(dir)).not.toHaveProperty('partial');
       const report = discoveryReport({
+        autoDiscover: true,
         scan: readDiscoveryScanFile(),
         census: readDiscoveryCensusFile(),
         setting: { value: [join(home, 'dev', 'tools')], error: null },
@@ -630,9 +662,10 @@ describe('runDiscoveryCensusIfDue', () => {
 
   describe('below a configured root', () => {
     const under = (root: string) =>
-      saveConfig({ version: 2, projects: {}, repos: {}, maintenance: { discoverRoots: [root] } });
+      saveConfig({ version: 2, projects: {}, repos: {}, maintenance: { autoDiscover: true, discoverRoots: [root] } });
     const reportOf = (root: string) =>
       discoveryReport({
+        autoDiscover: true,
         scan: readDiscoveryScanFile(),
         census: readDiscoveryCensusFile(),
         setting: { value: [root], error: null },

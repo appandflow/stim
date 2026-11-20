@@ -5,6 +5,8 @@ import { describe, expect, it } from 'vitest';
 import type { CensusFind, DiscoveryCensusFile, DiscoveryScan, DiscoveryScanFile } from '@stim-cli/core/state';
 import {
   adoptCommand,
+  AUTO_DISCOVER_SUGGESTION_BYTES,
+  autoDiscoverSuggestion,
   discoveryLines,
   discoveryReport,
   lowDiskLine,
@@ -77,6 +79,7 @@ function report(
   scanFile: DiscoveryScanFile = { status: 'read', scan },
 ) {
   return discoveryReport({
+    autoDiscover: true,
     scan: scanFile,
     census: census(finds),
     setting,
@@ -162,6 +165,7 @@ describe('discoveryReport', () => {
   it('shows no measurement of a census made from an older scan than the scan file holds', () => {
     const older = { ...scan, ranAt: scan.ranAt + 1 };
     const result = discoveryReport({
+      autoDiscover: true,
       scan: { status: 'read', scan: older },
       census: census([find({ path: '/Users/me/dev/a', bytes: 5 * GB })]),
       setting: noRoots,
@@ -197,20 +201,28 @@ describe('discoveryReport', () => {
   it('keeps an unreadable, absent and unusable scan or census apart', () => {
     const base = { setting: noRoots, home, canonical: same };
     const missing: DiscoveryCensusFile = { status: 'absent' };
-    expect(discoveryReport({ ...base, scan: { status: 'absent' }, census: missing }).scan).toEqual({
+    expect(discoveryReport({ autoDiscover: true, ...base, scan: { status: 'absent' }, census: missing }).scan).toEqual({
       status: 'absent',
     });
-    expect(discoveryReport({ ...base, scan: { status: 'unreadable' }, census: missing }).scan).toEqual({
+    expect(
+      discoveryReport({ autoDiscover: true, ...base, scan: { status: 'unreadable' }, census: missing }).scan,
+    ).toEqual({
       status: 'unreadable',
     });
-    expect(discoveryReport({ ...base, scan: { status: 'read', scan: null }, census: missing }).scan).toEqual({
+    expect(
+      discoveryReport({ autoDiscover: true, ...base, scan: { status: 'read', scan: null }, census: missing }).scan,
+    ).toEqual({
       status: 'unusable',
     });
     const scanFile: DiscoveryScanFile = { status: 'read', scan };
     const withScan = { ...base, scan: scanFile };
-    expect(discoveryReport({ ...withScan, census: missing }).census).toBe('absent');
-    expect(discoveryReport({ ...withScan, census: { status: 'unreadable' } }).census).toBe('unreadable');
-    expect(discoveryReport({ ...withScan, census: { status: 'read', census: null } }).census).toBe('unusable');
+    expect(discoveryReport({ autoDiscover: true, ...withScan, census: missing }).census).toBe('absent');
+    expect(discoveryReport({ autoDiscover: true, ...withScan, census: { status: 'unreadable' } }).census).toBe(
+      'unreadable',
+    );
+    expect(discoveryReport({ autoDiscover: true, ...withScan, census: { status: 'read', census: null } }).census).toBe(
+      'unusable',
+    );
   });
 });
 
@@ -273,11 +285,12 @@ describe('completeness', () => {
       census: { version: 1, at: now, scanRanAt: scan.ranAt, roots: [], canonicalRoots: [], pending: true, finds: [] },
     };
     const input = { scan: finished(), setting: noRoots, home, canonical: same };
-    expect(discoveryReport({ ...input, census: pending }).complete).toBe(false);
-    expect(discoveryReport({ ...input, census: census([]) }).complete).toBe(true);
-    expect(discoveryReport({ ...input, scan: finished({ ranAt: scan.ranAt + 1 }), census: census([]) }).complete).toBe(
-      false,
-    );
+    expect(discoveryReport({ autoDiscover: true, ...input, census: pending }).complete).toBe(false);
+    expect(discoveryReport({ autoDiscover: true, ...input, census: census([]) }).complete).toBe(true);
+    expect(
+      discoveryReport({ autoDiscover: true, ...input, scan: finished({ ranAt: scan.ranAt + 1 }), census: census([]) })
+        .complete,
+    ).toBe(false);
   });
 
   it('lists a find under a broad configured root with the home-folder wording, and the line follows', () => {
@@ -294,6 +307,7 @@ describe('completeness', () => {
       },
     };
     const result = discoveryReport({
+      autoDiscover: true,
       scan: finished(),
       census: file,
       setting: { value: ['~'], error: null },
@@ -354,6 +368,7 @@ describe('what the listing may claim', () => {
     });
     const through = (file: DiscoveryCensusFile, value: string[]) =>
       discoveryReport({
+        autoDiscover: true,
         scan: { status: 'read', scan },
         census: file,
         setting: { value, error: null },
@@ -394,6 +409,7 @@ describe('members', () => {
     expect(text).toContain('~/dev/old: last git activity 2026-10-11');
     expect(text).toContain('~/dev/x: last git activity unknown');
     const stale = discoveryReport({
+      autoDiscover: true,
       scan: { status: 'read', scan: { ...scan, ranAt: scan.ranAt + 1 } },
       census: census(finds),
       setting: noRoots,
@@ -408,6 +424,7 @@ describe('discoveryLines', () => {
   it('words the two kinds differently, shows the command, when the scan ran and what it could not read', () => {
     const lines = discoveryLines(
       discoveryReport({
+        autoDiscover: true,
         scan: {
           status: 'read',
           scan: { ...scan, truncated: true, truncation: 'budget', unreadable: ['/Users/me/Documents/x'] },
@@ -494,6 +511,7 @@ describe('a list older than the state it is read against', () => {
   const lines = (file: DiscoveryCensusFile, value: string[]) =>
     discoveryLines(
       discoveryReport({
+        autoDiscover: true,
         scan: { status: 'read', scan },
         census: file,
         setting: { value, error: null },
@@ -521,6 +539,7 @@ describe('a list older than the state it is read against', () => {
   it('never reads a measurement older than a day when the census was made as a current exact figure', () => {
     const old = recorded([], now, [find({ path: '/Users/me/dev/a', evaluatedAt: now - 3 * day })]);
     const result = discoveryReport({
+      autoDiscover: true,
       scan: { status: 'read', scan },
       census: old,
       setting: noRoots,
@@ -538,6 +557,7 @@ describe('a list older than the state it is read against', () => {
     const text = (status: 'read' | 'absent') =>
       discoveryLines(
         discoveryReport({
+          autoDiscover: true,
           scan: status === 'read' ? { status, scan } : { status },
           census: { status: 'absent' },
           setting: noRoots,
@@ -550,5 +570,51 @@ describe('a list older than the state it is read against', () => {
       'does not scan ~/Documents; name a folder of checkouts there in maintenance.discoverRoots',
     );
     expect(text('absent')).not.toContain('Documents');
+  });
+});
+
+describe('autoDiscoverSuggestion', () => {
+  const offCensus = (finds: CensusFind[]): DiscoveryCensusFile => {
+    const file = census(finds);
+    return file.status === 'read' && file.census
+      ? { ...file, census: { ...file.census, roots: ['/Users/me/work'], autoDiscover: false } }
+      : file;
+  };
+  const offReport = (finds: CensusFind[], over: { autoDiscover?: boolean } = {}) =>
+    discoveryReport({
+      scan: { status: 'read', scan },
+      census: offCensus(finds),
+      setting: { value: ['/Users/me/work'], error: null },
+      autoDiscover: over.autoDiscover ?? false,
+      home,
+      canonical: same,
+    });
+  const half = AUTO_DISCOVER_SUGGESTION_BYTES / 2;
+  const untracked = (path: string, bytes: number) => find({ path, kind: 'untracked', bytes });
+
+  it('suggests both commands once untracked checkouts reach the threshold, and nothing below it', () => {
+    const above = [untracked('/Users/me/dev/a', half), untracked('/Users/me/dev/.worktrees/b', half)];
+    const suggestion = autoDiscoverSuggestion(
+      offReport(above),
+      { value: ['/Users/me/work'], error: null },
+      false,
+      home,
+    );
+    expect(suggestion?.fix).toContain('`stim settings set maintenance.autoDiscover true --scope machine`');
+    expect(suggestion?.fix).toContain(
+      `\`stim settings set maintenance.discoverRoots '["/Users/me/work","/Users/me/dev","/Users/me/dev/.worktrees"]' --scope machine\``,
+    );
+    expect(suggestion?.detail).toContain('2 checkouts');
+
+    const below = [untracked('/Users/me/dev/a', half), untracked('/Users/me/dev/b', half - 1)];
+    expect(autoDiscoverSuggestion(offReport(below), { value: [], error: null }, false, home)).toBeNull();
+  });
+
+  it('counts only untracked checkouts, and says nothing with automatic discovery on', () => {
+    const big = AUTO_DISCOVER_SUGGESTION_BYTES * 2;
+    const reduceOnly = [find({ path: '/Users/me/dev/a', bytes: big })];
+    expect(autoDiscoverSuggestion(offReport(reduceOnly), noRoots, false, home)).toBeNull();
+    const finds = [untracked('/Users/me/dev/a', big)];
+    expect(autoDiscoverSuggestion(offReport(finds, { autoDiscover: true }), noRoots, true, home)).toBeNull();
   });
 });

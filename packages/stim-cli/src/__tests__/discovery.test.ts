@@ -309,7 +309,7 @@ describe('discoverCheckouts', () => {
     expect((await discoverCheckouts(config, [])).map(({ path }) => path)).toEqual([join(roots, 'app')]);
   });
 
-  it('finds the linked worktrees and recognised neighbours of a known repository through git worktree list', async () => {
+  it('finds nothing a known repository leads to by default, and its linked worktrees and recognised neighbours with maintenance.autoDiscover on', async () => {
     vi.stubEnv('STIM_HOME', '');
     const repo = join(base, 'dev', 'repo');
     app(repo);
@@ -322,13 +322,46 @@ describe('discoverCheckouts', () => {
     git(repo, 'worktree', 'add', '-q', '--detach', elsewhere);
     app(join(base, 'dev', 'neighbour'));
     mkdirSync(join(base, 'dev', 'notes'));
-    const config: Config = { projects: { [repo]: {} }, repos: {} };
+    const off: Config = { projects: { [repo]: {} }, repos: {} };
+    expect(await discoverCheckouts(off, [repo])).toEqual([]);
+    expect(await discoveredOutside(off, [repo])).toEqual([]);
+
+    const config: Config = { ...off, maintenance: { autoDiscover: true } };
     const found = await discoverCheckouts(config, [repo]);
     expect(found.map(({ path, origin }) => [path, origin])).toEqual([
       [linked, 'worktree'],
       [join(base, 'dev', 'neighbour'), 'sibling'],
     ]);
     expect((await discoveredOutside(config, [repo])).map(({ path }) => path)).toEqual([elsewhere]);
+  });
+
+  it('keeps maintenance.discoverRoots with automatic discovery off: its children and their worktrees inside it, nothing beside a known repository', async () => {
+    vi.stubEnv('STIM_HOME', '');
+    const commit = (cwd: string) => {
+      git(cwd, 'init', '-q', '-b', 'main');
+      git(cwd, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init');
+    };
+    const roots = join(base, 'roots');
+    const child = join(roots, 'child');
+    app(child);
+    commit(child);
+    const inside = join(child, '.worktrees', 'fix');
+    const outside = join(base, 'wt', 'pin');
+    mkdirSync(join(base, 'wt'));
+    git(child, 'worktree', 'add', '-q', '-b', 'fix', inside);
+    git(child, 'worktree', 'add', '-q', '--detach', outside);
+    const repo = join(base, 'dev', 'repo');
+    app(repo);
+    commit(repo);
+    git(repo, 'worktree', 'add', '-q', '-b', 'feature', join(base, 'dev', 'feature'));
+    app(join(base, 'dev', 'neighbour'));
+    const config: Config = { maintenance: { discoverRoots: [roots] }, projects: { [repo]: {} }, repos: {} };
+
+    expect((await discoverCheckouts(config, [repo])).map(({ path, origin }) => [path, origin])).toEqual([
+      [child, 'root'],
+      [inside, 'worktree'],
+    ]);
+    expect((await discoveredOutside(config, [repo])).map(({ path }) => path)).toEqual([outside]);
   });
 
   it('lists the worktree of a plain Node checkout only when asked, and no folder without git or package in a monorepo', async () => {
@@ -380,7 +413,7 @@ describe('discoverCheckouts', () => {
     const old = join(base, 'dev', 'a-old');
     git(zapp, 'worktree', 'add', '-q', '-b', 'old', old);
     writeFileSync(join(old, 'package.json'), '{}');
-    const config: Config = { projects: { [repo]: {} }, repos: {} };
+    const config: Config = { projects: { [repo]: {} }, repos: {}, maintenance: { autoDiscover: true } };
 
     const found = await discoverCheckouts(config, [repo], undefined, { nodeWorktrees: true });
     expect(found.map(({ path, origin, node }) => [path, origin, node])).toEqual([
@@ -434,7 +467,7 @@ describe('discoverCheckouts', () => {
         truncation: 'none',
       }),
     );
-    const config: Config = { maintenance: { discoverRoots: [dev] }, projects: {}, repos: {} };
+    const config: Config = { maintenance: { autoDiscover: true, discoverRoots: [dev] }, projects: {}, repos: {} };
 
     for (const select of [{}, { nodeWorktrees: true }])
       expect((await discoverCheckouts(config, [], undefined, select)).filter(({ path }) => path === mobile)).toEqual([
@@ -480,16 +513,14 @@ describe('discoverCheckouts', () => {
     };
     writeFileSync(join(base, 'home', '.stim', 'maintenance', 'discovery-scan.json'), JSON.stringify(scan));
     expect(
-      (await discoverCheckouts({ projects: {}, repos: {} }, [])).map(({ path, origin, reduceOnly }) => [
-        path,
-        origin,
-        reduceOnly,
-      ]),
+      (await discoverCheckouts({ projects: {}, repos: {}, maintenance: { autoDiscover: true } }, [])).map(
+        ({ path, origin, reduceOnly }) => [path, origin, reduceOnly],
+      ),
     ).toEqual([[docs, 'scan', true]]);
     vi.stubEnv('STIM_HOME', join(base, 'scoped'));
     expect(
       await discoverCheckouts(
-        { projects: {}, repos: {} },
+        { projects: {}, repos: {}, maintenance: { autoDiscover: true } },
         [],
         testContext({ env: { STIM_HOME: join(base, 'scoped') } }),
       ),

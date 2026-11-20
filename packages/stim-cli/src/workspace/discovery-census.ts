@@ -19,7 +19,7 @@ import { answered, hungRead, Unanswered } from './bounded-read.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { loadConfig } from './config.ts';
 import { DISCOVER_ROOTS_KEY, REFRESH_MS, rootsOf } from './discovery-report.ts';
-import { isBroadFolder, unmanagedScanFinds } from './discovery.ts';
+import { autoDiscoverEnabled, isBroadFolder, unmanagedScanFinds } from './discovery.ts';
 import { scanDescends } from './scan-rules.ts';
 import {
   ARTIFACT_DIRS,
@@ -49,20 +49,24 @@ function descendable(home: string, path: string): boolean {
 }
 
 /**
- * Whether a census run is due: none exists, the scan it came from is not the last one, `maintenance.discoverRoots`
- * changed, a recorded find lies where the scan no longer descends, some directory is still waiting for a measurement
+ * Whether a census run is due: none exists, the scan it came from is not the last one, `maintenance.discoverRoots` or
+ * `maintenance.autoDiscover` (`autoDiscover`, when given) changed, a recorded find lies where the scan no longer descends, some directory is still waiting for a measurement
  * and an hour passed, or a day passed.
  */
 export function censusDue(
   last:
-    | (Pick<DiscoveryCensus, 'at' | 'scanRanAt' | 'roots' | 'pending'> & { finds?: readonly { path: string }[] })
+    | (Pick<DiscoveryCensus, 'at' | 'scanRanAt' | 'roots' | 'pending' | 'autoDiscover'> & {
+        finds?: readonly { path: string }[];
+      })
     | null,
   scanRanAt: number,
   roots: readonly string[],
   now: number,
   home?: string,
+  autoDiscover?: boolean,
 ): boolean {
   if (!last || last.at > now || last.scanRanAt !== scanRanAt) return true;
+  if (autoDiscover !== undefined && (last.autoDiscover ?? true) !== autoDiscover) return true;
   if (home && last.finds?.some(({ path }) => !descendable(home, path))) return true;
   if (last.roots.length !== roots.length || last.roots.some((root, at) => root !== roots[at])) return true;
   return now - last.at >= (last.pending ? HOUR_MS : REFRESH_MS);
@@ -474,7 +478,14 @@ export async function runDiscoveryCensusIfDue(
     const roots = rootsOf(setting, homedir());
     const last = file.status === 'read' ? file.census : null;
     if (
-      !censusDue(last, scanFile.scan.ranAt, roots, now, canonicalPath(homedir())) ||
+      !censusDue(
+        last,
+        scanFile.scan.ranAt,
+        roots,
+        now,
+        canonicalPath(homedir()),
+        autoDiscoverEnabled(config, operation.env),
+      ) ||
       (now >= attempted.at && now - attempted.at < HOUR_MS)
     )
       return;
@@ -495,6 +506,7 @@ export async function runDiscoveryCensusIfDue(
     const groups: Array<[CensusFind['kind'], string[]]> = [
       ['reduce-only', finds.reduceOnly],
       ['dot-folder', finds.dotFolder],
+      ['untracked', finds.untracked],
       ['unchecked', finds.unchecked],
     ];
     for (const [kind, paths] of groups)
@@ -548,6 +560,7 @@ export async function runDiscoveryCensusIfDue(
       scanRanAt: finds.scanRanAt,
       roots,
       canonicalRoots: finds.canonicalRoots,
+      autoDiscover: finds.autoDiscover,
       pending: entries.some(
         (find) =>
           find.kind === 'unchecked' ||
