@@ -111,23 +111,56 @@ normal are not niced.
 ## A ladder pass that frees nothing waits
 
 After a daemon ladder pass that took no action, the next pass waits four times
-that pass's duration, at most 15 minutes. A rise of the disk or the memory
-level, any measured volume that is new, lost 1 GB or reached a higher level
-since that pass, or a command that asks the daemon for a tick (the hard floor)
-runs it at once. The rest of the tick, the idle and dormant stages included,
-still runs every minute. A build's headroom ladder and
-`stim gc` are not paced.
+that pass's duration, at most 15 minutes, or at most one minute at critical. A
+rise of the disk or the memory level, any measured volume that is new or reached
+a higher level since that pass, a volume at high or critical that lost 256 MB, a
+volume at normal that lost 1 GB, or a command that asks the daemon for a tick
+(the hard floor) runs it at once. The idle and dormant stages still run on every
+tick; a ladder pass runs inside the tick, so a long pass delays the next tick. A
+build's headroom ladder and `stim gc` are not paced.
 
-Reason: on a Linux worker held at critical by space Stim cannot free, 615 of
-657 ladder passes in a day freed nothing, and the ladder ran about 53% of the
-wall clock with a git spawn per checkout per rung, so stimd used 30 to 40% of
-a core for days (#5933). The factor keeps a pass that frees nothing under a
-fifth of the time; the cap bounds how late a newly idle tree is taken, and
-the bypasses keep a disk that is filling, or new memory pressure, from waiting.
+Reason: on a Linux worker held at critical by space Stim cannot free, 615 of 657
+ladder passes in a day freed nothing, and the ladder ran about 53% of the wall
+clock with a git spawn per checkout per rung, so stimd used 30 to 40% of a core
+for days (#5933). At high, the factor keeps a pass that frees nothing under a
+fifth of the time while the full four-times wait applies, that is for passes
+under 225 seconds; past that the 15-minute cap holds, so the incident's
+335-second pass below would run about 27% of the time at high. The cap bounds
+how late a newly idle tree is taken, and the bypasses keep a disk that is
+filling, or new memory pressure, from waiting. At critical the one-minute cap
+lets the ladder rerun on every tick, so a pass longer than 15 seconds that frees
+nothing can take more than a fifth of the time: a 335-second pass followed by a
+one-minute wait runs about 85% of the time. A worker held at critical, the #5933
+case, is back to that cost; the long wait covers a volume held at high.
+
+On 2026-11-19 a MacBook filled to 121 MB free while native builds grew Cargo
+targets past 20 GB (#6011). A ladder pass at high took 335 seconds and freed
+nothing, almost all of it in rung 1. At 22:46 UTC stimd paced the next tick;
+the tick after it ran the ladder, so pacing delayed the next pass by about one
+tick. That pass spent 132 seconds in rung 1, then trimmed Cargo targets in rung
+3 from 22:51; a trim failed with ENOSPC at 23:01 UTC, before the two targets
+that freed 21.8 GB and 23.3 GB were reached. Most of the delay was pass
+duration and trim order, not pacing; those are separate from this rule. The
+bypasses still keep a filling disk from waiting a full pace: on a volume at high
+or critical, a 256 MB drop since the last pass lets the next tick bypass the
+remaining wait, a quarter of the 1 GB a volume at normal needs.
+
+Chosen by the implementer of #6011, not the maintainer: critical keeps the wait
+of four times the pass, capped at one minute, the daemon's tick. A build, boot
+or test slot request or release asks stimd for a tick at once, and with no wait
+a pass that freed nothing at critical would start again as soon as it ended.
+
+Chosen by the implementers, not the maintainer: the 1 GB drop for a volume at
+normal (#5939) and the 256 MB drop for a volume at high or critical (#6011).
 
 Maintainer decision: "Good for both points", 2026-11-18, in answer to whether
 a wait of up to 15 minutes after a pass that freed nothing is acceptable, given
 that disk space comes before CPU use (#5933, pull request #5939).
+
+Maintainer decision: "lets do both", 2026-11-20, in answer to whether to keep
+both the critical-pressure bypass and the falling-free-space bypass of the
+ladder's pacing wait
+([#6011 comment](https://github.com/appandflow/stim/issues/6011#issuecomment-7031008184)).
 
 ## Each rung frees only the volumes under pressure
 
@@ -418,7 +451,7 @@ implementer of #5942 and its reviews, not by the maintainer.
 
 ## Links
 
-- Issues: #5492, #5512, #5524, #5877, #5933, #5942, #5998. Pull requests: #5514, #5540.
+- Issues: #5492, #5512, #5524, #5877, #5933, #5942, #5998, #6011. Pull requests: #5514, #5540.
 - Code: `packages/stim-cli/src/policy/checkout-order.ts`,
   `packages/stim-cli/src/workspace/source-dependencies.ts`,
   `packages/stim-cli/src/stimd/passes/artifacts.ts`,

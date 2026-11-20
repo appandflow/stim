@@ -99,6 +99,9 @@ export function handleLogRequest({
       respond({ op: 'error', code: 'readiness.wait', message: 'the operation is no longer admitted' });
       return true;
     }
+    const request = new AbortController();
+    const cancel = () => request.abort();
+    socket.once('close', cancel);
     void traceInvocation(context, 'stimd.readiness.wait', () =>
       withInvocation(context, signal, () =>
         streams.wait(
@@ -113,17 +116,20 @@ export function handleLogRequest({
           context.forwarded.env,
           Number(fields.through ?? 0),
           fields.checkCoverage === true,
+          request.signal,
         ),
       ),
-    ).then(
-      (result) => respond({ op: 'readiness.changed', ...result }),
-      (error: unknown) =>
-        respond({
-          op: 'error',
-          code: 'readiness.wait',
-          message: error instanceof Error ? error.message : String(error),
-        }),
-    );
+    )
+      .then(
+        (result) => respond({ op: 'readiness.changed', ...result }),
+        (error: unknown) =>
+          respond({
+            op: 'error',
+            code: 'readiness.wait',
+            message: error instanceof Error ? error.message : String(error),
+          }),
+      )
+      .finally(() => socket.off('close', cancel));
     return true;
   }
   const fields = isJsonObject(message.params) ? message.params : {};

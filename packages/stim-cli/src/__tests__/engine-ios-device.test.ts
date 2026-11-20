@@ -687,6 +687,7 @@ test('a Wi-Fi install refused for a known cause keeps that cause, and a cabled t
 });
 
 test('awaitIosDeviceLaunch returns the device pid as soon as the phone reports it', async () => {
+  const sleep = Object.assign(async () => {}, { close: vi.fn<() => void>() });
   const probes: AppProcessProbe[] = [{ state: 'stopped' }, { state: 'stopped' }, { state: 'running', pid: 767 }];
   const result = await awaitIosDeviceLaunch({
     udid: PHONE,
@@ -695,10 +696,11 @@ test('awaitIosDeviceLaunch returns the device pid as soon as the phone reports i
     collectorPid: 99,
     readRecords: () => [],
     probe: () => probes.shift() ?? { state: 'stopped' },
-    sleep: async () => {},
+    sleep,
     pollMs: 0,
   });
   expect(result).toEqual({ pid: 767 });
+  expect(sleep.close).toHaveBeenCalledOnce();
 });
 
 test('a console that ends before the app appears is a launch failure with its own evidence', async () => {
