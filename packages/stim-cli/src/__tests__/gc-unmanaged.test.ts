@@ -6,7 +6,6 @@ import type { DaemonPressure } from '@stim-cli/core/state';
 import { parseProcSwaps, unmanagedUsage } from '../commands/gc/unmanaged.ts';
 import { formatUnmanagedUsage } from '../commands/gc/summary.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
-import { backgroundWalk } from './_background-walk.ts';
 import { upsertProject } from '../workspace/config.ts';
 import type { LevelRun } from '../stimd/passes/level-run.ts';
 import { discoverCachesAsync } from '../cache/caches.ts';
@@ -199,12 +198,7 @@ test.skipIf(process.platform === 'win32')(
     expect(
       calls
         .filter(([file]) => file !== 'docker')
-        .every(
-          ([file, ...args]) =>
-            backgroundWalk(file ?? '', args)
-              ?.slice(0, 3)
-              .join(' ') === 'du -x -sk',
-        ),
+        .every(([file, ...args]) => file === 'nice' && args.slice(0, 5).join(' ') === '-n 19 du -x -sk'),
     ).toBe(true);
     const lines = usage ? formatUnmanagedUsage({ ...usage, entries: ours?.slice(3) ?? [] }) : [];
     expect(lines).toContain("Not Stim's to delete, the largest other users of the short volume:");
@@ -249,7 +243,7 @@ test.skipIf(process.platform === 'win32')(
 
       expect(usage?.slow).toEqual(['Docker (docker system df)']);
       expect(hungRead()).toBe('Docker (docker system df)');
-      expect(calls.filter(([file, ...args]) => backgroundWalk(file ?? '', args))).toEqual([]);
+      expect(calls.filter(([file]) => file === 'nice')).toEqual([]);
     } finally {
       releaseDocker();
       await vi.advanceTimersByTimeAsync(0);
@@ -298,7 +292,7 @@ test.skipIf(process.platform === 'win32')('stops listing a folder once the time 
 
   expect(Date.now() - started).toBeLessThanOrEqual(17_000);
   expect(usage?.unreached).toBe(10);
-  expect(calls.filter(([file, ...args]) => backgroundWalk(file ?? '', args))).toEqual([]);
+  expect(calls.filter(([file]) => file === 'nice')).toEqual([]);
 });
 
 test.skipIf(process.platform === 'win32')('a cancelled gc stops the listing', async () => {
@@ -315,7 +309,7 @@ test.skipIf(process.platform === 'win32')('a cancelled gc stops the listing', as
     /abort/i,
   );
   expect(reads).toBe(1);
-  expect(calls.filter(([file, ...args]) => backgroundWalk(file ?? '', args))).toEqual([]);
+  expect(calls.filter(([file]) => file === 'nice')).toEqual([]);
 });
 
 test.skipIf(process.platform === 'win32')(
@@ -471,7 +465,7 @@ describe.skipIf(process.platform === 'win32')('a path Stim manages that does not
     const usage = await pending;
 
     expect(usage?.entries.some((entry) => entry.label.startsWith(root))).toBe(false);
-    expect(calls.filter(([file, ...args]) => backgroundWalk(file ?? '', args))).toEqual([]);
+    expect(calls.filter(([file]) => file === 'nice')).toEqual([]);
   });
 
   test('stops at once when gc is cancelled, and records the read it left pending', async () => {
@@ -485,7 +479,7 @@ describe.skipIf(process.platform === 'win32')('a path Stim manages that does not
     controller.abort();
     expect(await outcome).toMatch(/abort/i);
     expect(hungRead()).toBe(home);
-    expect(calls.filter(([file, ...args]) => backgroundWalk(file ?? '', args))).toEqual([]);
+    expect(calls.filter(([file]) => file === 'nice')).toEqual([]);
     release?.();
     await vi.advanceTimersByTimeAsync(0);
     expect(hungRead()).toBeNull();

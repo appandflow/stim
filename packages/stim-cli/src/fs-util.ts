@@ -1,7 +1,7 @@
 import { lstatSync, readdirSync, readlinkSync, statSync } from 'fs';
 import { dirname, isAbsolute, join, normalize, parse, sep } from 'path';
 import { getExecutor } from './exec.ts';
-import { backgroundPriority } from './io-priority.ts';
+import { lowPriorityCommand } from './io-priority.ts';
 import { noteSizeFailure, sizeFailure } from './size-failures.ts';
 import type { StimContext } from '@stim-cli/core';
 import { runOperationFile } from './engine/operation-exec.ts';
@@ -158,19 +158,22 @@ export async function measuredDirectorySizeAsync(
     signal,
     operation,
     lowPriority = false,
+    throttleIo = true,
     root,
   }: {
     timeoutMs: number | 'unbounded';
     signal?: AbortSignal;
     operation?: StimContext;
     lowPriority?: boolean;
+    /** With `lowPriority`, whether the walk also yields its I/O; false above normal pressure. */
+    throttleIo?: boolean;
     root?: string;
   },
 ): Promise<number | null> {
   let out: string;
   const startedAt = Date.now();
   try {
-    const [file, args] = lowPriority ? backgroundPriority('du', ['-sk', dir]) : ['du', ['-sk', dir]];
+    const [file, args] = lowPriority ? lowPriorityCommand('du', ['-sk', dir], throttleIo) : ['du', ['-sk', dir]];
     out = await runOperationFile(operation, getExecutor(), file, args, {
       timeoutMs,
       killSignal: 'SIGKILL',

@@ -5,7 +5,7 @@ import { configDir, isScopedHome, type StimContext } from '@stim-cli/core';
 import { buildWorkerRoot, userHome } from '@stim-cli/core/state';
 import { getExecutor, isTimeoutError } from '../../exec.ts';
 import { formatBytes } from '../../fs-util.ts';
-import { backgroundPriority } from '../../io-priority.ts';
+import { lowPriorityCommand } from '../../io-priority.ts';
 import { runOperationFile } from '../../engine/operation-exec.ts';
 import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
 import { measureDisk } from '../../daemon/measure.ts';
@@ -203,7 +203,7 @@ class Scan {
 
   /** The folder's allocated bytes on its own filesystem, through one low-priority `du`, a lower bound when `du` could not read part of it. */
   async size(path: string): Promise<{ bytes: number; partial: boolean } | null> {
-    const result = await this.run(path, ...backgroundPriority('du', ['-x', '-sk', path]), ENTRY_TIMEOUT_MS);
+    const result = await this.run(path, ...lowPriorityCommand('du', ['-x', '-sk', path], false), ENTRY_TIMEOUT_MS);
     if ('ok' in result) {
       const bytes = duBytes(result.ok);
       if (bytes !== null) return { bytes, partial: false };

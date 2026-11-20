@@ -5,7 +5,7 @@ import type { StimContext } from '@stim-cli/core';
 import { loadConfig, type MaintenanceAction, type MaintenanceSize, type PressureLevel } from '@stim-cli/core/state';
 import { RESERVE_RELEASED } from '../../disk-reserve.ts';
 import { getExecutor } from '../../exec.ts';
-import { backgroundPriority } from '../../io-priority.ts';
+import { lowPriorityCommand } from '../../io-priority.ts';
 import { diskPressure, diskThresholds } from '../../daemon/pressure.ts';
 import { measuredDirectorySizeAsync } from '../../fs-util.ts';
 import { canonicalPath } from '../../commands/gc/paths.ts';
@@ -164,11 +164,17 @@ export async function measureCargoTargets(
   return sizes;
 }
 
-async function bytesOf(paths: readonly string[], signal?: AbortSignal, lowPriority = false): Promise<number> {
+async function bytesOf(
+  paths: readonly string[],
+  signal?: AbortSignal,
+  lowPriority = false,
+  throttleIo = true,
+): Promise<number> {
   let total = 0;
   for (const path of paths) {
     signal?.throwIfAborted();
-    total += (await measuredDirectorySizeAsync(path, { timeoutMs: SIZE_TIMEOUT_MS, signal, lowPriority })) ?? 0;
+    total +=
+      (await measuredDirectorySizeAsync(path, { timeoutMs: SIZE_TIMEOUT_MS, signal, lowPriority, throttleIo })) ?? 0;
   }
   return total;
 }
@@ -180,13 +186,14 @@ async function bytesOfMany(
   paths: readonly string[],
   signal?: AbortSignal,
   lowPriority = false,
+  throttleIo = true,
 ): Promise<number | null> {
   let total = 0;
   for (let at = 0; at < paths.length; at += DU_CHUNK) {
     signal?.throwIfAborted();
     const args = ['-sk', ...paths.slice(at, at + DU_CHUNK)];
     try {
-      const [file, argv] = lowPriority ? backgroundPriority('du', args) : ['du', args];
+      const [file, argv] = lowPriority ? lowPriorityCommand('du', args, throttleIo) : ['du', args];
       const out = await getExecutor().runFileAsync(file, argv, { timeoutMs: SIZE_TIMEOUT_MS, signal });
       for (const line of out.split('\n')) total += (parseInt(line, 10) || 0) * 1024;
     } catch {
@@ -293,7 +300,8 @@ export async function planCargoTargets({
       continue;
     }
     const gone = stale.paths.map((path) => join(dir, path));
-    let freeable = await bytesOf(gone, signal, lowPriority);
+    const throttleIo = tightened === 'normal';
+    let freeable = await bytesOf(gone, signal, lowPriority, throttleIo);
     if (policy.incremental === 'all' || freeable < overBytes) {
       freeable += await bytesOf(
         profilesOutside(dir, gone)
@@ -301,11 +309,12 @@ export async function planCargoTargets({
           .filter(existsSync),
         signal,
         lowPriority,
+        throttleIo,
       );
     }
     let idleUnits = false;
     if (policy.units === 'all' || (policy.units === 'toNeed' && freeable < overBytes)) {
-      const unitBytes = await bytesOfMany(idleCargoUnitPaths(dir, now, gone), signal, lowPriority);
+      const unitBytes = await bytesOfMany(idleCargoUnitPaths(dir, now, gone), signal, lowPriority, throttleIo);
       idleUnits = unitBytes !== 0;
       if (unitBytes === null) plan.blocked.push(`${dir}: the idle build units could not be measured`);
       else freeable += unitBytes;

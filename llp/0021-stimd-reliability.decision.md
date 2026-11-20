@@ -241,11 +241,19 @@ status`, `stim doctor` and `stim setup` print the `stim service install`
 remedy, the only path for such a unit.
 
 Maintenance children keep the priority they had: they run at stimd's priority,
-now 31, except the size walks and the fingerprint children at nice 10. A size
-walk that ran under `nice -n 19` runs at background CPU and I/O priority
-instead: `taskpolicy -b` on macOS, where `nice` lowers only CPU, `ionice -c3
-nice -n 19` on Linux, and unchanged on Windows (#6047). Only the size walks
-(`du`, `find` and the private-size helper) are wrapped; the `lsof` and `ps`
+now 31, except the size walks under `nice -n 19` and the fingerprint children
+at nice 10. On macOS `nice` lowers only CPU, not I/O. A size walk at normal
+disk pressure on its volume therefore also runs at a throttled I/O policy:
+`taskpolicy -d utility` on macOS and `ionice -c3` on Linux, or `nice` alone
+when `ionice` is not on PATH. Windows keeps `nice` alone. At high and critical
+a walk keeps `nice` and no I/O throttle, since the disk is what is short. Today
+only the Cargo target walks know they run at normal: the cap's `du` while host
+load defers the size scan, and the trim plan's `du` for a target whose volume
+is at normal. The dependency and status walks and the unmanaged-usage scan keep
+`nice` alone. `utility` is the milder of macOS's two throttled policies.
+`taskpolicy -b` was rejected: it also moves CPU into the background band, and
+under a load average of about 300 its walks took 2 to 3.5 times as long as a
+niced walk, where `utility` and `throttle` took no longer. The `lsof` and `ps`
 reads of the Cargo trim and the background delete of a worktree's trash keep
 `nice -n 19`, and every other child keeps stimd's priority, for the reason the
 clamp below was dropped. A
@@ -263,9 +271,11 @@ critical pressure.
 
 Maintainer decision: "I really like all 6 points lets do them all!", 2026-11-20
 ([#6047](https://github.com/appandflow/stim/issues/6047)). Point 4 of those six
-is background I/O priority for cleanup work below critical pressure. The
-wrapper's command on each platform is the GC redesign's proposal, not the
-maintainer's wording.
+is background I/O priority for cleanup work below critical pressure. That a
+size walk runs without the I/O throttle at high and critical applies the
+maintainer's rule for sweeps, "it should be based on pressure lvl, critical
+should prob just delete right away" (2026-11-20), to walks; the coordinating
+session chose that, and the command each platform uses, not the maintainer.
 
 Maintainer decision: "yea stim itself is fine at interactive I am good with", 2026-11-19.
 [Decision on #5925](https://github.com/appandflow/stim/issues/5925#issuecomment-7023460880).

@@ -12,7 +12,6 @@ import {
 } from '@stim-cli/core/state';
 import { knownPrivateBytes, refreshMeasure, trustedMeasure } from '../disk-usage.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
-import { backgroundWalk } from './_background-walk.ts';
 
 let scratch: string;
 let tree: string;
@@ -31,7 +30,7 @@ beforeEach(() => {
   setExecutor({
     ...real,
     runFileAsync: (file, args, opts) => {
-      if (!backgroundWalk(file, args)) return real.runFileAsync(file, args, opts);
+      if (file !== 'nice') return real.runFileAsync(file, args, opts);
       walks++;
       return failing
         ? Promise.reject(Object.assign(new Error('Command timed out'), { code: 'ETIMEDOUT' }))
@@ -178,7 +177,7 @@ test('a walk records how long it took, and an entry written without it still rea
   setExecutor({
     ...real,
     runFileAsync: (file, args, opts) => {
-      if (backgroundWalk(file, args)) clock += 1234;
+      if (file === 'nice') clock += 1234;
       return real.runFileAsync(file, args, opts);
     },
   });

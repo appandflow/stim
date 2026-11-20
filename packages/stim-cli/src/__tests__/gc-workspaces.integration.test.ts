@@ -18,7 +18,6 @@ import {
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
-import { backgroundWalk } from './_background-walk.ts';
 import { runGc } from '../commands/gc.ts';
 import { deleteGcItem } from '../commands/gc/item.ts';
 import * as maintenancePreview from '../stimd/passes/preview.ts';
@@ -2067,7 +2066,7 @@ function countDu(calls: string[][], fail?: (args: string[]) => string | null) {
   setExecutor({
     ...real,
     runFileAsync: async (file, args: string[], opts) => {
-      const walk = backgroundWalk(file, args) ?? [file, ...args];
+      const walk = file === 'nice' ? args.slice(2) : [file, ...args];
       if (walk[0] === 'du') {
         calls.push(walk.slice(1));
         const stdout = fail?.(walk.slice(1));

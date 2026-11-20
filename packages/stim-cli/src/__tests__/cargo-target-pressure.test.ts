@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { MaintenanceSize } from '@stim-cli/core/state';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { planCargoTargets } from '../stimd/passes/cargo-target.ts';
 import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
 
@@ -95,4 +96,44 @@ describe('the Cargo target trim under disk pressure', () => {
     });
     expect(normal.actions).toEqual([]);
   });
+
+  it.skipIf(process.platform === 'win32')(
+    'a low-priority walk throttles its I/O only for a target on a volume at normal',
+    async () => {
+      const short = target('short');
+      const capped = target('capped');
+      const diskLevel = async (dir: string) => (dir === short ? ('critical' as const) : ('normal' as const));
+      const walks: string[][] = [];
+      const real = getExecutor();
+      setExecutor({
+        ...real,
+        runFileAsync: async (file, args) => {
+          walks.push([file, ...args]);
+          return `4\t${args.at(-1)}\n`;
+        },
+      });
+      try {
+        await planCargoTargets({
+          sizes: [size(short), { ...size(capped), bytes: 10_000 * 1024 ** 3 }],
+          settings,
+          pinned: () => false,
+          now: Date.now(),
+          diskLevel,
+          lowPriority: true,
+        });
+      } finally {
+        resetExecutor();
+      }
+
+      const of = (dir: string) => walks.filter((walk) => walk.some((arg) => arg.startsWith(dir)));
+      expect(of(short).length).toBeGreaterThan(0);
+      expect(of(short).every(([file, ...args]) => file === 'nice' && args.slice(0, 3).join(' ') === '-n 19 du')).toBe(
+        true,
+      );
+      expect(of(capped).length).toBeGreaterThan(0);
+      expect(of(capped).every(([file]) => file === (process.platform === 'darwin' ? 'taskpolicy' : 'ionice'))).toBe(
+        true,
+      );
+    },
+  );
 });

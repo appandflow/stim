@@ -8,7 +8,7 @@ import { answered, hungRead, Unanswered } from './workspace/bounded-read.ts';
 import { runOperationFile } from './engine/operation-exec.ts';
 import { WorkspaceProcessCleanupError } from './engine/workspace-process-lock.ts';
 import { getExecutor } from './exec.ts';
-import { backgroundPriority } from './io-priority.ts';
+import { lowPriorityCommand } from './io-priority.ts';
 import { noteSizeFailure, sizeFailure } from './size-failures.ts';
 
 /** `stim-privsize` exits 2 when the volume does not report private sizes (not APFS). */
@@ -194,7 +194,7 @@ async function walkTree(path: string, options: TreeOptions, errors: unknown[]): 
   const lowPriority = options.lowPriority ?? !operation;
   const deadline = Date.now() + options.timeoutMs;
   const walk = (file: string, args: string[]): Promise<string> => {
-    const [command, argv] = lowPriority ? backgroundPriority(file, args) : [file, args];
+    const [command, argv] = lowPriority ? lowPriorityCommand(file, args, false) : [file, args];
     return operation
       ? runOperationFile(operation, exec, command, argv, {
           timeoutMs: Math.max(1, deadline - Date.now()),

@@ -15,7 +15,6 @@ import {
   type EnvironmentState,
 } from '@stim-cli/core/state';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
-import { backgroundWalk } from './_background-walk.ts';
 import { applyStatusMeasures, createStatusMeasurer } from '../status-measures.ts';
 import { checkCounts } from '../workspace/pull-request.ts';
 import { workspaceDir } from '../workspace/paths.ts';
@@ -74,16 +73,15 @@ beforeEach(() => {
     findExecutable: (name) => (name === 'gh' ? '/usr/bin/gh' : real.findExecutable(name)),
     runFileAsync: async (file, args = [], opts) => {
       calls.push({ file, args });
-      const walk = backgroundWalk(file, args);
-      if (walk?.[0] === 'find') throw new Error('find: unknown predicate');
-      if (walk) {
+      if (file === 'nice' && args[2] === 'find') throw new Error('find: unknown predicate');
+      if (file === 'nice') {
         opts?.onSpawn?.({ pid: duPid } as ChildProcess);
         await gate;
-        clock += walkMs(walk.slice(2));
-        if (duFails || walk.slice(2).some((path: string) => failing.includes(path)))
+        clock += walkMs(args.slice(4));
+        if (duFails || args.slice(4).some((path: string) => failing.includes(path)))
           throw new Error('Command timed out after 120000ms: du');
-        return walk
-          .slice(2)
+        return args
+          .slice(4)
           .map((path: string) => `${kilobytes[path] ?? 1}\t${path}\n`)
           .join('');
       }
@@ -106,10 +104,7 @@ afterEach(() => {
 });
 
 function duWalks(): string[][] {
-  return calls
-    .map((call) => backgroundWalk(call.file, call.args))
-    .filter((walk) => walk && walk[0] !== 'find')
-    .map((walk) => walk?.slice(2) ?? []);
+  return calls.filter((call) => call.file === 'nice' && call.args[2] !== 'find').map((call) => call.args.slice(4));
 }
 
 function environment(): EnvironmentState {
