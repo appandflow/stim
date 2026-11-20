@@ -21,8 +21,9 @@
  *     uuid-changed, id-ahead, too-old (`sinceAt` missing, in the future or
  *     more than 2 hours ago, since FSEvents drops old history without saying
  *     so), dropped, ids-wrapped, and fd-limit (the watch needs more file
- *     descriptors than the helper may open; no stream runs for that watch line
- *     and nothing follows the purge).
+ *     descriptors than the helper may open, the smaller of its soft limit and
+ *     kern.maxfilesperproc, or that sysctl cannot be read; no stream runs for
+ *     that watch line and nothing follows the purge).
  *   {"generation": N, "dev": N, "dirty": [rootIndex, ...], "eventId": N}
  *     Roots that changed up to `eventId`, including a root that was renamed,
  *     moved or deleted with one of its parents.
@@ -607,11 +608,10 @@ int main(int argc, char **argv) {
   }
   int per_process = 0;
   size_t per_process_size = sizeof per_process;
+  if (sysctlbyname("kern.maxfilesperproc", &per_process, &per_process_size, NULL, 0) != 0) per_process = 0;
   rlim_t wanted = files.rlim_max;
-  if (sysctlbyname("kern.maxfilesperproc", &per_process, &per_process_size, NULL, 0) == 0 && per_process > 0 &&
-      (rlim_t)per_process < wanted)
-    wanted = (rlim_t)per_process;
-  if (files.rlim_cur < wanted) {
+  if (per_process > 0 && (rlim_t)per_process < wanted) wanted = (rlim_t)per_process;
+  if (per_process > 0 && files.rlim_cur < wanted) {
     files.rlim_cur = wanted;
     if (setrlimit(RLIMIT_NOFILE, &files) != 0 && wanted > OPEN_MAX) {
       files.rlim_cur = OPEN_MAX;
@@ -620,6 +620,8 @@ int main(int argc, char **argv) {
   }
   if (getrlimit(RLIMIT_NOFILE, &files) != 0) return 70;
   descriptor_limit = files.rlim_cur;
+  if (per_process <= 0) descriptor_limit = 0;
+  else if ((rlim_t)per_process < descriptor_limit) descriptor_limit = (rlim_t)per_process;
   struct stat input_stat;
   input_is_file = fstat(STDIN_FILENO, &input_stat) == 0 && S_ISREG(input_stat.st_mode);
   queue = dispatch_queue_create("dev.stim.fsevents", DISPATCH_QUEUE_SERIAL);
