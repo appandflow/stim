@@ -1112,6 +1112,8 @@ describe('the pressure ladder', () => {
 
   test('rung 3 at high trims a cache from the size the scan recorded, with no size walk first', async () => {
     caches('kept-key');
+    const hoursAgo = (Date.now() - 3 * 60 * MINUTE_MS) / 1000;
+    utimesSync(join(buildCache(), 'ios', 'unused'), hoursAgo, hoursAgo);
     vi.stubEnv('STIM_CACHES_BUILD_CACHE_MAX_GB', '12');
     mkdirSync(dirname(maintenanceStateFile()), { recursive: true });
     writeFileSync(

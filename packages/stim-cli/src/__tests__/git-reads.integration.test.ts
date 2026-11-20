@@ -143,11 +143,12 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-test('one report-mode ladder pass at critical lists each repository and reads each checkout once', async () => {
+test('one report-mode ladder pass at high lists each repository and reads each checkout once', async () => {
   fleet();
+  vi.stubEnv('STIM_DISK_CRITICAL_FREE_GB', '0');
   const counts = countGit();
   const passes = await runHomePasses({ act: false, log: () => {} });
-  expect(passes.pressure.level).toBe('critical');
+  expect(passes.pressure.level).toBe('high');
   expect({ ...counts, total: counts.total <= TOTAL_LADDER }).toEqual({
     total: true,
     lists: 2,
