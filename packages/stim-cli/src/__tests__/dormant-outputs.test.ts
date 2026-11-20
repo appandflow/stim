@@ -24,7 +24,9 @@ import * as processLock from '../engine/workspace-process-lock.ts';
 import { withCargoLocks } from '../workspace/cargo-lock.ts';
 import { exactClean } from '../integrations/exact-clean.ts';
 
-vi.mock('../integrations/exact-clean.ts', () => ({ exactClean: vi.fn() }));
+vi.mock('../integrations/exact-clean.ts', () => ({
+  exactClean: vi.fn<typeof import('../integrations/exact-clean.ts').exactClean>(),
+}));
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import * as maintenanceRun from '../stimd/passes/run.ts';
 import { loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';

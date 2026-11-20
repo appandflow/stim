@@ -25,14 +25,16 @@ import { liveClaimOwner, writeDerivedData } from './_factories.ts';
 import { serveShareList, shareRow, type ShareListAnswer } from './_share-list-server.ts';
 
 vi.mock('../integrations/exact-clean.ts', async () => {
-  const { rmSync } = await import('node:fs');
-  const { join } = await import('node:path');
+  const fs = await import('node:fs');
+  const path = await import('node:path');
   return {
-    exactClean: vi.fn(async (app: string, { dryRun = false }: { dryRun?: boolean } = {}) => {
-      const remove = [join(app, 'target', 'debug')];
-      if (!dryRun) for (const path of remove) rmSync(path, { recursive: true, force: true });
-      return { status: 'ok', remove, kept: [], held: [] };
-    }),
+    exactClean: vi.fn<typeof import('../integrations/exact-clean.ts').exactClean>(
+      async (app, { dryRun = false } = {}) => {
+        const remove = [path.join(app, 'target', 'debug')];
+        if (!dryRun) for (const entry of remove) fs.rmSync(entry, { recursive: true, force: true });
+        return { status: 'ok', remove, kept: [], held: [] };
+      },
+    ),
   };
 });
 
