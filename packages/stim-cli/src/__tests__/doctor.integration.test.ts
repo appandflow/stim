@@ -2241,10 +2241,13 @@ test('doctor lists the checkouts Stim does not manage and, above the threshold, 
   try {
     await runCli(doctor, ['--json'], { version: '1.2.3' });
     await runCli(doctor, [], { version: '1.2.3' });
+    process.env.STIM_MAINTENANCE_AUTO_DISCOVER = '0';
+    await runCli(doctor, ['--json'], { version: '1.2.3' });
   } finally {
     process.chdir(cwd);
     console.log = originalLog;
     delete process.env.STIM_HOME;
+    delete process.env.STIM_MAINTENANCE_AUTO_DISCOVER;
     rmSync(home, { recursive: true, force: true });
     rmSync(project, { recursive: true, force: true });
   }
@@ -2270,7 +2273,13 @@ test('doctor lists the checkouts Stim does not manage and, above the threshold, 
   const suggestion = payload.findings.find(({ code }: { code?: string }) => code === 'auto-discover-suggested');
   expect(suggestion?.fix).toContain('stim settings set maintenance.autoDiscover true --scope machine');
   expect(suggestion?.fix).toContain(command);
-  const text = logs.slice(1).join('\n');
+  const overridden = JSON.parse(logs.at(-1) ?? '').findings.find(
+    ({ code }: { code?: string }) => code === 'auto-discover-suggested',
+  );
+  expect(overridden?.fix).toContain(
+    'STIM_MAINTENANCE_AUTO_DISCOVER=0 in this environment overrides the machine setting',
+  );
+  const text = logs.slice(1, -1).join('\n');
   expect(text).toContain('/work/dev');
   expect(text).toContain(command);
   expect(text).toContain('2026-10-01');

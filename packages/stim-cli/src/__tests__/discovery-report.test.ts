@@ -637,4 +637,11 @@ describe('autoDiscoverSuggestion', () => {
       /^Turn automatic discovery on: STIM_MAINTENANCE_AUTO_DISCOVER=0 in this environment overrides the machine setting, so set it to true or remove it/,
     );
   });
+
+  it('offers only the automatic discovery command for a folder whose untracked checkouts are all dot-named', () => {
+    const finds = [untracked('/Users/me/dev/.hidden-app', AUTO_DISCOVER_SUGGESTION_BYTES)];
+    const fix = autoDiscoverSuggestion(offReport(finds), noRoots, false, home, null)?.fix;
+    expect(fix).toContain('stim settings set maintenance.autoDiscover true --scope machine');
+    expect(fix).not.toContain('maintenance.discoverRoots');
+  });
 });

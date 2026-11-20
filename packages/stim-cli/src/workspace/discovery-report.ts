@@ -1,4 +1,4 @@
-import { resolve, sep } from 'node:path';
+import { basename, resolve, sep } from 'node:path';
 import type { CensusFind, DiscoveryCensusFile, DiscoveryScanFile, ScanTruncation } from '@stim-cli/core/state';
 
 export const DISCOVER_ROOTS_KEY = 'maintenance.discoverRoots';
@@ -424,7 +424,10 @@ export function autoDiscoverSuggestion(
   const bytes = groups.reduce((sum, group) => sum + group.bytes, 0);
   if (bytes < AUTO_DISCOVER_SUGGESTION_BYTES) return null;
   const checkouts = groups.reduce((sum, group) => sum + group.checkouts, 0);
-  const folders = groups.filter((group) => group.command !== null).map((group) => group.folder);
+  // @ref LLP 0004#automatic-discovery-is-off-by-default -- discovery skips dot-named children of a root
+  const folders = groups
+    .filter((group) => group.command !== null && group.members.some(({ path }) => !basename(path).startsWith('.')))
+    .map((group) => group.folder);
   const command = folders.length ? adoptCommand(setting, ...folders) : null;
   const largest = groups.toSorted((a, b) => b.bytes - a.bytes)[0];
   return {

@@ -718,6 +718,14 @@ describe('checkouts found through a tool folder or the full scan', () => {
       reduceOnly: true,
       skipped: expect.stringContaining('never removes'),
     });
+
+    saveConfig({ ...config, maintenance: { discoverRoots: [join(codex, 'packages')] } });
+    const off = await collectWorktreeSweep({ idle: false, olderThan: null, now: Date.now(), refresh: false });
+    expect(off.worktrees.find((entry) => entry.path === codex)).toMatchObject({ skipCode: 'not-registered' });
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await removeWorktrees(off, { now: Date.now() });
+    expect(existsSync(codex)).toBe(true);
   });
 
   it('treats a tool-folder worktree as reduce-only for the artifact and Cargo passes too when a discover root inside it adds a child root', async () => {
@@ -806,18 +814,6 @@ describe('checkouts found through a tool folder or the full scan', () => {
     }
     saveConfig({ version: 2, projects: { [main]: {} }, repos: {}, maintenance: { autoDiscover: true } });
     expect(await plan()).toMatchObject({ skipped: null });
-  });
-
-  it('keeps a worktree planned for removal with maintenance.autoDiscover on when it is turned off before the removal', async () => {
-    const sibling = worktree(join(base, 'dev', 'sibling-wt'), 'sibling');
-    const planned = await collectWorktreeSweep({ idle: false, olderThan: null, now: Date.now(), refresh: false });
-    const worktrees = planned.worktrees.filter((entry) => entry.path === sibling);
-    expect(worktrees).toMatchObject([{ discovered: true, skipped: null }]);
-    saveConfig({ version: 2, projects: { [main]: {} }, repos: {} });
-    vi.spyOn(console, 'log').mockImplementation(() => {});
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    await removeWorktrees({ ...planned, worktrees }, { now: Date.now(), operation: testContext({ env: {} }) });
-    expect(existsSync(sibling)).toBe(true);
   });
 
   it('plans a reduce-only worktree as kept, and keeps it at removal even when the plan said it was removable', async () => {

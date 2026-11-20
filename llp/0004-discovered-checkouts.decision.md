@@ -67,11 +67,14 @@ census records the value it classified under (`autoDiscover`; a file without it 
 written with discovery on); a change makes the census due and the report treats the
 list as outdated, as for a roots change. The forced discovery runs at most once a
 day: the census records when (`untrackedAt`), and a run within a day of it, with the
-setting still off and `maintenance.discoverRoots` unchanged, reuses that list, so the
-hourly runs that continue the measuring, or follow an hourly low-disk scan, read no
-repository. Its time counts toward the census run's 90 second budget, which is fixed
-before it starts; the discovery itself is not cut short, and its reads are bounded
-as the passes' are.
+setting still off, `maintenance.discoverRoots` unchanged and no `unchecked` find in
+the last census, reuses that list, so the hourly runs that continue the measuring, or
+follow an hourly low-disk scan, read no repository. A last census with an `unchecked`
+find runs it again, so that find stays listed and the census stays pending. While the
+setting is off its time counts toward the census run's 90 second budget, which is
+then fixed before it starts; the discovery itself is not cut short, and its reads are
+bounded as the passes' are. With the setting on, the budget starts after discovery,
+as before.
 
 While the setting is off, every path the last scan recorded (revalidated or not)
 still keeps a plain Node worktree that is or holds it reduce-only, as a pending scan
@@ -79,11 +82,19 @@ find does with the setting on (see "Plain Node checkouts"), so a Node worktree r
 through `maintenance.discoverRoots` is never removed over a recorded app. The scan
 paths are only a veto; they are not candidates.
 
-`stim gc` and the daemon recheck, under the removal locks, that a discovered worktree
-is still discovered under the current settings, computed again rather than taken from
-the operation's memo, so a sweep planned with the setting on removes nothing after it
-is turned off. A linked worktree that is neither registered nor discovered is reported
-`not-registered` before any git, launcher, device or pull request read.
+A change to `maintenance.autoDiscover`, `maintenance.discoverRoots` or
+`STIM_MAINTENANCE_AUTO_DISCOVER` applies from the next plan. A `stim gc` run or daemon
+pass already planned finishes under the settings it planned with, as every pass that
+reads discovery through the per-operation memo already does (the stages, the artifact
+and Cargo passes, the level run). This is the coordinator's choice under #6025, not
+the maintainer's.
+
+In the finished-worktree check a linked worktree counts as discovered only when
+discovery lists the worktree root itself; a discovered checkout nested inside it, such
+as a `maintenance.discoverRoots` folder inside a tool-folder worktree, does not make
+the worktree a removal candidate. A linked worktree that is neither registered nor
+discovered is reported `not-registered` before any git, launcher, device or pull
+request read.
 
 `stim doctor` reports a `note` finding, `auto-discover-suggested`, when the setting is
 off, the census is current for the last scan and the settings, and the untracked
@@ -97,7 +108,9 @@ can still overstate a directory deleted since it was measured. When
 remove it, since the settings command alone changes nothing then. The roots command
 brings every recognised checkout directly in each named folder under the full
 discovered-checkout rules, finished linked worktree removal included, and the
-finding says so. Doctor reads only the census file; it walks nothing. This finding is
+finding says so. A folder whose untracked checkouts are all dot-named is left out of
+that command, because discovery skips dot-named children of a root; such checkouts
+get only the automatic discovery remedy. Doctor reads only the census file; it walks nothing. This finding is
 the one part of the listing that changes the findings count; the listing itself stays
 outside the findings.
 

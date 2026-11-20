@@ -159,6 +159,18 @@ describe('runDiscoveryCensusIfDue', () => {
     expect(third?.finds.find(({ path }) => path.endsWith('/later'))?.kind).toBe('untracked');
   });
 
+  it('keeps an unchecked find and the census pending on the next run while maintenance.autoDiscover is off', async () => {
+    saveConfig({ version: 2, projects: {}, repos: {}, maintenance: { discoverRoots: [join(home, 'dev', 'tools')] } });
+    writeFileSync(join(home, 'dev', 'fresh', 'package.json'), '<<<<<<< HEAD\n{}\n=======\n{}\n>>>>>>> main\n');
+    const unchecked = (census: Awaited<ReturnType<typeof run>>['census']) =>
+      census?.finds.filter(({ kind }) => kind === 'unchecked').map(({ path }) => path.slice(home.length));
+    const { census: first } = await run(t0);
+    expect(unchecked(first)).toEqual(['/dev/fresh']);
+    const { census: second } = await run(t0 + hour);
+    expect(unchecked(second)).toEqual(['/dev/fresh']);
+    expect(second?.pending).toBe(true);
+  });
+
   it('still lists an app the scan found under a home dot-folder inside a plain Node checkout that a root leads to', async () => {
     const cli = join(home, '.tools', 'cli');
     mkdirSync(join(cli, '.git'), { recursive: true });

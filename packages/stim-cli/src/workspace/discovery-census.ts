@@ -477,23 +477,18 @@ export async function runDiscoveryCensusIfDue(
     const setting = machineSettingValue(DISCOVER_ROOTS_KEY, { config, env: operation.env });
     const roots = rootsOf(setting, homedir());
     const last = file.status === 'read' ? file.census : null;
+    const automatic = autoDiscoverEnabled(config, operation.env);
     if (
-      !censusDue(
-        last,
-        scanFile.scan.ranAt,
-        roots,
-        now,
-        canonicalPath(homedir()),
-        autoDiscoverEnabled(config, operation.env),
-      ) ||
+      !censusDue(last, scanFile.scan.ranAt, roots, now, canonicalPath(homedir()), automatic) ||
       (now >= attempted.at && now - attempted.at < HOUR_MS)
     )
       return;
     attempted.at = now;
-    const deadline = Date.now() + budgetMs;
-    // @ref LLP 0004#automatic-discovery-is-off-by-default -- the forced discovery runs at most daily
+    // @ref LLP 0004#automatic-discovery-is-off-by-default -- the forced discovery runs at most daily, inside the budget
+    const offDeadline = automatic ? null : Date.now() + budgetMs;
     const reuse =
       last?.autoDiscover === false &&
+      !last.finds.some(({ kind }) => kind === 'unchecked') &&
       last.untrackedAt !== undefined &&
       now >= last.untrackedAt &&
       now - last.untrackedAt < REFRESH_MS &&
@@ -506,6 +501,7 @@ export async function runDiscoveryCensusIfDue(
       reuse ? { untrackedBefore: last.finds.filter(({ kind }) => kind === 'untracked').map(({ path }) => path) } : {},
     );
     if (!finds) return;
+    const deadline = offDeadline ?? Date.now() + budgetMs;
     const previous = new Map((last?.finds ?? []).map((find) => [find.path, find]));
     let looked = 0;
     const entries: CensusFind[] = [];

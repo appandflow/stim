@@ -272,13 +272,12 @@ export async function discoverCheckouts(
   config: Config | null,
   known: readonly string[],
   operation?: StimContext,
-  { nodeWorktrees = false, fresh = false }: { nodeWorktrees?: boolean; fresh?: boolean } = {},
+  { nodeWorktrees = false }: { nodeWorktrees?: boolean } = {},
 ): Promise<DiscoveredCheckout[]> {
-  const found = fresh
-    ? computeDiscovered(config, known, readDiscoveryScan(), operation)
-    : discovery(config, known, operation);
   // @ref LLP 0004#plain-node-checkouts -- only the finished-worktree check asks for them
-  return (await found).found.filter((checkout) => !checkout.node || (nodeWorktrees && checkout.node === 'linked'));
+  return (await discovery(config, known, operation)).found.filter(
+    (checkout) => !checkout.node || (nodeWorktrees && checkout.node === 'linked'),
+  );
 }
 
 /** What discovery reached outside the folders Stim manages. */

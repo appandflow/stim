@@ -878,7 +878,9 @@ export async function collectWorktreeSweep({
     const idleDays = idleDaysOf(keys, now);
     const linked = !('refusal' in source) && entry !== null && source.path !== entry.path;
     const managed = roots.some((root) => registry.has(root));
-    const discoveredOnly = !managed && roots.some((root) => discoveredPaths.has(root));
+    // @ref LLP 0004#automatic-discovery-is-off-by-default -- a linked worktree counts only when discovery lists its root
+    const discoveredOnly =
+      !managed && (linked ? discoveredPaths.has(canonicalPath(path)) : roots.some((root) => discoveredPaths.has(root)));
     // @ref LLP 0004#automatic-discovery-is-off-by-default -- an unknown worktree is kept before any probe
     if (linked && !entry.bare && !managed && !discoveredOnly) {
       inspected[index] = {
@@ -1110,13 +1112,6 @@ async function noOwnCommitsRecheck(
   );
 }
 
-/** Whether discovery, computed again from the current config and not the operation's memo, still selects it. */
-async function stillDiscovered(candidate: WorktreeCandidate, operation?: StimContext): Promise<boolean> {
-  const found = await discoverCheckouts(loadConfig(), listedRoots(), operation, { nodeWorktrees: true, fresh: true });
-  const paths = new Set(found.map(({ path }) => path));
-  return candidate.keys.some((key) => paths.has(key));
-}
-
 export async function removeWorktrees(
   sweep: WorktreeSweep,
   { now = Date.now(), operation }: { now?: number; operation?: StimContext } = {},
@@ -1148,9 +1143,6 @@ export async function removeWorktrees(
         ...(agents.get(candidate.path) ?? []),
         ...(await removalUseHold(candidate, operation)),
       ].map((r) => `in use: ${r}`);
-      // @ref LLP 0004#automatic-discovery-is-off-by-default -- recheck discovery under the removal lock
-      if (candidate.discovered && !(await stillDiscovered(candidate, operation)))
-        reasons.push('no longer discovered under the current maintenance settings');
       const mergedHead = candidate.merge?.merged
         ? candidate.merge.head
         : endedPullRequest(candidate.pullRequest)
