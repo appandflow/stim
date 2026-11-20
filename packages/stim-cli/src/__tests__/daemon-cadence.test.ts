@@ -1,6 +1,16 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { buildCacheRoot, metroCacheRoot } from '@stim-cli/core';
 import {
   daemonNdjsonFile,
   maintenanceStateFile,
@@ -12,15 +22,24 @@ import {
   readStimdBoots,
   stimdClaimRoot,
   type DaemonMode,
+  type DaemonPressure,
 } from '@stim-cli/core/state';
 import { readClaimSet } from '@stim-cli/core/ownership-claim';
 import * as engineFollow from '../stimd/engine-follow.ts';
 import * as dependencies from '../daemon/dependencies.ts';
+import { clearSourceCheckouts, type RankedDependency } from '../daemon/dependencies.ts';
+import * as artifacts from '../stimd/passes/artifacts.ts';
 import * as idlePass from '../daemon/idle.ts';
 import * as ladder from '../daemon/ladder.ts';
 import * as measure from '../daemon/measure.ts';
 import * as reclaim from '../daemon/reclaim.ts';
 import { ensureStimd } from '../daemon/client.ts';
+import { acquireDisk, diskBoundary, HARD_FLOOR, LADDER, LANE, releaseDisk } from '../daemon/disk-owner.ts';
+import { createMaintenanceLane, runDiskPass, runHomePasses } from '../daemon/passes.ts';
+import * as fsUtil from '../fs-util.ts';
+import { measureSizes } from '../stimd/passes/measure.ts';
+import { executeAction } from '../stimd/passes/act.ts';
+import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
 import { runStimd } from '../stimd/main.ts';
 import * as stages from '../daemon/stages.ts';
 import { pendingDormant } from '../daemon/stages.ts';
@@ -30,6 +49,7 @@ import * as maintenanceRun from '../stimd/passes/run.ts';
 import { loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState, recordWorkspaceUse } from '../workspace/workspace-state.ts';
+import { testContext } from './_context.ts';
 
 vi.mock('../stimd/threads.ts', () => import('./fixtures/inline-stimd-threads.ts'));
 vi.mock('../daemon/fingerprint-precompute.ts', () => ({
@@ -112,6 +132,340 @@ function quietWorkspace(usedAgoMs = MINUTE_MS): string {
   recordWorkspaceUse(root, new Date(Date.now() - usedAgoMs));
   return root;
 }
+
+describe('the disk owner', () => {
+  const critical = (reason: string): DaemonPressure => ({
+    level: 'critical',
+    disk: 'critical',
+    memory: 'normal',
+    reasons: [reason],
+    memoryWarningSince: null,
+  });
+
+  function unitsOfTheStep(order: string[]) {
+    let enter!: () => void;
+    let finish!: () => void;
+    const entered = new Promise<void>((resolve) => (enter = resolve));
+    const finished = new Promise<void>((resolve) => (finish = resolve));
+    vi.spyOn(dependencies, 'runDormantDependencies').mockImplementation(async (input) => {
+      order.push('unit 1');
+      enter();
+      await finished;
+      await input.between?.();
+      order.push('unit 2');
+      await input.between?.();
+      order.push('deletions');
+      return [];
+    });
+    vi.spyOn(ladder, 'runLadder').mockImplementation(async (_input, pressure) => {
+      order.push(pressure.reasons[0] === 'waiting' ? 'pass waiting' : 'pass hard floor');
+      return { actions: [], pressure };
+    });
+    return { entered, finish };
+  }
+
+  async function laneStarted() {
+    saveConfig({ version: 2, projects: {}, repos: {} });
+    const lane = createMaintenanceLane(() => {}, { run: async () => {} });
+    lane.start(
+      {
+        config: loadConfig(),
+        measured: await measure.measureTick(null, Date.now()),
+        operation: testContext(),
+        workspaces: [],
+        pressure: critical('lane'),
+      },
+      true,
+    );
+    return lane;
+  }
+
+  const pass = (reason: string) =>
+    runDiskPass(
+      { act: true, pressure: critical(reason), devices: [], sims: [], requested: false },
+      () => {},
+      testContext(),
+    );
+
+  test('a disk pass asked while the dormant step runs waits for its current unit, and the step then goes on to its deletions', async () => {
+    const order: string[] = [];
+    const { entered, finish } = unitsOfTheStep(order);
+    const lane = await laneStarted();
+    await entered;
+
+    const asked = pass('waiting');
+    order.push('asked');
+    finish();
+    await asked;
+    await lane.settled();
+
+    expect(order).toEqual(['unit 1', 'asked', 'pass waiting', 'unit 2', 'deletions']);
+  });
+
+  test('a hard-floor pass goes ahead of a waiting pass, and the tick that asked for it answers only after it', async () => {
+    const order: string[] = [];
+    const { entered, finish } = unitsOfTheStep(order);
+    vi.spyOn(idlePass, 'runIdlePass').mockResolvedValue([]);
+    vi.spyOn(stages, 'runDormantPass').mockResolvedValue([]);
+    freeMb = 10 * 1024;
+    const lane = await laneStarted();
+    await entered;
+
+    const waiting = pass('waiting');
+    let answered = false;
+    const floor = runHomePasses({ act: true, log: () => {}, requested: true }).finally(() => {
+      answered = true;
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    const beforeTheUnitEnded = answered;
+    finish();
+    await Promise.all([waiting, floor]);
+    await lane.settled();
+
+    expect(beforeTheUnitEnded).toBe(false);
+    expect(order).toEqual(['unit 1', 'pass hard floor', 'pass waiting', 'unit 2', 'deletions']);
+  });
+
+  test('a hard-floor pass asked during the size check runs after the current walk, before the next one', async () => {
+    saveConfig({ version: 2, projects: {}, repos: {} });
+    mkdirSync(buildCacheRoot(), { recursive: true });
+    mkdirSync(metroCacheRoot(), { recursive: true });
+    const order: string[] = [];
+    let entered!: () => void;
+    let finish!: () => void;
+    const walking = new Promise<void>((resolve) => (entered = resolve));
+    const finished = new Promise<void>((resolve) => (finish = resolve));
+    vi.spyOn(fsUtil, 'measuredDirectorySizeAsync').mockImplementation(async (dir) => {
+      const walk = dir === buildCacheRoot() ? 'walk build cache' : 'walk Metro cache';
+      order.push(walk);
+      if (walk === 'walk build cache') {
+        entered();
+        await finished;
+      }
+      return 1;
+    });
+    vi.spyOn(ladder, 'runLadder').mockImplementation(async (_input, pressure) => {
+      order.push('pass hard floor');
+      return { actions: [], pressure };
+    });
+    await acquireDisk(LANE);
+    try {
+      const sizes = measureSizes(Date.now(), () => {}, testContext(), [], diskBoundary);
+      await walking;
+      const floor = runDiskPass(
+        { act: true, pressure: critical('floor'), devices: [], sims: [], requested: true },
+        () => {},
+        testContext(),
+      );
+      finish();
+      await Promise.all([sizes, floor]);
+    } finally {
+      releaseDisk();
+    }
+
+    expect(order).toEqual(['walk build cache', 'pass hard floor', 'walk Metro cache']);
+  });
+
+  test('the maintenance pass gives up the turn once it deletes nothing more, before its discovery scan', async () => {
+    const order: string[] = [];
+    vi.spyOn(dependencies, 'runDormantDependencies').mockResolvedValue([]);
+    vi.spyOn(ladder, 'runLadder').mockImplementation(async (_input, pressure) => {
+      order.push('pass');
+      return { actions: [], pressure };
+    });
+    let asked: Promise<unknown> = Promise.resolve();
+    vi.spyOn(maintenanceRun, 'runMaintenance').mockImplementation(async (_trigger, options) => {
+      options?.deleted?.();
+      asked = pass('scan');
+      await vi.advanceTimersByTimeAsync(0);
+      order.push('discovery scan');
+    });
+    const lane = await laneStarted();
+    await lane.settled();
+    await asked;
+
+    expect(order).toEqual(['pass', 'discovery scan']);
+  });
+
+  test('a disk pass aborted while it waits for the turn stops before its first rung', async () => {
+    saveConfig({ version: 2, projects: {}, repos: {} });
+    const rungs = vi.spyOn(ladder, 'runLadder');
+    const controller = new AbortController();
+    await acquireDisk(LANE);
+    const asked = runDiskPass(
+      { act: true, pressure: critical('aborted'), devices: [], sims: [], requested: false },
+      () => {},
+      testContext({ signal: controller.signal }),
+    );
+    void asked.catch(() => {});
+    controller.abort();
+    releaseDisk();
+
+    await expect(asked).rejects.toThrow('aborted');
+    expect(rungs).not.toHaveBeenCalled();
+  });
+
+  test('a hard-floor pass asked while the first of two source checkouts is cleaned runs before the second', async () => {
+    saveConfig({ version: 2, projects: {}, repos: {} });
+    const order: string[] = [];
+    let entered!: () => void;
+    let finish!: () => void;
+    const clearing = new Promise<void>((resolve) => (entered = resolve));
+    const finished = new Promise<void>((resolve) => (finish = resolve));
+    vi.spyOn(artifacts, 'clearSourceTrees').mockImplementation(async (targets) => {
+      order.push(`clear ${targets.join(' ')}`);
+      if (order.length === 1) {
+        entered();
+        await finished;
+      }
+      return new Map(targets.map((target) => [target, { status: 'done' as const, bytes: 1, detail: '' }]));
+    });
+    vi.spyOn(ladder, 'runLadder').mockImplementation(async (_input, pressure) => {
+      order.push('pass hard floor');
+      return { actions: [], pressure };
+    });
+    const tree = (worktree: string): RankedDependency => ({
+      candidate: { worktree, path: join(worktree, 'node_modules'), keys: [], locked: false, reduceOnly: false },
+      source: true,
+      workspace: worktree,
+      bytes: 1,
+      privateBytes: 1,
+    });
+    await acquireDisk(LANE);
+    try {
+      const cleaned = clearSourceCheckouts(
+        [tree('/a'), tree('/b')],
+        0,
+        '',
+        [],
+        testContext(),
+        'idle.sourceDormantDays is 1',
+        'normal',
+        diskBoundary,
+      );
+      await clearing;
+      const floor = runDiskPass(
+        { act: true, pressure: critical('floor'), devices: [], sims: [], requested: true },
+        () => {},
+        testContext(),
+      );
+      finish();
+      await Promise.all([cleaned, floor]);
+    } finally {
+      releaseDisk();
+    }
+
+    expect(order).toEqual([
+      `clear ${join('/a', 'node_modules')}`,
+      'pass hard floor',
+      `clear ${join('/b', 'node_modules')}`,
+    ]);
+  });
+
+  test('a unit boundary refuses to run while the lane does not hold the turn', async () => {
+    expect(() => diskBoundary()).toThrow('did not hold the disk');
+    await acquireDisk(LADDER);
+    try {
+      expect(() => diskBoundary()).toThrow('did not hold the disk');
+    } finally {
+      releaseDisk();
+    }
+    await acquireDisk(LANE);
+    try {
+      await diskBoundary();
+    } finally {
+      releaseDisk();
+    }
+  });
+
+  test('a hard-floor pass asked during a maintenance cache trim runs before its next entry', async () => {
+    saveConfig({ version: 2, projects: {}, repos: {} });
+    const entries = ['a', 'b'].map((name) => join(buildCacheRoot(), 'key', name));
+    const old = new Date(Date.now() - 10 * 24 * 60 * MINUTE_MS);
+    for (const entry of entries) {
+      mkdirSync(entry, { recursive: true });
+      utimesSync(entry, old, old);
+    }
+    const order: string[] = [];
+    let entered!: () => void;
+    let finish!: () => void;
+    const walking = new Promise<void>((resolve) => (entered = resolve));
+    const finished = new Promise<void>((resolve) => (finish = resolve));
+    vi.spyOn(fsUtil, 'measuredDirectorySizeAsync').mockImplementation(async (dir) => {
+      if (!entries.includes(dir)) return 0;
+      order.push(`entry ${dir.slice(-1)}`);
+      if (order.length === 1) {
+        entered();
+        await finished;
+      }
+      return 1;
+    });
+    vi.spyOn(ladder, 'runLadder').mockImplementation(async (_input, pressure) => {
+      order.push('pass hard floor');
+      return { actions: [], pressure };
+    });
+    await acquireDisk(LANE);
+    try {
+      const trim = executeAction(
+        { kind: 'would-trim-cache', target: 'Build cache', dir: buildCacheRoot(), bytes: 100, reason: 'over its cap' },
+        {
+          settings: resolveMaintenanceSettings(),
+          protectedRoot: '',
+          operation: testContext(),
+          between: diskBoundary,
+        },
+      );
+      await walking;
+      const floor = runDiskPass(
+        { act: true, pressure: critical('floor'), devices: [], sims: [], requested: true },
+        () => {},
+        testContext(),
+      );
+      finish();
+      await Promise.all([trim, floor]);
+    } finally {
+      releaseDisk();
+    }
+
+    expect(order).toEqual(['entry a', 'pass hard floor', 'entry b']);
+  });
+
+  test('walks the lane runs side by side hand the turn over once, and each waits until the lane has it back', async () => {
+    const order: string[] = [];
+    await acquireDisk(LANE);
+    const floor = acquireDisk(HARD_FLOOR).then(() => void order.push('pass'));
+    const walks = Promise.all([
+      diskBoundary().then(() => void order.push('walk a')),
+      diskBoundary().then(() => void order.push('walk b')),
+    ]);
+    await floor;
+    order.push('pass done');
+    releaseDisk();
+    await walks;
+    releaseDisk();
+
+    expect(order).toEqual(['pass', 'pass done', 'walk a', 'walk b']);
+  });
+
+  test('a disk pass that fails is logged and the tick goes on', async () => {
+    saveConfig({ version: 2, projects: {}, repos: {} });
+    freeMb = 10 * 1024;
+    vi.spyOn(idlePass, 'runIdlePass').mockResolvedValue([]);
+    vi.spyOn(stages, 'runDormantPass').mockResolvedValue([]);
+    const events: string[] = [];
+
+    const passes = await runHomePasses({
+      act: true,
+      log: (_level, event) => void events.push(event),
+      diskPass: async () => {
+        throw new Error('the passes thread ended during a disk pass');
+      },
+    });
+
+    expect(events).toContain('pressure_ladder_failed');
+    expect(passes.ladder).toMatchObject({ freed: false });
+  });
+});
 
 describe.skipIf(process.platform === 'win32')(
   'a running stim-daemon (skipped on win32, where Stim runs no daemon)',
@@ -397,7 +751,12 @@ describe.skipIf(process.platform === 'win32')(
       vi.spyOn(idlePass, 'runIdlePass').mockImplementation(() => after(1000, []));
       vi.spyOn(stages, 'runDormantPass').mockImplementation(() => after(2000, []));
       vi.spyOn(dependencies, 'runDormantDependencies').mockImplementation(() => after(3000, []));
-      vi.spyOn(ladder, 'runLadder').mockImplementation((_input, pressure) => after(4000, { actions: [], pressure }));
+      vi.spyOn(ladder, 'runLadder').mockImplementation(() =>
+        after(4000, {
+          actions: [],
+          pressure: { level: 'normal', disk: 'normal', memory: 'normal', reasons: [], memoryWarningSince: null },
+        }),
+      );
       vi.spyOn(maintenanceRun, 'runMaintenance').mockImplementation(() => after(5000, undefined));
       vi.spyOn(reclaim, 'reclaimForBootWaiters').mockImplementation(() => after(6000, null));
       const daemon = runStimd({ mode: 'on' });
@@ -447,6 +806,34 @@ describe.skipIf(process.platform === 'win32')(
       await daemon;
       expect(maintenance).toHaveBeenCalledTimes(2);
       expect(ticks().map(({ at }) => Math.round((at - started) / MINUTE_MS))).toEqual([1, 6, 11, 16, 21]);
+    });
+
+    test('a tick serves boot waiters while its disk pass waits behind a long unit of the maintenance lane', async () => {
+      saveConfig({ version: 2, projects: {}, repos: {} });
+      freeMb = 10 * 1024;
+      let finishUnit!: (actions: []) => void;
+      const longUnit = new Promise<[]>((resolve) => (finishUnit = resolve));
+      vi.spyOn(dependencies, 'runDormantDependencies').mockImplementationOnce(() => longUnit);
+      vi.spyOn(ladder, 'runLadder').mockImplementation(async (_input, pressure) => ({ actions: [], pressure }));
+      const reclaims = vi.spyOn(reclaim, 'reclaimForBootWaiters').mockResolvedValue(null);
+      let exited = false;
+      const daemon = (async () => {
+        await runStimd({ mode: 'on' });
+        exited = true;
+      })();
+
+      await vi.advanceTimersByTimeAsync(MINUTE_MS);
+      await vi.waitFor(() => expect(ticks()).toHaveLength(1));
+      await vi.advanceTimersByTimeAsync(MINUTE_MS);
+      await vi.waitFor(() => expect(reclaims).toHaveBeenCalledTimes(2));
+      const ticksWhileWaiting = ticks().length;
+
+      finishUnit([]);
+      await vi.waitFor(() => expect(ticks()).toHaveLength(2));
+      await vi.advanceTimersByTimeAsync(3 * 5 * MINUTE_MS);
+      await vi.waitFor(() => expect(exited).toBe(true));
+      await daemon;
+      expect(ticksWhileWaiting).toBe(1);
     });
 
     describe('work that never ends', () => {
