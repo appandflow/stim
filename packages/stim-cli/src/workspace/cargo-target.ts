@@ -890,7 +890,8 @@ async function fileHeld(file: string, signal?: AbortSignal): Promise<boolean> {
 
 /**
  * One walk of `paths`, never through a symbolic link: the first directory on a device other than `dev` (`mount`), the
- * newest modification time of anything in each of `paths` (`newest`), and the bytes each holds (`bytes`).
+ * newest modification time of anything in each of `paths` (`newest`), and the bytes each holds (`bytes`), counting a
+ * file with several hard links once and leaving out the files the remover keeps.
  */
 async function walkEntries(
   paths: readonly string[],
@@ -898,12 +899,17 @@ async function walkEntries(
 ): Promise<{ mount: string | null; newest: Map<string, number>; bytes: Map<string, number> }> {
   const newest = new Map<string, number>();
   const bytes = new Map<string, number>();
+  const counted = new Set<string>();
   const queue = paths.map((path) => ({ path, top: path }));
   for (let item = queue.pop(); item !== undefined; item = queue.pop()) {
     const { path, top } = item;
     const stat = await lstat(path);
     newest.set(top, Math.max(newest.get(top) ?? 0, stat.mtimeMs));
-    bytes.set(top, (bytes.get(top) ?? 0) + stat.blocks * 512);
+    const id = `${stat.dev}:${stat.ino}`;
+    if (!counted.has(id) && (stat.isDirectory() || !kept(basename(path)))) {
+      counted.add(id);
+      bytes.set(top, (bytes.get(top) ?? 0) + stat.blocks * 512);
+    }
     if (!stat.isDirectory()) continue;
     if (stat.dev !== dev) return { mount: path, newest, bytes };
     for (const entry of await readdir(path, { withFileTypes: true })) queue.push({ path: join(path, entry.name), top });

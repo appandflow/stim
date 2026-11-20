@@ -1,6 +1,7 @@
 import {
   chmodSync,
   existsSync,
+  linkSync,
   lutimesSync,
   mkdirSync,
   mkdtempSync,
@@ -647,6 +648,19 @@ describe.skipIf(process.platform === 'win32')('deleting an idle Cargo target who
     expect(result.removed).toEqual([]);
     expect(result.kept).toEqual([expect.stringContaining('is no longer the directory')]);
     expect(readFileSync(join(dir, 'doc', 'index.html'), 'utf8')).toBe('theirs');
+  });
+
+  test('a binary hard-linked into deps is counted once in the bytes freed', async () => {
+    const binary = join(dir, 'debug', 'app');
+    writeFileSync(binary, Buffer.alloc(1024 * 1024, 1));
+    linkSync(binary, join(dir, 'debug', 'deps', 'app-0123456789abcdef'));
+    ageTree(dir);
+
+    const result = await remove();
+
+    expect(result.removed.toSorted()).toEqual(['.rustc_info.json', 'debug', 'doc']);
+    expect(result.bytes).toBeGreaterThanOrEqual(1024 * 1024);
+    expect(result.bytes).toBeLessThan(1.5 * 1024 * 1024);
   });
 
   test('a target with nothing left in it goes too', async () => {
