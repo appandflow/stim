@@ -33,7 +33,7 @@ process.exit(0);
   const child = spawn(
     process.execPath,
     ['--disable-warning=ExperimentalWarning', '--experimental-strip-types', '--input-type=module', '-e', script],
-    { stdio: ['ignore', 'pipe', 'inherit'] },
+    { stdio: ['ignore', 'pipe', 'inherit'], env: { ...process.env, UV_THREADPOOL_SIZE: '2' } },
   );
   let out = '';
   child.stdout.on('data', (chunk: Buffer) => (out += chunk.toString()));
@@ -47,7 +47,7 @@ describe.skipIf(process.platform === 'win32')('ending stimd workers before proce
     expect(spawnSync('mkfifo', [fifo]).status).toBe(0);
     // Worker teardown cancels a libuv threadpool request that no pool thread has taken yet, so the fifo open must be
     // running before the worker reports ready. The pool takes requests in order, so the stat callback queued after it
-    // runs only once a thread holds the open. This needs a second pool thread; libuv starts four by default.
+    // runs only once a thread holds the open. That takes a second pool thread, so the fixture sets UV_THREADPOOL_SIZE.
     const result = await endingProcess(
       `const fs = process.getBuiltinModule('node:fs'); fs.readFile(${JSON.stringify(fifo)}, () => {}); fs.stat('.', () => parentPort.postMessage('reading')); setInterval(() => {}, 1000);`,
     );
