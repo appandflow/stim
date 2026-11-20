@@ -33,7 +33,7 @@ import {
   type OwnedProcess,
 } from '../web/state.ts';
 import { workspaceDir } from '../workspace/paths.ts';
-import { getExecutor } from '../exec.ts';
+import { getExecutor, runControlPath } from '../exec.ts';
 import { repoRootAsync } from '../workspace/worktree.ts';
 import {
   deleteParkedIosSim,
@@ -114,7 +114,7 @@ export interface ParkRequest {
   bootedUntil?: string;
 }
 
-export async function teardownParkedAvd(
+async function teardownParkedAvdWork(
   avdName: string,
   { operation }: { operation?: StimContext } = {},
 ): Promise<TeardownOutcome> {
@@ -139,7 +139,7 @@ export async function teardownParkedAvd(
   }
 }
 
-export async function teardownParkedIosSim(
+async function teardownParkedIosSimWork(
   udid: string,
   {
     label,
@@ -188,7 +188,7 @@ async function shutDownParkedIosSimIfLive(udid: string, operation?: StimContext)
  * Shuts down a parked simulator that was kept booted and keeps it parked, without the `bootedUntil` that marked it.
  * A simulator that is gone or already shut down only loses the mark.
  */
-export async function shutDownBootedParkedIosSim(
+async function shutDownBootedParkedIosSimWork(
   udid: string,
   { label, operation }: { label?: string; operation?: StimContext } = {},
 ): Promise<TeardownOutcome> {
@@ -335,7 +335,7 @@ function iosSimReference(udid: string): string | null {
   return readParked('ios', { config }).some((entry) => entry.udid === udid) ? 'the simulator pool' : null;
 }
 
-export async function teardownOwnedIosSim(
+async function teardownOwnedIosSimWork(
   udid: string,
   {
     del = false,
@@ -489,7 +489,7 @@ export function deleteOwnedIosSimNow(udid: string, timeoutMs: number): boolean {
  * Deletes an owned simulator whose runtime is no longer installed, which simctl lists as unavailable and which cannot
  * boot, after re-resolving it and its ownership from a fresh listing that includes unavailable simulators.
  */
-export async function teardownUnavailableOwnedIosSim(
+async function teardownUnavailableOwnedIosSimWork(
   udid: string,
   { label, operation }: { label?: string; operation?: StimContext } = {},
 ): Promise<TeardownOutcome> {
@@ -653,7 +653,7 @@ interface AvdTeardownOptions {
   ) => ReturnType<typeof resolveOwnedAvdSerial> | Promise<ReturnType<typeof resolveOwnedAvdSerial>>;
 }
 
-export async function teardownOwnedAvd(avdName: string, options: AvdTeardownOptions = {}): Promise<TeardownOutcome> {
+async function teardownOwnedAvdWork(avdName: string, options: AvdTeardownOptions = {}): Promise<TeardownOutcome> {
   let claim: ClaimHandle | undefined;
   let retained = false;
   const operation = options.operation;
@@ -941,7 +941,7 @@ export const BROWSER_LOCK = 'web';
  * Closes the workspace's Stim-owned Chrome and its supervisor, after verifying both process identities. With
  * `deleteProfile`, it also deletes the profile directory, only when the created-devices ledger lists it.
  */
-export async function teardownOwnedBrowser(
+async function teardownOwnedBrowserWork(
   root: string,
   options: { deleteProfile?: boolean; operation?: StimContext } = {},
 ): Promise<TeardownOutcome> {
@@ -960,7 +960,7 @@ export async function teardownOwnedBrowser(
 }
 
 /** {@link teardownOwnedBrowser} for a caller that already holds the {@link BROWSER_LOCK} lock. */
-export async function teardownBrowserHeld(
+async function teardownBrowserHeldWork(
   root: string,
   { deleteProfile = false, operation }: { deleteProfile?: boolean; operation?: StimContext } = {},
 ): Promise<TeardownOutcome> {
@@ -1044,3 +1044,21 @@ export async function teardownBrowserHeld(
     return { status: 'failed', reason: String((error as Error)?.message || error) };
   }
 }
+
+// @ref LLP 0021#stimd-runs-at-the-priority-of-an-app -- a teardown keeps the caller priority inside maintenance work
+export const teardownParkedAvd: typeof teardownParkedAvdWork = (...args) =>
+  runControlPath(() => teardownParkedAvdWork(...args));
+export const teardownParkedIosSim: typeof teardownParkedIosSimWork = (...args) =>
+  runControlPath(() => teardownParkedIosSimWork(...args));
+export const shutDownBootedParkedIosSim: typeof shutDownBootedParkedIosSimWork = (...args) =>
+  runControlPath(() => shutDownBootedParkedIosSimWork(...args));
+export const teardownOwnedIosSim: typeof teardownOwnedIosSimWork = (...args) =>
+  runControlPath(() => teardownOwnedIosSimWork(...args));
+export const teardownUnavailableOwnedIosSim: typeof teardownUnavailableOwnedIosSimWork = (...args) =>
+  runControlPath(() => teardownUnavailableOwnedIosSimWork(...args));
+export const teardownOwnedAvd: typeof teardownOwnedAvdWork = (...args) =>
+  runControlPath(() => teardownOwnedAvdWork(...args));
+export const teardownOwnedBrowser: typeof teardownOwnedBrowserWork = (...args) =>
+  runControlPath(() => teardownOwnedBrowserWork(...args));
+export const teardownBrowserHeld: typeof teardownBrowserHeldWork = (...args) =>
+  runControlPath(() => teardownBrowserHeldWork(...args));

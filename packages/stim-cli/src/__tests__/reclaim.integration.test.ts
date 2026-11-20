@@ -1,11 +1,12 @@
-import { type ChildProcess, spawn } from 'node:child_process';
+import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
 import * as identity from '../process-identity.ts';
 import { captureProcessToken } from '../process-identity.ts';
 import { once } from 'node:events';
 import { realpathSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { dirname, join } from 'path';
-import { setExecutor, resetExecutor } from '../exec.ts';
+import { getExecutor, setExecutor, resetExecutor, runMaintenanceWork } from '../exec.ts';
+import { measuredDirectorySizeAsync } from '../fs-util.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { upsertProject, setDevice, getProject } from '../workspace/config.ts';
 import { describeDereferenced, reclaimProject } from '../devices/reclaim.ts';
@@ -89,6 +90,56 @@ test('reclaimProject retains daemon state after a refusal and removes it after a
     start.mockRestore();
   }
 });
+
+test.skipIf(process.platform === 'win32')(
+  'inside maintenance work at normal pressure the agent-device stop reclaimProject runs keeps the caller priority while a size walk is lowered',
+  async () => {
+    const field = process.platform === 'darwin' ? 'pri' : 'ni';
+    const own = Number(execFileSync('ps', ['-o', `${field}=`, '-p', String(process.pid)], { encoding: 'utf8' }).trim());
+    const log = join(tmpHome, 'priorities');
+    writeFileSync(log, '');
+    upsertProject('/proj', { metroPort: 8082 });
+    ensureWorkspaceStorage('/proj');
+    const stateDir = workspaceAgentDeviceDir('/proj');
+    mkdirSync(stateDir);
+    writeFileSync(
+      join(stateDir, 'daemon.json'),
+      JSON.stringify({ pid: process.pid, processStartTime: '2026-11-01T05:50:03Z' }),
+    );
+    const start = vi.spyOn(identity, 'inspectProcessStart').mockReturnValue({
+      status: 'running',
+      startedAtMs: Date.parse('2026-11-01T06:50:03Z'),
+    });
+    onTestFinished(() => start.mockRestore());
+    resetExecutor();
+    const real = getExecutor();
+    setExecutor(
+      makeExecutor({
+        findExecutable: () => '/bin/agent-device',
+        runFileAsync: async (file, _args, opts) => {
+          if (file === 'agent-device' || file === 'du')
+            await real.runFileAsync('/bin/sh', ['-c', `echo "${file} $(ps -o ${field}= -p $$)" >> "$0"`, log], opts);
+          return '';
+        },
+      }),
+    );
+    await runMaintenanceWork('normal', async () => {
+      await measuredDirectorySizeAsync(tmpHome, { timeoutMs: 30_000 });
+      expect((await reclaimProject('/proj', { deleteOwnedDevices: false })).keptEntry).toBe(false);
+    });
+    const priorities = Object.fromEntries(
+      readFileSync(log, 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => line.split(/\s+/))
+        .map(([tool, value]) => [tool, Number(value)]),
+    );
+    expect(priorities).toEqual({
+      du: process.platform === 'darwin' ? Math.min(own, 20) : 19,
+      'agent-device': own,
+    });
+  },
+);
 
 test('reclaimProject keeps the workspace, its devices and its entry while a native run or a build uses it', async () => {
   setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });

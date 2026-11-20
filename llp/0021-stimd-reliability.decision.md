@@ -267,9 +267,12 @@ one in the home's daemon snapshot. At high or critical pressure the same
 children run at full priority, since freeing disk or memory is then the urgent
 work.
 
-Inside maintenance work, a stop or a device teardown keeps full priority: the
-idle stage's workspace stop and the maintenance actions that stop a workspace,
-Gradle or watchman or delete a device or runtime run as control path. `adb` is
+Inside maintenance work, a stop or a device teardown keeps full priority. The
+exported teardowns of `devices/teardown.ts`, which every shutdown, delete and
+park goes through, run as control path, and so does the workspace stop inside
+`reclaimProject`, the agent-device daemon stop included. The idle stage's
+workspace stop and the maintenance actions that stop a workspace, Gradle or
+watchman or delete a device or runtime run as control path too. `adb` is
 never lowered, because a client that finds no server starts the shared adb
 server, which would keep the client's priority for every later install.
 Commands keep the caller's priority, `stim gc` included; a call that passes

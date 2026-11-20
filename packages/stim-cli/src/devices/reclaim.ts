@@ -57,7 +57,7 @@ import { readWebRecord, webLogFile } from '../web/state.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
 import { releaseWorkspaceLeases, type ReleasedLease } from '../engine/device-lease.ts';
 import { removePhoneReverses } from './phone-reverses.ts';
-import { getExecutor } from '../exec.ts';
+import { getExecutor, runControlPath } from '../exec.ts';
 import { runOperationFile } from '../engine/operation-exec.ts';
 import { withWorkspaceProcessLock, WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { agentDeviceDaemon } from './activity.ts';
@@ -435,7 +435,7 @@ export async function reclaimProject(path: string, options: ReclaimOptions = {})
   const dir = workspaceDir(path);
   const existed = existsSync(dir);
   await endWorkspaceShares(path);
-  const run = await withIdleWorkspace(path, () => reclaimIdleProject(path, existed, options), {
+  const run = await withIdleWorkspace(path, () => runControlPath(() => reclaimIdleProject(path, existed, options)), {
     operation: options.operation,
     purpose: 'workspace removal',
     hosted: false,
