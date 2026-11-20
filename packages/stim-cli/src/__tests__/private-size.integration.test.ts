@@ -1,9 +1,19 @@
 import { randomBytes } from 'node:crypto';
-import { linkSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  linkSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { measureTree } from '../private-size.ts';
+import { measureTree, privateSizeKnowable } from '../private-size.ts';
 
 let scratch: string;
 
@@ -41,4 +51,57 @@ describe.skipIf(process.platform !== 'darwin')('measureTree with the stim-privsi
       privateBytes: copy,
     });
   }, 120_000);
+});
+
+describe.runIf(process.platform === 'linux')('measureTree on Linux', () => {
+  let root: string;
+
+  beforeEach(async () => {
+    root =
+      (await privateSizeKnowable(scratch)) === 'yes'
+        ? scratch
+        : realpathSync(mkdtempSync(join(process.cwd(), '.stim-private-size-')));
+  });
+
+  afterEach(() => {
+    if (root !== scratch) rmSync(root, { recursive: true, force: true });
+  });
+
+  test('counts a file hard-linked from a package store outside the tree as shared, and one linked only inside once as its own', async () => {
+    const store = join(root, 'store');
+    const tree = join(root, 'tree');
+    mkdirSync(store);
+    mkdirSync(join(tree, '.pnpm'), { recursive: true });
+    writeFileSync(join(store, 'package.js'), randomBytes(2 * 1024 * 1024));
+    writeFileSync(join(tree, 'own'), randomBytes(1024 * 1024));
+    linkSync(join(store, 'package.js'), join(tree, '.pnpm', 'package.js'));
+    linkSync(join(tree, 'own'), join(tree, '.pnpm', 'own-link'));
+    symlinkSync(store, join(tree, 'outside'));
+    expect(await privateSizeKnowable(tree)).toBe('yes');
+
+    const size = await measureTree(tree, { timeoutMs: 60_000 });
+
+    const own = allocated(join(tree, 'own'));
+    expect(size).toEqual({ bytes: own + allocated(join(store, 'package.js')), privateBytes: own });
+  }, 120_000);
+
+  test.skipIf(process.getuid?.() === 0)(
+    'keeps the count of what it could read past a directory it cannot, as a lower bound',
+    async () => {
+      const tree = join(root, 'tree');
+      mkdirSync(join(tree, 'sealed'), { recursive: true });
+      writeFileSync(join(tree, 'own'), randomBytes(1024 * 1024));
+      writeFileSync(join(tree, 'sealed', 'hidden'), randomBytes(1024 * 1024));
+      chmodSync(join(tree, 'sealed'), 0o000);
+      try {
+        const size = await measureTree(tree, { timeoutMs: 60_000 });
+
+        const own = allocated(join(tree, 'own'));
+        expect(size).toEqual({ bytes: own, privateBytes: own, partial: true });
+      } finally {
+        chmodSync(join(tree, 'sealed'), 0o755);
+      }
+    },
+    120_000,
+  );
 });

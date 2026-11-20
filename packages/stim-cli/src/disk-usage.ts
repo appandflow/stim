@@ -16,13 +16,15 @@ import {
   diskUsageWalkClaims,
   readDiskUsage,
   readDiskUsageFailure,
+  readDiskUsageFailureSignature,
   readDiskUsagePartial,
   type DiskMeasure,
 } from '@stim-cli/core/state';
 import { writeCacheFile } from './cache-file.ts';
 import { debugLog } from './debug-log.ts';
 import { declareSpawnsOn, stopDeclaringSpawnsOn } from './engine/spawn-claims.ts';
-import { measureTree, treeSignature } from './private-size.ts';
+import { measureTree, treeSignature, type TreeSize } from './private-size.ts';
+import { lastSizeFailure } from './size-failures.ts';
 import { ARTIFACT_DIRS } from './workspace/regenerable-dirs.ts';
 
 const DEPENDENCY_MAX_AGE_MS: number = 6 * 60 * 60_000;
@@ -126,6 +128,13 @@ export interface RefreshOptions {
   /** Records a failed walk, and leaves the folder alone for `maxAgeMs` after it. */
   failures?: boolean;
   /**
+   * Asked under the walk claim, right before a walk would start: false leaves the folder unwalked with the outcome
+   * `busy`.
+   */
+  admit?: () => boolean;
+  /** Called once the walk is over, whatever its outcome, before the walk claim is released. */
+  settled?: () => void;
+  /**
    * The caller has established, through a bounded read, that `path` exists: do not probe it. Without it the folder is
    * probed with a synchronous `existsSync`, which a stalled mount can block.
    */
@@ -157,7 +166,8 @@ export async function refreshMeasure(
   const dependency = isDependencyTree(path);
   const failedRecently = () => {
     const failedAt = options.failures ? readDiskUsageFailure(path) : null;
-    return failedAt !== null && now() - Date.parse(failedAt) < maxAgeMs;
+    if (failedAt === null || now() - Date.parse(failedAt) >= maxAgeMs) return false;
+    return !dependency || readDiskUsageFailureSignature(path) === (options.signature ?? treeSignature(path));
   };
   const skip = () => freshMeasure(path, options) !== null || failedRecently();
   const fresh = () => {
@@ -176,6 +186,7 @@ export async function refreshMeasure(
     at: number,
     walkMs: number | null,
     partial?: true,
+    privateUnknown?: 'volume' | 'walk',
   ): DiskMeasure => {
     const measure: DiskMeasure = {
       bytes,
@@ -188,6 +199,7 @@ export async function refreshMeasure(
       ...measure,
       ...(walkMs !== null ? { walkMs } : {}),
       ...(partial ? { partial } : {}),
+      ...(privateBytes === null && privateUnknown ? { privateUnknown } : {}),
     });
     return measure;
   };
@@ -200,10 +212,11 @@ export async function refreshMeasure(
   let cleanupUnverified = false;
   try {
     if (claim && skip()) return fresh();
+    if (options.admit && !options.admit()) return { outcome: 'busy', measure: null };
     const startedAt = now();
     const signature = dependency ? (options.signature ?? treeSignature(path)) : null;
     const targets = options.targets?.();
-    let size: { bytes: number; privateBytes: number | null; partial?: true } | null;
+    let size: TreeSize | null;
     if (targets && !targets.length) size = { bytes: 0, privateBytes: null };
     else {
       if (claim) {
@@ -222,7 +235,12 @@ export async function refreshMeasure(
     operation?.signal.throwIfAborted();
     if (!size) {
       if (options.failures)
-        writeCacheFile(diskUsageFailureFile(path), { path, failedAt: new Date(now()).toISOString() });
+        writeCacheFile(diskUsageFailureFile(path), {
+          path,
+          failedAt: new Date(now()).toISOString(),
+          ...(signature ? { signature } : {}),
+          ...lastSizeFailure(path),
+        });
       return { outcome: 'failed', measure: null };
     }
     return {
@@ -234,6 +252,7 @@ export async function refreshMeasure(
         startedAt,
         Math.max(0, now() - startedAt),
         size.partial,
+        size.privateUnknown,
       ),
       ...(size.partial ? { partial: true as const } : {}),
     };
@@ -242,6 +261,7 @@ export async function refreshMeasure(
     throw error;
   } finally {
     if (operation) stopDeclaringSpawnsOn(operation, claim);
+    options.settled?.();
     if (!cleanupUnverified) releaseClaim(claim);
   }
 }

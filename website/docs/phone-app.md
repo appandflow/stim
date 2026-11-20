@@ -98,7 +98,7 @@ new code; the previous code stays valid until it expires.
 
 If scanning fails or camera access is denied, expand **Can't scan? Enter the
 endpoint and token** on Desktop. **Endpoint** and **Token** each have a copy
-button; the token is hidden until you choose the eye button. Choose **Enter the Endpoint and Token Instead** on the phone and paste them into its fields. Manual entry uses the same single-use code. Choose **Retry** on
+button; the token is hidden until you choose the eye button. Choose **Enter the Endpoint or Pairing Code Instead** on the phone and paste them into its fields. Manual entry uses the same single-use code. Choose **Retry** on
 the phone when a failed scan needs another attempt.
 
 A standalone server can print the same pairing payload:
@@ -120,7 +120,10 @@ npx --yes stim pair --json
 </TabItem>
 </Tabs>
 
-Use its endpoint and pairing token for manual entry. While the server serves
+Paste the whole line it prints into the phone's **Endpoint or pairing code**
+field and leave the token empty; the phone checks the server key fingerprint
+the same way it does for a QR code. The line plain `stim pair` prints works
+too. While the server serves
 this Mac only (**Allow connections** off in Desktop, or `stim serve
 --loopback-only`), `stim pair` refuses instead of printing an endpoint the phone
 cannot reach. The phone spends the

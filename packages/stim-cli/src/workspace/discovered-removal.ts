@@ -1,5 +1,5 @@
 import { lstat, readFile, readdir, readlink } from 'node:fs/promises';
-import { join, relative } from 'node:path';
+import { dirname, join, relative, sep } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
 import { decideIdleStop } from '../policy/idle.ts';
 import { ARTIFACT_DIRS, existingBuildDirsAsync } from './regenerable-dirs.ts';
@@ -8,6 +8,7 @@ import type { DiscoveredReads } from './discovered-reads.ts';
 import { gitQuietAsync } from './git.ts';
 import { hiddenEditHold } from './hidden-edits.ts';
 import { dependencyEditsHold } from './dependency-edits.ts';
+import { absent } from './scan-rules.ts';
 
 const MAX_IGNORED_FILES = 200;
 const MAX_COMPARED_BYTES = 16 * 1024 * 1024;
@@ -99,6 +100,33 @@ async function ignoredFilesHold(path: string, main: string, signal?: AbortSignal
   return null;
 }
 
+/** The nearest folder above `path` that holds a `.git` entry, or null; a level that cannot be read throws. */
+async function enclosingCheckout(path: string): Promise<string | null> {
+  for (let dir = dirname(path); dir !== dirname(dir); dir = dirname(dir))
+    try {
+      await lstat(join(dir, '.git'));
+      return dir;
+    } catch (error) {
+      if (!absent(error)) throw error;
+    }
+  return null;
+}
+
+/**
+ * Why an unfinished `pnpm patch` keeps the worktree, or null: pnpm keeps the editable copy in
+ * `node_modules/.pnpm_patches` until `pnpm patch-commit`, which git ignores and no activity read looks into.
+ */
+async function pendingPnpmPatch(path: string): Promise<string | null> {
+  const dir = join(path, 'node_modules', '.pnpm_patches');
+  try {
+    return (await readdir(dir)).length
+      ? 'it has an unfinished pnpm patch in node_modules/.pnpm_patches; run pnpm patch-commit or delete it'
+      : null;
+  } catch (error) {
+    return absent(error) ? null : 'node_modules/.pnpm_patches cannot be read';
+  }
+}
+
 // @ref LLP 0004#removing-a-discovered-worktree-needs-more-evidence -- no Stim record of its files
 /**
  * What stops Stim removing a discovered linked worktree, or null: it must have had no activity for `idleMs` by the full
@@ -117,9 +145,24 @@ export async function discoveredRemovalHold(
 ): Promise<string | null> {
   if (reduceOnly)
     return 'it was found in a tool folder or by the full scan, so Stim reduces its outputs and never removes it';
-  const folder = main ? relative(main, path).split('/')[0] : undefined;
-  if (folder?.startsWith('.') && folder !== '.worktrees' && !folder.startsWith('..'))
-    return `it is managed by another tool (inside ${folder} of its main checkout)`;
+  let owner: string | null;
+  try {
+    owner = await enclosingCheckout(path);
+  } catch {
+    return 'the checkout that holds it cannot be read';
+  }
+  const toolFolder = (checkout: string | null) =>
+    checkout && (path === checkout || path.startsWith(`${checkout}${sep}`))
+      ? relative(checkout, path)
+          .split(sep)
+          .find((name) => name.startsWith('.') && name !== '.worktrees')
+      : undefined;
+  const inOwner = toolFolder(owner);
+  const folder = inOwner ?? toolFolder(main);
+  if (folder)
+    return `it is managed by another tool (inside ${folder} of ${inOwner && owner !== main ? owner : 'its main checkout'})`;
+  const patches = await pendingPnpmPatch(path);
+  if (patches) return patches;
   if (!(idleMs > 0)) return 'idle.dormantDays is 0, so its idleness cannot be established';
   const now = Date.now();
   const decision = decideIdleStop(await discoveredEvidence(path, { now, idleMs, reads, operation, reduceOnly }), {

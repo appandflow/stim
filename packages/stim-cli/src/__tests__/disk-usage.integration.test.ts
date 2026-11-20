@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import {
   diskUsageCacheFile,
+  diskUsageFailureFile,
   diskUsageWalkClaims,
   readDiskUsage,
   readDiskUsageFailure,
@@ -31,7 +32,9 @@ beforeEach(() => {
     runFileAsync: (file, args, opts) => {
       if (file !== 'nice') return real.runFileAsync(file, args, opts);
       walks++;
-      return failing ? Promise.reject(new Error('Command timed out')) : real.runFileAsync(file, args, opts);
+      return failing
+        ? Promise.reject(Object.assign(new Error('Command timed out'), { code: 'ETIMEDOUT' }))
+        : real.runFileAsync(file, args, opts);
     },
   });
 });
@@ -91,6 +94,7 @@ test('a failed walk is recorded and not repeated until the folder is due again, 
   expect(failed).toEqual({ outcome: 'failed', measure: null });
   expect(readDiskUsage(plain)).toBeNull();
   expect(readDiskUsageFailure(plain)).toBe(new Date(clock).toISOString());
+  expect(readJsonObject(diskUsageFailureFile(plain))).toMatchObject({ reason: 'timeout', limitMs: 60_000 });
   const walked = walks;
   expect((await refreshMeasure(plain, { ...options, maxAgeMs: 60_000, now, failures: true })).outcome).toBe('fresh');
   expect(walks).toBe(walked);
@@ -116,6 +120,33 @@ test('a walk claim held elsewhere leaves the folder unmeasured, and the walk run
   expect(walks).toBe(0);
   releaseClaim(held);
   expect((await refreshMeasure(tree, { ...options, claim: true })).outcome).toBe('measured');
+}, 120_000);
+
+test('settled runs while the walk claim is still held, after a walk and after a failed one', async () => {
+  const heldDuringSettled: boolean[] = [];
+  const settled = () => {
+    const attempt = tryAcquireClaim({ root: diskUsageWalkClaims(), mode: 'exclusive', label: 'test walk' });
+    heldDuringSettled.push(!attempt.acquired);
+    if (attempt.acquired) releaseClaim(attempt.acquired);
+  };
+
+  expect((await refreshMeasure(tree, { ...options, claim: true, settled })).outcome).toBe('measured');
+  expect(
+    (
+      await refreshMeasure(join(tree, 'missing'), {
+        ...options,
+        claim: true,
+        knownToExist: true,
+        failures: true,
+        settled,
+      })
+    ).outcome,
+  ).toBe('failed');
+
+  expect(heldDuringSettled).toEqual([true, true]);
+  const after = tryAcquireClaim({ root: diskUsageWalkClaims(), mode: 'exclusive', label: 'test walk' }).acquired;
+  expect(after).toBeTruthy();
+  if (after) releaseClaim(after);
 }, 120_000);
 
 test('a claimed walk whose child exits before its identity can be recorded is still measured', async () => {

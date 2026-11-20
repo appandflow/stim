@@ -582,6 +582,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
       record: () => {},
       admit: async () => null,
       check: async () => null,
+      selecting: () => null,
       release: releaseEngine,
     });
     let entered = () => {};
@@ -635,6 +636,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
       record: () => {},
       admit: async () => null,
       check: async () => null,
+      selecting: () => null,
       release: releaseEngine,
     });
     const original = measure.measureTick;
@@ -1226,6 +1228,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
       record,
       admit: async () => null,
       check: async () => null,
+      selecting: () => null,
       release: () => {},
     });
     let running: Promise<boolean> | undefined;
@@ -1372,7 +1375,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
     setExecutor({
       ...real,
       runFileAsync(file, args, options) {
-        if (file !== 'nice' || args.at(-1) !== tree) return real.runFileAsync(file, args, options);
+        if (file !== 'nice' || !args.includes(tree)) return real.runFileAsync(file, args, options);
         walk = real.runFileAsync(process.execPath, ['-e', 'setTimeout(() => {}, 20000)'], {
           ...options,
           onSpawn(spawned) {
@@ -1833,7 +1836,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
 
     expect(spawned).toHaveLength(1);
     expect(spawned[0]?.args.slice(1)).toEqual(['__stimd', '--mode', 'report']);
-    expect(spawned[0]?.options?.env).toEqual(kept);
+    expect(spawned[0]?.options?.env).toEqual({ ...kept, UV_THREADPOOL_SIZE: '16' });
   });
 
   describe('a Linux command starts the daemon as a transient user service so a runner that kills the call cannot reach it', () => {

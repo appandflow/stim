@@ -35,6 +35,9 @@ import {
   stimdRecordFile,
   stimdRunDir,
   stimdSuccessorMissingFile,
+  stimdJobRestartFile,
+  readJobRestart,
+  isServiceLabel,
   stimdSocket,
   stimBuildId,
   macosAppState,
@@ -106,7 +109,7 @@ import { ownedHere } from '../daemon/idle.ts';
 import { removeStaleHomeJobs } from '../daemon/launchd-jobs.ts';
 import { measureTick, type TickMeasurement } from '../daemon/measure.ts';
 import { listTestWaiting, listWaiting } from '../engine/wait-queue.ts';
-import { runHomePasses, type HomePasses } from '../daemon/passes.ts';
+import { runHomePasses, type HomePasses, type LadderPass } from '../daemon/passes.ts';
 import { reclaimForBootWaiters } from '../daemon/reclaim.ts';
 import { bootedParkedPending } from '../daemon/booted-parked.ts';
 import { pendingDormant } from '../daemon/stages.ts';
@@ -131,13 +134,16 @@ import {
 } from './metro/children.ts';
 import { invocation, traceInvocation, withInvocation, type Invocation } from './forwarded.ts';
 import { createPassesLane, createThreadTable } from './threads.ts';
+import { awakeTimeout } from './awake-timer.ts';
+import { endWorkers } from './workers.ts';
 import { createCleanupWatch, isUnverifiedCleanup } from './cleanup-watch.ts';
 import { setReportChildLog } from '../report-child-log.ts';
 import { createStreams } from './logs/streams.ts';
 import { handleLogRequest } from './logs/protocol.ts';
 import { writeDesktopKey } from './desktop-key.ts';
 import { createNetThread, type NetOptions } from './net.ts';
-import { serviceUnitLabel, unitSuccessorLabel } from './service-unit.ts';
+import { serviceJob, unitSuccessorLabel } from './service-unit.ts';
+import { jobRestartHold, writeJobRestart } from './job-restart.ts';
 import { followEngine } from './engine-follow.ts';
 import { takeLock } from '../engine-store/locks.ts';
 import { createStatusSnapshots } from './status-snapshot.ts';
@@ -152,7 +158,7 @@ import {
   updateBoot,
 } from './crash-hold.ts';
 import { ASKED_MS, autoUpdateOn, checkForUpdate, DAILY_MS, lastUpdateCheck, updateDue } from './auto-update.ts';
-import { ownStoreEngine, requireCurrentEngine, type StoreEngine } from '../daemon/engine-switch.ts';
+import { ownStoreEngine, requireCurrentEngine, switchedEngine, type StoreEngine } from '../daemon/engine-switch.ts';
 import { readRecords } from '../engine-store/store.ts';
 import {
   ATTACHED_ARG,
@@ -181,6 +187,7 @@ const SUCCESSOR_BIND_MS = 10_000;
 const SIGNALS = ['SIGTERM', 'SIGINT'] as const;
 const DETACHED_SIGNALS = [...SIGNALS, 'SIGHUP'] as const;
 const SECOND_SIGNAL_GRACE_MS = 5000;
+const SHUTDOWN_DEADLINE_MS = 10 * 60_000;
 
 type Level = 'debug' | 'info' | 'warn' | 'error';
 type Resource = 'build' | 'boot' | 'test';
@@ -246,14 +253,41 @@ async function takeClaim(
   label: string,
   details: Record<string, unknown>,
   retries = CLAIM_TRIES,
+  gate?: JobRestartGate,
 ): Promise<ClaimHandle | null> {
   for (let tries = 0; ; tries++) {
+    await gate?.wait();
     const attempt = tryAcquireClaim({ root, mode, label, details });
     if (attempt.pending) releaseClaim(attempt.pending);
-    if (attempt.acquired) return attempt.acquired;
+    if (attempt.acquired && !gate?.reserved()) return attempt.acquired;
+    if (attempt.acquired) releaseClaim(attempt.acquired);
     if (tries >= retries) return null;
     await new Promise((done) => setTimeout(done, CLAIM_RETRY_MS));
   }
+}
+
+interface JobRestartGate {
+  wait(): Promise<void>;
+  reserved(): boolean;
+}
+
+/**
+ * Whether `run/job-restart.json` holds this home for a service unit's job, which a stimd checks before and after it takes
+ * the home. The job of that unit (`job`) waits only while the stimd that left runs; any other stimd waits until
+ * `jobRestartUntil`.
+ */
+function jobRestartGate(job: string | undefined): JobRestartGate {
+  const reserved = () => {
+    const hold = jobRestartHold();
+    if (!hold || Date.now() >= hold.until || hold.record.pid === process.pid) return false;
+    return hold.record.label !== job || (hold.running && hold.record.left === null);
+  };
+  return {
+    reserved,
+    wait: async () => {
+      while (reserved()) await new Promise((done) => setTimeout(done, CLAIM_RETRY_MS));
+    },
+  };
 }
 
 /** Why stimd cannot start while a stim-daemon from before Stim 2.0 holds the daemon claim exclusively. */
@@ -652,6 +686,7 @@ interface StimdStartup {
   cleanup?: (error: unknown) => Promise<void>;
   signal: AbortSignal;
   finish?: () => void;
+  endDeadline?: () => void;
 }
 
 interface RunStimdOptions {
@@ -677,10 +712,68 @@ interface RunStimdOptions {
    */
   unit?: string;
   /**
+   * Whether this stimd runs in the job of `unit`, and that job runs the engine's `bin/stimd` shim: at an engine switch or
+   * a crash rollback it exits and leaves the home to the job's restart instead of starting a successor outside the job.
+   */
+  inJob?: boolean;
+  /**
    * Bound to the process that started it (`hostStimd`): it neither follows the engine nor exits idle or under
    * `daemon.mode` off, and ends when its stdin closes or on a signal, through `endAttached`.
    */
   attached?: { handover: boolean };
+}
+
+let heldHome = false;
+
+/** Records that this stimd leaves its home to the job of `unit`, which `jobRestartGate` and commands read. */
+function leaveToJob(
+  unit: string,
+  at: number,
+  left: number | null,
+  log: (level: Level, event: string, msg: string) => unknown,
+): void {
+  if (!writeJobRestart({ at, pid: process.pid, label: unit, left }))
+    log('warn', 'job_restart_record_failed', `could not write ${stimdJobRestartFile()}`);
+}
+
+/** Whether the engine's `bin/stimd` shim, which a service job runs, already starts `build`. */
+function shimRuns(root: string, build: string): boolean {
+  try {
+    return readFileSync(join(root, 'bin', 'stimd'), 'utf8').includes(`/${build}/dist/cli.mjs`);
+  } catch {
+    return false;
+  }
+}
+
+/** `shimRuns`, giving a flip that wrote `current.json` up to 2 s to write the shim after it. */
+async function shimWritten(root: string, build: string): Promise<boolean> {
+  for (const deadline = Date.now() + 2000; !shimRuns(root, build);) {
+    if (Date.now() >= deadline) return false;
+    await new Promise((done) => setTimeout(done, 50));
+  }
+  return true;
+}
+
+/** Renews the job-restart record under this boot's pid when `job`, the unit whose job runs this stimd, wrote it. */
+function takeJobRecord(
+  job: string | undefined,
+  log: (level: Level, event: string, msg: string) => unknown,
+): ReturnType<typeof readJobRestart> {
+  const record = job ? readJobRestart() : null;
+  if (!job || !record || record.label !== job) return null;
+  leaveToJob(job, record.at, null, log);
+  return record;
+}
+
+/** After a crash hold: a staged rollback or a newly selected build leaves the home to `job` again; otherwise the record goes. */
+function endJobRecord(
+  staged: boolean,
+  job: string | undefined,
+  record: ReturnType<typeof readJobRestart>,
+  log: (level: Level, event: string, msg: string) => unknown,
+): void {
+  if (staged && job) leaveToJob(job, record?.at ?? Date.now(), Date.now(), log);
+  else rmSync(stimdJobRestartFile(), { force: true });
 }
 
 /**
@@ -696,6 +789,7 @@ async function runCrashHold(
     serve,
     service,
     unit,
+    inJob,
     checkedAt,
     log,
   }: {
@@ -705,15 +799,17 @@ async function runCrashHold(
     serve: ServeOptions | null;
     service: boolean;
     unit: string | undefined;
+    inJob: boolean;
     checkedAt: number;
     log: (level: Level, event: string, msg: string) => unknown;
   },
-): Promise<'rolled-back' | { checkedAt: number }> {
+): Promise<'rolled-back' | { checkedAt: number; staged: boolean }> {
   const held = store && loop.engineCaused ? await holdCrashLoop(store, version, getConfigDir()) : null;
   if (store && held && ('rolledBack' in held || 'moved' in held)) {
     const current = readRecords(store.root).current;
     log('error', 'engine_rolled_back', `${version} crashed 3 times in 10 minutes; the engine runs ${current?.version}`);
-    if (current)
+    if (inJob && unit && current && shimRuns(store.root, current.dir)) leaveToJob(unit, Date.now(), Date.now(), log);
+    else if (current)
       launchStimd(
         process.env,
         startMode,
@@ -741,7 +837,7 @@ async function runCrashHold(
     log('info', 'engine_update_check', `crash hold: ${line}`);
     checked = Date.now();
   }
-  return { checkedAt: checked };
+  return { checkedAt: checked, staged: held !== null && 'staged' in held };
 }
 
 /**
@@ -772,6 +868,7 @@ export async function runStimd(options: RunStimdOptions = {}): Promise<boolean> 
     await startup.cleanup?.(error);
     throw error;
   } finally {
+    startup.endDeadline?.();
     startup.finish?.();
   }
 }
@@ -787,6 +884,7 @@ async function runStimdInner(
     onNet,
     service = serve !== undefined,
     unit,
+    inJob = false,
     attached,
   }: RunStimdOptions,
   startup: StimdStartup,
@@ -828,7 +926,16 @@ async function runStimdInner(
   const lifetime = stimdLifetime(attached !== undefined, identity.version);
   const instance = randomUUID();
   refuseUnresolvedDaemonClaims(writer);
-  let own = await takeClaim(stimdClaimRoot(), 'exclusive', 'stimd', details, lifetime.retries(CLAIM_TRIES));
+  const jobUnit = inJob ? unit : undefined;
+  // @ref LLP 0009#service-and-engine-updates -- a home a service stimd left to its job waits for that job
+  let own = await takeClaim(
+    stimdClaimRoot(),
+    'exclusive',
+    'stimd',
+    details,
+    lifetime.retries(CLAIM_TRIES),
+    jobRestartGate(jobUnit),
+  );
   if (!own) {
     log('debug', 'stimd_claim_held', 'another stimd holds this Stim home; exiting');
     writer.close();
@@ -839,6 +946,7 @@ async function runStimdInner(
       );
     return false;
   }
+  const jobRecord = takeJobRecord(jobUnit, log);
   let keepOwn = false;
   let startupClaim: ClaimHandle | null = null;
   let startupFollower: ReturnType<typeof followEngine> = null;
@@ -873,7 +981,10 @@ async function runStimdInner(
     startupFollower?.release();
     if (isUnverifiedCleanup(error)) keepClaim();
     else {
-      if (attached === undefined) recordBoot(`startup failed: ${errorText(error)}`, error);
+      const recorded =
+        attached === undefined && recordBoot(`startup failed: ${errorText(error)}`, error) === 'recorded';
+      if (recorded && inJob && unit) leaveToJob(unit, readJobRestart()?.at ?? Date.now(), Date.now(), log);
+      else if (inJob) rmSync(stimdJobRestartFile(), { force: true });
       releaseClaim(startupClaim);
       releaseClaim(own);
     }
@@ -898,6 +1009,7 @@ async function runStimdInner(
       serve: serve ?? null,
       service,
       unit,
+      inJob,
       checkedAt: updateCheckedAt,
       log,
     });
@@ -908,6 +1020,7 @@ async function runStimdInner(
       return false;
     }
     own = updateClaimDetails(own, { ...details, kept: true, updateCheckedAt: held.checkedAt }) ?? own;
+    endJobRecord(held.staged || switchedEngine() !== null, jobUnit, jobRecord, log);
     writer.close();
     return true;
   }
@@ -924,6 +1037,7 @@ async function runStimdInner(
   startupClaim = claim;
   startup.signal.throwIfAborted();
   if (!claim) {
+    if (jobRecord) rmSync(stimdJobRestartFile(), { force: true });
     releaseClaim(own);
     log('warn', 'stimd_claim_held', daemonClaimRefusal());
     writer.close();
@@ -968,6 +1082,7 @@ async function runStimdInner(
   );
   let restartingNet = false;
   const netAskers = new Set<Socket>();
+  const jobWaiters = new Map<Socket, string>();
   const netGone = () => {
     recordNet(null);
     for (const socket of netAskers) socket.end();
@@ -1275,6 +1390,13 @@ async function runStimdInner(
       );
     }
   };
+  // @ref LLP 0021#a-handover-with-no-successor -- log it and leave the marker a client starts a stimd for
+  const successorMissing = (next: { build: string; version: string }, reason: string) => {
+    log('error', 'successor_missing', `no stimd of ${next.version} (${next.build}) took this Stim home: ${reason}`);
+    try {
+      writeAtomic(stimdSuccessorMissingFile(), { at: Date.now(), pid: process.pid, build: next.build, reason });
+    } catch {}
+  };
   const relaunchFailed = (error: unknown): void => {
     log(
       'error',
@@ -1284,6 +1406,19 @@ async function runStimdInner(
   };
   const relaunch = async (next: { build: string; version: string }, entry: string) => {
     switchedTo = next;
+    // @ref LLP 0009#service-and-engine-updates -- a service unit's stimd hands over through the unit's job
+    const waiter = [...jobWaiters].find(([socket]) => !socket.destroyed)?.[1];
+    const candidate = (inJob ? unit : undefined) ?? waiter ?? null;
+    const job =
+      candidate && follower !== null && (await shimWritten(follower.engine.root, next.build)) ? candidate : null;
+    const leftAt = Date.now();
+    if (job) {
+      leaveToJob(job, leftAt, null, log);
+      process.once('exit', () => {
+        if (readJobRestart()?.pid === process.pid)
+          writeJobRestart({ at: leftAt, pid: process.pid, label: job, left: Date.now() });
+      });
+    }
     const changed = `${JSON.stringify({ op: 'engine-changed', ...next, pid: process.pid })}\n`;
     for (const list of [waiters.build, waiters.boot, waiters.test, tickReplies]) list.length = 0;
     for (const socket of open) socket.end(changed);
@@ -1293,13 +1428,16 @@ async function runStimdInner(
     handingOver = true;
     shutdown(why);
     await shutdownDone;
-    // @ref LLP 0021#a-handover-with-no-successor -- log it and leave the marker a client starts a stimd for
-    const missing = (reason: string) => {
-      log('error', 'successor_missing', `no stimd of ${next.version} (${next.build}) took this Stim home: ${reason}`);
-      try {
-        writeAtomic(stimdSuccessorMissingFile(), { at: Date.now(), pid: process.pid, build: next.build, reason });
-      } catch {}
-    };
+    if (job) {
+      if (!inJob) leaveToJob(job, leftAt, Date.now(), log);
+      log(
+        keepOwn ? 'warn' : 'info',
+        'successor_job',
+        `the ${job} job starts the stimd of ${next.version} (${next.build})${keepOwn ? '; this stimd kept its claim because its cleanup was not verified' : ''}`,
+      );
+      return;
+    }
+    const missing = (reason: string) => successorMissing(next, reason);
     if (keepOwn) return missing('its cleanup was not verified, so no successor was started');
     try {
       launchStimd(process.env, startMode, process.platform, entry, serveArgs(carried, service || serviceNet, unit));
@@ -1551,6 +1689,15 @@ async function runStimdInner(
                   if (state.listening && !socket.destroyed) {
                     netAskers.add(socket);
                     socket.once('close', () => netAskers.delete(socket));
+                    if (
+                      forService &&
+                      typeof params.unit === 'string' &&
+                      isServiceLabel(params.unit) &&
+                      (unit === undefined || params.unit === unit)
+                    ) {
+                      jobWaiters.set(socket, params.unit);
+                      socket.once('close', () => jobWaiters.delete(socket));
+                    }
                   }
                   return reply({ op: 'net', ...state });
                 },
@@ -1779,12 +1926,23 @@ async function runStimdInner(
       sealed = true;
       return closeAttachedWork('attached cleanup failed', error);
     });
+  // @ref LLP 0021#every-exit-leaves-a-record -- a forced exit records itself, then SIGKILLs itself
+  const forceExit = (reason: string, kind?: 'unknown') => {
+    try {
+      markAbnormal?.(reason, undefined, kind);
+    } finally {
+      process.kill(process.pid, 'SIGKILL');
+    }
+  };
   const requestEnd = (why: string, level: Level = 'info') => {
     if (ending) return;
     ending = why;
     endingLevel = level;
     retention?.record(true, [...workspaceEngineDirs(loadConfig()), ...metroEngineDirs()]);
-    attachedWatchdog = setTimeout(() => process.exit(1), waitMs + KILL_GRACE_MS);
+    attachedWatchdog = setTimeout(
+      () => forceExit(`forced exit: the attached shutdown did not finish within ${waitMs + KILL_GRACE_MS} ms`),
+      waitMs + KILL_GRACE_MS,
+    );
     attachedWatchdog.unref();
     foregroundAbort.abort();
     stopMetroTicks();
@@ -1805,14 +1963,51 @@ async function runStimdInner(
       `${signal} while shutting down; exiting in 5 s if it has not finished`,
     );
     setTimeout(() => {
-      log('error', 'daemon_forced_exit', `shutdown did not finish within 5 s of a second ${signal}`);
-      markAbnormal?.(`forced exit after a second ${signal}`, undefined, 'unknown');
-      process.exit(1);
+      try {
+        log('error', 'daemon_forced_exit', `shutdown did not finish within 5 s of a second ${signal}`);
+      } finally {
+        forceExit(`forced exit after a second ${signal}`, 'unknown');
+      }
     }, SECOND_SIGNAL_GRACE_MS).unref();
   };
   const shutdown = (why: string, level: Level = 'info', cause?: unknown) => {
     if (closing) return;
     closing = true;
+    if (level === 'error' && inJob && unit && heldHome) leaveToJob(unit, readJobRestart()?.at ?? Date.now(), null, log);
+    const waiting = new Set<string>();
+    let settled = false;
+    let ended = false;
+    let cancelWait: () => void;
+    // @ref LLP 0021#a-shutdown-has-a-deadline -- a shutdown that outlasts it records what it waits on, then is forced
+    const expire = () => {
+      if (ended) return;
+      const selecting = follower?.selecting();
+      if (selecting) {
+        log(
+          'warn',
+          'daemon_shutdown_waits',
+          'the shutdown deadline passed while the engine selector runs; waiting for it',
+        );
+        void selecting.then(() => {
+          if (!ended) cancelWait = awakeTimeout(SHUTDOWN_DEADLINE_MS, expire);
+          return undefined;
+        });
+        return;
+      }
+      const names = [...waiting];
+      const reason = `shutdown did not finish within ${SHUTDOWN_DEADLINE_MS / 1000} s${names.length ? `; still waiting on ${names.join(', ')}` : ''}`;
+      try {
+        log('error', 'daemon_shutdown_timeout', reason, { waiting: names });
+        if (switchedTo && !settled) successorMissing(switchedTo, reason);
+      } finally {
+        forceExit(`forced exit: ${reason}`);
+      }
+    };
+    cancelWait = awakeTimeout(SHUTDOWN_DEADLINE_MS, expire);
+    startup.endDeadline = () => {
+      ended = true;
+      cancelWait();
+    };
     foregroundAbort.abort();
     markDaemonFailure(level, attached !== undefined, markAbnormal, why, cause);
     if (dependencyWork) log('debug', 'daemon_dependency_scan_cancelled', 'stopping the dependency size scan');
@@ -1828,12 +2023,20 @@ async function runStimdInner(
     if (readJsonObject(stimdRecordFile())?.pid === process.pid) rmSync(stimdRecordFile(), { force: true });
     if (attached) for (const signal of SIGNALS) process.off(signal, onSignal);
     log(level, 'daemon_exited', `exiting: ${why}`);
+    const awaited = (name: string, work: Promise<void> | undefined) => {
+      if (!work) return work;
+      waiting.add(name);
+      return work.finally(() => waiting.delete(name));
+    };
     shutdownDone = Promise.allSettled([
-      waitForeground(foregroundDone, () => foregroundFailure),
-      lane.settled(),
-      dependencyWork,
-      closeMetroChildren(),
-      closeNetAndLogs(),
+      awaited(
+        'the tick',
+        waitForeground(foregroundDone, () => foregroundFailure),
+      ),
+      awaited('the maintenance pass', lane.settled()),
+      awaited('the dependency scan', dependencyWork),
+      awaited('Metro and tunnel children', closeMetroChildren()),
+      awaited('the net thread and device logs', closeNetAndLogs()),
     ])
       .then(async (results) => {
         cleanups.settle();
@@ -1846,7 +2049,7 @@ async function runStimdInner(
           keepClaim();
           keepDaemon = true;
         }
-        await threads.close();
+        await awaited('the worker threads', threads.close());
         return undefined;
       })
       .catch((error: unknown) =>
@@ -1859,6 +2062,7 @@ async function runStimdInner(
             'daemon_claims_kept',
             `shutdown kept the ${[keepOwn && 'stimd', keepDaemon && 'daemon'].filter(Boolean).join(' and ')} claim`,
           );
+        settled = true;
         follower?.release();
         if (!keepDaemon) releaseClaim(claim);
         if (!keepOwn) releaseClaim(own);
@@ -1879,6 +2083,10 @@ async function runStimdInner(
   };
   startup.cleanup = async (error) => {
     if (isUnverifiedCleanup(error)) backgroundFailure = error;
+    if (inJob && unit && attached === undefined) {
+      if (classifyFailure(error).kind === 'refusal') rmSync(stimdJobRestartFile(), { force: true });
+      else leaveToJob(unit, readJobRestart()?.at ?? Date.now(), Date.now(), log);
+    }
     shutdown(`daemon startup failed: ${errorText(error)}`, lifetime.failLevel, error);
     await shutdownDone;
     await writerDone;
@@ -1926,6 +2134,8 @@ async function runStimdInner(
   startup.finish?.();
   startup.finish = undefined;
   startup.cleanup = undefined;
+  rmSync(stimdJobRestartFile(), { force: true });
+  heldHome = true;
   log(
     'info',
     'daemon_started',
@@ -1940,6 +2150,7 @@ async function runStimdInner(
     },
   );
   let emptyTicks = 0;
+  let lastLadder: LadderPass | null = null;
   let interval = tickMs;
   const kept = new Map<string, string>();
   const syncOwned = () => {
@@ -1993,6 +2204,7 @@ async function runStimdInner(
       await logs.ownedSync();
       if (hasOffWork()) {
         for (const socket of tickReplies.splice(0)) socket.destroy();
+        log('debug', 'daemon_tick_off', 'daemon.mode is off; stimd stays up for the work it still serves');
         continue;
       }
       shutdown('daemon.mode is off');
@@ -2018,8 +2230,11 @@ async function runStimdInner(
         log,
         memoryWarningSince: lastSnapshot?.pressure?.memoryWarningSince ?? null,
         signal: foregroundAbort.signal,
+        lastLadder,
+        requested: replying.length > 0,
       });
       const { config, now, measured, workspaces, pressure, actions, operation } = passes;
+      lastLadder = passes.ladder ?? null;
       operation.signal.throwIfAborted();
       syncOwned();
       actions.push(...lane.take());
@@ -2285,19 +2500,37 @@ export async function runStimdEntry(argv: readonly string[]): Promise<void> {
   });
   try {
     const service = serve !== undefined && !argv.includes('--carried');
+    const successor = service ? unitSuccessorLabel(argv) : undefined;
+    const job =
+      serve && service && !successor ? serviceJob(process.env, serve.port, ownStoreEngine()?.root ?? null) : null;
+    const jobLabel = job?.followsEngine ? job.label : null;
+    // @ref LLP 0009#service-and-engine-updates -- a job's stimd that crashes leaves the home to the job's restart
+    if (jobLabel)
+      process.once('exit', (code) => {
+        if (code !== 0 && heldHome) {
+          const kept = readJobRestart();
+          writeJobRestart({
+            at: kept?.label === jobLabel ? kept.at : Date.now(),
+            pid: process.pid,
+            label: jobLabel,
+            left: Date.now(),
+          });
+        }
+      });
     const served = await runStimd({
       mode: parseDaemonMode(at >= 0 ? argv[at + 1] : undefined) ?? daemonMode(process.env),
       serve,
       onNet: reportNet,
       service,
-      unit:
-        serve === undefined || argv.includes('--carried')
-          ? undefined
-          : (unitSuccessorLabel(argv) ?? serviceUnitLabel(process.env, serve.port) ?? undefined),
+      unit: successor ?? job?.label,
+      inJob: job?.followsEngine === true,
       ...(argv.includes(ATTACHED_ARG) ? { attached: { handover: !argv.includes(NO_HANDOVER_ARG) } } : {}),
     });
     if (serve && !served && stimdLive())
-      await serveThroughStimd({ ...serve, service }, reportServiceNet(serve.port, service));
+      await serveThroughStimd(
+        { ...serve, service, ...(job?.followsEngine ? { unit: job.label } : {}) },
+        reportServiceNet(serve.port, service),
+      );
   } catch (error) {
     const message =
       isClaimRefusal(error) || isClaimUnavailable(error)
@@ -2348,6 +2581,31 @@ export async function runStimdEntry(argv: readonly string[]): Promise<void> {
     try {
       getExecutor().runFile('launchctl', ['remove', label], { timeoutMs: LAUNCHCTL_TIMEOUT_MS });
     } catch {}
+  await endStimdWorkers();
+}
+
+/**
+ * Ends the worker threads a stimd run in this process started, for a process that is about to exit after `runStimd`
+ * returned: `__stimd` and an owning `stim serve`. One that has not exited after 10 awake minutes is logged, and the
+ * process sends itself SIGKILL.
+ */
+export async function endStimdWorkers(): Promise<void> {
+  // @ref LLP 0021#a-shutdown-has-a-deadline -- a worker that does not exit cannot hold the process alive
+  await endWorkers(SHUTDOWN_DEADLINE_MS, (count) => {
+    try {
+      const writer = createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES });
+      writer.write({
+        src: 'stimd',
+        level: 'error',
+        event: 'daemon_shutdown_timeout',
+        msg: `${count} worker threads did not exit within ${SHUTDOWN_DEADLINE_MS / 1000} s of stimd's end`,
+        waiting: ['the worker threads'],
+      });
+      writer.close();
+    } finally {
+      process.kill(process.pid, 'SIGKILL');
+    }
+  });
 }
 
 /** Removes the jobs of this home's earlier stimds that exited without removing their own, such as after a crash. */

@@ -1,8 +1,16 @@
 import { join } from 'node:path';
 import { rmSync } from 'node:fs';
+import { lstat } from 'node:fs/promises';
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import type { StimContext } from '@stim-cli/core';
-import { listBuildEndMarkers, type DaemonLadderAction, type PressureLevel } from '@stim-cli/core/state';
+import {
+  listBuildEndMarkers,
+  readDiskUsageFailureSignature,
+  readDiskUsagePartial,
+  readDiskUsagePrivateUnknown,
+  type DaemonLadderAction,
+  type PressureLevel,
+} from '@stim-cli/core/state';
 import { getProject } from '../workspace/config.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { formatBytes } from '../fs-util.ts';
@@ -16,15 +24,19 @@ import {
   type ArtifactWorktree,
 } from '../stimd/passes/artifacts.ts';
 import { maintenancePinnedReader } from '../stimd/passes/protect.ts';
-import { knownPrivateBytes, refreshMeasure, trustedMeasure } from '../disk-usage.ts';
+import { freshMeasure, knownPrivateBytes, refreshMeasure, trustedMeasure } from '../disk-usage.ts';
+import { treeSignature } from '../private-size.ts';
+import { hardLinkSample } from '../link-sample.ts';
 import { workspaceKeys } from '../workspace/lightened.ts';
 import { freshLaunchers } from '../workspace/launchers.ts';
 import { workspaceDir } from '../workspace/paths.ts';
-import { hungRead } from '../workspace/bounded-read.ts';
+import { matchWorktreeEntry, resolveSourceCheckoutAsync } from '../workspace/worktree.ts';
+import { answered, hungRead, Unanswered } from '../workspace/bounded-read.ts';
 import { buildOutputDirs, dependencyTreeSignature } from '../workspace/discovery-census.ts';
 import { ARTIFACT_DIRS } from '../workspace/regenerable-dirs.ts';
 import { checkDependencyEdits } from '../workspace/dependency-edits.ts';
 import { writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
+import { reduceDormantOutputs } from './dormant-outputs.ts';
 import {
   dormantAfterMs,
   idleStageCandidates,
@@ -38,6 +50,7 @@ import { sourceDependenciesDue } from '../policy/checkout-order.ts';
 import { warmedFromAt } from '../workspace/source-dependencies.ts';
 import type { Config } from '../workspace/config.ts';
 import { timedStep, type DaemonLog } from './step-timing.ts';
+import { forgetGitReads } from '../workspace/git-reads.ts';
 
 /**
  * The private bytes above which deleting a node_modules or Pods tree is worth a `stim worktree warm` or reinstall.
@@ -47,9 +60,19 @@ import { timedStep, type DaemonLog } from './step-timing.ts';
 export const REAL_BYTES_THRESHOLD: number = 256 * 1024 ** 2;
 const HOUR_MS = 60 * 60_000;
 const WALK_TIMEOUT_MS = 10 * 60_000;
+const PROBE_TIMEOUT_MS = 3000;
 const RESTORE = 'stim worktree warm';
 export const SOURCE_RESTORE = "the project's own install in it, or stim worktree warm --refresh in a linked worktree";
-const UNKNOWN_KEPT = 'its real size is not measured yet, or the volume cannot tell, so it stays';
+const NOT_MEASURED = 'its real size is not measured since its last install, so it stays';
+const VOLUME_CANNOT_TELL =
+  'its volume cannot report which of its blocks other files share, so its real size is unknown and it stays';
+const WALK_FAILED =
+  'its private-size walk could not count which of its blocks other files share, so its real size is unknown and it stays';
+const MEASURE_BUDGET_MS = 2 * 60_000;
+const LINK_SAMPLES_MS = 10_000;
+const MIN_WALK_MS = 10_000;
+const WALK_BUSY =
+  'another size walk on this machine was running, so stim gc did not measure it this run and its real size is unknown and it stays';
 const VERBS: Record<DaemonLadderAction['outcome'], string> = {
   would: 'would delete',
   done: 'deleted',
@@ -65,6 +88,10 @@ export interface RankedDependency {
   bytes: number | null;
   /** What deleting it would free, from a measurement whose install signature still matches; null when unknown. */
   privateBytes: number | null;
+  /** Why `privateBytes` is null. */
+  unknown?: string;
+  /** Set when `privateBytes` is null and a sample of its files found mostly hard links. */
+  links?: { linked: number; sampled: number };
 }
 
 type Measured = RankedDependency & { privateBytes: number };
@@ -73,26 +100,130 @@ function sharedDetail({ bytes, privateBytes }: Measured): string {
   return `${formatBytes(privateBytes)} of its ${bytes === null ? 'size' : formatBytes(bytes)} is its own and the rest is shared with copy-on-write clones or hard links, under the ${formatBytes(REAL_BYTES_THRESHOLD)} worth deleting`;
 }
 
+function linkedDetail({ linked, sampled }: { linked: number; sampled: number }): string {
+  return `its real size is unknown, but ${linked} of the ${sampled} files sampled from it are hard links another folder such as a package store also holds, so deleting it would free little and it stays`;
+}
+
 /**
  * Which dependency trees to delete, given in the order their workspaces went idle: those whose private bytes reach
  * REAL_BYTES_THRESHOLD, most private bytes first; trees below it are kept. A tree of unknown size is taken after the
- * measured ones in the given order (`unknown: 'take'`) or kept (`'keep'`).
+ * measured ones in the given order (`unknown: 'take'`) or kept (`'keep'`); one a sample found mostly hard links is kept,
+ * or with `links: 'last'`, at critical, taken after every other tree.
  */
 export function selectDependencies(
   ranked: readonly RankedDependency[],
   unknown: 'take' | 'keep',
+  links: 'keep' | 'last' = 'keep',
 ): { take: RankedDependency[]; kept: { dependency: RankedDependency; detail: string }[] } {
   const known = ranked.filter((dependency): dependency is Measured => dependency.privateBytes !== null);
-  const unmeasured = ranked.filter((dependency) => dependency.privateBytes === null);
+  const unmeasured = ranked.filter((dependency) => dependency.privateBytes === null && !dependency.links);
   const take: RankedDependency[] = known
     .filter((dependency) => dependency.privateBytes >= REAL_BYTES_THRESHOLD)
     .toSorted((a, b) => b.privateBytes - a.privateBytes);
   const kept: { dependency: RankedDependency; detail: string }[] = known
     .filter((dependency) => dependency.privateBytes < REAL_BYTES_THRESHOLD)
     .map((dependency) => ({ dependency, detail: sharedDetail(dependency) }));
+  const linked = ranked.filter(
+    (dependency): dependency is RankedDependency & Required<Pick<RankedDependency, 'links'>> =>
+      dependency.privateBytes === null && dependency.links !== undefined,
+  );
   if (unknown === 'take') take.push(...unmeasured);
-  else kept.push(...unmeasured.map((dependency) => ({ dependency, detail: UNKNOWN_KEPT })));
+  else kept.push(...unmeasured.map((dependency) => ({ dependency, detail: dependency.unknown ?? NOT_MEASURED })));
+  if (links === 'last') take.push(...linked);
+  else kept.push(...linked.map((dependency) => ({ dependency, detail: linkedDetail(dependency.links) })));
   return { take, kept };
+}
+
+// @ref LLP 0001#a-tree-of-hard-links-stays -- only a tree with no measurement is sampled, after any walk
+/**
+ * Samples the link counts of each tree in `ranked` whose private size is still unknown, for at most LINK_SAMPLES_MS in
+ * all; see `hardLinkSample`.
+ */
+export async function sampleLinks(ranked: readonly RankedDependency[], signal?: AbortSignal): Promise<void> {
+  const deadline = Date.now() + LINK_SAMPLES_MS;
+  for (const dependency of ranked) {
+    if (dependency.privateBytes !== null) continue;
+    if (Date.now() >= deadline) return;
+    const links = await hardLinkSample(dependency.candidate.path, signal, undefined, deadline);
+    if (links) dependency.links = links;
+  }
+}
+
+function rankedPrivateBytes(path: string): number | null {
+  const privateBytes = knownPrivateBytes(path);
+  return privateBytes !== null && privateBytes < REAL_BYTES_THRESHOLD && readDiskUsagePartial(path)
+    ? null
+    : privateBytes;
+}
+
+function triedBefore(dependency: RankedDependency): number {
+  return readDiskUsageFailureSignature(dependency.candidate.path) === treeSignature(dependency.candidate.path) ? 1 : 0;
+}
+
+/**
+ * Records why each tree in `ranked` has no private size. With `walk`, as in a `stim gc` pass, it first walks those whose
+ * current install no walk tried to count yet, largest first and those whose last walk failed last, one at a time for at most MEASURE_BUDGET_MS in all.
+ */
+async function measureUnknown(
+  ranked: readonly RankedDependency[],
+  walk: boolean,
+  operation?: StimContext,
+): Promise<void> {
+  const reason = (path: string): string | null => {
+    const recorded = readDiskUsagePrivateUnknown(path);
+    return recorded === 'walk' ? WALK_FAILED : recorded === 'volume' ? VOLUME_CANNOT_TELL : null;
+  };
+  const due: RankedDependency[] = [];
+  for (const dependency of ranked.filter(({ privateBytes }) => privateBytes === null)) {
+    const fresh = freshMeasure(dependency.candidate.path);
+    const recorded = !fresh
+      ? null
+      : fresh.privateBytes !== undefined && readDiskUsagePartial(dependency.candidate.path)
+        ? WALK_FAILED
+        : reason(dependency.candidate.path);
+    if (recorded) dependency.unknown = recorded;
+    else if (walk) due.push(dependency);
+  }
+  const order = new Map(due.map((dependency) => [dependency, triedBefore(dependency)]));
+  const deadline = Date.now() + MEASURE_BUDGET_MS;
+  let busy = false;
+  for (const dependency of due.toSorted(
+    (a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0) || (b.bytes ?? -1) - (a.bytes ?? -1),
+  )) {
+    if (busy) {
+      dependency.unknown = WALK_BUSY;
+      continue;
+    }
+    const remainingMs = deadline - Date.now();
+    if (remainingMs < MIN_WALK_MS) {
+      dependency.unknown = `stim gc spent its ${MEASURE_BUDGET_MS / 60_000} minutes of measuring on other trees first, so its real size is unknown and it stays`;
+      continue;
+    }
+    const { outcome, measure, partial } = await refreshMeasure(dependency.candidate.path, {
+      timeoutMs: remainingMs,
+      operation,
+      valid: (cached) => cached.privateBytes !== undefined,
+      failures: true,
+      claim: true,
+    });
+    if (outcome === 'busy') {
+      busy = true;
+      dependency.unknown = WALK_BUSY;
+      continue;
+    }
+    if (measure?.privateBytes !== undefined && !(partial && measure.privateBytes < REAL_BYTES_THRESHOLD)) {
+      dependency.bytes = measure.bytes;
+      dependency.privateBytes = measure.privateBytes;
+    } else
+      dependency.unknown =
+        measure?.privateBytes !== undefined
+          ? WALK_FAILED
+          : outcome === 'failed'
+            ? `its size walk failed or did not finish within the ${Math.ceil(remainingMs / 1000)} seconds stim gc had left, so its real size is unknown and it stays`
+            : outcome === 'fresh' && !measure
+              ? 'its last size walk did not finish in time and its install has not changed since, so its real size is unknown and it stays'
+              : (reason(dependency.candidate.path) ?? WALK_FAILED);
+  }
 }
 
 function canonicalOrNull(path: string): string | null {
@@ -146,7 +277,7 @@ export async function rankDependencies(
         source,
         workspace,
         bytes: trustedMeasure(candidate.path)?.bytes ?? null,
-        privateBytes: knownPrivateBytes(candidate.path),
+        privateBytes: rankedPrivateBytes(candidate.path),
       };
       return [{ dependency, order: rank.get(canonicalOrNull(workspace) ?? '') ?? 0 }];
     })
@@ -249,7 +380,7 @@ export async function rankSourceDependencies(
         source: true,
         workspace,
         bytes: trustedMeasure(candidate.path)?.bytes ?? null,
-        privateBytes: knownPrivateBytes(candidate.path),
+        privateBytes: rankedPrivateBytes(candidate.path),
       },
     });
   }
@@ -361,6 +492,7 @@ export async function clearSourceDependencies(
   operation?: StimContext,
   setting?: string,
 ): Promise<TreeResult[]> {
+  forgetGitReads(operation);
   const launchers = freshLaunchers(operation, operation?.signal);
   try {
     const results = await clearSourceTrees(
@@ -406,14 +538,16 @@ export async function wouldDelete(
 }
 
 /**
- * The dormant stage's dependency step, at most hourly with a cadence clock: the node_modules and Pods of linked worktrees
+ * The dormant stage's step, at most hourly with a cadence clock: first the regenerable build outputs of every
+ * workspace idle `idle.dormantDays` (`reduceDormantOutputs`), then the node_modules and Pods of linked worktrees
  * idle `idle.dormantDays` whose private bytes reach REAL_BYTES_THRESHOLD or are not measured yet, most first, each
  * recorded so the next Stim command restores it. A tree is taken even when `stim worktree warm` could not put the
  * same versions back, since a reinstall does; copy-on-write clones below the threshold stay. Then, as the last
  * step, those of source checkouts idle `idle.sourceDormantDays`, each recorded in the source checkout's workspace.
  */
 export async function runDormantDependencies(
-  input: Pick<IdlePassInput, 'config' | 'act' | 'log'> & DeviceReading & { force?: boolean; cadence?: BigInt64Array },
+  input: Pick<IdlePassInput, 'config' | 'act' | 'log'> &
+    DeviceReading & { force?: boolean; cadence?: BigInt64Array; walkUnknown?: false },
 ): Promise<DaemonLadderAction[]> {
   const { config, cadence } = input;
   const afterMs = dormantAfterMs(config);
@@ -439,29 +573,79 @@ export async function runDormantDependencies(
   );
 }
 
+/**
+ * Whether a discovered checkout holds a `node_modules` or `ios/Pods` the source collection could take. It is eligible
+ * only as `collectArtifactsAsync` finds it: git lists a non-bare worktree for it, its source checkout resolves, and that
+ * worktree is the source checkout; anything else, a linked worktree or a folder git does not list, is answered false
+ * before any dependency read. A tree counts only as a real directory, never followed through a link (the collection
+ * keeps a linked tree). Each probe is one `lstat` bounded like the launcher readings by `answered`; 'unanswered' when
+ * its own probe does not answer. While another read holds the pending slot no probe starts and the answer is true, so
+ * the checkout goes through the idle checks and the collection as it would on main.
+ */
+async function sourceTreesOf(path: string, operation?: StimContext): Promise<boolean | 'unanswered'> {
+  const { entries, ...source } = await resolveSourceCheckoutAsync(path, {
+    env: operation?.env,
+    signal: operation?.signal,
+    declareFor: operation,
+  });
+  const entry = 'refusal' in source ? null : matchWorktreeEntry(entries, path);
+  if (!entry || entry.bare || 'refusal' in source || entry.path !== source.path) return false;
+  try {
+    for (const dir of ARTIFACT_DIRS.dependencies) {
+      if (hungRead() !== null) return true;
+      const target = join(entry.path, dir);
+      const found = await answered(
+        target,
+        () =>
+          lstat(target).then(
+            (info) => info.isDirectory(),
+            () => false,
+          ),
+        PROBE_TIMEOUT_MS,
+        operation?.signal,
+      );
+      if (found) return true;
+    }
+    return false;
+  } catch (error) {
+    if (error instanceof Unanswered) return 'unanswered';
+    throw error;
+  }
+}
+
 async function takeIdleDependencies(
-  input: Pick<IdlePassInput, 'act' | 'log'> & DeviceReading & { force?: boolean },
+  input: Pick<IdlePassInput, 'act' | 'log'> & DeviceReading & { force?: boolean; walkUnknown?: false },
   config: Config,
   afterMs: number,
   source: boolean,
 ): Promise<DaemonLadderAction[]> {
   const keeps = new Map<string, string>();
-  const idle = (
-    await idleStageCandidates(
-      config,
-      input,
-      afterMs,
-      source
-        ? {
-            full: true,
-            setting: 'idle.sourceDormantDays',
-            onKept: (path, reason) => keeps.set(canonicalOrNull(path) ?? path, reason),
-          }
-        : {},
-    )
-  ).filter((candidate) => source || candidate.role === 'linked');
+  const candidates = await idleStageCandidates(
+    config,
+    input,
+    afterMs,
+    source
+      ? {
+          full: true,
+          setting: 'idle.sourceDormantDays',
+          onKept: (path, reason) => keeps.set(canonicalOrNull(path) ?? path, reason),
+          reclaimable: async (path) => {
+            const trees = await sourceTreesOf(path, input.operation);
+            if (trees === 'unanswered')
+              keeps.set(canonicalOrNull(path) ?? path, 'its node_modules or ios/Pods did not answer this pass');
+            return trees === true;
+          },
+        }
+      : {},
+  );
   const { operation } = input;
-  const actions: DaemonLadderAction[] = [];
+  const actions: DaemonLadderAction[] = source
+    ? []
+    : await timedStep(input.log, 'dormant_outputs', () => reduceDormantOutputs(candidates, config, afterMs, input), {
+        signal: operation?.signal,
+        items: (taken) => taken?.length,
+      });
+  const idle = candidates.filter((candidate) => source || candidate.role === 'linked');
   let take: RankedDependency[];
   if (source) {
     const { ranked, kept } = await timedStep(
@@ -496,6 +680,9 @@ async function takeIdleDependencies(
           detail: entry.reason,
           setting: 'idle.sourceDormantDays',
         });
+    if (!input.act || input.force)
+      await measureUnknown(ranked, Boolean(input.force) && input.walkUnknown !== false, operation);
+    await sampleLinks(ranked, operation?.signal);
     const selected = selectDependencies(ranked, 'keep');
     take = selected.take;
     if (!input.act || input.force)
@@ -511,16 +698,28 @@ async function takeIdleDependencies(
           setting: 'idle.sourceDormantDays',
         });
   } else {
-    if (!idle.length) return [];
-    take = selectDependencies(
-      await timedStep(
-        input.log,
-        'rank_dependencies',
-        () => rankDependencies(idle, input.protectedRoot ?? '', operation, false, input.log),
-        { signal: operation?.signal, items: (ranked) => ranked?.length },
-      ),
-      'take',
-    ).take;
+    if (!idle.length) return actions;
+    const ranked = await timedStep(
+      input.log,
+      'rank_dependencies',
+      () => rankDependencies(idle, input.protectedRoot ?? '', operation, false, input.log),
+      { signal: operation?.signal, items: (found) => found?.length },
+    );
+    await sampleLinks(ranked, operation?.signal);
+    const selected = selectDependencies(ranked, 'take');
+    take = selected.take;
+    if (!input.act || input.force)
+      for (const { dependency, detail } of selected.kept)
+        if (dependency.links)
+          actions.push({
+            rung: 4,
+            kind: 'delete-dependencies',
+            target: dependency.candidate.path,
+            workspace: dependency.workspace,
+            outcome: 'kept',
+            bytes: 0,
+            detail,
+          });
   }
   const worktrees = take.length ? await artifactWorktreesFor(operation) : [];
   const why = `${source ? 'idle.sourceDormantDays' : 'idle.dormantDays'} is ${afterMs / (24 * HOUR_MS)}`;

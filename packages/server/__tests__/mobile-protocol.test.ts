@@ -384,6 +384,7 @@ test('the build.start wire schema accepts every BuildStartParams field, includin
     repo: 'example-app',
     project: 'apps/mobile',
     platform: 'android',
+    warmthProject: '0123456789abcdef',
     configuration: 'Debug',
     scheme: 'App',
     iosProjectPath: 'ios',

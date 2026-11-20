@@ -593,8 +593,8 @@ test('gc at high reports what it removed apart from what it kept', async () => {
   );
   expect(
     preview.actions.find(
-      (action: { kind: string; target: string }) =>
-        action.kind === 'delete-build-outputs' && action.target === stale.root,
+      (action: { rung: number | null; kind: string; target: string }) =>
+        action.rung === 1 && action.kind === 'delete-build-outputs' && action.target === stale.root,
     ).bytes,
   ).toBeGreaterThan(0);
   for (const output of OUTPUTS) expect(existsSync(join(stale.dir, output))).toBe(true);
@@ -620,6 +620,40 @@ test('gc at high reports what it removed apart from what it kept', async () => {
   expect(payload.results.filter((r: { label: string }) => r.label === busy.root)).toEqual([]);
   for (const output of OUTPUTS) expect(existsSync(join(busy.dir, output))).toBe(true);
   expect(existsSync(orphan.dir)).toBe(false);
+}, 30_000);
+
+test('gc at high keeps a Cargo target/ holding trim recovery data and the outputs of a locked worktree', async () => {
+  hideMachineTools();
+  const git = (cwd: string, args: string) => execSync(`git -c user.name=t -c user.email=t@t ${args}`, { cwd });
+  const repo = (name: string) => {
+    const root = join(projects, name);
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, '.gitignore'), 'target/\n');
+    git(root, 'init -q -b main');
+    git(root, 'add -A');
+    git(root, 'commit -q -m init');
+    return root;
+  };
+  const exact = repo('exact');
+  writeFileSync(join(exact, 'exact.mjs'), '');
+  const target = join(exact, 'target');
+  mkdirSync(join(target, 'debug', '.fingerprint'), { recursive: true });
+  writeFileSync(join(target, 'debug', '.fingerprint', 'unit'), 'x');
+  mkdirSync(join(target, '.stim-trimmed', '0'), { recursive: true });
+  writeFileSync(join(target, '.stim-trimmed', 'NOT-RESTORED'), '');
+  const cargo = builtWorkspace('exact', { usedDaysAgo: 10 });
+  const main = repo('main');
+  const linked = join(projects, 'linked');
+  git(main, `worktree add -q -b feature ${linked}`);
+  git(main, `worktree lock ${linked}`);
+  const locked = builtWorkspace('linked', { usedDaysAgo: 10 });
+
+  await gcJson({ pressure: 'high' });
+
+  expect(existsSync(join(target, '.stim-trimmed', 'NOT-RESTORED'))).toBe(true);
+  expect(existsSync(join(target, '.stim-trimmed', '0'))).toBe(true);
+  expect(existsSync(join(cargo.dir, 'derived-data'))).toBe(false);
+  for (const output of OUTPUTS) expect(existsSync(join(locked.dir, output))).toBe(true);
 }, 30_000);
 
 test('gc removes a symlinked orphaned workspace directory as a link and leaves its target', async () => {

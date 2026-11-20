@@ -38,6 +38,11 @@ export interface EngineFollower {
   admit(): Promise<{ build: string; version: string } | null>;
   /** The build the engine points at once it is not this one, else flips a staged build when every claim drained. */
   check(pinned: () => boolean): Promise<{ build: string; version: string } | null>;
+  /**
+   * The running switch, which holds the engine store's locks for its selector child until that child exits; null
+   * when none runs.
+   */
+  selecting(): Promise<void> | null;
   release(): void;
 }
 
@@ -68,7 +73,7 @@ export function followEngine(log: Log, retained = false): EngineFollower | null 
   if (attempt.pending) releaseClaim(attempt.pending);
   let claim: ClaimHandle | null = attempt.acquired ?? null;
   if (!claim) return null;
-  let flipping = false;
+  let flipping: Promise<void> | null = null;
   let dirs: string[] = [];
   const record = (pinned: boolean, engineDirs: string[]) => {
     dirs = [...new Set(engineDirs)].toSorted();
@@ -137,14 +142,13 @@ export function followEngine(log: Log, retained = false): EngineFollower | null 
     async check(pinned) {
       const switched = switchedEngine(engine);
       if (switched || flipping) return switched;
-      flipping = true;
-      try {
-        await flip(pinned);
-      } finally {
-        flipping = false;
-      }
+      flipping = flip(pinned).finally(() => {
+        flipping = null;
+      });
+      await flipping;
       return switchedEngine(engine);
     },
+    selecting: () => flipping?.catch(() => {}) ?? null,
     release() {
       releaseClaim(claim);
       claim = null;

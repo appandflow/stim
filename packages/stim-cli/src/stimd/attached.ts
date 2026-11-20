@@ -17,7 +17,7 @@ import { getExecutor } from '../exec.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 import { facadeClient } from '../api/facade.ts';
 import type { EngineOptions, StimClient } from '../api/types.ts';
-import { launchStimd, SANDBOX_BLOCKED, stimdEnv, stimdLive } from '../daemon/client.ts';
+import { launchStimd, SANDBOX_BLOCKED, stimdLaunchEnv, stimdLive } from '../daemon/client.ts';
 
 /** The `__stimd` argument of a stimd bound to the process that started it, which ends it by closing its stdin. */
 export const ATTACHED_ARG = '--attached';
@@ -217,6 +217,8 @@ export async function hostStimd(
   | null
 > {
   signal?.throwIfAborted();
+  // @ref LLP 0009#service-and-engine-updates -- a home a service stimd left to its job waits for that job
+  await (await import('../daemon/client.ts')).awaitJobRestart(signal, env.STIM_HOME || join(userHome(env), '.stim'));
   const { ownStoreEngine, requireCurrentEngine } = await import('../daemon/engine-switch.ts');
   const engine = ownStoreEngine();
   if (engine) {
@@ -251,7 +253,7 @@ export async function hostStimd(
     child = getExecutor().spawn(process.execPath, handover ? args : [...args, NO_HANDOVER_ARG], {
       cwd: tmpdir(),
       stdio: ['pipe', 'pipe', 'inherit'],
-      env: stimdEnv(env, process.platform),
+      env: stimdLaunchEnv(env, process.platform),
       windowsHide: true,
     });
   } catch {

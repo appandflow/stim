@@ -5,6 +5,7 @@ import { spawnEntry } from '../spawn-entry.ts';
 import { childKey } from './cleanup-watch.ts';
 import { setReportChildLog } from '../report-child-log.ts';
 import { serveThreadJobs } from './thread-jobs.ts';
+import { trackWorker } from './workers.ts';
 
 type ThreadName = 'passes' | 'measure';
 type PassesInput = Omit<Parameters<MaintenanceLane['start']>[0], 'operation'> & { act: boolean; cwd: string };
@@ -26,16 +27,17 @@ type FromThread =
       msg: string;
       fields: Record<string, unknown>;
     }
-  | { type: 'done'; result: DaemonLadderAction[] }
+  | { type: 'done'; result: DaemonLadderAction[]; reading: boolean }
   | {
       type: 'failed';
+      reading: boolean;
       message: string;
       code?: string;
       remedy?: string;
       reportCleanup?: boolean;
       contained?: { pid: number; processToken: string | null };
     }
-  | { type: 'settled'; pending: string[] };
+  | { type: 'settled'; pending: string[]; reading: boolean };
 
 interface Thread {
   worker: Worker;
@@ -46,6 +48,8 @@ interface Thread {
   idle: NodeJS.Timeout | null;
   /** The children whose cleanup a job on this thread could not verify, which the thread itself watches. */
   unsettled: Set<string>;
+  /** A read of this thread timed out and has not settled; a replacement thread would start another. */
+  reading: boolean;
   lost: boolean;
 }
 
@@ -61,8 +65,8 @@ export interface ThreadTable {
 }
 
 /**
- * stimd's worker threads, each started on its first job and ended once it has had none for two minutes and watches no
- * unverified child. A job's unverified cleanup that names one child is watched on its thread, which releases what the
+ * stimd's worker threads, each started on its first job and ended once it has had none for two minutes, watches no
+ * unverified child and has no timed-out read pending. A job's unverified cleanup that names one child is watched on its thread, which releases what the
  * child held once it has stopped; the job's rejection then names that child and says whether it has stopped. A thread
  * that ends while it still watches a child reports `onLost`, since nothing can release what that child held any more.
  */
@@ -71,8 +75,9 @@ export function createThreadTable(log: Log, onLost: (error: Error) => void = () 
   const dependencyCadence = new BigInt64Array(new SharedArrayBuffer(BigInt64Array.BYTES_PER_ELEMENT));
   const idleEnd = (name: ThreadName, thread: Thread) => {
     thread.idle = setTimeout(() => {
-      if (thread.unsettled.size === 0) end(name, thread);
-      else idleEnd(name, thread);
+      if (thread.unsettled.size === 0 && !thread.reading) return end(name, thread);
+      if (thread.reading) thread.worker.postMessage({ type: 'settle' });
+      idleEnd(name, thread);
     }, IDLE_MS);
     thread.idle.unref();
   };
@@ -82,16 +87,20 @@ export function createThreadTable(log: Log, onLost: (error: Error) => void = () 
     void thread.worker.terminate();
   };
   const start = (name: ThreadName): Thread => {
-    const worker = new Worker(spawnEntry('stimd-thread'), {
-      workerData: { stimdThread: name, ...(name === 'passes' ? { dependencyCadence } : {}) },
-    });
-    const thread: Thread = { worker, pending: null, idle: null, unsettled: new Set(), lost: false };
+    const worker = trackWorker(
+      new Worker(spawnEntry('stimd-thread'), {
+        workerData: { stimdThread: name, ...(name === 'passes' ? { dependencyCadence } : {}) },
+      }),
+    );
+    const thread: Thread = { worker, pending: null, idle: null, unsettled: new Set(), reading: false, lost: false };
     worker.on('message', (message: FromThread) => {
       if (message.type === 'log') return log(message.level, message.event, message.msg, message.fields);
       if (message.type === 'settled') {
         thread.unsettled = new Set(message.pending);
+        thread.reading = message.reading;
         return;
       }
+      thread.reading = message.reading;
       const pending = thread.pending;
       thread.pending = null;
       idleEnd(name, thread);
@@ -110,6 +119,9 @@ export function createThreadTable(log: Log, onLost: (error: Error) => void = () 
     });
     const gone = (error: Error) => {
       if (threads.get(name) === thread) threads.delete(name);
+      if (thread.idle) clearTimeout(thread.idle);
+      thread.idle = null;
+      thread.reading = false;
       if (thread.unsettled.size > 0 && !thread.lost) {
         thread.lost = true;
         onLost(

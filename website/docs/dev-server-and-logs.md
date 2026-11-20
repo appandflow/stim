@@ -175,7 +175,7 @@ After 15 minutes of inactivity by default, Stim can stop Metro, keep its port, s
 
 Stim counts commands, builds, Metro bundle and HMR requests, device input and active leases. App logs and a view that only streams frames do not count. Running builds, live shares and pinned workspaces are protected. Custom Metro commands, Re.Pack and Expo SDKs before 54 do not report enough activity for idle stop.
 
-Set `idle.minutes` to `0` to disable idle stop. Under [disk pressure](./build-caches.md#disk-pressure), cleanup can act after two idle minutes.
+Set `idle.minutes` to `0` to disable idle stop. Under memory pressure, idle stop acts after two idle minutes. Under [disk pressure](./build-caches.md#disk-pressure) alone it waits for `idle.minutes`, and cleanup deletes the build outputs of workspaces with nothing running after two idle minutes.
 
 <StimTabs code="stim settings set idle.minutes 60 --scope workspace" />
 
@@ -540,7 +540,34 @@ checkout (`idle_stage_candidates`, `stopped_output_candidates`,
 (`finished`, `threw` or `aborted`); a rung adds `rung` and `pressureLevel`, and a step
 that threw adds `error`. A tick at normal writes one, up to 16 at high and up
 to 22 at critical. Use them to see which step a slow tick or maintenance run
-spent its time in. The records change nothing a pass does.
+spent its time in. The records change nothing a pass does. A step still
+running after 10 minutes also writes a `daemon_step_running` record (`step`,
+`startedAt`, `runningMs`) every 10 minutes until it ends, and so do the tick's
+`measure`, `booted_parked` and `idle_stage` phases and the maintenance pass's
+`fingerprint_precompute` and `maintenance` phases. These records only log. A
+shutdown still running after 10 minutes, not counting time the machine slept, writes
+`daemon_shutdown_timeout`, whose `waiting` names what it waits on, and stimd
+is forced to exit; an engine switch in progress is waited for first. While
+`daemon.mode` is off and stimd stays up for work it still serves, each pass of
+its loop writes a `daemon_tick_off` record.
+
+When a size walk fails, `daemon.ndjson` gets one `size_failed` record (`warn`,
+or `info` when the walk was aborted),
+from whichever Stim process ran the walk: `path` (the folder), `caller` (the
+function that asked for the size), `reason` (`timeout` with `limitMs`, `exit`
+with `status`, `signal` with `signal`, `aborted`, `error` with an errno `code`,
+or `no-output`) and `ms` (how long it ran). A walk that could not start because
+another walk held the machine's walk claim is not a failure, and neither is a
+`du` that exits non-zero because the folder does not exist. The home writes at
+most one record per folder and reason every 6 hours, whichever process or
+thread ran the walk (`daemon/size-failures.json` holds the times), so a folder
+that fails the same way on every pass shows up four times a day. The entries
+of a cache being trimmed share one record per reason, with `root` naming the
+cache. The failure record beside the
+size cache (`disk-usage/*.failed.json`) carries the same `reason` fields. When
+pressure ladder rung 3 cannot size the build or Metro cache at high, or the
+Swift compilation cache, it records a kept action that says why instead of
+skipping the cache silently.
 
 For local device lease contention, look for `device_lease_acquire` when the
 request was refused or spent at least five seconds waiting. `waitMs` counts

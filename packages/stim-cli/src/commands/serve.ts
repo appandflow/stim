@@ -7,7 +7,7 @@ import pairOp from './pair.ts';
 import { log, pairingsOp } from './pairings.ts';
 import serviceOp from './service.ts';
 import { loadServerCli } from '../server-cli.ts';
-import { serviceUnitLabel } from '../stimd/service-unit.ts';
+import { serviceJob } from '../stimd/service-unit.ts';
 import setupOp from './setup.ts';
 
 const options = {
@@ -54,7 +54,7 @@ const serveOp = defineOp({
         shareOnly: opts.share === true,
       },
       opts.service === true,
-      opts.service === true ? (serviceUnitLabel(process.env, port) ?? undefined) : undefined,
+      opts.service === true ? serviceJob(process.env, port, null)?.label : undefined,
     );
   },
 });
@@ -77,13 +77,17 @@ async function serveInStimd(serve: ServeOptions, service: boolean, unit: string 
   const lifetimeFd = process.env.STIM_DESKTOP_LIFETIME_FD;
   delete process.env.STIM_DESKTOP_BOOTSTRAP_FD;
   delete process.env.STIM_DESKTOP_LIFETIME_FD;
-  const [{ runStimd, daemonClaimRefusal }, { readDesktopInput }, { serveThroughStimd, stimdLive }, { daemonMode }] =
-    await Promise.all([
-      import('../stimd/main.ts'),
-      import('../stimd/desktop-key.ts'),
-      import('../daemon/client.ts'),
-      import('../daemon/mode.ts'),
-    ]);
+  const [
+    { runStimd, daemonClaimRefusal, endStimdWorkers },
+    { readDesktopInput },
+    { serveThroughStimd, stimdLive },
+    { daemonMode },
+  ] = await Promise.all([
+    import('../stimd/main.ts'),
+    import('../stimd/desktop-key.ts'),
+    import('../daemon/client.ts'),
+    import('../daemon/mode.ts'),
+  ]);
   if ((bootstrapFd ?? '0') !== '0' || (lifetimeFd ?? '0') !== '0')
     return refuse('Desktop bootstrap input is invalid or unavailable.');
   let desktop: Awaited<ReturnType<typeof readDesktopInput>> | undefined;
@@ -102,13 +106,18 @@ async function serveInStimd(serve: ServeOptions, service: boolean, unit: string 
     else if (!answer.listening) refuse(answer.message);
     if (!answer?.listening) process.kill(process.pid, 'SIGTERM');
   };
-  const served = await runStimd({
-    mode: daemonMode(process.env),
-    serve,
-    unit,
-    ...(desktop?.key ? { desktopKey: desktop.key } : {}),
-    onNet: answered,
-  });
+  let served: boolean;
+  try {
+    served = await runStimd({
+      mode: daemonMode(process.env),
+      serve,
+      unit,
+      ...(desktop?.key ? { desktopKey: desktop.key } : {}),
+      onNet: answered,
+    });
+  } finally {
+    await endStimdWorkers();
+  }
   if (served) return;
   if (!stimdLive()) return refuse(daemonClaimRefusal());
   console.error('stim: a stimd already serves this Stim home; asking it to start its net thread.');

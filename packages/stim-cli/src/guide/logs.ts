@@ -379,9 +379,23 @@ between its rung's startedAt and its end. Steps and what items counts:
 A step writes one record. A normal tick writes one (dormant_candidates), a high
 one up to 16, a critical one up to 22; the dormant step adds ~7/hour,
 build_end_measure one a pass. None alter a pass.
+A step running 10 minutes writes daemon_step_running (warn; step, startedAt,
+runningMs) every 10 minutes until it ends, as do the measure, booted_parked,
+idle_stage, fingerprint_precompute and maintenance phases; they only log. A
+shutdown past 10 awake minutes writes daemon_shutdown_timeout (waiting names what it
+waits on) and is forced. With daemon.mode off, each loop while stimd stays up
+writes daemon_tick_off.
+A size walk that fails or times out adds one record, event size_failed (warn,
+info when aborted),
+from whichever process ran it, at most once per folder and reason every 6
+hours across the home (daemon/size-failures.json), and once per cache and reason for the entries of a cache
+being trimmed (with root, the cache); du failing on a folder that does not exist is not one. Fields: path, caller (the function that asked), reason (timeout with
+limitMs, exit with status, signal with signal, aborted, error with code, or
+no-output) and ms. A walk the walk claim kept from starting is not a failure.
+A disk-usage failure record (*.failed.json) carries the same reason fields.
 Each disk-usage cache entry written after a walk also records walkMs, in milliseconds, from just
 before the install signature and target reads to the end of the folder walk;
-nothing reads it yet.
+status --watch reads it.
 When a report child's cleanup is refused (STIM_CLAIM_UNAVAILABLE) inside stimd, or a cancelled child whose identity
 was not captured is killed after its cancel (POSIX), the daemon log also gets one info record, event
 daemon_report_child_exited, when that child's own exit is seen. It never appears for a child that has not exited. Fields: pid, command (program and redacted, bounded arguments), cancelReason (timeout,
@@ -527,10 +541,12 @@ Fields: kind (build or device), platform, settings [{ key, value, from }] with
 from flag, env, setting or default (remote.build for a
 build, ios.remote or android.remote, plus remote.easFallback when it is on, for
 a device), candidates [{ machine, code,
-msg, detail? }], choice { machine, code, msg } with machine local when the run
+msg, detail?, warmth? }], choice { machine, code, msg } with machine local when the run
 stays on this machine, and fallback { code, msg, machine? } when a remote machine that
 was meant to take the run did not (level warn). The msg is the same text the
 placement: and build: phase lines print.
+A build candidate's warmth (artifact, checkout, dependencies or project) is what
+it holds for the build; it ranks ahead of remote.machines order.
 Candidate codes: accepted, unreachable, busy, disk, load, version-mismatch
 (detail lists the toolchain parts: xcode, arch, jdk, ...), no-matching-device,
 declined, memory, no-capacity; with machine eas, why an EAS Simulator was not

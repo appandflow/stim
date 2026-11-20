@@ -406,7 +406,11 @@ export function createLocalStim(options: EngineOptions): EngineClient {
           }),
         );
       const operation = beginReport('collectGarbage', signal);
-      const request = { pressure, json: true };
+      const request: { pressure: StimGcMutationOptions['pressure']; json: boolean; walkUnknown: false } = {
+        pressure,
+        json: true,
+        walkUnknown: false,
+      };
       return lifecycle(operation, (context) =>
         withGcMaintenanceClaim(request, (claim) =>
           runReport(context, (bounded) =>

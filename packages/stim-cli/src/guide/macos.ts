@@ -48,6 +48,7 @@ symbolic links. Sources can use ../ to reach other files
 inside that repository. Custom packaging scripts are not run and extra
 executables, including Stim Desktop's sim-fold helper, are not built.
 
+  stim worktree warm      # once in a new worktree
   stim macos              # fixed SwiftPM Debug build, then launch
   stim macos --json       # one launch record; progress goes to stderr
   stim macos --plan --json # validate the next build without running it
@@ -158,9 +159,9 @@ SwiftPM compile or another machine. Invalid, unlisted or unpaired selections
 refuse before stopping the app or changing its build record. See stim guide errors STIM_OFFLOAD_REFUSED.
 
 remote.build places these SwiftPM Debug builds: auto builds here while this Mac has
-capacity, remote uses the first approved build machine in remote.machines order that
-accepts and otherwise builds here, remote-only never builds here and refuses when none
-accepts, and local builds here. remote.buildPoolDisabled excludes members from automatic placement,
+capacity, remote uses the approved build machine that accepts and last built this
+checkout or project, else the first in remote.machines order, and otherwise builds
+here, remote-only never builds here and refuses when none accepts, and local builds here. remote.buildPoolDisabled excludes members from automatic placement,
 including its local fallback. Explicit local or named placement bypasses membership.
 Configure remote.machines
 and approve build access as described in stim guide settings. The worker needs

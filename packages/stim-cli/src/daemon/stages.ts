@@ -41,7 +41,8 @@ import { getProject, loadConfig, type Config, type ProjectRecord } from '../work
 import { checkoutOwnerOf } from '../workspace/checkout-role.ts';
 import { discoverCheckouts } from '../workspace/discovery.ts';
 import { discoveredEvidence } from '../workspace/discovered-activity.ts';
-import { freshLaunchers, launchersOf, launchingOf, type Checkout } from '../workspace/launchers.ts';
+import { freshLaunchers, launchersOf, launchingOf, type Checkout, type Launching } from '../workspace/launchers.ts';
+import { lockReason, worktreeLockAsync } from '../workspace/worktree.ts';
 import { discoveredReads, type DiscoveredReads } from '../workspace/discovered-reads.ts';
 import { listedRoots } from '../commands/gc/worktrees.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
@@ -56,6 +57,7 @@ import {
 import { readWorkspaceState, updateWorkspaceStateAsync } from '../workspace/workspace-state.ts';
 import { deleteOutputs, idleOutputs, revivable, writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
 import { timedStep, type DaemonLog, type StepTally } from './step-timing.ts';
+import { forgetGitReads } from '../workspace/git-reads.ts';
 
 const DAY_MS = 86_400_000;
 const MINUTE_MS = 60_000;
@@ -156,12 +158,15 @@ async function idleVerdict(
     reads = discoveredReads(operation?.signal, operation),
     full = false,
     reduceOnly,
+    checkout = path,
   }: {
     locked?: boolean;
     operation?: StimContext;
     reads?: DiscoveredReads;
     full?: boolean;
     reduceOnly: boolean;
+    /** The checkout whose source and git writes, processes and agent sessions count; default `path`. */
+    checkout?: string;
   },
 ): Promise<{ idleMs: number } | { kept: string }> {
   const now = Date.now();
@@ -170,7 +175,10 @@ async function idleVerdict(
   const evidence =
     !full && (getProject(path) || existsSync(workspaceMetadataFile(path)))
       ? stim
-      : mergeEvidence(stim, await discoveredEvidence(path, { now, idleMs: thresholdMs, reads, operation, reduceOnly }));
+      : mergeEvidence(
+          stim,
+          await discoveredEvidence(checkout, { now, idleMs: thresholdMs, reads, operation, reduceOnly }),
+        );
   const decision = decideIdleStop(evidence, { idleMs: thresholdMs, now, setting, pressured });
   if (!decision.stop) return { kept: decision.reason };
   try {
@@ -197,16 +205,29 @@ async function idleFor(
 
 /**
  * How long a source checkout has had no activity, by the full evidence whether or not a workspace is registered for it:
- * the newest of Stim activity, source file writes, git writes and the last commit. An unreadable state or a scan over
- * its bound keeps it, and the reason says so.
+ * the newest of Stim activity, source file writes, git writes and the last commit. An unreadable state or a source scan
+ * that ran out of time keeps it, and the reason says so.
  */
 export function sourceCheckoutIdle(
   path: string,
   thresholdMs: number,
   setting: string,
-  { operation, locked = false, reduceOnly }: { operation?: StimContext; locked?: boolean; reduceOnly: boolean },
+  {
+    operation,
+    locked = false,
+    reduceOnly,
+    reads,
+    checkout,
+  }: { operation?: StimContext; locked?: boolean; reduceOnly: boolean; reads?: DiscoveredReads; checkout?: string },
 ): Promise<{ idleMs: number } | { kept: string }> {
-  return idleVerdict(path, thresholdMs, setting, { operation, full: true, locked, reduceOnly });
+  return idleVerdict(path, thresholdMs, setting, {
+    operation,
+    full: true,
+    locked,
+    reduceOnly,
+    ...(reads ? { reads } : {}),
+    ...(checkout ? { checkout } : {}),
+  });
 }
 
 /** Why a discovered checkout is not idle `thresholdMs` by the activity definition, or null when it is. */
@@ -235,6 +256,8 @@ interface IdleSelection {
   /** The setting the threshold comes from, named in the reason a workspace is kept; default the pressure threshold. */
   setting?: string;
   onKept?: (path: string, reason: string) => void;
+  /** Whether a discovered checkout holds anything the caller reclaims; one that does not is left out before its source walk. */
+  reclaimable?: (path: string) => boolean | Promise<boolean>;
 }
 
 function idleWorkspaces(
@@ -261,17 +284,19 @@ async function readIdleWorkspaces(
   thresholdMs: number,
   setting: string,
   worthIt: (path: string, project: ProjectRecord) => boolean | Promise<boolean>,
-  { discover = false, full = false, onKept }: Omit<IdleSelection, 'setting'> & { discover?: boolean } = {},
+  { discover = false, full = false, onKept, reclaimable }: Omit<IdleSelection, 'setting'> & { discover?: boolean } = {},
 ): Promise<StageCandidate[]> {
   const readings: (Omit<StageCandidate, 'idleMs' | 'role' | 'checkout'> & { idleMs: number | null })[] = [];
   const reads = discoveredReads(reading.operation?.signal, reading.operation);
   const found = discover ? await discoverCheckouts(config, listedRoots(), reading.operation) : [];
   const discovered = found.map(({ path }): [string, ProjectRecord] => [path, {}]);
+  const discoveredPaths = new Set(found.map(({ path }) => path));
   const reduceOnly = new Set(found.filter((entry) => entry.reduceOnly).map(({ path }) => path));
   const checkouts = [...Object.entries(config.projects), ...discovered];
   tally.items = checkouts.length;
   for (const [path, project] of checkouts) {
     if (sameRoot(path, reading.protectedRoot) || !(await worthIt(path, project))) continue;
+    if (reclaimable && discoveredPaths.has(path) && !(await reclaimable(path))) continue;
     const used = Date.parse(String(readWorkspaceState(path)?.lastUsedAt ?? ''));
     if (Number.isFinite(used) && Date.now() - used < thresholdMs) {
       onKept?.(path, `a Stim command used it ${Math.floor((Date.now() - used) / MINUTE_MS)} minutes ago`);
@@ -319,10 +344,20 @@ export async function stillIdle(
     full = false,
     locked = true,
     setting = PRESSURE_THRESHOLD,
-  }: { operation?: StimContext; full?: boolean; locked?: boolean; setting?: string },
+    checkout,
+  }: { operation?: StimContext; full?: boolean; locked?: boolean; setting?: string; checkout?: string },
 ): Promise<boolean> {
   const reads = discoveredReads(operation?.signal, operation, freshLaunchers(operation, operation?.signal));
-  return (await idleFor(path, thresholdMs, setting, { locked, operation, full, reads, reduceOnly: false })) !== null;
+  return (
+    (await idleFor(path, thresholdMs, setting, {
+      locked,
+      operation,
+      full,
+      reads,
+      reduceOnly: false,
+      ...(checkout ? { checkout } : {}),
+    })) !== null
+  );
 }
 
 /** Workspaces with nothing running, idle `thresholdMs` by the activity definition: linked worktrees, then source checkouts, longest-idle first in each. */
@@ -351,6 +386,34 @@ export function stoppedOutputCandidates(
 }
 
 type StageResult = Pick<DaemonLadderAction, 'outcome' | 'bytes' | 'detail'>;
+
+/**
+ * The outputs rung 1 deletes for a stopped workspace, and why each other one stays: none while its worktree is
+ * locked with git worktree lock or git cannot list it, and never a Cargo `target/`, which only the Cargo trim of rung
+ * 3 reduces.
+ */
+export async function stoppedOutputs(
+  candidate: StageCandidate,
+  config: Config,
+  launching: Launching,
+  operation?: StimContext,
+  deletable?: (path: string) => boolean,
+): Promise<{ paths: string[]; kept: string[] } | { locked: string }> {
+  const lock = await worktreeLockAsync(candidate.path, {
+    env: operation?.env,
+    signal: operation?.signal,
+    declareFor: operation,
+  });
+  if (lock) return { locked: lockReason(lock) };
+  const outputs = await idleOutputs(candidate.path, config, launching, deletable);
+  return {
+    paths: outputs.paths.filter((path) => !outputs.targets.includes(path)),
+    kept: [
+      ...outputs.kept,
+      ...outputs.targets.map((target) => `kept ${target}: a Cargo target/ is left to the Cargo trim of rung 3`),
+    ],
+  };
+}
 
 /**
  * Deletes a stopped workspace's regenerable build outputs under its native-run and metro-start locks. Null when every
@@ -382,8 +445,8 @@ export async function clearStoppedOutputs(
               })) === null
             )
               return { outcome: 'kept', bytes: 0, detail: 'it is no longer idle' };
-            const outputs = await idleOutputs(
-              path,
+            const outputs = await stoppedOutputs(
+              candidate,
               config,
               launchingOf(
                 candidate.checkout,
@@ -391,8 +454,10 @@ export async function clearStoppedOutputs(
                 operation,
                 operation?.signal,
               ),
+              operation,
               deletable,
             );
+            if ('locked' in outputs) return { outcome: 'kept', bytes: 0, detail: outputs.locked };
             if (!outputs.paths.length) return null;
             const bytes = await deleteOutputs(
               outputs.paths,
@@ -561,6 +626,7 @@ export async function enterDormantStage(
   operation?: StimContext,
   deletable?: (path: string) => boolean,
 ): Promise<DormantOutcome> {
+  forgetGitReads(operation);
   const path = action.target;
   const thresholdMs = dormantThresholdMs(action);
   if (thresholdMs === null) return { status: 'kept', bytes: 0, detail: 'the action names no idle threshold' };

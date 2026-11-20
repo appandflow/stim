@@ -124,7 +124,8 @@ In on mode a pass runs, cheapest to rebuild first:
      caches whose directory no longer exists
   2. build outputs of idle workspaces, over maintenance.workspaceOutputsMaxGb,
      or unused for maintenance.olderThanDays; the Cargo target/ of an Exact
-     app or a Cargo workspace root (CACHEDIR.TAG), in a registered workspace or
+     app or a Cargo workspace root (CACHEDIR.TAG; untagged beside Cargo.toml:
+     trimmed only), in a registered workspace or
      a discovered checkout, in use or not, over maintenance.cargoTargetMaxGb
      (default 25, 0 no cap; one du walk per target/, at most 6 discovered
      ones per size scan, the least recently measured first, so every one is
@@ -166,7 +167,10 @@ In on mode a pass runs, cheapest to rebuild first:
      from target/exact-filesystem-tool does not protect the rest
   3. build-cache and Metro entries, least recently used first, down to
      80% of caches.buildCacheMaxGb or
-     caches.metroCacheMaxGb, and entries unused for olderThanDays
+     caches.metroCacheMaxGb, and entries unused for olderThanDays, Metro
+     file maps and Jest's default cache (TMPDIR/jest_<uid>, not on
+     Windows) included; a Jest entry goes once its whole config is
+     unused, none while Jest runs
   4. the Swift compilation cache, emptied whole once it is over
      caches.swiftCompilationCacheMaxGb (default 0, no cap), whatever the free
      disk, and kept while an iOS build holds its shared
@@ -298,7 +302,9 @@ The run claim serializes passes with an acting gc; gc refuses a held claim
 with the holder and recovery guidance instead of waiting. A dry run takes no
 claim.
 Each pass keeps a 1 MiB file, maintenance/disk-reserve. When taking the run
-claim fails with ENOSPC or EDQUOT, the pass deletes it and retries once; an
+claim fails with ENOSPC or EDQUOT, the pass deletes it and retries once, and
+so does a Cargo trim or delete whose claim or staging write fails that way, and
+the dormant step for any output whose workspace claims fail that way; an
 acting gc gives it back before taking the claim. Either starts deleting at zero
 free disk as long as an earlier run left the reserve, and writes the reserve
 again at its end when there is room.
@@ -493,6 +499,7 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
       target and reasons
     - on a dry run, "Apply with: stim gc" (plus --pressure <level> when you
       gave one)
+    - below disk.minFreeGb, "Not Stim's to delete": other large users
   An acting run appends each item to $STIM_HOME/gc/gc.ndjson (WHAT WAS
   CLEARED).
 
@@ -504,8 +511,8 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
             simulator runtimes, finished linked worktrees past
             gc.worktreeGraceMinutes
   high      plus the pressure ladder at high (\`guide lifecycle budget\`):
-            idle stage at 2 minutes, parked devices until the level clears,
-            shared caches trimmed to half their caps, the dormant stage and
+            idle stage at 2 minutes (memory pressure), parked devices until
+            the level clears, shared caches trimmed to half their caps, the dormant stage and
             node_modules and Pods of idle linked worktrees at 10 minutes, idle
             daemons, clean finished worktrees without the grace period, and,
             while free disk stays under disk.minFreeGb, other tools' caches
@@ -523,7 +530,7 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
   Workspace build outputs and shared caches over their caps
     maintenance caps, N. Kept: in use, pinned, a running build.
   What the age sweep removes after maintenance.olderThanDays (parked devices,
-  outputs, idle worktrees when opted in)
+  outputs, cache entries, Jest's cache, idle worktrees when opted in)
     maintenance sweep, N. Kept: recently used, pinned.
   Unused iOS simulator runtimes (xcrun simctl runtime delete <identifier>)
     maintenance sweep, N. Kept: any simulator on the machine uses it, simctl
@@ -551,16 +558,19 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
     maintenance worktree check, N. Kept: uncommitted (archived first) or
     unpushed work, in use, leased, locked, pinned, cannot prove finished.
   Workspace idle idle.dormantDays (default 1): build outputs (android/build,
-  android/.gradle, .build, .cxx, .dd DerivedData, an Exact app's target/ beside
-  exact.mjs), owned devices, logs archived
-    dormant reduction, N. Kept: running dev server or build, booted device,
-    leased, driven, locked, hosted, pinned, idle.minutes 0.
+  android/.gradle, .build, .cxx, .dd DerivedData, a Cargo target/ but a Solana
+  deploy/ keypair folder), owned devices, logs archived
+    dormant reduction, N. Kept: running dev server or build, a process in
+    the checkout, booted device, leased, driven, locked, hosted, pinned,
+    idle.minutes 0; a target/ used in that time, locked, open, holding a
+    mount or trim recovery.
   The same: node_modules and ios/Pods of a linked worktree, recorded so the next
   Stim command restores them with worktree warm, or asks for an install
     dormant reduction, N. Kept: source checkout, under 256 MB of its own (a
     copy-on-write clone), in use, a running process inside, pinned.
   Idle dev servers and their outputs (idle 2 minutes)
-    idle stage and rung 1, H. Kept: as above.
+    idle stage (memory pressure) and rung 1, H. Kept: as above; rung 1 keeps a Cargo target/
+    for rung 3.
   Parked devices
     rung 2, H until the level clears, C all.
   Cargo target/ stale profiles and incremental/ data (at C also idle units), first in rung 3
@@ -614,7 +624,8 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
 
   The dormant reduction and the dormant stage are the same work: a workspace
   with no activity for idle.dormantDays is reduced to its minimal size, by
-  stim gc at every level and by the stim-daemon. Its node_modules and
+  stim gc at every level and by the stim-daemon (hourly for build outputs
+  and dependencies). Its node_modules and
   ios/Pods go only in a linked worktree, are recorded, and the next Stim
   command in it restores them with \`stim worktree warm\`, or, when warm cannot
   restore the same versions (its lockfile differs from the source checkout's,
@@ -636,8 +647,9 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
   whose node_modules a linked worktree listed by git links to (a symlink at the
   same relative path or in its top two directory levels, up to 2000 entries,
   resolving into the tree; past the bound or at an unreadable directory the
-  tree is kept; unlisted worktrees are not scanned), nor a tree not measured yet at the 7-day
-  rule (critical takes it), or that is not a real
+  tree is kept; unlisted worktrees are not scanned), nor a tree of unknown size at the 7-day
+  rule (gc tries to measure it first; critical takes it, even when a
+  sample of its files finds mostly hard links), or that is not a real
   git-ignored directory with no tracked or unignored file and on its own volume. The deletion is
   recorded in the checkout's workspace; \`stim worktree warm\` in a linked
   worktree then says on stderr that the source has no installed dependencies
@@ -669,8 +681,9 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
   after an install Stim did not run, a file changed since the previous
   reference stays an edit unless its package was reinstalled. Not checked:
   the package manager's state files, dot-directories at a node_modules root
-  other than .pnpm, .bun, .deno and .bin (treated as tool caches, a custom
-  pnpm virtual-store directory included), .gradle, .kotlin, .cxx and Gradle's
+  other than .pnpm, .bun and .deno (treated as tool caches, a custom pnpm
+  virtual-store directory included), the .bin directory of any node_modules,
+  .gradle, .kotlin, .cxx and Gradle's
   build in a package's android directory or beside a Gradle build script, a
   package's ios/build, and Pods' xcuserdata. Known misses: an edit that keeps
   an older modification time (cp -p, rsync -t, tar), a file deleted by hand,
@@ -1112,6 +1125,7 @@ THE PRESSURE LADDER
   rung to its end:
     0  booted parked simulators
     1  idle outputs: the idle stage for every workspace idle 2 minutes or more
+       under memory pressure (at idle.minutes under disk pressure alone)
     2  parked devices (high until the level clears, critical all)
     3  shared caches: trimmed to half their caps at high; at critical emptied
        (compilation cache, ccache, build cache except entries in use, Metro
@@ -1203,7 +1217,8 @@ registered projects, direct children of the folders in maintenance.discoverRoots
 the home folder and / are refused, and doctor reports one that is not a folder), and linked worktrees (git worktree list) of their
 repositories. A child counts only when Stim's project detection recognises it as
 a project it handles, itself or through a direct child of its apps, examples or
-packages folder; any other folder is ignored. A linked worktree is acted on only
+packages folder; of a plain Node checkout (git, a root package.json) only its
+finished linked worktrees are removed, nothing else; any other folder is ignored. A linked worktree is acted on only
 inside its repository's main checkout folder, a folder holding a known project,
 or a maintenance.discoverRoots folder; every other worktree (another tool's
 home, a pin checkout) is listed by stim gc --dry-run as outside the folders Stim
@@ -1264,10 +1279,11 @@ to manage one. A checkout that an executable on PATH (a symlink in a
 PATH directory, ~/.local/bin, ~/bin, ~/.cargo/bin, ~/.bun/bin, ~/.volta/bin,
 ~/Library/pnpm, the active nvm bin, /usr/local/bin or /opt/homebrew/bin)
 resolves into is kept whole, by every pass that deletes its outputs,
-dependencies or Cargo target. A directory or entry that cannot be read (not one
-that is missing, or one that does not answer within 3 seconds) keeps every
-checkout for that pass; the reason and stim doctor (launcher-evidence-incomplete)
-name it and the fix. Each read of the processes using a path is paired with a
+dependencies or Cargo target. A link this user can run but not read is
+followed through the file it opens (macOS). A directory or entry still unread
+counts as no launcher: cleanup goes ahead, and the pass log and stim doctor
+(launcher-evidence-incomplete) name it. A read with no answer in 3 seconds
+keeps every checkout. Each read of the processes using a path is paired with a
 launcher read of its own, never the planning reading; a
 directory that hangs ends the reading as incomplete at once, and while that read
 is pending (at most one per thread: the daemon's main thread and passes thread
@@ -1287,8 +1303,8 @@ Idle, with no Stim activity record, means the newest of its source file writes
 and build, dist, target, .cache and similar folders skipped only where git
 ignores them), its last commit and its git writes, for idle.dormantDays. A
 process running from or working in it, an agent session in it, a pin by
-maintenance.keep, more source files than the scan reads, or evidence that
-cannot be read keeps it. Its regenerable build outputs go when it is idle, and its
+maintenance.keep, a source scan that does not finish within 15 seconds, or
+evidence that cannot be read keeps it. Its regenerable build outputs go when it is idle, and its
 node_modules and Pods go too: a linked worktree's after idle.dormantDays (default
 1 day), a main (source) checkout's after idle.sourceDormantDays (default 7 days; 0
 never), by the same evidence. That holds for every kind of discovered checkout
@@ -1309,13 +1325,15 @@ An ignored file elsewhere that the main checkout lacks, even inside a tracked
 dist folder, keeps it (more than 200 files or 16 MB to compare also keeps it).
 Any change to a tracked file, even Podfile.lock or project.pbxproj, is dirty
 work and keeps it, as does any tracked file marked assume-unchanged or
-skip-worktree, which hides edits from git status. A worktree inside a
-dot-folder of its main checkout other than .worktrees (.claude/worktrees) is
+skip-worktree, which hides edits from git status, or an unfinished pnpm patch
+in node_modules/.pnpm_patches. A worktree inside a
+dot-folder other than .worktrees (.claude/worktrees) of its main checkout, or of
+a worktree inside it, is
 managed by another tool and is never removed, though its outputs are reduced;
 so is a reduce-only checkout (above). Dirty work is never archived.
 stim gc --dry-run lists the discovered checkouts and what each
-would lose, or why it is kept; one over the scan bound is listed under Needs a
-person.
+would lose, or why it is kept; one whose scan ran out of time is listed under
+Needs a person.
 
 DELETED WORKTREES STILL REGISTERED
   A worktree deleted outside Stim keeps its registry entry; \`stim status\`
@@ -1330,8 +1348,7 @@ TMPDIR LEFTOVERS
   directories (stim-claim-*, stim-host-*, stim-fakehome-*,
   stim-hosted-macos-*, stim-server-*, stim-ws-*, stim-parity-*), xctrace recordings
   (instruments*.ktrace), SwiftPM temp directories (TemporaryDirectory.* with a
-  six-character suffix, left by swift and xcodebuild) and Jest's
-  jest_<uid in base 36> cache. \`gc\` at high or critical checks them again and deletes a
+  six-character suffix, left by swift and xcodebuild). \`gc\` at high or critical checks them again and deletes a
   Stim temp directory, recording or SwiftPM temp directory only when nothing in
   it changed for 24 hours. It keeps a Stim temp directory that contains or
   sits inside a registered project, holds a live or unverifiable ownership
@@ -1344,8 +1361,8 @@ TMPDIR LEFTOVERS
   temp directory while a swift or xcodebuild process runs, or when the process
   list cannot be read. Stim's own SwiftPM macOS builds run swift with the
   ambient TMPDIR, because SwiftPM keeps the locks for its shared caches there,
-  so their temp directories land here too. Jest's cache and every other entry
-  are never deleted. gc never follows a symlink and never acts outside TMPDIR.
+  so their temp directories land here too. Every other entry is never
+  deleted. gc never follows a symlink and never acts outside TMPDIR.
   With STIM_HOME set it neither reports nor deletes them, because TMPDIR is
   shared by every Stim home. Pressure ladder rung 6 runs the same deletion
   daily in the age sweep, and at once under disk pressure.
@@ -1839,10 +1856,13 @@ WORKSPACE BUILD OUTPUTS
   detected cache, "Workspace build outputs", with a per-workspace size, last
   use and verdict. An acting \`gc\` clears them for a workspace over
   maintenance.workspaceOutputsMaxGb or unused for maintenance.olderThanDays,
-  for a workspace idle for idle.dormantDays (1) at every level, and through the
+  for a workspace idle for idle.dormantDays (1) at every level (the
+  stim-daemon too, hourly), and through the
   pressure ladder at high or critical: for a workspace with
   nothing running idle 2 minutes or more, and in the idle stage of a running
   one. It prints the bytes freed per category.
+  Idle idle.dormantDays, a Cargo target/ goes but its keypairs (\`stim
+  guide cleanup gc\`).
   A workspace whose worktree is locked with git worktree lock is never
   lightened: not its outputs, not its project's build directories, at any
   disk pressure level, including the age sweep and the pressure ladder, and gc and
@@ -1862,7 +1882,7 @@ WORKSPACE BUILD OUTPUTS
   other macOS files, locks and device records stay. The workspace keeps its
   devices, ports and running dev server. The pressure ladder's idle stage
   (stim guide lifecycle budget) clears them for a workspace idle 2 minutes
-  under disk pressure. A running, building, unverified or hosted macOS app
+  under memory pressure. A running, building, unverified or hosted macOS app
   keeps its workspace untouched.
   Last use is the newest of the lastUsedAt that start, ios, android, reload,
   logs and worktree warm record in state.json, lastBuild.startedAt,

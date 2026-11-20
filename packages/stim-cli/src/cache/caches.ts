@@ -1,10 +1,11 @@
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
-import { existsSync, readdirSync, realpathSync, rmSync, statSync } from 'fs';
-import { readdir, rm, stat } from 'node:fs/promises';
+import { existsSync, lstatSync, readdirSync, realpathSync, rmSync, statSync } from 'fs';
+import { lstat, readdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'path';
 import { cacheDirRefusal, METRO_NAMED_CACHE_LAYOUT, type StimContext } from '@stim-cli/core';
 import { directorySize, measuredDirectorySizeAsync } from '../fs-util.ts';
+import { getExecutor } from '../exec.ts';
 import { registeredCaches } from './cache-manifest.ts';
 import { mapLimited, sizeConcurrency } from '../commands/gc/limited.ts';
 import { userHome } from '@stim-cli/core/state';
@@ -20,6 +21,13 @@ export interface CacheDescriptor {
   bytes?: number;
   sizeError?: string;
   source?: 'registered' | 'detected';
+  /**
+   * The last use of an entry beyond its own times, read when it is pruned; Infinity keeps the entry. `reread` asks for
+   * a fresh look at the cache directory, right before removal.
+   */
+  lastUse?: (entry: string, reread?: boolean) => number;
+  /** Why no entry may go in this pass, or null; read once when it is pruned. */
+  inUse?: () => string | null;
 }
 
 function xcodeDerivedDataRoot(env: NodeJS.ProcessEnv): string {
@@ -102,7 +110,107 @@ async function metroFileMapsAsync(): Promise<CacheDescriptor | null> {
   return metroFileMapsOf(root, entries);
 }
 
-function cachesWith(env: NodeJS.ProcessEnv, cwd: string, metro: CacheDescriptor | null): CacheDescriptor[] {
+/**
+ * Jest's default `cacheDirectory` (jest-config getCacheDirectory): the real temp directory plus `jest_<uid in base 36>`.
+ * Null where there is no uid (Windows): Stim cannot rule out a running Jest there, so it does not manage the cache.
+ */
+export function jestCacheDir(): string | null {
+  const uid = process.getuid?.();
+  return uid === undefined ? null : join(canonicalCacheDir(tmpdir()), `jest_${uid.toString(36)}`);
+}
+
+// jest-haste-map and @jest/transform name entries haste-map-<config id>-..., jest-transform-cache-<config id>-...
+// and perf-cache-<config id>-...; a run reads the transform files without touching their directory.
+const JEST_CONFIG_ENTRY = /^(?:haste-map|jest-transform-cache|perf-cache)-([^-]+)-/;
+
+// Metro spawns its transform workers through jest-worker, the same build/workers/processChild.js Jest uses, and wrappers
+// such as react-scripts run Jest without "jest" in their own command line, so a jest-worker child counts as Jest unless
+// its parent is a bundler: expo start, the React Native CLI, Metro, or Stim's own metro-host.cjs.
+const BUNDLER =
+  /expo[/\\]bin[/\\]cli\b|\.bin[/\\]expo\b|react-native[/\\]cli\.js|@react-native-community[/\\]cli|metro[/\\]src[/\\]cli\.js|\.bin[/\\]metro\b|metro-host\.cjs/;
+
+function jestRunning(): string | null {
+  const table = getExecutor().runFileQuiet('ps', ['-axww', '-o', 'pid=,ppid=,command='], { timeoutMs: 5000 });
+  if (table === null) return 'the process list could not be read, so a running Jest cannot be ruled out';
+  const rows = table.split('\n').flatMap((line) => {
+    const match = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line);
+    return match ? [{ pid: match[1], ppid: match[2], command: match[3] ?? '' }] : [];
+  });
+  const commands = new Map(rows.map((row) => [row.pid, row.command]));
+  return rows.some(
+    ({ ppid, command }) =>
+      /\bjest\b/i.test(command.replace(/jest-worker/gi, '')) ||
+      (/jest-worker[/\\]build[/\\].*processChild\.js/.test(command) && !BUNDLER.test(commands.get(ppid) ?? '')),
+  )
+    ? 'a Jest process is running'
+    : null;
+}
+
+function ownedRealDirectory(st: { isDirectory(): boolean; uid: number }): boolean {
+  return st.isDirectory() && st.uid === process.getuid?.();
+}
+
+function jestCacheOf(dir: string, names: string[]): CacheDescriptor | null {
+  const configOf = (path: string) => JEST_CONFIG_ENTRY.exec(basename(path))?.[1];
+  const files = names.map((name) => join(dir, name)).filter((path) => configOf(path) !== undefined);
+  if (!files.length) return null;
+  const configs = new Map<string | undefined, string[]>();
+  for (const path of files) {
+    const group = configs.get(configOf(path));
+    if (group) group.push(path);
+    else configs.set(configOf(path), [path]);
+  }
+  return {
+    name: 'Jest cache',
+    dir,
+    files,
+    prune: 'entries',
+    note: `${files.length} entr(ies) in Jest's default cacheDirectory; each goes with its Jest config's last use`,
+    inUse: jestRunning,
+    lastUse: (entry, reread = false) => {
+      let group = configs.get(configOf(entry)) ?? [];
+      try {
+        if (!ownedRealDirectory(lstatSync(dir)) || lstatSync(entry).isSymbolicLink()) return Infinity;
+        if (reread)
+          group = readdirSync(dir)
+            .map((name) => join(dir, name))
+            .filter((path) => configOf(path) === configOf(entry));
+      } catch {
+        return Infinity;
+      }
+      let newest = 0;
+      for (const path of group) {
+        try {
+          const st = lstatSync(path);
+          newest = Math.max(newest, st.mtimeMs, st.isDirectory() ? 0 : st.atimeMs);
+        } catch {}
+      }
+      return newest;
+    },
+  };
+}
+
+function jestCache(): CacheDescriptor | null {
+  const dir = jestCacheDir();
+  if (!dir) return null;
+  try {
+    return ownedRealDirectory(lstatSync(dir)) ? jestCacheOf(dir, readdirSync(dir)) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function jestCacheAsync(): Promise<CacheDescriptor | null> {
+  const dir = jestCacheDir();
+  if (!dir) return null;
+  try {
+    return ownedRealDirectory(await lstat(dir)) ? jestCacheOf(dir, await readdir(dir)) : null;
+  } catch {
+    return null;
+  }
+}
+
+function cachesWith(env: NodeJS.ProcessEnv, cwd: string, ...tmp: (CacheDescriptor | null)[]): CacheDescriptor[] {
   const gradle = gradleBuildCache(env, cwd);
   const gradleDir = gradle ? canonicalCacheDir(gradle.dir) : null;
   const registered = protectNestedMetroAncestors(
@@ -117,14 +225,14 @@ function cachesWith(env: NodeJS.ProcessEnv, cwd: string, metro: CacheDescriptor 
       ),
     ),
   );
-  const detected = [compilationCache(env), gradle, metro]
+  const detected = [compilationCache(env), gradle, ...tmp]
     .filter((c): c is CacheDescriptor => Boolean(c))
     .map((c): CacheDescriptor => Object.assign({}, c, { source: 'detected' as const }));
   return distinguishSharedNames(mergeCacheDescriptors([...registered, ...detected], gradleDir));
 }
 
 export function discoverCaches(env: NodeJS.ProcessEnv = process.env, cwd: string = process.cwd()): CacheDescriptor[] {
-  return cachesWith(env, cwd, metroFileMaps());
+  return cachesWith(env, cwd, metroFileMaps(), jestCache());
 }
 
 /** `discoverCaches` without blocking the event loop. */
@@ -132,7 +240,7 @@ export async function discoverCachesAsync(
   env: NodeJS.ProcessEnv = process.env,
   cwd: string = process.cwd(),
 ): Promise<CacheDescriptor[]> {
-  return cachesWith(env, cwd, await metroFileMapsAsync());
+  return cachesWith(env, cwd, await metroFileMapsAsync(), await jestCacheAsync());
 }
 
 function distinguishSharedNames(caches: CacheDescriptor[]): CacheDescriptor[] {
@@ -269,6 +377,7 @@ const CACHE_SIZE_TIMEOUT_MS = 60_000;
 export async function sizeCaches(caches: CacheDescriptor[], operation?: StimContext): Promise<CacheDescriptor[]> {
   return mapLimited(caches, sizeConcurrency(operation), async (cache) => {
     operation?.signal.throwIfAborted();
+    if (cache.files && cache.bytes === undefined) return cache;
     const bytes =
       cache.bytes ??
       (await measuredDirectorySizeAsync(cache.dir, {
@@ -284,7 +393,18 @@ export async function sizeCaches(caches: CacheDescriptor[], operation?: StimCont
   });
 }
 
-export function pruneCache(
+async function checkpoint(signal: AbortSignal): Promise<void> {
+  await new Promise<void>((done) => setImmediate(done));
+  signal.throwIfAborted();
+}
+
+/**
+ * Removes `cache`'s entries unused for `olderThanDays`, oldest first up to `evictBytes` when given. Without `signal`
+ * it runs to the end without yielding, so nothing the same thread serves can start between its protection check and
+ * its removals. With `signal` it yields to the event loop before each entry and throws once the signal is aborted, so
+ * a cancel stops it between entries instead of after the last one.
+ */
+export async function pruneCache(
   cache: CacheDescriptor,
   {
     olderThanDays,
@@ -292,14 +412,16 @@ export function pruneCache(
     protect,
     evictBytes,
     byMtime = false,
+    signal,
   }: {
     olderThanDays?: number;
     now?: number;
     protect?: (entry: string) => string | null;
     evictBytes?: number;
     byMtime?: boolean;
+    signal?: AbortSignal;
   } = {},
-): { removed: number; bytes: number; skipped: string | null; failed?: number; protectedEntries?: number } {
+): Promise<{ removed: number; bytes: number; skipped: string | null; failed?: number; protectedEntries?: number }> {
   const cutoff = now - (olderThanDays as number) * 24 * 60 * 60 * 1000;
 
   if (cache.prune === 'report-only') {
@@ -313,14 +435,17 @@ export function pruneCache(
   if (!cache.files && cacheDirRefusal(cache.dir)) {
     return { removed: 0, bytes: 0, skipped: `${cache.dir} is not a directory this cache owns` };
   }
+  const inUse = cache.inUse?.();
+  if (inUse) return { removed: 0, bytes: 0, skipped: inUse };
 
   const entries = cache.files ?? entriesAtDepth(cache.dir, cache.entriesDepth ?? 1);
   const candidates: { entry: string; used: number; isDirectory: boolean; size: number }[] = [];
   let protectedEntries = 0;
   for (const entry of entries) {
+    if (signal) await checkpoint(signal);
     try {
       const st = statSync(entry);
-      const used = byMtime ? st.mtimeMs : Math.max(st.atimeMs, st.mtimeMs);
+      const used = Math.max(byMtime ? st.mtimeMs : Math.max(st.atimeMs, st.mtimeMs), cache.lastUse?.(entry) ?? 0);
       if (used >= cutoff) continue;
       if (protect?.(entry)) {
         protectedEntries++;
@@ -335,9 +460,16 @@ export function pruneCache(
   let failed = 0;
   for (const { entry, isDirectory, size } of candidates) {
     if (evictBytes !== undefined && bytes >= evictBytes) break;
+    if (signal) await checkpoint(signal);
     try {
-      if (!existsSync(entry) || statSync(entry).mtimeMs >= cutoff) continue;
-      const entryBytes = isDirectory ? directorySize(entry, { timeoutMs: 'unbounded' }) : size;
+      if (!existsSync(entry) || Math.max(statSync(entry).mtimeMs, cache.lastUse?.(entry) ?? 0) >= cutoff) continue;
+      const entryBytes = isDirectory ? directorySize(entry, { timeoutMs: 'unbounded', root: cache.dir }) : size;
+      if ((cache.lastUse?.(entry, true) ?? 0) >= cutoff) continue;
+      const busy = cache.inUse?.();
+      if (busy) {
+        if (!removed && !failed) return { removed: 0, bytes: 0, skipped: busy };
+        break;
+      }
       rmSync(entry, { recursive: true, force: true });
       removed++;
       bytes += entryBytes;
@@ -386,7 +518,12 @@ export async function pruneCacheAsync(
       const st = await stat(entry);
       if (Math.max(st.atimeMs, st.mtimeMs) >= cutoff) continue;
       const size = st.isDirectory()
-        ? await measuredDirectorySizeAsync(entry, { timeoutMs: CACHE_SIZE_TIMEOUT_MS, signal, operation })
+        ? await measuredDirectorySizeAsync(entry, {
+            timeoutMs: CACHE_SIZE_TIMEOUT_MS,
+            signal,
+            operation,
+            root: cache.dir,
+          })
         : st.size;
       signal?.throwIfAborted();
       if ((await stat(entry)).mtimeMs >= cutoff) continue;

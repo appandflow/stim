@@ -1,6 +1,6 @@
 ---
 name: stim
-description: Use Stim to build, launch, and inspect Expo, React Native, native Xcode, Android Gradle, Swift Package macOS, and Exact iOS apps. Use for simulator, emulator, device and Metro workflows, app logs or launch errors, isolated worktrees, and handing a running app to UI automation.
+description: Use Stim to build, launch, and inspect Expo, React Native, native Xcode, Android Gradle, Swift Package macOS, and Exact iOS apps. Use for simulator, emulator, device and Metro workflows, app logs or launch errors, isolated worktrees, handing a running app to UI automation, and running a project's tests (Jest, Vitest or any test command) without overloading a machine other agents share.
 ---
 
 # Stim

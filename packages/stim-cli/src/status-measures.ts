@@ -8,12 +8,19 @@ import {
   diskUsageCacheFile,
   gitMergeCacheFile,
   diskUsageFailureFile,
+  diskUsageLinksFile,
+  diskUsageNativeFile,
   pullRequestCacheFile,
   ENDED_AGENT_RETENTION_MS,
   readAgentSessionsCache,
   readDiskUsage,
+  readDiskUsageFailure,
+  readDiskUsageFailureSignature,
+  readDiskUsageWalkMs,
   readEndedAgentSessions,
   readPullRequestCache,
+  readStatusWalkRest,
+  statusWalkRestFile,
   readWorkspaceAgent,
   readWorkspaceState,
   workspaceEndedAgentsFile,
@@ -33,16 +40,28 @@ import { gitAsync } from './workspace/git.ts';
 import { workspaceDir } from './workspace/paths.ts';
 import { gitCommonDirOnDisk, linkedWorktreesOnDisk } from './workspace/worktree.ts';
 import { writeCacheFile } from './cache-file.ts';
-import { refreshMeasure, trustedMeasure } from './disk-usage.ts';
+import { isDependencyTree, refreshMeasure, trustedMeasure } from './disk-usage.ts';
+import { treeSignature } from './private-size.ts';
 import { PULL_REQUEST_MAX_AGE_MS, refreshPullRequests, type PullRequestRequest } from './pull-request-state.ts';
 
 const LIVE_DISK_MAX_AGE_MS = 5 * 60_000;
 const IDLE_DISK_MAX_AGE_MS = 60 * 60_000;
 const DU_TIMEOUT_MS = 120_000;
+const WALK_SPACING = 20;
+const WALK_REST = 4;
+const MAX_WALK_MS = DU_TIMEOUT_MS + 5000;
 const PULL_REQUEST_CHECK_MS = 60_000;
 const GIT_TIMEOUT_MS = 5000;
 const AGENT_DISCOVERY_MS = 15_000;
 const AGENT_CACHE_MAX_AGE_MS = 2 * 60_000;
+
+/**
+ * The cache key of a checkout's size without its own node_modules: the checkout path with a trailing separator. Stim
+ * versions that walked the whole checkout keep their entry under the plain path, so neither version misreads the other.
+ */
+function checkoutKey(checkout: string): string {
+  return `${checkout}${sep}`;
+}
 
 export function forgetStatusMeasures(worktree: string, workspaces: readonly string[]): void {
   const roots = [...new Set([worktree, ...workspaces])];
@@ -53,10 +72,16 @@ export function forgetStatusMeasures(worktree: string, workspaces: readonly stri
     ...roots.flatMap((root) => [
       diskUsageCacheFile(root),
       diskUsageFailureFile(root),
+      diskUsageCacheFile(checkoutKey(root)),
+      diskUsageFailureFile(checkoutKey(root)),
       diskUsageCacheFile(join(root, 'node_modules')),
       diskUsageFailureFile(join(root, 'node_modules')),
+      diskUsageLinksFile(join(root, 'node_modules')),
+      diskUsageNativeFile(join(root, 'node_modules')),
       diskUsageCacheFile(join(root, 'ios', 'Pods')),
       diskUsageFailureFile(join(root, 'ios', 'Pods')),
+      diskUsageLinksFile(join(root, 'ios', 'Pods')),
+      diskUsageNativeFile(join(root, 'ios', 'Pods')),
       diskUsageCacheFile(workspaceDir(root)),
       diskUsageFailureFile(workspaceDir(root)),
     ]),
@@ -107,9 +132,17 @@ function environmentFolders(state: EnvironmentState): {
   return { worktree, nodeModules, build: workspaceDir(state.path) };
 }
 
-/** The environment's disk use from the cached measurements; null before any folder was measured. */
+/**
+ * The environment's disk use from the cached measurements; null before any folder was measured. The checkout's walk
+ * leaves out its own node_modules, so `worktreeBytes` adds that tree's size back while it is the current install's.
+ */
 function environmentDisk(folders: ReturnType<typeof environmentFolders>): EnvironmentDisk | null {
-  const worktree = readDiskUsage(folders.worktree);
+  const whole = readDiskUsage(folders.worktree);
+  const rest = readDiskUsage(checkoutKey(folders.worktree));
+  const own = trustedMeasure(join(folders.worktree, 'node_modules'));
+  const counted = rest && own ? { ...rest, bytes: rest.bytes + own.bytes } : null;
+  const worktree =
+    counted && (!whole || Date.parse(counted.measuredAt) >= Date.parse(whole.measuredAt)) ? counted : whole;
   const modules = folders.nodeModules.map((path) => trustedMeasure(path));
   const build = readDiskUsage(folders.build);
   const modulesPrivate = modules.map((entry) => entry?.privateBytes);
@@ -223,10 +256,42 @@ export function applyStatusMeasures(states: EnvironmentState[], worktrees: Workt
   }
 }
 
-/** The folders inside a checkout that another measurement owns: its linked worktrees and Stim's workspace folder. */
+/**
+ * The folders inside a checkout that another measurement owns: its linked worktrees, Stim's workspace folder and its
+ * own node_modules.
+ */
 function nestedFolders(state: EnvironmentState): string[] {
   const common = gitCommonDirOnDisk(state.path);
-  return [workspaceDir(state.path), ...(common ? linkedWorktreesOnDisk(common).map((entry) => entry.path) : [])];
+  return [
+    workspaceDir(state.path),
+    join(canonicalPath(checkoutDir(state)), 'node_modules'),
+    ...(common ? linkedWorktreesOnDisk(common).map((entry) => entry.path) : []),
+  ];
+}
+
+/**
+ * When the last walk of `path` failed, or null when a walk succeeded since, or when the failure was of a dependency
+ * tree's earlier install, as `refreshMeasure` reads it.
+ */
+function lastFailure(path: string): { at: number } | null {
+  const failedAt = readDiskUsageFailure(path);
+  if (failedAt === null) return null;
+  const at = Date.parse(failedAt);
+  const measure = readDiskUsage(path);
+  if (measure && Date.parse(measure.measuredAt) >= at) return null;
+  if (isDependencyTree(path) && readDiskUsageFailureSignature(path) !== treeSignature(path)) return null;
+  return { at };
+}
+
+/**
+ * How long after its last walk `path` is due again: `maxAgeMs` after that walk ended, or WALK_SPACING times as long as
+ * it took when that is longer. A walk counts as MAX_WALK_MS at most, so a machine asleep during it does not stretch
+ * the spacing. A failed walk is due `maxAgeMs` after it failed.
+ */
+function spacedMaxAgeMs(path: string, maxAgeMs: number): number {
+  if (lastFailure(path)) return maxAgeMs;
+  const walkMs = Math.min(MAX_WALK_MS, readDiskUsageWalkMs(path) ?? 0);
+  return Math.max(maxAgeMs, WALK_SPACING * walkMs) + walkMs;
 }
 
 /** The entries to hand to `du` so it sums `root` without descending into `nested`; `[root]` when none is inside it. */
@@ -258,26 +323,30 @@ function walkTargets(root: string, nested: readonly string[]): string[] {
 interface MeasuredFolder {
   path: string;
   maxAgeMs: number;
-  /** Folders inside `path` to leave out of its size; read only when the walk is due. */
-  nested?: () => string[];
+  /** The entries to sum instead of `path`; read only when the walk is due. */
+  targets?: () => string[];
 }
 
 export interface StatusMeasurer {
   /** Starts measuring the stale folders and looking up stale pull requests, unless a pass is already running. */
   schedule(states: EnvironmentState[], worktrees: WorktreeFacts[]): void;
+  /** Starts no further walk; a walk already running finishes. */
+  stop(): void;
 }
 
 /**
- * Keeps the disk use, pull request and agent session caches fresh for `status --watch`, off its refresh path: one
- * agent session discovery at most every 15 seconds, which status ignores once it is over 2 minutes old, one disk walk at
- * a time on the whole machine through `refreshMeasure` (an ownership claim; a failed walk is recorded so other watchers
- * do not repeat it), at low priority, live environments first, a checkout without the linked worktrees nested in it,
- * each folder other than node_modules at most every 5 minutes while its environment is live and every hour otherwise,
- * and one `gh api graphql` per repository for worktrees whose lookup is over 5 minutes old or whose branch or HEAD
- * moved. It runs git only in the repository, never in a worktree, and only for worktrees whose git state status read.
- * It rechecks a folder's cache right before measuring, so two watchers rarely measure the same folder. A session the
- * previous discovery found and this one does not is recorded as ended in the workspaces it worked in. `updated` runs
- * after each write.
+ * Keeps the disk use, pull request and agent session caches fresh for `status --watch`, off its refresh path: one agent
+ * session discovery at most every 15 seconds, which status ignores once it is over 2 minutes old, one disk walk at a
+ * time on the whole machine through `refreshMeasure` (an ownership claim; a failed walk is recorded so other watchers
+ * do not repeat it), at low priority, the folder whose last walk or failed walk is oldest first, a checkout without the
+ * linked worktrees nested in it and without its own node_modules, each folder other than node_modules again 5 minutes
+ * after its last walk ended while its environment is live and an hour after otherwise, or 20 times as long as that walk
+ * took when that is longer (a failed walk is retried after the same 5 minutes or hour), no walk by any status measurer on the machine sooner after the previous one ended than 4 times as long as it
+ * took, and one `gh api graphql` per repository for worktrees whose lookup is over 5 minutes old or whose branch or
+ * HEAD moved. It runs git only in the repository, never in a worktree, and only for worktrees whose git state status
+ * read. It rechecks a folder's cache right before measuring, so two watchers rarely measure the same folder. A session
+ * the previous discovery found and this one does not is recorded as ended in the workspaces it worked in. `updated`
+ * runs after each write.
  */
 export function createStatusMeasurer({
   updated,
@@ -287,24 +356,102 @@ export function createStatusMeasurer({
   now?: () => number;
 }): StatusMeasurer {
   let measuring = false;
+  let waking: ReturnType<typeof setTimeout> | null = null;
+  let stopped = false;
+  let latest: EnvironmentState[] = [];
   let checking = false;
   let checkedAt = -Infinity;
   let discovering = false;
   let discoveredAt = -Infinity;
 
   async function measure(folders: MeasuredFolder[]): Promise<void> {
-    for (const { path, maxAgeMs, nested } of folders) {
+    for (const { path, maxAgeMs, targets } of folders) {
+      if (stopped) return;
+      let startedAt: number | null = null;
+      const rest = () => {
+        if (startedAt === null) return;
+        const walkMs = Math.min(MAX_WALK_MS, now() - startedAt);
+        writeCacheFile(statusWalkRestFile(), { writtenAt: now(), until: now() + WALK_REST * walkMs });
+      };
       const { outcome } = await refreshMeasure(path, {
         timeoutMs: DU_TIMEOUT_MS,
-        maxAgeMs,
+        maxAgeMs: spacedMaxAgeMs(path, maxAgeMs),
         now,
         claim: true,
         failures: true,
-        ...(nested ? { targets: () => walkTargets(path, nested()) } : {}),
+        ...(targets ? { targets } : {}),
+        admit: () => {
+          if (now() < restUntil()) return false;
+          startedAt = now();
+          writeCacheFile(statusWalkRestFile(), { writtenAt: startedAt, until: startedAt + 2 * DU_TIMEOUT_MS });
+          return true;
+        },
+        settled: rest,
       });
-      if (outcome === 'busy') return;
+      if (outcome === 'busy') {
+        wakeAfterRest();
+        return;
+      }
       if (outcome === 'measured') updated();
+      if (startedAt === null) continue;
+      if (now() > startedAt) {
+        wakeAfterRest();
+        return;
+      }
     }
+  }
+
+  /** The shared rest's end, ignored when it was written in the future, as after the clock went back. */
+  function restUntil(): number {
+    const rest = readStatusWalkRest();
+    return rest && rest.writtenAt <= now() ? rest.until : -Infinity;
+  }
+
+  function wakeAfterRest(): void {
+    const wait = restUntil() - now();
+    if (waking || wait <= 0) return;
+    waking = setTimeout(() => {
+      waking = null;
+      measureDue();
+    }, wait);
+    waking.unref();
+  }
+
+  function measureDue(): void {
+    if (measuring || stopped) return;
+    if (now() < restUntil()) {
+      wakeAfterRest();
+      return;
+    }
+    const folders = new Map<string, MeasuredFolder>();
+    for (const state of latest.toSorted((a, b) => Number(b.live) - Number(a.live))) {
+      if (!existsSync(state.path)) continue;
+      const maxAgeMs = state.live ? LIVE_DISK_MAX_AGE_MS : IDLE_DISK_MAX_AGE_MS;
+      const { worktree, nodeModules, build } = environmentFolders(state);
+      const checkout = checkoutKey(worktree);
+      for (const path of [checkout, ...nodeModules, build, ...deviceFolders(state).map((folder) => folder.path)]) {
+        const known = folders.get(path);
+        folders.set(path, {
+          path,
+          maxAgeMs: Math.min(known?.maxAgeMs ?? Infinity, maxAgeMs),
+          targets:
+            known?.targets ?? (path === checkout ? () => walkTargets(worktree, nestedFolders(state)) : undefined),
+        });
+      }
+    }
+    const order = [...folders.values()].map((folder) => {
+      const entry = trustedMeasure(folder.path);
+      return {
+        folder,
+        at: lastFailure(folder.path)?.at ?? (entry ? Date.parse(entry.measuredAt) : -Infinity),
+      };
+    });
+    measuring = true;
+    void measure(order.toSorted((a, b) => (a.at === b.at ? 0 : a.at - b.at)).map(({ folder }) => folder))
+      .catch(() => {})
+      .finally(() => {
+        measuring = false;
+      });
   }
 
   async function branchHead(repository: string, branch: string): Promise<string | null> {
@@ -355,6 +502,11 @@ export function createStatusMeasurer({
   }
 
   return {
+    stop() {
+      stopped = true;
+      if (waking) clearTimeout(waking);
+      waking = null;
+    },
     schedule(states, worktrees) {
       if (!discovering && now() - discoveredAt >= AGENT_DISCOVERY_MS) {
         discovering = true;
@@ -365,28 +517,8 @@ export function createStatusMeasurer({
             discovering = false;
           });
       }
-      if (!measuring) {
-        const folders = new Map<string, MeasuredFolder>();
-        for (const state of states.toSorted((a, b) => Number(b.live) - Number(a.live))) {
-          if (!existsSync(state.path)) continue;
-          const maxAgeMs = state.live ? LIVE_DISK_MAX_AGE_MS : IDLE_DISK_MAX_AGE_MS;
-          const { worktree, nodeModules, build } = environmentFolders(state);
-          for (const path of [worktree, ...nodeModules, build, ...deviceFolders(state).map((folder) => folder.path)]) {
-            const known = folders.get(path);
-            folders.set(path, {
-              path,
-              maxAgeMs: Math.min(known?.maxAgeMs ?? Infinity, maxAgeMs),
-              nested: known?.nested ?? (path === worktree ? () => nestedFolders(state) : undefined),
-            });
-          }
-        }
-        measuring = true;
-        void measure([...folders.values()])
-          .catch(() => {})
-          .finally(() => {
-            measuring = false;
-          });
-      }
+      latest = states;
+      measureDue();
       if (!checking && now() - checkedAt >= PULL_REQUEST_CHECK_MS) {
         checking = true;
         checkedAt = now();

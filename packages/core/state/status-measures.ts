@@ -35,6 +35,16 @@ export function diskUsageFailureFile(path: string): string {
   return join(diskUsageCacheDir(), cacheName(path).replace(/\.json$/, '.failed.json'));
 }
 
+/** The file that records whether a sample of the dependency tree at `path` found mostly hard links. */
+export function diskUsageLinksFile(path: string): string {
+  return join(diskUsageCacheDir(), cacheName(path).replace(/\.json$/, '.links.json'));
+}
+
+/** The file that records which packages of the dependency tree at `path` hold a native project folder. */
+export function diskUsageNativeFile(path: string): string {
+  return join(diskUsageCacheDir(), cacheName(path).replace(/\.json$/, '.native.json'));
+}
+
 /**
  * A local native build of the workspace at `path` ended: the folders it wrote are stale. Every mark is its own file, so
  * a consumer removes only the marks it listed before it measured, never one written after.
@@ -110,7 +120,7 @@ const statusCacheDirs = (): readonly (readonly [StatusCacheEntry['kind'], string
   ['git-merge', gitMergeCacheDir()],
 ];
 
-const isCacheFileName = (name: string) => /^[0-9a-f]{32}\.json$/.test(name);
+const isCacheFileName = (name: string) => /^[0-9a-f]{32}(\.links|\.native)?\.json$/.test(name);
 
 function statusCacheEntry(
   kind: StatusCacheEntry['kind'],
@@ -119,7 +129,12 @@ function statusCacheEntry(
   bytes: number,
   recorded: unknown,
 ): StatusCacheEntry {
-  const path = typeof recorded === 'string' && isAbsolute(recorded) && cacheName(recorded) === name ? recorded : null;
+  const path =
+    typeof recorded === 'string' &&
+    isAbsolute(recorded) &&
+    cacheName(recorded) === name.replace(/\.(links|native)\.json$/, '.json')
+      ? recorded
+      : null;
   return { kind, file, path, bytes };
 }
 
@@ -271,11 +286,89 @@ export function readDiskUsagePartial(path: string): boolean {
   return entry !== null && entry.path === path && entry.partial === true;
 }
 
+/**
+ * Why the cached walk of `path` has no private bytes although it tried to count them: its volume cannot report shared
+ * blocks, or the counting walk failed. Null for an entry without the field.
+ */
+export function readDiskUsagePrivateUnknown(path: string): 'volume' | 'walk' | null {
+  const entry = readJsonObject(diskUsageCacheFile(path));
+  if (entry === null || entry.path !== path) return null;
+  return entry.privateUnknown === 'volume' || entry.privateUnknown === 'walk' ? entry.privateUnknown : null;
+}
+
+/** The install signature of the dependency tree whose last walk failed, or null when none is recorded. */
+export function readDiskUsageFailureSignature(path: string): string | null {
+  const entry = readJsonObject(diskUsageFailureFile(path));
+  return entry !== null && entry.path === path && typeof entry.signature === 'string' ? entry.signature : null;
+}
+
+/**
+ * The last link sample of the dependency tree at `path`: the install signature it was taken under, when, and its
+ * verdict (`links` when most sampled files are hard links, `other` when not or too few files were found, `timeout`
+ * when the reads did not answer in time), with the counts.
+ */
+export interface LinkSample {
+  signature: string;
+  sampledAt: string;
+  verdict: 'links' | 'other' | 'timeout';
+  linked: number;
+  sampled: number;
+  /** The pnpm store a `links` verdict found outside the tree. */
+  store?: string;
+}
+
+/** The recorded link sample of the dependency tree at `path`, or null when none is recorded. */
+export function readDiskUsageLinks(path: string): LinkSample | null {
+  const entry = readJsonObject(diskUsageLinksFile(path));
+  if (!entry || entry.path !== path || typeof entry.signature !== 'string' || typeof entry.sampledAt !== 'string')
+    return null;
+  const { verdict, linked, sampled } = entry;
+  if (verdict !== 'links' && verdict !== 'other' && verdict !== 'timeout') return null;
+  if (!Number.isFinite(Date.parse(entry.sampledAt))) return null;
+  const count = (value: unknown) => countOrNull(value) ?? 0;
+  return {
+    signature: entry.signature,
+    sampledAt: entry.sampledAt,
+    verdict,
+    linked: count(linked),
+    sampled: count(sampled),
+    ...(typeof entry.store === 'string' ? { store: entry.store } : {}),
+  };
+}
+
 /** When the last walk of `path` failed (an ISO time), or null when none is recorded. */
 export function readDiskUsageFailure(path: string): string | null {
   const entry = readJsonObject(diskUsageFailureFile(path));
   if (!entry || entry.path !== path || typeof entry.failedAt !== 'string') return null;
   return Number.isFinite(Date.parse(entry.failedAt)) ? entry.failedAt : null;
+}
+
+/** How long the cached walk of `path` took, in milliseconds, or null when the entry does not record it. */
+export function readDiskUsageWalkMs(path: string): number | null {
+  const entry = readJsonObject(diskUsageCacheFile(path));
+  if (entry === null || entry.path !== path) return null;
+  return typeof entry.walkMs === 'number' && Number.isFinite(entry.walkMs) && entry.walkMs >= 0 ? entry.walkMs : null;
+}
+
+/** The file that records until when no status measurer on this machine may start a disk walk. */
+export function statusWalkRestFile(): string {
+  return join(diskUsageCacheDir(), 'status-walk-rest.json');
+}
+
+/**
+ * When the status walk rest was written and until when (epoch milliseconds) no status measurer may start a disk walk;
+ * null when nothing readable is recorded.
+ */
+export function readStatusWalkRest(): { writtenAt: number; until: number } | null {
+  const entry = readJsonObject(statusWalkRestFile());
+  const writtenAt = entry?.writtenAt;
+  const until = entry?.until;
+  return typeof writtenAt === 'number' &&
+    Number.isFinite(writtenAt) &&
+    typeof until === 'number' &&
+    Number.isFinite(until)
+    ? { writtenAt, until }
+    : null;
 }
 
 function countOrNull(value: unknown): number | null {

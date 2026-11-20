@@ -67,6 +67,8 @@ export interface OpInput<Options, Args> {
   /** The parent's options: those before the subcommand's name, or anywhere when the parent has no `positionalOptions`. */
   readonly parent: Readonly<Record<string, unknown>>;
   readonly version: string;
+  /** How many of `args` came before `--`: all of them when there is no `--`. */
+  readonly beforeDash?: number;
 }
 
 /** A command: its argv and help derive from `arguments` and `options`. */
@@ -181,6 +183,8 @@ interface Scan {
   readonly options: Record<string, unknown>;
   readonly operands: string[];
   readonly leading?: number;
+  /** How many operands came before `--`, when there is one. */
+  readonly dashed?: number;
   readonly help: boolean;
   readonly unknown?: string;
   readonly taken: ReadonlySet<number>;
@@ -208,6 +212,7 @@ function scan(op: Op, args: string[]): Scan {
   );
   const operands: string[] = [];
   let leading: number | undefined;
+  let dashed: number | undefined;
   let help = false;
   let unknown: string | undefined;
   let variadic: { spec: Spec; next: number } | undefined;
@@ -217,6 +222,7 @@ function scan(op: Op, args: string[]): Scan {
   for (const token of tokens) {
     if (token.index === consumed) continue;
     if (token.kind === 'option-terminator') {
+      dashed ??= operands.length;
       variadic = undefined;
       continue;
     }
@@ -285,7 +291,7 @@ function scan(op: Op, args: string[]): Scan {
       } else options[spec.key] = value;
     } else unknown ??= raw;
   }
-  return { options, operands, leading, help, unknown, taken };
+  return { options, operands, leading, dashed, help, unknown, taken };
 }
 
 function end(args: string[]): number {
@@ -438,13 +444,15 @@ function showHelp(usage: string[], op: Op, error: boolean): number {
   return error ? 1 : 0;
 }
 
+const variadicArgument = (op: Op): boolean => /\.\.\.[\]>]$/.test(op.arguments);
+
 function checkArity(op: Op, operands: string[], program: boolean): void {
   const declared = op.arguments ? op.arguments.split(' ') : [];
   declared.forEach((arg, index) => {
     if (arg.startsWith('<') && operands[index] === undefined)
       throw new CliUsageError(`error: missing required argument '${arg.slice(1, -1)}'`);
   });
-  if (operands.length > declared.length) {
+  if (operands.length > declared.length && !variadicArgument(op)) {
     const s = declared.length === 1 ? '' : 's';
     const name = program ? '' : ` for '${op.name}'`;
     throw new CliUsageError(
@@ -519,7 +527,8 @@ export async function runCli(op: Op, args: string[], context: CliContext): Promi
     if (!current.run) return help(path, current, true);
     checkArity(current, parsed.operands, context.root === true && current === op);
     await context.before?.(path.slice(context.root ? 1 : 0).map((each) => each.name));
-    await current.run({ args: parsed.operands, options: parsed.options, parent, version: context.version });
+    const beforeDash = parsed.dashed ?? parsed.operands.length;
+    await current.run({ args: parsed.operands, options: parsed.options, parent, version: context.version, beforeDash });
     return 0;
   }
 }

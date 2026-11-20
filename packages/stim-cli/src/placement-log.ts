@@ -15,6 +15,12 @@ export interface PlacementCandidate {
   msg: string;
   /** Finer codes behind `code`, such as the toolchain parts of a version mismatch. */
   detail?: string[];
+  /**
+   * What a machine that can take the build holds for it, which ranks it ahead of `remote.machines` order: the exact
+   * completed artifact, this checkout's last build, this checkout's dependency install, or another checkout's build of
+   * the project. Absent for a machine that holds none of them.
+   */
+  warmth?: 'artifact' | 'checkout' | 'dependencies' | 'project';
 }
 
 export interface PlacementRecord {

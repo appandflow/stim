@@ -386,7 +386,7 @@ describe('executing single actions', () => {
 });
 
 describe('pruneCache protection and LRU order', () => {
-  test('the newest succeeded build-only artifact of each platform is protected', () => {
+  test('the newest succeeded build-only artifact of each platform is protected', async () => {
     const root = buildCacheRoot();
     const entries = ['k-build-only', 'k-older', 'k-failed'].map((key) => cacheEntry(root, 'ios', key, 9));
     const project = join(projects, 'build-only');
@@ -408,7 +408,7 @@ describe('pruneCache protection and LRU order', () => {
         ],
       },
     });
-    pruneCache(
+    await pruneCache(
       { name: 'builds', dir: join(root, 'ios'), prune: 'entries', note: '' },
       { olderThanDays: 1, byMtime: true, protect: cacheEntryProtection() },
     );

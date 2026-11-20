@@ -67,8 +67,8 @@ branch so every worktree warmed from it starts current. Here the source checkout
 is infrastructure, not a workspace, and every rule below about its fitness as
 a seed belongs to this workflow.
 
-  # 1. Create a linked worktree with Git, unless a harness already did.
-  #    Choose the branch, path, and base ref with Git.
+  # 1. Create a linked worktree with Git, unless a harness already did, and
+  #    warm it either way. Choose the branch, path, and base ref with Git.
   git worktree add -b app/412 ../app-412 HEAD
   cd ../app-412
   stim worktree warm
@@ -357,6 +357,7 @@ Run from the directory containing the .xcodeproj or .xcworkspace. A Node
 package.json is not required. React Native and Expo apps keep their existing
 integration.
 
+  stim worktree warm   # once in a new worktree
   stim ios --scheme MyApp --configuration Debug
   stim agent-device open <bundle-id> --platform ios
   stim stop
@@ -433,6 +434,7 @@ Copyable agent request:
 An Exact app (https://github.com/expo/exact) has exact.mjs next to app.json.
 Run from that directory:
 
+  stim worktree warm   # once in a new worktree
   stim ios --json
   EXACT_SIM=<udid from stim ios> ./exact.mjs agent ios tree "screenshot out.png"
   EXACT_SIM=<udid> ./exact.mjs test ios
@@ -537,6 +539,7 @@ density/split APK sets and EAS/proxy targets are unsupported. Set
 org.gradle.configureondemand=false; configuration cache remains supported.
 Stim verifies the existing APK signature; it does not sign it.
 
+  stim worktree warm   # once in a new worktree
   stim android
   stim agent-device open <package-id> --platform android
   stim stop
@@ -2353,7 +2356,8 @@ WHAT MAKES THE CACHE ACTUALLY HIT: .FINGERPRINTIGNORE
   move the key on one machine and not another.`,
     },
     concurrency: {
-      summary: "waiting on another workspace's build, --no-build-cache, concurrency.maxBuilds and maxDevices",
+      summary:
+        "waiting on another workspace's build, --no-build-cache, concurrency.maxBuilds, maxDevices and maxTests, stim test",
       body: () => `ONE COMPILE PER FINGERPRINT, ACROSS EVERY WORKSPACE
   The cache makes the SECOND workspace on a commit free -- but only once the
   first has finished. Three agents starting within the same minute all miss it,
@@ -2424,13 +2428,60 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
                             A workspace's own booted or booting device
                             bypasses the queue.
 
-    concurrency.maxTests    how many test commands run at once on this
+    concurrency.maxTests    how many stim test runs run at once on this
                             machine; derived max(1, floor(CPU cores / 6)).
                             It is a semaphore of N slots (~/.stim/test-slots)
                             that never counts against concurrency.maxBuilds.
                             A run past it waits in arrival order in
                             ~/.stim/test-waits and shows in status as a
-                            daemon.testWaiting entry.
+                            daemon.testWaiting entry; a running one shows as
+                            capacity.tests and a "tests" status line.
+
+  STIM TEST: stim test runs every test kind the project has; stim test <kind>
+  runs one (js, rust, android, macos, web, ios, android-device, e2e-ios,
+  e2e-android, or e2e for both e2e kinds). Only js runs so far; another kind
+  is refused. js is the project's test script, through the package manager
+  whose lockfile is nearest (pnpm, yarn, bun, else npm), from its
+  package.json's directory; stim test js -- <args> passes the args to it.
+  stim test -- <command> runs that command, with no shell and no stdin. A word
+  before -- that is not a kind is refused. A kind whose runner the test script
+  already names (cargo, gradlew, playwright, cypress, xcodebuild, detox,
+  maestro) is skipped. stim test --list [--json] prints the kinds and their
+  commands and runs nothing. It takes a test slot first
+  (--wait <seconds> bounds the wait, else at most 90 minutes; --no-wait
+  refuses a full cap with STIM_AT_CAPACITY), then picks a worker count:
+
+    workers = floor((cores - 1) / concurrency.maxTests), times cores / load1
+              when the 1-minute load is past the core count, at least 1
+
+  Jest and Vitest get --maxWorkers=<n> only when Stim can tell nothing else
+  sets workers or a serial run: the command runs jest or vitest directly (also
+  behind npx, bunx, pnpm exec, or pnpm or yarn with no script of that name,
+  yarn without --; the flag goes before any --), or the test script is a plain
+  jest or vitest command with no --. The command must name no worker, config,
+  preset, project, workspace, --pool, --poolOptions.* or file-parallelism
+  option, and no jest, vitest or vite config up to package.json (or its jest
+  key) may name workers, pools, serial runs or projects, spread an object,
+  import a module other than Node's, vite's or vitest's (jest's as types), or
+  set a preset other than React Native's or jest-expo's. Vitest 1.3 to 3.2.3
+  also get --minWorkers=1; older or unknown versions get nothing. node --test
+  gets --test-concurrency=<n> right after --test, or appended to a test script
+  that is node --test with no test file, unless the command or NODE_OPTIONS
+  sets it. Otherwise
+  the command runs unchanged, with no variables added; one stderr line says
+  which.
+
+  The command runs in its own process group, with no stdin, so a watch run has
+  no prompt and holds its slot until stopped. SIGINT, SIGTERM and SIGHUP reach
+  the group, which gets SIGKILL after a grace of at most 10s, or on a second
+  interrupt; a cancelled run exits with the signal's code. The slot frees once
+  the group is empty; what the command leaves there gets SIGTERM, then
+  SIGKILL, and a killed stim keeps the slot held. A process that leaves the
+  group (its own session, a detached server, a simulator the system starts)
+  does not count. STIM_TEST_RUN names the slot claim: a stim test inside it
+  takes no slot while that claim is held, and runs in the caller's group;
+  under env -i it loses the claim and queues behind its outer run. Windows
+  refuses stim test.
 
   Beyond the caps, at most 2 boots run at once in a Stim home, and no boot
   starts while the stim-daemon's last tick measured macOS memory pressure
@@ -2546,15 +2597,17 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
 
   The daemon line of \`stim status\` and \`daemon.pressure\` in its --json show
   the level and why. Above normal, the tick runs the ladder top-down until the
-  level clears. Each rung measures again before it acts, never touches a
+  level clears; after a pass that freed nothing, the next waits 4 times its
+  length (at most 15 min) unless pressure or disk use rose or a run asks.
+  Each rung measures again before it acts, never touches a
   workspace with a blocker (a build, a driver, a lease or lock, a live web
   share, a hosted placement, unreadable evidence, maintenance.keep), and
   takes the longest-idle workspace first. Disk rungs take only what lies on a
   short volume (stim gc --pressure: every volume):
 
-    1. idle stage: every workspace idle 2 minutes or more goes into the idle
-       stage now (\`guide metro\`, IDLE STOP), and the regenerable build
-       outputs of workspaces with nothing running are deleted
+    1. idle stage: memory pressure idles every workspace idle 2 minutes or
+       more now (\`guide metro\`, IDLE STOP), disk pressure alone at
+       idle.minutes; outputs of workspaces with nothing running go
     2. parked devices: at high the oldest deleted until the level clears, at
        critical all of them
     3. shared caches: at high the build and Metro caches trimmed least
@@ -2566,7 +2619,9 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
        Stim registered emptied whole (ccache, the macOS artifact cache and the
        React Native and Android caches; \`guide cleanup\` lists them), except
        report-only caches, caches inside a workspace, caches Stim does not own,
-       caches outside a scoped STIM_HOME and one a build holds
+       caches outside a scoped STIM_HOME and one a build holds. A capped cache
+       whose size walk fails is kept: build and Metro at high, Swift
+       compilation at high and critical
     4. dormant stage now: at high for workspaces idle 10 minutes, at critical
        for workspaces idle 2 minutes (the same reduction a day of idleness
        causes, DORMANT STAGE below)
@@ -2576,8 +2631,11 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
        Each one holding 256 MB or more of its own (private) bytes goes, most
        first; a copy-on-write clone holding less frees almost nothing and is
        kept, logged as kept. A tree whose private size is unknown (off APFS,
-       without the Command Line Tools, or not measured since its last
-       install) goes after the measured ones, longest-idle first. The daemon
+       ext4 and tmpfs, without the Command Line Tools, or not measured since
+       its last install) goes after the measured ones, longest-idle first,
+       unless a sample of its files finds mostly hard links (a pnpm store on a
+       volume without clones): that one stays at high and goes last at
+       critical. The daemon
        measures each tree in the background, one walk at a time on the
        machine, after its install changes and at least every 6 hours
     6. idle Gradle and Kotlin daemons, an unused watchman (over 2 GiB, or over
@@ -2707,8 +2765,10 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   last use), or at critical under rung 8 by the same evidence. Runs from or
   works in it means a process whose working directory is in the checkout or
   whose command line names a path in it; reading files in an editor with no
-  process there is not activity. A tree whose size is not measured yet is not
-  taken at the 7-day rule, and is at critical, as for a linked worktree. A
+  process there is not activity. A tree of unknown size is not taken at the
+  7-day rule (stim gc measures them first, up to 2 minutes, and says why one
+  stays unknown), and is at critical, even when a sample of its files
+  finds mostly hard links. A
   linked worktree listed by git with a symlink at the same relative path, or in
   its top two directory levels (up to 2000 entries, not entering node_modules or
   .git), that resolves into the tree keeps it; past 2000 entries or at a
@@ -2734,8 +2794,16 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   as freed are the data directories of the devices it
   deleted, measured before deletion; a device whose size cannot be measured is
   named in the action's detail and left out of the total. A tree under 256 MB
-  of its own (private) bytes, a copy-on-write clone, and trees whose private
-  size is unknown stay. The dependency step is logged as dormant_dependencies.
+  of its own (private) bytes, a clone or store hard links, and trees whose private size is unknown stay.
+  The stim-daemon runs the output step, then the dependency step, hourly
+  (dormant_outputs, dormant_dependencies). Outputs need the full evidence for
+  every workspace: no Stim command, source or git write, and no process in the
+  checkout (such as a Gradle or cargo build) for idle.dormantDays; git
+  worktree lock keeps them. Each is measured, then rechecked and removed under
+  the workspace's claims; a Cargo target/ goes whole unless a build used or
+  locks it, and the Metro store every worktree of the app shares stays. For an
+  app inside a larger checkout, activity anywhere in that checkout counts.
+  Where processes cannot be listed (always on Windows) nothing goes.
   Still kept: a workspace in use, with a running dev server or build, leased,
   locked, driven, hosted, pinned by maintenance.keep or with idle.minutes 0,
   and a path that cannot be proven. \`stim status\` shows a dormant
@@ -2795,6 +2863,7 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   stop            --slot <name> --json
   status          --json --watch  (already machine-wide)
   stats           --json          (this project and machine-wide)
+  test            --wait <seconds> --no-wait [-- <command...>]
   settings        --json; get <key> --scope <layer> --json;
                   set <key> <value> --scope <layer> --json; unset <key> --scope <layer> --json
   doctor          --json --fix --platform <ios|android>

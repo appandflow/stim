@@ -13,6 +13,7 @@ export interface StepTally {
 }
 
 const ERROR_MAX = 200;
+const RUNNING_REPORT_MS = 10 * 60_000;
 const WRITER_FIELDS = new Set(['src', 'level', 'event', 'msg', 'ts']);
 
 function classify(error: unknown, signal: AbortSignal | undefined): { outcome: StepOutcome; failure?: string } {
@@ -25,9 +26,46 @@ function classify(error: unknown, signal: AbortSignal | undefined): { outcome: S
 }
 
 /**
+ * Writes one `daemon_step_running` record for each 10 minutes `step` runs without ending, so a step that never ends
+ * is named in the daemon log. Returns the function that stops the records.
+ */
+function watchStep(
+  log: DaemonLog,
+  step: string,
+  startedAt: number,
+  started: number,
+  fields?: Record<string, unknown>,
+): () => void {
+  const timer = setInterval(() => {
+    try {
+      const runningMs = Math.round(performance.now() - started);
+      log('warn', 'daemon_step_running', `${step} still running after ${runningMs}ms`, {
+        step,
+        ...Object.fromEntries(Object.entries(fields ?? {}).filter(([key]) => !WRITER_FIELDS.has(key))),
+        startedAt: new Date(startedAt).toISOString(),
+        runningMs,
+      });
+    } catch {}
+  }, RUNNING_REPORT_MS);
+  timer.unref();
+  return () => clearInterval(timer);
+}
+
+/** Runs `run` and writes a `daemon_step_running` record for each 10 minutes it runs, without a record when it ends. */
+export async function watchedStep<T>(log: DaemonLog, step: string, run: () => Promise<T>): Promise<T> {
+  const stop = watchStep(log, step, Date.now(), performance.now());
+  try {
+    return await run();
+  } finally {
+    stop();
+  }
+}
+
+/**
  * Runs `run` and writes one `daemon_step` record to the daemon log: when it started, how long it took, how many items
  * it visited and how it ended. It returns `run`'s value, rethrows its error unchanged and changes nothing else; with
- * no `log` it only calls `run`. `items` is read after the step ends, with the result when it finished.
+ * no `log` it only calls `run`. `items` is read after the step ends, with the result when it finished. While it runs it
+ * writes a `daemon_step_running` record every 10 minutes.
  */
 export async function timedStep<T>(
   log: DaemonLog | undefined,
@@ -50,6 +88,7 @@ export async function timedStep<T>(
   let outcome: StepOutcome = 'finished';
   let result: T | undefined;
   let failure: string | undefined;
+  const stop = watchStep(log, step, startedAt, started, fields);
   try {
     result = await run(tally);
     return result;
@@ -57,6 +96,7 @@ export async function timedStep<T>(
     ({ outcome, failure } = classify(error, signal));
     throw error;
   } finally {
+    stop();
     try {
       const durationMs = Math.round(performance.now() - started);
       const count = tally.items ?? items?.(result);

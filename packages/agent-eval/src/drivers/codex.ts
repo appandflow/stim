@@ -5,6 +5,7 @@ import { requireConfined } from '../roots.ts';
 import type { AgentCommand, AgentDriver, AgentRun, DriverOptions, TrialPaths } from '../types.ts';
 import {
   asNumber,
+  asArray,
   asRecord,
   asString,
   minimalPath,
@@ -30,6 +31,7 @@ const FEATURES_OFF = [
 export function parseCodex(transcript: string): AgentRun {
   const run: AgentRun = {
     commands: [],
+    edits: [],
     skills: [],
     turns: null,
     tokens: { input: 0, output: 0, cached: 0 },
@@ -53,6 +55,9 @@ export function parseCodex(transcript: string): AgentRun {
         });
         const skill = /skills\/([\w-]+)\/SKILL\.md/.exec(command);
         if (skill?.[1]) run.skills.push(skill[1]);
+      } else if (item.type === 'file_change' && item.status === 'completed') {
+        for (const change of asArray(item.changes).map(asRecord))
+          run.edits.push({ path: asString(change.path), after: run.commands.length });
       } else if (item.type === 'agent_message') {
         run.finalMessage = asString(item.text);
         steps += 1;

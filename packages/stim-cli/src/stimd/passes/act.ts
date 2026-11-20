@@ -67,6 +67,7 @@ import { stopIdleWorkspace } from './idle-stop.ts';
 import { archiveExpiryReason, leaseKeepReason } from './prune.ts';
 import type { MaintenanceSettings } from './settings.ts';
 import { executeRecordAction } from './records.ts';
+import { forgetGitReads } from '../../workspace/git-reads.ts';
 
 import { deleteRuntimeAction, deleteUnavailableSimAction } from './runtimes.ts';
 
@@ -170,11 +171,12 @@ async function trimCache(action: MaintenanceAction, context: ActContext): Promis
   const [planned] = planCacheEmptying([cache], false);
   if (!planned || planned.machineGlobal) return kept(planned?.machineGlobal ?? 'it is no longer a cache Stim may trim');
   const aged = action.olderThanDays !== undefined;
-  const result = pruneCache(cache, {
+  const result = await pruneCache(cache, {
     olderThanDays: Math.max(action.olderThanDays ?? 0, context.settings.protectRecentHours / 24),
     byMtime: true,
     protect: (context.protect ??= await cacheEntryProtectionFor(loadConfig(), context.operation)),
     ...(aged ? {} : { evictBytes: action.bytes }),
+    ...(context.operation ? { signal: context.operation.signal } : {}),
   });
   if (result.skipped) return kept(result.skipped);
   if (result.failed)
@@ -521,6 +523,7 @@ function unregisterCache(action: MaintenanceAction): ActionOutcome {
 }
 
 export async function executeAction(action: MaintenanceAction, context: ActContext): Promise<ActionOutcome> {
+  forgetGitReads(context.operation);
   switch (action.kind) {
     case 'would-clear-outputs':
       return clearOutputs(action, context);

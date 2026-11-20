@@ -311,7 +311,9 @@ devices at a time.
 `concurrency.maxTests` caps the test commands a machine runs at once the same
 way, derived as `max(1, floor(CPU cores / 6))` (2 on a 14-core Mac, 1 on a
 10-core one; also `STIM_MAX_TESTS`). Test slots are separate from build slots,
-and a test run waiting for one appears under `daemon.testWaiting`.
+and a test run waiting for one appears under `daemon.testWaiting`. `stim test`
+takes these slots and sizes its test runner's workers from them; see
+[`stim test`](./commands.md#test).
 
 A run past a cap waits in arrival order per resource and prints its queue
 position and what it waits for every 10 seconds, and keeps waiting while every
@@ -589,7 +591,7 @@ architecture and runtime.
 
 In `auto`, an offloaded iOS/Android build runs prebuild (and `pod install` for iOS) here, then asks
 every paired machine what it can build. Stim picks one that, for iOS and macOS, has a CPU architecture matching the target simulator, with at least 10 GB free, that does
-not decline, taking the first in `remote.machines` order. When a machine that offered fails the sync or refuses to start
+not decline. It prefers a machine that last built this checkout, then one that built another checkout of the project or holds this checkout's dependency install, then `remote.machines` order; a warm machine with no free slot or with its load at its limit is skipped like any other. When a machine that offered fails the sync or refuses to start
 the build, for example because it got busy meanwhile, Stim tries the next one
 in that order:
 
@@ -646,7 +648,7 @@ provider. A project whose `xcodebuild` changes its own fingerprinted inputs
 builds on the machine, fails the fingerprint check there; `auto` builds here and a named selection
 refuses, so
 set `remote.build` to `local` for it. The `--json` payload and `lastBuilds` carry
-`offloadedTo`, or `offloadFallback` with the reason it built here,
+`offloadedTo` with `offloadReason`, why that machine took it, or `offloadFallback` with the reason it built here,
 `stim status` shows the machine and its step while a build runs there, and
 `stim stats` counts offloaded runs apart from cold runs and keeps where each
 compiling build ran and why (see [`stats`](./commands.md#stats)). On the
@@ -725,7 +727,11 @@ stim engine rollback        # back to the previous build, pinned until stim engi
 
 The engine fetches a release from the public npm registry, runs its self-test,
 and switches once running builds and hosted native steps have drained; the
-service's stimd restarts on the new build. It never changes pairings,
+service's stimd exits and the service starts it again on the new build, inside
+the service's job (on Linux after systemd's 30 s restart delay). The first switch
+onto a Stim with this behavior is still made by the older build, so it can leave
+one stimd outside the job until the next switch. A Linux service installed by an
+earlier Stim keeps the older handover until you run `stim service install` again. It never changes pairings,
 approvals, Stim Host, the pinned `--env` and `--path-prepend` values or the
 serve route. A client approved for builds or device hosting can ask for the
 same update from its machine with `stim remote update <mac>`. A build whose
@@ -790,7 +796,8 @@ writes to and from memory: **high** under `disk.minFreeGb` (40 GB), after
 available; **critical** under `disk.criticalFreeGb` (20 GB), or under
 `disk.hardFloorGb` when that is higher, or with critical memory pressure.
 Above normal it runs one pressure ladder until the level
-clears: idle stage for every workspace idle 2 minutes, parked devices, the
+clears: idle stage for every workspace idle 2 minutes under memory pressure
+(at `idle.minutes` under disk pressure alone), parked devices, the
 shared caches, the dormant stage, the `node_modules` and Pods of idle worktrees
 that `stim worktree warm` can restore (idle 1 hour at high, 2 minutes at critical),
 then Gradle daemons, unpinned Gradle versions, TMPDIR leftovers and the worktree
@@ -1008,7 +1015,8 @@ the same cap. Under disk pressure the
 `maintenance.sweepHours` (24) sets how often the age sweep runs.
 `maintenance.olderThanDays` (3; 0 turns these off) is how long something stays
 unused before that sweep removes it: workspace build outputs, shared cache
-entries, parked simulators and emulators, and clean, pushed linked worktrees
+entries (Metro file maps and, on macOS and Linux, Jest's default cache
+directory in the temp directory among them), parked simulators and emulators, and clean, pushed linked worktrees
 (only with `maintenance.removeIdleWorktrees`, off by default). The age sweep
 also stops idle Gradle and Kotlin daemons, shuts down an unused watchman over 2 GiB, deletes Gradle versions no project
 pins once unmodified for `maintenance.gradleVersionIdleDays` (7; 0 keeps

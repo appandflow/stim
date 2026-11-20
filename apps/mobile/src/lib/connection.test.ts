@@ -112,10 +112,12 @@ const hello = {
   capabilities: ['read'],
 };
 const client = { name: 'test', version: '0', phoneApi: 2 };
+const CONNECT_TIMEOUT_MS = 10_000;
 
 function setup() {
   const sockets: FakeSocket[] = [];
   const timers: { fn: () => void; ms: number }[] = [];
+  const attempts: { fn: () => void; ms: number; cleared: boolean }[] = [];
   const states: ConnectionState[] = [];
   const connection = new StimConnection({
     endpoint: 'wss://mac',
@@ -126,11 +128,19 @@ function setup() {
       sockets.push(socket);
       return socket;
     },
-    setTimer: (fn, ms) => timers.push({ fn, ms }),
-    clearTimer: () => {},
+    setTimer: (fn, ms) => {
+      if (ms !== CONNECT_TIMEOUT_MS) return timers.push({ fn, ms });
+      const attempt = { fn, ms, cleared: false };
+      attempts.push(attempt);
+      return attempt;
+    },
+    clearTimer: (handle) => {
+      const attempt = attempts.find((candidate) => candidate === handle);
+      if (attempt) attempt.cleared = true;
+    },
     onState: (state) => states.push(state),
   });
-  return { connection, sockets, timers, states };
+  return { connection, sockets, timers, attempts, states };
 }
 
 describe('StimConnection', () => {
@@ -303,6 +313,50 @@ describe('StimConnection', () => {
     await flush();
     sockets[7].close();
     expect(timers[7].ms).toBe(1000);
+  });
+
+  it('abandons an attempt whose hello is not accepted in time, retries with backoff and ignores the old socket', async () => {
+    const { connection, sockets, timers, attempts, states } = setup();
+    connection.start();
+    sockets[0].onopen?.('k');
+    expect(attempts.map((a) => a.ms)).toEqual([CONNECT_TIMEOUT_MS]);
+    attempts[0].fn();
+    await flush();
+    expect(sockets[0].closed).toBe(true);
+    expect(states.at(-1)).toMatchObject({ kind: 'waiting', retryInMs: 1000, reason: 'Connection lost.' });
+    expect(timers.map((t) => t.ms)).toEqual([1000]);
+
+    const seen = states.length;
+    sockets[0].reply('hello', hello);
+    sockets[0].onopen?.('k');
+    sockets[0].onclose?.({ code: 1006, reason: '', serverAnswered: false, handshakeComplete: false });
+    await flush();
+    expect(states).toHaveLength(seen);
+    expect(sockets[0].sent.map((m) => m.method)).toEqual(['hello']);
+    expect(timers).toHaveLength(1);
+
+    timers[0].fn();
+    attempts[1].fn();
+    expect(timers.map((t) => t.ms)).toEqual([1000, 2000]);
+  });
+
+  it('stops the attempt deadline once hello is accepted, the socket closes or the connection is closed', async () => {
+    const { connection, sockets, timers, attempts, states } = setup();
+    connection.start();
+    sockets[0].onopen?.('k');
+    sockets[0].reply('hello', hello);
+    await flush();
+    expect(attempts[0].cleared).toBe(true);
+    expect(states.at(-1)).toMatchObject({ kind: 'open' });
+
+    sockets[0].close();
+    timers[0].fn();
+    sockets[1].drop({ code: 1006, reason: '', serverAnswered: false, handshakeComplete: false });
+    expect(attempts[1].cleared).toBe(true);
+
+    timers[1].fn();
+    connection.close();
+    expect(attempts[2].cleared).toBe(true);
   });
 
   it('sends video subscriptions with hello, and the others once hello is accepted', async () => {

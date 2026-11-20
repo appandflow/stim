@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import type { StimContext } from '@stim-cli/core';
 import { stimBuildId } from '@stim-cli/core/state';
 import { installKind } from '../../bin/route.mjs';
+import { STIMD_THREADPOOL_SIZE } from '../daemon/client.ts';
 import { getExecutor } from '../exec.ts';
 import { claimsHeld, readBuildClaims } from './claims.ts';
 import { collectStore } from './gc.ts';
@@ -214,7 +215,7 @@ async function flip(
   writeRecord(join(root, 'bin', 'stim.cmd'), `@"${shimNode}" "${router}" %*\r`);
   writeRecord(
     join(root, 'bin', 'stimd'),
-    `#!/bin/sh\nexec "${shimNode}" "${join(root, build, 'dist', 'cli.mjs')}" __stimd "$@"`,
+    `#!/bin/sh\nexport UV_THREADPOOL_SIZE="\${UV_THREADPOOL_SIZE:-${STIMD_THREADPOOL_SIZE}}"\nexec "${shimNode}" "${join(root, build, 'dist', 'cli.mjs')}" __stimd "$@"`,
     0o755,
   );
 }

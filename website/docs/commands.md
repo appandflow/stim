@@ -445,7 +445,7 @@ can compile on a paired remote machine instead: see `remote.build` in
 
 - `--configuration <name>` selects an Xcode configuration. The default is Debug.
 - `--remote-build <local|auto|remote|remote-only|name>` overrides `STIM_REMOTE_BUILD` and
-  `remote.build`. `remote` tries the remote machines first, in `remote.machines` order, and builds here only when none takes the build; `remote-only` refuses instead. A name requires that configured, paired worker and fails
+  `remote.build`. `remote` tries the remote machines first, a machine that last built this checkout or project ahead of `remote.machines` order, and builds here only when none takes the build; `remote-only` refuses instead. A name requires that configured, paired worker and fails
   with `STIM_OFFLOAD_REFUSED` without local fallback. Unlisted or unpaired names refuse at setup before checking the cache, without
   a build record or failed-run stats. A listed paired name with a cache hit
   contacts no worker. Prebuild and pod install run on this machine before
@@ -843,7 +843,7 @@ can compile on a paired remote machine instead: see `remote.build` in
 [machine settings](./settings.md#machine-settings).
 
 - `--remote-build <local|auto|remote|remote-only|name>` overrides `STIM_REMOTE_BUILD` and
-  `remote.build`. `remote` tries the remote machines first, in `remote.machines` order, and builds here only when none takes the build; `remote-only` refuses instead. A name requires that configured, paired worker and fails
+  `remote.build`. `remote` tries the remote machines first, a machine that last built this checkout or project ahead of `remote.machines` order, and builds here only when none takes the build; `remote-only` refuses instead. A name requires that configured, paired worker and fails
   with `STIM_OFFLOAD_REFUSED` without local fallback. Unlisted or unpaired names refuse at setup before checking the cache, without
   a build record or failed-run stats. A listed paired name with a cache hit
   contacts no worker. Prebuild and pod install still run on this machine before
@@ -1303,6 +1303,133 @@ holds the home, and
 that target again, until it expires, or a new share with a warning when nothing
 is saved, and `stop --forget` also deletes the saved links. See
 [Share a running app](./share.md) for the requirements and the security model.
+
+## `test`
+
+```text
+stim test [<kind>...] [--wait <seconds> | --no-wait] [-- <args...>]
+stim test [--wait <seconds> | --no-wait] -- <command...>
+stim test --list [--json]
+```
+
+Runs a project's tests under a machine-wide test slot, so agents in parallel
+worktrees queue instead of each starting one test worker per core. The output
+and exit status are the test command's own; Stim's own lines go to stderr.
+
+Tests are grouped by kind. The kind names are `js`, `rust`, `android`, `macos`,
+`web`, `ios`, `android-device`, `e2e-ios` and `e2e-android`, and `e2e` stands
+for both `e2e-*` kinds. This version runs only `js`; naming another kind is
+refused with `STIM_BAD_ARG`.
+
+- `stim test` runs every kind the project has. A project has `js` when the
+  nearest `package.json` has a `test` script.
+- `stim test js` runs that `test` script through the package manager whose
+  lockfile is nearest (`pnpm`, `yarn`, `bun`, else `npm`), from the directory
+  of the nearest `package.json`. Words after `--` are passed to the script,
+  after any worker flag: `stim test js -- src/cart.test.ts`. Words after `--`
+  with several kinds named are refused.
+- `stim test -- <command>`, with no kind, runs that command as given, in the
+  working directory, with no shell. A word before `--` that is not a kind, as
+  in `stim test echo hi`, is refused with `STIM_BAD_ARG` and the `--` form as
+  the remedy.
+- When the `test` script names another kind's runner (`cargo`, `gradlew`,
+  `playwright`, `cypress`, `xcodebuild`, `detox` or `maestro`), plain
+  `stim test` skips that kind, so it does not run twice, and prints
+  `<kind>: skipped, the test script runs <runner>`.
+- `stim test --list` prints the kinds the project has and the command each
+  runs, and runs nothing. With `--json` it prints one payload:
+  `{ kinds: [{ kind, origin, command, cwd, script, runner, needs, runnable,
+scriptRuns }], skipped: [{ kind, reason }] }`. `origin` is `detected`,
+  `command` is the argv before Stim adds a worker count, `runner` is `jest`,
+  `vitest`, `node` or `null` when Stim cannot size the script, `needs` lists
+  the slots the kind takes (`test-slot`), and `scriptRuns` lists the other
+  kinds whose runner the `test` script names. `--json` without `--list` is
+  refused.
+
+```bash
+stim test
+stim test js -- src/cart.test.ts
+stim test -- npx jest src/cart.test.ts
+stim test -- pnpm exec vitest run --project unit
+stim test --list --json
+```
+
+- The run first takes one of the `concurrency.maxTests` slots (see
+  [settings](./settings.md)). A run past the cap waits in arrival order and
+  prints its queue position every 10 seconds. `--wait <seconds>` bounds that
+  wait, and `--no-wait` or `--wait 0` refuses at once with `STIM_AT_CAPACITY`.
+  Without either, a run refuses with `STIM_AT_CAPACITY` after 90 minutes, or
+  earlier once the runs ahead of it cannot be shown to be alive.
+- It then picks a worker count: `floor((cores - 1) / concurrency.maxTests)`,
+  scaled by `cores / load` when the 1-minute load average is already past the
+  core count, and never under 1. On an idle 4-core machine with one test slot
+  that is 3; on a 14-core Mac with two slots it is 6.
+- Jest and Vitest get `--maxWorkers=<n>` only when Stim can establish that
+  nothing else sets workers or a serial run. The command must run `jest` or
+  `vitest` directly (also behind `npx`, `bunx`, `pnpm exec`, or `pnpm` or
+  `yarn` when the package has no script of that name), with the flag placed
+  before any `--`. Yarn 1 drops the options after `yarn exec <bin>` and the
+  words before a `--`, so `yarn exec` and a `yarn` run with a `--` get nothing.
+  Otherwise the `test` script, run by `stim test` or by `stim test -- npm test`
+  (or `pnpm`, `yarn`, `bun run`), must be a plain `jest` or `vitest` command
+  with no `--` of its own, and the words after `stim test js --` must not set
+  workers either. Vitest applies `fileParallelism: false` after the
+  flag, in Vitest 2 through 5. Vitest 1.3 to 3.2.3 also get `--minWorkers=1`:
+  they default `minWorkers` to the cores but one and refuse a lower
+  `--maxWorkers` ([vitest#7974](https://github.com/vitest-dev/vitest/issues/7974),
+  fixed in 3.2.4), and Vitest 5 refuses `--minWorkers` as unknown. For a
+  command that starts with `vitest` itself, by name or path, Stim reads the
+  version of the package that executable belongs to; for a launcher or a
+  script, the nearest `node_modules/vitest`. An older version, or one Stim
+  cannot read, gets nothing.
+- Nothing is passed when the command names a worker option (Jest
+  `--maxWorkers`, `-w`, `--runInBand`, `-i`; Vitest `--maxWorkers`,
+  `--minWorkers`), another config, preset, project or workspace (`-c`,
+  `--config`, `--preset`, `--projects`, `--root`, `--project`, `--workspace`;
+  a short option counts with an attached value or in a cluster, as in `-w50%`
+  or `-ic`),
+  the `--pool` or `--poolOptions.*` flags, or a file-parallelism flag. Nothing
+  is passed either when a `jest`, `vitest` or `vite` config between the working
+  directory and `package.json`, or its `jest` key, names workers, pools, serial
+  runs, projects or a workspace, spreads an object, imports or requires any
+  module other than Node's own, `vite`, `vitest` and `vitest/config` (`jest`
+  and `@jest/types` only as types), names a Jest preset other than
+  `react-native`, `@react-native/jest-preset` and `jest-expo` (or its `ios`,
+  `android`, `web` and `node` presets), which set no workers, or cannot be
+  read. Any other command, such as `turbo run test` or `pnpm -r test`,
+  runs unchanged under the slot, with no variables added. One stderr line says
+  which.
+- Node's test runner gets `--test-concurrency=<n>` when `node --test` runs
+  directly, where the flag goes right after `--test` (node reads no option
+  after the first test file), or when the `test` script is `node --test` with
+  options and no test file. Nothing is passed when the command, the words
+  after `--` or `NODE_OPTIONS` set `--test-concurrency` or name a node config
+  file.
+- The command runs in its own process group with no stdin, so a watch-mode run
+  has no prompt and holds its slot until you stop it. `SIGINT`, `SIGTERM` and
+  `SIGHUP` reach the whole group. The group gets `SIGKILL` after a grace period
+  of at most 10 seconds, and at once on a second interrupt, and a cancelled run
+  exits with the signal's code. The slot is freed only once every process in
+  the group has exited. Processes the command leaves in its group after it
+  exits, such as a server a Jest `globalSetup` never stopped, get `SIGTERM`
+  after a grace period and `SIGKILL` after another, and one stderr line says
+  so. A process that survives `SIGKILL`, or one left after `stim` itself is
+  killed, keeps holding the slot. A process that leaves the group, such as
+  one in its own session, a detached dev server or a simulator the system
+  starts, is not counted and does not hold the slot.
+- The command gets `STIM_TEST_RUN`, naming its slot claim. A `stim test`
+  started inside it while that claim is held takes no slot and runs in the
+  caller's process group, so the outer run stops anything it leaves behind. Stim does not check that the inner run really descends from the
+  outer one: a process that inherited the value runs without a slot until the
+  outer run ends. A nested `stim test` started with a cleared environment, as
+  with `env -i`, has no `STIM_TEST_RUN` and queues for a slot its own outer
+  run holds.
+- Windows refuses `stim test`.
+- A queued run shows in `stim status` and in `daemon.testWaiting`, a running one
+  as a `tests 1/2 (concurrency.maxTests)` line and `capacity.tests`.
+
+> Run this project's tests with `stim test`, or `stim test js -- <file>` for a
+> single file, instead of calling the test runner directly.
 
 ## `logs`
 
@@ -1849,14 +1976,21 @@ and each owned simulator and emulator carries `disk: { bytes, measuredAt }` for
 its data folder. `buildBytes` is Stim's own folder for the workspace, with Xcode
 derived data, Gradle outputs and logs. `nodeModulesBytes` counts APFS clones in
 full; `nodeModulesPrivateBytes` is what deleting `node_modules` would free, the
-blocks no copy-on-write clone or outside hard link shares, and is `null` off
-APFS or without the Command Line Tools. Both `node_modules` figures are `null`
+blocks no copy-on-write clone or outside hard link shares, and is `null` on
+macOS off APFS or without the Command Line Tools, on Linux off ext2/3/4 and
+tmpfs (the volumes where a hard link is the only sharing), and on Windows. Both `node_modules` figures are `null`
 again after a reinstall or a fresh clone until the tree is measured, and they
 are the measurement `stim gc` and the daemon's cleanup use. The watcher
-measures off its refresh path, at most every 5 minutes per folder while the
-environment is active and every hour otherwise, and measures `node_modules`
-when its install changes and at least every 6 hours. One-shot `stim status`
-reads the cached sizes.
+measures off its refresh path, one folder at a time, least recently measured
+first: a folder again 5 minutes after its last walk ended while the environment
+is active and an hour after otherwise, or 20 times as long as that walk took
+when that is longer. No watcher on the machine starts a walk sooner than 4
+times as long as the previous one took, so a slow disk is walked less often. It measures
+`node_modules` when its install changes and at least every 6 hours, and
+`worktreeBytes` counts the checkout's own `node_modules` from that measurement,
+so it is `null` with `nodeModulesBytes` after a reinstall. A walk that fails
+is retried after the same 5 minutes or hour.
+One-shot `stim status` reads the cached sizes.
 
 An environment carries `agents` when a coding-agent session works in it:
 `[{ tool, sessionId, title?, cwd, startedAt?, lastActiveAt?, pid?, openUrl?, webUrl? }]`,
@@ -1916,7 +2050,9 @@ Status shows how many build and device slots are in use and who holds them,
 as a `builds 1/2 (concurrency.maxBuilds)` or
 `devices 6/8 (derived; set concurrency.maxDevices to override)` line, the second
 form while Stim derives the cap because the setting is unset, and in `--json` as
-`capacity.builds` and `capacity.devices`: `max`, `inUse` and `holders`. A build slot's holder names
+`capacity.builds` and `capacity.devices`: `max`, `inUse` and `holders`. While a
+`stim test` run holds a test slot, a `tests 1/2 (concurrency.maxTests)` line
+and `capacity.tests` show it the same way. A build slot's holder names
 the workspace building in it, or the client whose offloaded build this Mac
 runs; a device's holder names the workspace label and device slot that record
 it. An unresolved build slot, one whose claim Stim cannot settle, such as an
@@ -2103,14 +2239,15 @@ Server and Reload, and no Metro section.
 
 In `--json`, an environment with a recorded run carries
 `lastBuilds: { ios?, android? }`, each
-`{ platform, status, cacheHit, cacheSkipped, durationMs, fingerprint, startedAt, finishedAt, errorCode?, missReason?, buildMachine?, builtOn?, offloadedTo?, offloadFallback?, diagnostics? }`.
+`{ platform, status, cacheHit, cacheSkipped, durationMs, fingerprint, startedAt, finishedAt, errorCode?, missReason?, buildMachine?, builtOn?, offloadedTo?, offloadReason?, offloadFallback?, diagnostics? }`.
 `status` is `ok` or `failed`, and `cacheHit` is `local`, `remote`, or `false`
 when the run compiled or failed before finding an app. `buildMachine` records the
 selected `auto`, `local`, or machine name. `builtOn` records `here` or the worker
 name when a build ran; it is absent on a cache hit or a refusal before building.
 Invalid, unlisted or unpaired selections refuse at setup without a build record.
 `offloadedTo` names the
-remote machine that compiled the app; `offloadFallback` is why a run that
+remote machine that compiled the app, and `offloadReason` why it took the build,
+including what it held warm for it; `offloadFallback` is why a run that
 considered offloading built here instead, such as
 `janics-mac-mini: busy (load at or above 2/core; load 8.2/core, 2 builds)`. A failed run whose
 compiler reported errors carries `diagnostics`: up to five
@@ -2184,7 +2321,7 @@ reused pid does not count), an unexpired `stim device lock`, a host process
 that names the device (Argent, xcodebuild test runners, idb, Maestro, Appium,
 `simctl io|spawn`, except the screenshots stim-server itself takes of the device), and on Android a `uiautomator`, `androidx.test` or Argent
 helper process.
-An agent-device session whose last command is dated no longer keeps its device once it is idle: under disk pressure and when the daemon reclaims a device for a waiting run, it holds for 10 minutes after that command instead of the 2 minutes of other workspaces, and a session whose last command cannot be dated keeps it.
+An agent-device session whose last command is dated no longer keeps its device once it is idle: under memory or disk pressure and when the daemon reclaims a device for a waiting run, it holds for 10 minutes after that command instead of the 2 minutes of other workspaces, and a session whose last command cannot be dated keeps it.
 `lastActivityAt` is the newest of the device's app log records, changes to the
 workspace's `client.ndjson` and `device.ndjson` logs, the platform's Metro
 bundle requests, the workspace's last Stim run, and, while agent-device
@@ -2412,7 +2549,9 @@ What each level deletes. A level includes the ones below it.
 
 - **normal** (every level runs this): the automatic maintenance plan. Workspace
   build outputs and shared caches over their caps, the age sweep
-  (`maintenance.olderThanDays`), orphaned workspace directories (including a
+  (`maintenance.olderThanDays`; it also takes Metro file maps and, on macOS and Linux, entries of
+  Jest's default cache directory, `jest_<uid>` in the temp directory, whose Jest
+  config went unused that long, none while a Jest process runs), orphaned workspace directories (including a
   directory with no `workspace.json` that holds only logs or lock files left by
   a removed workspace), registry entries and owned devices of removed projects,
   stale records (the device ledger, the EAS ledger, gone Stim homes, dead build
@@ -2427,7 +2566,8 @@ What each level deletes. A level includes the ones below it.
   emulators (the parked pool stays), its logs archived and, for a linked
   worktree, its `node_modules` and `ios/Pods`.
 - **high**: also the [pressure ladder](./build-caches.md#disk-pressure) at high,
-  to its end. Idle dev servers and their build outputs (the idle stage), parked
+  to its end. Idle dev servers and their build outputs (the idle stage, at 2
+  minutes under memory pressure and at `idle.minutes` under disk pressure alone), parked
   devices until the level clears, Build and Metro caches trimmed to half their
   caps, the dormant stage for workspaces idle 10 minutes, the `node_modules` and
   `Pods` of linked worktrees idle 1 hour that `stim worktree warm` can
@@ -2484,7 +2624,35 @@ under the critical level, which `stim gc --pressure critical` always does. Then
 dependencies to copy, and since when, until you install them there. `gc` deletes
 only git-ignored regenerable directories: a real directory inside the checkout
 whose files git ignores, with no tracked or unignored file, not reached through a
-link. A tree under 256 MB of its own (a copy-on-write clone) is kept.
+link. A tree under 256 MB of its own (a copy-on-write clone, or a pnpm tree
+hard-linked from its store) is kept, and so is one whose own size is unknown at
+the 7-day rule. Before that rule keeps a tree as unknown, `stim gc` and
+`stim gc --dry-run` measure the ones no walk tried since their last install,
+largest first, for up to 2 minutes in all; a tree whose walk failed on the
+same install waits until the others are measured. Only the CLI walks: Stim
+Desktop's gc and its report, other API callers and the daemon do not. One still unknown says why in its kept reason: not
+measured since its last install, another size walk on this machine was running,
+gc ran out of time, its walk failed or did not finish (gc then leaves it for 6 hours or until it is reinstalled), the walk
+could not count its shared blocks (or saw only part of the tree), or its volume
+cannot report them.
+
+A tree whose own size is still unknown is kept at normal and high, and taken
+at critical (by rung 5 after every other tree), when a sample finds it is mostly hard links into a pnpm
+store: its `.modules.yaml` must name a store directory outside the tree, and
+Stim reads the link counts of up to 36 files from up to 12 of its packages
+within 10 seconds for all trees of one step, keeping the tree when
+at least 20 files from 5 packages were read and 90% of them have more than one
+link on the store's volume. That is a pnpm tree linked from its store on a
+volume without clones, where deleting it frees little. A tree with a cache
+folder such as `node_modules/.cache`, or a package that holds native build
+output (`android/build`, `android/.cxx`, `ios/build` and the like), is not
+counted as links: Stim lists the packages with an `android`, `ios`, `apple` or
+`.build` folder once per install, over several runs on a slow disk, and checks
+their build folders each time it uses the verdict. The kept reason gives the counts. The verdict is reused
+for 6 hours while the tree is not reinstalled and the store still exists. A
+tree pnpm did not install, or one copied by `stim worktree warm` where the
+volume cannot clone, keeps the rules above. The sample never replaces a
+measurement.
 
 Automatic maintenance and `stim gc` never delete a `node_modules` or
 `ios/Pods` folder in which they detect hand edits, at any pressure level,
@@ -2496,9 +2664,10 @@ times: a file modified after the install (when an install, `pod install` or
 `stim worktree warm` that Stim ran there finished, or else the package
 manager's stamp) is an edit, except in a 10-minute window after the stamp when
 the root `package.json` declares an install script. Not checked:
-dot-directories at the `node_modules` root other than `.pnpm`, `.bun`, `.deno`
-and `.bin` (tool caches such as `.cache` and `.vite`, a custom pnpm
-virtual-store directory included), Gradle, CMake and Xcode output, and the
+dot-directories at the `node_modules` root other than `.pnpm`, `.bun` and
+`.deno` (tool caches such as `.cache` and `.vite`, a custom pnpm
+virtual-store directory included), the `.bin` executable shims the package
+manager writes, Gradle, CMake and Xcode output, and the
 package manager's state files. Known misses: an edit that keeps an older
 modification time (`cp -p`, `rsync -t`, a tar extract), a file deleted by
 hand, an edit inside an install window, and an edit to a package whose
@@ -2511,13 +2680,13 @@ Everything `gc` deletes, by category (N normal, H high, C critical):
 | Category                                                                                                                                                                                                                                        | Pass or rung               | Level                 | Kept when                                                                                                                                                                                                                                                                                                                                                                                        |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Workspace build outputs and shared caches over their caps                                                                                                                                                                                       | maintenance caps           | N                     | in use, pinned (`maintenance.keep`), running build                                                                                                                                                                                                                                                                                                                                               |
-| What the age sweep removes after `maintenance.olderThanDays` (parked devices, outputs, idle worktrees opt-in)                                                                                                                                   | maintenance sweep          | N                     | recently used, pinned                                                                                                                                                                                                                                                                                                                                                                            |
+| What the age sweep removes after `maintenance.olderThanDays` (parked devices, outputs, shared cache entries, Metro file maps and Jest's default cache, idle worktrees opt-in)                                                                   | maintenance sweep          | N                     | recently used, pinned                                                                                                                                                                                                                                                                                                                                                                            |
 | Unused iOS simulator runtimes (`xcrun simctl runtime delete <id>`)                                                                                                                                                                              | maintenance sweep          | N                     | any simulator uses it, simctl does not mark it deletable, only runtime, newest when none is used, a project's `ios.runtime` pins it, same major version as the active Xcode's simulator SDK, `lastUsedAt` within `maintenance.olderThanDays` or absent; unreadable SDK version, unreachable project path or unparsable `.stim.json` (reported under Needs a person); scoped home; listing failed |
 | Owned simulators whose runtime is gone                                                                                                                                                                                                          | maintenance sweep          | N                     | not in this home's ledger (never a user simulator; Stim never runs `simctl delete unavailable`)                                                                                                                                                                                                                                                                                                  |
 | Registry entries, workspace dirs, owned devices and records of removed projects; stale ledger entries, gone homes, stale build claims, expired leases, status caches                                                                            | maintenance prune          | N                     | path absence cannot be proven, holder alive                                                                                                                                                                                                                                                                                                                                                      |
 | Workspace logs over their cap; recordings and archives past retention; parked hosted devices; orphaned EAS sessions of the cwd project                                                                                                          | maintenance prune          | N                     | live session, live recording                                                                                                                                                                                                                                                                                                                                                                     |
 | Finished linked worktrees (branch merged, PR merged or closed, or no commits of their own), after `gc.worktreeGraceMinutes`                                                                                                                     | maintenance worktree check | N                     | uncommitted (archived first) or unpushed work, in use, leased, locked, pinned, cannot prove finished                                                                                                                                                                                                                                                                                             |
-| Workspace idle `idle.dormantDays`: build outputs (`android/build`, `android/.gradle`, `.build`, `.cxx`, `.dd` DerivedData, Exact `target/`), owned devices, logs archived                                                                       | dormant reduction          | N                     | running dev server or build, booted device, leased, driven, locked, hosted, pinned, `idle.minutes` 0                                                                                                                                                                                                                                                                                             |
+| Workspace idle `idle.dormantDays`: build outputs (`android/build`, `android/.gradle`, `.build`, `.cxx`, `.dd` DerivedData, Cargo `target/`), owned devices, logs archived                                                                       | dormant reduction          | N                     | running dev server or build, booted device, leased, driven, locked, hosted, pinned, `idle.minutes` 0; a Cargo `target/` written in that time, locked by a build, used by a process, holding a mount or trim recovery data, and its `deploy/` folder when it holds a Solana keypair                                                                                                               |
 | The same: `node_modules` and `ios/Pods` of a linked worktree                                                                                                                                                                                    | dormant reduction          | N                     | source checkout, under 256 MB of its own (copy-on-write clone), in use, a running process inside, pinned                                                                                                                                                                                                                                                                                         |
 | Idle dev servers and their outputs (idle 2 min)                                                                                                                                                                                                 | idle stage, rung 1         | H                     | as above                                                                                                                                                                                                                                                                                                                                                                                         |
 | Parked devices                                                                                                                                                                                                                                  | rung 2                     | H until clear, C all  | -                                                                                                                                                                                                                                                                                                                                                                                                |
@@ -2573,6 +2742,25 @@ dry run ends with `Apply with: stim gc`. An acting run also appends every
 deletion to the machine cleanup log `$STIM_HOME/gc/gc.ndjson`, which
 `stim logs --source gc` reads.
 
+When the measured disk level is high or critical and a volume is still under
+`disk.minFreeGb` (after an acting run, measured again; on a dry run, the disk as
+it is now, before the deletions the dry run lists), plain `gc` then prints "Not
+Stim's to delete": the largest users of the short volume that Stim does not
+manage, which it never deletes. It lists swap files on that volume, Docker
+through `docker system df` (with `docker system prune`, possibly on another
+volume), and the entries of the temporary and home folders when they sit on that
+volume (a memory-backed `/tmp` is skipped), each folder sized by
+one low-priority `du -x`, 5 seconds at most each and 15 seconds for the whole
+scan. It names the folders too slow to size within their 5 seconds and those it
+could not read, and counts what the deadline left unreached. On macOS it names `~/Desktop`, `~/Documents`,
+`~/Downloads`, `~/Library`, `~/Movies`, `~/Music` and `~/Pictures` without
+reading them, so no privacy prompt appears. A cache Stim found but did not
+measure and sweeps by entry, such as Jest's default cache or Metro's file maps
+in the temporary folder, is listed too, marked "Stim sweeps only its unused
+entries". An acting
+run prints its summary and releases the maintenance claim first. The scan does
+not run on Windows or when `STIM_HOME` scopes the home.
+
 An acting `gc` takes the same exclusive maintenance claim as the stim-daemon's
 maintenance pass. While one holds it the other refuses at once with
 `STIM_CLAIM_REFUSED` naming the holder (pid, start, trigger); retry after it
@@ -2616,8 +2804,7 @@ volume is not mounted, is kept and counted under "Skipped".
 "TMPDIR leftovers", with their count, size and a remedy: Stim temp directories
 (`stim-claim-*`, `stim-host-*`, `stim-fakehome-*`, `stim-hosted-macos-*`,
 `stim-server-*`, `stim-ws-*`, `stim-parity-*`), xctrace recordings (`instruments*.ktrace`),
-SwiftPM temp directories (`TemporaryDirectory.*`, left by `swift` and `xcodebuild`) and
-Jest's cache (`jest_<uid in base 36>`). `gc` at high or critical removes a Stim temp directory, recording or SwiftPM
+SwiftPM temp directories (`TemporaryDirectory.*`, left by `swift` and `xcodebuild`). `gc` at high or critical removes a Stim temp directory, recording or SwiftPM
 temp directory only when nothing in it changed for 24 hours. It removes a `stim-parity-*` directory, with its git worktree registration, only when its Stim record names a process that has ended. It keeps a directory that contains or sits
 inside a registered project, holds a live or unverifiable ownership claim or
 a `.lock` directory with no claim set, or cannot be listed, and keeps a recording that
@@ -2625,7 +2812,7 @@ cannot be read, and keeps every recording while `xctrace` or Instruments runs an
 SwiftPM temp directory while a `swift` or `xcodebuild` process runs, or when the
 process list cannot be read. Stim's own SwiftPM macOS builds run `swift` with the
 ambient `TMPDIR`, because SwiftPM keeps the locks for its shared caches there, so
-their temp directories land here too. Jest's cache is never deleted. gc never
+their temp directories land here too. Jest's default cache is a shared cache, swept with the age sweep. gc never
 follows a symlink or acts outside `TMPDIR`, and with `STIM_HOME` set it skips
 them. The pressure ladder runs the same deletion daily and at
 once under disk pressure.
@@ -3021,7 +3208,7 @@ laid out as DerivedData under a name other than `.dd`, such as a rn-tester
 Each entry's
 `privateBytes` is what deleting `node_modules`, `ios/Pods`, `.dd`, `android/.cxx` or that output would free, the
 blocks no copy-on-write clone or outside hard link shares, and is `null` for
-other directories, off APFS and without the Command Line Tools. gc reuses a
+other directories, on macOS off APFS or without the Command Line Tools, on Linux off ext2/3/4 and tmpfs, and on Windows. gc reuses a
 size for up to an hour while no entry was added to or removed from the
 directory (for `node_modules` and Pods, for up to six hours while their install
 is unchanged, the measurement `stim status` and the daemon share),

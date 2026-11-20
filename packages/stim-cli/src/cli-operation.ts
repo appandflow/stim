@@ -2,7 +2,7 @@ import { ambientContext, configDir, withAmbientContext, type StimContext } from 
 import { runId } from '@stim-cli/core/state';
 import { operationState } from './engine/operation-state.ts';
 
-const EXIT_CODES = { SIGINT: 130, SIGTERM: 143 } as const;
+const EXIT_CODES = { SIGINT: 130, SIGTERM: 143, SIGHUP: 129 } as const;
 type Interrupt = keyof typeof EXIT_CODES;
 
 /** A CLI context bound to `signal`; when omitted, reuse the current operation or create a fresh CLI context. */
@@ -36,12 +36,15 @@ export interface ProcessOperation {
   cancel(interrupt: Interrupt): void;
   /** The exit code a received interrupt asks for, or null. */
   interrupted(): number | null;
-  /** Route this process's `SIGINT` and `SIGTERM` to `cancel`, and run its exit cleanups on any exit, until `dispose`. */
+  /**
+   * Route this process's `SIGINT` and `SIGTERM`, and `SIGHUP` when the operation was created with `hangup`, to `cancel`,
+   * and run its exit cleanups on any exit, until `dispose`.
+   */
   listen(): void;
   dispose(): void;
 }
 
-export function processOperation(projectRoot: string): ProcessOperation {
+export function processOperation(projectRoot: string, { hangup = false }: { hangup?: boolean } = {}): ProcessOperation {
   const controller = new AbortController();
   const context = processContext(projectRoot, controller.signal);
   let received: Interrupt | null = null;
@@ -58,6 +61,7 @@ export function processOperation(projectRoot: string): ProcessOperation {
   };
   const onInterrupt = () => operation.cancel('SIGINT');
   const onTerminate = () => operation.cancel('SIGTERM');
+  const onHangup = () => operation.cancel('SIGHUP');
   const state = operationState(context);
   state.takesSignals = true;
   state.abortOperation = (reason) => {
@@ -79,11 +83,13 @@ export function processOperation(projectRoot: string): ProcessOperation {
     listen() {
       process.on('SIGINT', onInterrupt);
       process.on('SIGTERM', onTerminate);
+      if (hangup) process.on('SIGHUP', onHangup);
       process.on('exit', runExitCleanups);
     },
     dispose() {
       process.off('SIGINT', onInterrupt);
       process.off('SIGTERM', onTerminate);
+      process.off('SIGHUP', onHangup);
       process.off('exit', runExitCleanups);
     },
   };
@@ -91,15 +97,17 @@ export function processOperation(projectRoot: string): ProcessOperation {
 }
 
 /**
- * Run `fn` as this process's operation: `SIGINT` and `SIGTERM` cancel it through its context, and the context is
+ * Run `fn` as this process's operation: `SIGINT` and `SIGTERM`, and `SIGHUP` with `hangup`, cancel it through its
+ * context, and the context is
  * also the ambient one for code that is not passed it yet. Returns `fn`'s value and the exit code an interrupt
  * asks for.
  */
 export async function runProcessOperation<T>(
   projectRoot: string,
   fn: (context: StimContext) => Promise<T>,
+  options: { hangup?: boolean } = {},
 ): Promise<{ value: T; interrupted: number | null }> {
-  const operation = processOperation(projectRoot);
+  const operation = processOperation(projectRoot, options);
   operation.listen();
   try {
     const value = await withAmbientContext(operation.context, () => fn(operation.context));

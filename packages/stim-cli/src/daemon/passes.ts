@@ -8,36 +8,51 @@ import {
   type DaemonLadderAction,
   type DaemonPressure,
   type DaemonWorkspaceDecision,
+  type PressureLevel,
 } from '@stim-cli/core/state';
 import { processContext } from '../cli-operation.ts';
 import { runMaintenance } from '../stimd/passes/run.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { checkoutRootOf } from '../workspace/checkout-role.ts';
-import { freshLaunchers, launchersOf, launchingOf, logLauncherProblems } from '../workspace/launchers.ts';
+import { forgetGitReads, openGitReads } from '../workspace/git-reads.ts';
+import { launchersOf, launchingOf, logLauncherProblems } from '../workspace/launchers.ts';
 import { loadConfig, type Config } from '../workspace/config.ts';
 import { requestDaemonTick, stimdRefused } from './client.ts';
 import { runBootedParkedPass } from './booted-parked.ts';
 import { runDormantDependencies } from './dependencies.ts';
 import { createFingerprintPrecompute, type PrecomputeInput } from './fingerprint-precompute.ts';
 import { daemonMode } from './mode.ts';
-import { runIdlePass, type IdlePassInput } from './idle.ts';
+import { onDiskVolumes, runIdlePass, type IdlePassInput } from './idle.ts';
+import { watchedStep } from './step-timing.ts';
 import { idleOutputBytes, runLadder } from './ladder.ts';
 import { measureDisk, measureMemory, measureTick, type TickMeasurement } from './measure.ts';
-import { classifyPressure, diskThresholds, shortVolumeDevices } from './pressure.ts';
+import { classifyPressure, diskPressure, diskThresholds, shortVolumeDevices, type DiskThresholds } from './pressure.ts';
 import { onShortVolume } from '../stimd/passes/unowned.ts';
-import {
-  clearStoppedOutputs,
-  dormantAfterMs,
-  runDormantPass,
-  sourceDormantAfterMs,
-  stoppedOutputCandidates,
-} from './stages.ts';
+import { dormantAfterMs, runDormantPass, sourceDormantAfterMs } from './stages.ts';
+
+const LADDER_PACE_FACTOR = 4;
+const LADDER_PACE_MAX_MS = 15 * 60_000;
+const LADDER_PACE_DISK_DROP_MB = 1024;
+const RANK: Record<PressureLevel, number> = { normal: 0, high: 1, critical: 2 };
 
 interface HomePassPhases {
   measureMs: number;
   idleMs: number;
   dormantMs: number;
   ladderMs: number;
+}
+
+/**
+ * The last pressure ladder pass: the disk and memory levels and each measured volume's free disk and level it started
+ * at, keyed by device id, whether it freed anything, how long it took and when it ended.
+ */
+export interface LadderPass {
+  disk: PressureLevel;
+  memory: PressureLevel;
+  volumes: Record<string, { freeMb: number; level: PressureLevel }>;
+  freed: boolean;
+  durationMs: number;
+  endedAt: number;
 }
 
 export interface HomePasses {
@@ -49,25 +64,64 @@ export interface HomePasses {
   actions: DaemonLadderAction[];
   phases: HomePassPhases;
   operation: StimContext;
+  /** The ladder pass to hand to the next tick as `lastLadder`; null while the level is normal. */
+  ladder: LadderPass | null;
+}
+
+function volumeReadings(
+  measurement: TickMeasurement['measurement'],
+  thresholds: DiskThresholds,
+): LadderPass['volumes'] {
+  return Object.fromEntries(
+    measurement.disk.map((volume) => [
+      String(volume.device ?? volume.volume),
+      { freeMb: volume.freeMb, level: diskPressure([volume], thresholds).level },
+    ]),
+  );
+}
+
+function ladderDue(last: LadderPass, pressure: DaemonPressure, volumes: LadderPass['volumes'], now: number): boolean {
+  if (last.freed || RANK[pressure.disk] > RANK[last.disk] || RANK[pressure.memory] > RANK[last.memory]) return true;
+  for (const [key, volume] of Object.entries(volumes)) {
+    const before = last.volumes[key];
+    if (!before || before.freeMb - volume.freeMb >= LADDER_PACE_DISK_DROP_MB || RANK[volume.level] > RANK[before.level])
+      return true;
+  }
+  return now - last.endedAt >= Math.min(LADDER_PACE_MAX_MS, LADDER_PACE_FACTOR * last.durationMs);
 }
 
 /**
- * One measurement, the activity pass (the idle stage, taking every workspace idle 2 minutes while the level is high
- * or critical, then the dormant stage) and the pressure ladder while the level stays above normal, in this process, as
- * the daemon runs them each tick. `act: false` decides and logs without acting. `memoryWarningSince` carries the
- * memory warning clock from the last tick.
+ * One measurement, the activity pass (the idle stage, taking every workspace idle 2 minutes while the memory level is
+ * high or critical and deleting only outputs on a short volume while disk alone is, then the dormant stage) and the
+ * pressure ladder while the level stays above normal, in this process, as the daemon runs them each tick. `act: false` decides and logs without acting. `memoryWarningSince` carries the
+ * memory warning clock from the last tick. After a ladder pass that freed nothing (`lastLadder`), the ladder waits
+ * four times that pass's duration, at most 15 minutes, before it runs again, unless the disk or memory level rose, a
+ * measured volume is new, lost 1 GB or reached a higher level since that pass, or `requested` says a command asked for
+ * this tick.
  */
-export async function runHomePasses({
-  act,
-  log,
-  memoryWarningSince = null,
-  signal,
-}: {
+export async function runHomePasses(input: HomePassesInput): Promise<HomePasses> {
+  const operation = processContext(process.cwd(), input.signal ?? new AbortController().signal);
+  const closeGitReads = openGitReads(operation);
+  try {
+    return await homePasses(input, operation);
+  } finally {
+    closeGitReads();
+  }
+}
+
+interface HomePassesInput {
   act: boolean;
   log: IdlePassInput['log'];
   memoryWarningSince?: string | null;
   signal?: AbortSignal;
-}): Promise<HomePasses> {
+  lastLadder?: LadderPass | null;
+  requested?: boolean;
+}
+
+async function homePasses(
+  { act, log, memoryWarningSince = null, lastLadder = null, requested = false }: HomePassesInput,
+  operation: StimContext,
+): Promise<HomePasses> {
   let mark = performance.now();
   const lap = () => {
     const at = performance.now();
@@ -77,8 +131,9 @@ export async function runHomePasses({
   };
   const config = loadConfig();
   const now = Date.now();
-  const operation = processContext(process.cwd(), signal ?? new AbortController().signal);
-  const measured = await measureTick(config, now, { signal: operation.signal, operation });
+  const measured = await watchedStep(log, 'measure', () =>
+    measureTick(config, now, { signal: operation.signal, operation }),
+  );
   operation.signal.throwIfAborted();
   const measureMs = lap();
   const { thresholds, error } = diskThresholds(config);
@@ -96,40 +151,39 @@ export async function runHomePasses({
   };
   let pressure = classify(measured.measurement);
   const memoryLevel = measured.measurement.memory.level;
-  const parkedActions = await runBootedParkedPass({
-    sims: measured.sims,
-    memory: memoryLevel !== 'normal' ? memoryLevel : pressure.memory !== 'normal' ? 'warning' : memoryLevel,
-    act,
-    log,
-    operation,
-  });
+  const parkedActions = await watchedStep(log, 'booted_parked', () =>
+    runBootedParkedPass({
+      sims: measured.sims,
+      memory: memoryLevel !== 'normal' ? memoryLevel : pressure.memory !== 'normal' ? 'warning' : memoryLevel,
+      act,
+      log,
+      operation,
+    }),
+  );
   operation.signal.throwIfAborted();
-  const workspaces = await runIdlePass({
-    config,
-    now,
-    sims: measured.sims,
-    simsError: measured.simsError,
-    devices: measured.devices,
-    act,
-    log,
-    operation,
-    ...(pressure.level === 'normal'
-      ? {}
-      : {
-          pressure: {
-            level: pressure.level,
-            reasons: pressure.reasons,
-            // @ref LLP 0001#each-rung-frees-only-the-volumes-under-pressure -- memory pressure idles every workspace
-            ...(pressure.memory === 'normal'
-              ? { volumes: shortVolumeDevices(measured.measurement.disk, thresholds, 'high') }
-              : {}),
-          },
-        }),
-  });
+  const workspaces = await watchedStep(log, 'idle_stage', () =>
+    runIdlePass({
+      config,
+      now,
+      sims: measured.sims,
+      simsError: measured.simsError,
+      devices: measured.devices,
+      act,
+      log,
+      operation,
+      // @ref LLP 0001#the-2-minute-idle-stop-is-for-memory -- a stop frees memory, not disk
+      ...(pressure.memory !== 'normal'
+        ? { pressure: { level: pressure.memory, reasons: pressure.reasons } }
+        : pressure.disk !== 'normal'
+          ? // @ref LLP 0001#each-rung-frees-only-the-volumes-under-pressure -- memory pressure idles every workspace
+            { disk: { volumes: shortVolumeDevices(measured.measurement.disk, thresholds, 'high') } }
+          : {}),
+    }),
+  );
   operation.signal.throwIfAborted();
   const actions: DaemonLadderAction[] = [
     ...parkedActions,
-    ...(pressure.level === 'normal'
+    ...(pressure.memory === 'normal'
       ? []
       : workspaces.flatMap((entry) =>
           entry.outcome === 'idle' || entry.outcome === 'would-idle'
@@ -149,11 +203,31 @@ export async function runHomePasses({
         )),
   ];
   const idleMs = lap();
+  if (act) forgetGitReads(operation);
   const reading = { devices: measured.devices, simsFailed: measured.sims === null, operation };
   actions.push(...(await runDormantPass({ config, act, log, ...reading })));
   operation.signal.throwIfAborted();
   const dormantMs = lap();
-  if (config && pressure.level !== 'normal') {
+  let ladderPass: LadderPass | null = null;
+  const level = pressure.level;
+  const volumes = volumeReadings(measured.measurement, thresholds);
+  if (
+    config &&
+    level !== 'normal' &&
+    lastLadder &&
+    !requested &&
+    !ladderDue(lastLadder, pressure, volumes, Date.now())
+  ) {
+    ladderPass = lastLadder;
+    log(
+      'debug',
+      'pressure_ladder_paced',
+      `the pressure ladder waits: its last pass freed nothing in ${lastLadder.durationMs}ms`,
+      { level, lastDurationMs: lastLadder.durationMs, lastEndedAt: new Date(lastLadder.endedAt).toISOString() },
+    );
+  } else if (config && level !== 'normal') {
+    const before = pressure;
+    const started = Date.now();
     const ladder = await runLadder(
       {
         config,
@@ -179,6 +253,15 @@ export async function runHomePasses({
     );
     actions.push(...ladder.actions);
     pressure = ladder.pressure;
+    const endedAt = Date.now();
+    ladderPass = {
+      disk: before.disk,
+      memory: before.memory,
+      volumes,
+      freed: ladder.actions.some((action) => action.outcome === 'done'),
+      durationMs: endedAt - started,
+      endedAt,
+    };
   }
   operation.signal.throwIfAborted();
   const ladderMs = lap();
@@ -192,6 +275,7 @@ export async function runHomePasses({
     actions,
     phases: { measureMs, idleMs, dormantMs, ladderMs },
     operation,
+    ladder: ladderPass,
   };
 }
 
@@ -240,7 +324,9 @@ export function createMaintenanceLane(
       loopDelay.enable();
       current = (async () => {
         const reading = { devices: measured.devices, simsFailed: measured.sims === null, operation };
-        await precompute.run({ config, workspaces, pressure, operation }, act).catch((error: unknown) => {
+        await watchedStep(log, 'fingerprint_precompute', () =>
+          precompute.run({ config, workspaces, pressure, operation }, act),
+        ).catch((error: unknown) => {
           if (isClaimUnavailable(error) || (error instanceof Error && 'reportCleanup' in error)) throw error;
           operation.signal.throwIfAborted();
           log('warn', 'daemon_fingerprint_precompute', error instanceof Error ? error.message : String(error));
@@ -249,7 +335,9 @@ export function createMaintenanceLane(
         const deleted = await runDormantDependencies({ config, act, log, ...reading, cadence: dependencyCadence });
         taken.push(...deleted);
         const dependenciesMs = lap();
-        const skipped = await runMaintenance('daemon', { report: !act, tick: { operation, measured } });
+        const skipped = await watchedStep(log, 'maintenance', () =>
+          runMaintenance('daemon', { report: !act, tick: { operation, measured } }),
+        );
         const maintenanceMs = lap();
         logLauncherProblems(operation, log);
         const tookMs = Math.round(performance.now() - started);
@@ -331,7 +419,7 @@ async function runCommandLadder(
         config,
         act: mode === 'on',
         log: (level, event, msg, fields = {}) => {
-          if (headroom && event === 'pressure_action') headroom.acted = true;
+          if (headroom && event === 'pressure_action' && !fields.unsized) headroom.acted = true;
           writer.write({ src: trigger, level, event, msg, ...fields });
         },
         devices: measured.devices,
@@ -415,9 +503,10 @@ export interface ForcedLadder {
 
 /**
  * The pressure ladder forced to each of `levels` whatever the machine measures, every rung in order without stopping
- * once the level clears: the idle stage for every workspace idle 2 minutes or more, then rungs 1 to 8 (rungs 5 and 8 only at
- * critical). `stim gc` runs one level with `act`; `stim gc --dry-run` previews it, measuring what each action would
- * free. Logs to `daemon.ndjson` under `trigger` when acting. Null without a Stim config.
+ * once the level clears: the idle stage (for every workspace idle 2 minutes or more while the measured memory level is
+ * above normal, else at `idle.minutes`), then rungs 1 to 8 (rungs 5 and 8 only at critical). `stim gc` runs one
+ * level with `act`; `stim gc --dry-run` previews it, measuring what each action would free. Logs to `daemon.ndjson`
+ * under `trigger` when acting. Null without a Stim config.
  */
 export async function runForcedLadder({
   levels,
@@ -472,7 +561,10 @@ export async function runForcedLadder({
       for (const entry of await runIdlePass({
         ...reading,
         act,
-        pressure: { level, reasons: [why], ...(volumes ? { volumes } : {}) },
+        // @ref LLP 0001#the-2-minute-idle-stop-is-for-memory -- a stop frees memory, not disk
+        ...(pressure.memory === 'normal'
+          ? { disk: volumes ? { volumes } : {} }
+          : { pressure: { level, reasons: [why] } }),
       })) {
         if (entry.outcome !== 'idle' && entry.outcome !== 'would-idle' && entry.outcome !== 'failed') continue;
         actions.push({
@@ -493,7 +585,7 @@ export async function runForcedLadder({
                     operation,
                     operation?.signal,
                   ),
-                  volumes ? (path) => onShortVolume([path], volumes) : undefined,
+                  volumes && onDiskVolumes(entry.path, volumes) ? (path) => onShortVolume([path], volumes) : undefined,
                 )
               : 0),
           detail: entry.outcome === 'would-idle' ? 'stim gc would do this' : entry.detail,
@@ -525,9 +617,9 @@ export async function runForcedLadder({
 }
 
 /**
- * What `stim gc` runs at every level for each workspace with no activity for `idle.dormantDays`: its regenerable build
- * outputs deleted, then the dormant stage (its owned devices deleted, its logs archived), then the node_modules and
- * Pods of linked worktrees. Logs to `daemon.ndjson` under `trigger` when acting. Empty without a Stim config or
+ * What `stim gc` runs at every level for each workspace with no activity for `idle.dormantDays`: the dormant stage (its
+ * owned devices deleted, its logs archived), then the dormant step the daemon runs hourly: its regenerable build
+ * outputs, then the node_modules and Pods of linked worktrees. Logs to `daemon.ndjson` under `trigger` when acting. Empty without a Stim config or
  * with the stage off.
  */
 export async function runDormantReduction({
@@ -535,11 +627,13 @@ export async function runDormantReduction({
   trigger,
   operation,
   protectedRoot,
+  walkUnknown,
 }: {
   act: boolean;
   trigger: string;
   operation?: StimContext;
   protectedRoot?: string;
+  walkUnknown?: false;
 }): Promise<DaemonLadderAction[]> {
   const config = loadConfig();
   const afterMs = dormantAfterMs(config);
@@ -560,37 +654,6 @@ export async function runDormantReduction({
   };
   try {
     const actions: DaemonLadderAction[] = [];
-    for (const candidate of afterMs > 0 ? await stoppedOutputCandidates(config, reading, afterMs) : []) {
-      const result = act
-        ? await clearStoppedOutputs(candidate, config, afterMs, operation)
-        : {
-            outcome: 'would' as const,
-            bytes: await idleOutputBytes(
-              candidate.path,
-              config,
-              launchingOf(
-                candidate.checkout,
-                () => freshLaunchers(operation, operation?.signal)(),
-                operation,
-                operation?.signal,
-              ),
-            ),
-            detail: 'stim gc would do this',
-          };
-      if (result)
-        actions.push({
-          rung: 4,
-          kind: 'delete-build-outputs',
-          target: candidate.path,
-          workspace: candidate.path,
-          ...result,
-          ...(result.outcome === 'done'
-            ? {
-                restore: 'the next stim ios or stim android, from the build cache when nothing changed',
-              }
-            : {}),
-        });
-    }
     if (afterMs > 0) actions.push(...(await runDormantPass({ config, act, log, ...reading })));
     actions.push(
       ...(await runDormantDependencies({
@@ -599,6 +662,7 @@ export async function runDormantReduction({
         log,
         ...reading,
         force: true,
+        ...(walkUnknown === false ? { walkUnknown } : {}),
       })),
     );
     return actions;

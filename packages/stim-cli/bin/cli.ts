@@ -42,6 +42,7 @@ const commands = new Map<string, () => Promise<{ default: Op }>>([
   ['remote', () => import('../src/commands/remote.ts')],
   ['settings', () => import('../src/commands/settings.ts')],
   ['status', () => import('../src/commands/status.ts')],
+  ['test', () => import('../src/commands/test.ts')],
   ['stats', () => import('../src/commands/stats.ts')],
   ['gc', () => import('../src/commands/gc.ts')],
   ['guide', () => import('../src/commands/guide.ts')],

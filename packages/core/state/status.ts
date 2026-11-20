@@ -173,6 +173,8 @@ export interface LastBuildReport {
   offloadedTo?: string;
   /** Why the run built here after it considered offloading; absent when it offloaded or never considered it. */
   offloadFallback?: string;
+  /** Why `offloadedTo` took the build: the placement reason, what it held warm for it, and its load then. */
+  offloadReason?: string;
   /** The first compiler diagnostics of a failed build, when the build tool reported any. */
   diagnostics?: BuildDiagnostic[];
   /** Present on a failed run: what failed, from `buildCause`. */
@@ -776,6 +778,8 @@ export interface StatusCapacity {
   builds?: StatusBuildSlots;
   /** `concurrency.maxDevices` usage; present only while that cap is set. */
   devices?: StatusDeviceSlots;
+  /** `concurrency.maxTests` usage; present only while a `stim test` run holds a test slot. */
+  tests?: StatusBuildSlots;
   /** `concurrency.maxIosDevices` and `concurrency.maxAndroidDevices` usage; each is present only while its cap is set. */
   platformDevices?: Partial<Record<'ios' | 'android', StatusPlatformDeviceSlots>>;
   /** This machine's load. Optional only so payloads from releases that predate it still decode. */

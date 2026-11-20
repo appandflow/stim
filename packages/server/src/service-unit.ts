@@ -36,6 +36,7 @@ export function renderUnit(spec: ServiceSpec, previousScript: string | null = nu
     'WorkingDirectory=%h',
     'Restart=always',
     `RestartSec=${THROTTLE_SECONDS}`,
+    'KillMode=process',
     `TimeoutStopSec=${STOP_TIMEOUT_SECONDS}`,
     `StandardOutput=append:${spec.logPath.replace(/%/g, '%%')}`,
     'StandardError=inherit',

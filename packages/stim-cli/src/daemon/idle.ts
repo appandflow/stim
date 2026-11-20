@@ -43,7 +43,7 @@ import { MODE_COMMAND, readWorkspaceLaunches, launchWithoutMetro } from '../stim
 import { getProject, type Config, type ProjectRecord } from '../workspace/config.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
-import { existingBuildDirsAsync, regenerableDirProblem } from '../workspace/regenerable-dirs.ts';
+import { existingBuildDirKindsAsync, regenerableDirProblem } from '../workspace/regenerable-dirs.ts';
 import {
   idleMinutesSetting,
   maintenanceKeepSetting,
@@ -52,6 +52,7 @@ import {
 } from '../workspace/settings.ts';
 import { readWorkspaceState, updateWorkspaceStateAsync } from '../workspace/workspace-state.ts';
 import type { DaemonLog } from './step-timing.ts';
+import { forgetGitReads } from '../workspace/git-reads.ts';
 
 const MINUTE_MS = 60_000;
 const SIZE_TIMEOUT_MS = 60_000;
@@ -66,11 +67,14 @@ export interface IdlePassInput {
   devices: OwnedDeviceActivity[];
   /** False in `daemon.mode report`: decide and log, act on nothing. */
   act: boolean;
+  /** Set while the memory level is high or critical: the idle stage then takes every workspace idle 2 minutes. */
+  pressure?: { level: 'high' | 'critical'; reasons: string[] };
   /**
-   * Set while the pressure level is high or critical: the idle stage then takes every workspace idle 2 minutes, or with
-   * `volumes`, set when disk alone raised the level, only those on one of those devices.
+   * Set while disk alone raises the level, the threshold staying `idle.minutes`: an agent-device command holds a
+   * workspace for 10 minutes, and the idle stage deletes only outputs on `volumes`. With `volumes`, both apply only to a
+   * workspace whose checkout or Stim workspace folder is on one of them; without, every volume counts as short.
    */
-  pressure?: { level: 'high' | 'critical'; reasons: string[]; volumes?: ReadonlySet<number> };
+  disk?: { volumes?: ReadonlySet<number> };
   /** A workspace the pass never takes: the one the running command belongs to. */
   protectedRoot?: string;
   /** The daemon tick's context, whose reads run without blocking its event loop. */
@@ -93,6 +97,11 @@ function thresholdWhy(input: Pick<IdlePassInput, 'pressure'>, minutes: number): 
   return input.pressure
     ? `pressure level ${input.pressure.level}: ${input.pressure.reasons.join('; ')}`
     : `${IDLE_SETTING} is ${minutes}`;
+}
+
+/** Whether the workspace's checkout or its Stim workspace folder lies on one of `volumes`. */
+export function onDiskVolumes(path: string, volumes: ReadonlySet<number>): boolean {
+  return onShortVolume([path, workspaceDir(path)], volumes);
 }
 
 /** Whether this Stim home owns the device: config records alone do not prove it in a scoped home. */
@@ -173,38 +182,43 @@ async function decide(
   const found = await candidate(path, project, input);
   if (!found.runs || 'kept' in found) return { candidate: found, decision: null };
   const now = Date.now();
+  // @ref LLP 0001#the-2-minute-idle-stop-is-for-memory -- disk pressure keeps the agent-device window, not the threshold
+  const pressured = Boolean(input.pressure) || input.disk !== undefined;
   const evidence = await idleStopEvidence(path, found.booted, {
     now,
     idleMs: found.idleMs,
     locked,
     serving: found.serving,
-    pressured: Boolean(input.pressure),
+    pressured,
     operation: input.operation,
   });
   return {
     candidate: found,
-    decision: decideIdleStop(evidence, {
-      idleMs: found.idleMs,
-      now,
-      setting: thresholdName(input),
-      pressured: Boolean(input.pressure),
-    }),
+    decision: decideIdleStop(evidence, { idleMs: found.idleMs, now, setting: thresholdName(input), pressured }),
   };
 }
 
-/** The regenerable outputs the idle stage deletes, and why each other one stays. */
+/**
+ * The regenerable outputs the idle stage deletes, and why each other one stays. `targets` names the Cargo `target/`
+ * among `paths`, recognised by the same reads that listed it.
+ */
 export async function idleOutputs(
   path: string,
   config: Config,
   launching: Launching,
   deletable?: (path: string) => boolean,
-): Promise<{ paths: string[]; kept: string[] }> {
+): Promise<{ paths: string[]; targets: string[]; kept: string[] }> {
   const paths = workspaceOutputPaths(workspaceDir(path));
+  const targets: string[] = [];
   const kept: string[] = [];
-  for (const dir of await existingBuildDirsAsync(path)) {
+  const { dirs, cargo } = await existingBuildDirKindsAsync(path);
+  for (const dir of dirs) {
     const problem = await regenerableDirProblem(path, dir, undefined, { launching });
     if (problem) kept.push(`kept ${dir}: ${problem}`);
-    else paths.push(dir);
+    else {
+      paths.push(dir);
+      if (cargo.includes(dir)) targets.push(dir);
+    }
   }
   const store = metroStoreRoot(path);
   if (existsSync(store)) {
@@ -218,7 +232,9 @@ export async function idleOutputs(
     if (sharer) kept.push(`kept the Metro store ${store}: the running dev server of ${sharer[0]} shares it`);
     else paths.push(store);
   }
-  return { paths: deletable ? paths.filter(deletable) : paths, kept };
+  return deletable
+    ? { paths: paths.filter(deletable), targets: targets.filter(deletable), kept }
+    : { paths, targets, kept };
 }
 
 /**
@@ -297,6 +313,7 @@ async function enterIdleStage(
   config: Config,
   input: IdlePassInput,
 ): Promise<{ outcome: DaemonWorkspaceDecision['outcome']; detail: string; freedBytes?: number }> {
+  forgetGitReads(input.operation);
   const run = await withIdleWorkspace(
     path,
     async () => {
@@ -330,7 +347,7 @@ async function enterIdleStage(
               return outcome?.status === 'shut-down' && booted.has(`${kind}:${slot}`) ? [key] : [];
             });
             const { operation } = input;
-            const volumes = input.pressure?.volumes;
+            const volumes = input.disk?.volumes;
             const checkout = await checkoutRootOf(path, operation?.signal, operation);
             const outputs = await idleOutputs(
               path,
@@ -377,11 +394,10 @@ export async function runIdlePass(input: IdlePassInput): Promise<DaemonWorkspace
   const decisions: DaemonWorkspaceDecision[] = [];
   const config = input.config;
   if (!config) return decisions;
-  const { pressure, ...unpressured } = input;
+  const { disk, ...elsewhere } = input;
   for (const [path, project] of Object.entries(config.projects)) {
     let entry: DaemonWorkspaceDecision;
-    const here =
-      pressure?.volumes && !onShortVolume([path, workspaceDir(path)], pressure.volumes) ? unpressured : input;
+    const here = disk?.volumes && !onDiskVolumes(path, disk.volumes) ? elsewhere : input;
     try {
       const { candidate: found, decision } = await decide(path, project, here, false);
       if (!found.runs) continue;

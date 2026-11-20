@@ -1,8 +1,9 @@
 import { constants } from 'node:fs';
-import { access, lstat, readdir, realpath } from 'node:fs/promises';
+import { access, lstat, open, readdir, realpath, stat } from 'node:fs/promises';
 import { join, sep } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
 import { canonicalPath } from '../commands/gc/paths.ts';
+import { getExecutor } from '../exec.ts';
 import { answered, hungRead, Unanswered } from './bounded-read.ts';
 import { launcherDirectories } from './launcher-directories.ts';
 
@@ -10,8 +11,8 @@ import { launcherDirectories } from './launcher-directories.ts';
  * One thing the inspection of the launcher directories could not settle: a directory that could not be read, an entry
  * that could not be resolved, or a read that has not answered. A directory or entry that does not exist, and a
  * dangling symlink, is no launcher. Neither is an entry that this user may neither inspect or resolve nor execute
- * (EACCES from both). Anything else that fails (permission, I/O, a loop, a timeout) is a problem, and nothing is
- * known about what it covers.
+ * (EACCES from both). Anything else that fails (permission, I/O, a loop, a timeout) is a problem. A directory or entry
+ * that failed is treated as pointing into no checkout; a read that has not answered (`pending`) keeps every checkout.
  */
 export interface LauncherProblem {
   kind: 'directory' | 'entry' | 'pending' | 'owner';
@@ -31,6 +32,36 @@ interface LauncherIo {
   realpath: (path: string) => Promise<string>;
   /** False when this user may not execute the path (EACCES); any other failure throws. */
   executable: (path: string) => Promise<boolean>;
+  /** The real path of the file that opening `path` reaches, for a link this user may execute but not resolve; any failure throws. */
+  opened: (path: string) => Promise<string>;
+}
+
+const LSOF_TIMEOUT_MS = 2000;
+
+async function openedPath(path: string): Promise<string> {
+  if (process.platform !== 'darwin') throw new Error('not supported on this platform');
+  const file = await open(path, constants.O_RDONLY | constants.O_NONBLOCK);
+  try {
+    const reached = await file.stat();
+    // lsof names one of the file's links, not necessarily the one the launcher reaches (#5964).
+    if (reached.nlink > 1) throw new Error('the file has more than one hard link');
+    const listed = await getExecutor().runFileAsync(
+      '/usr/sbin/lsof',
+      ['-a', '-p', String(process.pid), '-d', String(file.fd), '-Fn'],
+      { timeoutMs: LSOF_TIMEOUT_MS, env: { LC_ALL: 'en_US.UTF-8' } },
+    );
+    const name = listed
+      .split('\n')
+      .find((line) => line.startsWith('n/'))
+      ?.slice(1);
+    if (!name) throw new Error('lsof named no path');
+    const resolved = await realpath(name);
+    const named = await stat(resolved);
+    if (reached.dev !== named.dev || reached.ino !== named.ino) throw new Error('lsof named another file');
+    return resolved;
+  } finally {
+    await file.close();
+  }
 }
 
 const REAL_IO: LauncherIo = {
@@ -45,6 +76,7 @@ const REAL_IO: LauncherIo = {
         throw error;
       },
     ),
+  opened: openedPath,
 };
 
 const ABSENT = ['ENOENT', 'ENOTDIR'];
@@ -109,9 +141,10 @@ export function launcherReader(
             signal?.throwIfAborted();
             if (absent(error)) continue;
             if (denied(error)) {
-              // access(2) follows the link the way execve(2) does, without readlink(2): macOS denies resolving
+              // access(2) and open(2) follow the link the way execve(2) does, without readlink(2): macOS denies resolving
               // `/usr/sbin/weakpass_edit`, whose target is in root-only `authserver`, and this user cannot run it either,
-              // while a mode 0700 root link such as a 1Password `/usr/local/bin` entry cannot be read but still runs.
+              // while a mode 0700 root link such as a 1Password `/usr/local/bin` entry cannot be read but still runs, and
+              // opens to its target.
               try {
                 if (!(await answered(directory, () => io.executable(entry), timeoutMs))) continue;
               } catch (gone) {
@@ -119,6 +152,19 @@ export function launcherReader(
                 signal?.throwIfAborted();
                 if (absent(gone)) continue;
                 found.incomplete.push({ kind: 'entry', path: entry, error: describe(gone) });
+                continue;
+              }
+              try {
+                found.targets.push(await answered(directory, () => io.opened(entry), timeoutMs));
+                continue;
+              } catch (unopened) {
+                if (unopened instanceof Unanswered) throw unopened;
+                signal?.throwIfAborted();
+                found.incomplete.push({
+                  kind: 'entry',
+                  path: entry,
+                  error: `${describe(error)}; fallback: ${describe(unopened)}`,
+                });
                 continue;
               }
             }
@@ -131,7 +177,7 @@ export function launcherReader(
         if (error instanceof Unanswered) {
           found.incomplete.push(
             hungRead() === directory || !hungRead()
-              ? { kind: 'directory', path: directory, error: error.message }
+              ? { kind: 'pending', path: directory, error: error.message }
               : pendingProblem(hungRead() ?? directory, directories),
           );
           return found;
@@ -239,10 +285,21 @@ function takeLauncherProblems(operation: StimContext): LauncherProblem[] {
   return problems;
 }
 
-/** Writes one record when a pass met launcher evidence it could not settle, which keeps every checkout. */
+/** What cleanup does about `problems`: goes ahead past a failed directory or entry, keeps what the rest cannot rule out. */
+export function launcherProblemsOutcome(problems: readonly LauncherProblem[]): string {
+  const outcome = [];
+  if (problems.some(({ kind }) => kind === 'directory' || kind === 'entry'))
+    outcome.push('cleanup goes ahead as if what could not be read points into no checkout');
+  if (problems.some(({ kind }) => kind === 'pending'))
+    outcome.push('cleanup keeps every checkout while a read has not answered');
+  if (problems.some(({ kind }) => kind === 'owner')) outcome.push('cleanup keeps a checkout whose owner is unknown');
+  return outcome.join('; ').replace(/^./, (first) => first.toUpperCase());
+}
+
+/** Writes one record when a pass met launcher evidence it could not settle, and what cleanup did about it. */
 export function logLauncherProblems(
   operation: StimContext,
-  log: (level: 'warn', event: string, msg: string, fields?: Record<string, unknown>) => void,
+  log: (level: 'warn', event: 'launcher_evidence_incomplete', msg: string, fields?: Record<string, unknown>) => void,
 ): void {
   const problems = takeLauncherProblems(operation);
   if (!problems.length) return;
@@ -250,7 +307,7 @@ export function logLauncherProblems(
   log(
     'warn',
     'launcher_evidence_incomplete',
-    `Launcher evidence is incomplete, so cleanup keeps what it cannot rule out (${problems.length} found${problems.length > first.length ? `, first ${first.length}` : ''}): ${describeLauncherProblems(first)}. Run stim doctor for the fix.`,
+    `Launcher evidence is incomplete (${problems.length} found${problems.length > first.length ? `, first ${first.length}` : ''}): ${describeLauncherProblems(first)}. ${launcherProblemsOutcome(problems)}. Run stim doctor for the fix.`,
     { count: problems.length, problems: first },
   );
 }
@@ -271,8 +328,8 @@ export function describeLauncherProblems(problems: readonly LauncherProblem[]): 
 }
 
 /**
- * Why `folder` is kept for an executable on PATH: one resolves to a path inside it, or a launcher directory or entry
- * could not be inspected, so none can be ruled out. Null when every directory was read and none points into it.
+ * Why `folder` is kept for an executable on PATH: one resolves to a path inside it, or a launcher read has not
+ * answered, so none can be ruled out. Null otherwise, also when a directory or entry could not be read.
  */
 export function launcherReason(folder: Checkout, scan: LauncherScan): string | null {
   if (typeof folder !== 'string')
@@ -280,7 +337,8 @@ export function launcherReason(folder: Checkout, scan: LauncherScan): string | n
   const root = canonicalPath(folder);
   const target = scan.targets.find((path) => path.startsWith(`${root}${sep}`));
   if (target) return `an executable on PATH runs from it (${target})`;
-  if (scan.incomplete.length)
-    return `an executable on PATH cannot be ruled out: ${describeLauncherProblems(scan.incomplete)}; Stim keeps every checkout until that is fixed (stim doctor names the fix)`;
+  const unanswered = scan.incomplete.filter(({ kind }) => kind === 'pending');
+  if (unanswered.length)
+    return `an executable on PATH cannot be ruled out: ${describeLauncherProblems(unanswered)}; Stim keeps every checkout until that is fixed (stim doctor names the fix)`;
   return null;
 }

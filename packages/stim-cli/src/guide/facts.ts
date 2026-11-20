@@ -281,6 +281,7 @@ leased until <time>" for each one.`,
   offloadedTo     only on an app a remote machine compiled: its
                   remote.machines entry (see \`guide settings\`). cacheHit is
                   false for it. The Android payload carries it too
+  offloadReason   with offloadedTo: why that machine took the build
   offloadFallback only on an app compiled here after the run considered
                   offloading it: why it built here -- one reason per
                   machine when none took the build, or why the offload
@@ -985,10 +986,11 @@ RULES
                               clones in full.
                               privateBytes is what deleting node_modules,
                               ios/Pods, .dd, android/.cxx or xcodebuild
-                              output would free on APFS: blocks no
+                              output would free on APFS, ext4 or
+                              tmpfs: blocks no
                               copy-on-write clone or hard link outside it
-                              shares; null for other directories and off
-                              APFS. A bytes is null when it could not be
+                              shares; null for other directories and
+                              volumes. A bytes is null when it could not be
                               measured within 10 seconds; sizes are cached
                               for up to an hour while no entry of the
                               directory was added or removed (for
@@ -1176,8 +1178,7 @@ RULES
                               stim-fakehome-*, stim-hosted-macos-*,
                               stim-server-*, stim-ws-*, stim-parity-* directories), xctrace
                               (instruments*.ktrace), swiftpm
-                              (TemporaryDirectory.* directories) or jest (Jest's
-                              jest_<uid in base 36> cache, never deleted). deleteCount
+                              (TemporaryDirectory.* directories). deleteCount
                               is what a run removes. null with STIM_HOME
                               set
     trash                   { root, entries: [{ path, worktree, removedAt,
@@ -1747,7 +1748,7 @@ RULES
   lastBuilds   { ios?, android? }, each { platform, status, cacheHit,
                cacheSkipped, durationMs, fingerprint, startedAt, finishedAt,
                errorCode?, missReason?, buildMachine?, builtOn?, offloadedTo?, offloadFallback?,
-               diagnostics?, devicePlacement? }
+               offloadReason?, diagnostics?, devicePlacement? }
 
   status       "ok" or "failed"
   cacheHit     "local" or "remote" for an app from that cache tier; false
@@ -1777,6 +1778,8 @@ RULES
   buildMachine selected auto, local or configured machine entry; always on new build records
   builtOn      here or machine name; absent when no build ran (cache/refusal)
   offloadedTo  only on a run a remote machine compiled: its name
+  offloadReason
+               with offloadedTo: why that machine, what it held warm, its load
   offloadFallback
                only on a run that considered offloading and built here: one
                reason per machine when none took the build, or why the
@@ -1791,7 +1794,8 @@ RULES
     state               running | orphaned | stopped | unverified
     build               { state: running | ok | failed, startedAt,
                           finishedAt?, durationMs?, error?,
-                          buildMachine?, builtOn?, errorCode?, offloadedTo?, offloadFallback? }
+                          buildMachine?, builtOn?, errorCode?, offloadedTo?, offloadFallback?,
+                          offloadReason? }
     host?               { machine, session, appSlot, appAttempt, bundleId,
                           agent } when stim macos --remote placed the app on
                           another Mac; it then has no local app or supervisor
@@ -1852,7 +1856,7 @@ RULES
                       what deleting that node_modules would free on APFS:
                       blocks no copy-on-write clone (worktree warm clones
                       it) or hard link outside it shares; null off APFS,
-                      without the Command Line Tools, or like
+                      ext4 and tmpfs, without the Command Line Tools, or like
                       nodeModulesBytes until measured. gc's node_modules
                       privateBytes and the daemon's cleanup read the same
                       measurement
@@ -1863,14 +1867,14 @@ RULES
   disk (device)       { bytes, measuredAt }: the simulator's data folder
                       under CoreSimulator/Devices, or the AVD's .avd folder
 
-  \`status --watch\` runs one disk walk at a time on the whole machine, at low
-  priority, off its refresh path, and measures a folder at most every 5
-  minutes while its environment is active and every hour otherwise. A
-  node_modules is measured again when its install changes and after 6 hours,
-  as the daemon and gc do. A walk that fails or times out is not repeated by
-  any watcher for that period. It caches each size under $STIM_HOME/disk-usage,
-  which one-shot status only reads, so the fields appear once a watcher, such
-  as stim-server or Stim Desktop, has measured.
+  \`status --watch\` runs one disk walk at a time machine-wide, at low
+  priority, off its refresh path. A folder is due 5 minutes after its last
+  walk ended (an hour when its environment is idle), or 20 walk durations if
+  longer; all watchers' walks are 4 durations apart. A node_modules is
+  measured again when its install changes and after 6 hours. A failed or
+  timed-out walk is retried after the same 5 minutes or hour.
+  Sizes are cached under $STIM_HOME/disk-usage, which one-shot status only
+  reads, so the fields appear once a watcher has measured.
 
   An environment carries agents when coding-agent sessions work in it, most
   recently active first:
@@ -1938,8 +1942,8 @@ RULES
 
   capacity.load, capacity.builds and capacity.devices are always present:
   builds and devices carry the derived caps when concurrency.maxBuilds and
-  concurrency.maxDevices are 0. capacity.platformDevices lists only the
-  platforms whose cap is set (see \`guide lifecycle concurrency\`):
+  concurrency.maxDevices are 0. capacity.tests, shaped like builds, appears
+  while stim test holds a slot. capacity.platformDevices lists only the platforms whose cap is set (see \`guide lifecycle concurrency\`):
 
   load     { cpus, loadPerCore, busyAt, limit, state }. loadPerCore is the
            5-minute load average divided by cpus, to one decimal. busyAt is

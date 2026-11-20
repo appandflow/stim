@@ -443,6 +443,7 @@ function lastBuildReport(platform: BuildPlatform, value: unknown): LastBuildRepo
     ...(typeof record.builtOn === 'string' ? { builtOn: record.builtOn } : {}),
     ...(typeof record.offloadedTo === 'string' ? { offloadedTo: record.offloadedTo } : {}),
     ...(typeof record.offloadFallback === 'string' ? { offloadFallback: record.offloadFallback } : {}),
+    ...(typeof record.offloadReason === 'string' ? { offloadReason: record.offloadReason } : {}),
     ...(diagnostics.length ? { diagnostics } : {}),
   };
 }

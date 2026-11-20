@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { daemonClaimRoot, legacyDaemonSocket, UPGRADE_GUIDE_URL } from '@stim-cli/core/state';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { upsertProject } from '../workspace/config.ts';
 import { checkForUpdate, doctorDueReason, guideStatus, recordDoctorCheck, updateCacheFile } from '../guide-status.ts';
@@ -124,4 +125,152 @@ test('guideStatus skips the doctor lines when the config is corrupt instead of r
   const status = await guideStatus({ projectRoot: root, running: '1.4.0', now: NOW, fetch });
   expect(status).toContain('stim 1.5.0 is available');
   expect(status).not.toContain('Doctor');
+});
+
+test('guideStatus sends a home and project an earlier Stim left to the migration guide until they are migrated', async () => {
+  const root = appRoot();
+  const manifest = (stim: string, extra: Record<string, string> = {}) =>
+    writeFileSync(
+      join(root, 'package.json'),
+      JSON.stringify({ dependencies: { 'react-native': '*' }, devDependencies: { stim, ...extra } }),
+    );
+  manifest('^1.40.0', { '@stim-cli/metro': '1.40.0', '@stim-cli/cache-s3': '^2.0.0' });
+  upsertProject(root, { doctorRuns: { ios: { at: NOW.toISOString(), version: '1.40.0' } } });
+  const configFile = join(home, 'config.json');
+  const config = JSON.parse(readFileSync(configFile, 'utf-8'));
+  writeFileSync(configFile, JSON.stringify({ ...config, maintenance: { mode: 'off' } }));
+  const claim = tryAcquireClaim({
+    root: daemonClaimRoot(),
+    mode: 'exclusive',
+    label: 'stim-daemon',
+    details: { socket: legacyDaemonSocket(), mode: 'on' },
+  }).acquired;
+  if (!claim) throw new Error('Could not acquire fixture claim.');
+  onTestFinished(() => {
+    releaseClaim(claim);
+  });
+  const { fetch } = fakeFetch('2.0.0');
+  const env = { ...process.env, STIM_MAINTENANCE: 'off' };
+
+  const upgraded = await guideStatus({ projectRoot: root, running: '2.0.0', env, now: NOW, fetch });
+  expect(upgraded).toContain(`Before other work, follow:  ${UPGRADE_GUIDE_URL}`);
+  for (const item of [
+    'maintenance.mode',
+    'STIM_MAINTENANCE',
+    `pid ${process.pid}`,
+    'stim ^1.40.0',
+    '@stim-cli/metro',
+    'doctor last ran with stim 1.40.0',
+  ])
+    expect(upgraded).toContain(item);
+  expect(upgraded).not.toContain('cache-s3');
+
+  releaseClaim(claim);
+  writeFileSync(configFile, JSON.stringify(config));
+  manifest('^2.0.0', { '@stim-cli/core': 'workspace:^' });
+  upsertProject(root, { doctorRuns: { ios: { at: NOW.toISOString(), version: '2.0.0' } } });
+  const migrated = await guideStatus({ projectRoot: root, running: '2.0.0', env: process.env, now: NOW, fetch });
+  expect(migrated ?? '').not.toContain(UPGRADE_GUIDE_URL);
+});
+
+test.skipIf(process.platform === 'win32')(
+  'guideStatus names a service whose job runs a 1.x stim-server script, not one a 2.0 Stim installed without an engine',
+  async () => {
+    const runHome = process.env.HOME;
+    process.env.HOME = join(home, 'user');
+    onTestFinished(() => {
+      process.env.HOME = runHome;
+    });
+    const launchAgents = join(homedir(), 'Library', 'LaunchAgents');
+    const units = join(homedir(), '.config', 'systemd', 'user');
+    mkdirSync(launchAgents, { recursive: true });
+    mkdirSync(units, { recursive: true });
+    const plist = (label: string, script: string) =>
+      `<plist version="1.0"><dict><key>Label</key><string>${label}</string><key>ProgramArguments</key><array><string>/usr/local/bin/node</string><string>${script}</string><string>--port</string><string>7788</string></array><key>StandardOutPath</key><string>/Users/me/Library/Logs/Stim/${label}.log</string></dict></plist>`;
+    const unit = (label: string, script: string) =>
+      `[Service]\nExecStart=/usr/bin/node ${script} --port 7788\nEnvironment=STIM_SERVICE_LABEL=${label}\n`;
+    const old =
+      '/Users/me/Library/Application Support/Stim/services/old/versions/1.40.0/node_modules/@stim-cli/server/dist/stim-server.mjs';
+    writeFileSync(join(launchAgents, 'old.plist'), plist('old', old));
+    writeFileSync(
+      join(launchAgents, 'dev.stim-server.plist'),
+      plist('dev.stim-server', '/usr/local/lib/node_modules/stim/bin/stim.mjs'),
+    );
+    writeFileSync(join(units, 'old.service'), unit('old', '/home/me/.npm-global/bin/stim-server'));
+    writeFileSync(
+      join(units, 'dev.stim-server.service'),
+      unit('dev.stim-server', '/home/me/.npm-global/lib/node_modules/stim/bin/stim.mjs'),
+    );
+    const { fetch } = fakeFetch('2.0.0');
+    const status = await guideStatus({
+      projectRoot: null,
+      cwd: home,
+      running: '2.0.0',
+      env: process.env,
+      now: NOW,
+      fetch,
+    });
+    expect(status).toContain('a service installed by an earlier Stim (old)');
+    expect(status).toContain(UPGRADE_GUIDE_URL);
+
+    rmSync(join(launchAgents, 'old.plist'));
+    rmSync(join(units, 'old.service'));
+    const current = await guideStatus({
+      projectRoot: null,
+      cwd: home,
+      running: '2.0.0',
+      env: process.env,
+      now: NOW,
+      fetch,
+    });
+    expect(current ?? '').not.toContain(UPGRADE_GUIDE_URL);
+  },
+);
+
+test.each([
+  ['1', true],
+  ['^1.40.0', true],
+  ['>=1.40.0', false],
+  ['^1.40.0 || ^2.0.0', false],
+  ['^1.40.0 || >= 2.0.0', false],
+  ['>= 1.40.0 < 2.0.0', true],
+  ['^1.40.0 || github:org/stim', false],
+  ['latest', false],
+])('guideStatus reads a stim %s pin as left on 1.x: %s', async (range, pinned) => {
+  const root = appRoot();
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '*', stim: range } }));
+  const { fetch } = fakeFetch('2.0.0');
+  const status = await guideStatus({ projectRoot: root, running: '2.0.0', env: process.env, now: NOW, fetch });
+  expect((status ?? '').includes(`stim ${range}`)).toBe(pinned);
+});
+
+test('guideStatus names a retired export that 2.0 ignores without a refusal', async () => {
+  const { fetch } = fakeFetch('2.0.0');
+  const env = { ...process.env, STIM_REMOTE_BUILD_MODE: 'force' };
+  const status = await guideStatus({ projectRoot: null, cwd: home, running: '2.0.0', env, now: NOW, fetch });
+  expect(status).toContain('STIM_REMOTE_BUILD_MODE');
+  expect(status).toContain(UPGRADE_GUIDE_URL);
+});
+
+test('guideStatus leaves an unknown key that no Stim 1.x read to stim settings and doctor', async () => {
+  const { fetch } = fakeFetch('2.0.0');
+  writeFileSync(join(home, 'config.json'), JSON.stringify({ web: { viewprt: 'phone' } }));
+  const status = await guideStatus({
+    projectRoot: null,
+    cwd: home,
+    running: '2.0.0',
+    env: process.env,
+    now: NOW,
+    fetch,
+  });
+  expect(status ?? '').not.toContain(UPGRADE_GUIDE_URL);
+});
+
+test('guideStatus leaves a stim range with a prerelease bound unflagged', async () => {
+  const root = appRoot();
+  const range = '>=1.40.0 <2.0.0-rc.2';
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '*', stim: range } }));
+  const { fetch } = fakeFetch('2.0.0-rc.1');
+  const status = await guideStatus({ projectRoot: root, running: '2.0.0-rc.1', env: process.env, now: NOW, fetch });
+  expect(status ?? '').not.toContain(`stim ${range}`);
 });

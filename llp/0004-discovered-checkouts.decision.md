@@ -15,7 +15,8 @@ projects (`git worktree list`), direct children of the folders that hold
 registered checkouts, and direct children of the folders in
 `maintenance.discoverRoots`. A child counts only when Stim's project detection
 recognises it, itself or through a direct child of its `apps`, `examples` or
-`packages` folder. Discovery registers nothing, writes nothing, recomputes each
+`packages` folder, or as a plain Node checkout for one rule only (see "Plain Node
+checkouts"). Discovery registers nothing, writes nothing, recomputes each
 run and never runs `git fetch`. Two more sources, the common tool folders and the
 full scan (see "Tool folders and the full scan"), add checkouts that are only
 reduced.
@@ -217,7 +218,9 @@ per check); a directory check that reads the processes itself (a Cargo `target/`
 `deleteOutputs`, for a registered workspace and a discovered checkout alike, takes
 a new launcher reading before each removal, after that path's size measurement,
 so none is older than the removal before it, and no reading is carried from the idleness check across a later process
-read; `clearArtifact` and `clearSourceTrees` read the launchers once after their
+read; the dormant reduction's output step (`reduceDormantOutputs`) takes a new
+launcher reading under the workspace's claims for each output, after its
+idleness recheck and before the removal; `clearArtifact` and `clearSourceTrees` read the launchers once after their
 last recheck, before the removal; the Cargo trim takes a new launcher reading at
 each of its three process reads and checks the whole owning checkout against it
 before trimming anything; the worktree removal guard reads the processes and the
@@ -229,11 +232,16 @@ A Cargo target is checked against its owning checkout, not its app
 folder. Each call to a directory has 3 seconds to answer, and a timeout ends the
 reading as incomplete at once. A native read cannot be cancelled, so at most one
 read that timed out is outstanding per JavaScript isolate, shared by the launcher
-readings and the home scan (`bounded-read.ts`): while it is pending, no further
+readings, the home scan and the source scans (`bounded-read.ts`): while it is pending, no further
 launcher or scan read starts, every launcher reading reports incomplete
 immediately naming the folder, and a scheduled scan is skipped. A hung mount
 therefore holds one libuv thread per isolate, and reduction of every checkout
-stays off until that read settles. Two isolates in the daemon can
+stays off until that read settles. stimd does not retire an idle worker thread
+while such a read is pending, because its replacement would start with no
+pending read and could hold another thread. Discovery's listings of sibling and
+`maintenance.discoverRoots` folders and their children take the same slot: a
+folder or child not listed while a read is pending is not discovered, so
+nothing acts on it. Two isolates in the daemon can
 read launchers, the main thread and the passes thread, so up to two reads can be
 outstanding there; the scan runs only on the passes thread, and CLI commands are
 separate processes. A scan stops at the first read that times out: the result is
@@ -250,11 +258,22 @@ That includes every entry of a directory this user can list but not search.
 `/usr/sbin/authserver`, and reading it as a failure kept every checkout on
 every pass.) A link this user cannot resolve but can execute, such
 as a root link with mode 0700 (macOS denies `readlink` on it, not the path
-lookup), stays a failure. Not seen, as a result: a launcher that only root or
-another user can run, pointing into one of this user's checkouts. Any other
-failure to inspect a directory (permission, I/O, a timeout) keeps every
-checkout for that operation, with a reason naming the
-directory. A wrapper script that only names a path is not followed.
+lookup), is resolved through the file it opens to: on macOS the entry is opened
+read-only and non-blocking, `lsof` names the opened file, and that path counts
+as the link's target when its `realpath` is the same file (device and inode) as
+the open one and that file has a single hard link (`lsof` names any one of a
+file's links, which the device and inode check cannot tell apart). Any failure
+of that (open denied, a second hard link, `lsof` failing, timing out or naming
+no path or another file, any other platform) leaves the entry unresolved, and
+its error names the original one and the fallback's; the open and `lsof` together are one call under the 3 second bound
+above. (#5896: a root 0700 `/usr/local/bin/1password-mcp` kept every checkout
+for days, through a critical disk level.) Not seen, as a result: a launcher
+that only root or another user can run, pointing into one of this user's
+checkouts. An entry that stays unresolved and a directory that cannot be read
+(permission, I/O) are treated as pointing into no checkout and are logged, as
+the launcher keep section below states; a read that times out keeps every
+checkout for that operation, with a reason naming the directory. A wrapper
+script that only names a path is not followed.
 
 Every source (main) checkout, registered or discovered by any route (siblings,
 `maintenance.discoverRoots` children, tool folders, the scan), follows the
@@ -474,6 +493,59 @@ the low-disk line also appears at the high level; whether listing the
 `~/.codex/worktrees` worktrees belongs here; whether `stim status` and Stim
 Desktop show the listing.
 
+## The source scan has a time budget
+
+A discovered checkout's source writes count as evidence of idleness only when
+the scan (`scanSourceWrites`) visits every entry outside dependency, build and
+`.git` folders within 15 seconds and finds no recent write. A scan that runs out
+of time reports the activity as unknown, so the checkout is kept and listed
+under Needs a person, and Stim reuses that verdict for an hour without walking
+again. Each folder read, entry read and `git check-ignore` probe gets only the time
+left, a read that does not answer counts as running out of time (it takes the
+one pending-read slot of `bounded-read.ts`), and a walk that crossed the deadline
+never reports idle. While another read holds that slot, the scan waits for it to
+settle within the time left in its own budget and then walks on; when the budget
+runs out first it reports unknown for this pass without the hour of reuse, so
+the checkout is walked again next pass. Once one scan of a daemon pass or `stim
+gc` run has waited its whole budget on a pending read, later scans of that run
+give up on that same read at once, so a dead mount costs a pass at most one
+budget of waiting; a new pending read, or the next pass, is waited for again. A recent write ends the scan at once as activity, whatever time is left.
+A scan that reports unknown is the whole evidence: no further read of that
+checkout (its `.git`, git activity, launchers) starts.
+
+The hourly pass over source checkouts' dependencies (`idle.sourceDormantDays`)
+walks a discovered checkout only when the source collection would read its
+trees: git lists a non-bare worktree for it, its source checkout resolves, and
+that worktree is the source checkout (a linked worktree or a folder git does not
+list is left out before any dependency read), and
+holds a `node_modules` or an `ios/Pods` that is a real directory, not a link,
+which the source collection would keep. Each of those two probes is one `lstat`
+bounded like the launcher readings (3 seconds, through `answered`); a checkout
+whose own probe does not answer is left out for that pass, and its trees are
+listed as kept with that reason. While another read holds the pending slot no
+probe starts, and the checkout goes through the idle checks and the collection
+as it would without the gate. Deletion still rechecks idleness first. The pass over linked
+worktrees' dependencies and every checkout's build outputs (`idle.dormantDays`)
+reads every discovered checkout before it lists what it would reclaim, so a
+large idle checkout costs one full walk there each hourly pass, even with
+nothing left to take. Within one daemon pass or `stim gc` run, a completed walk is reused
+by every later read of that checkout until the pass acts or takes a workspace
+lock, so the checks made under a claim walk again.
+
+Reason: an entry count kept every checkout over 20,000 source entries forever,
+though `find` walks one of 21,000 in under a second. On a loaded machine
+(load average 8) Stim's walk of the largest checkouts measured 0.5 to 1.5
+seconds for 18,000 to 31,000 entries and 6.1 to 7.6 seconds for 52,000 to 93,000,
+so 15 seconds completes ordinary large checkouts with headroom. The budget is a
+fixed constant, not a setting. A `stim gc` run starts with no cached verdicts,
+so it can spend up to the budget on each checkout that does not finish.
+
+Maintainer decision: "time limited scan could work", 2026-11-19 (#5997).
+
+The 15 second figure was chosen by the agent that implemented #5997, and the
+one-hour reuse of a timed-out verdict was already in force for the entry count;
+neither is the maintainer's.
+
 ## Removing a discovered worktree needs more evidence
 
 A discovered linked worktree follows the registered-workspace rules for build
@@ -489,14 +561,18 @@ registered worktree does, at every pressure level, critical included:
   discovered one gets no such exclusion;
 - no tracked file marked `assume-unchanged`, or `skip-worktree` with the file
   on disk;
+- no entry in `node_modules/.pnpm_patches`, where `pnpm patch` keeps an edit until
+  `pnpm patch-commit`;
 - every git-ignored file present byte for byte in the main checkout, except
   inside directories git ignores that are named like build output or
   `node_modules`;
-- not inside a dot-folder of its main checkout other than `.worktrees`, such
-  as `.claude/worktrees`, which another tool manages.
+- not inside a dot-folder other than `.worktrees`, such as `.claude/worktrees`,
+  which another tool manages, of its main checkout or of the nearest checkout that
+  holds it (a worktree inside the main checkout).
 
 A dirty discovered worktree is kept, never archived. A checkout whose source
-scan exceeds its bound is never reduced and is listed under "Needs a person".
+scan runs out of time is kept that pass, checked again on a later one, and listed
+under "Needs a person".
 
 Reason: Stim has no record of what it put in a discovered worktree. It did not
 run `pod install` there, did not copy its ignored files with `worktree warm`,
@@ -505,6 +581,53 @@ person's work: a hand-written `.env`, a project file edited by hand, an edit
 hidden from `git status`.
 
 Chosen by the coordinator and the reviews of #5519, not by the maintainer.
+
+## Plain Node checkouts
+
+Maintainer decision, 2026-11-19 (#5957), verbatim: "Could stim support cleaning
+up these create app kind or projects, i guess just node, like have very basic
+support so we can cleanup their deps / finished worktrees"
+
+A sibling or `maintenance.discoverRoots` child that project detection does not
+recognise is a plain Node checkout when it has a `.git` entry and a regular
+`package.json` at its own root (two `lstat`s; packages inside a monorepo are never
+children). The linked worktrees of its repository are plain Node checkouts too,
+unless an app child or a registered project leads to the same repository, which
+keeps the full rules.
+
+One rule applies: finished linked worktree removal (`collectWorktreeSweep`, which
+`stim gc` and rung 7 run), with the evidence and keeps of every discovered worktree,
+the extra evidence of the section above included. Discovery returns only those
+linked worktrees, and only to that check (`nodeWorktrees`). Nothing else of theirs
+is touched: no `node_modules`, build or `dist` output, Cargo target, device, Metro or
+log, and their main checkouts are never acted on. `stim gc --dry-run` lists the
+worktrees with the removal verdict, not among the discovered checkouts. The full scan
+does not look for them (it still stops only at an app project), the census ignores
+them when deciding what another route covers, and their worktrees outside the
+managed folders are not listed as outside. A Node worktree the full scan also found
+as an app stays that scan find, reduce-only, as before; one that holds a scan find is
+kept by the finished-worktree check, which treats the worktree as reduce-only. So is a
+Node worktree that is or holds a scan find whose revalidation did not settle.
+
+Dormant `node_modules` reduction, the other half of the request, is not done here:
+the review of #5969 found that the linked-worktree route skips the regenerable-folder
+check, and that deleting a source checkout's `node_modules` can break a sibling
+worktree whose `node_modules` links into it. It waits for a follow-up issue.
+
+Cost, measured 2026-11-19 on the maintainer's MacBook with `~/Developer` (131
+folders) as the folder holding a registered checkout, in a scratch Stim home, two
+runs each: discovery found 32 plain Node checkouts and ran 41 git processes instead
+of 60, because a child that is a worktree of a repository already read is no longer
+read again; the finished-worktree check inspected 23 more worktrees (111 instead
+of 88) and ran about 2,050 git processes instead of 1,550, about 21 per worktree,
+in 32 and 35 seconds against 33 and 26 before, within run-to-run noise on a loaded
+machine. In that run, 20 of the 23 `appandflow-create-app-*` worktrees had no keep
+reason without a fetch or a pull request lookup, and 3 were kept for a git index
+write half an hour old.
+
+Chosen by the implementing lane and the coordinator, not by the maintainer: the
+recognition rule, leaving out the dependency rule, and leaving the scan and the
+listing unchanged.
 
 ## Known limits of the listing
 
@@ -571,14 +694,27 @@ operation's shared one of the checkout's kind at planning and a fresh one with e
 deletion, as above. `reduceOnly` keeps its other meaning: such a checkout is never
 removed.
 
-Incomplete launcher evidence keeps every checkout, and is reported where it
-happens. A PATH directory that cannot be read, one entry whose `lstat` or
-`realpath` fails (EPERM, EACCES, ELOOP, EIO) and a read that has not answered each
+Incomplete launcher evidence is reported where it happens, and only a read that
+has not answered keeps every checkout. A PATH directory that cannot be read, one
+entry whose `lstat` or `realpath` fails (EPERM, EACCES, ELOOP, EIO) and that the
+opened-file fallback above does not resolve, and a read that has not answered each
 become a `LauncherProblem` naming the path and the error; ENOENT and ENOTDIR are
-no launcher. A single unreadable entry is not ruled out by its link text: a
+no launcher. A directory or entry that failed is treated as pointing into no
+checkout: cleanup goes ahead, and the pass record and the doctor finding say so.
+A read that timed out or is still pending keeps every checkout, because a hung
+mount says nothing about what it would have listed.
+
+Maintainer decision, 2026-11-19 (#5896): "Can we err on cleanup side if fail to
+get path stuff and log the error"
+
+The cost: a single unreadable entry is not ruled out by its link text, since a
 textual target outside every checkout can still pass through a directory link
-into one, and the resolution is what failed, so no rule narrows the keep without
-risking a missed launcher. The pending-read slot is shared with the home scan, so
+into one, so a launcher behind an unreadable entry or directory can lose the
+build output, dependencies or Cargo target it runs from, and a worktree it
+runs from can be removed. Resolving through the opened file, above,
+reads where the link leads, not its text, and narrows that to entries it cannot
+open. A checkout whose owner cannot be established is not a launcher read and
+still keeps that checkout. The pending-read slot is shared with the home scan, so
 a pending read of a folder that is not a launcher directory is reported as a read
 outside PATH, not as a PATH directory. `stim doctor` reports the finding
 `launcher-evidence-incomplete` with the path, the error and the fix, from a read
@@ -586,9 +722,10 @@ bounded by 3 seconds per call and a 10 second deadline that covers queue time an
 every entry read, and a read that reaches the deadline is reported as incomplete; it
 also runs the same bounded ownership probe for each registered project. A checkout
 whose owner cannot be established is part of the same pass record, as a count and
-the first five. Each daemon pass writes one
-`launcher_evidence_incomplete` record, and each item's keep reason names the
-cause.
+the first five. Each daemon pass, and each acting `stim gc` in the gc log, writes
+one `launcher_evidence_incomplete` warn record that names the problems and what
+cleanup does about them, and the keep reason of an item kept by a read that has
+not answered names the cause.
 
 Limits: the daemon reads its own PATH and the fixed folders above, so a launcher
 in a folder that only an interactive shell's PATH names is not seen. A launcher
@@ -618,7 +755,7 @@ level short, as for every other keep reason.
 
 ## Links
 
-- Issues: #5512, #5515, #5757, #5762, #5765, #5775. Pull request: #5519.
+- Issues: #5512, #5515, #5757, #5762, #5765, #5775, #5896, #5957. Pull request: #5519.
 - Code: `packages/stim-cli/src/workspace/discovery.ts`,
   `packages/stim-cli/src/workspace/discovery-scan.ts`,
   `packages/stim-cli/src/workspace/discovery-census.ts`,

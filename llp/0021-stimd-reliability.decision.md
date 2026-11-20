@@ -14,7 +14,12 @@ SIGINT, and on the detached path SIGHUP) is a clean, logged shutdown. An uncaugh
 exception, or an unhandled rejection, which Node routes to the same handler, is
 written to the log with its stack (bounded to 8000 characters) before the exit. A
 second signal during a shutdown logs once and forces a logged exit after 5 s; it
-is never a silent default kill. A stimd that cannot record its own end (SIGKILL,
+is never a silent default kill. A forced exit, after a second signal or when an
+attached stimd's shutdown outlasts its wait, writes its boot record and then sends
+itself SIGKILL, so it ends on that signal rather than exit code 1. Reason:
+`process.exit` joins worker threads, and a worker whose filesystem request waits
+on a libuv thread that never returns, such as a hung directory open, never joins.
+A stimd that cannot record its own end (SIGKILL,
 out of memory, a native abort) is recorded by the next stimd: a dead holder of the
 stimd claim whose details lack `kept` is logged as `stimd_predecessor_lost` with
 its pid, build, start time and last tick, and its boot counts as abnormal. A stimd
@@ -106,13 +111,72 @@ clears after 10 minutes or with `stim doctor --fix`, and only cause `engine` rol
 a build back. `stim doctor --fix` clears the hold only after its repairs and
 report completed, so an unreadable config leaves the hold in place.
 
+## A shutdown has a deadline
+
+A stimd that has begun to shut down exits within 10 minutes of awake time. If its
+shutdown has not finished by then, it logs `daemon_shutdown_timeout` with the parts it still
+waits on (the tick, the maintenance pass, the dependency scan, Metro and tunnel
+children, the net thread and device logs, the worker threads) and makes a forced
+exit, as after a second signal: it records its boot and sends itself SIGKILL. A
+stimd that already kept its claims for unverified cleanup records no boot there,
+and its claims stay as that rule leaves them, so the next stimd takes the home
+over as after any dead holder. A forced exit during an engine switch, before the
+shutdown's cleanup settled, also logs `successor_missing` and writes the marker
+below, since no successor was started. The boot carries cause `engine`, as for
+the attached shutdown watchdog. Reason: a shutdown waited 5.7 hours on work that
+never settled (#5981), holding the home's claim while a new stimd started and was
+refused every minute; nothing ended it but a person's signal. The deadline covers
+the slow parts of a normal shutdown: the net thread's 15 s stop, a report's 35 s
+cleanup, a cancelled child's exit, and a cache trim, which checks for the cancel
+between entries but sizes and removes one entry at a time.
+
+Two waits outlast it on purpose:
+
+- While this stimd's engine switch runs, the forced exit waits for it, then
+  gives the shutdown 10 more minutes. The selector child holds the store's
+  `.lock.sock` and `.flip.sock` through this process, and killing the process
+  would free both while the selector still migrates a home or collects the
+  store. The selector has its own 10-minute timeout.
+- Before the process exits, stimd terminates each worker thread it started and
+  waits up to 10 minutes for them to exit, then logs `daemon_shutdown_timeout`
+  and sends itself SIGKILL. `process.exit` joins worker threads, so a worker
+  stuck in a filesystem request would otherwise keep a stimd that kept its
+  claims alive.
+
+Each of these limits counts awake time: libuv's timers on macOS read
+`mach_continuous_time`, which advances during sleep, so a plain timer armed
+before a sleep fires on wake, before the cleanup it waits for has had a turn.
+stimd adds the time between 5 s steps instead, and a gap over 60 s counts as
+nothing, so counting resumes from the wake. A main thread stalled for over 60 s
+between steps is not counted either; a watchdog off the main thread is #5995.
+
+Limit: these timers run on stimd's main thread. A main thread blocked in a
+synchronous call, such as a recursive `rmSync`, runs none of them.
+
+## A step that runs long is named
+
+A step of a tick or of the maintenance pass that runs 10 minutes logs
+`daemon_step_running` with its name every 10 minutes until it ends, so a step
+that never ends is named in the log. While `daemon.mode` is off and stimd stays
+up only for work it still serves, each pass of its loop logs `daemon_tick_off`.
+These records only log: nothing ends stimd for a slow step. Timers on macOS
+count time asleep, so a bound on a step would fire on wake after a long sleep;
+a stall bound needs a watchdog off the main thread that tells sleep from a
+stall (#5995). Reason: in #5981 the ticks stopped without a record for 3.5
+hours while the net thread went on serving, and the log did not say where.
+
+The deadline, the waits past it and the 10-minute records were chosen by the
+implementing lane of #5981 and its coordinating session, not the maintainer.
+The forced exit ends on SIGKILL, not code 75, for the reason under "Every exit
+leaves a record".
+
 ## A handover with no successor
 
 When a stimd hands the home over and its successor does not bind within 10 s, or the
 relaunch is skipped because cleanup was not verified, it logs `successor_missing`
 with the reason and writes `run/successor-missing.json`. A client that was refused
 by the old stimd and finds the marker with no stimd running starts one at once
-instead of waiting out the handover wait. The next stimd removes the marker. The
+instead of waiting out the handover wait. The next stimd removes the marker. A service unit's stimd that hands the home to its unit's job starts no successor and writes neither, unless a forced exit ends its shutdown; it logs `successor_job` instead (LLP 0009, Service and engine updates). The
 Desktop poll already starts a stimd when `run/stimd.json` is missing, so it needs no
 marker.
 

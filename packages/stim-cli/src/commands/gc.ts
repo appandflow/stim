@@ -1,5 +1,6 @@
 import { throwIfCancelled } from '../cancellation.ts';
-import { runProcessOperation } from '../cli-operation.ts';
+import { exitCli, runProcessOperation } from '../cli-operation.ts';
+import { hungRead } from '../workspace/bounded-read.ts';
 import { withDrainingCancellation } from '../engine/operation-state.ts';
 import { configDir, ensurePrivateDir, isScopedHome } from '@stim-cli/core';
 import { realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
@@ -14,7 +15,8 @@ import { defineOp, type Op } from '../cli/define-op.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { listMountedVolumes } from '../fs-util.ts';
 import { ClaimRefusedError, claimFailure, releaseClaim, type ClaimHandle } from '../ownership-claim.ts';
-import { claimPass, keepReserve, releaseReserve } from '../stimd/passes/run.ts';
+import { claimPass } from '../stimd/passes/run.ts';
+import { keepReserve, releaseReserve } from '../disk-reserve.ts';
 import { runMaintenanceAtLevel, type LevelRun, type LevelRunAction } from '../stimd/passes/level-run.ts';
 import { discoverCaches, sizeCaches } from '../cache/caches.ts';
 import { openGcLog, type GcLog } from './gc/log.ts';
@@ -23,7 +25,8 @@ import { phase } from './gc/progress.ts';
 import { markOverCapCompilationCache, previewScopedEmptying } from './gc/caches.ts';
 import { collectParkedAvds, collectParkedSims, collectDeviceLeases } from './gc/devices.ts';
 import { gcReportSections, type GcJsonSections, type GcReport } from './gc/report.ts';
-import { formatGcSummary, gcDetailLines } from './gc/summary.ts';
+import { formatGcSummary, formatUnmanagedUsage, gcDetailLines } from './gc/summary.ts';
+import { unmanagedUsage, type UnmanagedUsage } from './gc/unmanaged.ts';
 import { collectOrphanedWorkspaces, collectWorkspaceOutputs, isInsideWorkspaces } from './gc/workspaces.ts';
 import { collectWorktreeSweep } from './gc/worktrees.ts';
 import { measureWorktreeSweep } from './gc/worktree-sizes.ts';
@@ -33,11 +36,13 @@ import { collectRecordings } from './gc/recordings.ts';
 import { collectTempLeftovers } from './gc/temp-leftovers.ts';
 import { collectTrash } from './gc/trash.ts';
 import { workspaceDir } from '../workspace/paths.ts';
+import { logLauncherProblems } from '../workspace/launchers.ts';
 import { collectInventory, type GcInventory } from './gc/inventory.ts';
 import { collectParkedHostedDevices } from './gc/hosted-devices.ts';
 import { collectHostedAppStorage } from './gc/hosted-apps.ts';
 import { collectFinishedDevices } from './gc/finished-devices.ts';
 import { collectGcMemory } from './gc/memory.ts';
+import { openGitReads } from '../workspace/git-reads.ts';
 import {
   collectDeviceRecords,
   collectProjectEasSessions,
@@ -105,6 +110,8 @@ type GcDependencies = RecordDependencies;
 export interface GcExecutionResult {
   payload: GcPayload;
   exitCode: 0 | 1;
+  /** The maintenance run a plain run printed, for what follows once the claim is released. */
+  run?: LevelRun;
 }
 
 export type GcReadOptions = Pick<GcOptions, 'pressure' | 'measureBuildState'>;
@@ -274,7 +281,12 @@ function resultOf(action: LevelRunAction): GcResult {
 
 /** `stim gc --dry-run --json` as the API's read-only `gc()` returns it: the plan and the storage sections. */
 export async function readGcReport(options: GcReadOptions = {}, deps: GcDependencies = {}): Promise<GcPayload> {
-  const run = await runMaintenanceAtLevel({ level: options.pressure, act: false, operation: deps.operation });
+  const run = await runMaintenanceAtLevel({
+    level: options.pressure,
+    act: false,
+    operation: deps.operation,
+    walkUnknown: false,
+  });
   const report = await collectGcReport({ measureBuildState: options.measureBuildState }, deps);
   return {
     ...runPayload(run, false),
@@ -299,7 +311,7 @@ function gcLogOf(level: PressureLevel, chosen: boolean, env?: NodeJS.ProcessEnv)
 
 /** Runs one acting GC, or a dry run, already admitted under the maintenance claim when it acts. */
 export async function executeGc(
-  opts: GcOptions,
+  opts: GcOptions & { walkUnknown?: false },
   deps: GcDependencies,
   write: (stream: 'stdout' | 'stderr', line: string) => void,
   claim?: ClaimHandle,
@@ -309,12 +321,15 @@ export async function executeGc(
   const act = !opts.dryRun;
   const chosen = opts.pressure !== undefined;
   let log: GcLog | null = null;
+  let closeGitReads: (() => void) | undefined;
   try {
     declareSpawnsOn(deps.operation, claim);
+    closeGitReads = openGitReads(deps.operation);
     const run = await runMaintenanceAtLevel({
       level: opts.pressure,
       act,
       operation: deps.operation,
+      ...(opts.walkUnknown === false ? { walkUnknown: opts.walkUnknown } : {}),
       onAction: (action) => {
         if (!act || action.outcome === 'would') return;
         log ??= gcLogOf(opts.pressure ?? 'normal', chosen, deps.operation?.env);
@@ -339,9 +354,15 @@ export async function executeGc(
     if (!opts.json) {
       const detail = saveGcDetail(gcDetailLines(run));
       for (const line of formatGcSummary(run, { act, chosen, detail })) write('stdout', line);
+      return { payload, exitCode: payload.failures ? 1 : 0, run };
     }
     return { payload, exitCode: payload.failures ? 1 : 0 };
   } finally {
+    if (act && deps.operation)
+      logLauncherProblems(deps.operation, (...note) =>
+        (log ??= gcLogOf(opts.pressure ?? 'normal', chosen, deps.operation?.env)).note(...note),
+      );
+    closeGitReads?.();
     stopDeclaringSpawnsOn(deps.operation, claim);
   }
 }
@@ -393,6 +414,16 @@ export async function runGc(opts: GcOptions = {}, deps: GcDependencies = {}): Pr
   }
   if (result.exitCode) process.exitCode = result.exitCode;
   if (opts.json) console.log(JSON.stringify(result.payload));
+  if (result.run) {
+    let unmanaged: UnmanagedUsage | null = null;
+    try {
+      unmanaged = await unmanagedUsage(result.run, !opts.dryRun, deps.operation);
+    } catch (error) {
+      if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+        throw error;
+    }
+    for (const line of unmanaged ? formatUnmanagedUsage(unmanaged) : []) console.log(line);
+  }
 }
 
 /**
@@ -466,7 +497,7 @@ export function collectsEngineStore(env: NodeJS.ProcessEnv, store: string, home:
 const gc: Op = defineOp({
   name: 'gc',
   description:
-    "Run one automatic maintenance pass now at the measured pressure level, or the level --pressure names, and delete what it takes. At every level: workspace build outputs and shared caches over their caps, what the age sweep removes, unused iOS simulator runtimes, registry entries and owned devices of removed projects, stale records, workspace logs over their cap, finished linked worktrees past their grace period, and every workspace idle for idle.dormantDays reduced to its minimal size: build outputs, owned devices, and a linked worktree's node_modules and Pods; a source (main) checkout's node_modules and Pods go after those, once it is idle for idle.sourceDormantDays (7 days). At high, the pressure ladder to its end as well: idle dev servers and their build outputs, parked devices, shared caches trimmed to half their caps, idle workspaces made dormant, node_modules and Pods of linked worktrees idle an hour, idle Gradle daemons, unpinned Gradle versions, temporary leftovers, and clean merged worktrees after their grace period. At critical, every shared cache Stim registered emptied, clean merged worktrees without the grace period, clean pushed worktrees idle 7 days, the node_modules and Pods of source checkouts after every worktree's, every device recording and archived content, then the caches of other tools (npm, Yarn, pnpm, CocoaPods, Gradle, SwiftPM) through their own commands where they have one, when --pressure critical names the level, or when a measured critical still leaves the disk under the critical level after the earlier rungs. Finished worktrees go only while maintenance.removeFinishedWorktrees is true, and clean pushed worktrees idle 7 days only while maintenance.removeIdleWorktrees is true. It never touches a workspace that is building, driven, leased, hosted or pinned by maintenance.keep.",
+    "Run one automatic maintenance pass now at the measured pressure level, or the level --pressure names, and delete what it takes. At every level: workspace build outputs and shared caches over their caps, what the age sweep removes (on macOS and Linux, Jest's default cache directory in the temp directory included), unused iOS simulator runtimes, registry entries and owned devices of removed projects, stale records, workspace logs over their cap, finished linked worktrees past their grace period, and every workspace idle for idle.dormantDays reduced to its minimal size: build outputs, owned devices, and a linked worktree's node_modules and Pods; a source (main) checkout's node_modules and Pods go after those, once it is idle for idle.sourceDormantDays (7 days). At high, the pressure ladder to its end as well: idle dev servers and their build outputs, parked devices, shared caches trimmed to half their caps, idle workspaces made dormant, node_modules and Pods of linked worktrees idle an hour, idle Gradle daemons, unpinned Gradle versions, temporary leftovers, and clean merged worktrees after their grace period. At critical, every shared cache Stim registered emptied, clean merged worktrees without the grace period, clean pushed worktrees idle 7 days, the node_modules and Pods of source checkouts after every worktree's, every device recording and archived content, then the caches of other tools (npm, Yarn, pnpm, CocoaPods, Gradle, SwiftPM) through their own commands where they have one, when --pressure critical names the level, or when a measured critical still leaves the disk under the critical level after the earlier rungs. Finished worktrees go only while maintenance.removeFinishedWorktrees is true, and clean pushed worktrees idle 7 days only while maintenance.removeIdleWorktrees is true. It never touches a workspace that is building, driven, leased, hosted or pinned by maintenance.keep.",
   options: {
     dryRun: { flags: '--dry-run', description: 'report what the run would delete, and delete nothing' },
     pressure: {
@@ -489,6 +520,8 @@ const gc: Op = defineOp({
       withDrainingCancellation(operation, operation.signal, () => runGc(opts, { operation })),
     );
     if (interrupted !== null) process.exitCode = interrupted;
+    // A Node filesystem read that never answers, on a dead network or FUSE mount, keeps the event loop alive.
+    if (hungRead() !== null) exitCli(typeof process.exitCode === 'number' ? process.exitCode : 0);
   },
 });
 

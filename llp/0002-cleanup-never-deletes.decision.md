@@ -25,7 +25,9 @@ At every level, maintenance, the pressure ladder and `stim gc` never delete:
 
 Only git-ignored regenerable directories go: a real directory inside the
 checkout whose files git ignores, with no tracked or unignored file, not reached
-through a link, and not a mount point.
+through a link, and not a mount point. When the dormant reduction deletes a
+recognised Cargo `target/`, it counts as one regenerable directory, apart from
+a `deploy/` folder holding a Solana `*-keypair.json` (LLP 0005).
 
 Reason: everything Stim deletes must come back by rebuilding or reinstalling.
 Work a person made cannot.
@@ -92,9 +94,11 @@ deletes the worktree with its dependency folders.
   reference. Acting passes write the record; `stim doctor`, `stim gc
 --dry-run` and report-mode passes write nothing.
 - Not counted as edits: the package manager's state files, dot-directories
-  at a node_modules root other than `.pnpm`, `.bun`, `.deno` and `.bin`
-  (treated as tool caches and not checked, a custom pnpm virtual-store
-  directory included), `.gradle`, `.kotlin` and `.cxx` in a package's
+  at a node_modules root other than `.pnpm`, `.bun` and `.deno` (treated as
+  tool caches and not checked, a custom pnpm virtual-store directory
+  included), the `.bin` directory of any node_modules, where package managers
+  regenerate executable links and shims on every install (pnpm 11 writes its
+  shims after `.modules.yaml`), `.gradle`, `.kotlin` and `.cxx` in a package's
   `android` directory or beside a Gradle build script, a `build` directory
   there that holds Gradle output and that the package's `package.json` points
   nothing into, a package's `ios/build`, and `xcuserdata` in Pods.

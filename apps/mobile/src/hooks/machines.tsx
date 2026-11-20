@@ -180,10 +180,15 @@ function MacLink({ mac }: { mac: PairedMac }) {
                 archivesRead: null,
                 home: state.server.home ?? null,
                 disconnectedAt: null,
+                retrying: false,
               }
-            : wasOpen
-              ? { state, disconnectedAt: Date.now(), archiveSummary: null, archivesRead: null }
-              : { state, archiveSummary: null, archivesRead: null },
+            : {
+                state,
+                archiveSummary: null,
+                archivesRead: null,
+                ...(wasOpen ? { disconnectedAt: Date.now() } : {}),
+                ...(state.kind === 'waiting' ? { retrying: true } : {}),
+              },
         );
         wasOpen = isOpen;
       },

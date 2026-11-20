@@ -95,7 +95,7 @@
     "exitCode": 0
   },
   "[\"gc\",\"--help\"]": {
-    "out": "Usage: stim gc [options]\n\nRun one automatic maintenance pass now at the measured pressure level, or the\nlevel --pressure names, and delete what it takes. At every level: workspace\nbuild outputs and shared caches over their caps, what the age sweep removes,\nunused iOS simulator runtimes, registry entries and owned devices of removed\nprojects, stale records, workspace logs over their cap, finished linked\nworktrees past their grace period, and every workspace idle for idle.dormantDays\nreduced to its minimal size: build outputs, owned devices, and a linked\nworktree's node_modules and Pods; a source (main) checkout's node_modules and\nPods go after those, once it is idle for idle.sourceDormantDays (7 days). At\nhigh, the pressure ladder to its end as well: idle dev servers and their build\noutputs, parked devices, shared caches trimmed to half their caps, idle\nworkspaces made dormant, node_modules and Pods of linked worktrees idle an hour,\nidle Gradle daemons, unpinned Gradle versions, temporary leftovers, and clean\nmerged worktrees after their grace period. At critical, every shared cache Stim\nregistered emptied, clean merged worktrees without the grace period, clean\npushed worktrees idle 7 days, the node_modules and Pods of source checkouts\nafter every worktree's, every device recording and archived content, then the\ncaches of other tools (npm, Yarn, pnpm, CocoaPods, Gradle, SwiftPM) through\ntheir own commands where they have one, when --pressure critical names the\nlevel, or when a measured critical still leaves the disk under the critical\nlevel after the earlier rungs. Finished worktrees go only while\nmaintenance.removeFinishedWorktrees is true, and clean pushed worktrees idle 7\ndays only while maintenance.removeIdleWorktrees is true. It never touches a\nworkspace that is building, driven, leased, hosted or pinned by\nmaintenance.keep.\n\nOptions:\n  --dry-run           report what the run would delete, and delete nothing\n  --pressure <level>  run at this level, normal, high or critical, instead of\n                      the measured one\n  --json              print the result as JSON on stdout; every other line goes\n                      to stderr\n  -h, --help          display help for command\n",
+    "out": "Usage: stim gc [options]\n\nRun one automatic maintenance pass now at the measured pressure level, or the\nlevel --pressure names, and delete what it takes. At every level: workspace\nbuild outputs and shared caches over their caps, what the age sweep removes (on\nmacOS and Linux, Jest's default cache directory in the temp directory included),\nunused iOS simulator runtimes, registry entries and owned devices of removed\nprojects, stale records, workspace logs over their cap, finished linked\nworktrees past their grace period, and every workspace idle for idle.dormantDays\nreduced to its minimal size: build outputs, owned devices, and a linked\nworktree's node_modules and Pods; a source (main) checkout's node_modules and\nPods go after those, once it is idle for idle.sourceDormantDays (7 days). At\nhigh, the pressure ladder to its end as well: idle dev servers and their build\noutputs, parked devices, shared caches trimmed to half their caps, idle\nworkspaces made dormant, node_modules and Pods of linked worktrees idle an hour,\nidle Gradle daemons, unpinned Gradle versions, temporary leftovers, and clean\nmerged worktrees after their grace period. At critical, every shared cache Stim\nregistered emptied, clean merged worktrees without the grace period, clean\npushed worktrees idle 7 days, the node_modules and Pods of source checkouts\nafter every worktree's, every device recording and archived content, then the\ncaches of other tools (npm, Yarn, pnpm, CocoaPods, Gradle, SwiftPM) through\ntheir own commands where they have one, when --pressure critical names the\nlevel, or when a measured critical still leaves the disk under the critical\nlevel after the earlier rungs. Finished worktrees go only while\nmaintenance.removeFinishedWorktrees is true, and clean pushed worktrees idle 7\ndays only while maintenance.removeIdleWorktrees is true. It never touches a\nworkspace that is building, driven, leased, hosted or pinned by\nmaintenance.keep.\n\nOptions:\n  --dry-run           report what the run would delete, and delete nothing\n  --pressure <level>  run at this level, normal, high or critical, instead of\n                      the measured one\n  --json              print the result as JSON on stdout; every other line goes\n                      to stderr\n  -h, --help          display help for command\n",
     "err": "",
     "exitCode": 0
   },
@@ -2724,5 +2724,68 @@
     "err": "",
     "exitCode": 1,
     "error": "error: unknown option '--service=x'"
+  },
+  "[\"test\",\"--help\"]": {
+    "out": "Usage: stim test [options] [kind...]\n\nRun a project's tests by kind, or a test command after --, under a machine-wide\ntest slot (concurrency.maxTests), with Jest's, Vitest's or node --test's worker\ncount sized to this machine. The js kind runs the project's test script through\nits package manager. Output and exit status are the test command's own.\n\nArguments:\n  kind...           the test kinds to run (js, rust, android, macos, web, ios,\n                    android-device, e2e-ios, e2e-android, or e2e); without one,\n                    every kind the project has. A command to run instead goes\n                    after --.\n\nOptions:\n  --wait <seconds>  How long to wait for a test slot before refusing with\n                    STIM_AT_CAPACITY (0 refuses at once); without it, a queued\n                    run waits up to 90 minutes.\n  --no-wait         Refuse with STIM_AT_CAPACITY instead of queueing when every\n                    test slot is taken.\n  --list            List the test kinds this project has and the command each\n                    runs, and run nothing.\n  --json            With --list, print the list as JSON on stdout.\n  -h, --help        display help for command\n",
+    "err": "",
+    "exitCode": 0
+  },
+  "[\"test\"]": {
+    "out": "",
+    "err": "",
+    "exitCode": 0,
+    "ran": {
+      "path": ["test"],
+      "args": [],
+      "options": {},
+      "parent": {}
+    }
+  },
+  "[\"test\",\"--\",\"npx\",\"jest\",\"--ci\"]": {
+    "out": "",
+    "err": "",
+    "exitCode": 0,
+    "ran": {
+      "path": ["test"],
+      "args": ["npx", "jest", "--ci"],
+      "options": {},
+      "parent": {}
+    }
+  },
+  "[\"test\",\"--no-wait\",\"--wait\",\"30\",\"--\",\"vitest\",\"run\"]": {
+    "out": "",
+    "err": "",
+    "exitCode": 0,
+    "ran": {
+      "path": ["test"],
+      "args": ["vitest", "run"],
+      "options": {
+        "wait": 30
+      },
+      "parent": {}
+    }
+  },
+  "[\"test\",\"jest\",\"--ci\"]": {
+    "out": "",
+    "err": "",
+    "exitCode": 1,
+    "error": "error: unknown option '--ci'"
+  },
+  "[\"test\",\"echo\",\"hi\"]": {
+    "out": "",
+    "err": "",
+    "exitCode": 0,
+    "ran": {
+      "path": ["test"],
+      "args": ["echo", "hi"],
+      "options": {},
+      "parent": {}
+    }
+  },
+  "[\"test\",\"--wait\"]": {
+    "out": "",
+    "err": "",
+    "exitCode": 1,
+    "error": "error: option '--wait <seconds>' argument missing"
   }
 }

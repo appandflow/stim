@@ -47,6 +47,7 @@ function trialSettings(paths: TrialPaths): object {
 export function parseClaude(transcript: string): AgentRun {
   const run: AgentRun = {
     commands: [],
+    edits: [],
     skills: [],
     turns: null,
     tokens: { input: 0, output: 0, cached: null },
@@ -77,6 +78,8 @@ export function parseClaude(transcript: string): AgentRun {
           run.commands.push(attempt);
           byId.set(asString(block.id), attempt);
         } else if (block.name === 'Skill') run.skills.push(asString(input.skill));
+        else if (block.name === 'Edit' || block.name === 'Write')
+          run.edits.push({ path: asString(input.file_path), after: run.commands.length });
       }
     } else if (event.type === 'user') {
       for (const block of asArray(asRecord(event.message).content).map(asRecord)) {

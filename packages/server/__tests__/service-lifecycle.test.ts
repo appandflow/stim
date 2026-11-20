@@ -14,6 +14,7 @@ import {
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '@stim-cli/core/ownership-claim';
+import type { ServeRoute } from '@stim-cli/core/protocol';
 import { stimBuildDigest, stimdClaimRoot } from '@stim-cli/core/state';
 import {
   installJob,
@@ -45,6 +46,22 @@ const launchd = vi.hoisted(() => ({
   failRestore: false,
   failBootout: false,
   bootstraps: [] as { plist: string; portBusy: boolean }[],
+}));
+
+const tailnet = vi.hoisted((): { route: ServeRoute; offFails: boolean; offs: number } => ({
+  route: { state: 'routed', port: 7449 },
+  offFails: false,
+  offs: 0,
+}));
+
+vi.mock('../src/tailnet-helper.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/tailnet-helper.ts')>()),
+  tailscalePackage: async () => ({
+    ...(await import('@stim-cli/transport-tailscale')),
+    findTailscale: () => '/fake/tailscale',
+    readTailscaleStatus: async () => ({ state: 'running', ips: ['100.64.0.1'] }),
+    serveRoute: async () => tailnet.route,
+  }),
 }));
 
 vi.mock('node:child_process', async (importOriginal) => {
@@ -119,6 +136,12 @@ vi.mock('node:child_process', async (importOriginal) => {
           listening ? (launchd.replaceListener && !launchd.job ? '789\n' : launchd.listenerOutput) : '',
           '',
         );
+      }
+      if (file === '/fake/tailscale' && args.join(' ') === 'serve --https=7449 off') {
+        if (tailnet.offFails) return callback(new Error('failed'), '', 'serve config locked');
+        tailnet.offs++;
+        tailnet.route = { state: 'missing', port: 443 };
+        return callback(null, '', '');
       }
       if (file === 'plutil') return callback(null, execFileSync(file, args, { encoding: 'utf8' }), '');
       return actual.execFile(file, args, options, callback as never);
@@ -494,6 +517,26 @@ describe.skipIf(process.platform !== 'darwin')('service lifecycle', () => {
     launchd.busyUntil = 0;
     expect(await finish(uninstallService(label))).toContainEqual(expect.stringContaining(`Uninstalled ${label}`));
     expect(existsSync(plist)).toBe(false);
+  });
+
+  it('keeps the unit and its route record until uninstall confirms the route it created is removed', async () => {
+    launchd.job = null;
+    const routed = launchd.original.replace(
+      '<key>Managed</key>\n\t\t<true/>',
+      '<key>Managed</key>\n\t\t<true/>\n\t\t<key>ServePort</key>\n\t\t<integer>7449</integer>\n\t\t<key>ServeCreated</key>\n\t\t<true/>',
+    );
+    assert(routed !== launchd.original);
+    writeFileSync(plist, routed);
+    Object.assign(tailnet, { route: { state: 'unknown', reason: 'it timed out', port: 443 }, offFails: true, offs: 0 });
+    await expect(uninstallService(label)).rejects.toThrow('could not be read (it timed out)');
+    expect(readFileSync(plist, 'utf8')).toBe(routed);
+    tailnet.route = { state: 'routed', port: 7449 };
+    await expect(uninstallService(label)).rejects.toThrow('could not remove its tailscale serve route');
+    expect(readFileSync(plist, 'utf8')).toBe(routed);
+    tailnet.offFails = false;
+    expect(await finish(uninstallService(label))).toContain('Removed the tailscale serve route on https port 7449.');
+    expect(existsSync(plist)).toBe(false);
+    expect(tailnet.offs).toBe(1);
   });
 
   it('does not attribute a listener to the caller home when the unit uses another home', async () => {

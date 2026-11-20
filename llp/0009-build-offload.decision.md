@@ -40,20 +40,60 @@ Running a project build grants the client code execution on the worker. A worker
 builds. Use `local`, `auto`, `remote`, `remote-only` or one machine.
 `auto` prefers the eligible local machine while it has capacity. `remote`
 prefers workers. Automatic placement skips members in
-`remote.buildPoolDisabled` and considers the remaining workers in
-`remote.machines` order. A fresh build needs a free slot and, when the worker
+`remote.buildPoolDisabled`. A fresh build needs a free slot and, when the worker
 reports its load, load below `server.maxLoadPerCore`. Use the client's limit
 when the worker does not report a limit. In `auto`, a worker with unknown load
 can take a build when local is disabled or every local slot is busy.
 A matching completed artifact ranks before fresh build offers and skips
-build capacity checks. An explicit machine selects only that worker and
+build capacity checks. The workers that can take a fresh build rank by what
+they hold for it: first one whose area for this checkout completed a build of
+this project and platform, then one with this checkout's dependency install
+reusable or another checkout of the project built there, then the rest;
+`remote.machines` order breaks ties. A warm worker with no free slot or with
+its load at or above its limit is skipped like a cold one, and no build waits
+for a busy warm worker. An explicit machine selects only that worker and
 bypasses the automatic load filter. `auto` and `remote` fall back after an offload
 failure only while local placement is enabled. `remote-only` and named
 placement refuse when remote placement fails. No failure path writes the cache.
 
 Explicit selection fixes where a build may run. Automatic selection can
 keep development moving when workers are busy or unreachable. An existing
-exact artifact saves a build, so it ranks ahead of a cold offer.
+exact artifact saves a build, so it ranks ahead of a cold offer. A worker's
+caches (the Stim home with DerivedData, the compilation cache and ccache, the
+Gradle home, `node_modules` and Pods) live in its area for one client checkout,
+and the client's pnpm store, CocoaPods and SwiftPM caches and uploaded blobs are
+shared by that client's areas, so a worker that built the checkout or the
+project rebuilds faster than a cold one with the same free slot.
+
+The worker records each successful build's platform and project id (a hash of
+the client's canonical git common directory and the app's path in the
+repository, so every worktree of a repository, bare or not, shares it) in
+`built.json` in the area, and answers `build.offer` from it. An offer from an
+area whose exclusive claim another build holds declines a fresh build there,
+which `build.start` would refuse, while an exact artifact is still served. The record goes
+with the area when stim-server evicts it, is deleted when the area's home is
+replaced for another schema, and is deleted when a build fails on a corrupt
+compilation cache, which empties that cache. The worker's own maintenance
+passes do not reach an area: discovery skips `server.workerRoot`, and the
+compilation-cache and Cargo-target caps act on the worker's home and on
+discovered checkouts. A native Xcode or Gradle build on the worker runs the
+build headroom ladder (LLP 0006) in its area's home when the volume is short,
+and that ladder can empty the home's shared caches, such as the Swift
+compilation cache, while it keeps the build's own workspace. That trim, and any
+other that empties part of an area, leaves the record in place: the worker
+still reports the area warm, and the next build there is slower, never wrong,
+since the build is fingerprint-checked.
+
+This ordering supersedes #4321's strict `remote.machines` order for builds;
+devices and macOS app hosts keep that order.
+
+Recorded in [#5960](https://github.com/appandflow/stim/issues/5960):
+
+Maintainer decision: "can machines have project afinity so it strongly prefers them since they will very likely have cache for that project or machines be able to advert what cache they have", 2026-11-19
+
+The project-level rank, the rule that warmth never overrides the slot and load
+gates, and no waiting for a busy warm worker were chosen by the coordinating
+session for #5960, not by the maintainer.
 [Placement rules](https://github.com/appandflow/stim/pull/4331),
 [Remote artifact reuse](https://github.com/appandflow/stim/pull/3594).
 
@@ -259,11 +299,12 @@ hosted native work, cleanups, running Metro, log streams), the same condition as
 `Restart=always` starts it again about 30 seconds later from the loaded shim definition. A pure npm-copy service
 therefore needs one automatic restart after its first boot on this code; until a restart reaches code that has the
 rewrite (`stim service install`, `systemctl --user restart`, a crash or a reboot) it stays on its build. When the
-engine later flips under a shim service, the stimd hands its home to a transient `systemd-run` successor and the
-unit's restarted process attaches to that successor, so one stimd owns the home. A unit with a drop-in that sets
+engine later flips under a shim service, the unit's job starts the new build, as described below. A unit with a drop-in that sets
 `ExecStart=`, or a multi-line `ExecStart=`, is not rewritten; the server logs it and `stim doctor` reports the
 drop-in. A launchd job re-reads its plist only at bootstrap, so the macOS rewrite does not take effect on an exit and
-restart; it needs a `launchctl bootout` and `bootstrap`, and the server requests no restart there (#5608). A Windows task runs the build it was installed with, since the engine writes no Windows `stimd` entry (#5602). After an engine flip the unit's main process is a waiter attached to the transient service that holds the home, so stopping or restarting the unit does not stop the server (#5610, #5858). Connected phones and Desktop are disconnected by the one idle restart.
+restart; it needs a `launchctl bootout` and `bootstrap`, and the server requests no restart there (#5608). A Windows task runs the build it was installed with, since the engine writes no Windows `stimd` entry (#5602). Connected phones and Desktop are disconnected by the one idle restart.
+
+An engine switch under a launchd or systemd unit hands over through the unit's job, so the stimd that serves the unit's port stays inside it and stopping or restarting the unit stops or restarts that stimd (#6003). A stimd the job runs (its `XPC_SERVICE_NAME` or `STIM_SERVICE_LABEL` names a unit install wrote for its port, and it has no `--unit-successor`), whose unit runs the engine's `bin/stimd` shim, starts no successor at a switch, once the shim names the new build, or at a crash-loop rollback; while the shim still names an older build it hands over to a successor as before. It writes `run/job-restart.json` with its pid and the unit's label, shuts down and exits, and KeepAlive or `Restart=always` runs the shim again, which starts the new build inside the job. launchd starts a job that ran longer than its 30 s `ThrottleInterval` again at once; systemd waits `RestartSec`, 30 s. Until the job's stimd has started, the record holds the home for the job. The stimd that leaves stamps `left` in it when its process exits; when it died without one, the first process that sees it gone stamps it. Any other stimd that boots there, whether a command's, Stim Desktop's or a successor's, checks the record before and after taking the home and waits until 75 s after `left` (systemd's 30 s and the job's boot), and a command, `stim share` (also its list and stop) and other local clients of the net thread wait the same way before they start or ask a stimd, and a local net client that waited then retries for up to 60 s while the new stimd starts its net thread. Stim Desktop gives the stimd it starts 15 s and reports a start failure if the job takes longer, then retries. The job's own stimd waits only until `left`. When it takes the home it renews the record under its own pid, and removes it once its startup ends, so a crash during that startup still leaves the home to the job's next start. A record whose stimd has not left holds the home for at most 25 minutes after it was first written (a shutdown's deadline), so a reused pid does not hold it. A stimd that stops in a crash hold removes the record, and when the hold stages a rollback that waits for another home to drain it stamps the record instead, so the rolled-back build's stimd starts in the job; a command of the held build meets the hold's remedy at once either way. An update the hold selects keeps the record the same way. Each boot of a staged hold stamps the record again, so the rolled-back build's first stimd still starts in the job however long the other home takes to drain; a command of the build that crash-loops does not wait on the record: it prints the hold's remedy and starts no stimd, attached or detached, and an attached stimd of that build, such as `stim ci`'s, still waits for the job behind the record, so it fails its 10 s bind instead of taking the home or holding the build the rollback waits on. A job's stimd whose startup is refused, including a refused socket, removes the record, so commands meet the refusal. When the hold defers the rollback because another process holds the engine lock, a command's stimd can still retry the rollback outside the job, and a switch that lands while the unit's process is still retrying a home that a command's stimd holds, before it attaches, leaves that stimd's successor outside the job until the next switch. Writing it is best-effort: when that fails, the stimd still exits to its job, without the wait. The record is not `successor-missing.json`, so no client starts a stimd because of it (a forced exit during the switch still writes that file, and the stimd a client then starts waits on the record); a switch whose cleanup was not verified also leaves the home to the job, and logs `successor_job` as a warning where LLP 0021 logs `successor_missing`. A command whose operation continues across a stimd restart (LLP 0012) and a client the switching stimd refused wait as long as the record holds the home, past their usual 30 s and 15 s. A unit install writes on Linux sets `KillMode=process`, as the transient successor did, so the stimd's exit at a switch does not kill the Metro servers, tunnels and adb server it leaves for the next stimd to adopt; a unit written before this keeps systemd's default, which would kill them and the emulators hosted sessions booted, so a stimd in such a unit, including one the server moved onto the shim, keeps the successor handover until `stim service install` runs again. The same setting leaves those children running when the unit is stopped, restarted or uninstalled, as a LaunchAgent does with the detached children of its stimd. On Linux a switch now leaves the port unserved for systemd's 30 s and the boot, where a transient successor bound within 10 s; connected phones, Desktop and offload clients reconnect after it. A build older than this rule ignores the record, so a switch or rollback back to such a build, or a command of such a build, can still take the home by starting a stimd during the restart. A job's stimd writes the record too when its startup fails for a cause that counts as a crash, and, once started, when it begins an error shutdown or exits with an error, keeping the record's first time, so a command's stimd does not take the home, or run a crash-loop rollback outside the job, before the job restarts. `stim ci`'s attached stimd waits for the record before it starts; a handover that begins in the moment between that check and the attached stimd's claim can still outlast its 10 s bind timeout. When the stamp cannot be written, each process counts from the moment it first saw the stimd gone. While a staged hold restarts the job, commands of other builds wait until the other home drains. A job's stimd that dies of an uncaught exception early in a boot with no earlier record writes none. A unit that keeps the successor handover, by its first switch onto this build or a Linux unit without `KillMode=process`, still has its main process as a waiter after the switch, so stopping or restarting the unit does not stop the stimd that serves its port. The window counts wall time, so a Linux machine that suspends during systemd's restart delay can let another stimd take the home first, and an API caller that cancels an operation while it waits for the job is released only when the wait ends. A stimd that a command started before the unit's process, or that an earlier build started outside the job with `--unit-successor <label>`, leaves the home the same way at its next switch while the job's process waits on it: that waiter names the label in its `net.ensure` ask only when its job runs the shim, and exits when the stimd closes the connection, so the restarted job takes the home. The first switch onto a build with this rule still makes the split, because the build that switches starts the successor, and the next switch ends it. A stimd that no shim unit's job runs keeps the handover to a successor it starts: `stim serve`, including a shim-less unit's `stim serve --service`, and the stimd of Stim Desktop or of a command. Chosen by the implementing lane for #6003, not by the maintainer.
 
 A systemd unit sets `KillMode=process`, as the transient stimd unit does, so stopping or restarting it signals only the unit's main process, stimd, which leaves its dev servers, their helpers and managed tunnels running for the next stimd of that home to adopt (LLP 0018), as a launchd job does because they run in their own process groups. systemd's default, `control-group`, killed them with the unit. systemd's documentation recommends against `process` because processes can then outlive their service; here that is the point, and stimd's own shutdown cancels its offload jobs and their builds. The cost is that `systemctl --user stop` and `stim service uninstall` leave those dev servers running too, until `stim stop` in their workspace or the idle stop of the next stimd that adopts them. The server adds the line at boot to a unit install wrote without one and runs `daemon-reload`, which applies it at the next stop without a restart; the stop or restart that first brings a unit onto this code still uses the old mode and kills them once (#5873). Chosen by the implementing lane for #5873, not by the maintainer.
 

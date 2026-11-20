@@ -63,6 +63,64 @@ test('the hourly dependency check survives retirement of the worker that started
   }
 });
 
+test('an idle worker whose bounded read is still pending is kept, so a stuck folder holds one read', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const entry = vi
+    .spyOn(entries, 'spawnEntry')
+    .mockReturnValue(fileURLToPath(new URL('./fixtures/bounded-read-worker.ts', import.meta.url)));
+  const traces: Record<string, unknown>[] = [];
+  const threads = createThreadTable((_level, event, _message, fields) => {
+    if (event === 'fixture' && fields) traces.push(fields);
+  });
+  const release = { cwd: process.cwd(), release: true };
+  try {
+    await threads.run('measure', { cwd: process.cwd() });
+    await vi.advanceTimersByTimeAsync(120_001);
+    await threads.run('measure', { cwd: process.cwd() });
+    await threads.run('measure', release);
+    await vi.advanceTimersByTimeAsync(120_001);
+    await threads.run('measure', { cwd: process.cwd() });
+
+    const [first, kept, released, replacement] = traces;
+    expect([kept?.threadId, released?.threadId]).toEqual([first?.threadId, first?.threadId]);
+    expect(replacement?.threadId).not.toBe(first?.threadId);
+    expect(traces.map((trace) => trace.started)).toEqual([1, 1, 1, 1]);
+  } finally {
+    await threads.close();
+    entry.mockRestore();
+    vi.useRealTimers();
+  }
+});
+
+test('a kept worker that exits before answering settle leaves no idle poll behind', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const root = mkdtempSync(join(tmpdir(), 'stim-worker-settle-'));
+  const fixture = join(root, 'worker.mjs');
+  writeFileSync(
+    fixture,
+    `
+import { parentPort } from 'node:worker_threads';
+parentPort.on('message', (message) => {
+  if (message.type === 'settle') process.exit(1);
+  parentPort.postMessage({ type: 'done', result: [], reading: true });
+});
+`,
+  );
+  const entry = vi.spyOn(entries, 'spawnEntry').mockReturnValue(fixture);
+  const threads = createThreadTable(() => {});
+  const timers = vi.getTimerCount();
+  try {
+    await threads.run('measure', { cwd: root });
+    await vi.advanceTimersByTimeAsync(120_001);
+    await vi.waitFor(() => expect(vi.getTimerCount()).toBe(timers));
+  } finally {
+    await threads.close();
+    entry.mockRestore();
+    vi.useRealTimers();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 describe.skipIf(process.platform === 'win32')('unexpected worker exit', () => {
   test.each(['exit', 'abort'])(
     'a worker %s with an outstanding job reports a surviving child',

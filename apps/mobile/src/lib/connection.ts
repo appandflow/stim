@@ -125,6 +125,7 @@ function isMessageObject(value: unknown): value is {
 const MIN_RETRY_MS = 1000;
 const MAX_EARLY_SUBSCRIPTIONS = 8;
 const MAX_RETRY_MS = 30_000;
+const CONNECT_TIMEOUT_MS = 10_000;
 const INVALID_BACKOFF_MS = 60_000;
 const REFUSAL_CODES = new Set(['unauthorized', 'pairing-expired', 'protocol-unsupported']);
 
@@ -179,7 +180,8 @@ function outdatedServer(hello: Methods['hello']['result']): string | null {
  * One authenticated connection to a Stim server. It reconnects with a delay that doubles from 1 to
  * 30 seconds and resubscribes after each `hello`, because the server keeps no per-client history.
  * An `error` event ends one subscription on the server; that subscription is sent again after the
- * same doubling delay, which resets once it delivers an event.
+ * same doubling delay, which resets once it delivers an event. An attempt whose `hello` is not accepted within 10
+ * seconds counts as a lost connection.
  */
 export class StimConnection {
   private socket: StimSocket | null = null;
@@ -191,6 +193,7 @@ export class StimConnection {
   private retryMs = MIN_RETRY_MS;
   private lastInvalidAt = Number.NEGATIVE_INFINITY;
   private timer: unknown = null;
+  private connectTimer: unknown = null;
   private stopped = false;
   private open = false;
   private readonly createSocket: SocketFactory;
@@ -231,6 +234,7 @@ export class StimConnection {
     this.stopped = true;
     if (this.timer !== null) this.clearTimer(this.timer);
     this.timer = null;
+    this.endAttempt();
     for (const sub of this.subscriptions) this.cancelRetry(sub);
     this.socket?.close();
     this.socket = null;
@@ -299,6 +303,14 @@ export class StimConnection {
     this.options.onState?.({ kind: 'connecting' });
     const socket = this.createSocket(this.options.endpoint, { serverKey: this.options.serverKey });
     this.socket = socket;
+    this.connectTimer = this.setTimer(() => {
+      this.connectTimer = null;
+      if (socket !== this.socket) return;
+      const lost = t`Connection lost.`;
+      this.detach(lost);
+      socket.close();
+      if (!this.stopped) this.scheduleRetry(lost);
+    }, CONNECT_TIMEOUT_MS);
     socket.onopen = () => {
       if (socket !== this.socket) return;
       const session = { accepted: false };
@@ -319,6 +331,7 @@ export class StimConnection {
           // compat end
           session.accepted = true;
           this.open = true;
+          this.endAttempt();
           if (Date.now() - this.lastInvalidAt > INVALID_BACKOFF_MS) this.retryMs = MIN_RETRY_MS;
           this.options.onState?.({
             kind: 'open',
@@ -383,12 +396,18 @@ export class StimConnection {
   private detach(reason: string): void {
     this.socket = null;
     this.open = false;
+    this.endAttempt();
     for (const sub of this.subscriptions) {
       sub.serverId = null;
       this.cancelRetry(sub);
       endVideo(sub);
     }
     this.failPending(reason);
+  }
+
+  private endAttempt(): void {
+    if (this.connectTimer !== null) this.clearTimer(this.connectTimer);
+    this.connectTimer = null;
   }
 
   private scheduleRetry(reason: string): void {

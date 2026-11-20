@@ -169,6 +169,7 @@
 [*] interface AndroidFacts { @@1 logs: string | null;
 [*] interface AndroidFacts { @@1 metroPort: number | null;
 [*] interface AndroidFacts { @@1 offloadFallback?: string;
+[*] interface AndroidFacts { @@1 offloadReason?: string;
 [*] interface AndroidFacts { @@1 offloadedTo?: string;
 [*] interface AndroidFacts { @@1 platform: string;
 [*] interface AndroidFacts { @@1 serial: string | null;
@@ -361,6 +362,7 @@
 [*] interface DevicePlacement { @@1 reason: string;
 [*] interface DiscoveredCheckout {
 [*] interface DiscoveredCheckout { @@1 from: string;
+[*] interface DiscoveredCheckout { @@1 node?: NodeCheckout;
 [*] interface DiscoveredCheckout { @@1 origin: DiscoveryOrigin;
 [*] interface DiscoveredCheckout { @@1 path: string;
 [*] interface DiscoveredCheckout { @@1 reduceOnly?: boolean;
@@ -722,6 +724,7 @@
 [*] interface IosFacts { @@1 logs: LogsInfo;
 [*] interface IosFacts { @@1 metroPort?: number | null;
 [*] interface IosFacts { @@1 offloadFallback?: string;
+[*] interface IosFacts { @@1 offloadReason?: string;
 [*] interface IosFacts { @@1 offloadedTo?: string;
 [*] interface IosFacts { @@1 platform: string;
 [*] interface IosFacts { @@1 runtime: string | null;
@@ -735,6 +738,8 @@
 [*] interface IosFacts { @@2 pid: number | null;
 [*] interface IosFacts { @@2 stateDir: string;
 [*] interface LevelRun {
+[*] interface LevelRun { @@1 @internal cachePaths: string[];
+[*] interface LevelRun { @@1 @internal sweptCachePaths: string[];
 [*] interface LevelRun { @@1 actions: LevelRunAction[];
 [*] interface LevelRun { @@1 blocked: string[];
 [*] interface LevelRun { @@1 discovered: (DiscoveredCheckout & {
@@ -837,6 +842,7 @@
 [*] interface MacosBuild { @@1 fingerprint?: string;
 [*] interface MacosBuild { @@1 finishedAt?: string;
 [*] interface MacosBuild { @@1 offloadFallback?: string;
+[*] interface MacosBuild { @@1 offloadReason?: string;
 [*] interface MacosBuild { @@1 offloadedTo?: string;
 [*] interface MacosBuild { @@1 startedAt: string;
 [*] interface MacosBuild { @@1 state: "running" | "ok" | "failed";
@@ -1638,6 +1644,7 @@
 [*] type MaintenanceMode = "off" | "report" | "on";
 [*] type MemoryCacheKind = typeof WATCHMAN_KIND | typeof GRADLE_DAEMONS_KIND;
 [*] type MemoryKeptCode = "in-use" | "busy" | "unknown" | "build-running" | "stim-server";
+[*] type NodeCheckout = "source" | "linked";
 [*] type OffloadCheck = (credential: BuildMachineCredential) => Promise<{
 [*] type OffloadCheck = (credential: BuildMachineCredential) => Promise<{ @@1 capacity: Record<string, unknown> | null;
 [*] type OffloadCheck = (credential: BuildMachineCredential) => Promise<{ @@1 notes?: OffloadProblem[];

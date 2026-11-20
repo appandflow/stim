@@ -20,6 +20,7 @@ import { executedActionName } from '../../maintenance-kind.ts';
 import { measureCargoTargets, planCargoTargetsAtPressure } from './cargo-target.ts';
 import { maintenancePinnedReader } from './protect.ts';
 import { measureSizes } from './measure.ts';
+import { discoverCachesAsync } from '../../cache/caches.ts';
 import { measureOwnedDevices } from './devices.ts';
 import { plannedMaintenance, triggeringRoot } from './preview.ts';
 import { executionRank } from './run.ts';
@@ -32,6 +33,7 @@ import {
   type DiscoveredCheckout,
 } from '../../workspace/discovery.ts';
 import { listedRoots } from '../../commands/gc/worktrees.ts';
+import { forgetGitReads } from '../../workspace/git-reads.ts';
 
 /** One thing a maintenance run at a level did, would do, or kept, with what it freed or would free. */
 export interface LevelRunAction {
@@ -61,6 +63,10 @@ export interface LevelRun {
   outside: { path: string; from: string }[];
   /** The largest things Stim keeps on disk and can reclaim, from the sizes the run measured, largest first. */
   usage: { name: string; dir: string; bytes: number }[];
+  /** @internal Carries no compatibility: the folders and files of every cache the run discovered and measured. */
+  cachePaths: string[];
+  /** @internal Carries no compatibility: the folders and files of every cache the run discovered, did not measure, and sweeps by entry. */
+  sweptCachePaths: string[];
 }
 
 /** Measures disk and memory once and classifies them as the daemon would. */
@@ -120,11 +126,13 @@ export async function runMaintenanceAtLevel({
   act,
   operation,
   onAction,
+  walkUnknown,
 }: {
   level?: PressureLevel;
   act: boolean;
   operation?: StimContext;
   onAction?: (action: LevelRunAction) => void;
+  walkUnknown?: false;
 }): Promise<LevelRun> {
   const env = operation?.env ?? process.env;
   const pressure = await measureLevel(operation);
@@ -134,6 +142,7 @@ export async function runMaintenanceAtLevel({
   const blocked: string[] = [];
   const take = (action: LevelRunAction) => {
     actions.push(action);
+    if (action.outcome === 'done' || action.outcome === 'failed') forgetGitReads(operation);
     onAction?.(action);
   };
   const found = await discoverCheckouts(loadConfig(), listedRoots(), operation);
@@ -178,8 +187,9 @@ export async function runMaintenanceAtLevel({
     }
   }
   const measureFailed = (target: string) => blocked.push(`Could not measure ${target}`);
+  const caches = await discoverCachesAsync();
   const sizes = [
-    ...(await measureSizes(now, measureFailed, operation)),
+    ...(await measureSizes(now, measureFailed, operation, caches)),
     ...(await measureCargoTargets(now, operation)),
     ...(deviceSweepIsScoped(env) ? [] : await measureOwnedDevices(now, measureFailed)),
   ];
@@ -225,6 +235,7 @@ export async function runMaintenanceAtLevel({
     trigger: 'gc',
     ...(operation ? { operation } : {}),
     protectedRoot: context.protectedRoot,
+    ...(walkUnknown === false ? { walkUnknown } : {}),
   }))
     take(fromLadder(action, true));
   if (level !== 'normal') {
@@ -253,14 +264,28 @@ export async function runMaintenanceAtLevel({
       taken || idleMs <= 0 || !existsSync(checkout.path)
         ? null
         : await discoveredKeepReason(checkout.path, idleMs, checkout.reduceOnly === true, operation, reads);
-    if (kept && /source entries to check|cannot be read/.test(kept))
-      blocked.push(`Discovered checkout ${checkout.path}: ${kept}, so it is never reduced`);
+    if (kept && /every source entry within|cannot be read/.test(kept))
+      blocked.push(
+        `Discovered checkout ${checkout.path}: ${kept}, so it is kept this pass and checked again on a later one`,
+      );
     discovered.push({ ...checkout, actions: mine, ...(kept ? { kept } : {}) });
   }
+  const measuredCaches = caches.filter((cache) => sizes.some((size) => size.dir === cache.dir));
+  const sweptCaches = caches.filter((cache) => cache.prune === 'entries' && !measuredCaches.includes(cache));
   const usage = sizes
     .filter((size) => size.bytes > 0)
     .toSorted((a, b) => b.bytes - a.bytes)
     .slice(0, 10)
     .map(({ name, dir, bytes }) => ({ name, dir, bytes }));
-  return { pressure, level, actions, blocked, discovered, outside, usage };
+  return {
+    pressure,
+    level,
+    actions,
+    blocked,
+    discovered,
+    outside,
+    usage,
+    cachePaths: [...measuredCaches.map((cache) => cache.dir), ...measuredCaches.flatMap((cache) => cache.files ?? [])],
+    sweptCachePaths: [...sweptCaches.map((cache) => cache.dir), ...sweptCaches.flatMap((cache) => cache.files ?? [])],
+  };
 }

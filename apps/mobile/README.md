@@ -30,7 +30,12 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
   usage: active workspaces, the machine's memory used of total (as Activity
   Monitor's "Memory Used" counts it, colored by memory pressure), and the lowest
   free space of the volumes that hold Stim's workspaces, Stim home and the
-  simulators. **+**
+  simulators. A connection attempt that gets no accepted `hello` within 10 seconds
+  counts as lost and retries after the usual backoff; from then on the chip reads
+  **Offline** until the machine answers. When nothing else fills the list, a machine
+  without a cached status shows a spinner during its first attempt, and after a
+  failed one a message naming it, asking to check Tailscale on both devices, with
+  **Retry**. **+**
   pairs another machine. Below, one list of every workspace on every machine,
   grouped by repo. Workspaces marked with `workspace.hidden` stay out of the default
   list; select Hidden in the Home filters to see them. Starting or warming the
@@ -218,7 +223,9 @@ gc --json` dry run and `stim stats --json`, which the server refreshes at
   locale, on the clipboard for a bug report. A tap on home, a swipe left, or Android's back button closes the
   menu. Pairing scans the QR code Stim Desktop
   shows under **Pair a Phone**, or takes the endpoint and pairing token typed
-  in. Either way, the app shows the endpoint host and connects only after
+  in, or the line `stim pair` prints pasted into the endpoint field. A pasted line
+  is checked like a QR code, keeps the server key fingerprint, and leaves the
+  form empty when you go back. Either way, the app shows the endpoint host and connects only after
   **Connect**; a host that is not a `.ts.net` name or a private IP address gets a warning.
   A failed QR pairing keeps its error visible and pauses scanning until
   **Retry** or manual entry is chosen; unrelated QR codes do not pause scanning.
@@ -1063,7 +1070,7 @@ replays payloads captured from a real machine in `mock-server/fixtures/`: a
 `stim status --json` payload taken while `stim ios` was installing, records
 from `stim logs --json`, and one simulator screenshot as the frame of every
 iOS device. It prints a pairing code; in the app, choose
-**Enter the Endpoint and Token Instead** and type the endpoint and token. The
+**Enter the Endpoint or Pairing Code Instead** and type the endpoint and token. The
 status timestamps are moved forward to the time the server starts, so build
 and activity durations read as they did at capture. The workspace that ran
 the build carries a remote EAS session added by hand (listed under `edits` in
