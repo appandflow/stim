@@ -9,6 +9,7 @@ import {
   utimesSync,
   writeFileSync,
 } from 'node:fs';
+import { readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { saveConfig, upsertProject } from '../workspace/config.ts';
@@ -16,6 +17,11 @@ import { collectWorktreeSweep, removeWorktrees } from '../commands/gc/worktrees.
 import * as reads from '../workspace/discovered-reads.ts';
 import { discoveredRemovalHold } from '../workspace/discovered-removal.ts';
 import { worktreeInScope } from '../workspace/discovery.ts';
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, readdir: vi.fn<typeof actual.readdir>(actual.readdir) };
+});
 
 vi.mock('../workspace/protected-locations.ts', () => ({
   isProtectedLocation: () => false,
@@ -320,6 +326,37 @@ describe('a worktree of a plain Node repository on the removal path', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     await removeWorktrees(planned, { now: Date.now() });
     expect(existsSync(keypair)).toBe(true);
+  });
+
+  it('keeps a finished one whose check for keypairs never answers, and still plans the others', async () => {
+    writeFileSync(join(main, '.git', 'info', 'exclude'), 'build/\n');
+    const stalled = worktree('stalled');
+    mkdirSync(join(stalled, 'build', 'cache'), { recursive: true });
+    age(stalled);
+    const done = worktree('done');
+    const { readdir: actual } = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    let release = () => {};
+    const stall = join('stalled', 'build', 'cache');
+    vi.mocked(readdir).mockImplementation(async (path, options) => {
+      if (!String(path).endsWith(stall)) return actual(path, options);
+      return new Promise((_, fail) => {
+        release = () => fail(new Error('released'));
+      });
+    });
+    try {
+      const planning = collectWorktreeSweep({ idle: false, olderThan: null, now: Date.now(), refresh: false });
+      await vi.waitFor(() => expect(String(vi.mocked(readdir).mock.calls.at(-1)?.[0])).toMatch(/build.cache$/), {
+        timeout: 20_000,
+      });
+      await vi.advanceTimersByTimeAsync(15_000);
+      release();
+      const planned = await planning;
+      const of = (path: string) => planned.worktrees.find((entry) => entry.path === path);
+      expect(of(stalled)?.skipped).toContain('could not all be checked for keypairs and pnpm patches within 15 s');
+      expect(of(done)).toMatchObject({ discovered: true, skipped: null });
+    } finally {
+      vi.mocked(readdir).mockImplementation(actual);
+    }
   });
 
   it('keeps a finished one whose keypair git lists on its own inside a partly tracked Cargo target', async () => {

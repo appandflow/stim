@@ -240,6 +240,26 @@ test.skipIf(process.platform === 'win32')(
   },
 );
 
+test.skipIf(process.platform === 'win32')(
+  "the idle stage keeps an idle Exact app's Cargo target/ that holds a Solana keypair",
+  async () => {
+    const { root } = bootedWorkspace('exact', 20 * MINUTE_MS);
+    execSync('git init -q', { cwd: root });
+    writeFileSync(join(root, '.gitignore'), '/target/\n');
+    for (const name of ['exact.mjs', 'Cargo.toml']) writeFileSync(join(root, name), '');
+    mkdirSync(join(root, 'target', 'deploy'), { recursive: true });
+    writeFileSync(join(root, 'target', 'deploy', 'program-keypair.json'), '[1,2,3]');
+
+    const [kept] = await pass();
+
+    expect(kept).toMatchObject({
+      path: root,
+      detail: expect.stringContaining('deploy/program-keypair.json is a Solana keypair'),
+    });
+    expect(existsSync(join(root, 'target', 'deploy', 'program-keypair.json'))).toBe(true);
+  },
+);
+
 test('the idle stage keeps a .dd that git does not ignore', async () => {
   const { root } = bootedWorkspace('unignored', 20 * MINUTE_MS);
   execSync('git init -q', { cwd: root });

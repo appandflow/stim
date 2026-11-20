@@ -595,7 +595,8 @@ function dormantMs(operation?: StimContext): number {
  */
 async function registeredRemovalHold(path: string, operation?: StimContext): Promise<string | null> {
   const { ignoredFilesHold, pendingPnpmPatch } = await import('../../workspace/discovered-removal.ts');
-  const patch = await pendingPnpmPatch(path);
+  const { protectedPathHold } = await import('../../workspace/protected-paths.ts');
+  const patch = (await pendingPnpmPatch(path)) ?? (await protectedPathHold(path, operation?.signal));
   if (patch) return patch;
   const source = await resolveSourceCheckoutAsync(path, {
     env: operation?.env,

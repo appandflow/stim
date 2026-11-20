@@ -369,7 +369,7 @@ export function editsKeptReason(
  * Why an unfinished `pnpm patch` keeps the node_modules `tree`, or null: pnpm keeps the editable copy in its
  * `.pnpm_patches` until `pnpm patch-commit`, and the edit scan skips that dot-directory with the tools' caches.
  */
-export async function pnpmPatchHold(tree: string): Promise<string | null> {
+async function pnpmPatchHold(tree: string): Promise<string | null> {
   const where = `${basename(tree)}/.pnpm_patches`;
   try {
     return (await readdir(join(tree, '.pnpm_patches'))).length
@@ -390,7 +390,8 @@ export type EditCheck = { keep: string; edited?: true } | { delete: true };
  * install did to the stamp; when an install Stim did not run moved the reference, files changed after the old one in
  * a package or pod that install did not reinstall, or well after that package was installed, stay edits. Any edit
  * keeps the tree at every pressure level. A tree kept for edits is not walked again while its install signature and
- * its known edits are unchanged, except at critical. With `readOnly` nothing is written.
+ * its known edits are unchanged, except at critical. An unfinished `pnpm patch` keeps a node_modules tree too. With
+ * `readOnly` nothing is written.
  */
 export async function checkDependencyEdits(
   path: string,
@@ -403,7 +404,19 @@ export async function checkDependencyEdits(
 ): Promise<EditCheck> {
   const tree = canonicalOr(path);
   const patch = kindOf(tree) === 'node_modules' ? await pnpmPatchHold(tree) : null;
-  if (patch) return { keep: patch, edited: true };
+  return patch ? { keep: patch, edited: true } : recordedEdits(path, { level, worktree, readOnly, signal });
+}
+
+async function recordedEdits(
+  path: string,
+  {
+    level,
+    worktree,
+    readOnly,
+    signal,
+  }: { level: PressureLevel; worktree: string; readOnly: boolean; signal?: AbortSignal },
+): Promise<EditCheck> {
+  const tree = canonicalOr(path);
   const record = readDependencyInstall(tree);
   const signature = treeSignature(tree);
   const known = (record?.edits?.files ?? []).filter(
@@ -452,7 +465,7 @@ export async function checkDependencyEdits(
 export async function noteEditsBeforeInstall(trees: readonly string[], signal?: AbortSignal): Promise<void> {
   for (const tree of trees) {
     if (!existsSync(tree)) continue;
-    await checkDependencyEdits(tree, { level: 'high', worktree: dirname(tree), signal });
+    await recordedEdits(tree, { level: 'high', worktree: dirname(tree), readOnly: false, signal });
   }
 }
 

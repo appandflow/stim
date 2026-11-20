@@ -2707,29 +2707,35 @@ test('gc keeps a finished registered worktree with an unfinished pnpm patch', as
   expect(existsSync(worktrees.squashed ?? '')).toBe(false);
 }, 240_000);
 
-test('gc keeps a finished registered worktree whose ignored Cargo target holds a Solana keypair, listed or walked', async () => {
+test('gc keeps a finished registered worktree holding a keypair, a pnpm patch or a deploy link under an ignored parent', async () => {
   const { repo, worktrees } = repoWithMergedBranches();
-  writeFileSync(join(repo, '.git', 'info', 'exclude'), 'target/\ninfra/\n');
-  const listed = join(worktrees.merged ?? '', 'target', 'deploy', 'Program-Keypair.json');
-  const walked = join(worktrees.squashed ?? '', 'infra', 'target', 'deploy', 'program-keypair.json');
-  for (const keypair of [listed, walked]) {
-    mkdirSync(dirname(keypair), { recursive: true });
-    writeFileSync(keypair, '[1,2,3]');
+  writeFileSync(join(repo, '.git', 'info', 'exclude'), 'build/\nsandbox/\ntarget/\n');
+  const keypair = join(worktrees.merged ?? '', 'build', 'target', 'deploy', 'program-keypair.json');
+  const patch = join(worktrees.squashed ?? '', 'sandbox', 'node_modules', '.pnpm_patches', 'pkg@1.0.0', 'index.js');
+  const outside = join(dirname(worktrees.rebased ?? ''), 'keys', 'program-keypair.json');
+  for (const file of [keypair, patch, outside]) {
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, 'only copy');
   }
+  mkdirSync(join(worktrees.rebased ?? '', 'target'));
+  symlinkSync(dirname(outside), join(worktrees.rebased ?? '', 'target', 'deploy'));
 
   await checkWorktrees();
   const { payload } = await gcJson({ dryRun: true, pressure: 'normal' });
-  for (const name of ['merged', 'squashed']) {
+  for (const [name, detail] of [
+    ['merged', 'build/target/deploy/program-keypair.json is a Solana keypair'],
+    ['squashed', 'unfinished pnpm patch in sandbox/node_modules/.pnpm_patches'],
+    ['rebased', 'target/deploy is a link'],
+  ] as const) {
     const entry = payload.sections.linkedWorktrees.find(
       (w: { path: string }) => realpathSync.native(w.path) === realpathSync.native(worktrees[name] ?? ''),
     );
-    expect(entry).toMatchObject({ willRemove: false, detail: expect.stringContaining('Solana keypair') });
+    expect(entry).toMatchObject({ willRemove: false, detail: expect.stringContaining(detail) });
   }
   await gcJson({ pressure: 'normal' });
 
-  expect(existsSync(listed)).toBe(true);
-  expect(existsSync(walked)).toBe(true);
-  expect(existsSync(worktrees.rebased ?? '')).toBe(false);
+  for (const file of [keypair, patch]) expect(existsSync(file)).toBe(true);
+  expect(existsSync(join(worktrees.rebased ?? '', 'target', 'deploy'))).toBe(true);
 }, 240_000);
 
 test('gc keeps a finished registered worktree whose ignored file sits in a tracked folder named like the root Cargo target', async () => {

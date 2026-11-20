@@ -149,17 +149,22 @@ test('an edit inside a package added after the first install stays an edit after
   expect(await keptFiles()).toContain('(added/index.js)');
 }, 15_000);
 
-test('an edit stays an edit after Stim runs an install that leaves it in place', async () => {
-  installAt(ago(2 * HOUR));
-  recordDependencyInstall([tree], ago(2 * HOUR).getTime());
-  write(join(tree, 'pkg', 'index.js'), 'patched by hand', ago(HOUR));
+test.each([{ patch: false }, { patch: true }])(
+  'an edit stays an edit after Stim runs an install that leaves it in place, with a pending pnpm patch: $patch',
+  async ({ patch }) => {
+    installAt(ago(2 * HOUR));
+    recordDependencyInstall([tree], ago(2 * HOUR).getTime());
+    write(join(tree, 'pkg', 'index.js'), 'patched by hand', ago(HOUR));
+    if (patch) write(join(tree, '.pnpm_patches', 'other@1.0.0', 'index.js'), 'patching');
 
-  await noteEditsBeforeInstall([tree]);
-  write(join(tree, '.package-lock.json'), '{}');
-  recordDependencyInstall([tree]);
+    await noteEditsBeforeInstall([tree]);
+    write(join(tree, '.package-lock.json'), '{}');
+    recordDependencyInstall([tree]);
+    rmSync(join(tree, '.pnpm_patches'), { recursive: true, force: true });
 
-  expect(await keptFiles('high')).toContain('pkg/index.js');
-});
+    expect(await keptFiles('high')).toContain('pkg/index.js');
+  },
+);
 
 test.each([
   { script: false, kept: true },

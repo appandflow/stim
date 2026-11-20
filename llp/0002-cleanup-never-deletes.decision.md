@@ -32,6 +32,21 @@ a `deploy/` folder holding a Solana `*-keypair.json` (LLP 0005).
 Reason: everything Stim deletes must come back by rebuilding or reinstalling.
 Work a person made cannot.
 
+## Names that keep a whole folder
+
+Before maintenance or `stim gc` removes a finished or discovered worktree, and
+before the idle stage deletes a Cargo `target/`, one walk of that folder looks
+for what no rebuild or reinstall restores: a `*-keypair.json` in any letter
+case, a non-empty `.pnpm_patches` in a node_modules, and a `deploy` link in a
+`target` folder. Any of them keeps the folder.
+
+- The walk does not follow links, does not enter `.git`, another volume or a
+  node_modules (apart from its `.pnpm_patches`), and stops after 15 s or
+  500,000 entries. A walk that cannot finish keeps the folder.
+- It does not ask git what is ignored, since a protected file can sit inside
+  any ignored or regenerable parent.
+- A false keep, such as a test keypair fixture in build output, is accepted.
+
 ## Edits git status does not show
 
 A registered worktree counts as having uncommitted work, so `stim worktree
