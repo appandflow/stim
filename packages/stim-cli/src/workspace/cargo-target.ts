@@ -447,14 +447,17 @@ function profileLocks(profile: string): string[] | null {
   return locks.some((path) => basename(path) === '.cargo-lock') ? locks : null;
 }
 
-/** The Cargo lock files of `target` that exist: in each top-level entry and in each directory directly in one. */
+/**
+ * The Cargo lock paths of `target` that exist, whatever they are: in each top-level entry and in each directory directly
+ * in one. One that is not a regular file keeps the target in `withCargoLocks`.
+ */
 function targetLocks(target: string): string[] {
   const locks: string[] = [];
   for (const top of subdirectories(target) ?? []) {
     const dir = join(target, top.name);
     for (const at of [dir, ...(subdirectories(dir) ?? []).map((inner) => join(dir, inner.name))])
       for (const name of PROFILE_LOCKS)
-        if (lstatSync(join(at, name), { throwIfNoEntry: false })?.isFile()) locks.push(join(at, name));
+        if (lstatSync(join(at, name), { throwIfNoEntry: false })) locks.push(join(at, name));
   }
   return locks;
 }

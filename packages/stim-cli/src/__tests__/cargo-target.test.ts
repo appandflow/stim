@@ -229,6 +229,21 @@ describe.skipIf(process.platform === 'win32')('trimming in place (Cargo locks ne
     expect(ran).toBe(false);
   });
 
+  test('at normal the cap keeps a target whose .cargo-lock is a link, and the file behind it stays', async () => {
+    makeProfile('debug', 3 * DAY);
+    writeFileSync(join(target, 'debug', 'lock-file'), '');
+    rmSync(join(target, 'debug', '.cargo-lock'));
+    symlinkSync('lock-file', join(target, 'debug', '.cargo-lock'));
+    const old = new Date(Date.now() - 3 * DAY);
+    utimesSync(join(target, 'debug'), old, old);
+
+    const result = await trimCargoTarget(target, { needBytes: 1, idleOnly: true });
+
+    expect(result.removed).toEqual([]);
+    expect(result.kept).toEqual([expect.stringContaining('.cargo-lock could not be locked')]);
+    expect(existsSync(join(target, 'debug', 'lock-file'))).toBe(true);
+  });
+
   test('a profile with no .cargo-lock stays, and a missing build lock is never created', async () => {
     makeProfile('debug', 3 * DAY);
     rmSync(join(target, 'debug', '.cargo-lock'));
@@ -590,6 +605,21 @@ describe.skipIf(process.platform === 'win32')('deleting an idle Cargo target who
     expect(result.kept).toContainEqual(expect.stringContaining(why));
     expect(existsSync(join(dir, 'debug', 'app'))).toBe(true);
     expect(existsSync(join(dir, 'doc', 'index.html'))).toBe(true);
+  });
+
+  test('a .cargo-lock that is a link keeps it whole, and the file behind it stays', async () => {
+    writeFileSync(join(dir, 'debug', 'lock-file'), '');
+    rmSync(join(dir, 'debug', '.cargo-lock'));
+    symlinkSync('lock-file', join(dir, 'debug', '.cargo-lock'));
+    ageTree(dir);
+    const old = new Date(Date.now() - 3 * DAY);
+    lutimesSync(join(dir, 'debug', '.cargo-lock'), old, old);
+
+    const result = await remove();
+
+    expect(result.removed).toEqual([]);
+    expect(result.kept).toEqual([expect.stringContaining('.cargo-lock could not be locked')]);
+    expect(existsSync(join(dir, 'debug', 'lock-file'))).toBe(true);
   });
 
   test('a build that holds a profile lock keeps it whole', async () => {
