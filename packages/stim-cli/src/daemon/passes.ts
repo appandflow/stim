@@ -89,11 +89,8 @@ function ladderDue(last: LadderPass, pressure: DaemonPressure, volumes: LadderPa
     const dropMb = volume.level === 'normal' ? LADDER_PACE_DISK_DROP_MB : LADDER_PACE_SHORT_DROP_MB;
     if (!before || before.freeMb - volume.freeMb >= dropMb || RANK[volume.level] > RANK[before.level]) return true;
   }
-  const waitMs =
-    pressure.level === 'critical'
-      ? LADDER_CRITICAL_WAIT_MS
-      : Math.min(LADDER_PACE_MAX_MS, LADDER_PACE_FACTOR * last.durationMs);
-  return now - last.endedAt >= waitMs;
+  const maxWaitMs = pressure.level === 'critical' ? LADDER_CRITICAL_WAIT_MS : LADDER_PACE_MAX_MS;
+  return now - last.endedAt >= Math.min(maxWaitMs, LADDER_PACE_FACTOR * last.durationMs);
 }
 
 /**
@@ -101,7 +98,7 @@ function ladderDue(last: LadderPass, pressure: DaemonPressure, volumes: LadderPa
  * high or critical and deleting only outputs on a short volume while disk alone is, then the dormant stage) and the
  * pressure ladder while the level stays above normal, in this process, as the daemon runs them each tick. `act: false` decides and logs without acting. `memoryWarningSince` carries the
  * memory warning clock from the last tick. After a ladder pass that freed nothing (`lastLadder`), the ladder waits
- * four times that pass's duration, at most 15 minutes, before it runs again, or one minute while the level is critical,
+ * four times that pass's duration, at most 15 minutes or, while the level is critical, one minute, before it runs again,
  * unless the disk or memory level rose, a measured volume is new, reached a higher level or lost free space since that
  * pass (256 MB on a volume under pressure, 1 GB on any other), or `requested` says a command asked for this tick.
  */

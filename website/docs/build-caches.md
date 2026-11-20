@@ -666,7 +666,7 @@ and above normal runs one ladder top-down until the level clears:
 | 9    | Nothing                                                                                                                                                              | Other tools' caches, subject to the rules below                                                                                                                                                                                                                                            |
 
 After a ladder pass that freed nothing, the next pass waits four times that
-pass's duration, at most 15 minutes, or one minute at critical, unless the disk
+pass's duration, at most 15 minutes, or at most one minute at critical, unless the disk
 or memory level rose, any measured volume is new or reached a higher level, a
 volume under `disk.minFreeGb` lost 256 MB, any other volume lost 1 GB, or a
 command asked the `stim-daemon` for a tick, such as one under

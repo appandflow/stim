@@ -111,7 +111,7 @@ normal are not niced.
 ## A ladder pass that frees nothing waits
 
 After a daemon ladder pass that took no action, the next pass waits four times
-that pass's duration, at most 15 minutes, or one minute at critical. A rise of
+that pass's duration, at most 15 minutes, or at most one minute at critical. A rise of
 the disk or the memory level, any measured volume that is new or reached a
 higher level since that pass, a volume under pressure that lost 256 MB, any
 other volume that lost 1 GB, or a command that asks the daemon for a tick (the
@@ -136,11 +136,11 @@ fruitless pass per 256 MB it loses. A worker held at critical, the #5933 case,
 runs the ladder about once a minute again; the long wait covers a volume held
 at high.
 
-Chosen by the implementer of #6011, not the maintainer: the one-minute wait at
-critical is the daemon's tick, so the ladder still runs every scheduled tick.
-A build, boot or test slot request or release asks stimd for a tick at once, and
-without the wait a pass that freed nothing at critical would start again as
-soon as it ended.
+Chosen by the implementer of #6011, not the maintainer: critical keeps the wait
+of four times the pass, capped at one minute, the daemon's tick, so the ladder
+still runs every scheduled tick. A build, boot or test slot request or release
+asks stimd for a tick at once, and with no wait a pass that freed nothing at
+critical would start again as soon as it ended.
 
 Maintainer decision: "Good for both points", 2026-11-18, in answer to whether
 a wait of up to 15 minutes after a pass that freed nothing is acceptable, given
