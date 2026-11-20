@@ -25,7 +25,7 @@ any of the three. Before that the idle stage checks that the directory is real, 
 mount point, holds no file git tracks and only files git ignores; that no PATH
 launcher resolves into the checkout; that no other process runs from or works
 in the app; and that it holds no copy a trim could not put back
-(`.stim-not-restored-*`, or a `.stim-trimmed` marked `NOT-RESTORED`). It reads
+(`.stim-not-restored-*`, or `.stim-trimmed` marked `NOT-RESTORED`). It reads
 no Cargo lock file. The trims run the git, link, mount and launcher checks but
 not the whole-app process check; instead they keep each path a process
 executes from or holds open and each profile whose lock a build holds (below).
@@ -266,42 +266,27 @@ new path. A build that took a lock in
 between gets the directory back. A directory that cannot be put back is never
 deleted: it moves to `target/.stim-not-restored-*`, which later trims skip, for
 a person to merge or delete. If that move fails too, it stays in
-`.stim-trimmed` under its `NOT-RESTORED` marker, and later trims of that
-`target/` stop until a person removes it. When the put-back and the marking
-both fail, nothing records it, a known gap that main shares.
+`.stim-trimmed` with a marker, and later trims of that `target/` stop until a
+person removes it.
 
-Before its first move the trim writes a `STAGED` file and then an empty
-`NOT-RESTORED` marker, which every Stim version reads as a block, and notes
-the device and inode of the `.stim-trimmed` it made. A failed put-back
-removes `STAGED`, which needs no space, and leaves the marker. A clean finish
+The trim writes no marker before it moves: a trim that is killed leaves an
+unmarked `.stim-trimmed`, which the next trim deletes at its start. The
+trim notes the device and inode of the `.stim-trimmed` it made; at the end it
 checks that `.stim-trimmed` is still that real directory, deletes only the
-entries this trim staged, then the marker, then `STAGED`; a lone `STAGED`
-left by a stop is harmless, and a replaced `.stim-trimmed` keeps everything.
-A later trim that finds `STAGED` beside an empty marker, in a `.stim-trimmed`
-that is a real directory, treats it as a trim that did not finish, such as
-one whose process was killed; a `target/` holding such a leftover counts as a
-Cargo `target/` for the trims even when its last profile is staged. Under the
-trim claim it reads the processes once, probes the Cargo and Exact lock files
-of each staged entry at its staged path, walks them for a `*-keypair.json`
-and for another filesystem mounted inside, and on Linux reads the mounts for
-one at or under `.stim-trimmed`. When nothing uses, holds or keeps any of
-them, it deletes the staged entries, the marker and `STAGED` in that order,
-reports the entries as removed and goes on. Anything else keeps the whole
-`.stim-trimmed` for a person: a process in use, a held lock, a keypair, a
-mount, mounts that cannot be read, any entry at its top that is not a staged
-directory, `STAGED` or the marker, a launcher or process evidence that cannot
-be read, a check or delete that throws, is cancelled or reaches the build
-headroom deadline, a `.stim-not-restored-*` entry in the `target/`, and every
-other marker: the dormant delete's list of names, or a marker without
-`STAGED` beside it. Whatever deletes a `target/` whole (the dormant delete,
-the idle stage, gc's workspace outputs) treats any marker as a veto.
+entries it staged, and removes `.stim-trimmed` only when that leaves it empty,
+so anything else that appeared there stays and is reported. Two gaps are
+accepted, both shared with earlier versions: a kill between a build taking a
+profile back during the move and the trim's own check after the move, and a
+put-back whose marking fails too.
 
-Maintainer decision: "Ok 2", 2026-11-19
-[Pull request comment](https://github.com/appandflow/stim/pull/6013#issuecomment-7027224653),
-given in answer to how a leftover marker is handled. Option 2 was: a leftover
-marker means check before deleting rather than wait for a person; the next trim
-checks the staged folders' Cargo locks and processes, deletes them if nothing
-holds them, and keeps them if something does.
+Maintainer decision: "ok", 2026-11-19
+[Pull request comment](https://github.com/appandflow/stim/pull/6013#issuecomment-7029140328),
+choosing option 3 for a killed trim's staging: no marker before the move, so
+the next trim removes an unmarked `.stim-trimmed`; a failed put-back is
+recorded with the `NOT-RESTORED` marker for a person; and the gap when the
+marking fails too is accepted. Reason given: everything the trim stages is
+regenerable Cargo build output, Solana keypairs are never staged, and the
+remaining kill window exists on earlier versions.
 
 A unit sweep takes exclusive, non-blocking locks on Exact's ledger lock and the
 profile's `.cargo-lock`, `.cargo-build-lock` and `.cargo-artifact-lock` before
@@ -331,7 +316,7 @@ maintainer.
 The trim and the dormant delete write before they free anything: the trim
 claim under `~/.stim/machine/cargo-trim/`, on the dormant path the
 workspace's `native-run` and `metro-start` claims, the `target/.stim-trimmed`
-directory, the `NOT-RESTORED` marker, and the trim's moves of profiles,
+directory, the dormant delete's `NOT-RESTORED` marker, and the trim's moves of profiles,
 `incremental/` directories and unit files into it. When one of those writes
 fails with `ENOSPC`, or `EDQUOT` over a quota, Stim deletes its 1 MiB
 maintenance disk reserve (`$STIM_HOME/maintenance/disk-reserve`, the file the
@@ -350,15 +335,11 @@ runs again. A run that released the reserve says so in its outcome. When the
 write fails again, or there was no reserve to release, the `target/` is kept
 as before.
 
-The trim, like the dormant delete, writes the `NOT-RESTORED` marker before its
-first move and removes it only after it has deleted what it staged. A
-directory that could not be put back therefore stays marked for every later
-trim and delete, from any process. When the marker or `STAGED` cannot be
-written even after the reserve is released, the trim moves nothing; the dormant delete removes a marker it could
-not finish writing with its empty `.stim-trimmed`, and the `target/` gets its
-modification time back, so nothing blocks the next run. A trim's own marker a
-stopped trim left is checked by the next trim, as above. The maintenance
-pass writes the reserve back at its end when there is room.
+A failed put-back's `NOT-RESTORED` marker retries the same way. The dormant
+delete removes a marker it could not finish writing with its empty
+`.stim-trimmed`, and the `target/` gets its modification time back, so
+nothing blocks the next run. The maintenance pass writes the reserve back at
+its end when there is room.
 
 Reason: on 2026-11-19 at 23:01 UTC, with the maintainer's disk full, a rung 3
 trim failed with `ENOSPC` creating `.stim-trimmed` and freed nothing (#6012),

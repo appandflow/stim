@@ -102,7 +102,7 @@ async function cargoTargetCandidates(
   const found: CargoTargetCandidate[] = [];
   const add = async (base: string, discovered: boolean, reduceOnly: boolean, checkout: Checkout) => {
     const root = canonicalPath(base);
-    for (const path of await cargoTargetDirsAsync(root, { trimLeftover: true })) {
+    for (const path of await cargoTargetDirsAsync(root)) {
       try {
         await lstat(path);
         // Windows 8.3 aliases need native realpath. If it fails, keep the path for the existing ownership checks.
@@ -455,7 +455,7 @@ export async function trimCargoTargetAction(
   stop?: AbortSignal,
 ): Promise<ActionOutcome> {
   const root = action.workspace;
-  if (!root || !(await cargoTargetDirsAsync(dirname(action.target), { trimLeftover: true })).includes(action.target))
+  if (!root || !(await cargoTargetDirsAsync(dirname(action.target))).includes(action.target))
     return kept('it is no longer a Cargo target/ Stim recognises');
   const managed = await managedAs(root, operation);
   if (!managed) return kept('its checkout is no longer in a workspace or discovery scope');
