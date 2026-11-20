@@ -1,4 +1,4 @@
-import { quoteUnitWord } from '@stim-cli/core';
+import { quoteUnitWord, unitLines } from '@stim-cli/core';
 import { LABEL_VARIABLE } from '@stim-cli/core/state';
 import {
   environmentValues,
@@ -52,18 +52,16 @@ export function renderUnit(spec: ServiceSpec, previousScript: string | null = nu
   return lines.join('\n');
 }
 
+/** The `KillMode=` value the `[Service]` section of `text` sets last, or null when it sets none. */
+export function unitKillMode(text: string): string | null {
+  return unitLines(text).findLast((line) => line.section === 'Service' && line.key === 'KillMode')?.value ?? null;
+}
+
 /** `text` with `KillMode=process` added to its `[Service]` section when that section sets no `KillMode=`. */
 export function withKillMode(text: string): string {
+  if (unitKillMode(text) !== null) return text;
   const lines = text.split('\n');
-  let section = '';
-  let service = -1;
-  for (const [index, line] of lines.entries()) {
-    const header = /^\[(.+)\]$/.exec(line.trim())?.[1];
-    if (header) {
-      section = header;
-      if (header === 'Service') service = index;
-    } else if (section === 'Service' && /^KillMode\s*=/.test(line.trim())) return text;
-  }
+  const service = lines.findIndex((line) => line.trim() === '[Service]');
   if (service < 0) return text;
   lines.splice(service + 1, 0, KILL_MODE);
   return lines.join('\n');

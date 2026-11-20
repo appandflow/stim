@@ -45,7 +45,7 @@ import {
   type ServiceJob,
   type ServiceManager,
 } from './service-manager.ts';
-import { editUnit, withKillMode } from './service-unit.ts';
+import { editUnit, unitKillMode, withKillMode } from './service-unit.ts';
 import { hostPermissionPanes, requestHostPermissions, type HostApp } from './stim-host.ts';
 import { tailscalePackage } from './tailnet-helper.ts';
 import { markTailnet } from './tailnet-marker.ts';
@@ -445,10 +445,9 @@ export async function rewriteUnitToShim(label: string): Promise<boolean> {
     }
   } else if (installed.script !== stimd) return false;
   if (manager.loadedCommand) {
-    const loadsShim = async () => ((await manager.loadedCommand?.(label)) ?? '').includes(`path=${stimd} ;`);
-    if (!(await loadsShim())) {
+    if (!(await loadsShim(label, stimd))) {
       const reloaded = await manager.reload?.();
-      if (!reloaded?.ok || !(await loadsShim())) {
+      if (!reloaded?.ok || !(await loadsShim(label, stimd))) {
         const override = execStartOverride(path, readFileSync(path, 'utf8'));
         throw new ServiceError(
           `${manager.noun} has not loaded the engine shim for ${label}${override ? ` (${override})` : reloaded?.ok ? '' : ` (${reloaded?.stderr.trim()})`}; ${manager.restartRemedy(label)} when no build runs.`,
@@ -461,33 +460,83 @@ export async function rewriteUnitToShim(label: string): Promise<boolean> {
 }
 
 /** Writes `text` to the unit at `path`, through a symlink to its target. */
-function writeUnitThrough(path: string, text: string): void {
+function writeUnitThrough(path: string, text: string | Buffer): void {
   const target = realpathSync(path);
   const partial = `${target}.${process.pid}.tmp`;
   writeFileSync(partial, text, { mode: 0o644 });
   renameSync(partial, target);
 }
 
+/** Whether the service manager has loaded `stimd` as the start command of `label`. */
+async function loadsShim(label: string, stimd: string): Promise<boolean> {
+  return ((await serviceManager().loadedCommand?.(label)) ?? '').includes(`path=${stimd} ;`);
+}
+
+/**
+ * The unit migrations a service's server runs at boot, each failure passed to `report`. Returns whether the server must
+ * restart to run the engine shim. The shim rewrite goes first because `addUnitKillMode` reloads systemd, which also
+ * loads a shim an earlier boot wrote but failed to load; that reload then counts as the shim rewrite's.
+ */
+export async function migrateUnitAtBoot(label: string, report: (message: string) => void): Promise<boolean> {
+  let restart = false;
+  let shimPending = false;
+  try {
+    restart = await rewriteUnitToShim(label);
+  } catch (error) {
+    shimPending = true;
+    report(
+      `could not rewrite ${label} to name the stimd shim: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  try {
+    await addUnitKillMode(label);
+  } catch (error) {
+    report(`could not add KillMode=process to ${label}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const stimd = shimPending ? unitShim() : null;
+  return restart || (stimd !== null && (await loadsShim(label, stimd)));
+}
+
 /**
  * Adds `KillMode=process` to the systemd unit `label` when install wrote it without one, and reloads systemd so the
- * next stop of the running unit applies it; no restart is needed. When the reload fails the unit is written back as it
- * was, so the file never claims a mode systemd has not loaded, and the next boot tries again.
+ * next stop of the running unit applies it; no restart is needed. A unit whose file sets `KillMode=process` is reloaded
+ * when systemd has another mode loaded, as after a crash between the write and the reload. When the reload fails the
+ * unit is written back byte for byte, unless something else rewrote it meanwhile, and the next boot tries again. A stimd
+ * picks its handover from the mode systemd has loaded, not from this file. Runs under the unit's service claim.
  */
 export async function addUnitKillMode(label: string): Promise<void> {
   const manager = serviceManager();
-  if (manager.name !== 'systemd' || !(await readInstalled(label))?.managed) return;
-  const path = plistPath(label);
-  const text = readFileSync(path, 'utf8');
-  const edited = withKillMode(text);
-  if (edited === text) return;
-  writeUnitThrough(path, edited);
-  const reloaded = await manager.reload?.();
-  if (!reloaded?.ok) {
-    writeUnitThrough(path, text);
-    throw new ServiceError(
-      `systemd did not reload (${reloaded?.stderr.trim()}); the unit is unchanged and the server retries at its next boot.`,
-    );
-  }
+  if (manager.name !== 'systemd') return;
+  await holdingServiceClaim(label, async () => {
+    if (!(await readInstalled(label))?.managed) return;
+    const path = plistPath(label);
+    const original = readFileSync(path);
+    const text = original.toString('utf8');
+    if (!Buffer.from(text, 'utf8').equals(original))
+      throw new ServiceError(`${path} is not UTF-8 text; not adding KillMode=process to it.`);
+    const edited = withKillMode(text);
+    if (edited !== text) {
+      writeUnitThrough(path, edited);
+      const reloaded = await manager.reload?.();
+      if (!reloaded?.ok) {
+        if (!readFileSync(path).equals(Buffer.from(edited, 'utf8')))
+          throw new ServiceError(
+            `systemd did not reload (${reloaded?.stderr.trim()}), and ${path} changed since KillMode=process was added, so it is left as it is now.`,
+          );
+        writeUnitThrough(path, original);
+        throw new ServiceError(
+          `systemd did not reload (${reloaded?.stderr.trim()}); the unit is unchanged and the server retries at its next boot.`,
+        );
+      }
+    } else if (unitKillMode(text) !== 'process') return;
+    if ((await manager.loadedKillMode?.(label)) === 'process') return;
+    if (edited === text) await manager.reload?.();
+    const mode = await manager.loadedKillMode?.(label);
+    if (mode !== 'process')
+      throw new ServiceError(
+        `systemd has KillMode=${mode ?? 'unknown'} loaded for ${label}, not the unit's KillMode=process (a drop-in in ${path}.d may set it), so its stimd keeps the successor handover.`,
+      );
+  });
 }
 
 /** The server directory of the Stim home a service runs with `STIM_HOME` set to `stimHome`. */

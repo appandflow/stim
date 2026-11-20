@@ -8,10 +8,9 @@ import { formatHostedSessions, readHostedSessionRows } from './hosted-sessions.t
 import type { StatusWorkerRequest } from './status-feed.ts';
 import { readAudit } from './actions.ts';
 import {
-  addUnitKillMode,
   installService,
   listenerPids,
-  rewriteUnitToShim,
+  migrateUnitAtBoot,
   serviceStatus,
   statusLines,
   uninstallService,
@@ -213,22 +212,15 @@ export async function serve(
   }
   const label = serviceManagerOrNull()?.runningLabel(process.env);
   if (label)
-    void addUnitKillMode(label)
-      .catch((error: Error) => console.error(`stim: could not add KillMode=process to ${label}: ${error.message}`))
-      .then(() => rewriteUnitToShim(label))
-      .then(
-        (rewritten) => {
-          if (rewritten) {
-            const reloaded = serviceManagerOrNull()?.loadedCommand !== undefined;
-            console.log(
-              `Rewrote ${label} to start the Stim engine's stimd shim${reloaded ? '; restarting once idle to run it' : ''}.`,
-            );
-            if (reloaded) requestRestart('its service unit now starts the engine shim');
-          }
-          return rewritten;
-        },
-        (error: Error) => console.error(`stim: could not rewrite ${label} to name the stimd shim: ${error.message}`),
+    void migrateUnitAtBoot(label, (message) => console.error(`stim: ${message}`)).then((restart) => {
+      if (!restart) return false;
+      const reloaded = serviceManagerOrNull()?.loadedCommand !== undefined;
+      console.log(
+        `Rewrote ${label} to start the Stim engine's stimd shim${reloaded ? '; restarting once idle to run it' : ''}.`,
       );
+      if (reloaded) requestRestart('its service unit now starts the engine shim');
+      return true;
+    });
   console.log(`stim-server ${pkg.version} (stim ${stim.version}, protocol ${PROTOCOL_VERSION})`);
   for (const { host, port: bound } of server.addresses) {
     console.log(`listening on ws://${host.includes(':') ? `[${host}]` : host}:${bound}`);

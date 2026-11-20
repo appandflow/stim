@@ -91,6 +91,8 @@ export interface ServiceManager {
   reload?(): Promise<Run>;
   /** The start command the manager has loaded for `label`, as it prints it; absent where `reload` is. */
   loadedCommand?(label: string): Promise<string | null>;
+  /** The `KillMode=` the manager has loaded for `label`, drop-ins included, or null when it cannot say; systemd only. */
+  loadedKillMode?(label: string): Promise<string | null>;
   /** Asks the manager to stop the job; callers wait for it to go. */
   stop(label: string): Promise<Run>;
   /** Removes the stopped service's file and every registration of it. */
@@ -225,6 +227,10 @@ const systemd: ServiceManager = {
   async loadedCommand(label) {
     const shown = await systemctl('show', unit(label), '-p', 'ExecStart');
     return shown.ok ? shown.stdout : null;
+  },
+  async loadedKillMode(label) {
+    const shown = await systemctl('show', unit(label), '-p', 'KillMode', '--value');
+    return shown.ok ? shown.stdout.trim() : null;
   },
   stop: (label) => systemctl('stop', '--no-block', unit(label)),
   async remove(label) {
