@@ -202,12 +202,6 @@ export function easSessionLedgerLock(root: string = easMachineStateRoot()): stri
   return join(root, 'ledger.lock');
 }
 
-/** The claim root that admits one trim of a canonical Cargo `target/` at a time across every Stim home on this machine. */
-export function cargoTargetTrimClaims(target: string, env?: NodeJS.ProcessEnv): string {
-  const key = createHash('sha256').update(target).digest('hex').slice(0, 24);
-  return join(userHome(env), '.stim', 'machine', 'cargo-trim', `${key}.claims`);
-}
-
 /** The machine-level list of Stim homes lives under the real home directory, never under STIM_HOME. */
 export function stimHomesRoot(): string {
   return join(homedir(), '.stim', 'machine', 'homes');
