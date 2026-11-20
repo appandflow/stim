@@ -442,18 +442,28 @@ const currentConfig = () => loadConfig() ?? { version: 2 as const, projects: {},
 const daysAgo = (days: number) => new Date(Date.now() - days * 86_400_000);
 
 test.skipIf(process.platform === 'win32')(
-  'gc at critical reports the source checkout dependencies after the linked worktrees; at 7 days it takes them, records it, and the record ends once they are installed',
+  'gc at critical reports the source checkout dependencies after the linked worktrees',
   async () => {
     const roots = idleRepo([{ name: 'feature', workspace: true }]);
     const source = roots.repo ?? '';
 
-    const { payload } = await gcJson();
-    const order = criticalDependencies(payload);
+    const order = criticalDependencies((await gcJson()).payload);
+
     expect(order.indexOf(join(source, 'node_modules'))).toBeGreaterThan(
       order.indexOf(join(roots.feature ?? '', 'node_modules')),
     );
     expect(order).toContain(join(source, 'ios', 'Pods'));
+  },
+  60_000,
+);
+
+test.skipIf(process.platform === 'win32')(
+  'gc takes the source checkout dependencies at 7 days idle, records it, and the record ends once they are installed',
+  async () => {
+    const roots = idleRepo([{ name: 'feature', workspace: true }]);
+    const source = roots.repo ?? '';
     ageCheckout(source, daysAgo(8));
+
     await quietly(() => runGc({ pressure: 'normal' }));
 
     expect(existsSync(join(source, 'node_modules'))).toBe(false);
@@ -966,8 +976,8 @@ test.skipIf(process.platform === 'win32')(
     mkdirSync(join(diskUsageLinksFile(modules), 'occupied'), { recursive: true });
     const { payload }: { payload: LevelPayload } = await gcJson('normal');
     expect(readJsonObject(diskUsageNativeFile(modules))?.complete).toBe(true);
-    expect(dependencyAction(payload, modules, 4)).toMatchObject({ outcome: 'would' });
-    expect(dependencyAction(payload, modules, 4)?.detail ?? '').not.toMatch(linkedDetail);
+    expect(dependencyAction(payload, modules, null)).toMatchObject({ outcome: 'would' });
+    expect(dependencyAction(payload, modules, null)?.detail ?? '').not.toMatch(linkedDetail);
   },
   60_000,
 );
