@@ -590,21 +590,32 @@ function dormantMs(operation?: StimContext): number {
 }
 
 /**
- * The reasons a worktree stays, read again under the removal locks: for a registered one, a git-ignored file that the
- * main checkout lacks or holds differently; for a discovered one, its whole removal evidence.
+ * Why a finished registered worktree stays, or null: an unfinished `pnpm patch` in its `node_modules`, or a git-ignored
+ * file outside its dependency and build-output folders that its main checkout lacks or holds differently.
+ */
+async function registeredRemovalHold(path: string, operation?: StimContext): Promise<string | null> {
+  const { ignoredFilesHold, pendingPnpmPatch } = await import('../../workspace/discovered-removal.ts');
+  const patch = await pendingPnpmPatch(path);
+  if (patch) return patch;
+  const source = await resolveSourceCheckoutAsync(path, {
+    env: operation?.env,
+    signal: operation?.signal,
+    declareFor: operation,
+  });
+  if ('refusal' in source) return 'its main checkout cannot be named, so its git-ignored files cannot be compared';
+  return ignoredFilesHold(path, source.path, operation?.signal);
+}
+
+/**
+ * The reasons a worktree stays, read again under the removal locks: for a registered one, `registeredRemovalHold`; for
+ * a discovered one, its whole removal evidence.
  */
 async function removalUseHold(candidate: WorktreeCandidate, operation?: StimContext): Promise<string[]> {
-  const { discoveredRemovalHold, ignoredFilesHold } = await import('../../workspace/discovered-removal.ts');
   if (!candidate.discovered) {
-    const source = await resolveSourceCheckoutAsync(candidate.path, {
-      env: operation?.env,
-      signal: operation?.signal,
-      declareFor: operation,
-    });
-    if ('refusal' in source) return ['its main checkout cannot be named, so its git-ignored files cannot be compared'];
-    const hold = await ignoredFilesHold(candidate.path, source.path, operation?.signal);
+    const hold = await registeredRemovalHold(candidate.path, operation);
     return hold ? [hold] : [];
   }
+  const { discoveredRemovalHold } = await import('../../workspace/discovered-removal.ts');
   const hold = await discoveredRemovalHold(candidate.path, {
     main: candidate.source ?? null,
     idleMs: dormantMs(operation),
@@ -1011,6 +1022,10 @@ export async function collectWorktreeSweep({
       });
       if (hold) Object.assign(candidate, { skipCode: 'recent-activity', skipped: `kept: ${hold}`, eligibleAt: null });
     }
+  }
+  for (const candidate of worktrees.filter((entry) => !entry.discovered && entry.skipped === null)) {
+    const hold = await registeredRemovalHold(candidate.path, operation);
+    if (hold) Object.assign(candidate, { skipCode: 'dirty', skipped: `kept: ${hold}`, eligibleAt: null });
   }
   const listed = [...worktrees, ...outside].filter(
     (w) => idle || (w.skipCode !== 'not-a-worktree' && w.skipCode !== 'source-checkout'),

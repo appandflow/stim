@@ -15,9 +15,18 @@ const MAX_COMPARED_BYTES = 16 * 1024 * 1024;
 
 const outputNamed = (name: string) => name === 'node_modules' || SKIPPED_WHERE_IGNORED.has(name);
 
+/** Whether `rel` is `folder`, or lies inside it, at the checkout root or below, as `apps/mobile/ios/Pods` in a monorepo. */
+const within = (rel: string, folder: string) =>
+  rel === folder || rel.startsWith(`${folder}/`) || rel.endsWith(`/${folder}`) || rel.includes(`/${folder}/`);
+
 /** Whether git reported the whole folder ignored and it is a dependency or build-output folder the stages recognise. */
 const regenerableFolder = (rel: string, folders: readonly string[]) =>
-  outputNamed(rel.split('/').at(-1) ?? '') || folders.some((folder) => rel === folder || rel.startsWith(`${folder}/`));
+  outputNamed(rel.split('/').at(-1) ?? '') || folders.some((folder) => within(rel, folder));
+
+/** Whether the ignored entry `rel` is a `node_modules` that is a symbolic link, as some package managers and tools make. */
+const linkedNodeModules = async (path: string, rel: string): Promise<boolean> =>
+  rel.split('/').at(-1) === 'node_modules' &&
+  ((await lstat(join(path, rel)).catch(() => null))?.isSymbolicLink() ?? false);
 
 async function sameAsMain(path: string, main: string, rel: string, budget: { bytes: number }): Promise<boolean | null> {
   const mine = await lstat(join(path, rel));
@@ -85,6 +94,7 @@ export async function ignoredFilesHold(path: string, main: string, signal?: Abor
       if (!stat) return unreadable;
       const directory = stat.isDirectory() && !stat.isSymbolicLink();
       if (directory && regenerableFolder(child, folders)) continue;
+      if (stat.isSymbolicLink() && name === 'node_modules') continue;
       const hold = directory ? await walk(child) : await check(child);
       if (hold) return hold;
     }
@@ -92,7 +102,11 @@ export async function ignoredFilesHold(path: string, main: string, signal?: Abor
   };
   for (const entry of listed.split('\0').filter(Boolean)) {
     const rel = entry.endsWith('/') ? entry.slice(0, -1) : entry;
-    if (entry.endsWith('/') ? regenerableFolder(rel, folders) : folders.some((folder) => rel.startsWith(`${folder}/`)))
+    if (
+      entry.endsWith('/')
+        ? regenerableFolder(rel, folders)
+        : folders.some((folder) => within(dirname(rel), folder)) || (await linkedNodeModules(path, rel))
+    )
       continue;
     const hold = entry.endsWith('/') ? await walk(rel) : await check(rel);
     if (hold) return hold;
@@ -116,7 +130,7 @@ async function enclosingCheckout(path: string): Promise<string | null> {
  * Why an unfinished `pnpm patch` keeps the worktree, or null: pnpm keeps the editable copy in
  * `node_modules/.pnpm_patches` until `pnpm patch-commit`, which git ignores and no activity read looks into.
  */
-async function pendingPnpmPatch(path: string): Promise<string | null> {
+export async function pendingPnpmPatch(path: string): Promise<string | null> {
   const dir = join(path, 'node_modules', '.pnpm_patches');
   try {
     return (await readdir(dir)).length

@@ -2677,17 +2677,52 @@ test('gc keeps a finished worktree a running agent session works in', async () =
   expect(existsSync(worktrees.squashed ?? '')).toBe(false);
 }, 240_000);
 
-test('gc keeps a finished registered worktree whose git-ignored hand-written file the main checkout lacks', async () => {
+test('gc keeps a finished registered worktree whose git-ignored hand-written file the main checkout lacks, from the plan on', async () => {
   const { worktrees } = repoWithMergedBranches();
   const merged = worktrees.merged ?? '';
   mkdirSync(join(merged, '.claude'));
   writeFileSync(join(merged, '.claude', 'tool.sh'), '#!/bin/sh\necho mine\n');
 
   await checkWorktrees();
+  const { payload } = await gcJson({ dryRun: true, pressure: 'normal' });
   await gcJson({ pressure: 'normal' });
 
+  const entry = payload.sections.linkedWorktrees.find((w: { path: string }) => realpathSync.native(w.path) === merged);
+  expect(entry).toMatchObject({ willRemove: false, detail: expect.stringContaining('.claude/tool.sh') });
   expect(existsSync(join(merged, '.claude', 'tool.sh'))).toBe(true);
   expect(existsSync(worktrees.squashed ?? '')).toBe(false);
+}, 240_000);
+
+test('gc keeps a finished registered worktree with an unfinished pnpm patch', async () => {
+  const { repo, worktrees } = repoWithMergedBranches();
+  const merged = worktrees.merged ?? '';
+  writeFileSync(join(repo, '.git', 'info', 'exclude'), 'node_modules/\n');
+  mkdirSync(join(merged, 'node_modules', '.pnpm_patches', 'left-pad@1.3.0'), { recursive: true });
+  writeFileSync(join(merged, 'node_modules', '.pnpm_patches', 'left-pad@1.3.0', 'index.js'), 'patched');
+
+  await checkWorktrees();
+  await gcJson({ pressure: 'normal' });
+
+  expect(existsSync(join(merged, 'node_modules', '.pnpm_patches', 'left-pad@1.3.0', 'index.js'))).toBe(true);
+  expect(existsSync(worktrees.squashed ?? '')).toBe(false);
+}, 240_000);
+
+test('gc removes a finished registered worktree whose only ignored files are nested Pods and a linked node_modules', async () => {
+  const { repo, worktrees } = repoWithMergedBranches();
+  const merged = worktrees.merged ?? '';
+  writeFileSync(join(repo, '.git', 'info', 'exclude'), 'Pods/\nnode_modules\n');
+  const pods = join(merged, 'apps', 'mobile', 'ios', 'Pods', 'Lib');
+  mkdirSync(pods, { recursive: true });
+  for (let i = 0; i < 250; i++) writeFileSync(join(pods, `f${i}.h`), String(i));
+  const store = join(projects, 'linked-store');
+  mkdirSync(store);
+  symlinkSync(store, join(merged, 'node_modules'));
+
+  await checkWorktrees();
+  await gcJson({ pressure: 'normal' });
+
+  expect(existsSync(merged)).toBe(false);
+  expect(existsSync(store)).toBe(true);
 }, 240_000);
 
 test('worktree remove removes a clean linked worktree no stim command ran in', async () => {
