@@ -105,8 +105,7 @@ export async function runHomePasses(input: HomePassesInput): Promise<HomePasses>
   const operation = processContext(process.cwd(), input.signal ?? new AbortController().signal);
   const closeGitReads = openGitReads(operation);
   try {
-    // @ref LLP 0021#stimd-runs-at-the-priority-of-an-app -- a queued boot waits on the reclaim after these passes
-    return await (bootWaiting() ? runControlPath(() => homePasses(input, operation)) : homePasses(input, operation));
+    return await homePasses(input, operation);
   } finally {
     closeGitReads();
   }
@@ -118,6 +117,11 @@ function bootWaiting(): boolean {
   } catch {
     return false;
   }
+}
+
+// @ref LLP 0021#stimd-runs-at-the-priority-of-an-app -- a queued boot waits on the reclaim after the tick's passes
+function tickPass<T>(level: PressureLevel, fn: () => Promise<T>): Promise<T> {
+  return bootWaiting() ? runControlPath(fn) : runMaintenanceWork(level, fn);
 }
 
 interface HomePassesInput {
@@ -173,7 +177,7 @@ async function homePasses(
   );
   operation.signal.throwIfAborted();
   const workspaces = await watchedStep(log, 'idle_stage', () =>
-    runMaintenanceWork(pressure.level, () =>
+    tickPass(pressure.level, () =>
       runIdlePass({
         config,
         now,
@@ -218,7 +222,7 @@ async function homePasses(
   const idleMs = lap();
   if (act) forgetGitReads(operation);
   const reading = { devices: measured.devices, simsFailed: measured.sims === null, operation };
-  actions.push(...(await runMaintenanceWork(pressure.level, () => runDormantPass({ config, act, log, ...reading }))));
+  actions.push(...(await tickPass(pressure.level, () => runDormantPass({ config, act, log, ...reading }))));
   operation.signal.throwIfAborted();
   const dormantMs = lap();
   let ladderPass: LadderPass | null = null;

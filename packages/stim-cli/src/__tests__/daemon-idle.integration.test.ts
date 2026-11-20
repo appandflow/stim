@@ -164,13 +164,15 @@ test.skipIf(process.platform === 'win32')(
 );
 
 test.skipIf(process.platform === 'win32')(
-  'a tick runs its idle pass git reads lowered, and at full priority while a boot waits on its reclaim',
+  'a tick runs its idle pass git reads lowered, and at full priority when a boot queues on its reclaim during the measurement',
   async () => {
     vi.stubEnv('GIT_CONFIG_COUNT', undefined);
     bootedWorkspace('waited', 20 * MINUTE_MS);
     const config = loadConfig();
     const devices = await collectOwnedDeviceActivityAsync(config, sims, Date.now());
-    vi.spyOn(measure, 'measureTick').mockResolvedValue({
+    let ticket: ReturnType<typeof takeWaitTicket> | null = null;
+    let queueBoot = false;
+    const measured: measure.TickMeasurement = {
       measurement: {
         disk: [{ volume: '/', freeMb: 500_000 }],
         memory: { level: 'normal', availableBytes: 8 * 1024 ** 3, totalBytes: 16 * 1024 ** 3 },
@@ -183,6 +185,11 @@ test.skipIf(process.platform === 'win32')(
       sims,
       simsError: null,
       devices,
+    };
+    vi.spyOn(measure, 'measureTick').mockImplementation(async () => {
+      if (queueBoot)
+        ticket = takeWaitTicket('boot', { platform: 'ios', key: 'new', root: home, displayName: 'waiter' }, []);
+      return measured;
     });
     const realGit = execSync('command -v git', { encoding: 'utf8' }).trim();
     const bin = join(home, 'bin');
@@ -203,13 +210,14 @@ test.skipIf(process.platform === 'win32')(
     };
 
     const quiet = await calls();
-    const ticket = takeWaitTicket('boot', { platform: 'ios', key: 'new', root: home, displayName: 'waiter' }, []);
+    queueBoot = true;
     let waiting: string[];
     try {
       waiting = await calls();
     } finally {
-      releaseClaim(ticket);
+      if (ticket) releaseClaim(ticket);
     }
+    expect(ticket).not.toBeNull();
     expect(quiet).toContain('1');
     expect(waiting.length).toBeGreaterThan(0);
     expect(waiting).not.toContain('1');
