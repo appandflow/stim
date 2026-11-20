@@ -878,27 +878,6 @@ describe('the pressure ladder', () => {
     expect(deleted).toEqual([]);
   });
 
-  test('rung 1 records kept, not done, when the deletion kept every output', async () => {
-    const { root } = workspace('held', 5 * MINUTE_MS, 'Shutdown');
-    const dir = join(workspaceDir(root), 'derived-data');
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, 'Build.o'), 'x'.repeat(4096));
-    vi.spyOn(idlePass, 'deleteOutputs').mockImplementation(async (paths, _launching, kept) => {
-      for (const path of paths) kept.push(`kept ${path}: held`);
-      return 0;
-    });
-
-    const { actions } = await runLadder(
-      input(true, async () => pressure('high')),
-      pressure('high'),
-    );
-
-    expect(existsSync(dir)).toBe(true);
-    expect(actions.filter((action) => action.rung === 1)).toEqual([
-      expect.objectContaining({ outcome: 'kept', bytes: 0, detail: `kept ${dir}: held` }),
-    ]);
-  });
-
   test('rung 1 leaves out a stopped workspace whose only output is a Cargo target/', async () => {
     const rust = workspace('rust-only', 5 * MINUTE_MS, 'Shutdown').root;
     mkdirSync(join(rust, 'target'));
@@ -2206,4 +2185,20 @@ describe("the daemon tick's ladder pacing", () => {
     expect(first.ladder).toMatchObject({ freed: false });
     expect(ladder).toHaveBeenCalledTimes(1);
   });
+});
+
+test('deleteOutputs stops before the next removal once its operation is aborted', async () => {
+  const base = mkdtempSync(join(tmpdir(), 'stim-delete-outputs-'));
+  onTestFinished(() => rmSync(base, { recursive: true, force: true }));
+  const paths = ['one', 'two'].map((name) => join(base, name));
+  for (const path of paths) mkdirSync(path);
+  const controller = new AbortController();
+  vi.spyOn(fsUtil, 'measuredDirectorySizeAsync').mockImplementation(async () => {
+    controller.abort();
+    return 1;
+  });
+
+  await expect(idlePass.deleteOutputs(paths, controller.signal)).rejects.toThrow('aborted');
+
+  for (const path of paths) expect(existsSync(path)).toBe(true);
 });

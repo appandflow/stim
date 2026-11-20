@@ -899,8 +899,10 @@ SWEEPING FINISHED WORKTREES
   and reports each linked worktree with the reason it is removed or kept. A
   worktree is managed when a registered project or a workspace.json root lies
   in it, or when discovery finds it (DISCOVERED CHECKOUTS below); a linked
-  worktree of a scoped STIM_HOME that none of these names is reported as
-  not-registered and kept, however merged or idle; \`worktree remove\` still
+  worktree that none of these names (with maintenance.autoDiscover off, the
+  default, or in a scoped STIM_HOME, every one outside maintenance.discoverRoots
+  that no stim command ran in) is reported as not-registered and kept, however
+  merged or idle; \`worktree remove\` still
   removes it on request. A worktree is finished when
   its branch is merged into the default branch, or its pull request was
   merged or closed (PULL REQUESTS below). A clean worktree with no commits
@@ -915,8 +917,7 @@ SWEEPING FINISHED WORKTREES
   counts a running Claude Code session, or a Codex thread active in the last
   30 minutes, whose working directory is in the worktree),
   not known to this Stim home (not-registered: no project, workspace.json root
-  or discovery source of this Stim home names it, which in a scoped STIM_HOME
-  includes every worktree outside maintenance.discoverRoots),
+  or discovery source of this Stim home names it),
   dirty and not finished, or dirty and finished when its changes cannot be
   archived (ARCHIVED CHANGES below; untracked files count; a Podfile.lock
   that Pods/Manifest.lock matches, or that matched when gc deleted Pods (project.pbxproj always counts) and
@@ -1212,11 +1213,20 @@ ORPHANED WORKSPACE DIRECTORIES
 
 DISCOVERED CHECKOUTS
 A checkout no stim command ran in is managed like a registered workspace once
-discovery finds it: direct children of the folders that hold the checkouts of
-registered projects, direct children of the folders in maintenance.discoverRoots
-(a machine setting: absolute paths below the home folder, a leading ~ expanded;
-the home folder and / are refused, and doctor reports one that is not a folder), and linked worktrees (git worktree list) of their
-repositories. A child counts only when Stim's project detection recognises it as
+discovery finds it. By default (maintenance.autoDiscover false) discovery reads
+only maintenance.discoverRoots (a machine setting: absolute paths below the home
+folder, a leading ~ expanded; the home folder and / are refused, and doctor
+reports one that is not a folder): its direct children and the linked worktrees
+of their repositories that lie inside it. With
+  stim settings set maintenance.autoDiscover true --scope machine
+it also reads direct children of the folders that hold the checkouts of
+registered projects, linked worktrees (git worktree list) of every known
+repository, and the two reduce-only sources below. While it is off, the daemon
+still scans and measures, and stim doctor reports a note
+(auto-discover-suggested) when checkouts only automatic discovery would reach
+hold at least 10 GiB of measured build output, with both commands: turn it on,
+or add their folders to maintenance.discoverRoots. Rules below for siblings,
+worktrees outside roots and reduce-only finds apply only with it on. A child counts only when Stim's project detection recognises it as
 a project it handles, itself or through a direct child of its apps, examples or
 packages folder; of a plain Node checkout (git, a root package.json) only its
 finished linked worktrees are removed, nothing else; any other folder is ignored. A linked worktree is acted on only
@@ -1229,7 +1239,8 @@ except inside a maintenance.discoverRoots folder, which is always considered,
 and the ~/.codex/worktrees worktrees below, which are only reduced.
 A worktree nested in a registered root is left to that workspace. The home
 directory and / are never a folder that holds known projects. A scoped
-STIM_HOME discovers only from its own maintenance.discoverRoots. Discovery
+STIM_HOME discovers only from its own maintenance.discoverRoots, whatever
+maintenance.autoDiscover says, and reads no repository. Discovery
 registers nothing, writes nothing and recomputes each run; no git fetch runs in
 a discovered repository and pull requests come from the cache.
 Two more sources find checkouts that Stim only reduces and never removes
@@ -1276,21 +1287,11 @@ symlink), on the home volume, below no skipped folder and still a project;
 anything else is dropped. Checkouts the scan finds under a dot-folder of the
 home folder are recorded in the result and never acted on, because an installed
 tool cannot be told from a checkout there; maintenance.discoverRoots is the way
-to manage one. A checkout that an executable on PATH (a symlink in a
-PATH directory, ~/.local/bin, ~/bin, ~/.cargo/bin, ~/.bun/bin, ~/.volta/bin,
-~/Library/pnpm, the active nvm bin, /usr/local/bin or /opt/homebrew/bin)
-resolves into is kept whole, by every pass that deletes its outputs,
-dependencies or Cargo target. A link this user can run but not read is
-followed through the file it opens (macOS). A directory or entry still unread
-counts as no launcher: cleanup goes ahead, and the pass log and stim doctor
-(launcher-evidence-incomplete) name it. A read with no answer in 3 seconds
-keeps every checkout. Each read of the processes using a path is paired with a
-launcher read of its own, never the planning reading; a
-directory that hangs ends the reading as incomplete at once, and while that read
-is pending (at most one per thread: the daemon's main thread and passes thread
-each have one; the scan runs on the passes thread) no other launcher or scan
-read starts and a scheduled scan is skipped. A scan stops at the first read that
-times out, keeping the previous finds. Reduce-only checkouts have their build outputs, and
+to manage one. Cleanup does not look at PATH: a command linked into build
+output, dependencies or a Cargo target breaks when that folder goes, until
+rebuilt or reinstalled. A folder read with no answer in 3 seconds stays
+pending (one per daemon thread), blocks other scan reads and skips a scheduled
+scan; the scan stops there, keeping the previous finds. Reduce-only checkouts have their build outputs, and
 their node_modules and Pods (a linked worktree's after idle.dormantDays, a source
 checkout's after idle.sourceDormantDays), reduced by the rules below. Every one is
 evaluated on every pass, like a sibling-discovered checkout; the
@@ -1310,8 +1311,7 @@ node_modules and Pods go too: a linked worktree's after idle.dormantDays (defaul
 1 day), a main (source) checkout's after idle.sourceDormantDays (default 7 days; 0
 never), by the same evidence. That holds for every kind of discovered checkout
 (children of the folders holding registered checkouts, children of
-maintenance.discoverRoots, reduce-only finds) even where no stim command ever ran,
-and a PATH launcher keeps any of them. A
+maintenance.discoverRoots, reduce-only finds) even where no stim command ever ran. A
 target directory at a checkout root whose CACHEDIR.TAG starts with the standard
 CACHEDIR.TAG signature line and whose files git ignores counts as build output
 for every checkout.
@@ -1327,7 +1327,9 @@ dist folder, keeps it (more than 200 files or 16 MB to compare also keeps it).
 Any change to a tracked file, even Podfile.lock or project.pbxproj, is dirty
 work and keeps it, as does any tracked file marked assume-unchanged or
 skip-worktree, which hides edits from git status, or an unfinished pnpm patch
-in node_modules/.pnpm_patches. A worktree inside a
+in node_modules/.pnpm_patches. A finished registered worktree follows the
+ignored-file and pnpm patch rules too; Pods under any ios folder and a linked
+node_modules count as regenerable. A worktree inside a
 dot-folder other than .worktrees (.claude/worktrees) of its main checkout, or of
 a worktree inside it, is
 managed by another tool and is never removed, though its outputs are reduced;

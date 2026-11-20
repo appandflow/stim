@@ -174,7 +174,9 @@ invariant 8). A runtime deletion that cannot read the SDK version or a
 project's settings deletes no runtime and reports why under "Needs a person".
 
 Reason: a wrong keep costs space until the next pass; a wrong delete loses
-work or breaks a build in progress.
+work or breaks a build in progress. For regenerable build output, a build that
+starts after the last check is the accepted exception: it loses that output and
+rebuilds (LLP 0005, The loss budget for regenerable build output).
 
 ## Links
 

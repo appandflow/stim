@@ -44,7 +44,6 @@ import { projectDeviceSlots } from '../../devices/device-slots.ts';
 import { listAllIosSimsAsync } from '../../devices/ios.ts';
 import { liveShareKeepReason } from '../../local-server.ts';
 import { withIdleWorkspace } from '../../workspace/in-use.ts';
-import { freshLaunchers } from '../../workspace/launchers.ts';
 import { isOnMountedVolume, listMountedVolumes } from '../../fs-util.ts';
 import { loadConfig } from '../../workspace/config.ts';
 import { cacheBlocked, lowestFree, measureDisk, measureDiskAsync } from './measure.ts';
@@ -407,7 +406,6 @@ async function clearArtifacts(action: MaintenanceAction, context: ActContext): P
     protectedRoot: context.protectedRoot,
     pinned: maintenancePinnedReader(context.operation),
     worktrees: (context.worktrees ??= await artifactWorktreesFor(context.operation)),
-    launchers: freshLaunchers(context.operation, context.operation?.signal),
     operation: context.operation,
   });
 }

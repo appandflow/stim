@@ -177,7 +177,7 @@ describe('serverSetupFindings', () => {
       }),
     );
     expect(legacy?.fix).toBe(
-      'Follow https://stim.appandflow.com/docs/migrate-to-2#for-agents first. At its services step, once active work has drained, run `STIM_HOME=/Users/me/.stim stim service install --label worker --port 7788 --path-prepend /opt/homebrew/bin --path-prepend "/Users/me/My Tools" --env ANDROID_HOME=<value> --env SECRET_TOKEN=<value>`, with each <value> set to what the service sets now. The service does not run the engine\'s stimd shim, so `stim engine update` does not move it.',
+      "Follow https://stim.appandflow.com/docs/migrate-to-2#for-agents first. At its services step, once active work has drained, run `STIM_HOME=/Users/me/.stim stim service install --label worker --port 7788 --path-prepend /opt/homebrew/bin --path-prepend '/Users/me/My Tools' --env ANDROID_HOME=<value> --env SECRET_TOKEN=<value>`, with each <value> set to what the service sets now. The service does not run the engine's stimd shim, so `stim engine update` does not move it.",
     );
     expect(legacy?.fix).not.toContain('hunter2');
     const defaultHome = service();
@@ -190,6 +190,12 @@ describe('serverSetupFindings', () => {
       }),
     ).find((each) => each.code === 'server-version');
     expect(fromScratchShell?.fix).toContain('`env -u STIM_HOME stim service install --port 7788`');
+    const portless = service();
+    portless.installed = { ...portless.installed, port: null };
+    const [unknownPort] = serverSetupFindings(
+      setup({ services: [portless], servers: [reading({ health: health({ stim: '1.40.0' }) })] }),
+    );
+    expect(unknownPort?.fix).toContain('stim service install --port 7788');
     const shim = service();
     shim.installed = { ...shim.installed, node: null, script: '/Users/me/.stim/engine/bin/stimd' };
     const [engine] = serverSetupFindings(
@@ -251,6 +257,22 @@ describe('serverSetupFindings', () => {
       );
       expect(finding).toMatchObject({ code: 'server-service-override', level: 'note' });
       expect(finding?.detail).toContain('o.conf');
+    });
+
+    it('tells a stale LaunchAgent to install once with its own options', () => {
+      const { label, installed } = service();
+      const stale = {
+        label,
+        installed: { ...installed, env: ['TOKEN=secret'], pathPrepend: ['/opt/jdk bin'] },
+        reason: 'its plist sets ProcessType Standard',
+      };
+      const [finding] = serverSetupFindings(setup({ staleServices: [stale] }));
+      expect(finding).toMatchObject({ code: 'server-service-stale', level: 'note' });
+      expect(finding?.fix).toContain(
+        "STIM_HOME=/Users/me/.stim stim service install --port 7788 --path-prepend '/opt/jdk bin' --env TOKEN=<value>",
+      );
+      expect(finding?.fix).not.toContain('secret');
+      expect(serverSetupFindings(setup())).toEqual([]);
     });
 
     it('keeps the crash finding next to the drop-in note, and says nothing for a unit already on the shim', () => {

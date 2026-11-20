@@ -1435,7 +1435,7 @@
 [*] interface UnmanagedGroup { @@1 commandProblem: "too-broad" | "already-named" | "setting-unreadable" | "unchecked" | null;
 [*] interface UnmanagedGroup { @@1 failed: number;
 [*] interface UnmanagedGroup { @@1 folder: string;
-[*] interface UnmanagedGroup { @@1 kind: "reduce-only" | "dot-folder" | "unchecked";
+[*] interface UnmanagedGroup { @@1 kind: "reduce-only" | "dot-folder" | "untracked" | "unchecked";
 [*] interface UnmanagedGroup { @@1 measured: number;
 [*] interface UnmanagedGroup { @@1 members: Array<{
 [*] interface UnmanagedGroup { @@1 notMeasuredYet: number;

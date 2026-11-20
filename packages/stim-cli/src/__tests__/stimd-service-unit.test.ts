@@ -1,6 +1,6 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { renderUnit } from '../../../server/src/service-unit.ts';
 import { serviceJob } from '../stimd/service-unit.ts';
 
@@ -10,6 +10,15 @@ describe('serviceJob on systemd', () => {
   beforeEach(() => {
     home = mkdtempSync(join(tmpdir(), 'stim-service-unit-'));
     vi.stubEnv('HOME', home);
+    // Stands in for systemd: prints the KillMode it has loaded for the unit, or fails when there is none to print.
+    mkdirSync(join(home, 'bin'));
+    writeFileSync(
+      join(home, 'bin', 'systemctl'),
+      `#!/bin/sh\n[ -e '${home}/loaded-killmode' ] || exit 1\ncat '${home}/loaded-killmode'\n`,
+    );
+    chmodSync(join(home, 'bin', 'systemctl'), 0o755);
+    vi.stubEnv('PATH', `${join(home, 'bin')}${delimiter}${process.env.PATH ?? ''}`);
+    writeFileSync(join(home, 'loaded-killmode'), 'process\n');
     const dir = join(home, '.config', 'systemd', 'user');
     mkdirSync(dir, { recursive: true });
     mkdirSync(join(home, '.stim', 'engine', 'bin'), { recursive: true });
@@ -57,14 +66,15 @@ describe('serviceJob on systemd', () => {
     });
   });
 
-  it('does not follow the engine in a unit written without KillMode=process, whose exit kills its children', () => {
-    const unit = join(home, '.config', 'systemd', 'user', 'dev.stim.server.service');
-    writeFileSync(unit, readFileSync(unit, 'utf8').replace('KillMode=process\n', ''));
+  it.each([
+    ['systemd has its default loaded, as for a unit written without KillMode=process', 'control-group\n'],
+    ['a drop-in overrides the unit file with another mode', 'mixed\n'],
+    ['systemctl cannot say', null],
+  ])('does not follow the engine when %s, since its exit would kill its children', (_case, loaded) => {
+    if (loaded === null) rmSync(join(home, 'loaded-killmode'));
+    else writeFileSync(join(home, 'loaded-killmode'), loaded);
     expect(serviceJob({ STIM_SERVICE_LABEL: 'dev.stim.server' }, 7787, join(home, '.stim', 'engine'), 'linux')).toEqual(
-      {
-        label: 'dev.stim.server',
-        followsEngine: false,
-      },
+      { label: 'dev.stim.server', followsEngine: false },
     );
   });
 });

@@ -38,10 +38,9 @@ import { linkedFirst, type CheckoutRole } from '../policy/checkout-order.ts';
 import { dormantAction, dormantThresholdMs, longestIdleFirst } from '../policy/pressure.ts';
 import { resolveSupervisorTarget } from '../stimd/metro/ownership.ts';
 import { getProject, loadConfig, type Config, type ProjectRecord } from '../workspace/config.ts';
-import { checkoutOwnerOf } from '../workspace/checkout-role.ts';
+import { checkoutOwnerOf, type Checkout } from '../workspace/checkout-role.ts';
 import { discoverCheckouts } from '../workspace/discovery.ts';
 import { discoveredEvidence } from '../workspace/discovered-activity.ts';
-import { freshLaunchers, launchersOf, launchingOf, type Checkout, type Launching } from '../workspace/launchers.ts';
 import { lockReason, worktreeLockAsync } from '../workspace/worktree.ts';
 import { discoveredReads, type DiscoveredReads } from '../workspace/discovered-reads.ts';
 import { listedRoots } from '../commands/gc/worktrees.ts';
@@ -70,7 +69,7 @@ export interface StageCandidate {
   idleMs: number;
   /** A source checkout is taken after every linked worktree. */
   role: CheckoutRole;
-  /** The git worktree root that owns the workspace, which an executable on PATH can point anywhere into. */
+  /** The git worktree root that owns the workspace, whose activity counts for it. */
   checkout: Checkout;
 }
 
@@ -155,16 +154,14 @@ async function idleVerdict(
   {
     locked = false,
     operation,
-    reads = discoveredReads(operation?.signal, operation),
+    reads = discoveredReads(operation?.signal),
     full = false,
-    reduceOnly,
     checkout = path,
   }: {
     locked?: boolean;
     operation?: StimContext;
     reads?: DiscoveredReads;
     full?: boolean;
-    reduceOnly: boolean;
     /** The checkout whose source and git writes, processes and agent sessions count; default `path`. */
     checkout?: string;
   },
@@ -175,10 +172,7 @@ async function idleVerdict(
   const evidence =
     !full && (getProject(path) || existsSync(workspaceMetadataFile(path)))
       ? stim
-      : mergeEvidence(
-          stim,
-          await discoveredEvidence(checkout, { now, idleMs: thresholdMs, reads, operation, reduceOnly }),
-        );
+      : mergeEvidence(stim, await discoveredEvidence(checkout, { now, idleMs: thresholdMs, reads, operation }));
   const decision = decideIdleStop(evidence, { idleMs: thresholdMs, now, setting, pressured });
   if (!decision.stop) return { kept: decision.reason };
   try {
@@ -215,16 +209,14 @@ export function sourceCheckoutIdle(
   {
     operation,
     locked = false,
-    reduceOnly,
     reads,
     checkout,
-  }: { operation?: StimContext; locked?: boolean; reduceOnly: boolean; reads?: DiscoveredReads; checkout?: string },
+  }: { operation?: StimContext; locked?: boolean; reads?: DiscoveredReads; checkout?: string },
 ): Promise<{ idleMs: number } | { kept: string }> {
   return idleVerdict(path, thresholdMs, setting, {
     operation,
     full: true,
     locked,
-    reduceOnly,
     ...(reads ? { reads } : {}),
     ...(checkout ? { checkout } : {}),
   });
@@ -234,13 +226,11 @@ export function sourceCheckoutIdle(
 export async function discoveredKeepReason(
   path: string,
   thresholdMs: number,
-  reduceOnly: boolean,
   operation?: StimContext,
   reads?: DiscoveredReads,
 ): Promise<string | null> {
   const verdict = await idleVerdict(path, thresholdMs, 'idle.dormantDays', {
     operation,
-    reduceOnly,
     ...(reads ? { reads } : {}),
   });
   return 'kept' in verdict ? verdict.kept : null;
@@ -295,11 +285,10 @@ async function readIdleWorkspaces(
   }: Omit<IdleSelection, 'setting'> & { discover?: boolean } = {},
 ): Promise<StageCandidate[]> {
   const readings: (Omit<StageCandidate, 'idleMs' | 'role' | 'checkout'> & { idleMs: number | null })[] = [];
-  const reads = discoveredReads(reading.operation?.signal, reading.operation);
+  const reads = discoveredReads(reading.operation?.signal);
   const found = discover ? await discoverCheckouts(config, listedRoots(), reading.operation) : [];
   const discovered = found.map(({ path }): [string, ProjectRecord] => [path, {}]);
   const discoveredPaths = new Set(found.map(({ path }) => path));
-  const reduceOnly = new Set(found.filter((entry) => entry.reduceOnly).map(({ path }) => path));
   const checkouts = [...Object.entries(config.projects), ...discovered];
   tally.items = checkouts.length;
   for (const [path, project] of checkouts) {
@@ -319,7 +308,6 @@ async function readIdleWorkspaces(
           operation: reading.operation,
           reads,
           full,
-          reduceOnly: reduceOnly.has(path),
         });
         if ('idleMs' in verdict) idleMs = verdict.idleMs;
         else onKept?.(path, verdict.kept);
@@ -355,14 +343,11 @@ export async function stillIdle(
     checkout,
   }: { operation?: StimContext; full?: boolean; locked?: boolean; setting?: string; checkout?: string },
 ): Promise<boolean> {
-  const reads = discoveredReads(operation?.signal, operation, freshLaunchers(operation, operation?.signal));
   return (
     (await idleFor(path, thresholdMs, setting, {
       locked,
       operation,
       full,
-      reads,
-      reduceOnly: false,
       ...(checkout ? { checkout } : {}),
     })) !== null
   );
@@ -403,7 +388,6 @@ type StageResult = Pick<DaemonLadderAction, 'outcome' | 'bytes' | 'detail'>;
 export async function stoppedOutputs(
   candidate: StageCandidate,
   config: Config,
-  launching: Launching,
   operation?: StimContext,
   deletable?: (path: string) => boolean,
 ): Promise<{ paths: string[]; kept: string[] } | { locked: string }> {
@@ -413,7 +397,7 @@ export async function stoppedOutputs(
     declareFor: operation,
   });
   if (lock) return { locked: lockReason(lock) };
-  const outputs = await idleOutputs(candidate.path, config, launching, deletable);
+  const outputs = await idleOutputs(candidate.path, config, deletable);
   return {
     paths: outputs.paths.filter((path) => !outputs.targets.includes(path)),
     kept: [
@@ -425,8 +409,7 @@ export async function stoppedOutputs(
 
 /**
  * Deletes a stopped workspace's regenerable build outputs under its native-run and metro-start locks. Null when every
- * output it has is kept, such as a Metro store a running dev server shares; `kept`, not `done`, when the deletion kept
- * every path it was given.
+ * output it has is kept, such as a Metro store a running dev server shares.
  */
 export async function clearStoppedOutputs(
   candidate: StageCandidate,
@@ -436,7 +419,6 @@ export async function clearStoppedOutputs(
   deletable?: (path: string) => boolean,
 ): Promise<StageResult | null> {
   const { path } = candidate;
-  const launchers = freshLaunchers(operation, operation?.signal);
   const run = await withIdleWorkspace(
     path,
     async (): Promise<StageResult | null> => {
@@ -449,38 +431,13 @@ export async function clearStoppedOutputs(
               (await idleFor(path, thresholdMs, PRESSURE_THRESHOLD, {
                 locked: true,
                 operation,
-                reads: discoveredReads(operation?.signal, operation, launchers),
-                reduceOnly: false,
               })) === null
             )
               return { outcome: 'kept', bytes: 0, detail: 'it is no longer idle' };
-            const outputs = await stoppedOutputs(
-              candidate,
-              config,
-              launchingOf(
-                candidate.checkout,
-                () => freshLaunchers(operation, operation?.signal)(),
-                operation,
-                operation?.signal,
-              ),
-              operation,
-              deletable,
-            );
+            const outputs = await stoppedOutputs(candidate, config, operation, deletable);
             if ('locked' in outputs) return { outcome: 'kept', bytes: 0, detail: outputs.locked };
             if (!outputs.paths.length) return null;
-            const keptBefore = outputs.kept.length;
-            const bytes = await deleteOutputs(
-              outputs.paths,
-              launchingOf(
-                candidate.checkout,
-                launchersOf(operation, operation?.signal, false),
-                operation,
-                operation?.signal,
-              ),
-              outputs.kept,
-            );
-            if (outputs.kept.length - keptBefore === outputs.paths.length)
-              return { outcome: 'kept', bytes: 0, detail: outputs.kept.join('; ') };
+            const bytes = await deleteOutputs(outputs.paths, operation?.signal);
             return {
               outcome: 'done',
               bytes,
@@ -648,11 +605,7 @@ export async function enterDormantStage(
   const run = await withIdleWorkspace(
     path,
     async (): Promise<DormantOutcome> => {
-      const idleMs = await idleFor(path, thresholdMs, 'idle.dormantDays', {
-        locked: true,
-        operation,
-        reduceOnly: false,
-      });
+      const idleMs = await idleFor(path, thresholdMs, 'idle.dormantDays', { locked: true, operation });
       if (idleMs === null) return { status: 'kept', bytes: 0, detail: 'it is no longer idle' };
       const owns = (kind: 'ios' | 'android') =>
         projectDeviceSlots(project).some(({ platforms }) => platforms[kind]?.owned === true);

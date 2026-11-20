@@ -13,9 +13,7 @@ import {
 import { processContext } from '../cli-operation.ts';
 import { runMaintenance } from '../stimd/passes/run.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
-import { checkoutRootOf } from '../workspace/checkout-role.ts';
 import { forgetGitReads, openGitReads } from '../workspace/git-reads.ts';
-import { launchersOf, launchingOf, logLauncherProblems } from '../workspace/launchers.ts';
 import { loadConfig, type Config } from '../workspace/config.ts';
 import { requestDaemonTick, stimdRefused } from './client.ts';
 import { runBootedParkedPass } from './booted-parked.ts';
@@ -385,7 +383,6 @@ async function homePasses(
   }
   operation.signal.throwIfAborted();
   const ladderMs = lap();
-  logLauncherProblems(operation, log);
   return {
     config,
     now,
@@ -476,7 +473,6 @@ export function createMaintenanceLane(
           releaseDisk();
         }
         const maintenanceMs = lap();
-        logLauncherProblems(operation, log);
         const tookMs = Math.round(performance.now() - started);
         log('debug', 'daemon_maintenance', `maintenance ${tookMs}ms${skipped ? `; skipped: ${skipped}` : ''}`, {
           tookMs,
@@ -717,12 +713,6 @@ export async function runForcedLadder({
               ? await idleOutputBytes(
                   entry.path,
                   config,
-                  launchingOf(
-                    await checkoutRootOf(entry.path, operation?.signal, operation),
-                    launchersOf(operation, operation?.signal, false),
-                    operation,
-                    operation?.signal,
-                  ),
                   volumes && onDiskVolumes(entry.path, volumes) ? (path) => onShortVolume([path], volumes) : undefined,
                 )
               : 0),

@@ -11,6 +11,7 @@ import {
 import { getExecutor } from '../exec.ts';
 
 const PLUTIL_TIMEOUT_MS = 5_000;
+const SYSTEMCTL_TIMEOUT_MS = 5_000;
 
 function installedUnit(label: string, platform: NodeJS.Platform): InstalledService | null {
   if (platform === 'darwin') {
@@ -57,11 +58,25 @@ export function serviceJob(
   }
 }
 
-/** systemd kills a unit's whole cgroup when its main process exits unless the unit sets `KillMode=process`. */
+/**
+ * systemd kills a unit's whole cgroup when its main process exits unless the unit sets `KillMode=process`. The mode
+ * systemd has loaded decides, drop-ins included, not the unit file, which can name a mode systemd has not loaded.
+ */
 function keepsChildren(label: string, platform: NodeJS.Platform): boolean {
   if (platform !== 'linux') return true;
-  const unit = join(homedir(), '.config', 'systemd', 'user', `${label}.service`);
-  return /^KillMode=process$/m.test(readFileSync(unit, 'utf8'));
+  try {
+    const loaded = getExecutor().runFile(
+      'systemctl',
+      ['--user', 'show', `${label}.service`, '-p', 'KillMode', '--value'],
+      {
+        timeoutMs: SYSTEMCTL_TIMEOUT_MS,
+        env: { XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR ?? `/run/user/${process.getuid?.() ?? 1000}` },
+      },
+    );
+    return loaded.trim() === 'process';
+  } catch {
+    return false;
+  }
 }
 
 function runsShim(script: string | null, engineRoot: string): boolean {

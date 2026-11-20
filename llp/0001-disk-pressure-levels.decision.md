@@ -173,8 +173,7 @@ A pass frees something when one of its actions removed something it counted in
 bytes. An action that freed no bytes, such as a Gradle stop, a parked simulator
 shut down for memory, or a Cargo trim whose volume gained nothing because other
 writers filled it meanwhile, does not count, and it does not drop the git reads
-the rungs share. Rung 1 records `kept`, not `done`, when its deletion kept every
-output it was given. A cache emptied at critical reports 0 bytes, so a pass that
+the rungs share. A cache emptied at critical reports 0 bytes, so a pass that
 only emptied caches counts as freeing nothing and waits, at most a minute at
 critical.
 
@@ -553,7 +552,7 @@ every use of a `links` verdict, a recorded one included, then reads the
 `android/app` when present) for build output folders, and a build output
 folder or a check that does not answer or fails ends it. No read starts with
 less than 500 ms of its budget left, so a read near the end of the budget does
-not become the pending read that makes the launcher scan incomplete; one that
+not become the pending read that stops the discovery and source scans; one that
 does not answer in the time it got is the pending read, as any other, and a
 sample that the step's limit left less than its full 2 seconds records no
 `timeout` verdict, so it is sampled again on the next run. The verdict and the

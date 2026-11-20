@@ -68,6 +68,8 @@ export interface ServiceJob {
   pid: number | null;
   runs: number | null;
   lastExitCode: string | null;
+  /** The program arguments launchd loaded; absent for other managers. */
+  arguments?: string[] | null;
 }
 
 type ServiceChange = { script: string; previousScript: string } | { serve: ServeRecord };

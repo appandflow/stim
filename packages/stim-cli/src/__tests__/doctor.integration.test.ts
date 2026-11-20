@@ -2180,7 +2180,7 @@ test.skipIf(process.platform === 'win32')(
   },
 );
 
-test('doctor lists the checkouts the scan found that Stim does not fully manage, in the JSON payload and in the text', async () => {
+test('doctor lists the checkouts Stim does not manage and, above the threshold, suggests automatic discovery or their folder', async () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doctor-discovery-'));
   const home = mkdtempSync(join(tmpdir(), 'stim-doctor-discovery-home-'));
   process.env.STIM_HOME = home;
@@ -2210,7 +2210,7 @@ test('doctor lists the checkouts the scan found that Stim does not fully manage,
   const gitAt = Date.UTC(2026, 9, 1);
   const find = (name: string, at: number | null) => ({
     path: `/work/dev/${name}`,
-    kind: 'reduce-only',
+    kind: 'untracked',
     folder: '/work/dev',
     adoptable: true,
     evaluatedAt: ranAt,
@@ -2218,7 +2218,7 @@ test('doctor lists the checkouts the scan found that Stim does not fully manage,
     measuredDirs: 1,
     failedDirs: 0,
     partialDirs: 0,
-    bytes: 2 * 1024 ** 3,
+    bytes: 6 * 1024 ** 3,
     unreadable: false,
     gitActivityAt: at,
   });
@@ -2230,6 +2230,7 @@ test('doctor lists the checkouts the scan found that Stim does not fully manage,
       scanRanAt: ranAt,
       roots: [],
       canonicalRoots: [],
+      autoDiscover: false,
       pending: false,
       finds: [find('b', null), find('a', gitAt)],
     }),
@@ -2240,10 +2241,13 @@ test('doctor lists the checkouts the scan found that Stim does not fully manage,
   try {
     await runCli(doctor, ['--json'], { version: '1.2.3' });
     await runCli(doctor, [], { version: '1.2.3' });
+    process.env.STIM_MAINTENANCE_AUTO_DISCOVER = '0';
+    await runCli(doctor, ['--json'], { version: '1.2.3' });
   } finally {
     process.chdir(cwd);
     console.log = originalLog;
     delete process.env.STIM_HOME;
+    delete process.env.STIM_MAINTENANCE_AUTO_DISCOVER;
     rmSync(home, { recursive: true, force: true });
     rmSync(project, { recursive: true, force: true });
   }
@@ -2254,9 +2258,9 @@ test('doctor lists the checkouts the scan found that Stim does not fully manage,
     groups: [
       {
         folder: '/work/dev',
-        kind: 'reduce-only',
+        kind: 'untracked',
         checkouts: 2,
-        bytes: 4 * 1024 ** 3,
+        bytes: 12 * 1024 ** 3,
         members: [
           { path: '/work/dev/a', gitActivityAt: new Date(gitAt).toISOString() },
           { path: '/work/dev/b', gitActivityAt: null },
@@ -2266,7 +2270,16 @@ test('doctor lists the checkouts the scan found that Stim does not fully manage,
   });
   const { command } = payload.discovery.groups[0];
   expect(command).toContain('maintenance.discoverRoots');
-  const text = logs.slice(1).join('\n');
+  const suggestion = payload.findings.find(({ code }: { code?: string }) => code === 'auto-discover-suggested');
+  expect(suggestion?.fix).toContain('stim settings set maintenance.autoDiscover true --scope machine');
+  expect(suggestion?.fix).toContain(command);
+  const overridden = JSON.parse(logs.at(-1) ?? '').findings.find(
+    ({ code }: { code?: string }) => code === 'auto-discover-suggested',
+  );
+  expect(overridden?.fix).toContain(
+    'STIM_MAINTENANCE_AUTO_DISCOVER=0 in this environment overrides the machine setting',
+  );
+  const text = logs.slice(1, -1).join('\n');
   expect(text).toContain('/work/dev');
   expect(text).toContain(command);
   expect(text).toContain('2026-10-01');

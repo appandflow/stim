@@ -22,7 +22,6 @@ import { projectDeviceSlots } from '../devices/device-slots.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
 import { readParked } from '../devices/sim-pool.ts';
 import { workspaceDir } from '../workspace/paths.ts';
-import { freshLaunchers, launchingOf, type Launching } from '../workspace/launchers.ts';
 import { formatBytes, measuredDirectorySizeAsync } from '../fs-util.ts';
 import { timedStep } from './step-timing.ts';
 import { describeSizeFailure, lastSizeFailure } from '../size-failures.ts';
@@ -163,10 +162,9 @@ function recordAction(
 export async function idleOutputBytes(
   path: string,
   config: Config,
-  launching: Launching,
   onVolume?: (path: string) => boolean,
 ): Promise<number> {
-  return pathsBytes((await idleOutputs(path, config, launching, onVolume)).paths);
+  return pathsBytes((await idleOutputs(path, config, onVolume)).paths);
 }
 
 async function pathsBytes(paths: readonly string[]): Promise<number> {
@@ -299,18 +297,7 @@ async function idleOutputsRung(context: RungContext): Promise<void> {
         deletable(context),
       );
     else {
-      const outputs = await stoppedOutputs(
-        candidate,
-        context.config,
-        launchingOf(
-          candidate.checkout,
-          () => freshLaunchers(context.operation, context.operation?.signal)(),
-          context.operation,
-          context.operation?.signal,
-        ),
-        context.operation,
-        deletable(context),
-      );
+      const outputs = await stoppedOutputs(candidate, context.config, context.operation, deletable(context));
       const paths = 'paths' in outputs ? outputs.paths : [];
       result = paths.length
         ? { outcome: 'would', bytes: context.measure ? await pathsBytes(paths) : 0, detail: wouldDetail(context) }

@@ -62,7 +62,6 @@ import * as ownershipClaim from '../ownership-claim.ts';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../workspace/paths.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
-import { noteLauncherProblem } from '../workspace/launchers.ts';
 import gcOp, {
   readGcReport,
   deleteParkedSims,
@@ -4319,23 +4318,8 @@ describe('the gc log', () => {
   test('a dry run writes no record and creates no log', async () => {
     stageRun();
     const operation = testContext({ env: { ...process.env }, signal: testSignal });
-    noteLauncherProblem(operation, { kind: 'directory', path: '/locked', error: 'EACCES' });
     await captureLog(() => sweepingGc({ dryRun: true, pressure: 'normal' }, operation));
     expect(existsSync(gcLogFile())).toBe(false);
-  });
-
-  test('a deleting run with a failed action records the launcher evidence it went ahead past', async () => {
-    stageRun();
-    const operation = testContext({ env: { ...process.env }, signal: testSignal });
-    noteLauncherProblem(operation, { kind: 'directory', path: '/locked', error: 'EACCES' });
-    await captureLog(() => sweepingGc({ pressure: 'normal' }, operation));
-    expect(readGcLog().filter((record) => record.event === 'launcher_evidence_incomplete')).toEqual([
-      expect.objectContaining({
-        level: 'warn',
-        trigger: 'manual',
-        msg: expect.stringMatching(/the directory \/locked could not be read \(EACCES\).*cleanup goes ahead/i),
-      }),
-    ]);
   });
 
   test('a deleting run that only keeps things writes no record', async () => {

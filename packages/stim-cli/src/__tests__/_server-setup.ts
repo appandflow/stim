@@ -54,6 +54,8 @@ export const setup = (over: Partial<ServerSetup> = {}): ServerSetup => ({
   version: '1.41.0',
   build: null,
   services: [service()],
+  staleServices: [],
+  killModeOverrides: [],
   servers: [reading({})],
   local: null,
   clients: { build: 0, deviceHost: 0 },

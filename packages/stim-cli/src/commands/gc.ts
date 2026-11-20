@@ -36,7 +36,6 @@ import { collectRecordings } from './gc/recordings.ts';
 import { collectTempLeftovers } from './gc/temp-leftovers.ts';
 import { collectTrash } from './gc/trash.ts';
 import { workspaceDir } from '../workspace/paths.ts';
-import { logLauncherProblems } from '../workspace/launchers.ts';
 import { collectInventory, type GcInventory } from './gc/inventory.ts';
 import { collectParkedHostedDevices } from './gc/hosted-devices.ts';
 import { collectHostedAppStorage } from './gc/hosted-apps.ts';
@@ -358,10 +357,6 @@ export async function executeGc(
     }
     return { payload, exitCode: payload.failures ? 1 : 0 };
   } finally {
-    if (act && deps.operation)
-      logLauncherProblems(deps.operation, (...note) =>
-        (log ??= gcLogOf(opts.pressure ?? 'normal', chosen, deps.operation?.env)).note(...note),
-      );
     closeGitReads?.();
     stopDeclaringSpawnsOn(deps.operation, claim);
   }

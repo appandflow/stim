@@ -731,7 +731,11 @@ service's stimd exits and the service starts it again on the new build, inside
 the service's job (on Linux after systemd's 30 s restart delay). The first switch
 onto a Stim with this behavior is still made by the older build, so it can leave
 one stimd outside the job until the next switch. A Linux service installed by an
-earlier Stim keeps the older handover until you run `stim service install` again. It never changes pairings,
+earlier Stim keeps the older handover until you run `stim service install` again;
+`stim service status`, `stim doctor` and `stim setup` print that install with the
+service's own options. A service installed this way leaves its dev servers running
+when `systemctl --user stop` or `stim service uninstall` stops it, as any stimd exit
+does. It never changes pairings,
 approvals, Stim Host, the pinned `--env` and `--path-prepend` values or the
 serve route. A client approved for builds or device hosting can ask for the
 same update from its machine with `stim remote update <mac>`. A build whose
@@ -771,6 +775,14 @@ or starting the new one fails, install restores the previous plist and attempts
 to restart a previously loaded LaunchAgent; if it cannot, it prints the
 launchctl bootout/bootstrap remedy. A running LaunchAgent does not prove server readiness: check its health in
 `stim service status` and the reported log when readiness is unavailable.
+launchd reads a LaunchAgent only when it loads it. When a LaunchAgent that
+`stim service install` wrote does not match what install writes now (its
+`ProgramArguments` or `ProcessType`, or the arguments launchd loaded),
+`stim service status` adds a `stale:` line with the reason and the
+`stim service install` command that fixes it, and `--json` reports the same
+as `stale` (`{ reason, remedy }`, null otherwise). `stim doctor` reports it as
+`server-service-stale` and `stim setup` prints it as a warning. Run that
+install once when no build runs.
 The server listens before it touches the Stim home. A read-only child process
 reads the Stim home, server and recording directories; until it returns,
 `/health` answers 503 with `startup.state` `pending`. A read that does not
@@ -1022,6 +1034,7 @@ directory in the temp directory among them), parked simulators and emulators, an
 also stops idle Gradle and Kotlin daemons, shuts down an unused watchman over 2 GiB, deletes Gradle versions no project
 pins once unmodified for `maintenance.gradleVersionIdleDays` (7; 0 keeps
 them), and deletes TMPDIR leftovers and the worktree trash.
+`maintenance.autoDiscover` (off) decides which checkouts no `stim` command ran in a pass and `stim gc` reach: off, only those in the folders named in `maintenance.discoverRoots`; on, also those next to your registered projects and the linked worktrees of known repositories ([checkouts Stim never ran in](./worktrees.md#checkouts-stim-never-ran-in)). While it is off, `stim doctor` suggests turning it on, or adding their folders to `maintenance.discoverRoots`, when such checkouts hold at least 10 GiB of measured build output.
 `maintenance.removeFinishedWorktrees` controls the worktree check; with it false no finished worktree is removed at any level. `stim gc` at high or critical stops idle Gradle and Kotlin daemons with no local
 build, including iOS, whatever `daemon.mode` says. A pass stops a dev server only in a
 workspace whose device is hosted on a remote Mac, after
