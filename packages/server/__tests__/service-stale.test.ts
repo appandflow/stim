@@ -89,6 +89,13 @@ describe.skipIf(process.platform !== 'darwin')('a LaunchAgent that launchd runs 
       shim,
       /sets ProcessType Background, and `stim service install` writes /,
     ],
+    [
+      'a shim plist with the ProcessType Standard that installs before Interactive wrote',
+      shimPlist.replace(/(\n\t<key>ProcessType<\/key>\n\t<string>)[^<]*/, '$1Standard'),
+      shimArgs,
+      shim,
+      /sets ProcessType Standard, and `stim service install` writes Interactive/,
+    ],
     ['a shim plist after the engine was uninstalled', shimPlist, shimArgs, null, /no bin\/stimd shim/],
     ['a Stim Host plist whose loaded job skips the host', shimPlist, shimArgs.slice(2), shim, /other than its plist/],
   ])('%s', (_case, text, loaded, engineShim, stale) => {
