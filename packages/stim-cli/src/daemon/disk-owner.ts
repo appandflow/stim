@@ -124,7 +124,7 @@ export function requestGcPass(
 ): { result: Promise<GcPassReply>; leave(): void } {
   // @ref LLP 0001#every-gc-joins-a-pass-under-way -- no level, or a level at or below the pass's, joins it
   const covers = (pass: Pass | null): pass is Pass =>
-    pass !== null && (level === undefined || RANK[pass.level ?? 'normal'] >= RANK[level]);
+    pass !== null && !pass.stop?.signal.aborted && (level === undefined || RANK[pass.level ?? 'normal'] >= RANK[level]);
   let pass = covers(running) ? running : covers(queued) ? queued : null;
   const joined = pass !== null || queued !== null;
   if (!pass && queued && level) {

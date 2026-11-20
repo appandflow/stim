@@ -135,7 +135,13 @@ test('a request that leaves stops only a pass no other request waits for', async
   const alone = requestGcPass('high', 'manual', pass.run, ignore);
   await pass.started;
   alone.leave();
+  const finish = gate();
+  const next = heldPass(finish.promise);
+  const rerun = requestGcPass(undefined, 'manual', next.run, ignore);
   await expect(alone.result).rejects.toThrow('aborted');
+  finish.open();
+  expect(await rerun.result).not.toHaveProperty('joined');
+  expect(next.runs).toEqual([undefined]);
 
   const shared = heldPass(new Promise(() => {}));
   const first = requestGcPass('high', 'manual', shared.run, ignore);

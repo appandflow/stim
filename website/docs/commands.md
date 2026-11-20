@@ -2756,15 +2756,21 @@ reading them, so no privacy prompt appears. A cache Stim found but did not
 measure and sweeps by entry, such as Jest's default cache or Metro's file maps
 in the temporary folder, is listed too, marked "Stim sweeps only its unused
 entries". An acting
-run prints its summary and releases the maintenance claim first. The scan does
+run prints its summary first. The scan does
 not run on Windows or when `STIM_HOME` scopes the home.
 
-An acting `gc` takes the same exclusive maintenance claim as the stim-daemon's
-maintenance pass. While one holds it the other refuses at once with
-`STIM_CLAIM_REFUSED` naming the holder (pid, start, trigger); retry after it
-ends. A dry run takes no claim. On a full disk `gc` gives back the 1 MB
-`$STIM_HOME/maintenance/disk-reserve` before taking its claim, so it can start
-at 0 bytes free, and writes it again when the run ends.
+An acting `gc` asks this home's stimd for a pass, starting one whatever
+`daemon.mode` says; under `off` that stimd exits after the pass. stimd's config
+and environment apply, not the `STIM_*` variables of the `gc` command. Without
+a stimd it fails with `STIM_DAEMON_UNAVAILABLE`. A `gc` with no `--pressure`,
+or a level at or below that of a pass already running or queued, joins that
+pass and prints `Joined the <level> pass ...` with that pass's actions; a
+higher level queues one pass after it. Interrupting `gc` stops its pass only
+when no other request waits for it. A stimd that stops during the pass fails
+`gc` with `STIM_DAEMON_UNAVAILABLE`: run it again. A dry run runs in the
+command's own process. On a full disk the pass gives back the 1 MB
+`$STIM_HOME/maintenance/disk-reserve` first, so it can start at 0 bytes free,
+and writes it again when it ends.
 
 Single items cannot be deleted from the CLI. Stim Desktop deletes one cache, the
 build outputs of idle workspaces, one archive or one part of it, watchman or the

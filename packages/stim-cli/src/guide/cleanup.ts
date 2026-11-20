@@ -708,7 +708,7 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
   A pass the daemon runs for disk pressure frees only the volumes under
   pressure. Interrupting gc stops its pass only when no other request waits
   for it; completed actions stay. A stimd that stops during the pass fails gc
-  with STIM_DAEMON_UNAVAILABLE: run it again. A dry run takes no claim.
+  with STIM_DAEMON_UNAVAILABLE: run it again. A dry run stays in process.
   Full disk: gc gives back the 1 MiB maintenance disk reserve
   ($STIM_HOME/maintenance/disk-reserve) before its pass, so it can start at
   0 bytes free, and writes it again when the pass ends.

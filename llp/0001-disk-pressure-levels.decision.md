@@ -371,10 +371,11 @@ joins a pass at that level), 2026-11-20 (#6058).
 
 Maintainer decision: "Accept, stimd's config wins", 2026-11-20 (#6058).
 
-A lower level joins, a higher level queues one pass, and a request leaving
-stops only a pass it alone waits for: the coordinator's reading on #6058. The
-lane's dormant step and maintenance pass are not passes a request joins; a gc
-pass takes the turn at their next unit boundary.
+A lower level joins and a higher level queues one pass: the coordinator's
+plan on #6058. That a request leaving stops only a pass it alone waits for, and
+that the lane's dormant step and maintenance pass are not passes a request
+joins (a gc pass takes the turn at their next unit boundary), are the
+implementer's reading on #6058.
 
 ## Each rung frees only the volumes under pressure
 
