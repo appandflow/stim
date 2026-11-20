@@ -663,6 +663,23 @@ describe.skipIf(process.platform === 'win32')('deleting an idle Cargo target who
     expect(result.bytes).toBeLessThan(1.5 * 1024 * 1024);
   });
 
+  test('a delete stopped part way leaves an untagged target Stim still finds, and a retry removes the rest', async () => {
+    const abort = new AbortController();
+    const fingerprint = join(real, 'debug', '.fingerprint');
+    fsHooks.afterLstat = (path) => {
+      if (path === fingerprint && readdirSync(fingerprint).length === 0) abort.abort();
+    };
+
+    await expect(deleteCargoTarget(dir, { idleMs: DAY, mountInfo: null, signal: abort.signal })).rejects.toThrow(
+      'aborted',
+    );
+    delete fsHooks.afterLstat;
+
+    expect(await cargoTargetDirsAsync(target)).toEqual([dir]);
+    expect((await deleteCargoTarget(dir, { mountInfo: null })).kept).toEqual([]);
+    expect(readdirSync(dir)).toEqual(['debug']);
+  });
+
   test('a target with nothing left in it goes too', async () => {
     rmSync(join(dir, 'debug', '.cargo-lock'));
     ageTree(dir);

@@ -17,6 +17,7 @@ const CARGO_TRIPLE_FILES = new Set(['CACHEDIR.TAG', '.rustc_info.json', '.cargo-
 const PROFILE_LOCKS = ['.cargo-lock', '.cargo-build-lock', '.cargo-artifact-lock'];
 const EXACT_LEDGER = '.exact-sweep.json';
 const CACHEDIR_TAG = 'CACHEDIR.TAG';
+const RUSTC_INFO = '.rustc_info.json';
 const EXACT_APPLE_LOCKS = '.apple-cargo-locks';
 /** The lock files Cargo and Exact take in a `target/`, which a delete leaves in place. */
 const LOCK_FILES = new Set([...PROFILE_LOCKS, `${EXACT_LEDGER}.lock`]);
@@ -836,7 +837,7 @@ export async function deleteCargoTarget(
         await refuseMoved(registeredTarget, admitted);
         await refuseKeypairLink(target, dev, signal);
         const left: string[] = [];
-        for (const name of names) {
+        for (const name of names.toSorted((a, b) => recognitionLast(target, a) - recognitionLast(target, b))) {
           await refuseMoved(registeredTarget, admitted);
           left.push(...(await removeInPlace(join(target, name), dev, signal)));
         }
@@ -855,6 +856,16 @@ export async function deleteCargoTarget(
   if (left.length) result.kept.push(`left ${left.join(', ')}`);
   await rmdir(target).catch(() => {});
   return result;
+}
+
+/**
+ * Orders the top-level entries a delete removes so what recognises an untagged `target/` goes last: a profile holding
+ * `.fingerprint` after other entries, and `.rustc_info.json` after everything, so a delete stopped part way leaves a
+ * `target/` Stim still finds and deletes again.
+ */
+function recognitionLast(target: string, name: string): number {
+  if (name === RUSTC_INFO) return 2;
+  return fingerprintDir(join(target, name)) ? 1 : 0;
 }
 
 /** The lock files Exact takes in a top-level entry of a target: `.exact-sweep.json.lock`, and those under `.apple-cargo-locks`. */
