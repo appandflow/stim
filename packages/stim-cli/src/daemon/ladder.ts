@@ -6,7 +6,6 @@ import {
   fingerprintIndexDir,
   fingerprintIndexLock,
   readDiskUsage,
-  readMaintenanceState,
   sharedCompilationCache,
   type DaemonLadderAction,
   type DaemonPressure,
@@ -25,12 +24,10 @@ import { readParked } from '../devices/sim-pool.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import { freshLaunchers, launchingOf, type Launching } from '../workspace/launchers.ts';
 import { formatBytes, measuredDirectorySizeAsync } from '../fs-util.ts';
-import { describeSizeFailure, lastSizeFailure } from '../size-failures.ts';
 import { timedStep } from './step-timing.ts';
 import { forgetGitReads } from '../workspace/git-reads.ts';
 import { executeAction, type ActContext, type ActionOutcome } from '../stimd/passes/act.ts';
 import { cacheBlocked } from '../stimd/passes/measure.ts';
-import { readVolumeSpaceAsync } from '../stimd/passes/budget.ts';
 import { cacheEntryProtectionFor, maintenancePinned, maintenancePinnedReader } from '../stimd/passes/protect.ts';
 import { executedActionName } from '../maintenance-kind.ts';
 import { measuredDiskLevel, planCargoTargetsAtPressure } from '../stimd/passes/cargo-target.ts';
@@ -418,55 +415,22 @@ async function trim(
     : { outcome: 'kept', bytes: 0, detail: `no unprotected entry to evict${kept}` };
 }
 
-const cargoAttemptedAt = new Map<string, number>();
-
-/** The sizes the last maintenance size scan recorded, by directory. */
-function scannedSizes(): Map<string, { bytes: number; at: number }> {
-  return new Map(
-    (readMaintenanceState()?.sizes ?? []).map((size) => [size.dir, { bytes: size.bytes, at: size.measuredAt }]),
-  );
-}
-
-/** The newer of the size scan's and the disk-usage cache's size of `dir`, or null when neither has one. */
-function recordedSize(
-  dir: string,
-  scanned: ReadonlyMap<string, { bytes: number; at: number }> = scannedSizes(),
-): { bytes: number; at: number } | null {
-  const walked = readDiskUsage(dir);
-  const walkedAt = walked ? Date.parse(walked.measuredAt) : -Infinity;
-  const scan = scanned.get(dir);
-  return scan && scan.at >= walkedAt ? scan : walked ? { bytes: walked.bytes, at: walkedAt } : null;
-}
+const triedAt = new Map<string, number>();
 
 /**
- * A shared cache's size: when acting, the last one recorded, so freeing it never waits on a walk; a walk when nothing
- * was recorded or for a report.
+ * The size the disk-usage cache records for `dir`, which the size scan writes for every Cargo target and shared cache
+ * it measures; null when none is recorded, or none since this process last tried to free `dir`.
  */
-async function cacheSize(context: Pick<RungContext, 'act'>, dir: string): Promise<number | null> {
+function recordedBytes(dir: string): number | null {
   // @ref LLP 0001#pressure-acts-without-waiting-for-measurement-or-load -- no size walk before a cache is freed
-  const recorded = context.act ? recordedSize(dir) : null;
-  return recorded ? recorded.bytes : measuredDirectorySizeAsync(dir, { timeoutMs: SIZE_TIMEOUT_MS });
+  const recorded = readDiskUsage(dir);
+  return recorded && Date.parse(recorded.measuredAt) > (triedAt.get(dir) ?? -Infinity) ? recorded.bytes : null;
 }
 
-/** The free space, in MB, of the volume holding `dir`; null when it cannot be read. */
-async function volumeFreeMb(dir: string, signal?: AbortSignal): Promise<number | null> {
-  const [volume] = await readVolumeSpaceAsync([dir], signal);
-  return volume && Number.isFinite(volume.freeMb) ? volume.freeMb : null;
-}
-
-/**
- * The trims ordered by the last size recorded for their target, by the maintenance size scan or the disk-usage cache,
- * whichever is newer, largest first; targets with no recorded size, or none since this process last tried to trim them,
- * follow in plan order.
- */
+/** The trims ordered by `recordedBytes`, largest first; targets with no recorded size follow in plan order. */
 function largestFirst(actions: readonly MaintenanceAction[]): MaintenanceAction[] {
-  const scanned = scannedSizes();
-  const known = (dir: string): number => {
-    const latest = recordedSize(dir, scanned);
-    return latest && latest.at > (cargoAttemptedAt.get(dir) ?? -Infinity) ? latest.bytes : -1;
-  };
   return actions
-    .map((action) => ({ action, bytes: known(action.target) }))
+    .map((action) => ({ action, bytes: recordedBytes(action.target) ?? -1 }))
     .toSorted((a, b) => b.bytes - a.bytes)
     .map(({ action }) => action);
 }
@@ -509,15 +473,10 @@ async function cargoTargetsStep(context: RungContext): Promise<void> {
       (await measuredDiskLevel(action.target, context.operation?.signal)) === 'normal'
     )
       continue;
-    cargoAttemptedAt.set(action.target, Date.now());
+    if (context.act) triedAt.set(action.target, Date.now());
     await run(context, action);
   }
   cargoTrimmedAt.set(key, now);
-}
-
-function unsizedDetail(dir: string): string {
-  const failure = lastSizeFailure(dir);
-  return `its size walk ${failure ? describeSizeFailure(failure) : 'failed'}, so it was left alone`;
 }
 
 /**
@@ -551,25 +510,11 @@ async function sharedCachesStep(context: RungContext): Promise<void> {
     let evict = Infinity;
     if (!critical) {
       if (capGb === 0) continue;
-      const bytes = await cacheSize(context, cache.dir);
+      const bytes = recordedBytes(cache.dir) ?? 0;
       const target = (capGb * GIB) / 2;
-      if (bytes === null) {
-        recordAction(
-          context,
-          {
-            rung: 3,
-            kind: 'trim-cache',
-            target: cache.dir,
-            outcome: 'kept',
-            bytes: 0,
-            detail: unsizedDetail(cache.dir),
-          },
-          context.why,
-        );
-        continue;
-      }
       if (bytes <= target) continue;
       evict = bytes - target;
+      if (context.act) triedAt.set(cache.dir, Date.now());
     }
     const result = await trim(context, cache, evict, recentDays);
     recordAction(
@@ -582,24 +527,9 @@ async function sharedCachesStep(context: RungContext): Promise<void> {
   }
   const compilation = sharedCompilationCache();
   if (existsSync(compilation) && onShort(context, [compilation]) && (await context.stillShort())) {
-    const bytes =
-      critical && context.act ? (recordedSize(compilation)?.bytes ?? 0) : await cacheSize(context, compilation);
+    const bytes = recordedBytes(compilation) ?? 0;
     const capGb = context.settings.swiftCompilationCacheMaxGb;
-    if (bytes === null) {
-      if (critical || capGb > 0)
-        recordAction(
-          context,
-          {
-            rung: 3,
-            kind: 'empty-cache',
-            target: compilation,
-            outcome: 'kept',
-            bytes: 0,
-            detail: unsizedDetail(compilation),
-          },
-          context.why,
-        );
-    } else if (critical || (capGb > 0 && bytes > (capGb * GIB) / 2)) {
+    if (critical || (capGb > 0 && bytes > (capGb * GIB) / 2)) {
       const blocked = cacheBlocked(
         { name: 'Swift compilation cache', dir: compilation, category: 'compilation-cache' },
         await discoverCachesAsync(),
@@ -610,7 +540,8 @@ async function sharedCachesStep(context: RungContext): Promise<void> {
           { rung: 3, kind: 'empty-cache', target: compilation, outcome: 'kept', bytes: 0, detail: blocked },
           context.why,
         );
-      else
+      else {
+        if (context.act) triedAt.set(compilation, Date.now());
         await run(context, {
           kind: 'would-empty-cache',
           target: compilation,
@@ -618,6 +549,7 @@ async function sharedCachesStep(context: RungContext): Promise<void> {
           bytes,
           reason: 'it can only be emptied whole',
         });
+      }
     }
   }
   if (critical) await emptyRegisteredCaches(context, [buildCacheRoot(), metroCacheRoot(), compilation]);
@@ -627,14 +559,8 @@ async function sharedCachesStep(context: RungContext): Promise<void> {
   ] as const) {
     if (!critical || !existsSync(directory) || !onShort(context, [directory]) || !(await context.stillShort()))
       continue;
-    let bytes = 0;
-    if (context.act) {
-      const before = await volumeFreeMb(directory, context.operation?.signal);
-      withDirLock(lock, () => rmSync(directory, { recursive: true, force: true }));
-      const after = await volumeFreeMb(directory, context.operation?.signal);
-      if (before !== null && after !== null) bytes = Math.max(0, Math.round((after - before) * 1024 * 1024));
-    } else if (context.measure)
-      bytes = (await measuredDirectorySizeAsync(directory, { timeoutMs: SIZE_TIMEOUT_MS })) ?? 0;
+    const bytes = recordedBytes(directory) ?? 0;
+    if (context.act) withDirLock(lock, () => rmSync(directory, { recursive: true, force: true }));
     recordAction(
       context,
       {

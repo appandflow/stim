@@ -12,12 +12,11 @@ import {
 import { execSync } from 'node:child_process';
 import type { MockInstance } from 'vitest';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import type { DaemonLadderAction, DaemonPressure } from '@stim-cli/core/state';
 import {
   daemonNdjsonFile,
   diskUsageCacheFile,
-  maintenanceStateFile,
   IDLE_STOP_KEY,
   ladderRunClaims,
   readDormantStage,
@@ -50,7 +49,6 @@ import * as ios from '../devices/ios.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
 import * as teardown from '../devices/teardown.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
-import * as fsUtil from '../fs-util.ts';
 import { treeSignature } from '../private-size.ts';
 import { writeCacheFile } from '../cache-file.ts';
 import { getProject, loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
@@ -133,6 +131,10 @@ const pressure = (level: DaemonPressure['level'], cause: 'disk' | 'memory' = 'di
   reasons: [`fixture ${cause} ${level}`],
   memoryWarningSince: null,
 });
+
+const GIB = 1024 ** 3;
+const recordSize = (path: string, bytes: number, at = new Date()) =>
+  writeCacheFile(diskUsageCacheFile(path), { path, measuredAt: at.toISOString(), bytes });
 
 const devicesNow = () => collectOwnedDeviceActivityAsync(loadConfig(), sims, Date.now());
 
@@ -638,14 +640,7 @@ describe('the pressure ladder', () => {
         });
       caches('kept-key');
       vi.stubEnv('STIM_CACHES_BUILD_CACHE_MAX_GB', '12');
-      const real = getExecutor();
-      setExecutor({
-        ...real,
-        runFileAsync: async (file, args, options) =>
-          file === 'du' && args.at(-1) === buildCache()
-            ? `${20 * 1024 * 1024}\t${buildCache()}\n`
-            : real.runFileAsync(file, args, options),
-      });
+      recordSize(buildCache(), 20 * GIB);
 
       const { actions } = await runLadder(
         input(true, async () => pressure('high')),
@@ -660,36 +655,17 @@ describe('the pressure ladder', () => {
     },
   );
 
-  const GIB = 1024 ** 3;
-  const walked = (target: string, bytes: number, at = new Date()) =>
-    writeCacheFile(diskUsageCacheFile(target), { path: target, measuredAt: at.toISOString(), bytes });
   const trimOrder = (actions: readonly DaemonLadderAction[]) =>
     actions.filter((action) => action.kind === 'trim-cargo').map((action) => action.target);
 
   test.skipIf(process.platform === 'win32')(
-    'rung 3 orders Cargo targets by the newer of the size scan and the disk-usage cache, unsized ones last',
+    'rung 3 orders Cargo targets by their recorded size, unsized ones last',
     async () => {
       const unsized = cargoApp('unsized-app');
       const rescanned = cargoApp('rescanned-app');
       const large = cargoApp('large-app');
-      const hourAgo = Date.now() - 60 * MINUTE_MS;
-      mkdirSync(dirname(maintenanceStateFile()), { recursive: true });
-      writeFileSync(
-        maintenanceStateFile(),
-        JSON.stringify({
-          version: 1,
-          lastAt: {},
-          pressure: null,
-          sizes: [
-            { name: 'Cargo target', category: 'other', dir: rescanned.target, bytes: 30 * GIB, measuredAt: hourAgo },
-          ],
-          lastPass: null,
-          recent: [],
-          plan: [],
-        }),
-      );
-      walked(rescanned.target, GIB);
-      walked(large.target, 5 * GIB);
+      recordSize(rescanned.target, GIB);
+      recordSize(large.target, 5 * GIB);
 
       const { actions } = await runLadder(
         input(true, async () => pressure('high')),
@@ -705,8 +681,8 @@ describe('the pressure ladder', () => {
     async () => {
       const small = cargoApp('small-app');
       const big = cargoApp('big-app');
-      walked(small.target, GIB);
-      walked(big.target, 20 * GIB);
+      recordSize(small.target, GIB);
+      recordSize(big.target, 20 * GIB);
       const ladder = () =>
         runLadder(
           input(true, async () => pressure('high')),
@@ -718,7 +694,7 @@ describe('the pressure ladder', () => {
       vi.setSystemTime(Date.now() + 11 * MINUTE_MS);
       small.fill();
       big.fill();
-      walked(small.target, GIB);
+      recordSize(small.target, GIB);
 
       expect(trimOrder((await ladder()).actions)).toEqual([small.target, big.target]);
     },
@@ -1036,7 +1012,7 @@ describe('the pressure ladder', () => {
       utimesSync(entry, at, at);
     }
     vi.stubEnv('STIM_CACHES_BUILD_CACHE_MAX_GB', '12');
-    vi.spyOn(fsUtil, 'measuredDirectorySizeAsync').mockResolvedValue(10 * 1024 ** 3);
+    recordSize(buildCache(), 10 * GIB);
     const { actions } = await runLadder(
       input(true, async () => pressure('high')),
       pressure('high'),
@@ -1046,101 +1022,14 @@ describe('the pressure ladder', () => {
     expect(existsSync(join(buildCache(), 'ios', 'kept-key'))).toBe(true);
   });
 
-  test('rung 3 at high keeps a cache or the Swift compilation cache whose size walk timed out with a kept action, and logs the failure once per 6 hours', async () => {
-    workspace('idle-hour', 60 * MINUTE_MS, 'Shutdown');
-    mkdirSync(join(buildCache(), 'ios'), { recursive: true });
-    vi.stubEnv('STIM_CACHES_BUILD_CACHE_MAX_GB', '12');
-    const real = getExecutor();
-    setExecutor({
-      ...getExecutor(),
-      runFileAsync: async (file, args, options) => {
-        if (file !== 'du') return real.runFileAsync(file, args, options);
-        throw Object.assign(new Error('Command timed out after 120000ms: du'), { code: 'ETIMEDOUT' });
-      },
-    });
-    const sizeRecords = () =>
-      readFileSync(daemonNdjsonFile(), 'utf8')
-        .split('\n')
-        .filter(Boolean)
-        .map((line): { event?: unknown; path?: unknown } => JSON.parse(line))
-        .filter((record) => record.event === 'size_failed' && record.path === buildCache());
-    const kept = (actions: { rung: number | null; kind: string; target: string; outcome: string }[]) =>
-      actions.find((action) => action.rung === 3 && action.kind === 'trim-cache' && action.target === buildCache());
-
-    const startedAt = Date.now();
-    const first = await runLadder(
-      input(true, async () => pressure('high')),
-      pressure('high'),
-    );
-    expect(kept(first.actions)).toMatchObject({
-      outcome: 'kept',
-      detail: 'its size walk did not finish within 120 seconds, so it was left alone',
-    });
-    expect(sizeRecords()).toEqual([
-      expect.objectContaining({
-        level: 'warn',
-        caller: 'sharedCachesStep',
-        reason: 'timeout',
-        limitMs: 120_000,
-        ms: expect.any(Number),
-      }),
-    ]);
-
-    const again = await runLadder(
-      input(true, async () => pressure('high')),
-      pressure('high'),
-    );
-    expect(kept(again.actions)?.outcome).toBe('kept');
-    expect(sizeRecords()).toHaveLength(1);
-
-    vi.setSystemTime(Date.now() + 6 * 60 * MINUTE_MS);
-    await runLadder(
-      input(true, async () => pressure('high')),
-      pressure('high'),
-    );
-    expect(sizeRecords()).toHaveLength(2);
-
-    const compilation = join(home, 'compilation-cache');
-    mkdirSync(compilation);
-    vi.stubEnv('STIM_CACHES_SWIFT_COMPILATION_CACHE_MAX_GB', '1');
-    const swift = await runLadder(
-      input(true, async () => pressure('high')),
-      pressure('high'),
-    );
-    expect(swift.actions.find((action) => action.rung === 3 && action.target === compilation)).toMatchObject({
-      kind: 'empty-cache',
-      outcome: 'kept',
-      detail: 'its size walk did not finish within 120 seconds, so it was left alone',
-    });
-    vi.setSystemTime(startedAt);
-  });
-
-  test('rung 3 at high trims a cache from the size the scan recorded, with no size walk first', async () => {
+  test('rung 3 at high trims a cache from its recorded size with no size walk, and leaves one with no recorded size alone', async () => {
     caches('kept-key');
     const hoursAgo = (Date.now() - 3 * 60 * MINUTE_MS) / 1000;
     utimesSync(join(buildCache(), 'ios', 'unused'), hoursAgo, hoursAgo);
+    utimesSync(join(metroCache(), 'other-app', 'transform', 'aa'), hoursAgo, hoursAgo);
     vi.stubEnv('STIM_CACHES_BUILD_CACHE_MAX_GB', '12');
-    mkdirSync(dirname(maintenanceStateFile()), { recursive: true });
-    writeFileSync(
-      maintenanceStateFile(),
-      JSON.stringify({
-        version: 1,
-        lastAt: {},
-        pressure: null,
-        sizes: [
-          {
-            name: 'shared build cache',
-            category: 'build-cache',
-            dir: buildCache(),
-            bytes: 20 * 1024 ** 3,
-            measuredAt: Date.now(),
-          },
-        ],
-        lastPass: null,
-        recent: [],
-        plan: [],
-      }),
-    );
+    vi.stubEnv('STIM_CACHES_METRO_CACHE_MAX_GB', '1');
+    recordSize(buildCache(), 20 * GIB);
     const walks: string[] = [];
     const real = getExecutor();
     setExecutor({
@@ -1156,26 +1045,21 @@ describe('the pressure ladder', () => {
       pressure('high'),
     );
 
-    expect(walks).not.toContain(buildCache());
+    expect(walks).toEqual([]);
     expect(existsSync(join(buildCache(), 'ios', 'unused'))).toBe(false);
-    expect(actions).toContainEqual(expect.objectContaining({ rung: 3, target: buildCache(), outcome: 'done' }));
+    expect(existsSync(join(metroCache(), 'other-app', 'transform', 'aa'))).toBe(true);
+    expect(actions.filter((action) => action.rung === 3)).toEqual([
+      expect.objectContaining({ target: buildCache(), outcome: 'done' }),
+    ]);
   });
 
-  test('a build headroom run goes on to the Metro cache after the build cache could not be sized and was kept', async () => {
+  test('a build headroom run goes on to the Metro cache past a build cache with no recorded size', async () => {
     caches('kept-key');
     vi.stubEnv('STIM_CACHES_BUILD_CACHE_MAX_GB', '12');
     vi.stubEnv('STIM_CACHES_METRO_CACHE_MAX_GB', '1');
+    recordSize(metroCache(), 4 * GIB);
     const device = statSync(home).dev;
     vi.spyOn(daemonMeasure, 'measureDisk').mockResolvedValue([{ volume: '/', freeMb: 100 * 1024, device }]);
-    const real = getExecutor();
-    setExecutor({
-      ...getExecutor(),
-      runFileAsync: async (file, args, options) => {
-        if (file === 'du' && args.at(-1) === buildCache()) throw Object.assign(new Error('du: denied'), { status: 1 });
-        if (file === 'du' && args.at(-1) === metroCache()) return `${4 * 1024 * 1024}\t${metroCache()}\n`;
-        return real.runFileAsync(file, args, options);
-      },
-    });
 
     await runLadderToFree({
       operation: testContext({ env: { ...process.env, CI: undefined, STIM_DAEMON: undefined } }),
@@ -1191,7 +1075,7 @@ describe('the pressure ladder', () => {
       .map((line): { event?: unknown; target?: unknown } => JSON.parse(line))
       .filter((record) => record.event === 'pressure_action')
       .map((record) => record.target);
-    expect(reached).toEqual([buildCache(), metroCache()]);
+    expect(reached).toEqual([metroCache()]);
     expect(existsSync(join(buildCache(), 'ios', 'unused'))).toBe(true);
   });
 
@@ -1205,16 +1089,8 @@ describe('the pressure ladder', () => {
     vi.stubEnv('STIM_CACHES_METRO_CACHE_MAX_GB', '1');
     const device = statSync(home).dev;
     vi.spyOn(daemonMeasure, 'measureDisk').mockResolvedValue([{ volume: '/', freeMb: 100 * 1024, device }]);
-    const real = getExecutor();
-    setExecutor({
-      ...getExecutor(),
-      runFileAsync: async (file, args, options) => {
-        if (file === 'du' && args.at(-1) === buildCache()) return `${20 * 1024 * 1024}\t${buildCache()}\n`;
-        if (file === 'du' && args.at(-1) === metroCache()) return `${4 * 1024 * 1024}\t${metroCache()}\n`;
-        return real.runFileAsync(file, args, options);
-      },
-    });
-
+    recordSize(buildCache(), 20 * GIB);
+    recordSize(metroCache(), 4 * GIB);
     await runLadderToFree({
       operation: testContext({ env: { ...process.env, CI: undefined, STIM_DAEMON: undefined } }),
       signal: new AbortController().signal,

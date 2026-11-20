@@ -348,17 +348,24 @@ async function measureCapOnly(
   state.capAt = now;
   const cargo = await measureCargoTargets(now, operation, state.sizes, { lowPriority: true });
   state.sizes = [...state.sizes.filter((size) => size.name !== 'Cargo target'), ...cargo];
-  keepCargoSizes(cargo);
+  keepScannedSizes(cargo);
   return true;
 }
 
+const KEPT_CATEGORIES: ReadonlySet<MaintenanceSize['category']> = new Set([
+  'build-cache',
+  'metro-cache',
+  'compilation-cache',
+]);
+
 /**
- * Writes each Cargo target size into the disk-usage cache, which keeps it across scans that measure other targets, for
- * the pressure ladder's largest-first order; the scan's own list, which the caps plan from, keeps only this scan's.
+ * Writes the size of each Cargo target and shared cache the scan measured into the disk-usage cache, which keeps it
+ * across scans that measure other targets, for the pressure ladder to free them without a walk; the caps still plan
+ * from the scan's own list.
  */
-function keepCargoSizes(sizes: readonly MaintenanceSize[]): void {
+function keepScannedSizes(sizes: readonly MaintenanceSize[]): void {
   for (const size of sizes)
-    if (size.name === 'Cargo target')
+    if (size.name === 'Cargo target' || KEPT_CATEGORIES.has(size.category))
       try {
         writeCacheFile(diskUsageCacheFile(size.dir), {
           path: size.dir,
@@ -511,7 +518,7 @@ export async function runMaintenance(
               ? []
               : await measureOwnedDevices(state.lastAt[check]!, measureFailed, tick && tickDeviceReads(tick))),
           ];
-          keepCargoSizes(state.sizes);
+          keepScannedSizes(state.sizes);
           for (const size of state.sizes)
             record('maintenance_check', 'debug', `${size.name}: ${formatBytes(size.bytes)}`, {
               check: {
