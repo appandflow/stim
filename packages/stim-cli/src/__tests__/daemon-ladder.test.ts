@@ -950,12 +950,25 @@ describe('the pressure ladder', () => {
         graceMs: 0,
         now: Date.now(),
         noOwnCommitsIdleMs: null,
-        worktrees: [{ path: worktree, dirty: false }],
+        worktrees: [
+          {
+            path: worktree,
+            keys: [worktree],
+            idleDays: 9,
+            merge: null,
+            head: null,
+            pullRequest: null,
+            skipCode: null,
+            skipped: null,
+            eligibleAt: null,
+            activity: null,
+          },
+        ],
       },
       actions: [{ kind: 'would-remove-worktree', target: worktree, bytes: 0, reason: 'its branch is merged' }],
       blocked: [],
       skips: [],
-    } as unknown as Awaited<ReturnType<typeof sweep.planWorktrees>>);
+    });
     const act = vi.spyOn(acting, 'executeAction');
 
     const { actions } = await runLadder(
@@ -1699,7 +1712,7 @@ describe('rung 5', () => {
         simsFailed: false,
         remeasure: async () => pressure(level),
         fromRung: 5,
-        ...(daemon ? { reports: true as const } : {}),
+        reports: daemon,
         ...(protectedRoot ? { protectedRoot } : {}),
       },
       pressure(level),

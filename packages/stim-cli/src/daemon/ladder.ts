@@ -108,7 +108,7 @@ export interface LadderInput {
   /** The device id of the one volume a build's headroom run frees; without it, the volumes under `disk.minFreeGb`. */
   volume?: number;
   /** Runs the report-only rungs 5 and 7: the stim-daemon's ladder, at most hourly and never at critical. */
-  reports?: true;
+  reports?: boolean;
 }
 
 interface RungContext extends LadderInput {

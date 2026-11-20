@@ -80,15 +80,24 @@ worktree steps of the ladder only report.
 
 The ladder runs its rungs in this order: rung 0 (memory), rung 2 (parked
 devices), rung 3 (Stim's shared caches, then the Cargo trims), rung 1 (the
-build outputs of stopped workspaces), then rungs 4 to 9. The rung numbers name
-the steps and do not change. Each rung measures again before it starts and the
-ladder stops once no volume is under pressure.
+build outputs of stopped workspaces), rungs 4, 6, 8 and 9, then the report
+rungs 5 and 7 (Rungs 5, 7 and 8 only report). The rung numbers name the steps
+and do not change. Each rung measures again before it starts and the ladder
+stops once no volume is under pressure.
 
-Rung 3 trims the Cargo targets largest first, by the last size Stim recorded
-for each: the maintenance size scan or a walk into the disk-usage cache,
-whichever is newer. Targets with no recorded size follow in plan order. The
-size scan measures every registered target but only six discovered ones per
-pass, so a discovered target is often unsized.
+Rung 3 runs its Cargo trims even when its shared caches failed (a lock that did
+not answer, a full disk), recording that failure as a failed action. It trims
+the targets largest first, by the last size Stim recorded for each: the
+maintenance size scan or the disk-usage cache, whichever is newer. The size
+scan measures every registered target but only six discovered ones per pass,
+and it writes each size into the disk-usage cache too, so a size survives the
+later scans that measure other targets; the caps still plan from the scan's own
+list. A target with no recorded size, or none newer than this process's last
+attempt to trim it, follows in plan order, so a target the ladder tried does
+not stay first. Before each trim the daemon's ladder measures that target's
+volume again and skips the target once its volume is no longer short, since a
+larger target's trim may have cleared it; a build's headroom run keeps its own
+free-space target.
 
 Rung 1 leaves out a checkout whose only output is a Cargo `target/`: rung 1
 never deletes a `target/`, so reading the evidence of that checkout bought
@@ -107,8 +116,11 @@ delay than ship what we have", 2026-11-20, on #6025, whose decided list
 includes this order and leaving target-only checkouts out of rung 1.
 
 Chosen by the implementer of #6025, not the maintainer: the rung numbers stay,
-rung 4 stays after rung 1 because it needs the same evidence reads, and an
-unsized target goes after the sized ones.
+rung 4 stays after rung 1 because it needs the same evidence reads, an unsized
+or already tried target goes after the sized ones, and the sizes persist in the
+disk-usage cache rather than in the scan's list, so stale sizes never drive a
+cap trim. The per-target volume check, the Cargo step's isolation from cache
+failures and the persisted sizes followed the first review of #6029.
 
 The full table lives in `website/docs/commands.md` (the `gc` section) and in
 `stim guide cleanup`; this document records why the levels are shaped this
@@ -120,9 +132,12 @@ While any volume is at high or critical, no cleanup step waits for a size
 scan, a `du` of what it frees, or host load to drop. A step whose decision
 needs no byte count (the Cargo `target/` trim, LLP 0005) plans from structure
 and runs in the same ladder pass, after the shared caches of rung 3 (The ladder
-runs by yield); a step that needs sizes measures them at once. At high the
-build and Metro caches are sized first, each walk bounded at 120 s, so the trim
-can wait for those walks, never for a size scan. Host load
+runs by yield); a step that needs sizes measures them at once. The shared
+caches are freed from the size Stim last recorded for them, with no walk
+first: at high the build, Metro and compilation caches are trimmed from that
+size, and only a cache with no recorded size is walked, at most 120 s; at
+critical the compilation cache and the fingerprint index and memo are emptied
+with no walk, and report the bytes their volume gained. Host load
 defers the size, idle, worktree and sweep checks only while every volume is at
 normal. The walk itself keeps its protections (one at a time, the walk claim,
 time limits, abort on handover). Walks above normal run at normal priority:
@@ -158,7 +173,9 @@ bytes. An action that freed no bytes, such as a Gradle stop, a parked simulator
 shut down for memory, or a Cargo trim whose volume gained nothing because other
 writers filled it meanwhile, does not count, and it does not drop the git reads
 the rungs share. Rung 1 records `kept`, not `done`, when its deletion kept every
-output it was given.
+output it was given. An emptied cache that reports the bytes its volume gained
+reports 0 on a disk other writers fill at the same time, so such a pass can
+count as freeing nothing and wait.
 
 After a daemon ladder pass that freed nothing, the next pass waits four times
 that pass's duration, at most 15 minutes, or at most one minute at critical. A
@@ -225,10 +242,12 @@ Rung 5 (the `node_modules` and Pods of idle linked worktrees), rung 7
 (finished worktrees) and the first step of rung 8 (the `node_modules` and Pods
 of idle main checkouts) delete nothing. Each records, as a `kept` action, what
 it would have taken, what that would free when the size is known, and why. This
-holds in the stim-daemon, in `stim gc` and in `stim gc --dry-run`. The rest of
-rung 8, device recordings and archived history, still acts. The stim-daemon
-runs each of these reports at most once an hour per Stim home, and a build's
-headroom run never runs them, since a report frees nothing for the build. The
+holds in the stim-daemon, in `stim gc` and in `stim gc --dry-run`. Rung 8 itself,
+device recordings and archived history, still acts; rung 5 runs the main
+checkout report after its own. Rungs 5 and 7 run last, after rung 9. The
+stim-daemon runs them at most once an hour per Stim home and never at
+critical; the ladder a command runs, a build's headroom run included, never
+runs them; `stim gc` runs them each time, at critical too. The
 pressure path neither samples hard links nor checks dependency trees for hand
 edits; the dormant steps still do both before they delete. The dormant steps,
 `stim worktree remove` and the worktree check of the maintenance pass are what
@@ -247,32 +266,48 @@ detection from the pressure path.
 
 Chosen by the implementer of #6025, not the maintainer: `stim gc` reports them
 too, so the daemon and `stim gc` keep one model, and the hourly limit, which
-keeps a report that frees nothing from walking every checkout each pass.
+keeps a report that frees nothing from walking every checkout each pass. The
+coordinator of #6025 chose, after the first review of #6029, to run them last,
+to skip them at critical in the daemon and in a command's ladder, where their
+walks cost the most and free nothing, and to keep them in `stim gc`, where a
+person asked for the report.
 
-## The maintenance lane never runs beside the ladder
+## The dormant step never runs beside the ladder
 
-The stim-daemon's maintenance lane starts its dormant step, the build outputs
-and then the dependencies of workspaces idle `idle.dormantDays` (One idle day
-reduces a workspace), only when the tick that started the lane ended at normal
-pressure. Above normal the step does not start, its hourly clock is not
-stamped, and it runs on the first lane after the level returns to normal. A
-step that already runs when the level rises runs to its end. The lane's
-fingerprint precompute and automatic maintenance pass still run. A machine held
-above normal therefore has no daemon step that deletes dependencies or the
-outputs of workspaces idle `idle.dormantDays`; `stim gc` still deletes them.
+The stim-daemon's dormant step, the hourly reduction of workspaces idle
+`idle.dormantDays` (One idle day reduces a workspace), never runs at the same
+time as a ladder pass for disk. The tick and the maintenance lane share a turn:
 
-Reason: on 2026-11-19 the lane's dormant dependency step ran for 49 minutes
-beside both slow rung 1 passes and rung 3, walking the same 171 checkouts with
-its own `ps`, `lsof`, `git` and `du`, in another thread that shares no caches
-with the ladder.
+- The lane takes the turn when the step starts, only while the disk level the
+  tick last measured is normal and no ladder pass holds it. Memory pressure
+  alone does not hold it back.
+- A ladder pass for disk takes the turn first. When the lane's step holds it,
+  the tick stops the lane's running job, which ends its precompute or
+  maintenance pass too, waits for it to settle, and gives the step its hour
+  back.
+- While the disk stays above normal after the pass, the tick runs the step
+  itself, right after the pass and before it answers waiting commands, with
+  the same idle and ownership checks. A tick a command asked for skips it. Its
+  time is the tick's `dormantStepMs` phase, not part of the ladder pass, so
+  pacing does not count it.
+
+A step stopped part way leaves what it already removed removed and the rest in
+place; each removal holds its workspace's claims, which the stop releases.
+
+Reason: on 2026-11-19 the lane's dormant step started at normal and ran for 49
+minutes beside both slow rung 1 passes and rung 3, walking the same 171
+checkouts with its own `ps`, `lsof`, `git` and `du`, in another thread that
+shares no caches with the ladder. At critical the step is also what deletes an
+idle target whole, which no rung reclaims, so it must still run while the disk
+stays short.
 
 Maintainer decision: "I agree lets do this and ur recommendations from prev
 messages, also lets do the changes now that u flagged as after 2.0 id rather
 delay than ship what we have", 2026-11-20, on #6025, whose decided list
-includes never running the maintenance lane beside the ladder. Chosen by the
-implementer, not the maintainer: the whole dormant step is gated, a step
-already running is not stopped, and the precompute and maintenance pass are
-not gated.
+includes never running the maintenance lane beside the ladder. The serial run
+after the ladder pass, stopping a running step, gating on the disk level only
+and skipping it on a requested tick are the coordinator's reading of #6025,
+after the first review of #6029, not the maintainer's.
 
 ## Each rung frees only the volumes under pressure
 
@@ -347,8 +382,8 @@ drops a marker for any other root, an unreadable marker file, or a marker over
 an hour old, without a read inside that root. A workspace layout that cannot be
 read keeps the marker and measures nothing for that root. An expired marker is
 dropped, and those folders are measured again at the next build end or when
-`stim gc` reports; nothing else refreshes them on a schedule, because the hourly
-size scan measures only the Stim workspace folders. The disk-usage cache is keyed by the exact path string, so each folder is
+`stim gc` reports; the hourly size scan refreshes only the Cargo `target/` sizes
+it measures (The ladder runs by yield). The disk-usage cache is keyed by the exact path string, so each folder is
 walked and keyed as the gc worktree report spells it, the registered root joined
 with the name as enumerated; the canonical path only bounds what may be walked. A
 case-only redirect through a replaced ancestor on a case-sensitive volume is not
@@ -367,7 +402,9 @@ level and waits only for the walk claim: a held claim keeps every marker for the
 next period. The walk is the same one the thread already runs: one at a time,
 under the walk claim, with a time limit. The cache numbers feed `stim status`,
 Desktop and the `stim gc` worktree report. No deletion, reduction, refusal or
-build admission reads them: the caps read the maintenance size scan, the
+build admission reads them, only the order and the trim amount of the pressure
+ladder's rung 3 (Pressure acts without waiting for measurement or load): the
+caps read the maintenance size scan, the
 dependency ranking reads only `node_modules` and Pods entries, which this job
 never writes, and the headroom estimate (LLP 0006) reads the build ledger.
 
@@ -387,8 +424,9 @@ its minimal size at every level: build outputs, owned devices, logs archived,
 and in a linked worktree `node_modules` and Pods.
 
 The stim-daemon runs the build output step and then the dependency step at most
-hourly, only while the level is normal (The maintenance lane never runs beside
-the ladder), and `stim gc` at every level on each run. Build outputs go only by the
+hourly at every level, beside its tick at normal and right after a ladder pass
+while the disk is above normal (The dormant step never runs beside the ladder),
+and `stim gc` on each run. Build outputs go only by the
 full evidence, for a registered workspace as for a discovered checkout: Stim
 activity, source and git writes, and processes running from or working in the
 checkout, its git checkout as a whole for an app nested in one. A locked

@@ -574,29 +574,29 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
     rung 3, H and C. Kept: entries a running build protects, report-only
     caches.
   Cargo target/ stale profiles and incremental/ data (at C also idle units), last in rung 3
-    rung 3 after the caches, largest target first by its last recorded size, H
-    and C. Kept: as the cap trim above.
+    rung 3 after the caches, largest target first by its last recorded size,
+    while its own volume is short, H and C. Kept: as the cap trim above.
   Idle dev servers and their outputs (idle 2 minutes)
     idle stage (memory pressure) and rung 1, H. Kept: as above; rung 1
     skips a Cargo target/ and a checkout whose only output is one.
   Dormant stage at 10 minutes (H) or 2 minutes (C)
     rung 4, H. Kept: as the dormant reduction.
   node_modules and Pods of linked worktrees idle 1 hour (H) or 2 minutes (C)
-    rung 5, H, reported only, hourly in the daemon. Not listed: a
-    copy-on-write clone, in use, pinned.
+    rung 5, H, reported only, last: hourly in the daemon below C, each time
+    in stim gc. Not listed: a copy-on-write clone, in use, pinned.
   Idle Gradle and Kotlin daemons, unused watchman, unpinned Gradle versions (C:
   all unpinned), TMPDIR leftovers, worktree trash
     rung 6, H. Kept: a build running, a project pins it, modified within 24
     hours.
   Clean finished worktrees after gc.worktreeGraceMinutes (H), without it (C);
   clean pushed worktrees idle 7 days (C)
-    rung 7, H and C, reported only, while
+    rung 7, H and C, reported only, last, while
     maintenance.removeFinishedWorktrees is true; the idle pushed ones only
     while maintenance.removeIdleWorktrees is true. Not listed: dirty,
     unpushed, in use, leased, locked, pinned.
   node_modules and Pods of source checkouts idle 2 minutes, on a volume still
   under the critical level
-    rung 8, C, reported only.
+    rung 5 in stim gc at C, reported only.
   Every device recording and archived logs, recordings and agent actions
     rung 8, C. Kept: a recording being written, those of a workspace pinned
     with maintenance.keep or in use (checked again under the workspace's
@@ -628,7 +628,8 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
 
   The dormant reduction and the dormant stage are the same work: a workspace
   with no activity for idle.dormantDays is reduced to its minimal size, by
-  stim gc at every level and by the stim-daemon (hourly at normal pressure). Its node_modules and
+  stim gc at every level and by the stim-daemon (hourly, never beside a
+  ladder pass). Its node_modules and
   ios/Pods go only in a linked worktree, are recorded, and the next Stim
   command in it restores them with \`stim worktree warm\`, or, when warm cannot
   restore the same versions (its lockfile differs from the source checkout's,
@@ -1132,24 +1133,14 @@ THE PRESSURE LADDER
        under memory pressure (at idle.minutes under disk pressure alone)
     4  the dormant stage: workspaces idle 10 minutes (high) or 2 minutes
        (critical)
-    5  reported only: node_modules and Pods of idle linked
-       worktrees, at high (idle 1 hour) and critical (idle 2 minutes)
     6  idle Gradle and Kotlin daemons, an unused watchman, unpinned Gradle
        versions (critical: all unpinned), TMPDIR leftovers, the worktree trash
-    7  reported only: worktrees, only while
-       maintenance.removeFinishedWorktrees is true:
-       clean finished ones after gc.worktreeGraceMinutes (high) or without it
-       (critical); at critical also clean pushed ones no Stim command used for
-       7 days, only while maintenance.removeIdleWorktrees is true (false
-       means never, at any level). The daemon's tick uses the pull request lookups the worktree
-       check cached; stim gc looks them up again
-    8  critical only: node_modules and Pods of idle source checkouts,
-       reported only; then every device recording not being written, except those
+    8  critical only: every device recording not being written, except those
        of workspaces pinned with maintenance.keep or in use (checked again
        under each workspace's native-run claim), and archived logs,
        recordings and agent actions; worktree archives and archive records
        stay
-    9  the last rung, at critical only, never in a STIM_HOME-scoped home and
+    9  at critical only, never in a STIM_HOME-scoped home and
        never in the in-process ladder a build command runs at
        disk.hardFloorGb: caches Stim does not own, each through the tool's
        own command only when that tool is installed and no process of that
@@ -1170,6 +1161,16 @@ THE PRESSURE LADDER
        Reported only, never deleted, with the command: Android NDKs
        (sdkmanager --uninstall "ndk;<version>"), Android system images no AVD
        uses (the sdkmanager command) and ~/.cache/exact.
+    5  reported only, last: node_modules and Pods of idle linked worktrees,
+       at high (idle 1 hour), and at critical (2 minutes) of idle source
+       checkouts too
+    7  reported only: worktrees, only while
+       maintenance.removeFinishedWorktrees is true:
+       clean finished ones after gc.worktreeGraceMinutes (high) or without it
+       (critical); at critical also clean pushed ones no Stim command used for
+       7 days, only while maintenance.removeIdleWorktrees is true (false
+       means never, at any level). The daemon's tick uses the pull request lookups the worktree
+       check cached; stim gc looks them up again
   Only the stim-daemon and stim gc run rung 9. The daemon runs it at most
   hourly, while the disk is still short. stim gc with no --pressure that
   measures critical measures free disk again after the earlier rungs and runs
@@ -1178,8 +1179,8 @@ THE PRESSURE LADDER
   it.
   It runs whatever daemon.mode says and covers every registered workspace,
   the one gc runs in included: its dev server stops and its devices shut
-  down after 2 idle minutes, its owned devices are deleted after 10 at high,
-  and a linked worktree's node_modules and Pods after an hour at high. It never touches
+  down after 2 idle minutes, and its owned devices are deleted after 10 at
+  high. It never touches
   a workspace with a blocker (a build, a driver, a lease or lock, a live web
   share, a hosted placement, unreadable evidence), and maintenance.keep
   protects a workspace. Report-only caches and what Stim never deletes (other

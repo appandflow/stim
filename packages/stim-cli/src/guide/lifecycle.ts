@@ -2597,7 +2597,9 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
 
   The daemon line of \`stim status\` and \`daemon.pressure\` in its --json show
   the level and why. Above normal, the tick runs the ladder in the order below,
-  by yield (rung numbers stay), until the level clears; after a pass that freed
+  by yield (rung numbers stay), until the level clears, then, while the disk is
+  still short and no command asked for the tick, the hourly dormant step, which
+  never runs beside a disk ladder pass; after a pass that freed
   no bytes, the next waits 4 times its
   length (max 15 min; 1 min at critical) unless pressure or disk use rose
   or a run asks.
@@ -2619,9 +2621,11 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
        React Native and Android caches; \`guide cleanup\` lists them), except
        report-only caches, caches inside a workspace, caches Stim does not own,
        caches outside a scoped STIM_HOME and one a build holds. A capped cache
-       whose size walk fails is kept: build and Metro at high, Swift
-       compilation at high and critical. Then the Cargo trims (\`guide cleanup
-       disk\`), largest target first by its last recorded size
+       is sized from what the size scan recorded, with no walk first; one with
+       no recorded size whose walk fails is kept: build and Metro at high,
+       Swift compilation at high. Then the Cargo trims (\`guide cleanup
+       disk\`), largest target first by its last recorded size, each only while
+       its own volume is still short, even when a cache step failed
     1. idle stage: memory pressure idles every workspace idle 2 minutes or
        more now (\`guide metro\`, IDLE STOP), disk pressure alone at
        idle.minutes; outputs of workspaces with nothing running go, but a
@@ -2629,28 +2633,15 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
     4. dormant stage now: at high for workspaces idle 10 minutes, at critical
        for workspaces idle 2 minutes (the same reduction a day of idleness
        causes, DORMANT STAGE below)
-    5. reported only, never deleted: node_modules and Pods of idle linked
-       worktrees at high (idle 1 hour) and at critical (idle 2 minutes), each
-       a kept action with the bytes deleting it would free when known; the
-       daemon reports at most hourly. Only the dormant stage deletes them
     6. idle Gradle and Kotlin daemons, an unused watchman (over 2 GiB, or over
        1 GiB under memory pressure), unpinned Gradle versions unmodified for
        maintenance.gradleVersionIdleDays (at critical every unpinned one), Stim
        TMPDIR leftovers unmodified for 24 hours, and the worktree trash;
        automatic maintenance's daily sweep runs this rung at normal
-    7. reported only, never removed: worktrees, only while
-       maintenance.removeFinishedWorktrees is true: at
-       high clean finished linked worktrees after the gc.worktreeGraceMinutes
-       wait; at critical without it, and also clean pushed worktrees no Stim
-       command used for 7 days, only while maintenance.removeIdleWorktrees is
-       true. The tick uses the pull request lookups the
-       worktree check cached instead of calling gh; stim gc looks them up again
-    8. critical only: first, reported only, the node_modules and Pods of
-       source (main) checkouts idle 2 minutes, on a volume still under the
-       critical level; then every device recording not
+    8. critical only: every device recording not
        being written, except those of workspaces pinned with maintenance.keep
        or in use, and archived logs, recordings and agent actions
-    9. last, at critical only, never in a STIM_HOME-scoped home and never in
+    9. at critical only, never in a STIM_HOME-scoped home and never in
        the in-process ladder a build command runs at disk.hardFloorGb: caches
        Stim does not own, each
        through the tool's own command and only when that tool is installed and
@@ -2674,6 +2665,20 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
        measures free disk again after the earlier rungs and runs it only if
        the disk is still under the critical level; an explicit
        \`stim gc --pressure critical\` always runs it
+    5. reported only, never deleted: node_modules and Pods of idle linked
+       worktrees at high (idle 1 hour), each a kept action with the bytes
+       deleting it would free when known; then, in \`stim gc\` at critical, those
+       of source (main) checkouts idle 2 minutes on a volume still under the
+       critical level. Rungs 5 and 7 run last: the daemon's ladder runs them at
+       most hourly and never at critical, a command's ladder never, \`stim gc\`
+       each time. Only the dormant stage deletes them
+    7. reported only, never removed: worktrees, only while
+       maintenance.removeFinishedWorktrees is true: at
+       high clean finished linked worktrees after the gc.worktreeGraceMinutes
+       wait; at critical without it, and also clean pushed worktrees no Stim
+       command used for 7 days, only while maintenance.removeIdleWorktrees is
+       true. The tick uses the pull request lookups the
+       worktree check cached instead of calling gh; stim gc looks them up again
 
   A level raised only by memory runs only what frees memory: the idle stage
   of rung 1, which shuts devices down, and the Gradle daemons and watchman of
@@ -2737,8 +2742,8 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
 
   DORMANT STAGE: a workspace with nothing running and no activity for
   idle.dormantDays (1; fractions allowed; 0 never) goes dormant and is
-  reduced to its minimal size, by \`stim gc\` at every level and by the
-  stim-daemon at normal: its regenerable build outputs are deleted (WORKSPACE BUILD
+  reduced to its minimal size, at every level, by \`stim gc\` and by the
+  stim-daemon: its regenerable build outputs are deleted (WORKSPACE BUILD
   OUTPUTS in \`guide cleanup disk\`), its owned simulators and emulators are
   deleted through centralized teardown (the parked pool is untouched), its
   logs are archived when archive.enabled is on, and, for a linked worktree,

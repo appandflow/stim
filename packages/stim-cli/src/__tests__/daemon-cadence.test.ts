@@ -189,7 +189,7 @@ describe('the dormant step and the disk ladder', () => {
     const gate = createDormantGate();
     const cadence = new BigInt64Array([BigInt(Date.now())]);
     expect(admitStep(gate)).toBe(true);
-    const yieldLane = vi.fn(async () => {
+    const yieldLane = vi.fn<() => Promise<void>>(async () => {
       order.push('lane stopped');
       releaseStep(gate);
     });
