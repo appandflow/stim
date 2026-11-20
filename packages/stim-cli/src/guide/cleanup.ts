@@ -126,7 +126,7 @@ In on mode a pass runs, cheapest to rebuild first:
      or unused for maintenance.olderThanDays; the Cargo target/ of an Exact
      app or a Cargo workspace root (CACHEDIR.TAG; untagged beside Cargo.toml:
      trimmed only), in a registered workspace or
-     a discovered checkout, in use or not, over maintenance.cargoTargetMaxGb
+     a discovered checkout, over maintenance.cargoTargetMaxGb
      (default 25, 0 no cap; one du walk per target/, at most 6 discovered
      ones per size scan, the least recently measured first, so every one is
      reached within a few scans; one that times out
@@ -139,32 +139,34 @@ In on mode a pass runs, cheapest to rebuild first:
      stale profiles: first the profiles and target triples no build wrote in the last
      day (directory times and Exact's own .exact-sweep.json ledger; reads leave
      no trace on APFS), then, if still over, the incremental/ directory of each
-     remaining profile, largest first, until under the cap. At critical only,
-     the idle build units of each remaining profile go too, where Exact's
-     ledger shows their use (see CARGO UNITS below). The disk level of the volume holding a target/
-     tightens this: at high every recognised target/, in use or not, loses all
-     its stale profiles and all incremental/ data whatever the cap, and
-     at critical it also loses every idle unit. An explicit stim gc --pressure high|critical applies the level
+     remaining profile, largest first, until under the cap. At normal the cap
+     trims only an idle target/: a process using any path in it, or a build
+     holding any of its Cargo locks, keeps it whole until the next pass. The
+     disk level of the volume holding a target/
+     tightens this: at high and critical every recognised target/, in use or not, loses all
+     its stale profiles and all incremental/ data whatever the cap. An explicit stim gc --pressure high|critical applies the level
      to every target/. At high or critical the trim is planned
      from the folders alone, with no size scan, no du and no load gate first: the
      pressure ladder runs it at the start of rung 3, before any shared cache
      is trimmed (the stim-daemon's at most every 10 minutes per level; the one
      start, ios and android run before they build runs it once and leaves the
-     workspace being built alone), one process at a time per target/ for each user account, whatever its Stim home, and an acting stim gc runs
+     workspace being built alone), and an acting stim gc runs
      it before it measures anything. At normal the cap is planned at the hourly
      size scan, or hourly on its own while host load defers the size scan (the
      cap is never held back by load, and its du runs at low priority, one
      target/ at a time, 120 seconds at most each, ended at once by a handover;
-     the planning du, the trim's du, lsof and ps run niced, while reading the
-     units' directories is in-process and short). Without Exact's ledger, a build that changes nothing leaves
-     no trace in a profile's directory times. Each is renamed
-     into target/.stim-trimmed after a check, checked again at its new path,
-     moved back if a build took one of the profile's lock files (.cargo-lock,
-     .cargo-build-lock, .cargo-artifact-lock) meanwhile, then deleted; a
-     leftover .stim-trimmed is deleted first. A profile whose lock file a
-     build holds, and any path a process executes from or holds open (one lsof
-     and one ps read; unreadable keeps everything), stay, so a server running
-     from target/exact-filesystem-tool does not protect the rest
+     the planning du, the trim's du, lsof and ps run niced). Without Exact's
+     ledger, a build that changes nothing leaves no trace in a profile's
+     directory times. Each is deleted in place while Stim holds the profile's
+     Cargo locks (.cargo-lock, .cargo-build-lock, .cargo-artifact-lock; only
+     those that exist), taken without waiting through flock (Perl on macOS and
+     Linux; Windows and Linux NFS keep it); a build that starts meanwhile waits,
+     then rebuilds. The delete never follows a link, never enters another
+     device and leaves lock files and *-keypair.json. A profile whose lock a
+     build holds or with no .cargo-lock, and any path a process executes from
+     or holds open (one lsof and one ps read; unreadable keeps everything),
+     stay. A target/ holding an earlier Stim's .stim-trimmed or
+     .stim-not-restored-* is left alone until you delete it
   3. build-cache and Metro entries, least recently used first, down to
      80% of caches.buildCacheMaxGb or
      caches.metroCacheMaxGb, and entries unused for olderThanDays, Metro
@@ -302,10 +304,10 @@ The run claim serializes passes with an acting gc; gc refuses a held claim
 with the holder and recovery guidance instead of waiting. A dry run takes no
 claim.
 Each pass keeps a 1 MiB file, maintenance/disk-reserve. When taking the run
-claim fails with ENOSPC or EDQUOT, the pass deletes it and retries once, and
-so does a Cargo trim or delete whose claim or staging write fails that way, and
-the dormant step for any output whose workspace claims fail that way; an
-acting gc gives it back before taking the claim. Either starts deleting at zero
+claim fails with ENOSPC or EDQUOT, the pass deletes it and retries once; a
+Cargo trim or delete, and the dormant step before its workspace claims, delete
+it once up front when their volume has less than 64 MiB free; an acting gc
+gives it back before taking the claim. Either starts deleting at zero
 free disk as long as an earlier run left the reserve, and writes the reserve
 again at its end when there is room.
 
@@ -1815,28 +1817,6 @@ setting measured on the selected API 36 profile. Set
 project needs another size. Android userdata grows but does not shrink, so the
 setting applies only to a newly created AVD; recreate the environment to adopt
 a changed value.
-
-CARGO UNITS
-  A unit is one build of one crate in a profile: .fingerprint/<crate>-<hash>,
-  build/<crate>-<hash> and the deps/ files carrying the hash. Cargo keeps the
-  old ones whenever a crate's version, features or dependencies change. Cargo
-  does not touch the fingerprint of a fresh dependency, so modification times
-  say nothing about use; only Exact's .exact-sweep.json ledger does: its sweep
-  stamps a unit (<profile>#<hash>) when a build read the unit's fingerprint,
-  even if it compiled nothing. Units are swept only in a target that has that
-  ledger. A unit is idle when its stamp is over a day old and no build read
-  its fingerprint since that sweep (the access time Exact's sweep resets); a
-  unit with no stamp stays, and so does one unit per crate name, the most
-  recently used (its other units, whatever their kind, can go when idle). A
-  ledger whose own time is over 3 days old shows no use and its target keeps
-  its units. Units are swept at critical only, in chunks of 25. Each chunk
-  needs exclusive locks on Exact's ledger and the Cargo profile. If a build or
-  Exact already holds a lock, the profile's sweep stops. If a build starts while
-  Stim holds the locks, Cargo waits until Stim has moved the files aside.
-  The locks require Perl on macOS or Linux. The sweep keeps units on Windows,
-  Linux NFS, and when it cannot verify a lock. A chunk is renamed aside,
-  fingerprints first, then build/, then deps/. Hard links Cargo made in the
-  profile root keep the bytes of a removed deps/ file.
 
 WORKSPACE BUILD OUTPUTS
   Each workspace directory holds derived-data/, gradle-build/, android-cas/,
