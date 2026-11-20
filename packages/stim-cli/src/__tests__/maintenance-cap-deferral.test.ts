@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { maintenanceStateFile, readMaintenanceState, type MaintenanceState } from '@stim-cli/core/state';
+import { maintenanceStateFile, readDiskUsage, readMaintenanceState, type MaintenanceState } from '@stim-cli/core/state';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { planCargoTargetsAtPressure, trimCargoTargetAction } from '../stimd/passes/cargo-target.ts';
 import { deferCheck } from '../stimd/passes/defer.ts';
@@ -67,6 +67,7 @@ test('while host load defers the size scan, the cap still measures and plans an 
   expect(measurements.measureSizes).not.toHaveBeenCalled();
   expect(state?.lastAt.size).toBeUndefined();
   expect(state?.sizes.map(({ name, dir }) => [name, dir])).toEqual([['Cargo target', target]]);
+  expect(readDiskUsage(target)?.bytes).toBe(state?.sizes[0]?.bytes);
   expect(state?.plan.map(({ kind, target: dir }) => [kind, dir])).toEqual([['would-clear-build-dirs', target]]);
   expect(maintenanceStatus().deferred).toContainEqual({ check: 'size', since: expect.any(Number) });
 });

@@ -12,11 +12,12 @@ import {
 import { execSync } from 'node:child_process';
 import type { MockInstance } from 'vitest';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import type { DaemonLadderAction, DaemonPressure } from '@stim-cli/core/state';
 import {
   daemonNdjsonFile,
   diskUsageCacheFile,
+  maintenanceStateFile,
   IDLE_STOP_KEY,
   ladderRunClaims,
   readDormantStage,
@@ -654,6 +655,70 @@ describe('the pressure ladder', () => {
         ['trim-cargo', big.target],
         ['trim-cargo', small.target],
       ]);
+    },
+  );
+
+  const GIB = 1024 ** 3;
+  const walked = (target: string, bytes: number, at = new Date()) =>
+    writeCacheFile(diskUsageCacheFile(target), { path: target, measuredAt: at.toISOString(), bytes });
+  const trimOrder = (actions: readonly DaemonLadderAction[]) =>
+    actions.filter((action) => action.kind === 'trim-cargo').map((action) => action.target);
+
+  test.skipIf(process.platform === 'win32')(
+    'rung 3 orders Cargo targets by the newer of the size scan and the disk-usage cache, unsized ones last',
+    async () => {
+      const unsized = cargoApp('unsized-app');
+      const rescanned = cargoApp('rescanned-app');
+      const large = cargoApp('large-app');
+      const hourAgo = Date.now() - 60 * MINUTE_MS;
+      mkdirSync(dirname(maintenanceStateFile()), { recursive: true });
+      writeFileSync(
+        maintenanceStateFile(),
+        JSON.stringify({
+          version: 1,
+          lastAt: {},
+          pressure: null,
+          sizes: [
+            { name: 'Cargo target', category: 'other', dir: rescanned.target, bytes: 30 * GIB, measuredAt: hourAgo },
+          ],
+          lastPass: null,
+          recent: [],
+          plan: [],
+        }),
+      );
+      walked(rescanned.target, GIB);
+      walked(large.target, 5 * GIB);
+
+      const { actions } = await runLadder(
+        input(true, async () => pressure('high')),
+        pressure('high'),
+      );
+
+      expect(trimOrder(actions)).toEqual([large.target, rescanned.target, unsized.target]);
+    },
+  );
+
+  test.skipIf(process.platform === 'win32')(
+    'a Cargo target this process tried to trim goes after the sized ones until it is measured again',
+    async () => {
+      const small = cargoApp('small-app');
+      const big = cargoApp('big-app');
+      walked(small.target, GIB);
+      walked(big.target, 20 * GIB);
+      const ladder = () =>
+        runLadder(
+          input(true, async () => pressure('high')),
+          pressure('high'),
+        );
+      expect(trimOrder((await ladder()).actions)).toEqual([big.target, small.target]);
+
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(Date.now() + 11 * MINUTE_MS);
+      small.fill();
+      big.fill();
+      walked(small.target, GIB);
+
+      expect(trimOrder((await ladder()).actions)).toEqual([small.target, big.target]);
     },
   );
 

@@ -415,9 +415,12 @@ async function trim(
     : { outcome: 'kept', bytes: 0, detail: `no unprotected entry to evict${kept}` };
 }
 
+const cargoAttemptedAt = new Map<string, number>();
+
 /**
- * The trims ordered by the last size recorded for their target, by the maintenance size scan or a walk into the
- * disk-usage cache, whichever is newer, largest first; targets with no recorded size follow in plan order.
+ * The trims ordered by the last size recorded for their target, by the maintenance size scan or the disk-usage cache,
+ * whichever is newer, largest first; targets with no recorded size, or none since this process last tried to trim them,
+ * follow in plan order.
  */
 function largestFirst(actions: readonly MaintenanceAction[]): MaintenanceAction[] {
   const scanned = new Map<string, { bytes: number; at: number }>();
@@ -425,9 +428,10 @@ function largestFirst(actions: readonly MaintenanceAction[]): MaintenanceAction[
     if (size.name === 'Cargo target') scanned.set(size.dir, { bytes: size.bytes, at: size.measuredAt });
   const known = (dir: string): number => {
     const walked = readDiskUsage(dir);
+    const walkedAt = walked ? Date.parse(walked.measuredAt) : -Infinity;
     const scan = scanned.get(dir);
-    if (walked && !(scan && scan.at >= Date.parse(walked.measuredAt))) return walked.bytes;
-    return scan?.bytes ?? -1;
+    const latest = scan && scan.at >= walkedAt ? scan : walked ? { bytes: walked.bytes, at: walkedAt } : null;
+    return latest && latest.at > (cargoAttemptedAt.get(dir) ?? -Infinity) ? latest.bytes : -1;
   };
   return actions
     .map((action) => ({ action, bytes: known(action.target) }))
@@ -473,6 +477,7 @@ async function cargoTargetsStep(context: RungContext): Promise<void> {
       (await measuredDiskLevel(action.target, context.operation?.signal)) === 'normal'
     )
       continue;
+    cargoAttemptedAt.set(action.target, Date.now());
     await run(context, action);
   }
   cargoTrimmedAt.set(key, now);

@@ -1,5 +1,6 @@
 import { appendFileSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { diskFull, keepReserve, releaseReserve } from '../../disk-reserve.ts';
+import { writeCacheFile } from '../../cache-file.ts';
 import { basename, join } from 'node:path';
 import { withDirLock, type StimContext } from '@stim-cli/core';
 import {
@@ -7,6 +8,7 @@ import {
   maintenanceDir,
   maintenanceRunClaims,
   maintenanceStateFile,
+  diskUsageCacheFile,
   readMaintenanceState,
   type MaintenanceAction,
   type MaintenanceCheck,
@@ -346,7 +348,24 @@ async function measureCapOnly(
   state.capAt = now;
   const cargo = await measureCargoTargets(now, operation, state.sizes, { lowPriority: true });
   state.sizes = [...state.sizes.filter((size) => size.name !== 'Cargo target'), ...cargo];
+  keepCargoSizes(cargo);
   return true;
+}
+
+/**
+ * Writes each Cargo target size into the disk-usage cache, which keeps it across scans that measure other targets, for
+ * the pressure ladder's largest-first order; the scan's own list, which the caps plan from, keeps only this scan's.
+ */
+function keepCargoSizes(sizes: readonly MaintenanceSize[]): void {
+  for (const size of sizes)
+    if (size.name === 'Cargo target')
+      try {
+        writeCacheFile(diskUsageCacheFile(size.dir), {
+          path: size.dir,
+          measuredAt: new Date(size.measuredAt).toISOString(),
+          bytes: size.bytes,
+        });
+      } catch {}
 }
 
 async function measureAllSizes(
@@ -492,6 +511,7 @@ export async function runMaintenance(
               ? []
               : await measureOwnedDevices(state.lastAt[check]!, measureFailed, tick && tickDeviceReads(tick))),
           ];
+          keepCargoSizes(state.sizes);
           for (const size of state.sizes)
             record('maintenance_check', 'debug', `${size.name}: ${formatBytes(size.bytes)}`, {
               check: {
