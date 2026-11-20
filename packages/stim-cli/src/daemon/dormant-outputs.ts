@@ -17,7 +17,6 @@ import {
 import type { Config } from '../workspace/config.ts';
 import { discoveredReads, type DiscoveredReads } from '../workspace/discovered-reads.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
-import { freshLaunchers, launcherReason, launchingOf, type Launching } from '../workspace/launchers.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import {
   cargoTargetDirsAsync,
@@ -62,7 +61,7 @@ export async function reduceDormantOutputs(
   input: Input,
 ): Promise<DaemonLadderAction[]> {
   const { operation } = input;
-  const reads = discoveredReads(operation?.signal, operation);
+  const reads = discoveredReads(operation?.signal);
   const actions: DaemonLadderAction[] = [];
   for (const candidate of candidates) {
     let result: Result | null;
@@ -115,14 +114,9 @@ async function reduceWorkspace(
   if (typeof checkout !== 'string') return keep(`its checkout cannot be established: ${checkout.unknown}`);
   const lock = await worktreeLockAsync(path, gitOptions(operation));
   if (lock) return keep(lockReason(lock));
-  const verdict = await sourceCheckoutIdle(path, afterMs, SETTING, { operation, reads, reduceOnly: false, checkout });
+  const verdict = await sourceCheckoutIdle(path, afterMs, SETTING, { operation, reads, checkout });
   if ('kept' in verdict) return keep(verdict.kept);
-  const plan = await eligible(
-    candidate,
-    config,
-    afterMs,
-    launchingOf(checkout, () => reads.launchers(false), operation, signal),
-  );
+  const plan = await eligible(candidate, config, afterMs);
   if (!plan.paths.length) return plan.keptTarget ? keep(plan.kept.join('; ')) : null;
   const measure = input.act || input.force === true;
   const sizeOf = async (dir: string) =>
@@ -194,21 +188,16 @@ function gitOptions(operation: StimContext | undefined) {
  * allow, among them every recognised Cargo `target/`, which stays while it shows use within `afterMs`
  * (`recentTargetUse`).
  */
-async function eligible(
-  candidate: StageCandidate,
-  config: Config,
-  afterMs: number,
-  launching: Launching,
-): Promise<Plan> {
+async function eligible(candidate: StageCandidate, config: Config, afterMs: number): Promise<Plan> {
   const store = metroStoreRoot(candidate.path);
-  const outputs = await idleOutputs(candidate.path, config, launching, (output) => output !== store);
+  const outputs = await idleOutputs(candidate.path, config, (output) => output !== store);
   const kept = outputs.kept.filter((reason) => !reason.includes(store));
   const plan: Plan = { paths: [], targets: new Set(), kept, keptTarget: false };
   const targets = [...outputs.targets];
   // @ref LLP 0005#the-dormant-reduction-deletes-an-idle-target-whole -- untagged too, never build output
   for (const dir of await cargoTargetDirsAsync(candidate.path, { staged: true })) {
     if (isBuildDirPath(dir)) continue;
-    const problem = await regenerableDirProblem(candidate.path, dir, undefined, { launching });
+    const problem = await regenerableDirProblem(candidate.path, dir, undefined);
     if (problem) {
       plan.kept.push(`kept ${dir}: ${problem}`);
       plan.keptTarget = true;
@@ -237,7 +226,6 @@ async function outputProblem(
   path: string,
   output: string,
   cargo: boolean,
-  launching: Launching,
   signal: AbortSignal | undefined,
 ): Promise<string | null> {
   if (output === metroStoreRoot(path)) return 'the shared Metro store is not a dormant output';
@@ -245,14 +233,14 @@ async function outputProblem(
     return 'it is no longer a Cargo target/ Stim recognises';
   if (!cargo && basename(output) === 'target') return 'a Cargo target/ goes only through the Cargo delete';
   if (workspaceOutputPaths(workspaceDir(path)).includes(output)) return null;
-  return regenerableDirProblem(path, output, signal, { launching });
+  return regenerableDirProblem(path, output, signal);
 }
 
 /**
  * Removes one output under the workspace's native-run and metro-start claims after checking again that the workspace
- * is idle by the full evidence, its worktree is not locked, the output is still eligible and no launcher points into
- * the checkout; a Cargo `target/` (`cargo`, from the plan) goes through `deleteCargoTarget`. Returns why it stays, the
- * Cargo delete's result, or null once it is gone.
+ * is idle by the full evidence, its worktree is not locked and the output is still eligible; a Cargo `target/`
+ * (`cargo`, from the plan) goes through `deleteCargoTarget`. Returns why it stays, the Cargo delete's result, or null
+ * once it is gone.
  */
 async function removeOutput(
   path: string,
@@ -275,12 +263,9 @@ async function removeOutput(
               return 'it is no longer idle';
             const lock = await worktreeLockAsync(path, gitOptions(operation));
             if (lock) return lockReason(lock);
-            const launching = launchingOf(checkout, freshLaunchers(operation, signal), operation, signal);
-            const problem = await outputProblem(path, output, cargo, launching, signal);
+            const problem = await outputProblem(path, output, cargo, signal);
             if (problem) return problem;
-            const launcher = launcherReason(checkout, await launching.launchers());
-            if (launcher) return launcher;
-            if (cargo) return unseen(output, () => deleteCargoTarget(output, { idleMs: afterMs, launching, signal }));
+            if (cargo) return unseen(output, () => deleteCargoTarget(output, { idleMs: afterMs, signal }));
             await unseen(output, () => rm(output, { recursive: true, force: true }));
             return null;
           },

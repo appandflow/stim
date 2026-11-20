@@ -1849,3 +1849,19 @@ describe("the daemon tick's ladder pacing", () => {
     expect(passes.ladder === lastLadder).toBe(!runs);
   });
 });
+
+test('deleteOutputs stops before the next removal once its operation is aborted', async () => {
+  const base = mkdtempSync(join(tmpdir(), 'stim-delete-outputs-'));
+  onTestFinished(() => rmSync(base, { recursive: true, force: true }));
+  const paths = ['one', 'two'].map((name) => join(base, name));
+  for (const path of paths) mkdirSync(path);
+  const controller = new AbortController();
+  vi.spyOn(fsUtil, 'measuredDirectorySizeAsync').mockImplementation(async () => {
+    controller.abort();
+    return 1;
+  });
+
+  await expect(idlePass.deleteOutputs(paths, controller.signal)).rejects.toThrow('aborted');
+
+  for (const path of paths) expect(existsSync(path)).toBe(true);
+});

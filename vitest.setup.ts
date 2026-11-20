@@ -56,8 +56,6 @@ delete process.env.SHELL;
 // npx installs react-native (about 330 MB) from the registry when the project has none. Offline, npx fails at once.
 process.env.npm_config_offline ??= 'true';
 
-vi.mock('./packages/stim-cli/src/workspace/launcher-directories.ts', () => ({ launcherDirectories: () => [] }));
-
 beforeEach(({ task }) => {
   if (/\.(?:integration|compat)\.test\.(?:ts|mjs)$/.test(task.file.filepath)) return;
   vi.useFakeTimers({

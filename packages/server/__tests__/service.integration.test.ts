@@ -75,6 +75,7 @@ describe('service plist', () => {
             managed: true,
             serve: { port: 7443, created: true },
             previousScript: null,
+            processType: json.ProcessType,
             programArguments: [
               ...(host ? [host, 'run'] : []),
               SPEC.node,
@@ -222,6 +223,7 @@ describe('service status permissions', () => {
     stimBuild: { service: null, cli: null, match: null },
     stimd: null,
     followsEngine: null,
+    stale: null,
     linger: null,
   };
 
@@ -249,6 +251,14 @@ describe('service status permissions', () => {
     );
     expect(line(served, 'stimd:')).toBe('');
     expect(line(served, 'engine:')).toBe('');
+  });
+
+  it('prints why the unit is stale with the install that fixes it, and nothing for a current one', () => {
+    const stale = { reason: 'its unit sets no KillMode=', remedy: 'run `stim service install --port 7787` once' };
+    expect(line(statusLines({ ...status, stale }, permissionPanes(27)), 'stale:')).toBe(
+      '  stale: its unit sets no KillMode=; run `stim service install --port 7787` once',
+    );
+    expect(line(statusLines(status, permissionPanes(27)), 'stale:')).toBe('');
   });
 
   it('reports a server that listens but cannot read its Stim home as degraded, not ok', () => {

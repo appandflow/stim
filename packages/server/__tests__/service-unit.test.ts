@@ -1,4 +1,4 @@
-import type { ServiceSpec } from '../src/service-plist.ts';
+import { serviceInstallCommand, staleSystemdUnit, type ServiceSpec } from '../src/service-plist.ts';
 import { editUnit, parseSystemctlShow, parseUnit, renderUnit } from '../src/service-unit.ts';
 
 const SPEC: ServiceSpec = {
@@ -66,6 +66,31 @@ describe('systemd unit naming the engine shim', () => {
     const text = renderUnit(SPEC, '/older/stim-server.mjs');
     const edited = editUnit(text, { programArguments: [stimd, '--service', '--port', '7787'] });
     expect(parseUnit(edited)).toMatchObject({ script: stimd, previousScript: '/older/stim-server.mjs' });
+  });
+});
+
+describe('systemd unit written before KillMode=process', () => {
+  it('is current as install writes it and stale without the line or with another mode, however it is spaced', () => {
+    const text = renderUnit(SPEC);
+    expect(staleSystemdUnit(text)).toBeNull();
+    expect(staleSystemdUnit(text.replace('KillMode=process\n', 'KillMode = process\n'))).toBeNull();
+    expect(staleSystemdUnit(text.replace('KillMode=process\n', ''))).toMatch(
+      /sets no KillMode= where `stim service install` writes KillMode=process/,
+    );
+    expect(staleSystemdUnit(text.replace('KillMode=process\n', 'KillMode = mixed\n'))).toMatch(/sets KillMode=mixed/);
+    expect(staleSystemdUnit(`${text}\n[X-Other]\nKillMode=process\n`.replace('KillMode=process\n', ''))).toMatch(
+      /sets no KillMode=/,
+    );
+  });
+
+  it('names the install with its own options and no --env values', () => {
+    const installed = parseUnit(renderUnit(SPEC));
+    if (!installed) throw new Error('unit did not parse');
+    const command = serviceInstallCommand(installed);
+    expect(command).toBe(
+      "STIM_HOME=/home/me/.stim stim service install --port 7787 --path-prepend '/opt/android sdk/platform-tools' --env JAVA_HOME=<value> --env TOKEN=<value>",
+    );
+    expect(command).not.toContain('java 17');
   });
 });
 

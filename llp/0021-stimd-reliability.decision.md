@@ -238,7 +238,7 @@ again, and launchd reads a plist only at bootstrap, so after a reboot or a login
 such a unit starts stimd at 20 again. The stale-unit check (#6009) compares
 the unit's `ProcessType` with what `renderPlist` writes, and `stim service
 status`, `stim doctor` and `stim setup` print the `stim service install`
-remedy.
+remedy, the only path for such a unit.
 
 Maintenance children keep the priority they had: they run at stimd's priority,
 now 31, except the size walks that already ran under `nice -n 19` and the

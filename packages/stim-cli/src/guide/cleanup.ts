@@ -1286,21 +1286,11 @@ symlink), on the home volume, below no skipped folder and still a project;
 anything else is dropped. Checkouts the scan finds under a dot-folder of the
 home folder are recorded in the result and never acted on, because an installed
 tool cannot be told from a checkout there; maintenance.discoverRoots is the way
-to manage one. A checkout that an executable on PATH (a symlink in a
-PATH directory, ~/.local/bin, ~/bin, ~/.cargo/bin, ~/.bun/bin, ~/.volta/bin,
-~/Library/pnpm, the active nvm bin, /usr/local/bin or /opt/homebrew/bin)
-resolves into is kept whole, by every pass that deletes its outputs,
-dependencies or Cargo target. A link this user can run but not read is
-followed through the file it opens (macOS). A directory or entry still unread
-counts as no launcher: cleanup goes ahead, and the pass log and stim doctor
-(launcher-evidence-incomplete) name it. A read with no answer in 3 seconds
-keeps every checkout. Each read of the processes using a path is paired with a
-launcher read of its own, never the planning reading; a
-directory that hangs ends the reading as incomplete at once, and while that read
-is pending (at most one per thread: the daemon's main thread and passes thread
-each have one; the scan runs on the passes thread) no other launcher or scan
-read starts and a scheduled scan is skipped. A scan stops at the first read that
-times out, keeping the previous finds. Reduce-only checkouts have their build outputs, and
+to manage one. Cleanup does not look at PATH: a command linked into build
+output, dependencies or a Cargo target breaks when that folder goes, until
+rebuilt or reinstalled. A folder read with no answer in 3 seconds stays
+pending (one per daemon thread), blocks other scan reads and skips a scheduled
+scan; the scan stops there, keeping the previous finds. Reduce-only checkouts have their build outputs, and
 their node_modules and Pods (a linked worktree's after idle.dormantDays, a source
 checkout's after idle.sourceDormantDays), reduced by the rules below. Every one is
 evaluated on every pass, like a sibling-discovered checkout; the
@@ -1320,8 +1310,7 @@ node_modules and Pods go too: a linked worktree's after idle.dormantDays (defaul
 1 day), a main (source) checkout's after idle.sourceDormantDays (default 7 days; 0
 never), by the same evidence. That holds for every kind of discovered checkout
 (children of the folders holding registered checkouts, children of
-maintenance.discoverRoots, reduce-only finds) even where no stim command ever ran,
-and a PATH launcher keeps any of them. A
+maintenance.discoverRoots, reduce-only finds) even where no stim command ever ran. A
 target directory at a checkout root whose CACHEDIR.TAG starts with the standard
 CACHEDIR.TAG signature line and whose files git ignores counts as build output
 for every checkout.
@@ -1337,7 +1326,9 @@ dist folder, keeps it (more than 200 files or 16 MB to compare also keeps it).
 Any change to a tracked file, even Podfile.lock or project.pbxproj, is dirty
 work and keeps it, as does any tracked file marked assume-unchanged or
 skip-worktree, which hides edits from git status, or an unfinished pnpm patch
-in node_modules/.pnpm_patches. A worktree inside a
+in node_modules/.pnpm_patches. A finished registered worktree follows the
+ignored-file and pnpm patch rules too; Pods under any ios folder and a linked
+node_modules count as regenerable. A worktree inside a
 dot-folder other than .worktrees (.claude/worktrees) of its main checkout, or of
 a worktree inside it, is
 managed by another tool and is never removed, though its outputs are reduced;

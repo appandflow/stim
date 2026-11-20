@@ -2,14 +2,6 @@ import { lstat, realpath } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
 import { answered, Unanswered } from './bounded-read.ts';
-import {
-  absent,
-  describe,
-  describeLauncherProblems,
-  noteLauncherProblem,
-  type Checkout,
-  type LauncherProblem,
-} from './launchers.ts';
 import type { CheckoutRole } from '../policy/checkout-order.ts';
 import { matchWorktreeEntry, resolveSourceCheckoutAsync, type SourceCheckout, type WorktreeEntry } from './worktree.ts';
 
@@ -34,6 +26,19 @@ export async function checkoutRoleOf(path: string, operation?: StimContext): Pro
 
 const PROBE_TIMEOUT_MS = 3000;
 
+/** A checkout root, or why ownership of a path could not be established, which keeps it. */
+export type Checkout = string | { unknown: string };
+
+const absent = (error: unknown): boolean =>
+  error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR');
+
+const describe = (error: unknown): string =>
+  error instanceof Error && 'code' in error
+    ? String(error.code)
+    : error instanceof Error
+      ? error.message
+      : String(error);
+
 /**
  * The git worktree root that owns `path`: its nearest ancestor, itself included, holding a `.git` entry, read with
  * one bounded lstat per level, the abort checked between levels, and no git process. The climb stops at the
@@ -41,7 +46,7 @@ const PROBE_TIMEOUT_MS = 3000;
  * checkout owns itself. A level that cannot be read for any reason but proven absence (permission, I/O, a read that
  * does not answer) leaves the owner unknown, which keeps the checkout, never a narrower root.
  */
-export async function checkoutRootOf(path: string, signal?: AbortSignal, operation?: StimContext): Promise<Checkout> {
+async function checkoutRootOf(path: string, signal?: AbortSignal): Promise<Checkout> {
   try {
     let start: string;
     try {
@@ -62,9 +67,7 @@ export async function checkoutRootOf(path: string, signal?: AbortSignal, operati
     }
   } catch (error) {
     signal?.throwIfAborted();
-    const problem: LauncherProblem = { kind: 'owner', path, error: describe(error) };
-    if (operation) noteLauncherProblem(operation, problem);
-    return { unknown: describeLauncherProblems([problem]), problem };
+    return { unknown: `which git checkout owns ${path} could not be established (${describe(error)})` };
   }
 }
 
@@ -81,6 +84,6 @@ export async function checkoutOwnerOf(
   const entry = 'refusal' in source ? null : matchWorktreeEntry([...entries], path);
   return {
     role: classifyCheckout(entries, source, path),
-    checkout: entry && !entry.bare ? entry.path : await checkoutRootOf(path, operation?.signal, operation),
+    checkout: entry && !entry.bare ? entry.path : await checkoutRootOf(path, operation?.signal),
   };
 }

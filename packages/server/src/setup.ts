@@ -31,6 +31,7 @@ import {
   fetchHealth,
   holdingServiceClaim,
   installJob,
+  serviceStale,
   prepareRoute,
   recordServiceRoute,
   requireManaged,
@@ -260,6 +261,7 @@ export interface SetupDeps {
   select(version: string): Promise<string>;
   installHost: typeof installHostApp;
   installJob: typeof installJob;
+  stale: typeof serviceStale;
   route(port: number): Promise<ServeRoute>;
   prepareRoute: typeof prepareRoute;
   recordRoute: typeof recordServiceRoute;
@@ -427,6 +429,7 @@ export function defaultSetupDeps(): SetupDeps {
     select: (version) => selectEngine({ release: version }, 'setup', true),
     installHost: installHostApp,
     installJob,
+    stale: serviceStale,
     async route(port) {
       const { readRawTailscaleStatus, serveRoute } = await tailscalePackage();
       const raw = await readRawTailscaleStatus(await binary(), process.env);
@@ -988,6 +991,13 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
           deps.installJob({ ...opts, serve: false }, { script, host, requestPermissions: false }),
         ))
           chatter(note);
+        const stale = await wait(deps.stale(opts.label).catch(() => null));
+        if (stale) {
+          const warning = `${opts.label} runs a stale ${serviceNoun}: ${stale.reason}; ${stale.remedy}.`;
+          output.warnings.push(warning);
+          printer.clear();
+          log(warning);
+        }
         const ready = await wait(deps.health(opts.port));
         if (!ready || (ready.startup && ready.startup.state !== 'ready'))
           throw new SetupRefusal('The installed server is not ready; check service status.');

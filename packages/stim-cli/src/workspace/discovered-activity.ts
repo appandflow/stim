@@ -7,8 +7,6 @@ import { gitQuietAsync } from './git.ts';
 import { sharedRead } from './git-reads.ts';
 import { answered, hungRead, pendingRead, Unanswered } from './bounded-read.ts';
 import type { DiscoveredReads } from './discovered-reads.ts';
-import { checkoutRootOf } from './checkout-role.ts';
-import { launcherReason } from './launchers.ts';
 import { runningFromReason } from './running-from.ts';
 
 /** Folders holding dependencies or other checkouts, skipped wherever they are. */
@@ -178,7 +176,7 @@ async function sharedSourceScan(root: string, activeSince: number, operation?: S
 /**
  * What idleness rests on for a checkout with no Stim state: the newest source write (git-ignored files included), the
  * last commit and the last git write count as activity; a process running from or working in it, an agent session
- * working in it, an executable on PATH that resolves into it, or evidence that cannot be read keeps it.
+ * working in it, or evidence that cannot be read keeps it.
  */
 export async function discoveredEvidence(
   path: string,
@@ -187,13 +185,11 @@ export async function discoveredEvidence(
     idleMs,
     reads,
     operation,
-    reduceOnly,
   }: {
     now: number;
     idleMs: number;
     reads: DiscoveredReads;
     operation?: StimContext;
-    reduceOnly: boolean;
   },
 ): Promise<IdleStopEvidence> {
   const signal = operation?.signal;
@@ -221,7 +217,5 @@ export async function discoveredEvidence(
   keep.push(...(await reads.sessions(path, now)));
   const running = runningFromReason(path, await reads.processes());
   if (running) keep.push(running);
-  const launcher = launcherReason(await checkoutRootOf(path, signal, operation), await reads.launchers(reduceOnly));
-  if (launcher) keep.push(launcher);
   return { activity, keep };
 }

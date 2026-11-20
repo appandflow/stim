@@ -65,7 +65,6 @@ import { DEVICE_LIST_TIMEOUT_MS } from './devices.ts';
 import { canonicalPath } from './paths.ts';
 import { discoverCheckouts } from '../../workspace/discovery.ts';
 import { discoveredReads } from '../../workspace/discovered-reads.ts';
-import { freshLaunchers, launcherReason, launchersOf, type LauncherScan } from '../../workspace/launchers.ts';
 import { hiddenEditHold } from '../../workspace/hidden-edits.ts';
 import { dependencyEditsHold } from '../../workspace/dependency-edits.ts';
 import { listWorkspaceDirs } from './workspaces.ts';
@@ -590,24 +589,37 @@ function dormantMs(operation?: StimContext): number {
   );
 }
 
-/** Why an executable on PATH that resolves into the worktree keeps it, from `scan`. */
-async function launcherHold(path: string, scan: () => Promise<LauncherScan>): Promise<string[]> {
-  const hold = launcherReason(path, await scan());
-  return hold ? [hold] : [];
+/**
+ * Why a finished registered worktree stays, or null: an unfinished `pnpm patch` in its `node_modules`, or a git-ignored
+ * file outside its dependency and build-output folders that its main checkout lacks or holds differently.
+ */
+async function registeredRemovalHold(path: string, operation?: StimContext): Promise<string | null> {
+  const { ignoredFilesHold, pendingPnpmPatch } = await import('../../workspace/discovered-removal.ts');
+  const patch = await pendingPnpmPatch(path);
+  if (patch) return patch;
+  const source = await resolveSourceCheckoutAsync(path, {
+    env: operation?.env,
+    signal: operation?.signal,
+    declareFor: operation,
+  });
+  if ('refusal' in source) return 'its main checkout cannot be named, so its git-ignored files cannot be compared';
+  return ignoredFilesHold(path, source.path, operation?.signal);
 }
 
 /**
- * The reasons a worktree stays that rest on its use as a place to run from, read again under the removal locks: a
- * discovered worktree's removal evidence, or for a managed one an executable on PATH that resolves into it.
+ * The reasons a worktree stays, read again under the removal locks: for a registered one, `registeredRemovalHold`; for
+ * a discovered one, its whole removal evidence.
  */
 async function removalUseHold(candidate: WorktreeCandidate, operation?: StimContext): Promise<string[]> {
-  const launchers = freshLaunchers(operation, operation?.signal);
-  if (!candidate.discovered) return launcherHold(candidate.path, launchers);
+  if (!candidate.discovered) {
+    const hold = await registeredRemovalHold(candidate.path, operation);
+    return hold ? [hold] : [];
+  }
   const { discoveredRemovalHold } = await import('../../workspace/discovered-removal.ts');
   const hold = await discoveredRemovalHold(candidate.path, {
     main: candidate.source ?? null,
     idleMs: dormantMs(operation),
-    reads: discoveredReads(operation?.signal, operation, launchers),
+    reads: discoveredReads(operation?.signal),
     reduceOnly: candidate.reduceOnly === true,
     operation,
   });
@@ -987,11 +999,9 @@ export async function collectWorktreeSweep({
     };
   });
   const linked = inspected.filter(({ facts }) => facts.source === 'linked' && !facts.unregistered);
-  const launchers = launchersOf(operation, operation?.signal, false);
   for (const { candidate, facts } of linked) {
     for (const key of candidate.keys)
       facts.inUse.push(...(await workspaceInUseAsync(key, { managedLocks: true }, operation?.signal, operation)));
-    if (!candidate.discovered) facts.inUse.push(...(await launcherHold(candidate.path, launchers)));
   }
   const devices = await reportDeviceReads(
     linked.flatMap(({ candidate }) => candidate.keys),
@@ -1037,7 +1047,7 @@ export async function collectWorktreeSweep({
   const handed = worktrees.filter((candidate) => candidate.discovered && candidate.skipped === null);
   if (handed.length) {
     const { discoveredRemovalHold } = await import('../../workspace/discovered-removal.ts');
-    const reads = discoveredReads(operation?.signal, operation);
+    const reads = discoveredReads(operation?.signal);
     for (const candidate of handed) {
       const hold = await discoveredRemovalHold(candidate.path, {
         main: candidate.source ?? null,
@@ -1048,6 +1058,10 @@ export async function collectWorktreeSweep({
       });
       if (hold) Object.assign(candidate, { skipCode: 'recent-activity', skipped: `kept: ${hold}`, eligibleAt: null });
     }
+  }
+  for (const candidate of worktrees.filter((entry) => !entry.discovered && entry.skipped === null)) {
+    const hold = await registeredRemovalHold(candidate.path, operation);
+    if (hold) Object.assign(candidate, { skipCode: 'dirty', skipped: `kept: ${hold}`, eligibleAt: null });
   }
   const listed = [...worktrees, ...outside].filter(
     (w) => idle || (w.skipCode !== 'not-a-worktree' && w.skipCode !== 'source-checkout'),

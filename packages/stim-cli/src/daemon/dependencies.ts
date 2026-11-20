@@ -28,7 +28,6 @@ import { freshMeasure, knownPrivateBytes, refreshMeasure, trustedMeasure } from 
 import { treeSignature } from '../private-size.ts';
 import { hardLinkSample } from '../link-sample.ts';
 import { workspaceKeys } from '../workspace/lightened.ts';
-import { freshLaunchers } from '../workspace/launchers.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import { matchWorktreeEntry, resolveSourceCheckoutAsync } from '../workspace/worktree.ts';
 import { answered, hungRead, Unanswered } from '../workspace/bounded-read.ts';
@@ -346,10 +345,7 @@ export async function rankSourceDependencies(
       });
       continue;
     }
-    const verdict = await sourceCheckoutIdle(candidate.worktree, rule.thresholdMs, rule.setting, {
-      operation,
-      reduceOnly: candidate.reduceOnly,
-    });
+    const verdict = await sourceCheckoutIdle(candidate.worktree, rule.thresholdMs, rule.setting, { operation });
     if ('kept' in verdict) {
       kept.push({ target: candidate.path, workspace, reason: verdict.kept });
       continue;
@@ -424,7 +420,6 @@ export async function clearDependency(
   requireRestorable: boolean = true,
   level: PressureLevel = 'normal',
 ): Promise<{ status: 'done' | 'kept' | 'failed'; bytes: number; detail: string }> {
-  const launchers = freshLaunchers(operation, operation?.signal);
   try {
     return await clearArtifact(
       {
@@ -441,7 +436,6 @@ export async function clearDependency(
         pinned: maintenancePinnedReader(operation),
         worktrees,
         requireRestorable,
-        launchers,
         recheck: (keys, worktree) => stillUnused(false, keys, worktree, idleMs, operation),
         level,
         operation,
@@ -493,7 +487,6 @@ export async function clearSourceDependencies(
   setting?: string,
 ): Promise<TreeResult[]> {
   forgetGitReads(operation);
-  const launchers = freshLaunchers(operation, operation?.signal);
   try {
     const results = await clearSourceTrees(
       dependencies.map(({ candidate }) => candidate.path),
@@ -501,7 +494,6 @@ export async function clearSourceDependencies(
         protectedRoot,
         pinned: maintenancePinnedReader(operation),
         worktrees,
-        launchers,
         recheck: (keys, worktree) => stillUnused(true, keys, worktree, idleMs, operation, setting),
         level,
         operation,
@@ -578,9 +570,9 @@ export async function runDormantDependencies(
  * only as `collectArtifactsAsync` finds it: git lists a non-bare worktree for it, its source checkout resolves, and that
  * worktree is the source checkout; anything else, a linked worktree or a folder git does not list, is answered false
  * before any dependency read. A tree counts only as a real directory, never followed through a link (the collection
- * keeps a linked tree). Each probe is one `lstat` bounded like the launcher readings by `answered`; 'unanswered' when
- * its own probe does not answer. While another read holds the pending slot no probe starts and the answer is true, so
- * the checkout goes through the idle checks and the collection as it would on main.
+ * keeps a linked tree). Each probe is one `lstat` bounded by `answered`; 'unanswered' when its own probe does not
+ * answer. While another read holds the pending slot no probe starts and the answer is true, so the checkout goes
+ * through the idle checks and the collection as it would on main.
  */
 async function sourceTreesOf(path: string, operation?: StimContext): Promise<boolean | 'unanswered'> {
   const { entries, ...source } = await resolveSourceCheckoutAsync(path, {
