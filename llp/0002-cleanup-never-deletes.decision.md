@@ -36,22 +36,25 @@ Work a person made cannot.
 
 Two rules keep what no rebuild or reinstall restores.
 
-- A pnpm patch: a node_modules whose `.pnpm_patches` holds an edit folder,
-  which `pnpm patch` creates, is never deleted, and a finished or discovered
-  worktree whose root node_modules holds one is not removed. A `.pnpm_patches`
-  holding only `state.json`, which pnpm keeps on purpose
-  ([pnpm/pnpm#8401](https://github.com/pnpm/pnpm/pull/8401)), does not count.
-  `pnpm patch-commit` leaves the edit folder in place, so a committed patch
-  keeps the folder until the person deletes the edit folder, as the reason
-  says. The probe does not follow links and reads through the bounded reader;
-  a read that does not answer keeps the folder.
+- A pnpm patch not yet committed: `pnpm patch` copies a package into an edit
+  folder in `.pnpm_patches`, and `pnpm patch-commit` writes the patch file
+  that `patchedDependencies` (in `pnpm-workspace.yaml`, or `package.json`
+  before pnpm 10) names but leaves the edit folder and `state.json` in place
+  ([pnpm/pnpm#8401](https://github.com/pnpm/pnpm/pull/8401)). An edit folder
+  with no patch file, or with anything modified after its patch file, keeps
+  its node_modules from deletion, and a finished or discovered worktree whose
+  root node_modules holds one is not removed. A committed edit folder does
+  not keep anything, so cleanup stays automatic. The probe does not follow
+  links and reads through the bounded reader; a read that does not answer in
+  5 s, or more than 5,000 entries, keeps the folder.
 - A Solana keypair: Cargo `target/` deletes go through one remover that never
   unlinks a `*-keypair.json` (LLP 0005). A finished or discovered worktree whose
   recognised root Cargo `target/` holds a `deploy/` with a keypair, or a link,
   is not removed, because worktree removal does not go through that remover.
 
 Not covered: a keypair in a Cargo `target/` Stim does not recognise, such as a
-nested one; a pnpm patch in a node_modules no workspace package root owns;
+nested one; an uncommitted edit made before something rewrote the patch file,
+such as a branch switch, since the probe compares modification times; a pnpm patch in a node_modules no workspace package root owns;
 build folders other than Cargo targets, which are deleted with a plain
 recursive delete; and `stim worktree remove`, which is explicit and runs none
 of these checks.
@@ -89,9 +92,8 @@ deletes the worktree with its dependency folders.
 --dry-run` shows it kept), and before automatic maintenance removes a
   finished or discovered worktree, which waits while one of its dependency
   folders has detected edits.
-- A pnpm patch edit folder in `.pnpm_patches` counts as an edit (above). The
-  scan skips that folder with the tools' caches, so the check reads it on its
-  own.
+- A pnpm patch not yet committed counts as an edit (above). The scan skips
+  `.pnpm_patches` with the tools' caches, so the check reads it on its own.
 - A kept folder's reason names the files, in the kept action, the cleanup
   log, `stim gc --dry-run`, `stim status` (`dependencyEdits`) and
   `stim doctor`, which says its disk is not freed and how to release it: make

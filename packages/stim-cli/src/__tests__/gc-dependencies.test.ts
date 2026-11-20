@@ -365,7 +365,7 @@ test.skipIf(process.platform === 'win32')(
 
     const kept = payload.actions.find((action) => action.kind === 'delete-dependencies' && action.target === modules);
     expect(kept?.outcome).toBe('kept');
-    expect(kept?.detail).toContain('pnpm patch edit folder');
+    expect(kept?.detail).toContain('pnpm patch not yet committed');
     expect(readFileSync(patched, 'utf-8')).toBe('patched by hand');
   },
   60_000,

@@ -1,6 +1,6 @@
 import { existsSync, lstatSync, readdirSync, type Stats } from 'node:fs';
-import { basename, dirname, join, relative, sep } from 'node:path';
-import { lstat, readdir } from 'node:fs/promises';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
+import { lstat, readdir, readFile, stat as statFile } from 'node:fs/promises';
 import { setImmediate as nextTurn } from 'node:timers/promises';
 import {
   readDependencyInstall,
@@ -17,6 +17,7 @@ import { updateDependencyInstall as updateRecord } from './dependency-install-re
 import { ARTIFACT_DIRS, existingDirsOf } from './regenerable-dirs.ts';
 import { absent } from './scan-rules.ts';
 import { answered } from './bounded-read.ts';
+import { yamlBlock } from '../fingerprint/inputs.ts';
 
 /**
  * How long after a package manager's stamp the root project's own install-time script (`preinstall`, `install`,
@@ -367,27 +368,89 @@ export function editsKeptReason(
 }
 
 const PATCH_PROBE_MS = 5_000;
+const MAX_PATCH_ENTRIES = 5_000;
+
+/** The patch file of each key of pnpm's `patchedDependencies` declared at the project `root`. */
+async function patchFiles(root: string, read: <T>(path: string, start: () => Promise<T>) => Promise<T>) {
+  const files = new Map<string, string>();
+  const text = async (name: string) => {
+    try {
+      return await read(join(root, name), () => readFile(join(root, name), 'utf8'));
+    } catch (error) {
+      if (absent(error)) return null;
+      throw error;
+    }
+  };
+  for (const line of yamlBlock(await text('pnpm-workspace.yaml'), 'patchedDependencies')) {
+    const entry = /^(['"]?)(.+)\1:\s*(['"]?)(.+\.patch)\3$/.exec(line);
+    if (entry?.[2] && entry[4]) files.set(entry[2], resolve(root, entry[4]));
+  }
+  const manifest = await text('package.json');
+  const declared: unknown = manifest ? JSON.parse(manifest)?.pnpm?.patchedDependencies : null;
+  for (const [key, file] of Object.entries(declared && typeof declared === 'object' ? declared : {}))
+    if (typeof file === 'string') files.set(key, resolve(root, file));
+  return files;
+}
 
 /**
- * Why an unfinished `pnpm patch` keeps the node_modules `tree`, or null: `pnpm patch` copies the package into an edit
- * folder in its `.pnpm_patches`, which the edit scan skips with the tools' caches. A `.pnpm_patches` holding only
- * `state.json`, which pnpm keeps on purpose (pnpm/pnpm#8401), does not keep it; `pnpm patch-commit` leaves the edit
- * folder in place, so a committed patch keeps the tree until that folder is deleted. Never follows a link.
+ * Why a `pnpm patch` not yet committed keeps the node_modules `tree`, or null. `pnpm patch` copies a package into an
+ * edit folder in `.pnpm_patches`, which the edit scan skips with the tools' caches, and `pnpm patch-commit` writes the
+ * patch file `patchedDependencies` names but leaves the edit folder and `state.json` in place (pnpm/pnpm#8401). An
+ * edit folder with no patch file, or with anything modified after its patch file, keeps the tree. Never follows a
+ * link; a read that does not answer within PATCH_PROBE_MS, or more than MAX_PATCH_ENTRIES entries, keeps it too.
  */
 export async function pnpmPatchHold(tree: string, signal?: AbortSignal): Promise<string | null> {
   const dir = join(tree, '.pnpm_patches');
   const where = `${basename(tree)}/.pnpm_patches`;
+  const started = performance.now();
+  const read = <T>(path: string, start: () => Promise<T>) =>
+    answered(path, start, Math.max(1, PATCH_PROBE_MS - (performance.now() - started)), signal);
+  const list = (path: string) => read(path, () => readdir(path, { withFileTypes: true }));
   try {
-    if (!(await answered(dir, () => lstat(dir), PATCH_PROBE_MS, signal)).isDirectory()) return null;
-    const entries = await answered(dir, () => readdir(dir, { withFileTypes: true }), PATCH_PROBE_MS, signal);
-    const edit = entries.find((entry) => entry.isDirectory());
-    return edit
-      ? `it has a pnpm patch edit folder, ${where}/${edit.name}; run pnpm patch-commit if the patch is unfinished, then delete that folder`
-      : null;
+    if (!(await read(dir, () => lstat(dir))).isDirectory()) return null;
   } catch (error) {
     if (absent(error)) return null;
     signal?.throwIfAborted();
     return `${where} cannot be read`;
+  }
+  try {
+    const folders: string[] = [];
+    for (const entry of await list(dir)) {
+      if (!entry.isDirectory()) continue;
+      if (!entry.name.startsWith('@')) folders.push(entry.name);
+      else
+        for (const inner of await list(join(dir, entry.name)))
+          if (inner.isDirectory()) folders.push(`${entry.name}/${inner.name}`);
+    }
+    if (!folders.length) return null;
+    const files = await patchFiles(dirname(tree), read);
+    let entries = 0;
+    for (const folder of folders) {
+      const version = folder.lastIndexOf('@');
+      const file = files.get(folder) ?? files.get(version > 0 ? folder.slice(0, version) : folder);
+      const committed = file
+        ? await read(file, () => statFile(file)).catch((error: unknown) => {
+            if (absent(error)) return null;
+            throw error;
+          })
+        : null;
+      if (!file || !committed)
+        return `it has a pnpm patch not yet committed in ${where}/${folder}; run pnpm patch-commit`;
+      const queue = [join(dir, folder)];
+      for (let path = queue.pop(); path !== undefined; path = queue.pop()) {
+        if (++entries > MAX_PATCH_ENTRIES)
+          return `${where} holds over ${MAX_PATCH_ENTRIES} entries to check for a pnpm patch not yet committed`;
+        const at = path;
+        const info = await read(at, () => lstat(at));
+        if (info.mtimeMs > committed.mtimeMs)
+          return `it has pnpm patch edits in ${where}/${folder} newer than ${relative(dirname(tree), file)}; run pnpm patch-commit`;
+        if (info.isDirectory()) for (const entry of await list(at)) queue.push(join(at, entry.name));
+      }
+    }
+    return null;
+  } catch {
+    signal?.throwIfAborted();
+    return `${where} cannot be checked for a pnpm patch not yet committed`;
   }
 }
 

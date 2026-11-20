@@ -1326,8 +1326,8 @@ An ignored file elsewhere that the main checkout lacks, even inside a tracked
 dist folder, keeps it (more than 200 files or 16 MB to compare also keeps it).
 Any change to a tracked file, even Podfile.lock or project.pbxproj, is dirty
 work and keeps it, as does any tracked file marked assume-unchanged or
-skip-worktree, which hides edits from git status, or a pnpm patch edit folder
-in node_modules/.pnpm_patches. A finished registered worktree follows the
+skip-worktree, which hides edits from git status, or a pnpm patch not yet
+committed in node_modules/.pnpm_patches. A finished registered worktree follows the
 ignored-file and pnpm patch rules too; Pods under any ios folder and a linked
 node_modules count as regenerable. A worktree inside a
 dot-folder other than .worktrees (.claude/worktrees) of its main checkout, or of

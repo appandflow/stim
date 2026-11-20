@@ -297,7 +297,7 @@ describe('a worktree of a plain Node repository on the removal path', () => {
     const of = (path: string) => planned.worktrees.find((entry) => entry.path === path);
     expect(of(done)).toMatchObject({ discovered: true, skipped: null });
     expect(of(dirty)).toMatchObject({ skipCode: 'dirty' });
-    expect(of(patched)?.skipped).toContain('pnpm patch edit folder');
+    expect(of(patched)?.skipped).toContain('pnpm patch not yet committed');
     expect(of(main)).toBeUndefined();
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});

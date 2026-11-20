@@ -82,11 +82,43 @@ test('an untouched tree is deleted; Gradle, pnpm and tool-cache output does not 
   expect(await keptFiles()).toContain('hybrid/build/index.js');
 });
 
-test('an unfinished pnpm patch keeps the tree at critical too', async () => {
+test('a pnpm patch edit folder with no patch file keeps the tree at critical too', async () => {
   installAt(ago(HOUR));
   write(join(tree, '.pnpm_patches', 'pkg@1.0.0', 'index.js'), 'patched by hand', ago(2 * HOUR));
 
-  expect(await keptFiles()).toContain('pnpm patch edit folder, node_modules/.pnpm_patches/pkg@1.0.0');
+  expect(await keptFiles()).toContain('pnpm patch not yet committed in node_modules/.pnpm_patches/pkg@1.0.0');
+});
+
+function committedPatch(declared: 'pnpm-workspace.yaml' | 'package.json'): string {
+  installAt(ago(HOUR));
+  const edit = join(tree, '.pnpm_patches', '@scope', 'pkg@1.0.0');
+  write(join(edit, 'index.js'), 'patched by hand', ago(2 * HOUR));
+  utimesSync(edit, ago(2 * HOUR), ago(2 * HOUR));
+  write(join(tree, '.pnpm_patches', 'state.json'), '{}');
+  write(join(worktree, 'patches', '@scope__pkg@1.0.0.patch'), 'diff', ago(90 * 60_000));
+  write(
+    join(worktree, declared),
+    declared === 'package.json'
+      ? JSON.stringify({ pnpm: { patchedDependencies: { '@scope/pkg@1.0.0': 'patches/@scope__pkg@1.0.0.patch' } } })
+      : "patchedDependencies:\n  '@scope/pkg@1.0.0': patches/@scope__pkg@1.0.0.patch\n",
+  );
+  return edit;
+}
+
+test.each(['pnpm-workspace.yaml', 'package.json'] as const)(
+  'a committed pnpm patch, declared in %s, whose edit folder pnpm leaves behind does not keep the tree',
+  async (declared) => {
+    committedPatch(declared);
+
+    expect(await checkDependencyEdits(tree, { level: 'critical', worktree })).toEqual({ delete: true });
+  },
+);
+
+test('an edit made in a committed pnpm patch edit folder keeps the tree', async () => {
+  const edit = committedPatch('pnpm-workspace.yaml');
+  write(join(edit, 'index.js'), 'edited again');
+
+  expect(await keptFiles()).toContain('newer than patches/@scope__pkg@1.0.0.patch');
 });
 
 test('.bin shims a version of Stim recorded as edits no longer keep the tree', async () => {
