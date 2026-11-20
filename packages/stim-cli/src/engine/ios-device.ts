@@ -611,52 +611,56 @@ export async function awaitIosDeviceLaunch({
   timeoutMs?: number;
   pollMs?: number;
   now?: () => number;
-  sleep?: (ms: number) => Promise<unknown>;
+  sleep?: ((ms: number) => Promise<unknown>) & { close?: () => void };
 }): Promise<IosDeviceLaunchResult> {
   const probeProcess = probe ?? (() => iosDeviceProcess({ udid, appName }));
   const deadline = now() + Math.max(0, timeoutMs);
-  for (;;) {
-    const records = collectorRecordsFor(readRecords(), collectorPid, collectorStreamId);
-    const ended = records.find((entry) => typeof entry.event === 'string' && COLLECTOR_ENDED_EVENTS.has(entry.event));
-    const running = await probeProcess();
-    if (running.state === 'running') return { pid: running.pid };
-    if (ended) {
-      const evidence = launchEvidence(records);
-      const lines = evidence.slice(-6);
-      const kind = iosLaunchRefusalKind(evidence.join('\n'));
-      if (wireless && kind === null && WIRELESS_CONSOLE_DROP.test(devicectlErrorText(records))) {
+  try {
+    for (;;) {
+      const records = collectorRecordsFor(readRecords(), collectorPid, collectorStreamId);
+      const ended = records.find((entry) => typeof entry.event === 'string' && COLLECTOR_ENDED_EVENTS.has(entry.event));
+      const running = await probeProcess();
+      if (running.state === 'running') return { pid: running.pid };
+      if (ended) {
+        const evidence = launchEvidence(records);
+        const lines = evidence.slice(-6);
+        const kind = iosLaunchRefusalKind(evidence.join('\n'));
+        if (wireless && kind === null && WIRELESS_CONSOLE_DROP.test(devicectlErrorText(records))) {
+          return {
+            failed: true,
+            code: WIRELESS_ERROR,
+            reason: `devicectl lost the Wi-Fi (localNetwork) connection to ${udid} while launching ${bundleId}.`,
+            remedy: WIRELESS_REMEDY,
+            lines,
+          };
+        }
         return {
           failed: true,
-          code: WIRELESS_ERROR,
-          reason: `devicectl lost the Wi-Fi (localNetwork) connection to ${udid} while launching ${bundleId}.`,
-          remedy: WIRELESS_REMEDY,
+          reason: `devicectl could not keep ${bundleId} running on ${udid}: the console ended before the app appeared in the device's process list.`,
+          remedy: iosLaunchRemedy(kind, { udid, bundleId }),
           lines,
         };
       }
-      return {
-        failed: true,
-        reason: `devicectl could not keep ${bundleId} running on ${udid}: the console ended before the app appeared in the device's process list.`,
-        remedy: iosLaunchRemedy(kind, { udid, bundleId }),
-        lines,
-      };
-    }
-    if (now() >= deadline) {
-      const evidence = launchEvidence(records);
-      const lines = evidence.slice(-6);
-      const kind = iosLaunchRefusalKind(evidence.join('\n'));
-      const reason = `${bundleId} did not appear in ${udid}'s process list within ${Math.round(timeoutMs / 1000)}s of the launch`;
-      if (wireless && kind === null) {
-        return {
-          failed: true,
-          code: WIRELESS_ERROR,
-          reason: `${reason} over Wi-Fi (localNetwork).`,
-          remedy: WIRELESS_REMEDY,
-          lines,
-        };
+      if (now() >= deadline) {
+        const evidence = launchEvidence(records);
+        const lines = evidence.slice(-6);
+        const kind = iosLaunchRefusalKind(evidence.join('\n'));
+        const reason = `${bundleId} did not appear in ${udid}'s process list within ${Math.round(timeoutMs / 1000)}s of the launch`;
+        if (wireless && kind === null) {
+          return {
+            failed: true,
+            code: WIRELESS_ERROR,
+            reason: `${reason} over Wi-Fi (localNetwork).`,
+            remedy: WIRELESS_REMEDY,
+            lines,
+          };
+        }
+        return { failed: true, reason: `${reason}.`, remedy: iosLaunchRemedy(kind, { udid, bundleId }), lines };
       }
-      return { failed: true, reason: `${reason}.`, remedy: iosLaunchRemedy(kind, { udid, bundleId }), lines };
+      await sleep(Math.min(pollMs, Math.max(0, deadline - now())));
     }
-    await sleep(Math.min(pollMs, Math.max(0, deadline - now())));
+  } finally {
+    sleep.close?.();
   }
 }
 

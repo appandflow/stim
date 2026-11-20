@@ -170,6 +170,8 @@ export interface StreamTable {
     env?: Record<string, string>,
     through?: number,
     checkCoverage?: boolean,
+    /** Ends this one wait, as when its request connection closes; `signal` stays the identity of its coverage work. */
+    cancel?: AbortSignal,
   ): Promise<{
     revision: number;
     gone?: true;
@@ -1584,12 +1586,14 @@ export function createStreams(
       env,
       through = 0,
       checkCoverage = false,
+      cancel,
     ) {
       const key = `${realpathSync(root)}\0${deviceSlotKey(platform, validateDeviceSlot(slot))}`;
       const deadline = Date.now() + timeoutMs;
+      const ended = cancel && signal ? AbortSignal.any([signal, cancel]) : (cancel ?? signal);
       const entry = consoles.get(key);
       if (entry?.id === streamId)
-        return waitConsole(key, entry, after, deadline, signal, Boolean(signal && env), checkCoverage);
+        return waitConsole(key, entry, after, deadline, ended, Boolean(signal && env), checkCoverage);
       const stream = streams.get(key);
       if (!stream || stream.id !== streamId) return { revision: after, gone: true };
       if (checkCoverage && signal && stream.historySeen.get(signal)?.status === 'covered') {
@@ -1597,7 +1601,7 @@ export function createStreams(
           let settled = false;
           const cleanup = () => {
             clearTimeout(timer);
-            signal?.removeEventListener('abort', abort);
+            ended?.removeEventListener('abort', abort);
           };
           const finish = (result: boolean) => {
             if (settled) return;
@@ -1609,10 +1613,10 @@ export function createStreams(
             if (settled) return;
             settled = true;
             cleanup();
-            reject(signal?.reason);
+            reject(ended?.reason);
           };
           const timer = setTimeout(() => finish(false), timeoutMs);
-          signal?.addEventListener('abort', abort, { once: true });
+          ended?.addEventListener('abort', abort, { once: true });
           void stream.sink.sync().then(
             () => {
               finish(true);
@@ -1625,7 +1629,7 @@ export function createStreams(
               reject(error);
             },
           );
-          if (signal?.aborted) abort();
+          if (ended?.aborted) abort();
         });
         if (!synced) return { revision: stream.revision, coverage: 'pending' as const };
         if (streams.get(key) !== stream) return { revision: after, gone: true };
@@ -1650,11 +1654,11 @@ export function createStreams(
           revision: stream.revision,
           ...(coverage ? { coverage: coverageStatus() } : {}),
         };
-      signal?.throwIfAborted();
+      ended?.throwIfAborted();
       return new Promise((resolve, reject) => {
         const finish = (gone: boolean) => {
           clearTimeout(timer);
-          signal?.removeEventListener('abort', abort);
+          ended?.removeEventListener('abort', abort);
           stream.waiters.delete(finish);
           resolve({
             revision: stream.revision,
@@ -1664,14 +1668,14 @@ export function createStreams(
         };
         const abort = () => {
           clearTimeout(timer);
-          signal?.removeEventListener('abort', abort);
+          ended?.removeEventListener('abort', abort);
           stream.waiters.delete(finish);
-          reject(signal?.reason);
+          reject(ended?.reason);
         };
         const timer = setTimeout(() => finish(false), Math.max(0, deadline - Date.now()));
         stream.waiters.add(finish);
-        signal?.addEventListener('abort', abort, { once: true });
-        if (signal?.aborted) abort();
+        ended?.addEventListener('abort', abort, { once: true });
+        if (ended?.aborted) abort();
       });
     },
     running: () => streams.size > 0 || consoles.size > 0 || untaken.size > 0,

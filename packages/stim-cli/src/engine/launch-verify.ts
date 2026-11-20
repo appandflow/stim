@@ -347,6 +347,7 @@ export async function verifyLaunch({
   sleep?: ((ms: number) => Promise<unknown>) & {
     coverage?: () => 'pending' | 'covered' | 'failed';
     coverThrough?: (at: number) => void;
+    close?: () => void;
   };
 } = {}): Promise<VerifyLaunchResult> {
   const delivered = (record: NdjsonRecord) => deliveryOwner(record, { slot, appPid, platformShared }) === 'this';
@@ -379,6 +380,29 @@ export async function verifyLaunch({
   let bundlingAt: NdjsonRecord | null = null;
   let reported: 'bundling' | 'waiting-ready' | null = null;
   let coverageCandidate: string | null = null;
+  let rereadPastDeadline = false;
+  const readCoverage = (coveredWhenRead: boolean, deadline: number) => {
+    const proven = sleep.coverage?.();
+    if (proven !== 'covered' || coveredWhenRead) return proven;
+    if (rereadPastDeadline || now() < deadline) return 'pending';
+    rereadPastDeadline = true;
+    return 'reread';
+  };
+  let coveredRest: string | null = null;
+  let coveredWindowEnd = Infinity;
+  let coveredHorizon = -Infinity;
+  const coverWindow = (windowEnd: number, rest: string) => {
+    const candidate = `${windowEnd}:${rest}`;
+    if (candidate === coverageCandidate) return;
+    const shortened =
+      coverageCandidate !== null && rest === coveredRest && windowEnd < coveredWindowEnd && windowEnd <= coveredHorizon;
+    coverageCandidate = candidate;
+    coveredRest = rest;
+    coveredWindowEnd = windowEnd;
+    if (shortened) return;
+    coveredHorizon = now();
+    sleep.coverThrough?.(coveredHorizon);
+  };
   const report = (name: typeof reported, at: number) => {
     if (name === reported) return;
     reported = name;
@@ -393,6 +417,7 @@ export async function verifyLaunch({
         (record) =>
           (!requireBundleResponse || String(record.event).startsWith('bundle_response_')) && delivered(record),
       );
+      const coveredWhenRead = sleep.coverage?.() === 'covered';
       const deviceRecords = readDevice().filter(
         (record) =>
           after(record, since) &&
@@ -546,13 +571,10 @@ export async function verifyLaunch({
         const actionableErrors = errors.filter((record) => !isIosConnectionRefusal(record, platform));
         const appErrors = actionableErrors.some(isAppLaunchError);
         if ((!runtimeWaiting && pendingAt === null) || appErrors || ready || deviceNow() >= readinessDeadline) {
-          const candidate = `${windowEnd}:${pendingAt}:${ready}:${appErrors}:${runtimeWaiting}`;
-          if (candidate !== coverageCandidate) {
-            coverageCandidate = candidate;
-            sleep.coverThrough?.(now());
-          }
-          const coverage = sleep.coverage?.();
+          coverWindow(windowEnd, `${pendingAt}:${ready}:${appErrors}:${runtimeWaiting}`);
           const coverageDeadline = pendingAt !== null ? readinessDeadline : bundleDeadline;
+          const coverage = readCoverage(coveredWhenRead, coverageDeadline);
+          if (coverage === 'reread') continue;
           if (
             deviceStreamId === null ||
             coverage === 'failed' ||
@@ -630,6 +652,8 @@ export async function verifyLaunch({
   } catch (error) {
     await crashProbe.settle().catch(() => {});
     throw error;
+  } finally {
+    sleep.close?.();
   }
   const probed = crashProbe.pending !== null;
   const late = await crashProbe.settle();
