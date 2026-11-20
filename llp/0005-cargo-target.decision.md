@@ -128,7 +128,11 @@ in an idle `target/` goes, Exact's folders and records included. A symbolic
 link stays because deleting through it would reach what it points at, and a
 `deploy` that is itself a symbolic link, or holds one, keeps the whole
 `target/`, since its keys may live anywhere in it. Both `deploy` and
-`*-keypair.json` match in any letter case. A `.stim-trimmed` that is not a real directory
+`*-keypair.json` match in any letter case. Any other top-level entry holding a
+`*-keypair.json` at any depth stays too, found in the same walk that checks
+devices, before the move and again on the moved entries before the delete: a
+debug-only `cargo build-sbf --debug` writes the key under `deploy/debug/`, and
+`--sbf-out-dir` can put it in any folder. A `.stim-trimmed` that is not a real directory
 keeps the `target/` too: the staging directory is made fresh, never reused. An
 earlier version deleted only entries recognised as Cargo or Exact build
 output; it freed almost nothing from Exact app targets, whose size sits in
@@ -141,6 +145,11 @@ putting anything back through the new path; what was staged stays in the
 original directory's `.stim-trimmed`, marked `NOT-RESTORED`, for a person. A
 swap made deliberately between one of those checks and the call that follows is
 not covered.
+
+Known limit: a Linux bind mount that exposes part of the `target/` elsewhere,
+such as `target/doc` mounted at `/srv/docs` for a server outside the checkout,
+is not detected; the mount checks look only for mount points at or under the
+`target/`.
 
 Known limit: the process checks see a path in the `target/` only when a process
 runs from it, works in it, holds a file in it open or names it absolutely on

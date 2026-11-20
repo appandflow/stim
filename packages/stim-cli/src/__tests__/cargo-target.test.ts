@@ -859,6 +859,20 @@ describe.skipIf(process.platform === 'win32')(
       expect(existsSync(join(target, 'moved-target', 'debug', 'app'))).toBe(true);
     });
 
+    test.each([
+      ['a debug-only Solana build', join('deploy', 'debug')],
+      ['a custom --sbf-out-dir', 'sbf-output'],
+    ])('a keypair at any depth keeps its top-level entry: %s', async (_, folder) => {
+      mkdirSync(join(dir, folder), { recursive: true });
+      writeFileSync(join(dir, folder, 'app-keypair.json'), '[1,2,3]');
+      ageTree(dir);
+
+      const result = await remove();
+
+      expect(result.removed.toSorted()).toEqual(['.rustc_info.json', 'debug', 'doc']);
+      expect(readFileSync(join(dir, folder, 'app-keypair.json'), 'utf8')).toBe('[1,2,3]');
+    });
+
     test('a cancelled delete puts every moved entry back and leaves nothing staged', async () => {
       const controller = new AbortController();
       fsHooks.rename = (from) => {
