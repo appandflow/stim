@@ -160,17 +160,15 @@ const string = (value: string, indent: string) => `${indent}<string>${escapeXml(
 const key = (name: string, indent: string) => `${indent}<key>${name}</key>`;
 
 /**
- * `plist`, a LaunchAgent `renderPlist` wrote, with its `ProgramArguments` replaced by `programArguments` and its
- * `ProcessType` set to `Interactive`; every other key, such as the job's environment, stays as written.
+ * `plist`, a LaunchAgent `renderPlist` wrote, with its `ProgramArguments` replaced by `programArguments`; every other
+ * key, such as the job's environment, stays as written.
  */
 export function withProgramArguments(plist: string, programArguments: string[]): string {
-  return plist
-    .replace(
-      /(<key>ProgramArguments<\/key>\s*<array>)[\s\S]*?(\n\t<\/array>)/,
-      (_match, open: string, close: string) =>
-        `${open}\n${programArguments.map((argument) => string(argument, '\t\t')).join('\n')}${close}`,
-    )
-    .replace(/^(\t<key>ProcessType<\/key>\n\t<string>)[^<]*(<\/string>)$/m, '$1Interactive$2');
+  return plist.replace(
+    /(<key>ProgramArguments<\/key>\s*<array>)[\s\S]*?(\n\t<\/array>)/,
+    (_match, open: string, close: string) =>
+      `${open}\n${programArguments.map((argument) => string(argument, '\t\t')).join('\n')}${close}`,
+  );
 }
 
 /** The LaunchAgent plist for `spec`. `StimService` is inert to launchd: it marks the job as one `install` wrote, so `install` and `uninstall` never touch another agent, and records the serve route. */

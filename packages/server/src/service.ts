@@ -443,6 +443,14 @@ export async function rewriteUnitToShim(label: string): Promise<boolean> {
       const target = realpathSync(path);
       const partial = `${target}.${process.pid}.tmp`;
       writeFileSync(partial, rewritten, { mode: 0o644 });
+      if (manager.name === 'launchd') {
+        // @ref LLP 0021#stimd-runs-at-the-priority-of-an-app -- the unit moves to ProcessType Interactive with the shim
+        const edited = await run('plutil', ['-replace', 'ProcessType', '-string', 'Interactive', partial]);
+        if (!edited.ok) {
+          rmSync(partial, { force: true });
+          throw new ServiceError(`plutil -replace ProcessType failed: ${edited.stderr.trim()}`);
+        }
+      }
       renameSync(partial, target);
       changed = true;
     }

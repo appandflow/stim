@@ -408,7 +408,7 @@ describe.skipIf(process.platform !== 'darwin')('service lifecycle', () => {
         .replace('\t<string>Interactive</string>', '\t<string>Standard</string>')
         .replace(
           '<key>EnvironmentVariables</key>\n\t<dict>\n',
-          '<key>EnvironmentVariables</key>\n\t<dict>\n\t\t<key>ProcessType</key>\n\t\t<string>worker</string>\n',
+          '<key>EnvironmentVariables</key>\n\t<dict>\n\t<key>ProcessType</key>\n\t<string>worker</string>\n',
         ),
     );
     const before = installedPlist();
