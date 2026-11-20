@@ -413,6 +413,8 @@ export async function pruneCache(
     evictBytes,
     byMtime = false,
     signal,
+    entrySizes = 'walk',
+    between,
   }: {
     olderThanDays?: number;
     now?: number;
@@ -420,6 +422,14 @@ export async function pruneCache(
     evictBytes?: number;
     byMtime?: boolean;
     signal?: AbortSignal;
+    /**
+     * How a directory entry is sized for the bytes it frees: a blocking walk with no time limit, a non-blocking walk
+     * bounded like the cache size walks, or not at all (0). An entry whose bounded walk does not finish is removed and
+     * ends the trim, since what it freed cannot count toward `evictBytes`.
+     */
+    entrySizes?: 'walk' | 'bounded' | 'none';
+    /** Runs before each entry is checked again and removed: a unit boundary of the stim-daemon's disk owner. */
+    between?: () => Promise<void>;
   } = {},
 ): Promise<{ removed: number; bytes: number; skipped: string | null; failed?: number; protectedEntries?: number }> {
   const cutoff = now - (olderThanDays as number) * 24 * 60 * 60 * 1000;
@@ -461,9 +471,26 @@ export async function pruneCache(
   for (const { entry, isDirectory, size } of candidates) {
     if (evictBytes !== undefined && bytes >= evictBytes) break;
     if (signal) await checkpoint(signal);
+    if (between) {
+      await between();
+      if (protect?.(entry)) {
+        protectedEntries++;
+        continue;
+      }
+    }
     try {
       if (!existsSync(entry) || Math.max(statSync(entry).mtimeMs, cache.lastUse?.(entry) ?? 0) >= cutoff) continue;
-      const entryBytes = isDirectory ? directorySize(entry, { timeoutMs: 'unbounded', root: cache.dir }) : size;
+      const entryBytes = !isDirectory
+        ? size
+        : entrySizes === 'walk'
+          ? directorySize(entry, { timeoutMs: 'unbounded', root: cache.dir })
+          : entrySizes === 'bounded'
+            ? await measuredDirectorySizeAsync(entry, {
+                timeoutMs: CACHE_SIZE_TIMEOUT_MS,
+                ...(signal ? { signal } : {}),
+                root: cache.dir,
+              })
+            : 0;
       if ((cache.lastUse?.(entry, true) ?? 0) >= cutoff) continue;
       const busy = cache.inUse?.();
       if (busy) {
@@ -472,6 +499,7 @@ export async function pruneCache(
       }
       rmSync(entry, { recursive: true, force: true });
       removed++;
+      if (entryBytes === null) break;
       bytes += entryBytes;
     } catch {
       failed++;

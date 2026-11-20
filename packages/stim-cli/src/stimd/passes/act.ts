@@ -94,6 +94,8 @@ export interface ActContext {
   stop?: AbortSignal;
   /** In a run scoped to the volumes under pressure, whether a path the dormant stage would delete lies on one. */
   deletable?: (path: string) => boolean;
+  /** Runs between the entries of a cache trim: a unit boundary of the stim-daemon's disk owner. */
+  between?: () => Promise<void>;
 }
 
 const protectWindowMs = (settings: Pick<MaintenanceSettings, 'protectRecentHours'>) =>
@@ -176,6 +178,8 @@ async function trimCache(action: MaintenanceAction, context: ActContext): Promis
     protect: (context.protect ??= await cacheEntryProtectionFor(loadConfig(), context.operation)),
     ...(aged ? {} : { evictBytes: action.bytes }),
     ...(context.operation ? { signal: context.operation.signal } : {}),
+    entrySizes: 'bounded',
+    ...(context.between ? { between: context.between } : {}),
   });
   if (result.skipped) return kept(result.skipped);
   if (result.failed)

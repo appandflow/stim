@@ -1,15 +1,17 @@
+import { existsSync } from 'node:fs';
 import { rm, stat, utimes } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import type { StimContext } from '@stim-cli/core';
 import type { DaemonLadderAction } from '@stim-cli/core/state';
 import { workspaceOutputPaths } from '../commands/gc/workspaces.ts';
-import { RESERVE_RELEASED, retryWithReserve } from '../disk-reserve.ts';
+import { RESERVE_RELEASED, releaseReserveWhenFull } from '../disk-reserve.ts';
 import { withWorkspaceProcessLock, workspaceProcessLockError } from '../engine/workspace-process-lock.ts';
 import { formatBytes, measuredDirectorySizeAsync } from '../fs-util.ts';
 import { metroStoreRoot } from '../stimd/metro/metro-store.ts';
 import {
   deleteCargoTarget,
+  leftoverReason,
   recentTargetUse,
   removableEntries,
   type CargoTrimResult,
@@ -34,7 +36,12 @@ const SIZE_TIMEOUT_MS = 120_000;
 const IN_USE_CHECKS = { devServer: false, hosted: false, hostedMacos: false };
 const RESTORE = 'the next stim ios or stim android, from the build cache when nothing changed';
 
-type Input = Pick<IdlePassInput, 'act' | 'log'> & { operation?: StimContext; force?: boolean };
+type Input = Pick<IdlePassInput, 'act' | 'log'> & {
+  operation?: StimContext;
+  force?: boolean;
+  /** Runs before each size walk and each removal, outside the workspace's claims: a unit boundary of the disk owner. */
+  between?: () => Promise<void>;
+};
 type Result = Pick<DaemonLadderAction, 'outcome' | 'bytes' | 'detail'>;
 
 interface Plan {
@@ -93,6 +100,11 @@ export async function reduceDormantOutputs(
   return actions;
 }
 
+/** `path`, or its nearest ancestor that exists, whose volume is the one a write at `path` lands on. */
+function nearestExisting(path: string): string {
+  for (let at = path; ; at = dirname(at)) if (existsSync(at) || dirname(at) === at) return at;
+}
+
 async function reduceWorkspace(
   candidate: StageCandidate,
   config: Config,
@@ -106,7 +118,7 @@ async function reduceWorkspace(
   if (
     !workspaceOutputPaths(workspaceDir(path)).length &&
     !(await existingBuildDirsAsync(path)).length &&
-    !(await cargoTargetDirsAsync(path, { staged: true })).length
+    !(await cargoTargetDirsAsync(path)).length
   )
     return null;
   const keep = (detail: string): Result | null => (input.force ? { outcome: 'kept', bytes: 0, detail } : null);
@@ -119,8 +131,10 @@ async function reduceWorkspace(
   const plan = await eligible(candidate, config, afterMs);
   if (!plan.paths.length) return plan.keptTarget ? keep(plan.kept.join('; ')) : null;
   const measure = input.act || input.force === true;
-  const sizeOf = async (dir: string) =>
-    (await measuredDirectorySizeAsync(dir, { timeoutMs: SIZE_TIMEOUT_MS, signal })) ?? 0;
+  const sizeOf = async (dir: string) => {
+    await input.between?.();
+    return (await measuredDirectorySizeAsync(dir, { timeoutMs: SIZE_TIMEOUT_MS, signal })) ?? 0;
+  };
   const sizes = new Map<string, number>();
   if (measure)
     for (const output of plan.paths) {
@@ -143,17 +157,13 @@ async function reduceWorkspace(
     signal?.throwIfAborted();
     failures.push(`${output}: ${error instanceof Error ? error.message : String(error)}`);
   };
-  let released = false;
+  // @ref LLP 0005#a-full-disk-releases-the-reserve -- the workspace claims are writes too
+  let released = await releaseReserveWhenFull(nearestExisting(workspaceDir(path)));
   for (const output of plan.paths) {
     let outcome: string | CargoTrimResult | null;
+    await input.between?.();
     try {
-      // @ref LLP 0005#a-full-disk-releases-the-reserve -- the workspace claims are writes too
-      outcome = await retryWithReserve(
-        () => removeOutput(path, checkout, output, plan.targets.has(output), afterMs, operation),
-        () => {
-          released = true;
-        },
-      );
+      outcome = await removeOutput(path, checkout, output, plan.targets.has(output), afterMs, operation);
     } catch (error) {
       failed(output, error);
       continue;
@@ -166,7 +176,6 @@ async function reduceWorkspace(
       bytes += outcome.bytes;
       if (outcome.removed.length) removed.push(`${output} (${outcome.removed.join(', ')})`);
       if (outcome.kept.length) kept.push(`kept in ${output}: ${outcome.kept.join('; ')}`);
-      if (outcome.deleteError) failures.push(`${output}: ${outcome.deleteError}`);
       released ||= outcome.reserveReleased === true;
     }
   }
@@ -195,7 +204,7 @@ async function eligible(candidate: StageCandidate, config: Config, afterMs: numb
   const plan: Plan = { paths: [], targets: new Set(), kept, keptTarget: false };
   const targets = [...outputs.targets];
   // @ref LLP 0005#the-dormant-reduction-deletes-an-idle-target-whole -- untagged too, never build output
-  for (const dir of await cargoTargetDirsAsync(candidate.path, { staged: true })) {
+  for (const dir of await cargoTargetDirsAsync(candidate.path)) {
     if (isBuildDirPath(dir)) continue;
     const problem = await regenerableDirProblem(candidate.path, dir, undefined);
     if (problem) {
@@ -207,7 +216,8 @@ async function eligible(candidate: StageCandidate, config: Config, afterMs: numb
   for (const output of [...outputs.paths, ...targets.filter((dir) => !outputs.paths.includes(dir))]) {
     const target = targets.includes(output);
     const recent = target
-      ? (recentTargetUse(output, Date.now(), afterMs) ??
+      ? (leftoverReason(output) ??
+        recentTargetUse(output, Date.now(), afterMs) ??
         ((await removableEntries(output))?.length ? null : 'it holds nothing the dormant delete removes'))
       : null;
     if (recent) {
@@ -229,7 +239,7 @@ async function outputProblem(
   signal: AbortSignal | undefined,
 ): Promise<string | null> {
   if (output === metroStoreRoot(path)) return 'the shared Metro store is not a dormant output';
-  if (cargo && !(await cargoTargetDirsAsync(path, { staged: true })).includes(output))
+  if (cargo && !(await cargoTargetDirsAsync(path)).includes(output))
     return 'it is no longer a Cargo target/ Stim recognises';
   if (!cargo && basename(output) === 'target') return 'a Cargo target/ goes only through the Cargo delete';
   if (workspaceOutputPaths(workspaceDir(path)).includes(output)) return null;

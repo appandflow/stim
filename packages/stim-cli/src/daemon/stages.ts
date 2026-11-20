@@ -46,7 +46,7 @@ import { discoveredReads, type DiscoveredReads } from '../workspace/discovered-r
 import { listedRoots } from '../commands/gc/worktrees.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
-import { existingBuildDirsAsync } from '../workspace/regenerable-dirs.ts';
+import { existingBuildDirKindsAsync } from '../workspace/regenerable-dirs.ts';
 import {
   idleMinutesSetting,
   maintenanceKeepSetting,
@@ -248,6 +248,8 @@ interface IdleSelection {
   onKept?: (path: string, reason: string) => void;
   /** Whether a discovered checkout holds anything the caller reclaims; one that does not is left out before its source walk. */
   reclaimable?: (path: string) => boolean | Promise<boolean>;
+  /** Runs before each checkout's reads, a unit boundary of the disk owner. */
+  between?: () => Promise<void>;
 }
 
 function idleWorkspaces(
@@ -274,7 +276,13 @@ async function readIdleWorkspaces(
   thresholdMs: number,
   setting: string,
   worthIt: (path: string, project: ProjectRecord) => boolean | Promise<boolean>,
-  { discover = false, full = false, onKept, reclaimable }: Omit<IdleSelection, 'setting'> & { discover?: boolean } = {},
+  {
+    discover = false,
+    full = false,
+    onKept,
+    reclaimable,
+    between,
+  }: Omit<IdleSelection, 'setting'> & { discover?: boolean } = {},
 ): Promise<StageCandidate[]> {
   const readings: (Omit<StageCandidate, 'idleMs' | 'role' | 'checkout'> & { idleMs: number | null })[] = [];
   const reads = discoveredReads(reading.operation?.signal);
@@ -284,6 +292,7 @@ async function readIdleWorkspaces(
   const checkouts = [...Object.entries(config.projects), ...discovered];
   tally.items = checkouts.length;
   for (const [path, project] of checkouts) {
+    await between?.();
     if (sameRoot(path, reading.protectedRoot) || !(await worthIt(path, project))) continue;
     if (reclaimable && discoveredPaths.has(path) && !(await reclaimable(path))) continue;
     const used = Date.parse(String(readWorkspaceState(path)?.lastUsedAt ?? ''));
@@ -315,12 +324,11 @@ async function readIdleWorkspaces(
   return linkedFirst(candidates);
 }
 
+/** Whether the checkout holds an output rung 1 deletes, which a Cargo `target/` is not. */
 async function hasOutputs(path: string): Promise<boolean> {
-  return (
-    workspaceOutputPaths(workspaceDir(path)).length > 0 ||
-    (await existingBuildDirsAsync(path)).length > 0 ||
-    existsSync(metroStoreRoot(path))
-  );
+  if (workspaceOutputPaths(workspaceDir(path)).length > 0 || existsSync(metroStoreRoot(path))) return true;
+  const { dirs, cargo } = await existingBuildDirKindsAsync(path);
+  return dirs.some((dir) => !cargo.includes(dir));
 }
 
 /** Whether the workspace is still idle `thresholdMs`, for a caller that holds its native-run claim. */

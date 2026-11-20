@@ -118,6 +118,11 @@ function fixture(label: string, port: number, shim = false) {
   mkdirSync(store, { recursive: true });
   mkdirSync(bin);
   writeFileSync(join(bin, 'launchctl'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  writeFileSync(
+    join(bin, 'systemctl'),
+    '#!/bin/sh\ncase "$*" in *show*KillMode*) echo process ;; *) exit 1 ;; esac\n',
+    { mode: 0o755 },
+  );
   const pkg = join(repo, 'packages/stim-cli');
   const makeBuild = (name: string) => {
     const dir = join(store, name);

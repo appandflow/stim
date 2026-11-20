@@ -1,5 +1,6 @@
-import { appendFileSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { diskFull, keepReserve, releaseReserve } from '../../disk-reserve.ts';
+import { writeCacheFile } from '../../cache-file.ts';
 import { basename, join } from 'node:path';
 import { withDirLock, type StimContext } from '@stim-cli/core';
 import {
@@ -7,6 +8,8 @@ import {
   maintenanceDir,
   maintenanceRunClaims,
   maintenanceStateFile,
+  diskUsageCacheFile,
+  readJsonObject,
   readMaintenanceState,
   type MaintenanceAction,
   type MaintenanceCheck,
@@ -270,9 +273,10 @@ export interface MaintenanceTick {
   measured: TickMeasurement;
 }
 
-function tickDeviceReads({ operation, measured }: MaintenanceTick): OwnedDeviceReads {
+function tickDeviceReads({ operation, measured }: MaintenanceTick, between?: () => Promise<void>): OwnedDeviceReads {
   const { signal } = operation;
   return {
+    ...(between ? { between } : {}),
     sims: () => {
       if (!tickListsSims(loadConfig()))
         return listAllIosSimsAsync({ timeoutMs: DEVICE_LIST_TIMEOUT_MS, signal, operation });
@@ -310,6 +314,7 @@ async function deferIfLoaded(
   ) => void,
   keepState: () => void,
   cap: { ran: boolean },
+  between?: () => Promise<void>,
 ): Promise<boolean> {
   if (!deferCheck(state, check, Date.now(), sizeScanDeferred(), recordedDiskLevel(state, operation?.env))) return false;
   record('maintenance_skip', 'debug', `${check} check deferred: host load exceeds 4 per core`, {
@@ -320,7 +325,7 @@ async function deferIfLoaded(
   keepState();
   if (check !== 'size') return true;
   try {
-    cap.ran = await measureCapOnly(state, Date.now(), operation);
+    cap.ran = await measureCapOnly(state, Date.now(), operation, between);
   } catch (error) {
     throwUnverifiedCleanup(error);
     operation?.signal.throwIfAborted();
@@ -341,12 +346,46 @@ async function measureCapOnly(
   state: MaintenanceState,
   now: number,
   operation: StimContext | undefined,
+  between: (() => Promise<void>) | undefined,
 ): Promise<boolean> {
   if (!capDue(state, now)) return false;
   state.capAt = now;
-  const cargo = await measureCargoTargets(now, operation, state.sizes, { lowPriority: true });
+  const cargo = await measureCargoTargets(now, operation, state.sizes, {
+    lowPriority: true,
+    ...(between ? { between } : {}),
+  });
   state.sizes = [...state.sizes.filter((size) => size.name !== 'Cargo target'), ...cargo];
+  keepScannedSizes(cargo);
   return true;
+}
+
+/**
+ * Writes the size of each Cargo target the scan measured into the disk-usage cache, which keeps it across scans that
+ * measure other targets, for the pressure ladder's largest-first order; the caps still plan from the scan's own list.
+ * A newer record stays; an older one keeps its other fields but the private-size ones, which described its old bytes.
+ */
+function keepScannedSizes(sizes: readonly MaintenanceSize[]): void {
+  for (const size of sizes) {
+    if (size.name !== 'Cargo target' || !existsSync(size.dir)) continue;
+    const file = diskUsageCacheFile(size.dir);
+    const recorded = readJsonObject(file);
+    const recordedAt = Date.parse(String(recorded?.measuredAt ?? ''));
+    if (recorded?.path === size.dir && Number.isFinite(recordedAt) && recordedAt >= size.measuredAt) continue;
+    const {
+      privateBytes: _private,
+      partial: _partial,
+      privateUnknown: _unknown,
+      ...kept
+    } = recorded?.path === size.dir ? recorded : {};
+    try {
+      writeCacheFile(file, {
+        ...kept,
+        path: size.dir,
+        measuredAt: new Date(size.measuredAt).toISOString(),
+        bytes: size.bytes,
+      });
+    } catch {}
+  }
 }
 
 async function measureAllSizes(
@@ -354,8 +393,16 @@ async function measureAllSizes(
   failure: Parameters<typeof measureSizes>[1],
   operation: StimContext | undefined,
   recorded: readonly MaintenanceSize[],
+  between: (() => Promise<void>) | undefined,
 ): Promise<MaintenanceSize[]> {
-  return [...(await measureSizes(now, failure, operation)), ...(await measureCargoTargets(now, operation, recorded))];
+  return [
+    ...(await measureSizes(now, failure, operation, undefined, between)),
+    ...(await measureCargoTargets(now, operation, recorded, between ? { between } : {})),
+  ];
+}
+
+async function unitBoundary(between?: () => Promise<void>): Promise<void> {
+  await between?.();
 }
 
 /**
@@ -366,7 +413,22 @@ async function measureAllSizes(
  */
 export async function runMaintenance(
   trigger: string,
-  { report = false, tick }: { report?: boolean; tick?: MaintenanceTick } = {},
+  {
+    report = false,
+    tick,
+    between,
+    deleted,
+  }: {
+    report?: boolean;
+    tick?: MaintenanceTick;
+    /**
+     * Runs before each check, each walk of the size check, the plan and each action: a unit boundary of the
+     * stim-daemon's disk owner.
+     */
+    between?: () => Promise<void>;
+    /** Runs once the pass deletes nothing more, before its discovery scan and census. */
+    deleted?: () => void;
+  } = {},
 ): Promise<string | void> {
   const startedAt = Date.now();
   let claim: ClaimHandle | undefined;
@@ -445,7 +507,8 @@ export async function runMaintenance(
     const ran = new Set<MaintenanceCheck>();
     const cap = { ran: false };
     for (const check of checks) {
-      if (check !== 'pressure' && (await deferIfLoaded(state, check, tick?.operation, record, keepState, cap)))
+      await unitBoundary(between);
+      if (check !== 'pressure' && (await deferIfLoaded(state, check, tick?.operation, record, keepState, cap, between)))
         continue;
       state.lastAt[check] = Date.now();
       ran.add(check);
@@ -487,11 +550,12 @@ export async function runMaintenance(
             });
           };
           state.sizes = [
-            ...(await measureAllSizes(state.lastAt[check]!, measureFailed, tick?.operation, state.sizes)),
+            ...(await measureAllSizes(state.lastAt[check]!, measureFailed, tick?.operation, state.sizes, between)),
             ...(deviceSweepIsScoped()
               ? []
-              : await measureOwnedDevices(state.lastAt[check]!, measureFailed, tick && tickDeviceReads(tick))),
+              : await measureOwnedDevices(state.lastAt[check]!, measureFailed, tick && tickDeviceReads(tick, between))),
           ];
+          keepScannedSizes(state.sizes);
           for (const size of state.sizes)
             record('maintenance_check', 'debug', `${size.name}: ${formatBytes(size.bytes)}`, {
               check: {
@@ -519,6 +583,7 @@ export async function runMaintenance(
     const partPlanned = { caps, sweep: ran.has('sweep'), worktree: plannedWorktrees, idle: ran.has('idle') };
     let plannedParts = new Set([...PLAN_PARTS.filter((part) => partPlanned[part]), ...disabledParts(settings)]);
     let result: PlannedMaintenance;
+    await unitBoundary(between);
     try {
       result = await plannedMaintenance(state.sizes, settings, {
         caps,
@@ -555,10 +620,12 @@ export async function runMaintenance(
         worktreeSweep: result.worktreeSweep,
         lowPriority: cap.ran,
         ...(tick ? { operation: tick.operation } : {}),
+        ...(between ? { between } : {}),
       };
       const results: { action: MaintenanceAction; outcome: ActionOutcome }[] = [];
       const ordered = actions.toSorted((a, b) => executionRank(a) - executionRank(b));
       for (const action of ordered) {
+        await unitBoundary(between);
         const began = Date.now();
         let outcome: ActionOutcome;
         try {
@@ -720,7 +787,7 @@ export async function runMaintenance(
     logger?.close();
     keepReserve();
     releaseClaim(claim);
-    if (scanAfter) await scanAfterPass(tick, passFailed, trigger);
+    if (scanAfter) await scanAfterPass(tick, passFailed, trigger, deleted);
   }
 }
 
@@ -730,7 +797,13 @@ export async function runMaintenance(
  * unchanged for the daemon's cleanup containment (LLP 0007): this runs only after a pass that did not fail, so it masks
  * no earlier error. A census failure it contains is recorded in the maintenance log.
  */
-async function scanAfterPass(tick: MaintenanceTick | undefined, passFailed: boolean, trigger: string): Promise<void> {
+async function scanAfterPass(
+  tick: MaintenanceTick | undefined,
+  passFailed: boolean,
+  trigger: string,
+  deleted?: () => void,
+): Promise<void> {
+  deleted?.();
   if (passFailed || tick?.operation.signal.aborted) return;
   try {
     await runDiscoveryScanIfDue(tick);

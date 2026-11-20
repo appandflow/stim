@@ -16,7 +16,8 @@ import { executeAction } from '../stimd/passes/act.ts';
 import { artifactWorktreesFor, clearSourceTrees } from '../stimd/passes/artifacts.ts';
 import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
 import { ensureWorkspaceStorage } from '../workspace/paths.ts';
-import { runHomePasses } from '../daemon/passes.ts';
+import { processContext } from '../cli-operation.ts';
+import { runDiskPass, runHomePasses } from '../daemon/passes.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { upsertProject } from '../workspace/config.ts';
 import { forgetGitReads, openGitReads } from '../workspace/git-reads.ts';
@@ -142,18 +143,30 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-test('one report-mode ladder pass at critical lists each repository and reads each checkout once', async () => {
-  fleet();
-  const counts = countGit();
-  const passes = await runHomePasses({ act: false, log: () => {} });
-  expect(passes.pressure.level).toBe('critical');
-  expect({ ...counts, total: counts.total <= TOTAL_LADDER }).toEqual({
-    total: true,
-    lists: 2,
-    paths: 4,
-    statuses: 2,
-  });
-}, 30_000);
+test.each([
+  ['in the tick', undefined],
+  [
+    'on its own operation, as the passes thread runs it',
+    (input: Parameters<typeof runDiskPass>[0]) =>
+      runDiskPass(input, () => {}, processContext(process.cwd(), new AbortController().signal)),
+  ],
+])(
+  'one report-mode ladder pass at high with its disk pass %s lists each repository and reads each checkout once',
+  async (_where, diskPass) => {
+    fleet();
+    vi.stubEnv('STIM_DISK_CRITICAL_FREE_GB', '0');
+    const counts = countGit();
+    const passes = await runHomePasses({ act: false, log: () => {}, ...(diskPass ? { diskPass } : {}) });
+    expect(passes.pressure.level).toBe('high');
+    expect({ ...counts, total: counts.total <= TOTAL_LADDER }).toEqual({
+      total: true,
+      lists: 2,
+      paths: 4,
+      statuses: 2,
+    });
+  },
+  30_000,
+);
 
 test('a gc dry run lists each repository and reads each checkout once, with the plan it makes alone', async () => {
   fleet();
