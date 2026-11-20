@@ -473,6 +473,7 @@ export function createMaintenanceLane(
               ...reading,
               cadence: dependencyCadence,
               between: diskBoundary,
+              marks: true,
             })),
           );
           dependenciesMs = lap();

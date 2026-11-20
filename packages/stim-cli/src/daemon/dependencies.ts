@@ -36,10 +36,12 @@ import { ARTIFACT_DIRS } from '../workspace/regenerable-dirs.ts';
 import { checkDependencyEdits } from '../workspace/dependency-edits.ts';
 import { writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
 import { reduceDormantOutputs } from './dormant-outputs.ts';
+import { writeMark } from './marks.ts';
 import {
   dormantAfterMs,
   idleStageCandidates,
   sourceCheckoutIdle,
+  type CheckoutReading,
   sourceDormantAfterMs,
   stillIdle,
   type DeviceReading,
@@ -547,6 +549,8 @@ export async function runDormantDependencies(
       walkUnknown?: false;
       /** Runs between checkouts, phases and deletions: a unit boundary of the disk owner. */
       between?: () => Promise<void>;
+      /** Writes the gc mark of each checkout the linked-worktree walk reads. */
+      marks?: true;
     },
 ): Promise<DaemonLadderAction[]> {
   const { config, cadence } = input;
@@ -615,7 +619,7 @@ async function sourceTreesOf(path: string, operation?: StimContext): Promise<boo
 
 async function takeIdleDependencies(
   input: Pick<IdlePassInput, 'act' | 'log'> &
-    DeviceReading & { force?: boolean; walkUnknown?: false; between?: () => Promise<void> },
+    DeviceReading & { force?: boolean; walkUnknown?: false; between?: () => Promise<void>; marks?: true },
   config: Config,
   afterMs: number,
   source: boolean,
@@ -639,7 +643,7 @@ async function takeIdleDependencies(
           },
           between,
         }
-      : { between },
+      : { between, ...(input.marks ? { onRead: (reading: CheckoutReading) => writeMark(config, reading) } : {}) },
   );
   await between();
   const { operation } = input;

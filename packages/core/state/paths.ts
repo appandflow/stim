@@ -256,6 +256,11 @@ export function gcLogFile(): string {
   return join(gcLogDir(), 'gc.ndjson');
 }
 
+/** The gc mark of the checkout at the canonical path `root`, one file per root. */
+export function gcMarkFile(root: string): string {
+  return join(gcLogDir(), 'marks', `${createHash('sha256').update(root).digest('hex').slice(0, 32)}.json`);
+}
+
 /** The full plain-text report of the last `stim gc` run in plain mode, which prints only a summary. */
 export function gcReportFile(): string {
   return join(gcLogDir(), 'last-report.txt');

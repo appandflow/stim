@@ -330,6 +330,34 @@ avoid concurrency problems", 2026-11-20. The units, the hard-floor priority
 and keeping the idle and dormant stages in the tick are the coordinator's and
 implementer's reading of it on #6029.
 
+## The lane marks what each checkout could free
+
+The dormant step's hourly walk of registered workspaces and discovered
+checkouts at `idle.dormantDays` writes one mark per checkout it reads, inside that checkout's unit, to
+`$STIM_HOME/gc/marks/<hash>.json`, keyed by the canonical root. A mark holds
+the newest activity the walk read and the outputs rung 1 would delete there,
+with each Cargo `target/` as its own kind and sizes from the disk-usage
+cache; the mark starts no size walk. A checkout kept for something other than
+recent activity (something of it runs, `maintenance.keep`, unreadable
+evidence) records that reason on each candidate.
+
+- A mark is rebuildable: an unknown version or a file that does not parse
+  reads as absent and the next walk rewrites it, so deleting the folder is
+  safe. It is written with a temporary file and a rename.
+- A `dirtyAt` newer than the start of the checkout's reads stays, so a
+  change seen while the walk read the checkout is not lost.
+- Nothing reads the marks yet: the ladder plans and deletes as before, and
+  the ladder's own walks, `stim gc` and the source-checkout walk write none.
+
+Reason: planning dominates a pressure pass (rung 5's evidence loop took about
+13,300 s for 0 bytes on the loaded MacBook), and every pass repeats the
+walk the lane already made. Marks let a later sweep recheck and delete
+without planning again.
+
+Maintainer decision: "I really like all 6 points lets do them all!",
+2026-11-20, #6059. Point 1 of the six is the split between a background
+mark and a sweep that only rechecks and deletes.
+
 ## Each rung frees only the volumes under pressure
 
 While disk sets the level, a rung deletes an item only when the path it will
