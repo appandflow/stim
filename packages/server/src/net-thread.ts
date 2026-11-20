@@ -55,7 +55,11 @@ function closeFailures(error: unknown): Error[] {
     : [error instanceof Error ? error : new Error(String(error))];
 }
 
-const failureText = (failures: Error[]): string => failures.map((failure) => failure.message).join('; ');
+const failureText = (failures: Error[]): string =>
+  failures
+    .map((failure) => failure.message)
+    .filter(Boolean)
+    .join('; ');
 
 async function run(port: MessagePort, options: NetOptions): Promise<void> {
   const post = (message: FromNet) => port.postMessage(message);
