@@ -217,7 +217,7 @@ jobs:
           gh release create "$GITHUB_REF_NAME" "$out/stim-fsevents-$VERSION.zip" "$out/SHA256SUMS" \
             --draft --verify-tag $flags --title "Stim FSEvents helper $VERSION" \
             --notes "The signed macOS helper that stimd runs to learn which checkouts changed. \`SHA256SUMS\` lists the checksums of the zip and of the \`stim-fsevents\` binary inside it, which stim pins."
-          gh release edit "$GITHUB_REF_NAME" --draft=false
+          gh release edit "$GITHUB_REF_NAME" --draft=false --latest=false
           cat "$out/SHA256SUMS"
 
       - name: Remove the signing keychain and API key
