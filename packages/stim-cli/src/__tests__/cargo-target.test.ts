@@ -8,6 +8,7 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
+  renameSync,
   rmSync,
   symlinkSync,
   utimesSync,
@@ -805,6 +806,57 @@ describe.skipIf(process.platform === 'win32')(
       expect(result.removed).toEqual([]);
       expect(readFileSync(join(dir, 'sbf-output', 'app-keypair.json'), 'utf8')).toBe('[1,2,3]');
       expect(existsSync(join(dir, 'debug', 'app'))).toBe(true);
+    });
+
+    test('a keypair in deploy/ that is a symbolic link keeps the whole target', async () => {
+      mkdirSync(join(dir, 'keys'));
+      writeFileSync(join(dir, 'keys', 'app.json'), '[1,2,3]');
+      mkdirSync(join(dir, 'deploy'));
+      symlinkSync(join('..', 'keys', 'app.json'), join(dir, 'deploy', 'app-keypair.json'));
+      ageTree(dir);
+      const old = new Date(Date.now() - 3 * DAY);
+      lutimesSync(join(dir, 'deploy', 'app-keypair.json'), old, old);
+      utimesSync(join(dir, 'deploy'), old, old);
+
+      const result = await remove();
+
+      expect(result.removed).toEqual([]);
+      expect(readFileSync(join(dir, 'deploy', 'app-keypair.json'), 'utf8')).toBe('[1,2,3]');
+    });
+
+    test('a keypair folder named in another letter case stays', async () => {
+      mkdirSync(join(dir, 'Deploy'));
+      writeFileSync(join(dir, 'Deploy', 'app-keypair.json'), '[1,2,3]');
+      ageTree(dir);
+
+      const result = await remove();
+
+      expect(result.removed).not.toContain('Deploy');
+      expect(readFileSync(join(dir, 'Deploy', 'app-keypair.json'), 'utf8')).toBe('[1,2,3]');
+    });
+
+    test('a target/ replaced by a symbolic link during the process scan is kept, and the directory it points at untouched', async () => {
+      const outside = join(target, 'outside');
+      mkdirSync(outside);
+      writeFileSync(join(outside, 'mine.txt'), 'mine');
+      let swapped = false;
+      stubProcesses({
+        lsof: (args) => {
+          if (args.includes('-Fn') && !swapped) {
+            swapped = true;
+            renameSync(dir, join(target, 'moved-target'));
+            symlinkSync(outside, dir);
+          }
+          return '';
+        },
+      });
+
+      const result = await remove();
+
+      expect(result.removed).toEqual([]);
+      expect(result.kept).toEqual([expect.stringContaining('was replaced during the delete')]);
+      expect(readdirSync(outside)).toEqual(['mine.txt']);
+      expect(existsSync(join(target, 'moved-target', 'debug', 'app'))).toBe(true);
     });
 
     test('a cancelled delete puts every moved entry back and leaves nothing staged', async () => {

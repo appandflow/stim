@@ -126,12 +126,21 @@ benchmark baselines and Cargo's reports. A `deploy/` directory holding a
 program's private key there, and a new key is a new program ID. Everything else
 in an idle `target/` goes, Exact's folders and records included. A symbolic
 link stays because deleting through it would reach what it points at, and a
-`deploy` that is itself a symbolic link keeps the whole `target/`, since its
-keys may live anywhere in it. A `.stim-trimmed` that is not a real directory
+`deploy` that is itself a symbolic link, or holds one, keeps the whole
+`target/`, since its keys may live anywhere in it. Both `deploy` and
+`*-keypair.json` match in any letter case. A `.stim-trimmed` that is not a real directory
 keeps the `target/` too: the staging directory is made fresh, never reused. An
 earlier version deleted only entries recognised as Cargo or Exact build
 output; it freed almost nothing from Exact app targets, whose size sits in
 folders that also hold records.
+
+The delete notes the `target/`'s device and inode first and checks them again
+before it makes the staging directory, before each move and before the final
+delete. If the `target/` is no longer that real directory, it stops without
+putting anything back through the new path; what was staged stays in the
+original directory's `.stim-trimmed`, marked `NOT-RESTORED`, for a person. A
+swap made deliberately between one of those checks and the call that follows is
+not covered.
 
 Known limit: the process checks see a path in the `target/` only when a process
 runs from it, works in it, holds a file in it open or names it absolutely on
