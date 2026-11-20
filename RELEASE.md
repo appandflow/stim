@@ -605,19 +605,29 @@ build or sign a Mach-O, so the helper ships as its own signed GitHub release,
 like Stim Host. It only needs a new version when its source changes. Nothing in
 `stim` downloads or runs it yet.
 
+Before the first release, a maintainer adds `fsevents-v*` to the `release`
+environment's deployment policy and to the ruleset that protects release tags.
+Until then the environment rejects a `fsevents-v` tag run, and the tags are not
+protected.
+
 1. Tag a commit on `main` with `fsevents-v<version>` and push the tag. The
-   `FSEvents helper release` workflow runs the helper's tests on macOS, then
-   builds one universal binary, signs it with the Desktop Developer ID
-   certificate and the hardened runtime (identifier `dev.stim.fsevents`),
-   notarizes a zip of it, and attaches `stim-fsevents-<version>.zip` and
-   `SHA256SUMS` to a `fsevents-v<version>` GitHub release. `SHA256SUMS` lists
+   `FSEvents helper release` workflow runs the helper's tests on macOS and
+   checks that the tag is on `main`. It then builds one universal binary,
+   signs it with the Desktop Developer ID certificate and the hardened runtime
+   (identifier `dev.stim.fsevents`), notarizes a zip of it, and publishes
+   `stim-fsevents-<version>.zip` and `SHA256SUMS` as a `fsevents-v<version>`
+   GitHub release, uploaded while the release is a draft. `SHA256SUMS` lists
    the zip and the `stim-fsevents` binary inside it. A bare executable cannot
    be stapled, so the notarization ticket is not attached to the file. It uses
    the `release` environment and the same Desktop signing and App Store
    Connect secrets as Stim Host. A tag refuses to publish a build that is not
-   signed and notarized; a dispatched run is a dry run that uploads the build
-   as a workflow artifact only.
-2. Never replace a published zip: a pinned digest would stop matching. Fix a
+   signed and notarized, and refuses a tag that already has a release; when a
+   run stopped after creating its draft, delete the draft and re-run the job.
+2. A dispatched run is a dry run that uploads the build as a workflow artifact
+   and publishes nothing. On `main` it signs and notarizes in the `release`
+   environment; on any other ref it builds ad hoc, outside the environment and
+   without its secrets.
+3. Never replace a published zip: a pinned digest would stop matching. Fix a
    bad release with a new version.
 
 `packages/stim-cli/native/fsevents/release.sh <version>` builds the same zip
