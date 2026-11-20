@@ -25,7 +25,7 @@ import {
   workspaceLightenedFile,
 } from '@stim-cli/core/state';
 import * as gcDevices from '../commands/gc/devices.ts';
-import { collectOwnedDeviceActivityAsync } from '../commands/gc/idle.ts';
+import { collectOwnedDeviceActivityAsync, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { REAL_BYTES_THRESHOLD, runDormantDependencies } from '../daemon/dependencies.ts';
 import { runIdlePass } from '../daemon/idle.ts';
 import { runLadder } from '../daemon/ladder.ts';
@@ -148,20 +148,95 @@ describe('the idle stage under pressure (rung 1)', () => {
     expect(readIdleStage(readWorkspaceState(root))).toMatchObject({ idleMinutes: 2 });
   });
 
-  test('under disk pressure on another volume it keeps the 2-minute threshold away from the workspace', async () => {
-    const { root } = workspace('recent', 5 * MINUTE_MS, 'Booted');
-    const decisions = await runIdlePass({
-      config: loadConfig(),
-      now: Date.now(),
+  function tick(
+    cause: 'disk' | 'memory' | 'both',
+    drive: (device: OwnedDeviceActivity) => OwnedDeviceActivity = (device) => device,
+  ) {
+    const disk = [{ volume: '/', freeMb: (cause === 'memory' ? 500 : 30) * 1024, device: statSync(home).dev }];
+    const memory = {
+      level: 'normal' as const,
+      availableBytes: (cause === 'disk' ? 8 : 1) * 1024 ** 3,
+      totalBytes: 16 * 1024 ** 3,
+    };
+    vi.spyOn(daemonMeasure, 'measureDisk').mockResolvedValue(disk);
+    vi.spyOn(daemonMeasure, 'measureMemory').mockResolvedValue(memory);
+    vi.spyOn(daemonMeasure, 'measureTick').mockImplementation(async () => ({
+      measurement: { disk, memory, load1: 0, cores: 8, bootedSimulators: 1, runningEmulators: null, interaction: null },
       sims,
       simsError: null,
-      act: true,
-      log,
-      devices: await devicesNow(),
-      pressure: { level: 'high', reasons: ['fixture'], volumes: new Set([statSync(home).dev + 1]) },
-    });
-    expect(decisions).toEqual([expect.objectContaining({ path: root, outcome: 'active' })]);
-    expect(readIdleStage(readWorkspaceState(root))).toBeNull();
+      devices: (await devicesNow()).map(drive),
+    }));
+  }
+
+  function withOutputs(name: string, usedAgoMs: number) {
+    const { root, udid } = workspace(name, usedAgoMs, 'Booted');
+    const outputs = join(workspaceDir(root), 'derived-data');
+    mkdirSync(outputs, { recursive: true });
+    writeFileSync(join(outputs, 'Build.o'), 'x'.repeat(4096));
+    return { root, udid, outputs };
+  }
+
+  test.each([
+    { cause: 'disk' as const, outcome: 'active', state: 'Booted', idleMinutes: null },
+    { cause: 'memory' as const, outcome: 'idle', state: 'Shutdown', idleMinutes: 2 },
+  ])('at high $cause pressure a workspace idle 3 minutes is stopped only for memory', async (row) => {
+    const { root, udid, outputs } = withOutputs('running', 3 * MINUTE_MS);
+    tick(row.cause);
+
+    const passes = await runHomePasses({ act: true, log });
+
+    expect(passes.workspaces).toEqual([expect.objectContaining({ path: root, outcome: row.outcome })]);
+    expect(readIdleStage(readWorkspaceState(root))?.idleMinutes ?? null).toBe(row.idleMinutes);
+    expect(sims.find((sim) => sim.udid === udid)?.state).toBe(row.state);
+    expect(existsSync(outputs)).toBe(row.state === 'Booted');
+  });
+
+  test('a forced stim gc --pressure high with memory normal stops a workspace only past idle.minutes', async () => {
+    const recent = withOutputs('recent', 3 * MINUTE_MS);
+    const old = withOutputs('old', 20 * MINUTE_MS);
+    tick('disk');
+
+    const ladder = await runForcedLadder({ levels: ['high'], act: true, why: 'stim gc at high', trigger: 'gc' });
+
+    expect(ladder?.levels[0]?.actions.filter((action) => action.kind === 'idle-stage')).toEqual([
+      expect.objectContaining({ target: old.root, outcome: 'done' }),
+    ]);
+    expect(readIdleStage(readWorkspaceState(recent.root))).toBeNull();
+    expect(sims.find((sim) => sim.udid === recent.udid)?.state).toBe('Booted');
+    expect(existsSync(recent.outputs)).toBe(true);
+    expect(readIdleStage(readWorkspaceState(old.root))).toMatchObject({ idleMinutes: 15 });
+    expect(existsSync(old.outputs)).toBe(false);
+  });
+
+  test.each(['the daemon tick', 'a forced stim gc'])(
+    'under disk pressure alone with idle.minutes 5, %s keeps a workspace whose agent-device command was 6 minutes ago',
+    async (path) => {
+      const { root, udid } = withOutputs('agent', 20 * MINUTE_MS);
+      writeFileSync(join(root, '.stim.json'), JSON.stringify({ idle: { minutes: 5 } }));
+      const at = new Date(Date.now() - 6 * MINUTE_MS).toISOString();
+      tick('disk', (device) => ({
+        ...device,
+        activity: { ...device.activity, recent: { ...device.activity.recent, 'agent-action': at } },
+      }));
+
+      if (path === 'the daemon tick') await runHomePasses({ act: true, log });
+      else
+        await runForcedLadder({ levels: ['high'], act: true, why: 'stim gc at high', trigger: 'gc', measured: true });
+
+      expect(readIdleStage(readWorkspaceState(root))).toBeNull();
+      expect(sims.find((sim) => sim.udid === udid)?.state).toBe('Booted');
+    },
+  );
+
+  test('a stim gc --dry-run under memory and disk pressure counts a running workspace outputs once', async () => {
+    const { root } = withOutputs('running', 3 * MINUTE_MS);
+    tick('both');
+
+    const ladder = await runForcedLadder({ levels: ['high'], act: false, why: 'stim gc at high', trigger: 'gc' });
+
+    const mine = ladder?.levels[0]?.actions.filter((action) => action.target === root) ?? [];
+    expect(mine).toEqual([expect.objectContaining({ kind: 'idle-stage', outcome: 'would' })]);
+    expect(mine[0]?.bytes).toBeGreaterThanOrEqual(4096);
   });
 });
 

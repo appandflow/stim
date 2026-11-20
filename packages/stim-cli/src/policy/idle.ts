@@ -2,7 +2,10 @@ import { formatLongDuration } from '../command-output.ts';
 
 const MINUTE_MS = 60_000;
 export const IDLE_SETTING = 'idle.minutes';
-/** Under high or critical pressure, the idle stage takes every workspace idle this long (ladder rung 1). */
+/**
+ * The pressure idle threshold: under high or critical memory pressure the idle stage takes every workspace idle this
+ * long; under disk pressure the ladder's rungs take workspaces with nothing running idle this long.
+ */
 export const PRESSURE_IDLE_MS: number = 2 * MINUTE_MS;
 
 /**
@@ -12,7 +15,7 @@ export const PRESSURE_IDLE_MS: number = 2 * MINUTE_MS;
 const AGENT_DEVICE_IDLE_MS: number = 10 * MINUTE_MS;
 
 /**
- * The window within which an activity of `basis` keeps a workspace running under an `idleMs` threshold. Only under
+ * The window within which an activity of `basis` keeps a workspace under an `idleMs` threshold. Only under memory or
  * disk pressure does an agent-device command hold longer than `idleMs`.
  */
 export function activityWindowMs(basis: string, idleMs: number, pressured: boolean): number {
@@ -115,13 +118,14 @@ export interface IdleKeepFacts {
   /** Why a dev server may still run after its supervisor exited; null otherwise. */
   orphan: string | null;
   hosted: { placements: readonly { label: string; machine: string }[]; unreadable: readonly string[] };
-  /** The pressure level is high or critical. */
+  /** The memory level is high or critical. */
   pressured: boolean;
 }
 
 /**
  * What keeps a running workspace out of the idle stage whatever its activity, the first in this order, else its idle
- * threshold: `idle.minutes`, shortened to `PRESSURE_IDLE_MS` under pressure, and that threshold in whole minutes.
+ * threshold: `idle.minutes`, shortened to `PRESSURE_IDLE_MS` under memory pressure, and that threshold in whole
+ * minutes.
  */
 export function idleKeep(facts: IdleKeepFacts): { kept: string } | { idleMs: number; minutes: number } {
   const { settings, supervisor, hosted } = facts;

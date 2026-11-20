@@ -2605,9 +2605,9 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   takes the longest-idle workspace first. Disk rungs take only what lies on a
   short volume (stim gc --pressure: every volume):
 
-    1. idle stage: every workspace idle 2 minutes or more goes into the idle
-       stage now (\`guide metro\`, IDLE STOP), and the regenerable build
-       outputs of workspaces with nothing running are deleted
+    1. idle stage: memory pressure idles every workspace idle 2 minutes or
+       more now (\`guide metro\`, IDLE STOP), disk pressure alone at
+       idle.minutes; outputs of workspaces with nothing running go
     2. parked devices: at high the oldest deleted until the level clears, at
        critical all of them
     3. shared caches: at high the build and Metro caches trimmed least
@@ -2800,8 +2800,8 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   every workspace: no Stim command, source or git write, and no process in the
   checkout (such as a Gradle or cargo build) for idle.dormantDays; git
   worktree lock keeps them. Each is measured, then rechecked and removed under
-  the workspace's claims; a Cargo target/ is only trimmed by profile, and the
-  Metro store every worktree of the app shares stays. For an
+  the workspace's claims; a Cargo target/ goes whole unless a build used or
+  locks it, and the Metro store every worktree of the app shares stays. For an
   app inside a larger checkout, activity anywhere in that checkout counts.
   Where processes cannot be listed (always on Windows) nothing goes.
   Still kept: a workspace in use, with a running dev server or build, leased,

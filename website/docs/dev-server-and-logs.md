@@ -175,7 +175,7 @@ After 15 minutes of inactivity by default, Stim can stop Metro, keep its port, s
 
 Stim counts commands, builds, Metro bundle and HMR requests, device input and active leases. App logs and a view that only streams frames do not count. Running builds, live shares and pinned workspaces are protected. Custom Metro commands, Re.Pack and Expo SDKs before 54 do not report enough activity for idle stop.
 
-Set `idle.minutes` to `0` to disable idle stop. Under [disk pressure](./build-caches.md#disk-pressure), cleanup can act after two idle minutes.
+Set `idle.minutes` to `0` to disable idle stop. Under memory pressure, idle stop acts after two idle minutes. Under [disk pressure](./build-caches.md#disk-pressure) alone it waits for `idle.minutes`, and cleanup deletes the build outputs of workspaces with nothing running after two idle minutes.
 
 <StimTabs code="stim settings set idle.minutes 60 --scope workspace" />
 

@@ -622,7 +622,7 @@ test('gc at high reports what it removed apart from what it kept', async () => {
   expect(existsSync(orphan.dir)).toBe(false);
 }, 30_000);
 
-test('gc at high never deletes a Cargo target/ whole and keeps the outputs of a locked worktree', async () => {
+test('gc at high keeps a Cargo target/ holding trim recovery data and the outputs of a locked worktree', async () => {
   hideMachineTools();
   const git = (cwd: string, args: string) => execSync(`git -c user.name=t -c user.email=t@t ${args}`, { cwd });
   const repo = (name: string) => {
