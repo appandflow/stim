@@ -9,8 +9,9 @@
 
 ## Discovery
 
-Maintenance and `stim gc` also manage checkouts no `stim` command ran in. They
-find them in three places: linked worktrees of the repositories of registered
+Maintenance and `stim gc` also manage checkouts no `stim` command ran in. With
+`maintenance.autoDiscover` on (it is off by default, see "Automatic discovery is
+off by default"), they find them in three places: linked worktrees of the repositories of registered
 projects (`git worktree list`), direct children of the folders that hold
 registered checkouts, and direct children of the folders in
 `maintenance.discoverRoots`. A child counts only when Stim's project detection
@@ -35,9 +36,98 @@ Which folders count as sources, the `apps`, `examples` and `packages` rule,
 and the absence of any write or fetch were chosen by the coordinator and the
 review of #5519, not by the maintainer.
 
+## Automatic discovery is off by default
+
+`maintenance.autoDiscover`, a machine boolean, defaults to false. Off, maintenance
+and `stim gc` act only on registered workspaces (checkouts a `stim` command ran in)
+and on `maintenance.discoverRoots`: its recognised direct children, and the linked
+worktrees of their repositories that lie inside a configured root. Nothing is read
+for the registered projects' repositories or the folders holding them, and the tool
+folders and the full scan's finds are not selected. On, discovery is everything the
+rest of this document describes. A scoped `STIM_HOME` behaves as before either
+way: only its own roots, no repository read.
+
+Reason: proving that a checkout Stim never ran in is unused needs process, launcher
+and lock reads from outside, where most of the recent cleanup edge cases came from,
+and the discovery scan is one of the slowest steps of the pressure ladder on a busy
+machine (#6023).
+
+Maintainer decision: "lets disable auto discovery by default and only have doctor
+suggest turning it on of we detect a lot of untracked projects taking lots of space.
+We can recommend auto disc or adding to roots", 2026-11-20
+([#6023](https://github.com/appandflow/stim/issues/6023)).
+
+The daemon keeps running the full scan and the census whatever the setting, so
+doctor has sizes to read. With the setting off, the census also computes what
+automatic discovery would select (one `computeDiscovered` with it forced on, in the
+census run only) and lists every
+checkout that adds, except the `~/.codex/worktrees` worktrees, as `untracked`, grouped by its parent folder like the other
+kinds, with the command that adds the folder to `maintenance.discoverRoots`. The
+census records the value it classified under (`autoDiscover`; a file without it was
+written with discovery on); a change makes the census due and the report treats the
+list as outdated, as for a roots change. The forced discovery runs at most once a
+day: the census records when (`untrackedAt`), and a run within a day of it, with the
+setting still off, `maintenance.discoverRoots` unchanged and no `unchecked` find in
+the last census, reuses that list, so the hourly runs that continue the measuring, or
+follow an hourly low-disk scan, read no repository. A last census with an `unchecked`
+find runs it again, so that find stays listed and the census stays pending. While the
+setting is off its time counts toward the census run's 90 second budget, which is
+then fixed before it starts; the discovery itself is not cut short, and its reads are
+bounded as the passes' are. With the setting on, the budget starts after discovery,
+as before.
+
+While the setting is off, every path the last scan recorded (revalidated or not)
+still keeps a plain Node worktree that is or holds it reduce-only, as a pending scan
+find does with the setting on (see "Plain Node checkouts"), so a Node worktree reached
+through `maintenance.discoverRoots` is never removed over a recorded app. The scan
+paths are only a veto; they are not candidates.
+
+A change to `maintenance.autoDiscover`, `maintenance.discoverRoots` or
+`STIM_MAINTENANCE_AUTO_DISCOVER` applies from the next plan. A `stim gc` run or daemon
+pass already planned finishes under the settings it planned with, as every pass that
+reads discovery through the per-operation memo already does (the stages, the artifact
+and Cargo passes, the level run). This is the coordinator's choice under #6025, not
+the maintainer's.
+
+In the finished-worktree check a linked worktree counts as discovered only when
+discovery lists the worktree root itself; a discovered checkout nested inside it, such
+as a `maintenance.discoverRoots` folder inside a tool-folder worktree, does not make
+the worktree a removal candidate. A linked worktree that is neither registered nor
+discovered is reported `not-registered` before any git, device or pull
+request read.
+
+`stim doctor` reports a `note` finding, `auto-discover-suggested`, when the setting is
+off, the census is current for the last scan and the settings, and the untracked
+groups' measured build output totals at least 10 GiB. It names both remedies with
+exact commands: `stim settings set maintenance.autoDiscover true --scope machine`, and
+one `maintenance.discoverRoots` command that adds every adoptable folder. The figure
+counts recognised build output of measured checkouts only, no `node_modules` or Pods,
+so an incomplete census leaves the finding out rather than adding it; a cached size
+can still overstate a directory deleted since it was measured. When
+`STIM_MAINTENANCE_AUTO_DISCOVER` overrides the setting, the fix says to change or
+remove it, since the settings command alone changes nothing then. The roots command
+brings every recognised checkout directly in each named folder under the full
+discovered-checkout rules, finished linked worktree removal included, and the
+finding says so. A folder whose untracked checkouts are all dot-named is left out of
+that command, because discovery skips dot-named children of a root; such checkouts
+get only the automatic discovery remedy. Doctor reads only the census file; it walks nothing. This finding is
+the one part of the listing that changes the findings count; the listing itself stays
+outside the findings.
+
+Chosen by the implementing lane, not by the maintainer: the setting's name and
+machine scope, the environment override `STIM_MAINTENANCE_AUTO_DISCOVER`, keeping
+the worktrees of root children inside the root when off, gating the tool folders and
+the scan finds with the rest, keeping the scan and census running when off,
+leaving the `~/.codex/worktrees` worktrees out of `untracked` (so their bytes never
+count toward the suggestion, and no command adopts another tool's folder), the
+10 GiB threshold (half the default `maintenance.workspaceOutputsMaxGb`, so the
+suggestion means more than one workspace's worth of output), and a note rather than
+a `costs time` finding.
+
 ## Scope
 
-A discovered linked worktree is acted on only inside its repository's main
+This section describes automatic discovery, which `maintenance.autoDiscover` turns
+on. A discovered linked worktree is acted on only inside its repository's main
 checkout folder, a folder that holds a known project, or a
 `maintenance.discoverRoots` folder. Nothing under the system temporary directory
 or a dot-folder directly inside the home directory is ever touched, unless it
@@ -65,7 +155,7 @@ Everything else in this section was chosen by the coordinator and the review of
 
 ## Tool folders and the full scan
 
-Discovery also reads two more sources, and what they find is reduce-only: Stim
+With `maintenance.autoDiscover` on, discovery also reads two more sources, and what they find is reduce-only: Stim
 reduces its build outputs and its `node_modules` and Pods (a linked worktree's
 after `idle.dormantDays`, a source checkout's after `idle.sourceDormantDays`) by
 the discovered-checkout rules, and never removes the checkout or worktree. The
@@ -231,6 +321,11 @@ Maintainer decision, 2026-11-14 (#5762), verbatim:
 Earlier the same evening, on including common tool folders by default: "Could
 these common paths just be included by default in Discovered checkout".
 
+The 2026-11-20 decision (#6023, quoted in "Automatic discovery is off by default"),
+"lets disable auto discovery by default", supersedes these two for the default:
+the tool folders and the full scan feed discovery only with `maintenance.autoDiscover`
+on. The scan itself still runs, so the census can size what turning it on would add.
+
 The coordinator's reading, not the maintainer's words, for the points the
 decision leaves open:
 
@@ -311,7 +406,9 @@ maintainer:
   root discovery ignores (a broad one such as `~`) is an ordinary group.
 - Two kinds, worded differently because they are different facts: reduce-only
   scan finds (Stim reduces their outputs and never removes them), and finds under
-  a home dot-folder (Stim does nothing with them). Both are grouped by the
+  a home dot-folder (Stim does nothing with them). A third, `untracked`, exists
+  only while automatic discovery is off (see "Automatic discovery is off by
+  default"); the `~/.codex/worktrees` worktrees are never in it. Both are grouped by the
   folder that holds them, the only folder `maintenance.discoverRoots` can name to
   adopt them, with a command built from the current value plus that folder and
   quoted for the shell. The home folder and a folder holding it cannot be named, so
@@ -412,10 +509,12 @@ maintainer:
   any other census error is contained and logged once as `maintenance_failure`.
 - The low-disk line is a second stderr line after the existing one, at critical
   only, never on stdout or in JSON. It gives the total (with "at least" while some
-  is unmeasured) and the command for the largest reduce-only folder; a dot-folder
-  group counts in the total and is never the one named.
+  is unmeasured) and the command for the largest reduce-only or untracked folder; a
+  dot-folder group counts in the total and is never the one named.
 - Doctor shows it as a section outside the findings, so it never changes a PASS or
-  the count, and carries it in `--json` as `discovery`, an internal field. Doctor
+  the count, and carries it in `--json` as `discovery`, an internal field. The
+  suggestion to turn automatic discovery on is a finding (see "Automatic discovery
+  is off by default"). Doctor
   runs only inside a project, so the section does too.
 - The worktrees in `~/.codex/worktrees` reach discovery through git as reduce-only
   worktrees and are not scan finds, so they are not listed.
@@ -641,7 +740,7 @@ unreadable launcher entries, which no longer applies.
 
 ## Links
 
-- Issues: #5512, #5515, #5757, #5762, #5765, #5775, #5896, #5957, #6024. Pull request: #5519.
+- Issues: #5512, #5515, #5757, #5762, #5765, #5775, #5896, #5957, #6023, #6024. Pull request: #5519.
 - Code: `packages/stim-cli/src/workspace/discovery.ts`,
   `packages/stim-cli/src/workspace/discovery-scan.ts`,
   `packages/stim-cli/src/workspace/discovery-census.ts`,

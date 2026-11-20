@@ -174,7 +174,7 @@ test('the critical-disk warning adds one line with what unmanaged checkouts hold
   );
   const find = {
     path: '/Users/x/dev/app',
-    kind: 'reduce-only',
+    kind: 'untracked',
     folder: '/Users/x/dev',
     adoptable: true,
     evaluatedAt: ranAt,
@@ -203,6 +203,7 @@ test('the critical-disk warning adds one line with what unmanaged checkouts hold
       scanRanAt: ranAt,
       roots: [],
       canonicalRoots: [],
+      autoDiscover: false,
       pending: false,
       finds: [find],
     }),
@@ -265,11 +266,12 @@ test('the critical-disk warning lists nothing once maintenance.discoverRoots cha
       scanRanAt: ranAt,
       roots: [],
       canonicalRoots: [],
+      autoDiscover: false,
       pending: false,
       finds: [
         {
           path: '/nowhere/dev/app',
-          kind: 'reduce-only',
+          kind: 'untracked',
           folder: '/nowhere/dev',
           adoptable: true,
           evaluatedAt: ranAt,

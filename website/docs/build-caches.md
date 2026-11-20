@@ -640,7 +640,7 @@ shared caches on a different volume. The same values can live in the machine con
 
 Stim automatically trims its own caches, idle build outputs and parked devices, and can remove [finished worktrees](./worktrees.md#remove-finished-worktrees-in-bulk). Run `stim gc --dry-run` to preview cleanup and `stim logs --source maintenance` to see the workspace's recent cleanup activity.
 
-Set `daemon.mode` to `report` to see plans without automatic deletion, or `off` to disable automatic maintenance. It defaults to `on` outside CI. Use `maintenance.keep` to protect a workspace from maintenance cleanup. [Maintenance settings](./settings.md#automatic-maintenance)
+Set `daemon.mode` to `report` to see plans without automatic deletion, or `off` to disable automatic maintenance. It defaults to `on` outside CI. Use `maintenance.keep` to protect a workspace from maintenance cleanup. Maintenance and the pressure ladder act on registered workspaces and on [checkouts in the folders you name](./worktrees.md#checkouts-stim-never-ran-in) in `maintenance.discoverRoots`; turn on `maintenance.autoDiscover` to also reach checkouts next to your projects and linked worktrees of known repositories that no `stim` command ran in. [Maintenance settings](./settings.md#automatic-maintenance)
 
 <StimTabs code="stim settings set daemon.mode report --scope machine" />
 

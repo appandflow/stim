@@ -307,7 +307,7 @@ describe('discoverCheckouts', () => {
     expect((await discoverCheckouts(config, [])).map(({ path }) => path)).toEqual([join(roots, 'app')]);
   });
 
-  it('finds the linked worktrees and recognised neighbours of a known repository through git worktree list', async () => {
+  it('finds nothing a known repository leads to by default, and its linked worktrees and recognised neighbours with maintenance.autoDiscover on', async () => {
     vi.stubEnv('STIM_HOME', '');
     const repo = join(base, 'dev', 'repo');
     app(repo);
@@ -320,13 +320,67 @@ describe('discoverCheckouts', () => {
     git(repo, 'worktree', 'add', '-q', '--detach', elsewhere);
     app(join(base, 'dev', 'neighbour'));
     mkdirSync(join(base, 'dev', 'notes'));
-    const config: Config = { projects: { [repo]: {} }, repos: {} };
+    const off: Config = { projects: { [repo]: {} }, repos: {} };
+    expect(await discoverCheckouts(off, [repo])).toEqual([]);
+    expect(await discoveredOutside(off, [repo])).toEqual([]);
+
+    const config: Config = { ...off, maintenance: { autoDiscover: true } };
     const found = await discoverCheckouts(config, [repo]);
     expect(found.map(({ path, origin }) => [path, origin])).toEqual([
       [linked, 'worktree'],
       [join(base, 'dev', 'neighbour'), 'sibling'],
     ]);
     expect((await discoveredOutside(config, [repo])).map(({ path }) => path)).toEqual([elsewhere]);
+  });
+
+  it('keeps maintenance.discoverRoots with automatic discovery off: its children and their worktrees inside it, nothing beside a known repository', async () => {
+    vi.stubEnv('STIM_HOME', '');
+    const commit = (cwd: string) => {
+      git(cwd, 'init', '-q', '-b', 'main');
+      git(cwd, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init');
+    };
+    const roots = join(base, 'roots');
+    const child = join(roots, 'child');
+    app(child);
+    commit(child);
+    const inside = join(child, '.worktrees', 'fix');
+    const outside = join(base, 'wt', 'pin');
+    mkdirSync(join(base, 'wt'));
+    git(child, 'worktree', 'add', '-q', '-b', 'fix', inside);
+    git(child, 'worktree', 'add', '-q', '--detach', outside);
+    const repo = join(base, 'dev', 'repo');
+    app(repo);
+    commit(repo);
+    git(repo, 'worktree', 'add', '-q', '-b', 'feature', join(base, 'dev', 'feature'));
+    app(join(base, 'dev', 'neighbour'));
+    const config: Config = { maintenance: { discoverRoots: [roots] }, projects: { [repo]: {} }, repos: {} };
+
+    expect((await discoverCheckouts(config, [repo])).map(({ path, origin }) => [path, origin])).toEqual([
+      [child, 'root'],
+      [inside, 'worktree'],
+    ]);
+    expect((await discoveredOutside(config, [repo])).map(({ path }) => path)).toEqual([outside]);
+  });
+
+  it('keeps a root child that is a linked worktree of a repository outside the root, and none of that repository beside its main checkout, with automatic discovery off', async () => {
+    vi.stubEnv('STIM_HOME', '');
+    const main = join(base, 'elsewhere', 'repo');
+    app(main);
+    git(main, 'init', '-q', '-b', 'main');
+    git(main, 'add', '-A');
+    git(main, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'init');
+    const roots = join(base, 'roots');
+    mkdirSync(roots);
+    const child = join(roots, 'child');
+    git(main, 'worktree', 'add', '-q', '-b', 'child', child);
+    const near = join(main, '.worktrees', 'near');
+    git(main, 'worktree', 'add', '-q', '-b', 'near', near);
+    const config: Config = { maintenance: { discoverRoots: [roots] }, projects: {}, repos: {} };
+
+    expect((await discoverCheckouts(config, [])).map(({ path, origin }) => [path, origin])).toEqual([
+      [child, 'worktree'],
+    ]);
+    expect((await discoveredOutside(config, [])).map(({ path }) => path)).toEqual([near]);
   });
 
   it('lists the worktree of a plain Node checkout only when asked, and no folder without git or package in a monorepo', async () => {
@@ -378,7 +432,7 @@ describe('discoverCheckouts', () => {
     const old = join(base, 'dev', 'a-old');
     git(zapp, 'worktree', 'add', '-q', '-b', 'old', old);
     writeFileSync(join(old, 'package.json'), '{}');
-    const config: Config = { projects: { [repo]: {} }, repos: {} };
+    const config: Config = { projects: { [repo]: {} }, repos: {}, maintenance: { autoDiscover: true } };
 
     const found = await discoverCheckouts(config, [repo], undefined, { nodeWorktrees: true });
     expect(found.map(({ path, origin, node }) => [path, origin, node])).toEqual([
@@ -389,71 +443,74 @@ describe('discoverCheckouts', () => {
     expect(await discoveredOutside(config, [repo])).toEqual([]);
   });
 
-  it('keeps a Node worktree that is or holds a full-scan find, checked or pending, reduce-only in discovery and in the removal check', async () => {
-    vi.stubEnv('STIM_HOME', '');
-    vi.stubEnv('HOME', join(base, 'home'));
-    vi.stubEnv('USERPROFILE', join(base, 'home'));
-    const dev = join(base, 'home', 'dev');
-    const cli = join(dev, 'cli');
-    mkdirSync(cli, { recursive: true });
-    writeFileSync(join(cli, 'package.json'), JSON.stringify({ name: 'cli' }));
-    git(cli, 'init', '-q', '-b', 'main');
-    git(cli, 'add', '-A');
-    git(cli, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'init');
-    mkdirSync(join(dev, 'wts'));
-    const mobile = join(dev, 'wts', 'mobile');
-    git(cli, 'worktree', 'add', '-q', '-b', 'mobile', mobile);
-    app(mobile);
-    const tool = join(dev, 'wts', 'tool');
-    git(cli, 'worktree', 'add', '-q', '-b', 'tool', tool);
-    app(join(tool, 'mobile'));
-    const broken = join(dev, 'wts', 'broken');
-    git(cli, 'worktree', 'add', '-q', '-b', 'broken', broken);
-    writeFileSync(join(broken, 'package.json'), '{ not json');
-    const holder = join(dev, 'wts', 'holder');
-    git(cli, 'worktree', 'add', '-q', '-b', 'holder', holder);
-    mkdirSync(join(holder, 'mobile'));
-    writeFileSync(join(holder, 'mobile', 'package.json'), '{ not json');
-    mkdirSync(join(base, 'home', '.stim', 'maintenance'), { recursive: true });
-    writeFileSync(
-      join(base, 'home', '.stim', 'maintenance', 'discovery-scan.json'),
-      JSON.stringify({
-        version: 2,
-        completedAt: 1,
-        lowScanAt: 0,
-        ranAt: 1,
-        durationMs: 1,
-        trigger: 'weekly',
-        visited: 1,
-        found: [mobile, join(tool, 'mobile'), broken, join(holder, 'mobile')],
-        dotFolderFound: [],
-        unreadable: [],
-        truncated: false,
-        truncation: 'none',
-      }),
-    );
-    const config: Config = { maintenance: { discoverRoots: [dev] }, projects: {}, repos: {} };
+  it.each([true, false])(
+    'keeps a Node worktree that is or holds a full-scan find, checked or pending, reduce-only in discovery and in the removal check, with maintenance.autoDiscover %s',
+    async (autoDiscover) => {
+      vi.stubEnv('STIM_HOME', '');
+      vi.stubEnv('HOME', join(base, 'home'));
+      vi.stubEnv('USERPROFILE', join(base, 'home'));
+      const dev = join(base, 'home', 'dev');
+      const cli = join(dev, 'cli');
+      mkdirSync(cli, { recursive: true });
+      writeFileSync(join(cli, 'package.json'), JSON.stringify({ name: 'cli' }));
+      git(cli, 'init', '-q', '-b', 'main');
+      git(cli, 'add', '-A');
+      git(cli, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'init');
+      mkdirSync(join(dev, 'wts'));
+      const mobile = join(dev, 'wts', 'mobile');
+      git(cli, 'worktree', 'add', '-q', '-b', 'mobile', mobile);
+      app(mobile);
+      const tool = join(dev, 'wts', 'tool');
+      git(cli, 'worktree', 'add', '-q', '-b', 'tool', tool);
+      app(join(tool, 'mobile'));
+      const broken = join(dev, 'wts', 'broken');
+      git(cli, 'worktree', 'add', '-q', '-b', 'broken', broken);
+      writeFileSync(join(broken, 'package.json'), '{ not json');
+      const holder = join(dev, 'wts', 'holder');
+      git(cli, 'worktree', 'add', '-q', '-b', 'holder', holder);
+      mkdirSync(join(holder, 'mobile'));
+      writeFileSync(join(holder, 'mobile', 'package.json'), '{ not json');
+      mkdirSync(join(base, 'home', '.stim', 'maintenance'), { recursive: true });
+      writeFileSync(
+        join(base, 'home', '.stim', 'maintenance', 'discovery-scan.json'),
+        JSON.stringify({
+          version: 2,
+          completedAt: 1,
+          lowScanAt: 0,
+          ranAt: 1,
+          durationMs: 1,
+          trigger: 'weekly',
+          visited: 1,
+          found: [mobile, join(tool, 'mobile'), broken, join(holder, 'mobile')],
+          dotFolderFound: [],
+          unreadable: [],
+          truncated: false,
+          truncation: 'none',
+        }),
+      );
+      const config: Config = { maintenance: { autoDiscover, discoverRoots: [dev] }, projects: {}, repos: {} };
 
-    for (const select of [{}, { nodeWorktrees: true }])
-      expect((await discoverCheckouts(config, [], undefined, select)).filter(({ path }) => path === mobile)).toEqual([
-        expect.objectContaining({ origin: 'scan', reduceOnly: true }),
+      for (const select of autoDiscover ? [{}, { nodeWorktrees: true }] : [{ nodeWorktrees: true }])
+        expect((await discoverCheckouts(config, [], undefined, select)).filter(({ path }) => path === mobile)).toEqual([
+          expect.objectContaining({ origin: autoDiscover ? 'scan' : 'worktree', reduceOnly: true }),
+        ]);
+      saveConfig({ version: 2, ...config });
+      const sweep = await collectWorktreeSweep({ idle: false, olderThan: null, now: Date.now(), refresh: false });
+      expect(
+        (await discoverCheckouts(config, [], undefined, { nodeWorktrees: true }))
+          .filter(({ path }) => path === broken || path === holder)
+          .map(({ path, reduceOnly }) => [path, reduceOnly]),
+      ).toEqual([
+        [broken, true],
+        [holder, true],
       ]);
-    saveConfig({ version: 2, ...config });
-    const sweep = await collectWorktreeSweep({ idle: false, olderThan: null, now: Date.now(), refresh: false });
-    expect(
-      (await discoverCheckouts(config, [], undefined, { nodeWorktrees: true }))
-        .filter(({ path }) => path === broken || path === holder)
-        .map(({ path, reduceOnly }) => [path, reduceOnly]),
-    ).toEqual([
-      [broken, true],
-      [holder, true],
-    ]);
-    for (const path of [mobile, tool, broken, holder])
-      expect(sweep.worktrees.find((entry) => entry.path === path)).toMatchObject({
-        discovered: true,
-        reduceOnly: true,
-      });
-  });
+      for (const path of [mobile, tool, broken, holder])
+        expect(sweep.worktrees.find((entry) => entry.path === path)).toMatchObject({
+          discovered: true,
+          reduceOnly: true,
+        });
+    },
+  );
 
   it('takes the checkouts of the last full scan as reduce-only in an unscoped home, and none in a scoped one', async () => {
     vi.stubEnv('STIM_HOME', '');
@@ -478,16 +535,14 @@ describe('discoverCheckouts', () => {
     };
     writeFileSync(join(base, 'home', '.stim', 'maintenance', 'discovery-scan.json'), JSON.stringify(scan));
     expect(
-      (await discoverCheckouts({ projects: {}, repos: {} }, [])).map(({ path, origin, reduceOnly }) => [
-        path,
-        origin,
-        reduceOnly,
-      ]),
+      (await discoverCheckouts({ projects: {}, repos: {}, maintenance: { autoDiscover: true } }, [])).map(
+        ({ path, origin, reduceOnly }) => [path, origin, reduceOnly],
+      ),
     ).toEqual([[docs, 'scan', true]]);
     vi.stubEnv('STIM_HOME', join(base, 'scoped'));
     expect(
       await discoverCheckouts(
-        { projects: {}, repos: {} },
+        { projects: {}, repos: {}, maintenance: { autoDiscover: true } },
         [],
         testContext({ env: { STIM_HOME: join(base, 'scoped') } }),
       ),
@@ -520,7 +575,7 @@ describe('discoverCheckouts', () => {
         truncation: 'none',
       }),
     );
-    const config: Config = { maintenance: { discoverRoots: [root] }, projects: {}, repos: {} };
+    const config: Config = { maintenance: { autoDiscover: true, discoverRoots: [root] }, projects: {}, repos: {} };
     expect((await discoverCheckouts(config, [])).map(({ path, origin }) => [path, origin])).toEqual([
       [join(root, 'app'), 'root'],
     ]);
@@ -534,7 +589,7 @@ describe('discoverCheckouts', () => {
     git(repo, 'init', '-q', '-b', 'main');
     git(repo, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init');
     app(join(base, 'home', 'neighbour'));
-    const config: Config = { projects: { [repo]: {} }, repos: {} };
+    const config: Config = { projects: { [repo]: {} }, repos: {}, maintenance: { autoDiscover: true } };
     expect(await discoverCheckouts(config, [repo])).toEqual([]);
   });
 });

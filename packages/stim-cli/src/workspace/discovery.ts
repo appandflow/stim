@@ -12,6 +12,13 @@ import { absent, scanEntryValid, scanSkipper } from './scan-rules.ts';
 import { matchWorktreeEntry, resolveSourceCheckoutAsync } from './worktree.ts';
 
 const DISCOVER_ROOTS_SETTING = 'maintenance.discoverRoots';
+const AUTO_DISCOVER_SETTING = 'maintenance.autoDiscover';
+
+// @ref LLP 0004#automatic-discovery-is-off-by-default -- only registered workspaces and discoverRoots unless turned on
+/** Whether `maintenance.autoDiscover` is on: discovery then also reaches past `maintenance.discoverRoots`. */
+export function autoDiscoverEnabled(config: Config | null, env: NodeJS.ProcessEnv): boolean {
+  return machineSettingValue(AUTO_DISCOVER_SETTING, { config, env }).value === true;
+}
 
 type DiscoveryOrigin = 'worktree' | 'sibling' | 'root' | 'scan';
 
@@ -312,9 +319,11 @@ async function computeDiscovered(
   known: readonly string[],
   scan: DiscoveryScan | null,
   operation?: StimContext,
+  automaticOverride?: boolean,
 ): Promise<Discovery> {
   const env = operation?.env ?? {};
   const scoped = isScopedHome(operation?.env);
+  const automatic = !scoped && (automaticOverride ?? autoDiscoverEnabled(config, env));
   const canonicalRoots = canonicalDiscoverRoots(config, env);
   const repositories: { entries: { path: string }[]; main: string; node?: true }[] = [];
   const folders = new Map<string, string>();
@@ -329,7 +338,7 @@ async function computeDiscovered(
       main: source.path,
     };
   };
-  if (!scoped) {
+  if (automatic) {
     const seen = new Set<string>();
     for (const root of Object.keys(config?.projects ?? {}).filter(isAbsolute)) {
       if (!existsSync(root)) continue;
@@ -369,22 +378,28 @@ async function computeDiscovered(
     for (const entry of entries) {
       const path = canonicalPath(entry.path);
       if (path === canonicalPath(main)) continue;
-      if (worktreeInScope(path, { main: canonicalPath(main), folders: [...folders.keys()], roots: canonicalRoots }))
+      if (
+        automatic
+          ? worktreeInScope(path, { main: canonicalPath(main), folders: [...folders.keys()], roots: canonicalRoots })
+          : canonicalRoots.some((root) => inside(path, root))
+      )
         worktrees.push({ path, from: main, ...kind });
-      else if (inToolFolder(path, canonicalPath(homedir())))
+      else if (automatic && inToolFolder(path, canonicalPath(homedir())))
         worktrees.push({ path, from: main, reduceOnly: true, ...kind });
       else if (!node) outside.push({ path, from: main });
     }
   }
-  const { valid: scanned, pending: scanPending } = scoped ? { valid: [], pending: [] } : await revalidatedScan(scan);
+  const { valid: scanned, pending: scanPending } = automatic ? await revalidatedScan(scan) : { valid: [], pending: [] };
   const allowed = [...children, ...scanned].filter(
     (child) => canonicalRoots.some((root) => inside(child.path, root)) || !isProtectedLocation(child.path),
   );
   const knownRoots = known.map(canonicalPath);
   const everything = selectDiscovered({ known: knownRoots, worktrees, children: allowed });
   // @ref LLP 0004#plain-node-checkouts -- a scan find not yet revalidated keeps the Node worktree that holds it
+  // @ref LLP 0004#automatic-discovery-is-off-by-default -- off, every recorded scan find keeps it
+  const holds = automatic ? scanPending : scoped ? [] : (scan?.found ?? []).filter((path) => isAbsolute(path));
   for (const checkout of everything)
-    if (checkout.node && scanPending.some((path) => inside(path, checkout.path))) checkout.reduceOnly = true;
+    if (checkout.node && holds.some((path) => inside(path, checkout.path))) checkout.reduceOnly = true;
   const listed = new Set(everything.map(({ path }) => path));
   const coveredByKnown = (path: string) => knownRoots.some((root) => inside(path, root) || inside(root, path));
   return {
@@ -402,10 +417,18 @@ export interface UnmanagedScanFinds {
   reduceOnly: string[];
   /** Scan finds under a home dot-folder that no route reaches: Stim does nothing with them. */
   dotFolder: string[];
+  /**
+   * With `maintenance.autoDiscover` off, the checkouts automatic discovery would reach (siblings, linked worktrees of
+   * known repositories, scan finds) that no route reaches now: Stim does nothing with them. Tool folder worktrees are
+   * left out, as they are from the listing with it on.
+   */
+  untracked: string[];
   /** Finds, of either kind, whose validity a read that did not answer left unestablished: neither managed nor gone. */
   unchecked: string[];
   /** The existing, non-broad `maintenance.discoverRoots` folders with symlinks resolved, as this classification used. */
   canonicalRoots: string[];
+  /** The `maintenance.autoDiscover` value this classification used. */
+  autoDiscover: boolean;
 }
 
 const touches = (path: string, other: string): boolean =>
@@ -414,7 +437,10 @@ const touches = (path: string, other: string): boolean =>
 /**
  * The scan finds that are not managed through another route, classified from the complete discovery list: the finds
  * discovery selects with origin `scan` are reduce-only, and the find of a home dot-folder, which discovery never selects,
- * is unmanaged unless a registered project or a discovered checkout touches it. Lying inside a `maintenance.discoverRoots`
+ * is unmanaged unless a registered project or a discovered checkout touches it. With `maintenance.autoDiscover` off it
+ * also computes what automatic discovery would select and lists what it adds as `untracked`; this is the one place that
+ * runs automatic discovery while the setting is off, in the daemon's census, not in a pass. `untrackedBefore`, the list
+ * an earlier census computed, is reused instead of computing it again. Lying inside a `maintenance.discoverRoots`
  * folder or a tool folder is not coverage: discovery reaches only the direct children of a root and the worktrees git
  * lists, and a find it did not select stays listed. (The scan prunes `.codex`, so a find under the tool folder cannot
  * come from it.) Each dot-folder find is revalidated like a scan find. A find of either kind whose revalidation did
@@ -429,23 +455,48 @@ export async function unmanagedScanFinds(
   config: Config | null,
   known: readonly string[],
   operation: StimContext,
+  { untrackedBefore }: { untrackedBefore?: readonly string[] } = {},
 ): Promise<UnmanagedScanFinds | null> {
   const scan = readDiscoveryScan();
   if (!scan) return null;
-  const { found: all, scanPending } = await computeDiscovered(config, known, scan, operation);
+  const automatic = autoDiscoverEnabled(config, operation.env);
+  const { found: all, scanPending: pendingNow } = await computeDiscovered(config, known, scan, operation);
   const found = all.filter((checkout) => !checkout.node);
   const reduceOnly = found.filter(({ origin }) => origin === 'scan').map(({ path }) => path);
   if (isScopedHome(operation.env))
-    return { scanRanAt: scan.ranAt, reduceOnly, dotFolder: [], unchecked: [], canonicalRoots: [] };
+    return {
+      scanRanAt: scan.ranAt,
+      reduceOnly,
+      dotFolder: [],
+      untracked: [],
+      unchecked: [],
+      canonicalRoots: [],
+      autoDiscover: automatic,
+    };
+  const managed = new Set(found.map(({ path }) => path));
+  const knownRoots = known.map(canonicalPath);
+  // @ref LLP 0004#automatic-discovery-is-off-by-default -- the census lists what turning it on would add
+  const wouldFind = automatic || untrackedBefore ? null : await computeDiscovered(config, known, scan, operation, true);
+  const untracked = automatic
+    ? []
+    : untrackedBefore
+      ? untrackedBefore.filter((path) => !managed.has(path) && !knownRoots.some((root) => touches(path, root)))
+      : (wouldFind?.found ?? [])
+          .filter(
+            (checkout) =>
+              !checkout.node && !managed.has(checkout.path) && !(checkout.origin === 'worktree' && checkout.reduceOnly),
+          )
+          .map(({ path }) => path);
+  const scanPending = wouldFind?.scanPending ?? pendingNow;
   const home = canonicalPath(homedir());
   const roots = canonicalDiscoverRoots(config, operation.env);
-  const knownRoots = known.map(canonicalPath);
   const rules = { home, isCheckout: recognition, skip: scanSkipper(home) };
   const ancestors = new Map();
   const covered = (path: string): boolean =>
     !isAbsolute(path) ||
     knownRoots.some((root) => touches(path, root)) ||
-    found.some((checkout) => touches(path, checkout.path));
+    found.some((checkout) => touches(path, checkout.path)) ||
+    untracked.some((checkout) => touches(path, checkout));
   const dotFolder: string[] = [];
   const unchecked = scanPending.filter((path) => !covered(path));
   for (const path of scan.dotFolderFound) {
@@ -459,7 +510,9 @@ export async function unmanagedScanFinds(
     scanRanAt: scan.ranAt,
     reduceOnly,
     dotFolder: dotFolder.toSorted(),
+    untracked,
     unchecked: unchecked.toSorted(),
     canonicalRoots: roots,
+    autoDiscover: automatic,
   };
 }

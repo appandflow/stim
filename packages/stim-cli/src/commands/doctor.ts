@@ -24,8 +24,10 @@ import { projectRegistry } from '../integrations/projects.ts';
 import type { ProjectRegistry } from '../integrations/project-registry.ts';
 import type { ProjectDoctor } from '../integrations/project-doctor.ts';
 import { getProject, loadConfig } from '../workspace/config.ts';
-import { broadDiscoverRoots, missingDiscoverRoots } from '../workspace/discovery.ts';
+import { autoDiscoverEnabled, broadDiscoverRoots, missingDiscoverRoots } from '../workspace/discovery.ts';
 import {
+  AUTO_DISCOVER_ENV,
+  autoDiscoverSuggestion,
   DISCOVER_ROOTS_KEY,
   discoveryLines,
   discoveryReport,
@@ -789,6 +791,31 @@ async function assembleDoctorReport(
       detail: `${broadRoots.join(', ')} resolve${broadRoots.length === 1 ? 's' : ''} to the home folder, a folder holding it or the filesystem root, so nothing is discovered there.`,
       fix: 'Name folders below the home folder, such as ~/Developer.',
     });
+  const rootsSetting = machineSettingValue(DISCOVER_ROOTS_KEY, { config: loadConfig(), env });
+  const autoDiscover = autoDiscoverEnabled(loadConfig(), env);
+  const discovery = discoveryReport({
+    scan: readDiscoveryScanFile(),
+    census: readDiscoveryCensusFile(),
+    setting: rootsSetting,
+    autoDiscover,
+    home: homedir(),
+    canonical: canonicalOrSelf,
+  });
+  const override = env[AUTO_DISCOVER_ENV];
+  const suggestion = autoDiscoverSuggestion(
+    discovery,
+    rootsSetting,
+    autoDiscover,
+    homedir(),
+    override === undefined || override === '' ? null : override,
+  );
+  if (suggestion)
+    findings.push({
+      code: 'auto-discover-suggested',
+      level: 'note',
+      title: 'Checkouts Stim does not manage hold a lot of build output',
+      ...suggestion,
+    });
   findings.push(...silent);
   return {
     project: root,
@@ -797,13 +824,7 @@ async function assembleDoctorReport(
     pressure: pressure.pressure,
     maintenance: { ...maintenance, logPath: gcLogFile() },
     daemon: { ...answered, logPath: daemonNdjsonFile() },
-    discovery: discoveryReport({
-      scan: readDiscoveryScanFile(),
-      census: readDiscoveryCensusFile(),
-      setting: machineSettingValue(DISCOVER_ROOTS_KEY, { config: loadConfig(), env }),
-      home: homedir(),
-      canonical: canonicalOrSelf,
-    }),
+    discovery,
     remoteMachines: withPriority(remoteMachines.machines),
     deviceHosts: withPriority(deviceHostMachines.machines),
     toolchain,
