@@ -531,11 +531,9 @@ describe('trimming on a full disk', () => {
     return { options: {}, staged: join('.stim-trimmed', '0', 'deps', 'libx.rlib') };
   };
   test.each([
-    ['a profile a build took back', false, tookBack],
-    ['a profile a build took back, whose marker has no room for its failed line', true, tookBack],
+    ['a profile a build took back', tookBack],
     [
-      'a unit batch whose move failed, whose marker has no room for its failed line',
-      true,
+      'a unit batch whose move failed',
       () => {
         makeIdleUnit('debug');
         stubProcesses({});
@@ -548,14 +546,9 @@ describe('trimming on a full disk', () => {
         return { options: { units: 'all' as const }, staged: join('.stim-trimmed', 'units-0') };
       },
     ],
-  ])('when %s cannot be put back on a full disk, a trim from a fresh process keeps it', async (_, full, arrange) => {
-    let movedIn = false;
-    fsHooks.rename = (from, to) => {
-      if (from.includes('.stim-trimmed') && !from.endsWith('NOT-RESTORED')) throw diskFull();
-      if (to.includes('.stim-trimmed')) movedIn = true;
-    };
-    fsHooks.writeFile = (path) => {
-      if (full && movedIn && path.endsWith('NOT-RESTORED')) throw diskFull();
+  ])('when %s cannot be put back on a full disk, a trim from a fresh process keeps it', async (_, arrange) => {
+    fsHooks.rename = (from) => {
+      if (from.includes('.stim-trimmed')) throw diskFull();
     };
     const { options, staged } = arrange();
 
@@ -568,7 +561,8 @@ describe('trimming on a full disk', () => {
     expect(next.removed).toEqual([]);
     expect(next.kept).toEqual([expect.stringContaining('could not be put back')]);
     expect(existsSync(join(target, staged))).toBe(true);
-    expect(existsSync(join(target, '.stim-trimmed', full ? 'NOT-RESTORED.failed' : 'NOT-RESTORED'))).toBe(true);
+    expect(readdirSync(join(target, '.stim-trimmed'))).toContain('NOT-RESTORED');
+    expect(readdirSync(join(target, '.stim-trimmed'))).not.toContain('STAGED');
   });
 
   test.each([
@@ -581,7 +575,8 @@ describe('trimming on a full disk', () => {
       makeProfile('host-dev', 3 * DAY);
       mkdirSync(join(target, '.stim-trimmed'));
       renameSync(join(target, 'host-dev'), join(target, '.stim-trimmed', '0'));
-      writeFileSync(join(target, '.stim-trimmed', 'NOT-RESTORED'), 'staged\n');
+      writeFileSync(join(target, '.stim-trimmed', 'NOT-RESTORED'), '');
+      writeFileSync(join(target, '.stim-trimmed', 'STAGED'), '');
       const fresh = await freshTrim((args) => (args.some((arg) => arg.includes('.stim-trimmed')) ? holder : ''));
 
       const result = await fresh(target, { launching: noLaunchers(target), needBytes: 0 });
@@ -598,7 +593,8 @@ describe('trimming on a full disk', () => {
     writeFileSync(join(target, 'host-dev', 'deploy', 'app-keypair.json'), '[1]');
     mkdirSync(join(target, '.stim-trimmed'));
     renameSync(join(target, 'host-dev'), join(target, '.stim-trimmed', '0'));
-    writeFileSync(join(target, '.stim-trimmed', 'NOT-RESTORED'), 'staged\n');
+    writeFileSync(join(target, '.stim-trimmed', 'NOT-RESTORED'), '');
+    writeFileSync(join(target, '.stim-trimmed', 'STAGED'), '');
     const cancel = new AbortController();
     let cancelled = false;
     const fresh = await freshTrim((args) => {
@@ -611,7 +607,7 @@ describe('trimming on a full disk', () => {
     await expect(
       fresh(target, { launching: noLaunchers(target), needBytes: 0, signal: cancel.signal }),
     ).rejects.toThrow('aborted');
-    expect(readFileSync(join(target, '.stim-trimmed', 'NOT-RESTORED'), 'utf8')).toBe('staged\n');
+    expect(readdirSync(join(target, '.stim-trimmed')).toSorted()).toEqual(['0', 'NOT-RESTORED', 'STAGED']);
     const walk = new AbortController();
     fsHooks.dev = (path) => {
       if (path.endsWith(join('.stim-trimmed', '0', 'deploy'))) walk.abort();
@@ -623,7 +619,7 @@ describe('trimming on a full disk', () => {
     await expect(fresh(target, { launching: noLaunchers(target), needBytes: 0, signal: walk.signal })).rejects.toThrow(
       'aborted',
     );
-    expect(readFileSync(join(target, '.stim-trimmed', 'NOT-RESTORED'), 'utf8')).toBe('staged\n');
+    expect(readdirSync(join(target, '.stim-trimmed')).toSorted()).toEqual(['0', 'NOT-RESTORED', 'STAGED']);
     delete fsHooks.dev;
     const result = await fresh(target, { launching: noLaunchers(target), needBytes: 0 });
 
@@ -635,7 +631,8 @@ describe('trimming on a full disk', () => {
     makeProfile('host-dev', 3 * DAY);
     mkdirSync(join(target, '.stim-trimmed'));
     renameSync(join(target, 'host-dev'), join(target, '.stim-trimmed', '0'));
-    writeFileSync(join(target, '.stim-trimmed', 'NOT-RESTORED'), 'staged\n');
+    writeFileSync(join(target, '.stim-trimmed', 'NOT-RESTORED'), '');
+    writeFileSync(join(target, '.stim-trimmed', 'STAGED'), '');
     fsHooks.dev = (path) => (path.endsWith(join('.stim-trimmed', '0', 'deps')) ? 4242 : undefined);
     onTestFinished(() => {
       delete fsHooks.dev;
@@ -645,7 +642,7 @@ describe('trimming on a full disk', () => {
     const result = await fresh(target, { launching: noLaunchers(target), needBytes: 0 });
 
     expect(result.kept).toEqual([expect.stringContaining('is another filesystem')]);
-    expect(readFileSync(join(target, '.stim-trimmed', 'NOT-RESTORED'), 'utf8')).toBe('staged\n');
+    expect(readdirSync(join(target, '.stim-trimmed')).toSorted()).toEqual(['0', 'NOT-RESTORED', 'STAGED']);
     expect(existsSync(join(target, '.stim-trimmed', '0', 'deps', 'libx.rlib'))).toBe(true);
   });
 
@@ -662,6 +659,124 @@ describe('trimming on a full disk', () => {
 
       expect(result).toMatchObject({ removed: [], reserveReleased: true });
       expect(existsSync(rlib)).toBe(true);
+    },
+  );
+
+  test.each([
+    [
+      'a mount lies under its staging',
+      (aside: string) => () => `36 35 0:1 / ${aside}/0 rw - ext4 /dev/x rw\n`,
+      'is a mount point',
+    ],
+    [
+      'the mount table cannot be read',
+      () => () => {
+        throw new Error('EACCES');
+      },
+      'mounts cannot be read',
+    ],
+  ])('a killed trim is kept when %s', async (_, table, why) => {
+    stubProcesses({});
+    makeProfile('host-dev', 3 * DAY);
+    mkdirSync(join(target, '.stim-trimmed'));
+    renameSync(join(target, 'host-dev'), join(target, '.stim-trimmed', '0'));
+    writeFileSync(join(target, '.stim-trimmed', 'NOT-RESTORED'), '');
+    writeFileSync(join(target, '.stim-trimmed', 'STAGED'), '');
+
+    const result = await trimCargoTarget(target, {
+      launching: noLaunchers(target),
+      needBytes: 0,
+      mountInfo: table(join(realpathSync.native(target), '.stim-trimmed')),
+    });
+
+    expect(result.kept).toEqual([expect.stringContaining(why)]);
+    expect(readdirSync(join(target, '.stim-trimmed')).toSorted()).toEqual(['0', 'NOT-RESTORED', 'STAGED']);
+  });
+
+  test.skipIf(process.platform === 'win32')(
+    'a unit whose pending file a process uses when the reserve is released for its fingerprint move stays',
+    async () => {
+      makeIdleUnit('release');
+      const rlib = join(realpathSync.native(target), 'release', 'deps', `libserde-${'1'.padStart(16, '0')}.rlib`);
+      let full = true;
+      stubProcesses({ lsof: (args) => (args.includes('-Fn') && !full ? `p100\nn${rlib}\n` : '') });
+      fsHooks.rename = (from, to) => {
+        if (!full || !to.includes('units-') || !from.includes('.fingerprint')) return;
+        full = false;
+        throw diskFull();
+      };
+
+      const result = await trimCargoTarget(target, { launching: noLaunchers(target), needBytes: 0, units: 'all' });
+
+      expect(result).toMatchObject({ removed: [], reserveReleased: true });
+      expect(result.kept).toEqual([expect.stringContaining('a process uses it')]);
+      expect(existsSync(rlib)).toBe(true);
+      expect(existsSync(join(target, 'release', '.fingerprint', `serde-${'1'.padStart(16, '0')}`))).toBe(true);
+    },
+  );
+
+  const killedTrim = () => {
+    makeProfile('host-dev', 3 * DAY);
+    mkdirSync(join(target, '.stim-trimmed'));
+    renameSync(join(target, 'host-dev'), join(target, '.stim-trimmed', '0'));
+    writeFileSync(join(target, '.stim-trimmed', 'NOT-RESTORED'), '');
+    writeFileSync(join(target, '.stim-trimmed', 'STAGED'), '');
+  };
+
+  test.each([
+    [
+      'a .stim-not-restored-* entry lies beside it',
+      () => mkdirSync(join(target, '.stim-not-restored-1-0')),
+      undefined,
+      'could not put back',
+    ],
+    [
+      'the headroom deadline passes during its walk',
+      () => {},
+      (stop: AbortController) => {
+        fsHooks.dev = (path) => {
+          if (path.endsWith(join('.stim-trimmed', '0', 'deps'))) stop.abort();
+          return undefined;
+        };
+        onTestFinished(() => {
+          delete fsHooks.dev;
+        });
+      },
+      'headroom deadline',
+    ],
+  ])('a killed trim is kept when %s', async (_, arrange, during, why) => {
+    stubProcesses({});
+    killedTrim();
+    arrange();
+    const stop = new AbortController();
+    during?.(stop);
+
+    const result = await trimCargoTarget(target, { launching: noLaunchers(target), needBytes: 0, stop: stop.signal });
+
+    expect(result.kept).toEqual([expect.stringContaining(why)]);
+    expect(readdirSync(join(target, '.stim-trimmed')).toSorted()).toEqual(['0', 'NOT-RESTORED', 'STAGED']);
+  });
+
+  test.skipIf(process.platform === 'win32')(
+    'a unit batch is put back when the rescan for a later move finds an already moved unit in use',
+    async () => {
+      makeIdleUnit('release');
+      const hash = '1'.padStart(16, '0');
+      const staged = join(realpathSync.native(target), '.stim-trimmed', 'units-0', '.fingerprint', `serde-${hash}`);
+      let full = true;
+      stubProcesses({ lsof: (args) => (args.includes('-Fn') && !full ? `p100\nn${staged}/lib\n` : '') });
+      fsHooks.rename = (from, to) => {
+        if (!full || !to.includes('units-') || !from.includes(`libserde-${hash}.rlib`)) return;
+        full = false;
+        throw diskFull();
+      };
+
+      const result = await trimCargoTarget(target, { launching: noLaunchers(target), needBytes: 0, units: 'all' });
+
+      expect(result).toMatchObject({ removed: [], reserveReleased: true });
+      expect(result.kept).toEqual([expect.stringContaining('a process uses it')]);
+      expect(existsSync(join(target, 'release', '.fingerprint', `serde-${hash}`))).toBe(true);
+      expect(existsSync(join(target, 'release', 'deps', `libserde-${hash}.rlib`))).toBe(true);
     },
   );
 
@@ -1213,12 +1328,13 @@ describe.skipIf(process.platform === 'win32')(
       expect(readdirSync(outside)).toEqual(['mine.txt']);
       expect(existsSync(join(dir, 'debug', 'app'))).toBe(true);
 
-      writeFileSync(join(outside, 'NOT-RESTORED'), 'staged\n');
+      writeFileSync(join(outside, 'NOT-RESTORED'), '');
+      writeFileSync(join(outside, 'STAGED'), 'theirs');
       const trim = await trimCargoTarget(dir, { launching: noLaunchers(target), needBytes: 0 });
 
       expect(trim.kept).toEqual([expect.stringContaining('could not be put back')]);
-      expect(readFileSync(join(outside, 'NOT-RESTORED'), 'utf8')).toBe('staged\n');
-      expect(readdirSync(outside).toSorted()).toEqual(['NOT-RESTORED', 'mine.txt']);
+      expect(readFileSync(join(outside, 'STAGED'), 'utf8')).toBe('theirs');
+      expect(readdirSync(outside).toSorted()).toEqual(['NOT-RESTORED', 'STAGED', 'mine.txt']);
     });
 
     test('a deploy that is a symbolic link keeps the whole target', async () => {

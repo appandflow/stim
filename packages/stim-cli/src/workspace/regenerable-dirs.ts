@@ -189,7 +189,7 @@ function* cargoTargetDirsReads(root: string, staged: boolean): DirReads<string[]
 /** Why a Cargo `target/` must not be deleted whole: it holds a copy a Cargo trim could not put back. */
 function* recoveryCopyProblem(path: string): DirReads<string | null> {
   return (yield* namesIn(path)).some((name) => name.startsWith(NOT_RESTORED)) ||
-    (yield* namesIn(join(path, TRIM_ASIDE))).some((name) => name.startsWith(STRANDED))
+    (yield* namesIn(join(path, TRIM_ASIDE))).includes(STRANDED)
     ? 'it holds a directory a Cargo trim could not put back; a person must merge or delete it'
     : null;
 }
