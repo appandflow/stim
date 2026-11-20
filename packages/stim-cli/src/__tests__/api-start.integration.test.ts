@@ -283,6 +283,72 @@ test.skipIf(process.platform === 'win32')(
   45_000,
 );
 
+test.skipIf(process.platform === 'win32')(
+  'start whose stimd goes away after admission rejects with the rerun remedy and starts no stimd',
+  async () => {
+    const root = join(scratch, 'lost-stimd');
+    const home = join(scratch, 'lost-stimd-home');
+    const bin = join(scratch, 'bin');
+    mkdirSync(root);
+    mkdirSync(home);
+    mkdirSync(bin);
+    for (const tool of ['launchctl', 'systemd-run']) {
+      writeFileSync(join(bin, tool), '#!/bin/sh\nexit 1\n');
+      chmodSync(join(bin, tool), 0o755);
+    }
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.88.0' } }));
+    writeFileSync(join(root, '.stim.json'), JSON.stringify({ metro: { command: [process.execPath, '-e', ''] } }));
+    const env = {
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH}`,
+      STIM_HOME: home,
+      STIM_ENGINE_ROOT: join(home, 'engine'),
+      STIM_DAEMON: 'off',
+    };
+    vi.stubEnv('STIM_HOME', home);
+    vi.stubEnv('PATH', env.PATH);
+    const daemon = getExecutor().spawn(
+      process.execPath,
+      [spawnEntry('cli'), '__stimd', '--attached', '--no-handover'],
+      {
+        env,
+        stdio: ['pipe', 'ignore', 'ignore'],
+      },
+    );
+    const exited = once(daemon, 'exit');
+    const stimdPid = () => {
+      try {
+        return Number(JSON.parse(readFileSync(join(home, 'run', 'stimd.json'), 'utf8')).pid);
+      } catch {
+        return null;
+      }
+    };
+    try {
+      await vi.waitFor(() => expect(stimdPid()).toBe(daemon.pid), { timeout: 15_000 });
+      await expect(
+        createStim({ projectRoot: root, home, env }).start({
+          waitSeconds: 10,
+          beforeStart: () => daemon.kill('SIGKILL'),
+        }),
+      ).rejects.toMatchObject({
+        code: 'STIM_DAEMON_UNAVAILABLE',
+        remedy: expect.stringContaining('Run the command again'),
+      });
+      await exited;
+      expect(stimdPid()).toBe(daemon.pid);
+    } finally {
+      if (daemon.exitCode === null && daemon.signalCode === null) daemon.kill('SIGKILL');
+      const successor = stimdPid();
+      if (successor && successor !== daemon.pid) {
+        try {
+          process.kill(successor, 'SIGKILL');
+        } catch {}
+      }
+    }
+  },
+  45_000,
+);
+
 test('start admission resolves the app once and refuses before usage, config changes or Metro probes', async () => {
   const item = await metroFixture('refused', 999999903);
   const child = join(item.root, 'nested');

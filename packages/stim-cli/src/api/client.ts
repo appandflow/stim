@@ -891,7 +891,9 @@ async function start(context: StimContext, options: StimStartOptions): Promise<S
   if (problem) throw new StimError({ code: 'STIM_NO_PROJECT', ...problem });
   options.beforeStart?.(root);
   context.signal.throwIfAborted();
-  return withAmbientContext({ ...context, projectRoot: root }, async () => {
+  const startContext = { ...context, projectRoot: root };
+  operationState(startContext).stimdOpToken = operationState(context).stimdOpToken;
+  return withAmbientContext(startContext, async () => {
     const { context: settingsContext, settings } = await resolveProjectSettingsAsync(root, {
       env: context.env,
       signal: context.signal,

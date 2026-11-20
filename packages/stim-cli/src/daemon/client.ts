@@ -493,8 +493,8 @@ export async function ensureTunnelThroughStimd(
   try {
     const admitted = await admitOperation(params.root, operation, held);
     if ('answer' in admitted) return admitted.answer;
-    return await admittedStep(admitted.opToken, signal, (opToken) =>
-      askStimd('tunnel.ensure', timeoutMs, { opToken, params: { ...params, requireReachable: false } }, signal),
+    return await admittedStep(admitted.opToken, signal, (opToken, stepSignal) =>
+      askStimd('tunnel.ensure', timeoutMs, { opToken, params: { ...params, requireReachable: false } }, stepSignal),
     );
   } catch (error) {
     if (!(error instanceof Error) || !('code' in error) || typeof error.code !== 'string') throw error;
@@ -630,14 +630,14 @@ export async function ensureMetroThroughStimd(
     const admitted = await admitOperation(params.root, operation, held);
     if ('answer' in admitted) return admitted.answer;
     const started = Date.now();
-    const answer = await admittedStep(admitted.opToken, signal, async (opToken) => {
-      const prepared = await askStimd('metro.prepare', 10_000, { opToken, params }, signal);
+    const answer = await admittedStep(admitted.opToken, signal, async (opToken, stepSignal) => {
+      const prepared = await askStimd('metro.prepare', 10_000, { opToken, params }, stepSignal);
       if (prepared?.op !== 'metro.prepared' || typeof prepared.ticket !== 'string') return prepared;
       return askStimd(
         'metro.wait',
         Math.max(0, timeoutMs - (Date.now() - started)),
         { opToken, params: { ticket: prepared.ticket } },
-        signal,
+        stepSignal,
       );
     });
     if (held.length > 0 && answer?.op === 'metro' && answer.state === 'starting' && signal && !signal.aborted) {
@@ -1235,6 +1235,8 @@ export function cancelCliOp(): void {
 interface Admission {
   /** Whether stimd closed the op connection; closing it here (the op's end or cancellation) never sets it. */
   lost: boolean;
+  /** Aborts once `lost` is set, so a step under way settles then. */
+  lostSignal: AbortSignal;
   closed: Promise<void>;
 }
 
@@ -1246,9 +1248,15 @@ export function releaseHeldAdmission(held: Socket[]): void {
 }
 
 function track(socket: Socket, token: string): void {
-  const record: Admission = { lost: false, closed: new Promise((done) => socket.once('close', () => done())) };
+  const loss = new AbortController();
+  const record: Admission = {
+    lost: false,
+    lostSignal: loss.signal,
+    closed: new Promise((done) => socket.once('close', () => done())),
+  };
   const lose = () => {
     record.lost = true;
+    loss.abort();
   };
   socket.once('end', lose);
   socket.once('error', lose);
@@ -1281,17 +1289,30 @@ function requireLive(opToken: string): void {
   if (admissions.get(opToken)?.lost) throw daemonRestarted();
 }
 
+/** The refusal of `operation` when the stimd that admitted it went away, so it does not report success; else null. */
+export function lostAdmission(operation?: StimContext): { code: string; message: string; remedy: string } | null {
+  const token = operationToken(operation);
+  if (!token || !admissions.get(token)?.lost) return null;
+  const { code, message, remedy } = daemonRestarted();
+  return { code, message, remedy };
+}
+
 /**
  * Runs `step` with the operation's token once, and throws {@link daemonRestarted} instead of its failure (null or an
- * `error` reply) when the stimd that admitted the operation went away.
+ * `error` reply) when the stimd that admitted the operation went away. The signal `step` gets also aborts at that loss,
+ * so a step that waits on stimd settles at once.
  */
 async function admittedStep(
   opToken: string,
   signal: AbortSignal | undefined,
-  step: (opToken: string) => Promise<Record<string, unknown> | null>,
+  step: (opToken: string, signal: AbortSignal | undefined) => Promise<Record<string, unknown> | null>,
 ): Promise<Record<string, unknown> | null> {
   requireLive(opToken);
-  const reply = await step(opToken);
+  const lostSignal = admissions.get(opToken)?.lostSignal;
+  const reply = await step(
+    opToken,
+    lostSignal && signal ? AbortSignal.any([signal, lostSignal]) : (lostSignal ?? signal),
+  );
   if ((reply && reply.op !== 'error') || signal?.aborted) return reply;
   if (await admissionLost(opToken, reply === null)) throw daemonRestarted();
   return reply;
@@ -1316,8 +1337,8 @@ export async function acquireDeviceTicket(
   const opToken = operationToken(operation);
   if (!opToken) throw new Error('the operation has no stimd connection');
   let ticket: string | undefined;
-  const answer = await admittedStep(opToken, operation.signal, async (token) => {
-    const prepared = await askStimd('lease.prepare', 10_000, { opToken: token, params }, operation.signal);
+  const answer = await admittedStep(opToken, operation.signal, async (token, stepSignal) => {
+    const prepared = await askStimd('lease.prepare', 10_000, { opToken: token, params }, stepSignal);
     throwIfCancelled(operation.signal, 'device lease wait');
     if (prepared?.op !== 'lease.prepared' || typeof prepared.ticket !== 'string')
       return prepared && { op: 'error', message: prepared.message ?? 'stimd did not prepare the device lease' };
@@ -1326,7 +1347,7 @@ export async function acquireDeviceTicket(
       'lease.acquire',
       params.waitSeconds * 1000 + 10_000,
       { opToken: token, params: { ticket } },
-      operation.signal,
+      stepSignal,
       warn,
     );
     throwIfCancelled(operation.signal, 'device lease wait');
@@ -1405,8 +1426,8 @@ export async function startDeviceLogStream(
     const refused = otherBuildRefusal();
     return { error: refused ? `${refused.message} ${refused.remedy}` : 'the operation has no stimd connection' };
   }
-  const reply = await admittedStep(opToken, operation?.signal, (token) =>
-    askStimd('logs.start', 10_000, { opToken: token, params: spec }, operation?.signal),
+  const reply = await admittedStep(opToken, operation?.signal, (token, stepSignal) =>
+    askStimd('logs.start', 10_000, { opToken: token, params: spec }, stepSignal),
   );
   throwIfCancelled(operation?.signal, 'device log startup');
   if (reply?.op === 'logs.started' && typeof reply.streamId === 'string') return { streamId: reply.streamId };
@@ -1544,6 +1565,7 @@ export function deviceLogReadinessWait(
     clearTimeout(timer);
     throwIfCancelled(operation?.signal, 'launch readiness check');
     if (lost) throw lost;
+    requireLive(token);
     if (answered === null) return;
     if (runner === current) runner = null;
     if (!answered && !current.controller.signal.aborted && remaining() > 0) await rest();
