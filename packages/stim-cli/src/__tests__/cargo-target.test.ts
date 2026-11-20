@@ -628,6 +628,27 @@ describe.skipIf(process.platform === 'win32')('deleting an idle Cargo target who
     expect(readFileSync(join(elsewhere, 'doc', 'index.html'), 'utf8')).toBe('theirs');
   });
 
+  test('a target replaced by another real directory under the same path stays, and what that one holds stays', async () => {
+    rmSync(join(dir, 'debug', '.cargo-lock'));
+    ageTree(dir);
+    stubProcesses({
+      lsof: () => {
+        if (!existsSync(`${dir}-moved`)) {
+          renameSync(dir, `${dir}-moved`);
+          mkdirSync(join(dir, 'doc'), { recursive: true });
+          writeFileSync(join(dir, 'doc', 'index.html'), 'theirs');
+        }
+        return '';
+      },
+    });
+
+    const result = await remove();
+
+    expect(result.removed).toEqual([]);
+    expect(result.kept).toEqual([expect.stringContaining('is no longer the directory')]);
+    expect(readFileSync(join(dir, 'doc', 'index.html'), 'utf8')).toBe('theirs');
+  });
+
   test('a target with nothing left in it goes too', async () => {
     rmSync(join(dir, 'debug', '.cargo-lock'));
     ageTree(dir);

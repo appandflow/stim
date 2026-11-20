@@ -456,13 +456,43 @@ async function keypairLink(
   return null;
 }
 
-/** Why the admitted `registered` path no longer leads to the canonical `target`: it is not a directory now, or resolves elsewhere. */
-async function rootMoved(registered: string, target: string): Promise<string | null> {
-  if (!(await lstat(registered).catch(() => null))?.isDirectory())
-    return `${registered} is no longer a directory, so the delete stopped`;
-  return (await realpath(registered).catch(() => null)) === target
+/** The canonical path and the device and inode of the directory a trim or delete was admitted with. */
+export interface AdmittedTarget {
+  path: string;
+  dev: number;
+  ino: number;
+}
+
+/** The canonical path and identity of the directory at `registered` now, or why it has none. */
+export async function admitCargoTarget(registered: string): Promise<AdmittedTarget | { kept: string }> {
+  let path: string;
+  try {
+    path = realpathSync.native(registered);
+  } catch {
+    return { kept: `${registered} cannot be resolved to its on-disk path` };
+  }
+  const stat = await lstat(path).catch(() => null);
+  return stat?.isDirectory() ? { path, dev: stat.dev, ino: stat.ino } : { kept: `${registered} is not a directory` };
+}
+
+/**
+ * Why `registered` no longer names the `admitted` directory: it is not a directory now, is another directory (device and
+ * inode), or resolves to another path.
+ */
+async function rootMoved(registered: string, admitted: AdmittedTarget): Promise<string | null> {
+  const stat = await lstat(registered).catch(() => null);
+  if (!stat?.isDirectory()) return `${registered} is no longer a directory, so Stim left it`;
+  return stat.dev === admitted.dev &&
+    stat.ino === admitted.ino &&
+    (await realpath(registered).catch(() => null)) === admitted.path
     ? null
-    : `${registered} no longer resolves to ${target}, so the delete stopped`;
+    : `${registered} is no longer the directory Stim checked, so Stim left it`;
+}
+
+/** Throws `KeepTarget` when `rootMoved` finds `registered` no longer names the `admitted` directory. */
+async function refuseMoved(registered: string, admitted: AdmittedTarget): Promise<void> {
+  const moved = await rootMoved(registered, admitted);
+  if (moved) throw new KeepTarget(moved);
 }
 
 /** Throws `KeepTarget` when `keypairLink` finds a link; run under the Cargo locks that cover the delete. */
@@ -514,6 +544,8 @@ function wholeTargetReason(target: string, mountInfo: (() => string) | null): st
 
 interface CargoTrimOptions {
   needBytes: number;
+  /** The directory the caller admitted (`admitCargoTarget`); the trim keeps the target once `registeredTarget` names another. */
+  admitted?: AdmittedTarget;
   incremental?: 'toNeed' | 'all';
   /**
    * Keep the whole target while a process uses any path in it or a build holds any of its Cargo locks, and hold every
@@ -552,20 +584,19 @@ export async function trimCargoTarget(
     stop,
     measure = true,
     mountInfo = LINUX_MOUNT_INFO,
+    admitted: given,
   }: CargoTrimOptions,
 ): Promise<CargoTrimResult> {
   const result: CargoTrimResult = { bytes: 0, removed: [], kept: [] };
   const keep = (why: string): CargoTrimResult => ({ ...result, kept: [...result.kept, why] });
-  let target: string;
-  try {
-    target = realpathSync.native(registeredTarget);
-  } catch {
-    return keep(`${registeredTarget} cannot be resolved to its on-disk path`);
-  }
+  const admitted = given ?? (await admitCargoTarget(registeredTarget));
+  if ('kept' in admitted) return keep(admitted.kept);
+  const moved = await rootMoved(registeredTarget, admitted);
+  if (moved) return keep(moved);
+  const { path: target, dev } = admitted;
   const whole = wholeTargetReason(target, mountInfo);
   if (whole) return keep(whole);
   if (await releaseReserveWhenFull(target)) result.reserveReleased = true;
-  const { dev } = await lstat(target);
   const first = await readTargetUse(target, signal, lowPriority);
   if ('kept' in first) return keep(first.kept);
   const { used } = first;
@@ -629,6 +660,7 @@ export async function trimCargoTarget(
     const done = await withCargoLocks(
       idleOnly ? [] : locks,
       async () => {
+        await refuseMoved(registeredTarget, admitted);
         await refuseKeypairLink(target, dev, signal, stop);
         return removeInPlace(dir, dev, signal);
       },
@@ -772,19 +804,15 @@ export async function deleteCargoTarget(
   const keep = (why: string): CargoTrimResult => ({ ...result, kept: [...result.kept, why] });
   if (!(await cargoTargetDirsAsync(dirname(registeredTarget))).includes(registeredTarget))
     return keep('it is no longer a Cargo target/ Stim recognises');
-  let target: string;
-  try {
-    target = realpathSync.native(registeredTarget);
-  } catch {
-    return keep(`${registeredTarget} cannot be resolved to its on-disk path`);
-  }
-  const moved = await rootMoved(registeredTarget, target);
+  const admitted = await admitCargoTarget(registeredTarget);
+  if ('kept' in admitted) return keep(admitted.kept);
+  const moved = await rootMoved(registeredTarget, admitted);
   if (moved) return keep(moved);
+  const { path: target, dev } = admitted;
   const blocked =
     wholeTargetReason(target, mountInfo) ?? (idleMs === undefined ? null : recentTargetUse(target, Date.now(), idleMs));
   if (blocked) return keep(blocked);
   if (await releaseReserveWhenFull(target)) result.reserveReleased = true;
-  const { dev } = await lstat(target);
   const names = await removableEntries(target);
   if (!names) return keep(`${target} cannot be listed`);
   if (!names.length) return result;
@@ -805,11 +833,13 @@ export async function deleteCargoTarget(
     done = await withCargoLocks(
       targetLocks(target),
       async () => {
-        const movedSince = await rootMoved(registeredTarget, target);
-        if (movedSince) throw new KeepTarget(movedSince);
+        await refuseMoved(registeredTarget, admitted);
         await refuseKeypairLink(target, dev, signal);
         const left: string[] = [];
-        for (const name of names) left.push(...(await removeInPlace(join(target, name), dev, signal)));
+        for (const name of names) {
+          await refuseMoved(registeredTarget, admitted);
+          left.push(...(await removeInPlace(join(target, name), dev, signal)));
+        }
         return left;
       },
       signal,
