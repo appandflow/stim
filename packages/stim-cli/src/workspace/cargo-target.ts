@@ -695,25 +695,32 @@ async function deleteClaimed(
   // @ref LLP 0005#never-delete-what-a-build-took-back -- staged entries carry the NOT-RESTORED marker until the checks pass
   try {
     await retryWithReserve(async () => {
+      if (!(await sameTarget())) throw new KeptAfterRelease(replaced);
       const file = await open(marker, 'wx');
-      const ours = await file.stat();
+      let ours: { dev: number; ino: number } | undefined;
+      let failure: unknown;
       try {
+        ours = await file.stat();
         await file.writeFile(
           `${JSON.stringify(Object.fromEntries(names.map((name, n) => [String(n), name])), null, 2)}\n`,
         );
       } catch (error) {
-        await file.close();
-        const now = await lstat(marker).catch(() => null);
-        if (now?.dev === ours.dev && now.ino === ours.ino) await unlink(marker);
-        throw error;
+        failure = error;
+      } finally {
+        await file.close().catch((error: unknown) => {
+          failure ??= error;
+        });
       }
-      await file.close();
+      if (failure === undefined) return;
+      const now = ours && (await lstat(marker).catch(() => null));
+      if (ours && now?.dev === ours.dev && now.ino === ours.ino) await unlink(marker).catch(() => {});
+      throw failure;
     }, released);
   } catch (error) {
     await rmdir(aside).catch(() => {});
+    if (error instanceof KeptAfterRelease) return keep(error.message);
     if (errorCode(error) === 'EEXIST') return keep(`${marker} already exists, so the target stays`);
     if (!diskFull(error)) throw error;
-    if (await sameTarget()) await keepTimes();
     return keep(`${marker} cannot be written: ${error instanceof Error ? error.message : error}`);
   }
   try {
@@ -1055,6 +1062,7 @@ async function trimClaimed(
     bytes: number | null,
     locks: (where: string) => Promise<string[]>,
     stalePath = false,
+    busy = dir,
   ): Promise<boolean> => {
     signal?.throwIfAborted();
     if (wholeKept) return false;
@@ -1063,7 +1071,7 @@ async function trimClaimed(
       return false;
     }
     const profiles = await locks(dir);
-    if (inUse(used, dir)) {
+    if (inUse(used, busy)) {
       result.kept.push(`${label}: a process uses it`);
       return false;
     }
@@ -1081,7 +1089,7 @@ async function trimClaimed(
       used = fresh.used;
       if (stalePath) latestStale = staleCargoTargetPaths(target, now, profileIdleMs);
       if ('refusal' in latestStale) throw new KeptAfterRelease(latestStale.refusal);
-      if (inUse(used, dir)) throw new KeptAfterRelease('a process uses it');
+      if (inUse(used, busy)) throw new KeptAfterRelease('a process uses it');
       for (const profile of profiles) {
         const held = await lockOutcome(profile, signal, lowPriority);
         if (lockHeld(held)) throw new KeptAfterRelease(`a build holds its ${held.file ?? '.cargo-lock'}`);
@@ -1265,7 +1273,14 @@ async function trimClaimed(
     for (const path of chosen) {
       const bytes = candidates.find((candidate) => candidate.path === path)?.bytes ?? 0;
       const parent = dirname(path);
-      await move(path, path.slice(target.length + 1), bytes, async () => [parent]);
+      await move(
+        path,
+        path.slice(target.length + 1),
+        bytes,
+        async () => [parent],
+        false,
+        incremental === 'toNeed' ? parent : path,
+      );
     }
   }
   if (!wholeKept && (units === 'all' || (units === 'toNeed' && result.bytes < needBytes)))

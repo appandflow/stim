@@ -333,18 +333,18 @@ reported. A launcher into the checkout or process evidence that cannot be read
 stops the rest of that run, and a path in use keeps that path; in a unit batch,
 one busy path, moved or not yet moved, puts the whole batch back. The dormant
 delete checks that the `target/` is still the same directory before each try,
-and creates its marker exclusively, so it never replaces a marker already
-there; a failed write removes only the file that attempt created, and a
-swapped-in `target/` keeps its own modification time. For the workspace claims
-the whole removal of that output runs again. A run that released the reserve
-says so in its outcome. When the write fails again, or there was no reserve to
-release, the `target/` is kept as before.
+the marker's included, and creates its marker exclusively, so it never replaces
+a marker already there; a failed write removes only the file that attempt
+created. For the workspace claims the whole removal of that output runs again.
+A run that released the reserve says so in its outcome. When the write fails
+again, or there was no reserve to release, the `target/` is kept as before.
 
 A failed put-back's `NOT-RESTORED` marker retries the same way. The dormant
 delete removes a marker it could not finish writing with its empty
-`.stim-trimmed`, and the `target/` gets its modification time back, so
-nothing blocks the next run. The maintenance pass writes the reserve back at
-its end when there is room.
+`.stim-trimmed` and keeps the `target/`; its modification time stays as the
+attempt left it, so a file that arrived meanwhile still counts as use, and no
+marker blocks the next run. The maintenance pass writes the reserve back at its
+end when there is room.
 
 Reason: on 2026-11-19 at 23:01 UTC, with the maintainer's disk full, a rung 3
 trim failed with `ENOSPC` creating `.stim-trimmed` and freed nothing (#6012),

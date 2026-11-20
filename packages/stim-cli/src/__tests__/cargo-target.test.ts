@@ -779,6 +779,28 @@ describe('trimming on a full disk', () => {
     expect(readFileSync(join(target, other, 'notes.txt'), 'utf8')).toBe('mine');
   });
 
+  test('an incremental cache whose profile a process starts using before the retry stays', async () => {
+    makeProfile('release', 0);
+    writeFileSync(join(target, 'release', 'incremental', 'data'), 'x'.repeat(1000));
+    const real = realpathSync.native(target);
+    let full = true;
+    stubProcesses({ lsof: (args) => (args.includes('-Fn') && !full ? `p100\nn${real}/release\n` : '') });
+    fsHooks.rename = (_, to) => {
+      if (!full || !to.includes('.stim-trimmed')) return;
+      full = false;
+      throw diskFull();
+    };
+
+    const result = await trimCargoTarget(target, { launching: noLaunchers(target), needBytes: 1 });
+
+    expect(result).toMatchObject({
+      removed: [],
+      kept: ['release/incremental: a process uses it'],
+      reserveReleased: true,
+    });
+    expect(readFileSync(join(target, 'release', 'incremental', 'data'), 'utf8')).toBe('x'.repeat(1000));
+  });
+
   test('without a reserve to release, a full disk keeps the profile', async () => {
     stubProcesses({});
     makeProfile('debug', 3 * DAY);
@@ -886,8 +908,8 @@ describe.skipIf(process.platform === 'win32')(
 
       test.each([
         ['already holds a marker', true, 'already exists, so the target stays'],
-        ['holds none while our write keeps failing', false, 'cannot be written: ENOSPC'],
-      ])('a target swapped in before our marker that %s keeps its own times', async (_, marked, why) => {
+        ['holds none while our write keeps failing', false, 'was replaced during the delete'],
+      ])('a target swapped in before our marker that %s is not given our times', async (_, marked, why) => {
         const original = lstatSync(dir).mtimeMs;
         const old = new Date(Date.now() - 10 * DAY);
         fsHooks.open = (path) => {
@@ -908,6 +930,9 @@ describe.skipIf(process.platform === 'win32')(
 
         expect(result.kept).toEqual([expect.stringContaining(why)]);
         expect(existsSync(join(dir, '.stim-trimmed', 'NOT-RESTORED'))).toBe(marked);
+        expect(marked ? readFileSync(join(dir, '.stim-trimmed', 'NOT-RESTORED'), 'utf8') : null).toBe(
+          marked ? 'theirs' : null,
+        );
         expect(Math.abs(lstatSync(dir).mtimeMs - original)).toBeGreaterThan(1000);
       });
 
@@ -935,6 +960,25 @@ describe.skipIf(process.platform === 'win32')(
         expect(trim.kept).toEqual([expect.stringContaining('could not be put back')]);
       });
 
+      test('a file renamed into the target while the marker cannot be written keeps the next pass away', async () => {
+        const arriving = join(target, 'arriving.txt');
+        writeFileSync(arriving, 'theirs');
+        const old = new Date(Date.now() - 10 * DAY);
+        utimesSync(arriving, old, old);
+        fsHooks.writeFile = (path) => {
+          if (!path.includes('NOT-RESTORED')) return;
+          if (existsSync(arriving)) renameSync(arriving, join(dir, 'arrived.txt'));
+          throw diskFull();
+        };
+
+        await remove();
+        delete fsHooks.writeFile;
+        const next = await remove();
+
+        expect(next.kept).toEqual([expect.stringContaining('was written in that time')]);
+        expect(readFileSync(join(dir, 'arrived.txt'), 'utf8')).toBe('theirs');
+      });
+
       test('a marker that still cannot be written keeps everything and leaves nothing that blocks the next run', async () => {
         fsHooks.writeFile = (path) => {
           if (!path.includes('NOT-RESTORED')) return;
@@ -945,10 +989,9 @@ describe.skipIf(process.platform === 'win32')(
         const result = await remove();
 
         expect(result.kept).toEqual([expect.stringContaining('cannot be written: ENOSPC')]);
-        expect(readdirSync(dir)).not.toContain('.stim-trimmed');
-        expect(existsSync(join(dir, '.stim-trimmed', 'NOT-RESTORED'))).toBe(false);
         expect(readdirSync(dir).toSorted()).toEqual(['.rustc_info.json', 'debug', 'doc']);
         delete fsHooks.writeFile;
+        ageTree(dir);
         expect((await remove()).kept).toEqual([]);
         expect(existsSync(dir)).toBe(false);
       });
