@@ -143,32 +143,6 @@ function stimOnPath(): string | null {
 
 const PATH_CHARACTER = /[\w.\-/]/;
 
-const linkedArgs = new WeakMap<RunningProcesses, { pid: number; path: string }[]>();
-
-/**
- * The real path of each absolute path a listed process names in its command line, resolved once per listing, so a
- * command started through a link, such as `node ~/.local/bin/tool` into a checkout's `node_modules`, names where it runs.
- */
-function argumentTargets(running: RunningProcesses): { pid: number; path: string }[] {
-  let found = linkedArgs.get(running);
-  if (!found) {
-    found = running.commands.flatMap(({ pid, line }) =>
-      line
-        .split(/\s+/)
-        .filter((token) => token.startsWith('/'))
-        .flatMap((token) => {
-          try {
-            return [{ pid, path: realpathSync.native(token) }];
-          } catch {
-            return [];
-          }
-        }),
-    );
-    linkedArgs.set(running, found);
-  }
-  return found;
-}
-
 /** Whether a command line names `root` itself or a path under it, matching whole path segments only. */
 function namesPath(line: string, root: string): boolean {
   for (let at = line.indexOf(root); at !== -1; at = line.indexOf(root, at + 1)) {
@@ -185,8 +159,7 @@ function namesPath(line: string, root: string): boolean {
 
 /**
  * Why something installed in or running from `folder` still needs it, or null: an installed stim service, the
- * `stim` on PATH, or a live process whose command line or working directory is inside it, or whose command line names
- * a path that resolves inside it.
+ * `stim` on PATH, or a live process whose command line or working directory is inside it.
  */
 export function runningFromReason(folder: string, running: RunningProcesses | null): string | null {
   const root = canonicalPath(folder);
@@ -198,8 +171,6 @@ export function runningFromReason(folder: string, running: RunningProcesses | nu
   if (!running) return 'the running processes cannot be listed to prove nothing runs from it';
   const command = running.commands.find(({ line }) => namesPath(line, root));
   if (command) return `process ${command.pid} runs from it`;
-  const linked = argumentTargets(running).find(({ path }) => inside(path));
-  if (linked) return `process ${linked.pid} runs ${linked.path} from it`;
   const cwd = running.cwds.find(({ path }) => inside(canonicalPath(path)));
   if (cwd) return `process ${cwd.pid} works in it`;
   return null;
