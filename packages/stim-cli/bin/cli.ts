@@ -142,10 +142,9 @@ export async function main(argv: string[], ctx: MainContext = {}): Promise<void>
     } else {
       const code = (err as { code?: unknown })?.code;
       const message = err instanceof Error ? err.message : String(err);
-      const remedy = (err as { remedy?: unknown })?.remedy;
       if (typeof code === 'string' && code.startsWith('STIM_')) {
         console.error(`${code}: ${message}`);
-        if (typeof remedy === 'string') console.error(remedy);
+        if (err instanceof Error && 'remedy' in err && typeof err.remedy === 'string') console.error(err.remedy);
       } else console.error(`Unexpected error: ${message.replace(/\.$/, '')}. Report it at ${pkg.bugs.url}`);
       exitCode = 1;
     }
