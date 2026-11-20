@@ -5,6 +5,7 @@ import {
   diskUsageNativeFile,
   diskUsageWalkClaims,
   readJsonObject,
+  readRescuedCopies,
   readWorkspaceState,
   workspaceLightenedFile,
 } from '@stim-cli/core/state';
@@ -346,6 +347,37 @@ test.skipIf(process.platform === 'win32')(
     await quietly(() => runGc({ pressure: 'critical' }));
 
     expect(readFileSync(join(modules, 'pkg', 'index.js'), 'utf-8')).toBe('patched by hand');
+  },
+  60_000,
+);
+
+test.skipIf(process.platform === 'win32')(
+  'gc copies an unfinished pnpm patch aside before it deletes the dependencies holding it, and lists the copy',
+  async () => {
+    const feature = idleRepo([{ name: 'feature', workspace: true }]).feature ?? '';
+    const modules = join(feature, 'node_modules');
+    const config = loadConfig();
+    if (!config) throw new Error('no config');
+    saveConfig({ ...config, idle: { dormantDays: 0.01 } });
+    const patched = join(modules, '.pnpm_patches', 'pkg@1.0.0', 'index.js');
+    mkdirSync(dirname(patched), { recursive: true });
+    writeFileSync(patched, 'patched by hand');
+
+    const stdout: string[] = [];
+    const log = vi.spyOn(console, 'log').mockImplementation((...args) => void stdout.push(args.join(' ')));
+    try {
+      await runGc({ pressure: 'normal', json: true });
+    } finally {
+      log.mockRestore();
+    }
+
+    expect(existsSync(modules)).toBe(false);
+    const [copy] = readRescuedCopies();
+    expect(copy?.items).toEqual([expect.objectContaining({ source: patched, size: 'patched by hand'.length })]);
+    expect(readFileSync(join(copy?.dir ?? '', 'node_modules', '.pnpm_patches', 'pkg@1.0.0', 'index.js'), 'utf8')).toBe(
+      'patched by hand',
+    );
+    expect(JSON.parse(stdout[0] ?? '').rescued).toEqual([expect.objectContaining({ dir: copy?.dir, from: feature })]);
   },
   60_000,
 );

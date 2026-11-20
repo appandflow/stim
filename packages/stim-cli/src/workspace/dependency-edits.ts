@@ -14,6 +14,7 @@ import { treeSignature } from '../private-size.ts';
 import { gitQuietAsync } from './git.ts';
 import { updateDependencyInstall as updateRecord } from './dependency-install-records.ts';
 import { ARTIFACT_DIRS, existingDirsOf } from './regenerable-dirs.ts';
+import { rescueBeforeDelete } from './rescue.ts';
 
 /**
  * How long after a package manager's stamp the root project's own install-time script (`preinstall`, `install`,
@@ -375,7 +376,7 @@ export type EditCheck = { keep: string; edited?: true } | { delete: true };
  * keeps the tree at every pressure level. A tree kept for edits is not walked again while its install signature and
  * its known edits are unchanged, except at critical. With `readOnly` nothing is written.
  */
-export async function checkDependencyEdits(
+async function recordedEdits(
   path: string,
   {
     level,
@@ -426,6 +427,22 @@ export async function checkDependencyEdits(
     : { delete: true };
 }
 
+/** `recordedEdits`, then, for a tree it would delete, `rescueBeforeDelete`, which copies its pnpm patches aside. */
+export async function checkDependencyEdits(
+  path: string,
+  options: { level: PressureLevel; worktree: string; readOnly?: boolean; signal?: AbortSignal },
+): Promise<EditCheck> {
+  const check = await recordedEdits(path, options);
+  if ('keep' in check) return check;
+  const held = await rescueBeforeDelete(
+    options.worktree,
+    path,
+    { trees: [path] },
+    { act: !options.readOnly, signal: options.signal },
+  );
+  return held ? { keep: held } : check;
+}
+
 /**
  * Before an install or pod install Stim runs into existing `trees`: records the files changed since the current
  * reference, so the install moving the reference does not hide them.
@@ -433,7 +450,7 @@ export async function checkDependencyEdits(
 export async function noteEditsBeforeInstall(trees: readonly string[], signal?: AbortSignal): Promise<void> {
   for (const tree of trees) {
     if (!existsSync(tree)) continue;
-    await checkDependencyEdits(tree, { level: 'high', worktree: dirname(tree), signal });
+    await recordedEdits(tree, { level: 'high', worktree: dirname(tree), signal });
   }
 }
 

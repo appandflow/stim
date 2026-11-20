@@ -8,9 +8,11 @@ import {
   rmSync,
   utimesSync,
   writeFileSync,
+  readFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { readRescuedCopies } from '@stim-cli/core/state';
 import { saveConfig, upsertProject } from '../workspace/config.ts';
 import { collectWorktreeSweep, removeWorktrees } from '../commands/gc/worktrees.ts';
 import * as reads from '../workspace/discovered-reads.ts';
@@ -285,7 +287,7 @@ describe('a worktree of a plain Node repository on the removal path', () => {
     rmSync(base, { recursive: true, force: true });
   });
 
-  it('removes a finished one with its node_modules and keeps a dirty one or one with an unfinished pnpm patch', async () => {
+  it('removes a finished one with its node_modules, and one with an unfinished pnpm patch after copying it aside, and keeps a dirty one', async () => {
     const done = worktree('done');
     const dirty = worktree('dirty');
     writeFileSync(join(dirty, 'notes.txt'), 'untracked');
@@ -297,13 +299,17 @@ describe('a worktree of a plain Node repository on the removal path', () => {
     const of = (path: string) => planned.worktrees.find((entry) => entry.path === path);
     expect(of(done)).toMatchObject({ discovered: true, skipped: null });
     expect(of(dirty)).toMatchObject({ skipCode: 'dirty' });
-    expect(of(patched)?.skipped).toContain('unfinished pnpm patch');
+    expect(of(patched)).toMatchObject({ discovered: true, skipped: null });
     expect(of(main)).toBeUndefined();
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
     await removeWorktrees(planned, { now: Date.now() });
     expect(existsSync(done)).toBe(false);
     expect(existsSync(join(dirty, 'notes.txt'))).toBe(true);
-    expect(existsSync(patched)).toBe(true);
+    expect(existsSync(patched)).toBe(false);
+    const [copy] = readRescuedCopies();
+    expect(readFileSync(join(copy?.dir ?? '', 'node_modules', '.pnpm_patches', 'dep@1.0.0', 'index.js'), 'utf8')).toBe(
+      'edited',
+    );
   });
 });

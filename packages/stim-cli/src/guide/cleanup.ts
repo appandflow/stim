@@ -670,7 +670,8 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
   pressure level, critical included, so its disk is not freed; stim gc
   --dry-run shows it kept. Automatic removal of a finished or discovered
   worktree also waits while one of its dependency folders has detected edits.
-  stim worktree remove runs no check. The kept action, \`stim status\` (--json
+  A pnpm patch edit folder is copied to $STIM_HOME/rescued before its
+  node_modules goes. stim worktree remove runs no check. The kept action, \`stim status\` (--json
   dependencyEdits) and \`stim doctor\` name the files; make the change a patch
   (pnpm patch, yarn patch or patch-package) or reinstall to release the
   folder. Detection is best effort, from file times alone: a file modified
@@ -1329,9 +1330,10 @@ An ignored file elsewhere that the main checkout lacks, even inside a tracked
 dist folder, keeps it (more than 200 files or 16 MB to compare also keeps it).
 Any change to a tracked file, even Podfile.lock or project.pbxproj, is dirty
 work and keeps it, as does any tracked file marked assume-unchanged or
-skip-worktree, which hides edits from git status, or an unfinished pnpm patch
-in node_modules/.pnpm_patches. A finished registered worktree follows the
-ignored-file and pnpm patch rules too; Pods under any ios folder and a linked
+skip-worktree, which hides edits from git status. A pnpm patch edit folder
+or a Solana keypair is copied to $STIM_HOME/rescued first (kept 30 days,
+listed by gc and doctor). A finished registered worktree follows the
+ignored-file rules too; Pods under any ios folder and a linked
 node_modules count as regenerable. A worktree inside a
 dot-folder other than .worktrees (.claude/worktrees) of its main checkout, or of
 a worktree inside it, is

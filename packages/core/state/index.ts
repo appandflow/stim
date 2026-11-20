@@ -58,6 +58,7 @@ export * from './gc-log.ts';
 export * from './build-ledger.ts';
 export * from './agent-device.ts';
 export * from './archive.ts';
+export * from './rescued.ts';
 export * from './setup-journal.ts';
 export * from './status-views.ts';
 export * from './keyed-delta.ts';

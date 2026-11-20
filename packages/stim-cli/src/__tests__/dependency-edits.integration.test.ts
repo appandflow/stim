@@ -1,4 +1,15 @@
-import { chmodSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
+import { rescuedRoot } from '@stim-cli/core/state';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
@@ -152,6 +163,15 @@ test('an edit stays an edit after Stim runs an install that leaves it in place',
   recordDependencyInstall([tree]);
 
   expect(await keptFiles('high')).toContain('pkg/index.js');
+});
+
+test('Stim copies no pnpm patch aside when it runs an install over the tree', async () => {
+  installAt(ago(HOUR));
+  write(join(tree, '.pnpm_patches', 'pkg@1.0.0', 'index.js'), 'patching');
+
+  await noteEditsBeforeInstall([tree]);
+
+  expect(existsSync(rescuedRoot())).toBe(false);
 });
 
 test.each([

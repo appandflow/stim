@@ -30,7 +30,7 @@ const DEADLINE_KEPT = 'the rest was left at the build headroom deadline';
 /** Solana's `cargo build-sbf` and Anchor keep each program's private key in `deploy/<program>-keypair.json`. */
 const KEYPAIR_DIR = 'deploy';
 const isKeypairDir = (name: string): boolean => name.toLowerCase() === KEYPAIR_DIR;
-const isKeypairName = (name: string): boolean => name.toLowerCase().endsWith('-keypair.json');
+export const isKeypairName = (name: string): boolean => name.toLowerCase().endsWith('-keypair.json');
 
 /**
  * The top-level entries of `target` the dormant delete removes (`output`), and those it keeps (`kept`): a symbolic link,
@@ -765,10 +765,11 @@ interface DeleteOptions {
   mountInfo?: (() => string) | null;
 }
 
-const LINUX_MOUNT_INFO = process.platform === 'linux' ? () => readFileSync('/proc/self/mountinfo', 'utf8') : null;
+export const LINUX_MOUNT_INFO: (() => string) | null =
+  process.platform === 'linux' ? () => readFileSync('/proc/self/mountinfo', 'utf8') : null;
 
 /** Why a mount point lies at or under `target` by `mountInfo`, or null when none does. */
-function mountedUnder(target: string, mountInfo: (() => string) | null): string | null {
+export function mountedUnder(target: string, mountInfo: (() => string) | null): string | null {
   if (!mountInfo) return null;
   let text: string;
   try {

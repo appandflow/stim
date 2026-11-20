@@ -7,7 +7,13 @@ import { realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, sep } from 'node:path';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { declareSpawnsOn, stopDeclaringSpawnsOn } from '../engine/spawn-claims.ts';
-import { gcReportFile, maintenanceRunClaims, type DaemonPressure, type PressureLevel } from '@stim-cli/core/state';
+import {
+  gcReportFile,
+  maintenanceRunClaims,
+  type DaemonPressure,
+  type PressureLevel,
+  type RescuedCopy,
+} from '@stim-cli/core/state';
 import { getSwiftpmCacheUsage } from '../devices/swiftpm-cache-usage.ts';
 import { getAgentDeviceUsage } from '../devices/agent-device-usage.ts';
 import { getMachineCacheReport } from '../devices/machine-cache-usage.ts';
@@ -42,6 +48,7 @@ import { collectHostedAppStorage } from './gc/hosted-apps.ts';
 import { collectFinishedDevices } from './gc/finished-devices.ts';
 import { collectGcMemory } from './gc/memory.ts';
 import { openGitReads } from '../workspace/git-reads.ts';
+import { expireRescued, rescuedSince } from '../workspace/rescue.ts';
 import {
   collectDeviceRecords,
   collectProjectEasSessions,
@@ -100,6 +107,8 @@ export interface GcRunPayload {
   /** On a dry run, what Stim keeps on disk, for Stim Desktop's storage view. */
   sections?: GcJsonSections;
   inventory?: GcInventory | null;
+  /** What an acting run copied aside before deleting it, each with the path to copy a file back from. */
+  rescued?: RescuedCopy[];
 }
 
 export type GcPayload = GcRunPayload | GcRefusal;
@@ -324,6 +333,7 @@ export async function executeGc(
   try {
     declareSpawnsOn(deps.operation, claim);
     closeGitReads = openGitReads(deps.operation);
+    const since = Date.now();
     const run = await runMaintenanceAtLevel({
       level: opts.pressure,
       act,
@@ -337,6 +347,10 @@ export async function executeGc(
     });
     throwIfCancelled(signal, 'GC');
     let payload: GcRunPayload = runPayload(run, act);
+    if (act) {
+      await expireRescued(Date.now());
+      payload = { ...payload, rescued: rescuedSince(since) };
+    }
     if (!act && opts.json) {
       const report = await collectGcReport({ measureBuildState: opts.measureBuildState }, deps);
       payload = {
@@ -353,6 +367,11 @@ export async function executeGc(
     if (!opts.json) {
       const detail = saveGcDetail(gcDetailLines(run));
       for (const line of formatGcSummary(run, { act, chosen, detail })) write('stdout', line);
+      for (const copy of payload.rescued ?? [])
+        write(
+          'stdout',
+          `Copied aside before deleting: ${copy.items.map((item) => item.source).join(', ')} -> ${copy.dir}`,
+        );
       return { payload, exitCode: payload.failures ? 1 : 0, run };
     }
     return { payload, exitCode: payload.failures ? 1 : 0 };

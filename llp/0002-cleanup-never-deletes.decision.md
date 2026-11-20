@@ -31,6 +31,67 @@ a `deploy/` folder holding a Solana `*-keypair.json` (LLP 0005).
 Reason: everything Stim deletes must come back by rebuilding or reinstalling.
 Work a person made cannot.
 
+## Rescue copies
+
+Two things in folders cleanup deletes cannot come back by rebuilding or
+reinstalling: a `pnpm patch` edit folder in a node_modules `.pnpm_patches`, and
+a Solana `*-keypair.json` in a Cargo `target/`. Before maintenance or
+`stim gc` deletes a node_modules (every delete that runs the dependency edit
+check) or removes a finished or discovered worktree, Stim copies them to
+`$STIM_HOME/rescued/<workspace id>/<time>/`, at their paths relative to the
+checkout, with a `manifest.json` naming each source path, its size and the
+time. Then the delete goes ahead.
+
+- What is copied: for a node_modules delete, every file of its `.pnpm_patches`
+  when that holds at least one edit folder (the edit folders and `state.json`),
+  or only its `state.json` when that names a live edit folder outside the folder
+  being deleted (`pnpm patch --edit-dir`), so `pnpm patch-commit` still finds the
+  edit after a restore.
+  For a worktree removal, one walk of the whole worktree, which does not ask git
+  or recognise Cargo targets: it skips `.git`, looks into each node_modules only
+  for its `.pnpm_patches` as above, and copies every `*-keypair.json` in any
+  letter case anywhere else. A keypair-named fixture is copied too, which costs
+  little. The walk took 190 to 310 ms on three checkouts of 28,000 to 33,000
+  entries outside node_modules and `.git`, one with a 6.6 GB Cargo `target/`.
+- Only plain files are copied, and no link is followed: a linked `target/` or
+  node_modules is removed as a link, as before. Anything unusual keeps the folder
+  or worktree, with the reason: a link named like a keypair (anywhere in a
+  worktree, so it keeps the worktree until the link is moved or replaced by
+  the file), a linked
+  `.pnpm_patches` or any link inside one, a `state.json` naming an edit folder
+  elsewhere inside the folder being deleted (`pnpm patch --edit-dir`), a
+  `state.json` in a removed worktree naming an edit folder that cannot be
+  found, as after `git worktree move`, a node_modules link whose target holds a
+  `.pnpm_patches`, a node_modules on
+  another volume, a mount at or under the folder being deleted (Linux mount
+  table),
+  a scan root on another volume than the folder being deleted, a rescue store
+  inside that folder when there is something to copy, a rescue store or workspace folder that is a link, more
+  than 50 MB to copy for one delete, more than 1,000,000 entries, or a search
+  and copy that fails or does not finish in 30 s through the bounded reader.
+- Each rescue gets its own new folder, a partial copy is removed, and expiry
+  removes only folders that resolve to their own place in the store under the
+  canonical Stim home.
+- `stim gc` removes rescued copies older than 30 days, lists what it copied in
+  that run (`rescued` in `--json`), and `stim doctor` lists every rescued copy
+  with its source and age, so an agent restores a file by copying it back.
+- Cargo `target/` deletes themselves go through one remover that never unlinks
+  a `*-keypair.json` (LLP 0005), so they copy nothing.
+
+The maintainer chose this in the coordinating session on 2026-11-20, answering
+"Rescue copies" to the question of rescuing protected items before deleting
+instead of detecting committed patches. The 30 days and the 50 MB are the
+coordinator's choices, constants in the code rather than settings.
+
+Not covered:
+
+- a keypair inside a node_modules, which an install restores;
+- build folders other than Cargo targets, which are deleted with a plain
+  recursive delete;
+- `stim worktree remove`, which is explicit and runs none of these checks;
+- rescued copies made by the background maintenance pass expire only when a
+  `stim gc` runs.
+
 ## Edits git status does not show
 
 A registered worktree counts as having uncommitted work, so `stim worktree
