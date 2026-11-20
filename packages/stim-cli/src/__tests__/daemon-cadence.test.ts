@@ -570,6 +570,34 @@ describe.skipIf(process.platform === 'win32')(
       expect(ticks().map(({ at }) => Math.round((at - started) / MINUTE_MS))).toEqual([1, 6, 11, 16, 21]);
     });
 
+    test('a tick serves boot waiters while its disk pass waits behind a long unit of the maintenance lane', async () => {
+      saveConfig({ version: 2, projects: {}, repos: {} });
+      freeMb = 10 * 1024;
+      let finishUnit!: (actions: []) => void;
+      const longUnit = new Promise<[]>((resolve) => (finishUnit = resolve));
+      vi.spyOn(dependencies, 'runDormantDependencies').mockImplementationOnce(() => longUnit);
+      vi.spyOn(ladder, 'runLadder').mockImplementation(async (_input, pressure) => ({ actions: [], pressure }));
+      const reclaims = vi.spyOn(reclaim, 'reclaimForBootWaiters').mockResolvedValue(null);
+      let exited = false;
+      const daemon = (async () => {
+        await runStimd({ mode: 'on' });
+        exited = true;
+      })();
+
+      await vi.advanceTimersByTimeAsync(MINUTE_MS);
+      await vi.waitFor(() => expect(ticks()).toHaveLength(1));
+      await vi.advanceTimersByTimeAsync(MINUTE_MS);
+      await vi.waitFor(() => expect(reclaims).toHaveBeenCalledTimes(2));
+      const ticksWhileWaiting = ticks().length;
+
+      finishUnit([]);
+      await vi.waitFor(() => expect(ticks()).toHaveLength(2));
+      await vi.advanceTimersByTimeAsync(3 * 5 * MINUTE_MS);
+      await vi.waitFor(() => expect(exited).toBe(true));
+      await daemon;
+      expect(ticksWhileWaiting).toBe(1);
+    });
+
     describe('work that never ends', () => {
       let selfKills: number;
 

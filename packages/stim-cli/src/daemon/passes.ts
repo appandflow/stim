@@ -205,10 +205,23 @@ interface HomePassesInput {
   requested?: boolean;
   /** Runs the disk pass on the disk owner, the passes thread; without it the pass runs in this thread. */
   diskPass?: (input: DiskPassInput) => Promise<DiskPassResult>;
+  /**
+   * Runs after the dormant stage and before the ladder, so what a waiting command needs, such as boot reclaim, never
+   * waits for a disk pass that waits for the maintenance lane.
+   */
+  beforeLadder?: (reading: { measured: TickMeasurement; operation: StimContext }) => Promise<void>;
 }
 
 async function homePasses(
-  { act, log, memoryWarningSince = null, lastLadder = null, requested = false, diskPass }: HomePassesInput,
+  {
+    act,
+    log,
+    memoryWarningSince = null,
+    lastLadder = null,
+    requested = false,
+    diskPass,
+    beforeLadder,
+  }: HomePassesInput,
   operation: StimContext,
 ): Promise<HomePasses> {
   let mark = performance.now();
@@ -297,6 +310,9 @@ async function homePasses(
   actions.push(...(await runDormantPass({ config, act, log, ...reading })));
   operation.signal.throwIfAborted();
   const dormantMs = lap();
+  await beforeLadder?.({ measured, operation });
+  operation.signal.throwIfAborted();
+  lap();
   let ladderPass: LadderPass | null = null;
   const level = pressure.level;
   const volumes = volumeReadings(measured.measurement, thresholds);

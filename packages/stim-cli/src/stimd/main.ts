@@ -2224,6 +2224,8 @@ async function runStimdInner(
     foregroundDone = new Promise<void>((done) => {
       settleForeground = done;
     });
+    let reclaimed: Awaited<ReturnType<typeof reclaimForBootWaiters>> = null;
+    let reclaimMs = 0;
     try {
       const passes = await runHomePasses({
         act: mode === 'on',
@@ -2233,6 +2235,18 @@ async function runStimdInner(
         lastLadder,
         requested: replying.length > 0,
         ...(threads.ladder ? { diskPass: threads.ladder.bind(threads) } : {}),
+        beforeLadder: async ({ measured: reading, operation: tickOperation }) => {
+          const reclaimStarted = performance.now();
+          reclaimed = await reclaimForBootWaiters({
+            devices: reading.devices,
+            sims: reading.sims,
+            act: mode === 'on',
+            log,
+            operation: tickOperation,
+          });
+          reclaimMs = Math.round(performance.now() - reclaimStarted);
+          if (reclaimed?.outcome === 'done') wakeOldest('boot');
+        },
       });
       const { config, now, measured, workspaces, pressure, actions, operation } = passes;
       lastLadder = passes.ladder ?? null;
@@ -2243,20 +2257,8 @@ async function runStimdInner(
         dependencyScanAt = Date.now();
         startMeasureJob({ cwd: process.cwd() }, 'daemon_dependency_scan_failed');
       }
-      const reclaimStarted = performance.now();
-      const reclaimed = await reclaimForBootWaiters({
-        devices: measured.devices,
-        sims: measured.sims,
-        act: mode === 'on',
-        log,
-        operation,
-      });
-      operation.signal.throwIfAborted();
-      phases = { ...passes.phases, reclaimMs: Math.round(performance.now() - reclaimStarted) };
-      if (reclaimed) {
-        actions.push(reclaimed);
-        if (reclaimed.outcome === 'done') wakeOldest('boot');
-      }
+      phases = { ...passes.phases, reclaimMs };
+      if (reclaimed) actions.push(reclaimed);
       const waiting = listWaiting();
       alive = aliveForWaiters(
         waiters.build.length + waiters.boot.length + waiters.test.length + waiting.length + listTestWaiting().length,
