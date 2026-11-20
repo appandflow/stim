@@ -1,6 +1,5 @@
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync, type Dirent } from 'node:fs';
-import { link, lstat, mkdir, readdir, rename, rm, rmdir, unlink, utimes, writeFile } from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
+import { link, lstat, mkdir, open, readdir, rename, rm, rmdir, unlink, utimes, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { cargoTargetTrimClaims } from '@stim-cli/core/state';
 import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-claim.ts';
@@ -694,18 +693,21 @@ async function deleteClaimed(
     return keep(`${aside} cannot be made: ${error instanceof Error ? error.message : error}`);
   }
   // @ref LLP 0005#never-delete-what-a-build-took-back -- staged entries carry the NOT-RESTORED marker until the checks pass
-  const draft = `${marker}.${process.pid}.${randomUUID()}.tmp`;
   try {
     await retryWithReserve(async () => {
+      const file = await open(marker, 'wx');
+      const ours = await file.stat();
       try {
-        await writeFile(
-          draft,
+        await file.writeFile(
           `${JSON.stringify(Object.fromEntries(names.map((name, n) => [String(n), name])), null, 2)}\n`,
         );
-        await link(draft, marker);
-      } finally {
-        await rm(draft, { force: true });
+      } catch (error) {
+        await file.close();
+        const now = await lstat(marker).catch(() => null);
+        if (now?.dev === ours.dev && now.ino === ours.ino) await unlink(marker);
+        throw error;
       }
+      await file.close();
     }, released);
   } catch (error) {
     await rmdir(aside).catch(() => {});

@@ -35,6 +35,7 @@ const fsHooks = vi.hoisted(
     unlink?: (path: string) => void;
     mkdir?: (path: string) => void;
     writeFile?: (path: string) => void;
+    open?: (path: string) => void;
     claim?: () => void;
     dev?: (path: string) => number | undefined;
   } => ({}),
@@ -54,6 +55,17 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     writeFile: async (...args: Parameters<typeof fs.writeFile>) => {
       fsHooks.writeFile?.(String(args[0]));
       return fs.writeFile(...args);
+    },
+    open: async (...args: Parameters<typeof fs.open>) => {
+      fsHooks.open?.(String(args[0]));
+      const file = await fs.open(...args);
+      const write = file.writeFile.bind(file);
+      return Object.assign(file, {
+        writeFile: async (...data: Parameters<typeof file.writeFile>) => {
+          fsHooks.writeFile?.(String(args[0]));
+          return write(...data);
+        },
+      });
     },
     unlink: async (...args: Parameters<typeof fs.unlink>) => {
       fsHooks.unlink?.(String(args[0]));
@@ -863,6 +875,42 @@ describe.skipIf(process.platform === 'win32')(
         expect(readdirSync(moved).toSorted()).toEqual(['.rustc_info.json', 'debug', 'doc']);
       });
 
+      test('the marker needs no hard link, as on a filesystem without them', async () => {
+        fsHooks.link = () => {
+          throw Object.assign(new Error('EPERM: operation not permitted'), { code: 'EPERM' });
+        };
+
+        expect(await remove()).toMatchObject({ kept: [] });
+        expect(existsSync(dir)).toBe(false);
+      });
+
+      test.each([
+        ['already holds a marker', true, 'already exists, so the target stays'],
+        ['holds none while our write keeps failing', false, 'cannot be written: ENOSPC'],
+      ])('a target swapped in before our marker that %s keeps its own times', async (_, marked, why) => {
+        const original = lstatSync(dir).mtimeMs;
+        const old = new Date(Date.now() - 10 * DAY);
+        fsHooks.open = (path) => {
+          if (!path.endsWith('NOT-RESTORED') || existsSync(`${dir}-moved`)) return;
+          renameSync(dir, `${dir}-moved`);
+          mkdirSync(join(dir, '.stim-trimmed'), { recursive: true });
+          if (marked) writeFileSync(join(dir, '.stim-trimmed', 'NOT-RESTORED'), 'theirs');
+          utimesSync(dir, old, old);
+        };
+        fsHooks.writeFile = (path) => {
+          if (!marked && path.includes('NOT-RESTORED')) throw diskFull();
+        };
+        onTestFinished(() => {
+          delete fsHooks.open;
+        });
+
+        const result = await remove();
+
+        expect(result.kept).toEqual([expect.stringContaining(why)]);
+        expect(existsSync(join(dir, '.stim-trimmed', 'NOT-RESTORED'))).toBe(marked);
+        expect(Math.abs(lstatSync(dir).mtimeMs - original)).toBeGreaterThan(1000);
+      });
+
       test('a target swapped in while the marker cannot be written keeps its own marker and staged files', async () => {
         const moved = `${dir}-moved`;
         let swapped = false;
@@ -898,6 +946,7 @@ describe.skipIf(process.platform === 'win32')(
 
         expect(result.kept).toEqual([expect.stringContaining('cannot be written: ENOSPC')]);
         expect(readdirSync(dir)).not.toContain('.stim-trimmed');
+        expect(existsSync(join(dir, '.stim-trimmed', 'NOT-RESTORED'))).toBe(false);
         expect(readdirSync(dir).toSorted()).toEqual(['.rustc_info.json', 'debug', 'doc']);
         delete fsHooks.writeFile;
         expect((await remove()).kept).toEqual([]);
