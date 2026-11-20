@@ -223,12 +223,14 @@ type LevelPayload = {
 
 function criticalDependencies(payload: LevelPayload): string[] {
   return payload.actions.flatMap((action) =>
-    action.kind === 'delete-dependencies' && action.outcome !== 'kept' ? [action.target] : [],
+    action.kind === 'delete-dependencies' && (action.outcome !== 'kept' || action.detail?.startsWith('report only'))
+      ? [action.target]
+      : [],
   );
 }
 
 test.skipIf(process.platform === 'win32')(
-  'gc at critical never deletes the dependencies of a git-locked worktree',
+  'gc at critical deletes no worktree dependencies and does not report those of a git-locked worktree',
   async () => {
     const roots = idleRepo([
       { name: 'feature', workspace: true },
@@ -241,7 +243,7 @@ test.skipIf(process.platform === 'win32')(
 
     expect(criticalDependencies(payload)).toContain(join(roots.feature!, 'node_modules'));
     expect(criticalDependencies(payload).filter((path) => path.startsWith(`${roots.rollback}/`))).toEqual([]);
-    expect(existsSync(join(roots.feature!, 'node_modules'))).toBe(false);
+    expect(existsSync(join(roots.feature!, 'node_modules'))).toBe(true);
     expect(existsSync(join(roots.rollback!, 'node_modules', 'pkg', 'index.js'))).toBe(true);
     expect(existsSync(join(roots.rollback!, 'ios', 'Pods', 'Manifest.lock'))).toBe(true);
   },
@@ -249,7 +251,7 @@ test.skipIf(process.platform === 'win32')(
 );
 
 test.skipIf(process.platform === 'win32')(
-  'gc at normal keeps dependencies idle less than idle.dormantDays, and at critical deletes those of an idle linked worktree that warm can restore and nothing runs in, then the source checkout',
+  'gc at normal keeps dependencies idle less than idle.dormantDays, and at critical only reports those of an idle linked worktree nothing runs in, then the source checkout',
   async () => {
     const scope = vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
     const roots = idleRepo([
@@ -268,12 +270,13 @@ test.skipIf(process.platform === 'win32')(
     try {
       const { payload }: { payload: LevelPayload } = await gcJson();
       const critical = payload.actions.filter((action) => action.kind === 'delete-dependencies');
-      expect(critical.find((action) => action.target === join(at('feature'), 'node_modules'))?.outcome).toBe('would');
+      expect(critical.find((action) => action.target === join(at('feature'), 'node_modules'))?.detail).toMatch(
+        /^report only/,
+      );
       const planned = criticalDependencies(payload);
       expect(planned.indexOf(join(at('repo'), 'node_modules'))).toBeGreaterThan(
         planned.indexOf(join(at('feature'), 'node_modules')),
       );
-      expect(critical.find((action) => action.target === join(at('drifted'), 'node_modules'))?.outcome).toBe('kept');
       await quietly(() => runGc({ pressure: 'normal' }));
       expect(existsSync(join(at('feature'), 'node_modules', 'pkg', 'index.js'))).toBe(true);
       await quietly(() => runGc({ pressure: 'critical' }));
@@ -282,9 +285,8 @@ test.skipIf(process.platform === 'win32')(
       scope.mockRestore();
     }
 
-    expect(existsSync(join(at('feature'), 'node_modules'))).toBe(false);
-    expect(recordedDirs(at('feature'))).toEqual([join(at('feature'), 'node_modules')]);
-    for (const name of ['busy', 'keyless', 'drifted'])
+    expect(recordedDirs(at('feature'))).toEqual([]);
+    for (const name of ['feature', 'busy', 'keyless', 'drifted'])
       expect(existsSync(join(at(name), 'node_modules', 'pkg', 'index.js'))).toBe(true);
     expect(existsSync(join(at('feature'), 'ios', 'Pods', 'Manifest.lock'))).toBe(true);
   },
@@ -440,18 +442,29 @@ const currentConfig = () => loadConfig() ?? { version: 2 as const, projects: {},
 const daysAgo = (days: number) => new Date(Date.now() - days * 86_400_000);
 
 test.skipIf(process.platform === 'win32')(
-  'gc at critical takes the source checkout dependencies after the linked worktrees, records it, and the record ends once they are installed',
+  'gc at critical reports the source checkout dependencies after the linked worktrees',
   async () => {
     const roots = idleRepo([{ name: 'feature', workspace: true }]);
     const source = roots.repo ?? '';
 
-    const { payload } = await gcJson();
-    const order = criticalDependencies(payload);
+    const order = criticalDependencies((await gcJson()).payload);
+
     expect(order.indexOf(join(source, 'node_modules'))).toBeGreaterThan(
       order.indexOf(join(roots.feature ?? '', 'node_modules')),
     );
     expect(order).toContain(join(source, 'ios', 'Pods'));
-    await quietly(() => runGc({ pressure: 'critical' }));
+  },
+  60_000,
+);
+
+test.skipIf(process.platform === 'win32')(
+  'gc takes the source checkout dependencies at 7 days idle, records it, and the record ends once they are installed',
+  async () => {
+    const roots = idleRepo([{ name: 'feature', workspace: true }]);
+    const source = roots.repo ?? '';
+    ageCheckout(source, daysAgo(8));
+
+    await quietly(() => runGc({ pressure: 'normal' }));
 
     expect(existsSync(join(source, 'node_modules'))).toBe(false);
     expect(existsSync(join(source, 'ios', 'Pods'))).toBe(false);
@@ -468,26 +481,25 @@ test.skipIf(process.platform === 'win32')(
 );
 
 test.skipIf(process.platform === 'win32')(
-  'the source checkout dependencies are not a candidate at high, and critical keeps one a process runs in or maintenance.keep pins',
+  'the source checkout dependencies are not a candidate at high, and critical does not report one a process runs in or maintenance.keep pins',
   async () => {
     const roots = idleRepo([{ name: 'feature', workspace: true }]);
     const source = roots.repo ?? '';
+    const reported = async (level: 'high' | 'critical') =>
+      criticalDependencies((await gcJson(level)).payload).some((path) => path.startsWith(`${source}/`));
 
-    const high = await gcJson('high');
-    expect(criticalDependencies(high.payload).some((path) => path.startsWith(`${source}/`))).toBe(false);
+    expect(await reported('high')).toBe(false);
+    expect(await reported('critical')).toBe(true);
 
     const child = spawn('sleep', ['60'], { cwd: source, stdio: 'ignore' });
     try {
-      await quietly(() => runGc({ pressure: 'critical' }));
-      expect(existsSync(join(source, 'node_modules', 'pkg', 'index.js'))).toBe(true);
+      expect(await reported('critical')).toBe(false);
     } finally {
       child.kill('SIGKILL');
     }
     writeFileSync(join(source, '.stim.json'), JSON.stringify({ maintenance: { keep: true } }));
     ageTree(source, new Date(Date.now() - 60 * 60_000));
-    await quietly(() => runGc({ pressure: 'critical' }));
-    expect(existsSync(join(source, 'node_modules', 'pkg', 'index.js'))).toBe(true);
-    expect(existsSync(join(roots.feature ?? '', 'node_modules'))).toBe(false);
+    expect(await reported('critical')).toBe(false);
   },
   60_000,
 );
@@ -633,7 +645,7 @@ test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
 );
 
 test.skipIf(process.platform === 'win32')(
-  'a source checkout tree not measured yet is not taken at 7 days idle, and is at critical',
+  'a source checkout tree not measured yet is not taken at 7 days idle, and at critical is only reported',
   async () => {
     const roots = idleRepo([{ name: 'feature', workspace: true }]);
     const source = roots.repo ?? '';
@@ -647,8 +659,9 @@ test.skipIf(process.platform === 'win32')(
     const normal = await quietly(() => runGc({ pressure: 'normal' }));
     expect(normal).toBeDefined();
     expect(existsSync(sourceModules(source))).toBe(true);
+    expect(rung8((await gcJson()).payload, modules)?.detail).toMatch(/^report only/);
     await quietly(() => runGc({ pressure: 'critical' }));
-    expect(existsSync(sourceModules(source))).toBe(false);
+    expect(existsSync(sourceModules(source))).toBe(true);
   },
   60_000,
 );
@@ -883,8 +896,7 @@ test.skipIf(process.platform === 'win32')(
     execSync(`git worktree add -q "${stranger}" -b stranger`, { cwd: other });
     for (let i = 0; i < 2100; i++) writeFileSync(join(stranger, `filler-${i}.txt`), '');
     upsertProject(realpathSync.native(stranger), { metroPort: null });
-    await quietly(() => runGc({ pressure: 'critical' }));
-    expect(existsSync(sourceModules(source))).toBe(false);
+    expect(criticalDependencies((await gcJson()).payload)).toContain(join(source, 'node_modules'));
   },
   60_000,
 );
@@ -928,51 +940,44 @@ function dependencyAction(payload: LevelPayload, target: string, rung: number | 
 }
 
 test.skipIf(process.platform === 'win32')(
-  'at high, rung 5 keeps a tree of unknown size whose sample is hard links, deletes a copied one and never samples a measured one; at critical rungs 5 and 8 take it last',
+  'rungs 5 and 8 report trees of unknown size without sampling them for hard links, and delete none',
   async () => {
     const roots = idleRepo([
       { name: 'linked', workspace: true },
       { name: 'copied', workspace: true },
-      { name: 'measured', workspace: true },
     ]);
     const hourAgo = new Date(Date.now() - 60 * 60_000);
     const modules = (name: string) => join(roots[name] ?? '', 'node_modules');
-    for (const name of ['repo', 'linked', 'measured']) pnpmTree(modules(name), 'linked', hourAgo);
+    for (const name of ['repo', 'linked']) pnpmTree(modules(name), 'linked', hourAgo);
     pnpmTree(modules('copied'), 'copied', hourAgo);
-    measureTrees(roots.measured ?? '');
     for (const name of ['repo', 'linked', 'copied']) walks.set(modules(name), () => null);
 
-    const { payload }: { payload: LevelPayload } = await gcJson('high');
-    expect(dependencyAction(payload, modules('linked'), 5)?.outcome).toBe('kept');
-    expect(dependencyAction(payload, modules('linked'), 5)?.detail).toMatch(linkedDetail);
-    expect(dependencyAction(payload, modules('copied'), 5)?.outcome).toBe('would');
-    expect(dependencyAction(payload, modules('measured'), 5)?.outcome).toBe('would');
-    expect(existsSync(diskUsageLinksFile(modules('measured')))).toBe(false);
-
+    const high: LevelPayload = (await gcJson('high')).payload;
     const critical: LevelPayload = (await gcJson('critical')).payload;
-    const planned = criticalDependencies(critical);
-    expect(planned.indexOf(modules('linked'))).toBeGreaterThan(planned.indexOf(modules('copied')));
-    expect(dependencyAction(critical, modules('repo'), 8)?.outcome).toBe('would');
-
     await quietly(() => runGc({ pressure: 'high' }));
-    expect(existsSync(join(modules('linked'), '.pnpm'))).toBe(true);
-    expect(existsSync(modules('copied'))).toBe(false);
+
+    for (const name of ['linked', 'copied'])
+      expect(dependencyAction(high, modules(name), 5)?.detail).toMatch(/^report only/);
+    expect(dependencyAction(critical, modules('repo'), 8)?.detail).toMatch(/^report only/);
+    for (const name of ['repo', 'linked']) expect(existsSync(diskUsageLinksFile(modules(name)))).toBe(false);
+    expect(existsSync(modules('copied'))).toBe(true);
   },
   60_000,
 );
 
 test.skipIf(process.platform === 'win32')(
-  'at high, rung 5 takes a hard-linked tree of unknown size as unknown when its link verdict cannot be written',
+  'the dormant step takes a hard-linked tree of unknown size as unknown when its link verdict cannot be written',
   async () => {
     const roots = idleRepo([{ name: 'linked', workspace: true }]);
     const modules = join(roots.linked ?? '', 'node_modules');
+    saveConfig({ ...currentConfig(), idle: { dormantDays: 0.01 } });
     pnpmTree(modules, 'linked', new Date(Date.now() - 60 * 60_000));
     walks.set(modules, () => null);
     mkdirSync(join(diskUsageLinksFile(modules), 'occupied'), { recursive: true });
-    const { payload }: { payload: LevelPayload } = await gcJson('high');
+    const { payload }: { payload: LevelPayload } = await gcJson('normal');
     expect(readJsonObject(diskUsageNativeFile(modules))?.complete).toBe(true);
-    expect(dependencyAction(payload, modules, 5)).toMatchObject({ outcome: 'would' });
-    expect(dependencyAction(payload, modules, 5)?.detail ?? '').not.toMatch(linkedDetail);
+    expect(dependencyAction(payload, modules, null)).toMatchObject({ outcome: 'would' });
+    expect(dependencyAction(payload, modules, null)?.detail ?? '').not.toMatch(linkedDetail);
   },
   60_000,
 );

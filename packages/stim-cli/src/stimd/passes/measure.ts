@@ -109,6 +109,7 @@ export async function measureSizes(
   failure: (target: string, workspace?: string) => void,
   operation?: StimContext,
   discovered?: CacheDescriptor[],
+  between?: () => Promise<void>,
 ): Promise<MaintenanceSize[]> {
   const sizes: MaintenanceSize[] = [];
   const outputs = await collectWorkspaceOutputs({
@@ -116,6 +117,7 @@ export async function measureSizes(
     now,
     sizeTimeoutMs: 120_000,
     ...(operation ? { signal: operation.signal, operation } : {}),
+    ...(between ? { between } : {}),
   });
   for (const entry of outputs.workspaces) {
     if (entry.bytes === null) {
@@ -173,6 +175,7 @@ export async function measureSizes(
   }
   for (const entry of known) {
     if (!existsSync(entry.dir)) continue;
+    await between?.();
     const bytes = await measuredDirectorySizeAsync(entry.dir, {
       timeoutMs: 120_000,
       ...(operation ? { signal: operation.signal, operation } : {}),
