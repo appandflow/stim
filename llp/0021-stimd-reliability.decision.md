@@ -245,8 +245,8 @@ now 31, except the size walks under `nice -n 19` and the fingerprint children
 at nice 10. On macOS `nice` lowers only CPU, not I/O. A size walk at normal
 disk pressure on its volume therefore also runs at a throttled I/O policy:
 `taskpolicy -d utility` on macOS and `ionice -c3` on Linux, or `nice` alone
-when `ionice` is not on PATH. Windows keeps `nice` alone. At high and critical
-a walk keeps `nice` and no I/O throttle, since the disk is what is short. Today
+when `ionice` is not on PATH. Windows keeps `nice` alone. A walk whose caller
+asks for low priority at high or critical gets `nice` and no I/O throttle. Today
 only the Cargo target walks know they run at normal: the cap's `du` while host
 load defers the size scan, and the trim plan's `du` for a target whose volume
 is at normal. The dependency and status walks and the unmanaged-usage scan keep
