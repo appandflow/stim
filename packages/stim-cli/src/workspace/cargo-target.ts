@@ -14,7 +14,14 @@ import { cargoUnitPaths, cargoUnitWasRead, idleCargoUnits, readCargoUnits, remov
 const CARGO_PROFILE_IDLE_MS: number = 24 * 3_600_000;
 
 /** Why a staging write found the disk full and the checks made after releasing the reserve keep the entry. */
-class KeptAfterRelease extends Error {}
+class KeptAfterRelease extends Error {
+  /** Whether the reason keeps the whole target, as a launcher or unreadable process evidence does. */
+  readonly whole: boolean;
+  constructor(message: string, whole = false) {
+    super(message);
+    this.whole = whole;
+  }
+}
 const ASIDE = '.stim-trimmed';
 const PROFILE_PARTS = ['.fingerprint', 'deps', 'build', 'incremental'];
 /** The files Cargo itself writes in a target triple directory; any other entry there belongs to something else. */
@@ -1004,8 +1011,14 @@ async function trimClaimed(
   const stale = staleCargoTargetPaths(target, now, profileIdleMs);
   if ('refusal' in stale) return { ...result, kept: [stale.refusal] };
   let moved = 0;
+  let wholeKept = false;
   const released = (): void => {
     result.reserveReleased = true;
+  };
+  const keptAfterRelease = (label: string, error: KeptAfterRelease): false => {
+    wholeKept ||= error.whole;
+    result.kept.push(error.whole ? error.message : `${label}: ${error.message}`);
+    return false;
   };
   const profilesAt = async (dir: string) => (fingerprintDir(dir) ? [dir] : await childProfiles(dir));
   const move = async (
@@ -1015,6 +1028,7 @@ async function trimClaimed(
     locks: (where: string) => Promise<string[]>,
   ): Promise<boolean> => {
     signal?.throwIfAborted();
+    if (wholeKept) return false;
     if (stopped()) {
       if (!result.kept.includes(DEADLINE_KEPT)) result.kept.push(DEADLINE_KEPT);
       return false;
@@ -1034,7 +1048,7 @@ async function trimClaimed(
     const recheck = async (): Promise<void> => {
       released();
       const fresh = await readTargetUse(target, launching, signal, lowPriority);
-      if ('kept' in fresh) throw new KeptAfterRelease(fresh.kept);
+      if ('kept' in fresh) throw new KeptAfterRelease(fresh.kept, true);
       used = fresh.used;
       if (inUse(used, dir)) throw new KeptAfterRelease('a process uses it');
       for (const profile of profiles) {
@@ -1047,18 +1061,14 @@ async function trimClaimed(
       await retryWithReserve(() => mkdir(aside, { recursive: true }), recheck);
     } catch (error) {
       if (!(error instanceof KeptAfterRelease)) throw error;
-      result.kept.push(`${label}: ${error.message}`);
-      return false;
+      return keptAfterRelease(label, error);
     }
     const there = join(aside, String(moved++));
     try {
       await retryWithReserve(() => rename(dir, there), recheck);
     } catch (error) {
-      result.kept.push(
-        error instanceof KeptAfterRelease
-          ? `${label}: ${error.message}`
-          : `${label}: it could not be moved aside: ${error instanceof Error ? error.message : error}`,
-      );
+      if (error instanceof KeptAfterRelease) return keptAfterRelease(label, error);
+      result.kept.push(`${label}: it could not be moved aside: ${error instanceof Error ? error.message : error}`);
       return false;
     }
     for (const profile of await locks(there)) {
@@ -1161,11 +1171,12 @@ async function trimClaimed(
   const remaining = (cargoProfileDirs(target) ?? []).filter(
     (profile) => ![...removedStale].some((gone) => profile === gone || profile.startsWith(`${gone}/`)),
   );
-  const refreshed = stopped()
-    ? null
-    : incremental === 'all' || result.bytes < needBytes
-      ? await readTargetUse(target, launching, signal, lowPriority)
-      : { used };
+  const refreshed =
+    stopped() || wholeKept
+      ? null
+      : incremental === 'all' || result.bytes < needBytes
+        ? await readTargetUse(target, launching, signal, lowPriority)
+        : { used };
   if (stopped()) {
     if (!result.kept.includes(DEADLINE_KEPT)) result.kept.push(DEADLINE_KEPT);
   } else if (refreshed && 'kept' in refreshed) result.kept.push(refreshed.kept);
@@ -1188,7 +1199,7 @@ async function trimClaimed(
       await move(path, path.slice(target.length + 1), bytes, async () => [parent]);
     }
   }
-  if (units === 'all' || (units === 'toNeed' && result.bytes < needBytes))
+  if (!wholeKept && (units === 'all' || (units === 'toNeed' && result.bytes < needBytes)))
     for (const profile of remaining) {
       signal?.throwIfAborted();
       if (stopped()) break;

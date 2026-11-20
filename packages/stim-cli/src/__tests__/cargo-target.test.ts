@@ -553,6 +553,29 @@ describe('trimming on a full disk', () => {
     expect(existsSync(join(target, staged))).toBe(true);
   });
 
+  test('a launcher the retry finds keeps every later profile of the target', async () => {
+    makeProfile('debug', 3 * DAY);
+    makeProfile('release', 3 * DAY);
+    writeFileSync(join(target, 'release', 'tool'), 'binary');
+    const old = new Date(Date.now() - 3 * DAY);
+    utimesSync(join(target, 'release'), old, old);
+    const real = realpathSync.native(target);
+    stubProcesses({});
+    let readings = 0;
+    const launchers = async () => ({ targets: readings++ === 0 ? [] : [`${real}/release/tool`], incomplete: [] });
+    fullOnce('mkdir', '.stim-trimmed');
+
+    const result = await trimCargoTarget(target, {
+      needBytes: 0,
+      launching: { launchers, anew: launchers, checkout: target },
+    });
+
+    expect(result).toMatchObject({ removed: [], reserveReleased: true });
+    expect(result.kept).toEqual([expect.stringContaining('on PATH')]);
+    expect(readFileSync(join(target, 'release', 'tool'), 'utf8')).toBe('binary');
+    expect(existsSync(join(target, 'debug', 'deps', 'libx.rlib'))).toBe(true);
+  });
+
   test('without a reserve to release, a full disk keeps the profile', async () => {
     stubProcesses({});
     makeProfile('debug', 3 * DAY);
