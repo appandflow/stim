@@ -551,7 +551,7 @@ export async function installJob(
   const path = plistPath(options.label);
   const { findTailscale, serveCommand } = await tailscalePackage();
   const tailscale = findTailscale(process.env) ?? 'tailscale';
-  const toShim = manager.name === 'launchd' && stimd !== undefined && previous !== null && previous.script !== stimd;
+  const toShim = manager.name === 'launchd' && stimd !== null && previous !== null && previous.script !== stimd;
   if (setup && sameOptions(previous, spec, toShim ? (previous.script ?? '') : (stimd ?? script))) {
     const health = await fetchHealth(options.port);
     if (health && health.startup?.state !== 'pending' && health.startup?.state !== 'degraded') {
