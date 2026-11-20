@@ -7,6 +7,19 @@ import { resetExecutor, setExecutor } from '../exec.ts';
 import { planCargoTargets } from '../stimd/passes/cargo-target.ts';
 import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
 
+const hooks = vi.hoisted(() => ({ lstat: null as ((path: string) => void) | null }));
+
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...actual,
+    lstatSync: ((path, options) => {
+      hooks.lstat?.(String(path));
+      return actual.lstatSync(path, options);
+    }) as typeof actual.lstatSync,
+  };
+});
+
 const DAY = 24 * 3_600_000;
 
 describe('the Cargo target trim under disk pressure', () => {
@@ -201,6 +214,21 @@ describe('the Cargo target trim under disk pressure', () => {
 
       expect(walks.normal.length).toBeGreaterThan(0);
       expect(walks.normal.every(([file]) => file === 'ionice')).toBe(true);
+    });
+
+    it('walks a root it cannot lstat under nice alone, and still plans the target', async () => {
+      hooks.lstat = (path) => {
+        if (path.endsWith(join('normal', 'target', 'debug', 'incremental')))
+          throw Object.assign(new Error(`EACCES: permission denied, lstat '${path}'`), { code: 'EACCES' });
+      };
+      try {
+        const { walks, bytes } = await plan('linux', '/usr/bin/ionice');
+
+        expect(niced(walks.normal)).toBe(true);
+        expect(bytes).toHaveLength(4);
+      } finally {
+        hooks.lstat = null;
+      }
     });
   });
 });

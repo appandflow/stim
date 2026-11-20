@@ -164,9 +164,14 @@ export async function measureCargoTargets(
   return sizes;
 }
 
-/** Whether every path is itself on `device`, the volume a pressure sample read at normal. */
+/** Whether every path is itself on `device`, the volume a pressure sample read at normal; false when one cannot be read. */
 function onSampledDevice(paths: readonly string[], device: number | undefined): boolean {
-  return device !== undefined && paths.every((path) => lstatSync(path, { throwIfNoEntry: false })?.dev === device);
+  if (device === undefined) return false;
+  try {
+    return paths.every((path) => lstatSync(path, { throwIfNoEntry: false })?.dev === device);
+  } catch {
+    return false;
+  }
 }
 
 async function bytesOf(
