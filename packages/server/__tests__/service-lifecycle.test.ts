@@ -5,6 +5,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -26,6 +27,18 @@ import {
 } from '../src/service.ts';
 import { serverBuild } from '../src/release-install.ts';
 import { parseInstalledPlist, renderPlist } from '../src/service-plist.ts';
+
+const stagedFiles = vi.hoisted(() => ({ failRename: false }));
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...actual,
+    renameSync: (from: string, to: string) => {
+      if (stagedFiles.failRename && from.endsWith('.tmp')) throw new Error('rename refused');
+      return actual.renameSync(from, to);
+    },
+  };
+});
 
 const launchd = vi.hoisted(() => ({
   job: null as 'old' | 'new' | null,
@@ -409,8 +422,15 @@ describe.skipIf(process.platform !== 'darwin')('service lifecycle', () => {
         .replace(
           '<key>EnvironmentVariables</key>\n\t<dict>\n',
           '<key>EnvironmentVariables</key>\n\t<dict>\n\t<key>ProcessType</key>\n\t<string>worker</string>\n',
+        )
+        .replace(
+          '\n\t</array>\n',
+          '\n</array>\n\t<key>WatchPaths</key>\n\t<array>\n\t\t<string>/tmp/watched</string>\n\t</array>\n',
         ),
     );
+    const parsed = () =>
+      JSON.parse(execFileSync('plutil', ['-convert', 'json', '-o', '-', plist], { encoding: 'utf8' }));
+    expect(parsed()).toMatchObject({ ProcessType: 'Standard', WatchPaths: ['/tmp/watched'] });
     const before = installedPlist();
     expect(before?.node).toBe(process.execPath);
     expect(await rewriteUnitToShim(label)).toBe(true);
@@ -422,11 +442,26 @@ describe.skipIf(process.platform !== 'darwin')('service lifecycle', () => {
       stimHome: before?.stimHome,
       programArguments: [before?.host, 'run', shim, '--service', '--port', String(before?.port)],
     });
-    expect(
-      JSON.parse(execFileSync('plutil', ['-convert', 'json', '-o', '-', plist], { encoding: 'utf8' })),
-    ).toMatchObject({ ProcessType: 'Interactive', EnvironmentVariables: { ProcessType: 'worker' } });
+    expect(parsed()).toMatchObject({
+      ProcessType: 'Interactive',
+      EnvironmentVariables: { ProcessType: 'worker' },
+      WatchPaths: ['/tmp/watched'],
+    });
     expect(launchd.bootstraps).toEqual([]);
     expect(await rewriteUnitToShim(label)).toBe(false);
+  });
+
+  it('leaves the LaunchAgent and no staged file behind when the shim rewrite cannot rename', async () => {
+    engineShim();
+    const original = readFileSync(plist, 'utf8');
+    stagedFiles.failRename = true;
+    try {
+      await expect(rewriteUnitToShim(label)).rejects.toThrow('rename refused');
+    } finally {
+      stagedFiles.failRename = false;
+    }
+    expect(readFileSync(plist, 'utf8')).toBe(original);
+    expect(readdirSync(dirname(plist)).filter((name) => name.endsWith('.tmp'))).toEqual([]);
   });
 
   it('records that the Stim home the service runs uses the tailnet when it keeps a serve route', async () => {

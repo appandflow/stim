@@ -218,8 +218,9 @@ first, which already waits 5 s, a silent stimd takes about 8 s.
 
 On macOS every launchd job that runs stimd sets `ProcessType` to `Interactive`:
 the transient job `launchStimd` writes, which a command and a handover at an
-engine switch go through, and the LaunchAgent `stim service install` writes. launchd.plist(5) gives a job without `ProcessType`, or with
-`Standard`, light CPU and I/O throttling, and stimd's children inherit it:
+engine switch go through, and the LaunchAgent `stim service install` writes.
+launchd.plist(5) gives a job without `ProcessType`, or with `Standard`, light
+CPU and I/O throttling, and stimd's children inherit it:
 Metro, the builds it runs, the offload probes and the tools it starts. On a
 loaded worker stimd missed `build.offer` and health deadlines while it ran
 throttled (#5925); that the throttling caused the misses is not proven end to
@@ -260,11 +261,12 @@ this change and dropped before 2.0 (#6025). It had to exempt every child that
 holds a lock a command waits on, and every child that may start a long-lived
 shared process, such as git's fsmonitor daemon, an ssh `ControlPersist` master
 or the adb server, which keeps the clamp for later foreground work. That list
-cannot be completed from inside Stim. After 2.0, in this order: run less
-maintenance (pace the ladder on bytes freed, never run the maintenance lane
-beside it); measure a foreground build with the lane running; and only if that
-shows a cost, do not start maintenance at normal pressure while foreground work
-runs, never holding it back at high or critical pressure.
+cannot be completed from inside Stim. Less maintenance work comes first and is
+done before 2.0 under #6025: the ladder paces on bytes freed and the
+maintenance lane never runs beside it. After 2.0: measure a foreground build
+with the lane running, and only if that shows a cost, do not start maintenance
+at normal pressure while foreground work runs, never holding it back at high or
+critical pressure.
 
 Maintainer decision: "yea stim itself is fine at interactive I am good with", 2026-11-19.
 [Decision on #5925](https://github.com/appandflow/stim/issues/5925#issuecomment-7023460880).
