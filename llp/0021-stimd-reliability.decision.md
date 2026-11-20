@@ -270,9 +270,15 @@ work.
 Inside maintenance work, a stop, a device teardown and work that holds a lock a
 command waits on keep full priority. Everything that runs while a workspace's
 `native-run` lock is held through `withIdleWorkspace`, its in-use check
-included, runs as control path; this covers the idle stage, the dormant stage
-and the dormant output removal, which also hold `metro-start`, and
-`reclaimProject`. Size walks a pass runs before it takes the lock stay lowered.
+included, runs as control path. That covers the idle stage, the output
+clearing of stopped workspaces (`clearStoppedOutputs`), the dormant output
+removal, the dormant stage and `reclaimProject`; the first three also hold
+`metro-start`. Size walks a pass runs
+before it takes the lock stay lowered. While a boot waits in the queue, the
+tick's passes run as control path, since the reclaim that frees a device for it
+runs after them. The fingerprint precompute and the queued fingerprint
+verification hold `native-run` while they run lowered; this is accepted, since
+they ran at nice 10 before.
 The exported teardowns of `devices/teardown.ts`, which every shutdown, delete
 and park goes through, run as control path wherever they are called from, and
 so do the maintenance actions that stop a workspace, Gradle or watchman or delete a device,
@@ -300,6 +306,8 @@ priority, and the precompute and queued verification follow the maintenance
 rule.
 Commands keep the caller's priority, `stim gc` included; a call that passes
 `lowPriority`, such as a size walk under a walk claim, is lowered there too.
+Control path wins over both: inside it neither `lowPriority` nor nested
+maintenance work lowers a child.
 Only `runFileAsync` applies the rule; a child started with `spawn` or the
 synchronous runners keeps the caller's priority.
 
