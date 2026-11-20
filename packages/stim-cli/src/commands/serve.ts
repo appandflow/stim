@@ -7,7 +7,7 @@ import pairOp from './pair.ts';
 import { log, pairingsOp } from './pairings.ts';
 import serviceOp from './service.ts';
 import { loadServerCli } from '../server-cli.ts';
-import { serviceUnitLabel } from '../stimd/service-unit.ts';
+import { serviceJob } from '../stimd/service-unit.ts';
 import setupOp from './setup.ts';
 
 const options = {
@@ -54,7 +54,7 @@ const serveOp = defineOp({
         shareOnly: opts.share === true,
       },
       opts.service === true,
-      opts.service === true ? (serviceUnitLabel(process.env, port) ?? undefined) : undefined,
+      opts.service === true ? serviceJob(process.env, port, null)?.label : undefined,
     );
   },
 });
