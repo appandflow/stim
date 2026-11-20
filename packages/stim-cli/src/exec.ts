@@ -624,8 +624,8 @@ const defaultExecutor: Executor = {
         for (const key of omitEnv ?? []) delete childEnv[key];
         opts.env = childEnv;
       }
-      opts.env = tailscaleEnvironment(file, opts.env);
-      refuseUnsafeBatchArguments(file, args, opts.env, opts.cwd);
+      opts.env = tailscaleEnvironment(program, opts.env);
+      refuseUnsafeBatchArguments(program, programArgs, opts.env, opts.cwd);
       const claims = declareFor ? [...operationState(declareFor).declaring] : [];
       let clearDeclaration: (() => void) | undefined;
       let retainDeclaration: ((error: unknown) => void) | undefined;
@@ -636,7 +636,7 @@ const defaultExecutor: Executor = {
               retainDeclaration = rejectDeclaration;
             })
           : undefined;
-      const contained = startsInReportJob(file, opts, containProcessTree || Boolean(report), context);
+      const contained = startsInReportJob(program, opts, containProcessTree || Boolean(report), context);
       const base =
         contained && timeout !== undefined ? join(tmpdir(), `stim-report-${process.pid}-${randomUUID()}`) : null;
       const markers = base ? { started: `${base}.started`, closed: `${base}.closed` } : undefined;

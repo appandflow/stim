@@ -31,6 +31,7 @@ describe.skipIf(process.platform === 'win32')('CLI Tailscale environment', () =>
           const expected = term || 'dumb';
           expect(executor.runFile(file, [], { timeoutMs: 5000 })).toBe(expected);
           expect(await executor.runFileAsync(file, [], { timeoutMs: 5000 })).toBe(expected);
+          expect(await executor.runFileAsync(file, [], { timeoutMs: 5000, lowPriority: true })).toBe(expected);
           const spawned = await new Promise<string>((resolve, reject) => {
             const child = executor.spawn(file, [], { stdio: ['ignore', 'pipe', 'pipe'] });
             let out = '';
