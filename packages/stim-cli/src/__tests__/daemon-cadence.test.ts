@@ -21,6 +21,7 @@ import * as ladder from '../daemon/ladder.ts';
 import * as measure from '../daemon/measure.ts';
 import * as reclaim from '../daemon/reclaim.ts';
 import { ensureStimd } from '../daemon/client.ts';
+import { createMaintenanceLane } from '../daemon/passes.ts';
 import { runStimd } from '../stimd/main.ts';
 import * as stages from '../daemon/stages.ts';
 import { pendingDormant } from '../daemon/stages.ts';
@@ -30,6 +31,7 @@ import * as maintenanceRun from '../stimd/passes/run.ts';
 import { loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState, recordWorkspaceUse } from '../workspace/workspace-state.ts';
+import { testContext } from './_context.ts';
 
 vi.mock('../stimd/threads.ts', () => import('./fixtures/inline-stimd-threads.ts'));
 vi.mock('../daemon/fingerprint-precompute.ts', () => ({
@@ -112,6 +114,26 @@ function quietWorkspace(usedAgoMs = MINUTE_MS): string {
   recordWorkspaceUse(root, new Date(Date.now() - usedAgoMs));
   return root;
 }
+
+test('the maintenance lane starts no dormant dependency step while the tick that started it ended above normal', async () => {
+  const step = vi.spyOn(dependencies, 'runDormantDependencies').mockResolvedValue([]);
+  const lane = createMaintenanceLane(() => {});
+  const measured = await measure.measureTick(null, Date.now());
+  for (const level of ['high', 'normal'] as const) {
+    lane.start(
+      {
+        config: loadConfig(),
+        measured,
+        operation: testContext(),
+        workspaces: [],
+        pressure: { level, disk: level, memory: 'normal', reasons: [], memoryWarningSince: null },
+      },
+      true,
+    );
+    await lane.settled();
+    expect(step).toHaveBeenCalledTimes(level === 'normal' ? 1 : 0);
+  }
+});
 
 describe.skipIf(process.platform === 'win32')(
   'a running stim-daemon (skipped on win32, where Stim runs no daemon)',
@@ -397,7 +419,12 @@ describe.skipIf(process.platform === 'win32')(
       vi.spyOn(idlePass, 'runIdlePass').mockImplementation(() => after(1000, []));
       vi.spyOn(stages, 'runDormantPass').mockImplementation(() => after(2000, []));
       vi.spyOn(dependencies, 'runDormantDependencies').mockImplementation(() => after(3000, []));
-      vi.spyOn(ladder, 'runLadder').mockImplementation((_input, pressure) => after(4000, { actions: [], pressure }));
+      vi.spyOn(ladder, 'runLadder').mockImplementation(() =>
+        after(4000, {
+          actions: [],
+          pressure: { level: 'normal', disk: 'normal', memory: 'normal', reasons: [], memoryWarningSince: null },
+        }),
+      );
       vi.spyOn(maintenanceRun, 'runMaintenance').mockImplementation(() => after(5000, undefined));
       vi.spyOn(reclaim, 'reclaimForBootWaiters').mockImplementation(() => after(6000, null));
       const daemon = runStimd({ mode: 'on' });

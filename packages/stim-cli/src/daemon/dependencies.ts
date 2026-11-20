@@ -107,13 +107,11 @@ function linkedDetail({ linked, sampled }: { linked: number; sampled: number }):
 /**
  * Which dependency trees to delete, given in the order their workspaces went idle: those whose private bytes reach
  * REAL_BYTES_THRESHOLD, most private bytes first; trees below it are kept. A tree of unknown size is taken after the
- * measured ones in the given order (`unknown: 'take'`) or kept (`'keep'`); one a sample found mostly hard links is kept,
- * or with `links: 'last'`, at critical, taken after every other tree.
+ * measured ones in the given order (`unknown: 'take'`) or kept (`'keep'`); one a sample found mostly hard links is kept.
  */
 export function selectDependencies(
   ranked: readonly RankedDependency[],
   unknown: 'take' | 'keep',
-  links: 'keep' | 'last' = 'keep',
 ): { take: RankedDependency[]; kept: { dependency: RankedDependency; detail: string }[] } {
   const known = ranked.filter((dependency): dependency is Measured => dependency.privateBytes !== null);
   const unmeasured = ranked.filter((dependency) => dependency.privateBytes === null && !dependency.links);
@@ -129,8 +127,7 @@ export function selectDependencies(
   );
   if (unknown === 'take') take.push(...unmeasured);
   else kept.push(...unmeasured.map((dependency) => ({ dependency, detail: dependency.unknown ?? NOT_MEASURED })));
-  if (links === 'last') take.push(...linked);
-  else kept.push(...linked.map((dependency) => ({ dependency, detail: linkedDetail(dependency.links) })));
+  kept.push(...linked.map((dependency) => ({ dependency, detail: linkedDetail(dependency.links) })));
   return { take, kept };
 }
 

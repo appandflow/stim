@@ -46,7 +46,7 @@ interface HomePassPhases {
 
 /**
  * The last pressure ladder pass: the disk and memory levels and each measured volume's free disk and level it started
- * at, keyed by device id, whether it freed anything, how long it took and when it ended.
+ * at, keyed by device id, whether an action freed bytes, how long it took and when it ended.
  */
 export interface LadderPass {
   disk: PressureLevel;
@@ -261,7 +261,8 @@ async function homePasses(
       disk: before.disk,
       memory: before.memory,
       volumes,
-      freed: ladder.actions.some((action) => action.outcome === 'done'),
+      // @ref LLP 0001#a-ladder-pass-that-frees-nothing-waits -- an action that freed no bytes is no progress
+      freed: ladder.actions.some((action) => action.outcome === 'done' && action.bytes > 0),
       durationMs: endedAt - started,
       endedAt,
     };
@@ -294,7 +295,7 @@ export interface MaintenanceLane {
 
 /**
  * The daemon's slow passes, beside its tick instead of in it: the fingerprint precompute of the live workspaces whose
- * HEAD, lockfile or install stamp changed, the dormant stage's dependency step and an automatic maintenance pass, from the
+ * HEAD, lockfile or install stamp changed, the dormant stage's dependency step while the tick ended at normal pressure, and an automatic maintenance pass, from the
  * measurement of the tick that started them, one at a time, so a slow git fetch, `gh` call or size scan never holds
  * the tick that serves waiting runs. Each logs a `daemon_maintenance` record with its phases; one that throws is
  * logged and the next tick starts them again.
@@ -335,7 +336,11 @@ export function createMaintenanceLane(
           log('warn', 'daemon_fingerprint_precompute', error instanceof Error ? error.message : String(error));
         });
         const fingerprintMs = lap();
-        const deleted = await runDormantDependencies({ config, act, log, ...reading, cadence: dependencyCadence });
+        // @ref LLP 0001#the-maintenance-lane-never-runs-beside-the-ladder -- both walk the same checkouts
+        const deleted =
+          pressure.level === 'normal'
+            ? await runDormantDependencies({ config, act, log, ...reading, cadence: dependencyCadence })
+            : [];
         taken.push(...deleted);
         const dependenciesMs = lap();
         const skipped = await watchedStep(log, 'maintenance', () =>
@@ -422,7 +427,8 @@ async function runCommandLadder(
         config,
         act: mode === 'on',
         log: (level, event, msg, fields = {}) => {
-          if (headroom && event === 'pressure_action' && !fields.unsized) headroom.acted = true;
+          if (headroom && event === 'pressure_action' && (fields.outcome === 'done' || fields.outcome === 'failed'))
+            headroom.acted = true;
           writer.write({ src: trigger, level, event, msg, ...fields });
         },
         devices: measured.devices,
@@ -449,11 +455,11 @@ interface HeadroomRun {
   operation: StimContext;
   /** Aborts when the build is cancelled or the run's deadline passes. */
   stop: AbortSignal;
-  /** An action has been logged since the build device was last measured. */
+  /** An action that removed something, or failed, has been logged since the build device was last measured. */
   acted: boolean;
   /** The build device's free space at the last measurement. */
   lastFreeMb: number | null;
-  /** An action left the build device's free space no higher: the rungs cannot help it, so the run ends. */
+  /** Such an action left the build device's free space no higher: the rungs cannot help it, so the run ends. */
   helpless: boolean;
 }
 
@@ -467,8 +473,8 @@ const NORMAL_PRESSURE: DaemonPressure = {
 
 /**
  * The level of a headroom run: high while the build's device has less free than the target, else normal. It ignores
- * every other volume and memory, and is normal once `stop` aborts or once an action left the build device's free space
- * no higher, which ends the run between two rungs or two actions.
+ * every other volume and memory, and is normal once `stop` aborts or once an action that removed something left the
+ * build device's free space no higher, which ends the run between two rungs or two actions.
  */
 async function headroomPressure(config: Config, headroom: HeadroomRun): Promise<DaemonPressure> {
   if (headroom.stop.aborted || headroom.helpless) return NORMAL_PRESSURE;

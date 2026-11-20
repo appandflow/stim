@@ -47,7 +47,7 @@ import { discoveredReads, type DiscoveredReads } from '../workspace/discovered-r
 import { listedRoots } from '../commands/gc/worktrees.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
-import { existingBuildDirsAsync } from '../workspace/regenerable-dirs.ts';
+import { existingBuildDirKindsAsync } from '../workspace/regenerable-dirs.ts';
 import {
   idleMinutesSetting,
   maintenanceKeepSetting,
@@ -327,12 +327,11 @@ async function readIdleWorkspaces(
   return linkedFirst(candidates);
 }
 
+/** Whether the checkout holds an output rung 1 deletes, which a Cargo `target/` is not. */
 async function hasOutputs(path: string): Promise<boolean> {
-  return (
-    workspaceOutputPaths(workspaceDir(path)).length > 0 ||
-    (await existingBuildDirsAsync(path)).length > 0 ||
-    existsSync(metroStoreRoot(path))
-  );
+  if (workspaceOutputPaths(workspaceDir(path)).length > 0 || existsSync(metroStoreRoot(path))) return true;
+  const { dirs, cargo } = await existingBuildDirKindsAsync(path);
+  return dirs.some((dir) => !cargo.includes(dir));
 }
 
 /** Whether the workspace is still idle `thresholdMs`, for a caller that holds its native-run claim. */
@@ -417,7 +416,8 @@ export async function stoppedOutputs(
 
 /**
  * Deletes a stopped workspace's regenerable build outputs under its native-run and metro-start locks. Null when every
- * output it has is kept, such as a Metro store a running dev server shares.
+ * output it has is kept, such as a Metro store a running dev server shares; `kept`, not `done`, when the deletion kept
+ * every path it was given.
  */
 export async function clearStoppedOutputs(
   candidate: StageCandidate,
@@ -459,6 +459,7 @@ export async function clearStoppedOutputs(
             );
             if ('locked' in outputs) return { outcome: 'kept', bytes: 0, detail: outputs.locked };
             if (!outputs.paths.length) return null;
+            const keptBefore = outputs.kept.length;
             const bytes = await deleteOutputs(
               outputs.paths,
               launchingOf(
@@ -469,6 +470,8 @@ export async function clearStoppedOutputs(
               ),
               outputs.kept,
             );
+            if (outputs.kept.length - keptBefore === outputs.paths.length)
+              return { outcome: 'kept', bytes: 0, detail: outputs.kept.join('; ') };
             return {
               outcome: 'done',
               bytes,

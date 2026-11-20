@@ -49,7 +49,6 @@ import * as fsUtil from '../fs-util.ts';
 import { treeSignature } from '../private-size.ts';
 import { writeCacheFile } from '../cache-file.ts';
 import { getProject, loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
-import * as lightened from '../workspace/lightened.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState, recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { serveShareList, shareRow } from './_share-list-server.ts';
@@ -566,11 +565,11 @@ describe('the pressure ladder', () => {
     expect(deleted).toEqual([]);
   });
 
-  function cargoApp() {
+  function cargoApp(name = 'rust-app') {
     vi.stubEnv('STIM_DISK_MIN_FREE_GB', '100000000');
     vi.stubEnv('STIM_DISK_CRITICAL_FREE_GB', '0');
     vi.stubEnv('STIM_DISK_HARD_FLOOR_GB', '0');
-    const app = join(projects, 'rust-app');
+    const app = join(projects, name);
     mkdirSync(join(app, 'ios', 'App.xcodeproj'), { recursive: true });
     writeFileSync(join(app, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
     writeFileSync(join(app, '.gitignore'), 'target/\n');
@@ -615,6 +614,44 @@ describe('the pressure ladder', () => {
       vi.setSystemTime(Date.now() + 11 * MINUTE_MS);
       await runLadder(input(true, remeasure), pressure('high'));
       expect(existsSync(incremental)).toBe(false);
+    },
+  );
+
+  test.skipIf(process.platform === 'win32')(
+    'at high rung 3 trims the shared caches before the Cargo targets, and the targets largest first by their last recorded size',
+    async () => {
+      const small = cargoApp('small-app');
+      const big = cargoApp('big-app');
+      for (const [target, gib] of [
+        [small.target, 1],
+        [big.target, 20],
+      ] as const)
+        writeCacheFile(diskUsageCacheFile(target), {
+          path: target,
+          measuredAt: new Date().toISOString(),
+          bytes: gib * 1024 ** 3,
+        });
+      caches('kept-key');
+      vi.stubEnv('STIM_CACHES_BUILD_CACHE_MAX_GB', '12');
+      const real = getExecutor();
+      setExecutor({
+        ...real,
+        runFileAsync: async (file, args, options) =>
+          file === 'du' && args.at(-1) === buildCache()
+            ? `${20 * 1024 * 1024}\t${buildCache()}\n`
+            : real.runFileAsync(file, args, options),
+      });
+
+      const { actions } = await runLadder(
+        input(true, async () => pressure('high')),
+        pressure('high'),
+      );
+
+      expect(actions.filter((action) => action.rung === 3).map((action) => [action.kind, action.target])).toEqual([
+        ['trim-cache', buildCache()],
+        ['trim-cargo', big.target],
+        ['trim-cargo', small.target],
+      ]);
     },
   );
 
@@ -739,6 +776,39 @@ describe('the pressure ladder', () => {
       expect.objectContaining({ rung: 1, kind: 'delete-build-outputs', outcome: 'done', bytes: expect.any(Number) }),
     );
     expect(deleted).toEqual([]);
+  });
+
+  test('rung 1 records kept, not done, when the deletion kept every output', async () => {
+    const { root } = workspace('held', 5 * MINUTE_MS, 'Shutdown');
+    const dir = join(workspaceDir(root), 'derived-data');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'Build.o'), 'x'.repeat(4096));
+    vi.spyOn(idlePass, 'deleteOutputs').mockImplementation(async (paths, _launching, kept) => {
+      for (const path of paths) kept.push(`kept ${path}: held`);
+      return 0;
+    });
+
+    const { actions } = await runLadder(
+      input(true, async () => pressure('high')),
+      pressure('high'),
+    );
+
+    expect(existsSync(dir)).toBe(true);
+    expect(actions.filter((action) => action.rung === 1)).toEqual([
+      expect.objectContaining({ outcome: 'kept', bytes: 0, detail: `kept ${dir}: held` }),
+    ]);
+  });
+
+  test('rung 1 leaves out a stopped workspace whose only output is a Cargo target/', async () => {
+    const rust = workspace('rust-only', 5 * MINUTE_MS, 'Shutdown').root;
+    mkdirSync(join(rust, 'target'));
+    writeFileSync(join(rust, 'target', 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55\n');
+    const built = workspace('built', 5 * MINUTE_MS, 'Shutdown').root;
+    mkdirSync(join(built, 'android', 'build'), { recursive: true });
+
+    const candidates = await stages.stoppedOutputCandidates(input().config, input(), idlePass.PRESSURE_IDLE_MS);
+
+    expect(candidates.map(({ path }) => path)).toEqual([built]);
   });
 
   test('rung 1 records nothing for a stopped workspace whose only output is a Metro store a running dev server shares', async () => {
@@ -903,11 +973,12 @@ describe('the pressure ladder', () => {
     expect(existsSync(join(buildCache(), 'ios', 'unused'))).toBe(true);
   });
 
-  test('a build headroom run ends after a build cache trim that evicted nothing left the free space no higher', async () => {
+  test('a build headroom run goes on past a build cache trim that evicted nothing', async () => {
     mkdirSync(join(buildCache(), 'ios', 'recent'), { recursive: true });
     const transform = join(metroCache(), 'other-app', 'transform', 'aa');
     mkdirSync(transform, { recursive: true });
-    old(transform);
+    const lastWeek = (Date.now() - 7 * DAY_MS) / 1000;
+    utimesSync(transform, lastWeek, lastWeek);
     vi.stubEnv('STIM_CACHES_BUILD_CACHE_MAX_GB', '12');
     vi.stubEnv('STIM_CACHES_METRO_CACHE_MAX_GB', '1');
     const device = statSync(home).dev;
@@ -935,8 +1006,11 @@ describe('the pressure ladder', () => {
       .filter(Boolean)
       .map((line): { event?: unknown; target?: unknown; outcome?: unknown } => JSON.parse(line))
       .filter((record) => record.event === 'pressure_action');
-    expect(reached).toEqual([expect.objectContaining({ target: buildCache(), outcome: 'kept' })]);
-    expect(existsSync(transform)).toBe(true);
+    expect(reached).toEqual([
+      expect.objectContaining({ target: buildCache(), outcome: 'kept' }),
+      expect.objectContaining({ target: metroCache(), outcome: 'done' }),
+    ]);
+    expect(existsSync(transform)).toBe(false);
   });
 
   test('a memory-only level never trims a cache or deletes a device', async () => {
@@ -1445,42 +1519,39 @@ describe('rung 5', () => {
   describe.skipIf(process.platform === 'win32')(
     'with the running processes listed (skipped on win32, where Stim cannot list them)',
     () => {
-      test('at high it deletes node_modules and Pods of a linked worktree idle 1 hour, and at critical of one idle 2 minutes', async () => {
+      const reports = (actions: readonly DaemonLadderAction[]) =>
+        actions
+          .filter((action) => action.rung === 5)
+          .map(({ target, outcome, detail }) => [target, outcome, detail.startsWith('report only')]);
+
+      test('it deletes nothing and reports at most hourly the node_modules and Pods of a linked worktree idle 1 hour at high, and 2 minutes at critical', async () => {
         const { idle, recent } = linkedWorktrees(['idle', 'recent']);
         register(idle);
         register(recent);
         recordWorkspaceUse(idle, new Date(Date.now() - 2 * HOUR_MS));
         recordWorkspaceUse(recent, new Date(Date.now() - 30 * MINUTE_MS));
+
         const high = await ladder('high');
-        expect(existsSync(join(idle, 'node_modules'))).toBe(false);
-        expect(existsSync(join(idle, 'ios', 'Pods'))).toBe(false);
-        expect(existsSync(join(recent, 'node_modules'))).toBe(true);
-        expect(high.actions.filter((action) => action.rung === 5).map((action) => action.outcome)).toEqual([
-          'done',
-          'done',
-        ]);
-        await ladder('critical');
-        expect(existsSync(join(recent, 'node_modules'))).toBe(false);
+        const within = await ladder('critical');
+        vi.setSystemTime(Date.now() + HOUR_MS);
+        const critical = await ladder('critical');
+
+        for (const root of [idle, recent]) {
+          expect(existsSync(join(root, 'node_modules'))).toBe(true);
+          expect(existsSync(join(root, 'ios', 'Pods'))).toBe(true);
+        }
+        expect(reports(high.actions).toSorted()).toEqual(
+          [join(idle, 'ios', 'Pods'), join(idle, 'node_modules')].map((target) => [target, 'kept', true]),
+        );
+        expect(reports(within.actions)).toEqual([]);
+        expect(reports(critical.actions).filter(([target]) => String(target).startsWith(recent))).toHaveLength(2);
       });
 
-      test('it keeps a worktree used a minute ago, and one used between selection and deletion', async () => {
-        const { recent, late } = linkedWorktrees(['recent', 'late']);
+      test('it reports nothing of a worktree used a minute ago', async () => {
+        const { recent } = linkedWorktrees(['recent']);
         register(recent);
         recordWorkspaceUse(recent, new Date(Date.now() - MINUTE_MS));
-        register(late);
-        const restoreProblem = lightened.restoreProblem;
-        vi.spyOn(lightened, 'restoreProblem').mockImplementation(async (candidate, ...rest) => {
-          if (candidate.worktree === late) recordWorkspaceUse(late);
-          return restoreProblem(candidate, ...rest);
-        });
-        const { actions } = await ladder('critical');
-        for (const root of [recent, late]) expect(existsSync(join(root, 'node_modules'))).toBe(true);
-        const rung5 = actions.filter((action) => action.rung === 5);
-        expect(rung5.filter((action) => action.workspace === recent)).toEqual([]);
-        expect(rung5.find((action) => action.workspace === late)).toMatchObject({
-          outcome: 'kept',
-          detail: 'it is no longer idle',
-        });
+        expect(reports((await ladder('critical')).actions)).toEqual([]);
       });
 
       function measured(path: string, privateBytes: number, signature = treeSignature(path)) {
@@ -1493,7 +1564,7 @@ describe('rung 5', () => {
         });
       }
 
-      test('at critical it keeps a clone under the private-bytes threshold and deletes the rest, most private first, unknown last', async () => {
+      test('at critical it keeps a clone under the private-bytes threshold and reports the rest, most private first, unknown last', async () => {
         const { clone, reinstalled, unknown } = linkedWorktrees(['clone', 'reinstalled', 'unknown']);
         for (const root of [clone, reinstalled, unknown]) register(root);
         measured(join(clone, 'node_modules'), REAL_BYTES_THRESHOLD - 1);
@@ -1501,18 +1572,17 @@ describe('rung 5', () => {
         measured(join(reinstalled, 'node_modules'), 2 * REAL_BYTES_THRESHOLD);
         measured(join(reinstalled, 'ios', 'Pods'), 3 * REAL_BYTES_THRESHOLD, 'an older install');
 
-        const rung5 = (await ladder('critical')).actions.filter((action) => action.rung === 5);
+        const rung5 = reports((await ladder('critical')).actions);
 
-        expect(existsSync(join(clone, 'node_modules'))).toBe(true);
-        const outcomes = rung5.map(({ target, outcome }) => [target, outcome]);
-        expect(outcomes.slice(0, 3)).toEqual([
-          [join(clone, 'node_modules'), 'kept'],
-          [join(reinstalled, 'node_modules'), 'done'],
-          [join(clone, 'ios', 'Pods'), 'done'],
+        expect(existsSync(join(reinstalled, 'node_modules'))).toBe(true);
+        expect(rung5.slice(0, 3)).toEqual([
+          [join(clone, 'node_modules'), 'kept', false],
+          [join(reinstalled, 'node_modules'), 'kept', true],
+          [join(clone, 'ios', 'Pods'), 'kept', true],
         ]);
-        expect(outcomes.slice(3).toSorted()).toEqual(
+        expect(rung5.slice(3).toSorted()).toEqual(
           [join(reinstalled, 'ios', 'Pods'), join(unknown, 'ios', 'Pods'), join(unknown, 'node_modules')].map(
-            (target) => [target, 'done'],
+            (target) => [target, 'kept', true],
           ),
         );
       }, 20_000);
@@ -1718,7 +1788,7 @@ describe("the daemon tick's ladder pacing", () => {
     });
   }
 
-  function passTaking(outcomes: DaemonLadderAction['outcome'][]) {
+  function passTaking(outcomes: DaemonLadderAction['outcome'][], bytes = 1) {
     ladder.mockImplementation(async (_input, level) => {
       vi.setSystemTime(Date.now() + 90_000);
       return {
@@ -1727,7 +1797,7 @@ describe("the daemon tick's ladder pacing", () => {
           kind: 'empty-cache',
           target: '/cache',
           outcome,
-          bytes: 1,
+          bytes,
           detail: '',
         })),
         pressure: level,
@@ -1847,5 +1917,16 @@ describe("the daemon tick's ladder pacing", () => {
 
     expect(ladder).toHaveBeenCalledTimes(runs ? 1 : 0);
     expect(passes.ladder === lastLadder).toBe(!runs);
+  });
+
+  test('a pass whose actions freed no bytes freed nothing, so the next pass waits', async () => {
+    measuredAt([SHORT, ROOMY]);
+    passTaking(['done'], 0);
+
+    const first = await runHomePasses({ act: true, log });
+    await runHomePasses({ act: true, log, lastLadder: first.ladder });
+
+    expect(first.ladder).toMatchObject({ freed: false });
+    expect(ladder).toHaveBeenCalledTimes(1);
   });
 });

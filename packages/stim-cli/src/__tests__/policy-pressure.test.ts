@@ -34,12 +34,12 @@ describe('the pressure ladder', () => {
     ]);
   });
 
-  test('a rung runs at critical only when a cause it relieves is critical', () => {
+  test("rungs run by yield, Stim's own devices and caches before rung 1, each at critical only when a cause it relieves is critical", () => {
     expect(runs(pressure('high', 'critical'))).toEqual([
       [0, 'critical', ['memory']],
-      [1, 'high', ['disk']],
       [2, 'high', ['disk']],
       [3, 'high', ['disk']],
+      [1, 'high', ['disk']],
       [4, 'high', ['disk']],
       [5, 'high', ['disk']],
       [6, 'critical', ['disk', 'memory']],

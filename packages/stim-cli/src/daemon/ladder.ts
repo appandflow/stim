@@ -5,6 +5,8 @@ import { buildCacheRoot, configDir, isScopedHome, metroCacheRoot, withDirLock, t
 import {
   fingerprintIndexDir,
   fingerprintIndexLock,
+  readDiskUsage,
+  readMaintenanceState,
   sharedCompilationCache,
   type DaemonLadderAction,
   type DaemonPressure,
@@ -20,7 +22,6 @@ import { ownedAvdDirectory } from '../devices/android.ts';
 import { projectDeviceSlots } from '../devices/device-slots.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
 import { readParked } from '../devices/sim-pool.ts';
-import { restoreProblem } from '../workspace/lightened.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import { freshLaunchers, launchingOf, type Launching } from '../workspace/launchers.ts';
 import { formatBytes, measuredDirectorySizeAsync } from '../fs-util.ts';
@@ -28,7 +29,6 @@ import { describeSizeFailure, lastSizeFailure } from '../size-failures.ts';
 import { timedStep } from './step-timing.ts';
 import { forgetGitReads } from '../workspace/git-reads.ts';
 import { executeAction, type ActContext, type ActionOutcome } from '../stimd/passes/act.ts';
-import { artifactWorktreesFor } from '../stimd/passes/artifacts.ts';
 import { cacheBlocked } from '../stimd/passes/measure.ts';
 import { cacheEntryProtectionFor, maintenancePinned, maintenancePinnedReader } from '../stimd/passes/protect.ts';
 import { executedActionName } from '../maintenance-kind.ts';
@@ -38,7 +38,7 @@ import { planRung6, planWorktrees } from '../stimd/passes/sweep.ts';
 import { planHistory } from '../stimd/passes/records.ts';
 import { planCacheEmptying } from '../commands/gc/caches.ts';
 import { isInsideWorkspaces } from '../commands/gc/workspaces.ts';
-import { DEFAULT_WORKTREE_IDLE_DAYS, type WorktreeSweep } from '../commands/gc/worktrees.ts';
+import { DEFAULT_WORKTREE_IDLE_DAYS } from '../commands/gc/worktrees.ts';
 import { causesOf, dormantAction, rungDecision, rungsFrom, type Cause, type Rung } from '../policy/pressure.ts';
 import type { Config, ProjectRecord } from '../workspace/config.ts';
 import { runBootedParkedPass } from './booted-parked.ts';
@@ -52,16 +52,7 @@ import {
   reportedCaches,
   surveyToolCaches,
 } from '../stimd/passes/unowned.ts';
-import {
-  clearDependency,
-  clearSourceCheckouts,
-  rankDependencies,
-  rankSourceDependencies,
-  sampleLinks,
-  wouldDelete,
-  selectDependencies,
-  SOURCE_RESTORE,
-} from './dependencies.ts';
+import { rankDependencies, rankSourceDependencies, selectDependencies, type RankedDependency } from './dependencies.ts';
 import { idleOutputs, PRESSURE_IDLE_MS, writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
 import {
   clearStoppedOutputs,
@@ -81,6 +72,8 @@ const DORMANT_HIGH_IDLE_MS = 10 * MINUTE_MS;
 const DEPENDENCIES_HIGH_IDLE_MS = 60 * MINUTE_MS;
 const UNOWNED_EVERY_MS = 60 * MINUTE_MS;
 let unownedRunAt = -Infinity;
+const REPORT_EVERY_MS = 60 * MINUTE_MS;
+const reportedAt = new Map<string, number>();
 
 export interface LadderInput {
   config: Config;
@@ -133,10 +126,9 @@ function recordAction(
   context: Pick<RungContext, 'log' | 'actions' | 'force' | 'operation'>,
   action: DaemonLadderAction,
   reason: string,
-  unsized?: true,
 ): void {
   context.actions.push(action);
-  if (action.outcome === 'done' || action.outcome === 'failed') forgetGitReads(context.operation);
+  if ((action.outcome === 'done' || action.outcome === 'failed') && action.bytes > 0) forgetGitReads(context.operation);
   const verb =
     action.outcome === 'would'
       ? 'would'
@@ -156,7 +148,6 @@ function recordAction(
     reason,
     ...(action.restore ? { restore: action.restore } : {}),
     ...(action.workspace ? { workspace: action.workspace } : {}),
-    ...(unsized ? { unsized } : {}),
   };
   context.log(level, 'pressure_action', msg, fields);
   if (action.workspace && action.outcome !== 'kept' && !(context.force && action.outcome === 'would'))
@@ -213,11 +204,7 @@ const actContext = (settings: MaintenanceSettings): ActContext => ({
 async function run(
   context: RungContext,
   plan: MaintenanceAction,
-  {
-    restore,
-    bytes,
-    worktreeSweep,
-  }: { restore?: string; bytes?: () => Promise<number>; worktreeSweep?: WorktreeSweep } = {},
+  { restore, bytes }: { restore?: string; bytes?: () => Promise<number> } = {},
 ): Promise<void> {
   if (!context.act) {
     recordAction(
@@ -244,7 +231,6 @@ async function run(
       protectedRoot: context.protectedRoot ? (canonicalOrNull(context.protectedRoot) ?? '') : '',
       operation: context.operation,
       ...(context.stop ? { stop: context.stop } : {}),
-      ...(worktreeSweep ? { worktreeSweep } : {}),
       ...(context.short ? { deletable: deletable(context) } : {}),
     });
   } catch (error) {
@@ -429,6 +415,26 @@ async function trim(
     : { outcome: 'kept', bytes: 0, detail: `no unprotected entry to evict${kept}` };
 }
 
+/**
+ * The trims ordered by the last size recorded for their target, by the maintenance size scan or a walk into the
+ * disk-usage cache, whichever is newer, largest first; targets with no recorded size follow in plan order.
+ */
+function largestFirst(actions: readonly MaintenanceAction[]): MaintenanceAction[] {
+  const scanned = new Map<string, { bytes: number; at: number }>();
+  for (const size of readMaintenanceState()?.sizes ?? [])
+    if (size.name === 'Cargo target') scanned.set(size.dir, { bytes: size.bytes, at: size.measuredAt });
+  const known = (dir: string): number => {
+    const walked = readDiskUsage(dir);
+    const scan = scanned.get(dir);
+    if (walked && !(scan && scan.at >= Date.parse(walked.measuredAt))) return walked.bytes;
+    return scan?.bytes ?? -1;
+  };
+  return actions
+    .map((action) => ({ action, bytes: known(action.target) }))
+    .toSorted((a, b) => b.bytes - a.bytes)
+    .map(({ action }) => action);
+}
+
 const CARGO_TRIM_RETRY_MS = 10 * 60_000;
 const cargoTrimmedAt = new Map<string, number>();
 
@@ -456,7 +462,7 @@ async function cargoTargetsStep(context: RungContext): Promise<void> {
           },
         }),
   });
-  for (const action of plan.actions) {
+  for (const action of largestFirst(plan.actions)) {
     const workspace = action.workspace ? canonicalOrNull(action.workspace) : null;
     if (protectedRoot && (workspace === protectedRoot || action.target.startsWith(`${protectedRoot}${sep}`))) continue;
     if (!onShort(context, [action.target])) continue;
@@ -475,10 +481,9 @@ function unsizedDetail(dir: string): string {
  * Rung 3, the shared caches: at high, each trimmed least recently used first to half its cap (the compilation cache,
  * which can only be emptied whole, emptied once over half its cap); at critical, the Metro cache and the compilation
  * cache emptied, the build cache trimmed to its protected entries, the fingerprint index and memo emptied, and every
- * other registered cache emptied whole except those `emptyRegisteredCaches` keeps.
+ * other registered cache emptied whole except those `emptyRegisteredCaches` keeps. Then the Cargo trims.
  */
 async function cachesRung(context: RungContext): Promise<void> {
-  await cargoTargetsStep(context);
   const critical = context.level === 'critical';
   const recentDays = critical ? 0 : context.settings.protectRecentHours / 24;
   const entries = [
@@ -504,7 +509,6 @@ async function cachesRung(context: RungContext): Promise<void> {
             detail: unsizedDetail(cache.dir),
           },
           context.why,
-          true,
         );
         continue;
       }
@@ -537,7 +541,6 @@ async function cachesRung(context: RungContext): Promise<void> {
             detail: unsizedDetail(compilation),
           },
           context.why,
-          true,
         );
     } else if (critical || (capGb > 0 && bytes > (capGb * GIB) / 2)) {
       const blocked = cacheBlocked(
@@ -582,6 +585,7 @@ async function cachesRung(context: RungContext): Promise<void> {
       context.why,
     );
   }
+  await cargoTargetsStep(context);
 }
 
 /**
@@ -668,13 +672,46 @@ function canonicalOrNull(path: string): string | null {
 }
 
 /**
- * Rung 5: node_modules and Pods of linked worktrees whose workspace in this Stim home is idle 1 hour at high and 2
- * minutes at critical by the activity definition with nothing running, each recorded for `stim worktree warm`: those holding
- * REAL_BYTES_THRESHOLD or more private bytes, most first, then those of unknown size, longest-idle first. A
- * copy-on-write clone below the threshold is kept, and so is a tree of unknown size whose sample found mostly hard
- * links, which at critical goes last instead.
+ * Whether a report-only step runs now: in `stim gc` each time, never in a build's headroom run, which a report cannot
+ * help, and in the stim-daemon at most hourly per rung and Stim home.
+ */
+function reportDue(context: RungContext): boolean {
+  if (context.force) return true;
+  if (context.volume !== undefined) return false;
+  const key = `${configDir()}\0${context.rung}`;
+  const now = Date.now();
+  const last = reportedAt.get(key);
+  if (last !== undefined && last <= now && now - last < REPORT_EVERY_MS) return false;
+  reportedAt.set(key, now);
+  return true;
+}
+
+/** Records a dependency tree a report-only rung would have deleted, with what that would free, and deletes nothing. */
+function reportDependency(context: RungContext, dependency: RankedDependency, why: string): void {
+  recordAction(
+    context,
+    {
+      rung: context.rung,
+      kind: 'delete-dependencies',
+      target: dependency.candidate.path,
+      workspace: dependency.workspace,
+      outcome: 'kept',
+      bytes: 0,
+      detail: `report only: deleting it would free ${dependency.privateBytes === null ? 'an unknown amount' : formatBytes(dependency.privateBytes)}`,
+    },
+    why,
+  );
+}
+
+/**
+ * Rung 5, report only: the node_modules and Pods of linked worktrees whose workspace in this Stim home is idle 1 hour at
+ * high and 2 minutes at critical by the activity definition with nothing running, those holding REAL_BYTES_THRESHOLD or
+ * more private bytes most first, then those of unknown size, longest-idle first. A copy-on-write clone below the
+ * threshold is reported as kept.
  */
 async function dependenciesRung(context: RungContext): Promise<void> {
+  // @ref LLP 0001#rungs-5-7-and-8-only-report -- a pressure pass deletes no dependencies or worktrees
+  if (!reportDue(context)) return;
   const idleMs = context.level === 'critical' ? PRESSURE_IDLE_MS : DEPENDENCIES_HIGH_IDLE_MS;
   const idle = await idleStageCandidates(context.config, context, idleMs);
   const protectedRoot = context.protectedRoot ? (canonicalOrNull(context.protectedRoot) ?? '') : '';
@@ -686,8 +723,7 @@ async function dependenciesRung(context: RungContext): Promise<void> {
       { signal: context.operation?.signal, items: (found) => found?.length },
     )
   ).filter((dependency) => onShort(context, [dependency.candidate.path]));
-  await sampleLinks(ranked, context.operation?.signal);
-  const { take, kept } = selectDependencies(ranked, 'take', context.level === 'critical' ? 'last' : 'keep');
+  const { take, kept } = selectDependencies(ranked, 'take');
   for (const { dependency, detail } of kept)
     recordAction(
       context,
@@ -702,73 +738,7 @@ async function dependenciesRung(context: RungContext): Promise<void> {
       },
       context.why,
     );
-  const worktrees = take.length ? await artifactWorktreesFor(context.operation) : [];
-  const restoreCache: Parameters<typeof restoreProblem>[1] = new Map();
-  for (const dependency of take) {
-    if (!(await context.stillShort())) return;
-    const why =
-      dependency.privateBytes === null
-        ? `${context.why}; its real size is unknown`
-        : `${context.why}; ${formatBytes(dependency.privateBytes)} of it is its own`;
-    const plan: MaintenanceAction = {
-      kind: 'would-delete-dependencies',
-      target: dependency.candidate.path,
-      bytes: dependency.privateBytes ?? 0,
-      reason: why,
-      workspace: dependency.workspace,
-    };
-    if (!context.act) {
-      const unrestorable = await restoreProblem(dependency.candidate, restoreCache, context.operation);
-      const result: { status: 'kept' | 'would'; bytes: number; detail: string } = unrestorable
-        ? { status: 'kept', bytes: 0, detail: unrestorable }
-        : await wouldDelete(
-            dependency,
-            context.level,
-            wouldDetail(context),
-            context.operation,
-            context.measure ? (dependency.privateBytes ?? (await pathsBytes([dependency.candidate.path]))) : plan.bytes,
-          );
-      recordAction(
-        context,
-        {
-          rung: 5,
-          kind: 'delete-dependencies',
-          target: dependency.candidate.path,
-          workspace: dependency.workspace,
-          outcome: result.status,
-          bytes: result.bytes,
-          detail: result.detail,
-          ...(result.status === 'would' ? { restore: 'stim worktree warm' } : {}),
-        },
-        why,
-      );
-      continue;
-    }
-    const result = await clearDependency(
-      dependency,
-      idleMs,
-      protectedRoot,
-      worktrees,
-      why,
-      context.operation,
-      true,
-      context.level,
-    );
-    recordAction(
-      context,
-      {
-        rung: 5,
-        kind: 'delete-dependencies',
-        target: dependency.candidate.path,
-        workspace: dependency.workspace,
-        outcome: result.status,
-        bytes: result.bytes,
-        detail: result.detail,
-        ...(result.status === 'done' ? { restore: 'stim worktree warm' } : {}),
-      },
-      why,
-    );
-  }
+  for (const dependency of take) reportDependency(context, dependency, context.why);
 }
 
 /**
@@ -797,14 +767,14 @@ async function sweepRung(context: RungContext, causes: readonly Cause[]): Promis
 }
 
 /**
- * Rung 7, finished worktrees, only while `maintenance.removeFinishedWorktrees` is on: at high, the clean ones whose
- * branch is merged or whose pull request ended, after `gc.worktreeGraceMinutes`; at critical without the grace period,
- * and, while `maintenance.removeIdleWorktrees` is on, clean, pushed ones no Stim command used for 7 days. Every other keep rule of the worktree check holds: in
- * use, leased, locked, pinned, unpushed, or not provably merged. The stim-daemon's own ladder reads the pull request
- * lookups the worktree check cached; `stim gc` looks them up again.
+ * Rung 7, report only, while `maintenance.removeFinishedWorktrees` is on: at high, the clean worktrees whose branch is
+ * merged or whose pull request ended, after `gc.worktreeGraceMinutes`; at critical without the grace period, and, while
+ * `maintenance.removeIdleWorktrees` is on, clean, pushed ones no Stim command used for 7 days. Every other keep rule of
+ * the worktree check holds: in use, leased, locked, pinned, unpushed, or not provably merged. The stim-daemon's own
+ * ladder reads the pull request lookups the worktree check cached; `stim gc` looks them up again.
  */
 async function worktreesRung(context: RungContext): Promise<void> {
-  if (!context.settings.removeFinishedWorktrees) return;
+  if (!context.settings.removeFinishedWorktrees || !reportDue(context)) return;
   const protectedRoot = context.protectedRoot ? (canonicalOrNull(context.protectedRoot) ?? '') : '';
   const pins = new Map<string, boolean>();
   const planned = await timedStep(
@@ -827,8 +797,6 @@ async function worktreesRung(context: RungContext): Promise<void> {
       }),
     { signal: context.operation?.signal, items: (result) => result?.sweep.worktrees.length },
   );
-  const clean = planned.sweep.worktrees.filter((worktree) => !worktree.dirty);
-  const sweep = { ...planned.sweep, worktrees: clean };
   for (const worktree of planned.sweep.worktrees)
     if (worktree.dirty)
       recordAction(
@@ -843,21 +811,31 @@ async function worktreesRung(context: RungContext): Promise<void> {
         },
         context.why,
       );
+  const clean = new Set(planned.sweep.worktrees.filter((worktree) => !worktree.dirty).map(({ path }) => path));
   for (const action of planned.actions) {
-    if (action.kind !== 'would-remove-worktree' || !clean.some((worktree) => worktree.path === action.target)) continue;
-    if (!onShort(context, [action.target])) continue;
-    if (!(await context.stillShort())) return;
-    await run({ ...context, why: `${context.why}; ${action.reason}` }, action, { worktreeSweep: sweep });
+    if (action.kind !== 'would-remove-worktree' || !clean.has(action.target) || !onShort(context, [action.target]))
+      continue;
+    recordAction(
+      context,
+      {
+        rung: 7,
+        kind: 'remove-worktree',
+        target: action.target,
+        outcome: 'kept',
+        bytes: 0,
+        detail: `report only: the pressure ladder removes no worktree${action.bytes > 0 ? `; removing it would free ${formatBytes(action.bytes)}` : ''}`,
+      },
+      `${context.why}; ${action.reason}`,
+    );
   }
 }
 
 /**
- * Rung 8's first step, at critical only: the node_modules and Pods of source checkouts idle 2 minutes, longest-idle
- * first, only on a volume still under the critical level and after rungs 5 and 7 took every linked worktree's
- * dependencies and finished worktrees. A source checkout is what `stim worktree warm` copies from, so it goes last of the
- * dependencies, and before the history and tool caches because one reinstall costs less than they do.
+ * Rung 8's first step, at critical only and report only: the node_modules and Pods of source checkouts idle 2 minutes,
+ * longest-idle first, only on a volume still under the critical level.
  */
 async function sourceDependenciesStep(context: RungContext): Promise<void> {
+  if (!reportDue(context)) return;
   const keeps = new Map<string, string>();
   const idle = await idleStageCandidates(context.config, context, PRESSURE_IDLE_MS, {
     full: true,
@@ -902,8 +880,7 @@ async function sourceDependenciesStep(context: RungContext): Promise<void> {
         },
         context.why,
       );
-  await sampleLinks(ranked, context.operation?.signal);
-  const { take, kept: small } = selectDependencies(ranked, 'take', 'last');
+  const { take, kept: small } = selectDependencies(ranked, 'take');
   if (!context.act || context.force)
     for (const { dependency, detail } of small)
       recordAction(
@@ -921,58 +898,9 @@ async function sourceDependenciesStep(context: RungContext): Promise<void> {
       );
   if (!take.length) return;
   const critical = context.force && !context.force.measured ? null : await shortDevices(context, 'critical');
-  if (critical?.size === 0) return;
-  const worktrees = await artifactWorktreesFor(context.operation);
-  const due: typeof take = [];
-  for (const dependency of take) {
-    if (!onShortVolume([dependency.candidate.path], critical)) continue;
-    if (!(await context.stillShort())) break;
-    due.push(dependency);
-  }
-  const why = `${context.why}; the source checkout's dependencies go last`;
-  const results = context.act
-    ? await clearSourceCheckouts(
-        due,
-        PRESSURE_IDLE_MS,
-        protectedRoot,
-        worktrees,
-        context.operation,
-        'the pressure idle threshold',
-        'critical',
-      )
-    : new Map();
-  for (const dependency of due) {
-    const plan: MaintenanceAction = {
-      kind: 'would-delete-dependencies',
-      target: dependency.candidate.path,
-      bytes: dependency.privateBytes ?? 0,
-      reason: why,
-      workspace: dependency.workspace,
-    };
-    const result = context.act
-      ? (results.get(dependency) ?? { status: 'kept' as const, bytes: 0, detail: 'it was not processed' })
-      : await wouldDelete(
-          dependency,
-          'critical',
-          wouldDetail(context),
-          context.operation,
-          context.measure ? (dependency.privateBytes ?? (await pathsBytes([dependency.candidate.path]))) : plan.bytes,
-        );
-    recordAction(
-      context,
-      {
-        rung: 8,
-        kind: 'delete-dependencies',
-        target: dependency.candidate.path,
-        workspace: dependency.workspace,
-        outcome: result.status,
-        bytes: result.bytes,
-        detail: result.detail,
-        ...(result.status === 'done' ? { restore: SOURCE_RESTORE } : {}),
-      },
-      why,
-    );
-  }
+  for (const dependency of take)
+    if (onShortVolume([dependency.candidate.path], critical))
+      reportDependency(context, dependency, `${context.why}; the source checkout's dependencies go last`);
 }
 
 /** Rung 8, at critical only: a source checkout's dependencies, then every device recording not being written, and the logs, recordings and agent actions of every archive. */
@@ -1087,10 +1015,11 @@ const RUNG_ACTS: Record<Rung, (context: RungContext, causes: Cause[]) => Promise
 };
 
 /**
- * The pressure ladder after the activity pass, whose idle stage at 2 minutes under memory pressure is rung 1: rungs 1
- * to 8 top-down while the level stays above normal, each measuring again before it acts and running only for the
- * causes it relieves (a memory level runs the Gradle daemons of rung 6; the devices of rung 1 are the activity pass's). Each rung skips
- * every workspace with a blocker and takes the longest-idle first. Returns the actions and the last measurement.
+ * The pressure ladder after the activity pass, whose idle stage at 2 minutes under memory pressure is rung 1: the rungs
+ * in the order `rungsFrom` gives while the level stays above normal, each measuring again before it acts and running
+ * only for the causes it relieves (a memory level runs the Gradle daemons of rung 6; the devices of rung 1 are the
+ * activity pass's). Each rung skips every workspace with a blocker and takes the longest-idle first. Returns the
+ * actions and the last measurement.
  */
 export async function runLadder(
   input: LadderInput,
