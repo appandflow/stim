@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { readClaimSet } from '@stim-cli/core/ownership-claim';
 import * as entries from '../spawn-entry.ts';
 import { createThreadTable } from '../stimd/threads.ts';
+import { admitStep } from '../daemon/dormant-gate.ts';
 import { captureProcessToken, inspectProcessIdentity } from '../process-identity.ts';
 import { signalProcessTree } from '../metro.ts';
 import { waitForProcessExit } from '@stim-cli/core/process-identity';
@@ -117,6 +118,34 @@ parentPort.on('message', (message) => {
     await threads.close();
     entry.mockRestore();
     vi.useRealTimers();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a passes worker that exits inside the dormant step gives the turn back', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'stim-worker-turn-'));
+  const fixture = join(root, 'worker.mjs');
+  writeFileSync(
+    fixture,
+    `
+import { parentPort, workerData } from 'node:worker_threads';
+parentPort.on('message', (message) => {
+  if (message.type !== 'run') return;
+  Atomics.compareExchange(workerData.dormantGate, 0, 0, 2);
+  process.exit(1);
+});
+`,
+  );
+  const entry = vi.spyOn(entries, 'spawnEntry').mockReturnValue(fixture);
+  const threads = createThreadTable(() => {});
+  try {
+    await expect(threads.run('passes', { cwd: root })).rejects.toThrow();
+    const gate = threads.dormant?.gate;
+    if (!gate) throw new Error('no dormant gate');
+    expect(admitStep(gate)).toBe(true);
+  } finally {
+    entry.mockRestore();
+    await threads.close();
     rmSync(root, { recursive: true, force: true });
   }
 });

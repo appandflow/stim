@@ -1,7 +1,7 @@
 import { isMainThread, parentPort, Worker, workerData } from 'node:worker_threads';
 import type { DaemonLadderAction } from '@stim-cli/core/state';
 import type { MaintenanceLane } from '../daemon/passes.ts';
-import { createDormantGate } from '../daemon/dormant-gate.ts';
+import { createDormantGate, releaseStep } from '../daemon/dormant-gate.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 import { childKey } from './cleanup-watch.ts';
 import { setReportChildLog } from '../report-child-log.ts';
@@ -123,6 +123,7 @@ export function createThreadTable(log: Log, onLost: (error: Error) => void = () 
     });
     const gone = (error: Error) => {
       if (threads.get(name) === thread) threads.delete(name);
+      if (name === 'passes') releaseStep(dormantGate);
       if (thread.idle) clearTimeout(thread.idle);
       thread.idle = null;
       thread.reading = false;
