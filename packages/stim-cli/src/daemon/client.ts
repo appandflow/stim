@@ -1694,7 +1694,7 @@ export function deviceLogReadinessWait(
     const settle = (value: 'pending' | 'covered' | 'failed') => {
       if (live()) coverage = value;
     };
-    const deadline = Date.now() + READINESS_WAIT_MAX_MS;
+    let deadline = Date.now() + READINESS_WAIT_MAX_MS;
     let readmitted = false;
     for (;;) {
       const { reply, closed } = await ask(current.token, current.through, deadline, signal);
@@ -1713,9 +1713,10 @@ export function deviceLogReadinessWait(
           return changed();
         }
         // @ref LLP 0012#a-command-continues-across-a-stimd-restart -- the successor proves coverage again and resumes the stream after it boots
-        restoring = { token: next.token, until: Date.now() + READINESS_WAIT_MAX_MS };
+        deadline = Date.now() + READINESS_WAIT_MAX_MS;
+        restoring = { token: next.token, until: deadline };
         current.token = next.token;
-        if (live()) revision = 0;
+        revision = 0;
         settle('pending');
         continue;
       }

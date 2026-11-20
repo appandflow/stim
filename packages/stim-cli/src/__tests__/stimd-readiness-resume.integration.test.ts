@@ -205,6 +205,44 @@ describe.skipIf(process.platform === 'win32')('readiness after a lost daemon con
       expect(successorAsks).toBe(successor === 'late' ? 1 : 2);
     },
   );
+  test('a successor admitted after a readmission longer than the request cap gets its own window', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], shouldAdvanceTime: true });
+    let first: Socket | undefined;
+    let admissions = 0;
+    let successorAsks = 0;
+    const seen: string[] = [];
+    try {
+      const coverage = await readinessAfterLoss(
+        (request, socket, reply) => {
+          if (request.op === 'op.begin') {
+            admissions++;
+            if (admissions === 1) first = socket;
+            else vi.setSystemTime(Date.now() + 35_000);
+            reply({ op: 'op.begun', opToken: `admission-${admissions}` });
+          } else if (request.op === 'readiness.wait') {
+            if (request.opToken === 'admission-1') {
+              first?.end();
+              socket.end();
+            } else if (++successorAsks === 1) reply({ op: 'readiness.changed', revision: 0, gone: true });
+            else reply({ op: 'readiness.changed', revision: 3, coverage: 'covered' });
+          }
+        },
+        async (wait) => {
+          for (let poll = 0; poll < 20; poll++) {
+            await wait(500);
+            seen.push(wait.coverage());
+            if (wait.coverage() === 'covered') break;
+          }
+        },
+      );
+      expect(coverage).toBe('covered');
+      expect(seen).not.toContain('failed');
+      expect(successorAsks).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test('a successor still restoring its stream keeps its window when the horizon moves', async () => {
     let first: Socket | undefined;
     let admissions = 0;
