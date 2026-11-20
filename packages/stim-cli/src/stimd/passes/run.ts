@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { diskFull, keepReserve, releaseReserve } from '../../disk-reserve.ts';
 import { writeCacheFile } from '../../cache-file.ts';
 import { basename, join } from 'node:path';
@@ -365,7 +365,7 @@ const KEPT_CATEGORIES: ReadonlySet<MaintenanceSize['category']> = new Set([
  */
 function keepScannedSizes(sizes: readonly MaintenanceSize[]): void {
   for (const size of sizes)
-    if (size.name === 'Cargo target' || KEPT_CATEGORIES.has(size.category))
+    if ((size.name === 'Cargo target' || KEPT_CATEGORIES.has(size.category)) && existsSync(size.dir))
       try {
         writeCacheFile(diskUsageCacheFile(size.dir), {
           path: size.dir,
