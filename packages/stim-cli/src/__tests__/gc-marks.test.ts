@@ -13,14 +13,37 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { diskUsageCacheFile, gcMarkFile, readGcMark, type Config } from '@stim-cli/core/state';
 import { runDormantDependencies } from '../daemon/dependencies.ts';
+import { writeMark } from '../daemon/marks.ts';
 import { stoppedOutputCandidates, stoppedOutputs } from '../daemon/stages.ts';
 import type { OwnedDeviceActivity } from '../commands/gc/idle.ts';
+import { metroStoreRoot } from '../stimd/metro/metro-store.ts';
 import { saveConfig } from '../workspace/config.ts';
+import { readRunningProcessesAsync } from '../workspace/running-from.ts';
 import { testContext } from './_context.ts';
 
 vi.mock('../workspace/protected-locations.ts', () => ({
   isProtectedLocation: () => false,
 }));
+
+const packageReads = vi.hoisted(() => ({ count: 0 }));
+vi.mock('node:fs', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs')>();
+  const readFileSync = new Proxy(fs.readFileSync, {
+    apply(target, self, args: Parameters<typeof fs.readFileSync>) {
+      if (String(args[0]).endsWith('package.json')) packageReads.count++;
+      return Reflect.apply(target, self, args);
+    },
+  });
+  return { ...fs, readFileSync };
+});
+
+vi.mock('../workspace/running-from.ts', async (importOriginal) => {
+  const module = await importOriginal<typeof import('../workspace/running-from.ts')>();
+  return {
+    ...module,
+    readRunningProcessesAsync: vi.fn<typeof module.readRunningProcessesAsync>(module.readRunningProcessesAsync),
+  };
+});
 
 const day = 86_400_000;
 const reading = { devices: [], simsFailed: false };
@@ -35,7 +58,7 @@ describe('gc marks written by the lane', () => {
     mkdirSync(join(path, 'android'), { recursive: true });
     writeFileSync(join(path, 'android', 'build.gradle'), '');
     writeFileSync(join(path, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
-    writeFileSync(join(path, '.gitignore'), 'build/\nnode_modules/\n');
+    writeFileSync(join(path, '.gitignore'), 'build/\nnode_modules/\ntarget/\n');
     const git = (...args: string[]) =>
       execFileSync('git', ['-C', path, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], {
         env: { ...process.env, GIT_AUTHOR_DATE: '2026-01-01T00:00:00Z', GIT_COMMITTER_DATE: '2026-01-01T00:00:00Z' },
@@ -177,5 +200,37 @@ describe('gc marks written by the lane', () => {
 
     expect(readGcMark(idle)?.dirtyAt).toBe(later);
     expect(readGcMark(other)).not.toHaveProperty('dirtyAt');
+  }, 20_000);
+
+  it('marks registered checkouts with Metro stores and Cargo targets without a process read and with package reads linear in the count', async () => {
+    const paths = Array.from({ length: 6 }, (_, i) => {
+      const path = checkout(`app${i}`, 3 * day);
+      writeFileSync(join(path, 'package.json'), JSON.stringify({ name: `app${i}`, dependencies: { expo: '*' } }));
+      mkdirSync(metroStoreRoot(path), { recursive: true });
+      mkdirSync(join(path, 'target', 'debug'), { recursive: true });
+      writeFileSync(join(path, 'target', 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55\n');
+      return path;
+    });
+    const mark = async (count: number) => {
+      const marked = paths.slice(0, count);
+      const registered = { ...config, projects: Object.fromEntries(marked.map((path) => [path, {}])) };
+      vi.mocked(readRunningProcessesAsync).mockClear();
+      packageReads.count = 0;
+      for (const path of marked)
+        await writeMark(registered, { path, at: Date.now(), lastActivityAt: null, kept: null });
+      return { processReads: vi.mocked(readRunningProcessesAsync).mock.calls.length, packageReads: packageReads.count };
+    };
+
+    const few = await mark(3);
+    const many = await mark(6);
+
+    expect(readGcMark(paths[5] ?? '')?.candidates.map(({ kind, path }) => [kind, path])).toEqual([
+      ['outputs', join(paths[5] ?? '', 'android', 'app', 'build')],
+      ['cargo-target', join(paths[5] ?? '', 'target')],
+      ['outputs', metroStoreRoot(paths[5] ?? '')],
+    ]);
+    expect(few.processReads).toBe(0);
+    expect(many.processReads).toBe(0);
+    expect(many.packageReads).toBe(2 * few.packageReads);
   }, 20_000);
 });

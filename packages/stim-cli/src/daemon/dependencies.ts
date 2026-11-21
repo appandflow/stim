@@ -643,7 +643,12 @@ async function takeIdleDependencies(
           },
           between,
         }
-      : { between, ...(input.marks ? { onRead: (reading: CheckoutReading) => writeMark(config, reading) } : {}) },
+      : {
+          between,
+          ...(input.marks
+            ? { onRead: (reading: CheckoutReading) => writeMark(config, reading, input.operation?.signal) }
+            : {}),
+        },
   );
   await between();
   const { operation } = input;

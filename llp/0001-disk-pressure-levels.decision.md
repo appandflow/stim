@@ -335,8 +335,11 @@ implementer's reading of it on #6029.
 The dormant step's hourly walk of registered workspaces and discovered
 checkouts at `idle.dormantDays` writes one mark per checkout it reads, inside that checkout's unit, to
 `$STIM_HOME/gc/marks/<hash>.json`, keyed by the canonical root. A mark holds
-the outputs rung 1 would delete there, with each Cargo `target/` as its own
-kind and sizes from the disk-usage cache; the mark starts no size walk. It
+the outputs rung 1 lists there, with each Cargo `target/` as its own kind and
+sizes from the disk-usage cache; the mark starts no size walk. It skips rung
+1's in-use reads, so it takes no process listing and reads no other checkout:
+a Cargo `target/` another process uses and a Metro store a running dev server
+shares stay candidates, and a sweep reads them fresh before it deletes. It
 also holds the newest activity the walk read, and the walk reads at
 `idle.dormantDays`, not at rung 1's 2-minute threshold:
 

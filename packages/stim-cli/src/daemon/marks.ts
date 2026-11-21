@@ -13,14 +13,14 @@ import type { Config } from '../workspace/config.ts';
 import { idleOutputs } from './idle.ts';
 import type { CheckoutReading } from './stages.ts';
 
-// @ref LLP 0001#the-lane-marks-what-each-checkout-could-free -- the plan rung 1 would make, sized from the cache
+// @ref LLP 0001#the-lane-marks-what-each-checkout-could-free -- rung 1's outputs without its in-use reads, sized from the cache
 /**
- * Writes the mark of one checkout the lane's walk read: the outputs rung 1 would delete there and its Cargo `target/`,
- * sized from the disk-usage cache. A `dirtyAt` after the walk began reading the checkout stays.
+ * Writes the mark of one checkout the lane's walk read: the outputs rung 1 lists there and its Cargo `target/`, before
+ * the in-use reads, sized from the disk-usage cache. A `dirtyAt` after the walk began reading the checkout stays.
  */
-export async function writeMark(config: Config, reading: CheckoutReading): Promise<void> {
+export async function writeMark(config: Config, reading: CheckoutReading, signal?: AbortSignal): Promise<void> {
   const root = canonicalPath(reading.path);
-  const { paths, targets } = await idleOutputs(reading.path, config);
+  const { paths, targets } = await idleOutputs(reading.path, config, undefined, { signal, inUse: false });
   const markedAt = new Date(reading.at).toISOString();
   const candidates = paths.map((path): GcMarkCandidate => {
     const size = readDiskUsage(path);
