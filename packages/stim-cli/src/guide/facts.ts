@@ -879,13 +879,15 @@ RULES
                   on a dry run, "done" otherwise
   failures        null on a dry run; otherwise the actions that failed
   actions         one { rung, kind, target, workspace?, outcome, bytes,
-                  reason, detail, restore? } per entry the run looked at.
+                  partial?, reason, detail, restore? } per entry the run
+                  looked at.
                   rung is null for the automatic maintenance plan, which
                   every level runs, and the ladder rung otherwise. outcome
                   is "would" (a dry run), "done", "kept" (left alone; reason
                   says why) or "failed" (reason says why and what to retry).
                   bytes is what it frees or freed, where gc could measure
-                  it. kind is the action: idle-stage, delete-build-outputs,
+                  it; partial: true when a size walk timed out, so bytes is
+                  a lower bound. kind is the action: idle-stage, delete-build-outputs,
                   delete-parked-device, trim-cache, empty-cache,
                   dormant-stage, delete-dependencies, stop-gradle-daemons,
                   stop-watchman, delete-gradle-version,
@@ -900,9 +902,10 @@ RULES
   blocked         one string per thing the run could not decide or reach,
                   each for a person to look at; empty when nothing blocks
   results         what the run did, one { kind, status, label,
-                  id, bytes, detail } per action that ran; empty on a dry
-                  run. status is "done", "kept" (left alone, detail says
-                  why) or "failed" (detail says why and what to retry).
+                  id, bytes, partial?, detail } per action that ran;
+                  empty on a dry run. status is "done", "kept" (left
+                  alone, detail says why) or "failed" (detail says why
+                  and what to retry).
                   kind: device, parkedDevice, parkedHostedDevice,
                   devServer, deviceRecord, gradleDaemon,
                   workspaceOutputs, worktreeDependencies, recording,
@@ -2003,7 +2006,7 @@ RULES
     label, platform?, since }, absent when none waits. recent is the last 20
     actions any daemon of this home took, oldest first, each a ladder action
     with the tick's time { rung, kind, target, workspace?, outcome, bytes,
-    detail, restore?, at }; the idle stage at idle.minutes is rung 1 there
+    partial?, detail, restore?, at }, partial when bytes is a lower bound; the idle stage at idle.minutes is rung 1 there
     too. unverified lists the children whose cleanup the running daemon could
     not verify and stays up for, { since, child, message, remedy }, absent when none;
     status prints a line for each; doctor adds its remedy. crashHold is { build, count, until, remedy }, present while stimd

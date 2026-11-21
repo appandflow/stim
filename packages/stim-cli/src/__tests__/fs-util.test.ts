@@ -2,13 +2,14 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, rmSync } 
 import { daemonNdjsonFile } from '@stim-cli/core/state';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import {
   directorySize,
   volumeRootFor,
   isRealMount,
   isOnMountedVolume,
   listMountedVolumes,
+  measureDirectoryAsync,
   measuredDirectorySizeAsync,
 } from '../fs-util.ts';
 
@@ -135,6 +136,123 @@ test('a size walk stopped by a signal, or that could not run, writes its reason'
     vi.unstubAllEnvs();
     rmSync(home, { recursive: true, force: true });
   }
+});
+
+describe('a size walk that reports what it measured', () => {
+  let home: string;
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'stim-fsutil-'));
+    vi.stubEnv('STIM_HOME', home);
+  });
+  afterEach(() => {
+    resetExecutor();
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  const folder = (entries: number): string => {
+    const dir = join(home, 'target');
+    for (let index = 0; index < entries; index++)
+      mkdirSync(join(dir, `entry-${String(index).padStart(3, '0')}`), { recursive: true });
+    return dir;
+  };
+  const timedOut = (stdout = '') => Object.assign(new Error('timed out'), { code: 'ETIMEDOUT', stdout });
+
+  test('a walk of a large folder cut off at its deadline reports the entries du printed as a partial size, and stays unknown to callers that decide', async () => {
+    const dir = folder(101);
+    const walks: string[][] = [];
+    setExecutor({
+      ...getExecutor(),
+      runFileAsync: async (file, args) => {
+        walks.push([file, ...args]);
+        throw timedOut(`100\t${join(dir, 'entry-000')}\n200\t${join(dir, 'entry-001')}\n7`);
+      },
+    });
+    expect(await measureDirectoryAsync(dir, { timeoutMs: 10_000 })).toEqual({ bytes: 300 * 1024, partial: true });
+    expect(await measuredDirectorySizeAsync(dir, { timeoutMs: 10_000 })).toBeNull();
+    expect(walks[0]).toEqual(['du', '-k', '-d', '1', dir]);
+  });
+
+  test('a walk of a large folder that finishes reports the total du prints last', async () => {
+    const dir = folder(101);
+    setExecutor({
+      ...getExecutor(),
+      runFileAsync: async () => `100\t${join(dir, 'entry-000')}\n200\t${join(dir, 'entry-001')}\n350\t${dir}`,
+    });
+    expect(await measureDirectoryAsync(dir, { timeoutMs: 10_000 })).toEqual({ bytes: 350 * 1024 });
+  });
+
+  test('a walk of a small folder cut off at its deadline reports the entries that finished as a partial size', async () => {
+    const dir = folder(3);
+    const walks: string[] = [];
+    const limits: (number | 'unbounded' | undefined)[] = [];
+    setExecutor({
+      ...getExecutor(),
+      runFileAsync: async (_file, args, options) => {
+        walks.push(args.join(' '));
+        limits.push(options?.timeoutMs);
+        if (args.at(-1) === join(dir, 'entry-001')) throw timedOut();
+        vi.advanceTimersByTime(4_000);
+        return `40\t${args.at(-1)}`;
+      },
+    });
+    expect(await measureDirectoryAsync(dir, { timeoutMs: 10_000 })).toEqual({ bytes: 40 * 1024, partial: true });
+    expect(walks).toEqual([`-sk ${join(dir, 'entry-000')}`, `-sk ${join(dir, 'entry-001')}`]);
+    expect(limits).toEqual([10_000, 6_000]);
+  });
+
+  test('a small folder stops before the next entry when finished entries spent the shared deadline', async () => {
+    const dir = folder(3);
+    const walks: string[] = [];
+    setExecutor({
+      ...getExecutor(),
+      runFileAsync: async (_file, args) => {
+        walks.push(String(args.at(-1)));
+        vi.advanceTimersByTime(10_000);
+        return `40\t${args.at(-1)}`;
+      },
+    });
+
+    expect(await measureDirectoryAsync(dir, { timeoutMs: 10_000 })).toEqual({ bytes: 40 * 1024, partial: true });
+    expect(walks).toEqual([join(dir, 'entry-000')]);
+  });
+
+  test('cancellation during discovery stops before any size command', async () => {
+    const dir = folder(3);
+    const controller = new AbortController();
+    const runFileAsync = vi.fn<(file: string, args: string[]) => Promise<string>>();
+    setExecutor({ ...getExecutor(), runFileAsync });
+    const walk = measureDirectoryAsync(dir, { timeoutMs: 10_000, signal: controller.signal });
+    controller.abort(new Error('cancel discovery'));
+    await expect(walk).rejects.toThrow('cancel discovery');
+    expect(runFileAsync).not.toHaveBeenCalled();
+  });
+
+  test('a directory symlink measures only the link that cleanup removes', async () => {
+    const target = folder(3);
+    const link = join(home, 'linked-output');
+    symlinkSync(target, link, 'junction');
+    const walks: string[][] = [];
+    setExecutor({
+      ...getExecutor(),
+      runFileAsync: async (_file, args) => {
+        walks.push(args);
+        return `0\t${link}\n`;
+      },
+    });
+    expect(await measureDirectoryAsync(link, { timeoutMs: 10_000 })).toEqual({ bytes: 0 });
+    expect(walks).toEqual([['-sk', link]]);
+  });
+
+  test('a walk of a small folder that finishes reports the sum of its entries', async () => {
+    const dir = folder(3);
+    const sizes: Record<string, number> = { 'entry-000': 40, 'entry-001': 8, 'entry-002': 300 };
+    setExecutor({
+      ...getExecutor(),
+      runFileAsync: async (_file, args) => `${sizes[basename(String(args.at(-1)))]}\t${args.at(-1)}`,
+    });
+    expect(await measureDirectoryAsync(dir, { timeoutMs: 10_000 })).toEqual({ bytes: 348 * 1024 });
+  });
 });
 
 test.each(['darwin', 'linux'] as const)(

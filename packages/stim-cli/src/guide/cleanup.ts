@@ -324,7 +324,7 @@ gc works from any directory because the log is machine-wide; it cannot be
 combined with other --source values and --source all leaves it out. Fields
 (\`guide logs\`, GC LOG): runId, trigger (manual, desktop, maintenance or
 budget), options, kind, status (done, kept or failed), label, id, path,
-bytes, detail. Records with event maintenance_pass, maintenance_skip,
+bytes, partial (bytes is a lower bound), detail. Records with event maintenance_pass, maintenance_skip,
 maintenance_failure, maintenance_check or maintenance_action carry no status,
 kind or label.
 

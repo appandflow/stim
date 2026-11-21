@@ -168,6 +168,29 @@ describe('the Cargo target cap over a root target/', () => {
     });
   }
 
+  it('a maintenance Cargo trim keeps the partial flag when its size walk times out', async () => {
+    const wt = linked('partial', join(base, 'roots'));
+    monorepoTarget(wt);
+    noProcesses();
+    const sizes = await measureCargoTargets(Date.now());
+    const planned = await planCargoTargets({ sizes, settings, pinned: () => false, now: Date.now() });
+    const action = planned.actions[0];
+    if (!action) throw new Error('no trim was planned');
+    const real = getExecutor();
+    setExecutor({
+      ...real,
+      runFileAsync: async (file, args, options) => {
+        if (file === 'du') throw Object.assign(new Error('timed out'), { code: 'ETIMEDOUT', stdout: '' });
+        return real.runFileAsync(file, args, options);
+      },
+    });
+    expect(await trimCargoTargetAction({ ...action, level: undefined })).toMatchObject({
+      status: 'done',
+      bytes: 0,
+      partial: true,
+    });
+  });
+
   it('trims the stale profiles of a discovered checkout root target and never a non-profile directory or a nested target', async () => {
     const wt = linked('wt', join(base, 'roots'));
     const target = monorepoTarget(wt);

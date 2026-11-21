@@ -34,6 +34,8 @@ export interface DaemonWorkspaceDecision {
   detail: string;
   /** The bytes of build outputs the idle stage deleted. */
   freedBytes?: number;
+  /** Set when a size walk timed out, so `freedBytes` is a lower bound. */
+  freedPartial?: true;
 }
 
 export type PressureLevel = 'normal' | 'high' | 'critical';
@@ -61,6 +63,8 @@ export interface DaemonLadderAction {
   workspace?: string;
   outcome: 'done' | 'kept' | 'failed' | 'would';
   bytes: number;
+  /** Set when a size walk timed out, so `bytes` is a lower bound. */
+  partial?: true;
   detail: string;
   /** The command that brings back what the action removed, when one does. */
   restore?: string;

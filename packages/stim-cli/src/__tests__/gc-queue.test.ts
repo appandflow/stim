@@ -97,6 +97,7 @@ test("a forced level joins the tick's disk pass at that level", async () => {
     target: '/repo/target',
     outcome: 'done',
     bytes: 5,
+    partial: true,
     detail: '',
   };
   const tick = joinablePass(
@@ -111,7 +112,7 @@ test("a forced level joins the tick's disk pass at that level", async () => {
   await tick;
   expect(await forced.result).toMatchObject({
     joined: { trigger: 'pressure', level: 'high' },
-    run: { level: 'high', actions: [{ rung: 3, kind: 'trim-cargo', target: '/repo/target', bytes: 5 }] },
+    run: { level: 'high', actions: [{ rung: 3, kind: 'trim-cargo', target: '/repo/target', bytes: 5, partial: true }] },
   });
   expect(unexpected).not.toHaveBeenCalled();
 });

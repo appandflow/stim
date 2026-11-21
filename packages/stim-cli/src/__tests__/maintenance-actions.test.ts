@@ -26,6 +26,9 @@ import {
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
 import { recordGcResult } from '../commands/gc/results.ts';
+import * as fsUtil from '../fs-util.ts';
+import * as gcWorkspaceOutputs from '../commands/gc/workspaces.ts';
+import { maintenanceItem } from '../commands/gc/log.ts';
 import * as gcWorktrees from '../commands/gc/worktrees.ts';
 import * as ios from '../devices/ios.ts';
 import { parkSim, readParked } from '../devices/sim-pool.ts';
@@ -39,6 +42,7 @@ import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.t
 import * as measurements from '../stimd/passes/measure.ts';
 import { cacheEntryProtection } from '../stimd/passes/protect.ts';
 import { runMaintenance } from '../stimd/passes/run.ts';
+import { maintenanceStatus, maintenanceLine } from '../stimd/passes/status.ts';
 import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
 import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
 import * as inUse from '../workspace/in-use.ts';
@@ -206,6 +210,36 @@ test.each<'measure' | 'plan' | 'action'>(['measure', 'plan', 'action'])(
   },
 );
 
+test('a maintenance pass retains a zero-byte partial total in state, log and status', async () => {
+  capFixture();
+  vi.spyOn(measurements, 'measureSizes').mockResolvedValue([]);
+  vi.spyOn(maintenancePreview, 'plannedMaintenance').mockResolvedValue({
+    actions: [{ kind: 'would-clear-outputs', target: '/x', bytes: 8192, reason: 'test' }],
+    blocked: [],
+    skips: [],
+    byCheck: {},
+  });
+  vi.spyOn(maintenanceActions, 'executeAction').mockResolvedValue({
+    status: 'done',
+    bytes: 0,
+    partial: true,
+    detail: '',
+  });
+  const onAction = vi.fn<(action: unknown) => void>();
+  await runMaintenance('test', { onAction });
+  expect(onAction).toHaveBeenCalledWith(expect.objectContaining({ bytes: 0, partial: true }));
+  expect(readMaintenanceState()?.lastPass).toMatchObject({ freedBytes: 0, freedPartial: true });
+  expect(records()).toContainEqual(
+    expect.objectContaining({
+      event: 'maintenance_pass',
+      freedBytes: 0,
+      freedPartial: true,
+      msg: expect.stringContaining('at least 0K freed'),
+    }),
+  );
+  expect(maintenanceLine(maintenanceStatus())).toContain('at least 0.0 GB freed');
+});
+
 test('on mode trims over-cap caches oldest first and clears only idle, unpinned, unlocked workspaces', async () => {
   const { entries, spaces } = capFixture();
 
@@ -323,6 +357,40 @@ describe('executing single actions', () => {
     bytes: 0,
     reason: 'test',
     ...overrides,
+  });
+
+  test.each([0, 1024])(
+    'a partial workspace clear preserves %i measured bytes through its outcome and log',
+    async (bytes) => {
+      const own = workspace('partial', { usedDaysAgo: 30 });
+      vi.spyOn(gcWorkspaceOutputs, 'clearWorkspaceOutputs').mockImplementation(async () => {
+        recordGcResult('workspaceOutputs', 'done', '/x', { bytes, partial: true });
+        return { failures: 0, cleared: ['/x'] };
+      });
+      const planned = action({ target: own.root, workspace: own.root, bytes: 8192 });
+      const outcome = await executeAction(planned, context());
+      expect(outcome).toMatchObject({ status: 'done', bytes, partial: true });
+      expect(maintenanceItem(planned, outcome)).toMatchObject({ bytes, partial: true });
+    },
+  );
+
+  test('cancelling during measurement keeps the workspace outputs', async () => {
+    const own = workspace('cancelled', { usedDaysAgo: 30 });
+    const controller = new AbortController();
+    const report = await gcWorkspaceOutputs.collectWorkspaceOutputs({
+      olderThan: null,
+      now: Date.now(),
+      measure: false,
+      only: own.root,
+    });
+    vi.spyOn(fsUtil, 'measureDirectoryAsync').mockImplementation(async () => {
+      controller.abort(new Error('cancel cleanup'));
+      return { bytes: 0, partial: true };
+    });
+    await expect(
+      gcWorkspaceOutputs.clearWorkspaceOutputs(report, { olderThan: null, signal: controller.signal }),
+    ).rejects.toThrow('cancel cleanup');
+    expect(hasOutputs(own.dir)).toBe(true);
   });
 
   test('the workspace that started the pass is never cleared', async () => {

@@ -14,7 +14,7 @@ import {
   type DaemonWorkspaceDecision,
   type IdleStageRecord,
 } from '@stim-cli/core/state';
-import { formatBytes, measuredDirectorySizeAsync } from '../fs-util.ts';
+import { addSize, formatSize, measureDirectoryAsync, type DirectorySize } from '../fs-util.ts';
 import { deleteCargoTarget } from '../workspace/cargo-target.ts';
 import { collectOwnedDeviceActivityAsync, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
@@ -241,23 +241,23 @@ export async function idleOutputs(
 }
 
 /**
- * Deletes `paths` one at a time, each measured first; the bytes measured. A Cargo `target/` among `targets` goes through
+ * Deletes `paths` one at a time, each measured first; the bytes measured, `partial` when a walk timed out. A Cargo `target/` among `targets` goes through
  * the Cargo delete (`deleteCargoTarget`), which says in `kept` what it left. An abort stops it before the next removal.
  */
 export async function deleteOutputs(
   paths: readonly string[],
   signal?: AbortSignal,
   { targets = [], kept = [] }: { targets?: readonly string[]; kept?: string[] } = {},
-): Promise<number> {
-  let freed = 0;
+): Promise<DirectorySize> {
+  const freed: DirectorySize = { bytes: 0 };
   for (const path of paths) {
     if (targets.includes(path)) {
       const result = await deleteCargoTarget(path, { signal });
-      freed += result.bytes;
+      addSize(freed, result);
       if (result.kept.length) kept.push(`kept in ${path}: ${result.kept.join('; ')}`);
       continue;
     }
-    freed += (await measuredDirectorySizeAsync(path, { timeoutMs: SIZE_TIMEOUT_MS, signal })) ?? 0;
+    addSize(freed, await measureDirectoryAsync(path, { timeoutMs: SIZE_TIMEOUT_MS, signal }));
     signal?.throwIfAborted();
     await rm(path, { recursive: true, force: true });
   }
@@ -294,9 +294,14 @@ export function revivable(path: string): boolean {
   });
 }
 
-async function recordStage(path: string, minutes: number, shutDown: readonly string[], freedBytes: number) {
+async function recordStage(path: string, minutes: number, shutDown: readonly string[], freed: DirectorySize) {
   const at = new Date().toISOString();
-  const stage: IdleStageRecord = { at, idleMinutes: minutes, freedBytes };
+  const stage: IdleStageRecord = {
+    at,
+    idleMinutes: minutes,
+    freedBytes: freed.bytes,
+    ...(freed.partial ? { freedPartial: true } : {}),
+  };
   await updateWorkspaceStateAsync(path, (state) => {
     const shutdowns = { ...readDeviceIdleShutdowns(state) };
     for (const key of shutDown) shutdowns[key] = { at, idleMinutes: minutes, reason: DEVICE_METRO_IDLE_STOP_REASON };
@@ -319,7 +324,7 @@ async function enterIdleStage(
   project: ProjectRecord,
   config: Config,
   input: IdlePassInput,
-): Promise<{ outcome: DaemonWorkspaceDecision['outcome']; detail: string; freedBytes?: number }> {
+): Promise<Pick<DaemonWorkspaceDecision, 'outcome' | 'detail' | 'freedBytes' | 'freedPartial'>> {
   forgetGitReads(input.operation);
   const run = await withIdleWorkspace(
     path,
@@ -363,9 +368,10 @@ async function enterIdleStage(
             await recordStage(path, minutes, shutDown, freed);
             const idle = Math.floor(again.decision.idleMs / MINUTE_MS);
             const restore = revivable(path) ? 'stim revive' : 'stim ios or stim android';
-            const msg = `no activity for ${idle} minutes (${thresholdWhy(input, minutes)}; last: ${again.decision.last.basis}): ${stopped.summary}; deleted ${formatBytes(freed)} of regenerable build outputs${outputs.kept.length ? `; ${outputs.kept.join('; ')}` : ''}. Run ${restore} to resume it.`;
-            writeWorkspaceEvent(path, 'info', 'workspace_idle', msg, { freedBytes: freed, restore });
-            return { outcome: 'idle' as const, detail: msg, freedBytes: freed };
+            const msg = `no activity for ${idle} minutes (${thresholdWhy(input, minutes)}; last: ${again.decision.last.basis}): ${stopped.summary}; deleted ${formatSize(freed)} of regenerable build outputs${outputs.kept.length ? `; ${outputs.kept.join('; ')}` : ''}. Run ${restore} to resume it.`;
+            const partial = freed.partial ? { freedPartial: true as const } : {};
+            writeWorkspaceEvent(path, 'info', 'workspace_idle', msg, { freedBytes: freed.bytes, ...partial, restore });
+            return { outcome: 'idle' as const, detail: msg, freedBytes: freed.bytes, ...partial };
           },
           {
             external: true,

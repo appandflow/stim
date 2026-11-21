@@ -554,6 +554,44 @@ marker plus a 30 second timer with no protocol change, no cap check brought
 forward when a measurement crosses a cap, no use of the measurement in the
 headroom estimate, and no new setting (#5759).
 
+## A size walk that times out reports what it measured
+
+The Cargo remover, the idle and dormant stages, rung 1's output delete and the
+`stim gc` workspace output clear size what they delete in a way that keeps
+partial results. A walk stopped at its deadline reports the bytes of the
+top-level entries it finished, marked `partial` ("at least" in text), instead of
+nothing. Callers that decide what to delete or trim from a size still treat a
+timed-out walk as unknown, so the lower bound changes only what is reported.
+
+How the walk runs depends on the number of top-level entries, counted with one
+directory read. Up to 100, it runs `du -sk` once per entry, one after another
+under one shared deadline, and adds up the entries that finished. Discovery and
+metadata reads consume that budget too; the filesystem calls themselves are not
+interruptible, so a stalled mounted volume can still delay returning. Above 100, it
+runs one `du -k -d 1` and sums the entry lines printed before the deadline. The
+split exists because macOS du writes to a pipe in 4 KB blocks (about 105 lines),
+so a single walk of a small folder stopped early prints nothing, while a large
+folder with many subdirectories has already printed whole blocks. BSD du emits
+intermediate rows only for directories: a flat folder with over 100 files can
+still report zero partial bytes before the final total; GNU du writes each line as it finishes.
+Per entry costs about the same as one walk on a few dozen entries and three to
+five times more on several hundred (measured on macOS, warm cache: 16 to 27
+entries 0.04 against 0.06 s and 0.79 against 0.80 s; 667 entries 0.23 against
+1.26 s; 1,037 entries 0.76 against 2.47 s). A file hard-linked into two
+top-level entries would count twice on the per-entry path, so a folder with a
+top-level file that has another link takes the single walk, which counts it
+once: a Cargo profile, whose binaries are hard-linked into its `deps/`, is that
+case. A link shared by two top-level folders still counts twice; pnpm's links
+point into the store outside the folder, so the layouts Stim deletes do not hit
+it.
+
+Maintainer decision, 2026-11-20: "Can timed out scan report the bytes it
+measured when it timed out, but still flag it as incomplete" (#6067).
+
+Maintainer decision, 2026-11-20: "ok do it", on the proposal to walk folders of
+up to about 100 top-level entries with one `du -sk` per entry under one deadline
+and larger ones with a single `du -k -d 1` (#6067).
+
 ## One idle day reduces a workspace
 
 A workspace with no activity for `idle.dormantDays` (default 1) is reduced to
@@ -734,7 +772,7 @@ implementer of #5942 and its reviews, not by the maintainer.
 
 ## Links
 
-- Issues: #5492, #5512, #5524, #5877, #5933, #5942, #5998, #6011, #6025. Pull requests: #5514, #5540.
+- Issues: #5492, #5512, #5524, #5877, #5933, #5942, #5998, #6011, #6025, #6067. Pull requests: #5514, #5540.
 - Code: `packages/stim-cli/src/policy/checkout-order.ts`,
   `packages/stim-cli/src/workspace/source-dependencies.ts`,
   `packages/stim-cli/src/stimd/passes/artifacts.ts`,

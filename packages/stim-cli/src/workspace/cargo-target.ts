@@ -3,7 +3,7 @@ import { lstat, readdir, realpath, rmdir, unlink } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { releaseReserveWhenFull } from '../disk-reserve.ts';
 import { getExecutor } from '../exec.ts';
-import { measuredDirectorySizeAsync } from '../fs-util.ts';
+import { addSize, measureDirectoryAsync, type DirectorySize } from '../fs-util.ts';
 import { exactClean, type ExactCleanReport } from '../integrations/exact-clean.ts';
 import { withCargoLocks } from './cargo-lock.ts';
 import { cargoTargetDirsAsync } from './regenerable-dirs.ts';
@@ -363,11 +363,16 @@ export interface CargoTrimResult {
   kept: string[];
   /** Set when the target's volume was full and the maintenance disk reserve was released before the trim. */
   reserveReleased?: boolean;
+  /** Set when a size walk of a removed path timed out, so `bytes` is a lower bound. */
+  partial?: true;
 }
 
-async function sizeOf(path: string, signal?: AbortSignal, lowPriority = false): Promise<number> {
-  return (await measuredDirectorySizeAsync(path, { timeoutMs: 120_000, signal, lowPriority })) ?? 0;
+async function sizeOf(path: string, signal?: AbortSignal, lowPriority = false): Promise<DirectorySize> {
+  return (await measureDirectoryAsync(path, { timeoutMs: 120_000, signal, lowPriority })) ?? { bytes: 0 };
 }
+
+/** The bytes a trim counts toward what it must cover: none for a walk that timed out. */
+const plannedBytes = ({ bytes, partial }: DirectorySize): number => (partial ? 0 : bytes);
 
 /** Whether the remover leaves the file `name` in place: a lock file Cargo or Exact takes, or a Solana keypair. */
 const kept = (name: string): boolean => LOCK_FILES.has(name) || isKeypairName(name);
@@ -538,7 +543,7 @@ export async function trimCargoTarget(
   if ('refusal' in stale) return keep(stale.refusal);
   const profilesAt = (dir: string): string[] =>
     fingerprintDir(dir) ? [dir] : (subdirectories(dir) ?? []).map((entry) => join(dir, entry.name));
-  type Step = { dir: string; label: string; profiles: string[]; bytes: number };
+  type Step = { dir: string; label: string; profiles: string[]; size: DirectorySize };
   const steps: Step[] = [];
   for (const path of stale.paths) {
     const dir = join(target, path);
@@ -546,36 +551,36 @@ export async function trimCargoTarget(
       dir,
       label: path,
       profiles: profilesAt(dir),
-      bytes: measure ? await sizeOf(dir, signal, lowPriority) : 0,
+      size: measure ? await sizeOf(dir, signal, lowPriority) : { bytes: 0 },
     });
   }
-  const planned = steps
+  const covered = steps
     .filter(({ dir, profiles }) => !inUse(used, dir) && profiles.every((profile) => profileLocks(profile)))
-    .reduce((sum, { bytes }) => sum + bytes, 0);
-  if (incremental === 'all' || planned < needBytes) {
+    .reduce((sum, { size }) => sum + plannedBytes(size), 0);
+  if (incremental === 'all' || covered < needBytes) {
     const gone = stale.paths.map((path) => join(target, path));
     const candidates: { path: string; bytes: number }[] = [];
+    const sizes = new Map<string, DirectorySize>();
     for (const profile of cargoProfileDirs(target) ?? []) {
       if (gone.some((path) => profile === path || profile.startsWith(`${path}/`))) continue;
       const dir = join(profile, 'incremental');
       if (!lstatSync(dir, { throwIfNoEntry: false })?.isDirectory()) continue;
       if (incremental === 'toNeed' && inUse(used, profile)) continue;
-      candidates.push({
-        path: dir,
-        bytes: measure || incremental === 'toNeed' ? await sizeOf(dir, signal, lowPriority) : 0,
-      });
+      const size = measure || incremental === 'toNeed' ? await sizeOf(dir, signal, lowPriority) : { bytes: 0 };
+      sizes.set(dir, size);
+      candidates.push({ path: dir, bytes: plannedBytes(size) });
     }
     const chosen =
-      incremental === 'all' ? candidates.map(({ path }) => path) : selectIncremental(candidates, needBytes - planned);
+      incremental === 'all' ? candidates.map(({ path }) => path) : selectIncremental(candidates, needBytes - covered);
     for (const path of chosen)
       steps.push({
         dir: path,
         label: path.slice(target.length + 1),
         profiles: [dirname(path)],
-        bytes: candidates.find((candidate) => candidate.path === path)?.bytes ?? 0,
+        size: sizes.get(path) ?? { bytes: 0 },
       });
   }
-  const step = async ({ dir, label, profiles, bytes }: Step): Promise<void> => {
+  const step = async ({ dir, label, profiles, size }: Step): Promise<void> => {
     signal?.throwIfAborted();
     if (inUse(used, dir)) {
       result.kept.push(`${label}: a process uses it`);
@@ -602,7 +607,7 @@ export async function trimCargoTarget(
       result.kept.push(`${label}: ${done.kept}`);
       return;
     }
-    result.bytes += bytes;
+    addSize(result, size);
     result.removed.push(label);
     const left = reported(done.value);
     if (left.length) result.kept.push(`${label}: left ${left.join(', ')}`);
@@ -735,8 +740,8 @@ export async function deleteCargoTarget(
   const exactOwned = EXACT_OWNED.find((name) => lstatSync(join(target, name), { throwIfNoEntry: false }));
   if (exactOwned)
     return keep(`it holds Exact's ${exactOwned} but no Exact app beside it, so it may be shared by Exact apps`);
-  const bytes = new Map<string, number>();
-  for (const name of names) bytes.set(name, await sizeOf(join(target, name), signal));
+  const sizes = new Map<string, DirectorySize>();
+  for (const name of names) sizes.set(name, await sizeOf(join(target, name), signal));
   let done: Awaited<ReturnType<typeof withCargoLocks<string[]>>>;
   try {
     done = await withCargoLocks(
@@ -755,7 +760,7 @@ export async function deleteCargoTarget(
   }
   if ('kept' in done) return keep(done.kept);
   result.removed.push(...names);
-  result.bytes = names.reduce((sum, name) => sum + (bytes.get(name) ?? 0), 0);
+  for (const name of names) addSize(result, sizes.get(name));
   const left = reported(done.value);
   if (left.length) result.kept.push(`left ${left.join(', ')}`);
   await rmdir(target).catch(() => {});
@@ -795,7 +800,7 @@ async function exactDelete(
   const planned = await exactClean(app, { ...options, dryRun: true });
   if (!('status' in planned) || planned.status !== 'ok') return keptByExact(exactKept(planned));
   if (!planned.remove.length) return keptByExact("Exact's cleaner lists nothing its builds remake");
-  const sizes = new Map<string, number>();
+  const sizes = new Map<string, DirectorySize>();
   for (const path of planned.remove) sizes.set(path, await sizeOf(path, signal));
   const report = await exactClean(app, options);
   if ('unknown' in report || ('status' in report && report.status === 'failed'))
@@ -810,6 +815,6 @@ async function exactDelete(
   result.removed.push(
     ...report.remove.map((path) => (path.startsWith(`${target}/`) ? path.slice(target.length + 1) : path)),
   );
-  result.bytes = report.remove.reduce((sum, path) => sum + (sizes.get(path) ?? 0), 0);
+  for (const path of report.remove) addSize(result, sizes.get(path));
   return result;
 }

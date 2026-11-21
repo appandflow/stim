@@ -1,6 +1,7 @@
-import { lstatSync, readdirSync, readlinkSync, statSync } from 'fs';
+import { lstatSync, readdirSync, readlinkSync, statSync, type Dirent } from 'fs';
+import { lstat, readdir } from 'fs/promises';
 import { dirname, isAbsolute, join, normalize, parse, sep } from 'path';
-import { getExecutor } from './exec.ts';
+import { getExecutor, isTimeoutError } from './exec.ts';
 import { lowPriorityCommand } from './io-priority.ts';
 import { noteSizeFailure, sizeFailure } from './size-failures.ts';
 import type { StimContext } from '@stim-cli/core';
@@ -151,32 +152,120 @@ export async function directorySizeAsync(
   return (await measuredDirectorySizeAsync(dir, options)) ?? 0;
 }
 
-export async function measuredDirectorySizeAsync(
+interface SizeWalkOptions {
+  timeoutMs: number | 'unbounded';
+  signal?: AbortSignal;
+  operation?: StimContext;
+  lowPriority?: boolean;
+  /** With `lowPriority`, whether the walk also yields its I/O: only for a volume sampled at normal pressure. */
+  throttleIo?: boolean;
+  root?: string;
+}
+
+/** A folder's size; `partial` marks a walk stopped at its deadline, whose `bytes` count only what it finished. */
+export interface DirectorySize {
+  bytes: number;
+  partial?: true;
+}
+
+export async function measuredDirectorySizeAsync(dir: string, options: SizeWalkOptions): Promise<number | null> {
+  const size = await walkSize(dir, ['-sk', dir], options);
+  return size && !size.partial ? size.bytes : null;
+}
+
+const PER_ENTRY_LIMIT = 100;
+
+/**
+ * The size of `dir`, or null when the walk failed. A walk that times out returns the bytes of the top-level entries it
+ * finished, marked `partial`.
+ */
+export async function measureDirectoryAsync(dir: string, options: SizeWalkOptions): Promise<DirectorySize | null> {
+  options.signal?.throwIfAborted();
+  options.operation?.signal.throwIfAborted();
+  const startedAt = Date.now();
+  const symlink = (await lstat(dir).catch(() => null))?.isSymbolicLink();
+  const entries = symlink ? null : await readdir(dir, { withFileTypes: true }).catch(() => null);
+  options.signal?.throwIfAborted();
+  options.operation?.signal.throwIfAborted();
+  const linkedFile =
+    entries !== null &&
+    entries.length <= PER_ENTRY_LIMIT &&
+    (await hasLinkedFile(
+      dir,
+      entries,
+      options,
+      options.timeoutMs === 'unbounded' ? null : startedAt + options.timeoutMs,
+    ));
+  options.signal?.throwIfAborted();
+  options.operation?.signal.throwIfAborted();
+  if (options.timeoutMs !== 'unbounded') {
+    const timeoutMs = options.timeoutMs - (Date.now() - startedAt);
+    if (timeoutMs <= 0) return { bytes: 0, partial: true };
+    options = { ...options, timeoutMs };
+  }
+  if (symlink) return walkSize(dir, ['-sk', dir], options);
+  if (entries === null || entries.length > PER_ENTRY_LIMIT || linkedFile)
+    return walkSize(dir, ['-k', '-d', '1', dir], options);
+  return walkEntries(dir, entries.map(({ name }) => name).toSorted(), options);
+}
+
+/** Whether a top-level file has another hard link, as a Cargo profile's binaries do in its `deps/`, which one du counts once. */
+async function hasLinkedFile(
   dir: string,
-  {
-    timeoutMs,
-    signal,
-    operation,
-    lowPriority = false,
-    throttleIo = false,
-    root,
-  }: {
-    timeoutMs: number | 'unbounded';
-    signal?: AbortSignal;
-    operation?: StimContext;
-    lowPriority?: boolean;
-    /** With `lowPriority`, whether the walk also yields its I/O: only for a volume sampled at normal pressure. */
-    throttleIo?: boolean;
-    root?: string;
-  },
-): Promise<number | null> {
+  entries: Dirent[],
+  options: SizeWalkOptions,
+  deadline: number | null,
+): Promise<boolean> {
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    options.signal?.throwIfAborted();
+    options.operation?.signal.throwIfAborted();
+    if (deadline !== null && Date.now() >= deadline) return false;
+    if (((await lstat(join(dir, entry.name)).catch(() => null))?.nlink ?? 1) > 1) return true;
+  }
+  return false;
+}
+
+// @ref LLP 0001#a-size-walk-that-times-out-reports-what-it-measured -- one du per entry below the limit unless a top-level file is hard-linked
+/**
+ * One `du -sk` per top-level entry under one deadline: macOS du holds up to 4 KB of output in a buffer when it writes
+ * to a pipe, so a single `du -k -d 1` stopped early leaves nothing for a folder with few entries.
+ */
+async function walkEntries(dir: string, names: string[], options: SizeWalkOptions): Promise<DirectorySize | null> {
+  const deadline = options.timeoutMs === 'unbounded' ? null : Date.now() + options.timeoutMs;
+  const total: DirectorySize = { bytes: 0 };
+  for (const name of names) {
+    const left = deadline === null ? 'unbounded' : Math.ceil(deadline - Date.now());
+    if (left !== 'unbounded' && left <= 0) return { ...total, partial: true };
+    const size = await walkSize(dir, ['-sk', join(dir, name)], { ...options, timeoutMs: left });
+    if (size === null) return null;
+    addSize(total, size);
+    if (size.partial) return total;
+  }
+  return total;
+}
+
+/** Adds `size` to `total`, which becomes partial when `size` is. */
+export function addSize(total: DirectorySize, size: DirectorySize | null | undefined): void {
+  total.bytes += size?.bytes ?? 0;
+  if (size?.partial) total.partial = true;
+}
+
+/** `bytes` with "at least" in front when they are a lower bound. */
+export function formatSize({ bytes, partial }: DirectorySize): string {
+  return `${partial ? 'at least ' : ''}${formatBytes(bytes)}`;
+}
+
+async function walkSize(
+  dir: string,
+  args: string[],
+  { timeoutMs, signal, operation, lowPriority = false, throttleIo = false, root }: SizeWalkOptions,
+): Promise<DirectorySize | null> {
   let out: string;
   const startedAt = Date.now();
   try {
-    const [file, args]: [string, string[]] = lowPriority
-      ? lowPriorityCommand('du', ['-sk', dir], throttleIo)
-      : ['du', ['-sk', dir]];
-    out = await runOperationFile(operation, getExecutor(), file, args, {
+    const [file, argv]: [string, string[]] = lowPriority ? lowPriorityCommand('du', args, throttleIo) : ['du', args];
+    out = await runOperationFile(operation, getExecutor(), file, argv, {
       timeoutMs,
       killSignal: 'SIGKILL',
       signal,
@@ -193,11 +282,29 @@ export async function measuredDirectorySizeAsync(
     );
     signal?.throwIfAborted();
     operation?.signal.throwIfAborted();
-    return null;
+    if (!isTimeoutError(error)) return null;
+    const stdout = error instanceof Error && 'stdout' in error ? error.stdout : '';
+    return { bytes: finishedBytes(dir, typeof stdout === 'string' ? stdout : ''), partial: true };
   }
-  if (!out) return 0;
-  const kb = parseInt(out.split(/\s+/)[0] ?? '', 10);
-  return isNaN(kb) ? 0 : kb * 1024;
+  if (!out) return { bytes: 0 };
+  const kb = parseInt(out.trim().split('\n').at(-1)?.split(/\s+/)[0] ?? '', 10);
+  return { bytes: isNaN(kb) ? 0 : kb * 1024 };
+}
+
+/**
+ * The bytes in the complete lines `du -k -d 1` printed before it was stopped: the total when it got that far, else the
+ * sum of the top-level entries it finished. GNU du writes each line as it finishes an entry; macOS du writes them in
+ * 4 KB blocks when it writes to a pipe, so a stopped walk there printed only whole blocks.
+ */
+function finishedBytes(dir: string, stdout: string): number {
+  let total = 0;
+  for (const line of stdout.split('\n').slice(0, -1)) {
+    const match = /^(\d+)\t(.*)$/.exec(line);
+    if (!match) continue;
+    if (match[2] === dir) return Number(match[1]) * 1024;
+    total += Number(match[1]) * 1024;
+  }
+  return total;
 }
 
 function measuredDirectorySize(

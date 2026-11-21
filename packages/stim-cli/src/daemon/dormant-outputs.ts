@@ -7,7 +7,7 @@ import type { DaemonLadderAction } from '@stim-cli/core/state';
 import { workspaceOutputPaths } from '../commands/gc/workspaces.ts';
 import { RESERVE_RELEASED, releaseReserveWhenFull } from '../disk-reserve.ts';
 import { withWorkspaceProcessLock, workspaceProcessLockError } from '../engine/workspace-process-lock.ts';
-import { formatBytes, measuredDirectorySizeAsync } from '../fs-util.ts';
+import { addSize, formatSize, measureDirectoryAsync, type DirectorySize } from '../fs-util.ts';
 import { metroStoreRoot } from '../stimd/metro/metro-store.ts';
 import { deleteCargoTarget, recentTargetUse, removablePaths, type CargoTrimResult } from '../workspace/cargo-target.ts';
 import type { Config } from '../workspace/config.ts';
@@ -36,7 +36,7 @@ type Input = Pick<IdlePassInput, 'act' | 'log'> & {
   /** Runs before each size walk and each removal, outside the workspace's claims: a unit boundary of the disk owner. */
   between?: () => Promise<void>;
 };
-type Result = Pick<DaemonLadderAction, 'outcome' | 'bytes' | 'detail'>;
+type Result = Pick<DaemonLadderAction, 'outcome' | 'bytes' | 'partial' | 'detail'>;
 
 interface Plan {
   paths: string[];
@@ -89,8 +89,14 @@ export async function reduceDormantOutputs(
       input.log(
         result.outcome === 'failed' ? 'warn' : 'info',
         'dormant_outputs',
-        `dormant stage: ${result.outcome} ${candidate.path} (${formatBytes(result.bytes)} freed): ${result.detail}`,
-        { workspace: candidate.path, outcome: result.outcome, bytes: result.bytes, ...restore },
+        `dormant stage: ${result.outcome} ${candidate.path} (${formatSize(result)} freed): ${result.detail}`,
+        {
+          workspace: candidate.path,
+          outcome: result.outcome,
+          bytes: result.bytes,
+          ...(result.partial ? { partial: true } : {}),
+          ...restore,
+        },
       );
   }
   return actions;
@@ -129,9 +135,10 @@ async function reduceWorkspace(
   const measure = input.act || input.force === true;
   const sizeOf = async (dir: string) => {
     await input.between?.();
-    return (await measuredDirectorySizeAsync(dir, { timeoutMs: SIZE_TIMEOUT_MS, signal })) ?? 0;
+    return (await measureDirectoryAsync(dir, { timeoutMs: SIZE_TIMEOUT_MS, signal })) ?? { bytes: 0 };
   };
-  const sizes = new Map<string, number>();
+  const sizes = new Map<string, DirectorySize>();
+  const freed: DirectorySize = { bytes: 0 };
   if (measure)
     for (const output of plan.paths) {
       if (!plan.targets.has(output)) sizes.set(output, await sizeOf(output));
@@ -139,13 +146,12 @@ async function reduceWorkspace(
         for (const removable of plan.removable.get(output) ?? []) sizes.set(removable, await sizeOf(removable));
     }
   if (!input.act) {
-    const bytes = [...sizes.values()].reduce((sum, size) => sum + size, 0);
+    for (const size of sizes.values()) addSize(freed, size);
     const detail = input.force ? 'stim gc would do this' : 'daemon.mode report acts on nothing';
-    return { outcome: 'would', bytes, detail: [detail, ...plan.kept].join('; ') };
+    return { outcome: 'would', ...freed, detail: [detail, ...plan.kept].join('; ') };
   }
   const kept = [...plan.kept];
   const removed: string[] = [];
-  let bytes = 0;
   const failures: string[] = [];
   const failed = (output: string, error: unknown) => {
     if (isClaimUnavailable(error) || (error instanceof Error && 'reportCleanup' in error)) throw error;
@@ -166,9 +172,9 @@ async function reduceWorkspace(
     if (typeof outcome === 'string') kept.push(`kept ${output}: ${outcome}`);
     else if (outcome === null) {
       removed.push(output);
-      bytes += sizes.get(output) ?? 0;
+      addSize(freed, sizes.get(output));
     } else {
-      bytes += outcome.bytes;
+      addSize(freed, outcome);
       if (outcome.removed.length) removed.push(`${output} (${outcome.removed.join(', ')})`);
       if (outcome.kept.length) kept.push(`kept in ${output}: ${outcome.kept.join('; ')}`);
       released ||= outcome.reserveReleased === true;
@@ -176,11 +182,11 @@ async function reduceWorkspace(
   }
   if (released) kept.push(RESERVE_RELEASED);
   const rest = kept.length ? `; ${kept.join('; ')}` : '';
-  const done = removed.length ? `deleted ${formatBytes(bytes)} of regenerable build outputs; ` : '';
+  const done = removed.length ? `deleted ${formatSize(freed)} of regenerable build outputs; ` : '';
   if (failures.length)
-    return { outcome: 'failed', bytes, detail: `${done}could not delete ${failures.join('; ')}${rest}` };
+    return { outcome: 'failed', ...freed, detail: `${done}could not delete ${failures.join('; ')}${rest}` };
   if (!removed.length) return { outcome: 'kept', bytes: 0, detail: kept.join('; ') || 'nothing was removed' };
-  return { outcome: 'done', bytes, detail: `deleted ${formatBytes(bytes)} of regenerable build outputs${rest}` };
+  return { outcome: 'done', ...freed, detail: `deleted ${formatSize(freed)} of regenerable build outputs${rest}` };
 }
 
 function gitOptions(operation: StimContext | undefined) {

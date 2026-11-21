@@ -182,7 +182,7 @@ test('each workspace says its stage and how long it has been in it, and the idle
     idleMinutes: 15,
     freedBytes: 1024,
   };
-  writeWorkspaceState(project, { idleStage });
+  writeWorkspaceState(project, { idleStage: { ...idleStage, freedPartial: true } });
   writeWorkspaceState(revivable, { idleStage, devServerStop: { reason: 'idle', at: idleStage.at, idleMinutes: 15 } });
   writeWorkspaceState(dormant, {
     dormantStage: {
@@ -197,6 +197,7 @@ test('each workspace says its stage and how long it has been in it, and the idle
   const text = lines.join('\n');
   const stages = lines.filter((line) => line.includes('stage: idle'));
   expect(stages).toHaveLength(2);
+  expect(stages.filter((line) => line.includes('freed at least 1K'))).toHaveLength(1);
   expect(
     stages.filter((line) => /stage: idle for 2h\b.*`stim ios` or `stim android` resumes it/.test(line)),
   ).toHaveLength(1);

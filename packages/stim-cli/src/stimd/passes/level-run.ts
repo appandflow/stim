@@ -38,6 +38,8 @@ export interface LevelRunAction {
   workspace?: string;
   outcome: 'would' | 'done' | 'kept' | 'failed';
   bytes: number;
+  /** Set when a size walk timed out, so `bytes` is a lower bound. */
+  partial?: true;
   /** Why the run took it, or why it kept it. */
   reason: string;
   detail: string;
