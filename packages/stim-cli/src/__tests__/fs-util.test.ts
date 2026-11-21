@@ -185,16 +185,36 @@ describe('a size walk that reports what it measured', () => {
   test('a walk of a small folder cut off at its deadline reports the entries that finished as a partial size', async () => {
     const dir = folder(3);
     const walks: string[] = [];
+    const limits: (number | 'unbounded' | undefined)[] = [];
     setExecutor({
       ...getExecutor(),
-      runFileAsync: async (_file, args) => {
+      runFileAsync: async (_file, args, options) => {
         walks.push(args.join(' '));
+        limits.push(options?.timeoutMs);
         if (args.at(-1) === join(dir, 'entry-001')) throw timedOut();
+        vi.advanceTimersByTime(4_000);
         return `40\t${args.at(-1)}`;
       },
     });
     expect(await measureDirectoryAsync(dir, { timeoutMs: 10_000 })).toEqual({ bytes: 40 * 1024, partial: true });
     expect(walks).toEqual([`-sk ${join(dir, 'entry-000')}`, `-sk ${join(dir, 'entry-001')}`]);
+    expect(limits).toEqual([10_000, 6_000]);
+  });
+
+  test('a small folder stops before the next entry when finished entries spent the shared deadline', async () => {
+    const dir = folder(3);
+    const walks: string[] = [];
+    setExecutor({
+      ...getExecutor(),
+      runFileAsync: async (_file, args) => {
+        walks.push(String(args.at(-1)));
+        vi.advanceTimersByTime(10_000);
+        return `40\t${args.at(-1)}`;
+      },
+    });
+
+    expect(await measureDirectoryAsync(dir, { timeoutMs: 10_000 })).toEqual({ bytes: 40 * 1024, partial: true });
+    expect(walks).toEqual([join(dir, 'entry-000')]);
   });
 
   test('a walk of a small folder that finishes reports the sum of its entries', async () => {
