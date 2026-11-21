@@ -100,7 +100,6 @@ export async function runDiskPass(
         sims: input.sims,
         simsFailed: input.sims === null,
         operation,
-        reports: true,
         only: 'disk',
         ...(clocks ? { clocks } : {}),
         remeasure: remeasurer(config, operation, (measurement) => {

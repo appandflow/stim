@@ -629,7 +629,7 @@ unless an app child or a registered project leads to the same repository, which
 keeps the full rules.
 
 One rule applies: finished linked worktree removal (`collectWorktreeSweep`, which
-`stim gc` runs and rung 7 reports), with the evidence and keeps of every discovered worktree,
+`stim gc` runs), with the evidence and keeps of every discovered worktree,
 the extra evidence of the section above included. Discovery returns only those
 linked worktrees, and only to that check (`nodeWorktrees`). Nothing else of theirs
 is touched: no `node_modules`, build or `dist` output, Cargo target, device, Metro or

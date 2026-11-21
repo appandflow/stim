@@ -60,29 +60,28 @@ Each level includes the ones below it.
   records, finished linked worktrees after `gc.worktreeGraceMinutes`, unused
   simulator runtimes), and every workspace idle `idle.dormantDays` reduced to
   its minimal size.
-- high: the pressure ladder, rungs 0 to 7; every Cargo `target/` on the
-  volume loses its stale profiles and `incremental/` data (LLP 0005). The
-  `node_modules` and Pods of linked worktrees idle an hour are reported, not
-  deleted (Rungs 5, 7 and 8 only report).
+- high: the pressure ladder, rungs 0 to 6; every Cargo `target/` on the
+  volume loses its stale profiles and `incremental/` data (LLP 0005). No rung
+  takes `node_modules`, Pods or worktrees (The ladder takes no dependencies or
+  worktrees).
 - critical: rungs 0 to 8 with shorter idle times and no grace, idle Cargo
   build units (LLP 0005), then rung 9, the caches of tools Stim does not own
   (LLP 0003).
 
 Maintainer decision: "1 hour", 2026-11-11, for the idle time before a linked
-worktree loses `node_modules` and Pods at high. Since #6025 it is the idle time
-at which rung 5 reports them.
+worktree loses `node_modules` and Pods at high. Superseded by #6025 and #6063:
+no rung takes them.
 
 Maintainer decision: "make sure all things we can delete are actually deleted
-at max pressure level", 2026-11-11. #6025 narrows it: the dependency and
-worktree steps of the ladder only report.
+at max pressure level", 2026-11-11. #6025 and #6063 narrow it: the ladder has
+no dependency or worktree step.
 
 ## The ladder runs by yield
 
 The ladder runs its rungs in this order: rung 0 (memory), rung 2 (parked
 devices), rung 3 (Stim's shared caches, then the Cargo trims), rung 1 (the
-build outputs of stopped workspaces), rungs 4, 6, 8 and 9, then the report
-rungs 5 and 7 (Rungs 5, 7 and 8 only report). The rung numbers name the steps
-and do not change. Each rung measures again before it starts and the ladder
+build outputs of stopped workspaces), then rungs 4, 6, 8 and 9. The rung
+numbers name the steps and do not change; 5 and 7 are unused. Each rung measures again before it starts and the ladder
 stops once no volume is under pressure.
 
 Rung 3 runs its Cargo trims even when its shared caches failed (a lock that did
@@ -236,27 +235,21 @@ both the critical-pressure bypass and the falling-free-space bypass of the
 ladder's pacing wait
 ([#6011 comment](https://github.com/appandflow/stim/issues/6011#issuecomment-7031008184)).
 
-## Rungs 5, 7 and 8 only report
+## The ladder takes no dependencies or worktrees
 
-Rung 5 (the `node_modules` and Pods of idle linked worktrees), rung 7
-(finished worktrees) and the first step of rung 8 (the `node_modules` and Pods
-of idle main checkouts) delete nothing. Each records, as a `kept` action, what
-it would have taken, what that would free when the size is known, and why. This
-holds in the stim-daemon, in `stim gc` and in `stim gc --dry-run`. Rung 8 itself,
-device recordings and archived history, still acts; rung 5 runs the main
-checkout report after its own. Rungs 5 and 7 run last, after rung 9. The
-stim-daemon runs them at most once an hour per Stim home and never while the
-overall level is critical, whichever of disk or memory set it; the ladder a command runs, a build's headroom run included, never
-runs them; `stim gc` runs them each time, at critical too. The
-pressure path neither samples hard links nor checks dependency trees for hand
-edits; the dormant steps still do both before they delete. The dormant steps,
+The pressure ladder has no step for `node_modules`, Pods or worktrees, and
+reports none. The dormant steps (`idle.dormantDays`, `idle.sourceDormantDays`),
 `stim worktree remove` and the worktree check of the maintenance pass are what
-delete dependencies and worktrees.
+delete them, and `stim gc --dry-run` lists what those would take. The pressure
+path neither samples hard links nor checks dependency trees for hand edits; the
+dormant steps still do both before they delete.
 
-Reason: over 2026-11-16 to 2026-11-20 on the maintainer's MacBook, rungs 5, 7
-and 8 took 30,179 s, 71% of all rung time, and freed 1.3 GiB, 0.4% of the
-bytes. Rung 5 ran 758 actions and kept every one; 79% of its time was its
-evidence loop over every checkout.
+Reason: over 2026-11-16 to 2026-11-20 on the maintainer's MacBook, the
+dependency and worktree rungs (5, 7 and the first step of 8) took 30,179 s, 71%
+of all rung time, and freed 1.3 GiB, 0.4% of the bytes. Rung 5 ran 758 actions
+and kept every one; 79% of its time was its evidence loop over every checkout.
+#6029 made them report only; the report repeated what `stim gc --dry-run`
+already lists through the dormant steps and the worktree check.
 
 Maintainer decision: "I agree lets do this and ur recommendations from prev
 messages, also lets do the changes now that u flagged as after 2.0 id rather
@@ -264,13 +257,8 @@ delay than ship what we have", 2026-11-20, on #6025, whose decided list makes
 rungs 5, 7 and 8 report-only and drops hard-link sampling and dependency-edit
 detection from the pressure path.
 
-Chosen by the implementer of #6025, not the maintainer: `stim gc` reports them
-too, so the daemon and `stim gc` keep one model, and the hourly limit, which
-keeps a report that frees nothing from walking every checkout each pass. The
-coordinator of #6025 chose, after the first review of #6029, to run them last,
-to skip them at critical in the daemon and in a command's ladder, where their
-walks cost the most and free nothing, and to keep them in `stim gc`, where a
-person asked for the report.
+Maintainer decision: "Remove from daemon", 2026-11-20, on #6063, answering
+whether to remove the report-only rungs from the daemon.
 
 ## One task runs every gc deletion
 
@@ -485,9 +473,8 @@ says on stderr that the source has no installed dependencies to copy, and
 
 A main checkout's `node_modules` and Pods go in one case only, after those of
 every linked worktree: no activity for `idle.sourceDormantDays` (default 7, 0
-for never), at any level. At critical, rung 8 reports those of a main checkout
-idle 2 minutes whose volume is still under the critical level, and deletes
-nothing (Rungs 5, 7 and 8 only report).
+for never), at any level. The ladder never takes them (The ladder takes no
+dependencies or worktrees).
 
 Activity is the newest of a Stim command, a source file write, a git index,
 HEAD or reflog write and the last commit, in the checkout and in every Stim
@@ -518,8 +505,8 @@ worktree are created from, ideally it will also be clear that when a main
 checkout is cleaned it should be rebuilt first", 2026-11-12.
 
 Maintainer decision: "I think we should consider deleting main checkout deps
-and pods on critical", 2026-11-12. Superseded by #6025: rung 8 only reports
-them.
+and pods on critical", 2026-11-12. Superseded by #6025 and #6063: the ladder
+does not take them.
 
 Maintainer decision: "I think a main checkout could also be considered idle but
 with maybe like 7 d", 2026-11-12. Maintainer decision: "I meant deps yes",
@@ -577,8 +564,7 @@ the listing in a package with none of them, `android/<module>/build` or
 `node_modules/react-native/ReactAndroid/build` and `.cxx` when React Native is
 built from source. Such a tree is kept by the 7-day source rule and the
 dormant step, with a kept reason that gives the counts. The pressure ladder
-does not sample: rungs 5 and 8 only report (Rungs 5, 7 and 8 only report), and
-report a tree of unknown size as freeing an unknown amount. Anything else (no recorded or existing store, as for
+does not sample (The ladder takes no dependencies or worktrees). Anything else (no recorded or existing store, as for
 every tree pnpm did not install, too few files, or reads that did not answer)
 leaves the tree unknown and the rules above unchanged. The verdict is recorded
 beside the size cache with the install signature and the store, and reused for

@@ -4,9 +4,9 @@ const DAY_MS = 86_400_000;
 
 export type Cause = 'disk' | 'memory';
 
-export type Rung = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+export type Rung = 0 | 1 | 2 | 3 | 4 | 6 | 8 | 9;
 
-// @ref LLP 0001#the-ladder-runs-by-yield -- Stim's own devices and caches, then Cargo, before rung 1; the reports last
+// @ref LLP 0001#the-ladder-runs-by-yield -- Stim's own devices and caches, then Cargo, before rung 1
 const LADDER: readonly { rung: Rung; relieves: readonly Cause[] }[] = [
   { rung: 0, relieves: ['memory'] },
   { rung: 2, relieves: ['disk'] },
@@ -16,8 +16,6 @@ const LADDER: readonly { rung: Rung; relieves: readonly Cause[] }[] = [
   { rung: 6, relieves: ['disk', 'memory'] },
   { rung: 8, relieves: ['disk'] },
   { rung: 9, relieves: ['disk'] },
-  { rung: 5, relieves: ['disk'] },
-  { rung: 7, relieves: ['disk'] },
 ];
 
 /** The ladder's rungs numbered `fromRung` or more, in the order they run, each with the causes it relieves. */

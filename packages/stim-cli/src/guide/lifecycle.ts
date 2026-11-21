@@ -2665,20 +2665,6 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
        measures free disk again after the earlier rungs and runs it only if
        the disk is still under the critical level; an explicit
        \`stim gc --pressure critical\` always runs it
-    5. reported only, never deleted: node_modules and Pods of idle linked
-       worktrees at high (idle 1 hour), each a kept action with the bytes
-       deleting it would free when known; then, in \`stim gc\` at critical, those
-       of source (main) checkouts idle 2 minutes on a volume still under the
-       critical level. Rungs 5 and 7 run last: the daemon's ladder runs them at
-       most hourly and never at critical, a command's ladder never, \`stim gc\`
-       each time. Only the dormant stage deletes them
-    7. reported only, never removed: worktrees, only while
-       maintenance.removeFinishedWorktrees is true: at
-       high clean finished linked worktrees after the gc.worktreeGraceMinutes
-       wait; at critical without it, and also clean pushed worktrees no Stim
-       command used for 7 days, only while maintenance.removeIdleWorktrees is
-       true. The tick uses the pull request lookups the
-       worktree check cached instead of calling gh; stim gc looks them up again
 
   A level raised only by memory runs only what frees memory: the idle stage
   of rung 1, which shuts devices down, and the Gradle daemons and watchman of
@@ -2760,7 +2746,7 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   or commit, in the checkout and in every Stim workspace in it, registered or
   not; a worktree warm copying from it is activity when the warmed app has a
   Stim workspace in the source, and a running warm keeps it, without moving its
-  last use); at critical rung 8 only reports it. Runs from or
+  last use). Runs from or
   works in it means a process whose working directory is in the checkout or
   whose command line names a path in it; reading files in an editor with no
   process there is not activity. A tree of unknown size is not taken at the
