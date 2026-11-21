@@ -1,4 +1,6 @@
-import { realpath, stat } from 'node:fs/promises';
+import { realpath } from 'node:fs';
+import { stat } from 'node:fs/promises';
+import { promisify } from 'node:util';
 import {
   GC_MARK_VERSION,
   gcMarkFile,
@@ -13,6 +15,8 @@ import { answered, Unanswered } from '../workspace/bounded-read.ts';
 import type { Config } from '../workspace/config.ts';
 import { idleOutputs } from './idle.ts';
 import type { CheckoutReading } from './stages.ts';
+
+const realpathAsync = promisify(realpath);
 
 /** The mark writer of one walk, which resolves the Metro cache root once for every checkout it marks. */
 export function markWriter(config: Config, signal?: AbortSignal): (reading: CheckoutReading) => Promise<void> {
@@ -42,7 +46,7 @@ async function writeMark(
   metroCache: string,
   expiresAt: number,
 ): Promise<void> {
-  const root = await answered(reading.path, () => realpath(reading.path), 3_000, signal);
+  const root = await answered(reading.path, () => realpathAsync(reading.path), 3_000, signal);
   // Node's synchronous filesystem checks inside idleOutputs cannot be interrupted by this deadline.
   const { paths, targets } = await idleOutputs(reading.path, config, undefined, {
     signal,
