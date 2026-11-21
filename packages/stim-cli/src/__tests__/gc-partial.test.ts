@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readGcLog } from '@stim-cli/core/state';
-import { executeGc } from '../commands/gc.ts';
+import { executeGc, runGcPass } from '../commands/gc.ts';
 import { runMaintenanceAtLevel } from '../stimd/passes/level-run.ts';
 
 vi.mock('../stimd/passes/level-run.ts', () => ({ runMaintenanceAtLevel: vi.fn<typeof runMaintenanceAtLevel>() }));
@@ -41,7 +41,7 @@ test.each([
       };
     });
     try {
-      const { payload } = await executeGc({ json: true, pressure: 'normal' }, {}, () => {});
+      const { payload } = await executeGc({ json: true, pressure: 'normal' }, {}, () => {}, runGcPass);
       expect('results' in payload ? payload.results : []).toContainEqual(
         expect.objectContaining({ bytes, partial: true }),
       );

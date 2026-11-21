@@ -12,12 +12,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { maintenanceRunClaims, workspaceRecordingsDir } from '@stim-cli/core/state';
 import { readClaimSet } from '@stim-cli/core/ownership-claim';
-import { createStim } from '../api.ts';
+import { withAmbientContext } from '@stim-cli/core';
+import { testContext } from './_context.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
-import { runGc } from '../commands/gc.ts';
+import { runGc as runGcCommand, runGcPass } from '../commands/gc.ts';
 import { saveConfig, upsertProject } from '../workspace/config.ts';
 import { register } from '../cache/cache-manifest.ts';
 import { ensureWorkspaceStorage } from '../workspace/paths.ts';
+
+const runGc: typeof runGcCommand = (opts, deps) => runGcCommand(opts, deps, runGcPass);
 
 vi.mock('../devices/machine-cache-usage.ts', () => ({ getMachineCacheReport: async () => null }));
 
@@ -202,10 +205,17 @@ test('cancelling the critical run while it deletes recordings keeps later footag
       controller.abort();
     }
   };
-  const client = createStim({ projectRoot: live.root, home: tmpHome, env: { ...process.env } });
-  await expect(client.collectGarbage({ pressure: 'critical', signal: controller.signal })).rejects.toMatchObject({
-    code: 'STIM_CANCELLED',
-  });
+  const operation = testContext({ home: tmpHome, projectRoot: live.root, cwd: live.root, signal: controller.signal });
+  const stdout: string[] = [];
+  const log = vi.spyOn(console, 'log').mockImplementation((...args) => void stdout.push(args.join(' ')));
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    await withAmbientContext(operation, () => runGc({ pressure: 'critical', json: true }, { operation }));
+  } finally {
+    log.mockRestore();
+    error.mockRestore();
+  }
+  expect(JSON.parse(stdout[0] ?? '')).toMatchObject({ code: 'STIM_CANCELLED' });
   expect(removed).toHaveLength(1);
   expect(existsSync(join(live.dir, `${now - 9 * DAY_MS}-${now - 9 * DAY_MS + 60_000}.seg`))).toBe(true);
   expect(existsSync(open)).toBe(true);

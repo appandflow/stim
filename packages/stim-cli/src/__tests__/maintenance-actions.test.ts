@@ -225,7 +225,9 @@ test('a maintenance pass retains a zero-byte partial total in state, log and sta
     partial: true,
     detail: '',
   });
-  await runMaintenance('test');
+  const onAction = vi.fn<(action: unknown) => void>();
+  await runMaintenance('test', { onAction });
+  expect(onAction).toHaveBeenCalledWith(expect.objectContaining({ bytes: 0, partial: true }));
   expect(readMaintenanceState()?.lastPass).toMatchObject({ freedBytes: 0, freedPartial: true });
   expect(records()).toContainEqual(
     expect.objectContaining({

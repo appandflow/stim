@@ -33,8 +33,7 @@ import { privateSizeKnowable, treeSignature } from '../private-size.ts';
 import { hardLinkSample, type LinkSampleIo } from '../link-sample.ts';
 import { hungRead } from '../workspace/bounded-read.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
-import { readGcReport, runGc } from '../commands/gc.ts';
-import { createStim } from '../api.ts';
+import { readGcReport, runGc as runGcCommand, runGcPass } from '../commands/gc.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
 import { loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceStateFile } from '../workspace/paths.ts';
@@ -47,6 +46,8 @@ import assert from 'node:assert';
 import { liveClaimOwner, plantClaim } from './_factories.ts';
 import { podLockHash } from '../workspace/lightened-pod-locks.ts';
 import { testContext } from './_context.ts';
+
+const runGc: typeof runGcCommand = (opts, deps) => runGcCommand(opts, deps, runGcPass);
 
 function recordedDirs(root: string): unknown {
   return readJsonObject(workspaceLightenedFile(root))?.dirs ?? [];
@@ -830,9 +831,7 @@ test.skipIf(process.platform === 'win32')(
     walks.set(pods, () => null);
 
     await readGcReport({ pressure: 'normal', measureBuildState: false });
-    await quietly(() =>
-      createStim({ projectRoot: source, home, env: process.env }).collectGarbage({ pressure: 'normal' }),
-    );
+    await quietly(() => runGcPass({ level: 'normal', client: 'desktop', walkUnknown: false }, undefined, () => {}));
     expect(partial).not.toHaveBeenCalled();
     expect(existsSync(modules)).toBe(true);
 

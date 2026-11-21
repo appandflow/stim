@@ -2,12 +2,14 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { archiveDir, readArchives } from '@stim-cli/core/state';
-import { runGc } from '../commands/gc.ts';
+import { runGc as runGcCommand, runGcPass } from '../commands/gc.ts';
 import { collectArchives } from '../commands/gc/archives.ts';
 import { deleteGcItem } from '../commands/gc/item.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { saveConfig } from '../workspace/config.ts';
 import { goneClaimOwner, liveClaimOwner, plantClaim } from './_factories.ts';
+
+const runGc: typeof runGcCommand = (opts, deps) => runGcCommand(opts, deps, runGcPass);
 
 let home: string;
 beforeEach(() => {

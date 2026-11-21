@@ -70,6 +70,7 @@ import gcOp, {
   findStaleDeviceRecords,
   findStaleProjectDevices,
   runGc as runGcCommand,
+  runGcPass,
 } from '../commands/gc.ts';
 import { adoptParked, parkSim, readParked } from '../devices/sim-pool.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
@@ -682,7 +683,7 @@ function installExecutor() {
 
 function runGc(opts: Parameters<typeof runGcCommand>[0] = {}, deps: Parameters<typeof runGcCommand>[1] = {}) {
   const operation = deps.operation ?? testContext({ env: { ...process.env }, signal: testSignal });
-  return withAmbientContext(operation, () => runGcCommand(opts, deps));
+  return withAmbientContext(operation, () => runGcCommand(opts, deps, runGcPass));
 }
 
 async function cli(args: string[] = []) {
@@ -2003,7 +2004,7 @@ test('a dead project on an unmounted volume is not unregistered', async () => {
   });
   installExecutor();
 
-  await cli(['--pressure', 'normal']);
+  await runGc({ pressure: 'normal' });
 
   const cfg = currentConfig();
   expect(cfg.projects[unmountedPath]).toBeTruthy();
@@ -2062,7 +2063,7 @@ describe('a registry key that is not an absolute path', () => {
     });
     installExecutor();
 
-    await cli(['--pressure', 'normal']);
+    await runGc({ pressure: 'normal' });
 
     expect(currentConfig().projects[relativeKey]).toBe(undefined);
   });
@@ -2077,7 +2078,7 @@ describe('a registry key that is not an absolute path', () => {
     });
     installExecutor();
 
-    await cli(['--pressure', 'normal']);
+    await runGc({ pressure: 'normal' });
 
     expect(currentConfig().projects[relativeKey]?.platforms?.ios?.deviceUdid).toBe('UDID-1');
   });
@@ -2545,7 +2546,7 @@ test('a config scoped by STIM_HOME never sweeps machine-global devices through t
   });
 
   const configBefore = currentConfig();
-  const { stdout } = await captureJson(() => cli(['--pressure', 'normal', '--json']));
+  const { stdout } = await captureJson(() => runGc({ pressure: 'normal', json: true }));
   const payload = JSON.parse(stdout.at(-1) ?? '');
 
   expect(payload.actions.some((action: GcPayloadAction) => action.kind === 'delete-orphaned-devices')).toBe(false);
@@ -2598,7 +2599,7 @@ test("under a scoped STIM_HOME, gc tears down a pruned dead project's owned devi
     execCalls,
   });
 
-  await cli(['--pressure', 'normal']);
+  await runGc({ pressure: 'normal' });
 
   expect(currentConfig().projects[localDeadPath]).toBe(undefined);
   expect(execCalls.some((c) => c.startsWith('xcrun simctl delete UDID-DEAD'))).toBe(true);
@@ -2610,7 +2611,7 @@ test('the STIM_HOME guard does not disable dead-entry pruning', async () => {
   saveConfig({ version: 2, projects: { [localDeadPath]: { metroPort: 8100 } }, repos: {} });
   installExecutor();
 
-  await cli(['--pressure', 'normal']);
+  await runGc({ pressure: 'normal' });
 
   expect(currentConfig().projects[localDeadPath]).toBe(undefined);
 });
@@ -2737,7 +2738,7 @@ test('the age sweep trims the cache entries nothing has touched', async () => {
   saveConfig({ version: 2, projects: {}, repos: {} });
   installExecutor();
 
-  await cli(['--pressure', 'normal']);
+  await runGc({ pressure: 'normal' });
 
   expect(existsSync(oldEntry)).toBe(false);
   expect(existsSync(freshEntry)).toBeTruthy();
@@ -2768,7 +2769,7 @@ test('the age sweep ignores a legacy Metro parent registered after its named chi
   saveConfig({ version: 2, projects: {}, repos: {} });
   installExecutor();
 
-  await cli(['--pressure', 'normal']);
+  await runGc({ pressure: 'normal' });
 
   expect(existsSync(currentTransform)).toBe(true);
   expect(existsSync(legacyTransform)).toBe(true);
@@ -2797,7 +2798,7 @@ test('the age sweep ignores a legacy Metro parent whose named child is a symlink
   saveConfig({ version: 2, projects: {}, repos: {} });
   installExecutor();
 
-  await cli(['--pressure', 'normal']);
+  await runGc({ pressure: 'normal' });
 
   expect(existsSync(currentTransform)).toBe(true);
 });
@@ -2834,7 +2835,7 @@ test('the age sweep keeps a current Metro store that is also a current override 
   const caches = discoverCaches();
   expect(caches.find((cache) => cache.dir === parent)?.prune).toBe('report-only');
   expect(caches.find((cache) => cache.dir === child)?.prune).toBe('entries');
-  await cli(['--pressure', 'normal']);
+  await runGc({ pressure: 'normal' });
 
   expect(existsSync(parentTransform)).toBe(true);
   expect(existsSync(childTransform)).toBe(true);
@@ -2905,7 +2906,7 @@ describe('gc and the Swift compilation cache cap', () => {
     );
     expect(existsSync(leaf())).toBe(true);
 
-    await captureLog(() => cli(['--pressure', 'normal']));
+    await captureLog(() => runGc({ pressure: 'normal' }));
     expect(existsSync(leaf())).toBe(false);
     expect(existsSync(join(casDir(), 'v4.actions'))).toBe(false);
   });
@@ -2925,13 +2926,13 @@ describe('gc and the Swift compilation cache cap', () => {
 
   test('keeps it under the cap', async () => {
     process.env.STIM_CACHES_SWIFT_COMPILATION_CACHE_MAX_GB = '1';
-    await captureLog(() => cli(['--pressure', 'normal']));
+    await captureLog(() => runGc({ pressure: 'normal' }));
     expect(existsSync(leaf())).toBe(true);
   });
 
   test('keeps it when the cap is 0', async () => {
     process.env.STIM_CACHES_SWIFT_COMPILATION_CACHE_MAX_GB = '0';
-    await captureLog(() => cli(['--pressure', 'normal']));
+    await captureLog(() => runGc({ pressure: 'normal' }));
     expect(existsSync(leaf())).toBe(true);
   });
 });
@@ -3106,7 +3107,7 @@ describe('gc --json', () => {
   test('an acting run prints the actions it took and the failure count', async () => {
     const lock = writeLock({ platform: 'android', key: 'def-debug-sim', pid: IMPOSSIBLE_PID, projectRoot: '/w/dead' });
 
-    const { stdout } = await captureJson(() => cli(['--pressure', 'normal', '--json']));
+    const { stdout } = await captureJson(() => runGc({ pressure: 'normal', json: true }));
 
     expect(stdout).toHaveLength(1);
     const payload = JSON.parse(stdout[0] ?? '');
@@ -3292,8 +3293,8 @@ describe('gc against a claim taken while gc is deleting', { timeout: 60_000 }, (
         "  runFile: () => '',",
         "  spawn: () => { throw new Error('unexpected tool spawn'); },",
         '});',
-        `const { runGc } = await import(${JSON.stringify(SRC_URL)} + 'commands/gc.ts');`,
-        "await runGc({ pressure: 'normal' });",
+        `const { runGc, runGcPass } = await import(${JSON.stringify(SRC_URL)} + 'commands/gc.ts');`,
+        "await runGc({ pressure: 'normal' }, {}, runGcPass);",
       ].join('\n'),
     );
 
@@ -3526,7 +3527,7 @@ test('gc reports and reclaims named ports only for confirmed missing workspaces'
   const payload = await gcJson({ dryRun: true, pressure: 'normal' });
   expect(payload.sections?.orphanedPorts).toEqual([{ project: missing, label: 'web', port: 8900 }]);
   expect(inspected).toEqual([]);
-  await cli(['--pressure', 'normal']);
+  await runGc({ pressure: 'normal' });
   expect(getProject(missing)).toBeNull();
   expect(getProject(unmounted)?.ports).toEqual({ web: 8901 });
   expect(inspected).toEqual([]);
@@ -4137,7 +4138,7 @@ describe('parked hosted device GC', () => {
     journal([session()]);
     const before = readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8');
     const requests = worker({ state: 'stopped', device: session().device });
-    const { stdout } = await captureJson(() => cli(['--pressure', 'normal', '--json']));
+    const { stdout } = await captureJson(() => runGc({ pressure: 'normal', json: true }));
     expect(stdout).toHaveLength(1);
     const payload = JSON.parse(stdout[0]!);
     expect(payload.mode).toBe('delete');

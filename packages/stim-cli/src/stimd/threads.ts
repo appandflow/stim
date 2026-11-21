@@ -1,7 +1,9 @@
 import { isMainThread, parentPort, Worker, workerData } from 'node:worker_threads';
 import type { DaemonLadderAction } from '@stim-cli/core/state';
 import type { DiskPassInput, DiskPassResult, MaintenanceLane } from '../daemon/passes.ts';
-import { LADDER_CLOCK_SLOTS } from '../daemon/disk-owner.ts';
+import { LADDER_CLOCK_SLOTS, requestGcPass, type GcPassReply } from '../daemon/disk-owner.ts';
+import type { GcPassRequest } from '../commands/gc.ts';
+import type { LevelRunAction } from './passes/level-run.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 import { childKey } from './cleanup-watch.ts';
 import { setReportChildLog } from '../report-child-log.ts';
@@ -39,7 +41,8 @@ type FromThread =
   | { type: 'done'; result: DaemonLadderAction[]; reading: boolean }
   | ({ type: 'failed'; reading: boolean } & Failure)
   | { type: 'settled'; pending: string[]; reading: boolean }
-  | { type: 'ladderDone'; id: number; reading: boolean; result?: DiskPassResult; failure?: Failure };
+  | { type: 'ladderDone'; id: number; reading: boolean; result?: DiskPassResult | GcPassReply; failure?: Failure }
+  | { type: 'gcAction'; id: number; action: LevelRunAction };
 
 interface Thread {
   worker: Worker;
@@ -52,8 +55,10 @@ interface Thread {
   unsettled: Set<string>;
   /** A read of this thread timed out and has not settled; a replacement thread would start another. */
   reading: boolean;
-  /** Disk passes asked of this thread and not answered yet, by request id. */
-  ladders: Map<number, { resolve: (result: DiskPassResult) => void; reject: (error: Error) => void }>;
+  /** Disk passes and gc requests asked of this thread and not answered yet, by request id. */
+  ladders: Map<number, { resolve: (result: DiskPassResult | GcPassReply) => void; reject: (error: Error) => void }>;
+  /** Where each gc request's actions go, by request id. */
+  gcActions: Map<number, (action: LevelRunAction) => void>;
   lost: boolean;
 }
 
@@ -64,13 +69,21 @@ export interface ThreadTable {
   abort(name: ThreadName): void;
   /** Asks every thread that watches an unverified child to check it again. */
   settle(): void;
-  /** Waits for every running job, then ends every thread. */
+  /** Waits for every running job, disk pass and gc request, then ends every thread. */
   close(): Promise<void>;
   /**
    * Runs one disk pass on the passes thread, the stim-daemon's disk owner, beside the job it runs: the pass takes the
    * owner's turn at the job's next unit boundary.
    */
   ladder?(input: DiskPassInput): Promise<DiskPassResult>;
+  /**
+   * Sends one gc request to the passes thread, which joins a pass under way or queues one (`requestGcPass`); `leave`
+   * withdraws it.
+   */
+  gc(
+    input: GcPassRequest & { cwd: string },
+    onAction: (action: LevelRunAction) => void,
+  ): { result: Promise<GcPassReply>; leave(): void };
 }
 
 const lostError = (name: ThreadName, error: Error) =>
@@ -125,6 +138,7 @@ export function createThreadTable(log: Log, onLost: (error: Error) => void = () 
       reading: false,
       lost: false,
       ladders: new Map(),
+      gcActions: new Map(),
     };
     const rejection = (failure: Failure) => {
       const child = failure.contained;
@@ -144,10 +158,12 @@ export function createThreadTable(log: Log, onLost: (error: Error) => void = () 
         thread.reading = message.reading;
         return;
       }
+      if (message.type === 'gcAction') return thread.gcActions.get(message.id)?.(message.action);
       thread.reading = message.reading;
       if (message.type === 'ladderDone') {
         const asked = thread.ladders.get(message.id);
         thread.ladders.delete(message.id);
+        thread.gcActions.delete(message.id);
         idleEnd(name, thread);
         if (message.result) return asked?.resolve(message.result);
         return asked?.reject(rejection(message.failure ?? { message: 'the disk pass failed' }));
@@ -163,6 +179,7 @@ export function createThreadTable(log: Log, onLost: (error: Error) => void = () 
       for (const asked of thread.ladders.values())
         asked.reject(lostError(name, new Error(`the ${name} thread ended during a disk pass`)));
       thread.ladders.clear();
+      thread.gcActions.clear();
       if (thread.idle) clearTimeout(thread.idle);
       thread.idle = null;
       thread.reading = false;
@@ -187,21 +204,38 @@ export function createThreadTable(log: Log, onLost: (error: Error) => void = () 
     threads.set(name, thread);
     return thread;
   };
+  const ask = <T extends DiskPassResult | GcPassReply>(
+    type: 'ladder' | 'gc',
+    input: object,
+    onAction?: (action: LevelRunAction) => void,
+  ) => {
+    const thread = threads.get('passes') ?? start('passes');
+    if (thread.idle) clearTimeout(thread.idle);
+    thread.idle = null;
+    const id = ++nextLadder;
+    const result = new Promise<T>((resolve, reject) => {
+      thread.ladders.set(id, { resolve: resolve as (result: DiskPassResult | GcPassReply) => void, reject });
+      if (onAction) thread.gcActions.set(id, onAction);
+      try {
+        thread.worker.postMessage({ type, id, input });
+      } catch (error) {
+        thread.ladders.delete(id);
+        thread.gcActions.delete(id);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+    return { thread, id, result };
+  };
   return {
-    ladder(input) {
-      const thread = threads.get('passes') ?? start('passes');
-      if (thread.idle) clearTimeout(thread.idle);
-      thread.idle = null;
-      const id = ++nextLadder;
-      return new Promise((resolve, reject) => {
-        thread.ladders.set(id, { resolve, reject });
-        try {
-          thread.worker.postMessage({ type: 'ladder', id, input: { ...input, cwd: process.cwd() } });
-        } catch (error) {
-          thread.ladders.delete(id);
-          reject(error instanceof Error ? error : new Error(String(error)));
-        }
-      });
+    ladder: (input) => ask<DiskPassResult>('ladder', { ...input, cwd: process.cwd() }).result,
+    gc(input, onAction) {
+      const { thread, id, result } = ask<GcPassReply>('gc', input, onAction);
+      return {
+        result,
+        leave: () => {
+          if (thread.ladders.has(id)) thread.worker.postMessage({ type: 'gcLeave', id });
+        },
+      };
     },
     run(name, input) {
       const thread = threads.get(name) ?? start(name);
@@ -238,6 +272,17 @@ export function createThreadTable(log: Log, onLost: (error: Error) => void = () 
               };
             });
           }
+          await Promise.all(
+            [...thread.ladders].map(
+              ([id, { resolve, reject }]) =>
+                new Promise<void>((done) => {
+                  thread.ladders.set(id, {
+                    resolve: (result) => (resolve(result), done()),
+                    reject: (error) => (reject(error), done()),
+                  });
+                }),
+            ),
+          );
           end(name, thread);
         }),
       );
@@ -302,7 +347,7 @@ else if (thread && parentPort) {
   const { processContext } = await import('../cli-operation.ts');
   const ladderClocks: BigInt64Array | undefined = workerData.ladderClocks;
   let lane: MaintenanceLane | undefined;
-  serveThreadJobs<ThreadInput, DiskPassInput, DiskPassResult>(
+  serveThreadJobs<ThreadInput, DiskPassInput, DiskPassResult, GcPassRequest, GcPassReply>(
     port,
     processContext,
     async (input, operation) => {
@@ -334,5 +379,20 @@ else if (thread && parentPort) {
       const { runDiskPass } = await import('../daemon/passes.ts');
       return runDiskPass(input, log, operation, ladderClocks);
     },
+    ({ level, client, walkUnknown }, open, emit) =>
+      requestGcPass(
+        level,
+        client,
+        async (asked, signal, onAction, onLevel) => {
+          const { runGcPass } = await import('../commands/gc.ts');
+          const request = {
+            ...(asked ? { level: asked } : {}),
+            client,
+            ...(walkUnknown === false ? { walkUnknown } : {}),
+          };
+          return runGcPass(request, open(signal), onAction, onLevel);
+        },
+        emit,
+      ),
   );
 }

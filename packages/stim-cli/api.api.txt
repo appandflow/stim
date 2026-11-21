@@ -527,6 +527,13 @@
 [*] interface GcOptions { @@1 json?: boolean;
 [*] interface GcOptions { @@1 measureBuildState?: boolean;
 [*] interface GcOptions { @@1 pressure?: PressureLevel;
+[*] interface GcPassReply {
+[*] interface GcPassReply { @@1 joined?: {
+[*] interface GcPassReply { @@1 rescued?: RescuedCopy[];
+[*] interface GcPassReply { @@1 run: LevelRun;
+[*] interface GcPassReply { @@2 level: PressureLevel;
+[*] interface GcPassReply { @@2 startedAt: string;
+[*] interface GcPassReply { @@2 trigger: string;
 [*] interface GcRefusal {
 [*] interface GcRefusal { @@1 code: string;
 [*] interface GcRefusal { @@1 message: string;
@@ -546,6 +553,7 @@
 [*] interface GcRunPayload { @@1 discovered: LevelRun["discovered"];
 [*] interface GcRunPayload { @@1 failures: number | null;
 [*] interface GcRunPayload { @@1 inventory?: GcInventory | null;
+[*] interface GcRunPayload { @@1 joined?: GcPassReply["joined"];
 [*] interface GcRunPayload { @@1 level: PressureLevel;
 [*] interface GcRunPayload { @@1 mode: "dry-run" | "delete";
 [*] interface GcRunPayload { @@1 outside: LevelRun["outside"];

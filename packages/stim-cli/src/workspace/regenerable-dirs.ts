@@ -2,6 +2,7 @@ import { lstatSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { lstat, readdir, readFile } from 'node:fs/promises';
 import { basename, dirname, join, relative, sep } from 'node:path';
 import { canonicalPath } from '../commands/gc/paths.ts';
+import { answered, Unanswered } from './bounded-read.ts';
 import { gitQuietAsync } from './git.ts';
 import { othersRunningAsync, readRunningProcessesAsync, runningFromReason } from './running-from.ts';
 
@@ -45,11 +46,24 @@ function answerSync(read: DirRead): string[] | boolean {
   }
 }
 
-async function answerAsync(read: DirRead): Promise<string[] | boolean> {
+async function answerAsync(read: DirRead, signal?: AbortSignal): Promise<string[] | boolean> {
   try {
-    if ('signature' in read) return signatureHeads((await readFile(read.signature, 'utf8')).slice(0, 64));
-    return 'names' in read ? await readdir(read.names) : (await lstat(read.directory)).isDirectory();
-  } catch {
+    const start = async () => {
+      if ('signature' in read) return signatureHeads((await readFile(read.signature, 'utf8')).slice(0, 64));
+      return 'names' in read ? await readdir(read.names) : (await lstat(read.directory)).isDirectory();
+    };
+    return signal
+      ? await answered(
+          'names' in read ? read.names : 'directory' in read ? read.directory : read.signature,
+          start,
+          3_000,
+          signal,
+        )
+      : await start();
+  } catch (error) {
+    if (error instanceof Unanswered || signal?.aborted) throw error;
+    if (signal && !(error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR')))
+      throw error;
     return 'names' in read ? [] : false;
   }
 }
@@ -60,9 +74,9 @@ function readSync<T>(reads: DirReads<T>): T {
   return step.value;
 }
 
-async function readAsync<T>(reads: DirReads<T>): Promise<T> {
+async function readAsync<T>(reads: DirReads<T>, signal?: AbortSignal): Promise<T> {
   let step = reads.next();
-  while (!step.done) step = reads.next(await answerAsync(step.value));
+  while (!step.done) step = reads.next(await answerAsync(step.value, signal));
   return step.value;
 }
 
@@ -228,8 +242,11 @@ export function existingBuildDirsAsync(root: string): Promise<string[]> {
 }
 
 /** `existingBuildDirsAsync`, with the Cargo `target/` among them named from the same reads. */
-export function existingBuildDirKindsAsync(root: string): Promise<{ dirs: string[]; cargo: string[] }> {
-  return readAsync(buildDirKindsReads(root));
+export function existingBuildDirKindsAsync(
+  root: string,
+  signal?: AbortSignal,
+): Promise<{ dirs: string[]; cargo: string[] }> {
+  return readAsync(buildDirKindsReads(root), signal);
 }
 
 /**

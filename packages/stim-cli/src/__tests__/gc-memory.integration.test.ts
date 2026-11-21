@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
-import { runGc } from '../commands/gc.ts';
+import { runGc as runGcCommand, runGcPass } from '../commands/gc.ts';
 import { deleteGcItem } from '../commands/gc/item.ts';
 import { ambientContext, withAmbientContext } from '@stim-cli/core';
 import { daemonSnapshotFile, maintenanceRunClaims } from '@stim-cli/core/state';
@@ -36,6 +36,8 @@ import { makeBuildLock, makeChildProcess, plantClaim } from './_factories.ts';
 import { saveConfig } from '../workspace/config.ts';
 import { buildLockPath } from '../engine/build-lock.ts';
 import * as hostMemory from '../host-memory.ts';
+
+const runGc: typeof runGcCommand = (opts, deps) => runGcCommand(opts, deps, runGcPass);
 
 let tmpHome: string;
 

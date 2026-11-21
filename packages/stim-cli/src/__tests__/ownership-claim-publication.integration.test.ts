@@ -3,10 +3,12 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { clearFreeClaimSet, readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
-import { runGc } from '../commands/gc.ts';
+import { runGc as runGcCommand, runGcPass } from '../commands/gc.ts';
 import { saveConfig } from '../workspace/config.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { makeExecutor } from './_factories.ts';
+
+const runGc: typeof runGcCommand = (opts, deps) => runGcCommand(opts, deps, runGcPass);
 
 const faults = vi.hoisted(() => ({
   readOnly: '',

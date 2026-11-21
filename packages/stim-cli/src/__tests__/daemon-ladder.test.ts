@@ -217,6 +217,23 @@ describe('the idle stage under pressure (rung 1)', () => {
     expect(existsSync(old.outputs)).toBe(false);
   });
 
+  test("a forced stim gc --pressure high keeps the caller's own idle workspace", async () => {
+    const caller = withOutputs('caller', 20 * MINUTE_MS);
+    tick('disk');
+
+    const ladder = await runForcedLadder({
+      levels: ['high'],
+      act: true,
+      why: 'stim gc at high',
+      trigger: 'gc',
+      protectedRoot: caller.root,
+    });
+
+    expect(ladder?.levels[0]?.actions.filter((action) => action.kind === 'idle-stage')).toEqual([]);
+    expect(sims.find((sim) => sim.udid === caller.udid)?.state).toBe('Booted');
+    expect(existsSync(caller.outputs)).toBe(true);
+  });
+
   test.each(['the daemon tick', 'a forced stim gc'])(
     'under disk pressure alone with idle.minutes 5, %s keeps a workspace whose agent-device command was 6 minutes ago',
     async (path) => {

@@ -916,6 +916,8 @@ RULES
                   homeEntry.
                   label is a device, path or cache name; id is the UDID,
                   AVD name or path behind it, or null
+  joined          { startedAt, trigger, level } of the pass it joined,
+                  whose actions it lists
   inventory       present on a dry run only. Report only, except the
                   unused simulator runtimes gc deletes.
                   { devices, runtimes, systemImages, notices }

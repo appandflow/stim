@@ -28,7 +28,7 @@ about an unresolvable stim-daemon claim. With admission 'command', start, build
 and run refuse and start the home's daemon as stim start, ios, android, macos
 and web do; previewGarbage and collectGarbage take the same refusals. The API never runs
 the daemon's passes in the calling process. The home is fixed when the client
-is created: home, else STIM_HOME from env, else the default home. All operations run in the calling
+is created: home, else STIM_HOME from env, else the default home. All operations but collectGarbage run in the calling
 process against the client's home and project and call the same lifecycle
 operations as the CLI. None parses CLI arguments or changes the caller's
 cwd/environment.
@@ -129,17 +129,18 @@ branch cleanup. Throwing refuses the operation.
 previewGarbage() stays read-only: the stim gc --dry-run --json report, at the measured
 pressure level or at pressure (normal, high or critical). measureBuildState
 false reports each worktree's buildState only from the disk-usage cache.
-collectGarbage({ pressure?, signal? }) runs stim gc in process at the measured
-level or at pressure, and returns { report, exitCode }; exitCode is 0 or 1 and
-does not change process.exitCode. An invalid pressure rejects with STIM_BAD_ARG.
+collectGarbage({ pressure?, signal? }) runs stim gc on this home's stimd at the
+measured level or at pressure (\`guide cleanup\`), and returns { report,
+exitCode }; exitCode is 0 or 1 and does not change process.exitCode. Past the
+report budget it rejects with STIM_REPORT_TIMEOUT; the pass goes on. An invalid pressure rejects with STIM_BAD_ARG.
 The CLI's scoped-home rules apply.
 deleteGarbageItem({ item, signal? }) deletes one item, for Stim Desktop's
 Storage page, and returns { results, exitCode }. item is { kind: 'cache', dir },
 { kind: 'workspace-outputs' }, { kind: 'archive', id, part? }, { kind:
 'watchman' } or { kind: 'gradle-daemons' }; the CLI has no command for it.
 
-collectGarbage and deleteGarbageItem take this home's exclusive maintenance claim;
-concurrent maintenance rejects with STIM_CLAIM_REFUSED and names the held claim.
+deleteGarbageItem takes this home's exclusive maintenance claim; concurrent
+maintenance rejects with STIM_CLAIM_REFUSED and names the held claim.
 Execution and cleanup use the report budgets above. Cancellation stops pending
 lock waits and further actions; completed actions remain applied. An archive
 whose history has started moving finishes publication before cancellation.
