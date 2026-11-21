@@ -27,6 +27,7 @@ import { warnCriticalDisk } from '../stimd/passes/trigger.ts';
 import { loadConfig, saveConfig } from '../workspace/config.ts';
 import * as memory from '../commands/gc/memory.ts';
 import { recordGcResult } from '../commands/gc/results.ts';
+import { testContext } from './_context.ts';
 
 const MINUTE_MS = 60_000;
 
@@ -541,12 +542,7 @@ test('the daily sweep shuts watchman down and records it', async () => {
   expect(actionKinds()).toContain('stop-watchman');
 });
 
-test('a due sweep at the critical disk level deletes worktree trash with a bare rm', async () => {
-  vi.spyOn(measurements, 'measurePressure').mockReturnValue({
-    disk: [{ volume: '/', freeMb: 1024 }],
-    memory: { level: 'normal', availableBytes: null, pressured: false },
-    warningSince: null,
-  });
+function trashAndRemovals(): { entry: string; removals: string[][] } {
   const entry = join(home, 'trash', 'remove-critical');
   write(join(entry, 'entries', '0', 'file'));
   writeFileSync(join(entry, 'trash.json'), JSON.stringify({ worktree: join(projects, 'gone'), createdAt: 'T' }));
@@ -561,9 +557,67 @@ test('a due sweep at the critical disk level deletes worktree trash with a bare 
       return current.runFileAsync('rm', command.slice(command.indexOf('rm') + 1), options);
     },
   });
+  return { entry, removals };
+}
+
+const bareRm = (entry: string): string[][] =>
+  process.platform === 'win32' ? [] : [['rm', '-rf', '--', join(entry, 'entries')]];
+
+test('a due sweep at the critical disk level deletes worktree trash with a bare rm', async () => {
+  vi.spyOn(measurements, 'measurePressure').mockReturnValue({
+    disk: [{ volume: '/', freeMb: 1024 }],
+    memory: { level: 'normal', availableBytes: null, pressured: false },
+    warningSince: null,
+  });
+  const trash = trashAndRemovals();
 
   await pass();
 
-  expect(removals).toEqual([['rm', '-rf', '--', join(entry, 'entries')]]);
-  expect(existsSync(entry)).toBe(false);
+  expect(trash.removals).toEqual(bareRm(trash.entry));
+  expect(existsSync(trash.entry)).toBe(false);
+});
+
+test('a due sweep on a critical daemon tick deletes worktree trash with a bare rm after a recent normal pressure check', async () => {
+  const now = Date.now();
+  mkdirSync(join(maintenanceStateFile(), '..'), { recursive: true });
+  writeFileSync(
+    maintenanceStateFile(),
+    JSON.stringify({
+      version: 1,
+      lastAt: { pressure: now - 30_000 },
+      pressure: {
+        disk: [{ volume: '/', freeMb: 500_000 }],
+        memory: { level: 'normal', availableBytes: null, pressured: false },
+        warningSince: null,
+      },
+      sizes: [],
+      lastPass: null,
+      recent: [],
+      plan: [],
+    }),
+  );
+  const trash = trashAndRemovals();
+
+  await runMaintenance('daemon', {
+    tick: {
+      operation: testContext(),
+      measured: {
+        measurement: {
+          disk: [{ volume: '/', freeMb: 1024 }],
+          memory: { level: 'normal', availableBytes: null, totalBytes: 0 },
+          load1: 0,
+          cores: 1,
+          bootedSimulators: null,
+          runningEmulators: null,
+          interaction: null,
+        },
+        sims: null,
+        simsError: null,
+        devices: [],
+      },
+    },
+  });
+
+  expect(trash.removals).toEqual(bareRm(trash.entry));
+  expect(existsSync(trash.entry)).toBe(false);
 });

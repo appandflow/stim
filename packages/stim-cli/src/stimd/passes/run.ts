@@ -619,7 +619,11 @@ export async function runMaintenance(
         protectedRoot: triggeringRoot(),
         worktreeSweep: result.worktreeSweep,
         lowPriority: cap.ran,
-        critical: recordedDiskLevel(state, tick?.operation.env) === 'critical',
+        critical:
+          (tick
+            ? diskPressure(tick.measured.measurement.disk, diskThresholds(loadConfig(), tick.operation.env).thresholds)
+                .level
+            : recordedDiskLevel(state)) === 'critical',
         ...(tick ? { operation: tick.operation } : {}),
         ...(between ? { between } : {}),
       };
