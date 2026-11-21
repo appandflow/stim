@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { diskUsageCacheFile, gcMarkFile, readGcMark, type Config } from '@stim-cli/core/state';
 import { runDormantDependencies } from '../daemon/dependencies.ts';
-import { writeMark } from '../daemon/marks.ts';
+import { markWriter } from '../daemon/marks.ts';
 import { stoppedOutputCandidates, stoppedOutputs } from '../daemon/stages.ts';
 import type { OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { metroStoreRoot } from '../stimd/metro/metro-store.ts';
@@ -25,16 +25,17 @@ vi.mock('../workspace/protected-locations.ts', () => ({
   isProtectedLocation: () => false,
 }));
 
-const packageReads = vi.hoisted(() => ({ count: 0 }));
+const reads = vi.hoisted(() => ({ packages: 0, configs: 0 }));
 vi.mock('node:fs', async (importOriginal) => {
   const fs = await importOriginal<typeof import('node:fs')>();
   const readFileSync = new Proxy(fs.readFileSync, {
     apply(target, self, args: Parameters<typeof fs.readFileSync>) {
-      if (String(args[0]).endsWith('package.json')) packageReads.count++;
+      if (String(args[0]).endsWith('package.json')) reads.packages++;
+      if (String(args[0]).endsWith('config.json')) reads.configs++;
       return Reflect.apply(target, self, args);
     },
   });
-  return { ...fs, readFileSync };
+  return { ...fs, readFileSync, default: { ...fs, readFileSync } };
 });
 
 vi.mock('../workspace/running-from.ts', async (importOriginal) => {
@@ -202,7 +203,8 @@ describe('gc marks written by the lane', () => {
     expect(readGcMark(other)).not.toHaveProperty('dirtyAt');
   }, 20_000);
 
-  it('marks registered checkouts with Metro stores and Cargo targets without a process read and with package reads linear in the count', async () => {
+  it('marks registered checkouts with Metro stores and Cargo targets without a process read, with package reads linear and config reads constant in the count', async () => {
+    vi.stubEnv('STIM_METRO_CACHE', undefined);
     const paths = Array.from({ length: 6 }, (_, i) => {
       const path = checkout(`app${i}`, 3 * day);
       writeFileSync(join(path, 'package.json'), JSON.stringify({ name: `app${i}`, dependencies: { expo: '*' } }));
@@ -214,11 +216,17 @@ describe('gc marks written by the lane', () => {
     const mark = async (count: number) => {
       const marked = paths.slice(0, count);
       const registered = { ...config, projects: Object.fromEntries(marked.map((path) => [path, {}])) };
+      saveConfig(registered);
       vi.mocked(readRunningProcessesAsync).mockClear();
-      packageReads.count = 0;
-      for (const path of marked)
-        await writeMark(registered, { path, at: Date.now(), lastActivityAt: null, kept: null });
-      return { processReads: vi.mocked(readRunningProcessesAsync).mock.calls.length, packageReads: packageReads.count };
+      reads.packages = 0;
+      reads.configs = 0;
+      const write = markWriter(registered);
+      for (const path of marked) await write({ path, at: Date.now(), lastActivityAt: null, kept: null });
+      return {
+        processReads: vi.mocked(readRunningProcessesAsync).mock.calls.length,
+        packageReads: reads.packages,
+        configReads: reads.configs,
+      };
     };
 
     const few = await mark(3);
@@ -232,5 +240,6 @@ describe('gc marks written by the lane', () => {
     expect(few.processReads).toBe(0);
     expect(many.processReads).toBe(0);
     expect(many.packageReads).toBe(2 * few.packageReads);
+    expect(many.configReads).toBeLessThanOrEqual(few.configReads);
   }, 20_000);
 });

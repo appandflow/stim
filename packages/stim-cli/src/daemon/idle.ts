@@ -201,12 +201,13 @@ async function decide(
  * The regenerable outputs the idle stage deletes, and why each other one stays. `targets` names the Cargo `target/`
  * among `paths`, recognised by the same reads that listed it. `inUse: false` skips the in-use reads (the process table
  * for a Cargo `target/`, the running sharer of the Metro store), so it lists candidates a delete must check again.
+ * `metroCache` is the Metro cache root a caller resolved once for many checkouts.
  */
 export async function idleOutputs(
   path: string,
   config: Config,
   deletable?: (path: string) => boolean,
-  { signal, inUse }: { signal?: AbortSignal; inUse?: false } = {},
+  { signal, inUse, metroCache }: { signal?: AbortSignal; inUse?: false; metroCache?: string } = {},
 ): Promise<{ paths: string[]; targets: string[]; kept: string[] }> {
   const paths = workspaceOutputPaths(workspaceDir(path));
   const targets: string[] = [];
@@ -220,7 +221,7 @@ export async function idleOutputs(
       if (cargo.includes(dir)) targets.push(dir);
     }
   }
-  const store = metroStoreRoot(path);
+  const store = metroStoreRoot(path, metroCache);
   if (existsSync(store)) {
     const sharer =
       inUse !== false &&

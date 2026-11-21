@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { metroCacheRoot, METRO_NAMED_CACHE_LAYOUT, registerCache } from '@stim-cli/core';
+import { cacheNameSegment, metroCacheRoot, METRO_NAMED_CACHE_LAYOUT, registerCache } from '@stim-cli/core';
 
 function metroStoreName(root: string): string {
   try {
@@ -12,8 +12,9 @@ function metroStoreName(root: string): string {
   return 'app';
 }
 
-export function metroStoreRoot(root: string): string {
-  return metroCacheRoot(metroStoreName(root));
+/** `base` is the Metro cache root, `metroCacheRoot()`, which reads Stim's config when the environment does not set it. */
+export function metroStoreRoot(root: string, base: string = metroCacheRoot()): string {
+  return join(base, cacheNameSegment(metroStoreName(root)));
 }
 
 export function registerMetroStore(storeRoot: string): void {

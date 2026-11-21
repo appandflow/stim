@@ -36,12 +36,11 @@ import { ARTIFACT_DIRS } from '../workspace/regenerable-dirs.ts';
 import { checkDependencyEdits } from '../workspace/dependency-edits.ts';
 import { writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
 import { reduceDormantOutputs } from './dormant-outputs.ts';
-import { writeMark } from './marks.ts';
+import { markWriter } from './marks.ts';
 import {
   dormantAfterMs,
   idleStageCandidates,
   sourceCheckoutIdle,
-  type CheckoutReading,
   sourceDormantAfterMs,
   stillIdle,
   type DeviceReading,
@@ -645,9 +644,7 @@ async function takeIdleDependencies(
         }
       : {
           between,
-          ...(input.marks
-            ? { onRead: (reading: CheckoutReading) => writeMark(config, reading, input.operation?.signal) }
-            : {}),
+          ...(input.marks ? { onRead: markWriter(config, input.operation?.signal) } : {}),
         },
   );
   await between();
