@@ -23,12 +23,16 @@ import { killStimdUnder } from '../../../../vitest.kill-run-processes.ts';
 import { testContext } from './_context.ts';
 
 const opened = vi.hoisted(() => new Set<Socket>());
+const refusal = vi.hoisted(() => ({ after: -1, refused: false }));
 vi.mock('node:net', async (original) => {
   const actual = await original<typeof import('node:net')>();
   return {
     ...actual,
     connect: (...args: Parameters<typeof actual.connect>) => {
-      const socket = actual.connect(...args);
+      const refuse = refusal.after === 0;
+      if (refusal.after >= 0) refusal.after--;
+      if (refuse) refusal.refused = true;
+      const socket = refuse ? actual.connect({ path: `${String(args[0])}.missing` }) : actual.connect(...args);
       opened.add(socket);
       socket.once('close', () => opened.delete(socket));
       return socket;
@@ -42,6 +46,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   vi.unstubAllEnvs();
+  Object.assign(refusal, { after: -1, refused: false });
   killStimdUnder(scratch);
   rmSync(scratch, { recursive: true, force: true });
 });
@@ -156,6 +161,22 @@ describe.skipIf(process.platform === 'win32')('gc on stimd', () => {
       },
       { timeout: 20_000, interval: 200 },
     );
+  }, 45_000);
+
+  test('a refused GC connection after hello restores the reserve before any pass starts', async () => {
+    const item = fixture();
+    writeFileSync(join(item.home, 'config.json'), JSON.stringify({ daemon: { mode: 'on' } }));
+    await createStim({ projectRoot: item.root, home: item.home, env: item.env }).collectGarbage({ pressure: 'normal' });
+    const operation = testContext({ home: item.home, projectRoot: item.root, cwd: item.root, env: item.env });
+    refusal.after = 2;
+    await expect(
+      withAmbientContext(operation, () =>
+        runGcThroughStimd({ level: 'critical', client: 'manual' }, operation, () => {}),
+      ),
+    ).rejects.toMatchObject({ code: 'STIM_DAEMON_UNAVAILABLE' });
+    expect(refusal.refused).toBe(true);
+    expect(readFileSync(join(maintenanceDir(), 'disk-reserve')).length).toBe(1024 * 1024);
+    expect(readFileSync(join(item.cache, 'artifact'), 'utf8')).toBe('cached');
   }, 45_000);
 
   test("a pass's native child stops when its only requester leaves", async () => {

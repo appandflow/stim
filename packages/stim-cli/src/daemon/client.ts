@@ -2130,7 +2130,8 @@ export async function runGcThroughStimd(
       operation,
     );
     signal?.throwIfAborted();
-    if (!started || (await waitForStimdHello()) === null) throw refused();
+    const hello = started ? await waitForStimdHello() : null;
+    if (hello !== 'held' && hello !== 'held-attached') throw refused();
     signal?.throwIfAborted();
   } catch (error) {
     if (released) keepReserve();
@@ -2139,10 +2140,12 @@ export async function runGcThroughStimd(
   // @ref LLP 0001#every-gc-joins-a-pass-under-way -- after transmission only the pass restores the reserve
   return new Promise((resolve, reject) => {
     let settled = false;
+    let written = false;
     const finish = (error: Error | null, reply?: GcPassReply) => {
       if (settled) return;
       settled = true;
       signal?.removeEventListener('abort', abort);
+      if (error && !written && released) keepReserve();
       if (error) reject(error);
       else if (reply) resolve(reply);
     };
@@ -2168,6 +2171,7 @@ export async function runGcThroughStimd(
         );
       },
     );
+    socket.once('connect', () => (written = true));
     const abort = () => {
       const reason: unknown = signal?.reason;
       if (reason instanceof Error && 'code' in reason && reason.code === 'STIM_REPORT_TIMEOUT')
