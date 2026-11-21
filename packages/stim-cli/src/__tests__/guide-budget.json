@@ -27,7 +27,7 @@
     "agent logs": 1050,
     "agent phone": 1000,
     "facts payloads": 37250,
-    "facts gc": 26100,
+    "facts gc": 26200,
     "facts status": 52400,
     "facts stats": 10500,
     "lifecycle hosted-android": 12500,
