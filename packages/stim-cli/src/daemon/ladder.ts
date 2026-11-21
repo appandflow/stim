@@ -22,7 +22,7 @@ import { projectDeviceSlots } from '../devices/device-slots.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
 import { readParked } from '../devices/sim-pool.ts';
 import { workspaceDir } from '../workspace/paths.ts';
-import { formatBytes, measuredDirectorySizeAsync } from '../fs-util.ts';
+import { formatBytes, formatSize, measuredDirectorySizeAsync } from '../fs-util.ts';
 import { timedStep } from './step-timing.ts';
 import { describeSizeFailure, lastSizeFailure } from '../size-failures.ts';
 import { forgetGitReads } from '../workspace/git-reads.ts';
@@ -155,7 +155,7 @@ function recordAction(
         : action.outcome === 'kept'
           ? 'kept'
           : 'failed to';
-  const msg = `rung ${action.rung}: ${verb} ${action.kind.replaceAll('-', ' ')} ${action.target} (${formatBytes(action.bytes)} freed): ${action.detail}; ${reason}${action.restore ? `; restore with ${action.restore}` : ''}`;
+  const msg = `rung ${action.rung}: ${verb} ${action.kind.replaceAll('-', ' ')} ${action.target} (${formatSize(action)} freed): ${action.detail}; ${reason}${action.restore ? `; restore with ${action.restore}` : ''}`;
   const level = action.outcome === 'failed' ? 'warn' : 'info';
   const fields = {
     rung: action.rung,
@@ -163,6 +163,7 @@ function recordAction(
     target: action.target,
     outcome: action.outcome,
     bytes: action.bytes,
+    ...(action.partial ? { partial: true } : {}),
     reason,
     ...(action.restore ? { restore: action.restore } : {}),
     ...(action.workspace ? { workspace: action.workspace } : {}),

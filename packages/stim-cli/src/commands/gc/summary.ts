@@ -1,4 +1,4 @@
-import { formatBytes } from '../../fs-util.ts';
+import { formatBytes, formatSize } from '../../fs-util.ts';
 import type { LevelRun, LevelRunAction } from '../../stimd/passes/level-run.ts';
 import type { UnmanagedUsage } from './unmanaged.ts';
 
@@ -53,7 +53,7 @@ export function gcDetailLines(run: LevelRun): string[] {
   ];
   for (const action of run.actions)
     lines.push(
-      `${action.outcome}\t${formatBytes(action.bytes)}\t${action.rung === null ? 'maintenance' : `rung ${action.rung}`}\t${action.kind}\t${action.target}\t${[action.reason, action.detail].filter(Boolean).join('; ')}${action.restore ? `; restore with ${action.restore}` : ''}`,
+      `${action.outcome}\t${formatSize(action)}\t${action.rung === null ? 'maintenance' : `rung ${action.rung}`}\t${action.kind}\t${action.target}\t${[action.reason, action.detail].filter(Boolean).join('; ')}${action.restore ? `; restore with ${action.restore}` : ''}`,
     );
   for (const checkout of run.discovered)
     lines.push(
@@ -82,10 +82,11 @@ export function formatGcSummary(
   const failed = run.actions.filter((action) => action.outcome === 'failed');
   const kept = run.actions.filter((action) => action.outcome === 'kept');
   const bytes = taken.reduce((sum, action) => sum + action.bytes, 0);
+  const estimate = `${taken.some((action) => action.partial) ? 'at least' : 'about'} ${formatBytes(bytes)}`;
   lines.push(
     act
-      ? `Freed about ${formatBytes(bytes)} in ${plural(taken.length, 'action')}; kept ${kept.length}; ${failed.length} failed.`
-      : `Dry run: would take ${plural(taken.length, 'action')}, about ${formatBytes(bytes)} where measured; ${kept.length} kept. Nothing was deleted.`,
+      ? `Freed ${estimate} in ${plural(taken.length, 'action')}; kept ${kept.length}; ${failed.length} failed.`
+      : `Dry run: would take ${plural(taken.length, 'action')}, ${estimate} where measured; ${kept.length} kept. Nothing was deleted.`,
   );
   const groups = new Map<string, LevelRunAction[]>();
   for (const action of taken) groups.set(categoryOf(action), [...(groups.get(categoryOf(action)) ?? []), action]);
@@ -93,10 +94,13 @@ export function formatGcSummary(
     (a, b) => b[1].reduce((s, x) => s + x.bytes, 0) - a[1].reduce((s, x) => s + x.bytes, 0),
   )) {
     const total = actions.reduce((sum, action) => sum + action.bytes, 0);
-    lines.push(`  ${category} (${actions.length}${total ? `, ${formatBytes(total)}` : ''})`);
+    const partial = actions.some((action) => action.partial);
+    lines.push(
+      `  ${category} (${actions.length}${total || partial ? `, ${formatSize({ bytes: total, ...(partial ? { partial: true } : {}) })}` : ''})`,
+    );
     const largest = actions.toSorted((a, b) => b.bytes - a.bytes).slice(0, LARGEST_SHOWN);
     for (const action of largest)
-      lines.push(`    ${action.bytes ? `${formatBytes(action.bytes)}  ` : ''}${action.target}`);
+      lines.push(`    ${action.bytes || action.partial ? `${formatSize(action)}  ` : ''}${action.target}`);
     if (actions.length > largest.length) lines.push(`    and ${actions.length - largest.length} more`);
   }
   if (run.discovered.length) {
@@ -108,7 +112,10 @@ export function formatGcSummary(
         ? mine.map((action) => action.kind.replaceAll('-', ' ')).join(', ')
         : (checkout.actions.find((action) => action.outcome === 'kept')?.detail ??
           (checkout.kept ? `kept: ${checkout.kept}` : 'idle, with no regenerable output to clear'));
-      lines.push(`  ${freed ? `${formatBytes(freed)}  ` : ''}${checkout.path} (${checkout.origin}): ${what}`);
+      const partial = mine.some((action) => action.partial);
+      lines.push(
+        `  ${freed || partial ? `${formatSize({ bytes: freed, ...(partial ? { partial: true } : {}) })}  ` : ''}${checkout.path} (${checkout.origin}): ${what}`,
+      );
     }
     if (run.discovered.length > LARGEST_SHOWN * 4)
       lines.push(`  and ${run.discovered.length - LARGEST_SHOWN * 4} more`);

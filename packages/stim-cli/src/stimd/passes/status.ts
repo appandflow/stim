@@ -63,7 +63,7 @@ export function maintenanceLine(status: MaintenanceStatus, includeLabel = true):
   const outputs = status.plan.filter((action) => action.kind === 'would-clear-outputs');
   const summary =
     status.mode === 'on' && status.lastPass
-      ? `${status.lastPass.actions} actions, ${(status.lastPass.freedBytes / 1024 ** 3).toFixed(1)} GB freed`
+      ? `${status.lastPass.actions} actions, ${status.lastPass.freedPartial ? 'at least ' : ''}${(status.lastPass.freedBytes / 1024 ** 3).toFixed(1)} GB freed`
       : outputs.length
         ? `would clear build outputs of ${outputs.length} ${outputs.length === 1 ? 'workspace' : 'workspaces'} (${(outputs.reduce((sum, action) => sum + action.bytes, 0) / 1024 ** 3).toFixed(1)} GB)`
         : `${status.plan.length} planned actions`;

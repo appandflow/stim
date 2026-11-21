@@ -36,7 +36,7 @@ import { describeMetroLastStop } from '../stimd/metro/stop-cause.ts';
 import { projectRegistry } from '../integrations/projects.ts';
 import { detectIsExpo, projectShortcut } from '../workspace/project.ts';
 import { buildStatusLine } from '../engine/build-progress.ts';
-import { formatBytes, volumeRootFor } from '../fs-util.ts';
+import { formatBytes, formatSize, volumeRootFor } from '../fs-util.ts';
 import { formatDuration, formatLongDuration, plural } from '../command-output.ts';
 import {
   withDerivedFacts,
@@ -201,9 +201,9 @@ function stageLine(state: EnvironmentState, snapshot: DaemonSnapshot | null, now
     return `  stage: dormant${timeIn(at, now)}; ${deletedDevices.length ? `deleted ${deletedDevices.join(', ')}` : 'no owned device deleted'}${archived ? '; logs archived' : ''}; ${back}`;
   }
   if (state.idleStage) {
-    const { at, idleMinutes, freedBytes } = state.idleStage;
+    const { at, idleMinutes, freedBytes, freedPartial } = state.idleStage;
     const restore = state.metro?.idleStop ? '`stim revive`' : '`stim ios` or `stim android`';
-    return `  stage: idle${timeIn(at, now)}, after ${idleMinutes}m without activity; freed ${formatBytes(freedBytes)}; ${restore} resumes it`;
+    return `  stage: idle${timeIn(at, now)}, after ${idleMinutes}m without activity; freed ${formatSize({ bytes: freedBytes, ...(freedPartial ? { partial: true } : {}) })}; ${restore} resumes it`;
   }
   if (!state.live && state.build?.state !== 'running') return '  stage: stopped';
   const decision = snapshot?.workspaces.find((entry) => entry.path === state.path);

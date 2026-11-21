@@ -299,6 +299,7 @@ async function homePasses(
                   workspace: entry.path,
                   outcome: entry.outcome === 'idle' ? ('done' as const) : ('would' as const),
                   bytes: entry.freedBytes ?? 0,
+                  ...(entry.freedPartial ? { partial: true as const } : {}),
                   detail: entry.detail,
                   ...(entry.outcome === 'idle' ? { restore: 'stim revive' } : {}),
                 },
@@ -731,6 +732,7 @@ export async function runForcedLadder({
                   volumes && onDiskVolumes(entry.path, volumes) ? (path) => onShortVolume([path], volumes) : undefined,
                 )
               : 0),
+          ...(entry.freedPartial ? { partial: true as const } : {}),
           detail: entry.outcome === 'would-idle' ? 'stim gc would do this' : entry.detail,
           ...(entry.outcome === 'idle' ? { restore: 'stim revive' } : {}),
         });

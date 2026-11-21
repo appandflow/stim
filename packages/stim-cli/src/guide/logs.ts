@@ -350,6 +350,7 @@ Each record has src: gc, level (info, or error for a failed item), msg and
   label, id, path, bytes, detail
            name, identifier, absolute path when the item is one, bytes freed,
            and the reason a kept or failed item was left
+  partial  true when a size walk timed out, so bytes is a lower bound
 Records of one run share runId. See stim guide cleanup, WHAT WAS CLEARED.
 
 DAEMON LOG TIMING

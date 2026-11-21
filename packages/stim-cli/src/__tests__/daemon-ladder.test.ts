@@ -2194,12 +2194,27 @@ test('deleteOutputs stops before the next removal once its operation is aborted'
   const paths = ['one', 'two'].map((name) => join(base, name));
   for (const path of paths) mkdirSync(path);
   const controller = new AbortController();
-  vi.spyOn(fsUtil, 'measuredDirectorySizeAsync').mockImplementation(async () => {
+  vi.spyOn(fsUtil, 'measureDirectoryAsync').mockImplementation(async () => {
     controller.abort();
-    return 1;
+    return { bytes: 1 };
   });
 
   await expect(idlePass.deleteOutputs(paths, controller.signal)).rejects.toThrow('aborted');
 
   for (const path of paths) expect(existsSync(path)).toBe(true);
+});
+
+test('deleteOutputs reports the bytes a timed-out walk finished as a lower bound and still deletes', async () => {
+  const output = join(home, 'build');
+  for (const name of ['intermediates', 'outputs']) mkdirSync(join(output, name), { recursive: true });
+  setExecutor({
+    ...getExecutor(),
+    runFileAsync: async (_file, args) => {
+      if (args.at(-1) === join(output, 'intermediates')) return `${6 * 1024}\t${args.at(-1)}`;
+      throw Object.assign(new Error('Command timed out after 120000ms: du'), { code: 'ETIMEDOUT', stdout: '' });
+    },
+  });
+
+  expect(await idlePass.deleteOutputs([output])).toEqual({ bytes: 6 * 1024 * 1024, partial: true });
+  expect(existsSync(output)).toBe(false);
 });

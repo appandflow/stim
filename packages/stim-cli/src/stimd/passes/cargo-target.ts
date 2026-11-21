@@ -406,5 +406,7 @@ export async function trimCargoTargetAction(
     result.bytes = result.removed.length && freed > 0 ? Math.round(freed * 1024 * 1024) : 0;
   }
   const detail = `${result.removed.length ? `removed ${result.removed.join(', ')}` : 'removed nothing'}${result.kept.length ? `; kept ${result.kept.join('; ')}` : ''}${result.reserveReleased ? `; ${RESERVE_RELEASED}` : ''}`;
-  return result.removed.length ? { status: 'done', bytes: result.bytes, detail } : kept(detail);
+  return result.removed.length
+    ? { status: 'done', bytes: result.bytes, ...(result.partial ? { partial: result.partial } : {}), detail }
+    : kept(detail);
 }

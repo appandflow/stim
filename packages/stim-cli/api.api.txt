@@ -275,6 +275,7 @@
 [*] interface DaemonLadderAction { @@1 detail: string;
 [*] interface DaemonLadderAction { @@1 kind: string;
 [*] interface DaemonLadderAction { @@1 outcome: "done" | "kept" | "failed" | "would";
+[*] interface DaemonLadderAction { @@1 partial?: true;
 [*] interface DaemonLadderAction { @@1 restore?: string;
 [*] interface DaemonLadderAction { @@1 rung: number;
 [*] interface DaemonLadderAction { @@1 setting?: string;
@@ -536,6 +537,7 @@
 [*] interface GcResult { @@1 id: string | null;
 [*] interface GcResult { @@1 kind: GcResultKind;
 [*] interface GcResult { @@1 label: string;
+[*] interface GcResult { @@1 partial?: true;
 [*] interface GcResult { @@1 status: GcResultStatus;
 [*] interface GcRunPayload {
 [*] interface GcRunPayload { @@1 actionable: boolean;
@@ -762,6 +764,7 @@
 [*] interface LevelRunAction { @@1 detail: string;
 [*] interface LevelRunAction { @@1 kind: string;
 [*] interface LevelRunAction { @@1 outcome: "would" | "done" | "kept" | "failed";
+[*] interface LevelRunAction { @@1 partial?: true;
 [*] interface LevelRunAction { @@1 reason: string;
 [*] interface LevelRunAction { @@1 restore?: string;
 [*] interface LevelRunAction { @@1 rung: number | null;
@@ -886,6 +889,7 @@
 [*] interface MaintenancePass { @@1 blocked: string[];
 [*] interface MaintenancePass { @@1 durationMs: number;
 [*] interface MaintenancePass { @@1 freedBytes: number;
+[*] interface MaintenancePass { @@1 freedPartial?: true;
 [*] interface MaintenancePass { @@1 mode: "report" | "on";
 [*] interface MaintenancePass { @@1 startedAt: number;
 [*] interface MaintenancePass { @@1 stopped: 0;

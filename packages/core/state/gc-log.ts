@@ -31,6 +31,8 @@ export interface GcLogRecord extends NdjsonRecord {
   id: string | null;
   path: string | null;
   bytes: number | null;
+  /** Set when a size walk timed out, so `bytes` is a lower bound. */
+  partial?: true;
   detail: string | null;
 }
 
