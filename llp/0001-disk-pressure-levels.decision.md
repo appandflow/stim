@@ -493,7 +493,9 @@ interruptible, so a stalled mounted volume can still delay returning. Above 100,
 runs one `du -k -d 1` and sums the entry lines printed before the deadline. The
 split exists because macOS du writes to a pipe in 4 KB blocks (about 105 lines),
 so a single walk of a small folder stopped early prints nothing, while a large
-folder has already printed whole blocks; GNU du writes each line as it finishes.
+folder with many subdirectories has already printed whole blocks. BSD du emits
+intermediate rows only for directories: a flat folder with over 100 files can
+still report zero partial bytes before the final total; GNU du writes each line as it finishes.
 Per entry costs about the same as one walk on a few dozen entries and three to
 five times more on several hundred (measured on macOS, warm cache: 16 to 27
 entries 0.04 against 0.06 s and 0.79 against 0.80 s; 667 entries 0.23 against

@@ -180,9 +180,13 @@ const PER_ENTRY_LIMIT = 100;
  * finished, marked `partial`.
  */
 export async function measureDirectoryAsync(dir: string, options: SizeWalkOptions): Promise<DirectorySize | null> {
+  options.signal?.throwIfAborted();
+  options.operation?.signal.throwIfAborted();
   const startedAt = Date.now();
   const symlink = (await lstat(dir).catch(() => null))?.isSymbolicLink();
   const entries = symlink ? null : await readdir(dir, { withFileTypes: true }).catch(() => null);
+  options.signal?.throwIfAborted();
+  options.operation?.signal.throwIfAborted();
   const linkedFile = entries !== null && entries.length <= PER_ENTRY_LIMIT && hasLinkedFile(dir, entries);
   if (options.timeoutMs !== 'unbounded') {
     const timeoutMs = options.timeoutMs - (Date.now() - startedAt);

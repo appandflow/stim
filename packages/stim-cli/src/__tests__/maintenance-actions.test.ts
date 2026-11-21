@@ -26,6 +26,7 @@ import {
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
 import { recordGcResult } from '../commands/gc/results.ts';
+import * as fsUtil from '../fs-util.ts';
 import * as gcWorkspaceOutputs from '../commands/gc/workspaces.ts';
 import { maintenanceItem } from '../commands/gc/log.ts';
 import * as gcWorktrees from '../commands/gc/worktrees.ts';
@@ -341,6 +342,25 @@ describe('executing single actions', () => {
       expect(maintenanceItem(planned, outcome)).toMatchObject({ bytes, partial: true });
     },
   );
+
+  test('cancelling during measurement keeps the workspace outputs', async () => {
+    const own = workspace('cancelled', { usedDaysAgo: 30 });
+    const controller = new AbortController();
+    const report = await gcWorkspaceOutputs.collectWorkspaceOutputs({
+      olderThan: null,
+      now: Date.now(),
+      measure: false,
+      only: own.root,
+    });
+    vi.spyOn(fsUtil, 'measureDirectoryAsync').mockImplementation(async () => {
+      controller.abort(new Error('cancel cleanup'));
+      return { bytes: 0, partial: true };
+    });
+    await expect(
+      gcWorkspaceOutputs.clearWorkspaceOutputs(report, { olderThan: null, signal: controller.signal }),
+    ).rejects.toThrow('cancel cleanup');
+    expect(hasOutputs(own.dir)).toBe(true);
+  });
 
   test('the workspace that started the pass is never cleared', async () => {
     const own = workspace('own', { usedDaysAgo: 30 });

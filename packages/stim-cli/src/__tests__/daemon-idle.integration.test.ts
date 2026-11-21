@@ -128,6 +128,21 @@ async function pass(act = true, drive: (device: OwnedDeviceActivity) => OwnedDev
   return runIdlePass({ config, now: Date.now(), sims, simsError: null, devices, act, log: () => {} });
 }
 
+test('a timed-out idle cleanup persists its partial size', async () => {
+  const { root, derivedData } = bootedWorkspace('partial', 20 * MINUTE_MS);
+  const real = getExecutor();
+  setExecutor({
+    ...real,
+    runFileAsync: async (file, args, options) => {
+      if (file === 'du') throw Object.assign(new Error('timed out'), { code: 'ETIMEDOUT', stdout: '' });
+      return real.runFileAsync(file, args, options);
+    },
+  });
+  expect(await pass()).toEqual([expect.objectContaining({ path: root, outcome: 'idle', freedPartial: true })]);
+  expect(existsSync(derivedData)).toBe(false);
+  expect(readIdleStage(readWorkspaceState(root))).toMatchObject({ freedBytes: 0, freedPartial: true });
+});
+
 test('a workspace idle past idle.minutes, whatever its device and app logs, enters the idle stage in one pass', async () => {
   const { root, udid, derivedData, launch } = bootedWorkspace('quiet', 20 * MINUTE_MS);
   writeLog(root, 'device.ndjson', { src: 'device', platform: 'ios', msg: 'nw_connection retry' });

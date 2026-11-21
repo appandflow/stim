@@ -217,6 +217,17 @@ describe('a size walk that reports what it measured', () => {
     expect(walks).toEqual([join(dir, 'entry-000')]);
   });
 
+  test('cancellation during discovery stops before any size command', async () => {
+    const dir = folder(3);
+    const controller = new AbortController();
+    const runFileAsync = vi.fn<(file: string, args: string[]) => Promise<string>>();
+    setExecutor({ ...getExecutor(), runFileAsync });
+    const walk = measureDirectoryAsync(dir, { timeoutMs: 10_000, signal: controller.signal });
+    controller.abort(new Error('cancel discovery'));
+    await expect(walk).rejects.toThrow('cancel discovery');
+    expect(runFileAsync).not.toHaveBeenCalled();
+  });
+
   test('a directory symlink measures only the link that cleanup removes', async () => {
     const target = folder(3);
     const link = join(home, 'linked-output');

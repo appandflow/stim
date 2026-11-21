@@ -698,6 +698,7 @@ export async function clearWorkspaceOutputs(
               for (const why of result.kept) log(chalk.yellow(`Kept in ${path}: ${why}`));
             } else if (lstatSync(path, { throwIfNoEntry: false })) {
               addSize(freed, await measureDirectoryAsync(path, { timeoutMs: SIZE_TIMEOUT_MS, signal }));
+              signal?.throwIfAborted();
               await rm(path, { recursive: true, force: true });
               removed++;
             }

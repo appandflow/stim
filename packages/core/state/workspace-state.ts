@@ -54,6 +54,7 @@ export interface IdleStageRecord {
   at: string;
   idleMinutes: number;
   freedBytes: number;
+  freedPartial?: true;
 }
 
 export function readIdleStage(state: WorkspaceState | null | undefined): IdleStageRecord | null {
@@ -63,6 +64,7 @@ export function readIdleStage(state: WorkspaceState | null | undefined): IdleSta
     at: record.at,
     idleMinutes: record.idleMinutes,
     freedBytes: typeof record.freedBytes === 'number' ? record.freedBytes : 0,
+    ...(record.freedPartial === true ? { freedPartial: true } : {}),
   };
 }
 

@@ -184,7 +184,11 @@ describe('the Cargo target cap over a root target/', () => {
         return real.runFileAsync(file, args, options);
       },
     });
-    expect(await trimCargoTargetAction(action)).toMatchObject({ status: 'done', bytes: 0, partial: true });
+    expect(await trimCargoTargetAction({ ...action, level: undefined })).toMatchObject({
+      status: 'done',
+      bytes: 0,
+      partial: true,
+    });
   });
 
   it('trims the stale profiles of a discovered checkout root target and never a non-profile directory or a nested target', async () => {

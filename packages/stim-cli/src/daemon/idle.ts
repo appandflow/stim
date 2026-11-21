@@ -294,9 +294,14 @@ export function revivable(path: string): boolean {
   });
 }
 
-async function recordStage(path: string, minutes: number, shutDown: readonly string[], freedBytes: number) {
+async function recordStage(path: string, minutes: number, shutDown: readonly string[], freed: DirectorySize) {
   const at = new Date().toISOString();
-  const stage: IdleStageRecord = { at, idleMinutes: minutes, freedBytes };
+  const stage: IdleStageRecord = {
+    at,
+    idleMinutes: minutes,
+    freedBytes: freed.bytes,
+    ...(freed.partial ? { freedPartial: true } : {}),
+  };
   await updateWorkspaceStateAsync(path, (state) => {
     const shutdowns = { ...readDeviceIdleShutdowns(state) };
     for (const key of shutDown) shutdowns[key] = { at, idleMinutes: minutes, reason: DEVICE_METRO_IDLE_STOP_REASON };
@@ -360,7 +365,7 @@ async function enterIdleStage(
               volumes ? (output) => onShortVolume([output], volumes) : undefined,
             );
             const freed = await deleteOutputs(outputs.paths, input.operation?.signal, outputs);
-            await recordStage(path, minutes, shutDown, freed.bytes);
+            await recordStage(path, minutes, shutDown, freed);
             const idle = Math.floor(again.decision.idleMs / MINUTE_MS);
             const restore = revivable(path) ? 'stim revive' : 'stim ios or stim android';
             const msg = `no activity for ${idle} minutes (${thresholdWhy(input, minutes)}; last: ${again.decision.last.basis}): ${stopped.summary}; deleted ${formatSize(freed)} of regenerable build outputs${outputs.kept.length ? `; ${outputs.kept.join('; ')}` : ''}. Run ${restore} to resume it.`;
