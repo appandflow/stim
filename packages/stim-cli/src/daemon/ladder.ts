@@ -70,7 +70,6 @@ const SIZE_TIMEOUT_MS = 120_000;
 const DORMANT_HIGH_IDLE_MS = 10 * MINUTE_MS;
 const DEPENDENCIES_HIGH_IDLE_MS = 60 * MINUTE_MS;
 const UNOWNED_EVERY_MS = 60 * MINUTE_MS;
-const REPORT_EVERY_MS = 60 * MINUTE_MS;
 
 type ClockKey = keyof typeof LADDER_CLOCK_SLOTS;
 const processClocks = new Map<string, number>();
@@ -120,12 +119,9 @@ export interface LadderInput {
   volume?: number;
   /** Runs only what relieves this cause: the stim-daemon's tick relieves memory, its disk owner disk. */
   only?: Cause;
-  /** Runs the report-only rungs 5 and 7: the stim-daemon's ladder, at most hourly and never at critical. */
-  reports?: boolean;
   /**
    * When each limited step last ran unforced, in epoch ms, by `LADDER_CLOCK_SLOTS`: the stim-daemon's clocks, which
-   * outlive the thread that runs its ladder. Rung 9 hourly, each level's Cargo trims every 10 minutes, each report rung
-   * hourly.
+   * outlive the thread that runs its ladder. Rung 9 hourly, each level's Cargo trims every 10 minutes.
    */
   clocks?: BigInt64Array;
 }
@@ -710,21 +706,6 @@ function canonicalOrNull(path: string): string | null {
   }
 }
 
-/**
- * Whether a report-only rung runs now: in `stim gc` each time; in the stim-daemon's ladder at most hourly per rung and
- * Stim home, never at critical; never in a command's ladder.
- */
-function reportDue(context: RungContext): boolean {
-  if (context.force) return true;
-  if (!context.reports || context.pressure.level === 'critical') return false;
-  const key = context.rung === 7 ? 'report 7' : 'report 5';
-  const now = Date.now();
-  const last = lastRanAt(context, key);
-  if (last !== undefined && last <= now && now - last < REPORT_EVERY_MS) return false;
-  ranAt(context, key, now);
-  return true;
-}
-
 /** Records a dependency tree a report-only rung would have deleted, with what that would free, and deletes nothing. */
 function reportDependency(context: RungContext, dependency: RankedDependency, why: string): void {
   recordAction(
@@ -743,14 +724,13 @@ function reportDependency(context: RungContext, dependency: RankedDependency, wh
 }
 
 /**
- * Rung 5, report only: the node_modules and Pods of linked worktrees whose workspace in this Stim home is idle 1 hour at
- * high and 2 minutes at critical by the activity definition with nothing running, those holding REAL_BYTES_THRESHOLD or
- * more private bytes most first, then those of unknown size, longest-idle first. A copy-on-write clone below the
- * threshold is reported as kept.
+ * Rung 5, report only and in `stim gc` only: the node_modules and Pods of linked worktrees whose workspace in this Stim
+ * home is idle 1 hour at high and 2 minutes at critical by the activity definition with nothing running, those holding
+ * REAL_BYTES_THRESHOLD or more private bytes most first, then those of unknown size, longest-idle first. A
+ * copy-on-write clone below the threshold is reported as kept.
  */
 async function dependenciesRung(context: RungContext): Promise<void> {
   // @ref LLP 0001#rungs-5-7-and-8-only-report -- a pressure pass deletes no dependencies or worktrees
-  if (!reportDue(context)) return;
   const idleMs = context.level === 'critical' ? PRESSURE_IDLE_MS : DEPENDENCIES_HIGH_IDLE_MS;
   const idle = await idleStageCandidates(context.config, context, idleMs);
   const protectedRoot = context.protectedRoot ? (canonicalOrNull(context.protectedRoot) ?? '') : '';
@@ -807,14 +787,14 @@ async function sweepRung(context: RungContext, causes: readonly Cause[]): Promis
 }
 
 /**
- * Rung 7, report only, while `maintenance.removeFinishedWorktrees` is on: at high, the clean worktrees whose branch is
- * merged or whose pull request ended, after `gc.worktreeGraceMinutes`; at critical without the grace period, and, while
- * `maintenance.removeIdleWorktrees` is on, clean, pushed ones no Stim command used for 7 days. Every other keep rule of
- * the worktree check holds: in use, leased, locked, pinned, unpushed, or not provably merged. The stim-daemon's own
- * ladder reads the pull request lookups the worktree check cached; `stim gc` looks them up again.
+ * Rung 7, report only and in `stim gc` only, while `maintenance.removeFinishedWorktrees` is on: at high, the clean
+ * worktrees whose branch is merged or whose pull request ended, after `gc.worktreeGraceMinutes`; at critical without
+ * the grace period, and, while `maintenance.removeIdleWorktrees` is on, clean, pushed ones no Stim command used for 7
+ * days. Every other keep rule of the worktree check holds: in use, leased, locked, pinned, unpushed, or not provably
+ * merged.
  */
 async function worktreesRung(context: RungContext): Promise<void> {
-  if (!context.settings.removeFinishedWorktrees || !reportDue(context)) return;
+  if (!context.settings.removeFinishedWorktrees) return;
   const protectedRoot = context.protectedRoot ? (canonicalOrNull(context.protectedRoot) ?? '') : '';
   const pins = new Map<string, boolean>();
   const planned = await timedStep(
@@ -1111,12 +1091,15 @@ export async function runLadder(
   }
   if (pressure.level === 'normal') return { actions, pressure };
   let current = pressure;
+  let freedSinceMeasured = false;
   for (const { rung, relieves: rungRelieves } of rungsFrom(input.fromRung).filter(
-    (entry) => entry.rung <= (input.lastRung ?? 9),
+    // @ref LLP 0001#rungs-5-7-and-8-only-report -- only stim gc runs the report rungs
+    (entry) => entry.rung <= (input.lastRung ?? 9) && entry.rung !== 5 && entry.rung !== 7,
   )) {
     const relieves = input.only ? rungRelieves.filter((cause) => cause === input.only) : rungRelieves;
     if (!relieves.length) continue;
     current = await input.remeasure();
+    freedSinceMeasured = false;
     const decision = rungDecision(current, relieves);
     if (decision === 'stop') break;
     if (decision === 'skip') continue;
@@ -1136,7 +1119,10 @@ export async function runLadder(
       // @ref LLP 0001#each-rung-frees-only-the-volumes-under-pressure -- a healthy volume gains nothing
       short: input.volume === undefined ? await shortDevices(input, 'high') : new Set([input.volume]),
     };
+    const before = actions.length;
     await runRung(rung, context, decision.causes);
+    if (actions.slice(before).some((action) => action.outcome === 'done')) freedSinceMeasured = true;
   }
+  if (freedSinceMeasured) current = await input.remeasure();
   return { actions, pressure: current };
 }

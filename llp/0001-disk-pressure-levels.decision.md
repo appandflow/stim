@@ -62,8 +62,8 @@ Each level includes the ones below it.
   its minimal size.
 - high: the pressure ladder, rungs 0 to 7; every Cargo `target/` on the
   volume loses its stale profiles and `incremental/` data (LLP 0005). The
-  `node_modules` and Pods of linked worktrees idle an hour are reported, not
-  deleted (Rungs 5, 7 and 8 only report).
+  `node_modules` and Pods of linked worktrees idle an hour are reported by
+  `stim gc`, not deleted (Rungs 5, 7 and 8 only report).
 - critical: rungs 0 to 8 with shorter idle times and no grace, idle Cargo
   build units (LLP 0005), then rung 9, the caches of tools Stim does not own
   (LLP 0003).
@@ -241,13 +241,12 @@ ladder's pacing wait
 Rung 5 (the `node_modules` and Pods of idle linked worktrees), rung 7
 (finished worktrees) and the first step of rung 8 (the `node_modules` and Pods
 of idle main checkouts) delete nothing. Each records, as a `kept` action, what
-it would have taken, what that would free when the size is known, and why. This
-holds in the stim-daemon, in `stim gc` and in `stim gc --dry-run`. Rung 8 itself,
-device recordings and archived history, still acts; rung 5 runs the main
-checkout report after its own. Rungs 5 and 7 run last, after rung 9. The
-stim-daemon runs them at most once an hour per Stim home and never while the
-overall level is critical, whichever of disk or memory set it; the ladder a command runs, a build's headroom run included, never
-runs them; `stim gc` runs them each time, at critical too. The
+it would have taken, what that would free when the size is known, and why. Rung
+8 itself, device recordings and archived history, still acts; rung 5 runs the
+main checkout report after its own. Rungs 5 and 7 run last, after rung 9. Only
+`stim gc` and `stim gc --dry-run` run them, each time, at critical too. The
+stim-daemon's ladder passes and the ladder a command runs, a build's headroom
+run included, never run them. The
 pressure path neither samples hard links nor checks dependency trees for hand
 edits; the dormant steps still do both before they delete. The dormant steps,
 `stim worktree remove` and the worktree check of the maintenance pass are what
@@ -264,13 +263,13 @@ delay than ship what we have", 2026-11-20, on #6025, whose decided list makes
 rungs 5, 7 and 8 report-only and drops hard-link sampling and dependency-edit
 detection from the pressure path.
 
-Chosen by the implementer of #6025, not the maintainer: `stim gc` reports them
-too, so the daemon and `stim gc` keep one model, and the hourly limit, which
-keeps a report that frees nothing from walking every checkout each pass. The
-coordinator of #6025 chose, after the first review of #6029, to run them last,
-to skip them at critical in the daemon and in a command's ladder, where their
-walks cost the most and free nothing, and to keep them in `stim gc`, where a
-person asked for the report.
+Maintainer decision: "Remove from daemon", 2026-11-20, on #6063, choosing to
+remove the report-only rungs from the stim-daemon while `stim gc --dry-run`
+still reports their rows.
+
+Chosen by the coordinator of #6025, after the first review of #6029, not the
+maintainer: run them last, and keep them in `stim gc`, where a person asked for
+the report.
 
 ## One task runs every gc deletion
 
@@ -524,9 +523,9 @@ says on stderr that the source has no installed dependencies to copy, and
 
 A main checkout's `node_modules` and Pods go in one case only, after those of
 every linked worktree: no activity for `idle.sourceDormantDays` (default 7, 0
-for never), at any level. At critical, rung 8 reports those of a main checkout
-idle 2 minutes whose volume is still under the critical level, and deletes
-nothing (Rungs 5, 7 and 8 only report).
+for never), at any level. At critical, `stim gc` reports in rung 8 those of a
+main checkout idle 2 minutes whose volume is still under the critical level, and
+deletes nothing (Rungs 5, 7 and 8 only report).
 
 Activity is the newest of a Stim command, a source file write, a git index,
 HEAD or reflog write and the last commit, in the checkout and in every Stim
