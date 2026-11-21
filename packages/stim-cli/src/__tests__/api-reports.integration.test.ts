@@ -1,3 +1,6 @@
+import { execFileSync } from 'node:child_process';
+import { ensureWorkspaceStorage } from '../workspace/paths.ts';
+import { upsertProject } from '../workspace/config.ts';
 import { PEER } from '@stim-cli/core/protocol';
 import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from '@stim-cli/core/process-identity';
 import * as identities from '../process-identity.ts';
@@ -9,7 +12,7 @@ import { delimiter, dirname, join } from 'node:path';
 import { withAmbientContext, type StimContext } from '@stim-cli/core';
 import { createStim } from '../api.ts';
 import { runGc } from '../commands/gc.ts';
-import { runGcItem } from '../commands/gc/item.ts';
+import { runGcItem } from '../stimd/gc-item.ts';
 import { recordGcResult, takeGcResults } from '../commands/gc/results.ts';
 import { getExecutor } from '../exec.ts';
 import { readClaimSet, releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-claim.ts';
@@ -290,9 +293,13 @@ test('concurrent GC mutations empty only their selected cache and return results
   }
 });
 
-test.each([false, true])(
-  'an item executor tracks its native child without a global claim and preserves cleanup refusal=%s',
-  async (unavailable) => {
+test.each([
+  { kind: 'cache', unavailable: false },
+  { kind: 'cache', unavailable: true },
+  ...(process.platform === 'win32' ? [] : [{ kind: 'cargo', unavailable: true }]),
+])(
+  'an item executor tracks its native child without a global claim: $kind, cleanup refusal=$unavailable',
+  async ({ kind, unavailable }) => {
     const item = fixture('native-inventory');
     vi.stubEnv('STIM_HOME', item.home);
     Object.assign(item.env, {
@@ -301,7 +308,21 @@ test.each([false, true])(
       XDG_CACHE_HOME: join(item.env.HOME, '.cache'),
     });
     mkdirSync(join(item.cache, 'entry'));
-    const preserved = join(item.cache, 'entry', 'original');
+    const preserved =
+      kind === 'cargo' ? join(item.root, 'target', 'debug', 'artifact') : join(item.cache, 'entry', 'original');
+    if (kind === 'cargo') {
+      item.env.PATH += `${delimiter}/usr/sbin`;
+      mkdirSync(join(item.root, 'target', 'debug'), { recursive: true });
+      writeFileSync(join(item.root, 'target', 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55\n');
+      writeFileSync(join(item.root, '.gitignore'), '/target/\n');
+      const gitCmd = (...args: string[]) =>
+        execFileSync('git', ['-C', item.root, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args]);
+      gitCmd('init', '-q', '-b', 'main');
+      gitCmd('add', '.');
+      gitCmd('commit', '-qm', 'init');
+      ensureWorkspaceStorage(item.root);
+      upsertProject(item.root, {});
+    }
     writeFileSync(preserved, 'native-inventory');
     const originalConfig = readFileSync(join(item.home, 'config.json'), 'utf8');
     const tag = 'requested-cache emptying';
@@ -323,8 +344,12 @@ test.each([false, true])(
         unavailable && owned !== undefined && record?.pid === owned.pid ? 'unknown' : inspectOriginal(record),
       );
     const probe = vi.spyOn(executor, 'runFileAsync').mockImplementation((file, args, options) => {
-      if (file !== 'du') throw new Error(`Unexpected native probe: ${file} ${args.join(' ')}`);
-      if (!args.includes(join(item.cache, 'entry'))) return Promise.resolve('1');
+      if (
+        kind === 'cargo'
+          ? file !== 'lsof' || !args.includes('-nP')
+          : file !== 'du' || !args.includes(join(item.cache, 'entry'))
+      )
+        return kind === 'cargo' ? original(file, args, options) : Promise.resolve('1');
       return original(
         process.execPath,
         [
@@ -334,6 +359,7 @@ test.each([false, true])(
         ],
         {
           ...options,
+          ...(kind === 'cargo' ? { timeoutMs: 500 } : {}),
           onSpawn: (child) => {
             options.onSpawn?.(child);
             const birth = child.pid === undefined ? null : captureProcessIdentity(child.pid);
@@ -352,7 +378,7 @@ test.each([false, true])(
               }
               observedContext = { cwd: metadata.cwd, tag: metadata.tag };
               observedPid = readClaimSet(join(item.home, 'maintenance', 'run.claims')).live[0]?.child?.pid;
-              controller.abort();
+              if (kind === 'cache') controller.abort();
             });
           },
         },
@@ -367,12 +393,12 @@ test.each([false, true])(
         env: { ...item.env, STIM_NATIVE_PROBE_TAG: tag },
       });
       const failure = await trackRead((signal) =>
-        runGcItem(
-          { kind: 'cache', dir: item.cache },
-          { ...operation, signal: AbortSignal.any([signal, controller.signal]) },
-        ),
+        runGcItem(kind === 'cargo' ? { kind: 'workspace-outputs' } : { kind: 'cache', dir: item.cache }, {
+          ...operation,
+          signal: AbortSignal.any([signal, controller.signal]),
+        }),
       ).then(
-        () => null,
+        (result) => result,
         (error: unknown) => error,
       );
       expect(failure).toMatchObject(unavailable ? { code: 'STIM_CLAIM_UNAVAILABLE' } : { name: 'AbortError' });

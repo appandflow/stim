@@ -1,3 +1,4 @@
+import { trackReportResource } from '../report-runtime.ts';
 import type { Invocation } from '../stimd/forwarded.ts';
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
@@ -2145,7 +2146,7 @@ export async function runGcThroughStimd(
     throw error;
   }
   // @ref LLP 0001#every-gc-joins-a-pass-under-way -- after transmission only the pass restores the reserve
-  return new Promise((resolve, reject) => {
+  const terminal = new Promise<GcPassReply | GcItemResult>((resolve, reject) => {
     let settled = false;
     let written = false;
     const finish = (error: Error | null, reply?: GcPassReply | GcItemResult) => {
@@ -2154,6 +2155,7 @@ export async function runGcThroughStimd(
       signal?.removeEventListener('abort', abort);
       if (error && !written && released) keepReserve();
       if (error) reject(error);
+      else if (signal?.aborted) reject(signal.reason);
       else if (reply) resolve(reply);
     };
     const socket = openStimd(
@@ -2208,8 +2210,14 @@ export async function runGcThroughStimd(
     );
     socket.once('connect', () => (written = true));
     const abort = () => {
+      if ('item' in request) {
+        const cancel = () => socket.write(`${JSON.stringify({ op: 'gc.cancel' })}\n`);
+        if (socket.connecting) socket.once('connect', cancel);
+        else cancel();
+        return;
+      }
       const reason: unknown = signal?.reason;
-      if (!('item' in request) && reason instanceof Error && 'code' in reason && reason.code === 'STIM_REPORT_TIMEOUT')
+      if (reason instanceof Error && 'code' in reason && reason.code === 'STIM_REPORT_TIMEOUT')
         socket.end(`${JSON.stringify({ op: 'gc.detach' })}\n`);
       else socket.destroy();
       finish(reason instanceof Error ? reason : new Error('GC was cancelled.'));
@@ -2218,4 +2226,16 @@ export async function runGcThroughStimd(
     // @ref LLP 0012#a-command-does-not-continue-across-a-stimd-restart -- a gc whose stimd went away fails, never reruns
     socket.once('close', () => finish(stimdRefused() ? refused() : daemonRestarted()));
   });
+  if ('item' in request)
+    trackReportResource(
+      operation,
+      terminal.then(
+        () => undefined,
+        (error: unknown) => {
+          if (error instanceof Error && 'code' in error && error.code === 'STIM_CLAIM_UNAVAILABLE') throw error;
+        },
+      ),
+      () => {},
+    );
+  return terminal;
 }

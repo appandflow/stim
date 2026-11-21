@@ -1,7 +1,5 @@
 import type { StimContext } from '@stim-cli/core';
 import { isJsonObject } from '@stim-cli/core/state';
-import { runReport, trackReportResource } from '../../report-runtime.ts';
-import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-error.ts';
 import { discoverCaches, sizeCaches } from '../../cache/caches.ts';
 import { canonicalPath } from './paths.ts';
 import { emptyCaches, planCacheEmptying } from './caches.ts';
@@ -58,24 +56,6 @@ export function validGcItem(item: unknown): item is GcItem {
       (item.part === undefined || ARCHIVE_PARTS.some((part) => part === item.part))
     );
   return only();
-}
-
-export function runGcItem(item: GcItem, operation: StimContext): Promise<GcItemResult> {
-  return runReport(operation, (bounded) => {
-    const task = deleteGcItem(item, bounded);
-    trackReportResource(
-      bounded,
-      task.then(
-        () => undefined,
-        (cause: unknown) => {
-          if (cause instanceof WorkspaceProcessCleanupError || (cause instanceof Error && 'reportCleanup' in cause))
-            throw cause;
-        },
-      ),
-      () => {},
-    );
-    return task;
-  });
 }
 
 export interface GcItemResult {

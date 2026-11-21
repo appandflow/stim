@@ -1161,6 +1161,7 @@ async function runStimdInner(
   const ops = new Map<Socket, 'pinned' | 'waiting'>();
   const gcRequests = new Set<Promise<unknown>>();
   const gcDetached = new WeakSet<Socket>();
+  const itemCancels = new WeakMap<Socket, () => void>();
   const logsRunning = () => logs.running() || logs.ownedRunning();
   const hasOffWork = () =>
     Boolean(
@@ -1429,6 +1430,7 @@ async function runStimdInner(
           },
           (action) => reply({ op: 'gc.action', action }),
         );
+    if (item) itemCancels.set(socket, asked.leave);
     // @ref LLP 0001#every-gc-joins-a-pass-under-way -- a detached request leaves its pass running
     socket.once('close', () => {
       if (item || !gcDetached.has(socket)) asked.leave();
@@ -1441,6 +1443,7 @@ async function runStimdInner(
     gcRequests.add(settled);
     void settled.finally(() => {
       gcRequests.delete(settled);
+      itemCancels.delete(socket);
       if (effectiveMode() === 'off') requestTick();
       void checkEngine();
     });
@@ -1865,7 +1868,8 @@ async function runStimdInner(
             });
         } else if (op === 'gc.run') {
           requestGc(socket, isJsonObject(message.params) ? message.params : {}, reply);
-        } else if (op === 'gc.detach') gcDetached.add(socket);
+        } else if (op === 'gc.cancel') itemCancels.get(socket)?.();
+        else if (op === 'gc.detach') gcDetached.add(socket);
         else if (op === 'snapshot') socket.end(`${JSON.stringify({ op: 'snapshot', snapshot: lastSnapshot })}\n`);
         else if (op === 'status') void statuses.answer(message.params).then((answer) => socket.end(`${answer}\n`));
         else if (op === 'tick') {

@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { runGc as runGcCommand, runGcPass } from '../commands/gc.ts';
-import { deleteGcItem, runGcItem, type GcItemRequest } from '../commands/gc/item.ts';
+import { deleteGcItem, type GcItemRequest } from '../commands/gc/item.ts';
+import { runGcItem } from '../stimd/gc-item.ts';
 import type { GcPassRequest } from '../commands/gc.ts';
 import type { StimContext } from '@stim-cli/core';
 import { requestGcItem } from '../daemon/disk-owner.ts';
@@ -687,7 +688,7 @@ test.skipIf(process.platform === 'win32')(
 );
 
 test.skipIf(process.platform === 'win32')(
-  'GC API cancellation between watchman roots keeps the remaining root and confines progress to its client',
+  'GC API cancellation stops later watchman work and confines progress to its client',
   async () => {
     const roots = [join(tmpHome, 'gone-one'), join(tmpHome, 'gone-two')];
     const subscribers = Object.fromEntries(roots.map((root) => [root, []]));

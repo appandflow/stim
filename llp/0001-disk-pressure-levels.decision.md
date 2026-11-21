@@ -324,7 +324,10 @@ after pressure passes and before the lane's next unit. Every item has its own
 turn and result, even when two requests name the same item; none joins a pass.
 It starts stimd under `off` and acts under `report`, as an explicit request.
 An item cancellation or report timeout stops that item; it never detaches as a
-whole-pass report timeout does. Completed actions remain applied.
+whole-pass report timeout does. The caller waits for terminal cleanup, and a
+cleanup refusal takes precedence over cancellation or timeout. Completed actions
+remain applied. Progress is notification delivered over IPC; an announced or
+in-flight action may complete before stimd receives a callback cancellation.
 
 An item takes no outer maintenance claim: the lane still holds that claim when
 it yields the turn. The worker's report tracks its children and pending work

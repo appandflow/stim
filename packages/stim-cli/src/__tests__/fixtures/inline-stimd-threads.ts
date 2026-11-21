@@ -4,7 +4,7 @@ import { createMaintenanceLane, type MaintenanceLane } from '../../daemon/passes
 import type { ThreadTable } from '../../stimd/threads.ts';
 import { requestGcPass, requestGcItem } from '../../daemon/disk-owner.ts';
 import { runGcPass } from '../../commands/gc.ts';
-import { runGcItem } from '../../commands/gc/item.ts';
+import { runGcItem } from '../../stimd/gc-item.ts';
 
 type Log = Parameters<typeof createMaintenanceLane>[0];
 

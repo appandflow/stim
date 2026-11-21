@@ -276,6 +276,43 @@ describe.skipIf(process.platform === 'win32')('a disk pass on the passes worker'
     }
   }, 10_000);
 
+  test('a cancelled item keeps its identified child watched while another request runs', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'stim-worker-item-'));
+    writeFileSync(join(root, 'package.json'), '{}');
+    const entry = vi
+      .spyOn(entries, 'spawnEntry')
+      .mockReturnValue(fileURLToPath(new URL('./fixtures/thread-jobs-worker.ts', import.meta.url)));
+    const threads = createThreadTable(() => {});
+    let sleeper: { pid: number; token: string | null } | undefined;
+    try {
+      const asked = threads.item({ item: { kind: 'watchman' }, client: 'desktop', cwd: root }, () => {});
+      const failure = asked.result.catch((error: unknown) => error);
+      await vi.waitFor(() => expect(existsSync(join(root, 'ready'))).toBe(true));
+      asked.leave();
+      const refused = await failure;
+      const pid = Number(readFileSync(join(root, 'pids'), 'utf8'));
+      sleeper = { pid, token: captureProcessToken(pid) };
+      assert(sleeper.token);
+      expect(refused).toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE', reportCleanup: true, reportChild: { pid } });
+      expect(readClaimSet(join(root, 'work.lock')).live).toMatchObject([{ child: { pid } }]);
+      const next = threads.item({ item: { kind: 'gradle-daemons' }, client: 'desktop', cwd: root }, () => {});
+      await expect(next.result).resolves.toMatchObject({ protectedRoot: realpathSync(root) });
+      await stopFixture(pid, sleeper.token);
+      await vi.waitFor(
+        () => {
+          threads.settle();
+          expect(readClaimSet(join(root, 'work.lock')).live).toEqual([]);
+        },
+        { timeout: 5_000, interval: 100 },
+      );
+    } finally {
+      if (sleeper?.token) await stopFixture(sleeper.pid, sleeper.token);
+      entry.mockRestore();
+      await threads.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 10_000);
+
   test('closing the threads waits for a gc request its requester left to settle', async () => {
     const root = mkdtempSync(join(tmpdir(), 'stim-worker-gc-'));
     const settled = join(root, 'settled');
