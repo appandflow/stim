@@ -3181,10 +3181,11 @@ The example omits the empty sections, `machineCaches` and `inventory`, and
 shortens `pressure`. `level` is the level the run used: `pressure.level`, the
 level the machine measures, unless `--pressure` chose one. `actions` lists every
 action the run would take or took, each
-`{ rung, kind, target, workspace?, outcome, bytes, reason, detail, restore? }`.
+`{ rung, kind, target, workspace?, outcome, bytes, partial?, reason, detail, restore? }`.
 `rung` is `null` for the maintenance plan and the ladder rung otherwise;
 `outcome` is `"would"`, `"done"`, `"kept"` or `"failed"`; `bytes` is what it
-would free or freed where gc could measure it. `blocked` lists what the run
+would free or freed where gc could measure it, and `partial: true` marks it as
+a lower bound because a size walk timed out. `blocked` lists what the run
 could not decide or reach, each for a person to look at. `failures` is `null` on
 a dry run and otherwise counts the actions that failed.
 `memory` lists each helper process as
@@ -3231,7 +3232,8 @@ Ctrl+C stops pending GC actions and drains verified owned children before exitin
 claims and prints `STIM_CLAIM_UNAVAILABLE` with a recovery remedy. In JSON mode,
 cancellation prints one `STIM_CANCELLED` payload, or the cleanup refusal when
 cleanup cannot be verified.
-Each `results` entry is `{ kind, status, label, id, bytes, detail }`. `status`
+Each `results` entry is `{ kind, status, label, id, bytes, partial?, detail }`,
+with `partial` as in `actions`. `status`
 is `"done"`, `"kept"` or `"failed"`, and `detail` says why an entry was kept or
 failed. For example, a deleted simulator reads
 `{ "kind": "device", "status": "done", "label": "stim-app (iPhone 17 26.5)", "id": "9C1F...", "bytes": null, "detail": null }`.

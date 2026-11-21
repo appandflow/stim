@@ -283,6 +283,7 @@ function resultOf(action: LevelRunAction): GcResult {
     label: action.target,
     id: action.workspace ?? null,
     bytes: action.outcome === 'done' && action.bytes ? action.bytes : null,
+    ...(action.partial ? { partial: action.partial } : {}),
     detail: action.outcome === 'done' ? [action.reason, action.detail].filter(Boolean).join('; ') : action.detail,
   };
 }

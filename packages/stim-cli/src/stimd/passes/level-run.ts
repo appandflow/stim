@@ -44,6 +44,8 @@ export interface LevelRunAction {
   workspace?: string;
   outcome: 'would' | 'done' | 'kept' | 'failed';
   bytes: number;
+  /** Set when a size walk timed out, so `bytes` is a lower bound. */
+  partial?: true;
   /** Why the run took it, or why it kept it. */
   reason: string;
   detail: string;
@@ -108,6 +110,7 @@ function fromLadder(action: DaemonLadderAction, dormant = false): LevelRunAction
     ...(action.workspace ? { workspace: action.workspace } : {}),
     outcome: action.outcome,
     bytes: action.bytes,
+    ...(action.partial ? { partial: action.partial } : {}),
     reason: dormant ? `no activity for ${action.setting ?? 'idle.dormantDays'}` : `pressure ladder rung ${action.rung}`,
     detail: action.detail,
     ...(action.restore ? { restore: action.restore } : {}),

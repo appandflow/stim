@@ -764,6 +764,7 @@
 [*] interface LevelRunAction { @@1 detail: string;
 [*] interface LevelRunAction { @@1 kind: string;
 [*] interface LevelRunAction { @@1 outcome: "would" | "done" | "kept" | "failed";
+[*] interface LevelRunAction { @@1 partial?: true;
 [*] interface LevelRunAction { @@1 reason: string;
 [*] interface LevelRunAction { @@1 restore?: string;
 [*] interface LevelRunAction { @@1 rung: number | null;

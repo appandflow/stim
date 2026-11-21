@@ -2225,3 +2225,20 @@ test('deleteOutputs stops before the next removal once its operation is aborted'
 
   for (const path of paths) expect(existsSync(path)).toBe(true);
 });
+
+test('deleteOutputs reports the bytes a timed-out walk finished as a lower bound and still deletes', async () => {
+  const output = join(home, 'build');
+  mkdirSync(join(output, 'intermediates'), { recursive: true });
+  setExecutor({
+    ...getExecutor(),
+    runFileAsync: async () => {
+      throw Object.assign(new Error('Command timed out after 120000ms: du'), {
+        code: 'ETIMEDOUT',
+        stdout: `${6 * 1024}\t${join(output, 'intermediates')}\n12`,
+      });
+    },
+  });
+
+  expect(await idlePass.deleteOutputs([output])).toEqual({ bytes: 6 * 1024 * 1024, partial: true });
+  expect(existsSync(output)).toBe(false);
+});

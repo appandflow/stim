@@ -479,8 +479,8 @@ headroom estimate, and no new setting (#5759).
 
 ## A size walk that times out reports what it measured
 
-When `stim gc` or the daemon reports the bytes a delete freed, it sizes each
-folder with `du -k -d 1`. A walk stopped at its deadline reports the sum of the
+The Cargo remover, the idle and dormant stages, rung 1's output delete and the
+`stim gc` workspace output clear size what they delete with `du -k -d 1`. A walk stopped at its deadline reports the sum of the
 top-level entries it finished, marked `partial` ("at least" in text), instead of
 nothing. Callers that decide what to delete or trim from a size still treat a
 timed-out walk as unknown, so the lower bound changes only what is reported.
