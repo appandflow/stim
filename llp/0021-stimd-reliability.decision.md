@@ -256,7 +256,8 @@ unmanaged-usage scan keep `nice` alone: none of them has a sample of the walked
 volume, and a target can sit on another volume than the ones the home's level
 comes from.
 gc's delete of a trash entry runs its `rm -rf` on the same throttled command
-line below the critical level, and at stimd's priority at critical. Maintainer
+line below the critical level, and at stimd's priority at critical; one that
+fails is not retried and leaves the entry for the next gc. Maintainer
 decision: "Replace with rm -rf", 2026-11-20, relayed by the coordinator (#6048).
 `utility` is the milder of macOS's two throttled policies.
 `taskpolicy -b` was rejected: it also moves CPU into the background band, and
