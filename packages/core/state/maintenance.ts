@@ -105,6 +105,7 @@ export interface MaintenancePass {
   trigger: string;
   mode: 'report' | 'on';
   freedBytes: number;
+  freedPartial?: true;
   actions: number;
   stopped: 0;
   blocked: string[];

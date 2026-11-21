@@ -187,7 +187,17 @@ export async function measureDirectoryAsync(dir: string, options: SizeWalkOption
   const entries = symlink ? null : await readdir(dir, { withFileTypes: true }).catch(() => null);
   options.signal?.throwIfAborted();
   options.operation?.signal.throwIfAborted();
-  const linkedFile = entries !== null && entries.length <= PER_ENTRY_LIMIT && hasLinkedFile(dir, entries);
+  const linkedFile =
+    entries !== null &&
+    entries.length <= PER_ENTRY_LIMIT &&
+    (await hasLinkedFile(
+      dir,
+      entries,
+      options,
+      options.timeoutMs === 'unbounded' ? null : startedAt + options.timeoutMs,
+    ));
+  options.signal?.throwIfAborted();
+  options.operation?.signal.throwIfAborted();
   if (options.timeoutMs !== 'unbounded') {
     const timeoutMs = options.timeoutMs - (Date.now() - startedAt);
     if (timeoutMs <= 0) return { bytes: 0, partial: true };
@@ -200,15 +210,20 @@ export async function measureDirectoryAsync(dir: string, options: SizeWalkOption
 }
 
 /** Whether a top-level file has another hard link, as a Cargo profile's binaries do in its `deps/`, which one du counts once. */
-function hasLinkedFile(dir: string, entries: Dirent[]): boolean {
-  const links = (name: string): number => {
-    try {
-      return lstatSync(join(dir, name)).nlink;
-    } catch {
-      return 1;
-    }
-  };
-  return entries.some((entry) => entry.isFile() && links(entry.name) > 1);
+async function hasLinkedFile(
+  dir: string,
+  entries: Dirent[],
+  options: SizeWalkOptions,
+  deadline: number | null,
+): Promise<boolean> {
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    options.signal?.throwIfAborted();
+    options.operation?.signal.throwIfAborted();
+    if (deadline !== null && Date.now() >= deadline) return false;
+    if (((await lstat(join(dir, entry.name)).catch(() => null))?.nlink ?? 1) > 1) return true;
+  }
+  return false;
 }
 
 // @ref LLP 0001#a-size-walk-that-times-out-reports-what-it-measured -- one du per entry below the limit unless a top-level file is hard-linked

@@ -889,6 +889,7 @@
 [*] interface MaintenancePass { @@1 blocked: string[];
 [*] interface MaintenancePass { @@1 durationMs: number;
 [*] interface MaintenancePass { @@1 freedBytes: number;
+[*] interface MaintenancePass { @@1 freedPartial?: true;
 [*] interface MaintenancePass { @@1 mode: "report" | "on";
 [*] interface MaintenancePass { @@1 startedAt: number;
 [*] interface MaintenancePass { @@1 stopped: 0;

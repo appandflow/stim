@@ -42,6 +42,7 @@ import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.t
 import * as measurements from '../stimd/passes/measure.ts';
 import { cacheEntryProtection } from '../stimd/passes/protect.ts';
 import { runMaintenance } from '../stimd/passes/run.ts';
+import { maintenanceStatus, maintenanceLine } from '../stimd/passes/status.ts';
 import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
 import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
 import * as inUse from '../workspace/in-use.ts';
@@ -208,6 +209,34 @@ test.each<'measure' | 'plan' | 'action'>(['measure', 'plan', 'action'])(
     expect(selected).toHaveBeenCalled();
   },
 );
+
+test('a maintenance pass retains a zero-byte partial total in state, log and status', async () => {
+  capFixture();
+  vi.spyOn(measurements, 'measureSizes').mockResolvedValue([]);
+  vi.spyOn(maintenancePreview, 'plannedMaintenance').mockResolvedValue({
+    actions: [{ kind: 'would-clear-outputs', target: '/x', bytes: 8192, reason: 'test' }],
+    blocked: [],
+    skips: [],
+    byCheck: {},
+  });
+  vi.spyOn(maintenanceActions, 'executeAction').mockResolvedValue({
+    status: 'done',
+    bytes: 0,
+    partial: true,
+    detail: '',
+  });
+  await runMaintenance('test');
+  expect(readMaintenanceState()?.lastPass).toMatchObject({ freedBytes: 0, freedPartial: true });
+  expect(records()).toContainEqual(
+    expect.objectContaining({
+      event: 'maintenance_pass',
+      freedBytes: 0,
+      freedPartial: true,
+      msg: expect.stringContaining('at least 0K freed'),
+    }),
+  );
+  expect(maintenanceLine(maintenanceStatus())).toContain('at least 0.0 GB freed');
+});
 
 test('on mode trims over-cap caches oldest first and clears only idle, unpinned, unlocked workspaces', async () => {
   const { entries, spaces } = capFixture();

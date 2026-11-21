@@ -25,7 +25,7 @@ import { tickListsSims, type TickMeasurement } from '../../daemon/measure.ts';
 import { listAvdsAsync } from '../../devices/android.ts';
 import { listAllIosSimsAsync } from '../../devices/ios.ts';
 import { loadConfig } from '../../workspace/config.ts';
-import { formatSize, formatBytes } from '../../fs-util.ts';
+import { addSize, type DirectorySize, formatSize, formatBytes } from '../../fs-util.ts';
 import { memoryCulpritsUnderAsync } from '../../host-memory.ts';
 import { memoryCulpritAdvice } from '../../memory-culprits.ts';
 import { DEVICE_LIST_TIMEOUT_MS, deviceSweepIsScoped } from '../../commands/gc/devices.ts';
@@ -705,7 +705,8 @@ export async function runMaintenance(
       state.byCheck = partsAfter(state.byCheck, plannedParts, result, outcomes);
       const blockedNow = [...partsBlocked(state.byCheck), ...failures];
       const done = outcomes.filter(({ outcome }) => outcome.status === 'done');
-      const freedBytes = done.reduce((sum, { outcome }) => sum + outcome.bytes, 0);
+      const freed: DirectorySize = { bytes: 0 };
+      done.forEach(({ outcome }) => addSize(freed, outcome));
       for (const { action, outcome } of done) shrinkSizes(state, action, outcome);
       state.plan = uniqueActions([
         ...outcomes.filter(({ outcome }) => outcome.status !== 'done').map(({ action }) => action),
@@ -718,7 +719,8 @@ export async function runMaintenance(
         durationMs: Date.now() - startedAt,
         trigger,
         mode: 'on',
-        freedBytes,
+        freedBytes: freed.bytes,
+        freedPartial: freed.partial,
         actions: done.length,
         stopped: 0,
         blocked: blockedNow,
@@ -731,7 +733,7 @@ export async function runMaintenance(
         record(
           'maintenance_pass',
           state.lastPass.blocked.length ? 'warn' : 'info',
-          `Pass: ${done.length} actions, ${formatBytes(freedBytes)} freed${state.lastPass.blocked.length ? `; ${state.lastPass.blocked.join('; ')}` : ''}`,
+          `Pass: ${done.length} actions, ${formatSize(freed)} freed${state.lastPass.blocked.length ? `; ${state.lastPass.blocked.join('; ')}` : ''}`,
           { ...state.lastPass },
         );
     } else {
