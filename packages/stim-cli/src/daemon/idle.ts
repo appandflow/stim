@@ -212,7 +212,7 @@ export async function idleOutputs(
   const paths = workspaceOutputPaths(workspaceDir(path));
   const targets: string[] = [];
   const kept: string[] = [];
-  const { dirs, cargo } = await existingBuildDirKindsAsync(path);
+  const { dirs, cargo } = await existingBuildDirKindsAsync(path, inUse === false ? signal : undefined);
   for (const dir of dirs) {
     const problem = await regenerableDirProblem(path, dir, signal, { processes: inUse !== false });
     if (problem) kept.push(`kept ${dir}: ${problem}`);
