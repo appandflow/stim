@@ -105,7 +105,7 @@ before it pins.
 The stimd that holds a home a service unit serves listens on the unit's port.
 Where the unit follows the engine, the job ends up the owner (LLP 0009, Service
 and engine updates): a holder that accepts the job's ask below exits once no
-command runs, and the job's process then takes the home back.
+command runs, and the job's restart then takes the home back.
 Any starter can win the home after a handover: the successor, the unit's own
 restart, or a stimd a command started, which has no service options and, with
 a saved share, runs a share-only net thread on a random loopback port. So the

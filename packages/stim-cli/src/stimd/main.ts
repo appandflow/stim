@@ -155,7 +155,7 @@ import {
   updateBoot,
 } from './crash-hold.ts';
 import { ASKED_MS, autoUpdateOn, checkForUpdate, DAILY_MS, lastUpdateCheck, updateDue } from './auto-update.ts';
-import { ownStoreEngine, requireCurrentEngine, switchedEngine, type StoreEngine } from '../daemon/engine-switch.ts';
+import { ownStoreEngine, requireCurrentEngine, type StoreEngine } from '../daemon/engine-switch.ts';
 import { readRecords } from '../engine-store/store.ts';
 import {
   ATTACHED_ARG,
@@ -181,7 +181,6 @@ const WAKE_GRACE_MS = 2000;
 const RECORD_FORMAT = 1;
 const LAUNCHCTL_TIMEOUT_MS = 5000;
 const SUCCESSOR_BIND_MS = 10_000;
-const DESKTOP_NET_ARG = '--desktop-net';
 const SIGNALS = ['SIGTERM', 'SIGINT'] as const;
 const DETACHED_SIGNALS = [...SIGNALS, 'SIGHUP'] as const;
 const SECOND_SIGNAL_GRACE_MS = 5000;
@@ -692,10 +691,6 @@ interface RunStimdOptions {
    * `daemon.mode` off, and ends when its stdin closes or on a signal, through `endAttached`.
    */
   attached?: { handover: boolean };
-  /** A `stim serve` the user runs in the foreground, which a service's job never asks to exit. */
-  foreground?: boolean;
-  /** The net thread `serve` describes is one Stim Desktop's ask started, carried over from the stimd this one succeeds. */
-  desktopNet?: boolean;
 }
 
 /** Whether the engine's `bin/stimd` shim, which a service job runs, already starts `build`. */
@@ -825,8 +820,6 @@ async function runStimdInner(
     unit,
     inJob = false,
     attached,
-    foreground = false,
-    desktopNet = false,
   }: RunStimdOptions,
   startup: StimdStartup,
 ): Promise<boolean> {
@@ -930,9 +923,6 @@ async function runStimdInner(
     keepClaim();
   };
   rmSync(stimdSuccessorMissingFile(), { force: true });
-  // compat C34 until 2.1.0
-  rmSync(join(stimdRunDir(), 'job-restart.json'), { force: true });
-  // compat end
   recordLostPredecessors(leftover, log);
   const history = readStimdBoots();
   const loop = crashLoop(history, build, bootAt);
@@ -1021,8 +1011,6 @@ async function runStimdInner(
   );
   let restartingNet = false;
   const netAskers = new Set<Socket>();
-  /** The connections of a `stim serve` the user runs in the foreground through this stimd, which a takeback waits for. */
-  const foregroundAskers = new Set<Socket>();
   let takeBack = false;
   const jobWaiters = new Map<Socket, string>();
   const netGone = () => {
@@ -1211,7 +1199,7 @@ async function runStimdInner(
   } catch {}
   let netServes: ServeOptions | null = serve ?? null;
   /** Whether Stim Desktop's ask started the net thread, which a service's ask on other options does not replace (#5095). */
-  let netForDesktop = desktopNet;
+  let netForDesktop = false;
   let serviceNet = service;
   let serviceListening = false;
   const writeRecord = (netPort: number | null) =>
@@ -1297,7 +1285,7 @@ async function runStimdInner(
       !hasActiveCommands() &&
       !pinned() &&
       !net.running()?.shareOnly &&
-      !(takeBack && (foregroundAskers.size > 0 || offloadJobs > 0))
+      !(takeBack && offloadJobs > 0)
     ) {
       log('info', 'service_restart', restartWhy);
       // @ref LLP 0009#service-and-engine-updates -- the job resumes the device log streams of the stimd it takes back from
@@ -1380,13 +1368,7 @@ async function runStimdInner(
     const missing = (reason: string) => successorMissing(next, reason);
     if (keepOwn) return missing('its cleanup was not verified, so no successor was started');
     try {
-      launchStimd(
-        process.env,
-        startMode,
-        process.platform,
-        entry,
-        serveArgs(carried, service || serviceNet, unit, netForDesktop),
-      );
+      launchStimd(process.env, startMode, process.platform, entry, serveArgs(carried, service || serviceNet, unit));
     } catch (error) {
       return missing(`the launch failed: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -1644,17 +1626,13 @@ async function runStimdInner(
                   if (state.listening && !socket.destroyed) {
                     netAskers.add(socket);
                     socket.once('close', () => netAskers.delete(socket));
-                    if (params.foreground === true) {
-                      foregroundAskers.add(socket);
-                      socket.once('close', () => foregroundAskers.delete(socket) && void checkEngine());
-                    }
                     if (job) {
                       jobWaiters.set(socket, job);
                       socket.once('close', () => jobWaiters.delete(socket));
                     }
                   }
                   // @ref LLP 0009#service-and-engine-updates -- the job ends up the owner once this stimd is idle
-                  if (job && (state.listening || (mismatch && !netForDesktop)) && !inJob && !attached && !foreground) {
+                  if (job && (state.listening || (mismatch && !netForDesktop)) && !inJob && !attached) {
                     if (restartWhy === null) {
                       restartWhy = `the ${job} service takes this Stim home back once no command runs`;
                       takeBack = true;
@@ -1881,7 +1859,7 @@ async function runStimdInner(
       successorArgs: () => {
         const running = net.running();
         const carried = running && netServes ? { ...netServes, shareOnly: running.shareOnly } : null;
-        return serveArgs(carried, service || serviceNet, unit, netForDesktop);
+        return serveArgs(carried, service || serviceNet, unit);
       },
       release: (why) => closeAttachedWork(ending === 'stdin' ? why : `${why} (${ending})`),
       log,
@@ -2382,14 +2360,12 @@ function shareWorkPending(): boolean {
  * that only serves `stim share` is not carried over by arguments (its successor restores the saved shares at boot, see
  * `shareWorkPending`), and one no service unit or `stim serve` started is marked `--carried`, so its successor does not
  * count as a service. The successor of a service unit's stimd gets `--unit-successor <label>`, so it counts as that
- * unit's too, and one whose net thread Stim Desktop's ask started gets `--desktop-net`, so a service's ask on other
- * options still does not take its home back.
+ * unit's too.
  */
-function serveArgs(serve: ServeOptions | null, service: boolean, unit: string | undefined, desktop = false): string[] {
+function serveArgs(serve: ServeOptions | null, service: boolean, unit: string | undefined): string[] {
   if (!serve || serve.shareOnly) return [];
   return [
     ...(service ? [] : ['--carried']),
-    ...(desktop ? [DESKTOP_NET_ARG] : []),
     '--service',
     ...(unit ? ['--unit-successor', unit] : []),
     ...(serve.loopbackOnly ? ['--loopback-only'] : []),
@@ -2426,44 +2402,18 @@ export function serviceArguments(argv: readonly string[]): ServeOptions | undefi
   return serve;
 }
 
-const homeClaimId = (): string | undefined =>
-  readClaimSet(stimdClaimRoot()).live.find(({ mode }) => mode === 'exclusive')?.claimId;
-
-/** Waits until the stimd claim `claimId` of this home is released, within a shutdown's deadline. */
-async function claimReleased(claimId: string | undefined): Promise<void> {
-  if (claimId === undefined) return;
-  const deadline = Date.now() + SHUTDOWN_DEADLINE_MS;
-  while (homeClaimId() === claimId && Date.now() < deadline)
-    await new Promise((done) => setTimeout(done, CLAIM_RETRY_MS));
-}
-
 /**
- * For a stimd that found its home held: serves its net thread through the holder until the holder closes the connection.
- * In the job of `unit`, which follows the engine, it then takes the home back once that holder, which accepted the
- * job's ask, has released it, and serves through whichever stimd took it first instead. When the engine selected another
- * build meanwhile, it exits instead, and the service manager starts the selected build through the shim.
+ * For a stimd that found its home held: serves its net thread through the holder until the holder closes the
+ * connection, judged by the holder's first answer, since a holder that leaves the home to the job of `unit` writes one
+ * more message as it shuts down. The process then exits, and the job's service manager starts it again.
  */
-async function serveThroughHolder(
-  serve: ServeOptions,
-  service: boolean,
-  unit: string | undefined,
-  retake: () => Promise<boolean>,
-): Promise<void> {
-  // @ref LLP 0009#service-and-engine-updates -- the job's process takes the home back when the holder ends
-  for (let served = false; !served && stimdLive();) {
-    const holder = homeClaimId();
-    let first: NetAnswer | null | undefined;
-    await serveThroughStimd({ ...serve, service, ...(unit ? { unit } : {}) }, (answer) => {
-      if (first !== undefined) return;
-      first = answer;
-      reportServiceNet(serve.port, service)(answer);
-    });
-    const accepted = first?.listening === true && (serve.port === 0 || first.port === serve.port);
-    if (!unit || !accepted) return;
-    await claimReleased(holder);
-    if (switchedEngine()) return;
-    served = await retake();
-  }
+async function serveThroughHolder(serve: ServeOptions, service: boolean, unit: string | undefined): Promise<void> {
+  if (!stimdLive()) return;
+  let answered = false;
+  await serveThroughStimd({ ...serve, service, ...(unit ? { unit } : {}) }, (answer) => {
+    if (!answered) reportServiceNet(serve.port, service)(answer);
+    answered = true;
+  });
 }
 
 /** The `__stimd` entry: `argv` is what follows it. */
@@ -2513,12 +2463,10 @@ export async function runStimdEntry(argv: readonly string[]): Promise<void> {
       service,
       unit: successor ?? job?.label,
       inJob: job?.followsEngine === true,
-      desktopNet: argv.includes(DESKTOP_NET_ARG),
       ...(argv.includes(ATTACHED_ARG) ? { attached: { handover: !argv.includes(NO_HANDOVER_ARG) } } : {}),
     };
     const served = await runStimd(options);
-    if (serve && !served)
-      await serveThroughHolder(serve, service, job?.followsEngine ? job.label : undefined, () => runStimd(options));
+    if (serve && !served) await serveThroughHolder(serve, service, job?.followsEngine ? job.label : undefined);
   } catch (error) {
     const message =
       isClaimRefusal(error) || isClaimUnavailable(error)

@@ -112,7 +112,6 @@ async function serveInStimd(serve: ServeOptions, service: boolean, unit: string 
       mode: daemonMode(process.env),
       serve,
       unit,
-      foreground: true,
       ...(desktop?.key ? { desktopKey: desktop.key } : {}),
       onNet: answered,
     });
@@ -123,7 +122,7 @@ async function serveInStimd(serve: ServeOptions, service: boolean, unit: string 
   if (!stimdLive()) return refuse(daemonClaimRefusal());
   console.error('stim: a stimd already serves this Stim home; asking it to start its net thread.');
   let heard = false;
-  await serveThroughStimd({ ...serve, service, foreground: true }, (answer) => {
+  await serveThroughStimd({ ...serve, service }, (answer) => {
     heard = true;
     if (answer?.listening && service && serve.port !== 0 && answer.port !== serve.port)
       return refuse(`the stimd of this Stim home serves port ${answer.port}, not the service's port ${serve.port}.`);
