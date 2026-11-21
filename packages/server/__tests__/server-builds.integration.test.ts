@@ -829,7 +829,7 @@ describe('offloaded builds', () => {
     'reports how many offload jobs run until a job, artifact delivery included, ends with its connection',
     async () => {
       const counts: number[] = [];
-      const port = await startWorker({ offloadJobs: (count) => counts.push(count) });
+      const port = await startWorker({ busy: (count) => counts.push(count) });
       const { client } = await buildClient(port);
       expect(counts.length).toBeGreaterThan(0);
       expect(counts.every((count) => count === 1)).toBe(true);

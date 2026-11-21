@@ -195,8 +195,8 @@ export interface ServerOptions {
   statusAtBoot?: boolean;
   /** Starts the status worker on another thread; by default the server starts it as its own child worker. */
   spawnStatusWorker?: (request: StatusWorkerRequest) => void;
-  /** Called with the number of offload jobs running, each time one starts or exits. */
-  offloadJobs?: (count: number) => void;
+  /** Called with the number of offloads and workspace actions, such as a worktree warm, under way, each time it changes. */
+  busy?: (count: number) => void;
   /** The Expo push API base URL; tests point it at a local server. */
   pushEndpoint?: string;
   pushLimits?: Partial<PushLimits>;

@@ -623,7 +623,20 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const logLimits: LogLimits = { ...LOG_LIMITS, ...options.logLimits };
   const commandLimits: CommandLimits = { ...COMMAND_LIMITS, ...options.commandLimits };
   const actionLimits: CommandLimits = { ...ACTION_LIMITS, ...options.actionLimits };
-  const busyWorkspaces = new Set<string>();
+  let offloads = 0;
+  const reportBusy = () => options.busy?.(offloads + busyWorkspaces.size);
+  const busyWorkspaces = new (class extends Set<string> {
+    override add(workspace: string): this {
+      super.add(workspace);
+      reportBusy();
+      return this;
+    }
+    override delete(workspace: string): boolean {
+      const deleted = super.delete(workspace);
+      if (deleted) reportBusy();
+      return deleted;
+    }
+  })();
   const retainedLifecycles = new Set<() => void>();
   const planQueues = new Map<string, Promise<void>>();
   const readDetailsReport = (
@@ -854,7 +867,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       return builds.drained ?? (builds.removing(client) ? 'This machine is removing this build client.' : null);
     },
     idle: (client) => builds.pruneBlobs(client),
-    ...(options.offloadJobs ? { counted: options.offloadJobs } : {}),
+    counted: (count) => {
+      offloads = count;
+      reportBusy();
+    },
   });
   const presence = new PresenceHub();
   const localAgents = new LocalAgentPresence({

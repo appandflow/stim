@@ -1866,10 +1866,11 @@ function netEnsureParams(
     service?: boolean;
     unit?: string;
     envValues?: Record<string, string>;
+    startedAt?: number;
   },
 ): Record<string, unknown> {
-  const { shareOnly, port, loopbackOnly, extraEnv, pathPrepend, service, unit, envValues } = serve;
-  return { share: shareOnly === true, port, loopbackOnly, extraEnv, pathPrepend, service, unit, envValues };
+  const { shareOnly, port, loopbackOnly, extraEnv, pathPrepend, service, unit, envValues, startedAt } = serve;
+  return { share: shareOnly === true, port, loopbackOnly, extraEnv, pathPrepend, service, unit, envValues, startedAt };
 }
 
 /**
@@ -1882,7 +1883,7 @@ function netEnsureParams(
  * stimd outside that job leaves the home to the job at its engine switch.
  */
 export function serveThroughStimd(
-  params: ServeOptions & { service: boolean; unit?: string },
+  params: ServeOptions & { service: boolean; unit?: string; startedAt?: number },
   onAnswer: (answer: NetAnswer | null) => void,
 ): Promise<void> {
   const envValues = params.service

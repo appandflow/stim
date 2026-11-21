@@ -242,13 +242,17 @@ function fixture(label: string, port: number, shim = false) {
    * Starts the job on the current build, and again `restartMs` after its process exits until the job is stopped, as
    * KeepAlive and `Restart=always` with `RestartSec` do.
    */
-  const keepJob = (restartMs = 0) => {
+  const keepJob = (restartMs = 0, throttleMs = 0) => {
     const start = () => {
       const job = stimd(current);
+      const startedAt = Date.now();
       job.once('exit', () =>
-        setTimeout(() => {
-          if (launchd.job === job) launchd.job = start();
-        }, restartMs),
+        setTimeout(
+          () => {
+            if (launchd.job === job) launchd.job = start();
+          },
+          Math.max(restartMs, startedAt + throttleMs - Date.now()),
+        ),
       );
       return job;
     };
@@ -428,7 +432,7 @@ function fixture(label: string, port: number, shim = false) {
     bin,
     scratch,
     streams,
-    restartJob: (restartMs: number) => keepJob(restartMs),
+    restartJob: (restartMs: number, throttleMs = 0) => keepJob(restartMs, throttleMs),
     last,
     answers,
     command: () => cli(next, ['__stimd', '--mode', 'on']),
@@ -790,6 +794,32 @@ describe.skipIf(process.platform === 'win32')("an engine switch under a service 
         'takes this Stim home back',
       );
     } finally {
+      await service.cleanup();
+    }
+  }, 240_000);
+
+  it("takes the home from a Desktop that polls faster than launchd's 30 s ThrottleInterval restarts the job", async () => {
+    const port = await freePort();
+    const service = fixture('dev.stim.handoff-job-throttle', port, true);
+    // Stands in for Stim Desktop: every 10 s, a stimd with the service's options when none holds the home.
+    const poll = setInterval(() => {
+      if (!homeClaim(service.home)) void service.runDesktop().catch(() => {});
+    }, 10_000);
+    try {
+      await service.runDesktop();
+      service.restartJob(0, 30_000);
+      const held = await until(
+        'the job to hold the home',
+        () => {
+          const holder = homeClaim(service.home);
+          return holder?.details.serviceUnit === service.label ? holder : null;
+        },
+        150_000,
+      );
+      await new Promise((done) => setTimeout(done, 25_000));
+      expect(homeClaim(service.home)?.owner.pid).toBe(held.owner.pid);
+    } finally {
+      clearInterval(poll);
       await service.cleanup();
     }
   }, 240_000);

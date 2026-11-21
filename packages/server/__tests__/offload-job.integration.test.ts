@@ -40,10 +40,10 @@ afterEach(async () => {
 
 async function paired(
   attached = false,
-  offloadJobs?: (count: number) => void,
+  busy?: (count: number) => void,
 ): Promise<{ endpoint: Endpoint; credential: MachineCredential }> {
   server = await startServer({
-    ...(offloadJobs ? { offloadJobs } : {}),
+    ...(busy ? { busy } : {}),
     hosts: ['127.0.0.1'],
     port: 0,
     stimCli,

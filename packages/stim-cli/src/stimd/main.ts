@@ -95,6 +95,7 @@ import {
   type NetAnswer,
 } from '../daemon/client.ts';
 import { getExecutor } from '../exec.ts';
+import { THROTTLE_SECONDS } from '@stim-cli/server/service-plist';
 import { resolveTailscaleBinary } from '../engine/metro-reach.ts';
 import {
   configuredDaemonMode,
@@ -986,8 +987,8 @@ async function runStimdInner(
   process.title = 'stimd';
   const key = writeDesktopKey(desktopKey);
   const script = realpathSync(process.argv[1] ?? '');
-  /** The offload jobs the net thread runs, an artifact delivery included, which a takeback waits for. */
-  let offloadJobs = 0;
+  /** The offloads and workspace actions under way in the net thread, which a takeback waits for. */
+  let netBusy = 0;
   const net = createNetThread(
     log,
     (failure) => {
@@ -1005,17 +1006,18 @@ async function runStimdInner(
       void checkEngine();
     },
     (count) => {
-      offloadJobs = count;
+      netBusy = count;
       if (count === 0) void checkEngine();
     },
   );
   let restartingNet = false;
   const netAskers = new Set<Socket>();
   let takeBack = false;
+  let takeBackAt = 0;
   const jobWaiters = new Map<Socket, string>();
   const netGone = () => {
     recordNet(null);
-    offloadJobs = 0;
+    netBusy = 0;
     for (const socket of netAskers) socket.end();
     netAskers.clear();
     handleNetStop(serve, closing, attached !== undefined, requestEnd, shutdown, requestTick);
@@ -1285,7 +1287,7 @@ async function runStimdInner(
       !hasActiveCommands() &&
       !pinned() &&
       !net.running()?.shareOnly &&
-      !(takeBack && offloadJobs > 0)
+      !(takeBack && (netBusy > 0 || Date.now() < takeBackAt))
     ) {
       log('info', 'service_restart', restartWhy);
       // @ref LLP 0009#service-and-engine-updates -- the job resumes the device log streams of the stimd it takes back from
@@ -1636,6 +1638,12 @@ async function runStimdInner(
                     if (restartWhy === null) {
                       restartWhy = `the ${job} service takes this Stim home back once no command runs`;
                       takeBack = true;
+                    }
+                    // A job that exits before launchd's ThrottleInterval since its start is restarted only after it.
+                    if (typeof params.startedAt === 'number') {
+                      takeBackAt = Math.max(takeBackAt, params.startedAt + THROTTLE_SECONDS * 1000);
+                      const wait = takeBackAt - Date.now();
+                      if (wait > 0) setTimeout(() => void checkEngine(), wait).unref();
                     }
                     socket.write(`${JSON.stringify({ op: 'net', ...state })}\n`, () => void checkEngine());
                     return true;
@@ -2410,7 +2418,8 @@ export function serviceArguments(argv: readonly string[]): ServeOptions | undefi
 async function serveThroughHolder(serve: ServeOptions, service: boolean, unit: string | undefined): Promise<void> {
   if (!stimdLive()) return;
   let answered = false;
-  await serveThroughStimd({ ...serve, service, ...(unit ? { unit } : {}) }, (answer) => {
+  const startedAt = Math.round(Date.now() - process.uptime() * 1000);
+  await serveThroughStimd({ ...serve, service, ...(unit ? { unit, startedAt } : {}) }, (answer) => {
     if (!answered) reportServiceNet(serve.port, service)(answer);
     answered = true;
   });

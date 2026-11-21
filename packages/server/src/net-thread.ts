@@ -23,7 +23,7 @@ export type FromNet =
   | { type: 'update'; why: string }
   | { type: 'restart'; why: string }
   | { type: 'statusWorker'; request: StatusWorkerRequest }
-  | { type: 'jobs'; count: number };
+  | { type: 'busy'; count: number };
 
 /** A connection stimd's CLI socket handed over, carried as messages. */
 class Bridged extends Duplex {
@@ -76,7 +76,7 @@ async function run(port: MessagePort, options: NetOptions): Promise<void> {
       (why) => post({ type: 'update', why }),
       (why) => post({ type: 'restart', why }),
       (request) => port.postMessage({ type: 'statusWorker', request } satisfies FromNet, [request.port]),
-      (count) => post({ type: 'jobs', count }),
+      (count) => post({ type: 'busy', count }),
     );
   } catch (error) {
     post({
