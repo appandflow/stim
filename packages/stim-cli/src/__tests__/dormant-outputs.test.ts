@@ -24,6 +24,11 @@ import * as ladderModule from '../daemon/ladder.ts';
 import * as measure from '../daemon/measure.ts';
 import * as processLock from '../engine/workspace-process-lock.ts';
 import { withCargoLocks } from '../workspace/cargo-lock.ts';
+import { exactClean } from '../integrations/exact-clean.ts';
+
+vi.mock('../integrations/exact-clean.ts', () => ({
+  exactClean: vi.fn<typeof import('../integrations/exact-clean.ts').exactClean>(),
+}));
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import * as maintenanceRun from '../stimd/passes/run.ts';
 import { loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
@@ -370,7 +375,7 @@ describe.skipIf(process.platform === 'win32')(
       expect(existsSync(join(linked, BUILD, 'app.apk'))).toBe(true);
     });
 
-    test.each(['exact', 'tagged', 'untagged'] as const)(
+    test.each(['tagged', 'untagged'] as const)(
       'an idle %s Cargo target/ that is the only output is predicted, then deleted whole',
       async (kind) => {
         const root = onlyTarget(cargo('app', kind));
@@ -388,6 +393,29 @@ describe.skipIf(process.platform === 'win32')(
         expect((await gc()).filter((action) => action.outcome !== 'kept')).toEqual([]);
       },
     );
+
+    test("an idle Exact app's target/ is predicted without running Exact, then cleaned by Exact", async () => {
+      const root = onlyTarget(cargo('app', 'exact'));
+      idleFor(3, root);
+      const target = realpathSync(join(root, 'target'));
+      const cleaner = vi.mocked(exactClean).mockImplementation(async (_, { dryRun = false } = {}) => {
+        const remove = [join(target, 'debug'), join(target, 'doc')];
+        if (!dryRun) for (const path of remove) rmSync(path, { recursive: true, force: true });
+        return { status: 'ok', remove, kept: [], held: [] };
+      });
+
+      expect(await hourlyStep(false)).toEqual([
+        expect.objectContaining({ target: root, outcome: 'would', bytes: expect.any(Number) }),
+      ]);
+      expect(cleaner).not.toHaveBeenCalled();
+      expect(existsSync(join(root, 'target', 'debug'))).toBe(true);
+      expect(await gc()).toEqual([expect.objectContaining({ target: root, outcome: 'done' })]);
+      expect(readdirSync(join(root, 'target'))).toEqual([]);
+      expect(cleaner.mock.calls.map(([app, options]) => [app, options?.dryRun === true])).toContainEqual([
+        realpathSync(root),
+        false,
+      ]);
+    });
 
     test('a dry run leaves out a folder holding a Solana keypair deeper inside', async () => {
       const root = onlyTarget(cargo('app', 'untagged'));

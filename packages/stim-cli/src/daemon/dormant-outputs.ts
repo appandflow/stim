@@ -13,7 +13,7 @@ import {
   deleteCargoTarget,
   leftoverReason,
   recentTargetUse,
-  removableEntries,
+  removablePaths,
   type CargoTrimResult,
 } from '../workspace/cargo-target.ts';
 import type { Config } from '../workspace/config.ts';
@@ -46,6 +46,8 @@ type Result = Pick<DaemonLadderAction, 'outcome' | 'bytes' | 'detail'>;
 
 interface Plan {
   paths: string[];
+  /** What the dormant delete would remove from each planned Cargo `target/`, for report mode's sizes. */
+  removable: Map<string, string[]>;
   /** The planned paths that are Cargo `target/` directories, which go only through the Cargo delete. */
   targets: Set<string>;
   kept: string[];
@@ -140,8 +142,7 @@ async function reduceWorkspace(
     for (const output of plan.paths) {
       if (!plan.targets.has(output)) sizes.set(output, await sizeOf(output));
       else if (!input.act)
-        for (const name of (await removableEntries(output)) ?? [])
-          sizes.set(join(output, name), await sizeOf(join(output, name)));
+        for (const removable of plan.removable.get(output) ?? []) sizes.set(removable, await sizeOf(removable));
     }
   if (!input.act) {
     const bytes = [...sizes.values()].reduce((sum, size) => sum + size, 0);
@@ -201,7 +202,7 @@ async function eligible(candidate: StageCandidate, config: Config, afterMs: numb
   const store = metroStoreRoot(candidate.path);
   const outputs = await idleOutputs(candidate.path, config, (output) => output !== store);
   const kept = outputs.kept.filter((reason) => !reason.includes(store));
-  const plan: Plan = { paths: [], targets: new Set(), kept, keptTarget: false };
+  const plan: Plan = { paths: [], removable: new Map(), targets: new Set(), kept, keptTarget: false };
   const targets = [...outputs.targets];
   // @ref LLP 0005#the-dormant-reduction-deletes-an-idle-target-whole -- untagged too, never build output
   for (const dir of await cargoTargetDirsAsync(candidate.path)) {
@@ -218,7 +219,7 @@ async function eligible(candidate: StageCandidate, config: Config, afterMs: numb
     const recent = target
       ? (leftoverReason(output) ??
         recentTargetUse(output, Date.now(), afterMs) ??
-        ((await removableEntries(output))?.length ? null : 'it holds nothing the dormant delete removes'))
+        (await nothingRemovable(output, plan)))
       : null;
     if (recent) {
       plan.kept.push(`kept ${output}: ${recent}`);
@@ -229,6 +230,15 @@ async function eligible(candidate: StageCandidate, config: Config, afterMs: numb
     }
   }
   return plan;
+}
+
+/** Why the dormant delete would remove nothing from the target `output`; null when it would, noting what in `plan`. */
+async function nothingRemovable(output: string, plan: Plan): Promise<string | null> {
+  const removable = await removablePaths(output);
+  if ('kept' in removable) return removable.kept;
+  if (!removable.paths.length) return 'it holds nothing the dormant delete removes';
+  plan.removable.set(output, removable.paths);
+  return null;
 }
 
 /** Why `output` must stay, asked under the workspace's claims right before its removal; null when it may go. */

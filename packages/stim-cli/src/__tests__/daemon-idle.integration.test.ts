@@ -24,6 +24,20 @@ import { readWorkspaceState, recordWorkspaceUse, writeWorkspaceState } from '../
 import { liveClaimOwner, writeDerivedData } from './_factories.ts';
 import { serveShareList, shareRow, type ShareListAnswer } from './_share-list-server.ts';
 
+vi.mock('../integrations/exact-clean.ts', async () => {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  return {
+    exactClean: vi.fn<typeof import('../integrations/exact-clean.ts').exactClean>(
+      async (app, { dryRun = false } = {}) => {
+        const remove = [path.join(app, 'target', 'debug')];
+        if (!dryRun) for (const entry of remove) fs.rmSync(entry, { recursive: true, force: true });
+        return { status: 'ok', remove, kept: [], held: [] };
+      },
+    ),
+  };
+});
+
 const MINUTE_MS = 60_000;
 
 const volume = vi.hoisted((): { short: { root: string; dev: number } | null } => ({ short: null }));
@@ -203,7 +217,7 @@ test('under disk pressure alone a workspace stopped at idle.minutes loses only t
 });
 
 test.skipIf(process.platform === 'win32')(
-  "the idle stage deletes an idle Exact app's Cargo target/, and keeps it while a process works in the app",
+  "the idle stage hands an idle Exact app's Cargo target/ to Exact's cleaner, and keeps it while a process works in the app",
   async () => {
     const { root } = bootedWorkspace('exact', 20 * MINUTE_MS);
     execSync('git init -q', { cwd: root });
@@ -236,7 +250,7 @@ test.skipIf(process.platform === 'win32')(
 
     bootedWorkspace('exact', 20 * MINUTE_MS);
     await pass();
-    expect(existsSync(join(root, 'target'))).toBe(false);
+    expect(existsSync(join(root, 'target', 'debug'))).toBe(false);
   },
 );
 

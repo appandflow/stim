@@ -103,9 +103,9 @@ use cannot be told, when another filesystem is mounted anywhere in it (on Linux
 also any mount point at or under it in `/proc/self/mountinfo`, since a bind
 mount keeps the device number; mounts that cannot be read keep it), when a
 process executes from, works in or holds open any path in it, the `target/`
-itself included, when a process holds Exact's `.exact-sweep.json.lock` or a
-file under `.apple-cargo-locks/` up to two levels down, or when a build holds a
-Cargo lock (below). Use means a modification time within that time, or one
+itself included, or when a build holds a Cargo lock (below). An Exact app's
+`target/` then goes to Exact's own cleaner instead (Exact apps clean through
+Exact, below). Use means a modification time within that time, or one
 that cannot be read, on the `target/` itself, on any top-level entry but Stim's
 own `.stim-*`, on each direct child of a top-level directory, or on a profile
 directory and its `.fingerprint`, `deps`, `build` and `incremental`; or a unit
@@ -113,10 +113,9 @@ stamp within that time in Exact's ledger. The times are read two levels down by
 the eligibility check; the delete itself also takes the newest modification
 time of everything in each entry in the one walk that checks devices, so a file
 rewritten in place deep inside, such as a Criterion baseline, keeps the
-`target/`. A `target/` with no Cargo profile, such as most Exact app targets,
-is dated the same way and has no Cargo lock to take: its evidence is that
-dating, the Exact lock probe and the one process read, and a build that starts
-after them loses its output under the loss budget.
+`target/`. A `target/` with no Cargo profile is dated the same way and has no
+Cargo lock to take: its evidence is that dating and the one process read, and a
+build that starts after them loses its output under the loss budget.
 
 Then it takes every Cargo lock file of the `target/` that exists, a
 `.cargo-lock`, `.cargo-build-lock` or `.cargo-artifact-lock` in a top-level
@@ -142,7 +141,8 @@ cases were listed: Solana keypairs, Exact's receipts and development tokens,
 benchmark baselines and Cargo's reports. A `deploy/` directory holding a
 `*-keypair.json`, or one that cannot be read to tell, stays because Solana's `cargo build-sbf` and Anchor keep a
 program's private key there, and a new key is a new program ID. Everything else
-in an idle `target/` goes, Exact's folders and records included. A top-level
+in an idle `target/` goes; for an Exact app's `target/`, Exact's cleaner
+decides instead and keeps its records (below). A top-level
 symbolic link stays, and a `deploy` that is itself a symbolic link, or holds
 one, keeps the whole `target/`, since its keys may live anywhere in it. The same
 holds at any depth: a symbolic link named `deploy` or `*-keypair.json`, or one
@@ -280,8 +280,8 @@ decisions in #6025 removes that sweep.
 ## One remover
 
 Every deletion of Cargo build output, the trims, the dormant reduction, the idle
-stage, the build-output pass and the artifact pass, goes through one remover. It
-deletes in place, deepest first: a symbolic link is unlinked and never followed,
+stage, the build-output pass and the artifact pass, goes through one remover,
+except an Exact app's whole `target/` (below). It deletes in place, deepest first: a symbolic link is unlinked and never followed,
 a directory on a device other than the `target/`'s and Exact's
 `.apple-cargo-locks/` are not entered, a lock file Cargo or Exact takes
 (`.cargo-lock`, `.cargo-build-lock`, `.cargo-artifact-lock`,
@@ -324,6 +324,78 @@ never follows links, crosses devices, or unlinks keypairs or lock files, and to
 remove the staging, its markers and roll back. Reason: 38 of the 78 review
 findings on #5996 and #6013 were in the staging, roll back, marker and full-disk
 retry code itself; the loss budget above accepts the window that staging closed.
+
+## Exact apps clean through Exact
+
+A whole delete of an Exact app's `target/` (beside `exact.mjs`), from the
+dormant reduction, the idle stage, the build-output pass or the artifact pass,
+runs Exact's own cleaner instead of the remover, after Stim's checks above and
+one more: no process runs from or works in the app folder, since a dev server or
+a running app holds no lock Exact could see. The call is fixed: `<bun>
+<checkout>/scripts/sweep.mjs clean <app-dir> [--dry-run] --json`. The checkout is
+the one the app's `exact.mjs` resolves (`EXACT`, else `EXACT2`, else the path its
+launcher names), read from the last line of `bun exact.mjs help` (`Exact
+checkout: <path> at <commit>`), run with the Bun the launcher pins; the cleaner
+runs with the Bun the checkout's `package.json` pins (`packageManager`), both
+from `~/.bun-<version>/bin/bun`. At the delete, after the use dating, a dry run
+lists what goes, which Stim measures; the clean then removes it all or nothing
+under Exact's own locks and leases. Planning and report mode never run the
+cleaner: each run writes Exact's sweep files (`.exact-sweep.json`, its lock and
+log) into the `target/`, which the use dating would read as use. They show
+Stim's own listing of the `target/` instead, an upper bound of what Exact
+removes. Exact keeps the records an app stores in its `target/`
+(`traces/`, `web-receipts/`, `native-receipts/`, production builds) and any name
+it does not know.
+
+Stim protects what a regular Exact project keeps in a `target/` and cannot
+rebuild, its records, and never hands an Exact app's `target/` to the remover:
+
+- Any `exact.mjs` beside the `target/`, a file or a link, makes it an Exact app's,
+  for discovery and for the delete alike. A launcher that is a link keeps it
+  whole.
+- A Cargo `target/` holding Exact's files with no Exact app beside it (its ledger
+  `.exact-sweep.json` or the ledger's lock, or a `web-receipts/`,
+  `native-receipts/`, `receipts/` or `traces/` folder), such as a Cargo
+  workspace's `target/` its Exact apps share, stays whole: no single app's
+  cleaner owns it.
+- Stim requires `version: 1` in the one JSON object the cleaner prints. A dry run
+  without one keeps the `target/`, and so does one listing a path that does not
+  resolve inside the canonical `target/`. `busy` and `refused` keep it with Exact's
+  reason. After a keep without a removal, Stim does not ask Exact again about
+  that `target/` for a day, in the running process, so hourly passes do not rerun
+  `help` and the dry run.
+- `failed` reports the action failed with what Exact had already removed. A
+  clean that times out, crashes or prints no report fails the action too, with
+  what it removed unknown, since Exact moves entries aside before it reports. A
+  cleanup refusal from the process guard (LLP 0007) is reported, not turned
+  into a keep.
+
+The pressure trims of an Exact app's `target/` stay Stim's Cargo trims under the
+profile locks, and the remover never enters `.apple-cargo-locks/` or unlinks
+Exact's ledger lock; Exact's cleaner owns only the whole delete.
+
+Stim runs the app's own `exact.mjs` and the cleaner it names without vetting
+their code, during unattended cleanup too. The maintainer said in the
+coordinating session on 2026-11-20: "I dont think this is really a problem,
+stim security model assumes code is safe since I am pretty sure a lot of other
+places could have similar problem".
+
+Maintainer decision: "I agree lets do this and ur recommendations from prev
+messages, also lets do the changes now that u flagged as after 2.0 id rather
+delay than ship what we have", 2026-11-20 (#6025), whose list of decisions says
+Exact apps call Exact's `scripts/sweep.mjs clean --json` (appandflow/exact#41)
+instead of Stim's folder-name rules. This replaces Stim's own Exact rules for a
+whole delete: the `.exact-sweep.json.lock` and `.apple-cargo-locks/` probes and
+the full delete of Exact's records. Chosen by the lane of #6025, not by the
+maintainer: resolving the checkout through `help`, the Bun pins, the dry run
+before the clean, the day between asks, and keeping the `target/` in the cases
+above. Following the maintainer's rule for cleanup findings (would a regular
+project hit the case, and what is the worst that happens if Stim deletes
+anyway), Stim does not guard the cleaner against a link in the `target/`, an
+older checkout that reads `clean` as a folder to sweep, or a Cargo workspace
+around the app: each costs at most regenerable build output. Apple-built Exact
+apps always hold relative links from `swift build --scratch-path`, and Exact's
+clean does not follow links.
 
 ## Leftovers of the staged trim
 

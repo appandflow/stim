@@ -4,8 +4,10 @@ import { basename, dirname, join } from 'node:path';
 import { releaseReserveWhenFull } from '../disk-reserve.ts';
 import { getExecutor } from '../exec.ts';
 import { measuredDirectorySizeAsync } from '../fs-util.ts';
+import { exactClean, type ExactCleanReport } from '../integrations/exact-clean.ts';
 import { withCargoLocks } from './cargo-lock.ts';
 import { cargoTargetDirsAsync } from './regenerable-dirs.ts';
+import { othersRunningAsync, readRunningProcessesAsync, runningFromReason } from './running-from.ts';
 
 const CARGO_PROFILE_IDLE_MS: number = 24 * 3_600_000;
 
@@ -22,6 +24,8 @@ const EXACT_APPLE_LOCKS = '.apple-cargo-locks';
 /** The lock files Cargo and Exact take in a `target/`, which a delete leaves in place. */
 const LOCK_FILES = new Set([...PROFILE_LOCKS, `${EXACT_LEDGER}.lock`]);
 const NOT_PROFILES = new Set(['.exact-swept']);
+/** What Exact writes in a `target/` it owns: its sweep ledger and lock, and the folders that hold an app's records. */
+const EXACT_OWNED = [EXACT_LEDGER, `${EXACT_LEDGER}.lock`, 'web-receipts', 'native-receipts', 'receipts', 'traces'];
 const OWN_PREFIX = '.stim-';
 const ASIDE = `${OWN_PREFIX}trimmed`;
 const NOT_RESTORED = `${OWN_PREFIX}not-restored-`;
@@ -63,15 +67,34 @@ export function targetEntries(target: string): { output: string[]; kept: string[
 }
 
 /**
- * The top-level entries of `target` the dormant delete would remove something from: `targetEntries`' output but an
- * entry that holds only what the delete leaves (lock files, keypairs and links). Null when `target` cannot be listed.
+ * What the dormant delete would remove from `target`, as absolute paths: each top-level entry of `targetEntries`' output
+ * but one that holds only what the remover leaves (lock files, keypairs and links). For an Exact app's `target/` it is an
+ * upper bound, since Exact's cleaner decides at the delete what goes; Stim does not run that cleaner to plan, because
+ * every run writes Exact's sweep files into the `target/` and would make it look used.
  */
-export async function removableEntries(target: string): Promise<string[] | null> {
+export async function removablePaths(target: string): Promise<{ paths: string[] } | { kept: string }> {
+  const names = await removableEntries(target);
+  return names ? { paths: names.map((name) => join(target, name)) } : { kept: `${target} cannot be listed` };
+}
+
+/** The top-level entries of `target` that `removablePaths` lists, or null when `target` cannot be listed. */
+async function removableEntries(target: string): Promise<string[] | null> {
   const entries = targetEntries(target);
   if (!entries) return null;
   const output: string[] = [];
   for (const name of entries.output) if (!(await leftAlone(join(target, name)))) output.push(name);
   return output;
+}
+
+/** Whether `app` holds an `exact.mjs` of any kind, as Exact app discovery reads it: a link counts too. */
+const isExactApp = (app: string): boolean => lstatSync(join(app, 'exact.mjs'), { throwIfNoEntry: false }) !== undefined;
+
+/** Why Exact's cleaner removed nothing, for a kept detail. */
+function exactKept(report: ExactCleanReport | { unsupported: string } | { unknown: string }): string {
+  if ('unknown' in report) return `Exact's clean ended without a report: ${report.unknown}`;
+  if ('unsupported' in report) return `Exact's cleaner cannot run, so Stim keeps it: ${report.unsupported}`;
+  if (report.status === 'busy') return `Exact reports it in use: ${report.held.join(', ')}`;
+  return `Exact's cleaner ${report.status === 'refused' ? 'refuses it' : 'failed'}: ${report.error ?? 'no reason given'}`;
 }
 
 /**
@@ -789,10 +812,11 @@ export function mountedUnder(target: string, mountInfo: (() => string) | null): 
 // @ref LLP 0005#the-dormant-reduction-deletes-an-idle-target-whole -- in place under every profile's Cargo locks
 /**
  * Deletes everything in `target` the remover may delete, every top-level entry but a symbolic link and a `deploy` that
- * is or holds one, that holds anything the remover removes (`removableEntries`), in place under all its Cargo locks, once it is still a Cargo `target/` Stim
- * recognises, shows no use within `idleMs` (`recentTargetUse`), has no other filesystem mounted inside or a leftover of
- * an earlier engine's staging, no process uses any path in it and no build holds an Exact lock file in it. Lock files
- * and keypairs stay, and so does the `target/` while anything is left in it.
+ * is or holds one, that holds anything the remover removes (`removableEntries`), in place under all its Cargo locks,
+ * once it is still a Cargo `target/` Stim recognises, shows no use within `idleMs` (`recentTargetUse`), has no other
+ * filesystem mounted inside or a leftover of an earlier engine's staging, and no process uses any path in it. An Exact
+ * app's `target/` goes to Exact's cleaner instead (`exactDelete`), and one holding Exact's files (`EXACT_OWNED`) with no
+ * Exact app beside it stays. Lock files and keypairs stay, and so does the `target/` while anything is left in it.
  */
 export async function deleteCargoTarget(
   registeredTarget: string,
@@ -824,8 +848,11 @@ export async function deleteCargoTarget(
   const first = await readTargetUse(target, signal);
   if ('kept' in first) return keep(first.kept);
   if (first.used.length) return keep(`a process uses ${first.used[0]}`);
-  const exactHeld = await heldExactLock(target, signal);
-  if (exactHeld) return keep(`a build holds ${exactHeld}`);
+  const app = dirname(target);
+  if (isExactApp(app)) return exactDelete(app, target, result, signal);
+  const exactOwned = EXACT_OWNED.find((name) => lstatSync(join(target, name), { throwIfNoEntry: false }));
+  if (exactOwned)
+    return keep(`it holds Exact's ${exactOwned} but no Exact app beside it, so it may be shared by Exact apps`);
   let done: Awaited<ReturnType<typeof withCargoLocks<string[]>>>;
   try {
     done = await withCargoLocks(
@@ -865,35 +892,60 @@ function recognitionLast(target: string, name: string): number {
   return fingerprintDir(join(target, name)) ? 1 : 0;
 }
 
-/** The lock files Exact takes in a top-level entry of a target: `.exact-sweep.json.lock`, and those under `.apple-cargo-locks`. */
-function exactLockFiles(path: string, name: string): string[] {
-  if (name === `${EXACT_LEDGER}.lock`) return [path];
-  if (name !== EXACT_APPLE_LOCKS) return [];
-  const files: string[] = [];
-  for (const entry of entriesOf(path) ?? []) {
-    const inner = join(path, entry.name);
-    if (entry.isFile()) files.push(inner);
-    else if (entry.isDirectory())
-      for (const file of entriesOf(inner) ?? []) if (file.isFile()) files.push(join(inner, file.name));
-  }
-  return files;
-}
+/** When Exact's cleaner last kept each target without removing anything, so a pass within a day does not ask again. */
+const exactKeptAt = new Map<string, number>();
 
-/** The lock file of Exact's at the top of `target` a process holds, which keeps the whole target. */
-async function heldExactLock(target: string, signal?: AbortSignal): Promise<string | null> {
-  for (const name of [`${EXACT_LEDGER}.lock`, EXACT_APPLE_LOCKS])
-    for (const file of exactLockFiles(join(target, name), name)) if (await fileHeld(file, signal)) return file;
-  return null;
-}
-
-/** Whether a process holds `file` open, from `lsof -t`: output names a holder, and anything but a clean no-match holds. */
-async function fileHeld(file: string, signal?: AbortSignal): Promise<boolean> {
-  try {
-    return (await getExecutor().runFileAsync('lsof', ['-t', '--', file], { timeoutMs: 5000, signal })).trim() !== '';
-  } catch (error) {
-    signal?.throwIfAborted();
-    return !(isRecord(error) && error.status === 1 && (error.stdout === '' || error.stdout === undefined));
+// @ref LLP 0005#exact-apps-clean-through-exact -- Stim checks the app is idle, Exact decides what goes
+/**
+ * Hands the idle Exact app `app`'s `target/` (`target`, canonical) to Exact's cleaner, once no process runs from or
+ * works in the app: a dev server or a running app holds no lock Exact could see. An unsupported checkout, a dry run
+ * listing a path outside the canonical `target`, or a busy or refused clean keeps the target. A dry run first lists what goes, which Stim measures; the
+ * clean then removes it all or nothing. A failed clean, or one that ends without a report, throws: what it removed is
+ * not known. A keep without a removal is not asked again for a day.
+ */
+async function exactDelete(
+  app: string,
+  target: string,
+  result: CargoTrimResult,
+  signal?: AbortSignal,
+): Promise<CargoTrimResult> {
+  const keep = (why: string): CargoTrimResult => ({ ...result, kept: [...result.kept, why] });
+  const asked = exactKeptAt.get(target);
+  if (asked !== undefined && Date.now() - asked < CARGO_PROFILE_IDLE_MS)
+    return keep(
+      `Exact's cleaner kept it ${Math.round((Date.now() - asked) / 60_000)} minutes ago; Stim asks again after a day`,
+    );
+  const keptByExact = (why: string): CargoTrimResult => {
+    exactKeptAt.set(target, Date.now());
+    return keep(why);
+  };
+  const running = runningFromReason(app, await othersRunningAsync(await readRunningProcessesAsync(signal), signal));
+  if (running) return keep(`its app may be in use: ${running.replace(/ it\b/, ' its app')}`);
+  const options = signal ? { signal } : {};
+  const planned = await exactClean(app, { ...options, dryRun: true });
+  if (!('status' in planned) || planned.status !== 'ok') return keptByExact(exactKept(planned));
+  if (!planned.remove.length) return keptByExact("Exact's cleaner lists nothing its builds remake");
+  for (const path of planned.remove) {
+    const real = await realpath(path).catch(() => null);
+    if (!real?.startsWith(`${target}/`)) return keptByExact(`Exact's cleaner lists ${path}, outside ${target}`);
   }
+  const sizes = new Map<string, number>();
+  for (const path of planned.remove) sizes.set(path, await sizeOf(path, signal));
+  const report = await exactClean(app, options);
+  if ('unknown' in report || ('status' in report && report.status === 'failed'))
+    throw new Error(
+      'unknown' in report
+        ? `${exactKept(report)}; what it removed is not known`
+        : `${exactKept(report)}; it had removed ${report.remove.length ? report.remove.join(', ') : 'nothing'}`,
+    );
+  if ('unsupported' in report || report.status === 'busy' || report.status === 'refused')
+    return keptByExact(exactKept(report));
+  exactKeptAt.delete(target);
+  result.removed.push(
+    ...report.remove.map((path) => (path.startsWith(`${target}/`) ? path.slice(target.length + 1) : path)),
+  );
+  result.bytes = report.remove.reduce((sum, path) => sum + (sizes.get(path) ?? 0), 0);
+  return result;
 }
 
 /**
