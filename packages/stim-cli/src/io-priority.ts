@@ -1,6 +1,6 @@
 import { getExecutor } from './exec.ts';
 
-// @ref LLP 0021#stimd-runs-at-the-priority-of-an-app -- only size walks at normal pressure throttle their I/O
+// @ref LLP 0021#stimd-runs-at-the-priority-of-an-app -- size walks at normal pressure and trash deletes below critical throttle their I/O
 
 /**
  * The command line that runs a size walk at low priority: under `nice -n 19`, and with `throttleIo` also at a throttled
