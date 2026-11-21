@@ -724,6 +724,8 @@ export async function runForcedLadder({
       simsError: measured.simsError,
       devices: measured.devices,
       log,
+      ...(protectedRoot ? { protectedRoot } : {}),
+      ...(operation ? { operation } : {}),
     };
     const running = act ? [] : await runIdlePass({ ...reading, act: false });
     const volumes =

@@ -155,17 +155,33 @@ test('gc at zero free disk gives back the reserve to take its claim, then delete
   expect(existsSync(maintenanceRunClaims())).toBe(false);
 });
 
-test('an acting gc gives back the reserve before it asks stimd for its pass, so a stimd can start on a full disk', async () => {
+test('an acting gc gives back the reserve before it asks stimd for its pass and writes it back when the request fails', async () => {
   const reserve = join(maintenanceDir(), 'disk-reserve');
   await runMaintenance('status');
   expect(existsSync(reserve)).toBe(true);
   vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(console, 'error').mockImplementation(() => {});
   let held: boolean | undefined;
-  await runGcCommand({ pressure: 'normal', json: true }, {}, async (request, operation, onAction) => {
+  await runGcCommand({ pressure: 'normal', json: true }, {}, async () => {
     held = existsSync(reserve);
-    return runGcPass(request, operation, onAction);
+    throw Object.assign(new Error('no stimd'), { code: 'STIM_DAEMON_UNAVAILABLE', remedy: 'Run it again.' });
   });
   expect(held).toBe(false);
+  expect(readFileSync(reserve).length).toBe(1024 * 1024);
+});
+
+test('each gc pass logs under a run id of its own', async () => {
+  for (const name of ['first', 'second']) {
+    mkdirSync(join(home, 'workspaces', `${name}--0000000000000000`), { recursive: true });
+    await runGcPass({ level: 'normal', client: 'manual' }, undefined, () => {});
+  }
+  const runs = new Set(
+    readFileSync(gcLogFile(), 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line).runId),
+  );
+  expect(runs.size).toBe(2);
 });
 
 test('a reserve that can be neither written nor removed still releases the run claim', async () => {

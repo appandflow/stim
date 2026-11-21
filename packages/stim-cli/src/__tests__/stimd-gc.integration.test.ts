@@ -88,8 +88,11 @@ const alive = (pid: number) => {
   }
 };
 
-/** Starts an acting gc at critical on stimd whose size walk records its pid and waits until `go` exists. */
-async function heldGc(controller: AbortController) {
+/**
+ * Starts an acting gc at critical on stimd whose size walk records its pid and waits until `go` exists, through the
+ * API's `collectGarbage` when `report` is set, whose 60 s report budget then runs out when `expire` is called.
+ */
+async function heldGc(controller: AbortController, report = false) {
   const marker = join(scratch, 'du.pid');
   const go = join(scratch, 'go');
   const item = fixture(`echo $$ > '${marker}'\nwhile [ ! -f '${go}' ]; do sleep 0.1; done\nexec /usr/bin/du "$@"`);
@@ -100,17 +103,31 @@ async function heldGc(controller: AbortController) {
     env: item.env,
     signal: controller.signal,
   });
-  const gc = withAmbientContext(operation, () =>
-    runGcThroughStimd({ level: 'critical', client: 'manual' }, operation, () => {}),
-  );
+  const realSetTimeout = globalThis.setTimeout;
+  let expire: (() => void) | undefined;
+  const budget = vi.spyOn(globalThis, 'setTimeout').mockImplementation((callback, ms, ...rest) => {
+    if (!report || ms !== 60_000 || expire) return realSetTimeout(callback, ms, ...rest);
+    expire = () => callback();
+    return realSetTimeout(() => {}, 2 ** 30);
+  });
+  const gc = report
+    ? createStim({ projectRoot: item.root, home: item.home, env: item.env }).collectGarbage({
+        pressure: 'critical',
+        signal: controller.signal,
+      })
+    : withAmbientContext(operation, () =>
+        runGcThroughStimd({ level: 'critical', client: 'manual' }, operation, () => {}),
+      );
   void gc.catch(() => {});
-  await vi.waitFor(
-    () => {
-      if (!existsSync(marker)) throw new Error('the pass has not reached its size walk');
-    },
-    { timeout: 20_000, interval: 100 },
-  );
-  return { item, gc, go, du: Number(readFileSync(marker, 'utf8')) };
+  await vi
+    .waitFor(
+      () => {
+        if (!existsSync(marker)) throw new Error('the pass has not reached its size walk');
+      },
+      { timeout: 20_000, interval: 100 },
+    )
+    .finally(() => budget.mockRestore());
+  return { item, gc, go, expire, du: Number(readFileSync(marker, 'utf8')) };
 }
 
 describe.skipIf(process.platform === 'win32')('gc on stimd', () => {
@@ -157,11 +174,12 @@ describe.skipIf(process.platform === 'win32')('gc on stimd', () => {
     }
   }, 45_000);
 
-  test('a request the report budget detached leaves its pass running once the caller closes its sockets', async () => {
+  test('a collectGarbage report that ran out of budget leaves the stimd it started and its pass running once the caller closes its sockets', async () => {
     const controller = new AbortController();
-    const { item, gc, go, du } = await heldGc(controller);
+    const { item, gc, go, expire, du } = await heldGc(controller, true);
     try {
-      controller.abort(Object.assign(new Error('the report budget ran out'), { code: 'STIM_REPORT_TIMEOUT' }));
+      if (!expire) throw new Error('collectGarbage set no report budget');
+      expire();
       await expect(gc).rejects.toMatchObject({ code: 'STIM_REPORT_TIMEOUT' });
       for (const socket of opened) {
         await Promise.race([once(socket, 'close'), new Promise((done) => setTimeout(done, 1000))]);

@@ -260,3 +260,28 @@ test('a request queued while the running pass had not measured joins it once tha
   });
   expect(runs).toEqual([undefined]);
 });
+
+test("a gc at normal that waits through the lane's dormant step joins the lane's maintenance pass once it starts", async () => {
+  await acquireDisk(LANE);
+  const unexpected = vi.fn<Parameters<typeof requestGcPass>[2]>();
+  const seen: LevelRunAction[] = [];
+  const waiting = requestGcPass(undefined, 'manual', unexpected, (landed) => seen.push(landed));
+  await diskBoundary();
+  await joinablePass(
+    'normal',
+    'maintenance',
+    async (emit) => {
+      await diskBoundary();
+      emit(action);
+    },
+    () => runAt('normal', [action]),
+    'lane',
+  );
+  releaseDisk();
+  expect(await waiting.result).toMatchObject({
+    joined: { trigger: 'maintenance', level: 'normal' },
+    run: { actions: [action] },
+  });
+  expect(seen).toEqual([action]);
+  expect(unexpected).not.toHaveBeenCalled();
+});

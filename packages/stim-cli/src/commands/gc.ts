@@ -3,6 +3,7 @@ import { exitCli, runProcessOperation } from '../cli-operation.ts';
 import { hungRead } from '../workspace/bounded-read.ts';
 import { withDrainingCancellation } from '../engine/operation-state.ts';
 import { configDir, ensurePrivateDir, isScopedHome } from '@stim-cli/core';
+import { randomBytes } from 'node:crypto';
 import { realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import type { StimContext } from '@stim-cli/core';
 import { dirname, sep } from 'node:path';
@@ -328,7 +329,7 @@ export type GcPassRunner = (
 
 /**
  * One acting gc pass in this process, as stimd's passes thread runs it for a gc request: its actions go to the gc log
- * under the request's client. The maintenance disk reserve, a 1 MB file kept so a pass can start on a full disk, is
+ * under the request's client and a run id of its own. The maintenance disk reserve, a 1 MB file kept so a pass can start on a full disk, is
  * given back before the pass and written again once it ends.
  */
 export async function runGcPass(
@@ -341,6 +342,7 @@ export async function runGcPass(
   const closeGitReads = openGitReads(operation);
   try {
     let log: GcLog | null = null;
+    const id = `gc-${randomBytes(6).toString('hex')}`;
     const since = Date.now();
     const run = await runMaintenanceAtLevel({
       level: request.level,
@@ -353,6 +355,7 @@ export async function runGcPass(
         onAction(action);
         log ??= openGcLog({
           trigger: request.client,
+          runId: id,
           env: operation?.env,
           options: { level: request.level ?? 'normal', ...(request.level ? { pressure: true } : {}) },
           holdKept: true,
@@ -378,7 +381,8 @@ function joinedLine(joined: NonNullable<GcPassReply['joined']>, forced: boolean)
 
 /**
  * Runs one acting GC through `pass`, or a dry run in this process, and prints its summary unless `opts.json`. An
- * acting GC gives back the maintenance disk reserve first, so starting a stimd on a full disk has room to write.
+ * acting GC gives back the maintenance disk reserve first, so starting a stimd on a full disk has room to write, and
+ * writes it back once its pass answers or fails.
  */
 export async function executeGc(
   opts: GcOptions & { walkUnknown?: false },
@@ -396,11 +400,15 @@ export async function executeGc(
     let reply: GcPassReply;
     if (act) {
       releaseReserve();
-      reply = await pass(
-        { ...(chosen ? { level: opts.pressure } : {}), client: gcClient(deps.operation?.env), ...walk },
-        deps.operation,
-        (action) => phase(action.outcome, `${action.kind} ${action.target}`, deps.operation),
-      );
+      try {
+        reply = await pass(
+          { ...(chosen ? { level: opts.pressure } : {}), client: gcClient(deps.operation?.env), ...walk },
+          deps.operation,
+          (action) => phase(action.outcome, `${action.kind} ${action.target}`, deps.operation),
+        );
+      } finally {
+        keepReserve();
+      }
     } else {
       closeGitReads = openGitReads(deps.operation);
       reply = {

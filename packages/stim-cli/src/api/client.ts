@@ -415,7 +415,8 @@ export function createLocalStim(options: EngineOptions): EngineClient {
               request,
               { operation: bounded, easLedgerRoot: easMachineStateRoot(bounded.env) },
               (_stream, line) => bounded.output('stderr', `${line}\n`),
-              runGcThroughStimd,
+              (asked, gcOperation, onAction) =>
+                withAmbientContext({ ...bounded }, () => runGcThroughStimd(asked, gcOperation, onAction)),
             ).then(({ payload, exitCode }) => {
               if ('code' in payload) throw new StimError(payload);
               return { report: payload, exitCode };

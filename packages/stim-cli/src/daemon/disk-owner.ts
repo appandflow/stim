@@ -32,11 +32,14 @@ function enqueue(waiter: Waiter): void {
   waiting.splice(at === -1 ? waiting.length : at, 0, waiter);
 }
 
-/** Waits for the turn like `acquireDisk`; `raise` moves a request that still waits to a lower rank. */
-function queueForDisk(rank: number): { granted: Promise<void>; raise(rank: number): void } {
+/**
+ * Waits for the turn like `acquireDisk`; `raise` moves a request that still waits to a lower rank, and `withdraw` gives
+ * up the request, or the turn once it was granted.
+ */
+function queueForDisk(rank: number): { granted: Promise<void>; raise(rank: number): void; withdraw(): void } {
   if (holder === null) {
     holder = rank;
-    return { granted: Promise.resolve(), raise: () => {} };
+    return { granted: Promise.resolve(), raise: () => {}, withdraw: releaseDisk };
   }
   const waiter: Waiter = { rank, grant: () => {} };
   const granted = new Promise<void>((grant) => {
@@ -51,6 +54,11 @@ function queueForDisk(rank: number): { granted: Promise<void>; raise(rank: numbe
       waiting.splice(at, 1);
       waiter.rank = to;
       enqueue(waiter);
+    },
+    withdraw() {
+      const at = waiting.indexOf(waiter);
+      if (at === -1) releaseDisk();
+      else waiting.splice(at, 1);
     },
   };
 }
@@ -109,6 +117,10 @@ interface Pass {
   /** Stops a gc pass once no request waits for it; a pass of the tick or the lane has none. */
   stop?: AbortController;
   raise?: (rank: number) => void;
+  /** Hands a queued gc pass to a pass that started since and covers it. */
+  adopt?: (cover: Pass) => void;
+  /** The pass that took over this queued one, whose waiters it now counts. */
+  adoptedBy?: Pass;
 }
 
 let running: Pass | null = null;
@@ -138,6 +150,7 @@ export async function joinablePass<T>(
   pass.result.catch(() => {});
   if (slot === 'lane') lane = pass;
   else running = pass;
+  adoptQueued(pass);
   try {
     return await done;
   } finally {
@@ -159,11 +172,28 @@ const joinedOf = (pass: Pass, level: PressureLevel): NonNullable<GcPassReply['jo
   level: pass.level ?? level,
 });
 
+// @ref LLP 0001#every-gc-joins-a-pass-under-way -- a pass that starts or measures a covering level takes the queued one
+function adoptQueued(cover: Pass): void {
+  const held = queued;
+  if (
+    !held?.adopt ||
+    held === cover ||
+    cover.stop?.signal.aborted ||
+    RANK[cover.level ?? 'normal'] < RANK[held.level ?? 'normal']
+  )
+    return;
+  queued = null;
+  held.adoptedBy = cover;
+  for (const listen of held.listeners) cover.listeners.add(listen);
+  held.listeners.clear();
+  held.adopt(cover);
+}
+
 /**
  * One gc request on the disk owner: it joins the running pass, else the lane's maintenance pass, else the queued one,
  * when that pass's level is at least `level` or no level is asked for; a higher level raises the queued pass, and with
- * none queued it queues a pass of its own, which `run` runs once the pass takes the turn unless the pass that ran
- * before it measured a level that covers it. `leave` stops a gc pass no other request waits for.
+ * none queued it queues a pass of its own, which `run` runs once the pass takes the turn unless a pass that covers it
+ * starts or measures its level first. `leave` stops a gc pass no other request waits for.
  */
 export function requestGcPass(
   level: PressureLevel | undefined,
@@ -191,30 +221,33 @@ export function requestGcPass(
         const under = reply.joined ?? (joined ? joinedOf(asked, reply.run.level) : undefined);
         return { ...reply, ...(under ? { joined: under } : {}) };
       })
-      .finally(() => asked.listeners.delete(listen)),
+      .finally(() => (asked.adoptedBy ?? asked).listeners.delete(listen)),
     leave() {
-      if (!asked.listeners.delete(listen) || asked.listeners.size > 0 || !asked.stop) return;
-      if (queued === asked) queued = null;
-      asked.stop.abort();
+      const target = asked.adoptedBy ?? asked;
+      if (!target.listeners.delete(listen) || target.listeners.size > 0 || !target.stop) return;
+      if (queued === target) queued = null;
+      target.stop.abort();
     },
   };
 }
 
 function queuePass(level: PressureLevel | undefined, trigger: string, run: RunGcPass): Pass {
   const stop = new AbortController();
-  const before = running;
   const ticket = queueForDisk(turnRank(level ?? null));
+  let adopt: ((cover: Pass) => void) | undefined;
+  const adopted = new Promise<Pass>((resolve) => {
+    adopt = resolve;
+  });
   const turn = async (): Promise<GcPassReply> => {
-    await ticket.granted;
+    const cover = await Promise.race([ticket.granted.then(() => null), adopted]);
+    if (cover) {
+      ticket.withdraw();
+      const reply = await cover.result;
+      return { ...reply, joined: joinedOf(cover, reply.run.level) };
+    }
     try {
       if (queued === pass) queued = null;
       stop.signal.throwIfAborted();
-      // @ref LLP 0001#every-gc-joins-a-pass-under-way -- a pass that measured a level covering this one answers it
-      const measured = before?.level;
-      if (before && measured && RANK[measured] >= RANK[pass.level ?? 'normal']) {
-        const covering = await before.result.catch(() => null);
-        if (covering) return { ...covering, joined: joinedOf(before, measured) };
-      }
       running = pass;
       pass.startedAt = new Date().toISOString();
       return await run(
@@ -223,6 +256,7 @@ function queuePass(level: PressureLevel | undefined, trigger: string, run: RunGc
         (action) => pass.listeners.forEach((listen) => listen(action)),
         (found) => {
           pass.level = found;
+          adoptQueued(pass);
         },
       );
     } finally {
@@ -237,6 +271,7 @@ function queuePass(level: PressureLevel | undefined, trigger: string, run: RunGc
     listeners: new Set(),
     stop,
     raise: ticket.raise,
+    adopt: (cover) => adopt?.(cover),
     result: turn(),
   };
   pass.result.catch(() => {});

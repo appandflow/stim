@@ -353,9 +353,10 @@ joins a pass is protected by that pass's working directory, not its own.
   frees only the volumes under pressure. The maintenance pass runs only the
   checks due then. The joined result names the pass's start, trigger and
   level.
-- A request queued while the running gc pass had not measured its level yet
-  joins that pass once it has run, when the measured level covers the
-  request; otherwise it runs its own pass.
+- A queued gc pass joins the first pass that starts, or measures its level,
+  at or above the queued level before the queued pass takes its turn: the
+  lane's maintenance pass, the tick's disk pass or the running gc pass. Its
+  requests then wait for that pass and receive its result.
 - A request for a higher level raises the queued gc pass to it, or queues one
   when none waits. At most one gc pass waits.
 - A request that leaves (an interrupted gc, a cancelled call) stops its pass
