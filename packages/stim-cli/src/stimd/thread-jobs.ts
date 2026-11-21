@@ -16,12 +16,13 @@ type ToThread<Input, LadderInput, GcInput> =
 
 /**
  * One gc request on the thread: `open` makes the operation of a pass the request starts, `emit` sends each action of
- * the pass it runs or joins, and `leave` withdraws the request.
+ * the pass it runs or joins, `output` streams item output, and `leave` withdraws the request.
  */
 type GcRequest<GcInput, GcResult> = (
   input: GcInput & { cwd: string },
   open: (signal: AbortSignal) => StimContext,
   emit: (action: unknown) => void,
+  output: StimContext['output'],
 ) => { result: Promise<GcResult>; leave(): void };
 
 /**
@@ -88,6 +89,7 @@ export function serveThreadJobs<Input, LadderInput = never, LadderResult = never
         input,
         (signal) => (operation = { ...context(input.cwd, AbortSignal.any([signal, stopped])), cwd: input.cwd }),
         (action) => port.postMessage({ type: 'gcAction', id, action }),
+        (stream, text) => port.postMessage({ type: 'gcOutput', id, stream, text }),
       );
       gcLeaves.set(id, asked.leave);
       try {

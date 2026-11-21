@@ -9,6 +9,7 @@ import type { StimContext } from '@stim-cli/core';
 import type { StreamSpec } from '../stimd/logs/streams.ts';
 import type { ServeOptions } from '../stimd/main.ts';
 import type { GcPassRequest } from '../commands/gc.ts';
+import type { GcItemRequest, GcItemResult } from '../commands/gc/item.ts';
 import type { GcPassReply } from './disk-owner.ts';
 import type { LevelRunAction } from '../stimd/passes/level-run.ts';
 import { keepReserve, releaseReserve } from '../disk-reserve.ts';
@@ -2098,13 +2099,19 @@ export async function requestDaemonTick(env: NodeJS.ProcessEnv = process.env, si
  * says; stimd's own config applies, not this process's STIM_* overrides. Without a stimd it fails with
  * STIM_DAEMON_UNAVAILABLE and runs nothing here. Each action of the pass reaches `onAction` as it lands. An abort of
  * the operation leaves the pass, which stimd stops when no other request waits for it; a report timeout detaches, so
- * the pass goes on after this process exits. A stimd that stops before it answers fails the request with the remedy to run it again.
+ * the pass goes on after this process exits. An item always runs as its own unit and cancellation or timeout stops it. A stimd that stops before it answers fails the request with the remedy to run it again.
  */
-export async function runGcThroughStimd(
+export function runGcThroughStimd(
   request: GcPassRequest,
   operation: StimContext | undefined,
   onAction: (action: LevelRunAction) => void,
-): Promise<GcPassReply> {
+): Promise<GcPassReply>;
+export function runGcThroughStimd(request: GcItemRequest, operation: StimContext | undefined): Promise<GcItemResult>;
+export async function runGcThroughStimd(
+  request: GcPassRequest | GcItemRequest,
+  operation: StimContext | undefined,
+  onAction?: (action: LevelRunAction) => void,
+): Promise<GcPassReply | GcItemResult> {
   const signal = operation?.signal;
   const env = operation?.env ?? process.env;
   const refused = (): Error => {
@@ -2141,7 +2148,7 @@ export async function runGcThroughStimd(
   return new Promise((resolve, reject) => {
     let settled = false;
     let written = false;
-    const finish = (error: Error | null, reply?: GcPassReply) => {
+    const finish = (error: Error | null, reply?: GcPassReply | GcItemResult) => {
       if (settled) return;
       settled = true;
       signal?.removeEventListener('abort', abort);
@@ -2152,8 +2159,36 @@ export async function runGcThroughStimd(
     const socket = openStimd(
       [{ op: 'gc.run', params: { ...request, cwd: operation?.cwd ?? process.cwd() } }],
       (message) => {
+        if (
+          message.op === 'gc.output' &&
+          'item' in request &&
+          (message.stream === 'stdout' || message.stream === 'stderr') &&
+          typeof message.text === 'string'
+        ) {
+          operation?.output(message.stream, message.text);
+          return;
+        }
         if (message.op === 'gc.action' && isJsonObject(message.action)) {
-          onAction(message.action as unknown as LevelRunAction);
+          onAction?.(message.action as unknown as LevelRunAction);
+          return;
+        }
+        if (
+          message.op === 'gc.done' &&
+          'item' in request &&
+          Array.isArray(message.results) &&
+          typeof message.failures === 'number'
+        ) {
+          const itemRefusal = message.refusal;
+          finish(null, {
+            results: message.results,
+            failures: message.failures,
+            ...(isJsonObject(itemRefusal) &&
+            typeof itemRefusal.code === 'string' &&
+            typeof itemRefusal.message === 'string' &&
+            typeof itemRefusal.remedy === 'string'
+              ? { refusal: { code: itemRefusal.code, message: itemRefusal.message, remedy: itemRefusal.remedy } }
+              : {}),
+          });
           return;
         }
         if (message.op === 'gc.done' && isJsonObject(message.run)) {
@@ -2174,7 +2209,7 @@ export async function runGcThroughStimd(
     socket.once('connect', () => (written = true));
     const abort = () => {
       const reason: unknown = signal?.reason;
-      if (reason instanceof Error && 'code' in reason && reason.code === 'STIM_REPORT_TIMEOUT')
+      if (!('item' in request) && reason instanceof Error && 'code' in reason && reason.code === 'STIM_REPORT_TIMEOUT')
         socket.end(`${JSON.stringify({ op: 'gc.detach' })}\n`);
       else socket.destroy();
       finish(reason instanceof Error ? reason : new Error('GC was cancelled.'));

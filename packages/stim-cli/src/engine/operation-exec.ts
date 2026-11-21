@@ -24,6 +24,7 @@ export async function runOperationFile(
     ...options,
     ...(context ? { env: { ...environment.env, ...options.env } } : {}),
     omitEnv: [...environment.omitEnv.filter((name) => options.env?.[name] === undefined), ...(options.omitEnv ?? [])],
+    context,
     declareFor: context,
     signal,
   });

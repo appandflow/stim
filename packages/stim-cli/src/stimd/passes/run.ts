@@ -63,7 +63,7 @@ function writeState(state: MaintenanceState): void {
   });
 }
 
-export function claimPass(trigger: string): { acquired?: ClaimHandle; held?: ClaimHolder } {
+function claimPass(trigger: string): { acquired?: ClaimHandle; held?: ClaimHolder } {
   const take = () => {
     const attempt = tryAcquireClaim({
       root: maintenanceRunClaims(),

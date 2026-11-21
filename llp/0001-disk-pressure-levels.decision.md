@@ -318,9 +318,21 @@ so none ever runs beside another.
 The fingerprint precompute deletes nothing and runs beside a disk pass. The
 idle stage's output deletion and the dormant stage's device and archive work
 stay in the tick, inside flows that also stop dev servers and devices and
-hold workspace claims. A build's headroom ladder and the API's
-`deleteGarbageItem` run in their own processes and keep the claims that guard
-them today.
+hold workspace claims. A build's headroom ladder runs in its own process and keeps the claims that guard
+it today. The API's `deleteGarbageItem` sends an explicit item to the same queue,
+after pressure passes and before the lane's next unit. Every item has its own
+turn and result, even when two requests name the same item; none joins a pass.
+It starts stimd under `off` and acts under `report`, as an explicit request.
+An item cancellation or report timeout stops that item; it never detaches as a
+whole-pass report timeout does. Completed actions remain applied.
+
+An item takes no outer maintenance claim: the lane still holds that claim when
+it yields the turn. The worker's report tracks its children and pending work
+until cleanup settles, and its existing per-object claims remain unchanged.
+An older in-process cleanup may therefore overlap removal of a regenerable
+cache that has no per-cache claim; that may repeat work or require a rebuild.
+The queue serializes this stimd's cleanup, and workspace, Cargo, archive and
+atomic-cache ownership protections still apply.
 
 Reason: on 2026-11-19 the lane's dormant step ran for 49 minutes beside both
 slow rung 1 passes and rung 3, walking the same 171 checkouts with its own

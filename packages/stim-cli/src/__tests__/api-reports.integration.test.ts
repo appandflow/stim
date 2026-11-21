@@ -9,6 +9,7 @@ import { delimiter, dirname, join } from 'node:path';
 import { withAmbientContext, type StimContext } from '@stim-cli/core';
 import { createStim } from '../api.ts';
 import { runGc } from '../commands/gc.ts';
+import { runGcItem } from '../commands/gc/item.ts';
 import { recordGcResult, takeGcResults } from '../commands/gc/results.ts';
 import { getExecutor } from '../exec.ts';
 import { readClaimSet, releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-claim.ts';
@@ -290,9 +291,10 @@ test('concurrent GC mutations empty only their selected cache and return results
 });
 
 test.each([false, true])(
-  'a GC item deletion declares its native child and preserves cleanup refusal=%s',
+  'an item executor tracks its native child without a global claim and preserves cleanup refusal=%s',
   async (unavailable) => {
     const item = fixture('native-inventory');
+    vi.stubEnv('STIM_HOME', item.home);
     Object.assign(item.env, {
       AGENT_DEVICE_STATE_DIR: join(item.home, 'agent-device'),
       GRADLE_USER_HOME: join(item.home, 'gradle'),
@@ -358,22 +360,23 @@ test.each([false, true])(
     });
     let settled: (() => unknown) | undefined;
     try {
-      const client = createStim({
+      const operation = testContext({
         projectRoot: item.root,
+        cwd: item.root,
         home: item.home,
         env: { ...item.env, STIM_NATIVE_PROBE_TAG: tag },
       });
       const failure = await trackRead((signal) =>
-        client.deleteGarbageItem({
-          item: { kind: 'cache', dir: item.cache },
-          signal: AbortSignal.any([signal, controller.signal]),
-        }),
+        runGcItem(
+          { kind: 'cache', dir: item.cache },
+          { ...operation, signal: AbortSignal.any([signal, controller.signal]) },
+        ),
       ).then(
         () => null,
         (error: unknown) => error,
       );
-      expect(failure).toMatchObject({ code: unavailable ? 'STIM_CLAIM_UNAVAILABLE' : 'STIM_CANCELLED' });
-      const cause = failure instanceof Error ? failure.cause : undefined;
+      expect(failure).toMatchObject(unavailable ? { code: 'STIM_CLAIM_UNAVAILABLE' } : { name: 'AbortError' });
+      const cause = failure;
       if (cause instanceof Error && 'cleanupSettled' in cause && typeof cause.cleanupSettled === 'function') {
         const check = cause.cleanupSettled;
         settled = () => check();
@@ -381,12 +384,12 @@ test.each([false, true])(
       expect(settled?.()).toBe(unavailable ? false : undefined);
       expect(process.exitCode).toBe(exitCode);
       if (!owned) throw new Error('The controlled native inventory probe did not start');
-      expect(observedPid).toBe(owned.pid);
+      expect(observedPid).toBeUndefined();
       expect(observedContext).toEqual({ cwd: item.root, tag });
       expect(readFileSync(join(item.home, 'config.json'), 'utf8')).toBe(originalConfig);
       expect(readFileSync(preserved, 'utf8')).toBe('native-inventory');
       const admission = readClaimSet(join(item.home, 'maintenance', 'run.claims'));
-      expect(admission.live).toHaveLength(unavailable ? 1 : 0);
+      expect(admission.live).toHaveLength(0);
       expect(admission.unresolved).toEqual([]);
       const expected = unavailable ? ['same'] : ['gone', 'different'];
       for (const record of targets) {
@@ -436,26 +439,23 @@ test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
   },
 );
 
-test('a GC item deletion refuses while a maintenance pass holds the home and names the held claim', async () => {
+test('an item executor works while the yielded maintenance lane still holds its outer claim', async () => {
   const item = fixture('contention');
-  const options = { projectRoot: item.root, home: item.home, env: item.env };
+  vi.stubEnv('STIM_HOME', item.home);
   const held = withAmbientContext(testContext({ home: item.home, env: item.env }), () =>
     tryAcquireClaim({ root: maintenanceRunClaims(), mode: 'exclusive', label: 'maintenance' }),
   ).acquired;
   if (!held) throw new Error('The fixture maintenance claim was not taken');
   try {
-    await expect(
-      trackRead((signal) =>
-        createStim(options).deleteGarbageItem({ item: { kind: 'cache', dir: item.cache }, signal }),
-      ),
-    ).rejects.toMatchObject({ code: 'STIM_CLAIM_REFUSED', remedy: expect.stringContaining(item.home) });
+    const result = await withAmbientContext(testContext({ home: item.home, env: item.env, cwd: item.root }), () =>
+      runGcItem({ kind: 'cache', dir: item.cache }, testContext({ home: item.home, env: item.env, cwd: item.root })),
+    );
+    expect(result.failures).toBe(0);
+    expect(existsSync(join(item.cache, 'artifact'))).toBe(false);
+    expect(readClaimSet(maintenanceRunClaims()).live).toHaveLength(1);
   } finally {
     releaseClaim(held);
   }
-  const next = await trackRead((signal) =>
-    createStim(options).deleteGarbageItem({ item: { kind: 'cache', dir: item.cache }, signal }),
-  );
-  expect(next.exitCode).toBe(0);
 });
 
 test.each([undefined, 'importer-home'])(

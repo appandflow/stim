@@ -1,8 +1,10 @@
+import type { StimContext } from '@stim-cli/core';
 import { isMainThread, parentPort, Worker, workerData } from 'node:worker_threads';
 import type { DaemonLadderAction } from '@stim-cli/core/state';
 import type { DiskPassInput, DiskPassResult, MaintenanceLane } from '../daemon/passes.ts';
-import { LADDER_CLOCK_SLOTS, requestGcPass, type GcPassReply } from '../daemon/disk-owner.ts';
+import { LADDER_CLOCK_SLOTS, requestGcPass, requestGcItem, type GcPassReply } from '../daemon/disk-owner.ts';
 import type { GcPassRequest } from '../commands/gc.ts';
+import { runGcItem, type GcItemRequest, type GcItemResult } from '../commands/gc/item.ts';
 import type { LevelRunAction } from './passes/level-run.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 import { childKey } from './cleanup-watch.ts';
@@ -41,8 +43,15 @@ type FromThread =
   | { type: 'done'; result: DaemonLadderAction[]; reading: boolean }
   | ({ type: 'failed'; reading: boolean } & Failure)
   | { type: 'settled'; pending: string[]; reading: boolean }
-  | { type: 'ladderDone'; id: number; reading: boolean; result?: DiskPassResult | GcPassReply; failure?: Failure }
-  | { type: 'gcAction'; id: number; action: LevelRunAction };
+  | {
+      type: 'ladderDone';
+      id: number;
+      reading: boolean;
+      result?: DiskPassResult | GcPassReply | GcItemResult;
+      failure?: Failure;
+    }
+  | { type: 'gcAction'; id: number; action: LevelRunAction }
+  | { type: 'gcOutput'; id: number; stream: 'stdout' | 'stderr'; text: string };
 
 interface Thread {
   worker: Worker;
@@ -56,9 +65,13 @@ interface Thread {
   /** A read of this thread timed out and has not settled; a replacement thread would start another. */
   reading: boolean;
   /** Disk passes and gc requests asked of this thread and not answered yet, by request id. */
-  ladders: Map<number, { resolve: (result: DiskPassResult | GcPassReply) => void; reject: (error: Error) => void }>;
+  ladders: Map<
+    number,
+    { resolve: (result: DiskPassResult | GcPassReply | GcItemResult) => void; reject: (error: Error) => void }
+  >;
   /** Where each gc request's actions go, by request id. */
   gcActions: Map<number, (action: LevelRunAction) => void>;
+  gcOutputs: Map<number, StimContext['output']>;
   lost: boolean;
 }
 
@@ -84,6 +97,11 @@ export interface ThreadTable {
     input: GcPassRequest & { cwd: string },
     onAction: (action: LevelRunAction) => void,
   ): { result: Promise<GcPassReply>; leave(): void };
+  /** Queues an explicit item independently and streams its operation's output. */
+  item(
+    input: GcItemRequest & { cwd: string },
+    output: StimContext['output'],
+  ): { result: Promise<GcItemResult>; leave(): void };
 }
 
 const lostError = (name: ThreadName, error: Error) =>
@@ -139,6 +157,7 @@ export function createThreadTable(log: Log, onLost: (error: Error) => void = () 
       lost: false,
       ladders: new Map(),
       gcActions: new Map(),
+      gcOutputs: new Map(),
     };
     const rejection = (failure: Failure) => {
       const child = failure.contained;
@@ -158,12 +177,14 @@ export function createThreadTable(log: Log, onLost: (error: Error) => void = () 
         thread.reading = message.reading;
         return;
       }
+      if (message.type === 'gcOutput') return thread.gcOutputs.get(message.id)?.(message.stream, message.text);
       if (message.type === 'gcAction') return thread.gcActions.get(message.id)?.(message.action);
       thread.reading = message.reading;
       if (message.type === 'ladderDone') {
         const asked = thread.ladders.get(message.id);
         thread.ladders.delete(message.id);
         thread.gcActions.delete(message.id);
+        thread.gcOutputs.delete(message.id);
         idleEnd(name, thread);
         if (message.result) return asked?.resolve(message.result);
         return asked?.reject(rejection(message.failure ?? { message: 'the disk pass failed' }));
@@ -180,6 +201,7 @@ export function createThreadTable(log: Log, onLost: (error: Error) => void = () 
         asked.reject(lostError(name, new Error(`the ${name} thread ended during a disk pass`)));
       thread.ladders.clear();
       thread.gcActions.clear();
+      thread.gcOutputs.clear();
       if (thread.idle) clearTimeout(thread.idle);
       thread.idle = null;
       thread.reading = false;
@@ -204,23 +226,29 @@ export function createThreadTable(log: Log, onLost: (error: Error) => void = () 
     threads.set(name, thread);
     return thread;
   };
-  const ask = <T extends DiskPassResult | GcPassReply>(
+  const ask = <T extends DiskPassResult | GcPassReply | GcItemResult>(
     type: 'ladder' | 'gc',
     input: object,
     onAction?: (action: LevelRunAction) => void,
+    output?: StimContext['output'],
   ) => {
     const thread = threads.get('passes') ?? start('passes');
     if (thread.idle) clearTimeout(thread.idle);
     thread.idle = null;
     const id = ++nextLadder;
     const result = new Promise<T>((resolve, reject) => {
-      thread.ladders.set(id, { resolve: resolve as (result: DiskPassResult | GcPassReply) => void, reject });
+      thread.ladders.set(id, {
+        resolve: resolve as (result: DiskPassResult | GcPassReply | GcItemResult) => void,
+        reject,
+      });
       if (onAction) thread.gcActions.set(id, onAction);
+      if (output) thread.gcOutputs.set(id, output);
       try {
         thread.worker.postMessage({ type, id, input });
       } catch (error) {
         thread.ladders.delete(id);
         thread.gcActions.delete(id);
+        thread.gcOutputs.delete(id);
         reject(error instanceof Error ? error : new Error(String(error)));
       }
     });
@@ -230,6 +258,15 @@ export function createThreadTable(log: Log, onLost: (error: Error) => void = () 
     ladder: (input) => ask<DiskPassResult>('ladder', { ...input, cwd: process.cwd() }).result,
     gc(input, onAction) {
       const { thread, id, result } = ask<GcPassReply>('gc', input, onAction);
+      return {
+        result,
+        leave: () => {
+          if (thread.ladders.has(id)) thread.worker.postMessage({ type: 'gcLeave', id });
+        },
+      };
+    },
+    item(input, output) {
+      const { thread, id, result } = ask<GcItemResult>('gc', input, undefined, output);
       return {
         result,
         leave: () => {
@@ -347,7 +384,13 @@ else if (thread && parentPort) {
   const { processContext } = await import('../cli-operation.ts');
   const ladderClocks: BigInt64Array | undefined = workerData.ladderClocks;
   let lane: MaintenanceLane | undefined;
-  serveThreadJobs<ThreadInput, DiskPassInput, DiskPassResult, GcPassRequest, GcPassReply>(
+  serveThreadJobs<
+    ThreadInput,
+    DiskPassInput,
+    DiskPassResult,
+    GcPassRequest | GcItemRequest,
+    GcPassReply | GcItemResult
+  >(
     port,
     processContext,
     async (input, operation) => {
@@ -379,8 +422,15 @@ else if (thread && parentPort) {
       const { runDiskPass } = await import('../daemon/passes.ts');
       return runDiskPass(input, log, operation, ladderClocks);
     },
-    ({ level, client, walkUnknown }, open, emit) =>
-      requestGcPass(
+    (input, open, emit, output) => {
+      if ('item' in input)
+        return requestGcItem((signal) => {
+          const operation = open(signal);
+          operation.output = output;
+          return runGcItem(input.item, operation);
+        });
+      const { level, client, walkUnknown } = input;
+      return requestGcPass(
         level,
         client,
         async (asked, signal, onAction, onLevel) => {
@@ -393,6 +443,7 @@ else if (thread && parentPort) {
           return runGcPass(request, open(signal), onAction, onLevel);
         },
         emit,
-      ),
+      );
+    },
   );
 }

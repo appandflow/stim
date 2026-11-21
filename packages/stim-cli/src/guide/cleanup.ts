@@ -482,6 +482,7 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
   part of it, watchman, Gradle daemons) are deleted from Stim Desktop, which
   asks stim-server for them (desktop.gc.item.subscribe on its Unix-socket
   connection); the library API has deleteGarbageItem({ item }) (\`guide api\`).
+  Items queue separately after pressure, before the lane.
 
   Plain output is short, in this order:
     - the level the run used, and one summary line: what it freed, or what it

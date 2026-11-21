@@ -1,4 +1,3 @@
-import { claimFailure } from '../ownership-claim.ts';
 import { randomBytes } from 'node:crypto';
 import { stripVTControlCharacters } from 'node:util';
 import { join, resolve } from 'node:path';
@@ -10,7 +9,6 @@ import {
   validRunId,
   userHome,
   easMachineStateRoot,
-  isJsonObject,
 } from '@stim-cli/core/state';
 import { phaseLine } from '../command-output.ts';
 import { stopWorkspaceNow } from '../commands/stop.ts';
@@ -36,12 +34,11 @@ import {
   runDeviceTool,
 } from '../commands/device-tools.ts';
 import { recordDoctorCheck } from '../guide-status.ts';
-import { executeGc, readGcReport, withGcMaintenanceClaim } from '../commands/gc.ts';
+import { executeGc, readGcReport } from '../commands/gc.ts';
 import { runGcThroughStimd } from '../daemon/client.ts';
-import { ARCHIVE_PARTS, deleteGcItem, GC_ITEM_KINDS, type GcItem } from '../commands/gc/item.ts';
+import { validGcItem } from '../commands/gc/item.ts';
 import { removeWorktreeTarget, warmWorktreeTarget } from '../commands/worktree.ts';
 import { runReport, trackReportResource } from '../report-runtime.ts';
-import { declareSpawnsOn, stopDeclaringSpawnsOn } from '../engine/spawn-claims.ts';
 import { readWorkspaceLogs, followWorkspaceLogs } from '../engine/logs.ts';
 import { readProjectStats } from '../engine/stats-report.ts';
 import { buildAndroidOperation } from '../commands/android/build.ts';
@@ -126,24 +123,7 @@ export async function runOp(name: string, args: unknown[], ctx: EngineOptions): 
   }
 }
 
-/** This build's client: every operation runs in the calling process. */
 const GC_LEVELS: readonly unknown[] = ['normal', 'high', 'critical'];
-
-function validGcItem(item: unknown): item is GcItem {
-  if (!isJsonObject(item) || !GC_ITEM_KINDS.some((kind) => kind === item.kind)) return false;
-  const keys = Object.keys(item);
-  const only = (...allowed: string[]) => keys.every((key) => key === 'kind' || allowed.includes(key));
-  if (item.kind === 'cache')
-    return only('dir') && typeof item.dir === 'string' && item.dir.length > 0 && item.dir.length <= 4096;
-  if (item.kind === 'archive')
-    return (
-      only('id', 'part') &&
-      typeof item.id === 'string' &&
-      /^[\w.-]{1,200}$/.test(item.id) &&
-      (item.part === undefined || ARCHIVE_PARTS.some((part) => part === item.part))
-    );
-  return only();
-}
 
 export function createLocalStim(options: EngineOptions): EngineClient {
   const projectRoot = clientProjectRoot(options, ['buildCache', options.buildCache]);
@@ -437,41 +417,17 @@ export function createLocalStim(options: EngineOptions): EngineClient {
         );
       const operation = beginReport('deleteGarbageItem', signal);
       return lifecycle(operation, (context) =>
-        withGcMaintenanceClaim({}, (claim) =>
-          runReport(context, (bounded) =>
-            withAmbientContext(bounded, () => {
-              declareSpawnsOn(bounded, claim);
-              const task = deleteGcItem(item, bounded)
-                .then((result) => {
-                  if (result.refusal) throw new StimError(result.refusal);
-                  return { results: result.results, exitCode: result.failures ? (1 as const) : (0 as const) };
-                })
-                .finally(() => stopDeclaringSpawnsOn(bounded, claim));
-              trackReportResource(
-                bounded,
-                task.then(
-                  () => undefined,
-                  (cause: unknown) => {
-                    if (
-                      cause instanceof WorkspaceProcessCleanupError ||
-                      (cause instanceof Error && 'reportCleanup' in cause)
-                    )
-                      throw cause;
-                  },
-                ),
-                () => {},
-              );
-              return task;
+        runReport(context, (bounded) =>
+          withAmbientContext({ ...bounded }, () =>
+            runGcThroughStimd({ item, client: 'desktop' }, bounded).then((result) => {
+              if (result.refusal) throw new StimError(result.refusal);
+              return { results: result.results, exitCode: result.failures ? (1 as const) : (0 as const) };
             }),
           ),
-        ).catch((cause: unknown) => {
-          if (cause instanceof WorkspaceProcessCleanupError) throw cause;
-          const failure = claimFailure(cause, null);
-          if (failure) throw new StimError(failure, { cause });
-          throw cause;
-        }),
+        ),
       );
     },
+
     warmWorktree: ({ signal, beforeWarm }: StimWorktreeWarmOptions = {}) =>
       lifecycle(beginReport('warmWorktree', signal), (context) =>
         runReport(

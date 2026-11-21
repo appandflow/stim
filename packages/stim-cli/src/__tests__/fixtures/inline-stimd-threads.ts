@@ -2,8 +2,9 @@ import { processContext } from '../../cli-operation.ts';
 import { measureDependencyTrees } from '../../daemon/dependencies.ts';
 import { createMaintenanceLane, type MaintenanceLane } from '../../daemon/passes.ts';
 import type { ThreadTable } from '../../stimd/threads.ts';
-import { requestGcPass } from '../../daemon/disk-owner.ts';
+import { requestGcPass, requestGcItem } from '../../daemon/disk-owner.ts';
 import { runGcPass } from '../../commands/gc.ts';
+import { runGcItem } from '../../commands/gc/item.ts';
 
 type Log = Parameters<typeof createMaintenanceLane>[0];
 
@@ -24,6 +25,10 @@ export function createThreadTable(): ThreadTable {
     },
     settle() {},
     async close() {},
+    item: ({ item, cwd }, output) =>
+      requestGcItem((signal) =>
+        runGcItem(item, { ...processContext(cwd, AbortSignal.any([signal, controller.signal])), cwd, output }),
+      ),
     gc: ({ level, client, walkUnknown, cwd }, onAction) =>
       requestGcPass(
         level,

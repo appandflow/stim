@@ -1,4 +1,7 @@
 import type { StimContext } from '@stim-cli/core';
+import { isJsonObject } from '@stim-cli/core/state';
+import { runReport, trackReportResource } from '../../report-runtime.ts';
+import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-error.ts';
 import { discoverCaches, sizeCaches } from '../../cache/caches.ts';
 import { canonicalPath } from './paths.ts';
 import { emptyCaches, planCacheEmptying } from './caches.ts';
@@ -17,7 +20,7 @@ import { listMountedVolumes } from '../../fs-util.ts';
 import { createGcResults, type GcOutput, type GcResult } from './results.ts';
 
 /**
- * One item Stim Desktop deletes on its own, outside a maintenance run: a registered shared cache emptied whole, the
+ * One item Stim Desktop deletes as its own queue unit: a registered shared cache emptied whole, the
  * build outputs of idle workspaces, one archived workspace or one kind of its content, or a helper daemon's memory.
  */
 export type GcItem =
@@ -27,14 +30,53 @@ export type GcItem =
   | { kind: 'watchman' }
   | { kind: 'gradle-daemons' };
 
-export const GC_ITEM_KINDS: readonly GcItem['kind'][] = [
+const GC_ITEM_KINDS: readonly GcItem['kind'][] = [
   'cache',
   'workspace-outputs',
   'archive',
   'watchman',
   'gradle-daemons',
 ];
-export const ARCHIVE_PARTS: readonly ArchiveKind[] = ['logs', 'recordings', 'agentActions'];
+const ARCHIVE_PARTS: readonly ArchiveKind[] = ['logs', 'recordings', 'agentActions'];
+
+export interface GcItemRequest {
+  item: GcItem;
+  client: 'desktop';
+}
+
+export function validGcItem(item: unknown): item is GcItem {
+  if (!isJsonObject(item) || !GC_ITEM_KINDS.some((kind) => kind === item.kind)) return false;
+  const keys = Object.keys(item);
+  const only = (...allowed: string[]) => keys.every((key) => key === 'kind' || allowed.includes(key));
+  if (item.kind === 'cache')
+    return only('dir') && typeof item.dir === 'string' && item.dir.length > 0 && item.dir.length <= 4096;
+  if (item.kind === 'archive')
+    return (
+      only('id', 'part') &&
+      typeof item.id === 'string' &&
+      /^[\w.-]{1,200}$/.test(item.id) &&
+      (item.part === undefined || ARCHIVE_PARTS.some((part) => part === item.part))
+    );
+  return only();
+}
+
+export function runGcItem(item: GcItem, operation: StimContext): Promise<GcItemResult> {
+  return runReport(operation, (bounded) => {
+    const task = deleteGcItem(item, bounded);
+    trackReportResource(
+      bounded,
+      task.then(
+        () => undefined,
+        (cause: unknown) => {
+          if (cause instanceof WorkspaceProcessCleanupError || (cause instanceof Error && 'reportCleanup' in cause))
+            throw cause;
+        },
+      ),
+      () => {},
+    );
+    return task;
+  });
+}
 
 export interface GcItemResult {
   results: GcResult[];

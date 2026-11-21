@@ -1085,6 +1085,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
         settle,
         close: async () => {},
         gc: () => ({ result: new Promise(() => {}), leave: () => {} }),
+        item: () => ({ result: new Promise(() => {}), leave: () => {} }),
       });
       let running: Promise<boolean> | undefined;
       try {
@@ -1149,6 +1150,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
       settle: () => {},
       close: async () => {},
       gc: () => ({ result: new Promise(() => {}), leave: () => {} }),
+      item: () => ({ result: new Promise(() => {}), leave: () => {} }),
     });
     let running: Promise<boolean> | undefined;
     try {
@@ -1212,6 +1214,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
         settle: () => {},
         close: async () => {},
         gc: () => ({ result: new Promise(() => {}), leave: () => {} }),
+        item: () => ({ result: new Promise(() => {}), leave: () => {} }),
       });
       const lane = vi.spyOn(stimdThreads, 'createPassesLane').mockImplementation((_threads, _log, onFailure) => ({
         start: () => {

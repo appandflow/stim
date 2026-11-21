@@ -8,21 +8,14 @@ import { realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import type { StimContext } from '@stim-cli/core';
 import { dirname, sep } from 'node:path';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
-import {
-  gcReportFile,
-  maintenanceRunClaims,
-  type DaemonPressure,
-  type PressureLevel,
-  type RescuedCopy,
-} from '@stim-cli/core/state';
+import { gcReportFile, type DaemonPressure, type PressureLevel, type RescuedCopy } from '@stim-cli/core/state';
 import { getSwiftpmCacheUsage } from '../devices/swiftpm-cache-usage.ts';
 import { getAgentDeviceUsage } from '../devices/agent-device-usage.ts';
 import { getMachineCacheReport } from '../devices/machine-cache-usage.ts';
 import { defineOp, type Op } from '../cli/define-op.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { listMountedVolumes } from '../fs-util.ts';
-import { ClaimRefusedError, claimFailure, releaseClaim, type ClaimHandle } from '../ownership-claim.ts';
-import { claimPass } from '../stimd/passes/run.ts';
+import { claimFailure } from '../ownership-claim.ts';
 import { keepReserve, releaseReserve } from '../disk-reserve.ts';
 import { runMaintenanceAtLevel, type LevelRun, type LevelRunAction } from '../stimd/passes/level-run.ts';
 import type { GcPassReply } from '../daemon/disk-owner.ts';
@@ -518,56 +511,6 @@ export async function runGc(
         throw error;
     }
     for (const line of unmanaged ? formatUnmanagedUsage(unmanaged) : []) console.log(line);
-  }
-}
-
-/**
- * Runs an acting cleanup in this process under this home's exclusive maintenance claim, the one the stim-daemon's
- * maintenance pass takes, so the two never delete at once; while a pass holds it, it refuses at once with
- * STIM_CLAIM_REFUSED naming the holder. The claim is retained when owned cleanup is unresolved. The maintenance disk
- * reserve is given back before the claim's first write and written again once the run ends.
- */
-export async function withGcMaintenanceClaim<T>(
-  opts: Pick<GcOptions, 'dryRun' | 'pressure'>,
-  work: (claim: ClaimHandle | undefined) => Promise<T>,
-): Promise<T> {
-  if (opts.dryRun) return work(undefined);
-  let claim: ClaimHandle | undefined;
-  let retained = false;
-  try {
-    releaseReserve();
-    const attempt = claimPass('gc');
-    claim = attempt.acquired;
-    if (!claim) {
-      const holder = attempt.held;
-      throw new ClaimRefusedError({
-        root: maintenanceRunClaims(),
-        claimPath: holder?.path ?? maintenanceRunClaims(),
-        label: 'maintenance',
-        reason: `held by pid ${holder?.owner.pid ?? '?'} since ${holder?.startedAt ?? '?'} (${String(holder?.details.trigger ?? 'maintenance')})`,
-      });
-    }
-    return await work(claim);
-  } catch (cause) {
-    if (
-      claim &&
-      (cause instanceof WorkspaceProcessCleanupError || (cause instanceof Error && 'reportCleanup' in cause))
-    ) {
-      retained = true;
-      throw Object.assign(
-        new WorkspaceProcessCleanupError(
-          [...new Set([claim, ...(cause instanceof WorkspaceProcessCleanupError ? cause.claims : [])])],
-          cause.message,
-          'Verify GC and its owned children have stopped.',
-          cause,
-        ),
-        { reportCleanup: true },
-      );
-    }
-    throw cause;
-  } finally {
-    if (claim && !retained) releaseClaim(claim);
-    if (!retained) keepReserve();
   }
 }
 
