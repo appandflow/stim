@@ -170,6 +170,26 @@ test('an acting gc gives back the reserve before it asks stimd for its pass and 
   expect(readFileSync(reserve).length).toBe(1024 * 1024);
 });
 
+test('engine-store cleanup waits for an admitted gc pass', async () => {
+  const store = join(home, 'engine');
+  const leftover = join(store, '.trash', 'old-build');
+  mkdirSync(leftover, { recursive: true });
+  writeFileSync(join(store, 'current.json'), JSON.stringify({ format: 1, dir: 'current' }));
+  vi.stubEnv('STIM_ENGINE_ROOT', store);
+  vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    await runGcCommand({ pressure: 'normal', json: true }, {}, async () => {
+      throw Object.assign(new Error('no stimd'), { code: 'STIM_DAEMON_UNAVAILABLE', remedy: 'Run it again.' });
+    });
+    expect(existsSync(leftover)).toBe(true);
+    await runGcPass({ level: 'normal', client: 'manual' }, undefined, () => {});
+    expect(existsSync(leftover)).toBe(false);
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});
+
 test('each gc pass logs under a run id of its own', async () => {
   for (const name of ['first', 'second']) {
     mkdirSync(join(home, 'workspaces', `${name}--0000000000000000`), { recursive: true });

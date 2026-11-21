@@ -341,6 +341,15 @@ export async function runGcPass(
   releaseReserve();
   const closeGitReads = openGitReads(operation);
   try {
+    const env = operation?.env ?? process.env;
+    const { engineRoot } = await import('../engine-store/store.ts');
+    const store = engineRoot(env);
+    if (collectsEngineStore(env, store, operation?.home ?? configDir())) {
+      const { collectInstalledStore } = await import('../engine-store/gc.ts');
+      await collectInstalledStore(store).catch((error: unknown) =>
+        console.error(`Stim: the engine store was not collected: ${error instanceof Error ? error.message : error}`),
+      );
+    }
     let log: GcLog | null = null;
     const id = `gc-${randomBytes(6).toString('hex')}`;
     const since = Date.now();
@@ -601,14 +610,6 @@ const gc: Op = defineOp({
     json: { flags: '--json', description: 'print the result as JSON on stdout; every other line goes to stderr' },
   },
   run: async ({ options: opts }) => {
-    const { engineRoot } = await import('../engine-store/store.ts');
-    const store = engineRoot(process.env);
-    if (!opts.dryRun && collectsEngineStore(process.env, store, configDir())) {
-      const { collectInstalledStore } = await import('../engine-store/gc.ts');
-      await collectInstalledStore(store).catch((error: unknown) =>
-        console.error(`Stim: the engine store was not collected: ${error instanceof Error ? error.message : error}`),
-      );
-    }
     const { interrupted } = await runProcessOperation(process.cwd(), (operation) =>
       withDrainingCancellation(operation, operation.signal, () => runGc(opts, { operation })),
     );
