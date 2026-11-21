@@ -278,7 +278,7 @@ export async function planCargoTargets({
       continue;
     }
     const gone = stale.paths.map((path) => join(dir, path));
-    const throttleIo = tightened === 'normal';
+    const throttleIo = !level && tightened === 'normal';
     let freeable = await bytesOf(gone, signal, lowPriority, throttleIo);
     if (policy.incremental === 'all' || freeable < overBytes) {
       freeable += await bytesOf(

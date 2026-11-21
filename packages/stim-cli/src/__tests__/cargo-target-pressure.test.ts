@@ -96,7 +96,11 @@ describe('the Cargo target trim under disk pressure', () => {
 
     type Kind = 'critical' | 'normal';
 
-    async function plan(on: NodeJS.Platform, ionice: string | null): Promise<Record<Kind, string[][]>> {
+    async function plan(
+      on: NodeJS.Platform,
+      ionice: string | null,
+      level?: 'normal',
+    ): Promise<Record<Kind, string[][]>> {
       Object.defineProperty(process, 'platform', { value: on });
       const dirs: Record<Kind, string> = {
         critical: target('critical'),
@@ -117,6 +121,7 @@ describe('the Cargo target trim under disk pressure', () => {
         now: Date.now(),
         diskLevel: async (dir) => (dir === dirs.critical ? 'critical' : 'normal'),
         lowPriority: true,
+        ...(level ? { level } : {}),
       });
       const of = (dir: string) => walks.filter((walk) => walk.some((arg) => arg.startsWith(dir)));
       return { critical: of(dirs.critical), normal: of(dirs.normal) };
@@ -140,5 +145,12 @@ describe('the Cargo target trim under disk pressure', () => {
         for (const walk of walks.normal) expect(walk.join(' ')).toMatch(new RegExp(`^${throttled} `));
       },
     );
+
+    it('throttles no walk when the caller gives the level instead of a sample', async () => {
+      const walks = await plan('darwin', null, 'normal');
+
+      expect(niced(walks.normal)).toBe(true);
+      expect(niced(walks.critical)).toBe(true);
+    });
   });
 });

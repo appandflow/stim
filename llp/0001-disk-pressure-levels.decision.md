@@ -248,8 +248,11 @@ Reason: over 2026-11-16 to 2026-11-20 on the maintainer's MacBook, the
 dependency and worktree rungs (5, 7 and the first step of 8) took 30,179 s, 71%
 of all rung time, and freed 1.3 GiB, 0.4% of the bytes. Rung 5 ran 758 actions
 and kept every one; 79% of its time was its evidence loop over every checkout.
-#6029 made them report only; the report repeated what `stim gc --dry-run`
-already lists through the dormant steps and the worktree check.
+#6029 made them report only. `stim gc --dry-run` lists the same trees and
+worktrees through the dormant steps and the worktree check, once their own
+thresholds (`idle.dormantDays`, `idle.sourceDormantDays`,
+`gc.worktreeGraceMinutes`) are met; the report listed them earlier, at the
+pressure idle times and without the grace period.
 
 Maintainer decision: "I agree lets do this and ur recommendations from prev
 messages, also lets do the changes now that u flagged as after 2.0 id rather
@@ -259,6 +262,9 @@ detection from the pressure path.
 
 Maintainer decision: "Remove from daemon", 2026-11-20, on #6063, answering
 whether to remove the report-only rungs from the daemon.
+
+Chosen by the implementer of #6063, not the maintainer: `stim gc` loses the
+rows too, since it runs the same ladder and the rows freed nothing.
 
 ## One task runs every gc deletion
 
