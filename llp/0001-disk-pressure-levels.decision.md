@@ -368,6 +368,14 @@ Maintainer decision: "I really like all 6 points lets do them all!",
 2026-11-20, #6059. Point 1 of the six is the split between a background
 mark and a sweep that only rechecks and deletes.
 
+Mark-only asynchronous layout reads, canonical-root reads and root-device reads
+share the census reader's outstanding-read slot and a 3 second deadline per
+checkout. A timeout or cancellation publishes no mark and retains the previous
+complete one. A late native read cannot publish its result. Node's synchronous
+filesystem calls inside the output checks (including regenerable-directory
+metadata checks and the Metro package-name read) remain noninterruptible, so
+this is an asynchronous-read deadline, not a hard bound on the whole mark.
+
 ## Each rung frees only the volumes under pressure
 
 While disk sets the level, a rung deletes an item only when the path it will

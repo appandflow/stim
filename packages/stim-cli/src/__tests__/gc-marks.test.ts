@@ -9,6 +9,7 @@ import {
   utimesSync,
   writeFileSync,
 } from 'node:fs';
+import { lstat, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { diskUsageCacheFile, gcMarkFile, readGcMark, type Config } from '@stim-cli/core/state';
@@ -19,7 +20,13 @@ import type { OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { metroStoreRoot } from '../stimd/metro/metro-store.ts';
 import { saveConfig } from '../workspace/config.ts';
 import { readRunningProcessesAsync } from '../workspace/running-from.ts';
+import { hungRead, pendingRead, Unanswered } from '../workspace/bounded-read.ts';
 import { testContext } from './_context.ts';
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...fs, lstat: vi.fn<typeof fs.lstat>(fs.lstat), stat: vi.fn<typeof fs.stat>(fs.stat) };
+});
 
 vi.mock('../workspace/protected-locations.ts', () => ({
   isProtectedLocation: () => false,
@@ -133,6 +140,65 @@ describe('gc marks written by the lane', () => {
     ]);
     expect(Date.parse(busy?.lastActivityAt ?? '')).toBeGreaterThan(Date.now() - day);
   }, 20_000);
+
+  it.each(['layout', 'root device'] as const)('retains the complete mark when the %s read stalls', async (kind) => {
+    const path = checkout('idle', 3 * day);
+    const write = markWriter(config);
+    const input = { path, at: Date.now(), lastActivityAt: null, kept: null };
+    await write(input);
+    const previous = readGcMark(path);
+    let release!: () => void;
+    let started!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const stalled = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    if (kind === 'layout') {
+      vi.mocked(lstat).mockImplementationOnce(async (...args) => {
+        started();
+        await stalled;
+        return fs.lstat(...args);
+      });
+    } else {
+      vi.mocked(stat).mockImplementationOnce(async (...args) => {
+        started();
+        await stalled;
+        return fs.stat(...args);
+      });
+    }
+    const attempt = write({ ...input, at: input.at + 1 });
+    const rejected = attempt.catch((error: unknown) => error);
+    await ready;
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(await rejected).toBeInstanceOf(Unanswered);
+    expect(readGcMark(path)).toEqual(previous);
+    expect(hungRead()).not.toBeNull();
+    await expect(write(input)).rejects.toBeInstanceOf(Unanswered);
+    release();
+    await pendingRead();
+    expect(hungRead()).toBeNull();
+    expect(readGcMark(path)).toEqual(previous);
+    await write({ ...input, at: input.at + 2 });
+    expect(readGcMark(path)?.markedAt).toBe(new Date(input.at + 2).toISOString());
+  });
+
+  it('retains the complete mark when a layout probe fails without proving absence', async () => {
+    const path = checkout('idle', 3 * day);
+    const write = markWriter(config);
+    const input = { path, at: Date.now(), lastActivityAt: null, kept: null };
+    await write(input);
+    const previous = readGcMark(path);
+    const failure = Object.assign(new Error('permission denied'), { code: 'EACCES' });
+    vi.mocked(lstat).mockRejectedValueOnce(failure);
+
+    await expect(write({ ...input, at: input.at + 1 })).rejects.toBe(failure);
+
+    expect(readGcMark(path)).toEqual(previous);
+    expect(hungRead()).toBeNull();
+  });
 
   it('records why a checkout with something running is kept on each of its candidates', async () => {
     const idle = checkout('idle', 3 * day);
