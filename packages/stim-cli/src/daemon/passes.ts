@@ -6,6 +6,7 @@ import {
   readDaemonSnapshot,
   type DaemonLadderAction,
   type DaemonPressure,
+  type DaemonMeasurement,
   type DaemonWorkspaceDecision,
   type PressureLevel,
 } from '@stim-cli/core/state';
@@ -14,11 +15,12 @@ import { runMaintenance } from '../stimd/passes/run.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { forgetGitReads, openGitReads } from '../workspace/git-reads.ts';
 import { loadConfig, type Config } from '../workspace/config.ts';
+import { answered } from '../workspace/bounded-read.ts';
 import { requestDaemonTick, stimdRefused } from './client.ts';
 import { runBootedParkedPass } from './booted-parked.ts';
 import { runDormantDependencies } from './dependencies.ts';
 import { createFingerprintPrecompute, type PrecomputeInput } from './fingerprint-precompute.ts';
-import { daemonMode } from './mode.ts';
+import { configuredDaemonMode, daemonMode } from './mode.ts';
 import { onDiskVolumes, runIdlePass, type IdlePassInput } from './idle.ts';
 import { watchedStep } from './step-timing.ts';
 import { idleOutputBytes, runLadder } from './ladder.ts';
@@ -584,7 +586,7 @@ async function runCommandLadder(
   const measured = await measureTick(
     config,
     Date.now(),
-    headroom ? { probe: false, signal: headroom.stop, operation: headroom.operation } : {},
+    headroom ? { probe: false, signal: headroom.stop, operation: headroom.operation, disk: headroom.disk } : {},
   );
   const writer = createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES });
   try {
@@ -616,6 +618,7 @@ async function runCommandLadder(
 
 /** What a ladder run for a build's headroom judges by: the build's device, the target there, and when to stop. */
 interface HeadroomRun {
+  disk?: DaemonMeasurement['disk'];
   act: boolean;
   deadline: number;
   device: number;
@@ -648,7 +651,13 @@ async function headroomPressure(config: Config, headroom: HeadroomRun): Promise<
   if (headroom.stop.aborted || Date.now() >= headroom.deadline || headroom.helpless) return NORMAL_PRESSURE;
   let disk;
   try {
-    disk = await measureDisk(config, headroom.stop);
+    disk = await answered(
+      'headroom volumes',
+      () => measureDisk(config, headroom.stop),
+      Math.max(0, headroom.deadline - Date.now()),
+      headroom.stop,
+    );
+    headroom.disk = disk;
   } catch (error) {
     if (headroom.stop.aborted) return NORMAL_PRESSURE;
     throw error;
@@ -907,7 +916,7 @@ export async function runLadderToFree({
       freeMb,
       operation,
       stop,
-      act,
+      act: act && (configuredDaemonMode() ?? 'on') === 'on',
       deadline,
       acted: false,
       lastFreeMb: null,
