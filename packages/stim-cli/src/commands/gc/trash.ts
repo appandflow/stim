@@ -109,10 +109,14 @@ export async function collectTrash({
   return entries.length ? { root, entries } : null;
 }
 
-/** Deletes what a fresh `collectTrash` marks deletable, each entry under its own exclusive claim. */
+/**
+ * Deletes what a fresh `collectTrash` marks deletable, each entry under its own exclusive claim, at a low CPU and I/O
+ * priority with `throttleIo`.
+ */
 export async function deleteTrash(
   operation: StimContext | undefined,
   output: GcOutput = GC_OUTPUT,
+  throttleIo = false,
 ): Promise<{ count: number; bytes: number; failures: number }> {
   const report = await collectTrash({ signal: operation?.signal, operation });
   const done = { count: 0, bytes: 0, failures: 0 };
@@ -135,7 +139,7 @@ export async function deleteTrash(
       continue;
     }
     try {
-      await deleteTrashEntry(entry.path, operation);
+      await deleteTrashEntry(entry.path, operation, throttleIo);
       done.count++;
       done.bytes += entry.bytes ?? 0;
     } catch (error) {

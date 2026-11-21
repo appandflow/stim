@@ -3,7 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { collectTrash, deleteTrash } from '../commands/gc/trash.ts';
 import { takeGcResults } from '../commands/gc/results.ts';
-import { resetExecutor } from '../exec.ts';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { executeAction } from '../stimd/passes/act.ts';
+import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
 import { goneClaimOwner, liveClaimOwner, plantClaim } from './_factories.ts';
 
 const POSIX = process.platform !== 'win32';
@@ -138,4 +140,52 @@ test.skipIf(!POSIX)('gc keeps a trash entry whose ownership claim cannot be veri
     failures: 0,
   });
   expect(existsSync(join(entry, 'entries', '0', 'file'))).toBe(true);
+});
+
+describe.skipIf(!POSIX)('the trash delete', () => {
+  function recordRm(kill = false): string[][] {
+    const real = getExecutor();
+    const commands: string[][] = [];
+    setExecutor({
+      ...real,
+      runFileAsync: async (file: string, args: string[], options: Parameters<typeof real.runFileAsync>[2]) => {
+        const command = [file, ...args];
+        if (!command.includes('rm')) return real.runFileAsync(file, args, options);
+        commands.push(command);
+        if (!kill) return real.runFileAsync('rm', command.slice(command.indexOf('rm') + 1), options);
+        rmSync(join(command.at(-1) ?? '', '0', 'file'));
+        throw Object.assign(new Error('Command failed: rm'), { status: null, signal: 'SIGKILL' });
+      },
+    });
+    return commands;
+  }
+
+  test.each([
+    { level: 'below critical', critical: false, throttled: true },
+    { level: 'at critical', critical: true, throttled: false },
+  ])('runs rm at a low priority $level', async ({ critical, throttled }) => {
+    const entry = plantEntry('remove-priority', join(base, 'gone'));
+    const commands = recordRm();
+
+    const outcome = await executeAction(
+      { kind: 'would-delete-trash', target: trash, bytes: 0, reason: '' },
+      { settings: resolveMaintenanceSettings(null, { STIM_DAEMON: 'on' }), protectedRoot: '', critical },
+    );
+
+    expect(outcome.status).toBe('done');
+    expect(existsSync(entry)).toBe(false);
+    const [command = []] = commands;
+    expect(command.slice(-4)).toEqual(['rm', '-rf', '--', join(entry, 'entries')]);
+    expect(command.slice(0, -4).includes('nice')).toBe(throttled);
+  });
+
+  test('of an entry whose low-priority rm is killed part way still finishes it, as on main', async () => {
+    const entry = plantEntry('remove-killed', join(base, 'gone'));
+    writeFileSync(join(entry, 'entries', '0', 'other'), 'x');
+    recordRm(true);
+
+    expect(await deleteTrash(undefined, undefined, true)).toMatchObject({ count: 1, failures: 0 });
+
+    expect(existsSync(entry)).toBe(false);
+  });
 });
