@@ -25,6 +25,8 @@ const LOCK_FILES = new Set([...PROFILE_LOCKS, `${EXACT_LEDGER}.lock`]);
 const NOT_PROFILES = new Set(['.exact-swept']);
 /** What Exact writes in a `target/` it owns: its sweep ledger and lock, and the folders that hold an app's records. */
 const EXACT_OWNED = [EXACT_LEDGER, `${EXACT_LEDGER}.lock`, 'web-receipts', 'native-receipts', 'receipts', 'traces'];
+/** What an earlier engine's staged trim left, which may hold records it moved aside; nothing removes it automatically. */
+const staging = (name: string): boolean => name === '.stim-trimmed' || name.startsWith('.stim-not-restored-');
 const CANNOT_READ = 'the files processes hold open cannot be read';
 const DEADLINE_KEPT = 'the rest was left at the build headroom deadline';
 /** Solana's `cargo build-sbf` and Anchor keep each program's private key in `deploy/<program>-keypair.json`. */
@@ -35,7 +37,8 @@ export const isKeypairName = (name: string): boolean => name.toLowerCase().endsW
 /**
  * The top-level entries of `target` the dormant delete removes (`output`), and those it keeps (`kept`): a symbolic link,
  * which a delete must not go through, a `deploy/` directory holding a `*-keypair.json`, both names in any letter case,
- * and Cargo's `CACHEDIR.TAG`, which Cargo writes only when it creates the `target/` and by which Stim recognises it.
+ * Cargo's `CACHEDIR.TAG`, which Cargo writes only when it creates the `target/` and by which Stim recognises it, and an
+ * earlier engine's `.stim-trimmed` or `.stim-not-restored-*`.
  * Null when `target` cannot be listed.
  */
 function targetEntries(target: string): { output: string[]; kept: string[] } | null {
@@ -45,7 +48,9 @@ function targetEntries(target: string): { output: string[]; kept: string[] } | n
   const kept: string[] = [];
   for (const entry of entries.toSorted((a, b) => a.name.localeCompare(b.name))) {
     const keypairs = isKeypairDir(entry.name) && entry.isDirectory() && holdsKeypair(join(target, entry.name));
-    (entry.isSymbolicLink() || keypairs || entry.name === CACHEDIR_TAG ? kept : output).push(entry.name);
+    (entry.isSymbolicLink() || keypairs || entry.name === CACHEDIR_TAG || staging(entry.name) ? kept : output).push(
+      entry.name,
+    );
   }
   return { output, kept };
 }
@@ -202,7 +207,7 @@ function profilePaths(target: string): { profiles: string[]; extras: Set<string>
   const top = subdirectories(target);
   if (!top) return null;
   for (const first of top) {
-    if (NOT_PROFILES.has(first.name)) continue;
+    if (NOT_PROFILES.has(first.name) || staging(first.name)) continue;
     if (fingerprintDir(join(target, first.name))) {
       profiles.push(first.name);
       continue;

@@ -604,6 +604,18 @@ describe.skipIf(process.platform === 'win32')('deleting an idle Cargo target who
     expect(existsSync(join(dir, 'doc', 'index.html'))).toBe(true);
   });
 
+  test("an earlier engine's staged trim stays, receipts in it included, while the rest goes", async () => {
+    mkdirSync(join(dir, '.stim-trimmed', '4'), { recursive: true });
+    writeFileSync(join(dir, '.stim-trimmed', '4', 'r.json'), '{}');
+    ageTree(dir);
+
+    const result = await remove();
+
+    expect(result.removed).toContain('debug');
+    expect(readFileSync(join(dir, '.stim-trimmed', '4', 'r.json'), 'utf8')).toBe('{}');
+    expect(existsSync(join(dir, 'debug', 'app'))).toBe(false);
+  });
+
   test('a directory on another device is not entered, and the delete reports it left', async () => {
     fsHooks.dev = (path) => (path.endsWith('/doc') ? -1 : undefined);
 

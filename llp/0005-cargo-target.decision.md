@@ -382,12 +382,12 @@ clean does not follow links.
 ## Leftovers of the staged trim
 
 Earlier engines staged removals in `target/.stim-trimmed/` and kept what they
-could not put back as `target/.stim-not-restored-*`. A trim or delete now treats
-them as any other output in a recognised `target/` and removes them with the
-rest; a `target/` holding nothing else is no longer recognised. Chosen by the
-coordinator after the edge-case audit of 2026-11-20, not by the maintainer:
-no current engine writes them, and the worst case is losing build output an
-old engine moved aside.
+could not put back as `target/.stim-not-restored-*`. A trim or delete leaves
+both out by their top-level name, without looking inside, and removes the rest
+of the `target/` as usual; a `target/` holding nothing else is no longer
+recognised. An interrupted older delete could have staged Exact receipts there,
+which no rebuild restores. Chosen by the coordinator after the edge-case audit
+of 2026-11-20 and the review of #6065, not by the maintainer.
 
 ## A full disk releases the reserve
 
