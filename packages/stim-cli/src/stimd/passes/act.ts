@@ -73,6 +73,7 @@ import { deleteRuntimeAction, deleteUnavailableSimAction } from './runtimes.ts';
 export interface ActionOutcome {
   status: 'done' | 'kept' | 'failed';
   bytes: number;
+  partial?: true;
   detail: string;
   shortfall?: string;
   /** The command that brings back what the action removed, when one does. */
@@ -140,12 +141,16 @@ function outcomeOf(results: readonly GcResult[], fallbackBytes: number): ActionO
   const failed = results.find((result) => result.status === 'failed');
   if (failed) return { status: 'failed', bytes: 0, detail: failed.detail ?? `could not process ${failed.label}` };
   const done = results.filter((result) => result.status === 'done');
-  if (done.length)
+  if (done.length) {
+    const partial = done.some((result) => result.partial);
+    const bytes = done.reduce((sum, result) => sum + (result.bytes ?? 0), 0);
     return {
       status: 'done',
-      bytes: done.reduce((sum, result) => sum + (result.bytes ?? 0), 0) || fallbackBytes,
+      bytes: partial ? bytes : bytes || fallbackBytes,
+      ...(partial ? { partial: true } : {}),
       detail: done.map((result) => result.label).join(', '),
     };
+  }
   return kept(results.find((result) => result.detail)?.detail ?? 'nothing was eligible when the action ran');
 }
 

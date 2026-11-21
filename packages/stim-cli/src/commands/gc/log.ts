@@ -34,9 +34,10 @@ const VERBS = { done: 'Cleared', kept: 'Kept', failed: 'Failed to clear' } as co
 
 function gcLogRecord(run: GcLogRun, result: GcLogItem, ts: number): GcLogRecord {
   const path = [result.id, result.label].find((value) => value !== null && isAbsolute(value)) ?? null;
-  const size = result.bytes
-    ? ` (${formatSize({ bytes: result.bytes, ...(result.partial ? { partial: true } : {}) })})`
-    : '';
+  const size =
+    result.bytes !== null && (result.bytes || result.partial)
+      ? ` (${formatSize({ bytes: result.bytes, ...(result.partial ? { partial: true } : {}) })})`
+      : '';
   const why = result.detail ? `: ${result.detail}` : '';
   return {
     ts,
@@ -140,7 +141,8 @@ export function maintenanceItem(action: MaintenanceAction, outcome: ActionOutcom
     status: outcome.status,
     label: action.target,
     id: action.dir ?? action.workspace ?? null,
-    bytes: done && outcome.bytes ? outcome.bytes : null,
+    bytes: done && (outcome.bytes || outcome.partial) ? outcome.bytes : null,
+    ...(outcome.partial ? { partial: outcome.partial } : {}),
     detail: done ? (outcome.detail ? `${action.reason} (${outcome.detail})` : action.reason) : outcome.detail,
   };
 }

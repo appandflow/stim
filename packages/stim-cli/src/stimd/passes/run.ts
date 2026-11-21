@@ -25,7 +25,7 @@ import { tickListsSims, type TickMeasurement } from '../../daemon/measure.ts';
 import { listAvdsAsync } from '../../devices/android.ts';
 import { listAllIosSimsAsync } from '../../devices/ios.ts';
 import { loadConfig } from '../../workspace/config.ts';
-import { formatBytes } from '../../fs-util.ts';
+import { formatSize, formatBytes } from '../../fs-util.ts';
 import { memoryCulpritsUnderAsync } from '../../host-memory.ts';
 import { memoryCulpritAdvice } from '../../memory-culprits.ts';
 import { DEVICE_LIST_TIMEOUT_MS, deviceSweepIsScoped } from '../../commands/gc/devices.ts';
@@ -646,6 +646,7 @@ export async function runMaintenance(
             kind: executedActionName(action),
             target: action.target,
             bytes: outcome.bytes,
+            ...(outcome.partial ? { partial: outcome.partial } : {}),
             durationMs: Date.now() - began,
           },
           ...(action.workspace && action.kind !== 'would-remove-worktree' ? { workspace: action.workspace } : {}),
@@ -654,7 +655,7 @@ export async function runMaintenance(
           record(
             'maintenance_action',
             action.kind === 'would-remove-worktree' ? 'warn' : 'info',
-            `${describeDone(action)} (${formatBytes(outcome.bytes)}): ${action.kind === 'would-remove-worktree' ? outcome.detail : action.reason}`,
+            `${describeDone(action)} (${formatSize(outcome)}): ${action.kind === 'would-remove-worktree' ? outcome.detail : action.reason}`,
             fields,
             false,
           );

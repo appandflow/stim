@@ -487,7 +487,9 @@ timed-out walk as unknown, so the lower bound changes only what is reported.
 
 How the walk runs depends on the number of top-level entries, counted with one
 directory read. Up to 100, it runs `du -sk` once per entry, one after another
-under one shared deadline, and adds up the entries that finished. Above 100, it
+under one shared deadline, and adds up the entries that finished. Discovery and
+metadata reads consume that budget too; the filesystem calls themselves are not
+interruptible, so a stalled mounted volume can still delay returning. Above 100, it
 runs one `du -k -d 1` and sums the entry lines printed before the deadline. The
 split exists because macOS du writes to a pipe in 4 KB blocks (about 105 lines),
 so a single walk of a small folder stopped early prints nothing, while a large

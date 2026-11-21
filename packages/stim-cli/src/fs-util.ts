@@ -1,5 +1,5 @@
 import { lstatSync, readdirSync, readlinkSync, statSync, type Dirent } from 'fs';
-import { readdir } from 'fs/promises';
+import { lstat, readdir } from 'fs/promises';
 import { dirname, isAbsolute, join, normalize, parse, sep } from 'path';
 import { getExecutor, isTimeoutError } from './exec.ts';
 import { lowPriorityCommand } from './io-priority.ts';
@@ -180,8 +180,17 @@ const PER_ENTRY_LIMIT = 100;
  * finished, marked `partial`.
  */
 export async function measureDirectoryAsync(dir: string, options: SizeWalkOptions): Promise<DirectorySize | null> {
-  const entries = await readdir(dir, { withFileTypes: true }).catch(() => null);
-  if (entries === null || entries.length > PER_ENTRY_LIMIT || hasLinkedFile(dir, entries))
+  const startedAt = Date.now();
+  const symlink = (await lstat(dir).catch(() => null))?.isSymbolicLink();
+  const entries = symlink ? null : await readdir(dir, { withFileTypes: true }).catch(() => null);
+  const linkedFile = entries !== null && entries.length <= PER_ENTRY_LIMIT && hasLinkedFile(dir, entries);
+  if (options.timeoutMs !== 'unbounded') {
+    const timeoutMs = options.timeoutMs - (Date.now() - startedAt);
+    if (timeoutMs <= 0) return { bytes: 0, partial: true };
+    options = { ...options, timeoutMs };
+  }
+  if (symlink) return walkSize(dir, ['-sk', dir], options);
+  if (entries === null || entries.length > PER_ENTRY_LIMIT || linkedFile)
     return walkSize(dir, ['-k', '-d', '1', dir], options);
   return walkEntries(dir, entries.map(({ name }) => name).toSorted(), options);
 }

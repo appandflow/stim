@@ -96,6 +96,7 @@ function fromOutcome(action: MaintenanceAction, outcome: ActionOutcome): LevelRu
     ...(action.workspace ? { workspace: action.workspace } : {}),
     outcome: outcome.status,
     bytes: outcome.bytes,
+    ...(outcome.partial ? { partial: outcome.partial } : {}),
     reason: action.reason,
     detail: outcome.detail,
     ...(outcome.restore ? { restore: outcome.restore } : {}),

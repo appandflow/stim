@@ -217,6 +217,22 @@ describe('a size walk that reports what it measured', () => {
     expect(walks).toEqual([join(dir, 'entry-000')]);
   });
 
+  test('a directory symlink measures only the link that cleanup removes', async () => {
+    const target = folder(3);
+    const link = join(home, 'linked-output');
+    symlinkSync(target, link, 'junction');
+    const walks: string[][] = [];
+    setExecutor({
+      ...getExecutor(),
+      runFileAsync: async (_file, args) => {
+        walks.push(args);
+        return `0\t${link}\n`;
+      },
+    });
+    expect(await measureDirectoryAsync(link, { timeoutMs: 10_000 })).toEqual({ bytes: 0 });
+    expect(walks).toEqual([['-sk', link]]);
+  });
+
   test('a walk of a small folder that finishes reports the sum of its entries', async () => {
     const dir = folder(3);
     const sizes: Record<string, number> = { 'entry-000': 40, 'entry-001': 8, 'entry-002': 300 };

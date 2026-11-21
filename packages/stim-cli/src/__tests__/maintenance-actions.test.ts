@@ -26,6 +26,8 @@ import {
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
 import { recordGcResult } from '../commands/gc/results.ts';
+import * as gcWorkspaceOutputs from '../commands/gc/workspaces.ts';
+import { maintenanceItem } from '../commands/gc/log.ts';
 import * as gcWorktrees from '../commands/gc/worktrees.ts';
 import * as ios from '../devices/ios.ts';
 import { parkSim, readParked } from '../devices/sim-pool.ts';
@@ -324,6 +326,21 @@ describe('executing single actions', () => {
     reason: 'test',
     ...overrides,
   });
+
+  test.each([0, 1024])(
+    'a partial workspace clear preserves %i measured bytes through its outcome and log',
+    async (bytes) => {
+      const own = workspace('partial', { usedDaysAgo: 30 });
+      vi.spyOn(gcWorkspaceOutputs, 'clearWorkspaceOutputs').mockImplementation(async () => {
+        recordGcResult('workspaceOutputs', 'done', '/x', { bytes, partial: true });
+        return { failures: 0, cleared: ['/x'] };
+      });
+      const planned = action({ target: own.root, workspace: own.root, bytes: 8192 });
+      const outcome = await executeAction(planned, context());
+      expect(outcome).toMatchObject({ status: 'done', bytes, partial: true });
+      expect(maintenanceItem(planned, outcome)).toMatchObject({ bytes, partial: true });
+    },
+  );
 
   test('the workspace that started the pass is never cleared', async () => {
     const own = workspace('own', { usedDaysAgo: 30 });
