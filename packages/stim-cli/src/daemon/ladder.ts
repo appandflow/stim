@@ -1091,6 +1091,7 @@ export async function runLadder(
   }
   if (pressure.level === 'normal') return { actions, pressure };
   let current = pressure;
+  let freedSinceMeasured = false;
   for (const { rung, relieves: rungRelieves } of rungsFrom(input.fromRung).filter(
     // @ref LLP 0001#rungs-5-7-and-8-only-report -- only stim gc runs the report rungs
     (entry) => entry.rung <= (input.lastRung ?? 9) && entry.rung !== 5 && entry.rung !== 7,
@@ -1098,6 +1099,7 @@ export async function runLadder(
     const relieves = input.only ? rungRelieves.filter((cause) => cause === input.only) : rungRelieves;
     if (!relieves.length) continue;
     current = await input.remeasure();
+    freedSinceMeasured = false;
     const decision = rungDecision(current, relieves);
     if (decision === 'stop') break;
     if (decision === 'skip') continue;
@@ -1117,7 +1119,10 @@ export async function runLadder(
       // @ref LLP 0001#each-rung-frees-only-the-volumes-under-pressure -- a healthy volume gains nothing
       short: input.volume === undefined ? await shortDevices(input, 'high') : new Set([input.volume]),
     };
+    const before = actions.length;
     await runRung(rung, context, decision.causes);
+    if (actions.slice(before).some((action) => action.outcome === 'done')) freedSinceMeasured = true;
   }
+  if (freedSinceMeasured) current = await input.remeasure();
   return { actions, pressure: current };
 }

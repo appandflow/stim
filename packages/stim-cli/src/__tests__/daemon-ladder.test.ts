@@ -35,6 +35,7 @@ import * as acting from '../stimd/passes/act.ts';
 import * as cargoTargetPasses from '../stimd/passes/cargo-target.ts';
 import * as dependencies from '../daemon/dependencies.ts';
 import * as sweep from '../stimd/passes/sweep.ts';
+import * as unowned from '../stimd/passes/unowned.ts';
 import { runDiskPass, runForcedLadder, runHomePasses, runLadderToFree, type LadderPass } from '../daemon/passes.ts';
 import * as ladderModule from '../daemon/ladder.ts';
 import * as bootedParked from '../daemon/booted-parked.ts';
@@ -944,6 +945,25 @@ describe('the pressure ladder', () => {
 
     expect(worktrees).not.toHaveBeenCalled();
     expect(ranked).not.toHaveBeenCalled();
+  });
+
+  test('a pass whose last rung freed disk returns the level measured after it', async () => {
+    vi.spyOn(daemonMeasure, 'measureDisk').mockResolvedValue([
+      { volume: '/', freeMb: 1024, device: statSync(projects).dev },
+    ]);
+    const cache = { tool: 'npm', label: 'npm', paths: [projects], command: null, running: /npm/ };
+    vi.spyOn(unowned, 'surveyToolCaches').mockResolvedValue([{ cache, bytes: 1024, kept: null }]);
+    vi.spyOn(unowned, 'cleanToolCache').mockResolvedValue({ outcome: 'done', before: 1024, after: 0, detail: 'x' });
+    const remeasure = vi
+      .fn<() => Promise<DaemonPressure>>(async () => pressure('normal'))
+      .mockResolvedValueOnce(pressure('critical'));
+    const operation = testContext({ env: { ...process.env, STIM_HOME: undefined, ANDROID_HOME: projects } });
+
+    const pass = await runLadder({ ...input(true, remeasure), fromRung: 9, operation }, pressure('critical'));
+
+    expect(pass.actions).toContainEqual(expect.objectContaining({ rung: 9, outcome: 'done' }));
+    expect(pass.actions.filter((action) => action.rung === 5 || action.rung === 7)).toEqual([]);
+    expect(pass.pressure.level).toBe('normal');
   });
 
   test('rung 1 records nothing for a stopped workspace whose only output is a Metro store a running dev server shares', async () => {
