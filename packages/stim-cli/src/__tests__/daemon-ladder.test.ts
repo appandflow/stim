@@ -32,6 +32,8 @@ import { REAL_BYTES_THRESHOLD, runDormantDependencies } from '../daemon/dependen
 import { runIdlePass } from '../daemon/idle.ts';
 import { runLadder } from '../daemon/ladder.ts';
 import * as cargoTargetPasses from '../stimd/passes/cargo-target.ts';
+import * as dependencies from '../daemon/dependencies.ts';
+import * as sweep from '../stimd/passes/sweep.ts';
 import { runDiskPass, runForcedLadder, runHomePasses, runLadderToFree, type LadderPass } from '../daemon/passes.ts';
 import * as ladderModule from '../daemon/ladder.ts';
 import * as bootedParked from '../daemon/booted-parked.ts';
@@ -890,6 +892,17 @@ describe('the pressure ladder', () => {
     expect(actions.filter((action) => action.rung === 1)).toEqual([
       expect.objectContaining({ outcome: 'done', detail: expect.stringContaining(`kept ${join(root, 'target')}`) }),
     ]);
+  });
+
+  test("the stim-daemon's ladder runs neither report rung, at high or critical", async () => {
+    const worktrees = vi.spyOn(sweep, 'planWorktrees');
+    const ranked = vi.spyOn(dependencies, 'rankDependencies');
+
+    for (const level of ['high', 'critical'] as const)
+      await runLadder({ ...input(true, async () => pressure(level)), fromRung: 5 }, pressure(level));
+
+    expect(worktrees).not.toHaveBeenCalled();
+    expect(ranked).not.toHaveBeenCalled();
   });
 
   test('rung 1 records nothing for a stopped workspace whose only output is a Metro store a running dev server shares', async () => {

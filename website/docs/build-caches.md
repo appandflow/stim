@@ -586,7 +586,8 @@ A linked worktree that has a Stim workspace loses its `node_modules` and
 `ios/Pods`, never the source checkout's, in one way. `stim gc` at every level and
 the `stim-daemon` delete them once the workspace has had no activity
 for `idle.dormantDays` (1 day); the [pressure ladder](#disk-pressure)
-never takes them. A worktree locked with
+of `stim gc` only reports them at high (idle 1 hour) and critical (idle 2 minutes) disk
+pressure, without deleting them. A worktree locked with
 `git worktree lock` always keeps them, so a rollback checkout stays runnable.
 Otherwise a worktree keeps them while its dev server runs or a native run or
 build holds it, while it was recently used (a git or Stim activity or a write at
@@ -651,8 +652,11 @@ under 10% of RAM available) or **critical** (under `disk.criticalFreeGb`, 20 GB,
 or under `disk.hardFloorGb` when that is higher; or critical memory pressure),
 and above normal runs one ladder until the level clears, in the order of the
 table, by yield: Stim's own devices and caches, then the Cargo trims, before
-rung 1. No rung takes `node_modules`, Pods or worktrees; the dormant step and
-the worktree check do, and `stim gc --dry-run` lists them. The disk rungs, the hourly dormant step and automatic maintenance take turns in
+rung 1, and the report rungs last. Rungs 5 and 7 only report what they would
+free, as kept actions, and delete nothing; only `stim gc` runs them, each time,
+rung 5 then also reporting idle source checkouts at critical. The
+`stim-daemon` and the ladder a command runs never run them. The
+disk rungs, the hourly dormant step and automatic maintenance take turns in
 one background task, so a pass waits at most one unit of them, a hard-floor
 pass first:
 
@@ -666,6 +670,8 @@ pass first:
 | 6    | Idle Gradle and Kotlin daemons, an unused watchman, unpinned Gradle versions, TMPDIR leftovers, the worktree trash                                                                                                              | Same, with every unpinned Gradle version                                                                                                                                                      |
 | 8    | Nothing                                                                                                                                                                                                                         | Every device recording not being written (except pinned or in-use workspaces) and archived logs, recordings and agent actions                                                                 |
 | 9    | Nothing                                                                                                                                                                                                                         | Other tools' caches, subject to the rules below                                                                                                                                               |
+| 5    | In `stim gc` only, reported only: `node_modules` and `ios/Pods` of linked worktrees idle 1 hour                                                                                                                                 | Nothing in the daemon; in `stim gc`, the same for worktrees idle 2 minutes, then source (main) checkouts                                                                                      |
+| 7    | In `stim gc` only, reported only: clean finished worktrees after `gc.worktreeGraceMinutes`, if `maintenance.removeFinishedWorktrees`                                                                                            | Without the grace period; also clean pushed worktrees no Stim command used for 7 days, if `maintenance.removeIdleWorktrees`                                                                   |
 
 After a ladder pass that freed no bytes, the next pass waits four times that
 pass's duration, at most 15 minutes, or at most one minute at critical, unless
@@ -701,7 +707,7 @@ commands, with `COREPACK_ENABLE_NETWORK=0`. Rung 9 never runs at high, in a
 "ndk;<version>"`), Android system images no AVD uses and `~/.cache/exact`, with
 the command, and never deletes them. Only the `stim-daemon` and `stim gc` run rung 9. The daemon runs it at most hourly, while the disk is still short. `stim gc` with no `--pressure` that measures critical measures free disk again after the earlier rungs and runs rung 9 only if the disk is still under the critical level. An explicit `stim gc --pressure critical` is the free-everything run and always runs it.
 
-Cleanup protects active builds, leases, live shares and pinned workspaces. It removes dependencies from idle linked worktrees after `idle.dormantDays` (1 day) at every level, through the dormant step. Run `stim worktree warm` to restore missing copies from the source checkout; the next Stim command in the worktree does it for you, or refuses with `STIM_DEPS_FAILED` and asks for an install when warm cannot restore the same versions. A source (main) checkout is what new worktrees warm from, so every stage takes linked worktrees first. Its dependencies go only after theirs: at every level once it has had no activity for `idle.sourceDormantDays` (7 days by default; `0` never; activity is a Stim command, source file write, git write or commit in the checkout or any workspace in it, and a `worktree warm` copying from it, when the warmed app has a Stim workspace in the source). `stim worktree warm` and `stim status` then say the source has no installed dependencies to copy, and since when. Install them there so new worktrees warm from it; a worktree warmed meanwhile needs its own install before it builds, and a linked worktree whose own dependencies were deleted refuses with `STIM_DEPS_FAILED` until they are installed there, since warm has nothing to restore them from.
+Cleanup protects active builds, leases, live shares and pinned workspaces. It removes dependencies from idle linked worktrees after `idle.dormantDays` (1 day) at every level, through the dormant step; rung 5 of `stim gc` only reports them under disk pressure. Run `stim worktree warm` to restore missing copies from the source checkout; the next Stim command in the worktree does it for you, or refuses with `STIM_DEPS_FAILED` and asks for an install when warm cannot restore the same versions. A source (main) checkout is what new worktrees warm from, so every stage takes linked worktrees first. Its dependencies go only after theirs: at every level once it has had no activity for `idle.sourceDormantDays` (7 days by default; `0` never; activity is a Stim command, source file write, git write or commit in the checkout or any workspace in it, and a `worktree warm` copying from it, when the warmed app has a Stim workspace in the source). `stim gc --pressure critical` only reports them. `stim worktree warm` and `stim status` then say the source has no installed dependencies to copy, and since when. Install them there so new worktrees warm from it; a worktree warmed meanwhile needs its own install before it builds, and a linked worktree whose own dependencies were deleted refuses with `STIM_DEPS_FAILED` until they are installed there, since warm has nothing to restore them from.
 
 Run `stim gc --dry-run` to preview cleanup at the measured level, or add `--pressure high` or `--pressure critical` to preview that level. `stim gc` runs the measured level, and `stim gc --pressure high` or `--pressure critical` runs the ladder at that level, regardless of the current pressure. Plain output ends with the path of the full report, `$STIM_HOME/gc/last-report.txt`, and each deleted item is appended to `$STIM_HOME/gc/gc.ndjson`. Use `stim status` to see the measured level and `stim logs --source gc` to see what cleanup removed.
 

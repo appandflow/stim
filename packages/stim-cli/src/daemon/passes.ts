@@ -652,7 +652,7 @@ export interface ForcedLadder {
 /**
  * The pressure ladder forced to each of `levels` whatever the machine measures, every rung in order without stopping
  * once the level clears: the idle stage (for every workspace idle 2 minutes or more while the measured memory level is
- * above normal, else at `idle.minutes`), then rungs 1 to 8 (rung 8 only at critical). `stim gc` runs one
+ * above normal, else at `idle.minutes`), then rungs 1 to 8 (rungs 5 and 8 only at critical). `stim gc` runs one
  * level with `act`; `stim gc --dry-run` previews it, measuring what each action would free. Logs to `daemon.ndjson`
  * under `trigger` when acting. Null without a Stim config.
  */

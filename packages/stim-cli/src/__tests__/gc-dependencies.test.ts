@@ -35,6 +35,7 @@ import { hungRead } from '../workspace/bounded-read.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { readGcReport, runGc } from '../commands/gc.ts';
 import { createStim } from '../api.ts';
+import * as gcDevices from '../commands/gc/devices.ts';
 import { loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceStateFile } from '../workspace/paths.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
@@ -221,29 +222,74 @@ type LevelPayload = {
   actions: { rung: number | null; kind: string; target: string; outcome: string; detail?: string }[];
 };
 
-function plannedDependencies(payload: LevelPayload): string[] {
+function criticalDependencies(payload: LevelPayload): string[] {
   return payload.actions.flatMap((action) =>
-    action.kind === 'delete-dependencies' && action.outcome !== 'kept' ? [action.target] : [],
+    action.kind === 'delete-dependencies' && (action.outcome !== 'kept' || action.detail?.startsWith('report only'))
+      ? [action.target]
+      : [],
   );
 }
 
 test.skipIf(process.platform === 'win32')(
-  'gc after idle.dormantDays keeps the dependencies of a git-locked worktree',
+  'gc at critical deletes no worktree dependencies and does not report those of a git-locked worktree',
   async () => {
     const roots = idleRepo([
       { name: 'feature', workspace: true },
       { name: 'rollback', workspace: true },
     ]);
     execSync(`git worktree lock --reason rollback "${roots.rollback}"`, { cwd: roots.repo, timeout: 15_000 });
-    saveConfig({ ...loadConfig()!, idle: { dormantDays: 0.01 } });
 
-    const { payload } = await gcJson('normal');
-    await quietly(() => runGc({ pressure: 'normal' }));
+    const { payload } = await gcJson();
+    await quietly(() => runGc({ pressure: 'critical' }));
 
-    expect(plannedDependencies(payload)).toContain(join(roots.feature!, 'node_modules'));
-    expect(plannedDependencies(payload).filter((path) => path.startsWith(`${roots.rollback}/`))).toEqual([]);
+    expect(criticalDependencies(payload)).toContain(join(roots.feature!, 'node_modules'));
+    expect(criticalDependencies(payload).filter((path) => path.startsWith(`${roots.rollback}/`))).toEqual([]);
+    expect(existsSync(join(roots.feature!, 'node_modules'))).toBe(true);
     expect(existsSync(join(roots.rollback!, 'node_modules', 'pkg', 'index.js'))).toBe(true);
     expect(existsSync(join(roots.rollback!, 'ios', 'Pods', 'Manifest.lock'))).toBe(true);
+  },
+  60_000,
+);
+
+test.skipIf(process.platform === 'win32')(
+  'gc at normal keeps dependencies idle less than idle.dormantDays, and at critical only reports those of an idle linked worktree nothing runs in, then the source checkout',
+  async () => {
+    const scope = vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
+    const roots = idleRepo([
+      { name: 'feature', workspace: true },
+      { name: 'busy', workspace: true },
+      { name: 'keyless', workspace: false },
+      { name: 'drifted', workspace: true },
+    ]);
+    const at = (name: string): string => {
+      const root = roots[name];
+      if (!root) throw new Error(`no worktree ${name}`);
+      return root;
+    };
+    writeFileSync(join(at('drifted'), 'pnpm-lock.yaml'), 'lockfileVersion: 9\npackages: {}\n');
+    const child = spawn('sleep', ['60'], { cwd: roots.busy, stdio: 'ignore' });
+    try {
+      const { payload }: { payload: LevelPayload } = await gcJson();
+      const critical = payload.actions.filter((action) => action.kind === 'delete-dependencies');
+      expect(critical.find((action) => action.target === join(at('feature'), 'node_modules'))?.detail).toMatch(
+        /^report only/,
+      );
+      const planned = criticalDependencies(payload);
+      expect(planned.indexOf(join(at('repo'), 'node_modules'))).toBeGreaterThan(
+        planned.indexOf(join(at('feature'), 'node_modules')),
+      );
+      await quietly(() => runGc({ pressure: 'normal' }));
+      expect(existsSync(join(at('feature'), 'node_modules', 'pkg', 'index.js'))).toBe(true);
+      await quietly(() => runGc({ pressure: 'critical' }));
+    } finally {
+      child.kill('SIGKILL');
+      scope.mockRestore();
+    }
+
+    expect(recordedDirs(at('feature'))).toEqual([]);
+    for (const name of ['feature', 'busy', 'keyless', 'drifted'])
+      expect(existsSync(join(at(name), 'node_modules', 'pkg', 'index.js'))).toBe(true);
+    expect(existsSync(join(at('feature'), 'ios', 'Pods', 'Manifest.lock'))).toBe(true);
   },
   60_000,
 );
@@ -343,11 +389,10 @@ test.skipIf(process.platform === 'win32')(
       { name: 'feature', workspace: true },
       { name: 'keyless', workspace: false },
     ]);
-    saveConfig({ ...loadConfig()!, idle: { dormantDays: 0.01 } });
 
-    const { payload } = await gcJson('normal');
+    const { payload } = await gcJson();
 
-    const paths = plannedDependencies(payload);
+    const paths = criticalDependencies(payload);
     expect(paths.some((path) => path.startsWith(`${roots.feature}/`))).toBe(true);
     expect(paths.some((path) => path.startsWith(`${roots.keyless}/`))).toBe(false);
   },
@@ -429,6 +474,22 @@ const currentConfig = () => loadConfig() ?? { version: 2 as const, projects: {},
 const daysAgo = (days: number) => new Date(Date.now() - days * 86_400_000);
 
 test.skipIf(process.platform === 'win32')(
+  'gc at critical reports the source checkout dependencies after the linked worktrees',
+  async () => {
+    const roots = idleRepo([{ name: 'feature', workspace: true }]);
+    const source = roots.repo ?? '';
+
+    const order = criticalDependencies((await gcJson()).payload);
+
+    expect(order.indexOf(join(source, 'node_modules'))).toBeGreaterThan(
+      order.indexOf(join(roots.feature ?? '', 'node_modules')),
+    );
+    expect(order).toContain(join(source, 'ios', 'Pods'));
+  },
+  60_000,
+);
+
+test.skipIf(process.platform === 'win32')(
   'gc takes the source checkout dependencies at 7 days idle, records it, and the record ends once they are installed',
   async () => {
     const roots = idleRepo([{ name: 'feature', workspace: true }]);
@@ -452,25 +513,25 @@ test.skipIf(process.platform === 'win32')(
 );
 
 test.skipIf(process.platform === 'win32')(
-  'at 7 days idle gc keeps the source checkout dependencies while a process runs in it or maintenance.keep pins it',
+  'the source checkout dependencies are not a candidate at high, and critical does not report one a process runs in or maintenance.keep pins',
   async () => {
     const roots = idleRepo([{ name: 'feature', workspace: true }]);
     const source = roots.repo ?? '';
-    ageCheckout(source, daysAgo(8));
-    const planned = async () =>
-      plannedDependencies((await gcJson('normal')).payload).some((path) => path.startsWith(`${source}/`));
+    const reported = async (level: 'high' | 'critical') =>
+      criticalDependencies((await gcJson(level)).payload).some((path) => path.startsWith(`${source}/`));
 
-    expect(await planned()).toBe(true);
+    expect(await reported('high')).toBe(false);
+    expect(await reported('critical')).toBe(true);
 
     const child = spawn('sleep', ['60'], { cwd: source, stdio: 'ignore' });
     try {
-      expect(await planned()).toBe(false);
+      expect(await reported('critical')).toBe(false);
     } finally {
       child.kill('SIGKILL');
     }
     writeFileSync(join(source, '.stim.json'), JSON.stringify({ maintenance: { keep: true } }));
-    ageTree(source, daysAgo(8));
-    expect(await planned()).toBe(false);
+    ageTree(source, new Date(Date.now() - 60 * 60_000));
+    expect(await reported('critical')).toBe(false);
   },
   60_000,
 );
@@ -509,18 +570,21 @@ test.skipIf(process.platform === 'win32')(
 const sourceModules = (source: string) => join(source, 'node_modules', 'pkg', 'index.js');
 
 test.skipIf(process.platform === 'win32')(
-  'a source checkout edited or committed in with other tools inside the window keeps its dependencies at 7 days, and a dry run says why',
+  'a source checkout edited or committed in with other tools inside the window keeps its dependencies at critical and at 7 days, and a dry run says why',
   async () => {
     const roots = idleRepo([{ name: 'feature', workspace: true }]);
     const source = roots.repo ?? '';
     const git = (args: string) => execSync(`git ${args}`, { cwd: source, timeout: 15_000 });
 
-    ageCheckout(source, daysAgo(8));
     writeFileSync(join(source, 'edited.ts'), 'x');
-    const kept = dependencyAction((await gcJson('normal')).payload, join(source, 'node_modules'));
+    const { payload }: { payload: LevelPayload } = await gcJson();
+    const kept = payload.actions.find(
+      (action) =>
+        action.rung === 8 && action.kind === 'delete-dependencies' && action.target === join(source, 'node_modules'),
+    );
     expect(kept).toMatchObject({ outcome: 'kept' });
     expect(kept?.detail).toMatch(/file edit/);
-    await quietly(() => runGc({ pressure: 'normal' }));
+    await quietly(() => runGc({ pressure: 'critical' }));
     expect(existsSync(sourceModules(source))).toBe(true);
 
     ageCheckout(source, daysAgo(8));
@@ -530,6 +594,11 @@ test.skipIf(process.platform === 'win32')(
   },
   60_000,
 );
+
+const rung8 = (payload: LevelPayload, path: string) =>
+  payload.actions.find(
+    (action) => action.rung === 8 && action.kind === 'delete-dependencies' && action.target === path,
+  );
 
 test.skipIf(process.platform === 'win32')(
   'a source checkout keeps its dependencies, with the reason in a dry run, while a worktree warm holds its claim, an app in it is active, or a worktree links to them',
@@ -541,34 +610,33 @@ test.skipIf(process.platform === 'win32')(
     const source = roots.repo ?? '';
     const linker = roots.linker ?? '';
     const modules = join(source, 'node_modules');
-    ageCheckout(source, daysAgo(8));
     const claim = plantClaim(warmClaimPath(source), 'shared', liveClaimOwner());
-    const warming: { payload: LevelPayload } = await gcJson('normal');
-    expect(dependencyAction(warming.payload, modules)?.detail).toMatch(/warm is copying/);
-    await quietly(() => runGc({ pressure: 'normal' }));
+    const warming: { payload: LevelPayload } = await gcJson();
+    expect(rung8(warming.payload, modules)?.detail).toMatch(/warm is copying/);
+    await quietly(() => runGc({ pressure: 'critical' }));
     expect(existsSync(sourceModules(source))).toBe(true);
     rmSync(claim, { force: true });
 
     const app = join(source, 'apps', 'mobile');
     write(join(app, 'package.json'));
-    ageTree(source, daysAgo(8));
+    ageTree(source, new Date(Date.now() - 60 * 60_000));
     upsertProject(app, { metroPort: null });
     recordWorkspaceUse(app, new Date());
     ensureWorkspaceStorage(app);
-    const active: { payload: LevelPayload } = await gcJson('normal');
-    expect(dependencyAction(active.payload, modules)?.detail).toMatch(/is not idle/);
-    await quietly(() => runGc({ pressure: 'normal' }));
+    const active: { payload: LevelPayload } = await gcJson();
+    expect(rung8(active.payload, modules)?.detail).toMatch(/is not idle/);
+    await quietly(() => runGc({ pressure: 'critical' }));
     expect(existsSync(sourceModules(source))).toBe(true);
-    recordWorkspaceUse(app, daysAgo(8));
-    utimesSync(workspaceStateFile(app), daysAgo(8), daysAgo(8));
+    recordWorkspaceUse(app, new Date(Date.now() - 60 * 60_000));
+    utimesSync(workspaceStateFile(app), new Date(Date.now() - 60 * 60_000), new Date(Date.now() - 60 * 60_000));
 
     mkdirSync(join(linker, 'apps', 'x'), { recursive: true });
     symlinkSync(modules, join(linker, 'apps', 'x', 'node_modules'));
     writeFileSync(join(linker, '.stim.json'), JSON.stringify({ maintenance: { keep: true } }));
-    const linked: { payload: LevelPayload } = await gcJson('normal');
-    expect(dependencyAction(linked.payload, modules)).toMatchObject({ outcome: 'kept' });
-    expect(dependencyAction(linked.payload, modules)?.detail).toMatch(/links apps\/x\/node_modules to it/);
-    await quietly(() => runGc({ pressure: 'normal' }));
+    const linked: { payload: LevelPayload } = await gcJson();
+    expect(rung8(linked.payload, modules)).toMatchObject({ outcome: 'kept' });
+    expect(rung8(linked.payload, modules)?.detail).toMatch(/links apps\/x\/node_modules to it/);
+    await quietly(() => runGc({ pressure: 'critical' }));
     expect(existsSync(sourceModules(source))).toBe(true);
   },
   60_000,
@@ -581,18 +649,15 @@ test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
     const source = roots.repo ?? '';
     const linker = roots.linker ?? '';
     const modules = join(source, 'node_modules');
-    ageCheckout(source, daysAgo(8));
     writeFileSync(join(linker, '.stim.json'), JSON.stringify({ maintenance: { keep: true } }));
     for (let i = 0; i < 2100; i++) writeFileSync(join(linker, `filler-${i}.txt`), '');
     mkdirSync(join(linker, 'apps', 'x'), { recursive: true });
     symlinkSync(modules, join(linker, 'apps', 'x', 'node_modules'));
     ageTree(linker, new Date(Date.now() - 60 * 60_000));
-    const large: { payload: LevelPayload } = await gcJson('normal');
-    expect(dependencyAction(large.payload, modules)).toMatchObject({ outcome: 'kept' });
-    expect(dependencyAction(large.payload, modules)?.detail).toMatch(
-      /links apps\/x\/node_modules|could not be fully checked/,
-    );
-    await quietly(() => runGc({ pressure: 'normal' }));
+    const large: { payload: LevelPayload } = await gcJson();
+    expect(rung8(large.payload, modules)).toMatchObject({ outcome: 'kept' });
+    expect(rung8(large.payload, modules)?.detail).toMatch(/links apps\/x\/node_modules|could not be fully checked/);
+    await quietly(() => runGc({ pressure: 'critical' }));
     expect(existsSync(sourceModules(source))).toBe(true);
 
     rmSync(join(linker, 'apps'), { recursive: true });
@@ -600,9 +665,9 @@ test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
     mkdirSync(join(linker, 'sealed'));
     chmodSync(join(linker, 'sealed'), 0o000);
     try {
-      const sealed: { payload: LevelPayload } = await gcJson('normal');
-      expect(dependencyAction(sealed.payload, modules)?.detail).toMatch(/could not be fully checked/);
-      await quietly(() => runGc({ pressure: 'normal' }));
+      const sealed: { payload: LevelPayload } = await gcJson();
+      expect(rung8(sealed.payload, modules)?.detail).toMatch(/could not be fully checked/);
+      await quietly(() => runGc({ pressure: 'critical' }));
       expect(existsSync(sourceModules(source))).toBe(true);
     } finally {
       chmodSync(join(linker, 'sealed'), 0o755);
@@ -612,7 +677,7 @@ test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
 );
 
 test.skipIf(process.platform === 'win32')(
-  'a source checkout tree not measured yet is not taken at 7 days idle',
+  'a source checkout tree not measured yet is not taken at 7 days idle, and at critical is only reported',
   async () => {
     const roots = idleRepo([{ name: 'feature', workspace: true }]);
     const source = roots.repo ?? '';
@@ -625,6 +690,9 @@ test.skipIf(process.platform === 'win32')(
     ageTree(source, daysAgo(8));
     const normal = await quietly(() => runGc({ pressure: 'normal' }));
     expect(normal).toBeDefined();
+    expect(existsSync(sourceModules(source))).toBe(true);
+    expect(rung8((await gcJson()).payload, modules)?.detail).toMatch(/^report only/);
+    await quietly(() => runGc({ pressure: 'critical' }));
     expect(existsSync(sourceModules(source))).toBe(true);
   },
   60_000,
@@ -860,8 +928,7 @@ test.skipIf(process.platform === 'win32')(
     execSync(`git worktree add -q "${stranger}" -b stranger`, { cwd: other });
     for (let i = 0; i < 2100; i++) writeFileSync(join(stranger, `filler-${i}.txt`), '');
     upsertProject(realpathSync.native(stranger), { metroPort: null });
-    ageCheckout(source, daysAgo(8));
-    expect(plannedDependencies((await gcJson('normal')).payload)).toContain(join(source, 'node_modules'));
+    expect(criticalDependencies((await gcJson()).payload)).toContain(join(source, 'node_modules'));
   },
   60_000,
 );
@@ -898,11 +965,37 @@ function pnpmTree(modules: string, how: 'linked' | 'copied', at: Date, count = 8
   return store;
 }
 
-function dependencyAction(payload: LevelPayload, target: string) {
+function dependencyAction(payload: LevelPayload, target: string, rung: number | null) {
   return payload.actions.find(
-    (action) => action.kind === 'delete-dependencies' && action.target === target && action.rung === null,
+    (action) => action.kind === 'delete-dependencies' && action.target === target && action.rung === rung,
   );
 }
+
+test.skipIf(process.platform === 'win32')(
+  'rungs 5 and 8 report trees of unknown size without sampling them for hard links, and delete none',
+  async () => {
+    const roots = idleRepo([
+      { name: 'linked', workspace: true },
+      { name: 'copied', workspace: true },
+    ]);
+    const hourAgo = new Date(Date.now() - 60 * 60_000);
+    const modules = (name: string) => join(roots[name] ?? '', 'node_modules');
+    for (const name of ['repo', 'linked']) pnpmTree(modules(name), 'linked', hourAgo);
+    pnpmTree(modules('copied'), 'copied', hourAgo);
+    for (const name of ['repo', 'linked', 'copied']) walks.set(modules(name), () => null);
+
+    const high: LevelPayload = (await gcJson('high')).payload;
+    const critical: LevelPayload = (await gcJson('critical')).payload;
+    await quietly(() => runGc({ pressure: 'high' }));
+
+    for (const name of ['linked', 'copied'])
+      expect(dependencyAction(high, modules(name), 5)?.detail).toMatch(/^report only/);
+    expect(dependencyAction(critical, modules('repo'), 8)?.detail).toMatch(/^report only/);
+    for (const name of ['repo', 'linked']) expect(existsSync(diskUsageLinksFile(modules(name)))).toBe(false);
+    expect(existsSync(modules('copied'))).toBe(true);
+  },
+  60_000,
+);
 
 test.skipIf(process.platform === 'win32')(
   'the dormant step takes a hard-linked tree of unknown size as unknown when its link verdict cannot be written',
@@ -915,8 +1008,8 @@ test.skipIf(process.platform === 'win32')(
     mkdirSync(join(diskUsageLinksFile(modules), 'occupied'), { recursive: true });
     const { payload }: { payload: LevelPayload } = await gcJson('normal');
     expect(readJsonObject(diskUsageNativeFile(modules))?.complete).toBe(true);
-    expect(dependencyAction(payload, modules)).toMatchObject({ outcome: 'would' });
-    expect(dependencyAction(payload, modules)?.detail ?? '').not.toMatch(linkedDetail);
+    expect(dependencyAction(payload, modules, null)).toMatchObject({ outcome: 'would' });
+    expect(dependencyAction(payload, modules, null)?.detail ?? '').not.toMatch(linkedDetail);
   },
   60_000,
 );
@@ -942,10 +1035,10 @@ test.skipIf(process.platform === 'win32')(
 
     const first: LevelPayload = (await gcJson('normal')).payload;
     for (const name of ['repo', 'linked']) {
-      expect(dependencyAction(first, modules(name))?.outcome).toBe('kept');
-      expect(dependencyAction(first, modules(name))?.detail).toMatch(linkedDetail);
+      expect(dependencyAction(first, modules(name), null)?.outcome).toBe('kept');
+      expect(dependencyAction(first, modules(name), null)?.detail).toMatch(linkedDetail);
     }
-    expect(dependencyAction(first, modules('copied'))?.outcome).toBe('would');
+    expect(dependencyAction(first, modules('copied'), null)?.outcome).toBe('would');
 
     const linked = modules('linked');
     writeCacheFile(diskUsageLinksFile(linked), {
@@ -954,11 +1047,11 @@ test.skipIf(process.platform === 'win32')(
       sampled: 99,
     });
     const again: LevelPayload = (await gcJson('normal')).payload;
-    expect(dependencyAction(again, linked)?.detail).toContain('99 of the 99 files');
+    expect(dependencyAction(again, linked, null)?.detail).toContain('99 of the 99 files');
 
     pnpmTree(linked, 'copied', new Date(hourAgo.getTime() - 60_000));
     const reinstalled: LevelPayload = (await gcJson('normal')).payload;
-    expect(dependencyAction(reinstalled, linked)?.outcome).toBe('would');
+    expect(dependencyAction(reinstalled, linked, null)?.outcome).toBe('would');
   },
   60_000,
 );
