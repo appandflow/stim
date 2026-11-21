@@ -624,7 +624,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const commandLimits: CommandLimits = { ...COMMAND_LIMITS, ...options.commandLimits };
   const actionLimits: CommandLimits = { ...ACTION_LIMITS, ...options.actionLimits };
   let offloads = 0;
-  const reportBusy = () => options.busy?.(offloads + busyWorkspaces.size);
+  let hostedSessions = 0;
+  const reportBusy = () => options.busy?.(offloads + hostedSessions + busyWorkspaces.size);
   const busyWorkspaces = new (class extends Set<string> {
     override add(workspace: string): this {
       super.add(workspace);
@@ -762,6 +763,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     },
   });
   const hostedDevices = new DeviceHost({
+    sessions: (count) => {
+      hostedSessions = count;
+      reportBusy();
+    },
     worker: join(dirname(options.stimCli), 'device-host-worker.mjs'),
     env: options.env,
     agents: agentDrivers,

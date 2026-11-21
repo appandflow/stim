@@ -987,7 +987,7 @@ async function runStimdInner(
   process.title = 'stimd';
   const key = writeDesktopKey(desktopKey);
   const script = realpathSync(process.argv[1] ?? '');
-  /** The offloads and workspace actions under way in the net thread, which a takeback waits for. */
+  /** The offloads, hosted device sessions and workspace actions under way in the net thread, which a takeback waits for. */
   let netBusy = 0;
   const net = createNetThread(
     log,
