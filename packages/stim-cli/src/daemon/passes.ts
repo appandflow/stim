@@ -102,7 +102,6 @@ export async function runDiskPass(
         sims: input.sims,
         simsFailed: input.sims === null,
         operation,
-        reports: true,
         only: 'disk',
         ...(clocks ? { clocks } : {}),
         remeasure: remeasurer(config, operation, (measurement) => {
@@ -482,6 +481,7 @@ export function createMaintenanceLane(
               ...reading,
               cadence: dependencyCadence,
               between: diskBoundary,
+              marks: true,
             })),
           );
           dependenciesMs = lap();

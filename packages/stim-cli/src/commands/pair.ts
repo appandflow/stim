@@ -19,7 +19,7 @@ const pairOp: Op = defineOp({
     const { pair } = await loadServerCli();
     const asked: { answer: NetAnswer | null } = { answer: null };
     await pair(port, opts.json === true, opts.control === true, async () => {
-      asked.answer = await ensureNet(false);
+      asked.answer = await ensureNet(false, process.env, port);
       return asked.answer?.listening === true && asked.answer.loopbackOnly === true;
     });
     const { answer } = asked;

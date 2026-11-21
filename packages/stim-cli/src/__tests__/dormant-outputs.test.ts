@@ -7,7 +7,6 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
-  renameSync,
   rmSync,
   utimesSync,
   writeFileSync,
@@ -24,6 +23,11 @@ import * as ladderModule from '../daemon/ladder.ts';
 import * as measure from '../daemon/measure.ts';
 import * as processLock from '../engine/workspace-process-lock.ts';
 import { withCargoLocks } from '../workspace/cargo-lock.ts';
+import { exactClean } from '../integrations/exact-clean.ts';
+
+vi.mock('../integrations/exact-clean.ts', () => ({
+  exactClean: vi.fn<typeof import('../integrations/exact-clean.ts').exactClean>(),
+}));
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import * as maintenanceRun from '../stimd/passes/run.ts';
 import { loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
@@ -370,7 +374,7 @@ describe.skipIf(process.platform === 'win32')(
       expect(existsSync(join(linked, BUILD, 'app.apk'))).toBe(true);
     });
 
-    test.each(['exact', 'tagged', 'untagged'] as const)(
+    test.each(['tagged', 'untagged'] as const)(
       'an idle %s Cargo target/ that is the only output is predicted, then deleted whole',
       async (kind) => {
         const root = onlyTarget(cargo('app', kind));
@@ -388,6 +392,29 @@ describe.skipIf(process.platform === 'win32')(
         expect((await gc()).filter((action) => action.outcome !== 'kept')).toEqual([]);
       },
     );
+
+    test("an idle Exact app's target/ is predicted without running Exact, then cleaned by Exact", async () => {
+      const root = onlyTarget(cargo('app', 'exact'));
+      idleFor(3, root);
+      const target = realpathSync(join(root, 'target'));
+      const cleaner = vi.mocked(exactClean).mockImplementation(async (_, { dryRun = false } = {}) => {
+        const remove = [join(target, 'debug'), join(target, 'doc')];
+        if (!dryRun) for (const path of remove) rmSync(path, { recursive: true, force: true });
+        return { status: 'ok', remove, kept: [], held: [] };
+      });
+
+      expect(await hourlyStep(false)).toEqual([
+        expect.objectContaining({ target: root, outcome: 'would', bytes: expect.any(Number) }),
+      ]);
+      expect(cleaner).not.toHaveBeenCalled();
+      expect(existsSync(join(root, 'target', 'debug'))).toBe(true);
+      expect(await gc()).toEqual([expect.objectContaining({ target: root, outcome: 'done' })]);
+      expect(readdirSync(join(root, 'target'))).toEqual([]);
+      expect(cleaner.mock.calls.map(([app, options]) => [app, options?.dryRun === true])).toContainEqual([
+        realpathSync(root),
+        false,
+      ]);
+    });
 
     test('a dry run leaves out a folder holding a Solana keypair deeper inside', async () => {
       const root = onlyTarget(cargo('app', 'untagged'));
@@ -413,36 +440,12 @@ describe.skipIf(process.platform === 'win32')(
       expect(readFileSync(join(root, 'target', 'deploy', 'app-keypair.json'), 'utf8')).toBe('[1,2,3]');
     });
 
-    test.each([
-      [
-        'a build wrote a profile in that time',
-        (target: string) => utimesSync(join(target, 'debug'), new Date(), new Date()),
-        'was written in that time',
-        'kept',
-      ],
-      [
-        'an earlier Stim left its trim staging',
-        (target: string) => {
-          mkdirSync(join(target, '.stim-trimmed', '0'), { recursive: true });
-          age(target, new Date(Date.now() - 3 * DAY_MS));
-        },
-        'is a leftover',
-        'kept',
-      ],
-      [
-        'an earlier Stim moved a directory aside for a person',
-        (target: string) => {
-          mkdirSync(join(target, '.stim-not-restored-1-0'));
-          age(target, new Date(Date.now() - 3 * DAY_MS));
-        },
-        'is a leftover',
-        'kept',
-      ],
-    ])('an idle untagged Cargo target/ stays whole, and gc says why, when %s', async (_, arrange, why, report) => {
+    test('an untagged Cargo target/ a build wrote a profile of in that time stays whole, and gc says why', async () => {
       const root = onlyTarget(cargo('app', 'untagged'));
       idleFor(3, root);
-      arrange(join(root, 'target'));
-      expect(await gc(false)).toEqual([expect.objectContaining({ target: root, outcome: report })]);
+      utimesSync(join(root, 'target', 'debug'), new Date(), new Date());
+      const why = 'was written in that time';
+      expect(await gc(false)).toEqual([expect.objectContaining({ target: root, outcome: 'kept' })]);
       expect(await gc()).toEqual([
         expect.objectContaining({
           target: root,
@@ -451,24 +454,6 @@ describe.skipIf(process.platform === 'win32')(
         }),
       ]);
       expect(existsSync(join(root, 'target', 'debug', '.fingerprint', 'unit'))).toBe(true);
-    });
-
-    test('a target/ an earlier Stim staged whole into .stim-trimmed is still found, and gc names the leftover', async () => {
-      const root = onlyTarget(cargo('app', 'untagged'));
-      const target = join(root, 'target');
-      mkdirSync(join(target, '.stim-trimmed'));
-      for (const name of ['debug', 'doc', '.rustc_info.json'])
-        renameSync(join(target, name), join(target, '.stim-trimmed', name));
-      idleFor(3, root);
-
-      expect(await gc()).toEqual([
-        expect.objectContaining({
-          target: root,
-          outcome: 'kept',
-          detail: expect.stringMatching(new RegExp(`${join(target, '.stim-trimmed')} is a leftover`)),
-        }),
-      ]);
-      expect(existsSync(join(target, '.stim-trimmed', 'debug', '.fingerprint', 'unit'))).toBe(true);
     });
 
     test('an idle untagged Cargo target/ stays whole while a build holds a profile lock', async () => {

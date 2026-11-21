@@ -140,6 +140,7 @@ export async function serve(
   requestUpdate: (why: string) => void = () => {},
   requestRestart: (why: string) => void = () => {},
   spawnStatusWorker?: (request: StatusWorkerRequest) => void,
+  busy?: (count: number) => void,
 ): Promise<NetThread> {
   const { port, extraEnv, pathPrepend, loopbackOnly, shareOnly } = options;
   delete process.env.NODE_COMPILE_CACHE;
@@ -188,6 +189,7 @@ export async function serve(
       tailnet,
       keepAwake: { setting: lanSetting.keepAwake, onChange: lanSetting.onKeepAwakeChange },
       ...(spawnStatusWorker ? { spawnStatusWorker } : {}),
+      ...(busy ? { busy } : {}),
       service: {
         label: serviceManagerOrNull()?.runningLabel(process.env) ?? null,
         node: process.execPath,

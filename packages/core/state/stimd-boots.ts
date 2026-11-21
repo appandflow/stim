@@ -122,47 +122,6 @@ export function stimdSuccessorMissingFile(home?: string): string {
   return join(stimdRunDir(home), 'successor-missing.json');
 }
 
-/**
- * `run/job-restart.json`: a service unit's stimd left the home for the unit's job to take back, so other stimds and
- * commands wait for that job instead of taking the home first. `left` is when that stimd finished its shutdown.
- */
-export function stimdJobRestartFile(home?: string): string {
-  return join(stimdRunDir(home), 'job-restart.json');
-}
-
-export type JobRestart = { at: number; pid: number; label: string; left: number | null };
-
-/** How long after the stimd left the job has to take the home: a systemd unit's 30 s `RestartSec` and its boot. */
-export const JOB_RESTART_WAIT_MS = 75_000;
-
-export function readJobRestart(home?: string): JobRestart | null {
-  const record = readJsonObject(stimdJobRestartFile(home));
-  return record && typeof record.at === 'number' && typeof record.pid === 'number' && typeof record.label === 'string'
-    ? {
-        at: record.at,
-        pid: record.pid,
-        label: record.label,
-        left: typeof record.left === 'number' ? record.left : null,
-      }
-    : null;
-}
-
-/**
- * The longest a record holds the home after it was first written: a stimd's shutdown deadline, 10 awake minutes and up
- * to 10 more while the engine selector runs, then the job's restart.
- */
-const JOB_RESTART_MAX_MS = 25 * 60_000;
-
-/**
- * Until when `record` holds the home for its job: `JOB_RESTART_WAIT_MS` after its stimd left, and while that stimd still
- * runs without a `left`, but then never past `JOB_RESTART_MAX_MS` after the record was first written, so a reused pid
- * does not hold the home.
- */
-export function jobRestartUntil(record: JobRestart, running: boolean): number {
-  if (record.left !== null) return record.left + JOB_RESTART_WAIT_MS;
-  return running ? record.at + JOB_RESTART_MAX_MS : 0;
-}
-
 export type SuccessorMissing = { at: number; pid: number; build: string; reason: string };
 
 export function readSuccessorMissing(home?: string): SuccessorMissing | null {

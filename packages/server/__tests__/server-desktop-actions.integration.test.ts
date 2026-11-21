@@ -345,6 +345,22 @@ describe.skipIf(process.platform === 'win32')('Desktop stop', () => {
     expect(stimCalls()).toEqual([]);
   });
 
+  it('reports a workspace action as busy until it ends, so a service takeback waits for it', async () => {
+    writeFileSync(join(workspace, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.88.0' } }));
+    const state = join(workspaceStateDir(workspace), 'state.json');
+    mkdirSync(dirname(state), { recursive: true });
+    writeFileSync(state, JSON.stringify({ launches: {} }));
+    const counts: number[] = [];
+    await start({ busy: (count) => counts.push(count) });
+    const client = await desktop();
+    rmSync(join(root, 'fake-stim.mjs'));
+    expect(await client.request('desktop.stop.subscribe', { cwd: workspace })).toHaveProperty('result.subscription');
+    expect((await stopped(client)).done.exitCode).toBe(0);
+    expect(counts).toContain(1);
+    for (let i = 0; i < 200 && counts.at(-1) !== 0; i++) await new Promise((done) => setTimeout(done, 10));
+    expect(counts.at(-1)).toBe(0);
+  });
+
   it('requires the proved local Desktop and rejects invalid targets before starting work', async () => {
     const port = await start();
     const remote = await authed(port, true);

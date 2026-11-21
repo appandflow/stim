@@ -1,5 +1,4 @@
 import {
-  chmodSync,
   existsSync,
   linkSync,
   lutimesSync,
@@ -21,10 +20,9 @@ import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { withCargoLocks } from '../workspace/cargo-lock.ts';
 import {
   deleteCargoTarget,
-  removableEntries,
+  removablePaths,
   staleCargoPaths,
   staleCargoTargetPaths,
-  targetEntries,
   trimCargoTarget,
 } from '../workspace/cargo-target.ts';
 import { cargoTargetDirsAsync } from '../workspace/regenerable-dirs.ts';
@@ -344,7 +342,7 @@ describe.skipIf(process.platform === 'win32')('trimming in place (Cargo locks ne
     expect(result.kept).toEqual([expect.stringMatching(/^debug: left .*App-Keypair\.json$/)]);
   });
 
-  test('a directory a build removes while the keypair link check walks the target does not keep it', async () => {
+  test('a directory a build removes while the trim lists it does not keep the target', async () => {
     makeProfile('debug', 3 * DAY);
     const incremental = join(realpathSync.native(target), 'debug', 'incremental');
     fsHooks.beforeReaddir = (path) => {
@@ -356,30 +354,6 @@ describe.skipIf(process.platform === 'win32')('trimming in place (Cargo locks ne
     const result = await trimCargoTarget(target, { needBytes: 0, measure: false });
 
     expect(result.removed).toEqual(['debug']);
-  });
-
-  test('a keypair link a build publishes while the trim takes its locks still keeps the target', async () => {
-    makeProfile('debug', 3 * DAY);
-    writeFileSync(join(target, 'debug', 'deps', 'wallet.json'), '[9]');
-    const old = new Date(Date.now() - 3 * DAY);
-    for (const path of [join(target, 'debug', 'deps'), join(target, 'debug')]) utimesSync(path, old, old);
-    const real = getExecutor();
-    setExecutor({
-      ...real,
-      runFileAsync: async (file, args, options) =>
-        file === 'lsof' || file === 'ps' ? '' : real.runFileAsync(file, args, options),
-      spawn: (...args: Parameters<typeof real.spawn>) => {
-        mkdirSync(join(target, 'deploy'), { recursive: true });
-        symlinkSync(join('..', 'debug', 'deps', 'wallet.json'), join(target, 'deploy', 'app-keypair.json'));
-        return real.spawn(...args);
-      },
-    });
-
-    const result = await trimCargoTarget(target, { needBytes: 0 });
-
-    expect(result.removed).toEqual([]);
-    expect(result.kept).toEqual([expect.stringContaining('app-keypair.json is a symbolic link')]);
-    expect(readFileSync(join(target, 'debug', 'deps', 'wallet.json'), 'utf8')).toBe('[9]');
   });
 
   test('a trim interrupted once the fingerprints are gone leaves a profile a later trim still removes', async () => {
@@ -404,37 +378,13 @@ describe.skipIf(process.platform === 'win32')('trimming in place (Cargo locks ne
     expect(readdirSync(join(target, 'debug'))).toEqual(['.cargo-lock']);
   });
 
-  test('a keypair link on another device keeps the target, and the keypair link walk stops at the deadline', async () => {
+  test('a target replaced before the locked step stays, and the profile of its replacement stays', async () => {
     makeProfile('debug', 3 * DAY);
-    writeFileSync(join(target, 'debug', 'wallet.json'), '[5]');
-    const old = new Date(Date.now() - 3 * DAY);
-    utimesSync(join(target, 'debug'), old, old);
-    mkdirSync(join(target, 'deploy'));
-    symlinkSync(join('..', 'debug', 'wallet.json'), join(target, 'deploy', 'app-keypair.json'));
-    fsHooks.dev = (path) => (path.endsWith('/deploy') ? -1 : undefined);
-    const mounted = await trimCargoTarget(target, { needBytes: 0 });
-    expect(mounted).toMatchObject({ removed: [], kept: [expect.stringContaining('deploy is another filesystem')] });
-    expect(readFileSync(join(target, 'deploy', 'app-keypair.json'), 'utf8')).toBe('[5]');
-    delete fsHooks.dev;
-    rmSync(join(target, 'deploy'), { recursive: true });
-
-    makeProfile('release', 3 * DAY);
-    const deadline = new AbortController();
-    fsHooks.beforeReaddir = (path) => {
-      if (path === join(realpathSync.native(target), 'release')) deadline.abort();
-    };
-    const stopped = await trimCargoTarget(target, { needBytes: 0, stop: deadline.signal });
-    expect(stopped).toMatchObject({ removed: [], kept: ['the rest was left at the build headroom deadline'] });
-    expect(existsSync(join(target, 'release', 'deps', 'libx.rlib'))).toBe(true);
-  });
-
-  test('a target replaced during the keypair link walk stays, and the profile of its replacement stays', async () => {
-    makeProfile('debug', 3 * DAY);
-    const debug = join(realpathSync.native(target), 'debug');
+    const lock = join(realpathSync.native(target), 'debug', '.cargo-lock');
     onTestFinished(() => rmSync(`${target}-moved`, { recursive: true, force: true }));
-    fsHooks.beforeReaddir = (path) => {
-      if (path !== debug) return;
-      delete fsHooks.beforeReaddir;
+    fsHooks.afterLstat = (path) => {
+      if (path !== lock) return;
+      delete fsHooks.afterLstat;
       renameSync(target, `${target}-moved`);
       mkdirSync(join(target, 'debug', 'deps'), { recursive: true });
       writeFileSync(join(target, 'debug', 'deps', 'theirs'), 'theirs');
@@ -446,54 +396,6 @@ describe.skipIf(process.platform === 'win32')('trimming in place (Cargo locks ne
     expect(result.kept).toEqual([expect.stringContaining('is no longer the directory Stim checked')]);
     expect(readFileSync(join(target, 'debug', 'deps', 'theirs'), 'utf8')).toBe('theirs');
   });
-
-  test('a deploy link beside a stale profile, pointing into it, keeps the target, and the key stays readable', async () => {
-    makeProfile('debug', 3 * DAY);
-    makeProfile('release', 3 * DAY);
-    writeFileSync(join(target, 'debug', 'wallet.json'), '[7]');
-    const old = new Date(Date.now() - 3 * DAY);
-    utimesSync(join(target, 'debug'), old, old);
-    mkdirSync(join(target, 'deploy'));
-    symlinkSync(join('..', 'debug', 'wallet.json'), join(target, 'deploy', 'app-keypair.json'));
-
-    const result = await trimCargoTarget(target, { needBytes: 0 });
-
-    expect(result.removed).toEqual([]);
-    expect(result.kept).toEqual([expect.stringContaining('app-keypair.json is a symbolic link')]);
-    expect(readFileSync(join(target, 'deploy', 'app-keypair.json'), 'utf8')).toBe('[7]');
-  });
-
-  test('a link named like a keypair anywhere in the target keeps it whole, and what it points at stays', async () => {
-    makeProfile('debug', 3 * DAY);
-    const deps = join(target, 'debug', 'deps');
-    writeFileSync(join(deps, 'wallet.json'), '[9]');
-    symlinkSync('wallet.json', join(deps, 'App-Keypair.json'));
-    const old = new Date(Date.now() - 3 * DAY);
-    lutimesSync(join(deps, 'App-Keypair.json'), old, old);
-    for (const path of [join(deps, 'wallet.json'), deps, join(target, 'debug')]) utimesSync(path, old, old);
-
-    const result = await trimCargoTarget(target, { needBytes: 0 });
-
-    expect(result.removed).toEqual([]);
-    expect(result.kept).toEqual([expect.stringContaining('App-Keypair.json is a symbolic link')]);
-    expect(readFileSync(join(deps, 'wallet.json'), 'utf8')).toBe('[9]');
-  });
-
-  test.each(['.stim-trimmed', '.stim-not-restored-1-0'])(
-    'a leftover %s of an earlier trim keeps the target whole and says what to do',
-    async (leftover) => {
-      makeProfile('debug', 3 * DAY);
-      mkdirSync(join(target, leftover, '0'), { recursive: true });
-
-      const result = await trimCargoTarget(target, { needBytes: 0 });
-
-      expect(result.removed).toEqual([]);
-      expect(result.kept).toEqual([
-        expect.stringContaining(`${leftover} is a leftover of an earlier Stim's trim; delete it`),
-      ]);
-      expect(existsSync(join(target, 'debug', 'deps', 'libx.rlib'))).toBe(true);
-    },
-  );
 
   test('a trim stopped at a deadline finishes the step in flight and leaves the rest', async () => {
     for (const name of ['debug', 'release', 'host-dev']) makeProfile(name, 3 * DAY);
@@ -557,7 +459,7 @@ describe.skipIf(process.platform === 'win32')('deleting an idle Cargo target who
     real = realpathSync(dir);
     stubProcesses({});
   });
-  const remove = () => deleteCargoTarget(dir, { idleMs: DAY, mountInfo: null });
+  const remove = () => deleteCargoTarget(dir, { idleMs: DAY });
 
   test('everything goes in place but lock files and a deploy/ holding a Solana keypair, and nothing is left to plan again', async () => {
     mkdirSync(join(dir, 'criterion', 'base'), { recursive: true });
@@ -574,23 +476,7 @@ describe.skipIf(process.platform === 'win32')('deleting an idle Cargo target who
     expect(readdirSync(dir).toSorted()).toEqual(['debug', 'deploy']);
     expect(readdirSync(join(dir, 'debug'))).toEqual(['.cargo-lock']);
     expect(readdirSync(join(dir, 'deploy')).toSorted()).toEqual(['app-keypair.json', 'app.so']);
-    expect(await removableEntries(dir)).toEqual([]);
-  });
-
-  test('a link named like a keypair deep in deploy/ keeps the whole target, and the key it points at stays', async () => {
-    mkdirSync(join(dir, 'deploy', 'debug'), { recursive: true });
-    writeFileSync(join(dir, 'deploy', 'debug', 'wallet.json'), '[1,2,3]');
-    symlinkSync('wallet.json', join(dir, 'deploy', 'debug', 'app-keypair.json'));
-    ageTree(dir);
-    const old = new Date(Date.now() - 3 * DAY);
-    lutimesSync(join(dir, 'deploy', 'debug', 'app-keypair.json'), old, old);
-
-    const result = await remove();
-
-    expect(result.removed).toEqual([]);
-    expect(result.kept).toEqual([expect.stringContaining('app-keypair.json is a symbolic link')]);
-    expect(readFileSync(join(dir, 'deploy', 'debug', 'wallet.json'), 'utf8')).toBe('[1,2,3]');
-    expect(existsSync(join(dir, 'debug', 'app'))).toBe(true);
+    expect(await removablePaths(dir)).toEqual({ paths: [] });
   });
 
   test("Cargo's CACHEDIR.TAG stays, so a tagged target with no Cargo.toml is still recognised after the delete", async () => {
@@ -602,26 +488,7 @@ describe.skipIf(process.platform === 'win32')('deleting an idle Cargo target who
 
     expect(result.removed.toSorted()).toEqual(['.rustc_info.json', 'debug', 'doc']);
     expect(await cargoTargetDirsAsync(target)).toEqual([dir]);
-    expect(await deleteCargoTarget(dir, { mountInfo: null })).toEqual({ bytes: 0, removed: [], kept: [] });
-  });
-
-  test('a keypair link a build publishes after the checks still keeps it whole', async () => {
-    writeFileSync(join(dir, 'debug', 'wallet.json'), '[1,2,3]');
-    ageTree(dir);
-    stubProcesses({
-      lsof: () => {
-        mkdirSync(join(dir, 'deploy'), { recursive: true });
-        if (!existsSync(join(dir, 'deploy', 'app-keypair.json')))
-          symlinkSync(join('..', 'debug', 'wallet.json'), join(dir, 'deploy', 'app-keypair.json'));
-        return '';
-      },
-    });
-
-    const result = await remove();
-
-    expect(result.removed).toEqual([]);
-    expect(result.kept).toEqual([expect.stringContaining('app-keypair.json is a symbolic link')]);
-    expect(readFileSync(join(dir, 'debug', 'wallet.json'), 'utf8')).toBe('[1,2,3]');
+    expect(await deleteCargoTarget(dir, {})).toEqual({ bytes: 0, removed: [], kept: [] });
   });
 
   test('a target replaced by a link once recognised stays, and nothing behind the link goes', async () => {
@@ -676,23 +543,6 @@ describe.skipIf(process.platform === 'win32')('deleting an idle Cargo target who
     expect(result.bytes).toBeLessThan(1.5 * 1024 * 1024);
   });
 
-  test('a delete stopped part way leaves an untagged target Stim still finds, and a retry removes the rest', async () => {
-    const abort = new AbortController();
-    const fingerprint = join(real, 'debug', '.fingerprint');
-    fsHooks.afterLstat = (path) => {
-      if (path === fingerprint && readdirSync(fingerprint).length === 0) abort.abort();
-    };
-
-    await expect(deleteCargoTarget(dir, { idleMs: DAY, mountInfo: null, signal: abort.signal })).rejects.toThrow(
-      'aborted',
-    );
-    delete fsHooks.afterLstat;
-
-    expect(await cargoTargetDirsAsync(target)).toEqual([dir]);
-    expect((await deleteCargoTarget(dir, { mountInfo: null })).kept).toEqual([]);
-    expect(readdirSync(dir)).toEqual(['debug']);
-  });
-
   test('a target with nothing left in it goes too', async () => {
     rmSync(join(dir, 'debug', '.cargo-lock'));
     ageTree(dir);
@@ -702,7 +552,7 @@ describe.skipIf(process.platform === 'win32')('deleting an idle Cargo target who
     expect(existsSync(dir)).toBe(false);
   });
 
-  test('a symbolic link stays, and so does what it points at; a deploy that is a link keeps the whole target', async () => {
+  test('a symbolic link stays, and so does what it points at', async () => {
     const outside = join(target, 'outside.json');
     writeFileSync(outside, 'theirs');
     rmSync(join(dir, '.rustc_info.json'));
@@ -713,19 +563,9 @@ describe.skipIf(process.platform === 'win32')('deleting an idle Cargo target who
 
     expect((await remove()).removed.toSorted()).toEqual(['debug', 'doc']);
     expect(readFileSync(outside, 'utf8')).toBe('theirs');
-
-    mkdirSync(join(target, 'keys'));
-    writeFileSync(join(dir, 'doc-again'), 'x');
-    symlinkSync(join(target, 'keys'), join(dir, 'deploy'));
-    ageTree(dir);
-    lutimesSync(join(dir, 'deploy'), old, old);
-    expect(targetEntries(dir)?.output).toEqual([]);
-    expect((await remove()).removed).toEqual([]);
-    expect(existsSync(join(dir, 'doc-again'))).toBe(true);
   });
 
   test.each([
-    ['a leftover of an earlier trim', () => mkdirSync(join(dir, '.stim-not-restored-1-0')), 'is a leftover'],
     [
       'a build wrote a top-level entry',
       () => utimesSync(join(dir, 'doc'), new Date(), new Date()),
@@ -752,22 +592,7 @@ describe.skipIf(process.platform === 'win32')('deleting an idle Cargo target who
       () => stubProcesses({ lsof: () => `p100\nn${real}/debug/app\n` }),
       'a process uses',
     ],
-    [
-      'another filesystem is mounted in it',
-      () => (fsHooks.dev = (path) => (path.endsWith('/doc') ? -1 : undefined)),
-      'another filesystem',
-    ],
     ['it is no longer a Cargo target', () => rmSync(join(target, 'Cargo.toml')), 'no longer a Cargo target'],
-    [
-      'Criterion rewrites a saved baseline deep inside while its folders stay old',
-      () => {
-        mkdirSync(join(dir, 'criterion', 'bench', 'base'), { recursive: true });
-        writeFileSync(join(dir, 'criterion', 'bench', 'base', 'sample.json'), '{}');
-        ageTree(dir);
-        utimesSync(join(dir, 'criterion', 'bench', 'base', 'sample.json'), new Date(), new Date());
-      },
-      'criterion holds a file written in that time',
-    ],
   ])('it stays whole when %s', async (_, arrange, why) => {
     arrange();
 
@@ -777,6 +602,28 @@ describe.skipIf(process.platform === 'win32')('deleting an idle Cargo target who
     expect(result.kept).toContainEqual(expect.stringContaining(why));
     expect(existsSync(join(dir, 'debug', 'app'))).toBe(true);
     expect(existsSync(join(dir, 'doc', 'index.html'))).toBe(true);
+  });
+
+  test("an earlier engine's staged trim stays, receipts in it included, while the rest goes", async () => {
+    mkdirSync(join(dir, '.stim-trimmed', '4'), { recursive: true });
+    writeFileSync(join(dir, '.stim-trimmed', '4', 'r.json'), '{}');
+    ageTree(dir);
+
+    const result = await remove();
+
+    expect(result.removed).toContain('debug');
+    expect(readFileSync(join(dir, '.stim-trimmed', '4', 'r.json'), 'utf8')).toBe('{}');
+    expect(existsSync(join(dir, 'debug', 'app'))).toBe(false);
+  });
+
+  test('a directory on another device is not entered, and the delete reports it left', async () => {
+    fsHooks.dev = (path) => (path.endsWith('/doc') ? -1 : undefined);
+
+    const result = await remove();
+
+    expect(result.kept).toContainEqual(expect.stringMatching(/^left .*\/doc$/));
+    expect(existsSync(join(dir, 'doc', 'index.html'))).toBe(true);
+    expect(existsSync(join(dir, 'debug', 'app'))).toBe(false);
   });
 
   test('a .cargo-lock that is a link keeps it whole, and the file behind it stays', async () => {
@@ -800,77 +647,274 @@ describe.skipIf(process.platform === 'win32')('deleting an idle Cargo target who
     expect(held).toMatchObject({ value: { removed: [], kept: [expect.stringContaining('a build holds')] } });
     expect(existsSync(join(dir, 'debug', 'app'))).toBe(true);
   });
-
-  test.each([
-    ['a bind mount lies under it', () => `36 35 0:1 / ${real}/doc rw - ext4 /dev/x rw\n`, 'is a mount point'],
-    [
-      'the mounts cannot be read',
-      () => {
-        throw new Error('EACCES');
-      },
-      'the mounts cannot be read',
-    ],
-  ])('it stays whole when %s', async (_, mountInfo, why) => {
-    const result = await deleteCargoTarget(dir, { idleMs: DAY, mountInfo });
-
-    expect(result.kept).toEqual([expect.stringContaining(why)]);
-    expect(existsSync(join(dir, 'doc', 'index.html'))).toBe(true);
-  });
 });
 
-describe.skipIf(process.platform === 'win32')("deleting an idle Exact app's target (skipped on win32)", () => {
+describe.skipIf(process.platform === 'win32')(
+  "handing an idle Exact app's target to Exact's cleaner (skipped on win32)",
+  () => {
+    let dir: string;
+    let checkout: string;
+    let calls: string[][];
+    let report: (args: string[]) => { stdout: string; status: number };
+    beforeEach(() => {
+      dir = join(target, 'target');
+      writeFileSync(join(target, 'exact.mjs'), 'ensureBun("1.4.2");\n');
+      for (const path of ['bake/app/development', 'traces', 'debug/.fingerprint'])
+        mkdirSync(join(dir, path), { recursive: true });
+      writeFileSync(join(dir, 'bake', 'app', 'development', 'app.bin'), 'x'.repeat(5000));
+      writeFileSync(join(dir, 'traces', 'trace-1.json'), '{}');
+      ageTree(dir);
+      checkout = join(target, 'exact2');
+      mkdirSync(checkout);
+      writeFileSync(join(checkout, 'package.json'), JSON.stringify({ packageManager: 'bun@1.4.3' }));
+      calls = [];
+      const real = realpathSync(dir);
+      report = (args) => {
+        const dryRun = args.includes('--dry-run');
+        return {
+          status: 0,
+          stdout: JSON.stringify({
+            version: 1,
+            status: 'ok',
+            dryRun,
+            target: real,
+            remove: [join(real, 'bake', 'app', 'development'), join(real, 'debug')],
+            kept: [{ path: join(real, 'traces'), why: 'record' }],
+            held: [],
+          }),
+        };
+      };
+      const executor = getExecutor();
+      setExecutor({
+        ...executor,
+        runFileQuietAsync: async (file, args, options) =>
+          processTable(file, args) ?? executor.runFileQuietAsync(file, args, options),
+        runFileAsync: async (file, args, options) => {
+          if (file === 'lsof' || file === 'ps') return '';
+          if (!file.endsWith('/bin/bun')) return executor.runFileAsync(file, args, options);
+          calls.push([file, ...args]);
+          if (args[1] === 'help') return `verbs\n\nExact checkout: ${checkout} at 064bf18d3`;
+          if (!args.includes('--dry-run')) {
+            const planned = report(args);
+            if (planned.status === 0)
+              for (const path of JSON.parse(planned.stdout).remove) rmSync(path, { recursive: true, force: true });
+          }
+          const { stdout, status } = report(args);
+          if (status !== 0) throw Object.assign(new Error('Command failed'), { status, stdout });
+          return stdout;
+        },
+      });
+    });
+    let devServerIn: string | null = null;
+    afterEach(() => {
+      devServerIn = null;
+    });
+    /** A process table that lists this test and, when `devServerIn` is set, a dev server working in that folder. */
+    const processTable = (file: string, args: string[]): string | null => {
+      const other = devServerIn === null ? [] : [4242];
+      if (file === 'ps' && args.includes('pid=,args='))
+        return [`${process.pid} node test`, ...other.map((pid) => `${pid} bun ${devServerIn}/exact.mjs dev`)].join(
+          '\n',
+        );
+      if (file === 'ps' && args.includes('pid=,ppid='))
+        return [process.pid, ...other].map((pid) => `${pid} 1`).join('\n');
+      return null;
+    };
+    const remove = () => deleteCargoTarget(dir, { idleMs: DAY });
+
+    test("a dry run then the clean run with the Bun each pin names, and Exact's records stay", async () => {
+      const result = await remove();
+
+      const real = realpathSync(target);
+      expect(calls).toEqual([
+        [expect.stringMatching(/\.bun-1\.4\.2\/bin\/bun$/), join(real, 'exact.mjs'), 'help'],
+        [
+          expect.stringMatching(/\.bun-1\.4\.3\/bin\/bun$/),
+          join(checkout, 'scripts', 'sweep.mjs'),
+          'clean',
+          real,
+          '--dry-run',
+          '--json',
+        ],
+        [expect.stringMatching(/\.bun-1\.4\.2\/bin\/bun$/), join(real, 'exact.mjs'), 'help'],
+        [
+          expect.stringMatching(/\.bun-1\.4\.3\/bin\/bun$/),
+          join(checkout, 'scripts', 'sweep.mjs'),
+          'clean',
+          real,
+          '--json',
+        ],
+      ]);
+      expect(result.removed).toEqual(['bake/app/development', 'debug']);
+      expect(result.bytes).toBeGreaterThan(0);
+      expect(existsSync(join(dir, 'traces', 'trace-1.json'))).toBe(true);
+      expect(await removablePaths(dir)).toMatchObject({ paths: expect.any(Array) });
+    });
+
+    test.each([
+      [
+        'Exact reports a lock held',
+        () =>
+          (report = () => ({
+            status: 1,
+            stdout: JSON.stringify({
+              version: 1,
+              status: 'busy',
+              dryRun: true,
+              target: dir,
+              remove: [],
+              kept: [],
+              held: ['/t/debug/.cargo-lock'],
+            }),
+          })),
+        'Exact reports it in use: /t/debug/.cargo-lock',
+      ],
+      [
+        'an older checkout treats clean as a target path and prints no JSON',
+        () => (report = () => ({ status: 1, stdout: '' })),
+        "Exact's cleaner cannot run",
+      ],
+      [
+        'a report of another version',
+        () =>
+          (report = () => ({
+            status: 0,
+            stdout: JSON.stringify({ version: 2, status: 'ok', remove: [], kept: [], held: [] }),
+          })),
+        "Exact's cleaner cannot run",
+      ],
+      ['the checkout pins no Bun', () => writeFileSync(join(checkout, 'package.json'), '{}'), 'pins no Bun version'],
+    ])('it stays whole when %s', async (_, arrange, why) => {
+      arrange();
+
+      const result = await remove();
+
+      expect(result.removed).toEqual([]);
+      expect(result.kept).toEqual([expect.stringContaining(why)]);
+      expect(existsSync(join(dir, 'bake', 'app', 'development', 'app.bin'))).toBe(true);
+    });
+
+    test('a clean that ends without a report fails with an unknown outcome instead of keeping the target', async () => {
+      report = (args) =>
+        args.includes('--dry-run')
+          ? {
+              status: 0,
+              stdout: JSON.stringify({
+                version: 1,
+                status: 'ok',
+                remove: [join(realpathSync(dir), 'debug')],
+                kept: [],
+                held: [],
+              }),
+            }
+          : { status: 137, stdout: '' };
+
+      await expect(remove()).rejects.toThrow('what it removed is not known');
+    });
+
+    test.each([
+      ['help', (args: string[]) => args[1] === 'help'],
+      ['the dry run', (args: string[]) => args.includes('--dry-run')],
+    ])('a cleanup refusal from the executor during %s is reported, not turned into a keep', async (_, when) => {
+      const executor = getExecutor();
+      setExecutor({
+        ...executor,
+        runFileAsync: async (file, args, options) => {
+          if (file.endsWith('/bin/bun') && when(args))
+            throw Object.assign(new Error('refused'), { reportCleanup: true });
+          return executor.runFileAsync(file, args, options);
+        },
+      });
+
+      await expect(remove()).rejects.toThrow('refused');
+    });
+
+    test('a target Exact kept is not asked about again within a day', async () => {
+      report = () => ({
+        status: 1,
+        stdout: JSON.stringify({ version: 1, status: 'busy', remove: [], kept: [], held: ['/t/debug/.cargo-lock'] }),
+      });
+      await remove();
+      const asked = calls.length;
+
+      const result = await remove();
+
+      expect(calls).toHaveLength(asked);
+      expect(result.kept).toEqual([expect.stringContaining('Stim asks again after a day')]);
+    });
+
+    test("an earlier Stim's staged trim keeps the target, and Exact is never asked", async () => {
+      mkdirSync(join(dir, '.stim-trimmed', '3', '.fingerprint'), { recursive: true });
+      mkdirSync(join(dir, '.stim-trimmed', '4'), { recursive: true });
+      writeFileSync(join(dir, '.stim-trimmed', '4', 'r.json'), '{}');
+      ageTree(dir);
+
+      const result = await remove();
+
+      expect(result.kept).toEqual([expect.stringContaining('.stim-trimmed from an earlier Stim')]);
+      expect(calls).toEqual([]);
+      expect(readFileSync(join(dir, '.stim-trimmed', '4', 'r.json'), 'utf8')).toBe('{}');
+      expect(existsSync(join(dir, 'debug'))).toBe(true);
+    });
+
+    test('a process working in the app keeps it, and Exact is never asked', async () => {
+      devServerIn = realpathSync(target);
+
+      const result = await remove();
+
+      expect(result.kept).toEqual([expect.stringContaining('its app may be in use: process 4242')]);
+      expect(calls).toEqual([]);
+    });
+  },
+);
+
+describe.skipIf(process.platform === 'win32')('Exact files in a target no Exact app owns (skipped on win32)', () => {
   let dir: string;
   beforeEach(() => {
     dir = join(target, 'target');
-    writeFileSync(join(target, 'exact.mjs'), '');
-    for (const path of ['.apple-cargo-locks/aarch64-apple-ios', 'bake/app', 'clients/app', 'debug/.fingerprint'])
+    for (const path of ['.apple-cargo-locks/aarch64-apple-ios', 'debug/.fingerprint'])
       mkdirSync(join(dir, path), { recursive: true });
-    writeFileSync(join(dir, '.rustc_info.json'), '{}');
-    for (const file of [
-      join(dir, '.apple-cargo-locks', 'aarch64-apple-ios', 'libapp.lock.flock'),
-      join(dir, '.exact-sweep.json.lock'),
-      join(dir, 'clients', 'app', 'client.js'),
-    ])
-      writeFileSync(file, '');
-    writeFileSync(join(dir, '.exact-sweep.json'), JSON.stringify({ at: Date.now() - 3 * DAY, units: {} }));
+    writeFileSync(join(dir, 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55\n');
+    writeFileSync(join(dir, 'debug', '.cargo-lock'), '');
+    writeFileSync(join(dir, 'debug', 'app'), 'binary');
+    writeFileSync(join(dir, '.apple-cargo-locks', 'aarch64-apple-ios', 'libapp.lock.flock'), '');
     ageTree(dir);
     stubProcesses({});
   });
-  afterEach(() => {
-    if (existsSync(join(dir, 'bake'))) chmodSync(join(dir, 'bake'), 0o755);
-  });
-  const remove = () => deleteCargoTarget(dir, { idleMs: DAY, mountInfo: null });
+  const remove = () => deleteCargoTarget(dir, { idleMs: DAY });
 
-  test("Exact's folders and records go, and its lock files stay", async () => {
-    mkdirSync(join(dir, 'traces'));
-    writeFileSync(join(dir, 'traces', 'trace-1.json'), '{"session":1}');
-    writeFileSync(join(dir, 'clients', 'app', 'receipt.json'), '{"development":{"token":"abc"}}');
-    ageTree(dir);
-
+  test("the remover leaves Exact's lock files and .apple-cargo-locks", async () => {
     const result = await remove();
 
-    expect(result.kept).toEqual([]);
-    expect(readdirSync(dir).toSorted()).toEqual(['.apple-cargo-locks', '.exact-sweep.json.lock']);
+    expect(existsSync(join(dir, 'debug', 'app'))).toBe(false);
+    expect(result.removed).toContain('debug');
     expect(existsSync(join(dir, '.apple-cargo-locks', 'aarch64-apple-ios', 'libapp.lock.flock'))).toBe(true);
   });
 
-  test('it stays whole while a build holds an Apple Cargo lock', async () => {
-    const lock = join(realpathSync(dir), '.apple-cargo-locks', 'aarch64-apple-ios', 'libapp.lock.flock');
-    stubProcesses({ lsof: (args) => (args.at(-1) === lock ? '4242\n' : '') });
+  test("a target holding Exact's sweep lock and a receipt with no Exact app beside it stays whole", async () => {
+    writeFileSync(join(dir, '.exact-sweep.json.lock'), '');
+    mkdirSync(join(dir, 'web-receipts'));
+    writeFileSync(join(dir, 'web-receipts', 'r.json'), '{}');
+    ageTree(dir);
 
     const result = await remove();
 
     expect(result.removed).toEqual([]);
-    expect(result.kept).toContainEqual(expect.stringContaining('libapp.lock.flock'));
-    expect(existsSync(join(dir, 'clients', 'app', 'client.js'))).toBe(true);
+    expect(result.kept).toEqual([expect.stringContaining('.exact-sweep.json.lock but no Exact app beside it')]);
+    expect(existsSync(join(dir, 'web-receipts', 'r.json'))).toBe(true);
+    expect(existsSync(join(dir, 'debug', 'app'))).toBe(true);
   });
 
-  test.skipIf(process.getuid?.() === 0)('it stays whole when an entry cannot be listed', async () => {
-    chmodSync(join(dir, 'bake'), 0o000);
+  test("a target holding Exact's ledger with no Exact app beside it stays whole", async () => {
+    writeFileSync(join(dir, '.exact-sweep.json'), JSON.stringify({ at: Date.now() - 3 * DAY, units: {} }));
+    mkdirSync(join(dir, 'web-receipts'));
+    writeFileSync(join(dir, 'web-receipts', 'r.json'), '{}');
+    ageTree(dir);
 
     const result = await remove();
 
-    expect(result.kept).toContainEqual(expect.stringContaining('bake cannot be listed'));
-    expect(existsSync(join(dir, 'clients', 'app', 'client.js'))).toBe(true);
+    expect(result.removed).toEqual([]);
+    expect(result.kept).toEqual([expect.stringContaining('.exact-sweep.json but no Exact app beside it')]);
+    expect(existsSync(join(dir, 'web-receipts', 'r.json'))).toBe(true);
   });
 });

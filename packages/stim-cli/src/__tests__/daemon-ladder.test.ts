@@ -25,15 +25,17 @@ import {
   workspaceLightenedFile,
 } from '@stim-cli/core/state';
 import * as cacheModule from '../cache/caches.ts';
-import * as acting from '../stimd/passes/act.ts';
-import * as sweep from '../stimd/passes/sweep.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
 import { recordGcResult } from '../commands/gc/results.ts';
 import { collectOwnedDeviceActivityAsync, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { REAL_BYTES_THRESHOLD, runDormantDependencies } from '../daemon/dependencies.ts';
 import { runIdlePass } from '../daemon/idle.ts';
 import { runLadder } from '../daemon/ladder.ts';
+import * as acting from '../stimd/passes/act.ts';
 import * as cargoTargetPasses from '../stimd/passes/cargo-target.ts';
+import * as dependencies from '../daemon/dependencies.ts';
+import * as sweep from '../stimd/passes/sweep.ts';
+import * as unowned from '../stimd/passes/unowned.ts';
 import { runDiskPass, runForcedLadder, runHomePasses, runLadderToFree, type LadderPass } from '../daemon/passes.ts';
 import * as ladderModule from '../daemon/ladder.ts';
 import * as bootedParked from '../daemon/booted-parked.ts';
@@ -911,7 +913,7 @@ describe('the pressure ladder', () => {
     ]);
   });
 
-  test("rung 7 in the daemon's ladder reports a finished worktree and removes nothing", async () => {
+  test('rung 7 in stim gc reports a finished worktree and removes nothing', async () => {
     const worktree = join(projects, 'finished');
     vi.spyOn(sweep, 'planWorktrees').mockResolvedValue({
       sweep: {
@@ -941,7 +943,7 @@ describe('the pressure ladder', () => {
     const act = vi.spyOn(acting, 'executeAction');
 
     const { actions } = await runLadder(
-      { ...input(true, async () => pressure('high')), fromRung: 7, reports: true },
+      { ...input(true, async () => pressure('high')), fromRung: 7, lastRung: 7, force: { level: 'high', why: 'test' } },
       pressure('high'),
     );
 
@@ -949,6 +951,36 @@ describe('the pressure ladder', () => {
     expect(actions.filter((action) => action.rung === 7)).toEqual([
       expect.objectContaining({ target: worktree, outcome: 'kept', detail: expect.stringMatching(/^report only/) }),
     ]);
+  });
+
+  test("the stim-daemon's ladder runs neither report rung, at high or critical", async () => {
+    const worktrees = vi.spyOn(sweep, 'planWorktrees');
+    const ranked = vi.spyOn(dependencies, 'rankDependencies');
+
+    for (const level of ['high', 'critical'] as const)
+      await runLadder({ ...input(true, async () => pressure(level)), fromRung: 5 }, pressure(level));
+
+    expect(worktrees).not.toHaveBeenCalled();
+    expect(ranked).not.toHaveBeenCalled();
+  });
+
+  test('a pass whose last rung freed disk returns the level measured after it', async () => {
+    vi.spyOn(daemonMeasure, 'measureDisk').mockResolvedValue([
+      { volume: '/', freeMb: 1024, device: statSync(projects).dev },
+    ]);
+    const cache = { tool: 'npm', label: 'npm', paths: [projects], command: null, running: /npm/ };
+    vi.spyOn(unowned, 'surveyToolCaches').mockResolvedValue([{ cache, bytes: 1024, kept: null }]);
+    vi.spyOn(unowned, 'cleanToolCache').mockResolvedValue({ outcome: 'done', before: 1024, after: 0, detail: 'x' });
+    const remeasure = vi
+      .fn<() => Promise<DaemonPressure>>(async () => pressure('normal'))
+      .mockResolvedValueOnce(pressure('critical'));
+    const operation = testContext({ env: { ...process.env, STIM_HOME: undefined, ANDROID_HOME: projects } });
+
+    const pass = await runLadder({ ...input(true, remeasure), fromRung: 9, operation }, pressure('critical'));
+
+    expect(pass.actions).toContainEqual(expect.objectContaining({ rung: 9, outcome: 'done' }));
+    expect(pass.actions.filter((action) => action.rung === 5 || action.rung === 7)).toEqual([]);
+    expect(pass.pressure.level).toBe('normal');
   });
 
   test('rung 1 records nothing for a stopped workspace whose only output is a Metro store a running dev server shares', async () => {
@@ -1687,7 +1719,7 @@ describe('the ladder a build runs for its headroom', () => {
   });
 });
 
-describe('rung 5', () => {
+describe('rung 5 in stim gc', () => {
   const HOUR_MS = 60 * MINUTE_MS;
 
   beforeEach(() => {
@@ -1746,7 +1778,7 @@ describe('rung 5', () => {
     recordWorkspaceUse(root, new Date(Date.now() - 2 * HOUR_MS));
   }
 
-  const ladder = (level: 'high' | 'critical', protectedRoot?: string, daemon = true) =>
+  const ladder = (level: 'high' | 'critical', protectedRoot?: string) =>
     runLadder(
       {
         config: loadConfig()!,
@@ -1756,7 +1788,8 @@ describe('rung 5', () => {
         simsFailed: false,
         remeasure: async () => pressure(level),
         fromRung: 5,
-        reports: daemon,
+        lastRung: 5,
+        force: { level, why: 'test' },
         ...(protectedRoot ? { protectedRoot } : {}),
       },
       pressure(level),
@@ -1784,61 +1817,6 @@ describe('rung 5', () => {
         actions
           .filter((action) => action.rung === 5)
           .map(({ target, outcome, detail }) => [target, outcome, detail.startsWith('report only')]);
-
-      test("at high the daemon's ladder deletes nothing and reports at most hourly the node_modules and Pods of a linked worktree idle 1 hour, never at critical or in a command's ladder", async () => {
-        const { idle, recent } = linkedWorktrees(['idle', 'recent']);
-        register(idle);
-        register(recent);
-        recordWorkspaceUse(recent, new Date(Date.now() - 30 * MINUTE_MS));
-
-        const high = await ladder('high');
-        const within = await ladder('high');
-        vi.setSystemTime(Date.now() + HOUR_MS);
-        const critical = await ladder('critical');
-        const command = await ladder('high', undefined, false);
-        const later = await ladder('high');
-
-        for (const root of [idle, recent]) {
-          expect(existsSync(join(root, 'node_modules'))).toBe(true);
-          expect(existsSync(join(root, 'ios', 'Pods'))).toBe(true);
-        }
-        const idleTrees = [join(idle, 'ios', 'Pods'), join(idle, 'node_modules')];
-        expect(reports(high.actions).toSorted()).toEqual(idleTrees.map((target) => [target, 'kept', true]));
-        expect(reports(within.actions)).toEqual([]);
-        expect(reports(critical.actions)).toEqual([]);
-        expect(reports(command.actions)).toEqual([]);
-        expect(reports(later.actions).length).toBeGreaterThanOrEqual(2);
-      });
-
-      test("the daemon's ladder reports nothing while memory is critical, even with disk only high", async () => {
-        const { idle } = linkedWorktrees(['idle']);
-        register(idle);
-        const level: DaemonPressure = {
-          level: 'critical',
-          disk: 'high',
-          memory: 'critical',
-          reasons: ['fixture'],
-          memoryWarningSince: null,
-        };
-        const config = loadConfig();
-        if (!config) throw new Error('no config');
-
-        const { actions } = await runLadder(
-          {
-            config,
-            act: true,
-            log,
-            devices: [],
-            simsFailed: false,
-            remeasure: async () => level,
-            fromRung: 5,
-            reports: true,
-          },
-          level,
-        );
-
-        expect(reports(actions)).toEqual([]);
-      });
 
       test('it reports nothing of a worktree used a minute ago, and reports one used two hours ago', async () => {
         const { recent, idle } = linkedWorktrees(['recent', 'idle']);

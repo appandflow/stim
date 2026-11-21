@@ -1,4 +1,4 @@
-import { existsSync, lstatSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { lstat, realpath } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
@@ -15,7 +15,6 @@ import { readVolumeSpaceAsync } from './budget.ts';
 import {
   admitCargoTarget,
   cargoProfileDirs,
-  leftoverReason,
   staleCargoTargetPaths,
   trimCargoTarget,
 } from '../../workspace/cargo-target.ts';
@@ -171,26 +170,15 @@ export async function measureCargoTargets(
   return sizes;
 }
 
-/** Whether every path is itself on `device`, the volume a pressure sample read at normal; false when one cannot be read. */
-function onSampledDevice(paths: readonly string[], device: number | undefined): boolean {
-  if (device === undefined) return false;
-  try {
-    return paths.every((path) => lstatSync(path, { throwIfNoEntry: false })?.dev === device);
-  } catch {
-    return false;
-  }
-}
-
 async function bytesOf(
   paths: readonly string[],
   signal?: AbortSignal,
   lowPriority = false,
-  throttleDevice?: number,
+  throttleIo = false,
 ): Promise<number> {
   let total = 0;
   for (const path of paths) {
     signal?.throwIfAborted();
-    const throttleIo = onSampledDevice([path], throttleDevice);
     total +=
       (await measuredDirectorySizeAsync(path, { timeoutMs: SIZE_TIMEOUT_MS, signal, lowPriority, throttleIo })) ?? 0;
   }
@@ -216,21 +204,8 @@ function profilesOutside(dir: string, gone: readonly string[]): string[] {
 }
 
 export async function measuredDiskLevel(dir: string, signal?: AbortSignal): Promise<PressureLevel> {
-  return (await sampledDiskLevel(dir, signal))?.level ?? 'normal';
-}
-
-/** A pressure sample of one volume: its level and, when known, its device id. */
-interface DiskSample {
-  level: PressureLevel;
-  device?: number;
-}
-
-/** The disk level and device of the volume `dir` is on, or null when that volume could not be read. */
-async function sampledDiskLevel(dir: string, signal?: AbortSignal): Promise<DiskSample | null> {
-  const [volume] = await readVolumeSpaceAsync([dir], signal);
-  if (!volume) return null;
   const { thresholds } = diskThresholds(loadConfig());
-  return { level: diskPressure([volume], thresholds).level, device: volume.device };
+  return diskPressure(await readVolumeSpaceAsync([dir], signal), thresholds).level;
 }
 
 /**
@@ -246,7 +221,7 @@ export async function planCargoTargets({
   now,
   signal,
   level,
-  diskLevel = sampledDiskLevel,
+  diskLevel = measuredDiskLevel,
   lowPriority = false,
 }: {
   sizes: readonly MaintenanceSize[];
@@ -255,8 +230,7 @@ export async function planCargoTargets({
   now: number;
   signal?: AbortSignal;
   level?: PressureLevel;
-  /** A sample of the volume `dir` is on, null when it could not be read. */
-  diskLevel?: (dir: string, signal?: AbortSignal) => Promise<DiskSample | null>;
+  diskLevel?: (dir: string, signal?: AbortSignal) => Promise<PressureLevel>;
   lowPriority?: boolean;
 }): Promise<MaintenancePlan> {
   const plan: MaintenancePlan = { actions: [], blocked: [], skips: [] };
@@ -276,8 +250,7 @@ export async function planCargoTargets({
     );
   for (const { dir, workspace, bytes } of targets) {
     signal?.throwIfAborted();
-    const sampled = level ? null : await diskLevel(dir, signal);
-    const tightened = level ?? sampled?.level ?? 'normal';
+    const tightened = level ?? (await diskLevel(dir, signal));
     const capped = cap > 0 && (bytes === null || bytes > cap);
     if (!capped && tightened === 'normal') continue;
     const policy = cargoTrimPolicy(tightened);
@@ -292,11 +265,6 @@ export async function planCargoTargets({
       plan.skips.push({ target: dir, reason: 'pinned by maintenance.keep', workspace });
       continue;
     }
-    const leftover = leftoverReason(dir);
-    if (leftover) {
-      plan.skips.push({ target: dir, reason: leftover, workspace });
-      continue;
-    }
     if (bytes === null) plan.blocked.push(why);
     const stale = staleCargoTargetPaths(dir, now);
     if ('refusal' in stale) {
@@ -304,8 +272,8 @@ export async function planCargoTargets({
       continue;
     }
     const gone = stale.paths.map((path) => join(dir, path));
-    const throttleDevice = sampled?.level === 'normal' ? sampled.device : undefined;
-    let freeable = await bytesOf(gone, signal, lowPriority, throttleDevice);
+    const throttleIo = !level && tightened === 'normal';
+    let freeable = await bytesOf(gone, signal, lowPriority, throttleIo);
     if (policy.incremental === 'all' || freeable < overBytes) {
       freeable += await bytesOf(
         profilesOutside(dir, gone)
@@ -313,7 +281,7 @@ export async function planCargoTargets({
           .filter(existsSync),
         signal,
         lowPriority,
-        throttleDevice,
+        throttleIo,
       );
     }
     if (freeable === 0) {
@@ -368,11 +336,6 @@ export async function planCargoTargetsAtPressure({
     }
     if (await pinned(workspace)) {
       plan.skips.push({ target: dir, reason: 'pinned by maintenance.keep', workspace });
-      continue;
-    }
-    const leftover = leftoverReason(dir);
-    if (leftover) {
-      plan.skips.push({ target: dir, reason: leftover, workspace });
       continue;
     }
     const stale = staleCargoTargetPaths(dir, now);

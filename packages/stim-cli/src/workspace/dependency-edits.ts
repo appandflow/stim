@@ -427,19 +427,17 @@ async function recordedEdits(
     : { delete: true };
 }
 
-/** `recordedEdits`, then, for a tree it would delete, `rescueBeforeDelete`, which copies its pnpm patches aside. */
+/**
+ * `recordedEdits`, then, for a tree it would delete and without `readOnly`, `rescueBeforeDelete`, which copies its pnpm
+ * patches aside.
+ */
 export async function checkDependencyEdits(
   path: string,
   options: { level: PressureLevel; worktree: string; readOnly?: boolean; signal?: AbortSignal },
 ): Promise<EditCheck> {
   const check = await recordedEdits(path, options);
-  if ('keep' in check) return check;
-  const held = await rescueBeforeDelete(
-    options.worktree,
-    path,
-    { trees: [path] },
-    { act: !options.readOnly, signal: options.signal },
-  );
+  if ('keep' in check || options.readOnly) return check;
+  const held = await rescueBeforeDelete(options.worktree, { trees: [path] }, options.signal);
   return held ? { keep: held } : check;
 }
 

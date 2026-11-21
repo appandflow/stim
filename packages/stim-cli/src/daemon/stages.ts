@@ -165,7 +165,7 @@ async function idleVerdict(
     /** The checkout whose source and git writes, processes and agent sessions count; default `path`. */
     checkout?: string;
   },
-): Promise<{ idleMs: number } | { kept: string }> {
+): Promise<{ idleMs: number; lastAt: number } | { kept: string; lastAt: number | null; active?: true }> {
   const now = Date.now();
   const pressured = setting === PRESSURE_THRESHOLD;
   const stim = await idleStopEvidence(path, [], { now, idleMs: thresholdMs, locked, pressured, operation });
@@ -174,17 +174,22 @@ async function idleVerdict(
       ? stim
       : mergeEvidence(stim, await discoveredEvidence(checkout, { now, idleMs: thresholdMs, reads, operation }));
   const decision = decideIdleStop(evidence, { idleMs: thresholdMs, now, setting, pressured });
-  if (!decision.stop) return { kept: decision.reason };
+  const times = evidence.activity.map(({ at }) => at).filter(Number.isFinite);
+  const lastAt = times.length ? Math.max(...times) : null;
+  if (!decision.stop) return { kept: decision.reason, lastAt, ...(decision.active ? { active: true as const } : {}) };
   try {
     const { settings } = await projectSettings(path, operation);
-    if (maintenanceKeepSetting(settings)) return { kept: 'pinned by maintenance.keep' };
-    if (idleMinutesSetting(settings) === 0) return { kept: 'idle.minutes is 0' };
+    if (maintenanceKeepSetting(settings)) return { kept: 'pinned by maintenance.keep', lastAt };
+    if (idleMinutesSetting(settings) === 0) return { kept: 'idle.minutes is 0', lastAt };
   } catch (error) {
     if (isClaimUnavailable(error) && 'reportCleanup' in error) throw error;
     operation?.signal.throwIfAborted();
-    return { kept: `its settings cannot be resolved: ${error instanceof Error ? error.message : String(error)}` };
+    return {
+      kept: `its settings cannot be resolved: ${error instanceof Error ? error.message : String(error)}`,
+      lastAt,
+    };
   }
-  return { idleMs: decision.idleMs };
+  return { idleMs: decision.idleMs, lastAt: decision.last.at };
 }
 
 async function idleFor(
@@ -240,6 +245,14 @@ function mergeEvidence<T extends { activity: unknown[]; keep: string[] }>(a: T, 
   return { ...a, activity: [...a.activity, ...b.activity], keep: [...a.keep, ...b.keep] };
 }
 
+/** What a walk read of one checkout: when its reads began, its newest activity, and why it is kept when not for activity. */
+export interface CheckoutReading {
+  path: string;
+  at: number;
+  lastActivityAt: number | null;
+  kept: string | null;
+}
+
 /** `full` reads source and git evidence even for a registered workspace; `onKept` hears why a workspace is not idle. */
 interface IdleSelection {
   full?: boolean;
@@ -250,6 +263,8 @@ interface IdleSelection {
   reclaimable?: (path: string) => boolean | Promise<boolean>;
   /** Runs before each checkout's reads, a unit boundary of the disk owner. */
   between?: () => Promise<void>;
+  /** Hears each checkout the walk read, inside that checkout's unit. */
+  onRead?: (reading: CheckoutReading) => Promise<void>;
 }
 
 function idleWorkspaces(
@@ -282,6 +297,7 @@ async function readIdleWorkspaces(
     onKept,
     reclaimable,
     between,
+    onRead,
   }: Omit<IdleSelection, 'setting'> & { discover?: boolean } = {},
 ): Promise<StageCandidate[]> {
   const readings: (Omit<StageCandidate, 'idleMs' | 'role' | 'checkout'> & { idleMs: number | null })[] = [];
@@ -295,15 +311,20 @@ async function readIdleWorkspaces(
     await between?.();
     if (sameRoot(path, reading.protectedRoot) || !(await worthIt(path, project))) continue;
     if (reclaimable && discoveredPaths.has(path) && !(await reclaimable(path))) continue;
-    const used = Date.parse(String(readWorkspaceState(path)?.lastUsedAt ?? ''));
-    if (Number.isFinite(used) && Date.now() - used < thresholdMs) {
-      onKept?.(path, `a Stim command used it ${Math.floor((Date.now() - used) / MINUTE_MS)} minutes ago`);
-      continue;
-    }
+    const at = Date.now();
     try {
+      const used = Date.parse(String(readWorkspaceState(path)?.lastUsedAt ?? ''));
+      if (Number.isFinite(used) && Date.now() - used < thresholdMs) {
+        onKept?.(path, `a Stim command used it ${Math.floor((Date.now() - used) / MINUTE_MS)} minutes ago`);
+        await onRead?.({ path, at, lastActivityAt: used, kept: null });
+        continue;
+      }
       let idleMs: number | null = null;
-      if (await runsSomething(path, project, reading)) onKept?.(path, 'something of it runs');
-      else {
+      let read: CheckoutReading;
+      if (await runsSomething(path, project, reading)) {
+        onKept?.(path, 'something of it runs');
+        read = { path, at, lastActivityAt: at, kept: 'something of it runs' };
+      } else {
         const verdict = await idleVerdict(path, thresholdMs, setting, {
           operation: reading.operation,
           reads,
@@ -311,8 +332,11 @@ async function readIdleWorkspaces(
         });
         if ('idleMs' in verdict) idleMs = verdict.idleMs;
         else onKept?.(path, verdict.kept);
+        const kept = 'kept' in verdict && !verdict.active ? verdict.kept : null;
+        read = { path, at, lastActivityAt: verdict.lastAt, kept };
       }
       readings.push({ path, project, idleMs });
+      await onRead?.(read);
     } catch (error) {
       if (isClaimUnavailable(error) && 'reportCleanup' in error) throw error;
       reading.operation?.signal.throwIfAborted();

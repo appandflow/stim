@@ -826,6 +826,19 @@ describe('offloaded builds', () => {
   }
 
   test.skipIf(!fakeTailscale)(
+    'reports how many offload jobs run until a job, artifact delivery included, ends with its connection',
+    async () => {
+      const counts: number[] = [];
+      const port = await startWorker({ busy: (count) => counts.push(count) });
+      const { client } = await buildClient(port);
+      expect(counts.length).toBeGreaterThan(0);
+      expect(counts.every((count) => count === 1)).toBe(true);
+      client.socket.close();
+      await eventually(() => counts.at(-1) === 0);
+    },
+  );
+
+  test.skipIf(!fakeTailscale)(
     'a machine that cannot host refuses device-host access and still takes builds',
     async () => {
       const port = await startWorker({ hostsDevices: false });
