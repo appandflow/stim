@@ -1,3 +1,4 @@
+import { createStim } from '../api.ts';
 import assert from 'node:assert';
 import fs, {
   cpSync,
@@ -1059,6 +1060,96 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
     }
   }, 60_000);
 
+  test.each(['cancel', 'timeout'] as const)(
+    'an item %s waits for its terminal cleanup failure without stopping other requests',
+    async (reason) => {
+      const before = new Set(process.listeners('SIGTERM'));
+      let started = false;
+      let cancelled = false;
+      let stopped = false;
+      let settleItem!: (error: Error) => void;
+      let count = 0;
+      const terminal = new Promise<never>((_resolve, reject) => {
+        settleItem = reject;
+      });
+      const threads = vi.spyOn(stimdThreads, 'createThreadTable').mockReturnValue({
+        run: async () => [],
+        abort: () => {},
+        settle: () => {},
+        close: async () => {},
+        gc: () => ({ result: new Promise(() => {}), leave: () => {} }),
+        item: () => {
+          if (count++) return { result: Promise.resolve({ results: [], failures: 0 }), leave: () => {} };
+          started = true;
+          return {
+            result: terminal,
+            leave: () => {
+              cancelled = true;
+            },
+          };
+        },
+      });
+      const realSetTimeout = globalThis.setTimeout;
+      let expire: (() => void) | undefined;
+      const budget = vi.spyOn(globalThis, 'setTimeout');
+      const running = runStimd({ mode: 'report', tickMs: 60_000 });
+      let call: Promise<unknown> | undefined;
+      try {
+        await listening();
+        budget.mockImplementation((callback, ms, ...args) => {
+          if (reason !== 'timeout' || ms !== 60_000 || expire) return realSetTimeout(callback, ms, ...args);
+          expire = () => callback();
+          return realSetTimeout(() => {}, 2 ** 30);
+        });
+        const controller = new AbortController();
+        const client = createStim({ projectRoot: home, home, env: { ...process.env }, admission: 'none' });
+        call = client.deleteGarbageItem({ item: { kind: 'watchman' }, signal: controller.signal });
+        let ended = false;
+        void call.then(
+          () => {
+            ended = true;
+            return undefined;
+          },
+          () => {
+            ended = true;
+            return undefined;
+          },
+        );
+        await vi.waitFor(() => expect(started).toBe(true));
+        if (reason === 'timeout') {
+          if (!expire) throw new Error('no report budget');
+          expire();
+        } else controller.abort();
+        await vi.waitFor(() => expect(cancelled).toBe(true));
+        expect(ended).toBe(false);
+        settleItem(
+          Object.assign(new Error('item child still runs'), {
+            code: 'STIM_CLAIM_UNAVAILABLE',
+            remedy: 'Inspect item child.',
+            reportCleanup: true,
+            reportChild: { pid: 4242, processToken: 'fixture' },
+            cleanupSettled: () => stopped,
+          }),
+        );
+        await expect(call).rejects.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE', remedy: 'Inspect item child.' });
+        await expect(client.deleteGarbageItem({ item: { kind: 'gradle-daemons' } })).resolves.toEqual({
+          results: [],
+          exitCode: 0,
+        });
+        expect(daemonEvents()).not.toContain('daemon_exited');
+      } finally {
+        stopped = true;
+        settleItem(new Error('fixture finished'));
+        await call?.catch(() => {});
+        budget.mockRestore();
+        stopInProcess(before);
+        await running.catch(() => {});
+        threads.mockRestore();
+      }
+    },
+    30_000,
+  );
+
   test.each(['passes', 'measure'])(
     'a %s thread cleanup the thread watches keeps stimd up until the thread finds the child stopped, then stimd releases its claims as usual',
     async (worker) => {
@@ -1085,6 +1176,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
         settle,
         close: async () => {},
         gc: () => ({ result: new Promise(() => {}), leave: () => {} }),
+        item: () => ({ result: new Promise(() => {}), leave: () => {} }),
       });
       let running: Promise<boolean> | undefined;
       try {
@@ -1149,6 +1241,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
       settle: () => {},
       close: async () => {},
       gc: () => ({ result: new Promise(() => {}), leave: () => {} }),
+      item: () => ({ result: new Promise(() => {}), leave: () => {} }),
     });
     let running: Promise<boolean> | undefined;
     try {
@@ -1212,6 +1305,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
         settle: () => {},
         close: async () => {},
         gc: () => ({ result: new Promise(() => {}), leave: () => {} }),
+        item: () => ({ result: new Promise(() => {}), leave: () => {} }),
       });
       const lane = vi.spyOn(stimdThreads, 'createPassesLane').mockImplementation((_threads, _log, onFailure) => ({
         start: () => {

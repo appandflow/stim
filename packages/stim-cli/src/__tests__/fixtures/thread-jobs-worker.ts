@@ -44,7 +44,7 @@ if (parentPort)
     { children?: number },
     DiskPassInput,
     DiskPassResult,
-    { settled?: string },
+    { settled?: string; item?: { kind: string } },
     { protectedRoot: string }
   >(
     parentPort,
@@ -57,7 +57,27 @@ if (parentPort)
       operation.signal.throwIfAborted();
       return { actions: [], pressure };
     },
-    ({ settled }, open) => {
+    ({ settled, item, cwd }, open) => {
+      if (item?.kind === 'watchman') {
+        const controller = new AbortController();
+        const operation = open(controller.signal);
+        const result = new Promise<{ protectedRoot: string }>((_resolve, reject) => {
+          controller.signal.addEventListener(
+            'abort',
+            () => {
+              try {
+                refuse(cwd, 1, operation);
+              } catch (error) {
+                reject(error);
+              }
+            },
+            { once: true },
+          );
+        });
+        writeFileSync(join(cwd, 'ready'), '');
+        return { result, leave: () => controller.abort() };
+      }
+
       const protectedRoot = triggeringRoot(open(new AbortController().signal));
       if (!settled) return { result: Promise.resolve({ protectedRoot }), leave: () => {} };
       let leave: (() => void) | undefined;

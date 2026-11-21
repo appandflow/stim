@@ -1,3 +1,4 @@
+import { validGcItem } from '../commands/gc/item.ts';
 import { runDirRemoved } from './run-dir.ts';
 import { createMetroTickets, handleMetroTicketRequest } from './metro/tickets.ts';
 import { createLeaseTickets, handleLeaseRequest } from './lease-tickets.ts';
@@ -1160,6 +1161,7 @@ async function runStimdInner(
   const ops = new Map<Socket, 'pinned' | 'waiting'>();
   const gcRequests = new Set<Promise<unknown>>();
   const gcDetached = new WeakSet<Socket>();
+  const itemCancels = new WeakMap<Socket, () => void>();
   const logsRunning = () => logs.running() || logs.ownedRunning();
   const hasOffWork = () =>
     Boolean(
@@ -1399,6 +1401,66 @@ async function runStimdInner(
       await new Promise((done) => setTimeout(done, 20));
     }
     missing(`it did not bind within ${SUCCESSOR_BIND_MS / 1000} s`);
+  };
+  const requestGc = (
+    socket: Socket,
+    params: Record<string, unknown>,
+    reply: (fields: Record<string, unknown>) => void,
+  ) => {
+    const level = GC_LEVELS.find((entry) => entry === params.level);
+    if ('item' in params && !validGcItem(params.item)) {
+      socket.end(
+        `${JSON.stringify({ op: 'error', code: 'STIM_BAD_ARG', message: 'item names no cleanup item.', remedy: 'Choose an item from the storage report.' })}\n`,
+      );
+      return;
+    }
+    const item = validGcItem(params.item) ? params.item : undefined;
+    // @ref LLP 0001#every-gc-joins-a-pass-under-way -- every acting gc runs on the passes thread
+    ops.set(socket, 'pinned');
+    opCommands.set(socket, item ? 'deleteGarbageItem' : 'stim gc');
+    const cwd = typeof params.cwd === 'string' ? params.cwd : process.cwd();
+    const asked = item
+      ? threads.item({ item, client: 'desktop', cwd }, (stream, text) => reply({ op: 'gc.output', stream, text }))
+      : threads.gc(
+          {
+            ...(level ? { level } : {}),
+            client: params.client === 'desktop' ? 'desktop' : 'manual',
+            ...(params.walkUnknown === false ? { walkUnknown: false } : {}),
+            cwd,
+          },
+          (action) => reply({ op: 'gc.action', action }),
+        );
+    if (item) itemCancels.set(socket, asked.leave);
+    // @ref LLP 0001#every-gc-joins-a-pass-under-way -- a detached request leaves its pass running
+    socket.once('close', () => {
+      if (item || !gcDetached.has(socket)) asked.leave();
+      if (effectiveMode() === 'off') requestTick();
+    });
+    const settled = asked.result.then(
+      () => undefined,
+      () => undefined,
+    );
+    gcRequests.add(settled);
+    void settled.finally(() => {
+      gcRequests.delete(settled);
+      itemCancels.delete(socket);
+      if (effectiveMode() === 'off') requestTick();
+      void checkEngine();
+    });
+    void asked.result
+      .then(
+        (result) => ({ op: 'gc.done', ...result }),
+        (error: unknown) => {
+          if (isUnverifiedCleanup(error) && !contain(error)) failBackground(error, 'gc cleanup could not be verified');
+          return {
+            op: 'error',
+            code: error instanceof Error && 'code' in error ? error.code : 'STIM_RUN_FAILED',
+            message: error instanceof Error ? error.message : String(error),
+            remedy: error instanceof Error && 'remedy' in error ? error.remedy : 'Run the command again.',
+          };
+        },
+      )
+      .then((answer) => socket.end(`${JSON.stringify(answer)}\n`));
   };
   const server = createServer((socket) => {
     open.add(socket);
@@ -1805,51 +1867,9 @@ async function runStimdInner(
               return socket.end(`${JSON.stringify(answer)}\n`);
             });
         } else if (op === 'gc.run') {
-          const params = isJsonObject(message.params) ? message.params : {};
-          const level = GC_LEVELS.find((entry) => entry === params.level);
-          // @ref LLP 0001#every-gc-joins-a-pass-under-way -- every acting gc runs on the passes thread
-          ops.set(socket, 'pinned');
-          opCommands.set(socket, 'stim gc');
-          const asked = threads.gc(
-            {
-              ...(level ? { level } : {}),
-              client: params.client === 'desktop' ? 'desktop' : 'manual',
-              ...(params.walkUnknown === false ? { walkUnknown: false } : {}),
-              cwd: typeof params.cwd === 'string' ? params.cwd : process.cwd(),
-            },
-            (action) => reply({ op: 'gc.action', action }),
-          );
-          // @ref LLP 0001#every-gc-joins-a-pass-under-way -- a detached request leaves its pass running
-          socket.once('close', () => {
-            if (!gcDetached.has(socket)) asked.leave();
-            if (effectiveMode() === 'off') requestTick();
-          });
-          const settled = asked.result.then(
-            () => undefined,
-            () => undefined,
-          );
-          gcRequests.add(settled);
-          void settled.finally(() => {
-            gcRequests.delete(settled);
-            if (effectiveMode() === 'off') requestTick();
-            void checkEngine();
-          });
-          void asked.result
-            .then(
-              (result) => ({ op: 'gc.done', ...result }),
-              (error: unknown) => {
-                if (isUnverifiedCleanup(error) && !contain(error))
-                  failBackground(error, 'gc cleanup could not be verified');
-                return {
-                  op: 'error',
-                  code: error instanceof Error && 'code' in error ? error.code : 'STIM_RUN_FAILED',
-                  message: error instanceof Error ? error.message : String(error),
-                  remedy: error instanceof Error && 'remedy' in error ? error.remedy : 'Run the command again.',
-                };
-              },
-            )
-            .then((answer) => socket.end(`${JSON.stringify(answer)}\n`));
-        } else if (op === 'gc.detach') gcDetached.add(socket);
+          requestGc(socket, isJsonObject(message.params) ? message.params : {}, reply);
+        } else if (op === 'gc.cancel') itemCancels.get(socket)?.();
+        else if (op === 'gc.detach') gcDetached.add(socket);
         else if (op === 'snapshot') socket.end(`${JSON.stringify({ op: 'snapshot', snapshot: lastSnapshot })}\n`);
         else if (op === 'status') void statuses.answer(message.params).then((answer) => socket.end(`${answer}\n`));
         else if (op === 'tick') {

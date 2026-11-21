@@ -16,12 +16,13 @@ type ToThread<Input, LadderInput, GcInput> =
 
 /**
  * One gc request on the thread: `open` makes the operation of a pass the request starts, `emit` sends each action of
- * the pass it runs or joins, and `leave` withdraws the request.
+ * the pass it runs or joins, `output` streams item output, and `leave` withdraws the request.
  */
 type GcRequest<GcInput, GcResult> = (
   input: GcInput & { cwd: string },
   open: (signal: AbortSignal) => StimContext,
   emit: (action: unknown) => void,
+  output: StimContext['output'],
 ) => { result: Promise<GcResult>; leave(): void };
 
 /**
@@ -47,11 +48,11 @@ export function serveThreadJobs<Input, LadderInput = never, LadderResult = never
   const gcLeaves = new Map<number, () => void>();
   // @ref LLP 0007#stimd-stays-up-for-a-child-it-can-watch -- a job's cleanup check stays on its thread
   const watch = createCleanupWatch(() => {});
-  const failure = (error: unknown, operation: StimContext, signal: AbortSignal) => {
+  const failure = (error: unknown, operation: StimContext, signal: AbortSignal, ending = signal.aborted) => {
     const cleanup = error instanceof Error && 'reportCleanup' in error;
     const child = reportChildOf(error);
     const others = [...operationState(operation).running].some((running) => running.pid !== child?.pid);
-    const contained = child && !others && watch.contain(error, signal.aborted) ? child : null;
+    const contained = child && !others && watch.contain(error, ending) ? child : null;
     return {
       contained: contained !== null,
       fields: {
@@ -88,6 +89,7 @@ export function serveThreadJobs<Input, LadderInput = never, LadderResult = never
         input,
         (signal) => (operation = { ...context(input.cwd, AbortSignal.any([signal, stopped])), cwd: input.cwd }),
         (action) => port.postMessage({ type: 'gcAction', id, action }),
+        (stream, text) => port.postMessage({ type: 'gcOutput', id, stream, text }),
       );
       gcLeaves.set(id, asked.leave);
       try {
@@ -95,7 +97,7 @@ export function serveThreadJobs<Input, LadderInput = never, LadderResult = never
         port.postMessage({ type: 'ladderDone', id, result, reading: hungRead() !== null });
       } catch (error) {
         const fields = operation
-          ? failure(error, operation, operation.signal).fields
+          ? failure(error, operation, operation.signal, stopped.aborted).fields
           : { message: error instanceof Error ? error.message : String(error) };
         port.postMessage({ type: 'ladderDone', id, failure: fields, reading: hungRead() !== null });
       } finally {

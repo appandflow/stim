@@ -5,9 +5,14 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { runGc as runGcCommand, runGcPass } from '../commands/gc.ts';
-import { deleteGcItem } from '../commands/gc/item.ts';
+import { deleteGcItem, type GcItemRequest } from '../commands/gc/item.ts';
+import { runGcItem } from '../stimd/gc-item.ts';
+import type { GcPassRequest } from '../commands/gc.ts';
+import type { StimContext } from '@stim-cli/core';
+import { requestGcItem } from '../daemon/disk-owner.ts';
+import type { LevelRunAction } from '../stimd/passes/level-run.ts';
 import { ambientContext, withAmbientContext } from '@stim-cli/core';
-import { daemonSnapshotFile, maintenanceRunClaims } from '@stim-cli/core/state';
+import { daemonSnapshotFile } from '@stim-cli/core/state';
 import { testContext } from './_context.ts';
 import { operationState } from '../engine/operation-state.ts';
 import { readClaimSet, releaseClaim, type ClaimHandle } from '../ownership-claim.ts';
@@ -36,6 +41,25 @@ import { makeBuildLock, makeChildProcess, plantClaim } from './_factories.ts';
 import { saveConfig } from '../workspace/config.ts';
 import { buildLockPath } from '../engine/build-lock.ts';
 import * as hostMemory from '../host-memory.ts';
+
+vi.mock('../daemon/client.ts', async (original) => {
+  const actual = await original<typeof import('../daemon/client.ts')>();
+  return {
+    ...actual,
+    runGcThroughStimd: (
+      request: GcPassRequest | GcItemRequest,
+      operation: StimContext,
+      onAction: (action: LevelRunAction) => void,
+    ) => {
+      if (!('item' in request)) return actual.runGcThroughStimd(request, operation, onAction);
+      const asked = requestGcItem((signal) =>
+        runGcItem(request.item, { ...operation, signal: AbortSignal.any([signal, operation.signal]) }),
+      );
+      operation.signal.addEventListener('abort', asked.leave, { once: true });
+      return asked.result.finally(() => operation.signal.removeEventListener('abort', asked.leave));
+    },
+  };
+});
 
 const runGc: typeof runGcCommand = (opts, deps) => runGcCommand(opts, deps, runGcPass);
 
@@ -664,7 +688,7 @@ test.skipIf(process.platform === 'win32')(
 );
 
 test.skipIf(process.platform === 'win32')(
-  'GC API cancellation between watchman roots keeps the remaining root and confines progress to its client',
+  'GC API cancellation stops later watchman work and confines progress to its client',
   async () => {
     const roots = [join(tmpHome, 'gone-one'), join(tmpHome, 'gone-two')];
     const subscribers = Object.fromEntries(roots.map((root) => [root, []]));
@@ -762,11 +786,8 @@ test
         ? [['--no-spawn', command, ...(command === 'watch-del' ? [join(tmpHome, 'a-gone')] : [])]]
         : [],
     );
-    expect(handles.map((handle) => handle.root)).toContain(maintenanceRunClaims());
+    expect(handles).toEqual([]);
     for (const handle of handles) expect(readClaimSet(handle.root).live).toMatchObject([{ child: { pid: owned.pid } }]);
-    await expect(client.deleteGarbageItem({ item: { kind: 'watchman' } })).rejects.toMatchObject({
-      code: 'STIM_CLAIM_REFUSED',
-    });
   } finally {
     inspect.mockRestore();
     if (owned && inspectProcessIdentity(owned) === 'same') process.kill(owned.pid, 'SIGKILL');

@@ -1,3 +1,4 @@
+import { trackReportResource } from '../report-runtime.ts';
 import type { Invocation } from '../stimd/forwarded.ts';
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
@@ -9,6 +10,7 @@ import type { StimContext } from '@stim-cli/core';
 import type { StreamSpec } from '../stimd/logs/streams.ts';
 import type { ServeOptions } from '../stimd/main.ts';
 import type { GcPassRequest } from '../commands/gc.ts';
+import type { GcItemRequest, GcItemResult } from '../commands/gc/item.ts';
 import type { GcPassReply } from './disk-owner.ts';
 import type { LevelRunAction } from '../stimd/passes/level-run.ts';
 import { keepReserve, releaseReserve } from '../disk-reserve.ts';
@@ -2098,13 +2100,19 @@ export async function requestDaemonTick(env: NodeJS.ProcessEnv = process.env, si
  * says; stimd's own config applies, not this process's STIM_* overrides. Without a stimd it fails with
  * STIM_DAEMON_UNAVAILABLE and runs nothing here. Each action of the pass reaches `onAction` as it lands. An abort of
  * the operation leaves the pass, which stimd stops when no other request waits for it; a report timeout detaches, so
- * the pass goes on after this process exits. A stimd that stops before it answers fails the request with the remedy to run it again.
+ * the pass goes on after this process exits. An item always runs as its own unit and cancellation or timeout stops it. A stimd that stops before it answers fails the request with the remedy to run it again.
  */
-export async function runGcThroughStimd(
+export function runGcThroughStimd(
   request: GcPassRequest,
   operation: StimContext | undefined,
   onAction: (action: LevelRunAction) => void,
-): Promise<GcPassReply> {
+): Promise<GcPassReply>;
+export function runGcThroughStimd(request: GcItemRequest, operation: StimContext | undefined): Promise<GcItemResult>;
+export async function runGcThroughStimd(
+  request: GcPassRequest | GcItemRequest,
+  operation: StimContext | undefined,
+  onAction?: (action: LevelRunAction) => void,
+): Promise<GcPassReply | GcItemResult> {
   const signal = operation?.signal;
   const env = operation?.env ?? process.env;
   const refused = (): Error => {
@@ -2138,22 +2146,51 @@ export async function runGcThroughStimd(
     throw error;
   }
   // @ref LLP 0001#every-gc-joins-a-pass-under-way -- after transmission only the pass restores the reserve
-  return new Promise((resolve, reject) => {
+  const terminal = new Promise<GcPassReply | GcItemResult>((resolve, reject) => {
     let settled = false;
     let written = false;
-    const finish = (error: Error | null, reply?: GcPassReply) => {
+    const finish = (error: Error | null, reply?: GcPassReply | GcItemResult) => {
       if (settled) return;
       settled = true;
       signal?.removeEventListener('abort', abort);
       if (error && !written && released) keepReserve();
       if (error) reject(error);
+      else if (signal?.aborted) reject(signal.reason);
       else if (reply) resolve(reply);
     };
     const socket = openStimd(
       [{ op: 'gc.run', params: { ...request, cwd: operation?.cwd ?? process.cwd() } }],
       (message) => {
+        if (
+          message.op === 'gc.output' &&
+          'item' in request &&
+          (message.stream === 'stdout' || message.stream === 'stderr') &&
+          typeof message.text === 'string'
+        ) {
+          operation?.output(message.stream, message.text);
+          return;
+        }
         if (message.op === 'gc.action' && isJsonObject(message.action)) {
-          onAction(message.action as unknown as LevelRunAction);
+          onAction?.(message.action as unknown as LevelRunAction);
+          return;
+        }
+        if (
+          message.op === 'gc.done' &&
+          'item' in request &&
+          Array.isArray(message.results) &&
+          typeof message.failures === 'number'
+        ) {
+          const itemRefusal = message.refusal;
+          finish(null, {
+            results: message.results,
+            failures: message.failures,
+            ...(isJsonObject(itemRefusal) &&
+            typeof itemRefusal.code === 'string' &&
+            typeof itemRefusal.message === 'string' &&
+            typeof itemRefusal.remedy === 'string'
+              ? { refusal: { code: itemRefusal.code, message: itemRefusal.message, remedy: itemRefusal.remedy } }
+              : {}),
+          });
           return;
         }
         if (message.op === 'gc.done' && isJsonObject(message.run)) {
@@ -2173,6 +2210,12 @@ export async function runGcThroughStimd(
     );
     socket.once('connect', () => (written = true));
     const abort = () => {
+      if ('item' in request) {
+        const cancel = () => socket.write(`${JSON.stringify({ op: 'gc.cancel' })}\n`);
+        if (socket.connecting) socket.once('connect', cancel);
+        else cancel();
+        return;
+      }
       const reason: unknown = signal?.reason;
       if (reason instanceof Error && 'code' in reason && reason.code === 'STIM_REPORT_TIMEOUT')
         socket.end(`${JSON.stringify({ op: 'gc.detach' })}\n`);
@@ -2183,4 +2226,16 @@ export async function runGcThroughStimd(
     // @ref LLP 0012#a-command-does-not-continue-across-a-stimd-restart -- a gc whose stimd went away fails, never reruns
     socket.once('close', () => finish(stimdRefused() ? refused() : daemonRestarted()));
   });
+  if ('item' in request)
+    trackReportResource(
+      operation,
+      terminal.then(
+        () => undefined,
+        (error: unknown) => {
+          if (error instanceof Error && 'code' in error && error.code === 'STIM_CLAIM_UNAVAILABLE') throw error;
+        },
+      ),
+      () => {},
+    );
+  return terminal;
 }

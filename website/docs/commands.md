@@ -2777,7 +2777,7 @@ Single items cannot be deleted from the CLI. Stim Desktop deletes one cache, the
 build outputs of idle workspaces, one archive or one part of it, watchman or the
 Gradle daemons through stim-server's `desktop.gc.item.subscribe` on its
 Unix-socket connection; the library API has
-[`deleteGarbageItem`](./programmatic-api.md#doctor-and-gc-reports).
+[`deleteGarbageItem`](./programmatic-api.md#doctor-and-gc-reports). Each item gets its own turn on stimd's cleanup queue, after pressure passes and before the maintenance lane; duplicate item requests never join one another.
 
 An orphaned device is one this Stim home created that no workspace references.
 `gc` shows the size of an orphaned or stale owned device: for a simulator, the

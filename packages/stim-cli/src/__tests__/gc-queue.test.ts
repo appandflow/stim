@@ -6,6 +6,7 @@ import {
   LANE,
   releaseDisk,
   requestGcPass,
+  requestGcItem,
   type GcPassReply,
 } from '../daemon/disk-owner.ts';
 import { ladderRun } from '../stimd/passes/ladder-run.ts';
@@ -302,4 +303,50 @@ test("a gc at normal that waits through the lane's dormant step joins the lane's
   });
   expect(seen).toEqual([action]);
   expect(unexpected).not.toHaveBeenCalled();
+});
+
+test('pressure precedes each independent item at the lane boundary, then the lane resumes', async () => {
+  await acquireDisk(LANE);
+  const order: string[] = [];
+  const first = requestGcItem(async () => {
+    order.push('item');
+    return 'first';
+  });
+  const second = requestGcItem(async () => {
+    order.push('item');
+    return 'second';
+  });
+  const high = requestGcPass(
+    'high',
+    'manual',
+    async () => {
+      order.push('pressure');
+      return { run: runAt('high') };
+    },
+    ignore,
+  );
+  await diskBoundary();
+  order.push('lane');
+  releaseDisk();
+
+  await high.result;
+  expect(await first.result).toBe('first');
+  expect(await second.result).toBe('second');
+  expect(order).toEqual(['pressure', 'item', 'item', 'lane']);
+});
+
+test('cancelling a queued item settles while the holder keeps the turn and leaves the next item able to run', async () => {
+  await acquireDisk(LANE);
+  try {
+    const work = vi.fn<() => Promise<void>>();
+    const cancelled = requestGcItem(work);
+    const next = requestGcItem(async () => 'next');
+    cancelled.leave();
+    await expect(cancelled.result).rejects.toBeInstanceOf(Error);
+    expect(work).not.toHaveBeenCalled();
+    await diskBoundary();
+    expect(await next.result).toBe('next');
+  } finally {
+    releaseDisk();
+  }
 });

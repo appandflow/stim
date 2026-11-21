@@ -1,15 +1,16 @@
 import type { PressureLevel, RescuedCopy } from '@stim-cli/core/state';
-import { keepReserve } from '../disk-reserve.ts';
+import { keepReserve, releaseReserve } from '../disk-reserve.ts';
 import type { LevelRun, LevelRunAction } from '../stimd/passes/level-run.ts';
 
 /**
  * The turn order on the disk: a hard-floor ladder pass, then any ladder pass or gc pass above normal, then the
- * maintenance lane's next unit, then a gc pass at normal, which waits for the lane to end its run.
+ * explicit item, then the maintenance lane's next unit, then a gc pass at normal, which waits for the lane to end its run.
  */
 export const HARD_FLOOR = 0;
 export const LADDER = 1;
-export const LANE = 2;
-const NORMAL_GC = 3;
+const ITEM = 2;
+export const LANE = 3;
+const NORMAL_GC = 4;
 
 /** The slots of the stim-daemon's ladder clocks (`LadderInput.clocks`), which live as long as stimd. */
 export const LADDER_CLOCK_SLOTS = {
@@ -75,10 +76,43 @@ export function releaseDisk(): void {
   next?.grant();
 }
 
+/** Runs one explicit item as its own turn, after pressure and before the lane; leaving cancels only this item. */
+export function requestGcItem<T>(work: (signal: AbortSignal) => Promise<T>): { result: Promise<T>; leave(): void } {
+  const stop = new AbortController();
+  const ticket = queueForDisk(ITEM);
+  let started = false;
+  let cancelWait!: () => void;
+  const cancelled = new Promise<never>((_resolve, reject) => {
+    cancelWait = () => {
+      if (started) return;
+      ticket.withdraw();
+      reject(stop.signal.reason);
+    };
+    stop.signal.addEventListener('abort', cancelWait, { once: true });
+  });
+  const result = (async () => {
+    try {
+      await Promise.race([ticket.granted, cancelled]);
+      stop.signal.throwIfAborted();
+      started = true;
+      releaseReserve();
+      return await work(stop.signal);
+    } finally {
+      stop.signal.removeEventListener('abort', cancelWait);
+      if (started) {
+        keepReserve();
+        ticket.withdraw();
+      }
+    }
+  })();
+  result.catch(() => {});
+  return { result, leave: () => stop.abort() };
+}
+
 let regained: Promise<void> | null = null;
 
 /**
- * A unit boundary of the lane, which holds the turn: gives the turn to a waiting ladder pass, and takes it back after.
+ * A unit boundary of the lane, which holds the turn: gives the turn to a waiting pressure pass or explicit item, and takes it back after.
  * Walks the lane runs side by side share one hand-over: each waits until the lane has the turn back.
  */
 export function diskBoundary(): Promise<void> {

@@ -420,8 +420,15 @@ console.log(report.results, exitCode);
 of these rejects with `STIM_BAD_ARG`. The CLI has no command for a single
 item.
 
-A deletion holds this home's exclusive maintenance claim.
-Concurrent maintenance rejects with `STIM_CLAIM_REFUSED` and names the held claim.
+Each item runs as its own unit on this home's stimd cleanup queue, after pressure
+passes and before the maintenance lane. Items never coalesce, even when they
+name the same cache. The call starts stimd under `daemon.mode: off` and acts
+under `report`; stimd's environment and config apply, as for `collectGarbage`.
+Without a reachable stimd it rejects with `STIM_DAEMON_UNAVAILABLE`.
+An item report timeout cancels its pending work instead of leaving a pass running.
+Cancellation takes effect when stimd receives it: an announced or in-flight action
+may complete first. `onProgress` is notification, not approval before an action.
+The call waits for terminal cleanup, whose failure takes precedence over cancellation.
 Cancellation stops pending lock waits and further actions; completed actions
 remain applied. An archive whose history has started moving finishes publication
 before cancellation. Unresolved cleanup retains its actual ownership claims and

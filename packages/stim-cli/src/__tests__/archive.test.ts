@@ -21,7 +21,7 @@ import {
   maintenanceRunClaims,
 } from '@stim-cli/core/state';
 import { readClaimSet } from '@stim-cli/core/ownership-claim';
-import { createStim } from '../api.ts';
+import { runGcItem } from '../stimd/gc-item.ts';
 import { archiveWorkspace, enforceArchiveRetention, sweepArchiveStaging } from '../archive.ts';
 import { reclaimProject } from '../devices/reclaim.ts';
 import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
@@ -215,7 +215,7 @@ test('cancellation after history moves publishes it and skips retention', async 
   expect(readdirSync(join(home, 'archive')).filter((name) => name.startsWith('.incoming-'))).toEqual([]);
 });
 
-test('public archive item cancellation keeps the completed deletion and releases admission', async () => {
+test('archive item cancellation keeps the completed deletion and releases its object locks', async () => {
   fixture('first', Date.now(), { logs: 5 });
   fixture('later', Date.now() - DAY, { logs: 5 });
   const controller = new AbortController();
@@ -226,10 +226,12 @@ test('public archive item cancellation keeps the completed deletion and releases
       controller.abort();
     }
   };
-  const client = createStim({ projectRoot: root, home, env: { ...process.env } });
   await expect(
-    client.deleteGarbageItem({ item: { kind: 'archive', id: 'first' }, signal: controller.signal }),
-  ).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
+    runGcItem(
+      { kind: 'archive', id: 'first' },
+      testContext({ projectRoot: root, cwd: root, home, signal: controller.signal }),
+    ),
+  ).rejects.toMatchObject({ name: 'AbortError' });
   expect(moved).toHaveLength(1);
   expect(readArchives().map((entry) => entry.id)).toEqual(['later']);
   expect(readFileSync(join(archiveDir('later'), 'logs', 'a.ndjson'))).toEqual(Buffer.alloc(5));

@@ -99,7 +99,7 @@ const alive = (pid: number) => {
  * Starts an acting gc at critical on stimd whose size walk records its pid and waits until `go` exists, through the
  * API's `collectGarbage` when `report` is set, whose 60 s report budget then runs out when `expire` is called.
  */
-async function heldGc(controller: AbortController, report = false) {
+async function heldGc(controller: AbortController, report = false, single = false) {
   const marker = join(scratch, 'du.pid');
   const go = join(scratch, 'go');
   const item = fixture(`echo $$ > '${marker}'\nwhile [ ! -f '${go}' ]; do sleep 0.1; done\nexec /usr/bin/du "$@"`);
@@ -117,14 +117,14 @@ async function heldGc(controller: AbortController, report = false) {
     expire = () => callback();
     return realSetTimeout(() => {}, 2 ** 30);
   });
-  const gc = report
-    ? createStim({ projectRoot: item.root, home: item.home, env: item.env }).collectGarbage({
-        pressure: 'critical',
-        signal: controller.signal,
-      })
-    : withAmbientContext(operation, () =>
-        runGcThroughStimd({ level: 'critical', client: 'manual' }, operation, () => {}),
-      );
+  const client = createStim({ projectRoot: item.root, home: item.home, env: item.env });
+  const gc = single
+    ? client.deleteGarbageItem({ item: { kind: 'cache', dir: item.cache }, signal: controller.signal })
+    : report
+      ? client.collectGarbage({ pressure: 'critical', signal: controller.signal })
+      : withAmbientContext(operation, () =>
+          runGcThroughStimd({ level: 'critical', client: 'manual' }, operation, () => {}),
+        );
   void gc.catch(() => {});
   await vi
     .waitFor(
@@ -138,6 +138,28 @@ async function heldGc(controller: AbortController, report = false) {
 }
 
 describe.skipIf(process.platform === 'win32')('gc on stimd', () => {
+  test.each(['off', 'report'] as const)(
+    'an explicit item runs on stimd with daemon mode %s',
+    async (mode) => {
+      const item = fixture();
+      writeFileSync(join(item.home, 'config.json'), JSON.stringify({ daemon: { mode } }));
+      const result = await createStim({ projectRoot: item.root, home: item.home, env: item.env }).deleteGarbageItem({
+        item: { kind: 'cache', dir: item.cache },
+      });
+      expect(result.exitCode).toBe(0);
+      expect(result.results).toMatchObject([{ kind: 'cache', status: 'done', id: item.cache }]);
+      expect(existsSync(join(item.cache, 'artifact'))).toBe(false);
+      if (mode === 'off')
+        await vi.waitFor(
+          () => {
+            if (stimdOwner()) throw new Error('the stimd still holds the home');
+          },
+          { timeout: 20_000, interval: 200 },
+        );
+    },
+    45_000,
+  );
+
   test('an acting gc starts a stimd under daemon.mode off, which runs the pass and exits after it', async () => {
     const item = fixture();
     let owner: ReturnType<typeof stimdOwner>;
@@ -196,6 +218,34 @@ describe.skipIf(process.platform === 'win32')('gc on stimd', () => {
       if (alive(du)) process.kill(du, 'SIGKILL');
     }
   }, 45_000);
+
+  test.each(['cancel', 'timeout'] as const)(
+    'an item %s stops its native read and retains the cache',
+    async (reason) => {
+      const controller = new AbortController();
+      const { item, gc, expire, du } = await heldGc(controller, reason === 'timeout', true);
+      try {
+        if (reason === 'timeout') {
+          if (!expire) throw new Error('the item set no report budget');
+          expire();
+        } else controller.abort();
+        await expect(gc).rejects.toMatchObject(
+          reason === 'timeout' ? { code: 'STIM_REPORT_TIMEOUT' } : { code: 'STIM_CANCELLED' },
+        );
+        await vi.waitFor(
+          () => {
+            if (alive(du) || stimdOwner())
+              throw new Error(`the item still runs: du=${alive(du)}, owner=${stimdOwner()?.pid ?? 'none'}`);
+          },
+          { timeout: 20_000, interval: 100 },
+        );
+        expect(readFileSync(join(item.cache, 'artifact'), 'utf8')).toBe('cached');
+      } finally {
+        if (alive(du)) process.kill(du, 'SIGKILL');
+      }
+    },
+    45_000,
+  );
 
   test('a collectGarbage report that ran out of budget leaves the stimd it started and its pass running once the caller closes its sockets', async () => {
     const controller = new AbortController();
