@@ -2763,8 +2763,9 @@ An acting `gc` asks this home's stimd for a pass, starting one whatever
 `daemon.mode` says; under `off` that stimd exits after the pass. stimd's config
 and environment apply, not the `STIM_*` variables of the `gc` command. Without
 a stimd it fails with `STIM_DAEMON_UNAVAILABLE`. A `gc` with no `--pressure`,
-or a level at or below that of a pass already running or queued, joins that
-pass and prints `Joined the <level> pass ...` with that pass's actions; a
+or a level at or below that of a pass already running or queued (the daemon's
+maintenance pass counts as normal), joins that pass and prints
+`Joined the <level> pass ...` with that pass's actions; a
 higher level queues one pass after it. Interrupting `gc` stops its pass only
 when no other request waits for it. A stimd that stops during the pass fails
 `gc` with `STIM_DAEMON_UNAVAILABLE`: run it again. A dry run runs in the

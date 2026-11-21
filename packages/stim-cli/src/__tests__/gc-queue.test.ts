@@ -102,7 +102,7 @@ test("a forced level joins the tick's disk pass at that level", async () => {
   const tick = joinablePass(
     'high',
     'pressure',
-    finish.promise.then(() => ({ actions: [ladder], pressure })),
+    () => finish.promise.then(() => ({ actions: [ladder], pressure })),
     (result) => ladderRun('high', result.pressure, result.actions),
   );
   const unexpected = vi.fn<Parameters<typeof requestGcPass>[2]>();
@@ -176,4 +176,87 @@ test("a gc pass takes the turn at the maintenance lane's next unit boundary", as
   expect(ran).toBe(true);
   await asked.result;
   releaseDisk();
+});
+
+test("a gc with no level or at normal joins the lane's acting maintenance pass and sees its actions; a higher one does not", async () => {
+  const finish = gate();
+  let emitted = (_action: LevelRunAction) => {};
+  const unit = joinablePass(
+    'normal',
+    'maintenance',
+    (emit) => {
+      emitted = emit;
+      return finish.promise;
+    },
+    () => runAt('normal', [action]),
+    'lane',
+  );
+  const unexpected = vi.fn<Parameters<typeof requestGcPass>[2]>();
+  const seen: LevelRunAction[] = [];
+  const flagless = requestGcPass(undefined, 'manual', unexpected, (landed) => seen.push(landed));
+  const normal = requestGcPass('normal', 'desktop', unexpected, ignore);
+  const high = heldPass(Promise.resolve());
+  const higher = requestGcPass('high', 'manual', high.run, ignore);
+  emitted(action);
+  finish.open();
+  await unit;
+  for (const joiner of [flagless, normal])
+    expect(await joiner.result).toMatchObject({
+      joined: { trigger: 'maintenance', level: 'normal' },
+      run: { level: 'normal', actions: [action] },
+    });
+  expect(seen).toEqual([action]);
+  expect(unexpected).not.toHaveBeenCalled();
+  expect(await higher.result).not.toHaveProperty('joined');
+  expect(high.runs).toEqual(['high']);
+});
+
+test("a gc at normal waits for the lane to end its run, and one above normal or raised above it takes the lane's next unit boundary", async () => {
+  await acquireDisk(LANE);
+  const order: string[] = [];
+  const pass = (name: string) => async (level: PressureLevel | undefined) => {
+    order.push(name);
+    return { run: runAt(level ?? 'normal') };
+  };
+  const normal = requestGcPass('normal', 'manual', pass('normal'), ignore);
+  await diskBoundary();
+  await new Promise((done) => setImmediate(done));
+  expect(order).toEqual([]);
+  const raised = requestGcPass('critical', 'desktop', pass('raised'), ignore);
+  await diskBoundary();
+  expect(order).toEqual(['normal']);
+  expect(await raised.result).toMatchObject({ run: { level: 'critical' } });
+  expect(await normal.result).toMatchObject({ run: { level: 'critical' } });
+  releaseDisk();
+});
+
+test('a request queued while the running pass had not measured joins it once that pass measures a level that covers it', async () => {
+  const measure = gate();
+  const finish = gate();
+  const runs: (PressureLevel | undefined)[] = [];
+  const run = async (
+    level: PressureLevel | undefined,
+    _signal: AbortSignal,
+    _onAction: (action: LevelRunAction) => void,
+    onLevel: (level: PressureLevel) => void,
+  ) => {
+    runs.push(level);
+    if (runs.length === 1) {
+      await measure.promise;
+      onLevel('high');
+      await finish.promise;
+    }
+    return { run: runAt(level ?? 'high', [action]) };
+  };
+  const first = requestGcPass(undefined, 'desktop', run, ignore);
+  await new Promise((done) => setImmediate(done));
+  const forced = requestGcPass('high', 'manual', run, ignore);
+  measure.open();
+  finish.open();
+  expect(await first.result).not.toHaveProperty('joined');
+  expect(await forced.result).toMatchObject({
+    joined: { trigger: 'desktop', level: 'high' },
+    run: { level: 'high', actions: [action] },
+  });
+  expect(runs).toEqual([undefined]);
 });

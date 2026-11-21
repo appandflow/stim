@@ -69,7 +69,7 @@ export interface ThreadTable {
   abort(name: ThreadName): void;
   /** Asks every thread that watches an unverified child to check it again. */
   settle(): void;
-  /** Waits for every running job, then ends every thread. */
+  /** Waits for every running job, disk pass and gc request, then ends every thread. */
   close(): Promise<void>;
   /**
    * Runs one disk pass on the passes thread, the stim-daemon's disk owner, beside the job it runs: the pass takes the
@@ -272,6 +272,17 @@ export function createThreadTable(log: Log, onLost: (error: Error) => void = () 
               };
             });
           }
+          await Promise.all(
+            [...thread.ladders].map(
+              ([id, { resolve, reject }]) =>
+                new Promise<void>((done) => {
+                  thread.ladders.set(id, {
+                    resolve: (result) => (resolve(result), done()),
+                    reject: (error) => (reject(error), done()),
+                  });
+                }),
+            ),
+          );
           end(name, thread);
         }),
       );

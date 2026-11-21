@@ -86,7 +86,7 @@ export function serveThreadJobs<Input, LadderInput = never, LadderResult = never
       let operation: StimContext | undefined;
       const asked = gc(
         input,
-        (signal) => (operation = context(input.cwd, AbortSignal.any([signal, stopped]))),
+        (signal) => (operation = { ...context(input.cwd, AbortSignal.any([signal, stopped])), cwd: input.cwd }),
         (action) => port.postMessage({ type: 'gcAction', id, action }),
       );
       gcLeaves.set(id, asked.leave);

@@ -1,5 +1,21 @@
-import type { DaemonLadderAction, DaemonPressure, PressureLevel } from '@stim-cli/core/state';
+import type { DaemonLadderAction, DaemonPressure, MaintenanceAction, PressureLevel } from '@stim-cli/core/state';
+import { executedActionName } from '../../maintenance-kind.ts';
+import type { ActionOutcome } from './act.ts';
 import type { LevelRun, LevelRunAction } from './level-run.ts';
+
+export function fromOutcome(action: MaintenanceAction, outcome: ActionOutcome): LevelRunAction {
+  return {
+    rung: null,
+    kind: executedActionName(action),
+    target: action.target,
+    ...(action.workspace ? { workspace: action.workspace } : {}),
+    outcome: outcome.status,
+    bytes: outcome.bytes,
+    reason: action.reason,
+    detail: outcome.detail,
+    ...(outcome.restore ? { restore: outcome.restore } : {}),
+  };
+}
 
 export function fromLadder(action: DaemonLadderAction, dormant = false): LevelRunAction {
   return {

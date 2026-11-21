@@ -1229,13 +1229,20 @@ async function runStimdInner(
   };
   const open = new Set<Socket>();
   const ops = new Map<Socket, 'pinned' | 'waiting'>();
+  const gcRequests = new Set<Promise<unknown>>();
+  const gcDetached = new WeakSet<Socket>();
   const logsRunning = () => logs.running() || logs.ownedRunning();
   const hasOffWork = () =>
     Boolean(
       cleanups.pending() ||
       logs.running() ||
       logs.ownedRunning() ||
-      keepsServingWhenOff(lifetime.keepsServingWhenOff, ops.size > 0, Boolean(net.running()), restartingNet),
+      keepsServingWhenOff(
+        lifetime.keepsServingWhenOff,
+        ops.size > 0 || gcRequests.size > 0,
+        Boolean(net.running()),
+        restartingNet,
+      ),
     );
   const opContexts = new Map<Socket, Invocation & { workspace: string }>();
   const opControllers = new Map<Socket, AbortController>();
@@ -1315,13 +1322,14 @@ async function runStimdInner(
     );
   };
   let heldSwitch = false;
-  const hasActiveCommands = () => ops.size > 0;
+  const hasActiveCommands = () => ops.size > 0 || gcRequests.size > 0;
   const pinned = (): boolean =>
     Boolean(backgroundFailure) ||
     cleanups.pending() ||
     metroCleanupPending() ||
     metroRootsEndingWithStimd().length > 0 ||
     [...ops.values()].includes('pinned') ||
+    gcRequests.size > 0 ||
     listBuildSlots().some((slot) => slot.alive && slot.client !== null) ||
     (net.running() !== null && readHostedSessions().some(hostedNativeWork));
   const failBackground = (error: unknown, why: string) => {
@@ -1866,9 +1874,20 @@ async function runStimdInner(
             },
             (action) => reply({ op: 'gc.action', action }),
           );
+          // @ref LLP 0001#every-gc-joins-a-pass-under-way -- a detached request leaves its pass running
           socket.once('close', () => {
-            asked.leave();
+            if (!gcDetached.has(socket)) asked.leave();
             if (effectiveMode() === 'off') requestTick();
+          });
+          const settled = asked.result.then(
+            () => undefined,
+            () => undefined,
+          );
+          gcRequests.add(settled);
+          void settled.finally(() => {
+            gcRequests.delete(settled);
+            if (effectiveMode() === 'off') requestTick();
+            void checkEngine();
           });
           void asked.result
             .then(
@@ -1885,7 +1904,8 @@ async function runStimdInner(
               },
             )
             .then((answer) => socket.end(`${JSON.stringify(answer)}\n`));
-        } else if (op === 'snapshot') socket.end(`${JSON.stringify({ op: 'snapshot', snapshot: lastSnapshot })}\n`);
+        } else if (op === 'gc.detach') gcDetached.add(socket);
+        else if (op === 'snapshot') socket.end(`${JSON.stringify({ op: 'snapshot', snapshot: lastSnapshot })}\n`);
         else if (op === 'status') void statuses.answer(message.params).then((answer) => socket.end(`${answer}\n`));
         else if (op === 'tick') {
           if (!tickReplies.includes(socket)) tickReplies.push(socket);

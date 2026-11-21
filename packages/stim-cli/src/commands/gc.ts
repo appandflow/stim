@@ -376,7 +376,10 @@ function joinedLine(joined: NonNullable<GcPassReply['joined']>, forced: boolean)
   return `Joined the ${joined.level} pass ${joined.trigger} started at ${joined.startedAt}${skipped}; the actions below are that pass's.`;
 }
 
-/** Runs one acting GC through `pass`, or a dry run in this process, and prints its summary unless `opts.json`. */
+/**
+ * Runs one acting GC through `pass`, or a dry run in this process, and prints its summary unless `opts.json`. An
+ * acting GC gives back the maintenance disk reserve first, so starting a stimd on a full disk has room to write.
+ */
 export async function executeGc(
   opts: GcOptions & { walkUnknown?: false },
   deps: GcDependencies,
@@ -391,13 +394,14 @@ export async function executeGc(
   let closeGitReads: (() => void) | undefined;
   try {
     let reply: GcPassReply;
-    if (act)
+    if (act) {
+      releaseReserve();
       reply = await pass(
         { ...(chosen ? { level: opts.pressure } : {}), client: gcClient(deps.operation?.env), ...walk },
         deps.operation,
         (action) => phase(action.outcome, `${action.kind} ${action.target}`, deps.operation),
       );
-    else {
+    } else {
       closeGitReads = openGitReads(deps.operation);
       reply = {
         run: await runMaintenanceAtLevel({ level: opts.pressure, act, operation: deps.operation, ...walk }),

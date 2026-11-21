@@ -38,6 +38,8 @@ import { measureCargoTargets } from './cargo-target.ts';
 import { capDue, clearDeferred, deferCheck, markDeferred } from './defer.ts';
 import { measurePressure, measureSizes, pressureFromMeasurement, sizeScanDeferred } from './measure.ts';
 import { executeAction, type ActionOutcome } from './act.ts';
+import { fromOutcome } from './ladder-run.ts';
+import type { LevelRunAction } from './level-run.ts';
 import { plannedMaintenance, triggeringRoot, type PlannedMaintenance } from './preview.ts';
 import { maintenanceLogger } from './log.ts';
 import { executedActionName } from '../../maintenance-kind.ts';
@@ -418,6 +420,7 @@ export async function runMaintenance(
     tick,
     between,
     deleted,
+    onAction,
   }: {
     report?: boolean;
     tick?: MaintenanceTick;
@@ -428,6 +431,8 @@ export async function runMaintenance(
     between?: () => Promise<void>;
     /** Runs once the pass deletes nothing more, before its discovery scan and census. */
     deleted?: () => void;
+    /** Sees each action the pass executed, with its outcome. */
+    onAction?: (action: LevelRunAction) => void;
   } = {},
 ): Promise<string | void> {
   const startedAt = Date.now();
@@ -635,6 +640,7 @@ export async function runMaintenance(
           outcome = { status: 'failed', bytes: 0, detail: error instanceof Error ? error.message : String(error) };
         }
         results.push({ action, outcome });
+        onAction?.(fromOutcome(action, outcome));
         if (outcome.status !== 'kept') gcLog?.record(maintenanceItem(action, outcome));
         const fields = {
           action: {

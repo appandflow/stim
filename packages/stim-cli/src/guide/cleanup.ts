@@ -703,8 +703,9 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
   environment apply, not the STIM_* variables of the gc command. With no stimd
   it fails with STIM_DAEMON_UNAVAILABLE and runs nothing. A gc with no
   --pressure, or a level at or below the level of a pass already running or
-  queued, joins that pass and prints "Joined the <level> pass ..." with the
-  pass's own actions; a higher level queues one pass at that level after it.
+  queued (the daemon's maintenance pass counts as normal), joins that pass and
+  prints "Joined the <level> pass ..." with the pass's own actions; a higher
+  level queues one pass at that level after it.
   A pass the daemon runs for disk pressure frees only the volumes under
   pressure. Interrupting gc stops its pass only when no other request waits
   for it; completed actions stay. A stimd that stops during the pass fails gc

@@ -31,7 +31,7 @@ export function createThreadTable(): ThreadTable {
         (asked, signal, emit, onLevel) =>
           runGcPass(
             { ...(asked ? { level: asked } : {}), client, ...(walkUnknown === false ? { walkUnknown } : {}) },
-            processContext(cwd, AbortSignal.any([signal, controller.signal])),
+            { ...processContext(cwd, AbortSignal.any([signal, controller.signal])), cwd },
             emit,
             onLevel,
           ),

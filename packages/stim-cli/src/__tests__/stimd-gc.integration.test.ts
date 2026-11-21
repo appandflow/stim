@@ -8,6 +8,8 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
+import { once } from 'node:events';
+import type { Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { withAmbientContext } from '@stim-cli/core';
@@ -15,9 +17,24 @@ import { readClaimSet } from '@stim-cli/core/ownership-claim';
 import { stimdClaimRoot } from '@stim-cli/core/state';
 import { createStim } from '../api.ts';
 import { runGc } from '../commands/gc.ts';
+import { runGcThroughStimd } from '../daemon/client.ts';
 import { inspectProcessIdentity } from '../process-identity.ts';
 import { killStimdUnder } from '../../../../vitest.kill-run-processes.ts';
 import { testContext } from './_context.ts';
+
+const opened = vi.hoisted(() => new Set<Socket>());
+vi.mock('node:net', async (original) => {
+  const actual = await original<typeof import('node:net')>();
+  return {
+    ...actual,
+    connect: (...args: Parameters<typeof actual.connect>) => {
+      const socket = actual.connect(...args);
+      opened.add(socket);
+      socket.once('close', () => opened.delete(socket));
+      return socket;
+    },
+  };
+});
 
 let scratch: string;
 beforeEach(() => {
@@ -62,6 +79,40 @@ function fixture(du?: string) {
 
 const stimdOwner = () => readClaimSet(stimdClaimRoot()).live[0]?.owner;
 
+const alive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/** Starts an acting gc at critical on stimd whose size walk records its pid and waits until `go` exists. */
+async function heldGc(controller: AbortController) {
+  const marker = join(scratch, 'du.pid');
+  const go = join(scratch, 'go');
+  const item = fixture(`echo $$ > '${marker}'\nwhile [ ! -f '${go}' ]; do sleep 0.1; done\nexec /usr/bin/du "$@"`);
+  const operation = testContext({
+    home: item.home,
+    projectRoot: item.root,
+    cwd: item.root,
+    env: item.env,
+    signal: controller.signal,
+  });
+  const gc = withAmbientContext(operation, () =>
+    runGcThroughStimd({ level: 'critical', client: 'manual' }, operation, () => {}),
+  );
+  void gc.catch(() => {});
+  await vi.waitFor(
+    () => {
+      if (!existsSync(marker)) throw new Error('the pass has not reached its size walk');
+    },
+    { timeout: 20_000, interval: 100 },
+  );
+  return { item, gc, go, du: Number(readFileSync(marker, 'utf8')) };
+}
+
 describe.skipIf(process.platform === 'win32')('gc on stimd', () => {
   test('an acting gc starts a stimd under daemon.mode off, which runs the pass and exits after it', async () => {
     const item = fixture();
@@ -86,6 +137,46 @@ describe.skipIf(process.platform === 'win32')('gc on stimd', () => {
       },
       { timeout: 20_000, interval: 200 },
     );
+  }, 45_000);
+
+  test("a pass's native child stops when its only requester leaves", async () => {
+    const controller = new AbortController();
+    const { item, gc, du } = await heldGc(controller);
+    try {
+      controller.abort();
+      await expect(gc).rejects.toMatchObject({ name: 'AbortError' });
+      await vi.waitFor(
+        () => {
+          if (alive(du)) throw new Error('the size walk still runs');
+        },
+        { timeout: 20_000, interval: 100 },
+      );
+      expect(readFileSync(join(item.cache, 'artifact'), 'utf8')).toBe('cached');
+    } finally {
+      if (alive(du)) process.kill(du, 'SIGKILL');
+    }
+  }, 45_000);
+
+  test('a request the report budget detached leaves its pass running once the caller closes its sockets', async () => {
+    const controller = new AbortController();
+    const { item, gc, go, du } = await heldGc(controller);
+    try {
+      controller.abort(Object.assign(new Error('the report budget ran out'), { code: 'STIM_REPORT_TIMEOUT' }));
+      await expect(gc).rejects.toMatchObject({ code: 'STIM_REPORT_TIMEOUT' });
+      for (const socket of opened) {
+        await Promise.race([once(socket, 'close'), new Promise((done) => setTimeout(done, 1000))]);
+        socket.destroy();
+      }
+      writeFileSync(go, '');
+      await vi.waitFor(
+        () => {
+          if (existsSync(join(item.cache, 'artifact'))) throw new Error('the pass has not deleted the cache');
+        },
+        { timeout: 20_000, interval: 200 },
+      );
+    } finally {
+      if (alive(du)) process.kill(du, 'SIGKILL');
+    }
   }, 45_000);
 
   test('a stimd killed during the pass fails gc with the remedy to run it again', async () => {

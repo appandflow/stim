@@ -299,9 +299,12 @@ so none ever runs beside another.
 - The disk pass measures again before each rung, so a level that fell while
   it waited takes only what the new level needs.
 - An acting `stim gc` and the API's `collectGarbage` ask the queue for a gc
-  pass (Every gc joins a pass under way) at the ladder rank, so it takes the
-  turn at the lane's next unit boundary. The hard-floor rank is kept for when
-  a build's headroom pass asks the queue for its pass.
+  pass (Every gc joins a pass under way). A pass at high or critical takes the
+  ladder rank, so it takes the turn at the lane's next unit boundary; a pass
+  at normal, or one whose level is still to be measured, ranks after the lane
+  and waits for the lane to end its run. A request that raises a waiting pass
+  above normal moves it to the ladder rank. The hard-floor rank is kept for
+  when a build's headroom pass asks the queue for its pass.
 - The maintenance pass gives up the turn once it deletes nothing more, before
   its discovery scan and census.
 - When the passes thread ends, a disk pass it had not answered fails as
@@ -340,18 +343,27 @@ whatever `daemon.mode` says, as Metro does; under `off` that stimd serves the
 request as a command it runs and exits after it. With no stimd the request
 fails with `STIM_DAEMON_UNAVAILABLE`. stimd's config and environment apply to
 the pass, not the caller's `STIM_*` overrides; the caller's working directory
-travels, so the pass never takes the caller's own workspace.
+travels, so the pass never takes the caller's own workspace. A request that
+joins a pass is protected by that pass's working directory, not its own.
 
 - A request with no level, or a level at or below that of the pass running or
   queued on the passes thread, joins it: the running pass first, then the
-  queued one. That pass is another gc pass or the tick's acting disk pass,
-  which frees only the volumes under pressure. The joined result names the
-  pass's start, trigger and level.
+  lane's acting maintenance pass, which counts as normal, then the queued one.
+  The running pass is another gc pass or the tick's acting disk pass, which
+  frees only the volumes under pressure. The maintenance pass runs only the
+  checks due then. The joined result names the pass's start, trigger and
+  level.
+- A request queued while the running gc pass had not measured its level yet
+  joins that pass once it has run, when the measured level covers the
+  request; otherwise it runs its own pass.
 - A request for a higher level raises the queued gc pass to it, or queues one
   when none waits. At most one gc pass waits.
 - A request that leaves (an interrupted gc, a cancelled call) stops its pass
   only when no other request waits for it; completed actions stay. The API's
-  report budget detaches instead and the pass goes on.
+  report budget detaches instead: the client tells stimd before it closes its
+  socket, and the pass goes on after the caller exits. stimd stays up for a
+  gc request until its pass settles, also under `daemon.mode` off, and does
+  not switch engines under one.
 - A stimd that stops during the pass fails the request with the remedy to run
   it again (LLP 0012, A command does not continue across a stimd restart).
 
@@ -372,10 +384,10 @@ joins a pass at that level), 2026-11-20 (#6058).
 Maintainer decision: "Accept, stimd's config wins", 2026-11-20 (#6058).
 
 A lower level joins and a higher level queues one pass: the coordinator's
-plan on #6058. That a request leaving stops only a pass it alone waits for, and
-that the lane's dormant step and maintenance pass are not passes a request
-joins (a gc pass takes the turn at their next unit boundary), are the
-implementer's reading on #6058.
+plan on #6058. That a request leaving stops only a pass it alone waits for is
+the implementer's reading on #6058. That the lane's maintenance pass is one a
+request at normal joins, while its dormant step is not, and the ranks above,
+are the reviewer's and implementer's reading of the second quote on #6061.
 
 ## Each rung frees only the volumes under pressure
 

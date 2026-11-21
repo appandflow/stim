@@ -1,10 +1,5 @@
 import type { StimContext } from '@stim-cli/core';
-import {
-  readDaemonSnapshot,
-  type DaemonPressure,
-  type MaintenanceAction,
-  type PressureLevel,
-} from '@stim-cli/core/state';
+import { readDaemonSnapshot, type DaemonPressure, type PressureLevel } from '@stim-cli/core/state';
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import { loadConfig } from '../../workspace/config.ts';
 import { measureDisk, measureMemory } from '../../daemon/measure.ts';
@@ -15,8 +10,7 @@ import { PRESSURE_IDLE_MS } from '../../daemon/idle.ts';
 import { discoveredReads } from '../../workspace/discovered-reads.ts';
 import { deviceSweepIsScoped } from '../../commands/gc/devices.ts';
 import { executeAction, type ActionOutcome } from './act.ts';
-import { fromLadder } from './ladder-run.ts';
-import { executedActionName } from '../../maintenance-kind.ts';
+import { fromLadder, fromOutcome } from './ladder-run.ts';
 import { measureCargoTargets, planCargoTargetsAtPressure } from './cargo-target.ts';
 import { maintenancePinnedReader } from './protect.ts';
 import { measureSizes } from './measure.ts';
@@ -84,20 +78,6 @@ async function measureLevel(operation?: StimContext): Promise<DaemonPressure> {
     previousWarningSince: readDaemonSnapshot()?.pressure?.memoryWarningSince ?? null,
     now: Date.now(),
   });
-}
-
-function fromOutcome(action: MaintenanceAction, outcome: ActionOutcome): LevelRunAction {
-  return {
-    rung: null,
-    kind: executedActionName(action),
-    target: action.target,
-    ...(action.workspace ? { workspace: action.workspace } : {}),
-    outcome: outcome.status,
-    bytes: outcome.bytes,
-    reason: action.reason,
-    detail: outcome.detail,
-    ...(outcome.restore ? { restore: outcome.restore } : {}),
-  };
 }
 
 /**

@@ -2123,8 +2123,8 @@ export async function requestDaemonTick(env: NodeJS.ProcessEnv = process.env, si
  * Runs one acting gc pass on this home's stimd, or joins one under way there, starting a stimd whatever `daemon.mode`
  * says; stimd's own config applies, not this process's STIM_* overrides. Without a stimd it fails with
  * STIM_DAEMON_UNAVAILABLE and runs nothing here. Each action of the pass reaches `onAction` as it lands. An abort of
- * the operation leaves the pass, which stimd stops when no other request waits for it; a report timeout detaches and
- * the pass goes on. A stimd that stops before it answers fails the request with the remedy to run it again.
+ * the operation leaves the pass, which stimd stops when no other request waits for it; a report timeout detaches, so
+ * the pass goes on after this process exits. A stimd that stops before it answers fails the request with the remedy to run it again.
  */
 export async function runGcThroughStimd(
   request: GcPassRequest,
@@ -2188,7 +2188,8 @@ export async function runGcThroughStimd(
     );
     const abort = () => {
       const reason: unknown = signal?.reason;
-      if (reason instanceof Error && 'code' in reason && reason.code === 'STIM_REPORT_TIMEOUT') socket.unref();
+      if (reason instanceof Error && 'code' in reason && reason.code === 'STIM_REPORT_TIMEOUT')
+        socket.end(`${JSON.stringify({ op: 'gc.detach' })}\n`);
       else socket.destroy();
       finish(reason instanceof Error ? reason : new Error('GC was cancelled.'));
     };

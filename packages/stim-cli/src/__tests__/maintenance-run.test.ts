@@ -155,6 +155,19 @@ test('gc at zero free disk gives back the reserve to take its claim, then delete
   expect(existsSync(maintenanceRunClaims())).toBe(false);
 });
 
+test('an acting gc gives back the reserve before it asks stimd for its pass, so a stimd can start on a full disk', async () => {
+  const reserve = join(maintenanceDir(), 'disk-reserve');
+  await runMaintenance('status');
+  expect(existsSync(reserve)).toBe(true);
+  vi.spyOn(console, 'log').mockImplementation(() => {});
+  let held: boolean | undefined;
+  await runGcCommand({ pressure: 'normal', json: true }, {}, async (request, operation, onAction) => {
+    held = existsSync(reserve);
+    return runGcPass(request, operation, onAction);
+  });
+  expect(held).toBe(false);
+});
+
 test('a reserve that can be neither written nor removed still releases the run claim', async () => {
   mkdirSync(join(maintenanceDir(), 'disk-reserve', 'blocker'), { recursive: true });
   await runMaintenance('status');
