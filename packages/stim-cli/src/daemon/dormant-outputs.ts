@@ -9,13 +9,7 @@ import { RESERVE_RELEASED, releaseReserveWhenFull } from '../disk-reserve.ts';
 import { withWorkspaceProcessLock, workspaceProcessLockError } from '../engine/workspace-process-lock.ts';
 import { addSize, formatSize, measureDirectoryAsync, type DirectorySize } from '../fs-util.ts';
 import { metroStoreRoot } from '../stimd/metro/metro-store.ts';
-import {
-  deleteCargoTarget,
-  leftoverReason,
-  recentTargetUse,
-  removablePaths,
-  type CargoTrimResult,
-} from '../workspace/cargo-target.ts';
+import { deleteCargoTarget, recentTargetUse, removablePaths, type CargoTrimResult } from '../workspace/cargo-target.ts';
 import type { Config } from '../workspace/config.ts';
 import { discoveredReads, type DiscoveredReads } from '../workspace/discovered-reads.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
@@ -223,9 +217,7 @@ async function eligible(candidate: StageCandidate, config: Config, afterMs: numb
   for (const output of [...outputs.paths, ...targets.filter((dir) => !outputs.paths.includes(dir))]) {
     const target = targets.includes(output);
     const recent = target
-      ? (leftoverReason(output) ??
-        recentTargetUse(output, Date.now(), afterMs) ??
-        (await nothingRemovable(output, plan)))
+      ? (recentTargetUse(output, Date.now(), afterMs) ?? (await nothingRemovable(output, plan)))
       : null;
     if (recent) {
       plan.kept.push(`kept ${output}: ${recent}`);

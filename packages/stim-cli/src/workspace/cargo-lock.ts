@@ -1,11 +1,10 @@
 import { constants } from 'node:fs';
-import { lstat, open, statfs, type FileHandle } from 'node:fs/promises';
+import { lstat, open, type FileHandle } from 'node:fs/promises';
 import { once } from 'node:events';
-import { basename, dirname } from 'node:path';
+import { basename } from 'node:path';
 import { getExecutor } from '../exec.ts';
 
 const LOCK_BUSY = 64;
-const NFS_SUPER_MAGIC = 0x6969;
 
 // flock(2) owns the lock on the open file description shared by parent and child.
 // Closing the helper's inherited descriptor leaves the Node handle locked.
@@ -37,8 +36,6 @@ export async function withCargoLocks<T>(
     for (const path of paths) {
       const name = basename(path);
       kept = `its ${name} could not be locked`;
-      // Cargo skips flock on Linux NFS (rust-lang/cargo#2615).
-      if (process.platform === 'linux' && (await statfs(dirname(path))).type === NFS_SUPER_MAGIC) return { kept };
       const before = await lstat(path).catch((error: NodeJS.ErrnoException) => {
         if (error.code !== 'ENOENT') throw error;
         return null;
@@ -74,11 +71,6 @@ export async function withCargoLocks<T>(
       return { kept: `a build holds ${busy ?? 'one of its Cargo locks'}` };
     }
     if (status !== 0) return { kept };
-    for (const { path, file } of handles) {
-      const current = await lstat(path, { bigint: true });
-      const opened = await file.stat({ bigint: true });
-      if (current.dev !== opened.dev || current.ino !== opened.ino) return { kept };
-    }
     signal?.throwIfAborted();
     kept = undefined;
     return { value: await body() };
