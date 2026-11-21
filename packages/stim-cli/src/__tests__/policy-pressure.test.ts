@@ -25,8 +25,6 @@ describe('the pressure ladder', () => {
       [6, 'high', ['disk']],
       [8, 'high', ['disk']],
       [9, 'high', ['disk']],
-      [5, 'high', ['disk']],
-      [7, 'high', ['disk']],
     ]);
     expect(runs(pressure('normal', 'high'))).toEqual([
       [0, 'high', ['memory']],
@@ -34,7 +32,7 @@ describe('the pressure ladder', () => {
     ]);
   });
 
-  test("rungs run by yield, Stim's own devices and caches before rung 1 and the report rungs 5 and 7 last, each at critical only when a cause it relieves is critical", () => {
+  test("rungs run by yield, Stim's own devices and caches before rung 1, each at critical only when a cause it relieves is critical", () => {
     expect(runs(pressure('high', 'critical'))).toEqual([
       [0, 'critical', ['memory']],
       [2, 'high', ['disk']],
@@ -44,14 +42,12 @@ describe('the pressure ladder', () => {
       [6, 'critical', ['disk', 'memory']],
       [8, 'high', ['disk']],
       [9, 'high', ['disk']],
-      [5, 'high', ['disk']],
-      [7, 'high', ['disk']],
     ]);
   });
 
   test('normal pressure stops the ladder, and a rung that relieves no raised cause is skipped', () => {
     expect(rungsFrom().map(({ relieves }) => rungDecision(pressure('normal', 'normal'), relieves))).toEqual(
-      Array(10).fill('stop'),
+      Array(8).fill('stop'),
     );
     expect(rungDecision(pressure('critical', 'normal'), ['memory'])).toBe('skip');
   });
