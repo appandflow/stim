@@ -386,7 +386,9 @@ could not put back as `target/.stim-not-restored-*`. A trim or delete leaves
 both out by their top-level name, without looking inside, and removes the rest
 of the `target/` as usual; a `target/` holding nothing else is no longer
 recognised. An interrupted older delete could have staged Exact receipts there,
-which no rebuild restores. Chosen by the coordinator after the edge-case audit
+which no rebuild restores. Exact's cleaner reads those folders as build output,
+so an Exact app's `target/` that holds either is kept whole and the cleaner is
+not asked. Chosen by the coordinator after the edge-case audit
 of 2026-11-20 and the review of #6065, not by the maintainer.
 
 ## A full disk releases the reserve

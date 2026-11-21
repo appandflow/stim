@@ -724,7 +724,14 @@ export async function deleteCargoTarget(
   if ('kept' in first) return keep(first.kept);
   if (first.used.length) return keep(`a process uses ${first.used[0]}`);
   const app = dirname(target);
-  if (isExactApp(app)) return exactDelete(app, target, result, signal);
+  if (isExactApp(app)) {
+    const staged = entriesOf(target)?.find((entry) => staging(entry.name));
+    if (staged)
+      return keep(
+        `it holds ${staged.name} from an earlier Stim, which Exact's cleaner would remove with what it stages`,
+      );
+    return exactDelete(app, target, result, signal);
+  }
   const exactOwned = EXACT_OWNED.find((name) => lstatSync(join(target, name), { throwIfNoEntry: false }));
   if (exactOwned)
     return keep(`it holds Exact's ${exactOwned} but no Exact app beside it, so it may be shared by Exact apps`);

@@ -843,6 +843,20 @@ describe.skipIf(process.platform === 'win32')(
       expect(result.kept).toEqual([expect.stringContaining('Stim asks again after a day')]);
     });
 
+    test("an earlier Stim's staged trim keeps the target, and Exact is never asked", async () => {
+      mkdirSync(join(dir, '.stim-trimmed', '3', '.fingerprint'), { recursive: true });
+      mkdirSync(join(dir, '.stim-trimmed', '4'), { recursive: true });
+      writeFileSync(join(dir, '.stim-trimmed', '4', 'r.json'), '{}');
+      ageTree(dir);
+
+      const result = await remove();
+
+      expect(result.kept).toEqual([expect.stringContaining('.stim-trimmed from an earlier Stim')]);
+      expect(calls).toEqual([]);
+      expect(readFileSync(join(dir, '.stim-trimmed', '4', 'r.json'), 'utf8')).toBe('{}');
+      expect(existsSync(join(dir, 'debug'))).toBe(true);
+    });
+
     test('a process working in the app keeps it, and Exact is never asked', async () => {
       devServerIn = realpathSync(target);
 
