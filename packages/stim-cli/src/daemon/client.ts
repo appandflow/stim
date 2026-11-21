@@ -11,6 +11,7 @@ import type { ServeOptions } from '../stimd/main.ts';
 import type { GcPassRequest } from '../commands/gc.ts';
 import type { GcPassReply } from './disk-owner.ts';
 import type { LevelRunAction } from '../stimd/passes/level-run.ts';
+import { keepReserve, releaseReserve } from '../disk-reserve.ts';
 import { fileLeaseIo, releaseRunLease } from '../engine/device-lease.ts';
 import { deviceSlotKey } from '../devices/device-slots.ts';
 import { operationState } from '../engine/operation-state.ts';
@@ -2106,18 +2107,6 @@ export async function runGcThroughStimd(
 ): Promise<GcPassReply> {
   const signal = operation?.signal;
   const env = operation?.env ?? process.env;
-  const started = await ensureStimd(
-    env,
-    process.platform,
-    false,
-    undefined,
-    'stim gc',
-    true,
-    undefined,
-    true,
-    operation,
-  );
-  signal?.throwIfAborted();
   const refused = (): Error => {
     const why = otherBuildRefusal() ?? {
       code: 'STIM_DAEMON_UNAVAILABLE',
@@ -2126,8 +2115,28 @@ export async function runGcThroughStimd(
     };
     return Object.assign(new Error(why.message), why);
   };
-  if (!started || (await waitForStimdHello()) === null) throw refused();
-  signal?.throwIfAborted();
+  const released = releaseReserve();
+  try {
+    signal?.throwIfAborted();
+    const started = await ensureStimd(
+      env,
+      process.platform,
+      false,
+      undefined,
+      'stim gc',
+      true,
+      undefined,
+      true,
+      operation,
+    );
+    signal?.throwIfAborted();
+    if (!started || (await waitForStimdHello()) === null) throw refused();
+    signal?.throwIfAborted();
+  } catch (error) {
+    if (released) keepReserve();
+    throw error;
+  }
+  // @ref LLP 0001#every-gc-joins-a-pass-under-way -- after transmission only the pass restores the reserve
   return new Promise((resolve, reject) => {
     let settled = false;
     const finish = (error: Error | null, reply?: GcPassReply) => {

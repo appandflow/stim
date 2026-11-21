@@ -389,9 +389,7 @@ function joinedLine(joined: NonNullable<GcPassReply['joined']>, forced: boolean)
 }
 
 /**
- * Runs one acting GC through `pass`, or a dry run in this process, and prints its summary unless `opts.json`. An
- * acting GC gives back the maintenance disk reserve first, so starting a stimd on a full disk has room to write, and
- * writes it back once its pass answers or fails.
+ * Runs one acting GC through `pass`, or a dry run in this process, and prints its summary unless `opts.json`.
  */
 export async function executeGc(
   opts: GcOptions & { walkUnknown?: false },
@@ -408,16 +406,11 @@ export async function executeGc(
   try {
     let reply: GcPassReply;
     if (act) {
-      releaseReserve();
-      try {
-        reply = await pass(
-          { ...(chosen ? { level: opts.pressure } : {}), client: gcClient(deps.operation?.env), ...walk },
-          deps.operation,
-          (action) => phase(action.outcome, `${action.kind} ${action.target}`, deps.operation),
-        );
-      } finally {
-        keepReserve();
-      }
+      reply = await pass(
+        { ...(chosen ? { level: opts.pressure } : {}), client: gcClient(deps.operation?.env), ...walk },
+        deps.operation,
+        (action) => phase(action.outcome, `${action.kind} ${action.target}`, deps.operation),
+      );
     } else {
       closeGitReads = openGitReads(deps.operation);
       reply = {

@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { withAmbientContext } from '@stim-cli/core';
 import { readClaimSet } from '@stim-cli/core/ownership-claim';
-import { stimdClaimRoot } from '@stim-cli/core/state';
+import { maintenanceDir, stimdClaimRoot } from '@stim-cli/core/state';
 import { createStim } from '../api.ts';
 import { runGc } from '../commands/gc.ts';
 import { runGcThroughStimd } from '../daemon/client.ts';
@@ -57,6 +57,8 @@ function fixture(du?: string) {
   mkdirSync(bin);
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'app', private: true }));
   writeFileSync(join(home, 'config.json'), JSON.stringify({ daemon: { mode: 'off' } }));
+  mkdirSync(join(home, 'maintenance'));
+  writeFileSync(join(home, 'maintenance', 'disk-reserve'), Buffer.alloc(1024 * 1024));
   writeFileSync(
     join(home, 'caches.json'),
     JSON.stringify({ version: 1, caches: [{ name: 'fixture', dir: cache, prune: 'entries' }] }),
@@ -181,6 +183,7 @@ describe.skipIf(process.platform === 'win32')('gc on stimd', () => {
       if (!expire) throw new Error('collectGarbage set no report budget');
       expire();
       await expect(gc).rejects.toMatchObject({ code: 'STIM_REPORT_TIMEOUT' });
+      expect(existsSync(join(maintenanceDir(), 'disk-reserve'))).toBe(false);
       for (const socket of opened) {
         await Promise.race([once(socket, 'close'), new Promise((done) => setTimeout(done, 1000))]);
         socket.destroy();
@@ -189,6 +192,7 @@ describe.skipIf(process.platform === 'win32')('gc on stimd', () => {
       await vi.waitFor(
         () => {
           if (existsSync(join(item.cache, 'artifact'))) throw new Error('the pass has not deleted the cache');
+          expect(readFileSync(join(maintenanceDir(), 'disk-reserve')).length).toBe(1024 * 1024);
         },
         { timeout: 20_000, interval: 200 },
       );

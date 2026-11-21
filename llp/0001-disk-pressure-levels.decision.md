@@ -357,7 +357,9 @@ joins a pass is protected by that pass's working directory, not its own.
   lane's maintenance pass, the tick's disk pass or the running gc pass. Its
   requests then wait for that pass and receive its result.
 - A request for a higher level raises the queued gc pass to it, or queues one
-  when none waits. At most one gc pass waits.
+  when none waits. At most one gc pass waits. A requester that leaves before
+  execution withdraws its level too; the queued level and rank come from the
+  remaining requesters. An executing pass keeps its level.
 - A request that leaves (an interrupted gc, a cancelled call) stops its pass
   only when no other request waits for it; completed actions stay. The API's
   report budget detaches instead: the client tells stimd before it closes its
@@ -366,6 +368,14 @@ joins a pass is protected by that pass's working directory, not its own.
   not switch engines under one.
 - A stimd that stops during the pass fails the request with the remedy to run
   it again (LLP 0012, A command does not continue across a stimd restart).
+
+The caller releases the maintenance disk reserve before starting or contacting
+stimd and restores it if startup, hello or cancellation fails before the
+request is sent. After transmission the executed or covering pass restores
+it when that pass settles, including after a caller detaches. A daemon lost
+or refusing the request after transmission may leave the reserve absent until
+the next pass. The reserve is rebuildable; the protocol has no ownership
+acknowledgement solely to cover that narrow gap.
 
 Reason: one queue for every cleanup, so a gc and the daemon never repeat each
 other's work on the same disk.

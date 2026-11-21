@@ -19,6 +19,10 @@ import * as preview from '../stimd/passes/preview.ts';
 import { cacheClaimRoot } from '../cache/cache-claim.ts';
 import { maintenanceStatus } from '../stimd/passes/status.ts';
 import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
+import { runGcThroughStimd } from '../daemon/client.ts';
+import { ladderRun } from '../stimd/passes/ladder-run.ts';
+import { joinablePass } from '../daemon/disk-owner.ts';
+import { releaseReserve } from '../disk-reserve.ts';
 import { runGc as runGcCommand, runGcPass } from '../commands/gc.ts';
 import statusOp from '../commands/status.ts';
 import { runCli } from '../cli/define-op.ts';
@@ -155,18 +159,38 @@ test('gc at zero free disk gives back the reserve to take its claim, then delete
   expect(existsSync(maintenanceRunClaims())).toBe(false);
 });
 
-test('an acting gc gives back the reserve before it asks stimd for its pass and writes it back when the request fails', async () => {
+test('a gc cancelled before transmission restores the reserve released for daemon startup', async () => {
   const reserve = join(maintenanceDir(), 'disk-reserve');
   await runMaintenance('status');
-  expect(existsSync(reserve)).toBe(true);
-  vi.spyOn(console, 'log').mockImplementation(() => {});
-  vi.spyOn(console, 'error').mockImplementation(() => {});
-  let held: boolean | undefined;
-  await runGcCommand({ pressure: 'normal', json: true }, {}, async () => {
-    held = existsSync(reserve);
-    throw Object.assign(new Error('no stimd'), { code: 'STIM_DAEMON_UNAVAILABLE', remedy: 'Run it again.' });
-  });
-  expect(held).toBe(false);
+  const controller = new AbortController();
+  controller.abort();
+  await expect(
+    runGcThroughStimd({ level: 'normal', client: 'manual' }, testContext({ signal: controller.signal }), () => {}),
+  ).rejects.toMatchObject({ name: 'AbortError' });
+  expect(readFileSync(reserve).length).toBe(1024 * 1024);
+});
+
+test('a covering pass restores the reserve only once its work settles', async () => {
+  const reserve = join(maintenanceDir(), 'disk-reserve');
+  await runMaintenance('status');
+  releaseReserve();
+  let finish = () => {};
+  const work = new Promise<void>((resolve) => (finish = resolve));
+  const pass = joinablePass(
+    'normal',
+    'maintenance',
+    () => work,
+    () =>
+      ladderRun(
+        'normal',
+        { level: 'normal', disk: 'normal', memory: 'normal', reasons: [], memoryWarningSince: null },
+        [],
+      ),
+    'lane',
+  );
+  expect(existsSync(reserve)).toBe(false);
+  finish();
+  await pass;
   expect(readFileSync(reserve).length).toBe(1024 * 1024);
 });
 

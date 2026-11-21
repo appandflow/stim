@@ -130,6 +130,23 @@ test('a higher level queues one pass after the running one, and a still higher r
   expect(pass.runs).toEqual([undefined, 'critical']);
 });
 
+test.each([undefined, 'normal'] as const)(
+  'withdrawing a queued critical request leaves the remaining %s request at its own level and rank',
+  async (level) => {
+    await acquireDisk(LANE);
+    const pass = heldPass(Promise.resolve());
+    const normal = requestGcPass(level, 'manual', pass.run, ignore);
+    const critical = requestGcPass('critical', 'desktop', pass.run, ignore);
+    critical.leave();
+    await diskBoundary();
+    await new Promise((done) => setImmediate(done));
+    expect(pass.runs).toEqual([]);
+    releaseDisk();
+    await Promise.all([normal.result, critical.result]);
+    expect(pass.runs).toEqual([level]);
+  },
+);
+
 test('a request that leaves stops only a pass no other request waits for', async () => {
   const pass = heldPass(new Promise(() => {}));
   const alone = requestGcPass('high', 'manual', pass.run, ignore);

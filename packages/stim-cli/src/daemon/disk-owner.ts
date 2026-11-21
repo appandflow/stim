@@ -1,4 +1,5 @@
 import type { PressureLevel, RescuedCopy } from '@stim-cli/core/state';
+import { keepReserve } from '../disk-reserve.ts';
 import type { LevelRun, LevelRunAction } from '../stimd/passes/level-run.ts';
 
 /**
@@ -31,13 +32,13 @@ function enqueue(waiter: Waiter): void {
 }
 
 /**
- * Waits for the turn like `acquireDisk`; `raise` moves a request that still waits to a lower rank, and `withdraw` gives
+ * Waits for the turn like `acquireDisk`; `rerank` changes the priority of a request that still waits, and `withdraw` gives
  * up the request, or the turn once it was granted.
  */
-function queueForDisk(rank: number): { granted: Promise<void>; raise(rank: number): void; withdraw(): void } {
+function queueForDisk(rank: number): { granted: Promise<void>; rerank(rank: number): void; withdraw(): void } {
   if (holder === null) {
     holder = rank;
-    return { granted: Promise.resolve(), raise: () => {}, withdraw: releaseDisk };
+    return { granted: Promise.resolve(), rerank: () => {}, withdraw: releaseDisk };
   }
   const waiter: Waiter = { rank, grant: () => {} };
   const granted = new Promise<void>((grant) => {
@@ -46,9 +47,9 @@ function queueForDisk(rank: number): { granted: Promise<void>; raise(rank: numbe
   enqueue(waiter);
   return {
     granted,
-    raise(to) {
+    rerank(to) {
       const at = waiting.indexOf(waiter);
-      if (at === -1 || to >= waiter.rank) return;
+      if (at === -1 || to === waiter.rank) return;
       waiting.splice(at, 1);
       waiter.rank = to;
       enqueue(waiter);
@@ -111,10 +112,10 @@ interface Pass {
   trigger: string;
   startedAt: string | null;
   result: Promise<GcPassReply>;
-  listeners: Set<(action: LevelRunAction) => void>;
+  listeners: Map<(action: LevelRunAction) => void, PressureLevel | undefined>;
   /** Stops a gc pass once no request waits for it; a pass of the tick or the lane has none. */
   stop?: AbortController;
-  raise?: (rank: number) => void;
+  rerank?: (rank: number) => void;
   /** Hands a queued gc pass to a pass that started since and covers it. */
   adopt?: (cover: Pass) => void;
   /** The pass that took over this queued one, whose waiters it now counts. */
@@ -136,8 +137,8 @@ export async function joinablePass<T>(
   toRun: (value: T) => LevelRun,
   slot: 'pass' | 'lane' = 'pass',
 ): Promise<T> {
-  const listeners = new Set<(action: LevelRunAction) => void>();
-  const done = work((action) => listeners.forEach((listen) => listen(action)));
+  const listeners = new Map<(action: LevelRunAction) => void, PressureLevel | undefined>();
+  const done = work((action) => listeners.forEach((_level, listen) => listen(action)));
   const pass: Pass = {
     level,
     trigger,
@@ -154,6 +155,7 @@ export async function joinablePass<T>(
   } finally {
     if (running === pass) running = null;
     if (lane === pass) lane = null;
+    keepReserve();
   }
 }
 
@@ -182,7 +184,7 @@ function adoptQueued(cover: Pass): void {
     return;
   queued = null;
   held.adoptedBy = cover;
-  for (const listen of held.listeners) cover.listeners.add(listen);
+  for (const [listen, level] of held.listeners) cover.listeners.set(listen, level);
   held.listeners.clear();
   held.adopt(cover);
 }
@@ -206,13 +208,13 @@ export function requestGcPass(
   const joined = pass !== null || queued !== null;
   if (!pass && queued && level) {
     queued.level = level;
-    queued.raise?.(turnRank(level));
+    queued.rerank?.(turnRank(level));
     pass = queued;
   }
   pass ??= queuePass(level, trigger, run);
   const asked = pass;
   const listen = (action: LevelRunAction) => onAction(action);
-  asked.listeners.add(listen);
+  asked.listeners.set(listen, level);
   return {
     result: asked.result
       .then((reply) => {
@@ -222,9 +224,17 @@ export function requestGcPass(
       .finally(() => (asked.adoptedBy ?? asked).listeners.delete(listen)),
     leave() {
       const target = asked.adoptedBy ?? asked;
-      if (!target.listeners.delete(listen) || target.listeners.size > 0 || !target.stop) return;
-      if (queued === target) queued = null;
-      target.stop.abort();
+      if (!target.listeners.delete(listen)) return;
+      if (target.listeners.size === 0) {
+        if (queued === target) queued = null;
+        target.stop?.abort();
+      } else if (queued === target) {
+        target.level = [...target.listeners.values()].reduce<PressureLevel | null>(
+          (highest, requested) => (requested && (!highest || RANK[requested] > RANK[highest]) ? requested : highest),
+          null,
+        );
+        target.rerank?.(turnRank(target.level));
+      }
     },
   };
 }
@@ -251,7 +261,7 @@ function queuePass(level: PressureLevel | undefined, trigger: string, run: RunGc
       return await run(
         pass.level ?? undefined,
         stop.signal,
-        (action) => pass.listeners.forEach((listen) => listen(action)),
+        (action) => pass.listeners.forEach((_level, listen) => listen(action)),
         (found) => {
           pass.level = found;
           adoptQueued(pass);
@@ -259,6 +269,7 @@ function queuePass(level: PressureLevel | undefined, trigger: string, run: RunGc
       );
     } finally {
       if (running === pass) running = null;
+      keepReserve();
       releaseDisk();
     }
   };
@@ -266,9 +277,9 @@ function queuePass(level: PressureLevel | undefined, trigger: string, run: RunGc
     level: level ?? null,
     trigger,
     startedAt: null,
-    listeners: new Set(),
+    listeners: new Map(),
     stop,
-    raise: ticket.raise,
+    rerank: ticket.rerank,
     adopt: (cover) => adopt?.(cover),
     result: turn(),
   };
