@@ -8,7 +8,6 @@ import type { DiscoveredReads } from './discovered-reads.ts';
 import { gitQuietAsync } from './git.ts';
 import { hiddenEditHold } from './hidden-edits.ts';
 import { checkDependencyEdits, dependencyEditsHold } from './dependency-edits.ts';
-import { rescueBeforeDelete } from './rescue.ts';
 import { absent } from './scan-rules.ts';
 
 const MAX_IGNORED_FILES = 200;
@@ -141,11 +140,6 @@ async function enclosingCheckout(path: string): Promise<string | null> {
   return null;
 }
 
-/** `rescueBeforeDelete` for removing the whole worktree at `path`. Without `act` it only checks. */
-export async function worktreeRescue(path: string, act: boolean, signal?: AbortSignal): Promise<string | null> {
-  return rescueBeforeDelete(path, path, { trees: [], whole: true }, { act, signal });
-}
-
 // @ref LLP 0004#removing-a-discovered-worktree-needs-more-evidence -- no Stim record of its files
 /**
  * What stops Stim removing a discovered linked worktree, or null: it must have had no activity for `idleMs` by the full
@@ -180,8 +174,6 @@ export async function discoveredRemovalHold(
   const folder = inOwner ?? toolFolder(main);
   if (folder)
     return `it is managed by another tool (inside ${folder} of ${inOwner && owner !== main ? owner : 'its main checkout'})`;
-  const patches = await worktreeRescue(path, false, operation?.signal);
-  if (patches) return patches;
   if (!(idleMs > 0)) return 'idle.dormantDays is 0, so its idleness cannot be established';
   const now = Date.now();
   const decision = decideIdleStop(await discoveredEvidence(path, { now, idleMs, reads, operation }), {
