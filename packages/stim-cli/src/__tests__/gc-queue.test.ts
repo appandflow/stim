@@ -3,6 +3,7 @@ import {
   acquireDisk,
   diskBoundary,
   joinablePass,
+  LADDER,
   LANE,
   releaseDisk,
   requestGcPass,
@@ -349,4 +350,26 @@ test('cancelling a queued item settles while the holder keeps the turn and leave
   } finally {
     releaseDisk();
   }
+});
+
+test('a cancelled headroom turn keeps the owner until its in-flight unit settles', async () => {
+  const started = gate();
+  const finish = gate();
+  const first = requestGcItem(async () => {
+    started.open();
+    await finish.promise;
+    return 'settled';
+  }, LADDER);
+  await started.promise;
+  let nextStarted = false;
+  const next = requestGcItem(async () => {
+    nextStarted = true;
+  });
+  first.leave();
+  await Promise.resolve();
+  expect(nextStarted).toBe(false);
+  finish.open();
+  expect(await first.result).toBe('settled');
+  await next.result;
+  expect(nextStarted).toBe(true);
 });

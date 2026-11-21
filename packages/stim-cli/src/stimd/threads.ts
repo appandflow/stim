@@ -1,8 +1,14 @@
 import type { StimContext } from '@stim-cli/core';
 import { isMainThread, parentPort, Worker, workerData } from 'node:worker_threads';
 import type { DaemonLadderAction } from '@stim-cli/core/state';
-import type { DiskPassInput, DiskPassResult, MaintenanceLane } from '../daemon/passes.ts';
-import { LADDER_CLOCK_SLOTS, requestGcPass, requestGcItem, type GcPassReply } from '../daemon/disk-owner.ts';
+import type {
+  DiskPassInput,
+  DiskPassResult,
+  MaintenanceLane,
+  HeadroomRequest,
+  HeadroomReply,
+} from '../daemon/passes.ts';
+import { LADDER, LADDER_CLOCK_SLOTS, requestGcPass, requestGcItem, type GcPassReply } from '../daemon/disk-owner.ts';
 import type { GcPassRequest } from '../commands/gc.ts';
 import type { GcItemRequest, GcItemResult } from '../commands/gc/item.ts';
 import { runGcItem } from './gc-item.ts';
@@ -48,7 +54,7 @@ type FromThread =
       type: 'ladderDone';
       id: number;
       reading: boolean;
-      result?: DiskPassResult | GcPassReply | GcItemResult;
+      result?: DiskPassResult | GcPassReply | GcItemResult | HeadroomReply;
       failure?: Failure;
     }
   | { type: 'gcAction'; id: number; action: LevelRunAction }
@@ -68,7 +74,10 @@ interface Thread {
   /** Disk passes and gc requests asked of this thread and not answered yet, by request id. */
   ladders: Map<
     number,
-    { resolve: (result: DiskPassResult | GcPassReply | GcItemResult) => void; reject: (error: Error) => void }
+    {
+      resolve: (result: DiskPassResult | GcPassReply | GcItemResult | HeadroomReply) => void;
+      reject: (error: Error) => void;
+    }
   >;
   /** Where each gc request's actions go, by request id. */
   gcActions: Map<number, (action: LevelRunAction) => void>;
@@ -98,6 +107,8 @@ export interface ThreadTable {
     input: GcPassRequest & { cwd: string },
     onAction: (action: LevelRunAction) => void,
   ): { result: Promise<GcPassReply>; leave(): void };
+  /** Queues a build's headroom turn, bounded by its original client deadline. */
+  headroom(input: HeadroomRequest & { cwd: string; act: boolean }): { result: Promise<HeadroomReply>; leave(): void };
   /** Queues an explicit item independently and streams its operation's output. */
   item(
     input: GcItemRequest & { cwd: string },
@@ -227,7 +238,7 @@ export function createThreadTable(log: Log, onLost: (error: Error) => void = () 
     threads.set(name, thread);
     return thread;
   };
-  const ask = <T extends DiskPassResult | GcPassReply | GcItemResult>(
+  const ask = <T extends DiskPassResult | GcPassReply | GcItemResult | HeadroomReply>(
     type: 'ladder' | 'gc',
     input: object,
     onAction?: (action: LevelRunAction) => void,
@@ -239,7 +250,7 @@ export function createThreadTable(log: Log, onLost: (error: Error) => void = () 
     const id = ++nextLadder;
     const result = new Promise<T>((resolve, reject) => {
       thread.ladders.set(id, {
-        resolve: resolve as (result: DiskPassResult | GcPassReply | GcItemResult) => void,
+        resolve: resolve as (result: DiskPassResult | GcPassReply | GcItemResult | HeadroomReply) => void,
         reject,
       });
       if (onAction) thread.gcActions.set(id, onAction);
@@ -265,6 +276,14 @@ export function createThreadTable(log: Log, onLost: (error: Error) => void = () 
           if (thread.ladders.has(id)) thread.worker.postMessage({ type: 'gcLeave', id });
         },
       };
+    },
+    headroom(input) {
+      const { thread, id, result } = ask<HeadroomReply>('gc', input);
+      const leave = () => {
+        if (thread.ladders.has(id)) thread.worker.postMessage({ type: 'gcLeave', id });
+      };
+      const timer = setTimeout(leave, Math.max(0, input.headroom.deadline - Date.now()));
+      return { result: result.finally(() => clearTimeout(timer)), leave };
     },
     item(input, output) {
       const { thread, id, result } = ask<GcItemResult>('gc', input, undefined, output);
@@ -389,8 +408,8 @@ else if (thread && parentPort) {
     ThreadInput,
     DiskPassInput,
     DiskPassResult,
-    GcPassRequest | GcItemRequest,
-    GcPassReply | GcItemResult
+    GcPassRequest | GcItemRequest | (HeadroomRequest & { act: boolean }),
+    GcPassReply | GcItemResult | HeadroomReply
   >(
     port,
     processContext,
@@ -424,6 +443,13 @@ else if (thread && parentPort) {
       return runDiskPass(input, log, operation, ladderClocks);
     },
     (input, open, emit, output) => {
+      if ('headroom' in input)
+        return requestGcItem(async (signal): Promise<HeadroomReply> => {
+          const { runLadderToFree } = await import('../daemon/passes.ts');
+          const operation = open(new AbortController().signal);
+          await runLadderToFree({ ...input.headroom, operation, signal, act: input.act });
+          return { headroom: true };
+        }, LADDER);
       if ('item' in input)
         return requestGcItem((signal) => {
           const operation = open(signal);

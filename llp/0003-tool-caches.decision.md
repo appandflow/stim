@@ -53,9 +53,9 @@ Chosen in the review of #5514, not by the maintainer.
 
 ## Never from a build command
 
-The ladder a build command runs in its own process, at the hard floor or for its
-headroom (LLP 0006), stops at rung 8. Only the stim-daemon and `stim gc` run
-rung 9. It never runs in a scoped home (LLP 0002).
+A build-triggered ladder stops at rung 8: the hard-floor pass in the caller
+and headroom on the disk owner (LLP 0006). Only independent stim-daemon and
+`stim gc` passes run rung 9. It never runs in a scoped home (LLP 0002).
 
 Reason: the build is about to read the Gradle and SwiftPM caches; clearing them
 would slow the build that asked for room.

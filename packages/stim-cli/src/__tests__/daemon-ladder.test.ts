@@ -18,7 +18,6 @@ import {
   daemonNdjsonFile,
   diskUsageCacheFile,
   IDLE_STOP_KEY,
-  ladderRunClaims,
   readDormantStage,
   readIdleStage,
   readJsonObject,
@@ -41,7 +40,6 @@ import * as ladderModule from '../daemon/ladder.ts';
 import * as bootedParked from '../daemon/booted-parked.ts';
 import * as idlePass from '../daemon/idle.ts';
 import * as stages from '../daemon/stages.ts';
-import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { dormantCandidates, pendingDormant, runDormantPass } from '../daemon/stages.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { parkSim, readParked } from '../devices/sim-pool.ts';
@@ -62,7 +60,7 @@ import * as archive from '../archive.ts';
 import { testContext } from './_context.ts';
 import * as settings from '../workspace/settings.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
-import { LADDER_CLOCK_SLOTS } from '../daemon/disk-owner.ts';
+import { acquireDisk, releaseDisk, requestGcItem, LADDER, LADDER_CLOCK_SLOTS } from '../daemon/disk-owner.ts';
 import * as daemonMeasure from '../daemon/measure.ts';
 
 const MINUTE_MS = 60_000;
@@ -1704,18 +1702,20 @@ describe('the ladder a build runs for its headroom', () => {
     expect(deleted).toEqual(['PARKED-0']);
   });
 
-  test('does nothing while another process holds the ladder claim', async () => {
+  test('a queued headroom turn remeasures prior cleanup and starts no duplicate deletion when its target is met', async () => {
     parked(2);
-    const disk = freeOnBuildDevice(10, 1);
-    const held = tryAcquireClaim({ root: ladderRunClaims(), mode: 'exclusive', label: 'pressure ladder' }).acquired;
-    if (!held) throw new Error('claim not acquired');
-    try {
-      await run(24);
-    } finally {
-      releaseClaim(held);
-    }
-    expect(deleted).toEqual([]);
+    let freeMb = 10 * 1024;
+    const disk = vi
+      .spyOn(daemonMeasure, 'measureDisk')
+      .mockImplementation(async () => [{ volume: '/', freeMb, device: DEVICE }]);
+    await acquireDisk(LADDER);
+    const asked = requestGcItem(() => run(24), LADDER);
     expect(disk).not.toHaveBeenCalled();
+    freeMb = 30 * 1024;
+    releaseDisk();
+    await asked.result;
+    expect(deleted).toEqual([]);
+    expect(disk).toHaveBeenCalled();
   });
 });
 

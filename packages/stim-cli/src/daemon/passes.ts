@@ -1,9 +1,8 @@
-import { isClaimUnavailable, releaseClaim, tryAcquireClaim, type ClaimHandle } from '@stim-cli/core/ownership-claim';
+import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { LOG_ROTATE_BYTES, type StimContext } from '@stim-cli/core';
 import {
   daemonNdjsonFile,
-  ladderRunClaims,
   readDaemonSnapshot,
   type DaemonLadderAction,
   type DaemonPressure,
@@ -564,7 +563,7 @@ async function runCommandLadder(
 ): Promise<void> {
   const mode = daemonMode(env);
   const config = loadConfig();
-  if (!config || mode === 'off') return;
+  if (!config || (!headroom && mode === 'off')) return;
   const { thresholds } = diskThresholds(config, env);
   let warningSince = readDaemonSnapshot()?.pressure?.memoryWarningSince ?? null;
   const classify = async (): Promise<DaemonPressure> => {
@@ -592,7 +591,7 @@ async function runCommandLadder(
     await runLadder(
       {
         config,
-        act: mode === 'on',
+        act: headroom?.act ?? mode === 'on',
         log: (level, event, msg, fields = {}) => {
           if (headroom && event === 'pressure_action' && (fields.outcome === 'done' || fields.outcome === 'failed'))
             headroom.acted = true;
@@ -617,6 +616,8 @@ async function runCommandLadder(
 
 /** What a ladder run for a build's headroom judges by: the build's device, the target there, and when to stop. */
 interface HeadroomRun {
+  act: boolean;
+  deadline: number;
   device: number;
   freeMb: number;
   operation: StimContext;
@@ -644,7 +645,7 @@ const NORMAL_PRESSURE: DaemonPressure = {
  * build device's free space no higher, which ends the run between two rungs or two actions.
  */
 async function headroomPressure(config: Config, headroom: HeadroomRun): Promise<DaemonPressure> {
-  if (headroom.stop.aborted || headroom.helpless) return NORMAL_PRESSURE;
+  if (headroom.stop.aborted || Date.now() >= headroom.deadline || headroom.helpless) return NORMAL_PRESSURE;
   let disk;
   try {
     disk = await measureDisk(config, headroom.stop);
@@ -860,15 +861,22 @@ export async function runLadderNow(
   } catch {}
 }
 
-const HEADROOM_DEADLINE_MS = 60_000;
+export interface HeadroomRequest {
+  headroom: {
+    device: number;
+    freeMb: number;
+    protectedRoot: string;
+    deadline: number;
+  };
+}
+
+export interface HeadroomReply {
+  headroom: true;
+}
 
 /**
- * Runs the pressure ladder for a build once, in this process, until the volume with device id `device` has `freeMb`
- * free or the rungs are spent, at the high level (rungs 2 to 8, never rung 9) whatever that target is relative to
- * `disk.minFreeGb`; other volumes and memory do not count. It asks the daemon for nothing and returns at once when a
- * stimd of another build refused this process or another process holds the `ladderRunClaims` claim. It stops after
- * 60 seconds: the deadline and `signal` are checked at every re-measurement, which each rung makes before every
- * action, so a step in flight finishes and no step is left half done. Throws only when `signal` aborts.
+ * Runs a build's headroom ladder on its disk-owner turn, high rungs 2-8 on the build device only. It remeasures
+ * before acting and stops at the target, deadline or cancellation, leaving an in-flight unit to settle.
  */
 export async function runLadderToFree({
   operation,
@@ -876,37 +884,37 @@ export async function runLadderToFree({
   device,
   freeMb,
   protectedRoot,
+  deadline = Date.now() + 60_000,
+  act = daemonMode(operation.env) === 'on',
 }: {
   operation: StimContext;
   signal: AbortSignal;
   device: number;
   freeMb: number;
   protectedRoot: string;
+  deadline?: number;
+  act?: boolean;
 }): Promise<void> {
-  if (stimdRefused()) return;
-  let claim: ClaimHandle | null = null;
-  try {
-    const attempt = tryAcquireClaim({ root: ladderRunClaims(), mode: 'exclusive', label: 'pressure ladder' });
-    if (attempt.pending) releaseClaim(attempt.pending);
-    claim = attempt.acquired ?? null;
-  } catch {
-    return;
-  }
-  if (!claim) return;
-  const stop = AbortSignal.any([signal, AbortSignal.timeout(HEADROOM_DEADLINE_MS)]);
+  if (Date.now() >= deadline) return;
+  const stop = AbortSignal.any([
+    signal,
+    operation.signal,
+    AbortSignal.timeout(Math.max(0, Math.ceil(deadline - Date.now()))),
+  ]);
   try {
     await runCommandLadder('command', operation.env, protectedRoot, {
       device,
       freeMb,
       operation,
       stop,
+      act,
+      deadline,
       acted: false,
       lastFreeMb: null,
       helpless: false,
     });
-  } catch {
+  } catch (error) {
+    if (isClaimUnavailable(error) || (error instanceof Error && 'reportCleanup' in error)) throw error;
     signal.throwIfAborted();
-  } finally {
-    releaseClaim(claim);
   }
 }

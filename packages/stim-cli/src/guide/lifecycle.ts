@@ -2714,22 +2714,21 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   20 ios. A project type Stim does not recognise uses the standalone native
   default. They are estimates, not measurements. The target is that estimate
   plus the critical floor (disk.criticalFreeGb, or disk.hardFloorGb when
-  higher). When free disk on the project's volume is under the target, Stim runs
-  the ladder once, in the build's own process, and the build then starts
+  higher). When free disk on the project's volume is under the target, Stim queues
+  headroom on the daemon's disk owner, and the build then starts
   whatever the result. That run is high level only (rungs 2 to 8, never
   rung 9, so a build does not clear the Gradle caches it is about to read),
   and it stops as soon as the volume, found by its device id, has the target
   free, whether the target is under or over disk.minFreeGb: a target of 24 GB
   on a volume with 22 GB free frees about 2 GB and does not go on toward
-  disk.minFreeGb. Other volumes and memory do not count. It asks the daemon
-  for nothing and takes a machine-wide claim, so a build that finds it held,
-  or finds a stimd of another build refusing this process, skips it. A
-  headroom run can overlap the daemon's own pass; the worst case is freeing more
-  than needed, as both may delete different parked devices or trim the same
-  cache. The run ends after any action that removed something and left the
-  build volume's free space no higher, such as one on another volume. It runs at most 60 seconds: the
-  deadline and cancelling the build are checked before every rung and every
-  action, so a step in flight finishes and none is left half done. If the space
+  disk.minFreeGb. Other volumes and memory do not count. The request waits
+  behind an ongoing pass and rechecks the target when it takes the turn,
+  skipping cleanup if earlier work already made room. It never deletes the
+  build's own workspace. The run ends after an action that removed something
+  leaves the build volume's free space no higher. One 60-second budget covers
+  setup, daemon contact, queue wait and cleanup; a step in flight settles before
+  the owner releases its turn. Off mode starts no daemon; report mode does not
+  delete. No daemon or an error never falls back to caller-side cleanup. If space
   is still short, one warning on stderr (also in --json mode) gives the bytes
   expected and available. The check adds no refusal and no error code, a
   failure inside it never fails the build; disk.hardFloorGb still refuses as
