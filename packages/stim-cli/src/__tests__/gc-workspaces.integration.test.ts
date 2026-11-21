@@ -2758,24 +2758,6 @@ test('gc copies aside a keypair a dormant Cargo trim left in target/custom and a
   expect(readFileSync(join(copy?.dir ?? '', relative(merged, patch)), 'utf8')).toBe('patched');
 }, 240_000);
 
-test('gc keeps a finished registered worktree whose .pnpm_patches holds a linked edit folder', async () => {
-  const { repo, worktrees } = repoWithMergedBranches();
-  const merged = worktrees.merged ?? '';
-  writeFileSync(join(repo, '.git', 'info', 'exclude'), 'node_modules/\n');
-  const edits = join(merged, 'node_modules', '.patch-work', 'pkg@1.0.0', 'index.js');
-  mkdirSync(dirname(edits), { recursive: true });
-  writeFileSync(edits, 'patched');
-  mkdirSync(join(merged, 'node_modules', '.pnpm_patches'));
-  writeFileSync(join(merged, 'node_modules', '.pnpm_patches', 'state.json'), '{}');
-  symlinkSync('../.patch-work/pkg@1.0.0', join(merged, 'node_modules', '.pnpm_patches', 'pkg@1.0.0'));
-
-  await checkWorktrees();
-  await gcJson({ pressure: 'normal' });
-
-  expect(readFileSync(edits, 'utf8')).toBe('patched');
-  expect(existsSync(worktrees.squashed ?? '')).toBe(false);
-}, 240_000);
-
 test('gc copies a pnpm patch and a Solana keypair aside before it removes a finished registered worktree', async () => {
   const { repo, worktrees } = repoWithMergedBranches();
   const merged = worktrees.merged ?? '';

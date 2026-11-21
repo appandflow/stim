@@ -689,28 +689,6 @@ interface DeleteOptions {
   signal?: AbortSignal;
 }
 
-/** Reads Linux's `/proc/self/mountinfo`, where a bind mount keeps the device number of the volume it exposes. */
-export const LINUX_MOUNT_INFO: (() => string) | null =
-  process.platform === 'linux' ? () => readFileSync('/proc/self/mountinfo', 'utf8') : null;
-
-/** Why a mount point lies at or under `target` by `mountInfo`, or null when none does. */
-export function mountedUnder(target: string, mountInfo: (() => string) | null): string | null {
-  if (!mountInfo) return null;
-  let text: string;
-  try {
-    text = mountInfo();
-  } catch (error) {
-    return `the mounts cannot be read: ${error instanceof Error ? error.message : error}`;
-  }
-  for (const line of text.split('\n')) {
-    const field = line.split(' ')[4];
-    if (!field) continue;
-    const point = field.replace(/\\([0-7]{3})/g, (_, octal: string) => String.fromCharCode(Number.parseInt(octal, 8)));
-    if (point === target || point.startsWith(`${target}/`)) return `${point} is a mount point`;
-  }
-  return null;
-}
-
 // @ref LLP 0005#the-dormant-reduction-deletes-an-idle-target-whole -- in place under every profile's Cargo locks
 /**
  * Deletes everything in `target` the remover may delete, every top-level entry but a symbolic link and a `deploy/`
