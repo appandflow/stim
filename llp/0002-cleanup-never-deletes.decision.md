@@ -70,9 +70,10 @@ The maintainer chose this in the coordinating session on 2026-11-20, answering
 instead of detecting committed patches. The 30 days is the coordinator's
 choice, a constant in the code rather than a setting.
 
-The copy handles the layouts a regular project has and nothing more: a hold
-for an unusual layout keeps a folder for good, while copying anyway costs at
-most a reinstall or a rerun of `pnpm patch`.
+The copy handles the layouts a regular project has and nothing more. A hold
+for an unusual layout kept a folder for good, while what copying anyway can
+lose is limited to layouts a regular project does not have, such as a keypair
+on another volume mounted inside the worktree.
 
 Not covered:
 

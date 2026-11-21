@@ -140,6 +140,20 @@ test.skipIf(process.platform === 'win32')(
   },
 );
 
+test.skipIf(process.platform === 'win32')(
+  'a node_modules linked outside the checkout is skipped and copies nothing',
+  async () => {
+    const outside = join(base, 'elsewhere', 'node_modules');
+    mkdirSync(join(outside, '.pnpm_patches', 'pkg@1.0.0'), { recursive: true });
+    writeFileSync(join(outside, '.pnpm_patches', 'pkg@1.0.0', 'index.js'), 'patched');
+    mkdirSync(root, { recursive: true });
+    symlinkSync(outside, tree);
+
+    expect(await rescue()).toBeNull();
+    expect(readRescuedCopies()).toEqual([]);
+  },
+);
+
 test.skipIf(process.platform === 'win32')('a linked target/ is not followed and holds nothing', async () => {
   mkdirSync(join(base, 'elsewhere', 'deploy'), { recursive: true });
   writeFileSync(join(base, 'elsewhere', 'deploy', 'program-keypair.json'), '[1]');
