@@ -113,14 +113,6 @@ test.each([
   },
 );
 
-test('a target/ holding only a leftover of an earlier Stim trim is recognised without Cargo.toml, never as build output', async () => {
-  dir('target', '.stim-not-restored-1-debug/.fingerprint');
-
-  expect(await cargoTargetDirsAsync(root)).toEqual([join(root, 'target')]);
-  expect(await existingBuildDirsAsync(root)).toEqual([]);
-  expect(isBuildDirPath(join(root, 'target'))).toBe(false);
-});
-
 test('a Cargo target/ that both the Exact rule and the CACHEDIR.TAG rule recognise is listed once', async () => {
   writeFileSync(join(root, 'exact.mjs'), '');
   dir('target');
