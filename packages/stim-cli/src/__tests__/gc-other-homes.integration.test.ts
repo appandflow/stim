@@ -2,12 +2,14 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createdDevicesFile, readStimHomes, stimHomesRoot } from '@stim-cli/core/state';
-import { runGc } from '../commands/gc.ts';
+import { runGc as runGcCommand, runGcPass } from '../commands/gc.ts';
 import { collectDeviceRecords } from '../commands/gc/records.ts';
 import { forgetCreatedDevice } from '../devices/created-devices.ts';
 import { recordStimHome } from '../engine/stim-home-registry.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { loadConfig, saveConfig } from '../workspace/config.ts';
+
+const runGc: typeof runGcCommand = (opts, deps) => runGcCommand(opts, deps, runGcPass);
 
 const SCRATCH_SIM = {
   udid: 'SCRATCH-UDID',

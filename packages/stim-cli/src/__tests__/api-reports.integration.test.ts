@@ -2,24 +2,13 @@ import { PEER } from '@stim-cli/core/protocol';
 import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from '@stim-cli/core/process-identity';
 import * as identities from '../process-identity.ts';
 import * as git from '../workspace/git.ts';
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  realpathSync,
-  utimesSync,
-  writeFileSync,
-} from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { withAmbientContext, type StimContext } from '@stim-cli/core';
 import { createStim } from '../api.ts';
-import gcOp, { runGc } from '../commands/gc.ts';
-import { runCli } from '../cli/define-op.ts';
-import * as cliOperation from '../cli-operation.ts';
+import { runGc } from '../commands/gc.ts';
 import { recordGcResult, takeGcResults } from '../commands/gc/results.ts';
 import { getExecutor } from '../exec.ts';
 import { readClaimSet, releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-claim.ts';
@@ -27,25 +16,10 @@ import { operationState } from '../engine/operation-state.ts';
 import { collectGradleVersions } from '../commands/gc/gradle-versions.ts';
 import * as tailnet from '../offload/tailnet.ts';
 import { testContext } from './_context.ts';
-import { ensureWorkspaceStorage } from '../workspace/paths.ts';
-import { macosDir } from '../macos/state.ts';
-import * as gcDevices from '../commands/gc/devices.ts';
 import * as androidDevices from '../devices/android.ts';
 import { decodeSecret } from '@stim-cli/core/noise-session';
+import { maintenanceRunClaims } from '@stim-cli/core/state';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
-
-const removal = vi.hoisted((): { after?: (path: unknown) => void } => ({}));
-vi.mock('node:fs/promises', async (importOriginal) => {
-  const fs = await importOriginal<typeof import('node:fs/promises')>();
-  return {
-    ...fs,
-    rm: async (...args: Parameters<typeof fs.rm>) => {
-      const result = await fs.rm(...args);
-      removal.after?.(args[0]);
-      return result;
-    },
-  };
-});
 
 let scratch: string;
 let fixtureAbort: AbortController;
@@ -315,267 +289,129 @@ test('concurrent GC mutations empty only their selected cache and return results
   }
 });
 
-test.each(
-  [
-    'cache size',
-    'CLI cache size',
-    'cache emptying',
-    'CLI cache emptying',
-    'simulator inventory',
-    'emulator inventory',
-    'Gradle project settings',
-    'worktree inventory',
-    ...(process.platform !== 'win32' ? ['temporary process inventory'] : []),
-    ...(process.platform === 'darwin' ? ['orphaned workspace'] : []),
-  ].flatMap((kind) => [false, true].map((unavailable) => ({ kind, unavailable }))),
-)('GC $kind declares its native child and preserves cleanup refusal=$unavailable', async ({ kind, unavailable }) => {
-  const item = fixture('native-inventory');
-  const cli = kind.startsWith('CLI ');
-  const emptying = kind.endsWith('cache emptying');
-  const cacheProbe = kind === 'cache size' || cli || emptying;
-  const workspaceProbe = kind === 'orphaned workspace';
-  const gradleProbe = kind === 'Gradle project settings';
-  const worktreeProbe = kind === 'worktree inventory';
-  const tempProbe = kind === 'temporary process inventory';
-  const temporary = join(item.home, 'tmp');
-  if (tempProbe) {
-    mkdirSync(temporary);
-    Object.assign(item.env, { TMPDIR: temporary, TMP: temporary, TEMP: temporary });
-  }
-  Object.assign(item.env, {
-    AGENT_DEVICE_STATE_DIR: join(item.home, 'agent-device'),
-    GRADLE_USER_HOME: join(item.home, 'gradle'),
-    XDG_CACHE_HOME: join(item.env.HOME, '.cache'),
-  });
-  const platform = kind === 'simulator inventory' ? 'ios' : 'android';
-  const config = {
-    version: 2,
-    projects: gradleProbe || worktreeProbe ? { [item.root]: {} } : {},
-    repos: {},
-    daemon: { mode: 'off' },
-    parked: {
-      [platform]: [
-        {
-          udid: 'stim-native-probe',
-          name: 'stim-native-probe',
-          parkedAt: '2026-01-01T00:00:00Z',
-          deviceTypeIdentifier: 'iphone',
-          runtimeIdentifier: 'runtime',
-          simslimManaged: false,
-          systemImage: 'system-images;android-35;google_apis;arm64-v8a',
-          configuration: '[]',
-        },
-      ],
-    },
-  };
-  if (!cacheProbe && !workspaceProbe && !tempProbe)
-    writeFileSync(join(item.home, 'config.json'), JSON.stringify(config));
-  let preserved = join(item.cache, 'artifact');
-  if (tempProbe) {
-    preserved = join(temporary, 'instruments-test.ktrace');
-    writeFileSync(preserved, 'native-inventory');
-    const old = new Date(Date.now() - 48 * 60 * 60 * 1000);
-    utimesSync(preserved, old, old);
-  }
-  if (emptying) {
+test.each([false, true])(
+  'a GC item deletion declares its native child and preserves cleanup refusal=%s',
+  async (unavailable) => {
+    const item = fixture('native-inventory');
+    Object.assign(item.env, {
+      AGENT_DEVICE_STATE_DIR: join(item.home, 'agent-device'),
+      GRADLE_USER_HOME: join(item.home, 'gradle'),
+      XDG_CACHE_HOME: join(item.env.HOME, '.cache'),
+    });
     mkdirSync(join(item.cache, 'entry'));
-    preserved = join(item.cache, 'entry', 'original');
+    const preserved = join(item.cache, 'entry', 'original');
     writeFileSync(preserved, 'native-inventory');
-  }
-  if (workspaceProbe)
-    withAmbientContext(testContext({ home: item.home, env: item.env }), () => {
-      const gone = join(item.root, 'deleted-worktree');
-      const dir = ensureWorkspaceStorage(gone);
-      mkdirSync(macosDir(gone), { recursive: true });
-      preserved = join(dir, 'original');
-      writeFileSync(preserved, 'native-inventory');
-    });
-  const originalConfig = readFileSync(join(item.home, 'config.json'), 'utf8');
-  const tag = `requested-${kind}`;
-  const infoFile = join(item.root, 'probe.json');
-  const controller = new AbortController();
-  const context = testContext({
-    home: item.home,
-    projectRoot: item.root,
-    cwd: item.root,
-    env: { ...item.env, STIM_NATIVE_PROBE_TAG: tag },
-    signal: AbortSignal.any([fixtureAbort.signal, controller.signal]),
-  });
-  const exitCode = process.exitCode;
-  const stdout: string[] = [];
-  const cliLog = cli
-    ? vi.spyOn(console, 'log').mockImplementation((value) => {
-        stdout.push(String(value));
-      })
-    : undefined;
-  const cliError = cli ? vi.spyOn(console, 'error').mockImplementation(() => {}) : undefined;
-  const cliProcess = cli
-    ? vi
-        .spyOn(cliOperation, 'runProcessOperation')
-        .mockImplementation(async <T>(_root: string, work: (context: StimContext) => Promise<T>) => ({
-          value: await work(context),
-          interrupted: controller.signal.aborted ? 130 : null,
-        }))
-    : undefined;
-  const executor = getExecutor();
-  const original = executor.runFileAsync.bind(executor);
-  const originalSync = executor.runFile.bind(executor);
-  const syncQueries: string[][] = [];
-  const sync = vi.spyOn(executor, 'runFile').mockImplementation((file, args, options) => {
-    if (workspaceProbe && file === 'ps' && args.includes('pid=,comm=')) {
-      syncQueries.push(args);
-      return '';
-    }
-    return originalSync(file, args, options);
-  });
-  let owned: { pid: number; processToken: string } | undefined;
-  const targets: { pid: number; processToken: string }[] = [];
-  let handles: ClaimHandle[] = [];
-  let observedPid: number | undefined;
-  let observedContext: unknown;
-  let closed: Promise<void> = Promise.resolve();
-  const inspectOriginal = inspectProcessIdentity;
-  const inspect = vi
-    .spyOn(identities, 'inspectProcessIdentity')
-    .mockImplementation((record) =>
-      unavailable && owned !== undefined && record?.pid === owned.pid ? 'unknown' : inspectOriginal(record),
-    );
-  const probe = vi.spyOn(executor, 'runFileAsync').mockImplementation((file, args, options) => {
-    const wanted = tempProbe
-      ? file === 'ps' && args.includes('comm=')
-      : worktreeProbe
-        ? file === 'git' && args.includes('worktree')
-        : gradleProbe
-          ? file === 'git'
-          : workspaceProbe
-            ? file === 'ps'
-            : cacheProbe
-              ? file === 'du' && (!emptying || args.includes(join(item.cache, 'entry')))
-              : kind === 'simulator inventory'
-                ? file === 'xcrun' && args.includes('devices')
-                : /emulator(?:\.exe)?$/.test(file) && args.includes('-list-avds');
-    if (!wanted) {
-      if (emptying && file === 'du') return Promise.resolve('1');
-      if (worktreeProbe && file === 'git' && args.includes('worktree'))
-        return Promise.resolve(`worktree ${item.root}\nHEAD ${'1'.repeat(40)}\nbranch refs/heads/main\n`);
-      if (gradleProbe || worktreeProbe || tempProbe) return Promise.resolve(file === 'du' ? `1\t${args.at(-1)}\n` : '');
-      throw new Error(`Unexpected native probe: ${file} ${args.join(' ')}`);
-    }
-    return original(
-      process.execPath,
-      [
-        '-e',
-        'require("node:fs").writeFileSync(process.argv[1],JSON.stringify({pid:process.pid,parent:process.ppid,cwd:process.cwd(),tag:process.env.STIM_NATIVE_PROBE_TAG})); console.log("ready"); ' +
-          (cli ? 'setTimeout(()=>{},2000)' : 'setInterval(()=>{},1000)'),
-        infoFile,
-      ],
-      {
-        ...options,
-        onSpawn: (child) => {
-          options.onSpawn?.(child);
-          const birth = child.pid === undefined ? null : captureProcessIdentity(child.pid);
-          if (!birth?.ok || child.pid === undefined) throw new Error('The fixture native child has no identity');
-          owned = { pid: child.pid, processToken: birth.token };
-          targets.push(owned);
-          handles = [...operationState(options.declareFor).declaring];
-          closed = new Promise<void>((resolve) => child.once('close', resolve));
-          child.stdout?.once('data', () => {
-            const metadata = JSON.parse(readFileSync(infoFile, 'utf8'));
-            for (const pid of process.platform === 'win32' ? [metadata.pid, metadata.parent] : [metadata.pid]) {
-              if (targets.some((record) => record.pid === pid)) continue;
-              const captured = captureProcessIdentity(pid);
-              if (!captured.ok) throw new Error(captured.reason);
-              targets.push({ pid, processToken: captured.token });
-            }
-            observedContext = { cwd: metadata.cwd, tag: metadata.tag };
-            observedPid = readClaimSet(join(item.home, 'maintenance', 'run.claims')).live[0]?.child?.pid;
-            controller.abort();
-          });
+    const originalConfig = readFileSync(join(item.home, 'config.json'), 'utf8');
+    const tag = 'requested-cache emptying';
+    const infoFile = join(item.root, 'probe.json');
+    const controller = new AbortController();
+    const exitCode = process.exitCode;
+    const executor = getExecutor();
+    const original = executor.runFileAsync.bind(executor);
+    let owned: { pid: number; processToken: string } | undefined;
+    const targets: { pid: number; processToken: string }[] = [];
+    let handles: ClaimHandle[] = [];
+    let observedPid: number | undefined;
+    let observedContext: unknown;
+    let closed: Promise<void> = Promise.resolve();
+    const inspectOriginal = inspectProcessIdentity;
+    const inspect = vi
+      .spyOn(identities, 'inspectProcessIdentity')
+      .mockImplementation((record) =>
+        unavailable && owned !== undefined && record?.pid === owned.pid ? 'unknown' : inspectOriginal(record),
+      );
+    const probe = vi.spyOn(executor, 'runFileAsync').mockImplementation((file, args, options) => {
+      if (file !== 'du') throw new Error(`Unexpected native probe: ${file} ${args.join(' ')}`);
+      if (!args.includes(join(item.cache, 'entry'))) return Promise.resolve('1');
+      return original(
+        process.execPath,
+        [
+          '-e',
+          'require("node:fs").writeFileSync(process.argv[1],JSON.stringify({pid:process.pid,parent:process.ppid,cwd:process.cwd(),tag:process.env.STIM_NATIVE_PROBE_TAG})); console.log("ready"); setInterval(()=>{},1000)',
+          infoFile,
+        ],
+        {
+          ...options,
+          onSpawn: (child) => {
+            options.onSpawn?.(child);
+            const birth = child.pid === undefined ? null : captureProcessIdentity(child.pid);
+            if (!birth?.ok || child.pid === undefined) throw new Error('The fixture native child has no identity');
+            owned = { pid: child.pid, processToken: birth.token };
+            targets.push(owned);
+            handles = [...operationState(options.declareFor).declaring];
+            closed = new Promise<void>((resolve) => child.once('close', resolve));
+            child.stdout?.once('data', () => {
+              const metadata = JSON.parse(readFileSync(infoFile, 'utf8'));
+              for (const pid of process.platform === 'win32' ? [metadata.pid, metadata.parent] : [metadata.pid]) {
+                if (targets.some((record) => record.pid === pid)) continue;
+                const captured = captureProcessIdentity(pid);
+                if (!captured.ok) throw new Error(captured.reason);
+                targets.push({ pid, processToken: captured.token });
+              }
+              observedContext = { cwd: metadata.cwd, tag: metadata.tag };
+              observedPid = readClaimSet(join(item.home, 'maintenance', 'run.claims')).live[0]?.child?.pid;
+              controller.abort();
+            });
+          },
         },
-      },
-    );
-  });
-  const scope = tempProbe ? vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false) : undefined;
-  let settled: (() => unknown) | undefined;
-  try {
-    const client = createStim({
-      projectRoot: item.root,
-      home: item.home,
-      env: { ...item.env, STIM_NATIVE_PROBE_TAG: tag },
+      );
     });
-    const result = trackRead((signal) => {
-      const cancel = AbortSignal.any([signal, controller.signal]);
-      if (cli)
-        return withAmbientContext(context, async () => {
-          await runCli(gcOp, ['--pressure', emptying ? 'critical' : 'normal', '--json'], { version: '9.9.9' });
-        });
-      if (emptying)
-        return client
-          .deleteGarbageItem({ item: { kind: 'cache', dir: item.cache }, signal: cancel })
-          .then(() => undefined);
-      return client
-        .collectGarbage({
-          pressure:
-            gradleProbe || kind === 'simulator inventory' || kind === 'emulator inventory' || tempProbe
-              ? 'high'
-              : 'normal',
-          signal: cancel,
-        })
-        .then(() => undefined);
-    });
-    const failure = await (cli
-      ? result.then(() => JSON.parse(stdout[0] ?? ''))
-      : result.then(
-          () => null,
-          (error) => error,
-        ));
-    expect(failure).toMatchObject({ code: unavailable ? 'STIM_CLAIM_UNAVAILABLE' : 'STIM_CANCELLED' });
-    const cause = failure instanceof Error ? failure.cause : undefined;
-    if (cause instanceof Error && 'cleanupSettled' in cause && typeof cause.cleanupSettled === 'function') {
-      const check = cause.cleanupSettled;
-      settled = () => check();
-    }
-    expect(settled?.()).toBe(unavailable && !cli ? false : undefined);
-    expect(stdout).toHaveLength(cli ? 1 : 0);
-    expect(process.exitCode).toBe(cli ? 130 : exitCode);
-    if (!owned) throw new Error('The controlled native inventory probe did not start');
-    expect(observedPid).toBe(owned.pid);
-    expect(syncQueries).toEqual([]);
-    expect(observedContext).toEqual({ cwd: item.root, tag });
-    expect(readFileSync(join(item.home, 'config.json'), 'utf8')).toBe(originalConfig);
-    for (const path of emptying ? [preserved] : [join(item.cache, 'artifact'), preserved])
-      expect(readFileSync(path, 'utf8')).toBe('native-inventory');
-    const admission = readClaimSet(join(item.home, 'maintenance', 'run.claims'));
-    expect(admission.live).toHaveLength(unavailable ? 1 : 0);
-    expect(admission.unresolved).toEqual([]);
-    const expected = unavailable ? ['same'] : ['gone', 'different'];
-    for (const record of targets) {
-      if (process.platform === 'win32' && !unavailable) {
-        // Windows termination stops execution before process exit is signaled.
-        // https://learn.microsoft.com/windows/win32/api/processthreadsapi/nf-processthreadsapi-terminateprocess
-        await waitForProcessExit(record, 1000);
+    let settled: (() => unknown) | undefined;
+    try {
+      const client = createStim({
+        projectRoot: item.root,
+        home: item.home,
+        env: { ...item.env, STIM_NATIVE_PROBE_TAG: tag },
+      });
+      const failure = await trackRead((signal) =>
+        client.deleteGarbageItem({
+          item: { kind: 'cache', dir: item.cache },
+          signal: AbortSignal.any([signal, controller.signal]),
+        }),
+      ).then(
+        () => null,
+        (error: unknown) => error,
+      );
+      expect(failure).toMatchObject({ code: unavailable ? 'STIM_CLAIM_UNAVAILABLE' : 'STIM_CANCELLED' });
+      const cause = failure instanceof Error ? failure.cause : undefined;
+      if (cause instanceof Error && 'cleanupSettled' in cause && typeof cause.cleanupSettled === 'function') {
+        const check = cause.cleanupSettled;
+        settled = () => check();
       }
-      expect(expected).toContain(inspectProcessIdentity(record));
+      expect(settled?.()).toBe(unavailable ? false : undefined);
+      expect(process.exitCode).toBe(exitCode);
+      if (!owned) throw new Error('The controlled native inventory probe did not start');
+      expect(observedPid).toBe(owned.pid);
+      expect(observedContext).toEqual({ cwd: item.root, tag });
+      expect(readFileSync(join(item.home, 'config.json'), 'utf8')).toBe(originalConfig);
+      expect(readFileSync(preserved, 'utf8')).toBe('native-inventory');
+      const admission = readClaimSet(join(item.home, 'maintenance', 'run.claims'));
+      expect(admission.live).toHaveLength(unavailable ? 1 : 0);
+      expect(admission.unresolved).toEqual([]);
+      const expected = unavailable ? ['same'] : ['gone', 'different'];
+      for (const record of targets) {
+        if (process.platform === 'win32' && !unavailable) {
+          // Windows termination stops execution before process exit is signaled.
+          // https://learn.microsoft.com/windows/win32/api/processthreadsapi/nf-processthreadsapi-terminateprocess
+          await waitForProcessExit(record, 1000);
+        }
+        expect(expected).toContain(inspectProcessIdentity(record));
+      }
+    } finally {
+      inspect.mockRestore();
+      probe.mockRestore();
+      controller.abort();
+      process.exitCode = exitCode;
+      for (const record of targets.toReversed()) {
+        killFixtureChild(record);
+      }
+      await closed;
+      for (const record of targets) expect(await waitForProcessExit(record, 5000)).toBe(true);
+      for (const handle of handles) releaseClaim(handle);
     }
-  } finally {
-    scope?.mockRestore();
-    inspect.mockRestore();
-    probe.mockRestore();
-    sync.mockRestore();
-    controller.abort();
-    cliProcess?.mockRestore();
-    cliLog?.mockRestore();
-    cliError?.mockRestore();
-    process.exitCode = exitCode;
-    for (const record of targets.toReversed()) {
-      killFixtureChild(record);
-    }
-    await closed;
-    for (const record of targets) expect(await waitForProcessExit(record, 5000)).toBe(true);
-    for (const handle of handles) releaseClaim(handle);
-  }
-  expect(settled?.()).toBe(unavailable && !cli ? true : undefined);
-});
+    expect(settled?.()).toBe(unavailable ? true : undefined);
+  },
+);
 
 test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
   'GC returns a failed exit status and partial report when a cache entry cannot be deleted',
@@ -600,79 +436,27 @@ test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
   },
 );
 
-test('GC mutations in one home refuse concurrent maintenance and name the held claim', async () => {
+test('a GC item deletion refuses while a maintenance pass holds the home and names the held claim', async () => {
   const item = fixture('contention');
   const options = { projectRoot: item.root, home: item.home, env: item.env };
-  let competing: Promise<unknown> | undefined;
-  const executor = getExecutor();
-  const run = executor.runFileAsync;
-  const probe = vi.spyOn(executor, 'runFileAsync').mockImplementation((file, args, opts) => {
-    if (file === 'du')
-      competing ??= trackRead((signal) =>
-        createStim(options).deleteGarbageItem({ item: { kind: 'cache', dir: item.cache }, signal }),
-      ).catch((error: unknown) => error);
-    return run(file, args, opts);
-  });
+  const held = withAmbientContext(testContext({ home: item.home, env: item.env }), () =>
+    tryAcquireClaim({ root: maintenanceRunClaims(), mode: 'exclusive', label: 'maintenance' }),
+  ).acquired;
+  if (!held) throw new Error('The fixture maintenance claim was not taken');
   try {
-    const result = await trackRead((signal) => createStim(options).collectGarbage({ pressure: 'normal', signal }));
-    expect(result.exitCode).toBe(0);
+    await expect(
+      trackRead((signal) =>
+        createStim(options).deleteGarbageItem({ item: { kind: 'cache', dir: item.cache }, signal }),
+      ),
+    ).rejects.toMatchObject({ code: 'STIM_CLAIM_REFUSED', remedy: expect.stringContaining(item.home) });
   } finally {
-    probe.mockRestore();
+    releaseClaim(held);
   }
-  if (!competing) throw new Error('The competing maintenance request was not started');
-  expect(await competing).toMatchObject({ code: 'STIM_CLAIM_REFUSED', remedy: expect.stringContaining(item.home) });
   const next = await trackRead((signal) =>
     createStim(options).deleteGarbageItem({ item: { kind: 'cache', dir: item.cache }, signal }),
   );
   expect(next.exitCode).toBe(0);
 });
-
-test.each(['before mutation', 'between caches'] as const)(
-  'cancelling GC %s keeps every remaining cache and releases maintenance admission',
-  async (when) => {
-    const item = fixture('cancel-caches');
-    const second = join(item.home, 'second-cache');
-    mkdirSync(second);
-    writeFileSync(join(second, 'artifact'), 'second');
-    const artifacts = [join(item.cache, 'artifact'), join(second, 'artifact')];
-    writeFileSync(
-      join(item.home, 'caches.json'),
-      JSON.stringify({
-        version: 1,
-        caches: [
-          { name: 'fixture-one', dir: item.cache, prune: 'entries' },
-          { name: 'fixture-two', dir: second, prune: 'entries' },
-        ],
-      }),
-    );
-    const controller = new AbortController();
-    const client = createStim({ projectRoot: item.root, home: item.home, env: item.env });
-    const executor = getExecutor();
-    const run = executor.runFileAsync;
-    const probe = vi.spyOn(executor, 'runFileAsync').mockImplementation((file, args, opts) => {
-      if (file === 'du' && when === 'before mutation') controller.abort();
-      return run(file, args, opts);
-    });
-    if (when === 'between caches')
-      removal.after = () => {
-        if (artifacts.some((path) => !existsSync(path))) controller.abort();
-      };
-    try {
-      await expect(
-        trackRead((signal) =>
-          client.collectGarbage({ pressure: 'critical', signal: AbortSignal.any([signal, controller.signal]) }),
-        ),
-      ).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
-    } finally {
-      probe.mockRestore();
-      removal.after = undefined;
-    }
-    expect(artifacts.filter(existsSync)).toHaveLength(when === 'before mutation' ? 2 : 1);
-    const next = await trackRead((signal) => client.collectGarbage({ pressure: 'critical', signal }));
-    expect(next.exitCode).toBe(0);
-    expect(artifacts.some(existsSync)).toBe(false);
-  },
-);
 
 test.each([undefined, 'importer-home'])(
   'scoped GC uses the client environment for Gradle remedies with importer home=%s',

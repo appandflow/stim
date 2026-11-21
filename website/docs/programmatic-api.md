@@ -398,9 +398,11 @@ their own measured-usage caches. An explicit `home` or `STIM_HOME` preserves
 the CLI's scoped-home restrictions on machine-global resources.
 
 `collectGarbage({ pressure?, signal? })`
-runs `stim gc` in process, at the measured level or at `pressure`, and returns
-`{ report, exitCode }`. `exitCode` is 0 or 1; it does not change
-`process.exitCode`. The CLI's scoped-home restrictions also apply.
+runs `stim gc` on this home's stimd, as the CLI does, at the measured level or
+at `pressure`, and returns `{ report, exitCode }`. `exitCode` is 0 or 1; it does
+not change `process.exitCode`. `report.joined` names the pass it joined, if
+any. Past the report budget it rejects with `STIM_REPORT_TIMEOUT` and the pass
+goes on in stimd. The CLI's scoped-home restrictions also apply.
 
 ```ts
 const { report, exitCode } = await stim.collectGarbage({

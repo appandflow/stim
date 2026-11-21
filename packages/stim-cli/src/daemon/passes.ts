@@ -28,7 +28,9 @@ import type { OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { classifyPressure, diskPressure, diskThresholds, shortVolumeDevices, type DiskThresholds } from './pressure.ts';
 import { onShortVolume } from '../stimd/passes/unowned.ts';
 import { dormantAfterMs, runDormantPass, sourceDormantAfterMs } from './stages.ts';
-import { acquireDisk, diskBoundary, HARD_FLOOR, LADDER, LANE, releaseDisk } from './disk-owner.ts';
+import { acquireDisk, diskBoundary, HARD_FLOOR, joinablePass, LADDER, LANE, releaseDisk } from './disk-owner.ts';
+import { ladderRun } from '../stimd/passes/ladder-run.ts';
+import type { LevelRunAction } from '../stimd/passes/level-run.ts';
 
 const LADDER_PACE_FACTOR = 4;
 const LADDER_PACE_MAX_MS = 15 * 60_000;
@@ -91,7 +93,7 @@ export async function runDiskPass(
     operation.signal.throwIfAborted();
     const { thresholds } = diskThresholds(config);
     let warningSince = input.pressure.memoryWarningSince;
-    return await runLadder(
+    const pass = runLadder(
       {
         config,
         act: input.act,
@@ -114,6 +116,13 @@ export async function runDiskPass(
         }),
       },
       input.pressure,
+    );
+    if (!input.act) return await pass;
+    return await joinablePass(
+      input.pressure.disk,
+      'pressure',
+      () => pass,
+      ({ actions, pressure }) => ladderRun(input.pressure.disk, pressure, actions),
     );
   } finally {
     closeGitReads();
@@ -476,13 +485,30 @@ export function createMaintenanceLane(
             })),
           );
           dependenciesMs = lap();
-          skipped = await watchedStep(log, 'maintenance', () =>
+          const maintain = (onAction?: (action: LevelRunAction) => void) =>
             runMaintenance('daemon', {
               report: !act,
               tick: { operation, measured },
               between: diskBoundary,
               deleted: release,
-            }),
+              ...(onAction ? { onAction } : {}),
+            });
+          const done: LevelRunAction[] = [];
+          // @ref LLP 0001#every-gc-joins-a-pass-under-way -- a gc at normal joins the lane's acting maintenance pass
+          skipped = await watchedStep(log, 'maintenance', () =>
+            act
+              ? joinablePass(
+                  'normal',
+                  'maintenance',
+                  (emit) =>
+                    maintain((action) => {
+                      done.push(action);
+                      emit(action);
+                    }),
+                  () => ({ ...ladderRun('normal', pressure, []), actions: done }),
+                  'lane',
+                )
+              : maintain(),
           );
         } finally {
           release();
@@ -698,6 +724,8 @@ export async function runForcedLadder({
       simsError: measured.simsError,
       devices: measured.devices,
       log,
+      ...(protectedRoot ? { protectedRoot } : {}),
+      ...(operation ? { operation } : {}),
     };
     const running = act ? [] : await runIdlePass({ ...reading, act: false });
     const volumes =

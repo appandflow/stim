@@ -6,11 +6,23 @@ import { reportChildOf } from '../engine/workspace-process-error.ts';
 import { hungRead } from '../workspace/bounded-read.ts';
 import { createCleanupWatch } from './cleanup-watch.ts';
 
-type ToThread<Input, LadderInput> =
+type ToThread<Input, LadderInput, GcInput> =
   | { type: 'run'; input: Input & { cwd: string } }
   | { type: 'abort' }
   | { type: 'settle' }
-  | { type: 'ladder'; id: number; input: LadderInput & { cwd: string } };
+  | { type: 'ladder'; id: number; input: LadderInput & { cwd: string } }
+  | { type: 'gc'; id: number; input: GcInput & { cwd: string } }
+  | { type: 'gcLeave'; id: number };
+
+/**
+ * One gc request on the thread: `open` makes the operation of a pass the request starts, `emit` sends each action of
+ * the pass it runs or joins, and `leave` withdraws the request.
+ */
+type GcRequest<GcInput, GcResult> = (
+  input: GcInput & { cwd: string },
+  open: (signal: AbortSignal) => StimContext,
+  emit: (action: unknown) => void,
+) => { result: Promise<GcResult>; leave(): void };
 
 /**
  * Serves one stimd thread's jobs on `port`, one at a time, each with its own operation from `context`, and beside them
@@ -18,17 +30,21 @@ type ToThread<Input, LadderInput> =
  * cleanup refusal names one child and leaves no other child of its operation running is watched here: the failure
  * crosses with that child's identity, and each `settle` releases what a stopped child alone retained and answers with
  * the children still watched. Every answer also says whether a timed-out read of this thread is still pending
- * (`bounded-read.ts`). `forget` runs after such a failure of a job, for a job that keeps state between runs.
+ * (`bounded-read.ts`). `forget` runs after such a failure of a job, for a job that keeps state between runs. Each `gc`
+ * request goes to `gc`, answered like a disk pass, with its actions as `gcAction` messages on the way.
  */
-export function serveThreadJobs<Input, LadderInput = never, LadderResult = never>(
+export function serveThreadJobs<Input, LadderInput = never, LadderResult = never, GcInput = never, GcResult = never>(
   port: MessagePort,
   context: (cwd: string, signal: AbortSignal) => StimContext,
   run: (input: Input & { cwd: string }, operation: StimContext) => Promise<DaemonLadderAction[]>,
   forget: () => void = () => {},
   ladder?: (input: LadderInput & { cwd: string }, operation: StimContext) => Promise<LadderResult>,
+  gc?: GcRequest<GcInput, GcResult>,
 ): void {
   let controller = new AbortController();
   const ladders = new Set<AbortController>();
+  let gcStop = new AbortController();
+  const gcLeaves = new Map<number, () => void>();
   // @ref LLP 0007#stimd-stays-up-for-a-child-it-can-watch -- a job's cleanup check stays on its thread
   const watch = createCleanupWatch(() => {});
   const failure = (error: unknown, operation: StimContext, signal: AbortSignal) => {
@@ -55,10 +71,37 @@ export function serveThreadJobs<Input, LadderInput = never, LadderResult = never
       },
     };
   };
-  port.on('message', async (message: ToThread<Input, LadderInput>) => {
+  port.on('message', async (message: ToThread<Input, LadderInput, GcInput>) => {
     if (message.type === 'abort') {
       for (const asked of ladders) asked.abort();
+      gcStop.abort();
+      gcStop = new AbortController();
       return controller.abort();
+    }
+    if (message.type === 'gcLeave') return gcLeaves.get(message.id)?.();
+    if (message.type === 'gc') {
+      if (!gc) return;
+      const { id, input } = message;
+      const stopped = gcStop.signal;
+      let operation: StimContext | undefined;
+      const asked = gc(
+        input,
+        (signal) => (operation = { ...context(input.cwd, AbortSignal.any([signal, stopped])), cwd: input.cwd }),
+        (action) => port.postMessage({ type: 'gcAction', id, action }),
+      );
+      gcLeaves.set(id, asked.leave);
+      try {
+        const result = await asked.result;
+        port.postMessage({ type: 'ladderDone', id, result, reading: hungRead() !== null });
+      } catch (error) {
+        const fields = operation
+          ? failure(error, operation, operation.signal).fields
+          : { message: error instanceof Error ? error.message : String(error) };
+        port.postMessage({ type: 'ladderDone', id, failure: fields, reading: hungRead() !== null });
+      } finally {
+        gcLeaves.delete(id);
+      }
+      return;
     }
     if (message.type === 'settle') {
       watch.settle();

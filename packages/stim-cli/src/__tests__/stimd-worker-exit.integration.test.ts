@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert';
@@ -256,6 +256,43 @@ describe.skipIf(process.platform === 'win32')('a disk pass on the passes worker'
     } finally {
       entry.mockRestore();
       await threads.close();
+    }
+  }, 10_000);
+
+  test("a gc request's operation protects the caller's project, not stimd's working directory", async () => {
+    const root = mkdtempSync(join(tmpdir(), 'stim-worker-gc-'));
+    writeFileSync(join(root, 'package.json'), '{}');
+    const entry = vi
+      .spyOn(entries, 'spawnEntry')
+      .mockReturnValue(fileURLToPath(new URL('./fixtures/thread-jobs-worker.ts', import.meta.url)));
+    const threads = createThreadTable(() => {});
+    try {
+      const asked = threads.gc({ client: 'manual', cwd: root }, () => {});
+      expect(await asked.result).toMatchObject({ protectedRoot: realpathSync(root) });
+    } finally {
+      entry.mockRestore();
+      await threads.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 10_000);
+
+  test('closing the threads waits for a gc request its requester left to settle', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'stim-worker-gc-'));
+    const settled = join(root, 'settled');
+    const entry = vi
+      .spyOn(entries, 'spawnEntry')
+      .mockReturnValue(fileURLToPath(new URL('./fixtures/thread-jobs-worker.ts', import.meta.url)));
+    const threads = createThreadTable(() => {});
+    try {
+      const request = { client: 'manual' as const, cwd: root, settled };
+      const asked = threads.gc(request, () => {});
+      void asked.result.catch(() => {});
+      asked.leave();
+      await threads.close();
+      expect(readFileSync(settled, 'utf8')).toBe('settled');
+    } finally {
+      entry.mockRestore();
+      rmSync(root, { recursive: true, force: true });
     }
   }, 10_000);
 

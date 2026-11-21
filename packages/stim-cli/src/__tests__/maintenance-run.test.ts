@@ -19,13 +19,19 @@ import * as preview from '../stimd/passes/preview.ts';
 import { cacheClaimRoot } from '../cache/cache-claim.ts';
 import { maintenanceStatus } from '../stimd/passes/status.ts';
 import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
-import { runGc } from '../commands/gc.ts';
+import { runGcThroughStimd } from '../daemon/client.ts';
+import { ladderRun } from '../stimd/passes/ladder-run.ts';
+import { joinablePass } from '../daemon/disk-owner.ts';
+import { releaseReserve } from '../disk-reserve.ts';
+import { runGc as runGcCommand, runGcPass } from '../commands/gc.ts';
 import statusOp from '../commands/status.ts';
 import { runCli } from '../cli/define-op.ts';
 import { warnCriticalDisk } from '../stimd/passes/trigger.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { makeChildProcess } from './_factories.ts';
 import { testContext } from './_context.ts';
+
+const runGc: typeof runGcCommand = (opts, deps) => runGcCommand(opts, deps, runGcPass);
 
 const disk = vi.hoisted(() => ({ full: false, reserve: '', code: 'ENOSPC', partialReserveWrite: false }));
 vi.mock('@stim-cli/core/ownership-claim', async (importOriginal) => {
@@ -105,7 +111,7 @@ test('load deferral leaves the size check due and a failing pressure check is no
   expect(measurements.measureSizes).not.toHaveBeenCalled();
 });
 
-test('an already held pass makes the child exit silently, names the holder to its caller, and gc refuses with the holder', async () => {
+test('an already held pass makes the child exit silently and names the holder to its caller', async () => {
   const attempt = tryAcquireClaim({
     root: maintenanceRunClaims(),
     mode: 'exclusive',
@@ -121,13 +127,6 @@ test('an already held pass makes the child exit silently, names the holder to it
     expect(measurements.measurePressure).not.toHaveBeenCalled();
     expect(out).not.toHaveBeenCalled();
     expect(err).not.toHaveBeenCalled();
-    await runGc({ pressure: 'normal', json: true });
-    const payload = JSON.parse(String(out.mock.calls[0]![0]));
-    expect(payload).toMatchObject({ code: 'STIM_CLAIM_REFUSED' });
-    expect(payload.message).toContain(`pid ${process.pid}`);
-    expect(payload.message).toContain('first-pass');
-    expect(payload.message).toContain(attempt.acquired!.path);
-    expect(out).toHaveBeenCalledTimes(1);
   } finally {
     releaseClaim(attempt.acquired!);
   }
@@ -158,6 +157,75 @@ test('gc at zero free disk gives back the reserve to take its claim, then delete
   expect(existsSync(orphan)).toBe(false);
   expect(readFileSync(reserve).length).toBe(1024 * 1024);
   expect(existsSync(maintenanceRunClaims())).toBe(false);
+});
+
+test('a gc cancelled before transmission restores the reserve released for daemon startup', async () => {
+  const reserve = join(maintenanceDir(), 'disk-reserve');
+  await runMaintenance('status');
+  const controller = new AbortController();
+  controller.abort();
+  await expect(
+    runGcThroughStimd({ level: 'normal', client: 'manual' }, testContext({ signal: controller.signal }), () => {}),
+  ).rejects.toMatchObject({ name: 'AbortError' });
+  expect(readFileSync(reserve).length).toBe(1024 * 1024);
+});
+
+test('a covering pass restores the reserve only once its work settles', async () => {
+  const reserve = join(maintenanceDir(), 'disk-reserve');
+  await runMaintenance('status');
+  releaseReserve();
+  let finish = () => {};
+  const work = new Promise<void>((resolve) => (finish = resolve));
+  const pass = joinablePass(
+    'normal',
+    'maintenance',
+    () => work,
+    () =>
+      ladderRun(
+        'normal',
+        { level: 'normal', disk: 'normal', memory: 'normal', reasons: [], memoryWarningSince: null },
+        [],
+      ),
+    'lane',
+  );
+  expect(existsSync(reserve)).toBe(false);
+  finish();
+  await pass;
+  expect(readFileSync(reserve).length).toBe(1024 * 1024);
+});
+
+test('engine-store cleanup waits for an admitted gc pass', async () => {
+  const store = join(home, 'engine');
+  const leftover = join(store, '.trash', 'old-build');
+  mkdirSync(leftover, { recursive: true });
+  writeFileSync(join(store, 'current.json'), JSON.stringify({ format: 1, dir: 'current' }));
+  vi.stubEnv('STIM_ENGINE_ROOT', store);
+  vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    await runGcCommand({ pressure: 'normal', json: true }, {}, async () => {
+      throw Object.assign(new Error('no stimd'), { code: 'STIM_DAEMON_UNAVAILABLE', remedy: 'Run it again.' });
+    });
+    expect(existsSync(leftover)).toBe(true);
+    await runGcPass({ level: 'normal', client: 'manual' }, undefined, () => {});
+    expect(existsSync(leftover)).toBe(false);
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});
+
+test('each gc pass logs under a run id of its own', async () => {
+  for (const name of ['first', 'second']) {
+    mkdirSync(join(home, 'workspaces', `${name}--0000000000000000`), { recursive: true });
+    await runGcPass({ level: 'normal', client: 'manual' }, undefined, () => {});
+  }
+  const runs = new Set(
+    readFileSync(gcLogFile(), 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line).runId),
+  );
+  expect(runs.size).toBe(2);
 });
 
 test('a reserve that can be neither written nor removed still releases the run claim', async () => {

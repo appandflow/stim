@@ -53,6 +53,7 @@ import {
   type DaemonMode,
   type DaemonRecentAction,
   type DaemonSnapshot,
+  type PressureLevel,
 } from '@stim-cli/core/state';
 import { startBuildEndTimer } from './build-end-timer.ts';
 import {
@@ -456,6 +457,8 @@ function handleNetStop(
   else shutdown(why, 'warn');
 }
 
+const GC_LEVELS: readonly PressureLevel[] = ['normal', 'high', 'critical'];
+
 function refusesSealedOperation(sealed: boolean, op: unknown): boolean {
   return (
     sealed &&
@@ -468,6 +471,7 @@ function refusesSealedOperation(sealed: boolean, op: unknown): boolean {
       'metro.prepare',
       'lease.prepare',
       'lease.acquire',
+      'gc.run',
     ].includes(String(op))
   );
 }
@@ -1154,13 +1158,20 @@ async function runStimdInner(
   };
   const open = new Set<Socket>();
   const ops = new Map<Socket, 'pinned' | 'waiting'>();
+  const gcRequests = new Set<Promise<unknown>>();
+  const gcDetached = new WeakSet<Socket>();
   const logsRunning = () => logs.running() || logs.ownedRunning();
   const hasOffWork = () =>
     Boolean(
       cleanups.pending() ||
       logs.running() ||
       logs.ownedRunning() ||
-      keepsServingWhenOff(lifetime.keepsServingWhenOff, ops.size > 0, Boolean(net.running()), restartingNet),
+      keepsServingWhenOff(
+        lifetime.keepsServingWhenOff,
+        ops.size > 0 || gcRequests.size > 0,
+        Boolean(net.running()),
+        restartingNet,
+      ),
     );
   const opContexts = new Map<Socket, Invocation & { workspace: string }>();
   const opControllers = new Map<Socket, AbortController>();
@@ -1242,13 +1253,14 @@ async function runStimdInner(
     );
   };
   let heldSwitch = false;
-  const hasActiveCommands = () => ops.size > 0;
+  const hasActiveCommands = () => ops.size > 0 || gcRequests.size > 0;
   const pinned = (): boolean =>
     Boolean(backgroundFailure) ||
     cleanups.pending() ||
     metroCleanupPending() ||
     metroRootsEndingWithStimd().length > 0 ||
     [...ops.values()].includes('pinned') ||
+    gcRequests.size > 0 ||
     listBuildSlots().some((slot) => slot.alive && slot.client !== null) ||
     (net.running() !== null && readHostedSessions().some(hostedNativeWork));
   const failBackground = (error: unknown, why: string) => {
@@ -1792,7 +1804,53 @@ async function runStimdInner(
               if (ops.has(socket)) return reply(answer);
               return socket.end(`${JSON.stringify(answer)}\n`);
             });
-        } else if (op === 'snapshot') socket.end(`${JSON.stringify({ op: 'snapshot', snapshot: lastSnapshot })}\n`);
+        } else if (op === 'gc.run') {
+          const params = isJsonObject(message.params) ? message.params : {};
+          const level = GC_LEVELS.find((entry) => entry === params.level);
+          // @ref LLP 0001#every-gc-joins-a-pass-under-way -- every acting gc runs on the passes thread
+          ops.set(socket, 'pinned');
+          opCommands.set(socket, 'stim gc');
+          const asked = threads.gc(
+            {
+              ...(level ? { level } : {}),
+              client: params.client === 'desktop' ? 'desktop' : 'manual',
+              ...(params.walkUnknown === false ? { walkUnknown: false } : {}),
+              cwd: typeof params.cwd === 'string' ? params.cwd : process.cwd(),
+            },
+            (action) => reply({ op: 'gc.action', action }),
+          );
+          // @ref LLP 0001#every-gc-joins-a-pass-under-way -- a detached request leaves its pass running
+          socket.once('close', () => {
+            if (!gcDetached.has(socket)) asked.leave();
+            if (effectiveMode() === 'off') requestTick();
+          });
+          const settled = asked.result.then(
+            () => undefined,
+            () => undefined,
+          );
+          gcRequests.add(settled);
+          void settled.finally(() => {
+            gcRequests.delete(settled);
+            if (effectiveMode() === 'off') requestTick();
+            void checkEngine();
+          });
+          void asked.result
+            .then(
+              (result) => ({ op: 'gc.done', ...result }),
+              (error: unknown) => {
+                if (isUnverifiedCleanup(error) && !contain(error))
+                  failBackground(error, 'gc cleanup could not be verified');
+                return {
+                  op: 'error',
+                  code: error instanceof Error && 'code' in error ? error.code : 'STIM_RUN_FAILED',
+                  message: error instanceof Error ? error.message : String(error),
+                  remedy: error instanceof Error && 'remedy' in error ? error.remedy : 'Run the command again.',
+                };
+              },
+            )
+            .then((answer) => socket.end(`${JSON.stringify(answer)}\n`));
+        } else if (op === 'gc.detach') gcDetached.add(socket);
+        else if (op === 'snapshot') socket.end(`${JSON.stringify({ op: 'snapshot', snapshot: lastSnapshot })}\n`);
         else if (op === 'status') void statuses.answer(message.params).then((answer) => socket.end(`${answer}\n`));
         else if (op === 'tick') {
           if (!tickReplies.includes(socket)) tickReplies.push(socket);

@@ -14,7 +14,7 @@ import { readClaimSet } from '../ownership-claim.ts';
 import { writeAvdProcessLock } from './_factories.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { runGc } from '../commands/gc.ts';
+import { runGc as runGcCommand, runGcPass } from '../commands/gc.ts';
 import { collectDeviceRecords } from '../commands/gc/records.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
 import { ensureConfig, getProject, loadConfig, upsertProject } from '../workspace/config.ts';
@@ -23,6 +23,8 @@ import { listOrphanedAvdDirectories } from '../devices/android.ts';
 import { readCreatedDevices, recordCreatedDevice } from '../devices/created-devices.ts';
 import { parkSim, readParked } from '../devices/sim-pool.ts';
 import { teardownOwnedAvd, teardownParkedAvd } from '../devices/teardown.ts';
+
+const runGc: typeof runGcCommand = (opts, deps) => runGcCommand(opts, deps, runGcPass);
 
 const race = vi.hoisted(() => ({ afterRename: null as null | ((from: string, to: string) => void) }));
 vi.mock('node:fs', async (importOriginal) => {

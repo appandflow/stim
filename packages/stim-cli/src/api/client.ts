@@ -37,6 +37,7 @@ import {
 } from '../commands/device-tools.ts';
 import { recordDoctorCheck } from '../guide-status.ts';
 import { executeGc, readGcReport, withGcMaintenanceClaim } from '../commands/gc.ts';
+import { runGcThroughStimd } from '../daemon/client.ts';
 import { ARCHIVE_PARTS, deleteGcItem, GC_ITEM_KINDS, type GcItem } from '../commands/gc/item.ts';
 import { removeWorktreeTarget, warmWorktreeTarget } from '../commands/worktree.ts';
 import { runReport, trackReportResource } from '../report-runtime.ts';
@@ -406,50 +407,22 @@ export function createLocalStim(options: EngineOptions): EngineClient {
           }),
         );
       const operation = beginReport('collectGarbage', signal);
-      const request: { pressure: StimGcMutationOptions['pressure']; json: boolean; walkUnknown: false } = {
-        pressure,
-        json: true,
-        walkUnknown: false,
-      };
+      const request = { pressure, json: true, walkUnknown: false as const };
       return lifecycle(operation, (context) =>
-        withGcMaintenanceClaim(request, (claim) =>
-          runReport(context, (bounded) =>
-            withAmbientContext(bounded, () => {
-              const task = executeGc(
-                request,
-                {
-                  operation: bounded,
-                  easLedgerRoot: easMachineStateRoot(bounded.env),
-                },
-                (_stream, line) => bounded.output('stderr', `${line}\n`),
-                claim,
-              ).then(({ payload, exitCode }) => {
-                if ('code' in payload) throw new StimError(payload);
-                return { report: payload, exitCode };
-              });
-              trackReportResource(
-                bounded,
-                task.then(
-                  () => undefined,
-                  (cause: unknown) => {
-                    if (
-                      cause instanceof WorkspaceProcessCleanupError ||
-                      (cause instanceof Error && 'reportCleanup' in cause)
-                    )
-                      throw cause;
-                  },
-                ),
-                () => {},
-              );
-              return task;
+        runReport(context, (bounded) =>
+          withAmbientContext(bounded, () =>
+            executeGc(
+              request,
+              { operation: bounded, easLedgerRoot: easMachineStateRoot(bounded.env) },
+              (_stream, line) => bounded.output('stderr', `${line}\n`),
+              (asked, gcOperation, onAction) =>
+                withAmbientContext({ ...bounded }, () => runGcThroughStimd(asked, gcOperation, onAction)),
+            ).then(({ payload, exitCode }) => {
+              if ('code' in payload) throw new StimError(payload);
+              return { report: payload, exitCode };
             }),
           ),
-        ).catch((cause: unknown) => {
-          if (cause instanceof WorkspaceProcessCleanupError) throw cause;
-          const failure = claimFailure(cause, null);
-          if (failure) throw new StimError(failure, { cause });
-          throw cause;
-        }),
+        ),
       );
     },
     deleteGarbageItem: ({ signal, item }: StimGcItemOptions) => {

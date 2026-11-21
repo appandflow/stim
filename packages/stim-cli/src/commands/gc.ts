@@ -3,10 +3,11 @@ import { exitCli, runProcessOperation } from '../cli-operation.ts';
 import { hungRead } from '../workspace/bounded-read.ts';
 import { withDrainingCancellation } from '../engine/operation-state.ts';
 import { configDir, ensurePrivateDir, isScopedHome } from '@stim-cli/core';
+import { randomBytes } from 'node:crypto';
 import { realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import type { StimContext } from '@stim-cli/core';
 import { dirname, sep } from 'node:path';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
-import { declareSpawnsOn, stopDeclaringSpawnsOn } from '../engine/spawn-claims.ts';
 import {
   gcReportFile,
   maintenanceRunClaims,
@@ -24,6 +25,8 @@ import { ClaimRefusedError, claimFailure, releaseClaim, type ClaimHandle } from 
 import { claimPass } from '../stimd/passes/run.ts';
 import { keepReserve, releaseReserve } from '../disk-reserve.ts';
 import { runMaintenanceAtLevel, type LevelRun, type LevelRunAction } from '../stimd/passes/level-run.ts';
+import type { GcPassReply } from '../daemon/disk-owner.ts';
+import { runGcThroughStimd } from '../daemon/client.ts';
 import { discoverCaches, sizeCaches } from '../cache/caches.ts';
 import { openGcLog, type GcLog } from './gc/log.ts';
 import type { GcResult } from './gc/results.ts';
@@ -109,6 +112,8 @@ export interface GcRunPayload {
   inventory?: GcInventory | null;
   /** What an acting run copied aside before deleting it, each with the path to copy a file back from. */
   rescued?: RescuedCopy[];
+  /** The pass already under way that this acting run joined instead of starting its own, and whose actions it lists. */
+  joined?: GcPassReply['joined'];
 }
 
 export type GcPayload = GcRunPayload | GcRefusal;
@@ -118,7 +123,7 @@ type GcDependencies = RecordDependencies;
 export interface GcExecutionResult {
   payload: GcPayload;
   exitCode: 0 | 1;
-  /** The maintenance run a plain run printed, for what follows once the claim is released. */
+  /** The maintenance run a plain run printed, for the unmanaged-usage report that follows it. */
   run?: LevelRun;
 }
 
@@ -308,49 +313,117 @@ export async function readGcReport(options: GcReadOptions = {}, deps: GcDependen
   };
 }
 
-function gcLogOf(level: PressureLevel, chosen: boolean, env?: NodeJS.ProcessEnv): GcLog {
-  return openGcLog({
-    trigger: (env ?? process.env).STIM_DESKTOP_APP ? 'desktop' : 'manual',
-    env,
-    options: { level, ...(chosen ? { pressure: true } : {}) },
-    holdKept: true,
-  });
+/** A gc pass request: the level the caller chose, if any, which client asked, and `walkUnknown` for the API's. */
+export interface GcPassRequest {
+  level?: PressureLevel;
+  client: 'manual' | 'desktop';
+  walkUnknown?: false;
 }
 
-/** Runs one acting GC, or a dry run, already admitted under the maintenance claim when it acts. */
+/** Runs one acting gc pass for `request`, or joins one under way, and hands each action to `onAction` as it lands. */
+export type GcPassRunner = (
+  request: GcPassRequest,
+  operation: StimContext | undefined,
+  onAction: (action: LevelRunAction) => void,
+) => Promise<GcPassReply>;
+
+/**
+ * One acting gc pass in this process, as stimd's passes thread runs it for a gc request: its actions go to the gc log
+ * under the request's client and a run id of its own. The maintenance disk reserve, a 1 MB file kept so a pass can start on a full disk, is
+ * given back before the pass and written again once it ends.
+ */
+export async function runGcPass(
+  request: GcPassRequest,
+  operation: StimContext | undefined,
+  onAction: (action: LevelRunAction) => void,
+  onLevel?: (level: PressureLevel) => void,
+): Promise<GcPassReply> {
+  releaseReserve();
+  const closeGitReads = openGitReads(operation);
+  try {
+    const env = operation?.env ?? process.env;
+    const { engineRoot } = await import('../engine-store/store.ts');
+    const store = engineRoot(env);
+    if (collectsEngineStore(env, store, operation?.home ?? configDir())) {
+      const { collectInstalledStore } = await import('../engine-store/gc.ts');
+      await collectInstalledStore(store).catch((error: unknown) =>
+        console.error(`Stim: the engine store was not collected: ${error instanceof Error ? error.message : error}`),
+      );
+    }
+    let log: GcLog | null = null;
+    const id = `gc-${randomBytes(6).toString('hex')}`;
+    const since = Date.now();
+    const run = await runMaintenanceAtLevel({
+      level: request.level,
+      act: true,
+      operation,
+      ...(request.walkUnknown === false ? { walkUnknown: request.walkUnknown } : {}),
+      ...(onLevel ? { onLevel } : {}),
+      onAction: (action) => {
+        if (action.outcome === 'would') return;
+        onAction(action);
+        log ??= openGcLog({
+          trigger: request.client,
+          runId: id,
+          env: operation?.env,
+          options: { level: request.level ?? 'normal', ...(request.level ? { pressure: true } : {}) },
+          holdKept: true,
+        });
+        log.record({ ...resultOf(action), kind: action.kind });
+      },
+    });
+    await expireRescued(Date.now());
+    return { run, rescued: rescuedSince(since) };
+  } finally {
+    closeGitReads();
+    keepReserve();
+  }
+}
+
+const gcClient = (env: NodeJS.ProcessEnv = process.env): GcPassRequest['client'] =>
+  env.STIM_DESKTOP_APP ? 'desktop' : 'manual';
+
+function joinedLine(joined: NonNullable<GcPassReply['joined']>, forced: boolean): string {
+  const skipped = forced && joined.trigger === 'pressure' ? '; it frees only the volumes under pressure' : '';
+  return `Joined the ${joined.level} pass ${joined.trigger} started at ${joined.startedAt}${skipped}; the actions below are that pass's.`;
+}
+
+/**
+ * Runs one acting GC through `pass`, or a dry run in this process, and prints its summary unless `opts.json`.
+ */
 export async function executeGc(
   opts: GcOptions & { walkUnknown?: false },
   deps: GcDependencies,
   write: (stream: 'stdout' | 'stderr', line: string) => void,
-  claim?: ClaimHandle,
+  pass: GcPassRunner,
 ): Promise<GcExecutionResult> {
   const signal = deps.operation?.signal;
   throwIfCancelled(signal, 'GC');
   const act = !opts.dryRun;
   const chosen = opts.pressure !== undefined;
-  let log: GcLog | null = null;
+  const walk = opts.walkUnknown === false ? { walkUnknown: opts.walkUnknown } : {};
   let closeGitReads: (() => void) | undefined;
   try {
-    declareSpawnsOn(deps.operation, claim);
-    closeGitReads = openGitReads(deps.operation);
-    const since = Date.now();
-    const run = await runMaintenanceAtLevel({
-      level: opts.pressure,
-      act,
-      operation: deps.operation,
-      ...(opts.walkUnknown === false ? { walkUnknown: opts.walkUnknown } : {}),
-      onAction: (action) => {
-        if (!act || action.outcome === 'would') return;
-        log ??= gcLogOf(opts.pressure ?? 'normal', chosen, deps.operation?.env);
-        log.record({ ...resultOf(action), kind: action.kind });
-      },
-    });
-    throwIfCancelled(signal, 'GC');
-    let payload: GcRunPayload = runPayload(run, act);
+    let reply: GcPassReply;
     if (act) {
-      await expireRescued(Date.now());
-      payload = { ...payload, rescued: rescuedSince(since) };
+      reply = await pass(
+        { ...(chosen ? { level: opts.pressure } : {}), client: gcClient(deps.operation?.env), ...walk },
+        deps.operation,
+        (action) => phase(action.outcome, `${action.kind} ${action.target}`, deps.operation),
+      );
+    } else {
+      closeGitReads = openGitReads(deps.operation);
+      reply = {
+        run: await runMaintenanceAtLevel({ level: opts.pressure, act, operation: deps.operation, ...walk }),
+      };
     }
+    const { run } = reply;
+    throwIfCancelled(signal, 'GC');
+    let payload: GcRunPayload = {
+      ...runPayload(run, act),
+      ...(reply.rescued ? { rescued: reply.rescued } : {}),
+      ...(reply.joined ? { joined: reply.joined } : {}),
+    };
     if (!act && opts.json) {
       const report = await collectGcReport({ measureBuildState: opts.measureBuildState }, deps);
       payload = {
@@ -365,6 +438,7 @@ export async function executeGc(
       };
     }
     if (!opts.json) {
+      if (reply.joined) write('stdout', joinedLine(reply.joined, chosen));
       const detail = saveGcDetail(gcDetailLines(run));
       for (const line of formatGcSummary(run, { act, chosen, detail })) write('stdout', line);
       for (const copy of payload.rescued ?? [])
@@ -377,7 +451,6 @@ export async function executeGc(
     return { payload, exitCode: payload.failures ? 1 : 0 };
   } finally {
     closeGitReads?.();
-    stopDeclaringSpawnsOn(deps.operation, claim);
   }
 }
 
@@ -401,26 +474,34 @@ function gcRetryCommand(opts: GcOptions): string {
     .join(' ');
 }
 
-export async function runGc(opts: GcOptions = {}, deps: GcDependencies = {}): Promise<void> {
+/**
+ * Runs `stim gc`: a dry run in this process, an acting run through `pass`, by default on this home's stimd, which
+ * starts one whatever daemon.mode says.
+ */
+export async function runGc(
+  opts: GcOptions = {},
+  deps: GcDependencies = {},
+  pass: GcPassRunner = runGcThroughStimd,
+): Promise<void> {
   let result: GcExecutionResult;
   try {
-    result = await withGcMaintenanceClaim(opts, (claim) =>
-      executeGc(
-        opts,
-        deps,
-        (stream, line) => {
-          if (stream === 'stderr' || opts.json) console.error(line);
-          else console.log(line);
-        },
-        claim,
-      ),
+    result = await executeGc(
+      opts,
+      deps,
+      (stream, line) => {
+        if (stream === 'stderr' || opts.json) console.error(line);
+        else console.log(line);
+      },
+      pass,
     );
   } catch (error) {
     const failure =
       claimFailure(error, gcRetryCommand(opts)) ??
       (deps.operation?.signal.aborted
         ? { code: 'STIM_CANCELLED', message: 'GC was cancelled.', remedy: 'Retry the same GC command.' }
-        : null);
+        : error instanceof Error && 'code' in error && typeof error.code === 'string' && 'remedy' in error
+          ? { code: error.code, message: error.message, remedy: String(error.remedy) }
+          : null);
     if (!failure) throw error;
     console.error(`${failure.code}: ${failure.message}`);
     console.error(failure.remedy);
@@ -441,10 +522,10 @@ export async function runGc(opts: GcOptions = {}, deps: GcDependencies = {}): Pr
 }
 
 /**
- * Runs an acting GC under this home's exclusive maintenance claim, the one the stim-daemon's maintenance pass takes, so
- * the two never delete at once; while a pass holds it, an acting GC refuses at once with STIM_CLAIM_REFUSED naming the
- * holder. The claim is retained when owned cleanup is unresolved. The maintenance disk reserve, a 1 MB file kept so a
- * pass can start on a full disk, is given back before the claim's first write and written again once the run ends.
+ * Runs an acting cleanup in this process under this home's exclusive maintenance claim, the one the stim-daemon's
+ * maintenance pass takes, so the two never delete at once; while a pass holds it, it refuses at once with
+ * STIM_CLAIM_REFUSED naming the holder. The claim is retained when owned cleanup is unresolved. The maintenance disk
+ * reserve is given back before the claim's first write and written again once the run ends.
  */
 export async function withGcMaintenanceClaim<T>(
   opts: Pick<GcOptions, 'dryRun' | 'pressure'>,
@@ -522,14 +603,6 @@ const gc: Op = defineOp({
     json: { flags: '--json', description: 'print the result as JSON on stdout; every other line goes to stderr' },
   },
   run: async ({ options: opts }) => {
-    const { engineRoot } = await import('../engine-store/store.ts');
-    const store = engineRoot(process.env);
-    if (!opts.dryRun && collectsEngineStore(process.env, store, configDir())) {
-      const { collectInstalledStore } = await import('../engine-store/gc.ts');
-      await collectInstalledStore(store).catch((error: unknown) =>
-        console.error(`Stim: the engine store was not collected: ${error instanceof Error ? error.message : error}`),
-      );
-    }
     const { interrupted } = await runProcessOperation(process.cwd(), (operation) =>
       withDrainingCancellation(operation, operation.signal, () => runGc(opts, { operation })),
     );
