@@ -496,10 +496,13 @@ folder has already printed whole blocks; GNU du writes each line as it finishes.
 Per entry costs about the same as one walk on a few dozen entries and three to
 five times more on several hundred (measured on macOS, warm cache: 16 to 27
 entries 0.04 against 0.06 s and 0.79 against 0.80 s; 667 entries 0.23 against
-1.26 s; 1,037 entries 0.76 against 2.47 s). A hard link shared by two top-level
-entries counts twice in the per-entry walk: Cargo's links stay inside one
-profile folder and pnpm's point into the store outside the folder, so the
-layouts Stim deletes do not hit it.
+1.26 s; 1,037 entries 0.76 against 2.47 s). A file hard-linked into two
+top-level entries would count twice on the per-entry path, so a folder with a
+top-level file that has another link takes the single walk, which counts it
+once: a Cargo profile, whose binaries are hard-linked into its `deps/`, is that
+case. A link shared by two top-level folders still counts twice; pnpm's links
+point into the store outside the folder, so the layouts Stim deletes do not hit
+it.
 
 Maintainer decision, 2026-11-20: "Can timed out scan report the bytes it
 measured when it timed out, but still flag it as incomplete" (#6067).

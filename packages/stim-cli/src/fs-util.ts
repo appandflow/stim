@@ -1,4 +1,4 @@
-import { lstatSync, readdirSync, readlinkSync, statSync } from 'fs';
+import { lstatSync, readdirSync, readlinkSync, statSync, type Dirent } from 'fs';
 import { readdir } from 'fs/promises';
 import { dirname, isAbsolute, join, normalize, parse, sep } from 'path';
 import { getExecutor, isTimeoutError } from './exec.ts';
@@ -180,12 +180,25 @@ const PER_ENTRY_LIMIT = 100;
  * finished, marked `partial`.
  */
 export async function measureDirectoryAsync(dir: string, options: SizeWalkOptions): Promise<DirectorySize | null> {
-  const names = await readdir(dir).catch(() => null);
-  if (names === null || names.length > PER_ENTRY_LIMIT) return walkSize(dir, ['-k', '-d', '1', dir], options);
-  return walkEntries(dir, names.toSorted(), options);
+  const entries = await readdir(dir, { withFileTypes: true }).catch(() => null);
+  if (entries === null || entries.length > PER_ENTRY_LIMIT || hasLinkedFile(dir, entries))
+    return walkSize(dir, ['-k', '-d', '1', dir], options);
+  return walkEntries(dir, entries.map(({ name }) => name).toSorted(), options);
 }
 
-// @ref LLP 0001#a-size-walk-that-times-out-reports-what-it-measured -- one du per entry below the limit; a hard link two entries share counts twice
+/** Whether a top-level file has another hard link, as a Cargo profile's binaries do in its `deps/`, which one du counts once. */
+function hasLinkedFile(dir: string, entries: Dirent[]): boolean {
+  const links = (name: string): number => {
+    try {
+      return lstatSync(join(dir, name)).nlink;
+    } catch {
+      return 1;
+    }
+  };
+  return entries.some((entry) => entry.isFile() && links(entry.name) > 1);
+}
+
+// @ref LLP 0001#a-size-walk-that-times-out-reports-what-it-measured -- one du per entry below the limit unless a top-level file is hard-linked
 /**
  * One `du -sk` per top-level entry under one deadline: macOS du holds up to 4 KB of output in a buffer when it writes
  * to a pipe, so a single `du -k -d 1` stopped early leaves nothing for a folder with few entries.
