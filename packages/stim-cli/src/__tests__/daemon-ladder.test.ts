@@ -2228,14 +2228,12 @@ test('deleteOutputs stops before the next removal once its operation is aborted'
 
 test('deleteOutputs reports the bytes a timed-out walk finished as a lower bound and still deletes', async () => {
   const output = join(home, 'build');
-  mkdirSync(join(output, 'intermediates'), { recursive: true });
+  for (const name of ['intermediates', 'outputs']) mkdirSync(join(output, name), { recursive: true });
   setExecutor({
     ...getExecutor(),
-    runFileAsync: async () => {
-      throw Object.assign(new Error('Command timed out after 120000ms: du'), {
-        code: 'ETIMEDOUT',
-        stdout: `${6 * 1024}\t${join(output, 'intermediates')}\n12`,
-      });
+    runFileAsync: async (_file, args) => {
+      if (args.at(-1) === join(output, 'intermediates')) return `${6 * 1024}\t${args.at(-1)}`;
+      throw Object.assign(new Error('Command timed out after 120000ms: du'), { code: 'ETIMEDOUT', stdout: '' });
     },
   });
 

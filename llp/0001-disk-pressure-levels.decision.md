@@ -480,16 +480,33 @@ headroom estimate, and no new setting (#5759).
 ## A size walk that times out reports what it measured
 
 The Cargo remover, the idle and dormant stages, rung 1's output delete and the
-`stim gc` workspace output clear size what they delete with `du -k -d 1`. A walk stopped at its deadline reports the sum of the
+`stim gc` workspace output clear size what they delete in a way that keeps
+partial results. A walk stopped at its deadline reports the bytes of the
 top-level entries it finished, marked `partial` ("at least" in text), instead of
 nothing. Callers that decide what to delete or trim from a size still treat a
 timed-out walk as unknown, so the lower bound changes only what is reported.
-GNU du writes each entry's line as it finishes; macOS du keeps its output in a
-block buffer when it writes to a pipe, so a stopped walk there reports 0 bytes,
-still marked partial.
+
+How the walk runs depends on the number of top-level entries, counted with one
+directory read. Up to 100, it runs `du -sk` once per entry, one after another
+under one shared deadline, and adds up the entries that finished. Above 100, it
+runs one `du -k -d 1` and sums the entry lines printed before the deadline. The
+split exists because macOS du writes to a pipe in 4 KB blocks (about 105 lines),
+so a single walk of a small folder stopped early prints nothing, while a large
+folder has already printed whole blocks; GNU du writes each line as it finishes.
+Per entry costs about the same as one walk on a few dozen entries and three to
+five times more on several hundred (measured on macOS, warm cache: 16 to 27
+entries 0.04 against 0.06 s and 0.79 against 0.80 s; 667 entries 0.23 against
+1.26 s; 1,037 entries 0.76 against 2.47 s). A hard link shared by two top-level
+entries counts twice in the per-entry walk: Cargo's links stay inside one
+profile folder and pnpm's point into the store outside the folder, so the
+layouts Stim deletes do not hit it.
 
 Maintainer decision, 2026-11-20: "Can timed out scan report the bytes it
 measured when it timed out, but still flag it as incomplete" (#6067).
+
+Maintainer decision, 2026-11-20: "ok do it", on the proposal to walk folders of
+up to about 100 top-level entries with one `du -sk` per entry under one deadline
+and larger ones with a single `du -k -d 1` (#6067).
 
 ## One idle day reduces a workspace
 

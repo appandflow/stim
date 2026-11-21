@@ -15,6 +15,7 @@ const SIZERS = new Set([
   'measuredDirectorySizeAsync',
   'measureDirectoryAsync',
   'walkSize',
+  'walkEntries',
   'measuredDirectorySize',
   'directorySize',
   'directorySizeAsync',

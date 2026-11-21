@@ -1,4 +1,5 @@
 import { lstatSync, readdirSync, readlinkSync, statSync } from 'fs';
+import { readdir } from 'fs/promises';
 import { dirname, isAbsolute, join, normalize, parse, sep } from 'path';
 import { getExecutor, isTimeoutError } from './exec.ts';
 import { runLowPriority } from './io-priority.ts';
@@ -172,12 +173,35 @@ export async function measuredDirectorySizeAsync(dir: string, options: SizeWalkO
   return size && !size.partial ? size.bytes : null;
 }
 
+const PER_ENTRY_LIMIT = 100;
+
 /**
  * The size of `dir`, or null when the walk failed. A walk that times out returns the bytes of the top-level entries it
  * finished, marked `partial`.
  */
 export async function measureDirectoryAsync(dir: string, options: SizeWalkOptions): Promise<DirectorySize | null> {
-  return walkSize(dir, ['-k', '-d', '1', dir], options);
+  const names = await readdir(dir).catch(() => null);
+  if (names === null || names.length > PER_ENTRY_LIMIT) return walkSize(dir, ['-k', '-d', '1', dir], options);
+  return walkEntries(dir, names.toSorted(), options);
+}
+
+// @ref LLP 0001#a-size-walk-that-times-out-reports-what-it-measured -- one du per entry below the limit; a hard link two entries share counts twice
+/**
+ * One `du -sk` per top-level entry under one deadline: macOS du holds up to 4 KB of output in a buffer when it writes
+ * to a pipe, so a single `du -k -d 1` stopped early leaves nothing for a folder with few entries.
+ */
+async function walkEntries(dir: string, names: string[], options: SizeWalkOptions): Promise<DirectorySize | null> {
+  const deadline = options.timeoutMs === 'unbounded' ? null : Date.now() + options.timeoutMs;
+  const total: DirectorySize = { bytes: 0 };
+  for (const name of names) {
+    const left = deadline === null ? 'unbounded' : Math.ceil(deadline - Date.now());
+    if (left !== 'unbounded' && left <= 0) return { ...total, partial: true };
+    const size = await walkSize(dir, ['-sk', join(dir, name)], { ...options, timeoutMs: left });
+    if (size === null) return null;
+    addSize(total, size);
+    if (size.partial) return total;
+  }
+  return total;
 }
 
 /** Adds `size` to `total`, which becomes partial when `size` is. */
@@ -229,8 +253,8 @@ async function walkSize(
 
 /**
  * The bytes in the complete lines `du -k -d 1` printed before it was stopped: the total when it got that far, else the
- * sum of the top-level entries it finished. GNU du writes each line as it finishes an entry; macOS du holds its
- * output in a block buffer when it writes to a pipe, so a stopped walk there printed nothing.
+ * sum of the top-level entries it finished. GNU du writes each line as it finishes an entry; macOS du writes them in
+ * 4 KB blocks when it writes to a pipe, so a stopped walk there printed only whole blocks.
  */
 function finishedBytes(dir: string, stdout: string): number {
   let total = 0;
