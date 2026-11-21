@@ -93,27 +93,22 @@ still idle and the directory is still a recognised `target/`. A path the plan to
 through the Cargo delete, never through the plain removal of other outputs.
 
 The Cargo delete then keeps the whole `target/` when it is no longer
-recognised, when the admitted path no longer names the directory it admitted:
-not a directory, another device and inode, or another canonical path (checked
-before the checks below and again under the Cargo locks before each top-level
-entry; the trims check it before planning and in each locked step, with the
-identity the pressure and cap actions capture when they admit the target), when it holds a leftover of an earlier engine's staging (Leftovers
-of the staged trim, below), when it shows use within `idle.dormantDays` or that
-use cannot be told, when another filesystem is mounted anywhere in it (on Linux
-also any mount point at or under it in `/proc/self/mountinfo`, since a bind
-mount keeps the device number; mounts that cannot be read keep it), when a
-process executes from, works in or holds open any path in it, the `target/`
-itself included, or when a build holds a Cargo lock (below). An Exact app's
+recognised, when it shows use within `idle.dormantDays` or that use cannot be
+told, when a process executes from, works in or holds open any path in it, the
+`target/` itself included, when a build holds a Cargo lock (below), or when,
+checked once under the Cargo locks, the admitted path no longer names the
+directory it admitted: not a directory, another device and inode, or another
+canonical path. The trims run the same one check in each locked step, with the
+identity the pressure and cap actions capture when they admit the target. An Exact app's
 `target/` then goes to Exact's own cleaner instead (Exact apps clean through
 Exact, below). Use means a modification time within that time, or one
-that cannot be read, on the `target/` itself, on any top-level entry but Stim's
-own `.stim-*`, on each direct child of a top-level directory, or on a profile
+that cannot be read, on the `target/` itself, on any top-level entry, on each
+direct child of a top-level directory, or on a profile
 directory and its `.fingerprint`, `deps`, `build` and `incremental`; or a unit
-stamp within that time in Exact's ledger. The times are read two levels down by
-the eligibility check; the delete itself also takes the newest modification
-time of everything in each entry in the one walk that checks devices, so a file
-rewritten in place deep inside, such as a Criterion baseline, keeps the
-`target/`. A `target/` with no Cargo profile is dated the same way and has no
+stamp within that time in Exact's ledger. The times are read two levels down; a
+file rewritten in place deeper inside, such as a Criterion baseline, does not
+keep the `target/`, and a build that uses it rebuilds it under the loss budget.
+A `target/` with no Cargo profile is dated the same way and has no
 Cargo lock to take: its evidence is that dating and the one process read, and a
 build that starts after them loses its output under the loss budget.
 
@@ -123,7 +118,8 @@ entry or a directory directly in one, exclusively and without waiting, and
 removes each top-level entry in place through the one remover. A lock a build
 holds keeps the whole `target/`. Lock files, keypairs and what stands on another
 device stay, and so does the `target/` while anything is left in it; an entry
-that holds only such files is not planned again. Report mode runs the checks
+that holds only such files is not planned again. Sizes are measured before the
+locks are taken. Report mode runs the checks
 that need no lock, the use dating among them, and reports the size of what
 would go, and gc names a `target/` it keeps and why. Stim's own deletes change
 the `target/`'s modification time, so a `target/` a delete left part of looks
@@ -142,26 +138,13 @@ benchmark baselines and Cargo's reports. A `deploy/` directory holding a
 `*-keypair.json`, or one that cannot be read to tell, stays because Solana's `cargo build-sbf` and Anchor keep a
 program's private key there, and a new key is a new program ID. Everything else
 in an idle `target/` goes; for an Exact app's `target/`, Exact's cleaner
-decides instead and keeps its records (below). A top-level
-symbolic link stays, and a `deploy` that is itself a symbolic link, or holds
-one, keeps the whole `target/`, since its keys may live anywhere in it. The same
-holds at any depth: a symbolic link named `deploy` or `*-keypair.json`, or one
-directly in a `deploy` directory, keeps all of the `target/`, and so does a
-directory that cannot be listed to look or that stands on another device, since
-a link there may point into what is removed. The walk runs under the Cargo locks
-right before deleting: over the whole `target/` for the dormant delete and for
-the first step of a trim that removes something, and over what the step removes
-for each later step, so a trim walks the whole `target/` once, not once per
-step. Every such link already in the `target/` when a delete or trim starts is
-covered wherever it points, a `deploy/app-keypair.json` beside a stale `debug/`
-that links into it included: these are the static links of the threat model
-under One remover, which the maintainer signed. A link that appears elsewhere in
-the `target/` after that first walk falls under the gap for a key a tool
-publishes with no Cargo lock held, such as a `deploy/` a tool writes itself
-rather than through Cargo; no walk under Cargo's locks can rule that out.
-Reason: a `deploy/debug/app-keypair.json` that links to a wallet file beside it
-would survive while the wallet went. Both `deploy` and `*-keypair.json` match in any letter
-case. Anywhere else the
+decides instead and keeps its records (below). A top-level symbolic link
+stays, and the remover unlinks any other link without following it, whatever
+its name: a link named `deploy` or `*-keypair.json` keeps nothing, and what it
+points at stays where it is. The maintainer chose this in the coordinating
+session on 2026-11-20, answering "Drop them" to removing the walk that kept a
+`target/` holding such a link, after an audit found no tool that writes one.
+Anywhere else the
 remover never unlinks a `*-keypair.json`: a debug-only `cargo build-sbf --debug`
 writes the key under `deploy/debug/`, and `--sbf-out-dir` can put it in any
 folder. A dry run leaves an entry that would keep only such files out of the
@@ -170,10 +153,9 @@ earlier version deleted only entries recognised as Cargo or Exact build
 output; it freed almost nothing from Exact app targets, whose size sits in
 folders that also hold records.
 
-Known limit: a Linux bind mount that exposes part of the `target/` elsewhere,
-such as `target/doc` mounted at `/srv/docs` for a server outside the checkout,
-is not detected; the mount checks look only for mount points at or under the
-`target/`.
+Known limit: the remover does not enter a directory on another device, but a
+Linux bind mount keeps the device number of the volume it exposes, so a bind
+mount inside a `target/` is entered and what it exposes can go.
 
 Known limit: the process checks see a path in the `target/` only when a process
 runs from it, works in it, holds a file in it open or names it absolutely on
@@ -183,7 +165,7 @@ server for `target/doc` started from elsewhere, is not seen, and its files can
 go while it serves them.
 
 Chosen by the coordinator and the reviews of #5996, not by the maintainer: the
-use dating and the mount checks. Reason for the dating: the idle evidence skips
+use dating. Reason: the idle evidence skips
 writes in a `target/` git ignores, so a build that ran without a source edit
 shows only in the target's own times; two levels of times are what a check that
 must not walk a large `target/` can read, and on this Mac most Exact app targets
@@ -297,13 +279,15 @@ review of #6032, not by the maintainer. A
 path already gone counts as removed. What it left for those rules is reported,
 lock files aside.
 
-Threat model: cleanup guards against builds, static links, a moved or replaced
-`target/` and crashes; it does not guard against a process of the same user
-that swaps directories inside a `target/` during a delete. The maintainer chose
-this in the coordinating session of #6025 on 2026-11-20, answering "Sign it" to
-that statement. So the remover checks the admitted `target/` itself (path,
-device and inode) under the locks before each top-level entry and each trim
-step, but not each unlink: Node offers no `openat` or `unlinkat`, and a
+Threat model: cleanup guards against builds, a moved or replaced `target/` and
+crashes; it does not guard against a process of the same user that swaps
+directories inside a `target/` during a delete. The maintainer chose this in
+the coordinating session of #6025 on 2026-11-20, answering "Sign it" to that
+statement. The links it once named, a link named `deploy` or `*-keypair.json`,
+are out of it since the "Drop them" decision above; regular keypair files are
+still never deleted. So the remover checks the admitted `target/` itself (path,
+device and inode) once under the locks, before a delete or a trim step removes
+anything, but not each unlink: Node offers no `openat` or `unlinkat`, and a
 `realpath` per unlink cost a large trim more than half its time while leaving a
 window anyway. The structural fix, deletes anchored to the checked directory,
 comes with the delete child of the GC redesign.
@@ -312,8 +296,8 @@ Each trim step takes the Cargo locks of the profiles it deletes from, the lock
 files that exist and never a new one, exclusively and without waiting, through
 `flock` (Perl on macOS and Linux), and deletes while it holds them. A build that
 starts meanwhile waits for the delete, as it waits for another Cargo, and then
-rebuilds. A profile with no `.cargo-lock` stays. On Windows, Linux NFS, or when
-locking cannot be verified, the profile stays. Sizes are measured before the
+rebuilds. A profile with no `.cargo-lock` stays. On Windows, or when locking
+cannot be verified, the profile stays. Sizes are measured before the
 locks are taken.
 
 Maintainer decision: "I agree lets do this and ur recommendations from prev
@@ -351,17 +335,15 @@ Stim protects what a regular Exact project keeps in a `target/` and cannot
 rebuild, its records, and never hands an Exact app's `target/` to the remover:
 
 - Any `exact.mjs` beside the `target/`, a file or a link, makes it an Exact app's,
-  for discovery and for the delete alike. A launcher that is a link keeps it
-  whole.
+  for discovery and for the delete alike.
 - A Cargo `target/` holding Exact's files with no Exact app beside it (its ledger
   `.exact-sweep.json` or the ledger's lock, or a `web-receipts/`,
   `native-receipts/`, `receipts/` or `traces/` folder), such as a Cargo
   workspace's `target/` its Exact apps share, stays whole: no single app's
   cleaner owns it.
 - Stim requires `version: 1` in the one JSON object the cleaner prints. A dry run
-  without one keeps the `target/`, and so does one listing a path that does not
-  resolve inside the canonical `target/`. `busy` and `refused` keep it with Exact's
-  reason. After a keep without a removal, Stim does not ask Exact again about
+  without one keeps the `target/`. `busy` and `refused` keep it with Exact's
+  reason; Stim trusts the paths Exact lists, as project code. After a keep without a removal, Stim does not ask Exact again about
   that `target/` for a day, in the running process, so hourly passes do not rerun
   `help` and the dry run.
 - `failed` reports the action failed with what Exact had already removed. A
@@ -400,15 +382,12 @@ clean does not follow links.
 ## Leftovers of the staged trim
 
 Earlier engines staged removals in `target/.stim-trimmed/` and kept what they
-could not put back as `target/.stim-not-restored-*`. A `target/` that holds
-either is left out of every trim and delete, read only: the plan names it with
-the remedy (delete the leftover, or move what you need out of it), and the next
-pass trims the `target/` again. The leftover alone makes a `target/` recognised,
-so one an earlier engine staged whole, with nothing else left in it, is still
-named. Chosen by the lane of #6025, not by the
-maintainer, following the step-back review: an earlier engine deleted an
-unmarked `.stim-trimmed` at its next trim; this one leaves that to a person
-rather than keep any knowledge of the staging format.
+could not put back as `target/.stim-not-restored-*`. A trim or delete now treats
+them as any other output in a recognised `target/` and removes them with the
+rest; a `target/` holding nothing else is no longer recognised. Chosen by the
+coordinator after the edge-case audit of 2026-11-20, not by the maintainer:
+no current engine writes them, and the worst case is losing build output an
+old engine moved aside.
 
 ## A full disk releases the reserve
 

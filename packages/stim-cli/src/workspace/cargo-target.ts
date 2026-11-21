@@ -19,16 +19,12 @@ const CARGO_TRIPLE_FILES = new Set(['CACHEDIR.TAG', '.rustc_info.json', '.cargo-
 const PROFILE_LOCKS = ['.cargo-lock', '.cargo-build-lock', '.cargo-artifact-lock'];
 const EXACT_LEDGER = '.exact-sweep.json';
 const CACHEDIR_TAG = 'CACHEDIR.TAG';
-const RUSTC_INFO = '.rustc_info.json';
 const EXACT_APPLE_LOCKS = '.apple-cargo-locks';
 /** The lock files Cargo and Exact take in a `target/`, which a delete leaves in place. */
 const LOCK_FILES = new Set([...PROFILE_LOCKS, `${EXACT_LEDGER}.lock`]);
 const NOT_PROFILES = new Set(['.exact-swept']);
 /** What Exact writes in a `target/` it owns: its sweep ledger and lock, and the folders that hold an app's records. */
 const EXACT_OWNED = [EXACT_LEDGER, `${EXACT_LEDGER}.lock`, 'web-receipts', 'native-receipts', 'receipts', 'traces'];
-const OWN_PREFIX = '.stim-';
-const ASIDE = `${OWN_PREFIX}trimmed`;
-const NOT_RESTORED = `${OWN_PREFIX}not-restored-`;
 const CANNOT_READ = 'the files processes hold open cannot be read';
 const DEADLINE_KEPT = 'the rest was left at the build headroom deadline';
 /** Solana's `cargo build-sbf` and Anchor keep each program's private key in `deploy/<program>-keypair.json`. */
@@ -39,27 +35,15 @@ export const isKeypairName = (name: string): boolean => name.toLowerCase().endsW
 /**
  * The top-level entries of `target` the dormant delete removes (`output`), and those it keeps (`kept`): a symbolic link,
  * which a delete must not go through, a `deploy/` directory holding a `*-keypair.json`, both names in any letter case,
- * and Cargo's `CACHEDIR.TAG`, which Cargo writes only when it creates the `target/` and by which Stim recognises it. A `deploy` that is a symbolic link, or holds one, keeps every entry, since Stim cannot tell what of the target
- * holds the keys it points at. Stim's own `.stim-*`
- * entries are in neither. Null when `target` cannot be listed.
+ * and Cargo's `CACHEDIR.TAG`, which Cargo writes only when it creates the `target/` and by which Stim recognises it.
+ * Null when `target` cannot be listed.
  */
-export function targetEntries(target: string): { output: string[]; kept: string[] } | null {
+function targetEntries(target: string): { output: string[]; kept: string[] } | null {
   const entries = entriesOf(target);
   if (!entries) return null;
   const output: string[] = [];
   const kept: string[] = [];
-  const linkedKeypairs = entries.some(
-    (entry) =>
-      isKeypairDir(entry.name) &&
-      (entry.isSymbolicLink() ||
-        (entry.isDirectory() && (entriesOf(join(target, entry.name)) ?? []).some((inner) => inner.isSymbolicLink()))),
-  );
   for (const entry of entries.toSorted((a, b) => a.name.localeCompare(b.name))) {
-    if (entry.name.startsWith(OWN_PREFIX)) continue;
-    if (linkedKeypairs) {
-      kept.push(entry.name);
-      continue;
-    }
     const keypairs = isKeypairDir(entry.name) && entry.isDirectory() && holdsKeypair(join(target, entry.name));
     (entry.isSymbolicLink() || keypairs || entry.name === CACHEDIR_TAG ? kept : output).push(entry.name);
   }
@@ -113,10 +97,10 @@ async function leftAlone(path: string): Promise<boolean> {
   return true;
 }
 
-/** Whether the directory at `path` holds a `*-keypair.json` in any letter case or a symbolic link, or cannot be read to tell. */
+/** Whether the directory at `path` holds a `*-keypair.json` in any letter case, or cannot be read to tell. */
 function holdsKeypair(path: string): boolean {
   const entries = entriesOf(path);
-  return !entries || entries.some((entry) => entry.isSymbolicLink() || isKeypairName(entry.name));
+  return !entries || entries.some((entry) => isKeypairName(entry.name));
 }
 
 const FOLD_CASE = process.platform === 'darwin' || process.platform === 'win32';
@@ -218,7 +202,7 @@ function profilePaths(target: string): { profiles: string[]; extras: Set<string>
   const top = subdirectories(target);
   if (!top) return null;
   for (const first of top) {
-    if (NOT_PROFILES.has(first.name) || first.name.startsWith(OWN_PREFIX)) continue;
+    if (NOT_PROFILES.has(first.name)) continue;
     if (fingerprintDir(join(target, first.name))) {
       profiles.push(first.name);
       continue;
@@ -433,46 +417,6 @@ async function removeInPlace(path: string, dev: number, signal?: AbortSignal, ke
   return [];
 }
 
-/**
- * Why the whole target stays because of a symbolic link a Solana key may stand behind, found at any depth of `root` (the
- * whole target for the delete and for a trim's first step, what the step removes for each later trim step) without
- * following links: one named `deploy` or `*-keypair.json`, or one directly in a `deploy` directory, all in any letter
- * case. A directory that cannot be listed, or one on a device other than `dev`, keeps it too, since a link there may
- * point into what is removed; one a build removed meanwhile is skipped. Stops with `DEADLINE_KEPT` once `stop` fires. Null when there is none.
- */
-async function keypairLink(
-  root: string,
-  dev: number,
-  signal?: AbortSignal,
-  stop?: AbortSignal,
-): Promise<string | null> {
-  const queue = [root];
-  for (let dir = queue.pop(); dir !== undefined; dir = queue.pop()) {
-    signal?.throwIfAborted();
-    if (stop?.aborted === true) return DEADLINE_KEPT;
-    const stat = await lstat(dir).catch(() => null);
-    if (!stat) continue;
-    if (stat.dev !== dev) return `${dir} is another filesystem, so the whole target/ stays`;
-    let entries: Dirent[];
-    try {
-      entries = await readdir(dir, { withFileTypes: true });
-    } catch (error) {
-      if (errorCode(error) === 'ENOENT' || errorCode(error) === 'ENOTDIR') continue;
-      return `${dir} cannot be listed to look for keypair links`;
-    }
-    for (const entry of entries) {
-      const path = join(dir, entry.name);
-      if (entry.isDirectory()) queue.push(path);
-      else if (
-        entry.isSymbolicLink() &&
-        (isKeypairName(entry.name) || isKeypairDir(entry.name) || isKeypairDir(basename(dir)))
-      )
-        return `${path} is a symbolic link where Solana keeps a keypair, so the whole target/ stays`;
-    }
-  }
-  return null;
-}
-
 /** The canonical path and the device and inode of the directory a trim or delete was admitted with. */
 export interface AdmittedTarget {
   path: string;
@@ -492,30 +436,20 @@ export async function admitCargoTarget(registered: string): Promise<AdmittedTarg
   return stat?.isDirectory() ? { path, dev: stat.dev, ino: stat.ino } : { kept: `${registered} is not a directory` };
 }
 
+// @ref LLP 0005#one-remover -- one identity check under the locks
 /**
- * Why `registered` no longer names the `admitted` directory: it is not a directory now, is another directory (device and
- * inode), or resolves to another path.
+ * Throws `KeepTarget` when `registered` no longer names the `admitted` directory: it is not a directory now, is another
+ * directory (device and inode), or resolves to another path. Run under the Cargo locks that cover the removal.
  */
-async function rootMoved(registered: string, admitted: AdmittedTarget): Promise<string | null> {
-  const stat = await lstat(registered).catch(() => null);
-  if (!stat?.isDirectory()) return `${registered} is no longer a directory, so Stim left it`;
-  return stat.dev === admitted.dev &&
-    stat.ino === admitted.ino &&
-    (await realpath(registered).catch(() => null)) === admitted.path
-    ? null
-    : `${registered} is no longer the directory Stim checked, so Stim left it`;
-}
-
-/** Throws `KeepTarget` when `rootMoved` finds `registered` no longer names the `admitted` directory. */
 async function refuseMoved(registered: string, admitted: AdmittedTarget): Promise<void> {
-  const moved = await rootMoved(registered, admitted);
-  if (moved) throw new KeepTarget(moved);
-}
-
-/** Throws `KeepTarget` when `keypairLink` finds a link under `root`; run under the Cargo locks that cover the delete. */
-async function refuseKeypairLink(root: string, dev: number, signal?: AbortSignal, stop?: AbortSignal): Promise<void> {
-  const link = await keypairLink(root, dev, signal, stop);
-  if (link) throw new KeepTarget(link);
+  const stat = await lstat(registered).catch(() => null);
+  if (!stat?.isDirectory()) throw new KeepTarget(`${registered} is no longer a directory, so Stim left it`);
+  if (
+    stat.dev !== admitted.dev ||
+    stat.ino !== admitted.ino ||
+    (await realpath(registered).catch(() => null)) !== admitted.path
+  )
+    throw new KeepTarget(`${registered} is no longer the directory Stim checked, so Stim left it`);
 }
 
 /** The lock files of `profile` that exist, or null when it has no `.cargo-lock`, which keeps it. */
@@ -541,24 +475,6 @@ function targetLocks(target: string): string[] {
   return locks;
 }
 
-// @ref LLP 0005#leftovers-of-the-staged-trim -- a person decides what happens to them
-/**
- * Why `target` stays out of every trim and delete: it holds a leftover of an earlier engine's staging (`.stim-trimmed` or
- * `.stim-not-restored-*`), which Stim no longer deletes. Null when it holds none or cannot be listed.
- */
-export function leftoverReason(target: string): string | null {
-  const leftover = entriesOf(target)?.find((entry) => entry.name === ASIDE || entry.name.startsWith(NOT_RESTORED));
-  return leftover
-    ? `${join(target, leftover.name)} is a leftover of an earlier Stim's trim; delete it, or move what you need out of it, and the next pass trims this target/ again`
-    : null;
-}
-
-/** Why `target` stays whole: a leftover (`leftoverReason`), another filesystem mounted at or under it on Linux, or it cannot be listed. */
-function wholeTargetReason(target: string, mountInfo: (() => string) | null): string | null {
-  if (!entriesOf(target)) return `${target} cannot be listed`;
-  return leftoverReason(target) ?? mountedUnder(target, mountInfo);
-}
-
 interface CargoTrimOptions {
   needBytes: number;
   /** The directory the caller admitted (`admitCargoTarget`); the trim keeps the target once `registeredTarget` names another. */
@@ -578,7 +494,6 @@ interface CargoTrimOptions {
   stop?: AbortSignal;
   /** Whether to walk what is removed to report its bytes; false reports 0. Default true. */
   measure?: boolean;
-  mountInfo?: (() => string) | null;
 }
 
 // @ref LLP 0005#the-size-cap -- deleted in place under Cargo's own locks
@@ -600,7 +515,6 @@ export async function trimCargoTarget(
     signal,
     stop,
     measure = true,
-    mountInfo = LINUX_MOUNT_INFO,
     admitted: given,
   }: CargoTrimOptions,
 ): Promise<CargoTrimResult> {
@@ -608,11 +522,8 @@ export async function trimCargoTarget(
   const keep = (why: string): CargoTrimResult => ({ ...result, kept: [...result.kept, why] });
   const admitted = given ?? (await admitCargoTarget(registeredTarget));
   if ('kept' in admitted) return keep(admitted.kept);
-  const moved = await rootMoved(registeredTarget, admitted);
-  if (moved) return keep(moved);
   const { path: target, dev } = admitted;
-  const whole = wholeTargetReason(target, mountInfo);
-  if (whole) return keep(whole);
+  if (!entriesOf(target)) return keep(`${target} cannot be listed`);
   if (await releaseReserveWhenFull(target)) result.reserveReleased = true;
   const first = await readTargetUse(target, signal, lowPriority);
   if ('kept' in first) return keep(first.kept);
@@ -659,7 +570,6 @@ export async function trimCargoTarget(
         bytes: candidates.find((candidate) => candidate.path === path)?.bytes ?? 0,
       });
   }
-  let walkedWhole = false;
   const step = async ({ dir, label, profiles, bytes }: Step): Promise<void> => {
     signal?.throwIfAborted();
     if (inUse(used, dir)) {
@@ -678,9 +588,6 @@ export async function trimCargoTarget(
     const done = await withCargoLocks(
       idleOnly ? [] : locks,
       async () => {
-        await refuseMoved(registeredTarget, admitted);
-        await refuseKeypairLink(walkedWhole ? dir : target, dev, signal, stop);
-        walkedWhole = true;
         await refuseMoved(registeredTarget, admitted);
         return removeInPlace(dir, dev, signal);
       },
@@ -720,7 +627,7 @@ export async function trimCargoTarget(
 
 /**
  * Why `target` shows use within `idleMs`: a modification time that recent, or one that cannot be read, on the `target/`
- * itself or in a top-level entry other than Stim's own (`recentEntryUse`). Null when all of it went unwritten that long.
+ * itself or in a top-level entry (`recentEntryUse`). Null when all of it went unwritten that long.
  */
 export function recentTargetUse(target: string, now: number, idleMs: number): string | null {
   const entries = entriesOf(target);
@@ -728,7 +635,6 @@ export function recentTargetUse(target: string, now: number, idleMs: number): st
   const root = recentWrite([target], now, idleMs);
   if (root) return root;
   for (const { name } of entries) {
-    if (name.startsWith(OWN_PREFIX)) continue;
     const why = recentEntryUse(join(target, name), name, now, idleMs);
     if (why) return why;
   }
@@ -781,13 +687,9 @@ interface DeleteOptions {
   /** How long the target must show no use (`recentTargetUse`); left out by a caller that already found it unused. */
   idleMs?: number;
   signal?: AbortSignal;
-  /**
-   * Reads Linux's `/proc/self/mountinfo`, where a bind mount keeps the device number of the volume it exposes, so the
-   * `st_dev` checks cannot see it; null where there is no such file. Defaults to the real file on Linux.
-   */
-  mountInfo?: (() => string) | null;
 }
 
+/** Reads Linux's `/proc/self/mountinfo`, where a bind mount keeps the device number of the volume it exposes. */
 export const LINUX_MOUNT_INFO: (() => string) | null =
   process.platform === 'linux' ? () => readFileSync('/proc/self/mountinfo', 'utf8') : null;
 
@@ -811,16 +713,16 @@ export function mountedUnder(target: string, mountInfo: (() => string) | null): 
 
 // @ref LLP 0005#the-dormant-reduction-deletes-an-idle-target-whole -- in place under every profile's Cargo locks
 /**
- * Deletes everything in `target` the remover may delete, every top-level entry but a symbolic link and a `deploy` that
- * is or holds one, that holds anything the remover removes (`removableEntries`), in place under all its Cargo locks,
- * once it is still a Cargo `target/` Stim recognises, shows no use within `idleMs` (`recentTargetUse`), has no other
- * filesystem mounted inside or a leftover of an earlier engine's staging, and no process uses any path in it. An Exact
- * app's `target/` goes to Exact's cleaner instead (`exactDelete`), and one holding Exact's files (`EXACT_OWNED`) with no
- * Exact app beside it stays. Lock files and keypairs stay, and so does the `target/` while anything is left in it.
+ * Deletes everything in `target` the remover may delete, every top-level entry but a symbolic link and a `deploy/`
+ * holding a keypair, that holds anything the remover removes (`removableEntries`), in place under all its Cargo locks,
+ * once it is still a Cargo `target/` Stim recognises, shows no use within `idleMs` (`recentTargetUse`), and no process
+ * uses any path in it. An Exact app's `target/` goes to Exact's cleaner instead (`exactDelete`), and one holding
+ * Exact's files (`EXACT_OWNED`) with no Exact app beside it stays. Lock files and keypairs stay, and so does the
+ * `target/` while anything is left in it.
  */
 export async function deleteCargoTarget(
   registeredTarget: string,
-  { idleMs, signal, mountInfo = LINUX_MOUNT_INFO }: DeleteOptions,
+  { idleMs, signal }: DeleteOptions,
 ): Promise<CargoTrimResult> {
   const result: CargoTrimResult = { bytes: 0, removed: [], kept: [] };
   const keep = (why: string): CargoTrimResult => ({ ...result, kept: [...result.kept, why] });
@@ -828,23 +730,13 @@ export async function deleteCargoTarget(
     return keep('it is no longer a Cargo target/ Stim recognises');
   const admitted = await admitCargoTarget(registeredTarget);
   if ('kept' in admitted) return keep(admitted.kept);
-  const moved = await rootMoved(registeredTarget, admitted);
-  if (moved) return keep(moved);
   const { path: target, dev } = admitted;
-  const blocked =
-    wholeTargetReason(target, mountInfo) ?? (idleMs === undefined ? null : recentTargetUse(target, Date.now(), idleMs));
+  const blocked = idleMs === undefined ? null : recentTargetUse(target, Date.now(), idleMs);
   if (blocked) return keep(blocked);
   if (await releaseReserveWhenFull(target)) result.reserveReleased = true;
   const names = await removableEntries(target);
   if (!names) return keep(`${target} cannot be listed`);
   if (!names.length) return result;
-  const walked = await walkEntries(
-    names.map((name) => join(target, name)),
-    dev,
-  );
-  if (walked.mount) return keep(`${walked.mount} is another filesystem`);
-  const fresh = idleMs === undefined ? null : writtenWithin(walked.newest, Date.now(), idleMs);
-  if (fresh) return keep(`${fresh} holds a file written in that time`);
   const first = await readTargetUse(target, signal);
   if ('kept' in first) return keep(first.kept);
   if (first.used.length) return keep(`a process uses ${first.used[0]}`);
@@ -853,18 +745,16 @@ export async function deleteCargoTarget(
   const exactOwned = EXACT_OWNED.find((name) => lstatSync(join(target, name), { throwIfNoEntry: false }));
   if (exactOwned)
     return keep(`it holds Exact's ${exactOwned} but no Exact app beside it, so it may be shared by Exact apps`);
+  const bytes = new Map<string, number>();
+  for (const name of names) bytes.set(name, await sizeOf(join(target, name), signal));
   let done: Awaited<ReturnType<typeof withCargoLocks<string[]>>>;
   try {
     done = await withCargoLocks(
       targetLocks(target),
       async () => {
         await refuseMoved(registeredTarget, admitted);
-        await refuseKeypairLink(target, dev, signal);
         const left: string[] = [];
-        for (const name of names.toSorted((a, b) => recognitionLast(target, a) - recognitionLast(target, b))) {
-          await refuseMoved(registeredTarget, admitted);
-          left.push(...(await removeInPlace(join(target, name), dev, signal)));
-        }
+        for (const name of names) left.push(...(await removeInPlace(join(target, name), dev, signal)));
         return left;
       },
       signal,
@@ -875,21 +765,11 @@ export async function deleteCargoTarget(
   }
   if ('kept' in done) return keep(done.kept);
   result.removed.push(...names);
-  result.bytes = names.reduce((sum, name) => sum + (walked.bytes.get(join(target, name)) ?? 0), 0);
+  result.bytes = names.reduce((sum, name) => sum + (bytes.get(name) ?? 0), 0);
   const left = reported(done.value);
   if (left.length) result.kept.push(`left ${left.join(', ')}`);
   await rmdir(target).catch(() => {});
   return result;
-}
-
-/**
- * Orders the top-level entries a delete removes so what recognises an untagged `target/` goes last: a profile holding
- * `.fingerprint` after other entries, and `.rustc_info.json` after everything, so a delete stopped part way leaves a
- * `target/` Stim still finds and deletes again.
- */
-function recognitionLast(target: string, name: string): number {
-  if (name === RUSTC_INFO) return 2;
-  return fingerprintDir(join(target, name)) ? 1 : 0;
 }
 
 /** When Exact's cleaner last kept each target without removing anything, so a pass within a day does not ask again. */
@@ -898,8 +778,8 @@ const exactKeptAt = new Map<string, number>();
 // @ref LLP 0005#exact-apps-clean-through-exact -- Stim checks the app is idle, Exact decides what goes
 /**
  * Hands the idle Exact app `app`'s `target/` (`target`, canonical) to Exact's cleaner, once no process runs from or
- * works in the app: a dev server or a running app holds no lock Exact could see. An unsupported checkout, a dry run
- * listing a path outside the canonical `target`, or a busy or refused clean keeps the target. A dry run first lists what goes, which Stim measures; the
+ * works in the app: a dev server or a running app holds no lock Exact could see. An unsupported checkout, or a busy
+ * or refused clean, keeps the target. A dry run first lists what goes, which Stim measures; the
  * clean then removes it all or nothing. A failed clean, or one that ends without a report, throws: what it removed is
  * not known. A keep without a removal is not asked again for a day.
  */
@@ -925,10 +805,6 @@ async function exactDelete(
   const planned = await exactClean(app, { ...options, dryRun: true });
   if (!('status' in planned) || planned.status !== 'ok') return keptByExact(exactKept(planned));
   if (!planned.remove.length) return keptByExact("Exact's cleaner lists nothing its builds remake");
-  for (const path of planned.remove) {
-    const real = await realpath(path).catch(() => null);
-    if (!real?.startsWith(`${target}/`)) return keptByExact(`Exact's cleaner lists ${path}, outside ${target}`);
-  }
   const sizes = new Map<string, number>();
   for (const path of planned.remove) sizes.set(path, await sizeOf(path, signal));
   const report = await exactClean(app, options);
@@ -946,39 +822,4 @@ async function exactDelete(
   );
   result.bytes = report.remove.reduce((sum, path) => sum + (sizes.get(path) ?? 0), 0);
   return result;
-}
-
-/**
- * One walk of `paths`, never through a symbolic link: the first directory on a device other than `dev` (`mount`), the
- * newest modification time of anything in each of `paths` (`newest`), and the bytes each holds (`bytes`), counting a
- * file with several hard links once and leaving out the files the remover keeps.
- */
-async function walkEntries(
-  paths: readonly string[],
-  dev: number,
-): Promise<{ mount: string | null; newest: Map<string, number>; bytes: Map<string, number> }> {
-  const newest = new Map<string, number>();
-  const bytes = new Map<string, number>();
-  const counted = new Set<string>();
-  const queue = paths.map((path) => ({ path, top: path }));
-  for (let item = queue.pop(); item !== undefined; item = queue.pop()) {
-    const { path, top } = item;
-    const stat = await lstat(path);
-    newest.set(top, Math.max(newest.get(top) ?? 0, stat.mtimeMs));
-    const id = `${stat.dev}:${stat.ino}`;
-    if (!counted.has(id) && (stat.isDirectory() || !kept(basename(path)))) {
-      counted.add(id);
-      bytes.set(top, (bytes.get(top) ?? 0) + stat.blocks * 512);
-    }
-    if (!stat.isDirectory()) continue;
-    if (stat.dev !== dev) return { mount: path, newest, bytes };
-    for (const entry of await readdir(path, { withFileTypes: true })) queue.push({ path: join(path, entry.name), top });
-  }
-  return { mount: null, newest, bytes };
-}
-
-/** The first of `newest`'s entries whose newest time is within `idleMs` of `now`. */
-function writtenWithin(newest: Map<string, number>, now: number, idleMs: number): string | null {
-  for (const [path, at] of newest) if (now - at <= idleMs) return path;
-  return null;
 }

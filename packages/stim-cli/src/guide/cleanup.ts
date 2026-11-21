@@ -159,14 +159,11 @@ In on mode a pass runs, cheapest to rebuild first:
      directory times. Each is deleted in place while Stim holds the profile's
      Cargo locks (.cargo-lock, .cargo-build-lock, .cargo-artifact-lock; only
      those that exist), taken without waiting through flock (Perl on macOS and
-     Linux; Windows and Linux NFS keep it); a build that starts meanwhile waits,
-     then rebuilds. The delete never follows a link, never enters another
-     device and leaves lock files and *-keypair.json; a deploy or
-     *-keypair.json link anywhere keeps the target/ whole. A profile whose lock a
-     build holds or with no .cargo-lock, and any path a process executes from
-     or holds open (one lsof and one ps read; unreadable keeps everything),
-     stay. A target/ holding an earlier Stim's .stim-trimmed or
-     .stim-not-restored-* is left alone until you delete it
+     Linux; Windows keeps it); a build that starts meanwhile waits, then
+     rebuilds. The delete never follows a link, never enters another device
+     and leaves lock files and *-keypair.json. A profile whose lock a build
+     holds or with no .cargo-lock, and any path a process executes from or
+     holds open (one lsof and one ps read; unreadable keeps everything), stay
   3. build-cache and Metro entries, least recently used first, down to
      80% of caches.buildCacheMaxGb or
      caches.metroCacheMaxGb, and entries unused for olderThanDays, Metro

@@ -15,7 +15,6 @@ import { readVolumeSpaceAsync } from './budget.ts';
 import {
   admitCargoTarget,
   cargoProfileDirs,
-  leftoverReason,
   staleCargoTargetPaths,
   trimCargoTarget,
 } from '../../workspace/cargo-target.ts';
@@ -292,11 +291,6 @@ export async function planCargoTargets({
       plan.skips.push({ target: dir, reason: 'pinned by maintenance.keep', workspace });
       continue;
     }
-    const leftover = leftoverReason(dir);
-    if (leftover) {
-      plan.skips.push({ target: dir, reason: leftover, workspace });
-      continue;
-    }
     if (bytes === null) plan.blocked.push(why);
     const stale = staleCargoTargetPaths(dir, now);
     if ('refusal' in stale) {
@@ -368,11 +362,6 @@ export async function planCargoTargetsAtPressure({
     }
     if (await pinned(workspace)) {
       plan.skips.push({ target: dir, reason: 'pinned by maintenance.keep', workspace });
-      continue;
-    }
-    const leftover = leftoverReason(dir);
-    if (leftover) {
-      plan.skips.push({ target: dir, reason: leftover, workspace });
       continue;
     }
     const stale = staleCargoTargetPaths(dir, now);

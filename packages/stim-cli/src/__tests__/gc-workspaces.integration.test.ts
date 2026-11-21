@@ -2745,7 +2745,6 @@ test('gc copies aside a keypair a dormant Cargo trim left in target/custom and a
   ])
     utimesSync(join(target, path), old, old);
   await deleteCargoTarget(target, { idleMs: DAY_MS });
-  expect(existsSync(join(target, 'CACHEDIR.TAG'))).toBe(false);
   const patch = join(merged, 'sandbox', 'node_modules', '.pnpm_patches', 'pkg@1.0.0', 'index.js');
   mkdirSync(dirname(patch), { recursive: true });
   writeFileSync(patch, 'patched');

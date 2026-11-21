@@ -1,4 +1,4 @@
-import { lstatSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { getExecutor } from '../exec.ts';
@@ -73,8 +73,7 @@ function stdoutOf(error: unknown): unknown {
  * Runs Exact's own cleaner on the idle Exact app at `app`: `<bun> <checkout>/scripts/sweep.mjs clean <app> [--dry-run]
  * --json`. The checkout is the one the app's `exact.mjs` resolves, which its `help` names on its last line (`Exact
  * checkout: <path> at <commit>`), run with the Bun its launcher pins; the cleaner runs with the Bun the checkout's
- * `package.json` pins, both from `~/.bun-<version>`. A launcher that is not a plain file, or a dry run without one
- * version 1 report, such as an older checkout that prints no JSON, is `unsupported`, which keeps the target. A clean
+ * `package.json` pins, both from `~/.bun-<version>`. A dry run without one version 1 report, such as an older checkout that prints no JSON, is `unsupported`, which keeps the target. A clean
  * that ends without one is `unknown`: it may have removed part. Exact checks its own locks and leases; a dev server or a
  * running app holds none, so the caller decides the app is idle first.
  */
@@ -82,8 +81,6 @@ export async function exactClean(
   app: string,
   { dryRun = false, signal, home = homedir() }: { dryRun?: boolean; signal?: AbortSignal; home?: string } = {},
 ): Promise<ExactCleanReport | { unsupported: string } | { unknown: string }> {
-  if (!lstatSync(join(app, 'exact.mjs'), { throwIfNoEntry: false })?.isFile())
-    return { unsupported: `${app}/exact.mjs is not a plain file` };
   let launcher: string;
   try {
     launcher = readFileSync(join(app, 'exact.mjs'), 'utf8');
