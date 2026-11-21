@@ -619,6 +619,7 @@ export async function runMaintenance(
         protectedRoot: triggeringRoot(),
         worktreeSweep: result.worktreeSweep,
         lowPriority: cap.ran,
+        critical: recordedDiskLevel(state, tick?.operation.env) === 'critical',
         ...(tick ? { operation: tick.operation } : {}),
         ...(between ? { between } : {}),
       };

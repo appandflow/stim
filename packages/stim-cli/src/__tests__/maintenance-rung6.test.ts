@@ -540,3 +540,30 @@ test('the daily sweep shuts watchman down and records it', async () => {
   expect(stop).toHaveBeenCalledWith(4242);
   expect(actionKinds()).toContain('stop-watchman');
 });
+
+test('a due sweep at the critical disk level deletes worktree trash with a bare rm', async () => {
+  vi.spyOn(measurements, 'measurePressure').mockReturnValue({
+    disk: [{ volume: '/', freeMb: 1024 }],
+    memory: { level: 'normal', availableBytes: null, pressured: false },
+    warningSince: null,
+  });
+  const entry = join(home, 'trash', 'remove-critical');
+  write(join(entry, 'entries', '0', 'file'));
+  writeFileSync(join(entry, 'trash.json'), JSON.stringify({ worktree: join(projects, 'gone'), createdAt: 'T' }));
+  const current = getExecutor();
+  const removals: string[][] = [];
+  setExecutor({
+    ...current,
+    runFileAsync: (file: string, args: string[], options: Parameters<typeof current.runFileAsync>[2]) => {
+      const command = [file, ...args];
+      if (!command.includes('rm')) return current.runFileAsync(file, args, options);
+      removals.push(command);
+      return current.runFileAsync('rm', command.slice(command.indexOf('rm') + 1), options);
+    },
+  });
+
+  await pass();
+
+  expect(removals).toEqual([['rm', '-rf', '--', join(entry, 'entries')]]);
+  expect(existsSync(entry)).toBe(false);
+});
