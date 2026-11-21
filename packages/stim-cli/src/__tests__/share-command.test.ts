@@ -560,6 +560,19 @@ describe('stim share', () => {
       expect(links().android.state).toBe('live');
     });
 
+    it('lists saved live links as resuming when no stimd holds the home, as between a holder leaving and the service rebinding', async () => {
+      const deps = fake([started(), unavailable]);
+      await runShare('android', {}, deps, '1.0.0');
+      expect(await runShare('list', {}, deps, '1.0.0')).toMatchObject({
+        ok: false,
+        error: {
+          code: 'STIM_SERVER_NOT_RUNNING',
+          remedy: expect.stringContaining("1 saved web share link is live and resumes when Stim's service"),
+        },
+      });
+      expect(deps.starts).toBe(0);
+    });
+
     it('stop --forget still forgets when no stim-server runs, and stop alone then reports the missing server', async () => {
       const deps = fake([started(), unavailable, unavailable]);
       await runShare('android', {}, deps, '1.0.0');

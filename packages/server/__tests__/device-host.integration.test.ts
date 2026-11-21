@@ -255,9 +255,11 @@ let allowed: Set<string>;
 let connected: Set<string>;
 let hostEnv: NodeJS.ProcessEnv;
 const request = { workspace: '/client/worktree', slot: 'default', platform: 'ios', attempt: 'first' };
+let sessionCounts: number[];
 
 beforeEach(() => {
   agentCalls = [];
+  sessionCounts = [];
   appRunningGate = undefined;
   appRunningResults = [];
   agentAccess = new Map();
@@ -276,6 +278,7 @@ beforeEach(() => {
     allowed: (client) => allowed.has(client),
     connected: (client) => connected.has(client),
     limits: { prepareMs: 5000, stopMs: 2000, logsMs: 1000, killGraceMs: 100 },
+    sessions: (count) => sessionCounts.push(count),
   });
 });
 afterEach(async () => {
@@ -855,6 +858,16 @@ test('a live device pause refuses new reservations, preserves existing sessions 
   expect(await host.offer('client', { platform: 'ios' })).toHaveProperty('result.declined', null);
   const resumed = await reserve({ attempt: 'second', workspace: '/other' });
   await state(resumed.id, 'ready');
+});
+
+test('counts an owned session from its reservation until it stops, so a service takeback waits for it', async () => {
+  const first = await reserve();
+  await state(first.id, 'ready');
+  expect(sessionCounts.at(-1)).toBe(1);
+  host.stop('client', { session: first.id });
+  await state(first.id, 'stopped');
+  for (let i = 0; i < 500 && sessionCounts.at(-1) !== 0; i++) await new Promise((done) => setTimeout(done, 10));
+  expect(sessionCounts.at(-1)).toBe(0);
 });
 
 test('reserves once across reconnect and attempt replay, isolates clients, and stops only the owned session', async () => {

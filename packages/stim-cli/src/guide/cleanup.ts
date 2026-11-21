@@ -582,15 +582,15 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
   Dormant stage at 10 minutes (H) or 2 minutes (C)
     rung 4, H. Kept: as the dormant reduction.
   node_modules and Pods of linked worktrees idle 1 hour (H) or 2 minutes (C)
-    rung 5, H, reported only, last: hourly in the daemon below C, each time
-    in stim gc. Not listed: a copy-on-write clone, in use, pinned.
+    rung 5, H, reported only, last, in stim gc only, never by the
+    stim-daemon. Not listed: a copy-on-write clone, in use, pinned.
   Idle Gradle and Kotlin daemons, unused watchman, unpinned Gradle versions (C:
   all unpinned), TMPDIR leftovers, worktree trash
     rung 6, H. Kept: a build running, a project pins it, modified within 24
     hours.
   Clean finished worktrees after gc.worktreeGraceMinutes (H), without it (C);
   clean pushed worktrees idle 7 days (C)
-    rung 7, H and C, reported only, last, while
+    rung 7, H and C, reported only, last, in stim gc only, while
     maintenance.removeFinishedWorktrees is true; the idle pushed ones only
     while maintenance.removeIdleWorktrees is true. Not listed: dirty,
     unpushed, in use, leased, locked, pinned.
@@ -644,7 +644,7 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
   runs from or works in it means a process whose working directory is in the
   checkout or whose command line names a path in it, and reading files in an
   editor with no process there is not activity), at any level. At critical,
-  pressure ladder rung 8 only reports one idle 2 minutes. Nothing that runs from or works in it, builds, drives,
+  stim gc's ladder rung 8 only reports one idle 2 minutes. Nothing that runs from or works in it, builds, drives,
   leases, hosts or is pinned with maintenance.keep is touched, nor a checkout
   whose node_modules a linked worktree listed by git links to (a symlink at the
   same relative path or in its top two directory levels, up to 2000 entries,
@@ -1171,8 +1171,8 @@ THE PRESSURE LADDER
        clean finished ones after gc.worktreeGraceMinutes (high) or without it
        (critical); at critical also clean pushed ones no Stim command used for
        7 days, only while maintenance.removeIdleWorktrees is true (false
-       means never, at any level). The daemon's tick uses the pull request lookups the worktree
-       check cached; stim gc looks them up again
+       means never, at any level). Only stim gc runs rungs 5 and 7, never the
+       stim-daemon
   Only the stim-daemon and stim gc run rung 9. The daemon runs it at most
   hourly, while the disk is still short. stim gc with no --pressure that
   measures critical measures free disk again after the earlier rungs and runs
@@ -1888,8 +1888,8 @@ WORKTREE DEPENDENCIES
   A linked worktree that has a Stim workspace loses its node_modules and
   ios/Pods, at the root or a project root, never the source checkout's, in
   one way: the dormant reduction at every level once its workspace has been
-  idle for idle.dormantDays (1 day); pressure ladder rung 5 only reports
-  them. A worktree
+  idle for idle.dormantDays (1 day); rung 5 of the ladder stim gc runs only
+  reports them. A worktree
   locked with git worktree lock keeps them always, so a rollback checkout
   stays runnable. Otherwise a worktree keeps them while it is in use (its
   dev server runs, a native run or build holds it), while it was used within

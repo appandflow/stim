@@ -35,7 +35,8 @@ type FromNet =
   | { type: 'idle' }
   | { type: 'update'; why: string }
   | { type: 'restart'; why: string }
-  | { type: 'statusWorker'; request: StatusWorkerRequest };
+  | { type: 'statusWorker'; request: StatusWorkerRequest }
+  | { type: 'busy'; count: number };
 
 /** A status worker the net thread asks stimd to start, so that its teardown does not hold the net thread's exit. */
 interface StatusWorkerRequest {
@@ -72,6 +73,7 @@ export function createNetThread(
   onExit: (failure?: Error) => void,
   onUpdate: (why: string) => void = () => {},
   onRestart: (why: string) => void = () => {},
+  onBusy: (count: number) => void = () => {},
 ): NetThread {
   let worker: Worker | null = null;
   let started: Promise<NetAnswer> | null = null;
@@ -173,6 +175,7 @@ export function createNetThread(
           } else if (message.type === 'update') onUpdate(message.why);
           else if (message.type === 'restart') onRestart(message.why);
           else if (message.type === 'statusWorker') startStatusWorker(message.request);
+          else if (message.type === 'busy') onBusy(message.count);
           else if (message.type === 'data') sockets.get(message.id)?.write(message.chunk);
           else sockets.get(message.id)?.end();
         });

@@ -160,7 +160,7 @@ When a stimd hands the home over and its successor does not bind within 10 s, or
 relaunch is skipped because cleanup was not verified, it logs `successor_missing`
 with the reason and writes `run/successor-missing.json`. A client that was refused
 by the old stimd and finds the marker with no stimd running starts one at once
-instead of waiting out the handover wait. The next stimd removes the marker. A service unit's stimd that hands the home to its unit's job starts no successor and writes neither, unless a forced exit ends its shutdown; it logs `successor_job` instead (LLP 0009, Service and engine updates). The
+instead of waiting out the handover wait. The next stimd removes the marker. A service unit's stimd that hands the home to its unit's job starts no successor and writes neither, unless a forced exit ends its shutdown; it logs `successor_job` instead (LLP 0009, Service and engine updates). A stimd that exits once idle because a service unit's job takes the home back starts no successor and writes no marker; it logs `service_restart`. The
 Desktop poll already starts a stimd when `run/stimd.json` is missing, so it needs no
 marker.
 
@@ -243,23 +243,22 @@ remedy, the only path for such a unit.
 Maintenance children keep the priority they had: they run at stimd's priority,
 now 31, except the size walks under `nice -n 19` and the fingerprint children
 at nice 10. On macOS `nice` lowers only CPU, not I/O, so a low-priority walk
-whose root is on a device a pressure sample read at normal also runs at a
-throttled I/O policy: `/usr/sbin/taskpolicy -d utility` on macOS, by its
+of a target whose volume a pressure sample reads at normal (a volume that
+could not be read reads normal) also runs at a throttled I/O policy: `/usr/sbin/taskpolicy -d utility` on macOS, by its
 absolute path so a walk's PATH cannot drop it, and `ionice -c3` on Linux when
-`ionice` is on PATH. A throttled walk that fails before printing a size (its
-wrapper missing or refused a spawn with ENOENT, EACCES or EPERM, or exiting nonzero with nothing on stdout, as an `ionice` does
-when it rejects its arguments or is refused the class) runs once more under
-`nice` alone; a walk killed at its deadline, or one that printed a partial
-size, does not. Windows keeps `nice` alone. Any other low-priority walk,
-including one whose volume could not be read or whose root sits on another
-device than the sample, gets `nice` and no I/O throttle. Today only the Cargo
+`ionice` is on PATH. A throttled walk that fails is not retried: a host whose
+`ionice` rejects its arguments is outside the supported model (#6063). Windows
+keeps `nice` alone. Any other low-priority walk, including one whose level the
+caller gave instead of a sample, gets `nice` and no I/O throttle. Today only the Cargo
 trim plan samples each target's volume, so only its `du` is throttled. The cap's
 size scan, the cap trim, the dependency and status walks and the
 unmanaged-usage scan keep `nice` alone: none of them has a sample of the walked
 volume, and a target can sit on another volume than the ones the home's level
 comes from.
 gc's delete of a trash entry runs its `rm -rf` on the same throttled command
-line below the critical level, and at stimd's priority at critical. Maintainer
+line below the critical level, and at stimd's priority at critical. An `rm`
+that fails is not run again on another command line; the in-process walk that
+follows, at stimd's priority, removes what it left. Maintainer
 decision: "Replace with rm -rf", 2026-11-20, relayed by the coordinator (#6048).
 `utility` is the milder of macOS's two throttled policies.
 `taskpolicy -b` was rejected: it also moves CPU into the background band, and

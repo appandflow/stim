@@ -5,7 +5,7 @@ import type { StimContext } from '@stim-cli/core';
 import { captureProcessIdentity, childExitedWithin } from '@stim-cli/core/process-identity';
 import { trashRoot } from '@stim-cli/core/state';
 import { getExecutor } from '../exec.ts';
-import { runLowPriority } from '../io-priority.ts';
+import { lowPriorityCommand } from '../io-priority.ts';
 import {
   clearClaimChild,
   markClaimChildPending,
@@ -206,15 +206,14 @@ export async function restoreTrashedTrees(trash: WorktreeTrash): Promise<string[
  */
 export async function deleteTrashEntry(dir: string, operation?: StimContext, throttleIo = false): Promise<void> {
   if (process.platform !== 'win32') {
-    const run = (file: string, args: string[]) =>
-      runOperationFile(operation, getExecutor(), file, args, {
+    const args = ['-rf', '--', join(dir, TRASH_ENTRIES)];
+    const [file, argv]: [string, string[]] = throttleIo ? lowPriorityCommand('rm', args, true) : ['rm', args];
+    try {
+      await runOperationFile(operation, getExecutor(), file, argv, {
         timeoutMs: 'unbounded',
         signal: operation?.signal,
         cwd: dirname(dir),
       });
-    const args = ['-rf', '--', join(dir, TRASH_ENTRIES)];
-    try {
-      await (throttleIo ? runLowPriority(run, 'rm', args, true) : run('rm', args));
     } catch (error) {
       rethrowCancellation(error, operation?.signal);
     }

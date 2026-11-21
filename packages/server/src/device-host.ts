@@ -148,6 +148,8 @@ export interface DeviceHostOptions {
   limits?: Partial<DeviceHostLimits>;
   /** How long a stopped session's home stays after it stopped, so its client can copy the final logs. Defaults to an hour. */
   homeGraceMs?: number;
+  /** Called with the number of sessions this host owns, each time it changes. */
+  sessions?: (count: number) => void;
 }
 
 const HOSTED_HOME_GRACE_MS = 3_600_000;
@@ -337,6 +339,7 @@ export class DeviceHost {
     }
     const owned = { claim: attempt.acquired };
     this.owned.set(record.id, owned);
+    this.options.sessions?.(this.owned.size);
     return owned;
   }
 
@@ -2061,7 +2064,7 @@ export class DeviceHost {
   }
 
   private release(id: string, owned: OwnedSession): void {
-    if (releaseClaim(owned.claim)) this.owned.delete(id);
+    if (releaseClaim(owned.claim) && this.owned.delete(id)) this.options.sessions?.(this.owned.size);
   }
 
   revoke(): void {
