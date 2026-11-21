@@ -139,9 +139,10 @@ benchmark baselines and Cargo's reports. A `deploy/` directory holding a
 program's private key there, and a new key is a new program ID. Everything else
 in an idle `target/` goes; for an Exact app's `target/`, Exact's cleaner
 decides instead and keeps its records (below). A top-level symbolic link
-stays, and the remover unlinks any other link without following it, whatever
-its name: a link named `deploy` or `*-keypair.json` keeps nothing, and what it
-points at stays where it is. The maintainer chose this in the coordinating
+stays. Deeper in, the remover unlinks a link without following it, except one
+named `*-keypair.json` (any case), which it leaves like a keypair file; what a
+link points at stays where it is, and no link, whatever its name, keeps the
+rest of the `target/`. The maintainer chose this in the coordinating
 session on 2026-11-20, answering "Drop them" to removing the walk that kept a
 `target/` holding such a link, after an audit found no tool that writes one.
 Anywhere else the
@@ -236,8 +237,7 @@ before it measures anything. It reports the bytes the trim removed. Cap 0,
 `maintenance.keep` and the lock, `lsof` and `ps` checks apply unchanged. Two
 Stims that trim the same `target/` at once need no claim: each takes the Cargo
 locks it deletes under, and the remover counts a path already gone as removed.
-Under a headroom deadline the trim stops between steps, and between directories
-of a step's keypair link walk before that step deletes anything; at high and
+Under a headroom deadline the trim stops between steps; at high and
 critical it measures nothing before removing, and reports the free space it gained of the
 target's own volume, or 0 when either sample is missing. The deadline stop, the
 free-space report and the absence of a per-run limit on targets were chosen by

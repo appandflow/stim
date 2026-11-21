@@ -342,7 +342,7 @@ describe.skipIf(process.platform === 'win32')('trimming in place (Cargo locks ne
     expect(result.kept).toEqual([expect.stringMatching(/^debug: left .*App-Keypair\.json$/)]);
   });
 
-  test('a directory a build removes while the keypair link check walks the target does not keep it', async () => {
+  test('a directory a build removes while the trim lists it does not keep the target', async () => {
     makeProfile('debug', 3 * DAY);
     const incremental = join(realpathSync.native(target), 'debug', 'incremental');
     fsHooks.beforeReaddir = (path) => {
@@ -376,6 +376,25 @@ describe.skipIf(process.platform === 'win32')('trimming in place (Cargo locks ne
     const later = await trimCargoTarget(target, { needBytes: 0, now: Date.now() + 2 * DAY });
     expect(later.removed).toEqual(['debug']);
     expect(readdirSync(join(target, 'debug'))).toEqual(['.cargo-lock']);
+  });
+
+  test('a target replaced before the locked step stays, and the profile of its replacement stays', async () => {
+    makeProfile('debug', 3 * DAY);
+    const lock = join(realpathSync.native(target), 'debug', '.cargo-lock');
+    onTestFinished(() => rmSync(`${target}-moved`, { recursive: true, force: true }));
+    fsHooks.afterLstat = (path) => {
+      if (path !== lock) return;
+      delete fsHooks.afterLstat;
+      renameSync(target, `${target}-moved`);
+      mkdirSync(join(target, 'debug', 'deps'), { recursive: true });
+      writeFileSync(join(target, 'debug', 'deps', 'theirs'), 'theirs');
+    };
+
+    const result = await trimCargoTarget(target, { needBytes: 0 });
+
+    expect(result.removed).toEqual([]);
+    expect(result.kept).toEqual([expect.stringContaining('is no longer the directory Stim checked')]);
+    expect(readFileSync(join(target, 'debug', 'deps', 'theirs'), 'utf8')).toBe('theirs');
   });
 
   test('a trim stopped at a deadline finishes the step in flight and leaves the rest', async () => {
@@ -583,6 +602,16 @@ describe.skipIf(process.platform === 'win32')('deleting an idle Cargo target who
     expect(result.kept).toContainEqual(expect.stringContaining(why));
     expect(existsSync(join(dir, 'debug', 'app'))).toBe(true);
     expect(existsSync(join(dir, 'doc', 'index.html'))).toBe(true);
+  });
+
+  test('a directory on another device is not entered, and the delete reports it left', async () => {
+    fsHooks.dev = (path) => (path.endsWith('/doc') ? -1 : undefined);
+
+    const result = await remove();
+
+    expect(result.kept).toContainEqual(expect.stringMatching(/^left .*\/doc$/));
+    expect(existsSync(join(dir, 'doc', 'index.html'))).toBe(true);
+    expect(existsSync(join(dir, 'debug', 'app'))).toBe(false);
   });
 
   test('a .cargo-lock that is a link keeps it whole, and the file behind it stays', async () => {
