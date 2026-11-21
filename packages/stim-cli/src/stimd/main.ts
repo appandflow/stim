@@ -1640,7 +1640,7 @@ async function runStimdInner(
                       takeBack = true;
                     }
                     // A job that exits before launchd's ThrottleInterval since its start is restarted only after it.
-                    if (typeof params.startedAt === 'number') {
+                    if (state.listening && typeof params.startedAt === 'number') {
                       takeBackAt = Math.max(takeBackAt, params.startedAt + THROTTLE_SECONDS * 1000);
                       const wait = takeBackAt - Date.now();
                       if (wait > 0) setTimeout(() => void checkEngine(), wait).unref();
