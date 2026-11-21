@@ -199,34 +199,39 @@ async function decide(
 
 /**
  * The regenerable outputs the idle stage deletes, and why each other one stays. `targets` names the Cargo `target/`
- * among `paths`, recognised by the same reads that listed it.
+ * among `paths`, recognised by the same reads that listed it. `inUse: false` skips the in-use reads (the process table
+ * for a Cargo `target/`, the running sharer of the Metro store), so it lists candidates a delete must check again.
+ * `metroCache` is the Metro cache root a caller resolved once for many checkouts.
  */
 export async function idleOutputs(
   path: string,
   config: Config,
   deletable?: (path: string) => boolean,
+  { signal, inUse, metroCache }: { signal?: AbortSignal; inUse?: false; metroCache?: string } = {},
 ): Promise<{ paths: string[]; targets: string[]; kept: string[] }> {
   const paths = workspaceOutputPaths(workspaceDir(path));
   const targets: string[] = [];
   const kept: string[] = [];
   const { dirs, cargo } = await existingBuildDirKindsAsync(path);
   for (const dir of dirs) {
-    const problem = await regenerableDirProblem(path, dir, undefined);
+    const problem = await regenerableDirProblem(path, dir, signal, { processes: inUse !== false });
     if (problem) kept.push(`kept ${dir}: ${problem}`);
     else {
       paths.push(dir);
       if (cargo.includes(dir)) targets.push(dir);
     }
   }
-  const store = metroStoreRoot(path);
+  const store = metroStoreRoot(path, metroCache);
   if (existsSync(store)) {
-    const sharer = Object.entries(config.projects).find(
-      ([other, project]) =>
-        canonicalPath(other) !== canonicalPath(path) &&
-        canonicalPath(metroStoreRoot(other)) === canonicalPath(store) &&
-        supervisorOf(other, project).status !== 'none' &&
-        supervisorOf(other, project).status !== 'stale',
-    );
+    const sharer =
+      inUse !== false &&
+      Object.entries(config.projects).find(
+        ([other, project]) =>
+          canonicalPath(other) !== canonicalPath(path) &&
+          canonicalPath(metroStoreRoot(other)) === canonicalPath(store) &&
+          supervisorOf(other, project).status !== 'none' &&
+          supervisorOf(other, project).status !== 'stale',
+      );
     if (sharer) kept.push(`kept the Metro store ${store}: the running dev server of ${sharer[0]} shares it`);
     else paths.push(store);
   }

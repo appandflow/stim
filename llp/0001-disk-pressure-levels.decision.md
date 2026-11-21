@@ -330,6 +330,45 @@ avoid concurrency problems", 2026-11-20. The units, the hard-floor priority
 and keeping the idle and dormant stages in the tick are the coordinator's and
 implementer's reading of it on #6029.
 
+## The lane marks what each checkout could free
+
+The dormant step's hourly walk of registered workspaces and discovered
+checkouts at `idle.dormantDays` writes one mark per checkout it reads, inside that checkout's unit, to
+`$STIM_HOME/gc/marks/<hash>.json`, keyed by the canonical root. A mark holds
+the outputs rung 1 lists there, with each Cargo `target/` as its own kind and
+sizes from the disk-usage cache; the mark starts no size walk. It skips rung
+1's in-use reads, so it takes no process listing and reads no other checkout:
+a Cargo `target/` another process uses and a Metro store a running dev server
+shares stay candidates, and a sweep reads them fresh before it deletes. It
+also holds the newest activity the walk read, and the walk reads at
+`idle.dormantDays`, not at rung 1's 2-minute threshold:
+
+- A checkout with something running records that as the keep reason on each
+  candidate.
+- A checkout idle past `idle.dormantDays` has its full reading, and a keep
+  reason on each candidate when something other than activity keeps it
+  (`maintenance.keep`, `idle.minutes` 0, unreadable evidence).
+- A newer checkout records the newest activity read, or only its last Stim
+  command when one ran within `idle.dormantDays`, which is a lower bound. Its
+  settings are not read. A sweep reads activity and keeps again before it
+  deletes.
+- A mark is rebuildable: an unknown version or a file that does not parse
+  reads as absent and the next walk rewrites it, so deleting the folder is
+  safe. It is written with a temporary file and a rename.
+- A `dirtyAt` newer than the start of the checkout's reads stays, so a
+  change seen while the walk read the checkout is not lost.
+- Nothing reads the marks yet: the ladder plans and deletes as before, and
+  the ladder's own walks, `stim gc` and the source-checkout walk write none.
+
+Reason: planning dominates a pressure pass (rung 5's evidence loop took about
+13,300 s for 0 bytes on the loaded MacBook), and every pass repeats the
+walk the lane already made. Marks let a later sweep recheck and delete
+without planning again.
+
+Maintainer decision: "I really like all 6 points lets do them all!",
+2026-11-20, #6059. Point 1 of the six is the split between a background
+mark and a sweep that only rechecks and deletes.
+
 ## Each rung frees only the volumes under pressure
 
 While disk sets the level, a rung deletes an item only when the path it will
