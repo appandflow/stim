@@ -275,6 +275,7 @@
 [*] interface DaemonLadderAction { @@1 detail: string;
 [*] interface DaemonLadderAction { @@1 kind: string;
 [*] interface DaemonLadderAction { @@1 outcome: "done" | "kept" | "failed" | "would";
+[*] interface DaemonLadderAction { @@1 partial?: true;
 [*] interface DaemonLadderAction { @@1 restore?: string;
 [*] interface DaemonLadderAction { @@1 rung: number;
 [*] interface DaemonLadderAction { @@1 setting?: string;
@@ -536,6 +537,7 @@
 [*] interface GcResult { @@1 id: string | null;
 [*] interface GcResult { @@1 kind: GcResultKind;
 [*] interface GcResult { @@1 label: string;
+[*] interface GcResult { @@1 partial?: true;
 [*] interface GcResult { @@1 status: GcResultStatus;
 [*] interface GcRunPayload {
 [*] interface GcRunPayload { @@1 actionable: boolean;

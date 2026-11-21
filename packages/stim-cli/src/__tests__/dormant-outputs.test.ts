@@ -242,8 +242,8 @@ describe.skipIf(process.platform === 'win32')(
       let finish!: () => void;
       const walking = new Promise<void>((resolve) => (entered = resolve));
       const finished = new Promise<void>((resolve) => (finish = resolve));
-      const walk = fsUtil.measuredDirectorySizeAsync;
-      vi.spyOn(fsUtil, 'measuredDirectorySizeAsync').mockImplementation(async (dir, options) => {
+      const walk = fsUtil.measureDirectoryAsync;
+      vi.spyOn(fsUtil, 'measureDirectoryAsync').mockImplementation(async (dir, options) => {
         if (outputs.includes(dir)) {
           order.push('walk');
           if (order.length === 1) {
@@ -351,7 +351,7 @@ describe.skipIf(process.platform === 'win32')(
       const root = register(repo('app'));
       idleFor(3, root);
       writeWorkspaceState(root, { macos: {} });
-      const walks = vi.spyOn(fsUtil, 'measuredDirectorySizeAsync');
+      const walks = vi.spyOn(fsUtil, 'measureDirectoryAsync');
 
       expect(await hourlyStep(false)).toEqual([]);
       expect(await gc()).toEqual([]);

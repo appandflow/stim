@@ -9,7 +9,7 @@ import {
   type MaintenanceAction,
 } from '@stim-cli/core/state';
 import { loadConfig } from '../../workspace/config.ts';
-import { formatBytes } from '../../fs-util.ts';
+import { formatSize } from '../../fs-util.ts';
 import { openRetainedLog } from '../../stimd/passes/log.ts';
 import { resolveMaintenanceSettings } from '../../stimd/passes/settings.ts';
 import type { ActionOutcome } from '../../stimd/passes/act.ts';
@@ -34,7 +34,9 @@ const VERBS = { done: 'Cleared', kept: 'Kept', failed: 'Failed to clear' } as co
 
 function gcLogRecord(run: GcLogRun, result: GcLogItem, ts: number): GcLogRecord {
   const path = [result.id, result.label].find((value) => value !== null && isAbsolute(value)) ?? null;
-  const size = result.bytes ? ` (${formatBytes(result.bytes)})` : '';
+  const size = result.bytes
+    ? ` (${formatSize({ bytes: result.bytes, ...(result.partial ? { partial: true } : {}) })})`
+    : '';
   const why = result.detail ? `: ${result.detail}` : '';
   return {
     ts,
@@ -52,6 +54,7 @@ function gcLogRecord(run: GcLogRun, result: GcLogItem, ts: number): GcLogRecord 
     id: result.id,
     path,
     bytes: result.bytes,
+    ...(result.partial ? { partial: true as const } : {}),
     detail: result.detail,
   };
 }

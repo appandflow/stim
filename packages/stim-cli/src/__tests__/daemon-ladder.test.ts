@@ -2216,9 +2216,9 @@ test('deleteOutputs stops before the next removal once its operation is aborted'
   const paths = ['one', 'two'].map((name) => join(base, name));
   for (const path of paths) mkdirSync(path);
   const controller = new AbortController();
-  vi.spyOn(fsUtil, 'measuredDirectorySizeAsync').mockImplementation(async () => {
+  vi.spyOn(fsUtil, 'measureDirectoryAsync').mockImplementation(async () => {
     controller.abort();
-    return 1;
+    return { bytes: 1 };
   });
 
   await expect(idlePass.deleteOutputs(paths, controller.signal)).rejects.toThrow('aborted');

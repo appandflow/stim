@@ -438,6 +438,20 @@ marker plus a 30 second timer with no protocol change, no cap check brought
 forward when a measurement crosses a cap, no use of the measurement in the
 headroom estimate, and no new setting (#5759).
 
+## A size walk that times out reports what it measured
+
+When `stim gc` or the daemon reports the bytes a delete freed, it sizes each
+folder with `du -k -d 1`. A walk stopped at its deadline reports the sum of the
+top-level entries it finished, marked `partial` ("at least" in text), instead of
+nothing. Callers that decide what to delete or trim from a size still treat a
+timed-out walk as unknown, so the lower bound changes only what is reported.
+GNU du writes each entry's line as it finishes; macOS du keeps its output in a
+block buffer when it writes to a pipe, so a stopped walk there reports 0 bytes,
+still marked partial.
+
+Maintainer decision, 2026-11-20: "Can timed out scan report the bytes it
+measured when it timed out, but still flag it as incomplete" (#6067).
+
 ## One idle day reduces a workspace
 
 A workspace with no activity for `idle.dormantDays` (default 1) is reduced to
@@ -618,7 +632,7 @@ implementer of #5942 and its reviews, not by the maintainer.
 
 ## Links
 
-- Issues: #5492, #5512, #5524, #5877, #5933, #5942, #5998, #6011, #6025. Pull requests: #5514, #5540.
+- Issues: #5492, #5512, #5524, #5877, #5933, #5942, #5998, #6011, #6025, #6067. Pull requests: #5514, #5540.
 - Code: `packages/stim-cli/src/policy/checkout-order.ts`,
   `packages/stim-cli/src/workspace/source-dependencies.ts`,
   `packages/stim-cli/src/stimd/passes/artifacts.ts`,

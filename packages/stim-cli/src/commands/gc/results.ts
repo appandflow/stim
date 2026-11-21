@@ -40,16 +40,20 @@ export interface GcResult {
   label: string;
   id: string | null;
   bytes: number | null;
+  /** Set when a size walk timed out, so `bytes` is a lower bound. */
+  partial?: true;
   detail: string | null;
 }
 
+interface RecordOptions {
+  id?: string | null;
+  bytes?: number | null;
+  partial?: true;
+  detail?: string | null;
+}
+
 interface GcResults {
-  record(
-    kind: GcResultKind,
-    status: GcResultStatus,
-    label: string,
-    options?: { id?: string | null; bytes?: number | null; detail?: string | null },
-  ): void;
+  record(kind: GcResultKind, status: GcResultStatus, label: string, options?: RecordOptions): void;
   take(): GcResult[];
 }
 
@@ -60,13 +64,9 @@ export function createGcResults(observe?: (result: GcResult) => void): GcResults
       kind: GcResultKind,
       status: GcResultStatus,
       label: string,
-      {
-        id = null,
-        bytes = null,
-        detail = null,
-      }: { id?: string | null; bytes?: number | null; detail?: string | null } = {},
+      { id = null, bytes = null, partial, detail = null }: RecordOptions = {},
     ): void {
-      const result = { kind, status, label, id, bytes, detail };
+      const result = { kind, status, label, id, bytes, ...(partial ? { partial } : {}), detail };
       results.push(result);
       observe?.(result);
     },

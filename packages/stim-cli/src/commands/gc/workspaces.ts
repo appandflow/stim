@@ -2,7 +2,16 @@ import { closeSync, existsSync, lstatSync, openSync, readSync, readdirSync, rmdi
 import { readdir, readFile, rm, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative } from 'path';
 import chalk from 'chalk';
-import { formatBytes, isOnMountedVolume, listMountedVolumes, measuredDirectorySizeAsync } from '../../fs-util.ts';
+import {
+  addSize,
+  formatBytes,
+  formatSize,
+  isOnMountedVolume,
+  listMountedVolumes,
+  measureDirectoryAsync,
+  measuredDirectorySizeAsync,
+  type DirectorySize,
+} from '../../fs-util.ts';
 import { isJsonObject, lastNativeUseFrom, readJsonFile } from '@stim-cli/core/state';
 import { getConfigDir, isPathPrefix, loadConfig } from '../../workspace/config.ts';
 import { agentDeviceDaemon } from '../../devices/activity.ts';
@@ -640,7 +649,7 @@ export async function clearWorkspaceOutputs(
   { log, record }: GcOutput = GC_OUTPUT,
 ): Promise<{ failures: number; cleared: string[] }> {
   let failures = 0;
-  let cleared = 0;
+  const cleared: DirectorySize = { bytes: 0 };
   const clearedRoots: string[] = [];
   for (const entry of report.workspaces) {
     signal?.throwIfAborted();
@@ -653,7 +662,7 @@ export async function clearWorkspaceOutputs(
       continue;
     }
     let run;
-    let freed = 0;
+    const freed: DirectorySize = { bytes: 0 };
     let removed = 0;
     try {
       run = await withIdleWorkspace(
@@ -684,11 +693,11 @@ export async function clearWorkspaceOutputs(
             signal?.throwIfAborted();
             if (kinds.cargo.includes(path)) {
               const result = await deleteCargoTarget(path, { signal });
-              freed += result.bytes;
+              addSize(freed, result);
               removed += result.removed.length;
               for (const why of result.kept) log(chalk.yellow(`Kept in ${path}: ${why}`));
             } else if (lstatSync(path, { throwIfNoEntry: false })) {
-              freed += (await measuredDirectorySizeAsync(path, { timeoutMs: SIZE_TIMEOUT_MS, signal })) ?? 0;
+              addSize(freed, await measureDirectoryAsync(path, { timeoutMs: SIZE_TIMEOUT_MS, signal }));
               await rm(path, { recursive: true, force: true });
               removed++;
             }
@@ -716,22 +725,22 @@ export async function clearWorkspaceOutputs(
       record('workspaceOutputs', 'kept', root, { bytes: kept === NOTHING_REMOVED ? 0 : entry.bytes, detail: kept });
       continue;
     }
-    cleared += freed;
+    addSize(cleared, freed);
     clearedRoots.push(root);
     log(
       chalk.green(
         lighten
-          ? `Lightened ${root}: freed ${sizeText(freed)} of build outputs`
-          : `Cleared the build outputs of ${root} (${sizeText(freed)})`,
+          ? `Lightened ${root}: freed ${formatSize(freed)} of build outputs`
+          : `Cleared the build outputs of ${root} (${formatSize(freed)})`,
       ),
     );
-    record('workspaceOutputs', 'done', root, { bytes: freed });
+    record('workspaceOutputs', 'done', root, freed);
   }
-  if (cleared) {
+  if (cleared.bytes) {
     const count = `${clearedRoots.length} workspace${clearedRoots.length === 1 ? '' : 's'}`;
     log(
       chalk.dim(
-        `${lighten ? `Lightened ${count}, freeing` : 'Cleared'} ${formatBytes(cleared)} of workspace build outputs. ${REBUILD_COST}`,
+        `${lighten ? `Lightened ${count}, freeing` : 'Cleared'} ${formatSize(cleared)} of workspace build outputs. ${REBUILD_COST}`,
       ),
     );
   }

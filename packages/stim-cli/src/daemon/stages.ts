@@ -24,7 +24,7 @@ import { avdDataDirectories, listAvdsAsync } from '../devices/android.ts';
 import { projectDeviceSlots } from '../devices/device-slots.ts';
 import { listAllIosSimsAsync, type IosSimRecord } from '../devices/ios.ts';
 import { withWorkspaceProcessLock, workspaceProcessLockError } from '../engine/workspace-process-lock.ts';
-import { formatBytes } from '../fs-util.ts';
+import { formatSize } from '../fs-util.ts';
 import { machineNumber } from '../machine-number.ts';
 import {
   decideIdleStop,
@@ -378,7 +378,7 @@ export function stoppedOutputCandidates(
   });
 }
 
-type StageResult = Pick<DaemonLadderAction, 'outcome' | 'bytes' | 'detail'>;
+type StageResult = Pick<DaemonLadderAction, 'outcome' | 'bytes' | 'partial' | 'detail'>;
 
 /**
  * The outputs rung 1 deletes for a stopped workspace, and why each other one stays: none while its worktree is
@@ -437,11 +437,11 @@ export async function clearStoppedOutputs(
             const outputs = await stoppedOutputs(candidate, config, operation, deletable);
             if ('locked' in outputs) return { outcome: 'kept', bytes: 0, detail: outputs.locked };
             if (!outputs.paths.length) return null;
-            const bytes = await deleteOutputs(outputs.paths, operation?.signal);
+            const freed = await deleteOutputs(outputs.paths, operation?.signal);
             return {
               outcome: 'done',
-              bytes,
-              detail: `deleted ${formatBytes(bytes)} of regenerable build outputs${outputs.kept.length ? `; ${outputs.kept.join('; ')}` : ''}`,
+              ...freed,
+              detail: `deleted ${formatSize(freed)} of regenerable build outputs${outputs.kept.length ? `; ${outputs.kept.join('; ')}` : ''}`,
             };
           },
           {

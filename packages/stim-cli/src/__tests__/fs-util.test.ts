@@ -9,6 +9,7 @@ import {
   isRealMount,
   isOnMountedVolume,
   listMountedVolumes,
+  measureDirectoryAsync,
   measuredDirectorySizeAsync,
 } from '../fs-util.ts';
 
@@ -135,6 +136,47 @@ test('a size walk stopped by a signal, or that could not run, writes its reason'
     vi.unstubAllEnvs();
     rmSync(home, { recursive: true, force: true });
   }
+});
+
+describe('a size walk that reports what it measured', () => {
+  let home: string;
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'stim-fsutil-'));
+    vi.stubEnv('STIM_HOME', home);
+  });
+  afterEach(() => {
+    resetExecutor();
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  test('a walk cut off at its deadline reports the entries it finished as a partial size, and stays unknown to callers that decide', async () => {
+    const walks: string[][] = [];
+    setExecutor({
+      ...getExecutor(),
+      runFileAsync: async (file, args) => {
+        walks.push([file, ...args]);
+        throw Object.assign(new Error('timed out'), {
+          code: 'ETIMEDOUT',
+          stdout: '100\t/w/target/debug\n200\t/w/target/release\n7',
+        });
+      },
+    });
+    expect(await measureDirectoryAsync('/w/target', { timeoutMs: 10_000 })).toEqual({
+      bytes: 300 * 1024,
+      partial: true,
+    });
+    expect(await measuredDirectorySizeAsync('/w/target', { timeoutMs: 10_000 })).toBeNull();
+    expect(walks[0]).toEqual(['du', '-k', '-d', '1', '/w/target']);
+  });
+
+  test('a walk that finishes reports the total du prints last', async () => {
+    setExecutor({
+      ...getExecutor(),
+      runFileAsync: async () => '100\t/w/target/debug\n200\t/w/target/release\n350\t/w/target',
+    });
+    expect(await measureDirectoryAsync('/w/target', { timeoutMs: 10_000 })).toEqual({ bytes: 350 * 1024 });
+  });
 });
 
 test.each(['darwin', 'linux'] as const)(

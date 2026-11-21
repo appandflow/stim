@@ -13,6 +13,8 @@ const SIZERS = new Set([
   'walkTree',
   'refreshMeasure',
   'measuredDirectorySizeAsync',
+  'measureDirectoryAsync',
+  'walkSize',
   'measuredDirectorySize',
   'directorySize',
   'directorySizeAsync',

@@ -1,6 +1,6 @@
 import { lstatSync, readdirSync, readlinkSync, statSync } from 'fs';
 import { dirname, isAbsolute, join, normalize, parse, sep } from 'path';
-import { getExecutor } from './exec.ts';
+import { getExecutor, isTimeoutError } from './exec.ts';
 import { runLowPriority } from './io-priority.ts';
 import { noteSizeFailure, sizeFailure } from './size-failures.ts';
 import type { StimContext } from '@stim-cli/core';
@@ -151,36 +151,62 @@ export async function directorySizeAsync(
   return (await measuredDirectorySizeAsync(dir, options)) ?? 0;
 }
 
-export async function measuredDirectorySizeAsync(
+interface SizeWalkOptions {
+  timeoutMs: number | 'unbounded';
+  signal?: AbortSignal;
+  operation?: StimContext;
+  lowPriority?: boolean;
+  /** With `lowPriority`, whether the walk also yields its I/O: only for a volume sampled at normal pressure. */
+  throttleIo?: boolean;
+  root?: string;
+}
+
+/** A folder's size; `partial` marks a walk stopped at its deadline, whose `bytes` count only what it finished. */
+export interface DirectorySize {
+  bytes: number;
+  partial?: true;
+}
+
+export async function measuredDirectorySizeAsync(dir: string, options: SizeWalkOptions): Promise<number | null> {
+  const size = await walkSize(dir, ['-sk', dir], options);
+  return size && !size.partial ? size.bytes : null;
+}
+
+/**
+ * The size of `dir`, or null when the walk failed. A walk that times out returns the bytes of the top-level entries it
+ * finished, marked `partial`.
+ */
+export async function measureDirectoryAsync(dir: string, options: SizeWalkOptions): Promise<DirectorySize | null> {
+  return walkSize(dir, ['-k', '-d', '1', dir], options);
+}
+
+/** Adds `size` to `total`, which becomes partial when `size` is. */
+export function addSize(total: DirectorySize, size: DirectorySize | null | undefined): void {
+  total.bytes += size?.bytes ?? 0;
+  if (size?.partial) total.partial = true;
+}
+
+/** `bytes` with "at least" in front when they are a lower bound. */
+export function formatSize({ bytes, partial }: DirectorySize): string {
+  return `${partial ? 'at least ' : ''}${formatBytes(bytes)}`;
+}
+
+async function walkSize(
   dir: string,
-  {
-    timeoutMs,
-    signal,
-    operation,
-    lowPriority = false,
-    throttleIo = false,
-    root,
-  }: {
-    timeoutMs: number | 'unbounded';
-    signal?: AbortSignal;
-    operation?: StimContext;
-    lowPriority?: boolean;
-    /** With `lowPriority`, whether the walk also yields its I/O: only for a volume sampled at normal pressure. */
-    throttleIo?: boolean;
-    root?: string;
-  },
-): Promise<number | null> {
+  args: string[],
+  { timeoutMs, signal, operation, lowPriority = false, throttleIo = false, root }: SizeWalkOptions,
+): Promise<DirectorySize | null> {
   let out: string;
   const startedAt = Date.now();
   try {
-    const walk = (file: string, args: string[]) =>
-      runOperationFile(operation, getExecutor(), file, args, {
+    const walk = (file: string, argv: string[]) =>
+      runOperationFile(operation, getExecutor(), file, argv, {
         timeoutMs,
         killSignal: 'SIGKILL',
         signal,
         cwd: operation?.cwd,
       });
-    out = lowPriority ? await runLowPriority(walk, 'du', ['-sk', dir], throttleIo) : await walk('du', ['-sk', dir]);
+    out = lowPriority ? await runLowPriority(walk, 'du', args, throttleIo) : await walk('du', args);
   } catch (error) {
     if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
       throw error;
@@ -192,11 +218,29 @@ export async function measuredDirectorySizeAsync(
     );
     signal?.throwIfAborted();
     operation?.signal.throwIfAborted();
-    return null;
+    if (!isTimeoutError(error)) return null;
+    const stdout = error instanceof Error && 'stdout' in error ? error.stdout : '';
+    return { bytes: finishedBytes(dir, typeof stdout === 'string' ? stdout : ''), partial: true };
   }
-  if (!out) return 0;
-  const kb = parseInt(out.split(/\s+/)[0] ?? '', 10);
-  return isNaN(kb) ? 0 : kb * 1024;
+  if (!out) return { bytes: 0 };
+  const kb = parseInt(out.trim().split('\n').at(-1)?.split(/\s+/)[0] ?? '', 10);
+  return { bytes: isNaN(kb) ? 0 : kb * 1024 };
+}
+
+/**
+ * The bytes in the complete lines `du -k -d 1` printed before it was stopped: the total when it got that far, else the
+ * sum of the top-level entries it finished. GNU du writes each line as it finishes an entry; macOS du holds its
+ * output in a block buffer when it writes to a pipe, so a stopped walk there printed nothing.
+ */
+function finishedBytes(dir: string, stdout: string): number {
+  let total = 0;
+  for (const line of stdout.split('\n').slice(0, -1)) {
+    const match = /^(\d+)\t(.*)$/.exec(line);
+    if (!match) continue;
+    if (match[2] === dir) return Number(match[1]) * 1024;
+    total += Number(match[1]) * 1024;
+  }
+  return total;
 }
 
 function measuredDirectorySize(
