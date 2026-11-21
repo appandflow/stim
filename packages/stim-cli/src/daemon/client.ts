@@ -33,7 +33,6 @@ import {
 import { claimRemoveCommand, readClaimSet, type ClaimProblem } from '@stim-cli/core/ownership-claim';
 import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
 import { windowsLauncherArgs } from '../detached-entry.ts';
-import { jobRestartHold } from '../stimd/job-restart.ts';
 import { ANDROID_LOCATION_VARIABLES } from '../devices/android-locations.ts';
 import { endForSwitch, engineShim, ownStoreEngine, switchedEngine } from './engine-switch.ts';
 import { legacyDaemonHolder, legacyDaemonStop } from './legacy-daemon.ts';
@@ -198,6 +197,8 @@ let refusal: {
   handover: boolean;
   heldBy: 'shares' | 'dev-servers' | null;
   workspaces: string[];
+  /** The refusing stimd leaves the home to a service unit's job, which starts no successor. */
+  toJob: boolean;
 } | null = null;
 let opSocket: Socket | null = null;
 let lostOpToken: string | undefined;
@@ -243,6 +244,7 @@ function noteRefusal(message: Record<string, unknown>): void {
     workspaces: Array.isArray(message.workspaces)
       ? message.workspaces.filter((entry): entry is string => typeof entry === 'string')
       : [],
+    toJob: message.job === true,
   };
 }
 
@@ -954,26 +956,6 @@ export function launchStimd(
   return { settled, exited: () => exited };
 }
 
-/** How much longer `run/job-restart.json` holds this home for a service unit's job; 0 without a record. */
-function jobRestartWaitMs(): number {
-  const hold = jobRestartHold();
-  return hold ? Math.max(0, hold.until - Date.now()) : 0;
-}
-
-/**
- * Waits while `run/job-restart.json` holds this home for a service unit's job, which removes it once its stimd has
- * started, so a command neither starts a stimd only to wait behind the job's restart nor asks the one that is leaving.
- */
-export async function awaitJobRestart(signal?: AbortSignal, home?: string): Promise<void> {
-  for (let said = false; ; said = true) {
-    const hold = jobRestartHold(home);
-    if (!hold || Date.now() >= hold.until || hold.record.pid === process.pid || signal?.aborted) return;
-    if (crashLoop(readStimdBoots(home), stimdBuildId(), Date.now())) return;
-    if (!said) console.error(`Stim: waiting for the ${hold.record.label} service to start stimd again`);
-    await new Promise((done) => setTimeout(done, CLAIM_POLL_MS));
-  }
-}
-
 /** Whether a live stimd claim shows up within `waitMs`, checking again as soon as the started stimd exits. */
 async function claimTaken(
   { settled, exited }: ReturnType<typeof launchStimd>,
@@ -1009,7 +991,6 @@ export async function ensureStimd(
 ): Promise<boolean> {
   if (pin) requireResolvedStimdHome();
   if (!spawnsDaemon(env) && !required) {
-    if (pin) await awaitJobRestart();
     if (pin && stimdLive()) await admitExisting(held, command, false, invocation, operation);
     return false;
   }
@@ -1028,8 +1009,6 @@ export async function ensureStimd(
     }
     // compat end
     admitting = pin && !held;
-    // @ref LLP 0009#service-and-engine-updates -- a home a service stimd left to its job waits for that job
-    if (!currentCrashHold()) await awaitJobRestart();
     if (stimdLive()) {
       if (!pin) await askStimd('hello', CONTACT_TIMEOUT_MS);
       else await admitExisting(held, command, false, invocation, operation);
@@ -1038,17 +1017,13 @@ export async function ensureStimd(
     // @ref LLP 0012#a-command-does-not-continue-across-a-stimd-restart -- a command that lost its stimd starts none
     if (admittedBefore(operation)) throw daemonRestarted();
     let launched: ReturnType<typeof launchStimd>;
-    // @ref LLP 0009#service-and-engine-updates -- a build the job holds meets the hold, not the job's wait
-    const jobHold = jobRestartHold();
-    const jobHeld =
-      jobHold && Date.now() < jobHold.until ? crashLoop(readStimdBoots(), stimdBuildId(), Date.now()) : null;
-    const hold = currentCrashHold() ?? jobHeld;
+    const hold = currentCrashHold();
     try {
       if (hold) {
         if (!holdAnnounced) {
           holdAnnounced = true;
           const { crashHoldRemedy } = await import('../stimd/crash-hold.ts');
-          console.error(`Stim: ${crashHoldRemedy(hold, jobHeld !== null && ownStoreEngine() !== null)}`);
+          console.error(`Stim: ${crashHoldRemedy(hold, false)}`);
         }
         launched = { settled: Promise.resolve(), exited: () => true };
       } else launched = launchStimd(env, daemonMode(env), platform);
@@ -1059,7 +1034,7 @@ export async function ensureStimd(
     }
     let taken = await claimTaken(launched, ATTACH_AFTER_MS);
     let attachedAttempt = false;
-    if (!taken && !held && !jobHeld && allowAttached && Reflect.get(globalThis, Symbol.for('stim.cli'))) {
+    if (!taken && !held && allowAttached && Reflect.get(globalThis, Symbol.for('stim.cli'))) {
       attachedAttempt = true;
       const { hostStimd } = await import('../stimd/attached.ts');
       const host = await hostStimd(env);
@@ -1710,10 +1685,7 @@ function successorExpected(): boolean {
  */
 async function successorBound(): Promise<boolean> {
   if (successorMissed) return false;
-  const base = Date.now() + (refusal?.handover ? HANDOVER_WAIT_MS : CLAIM_WAIT_MS);
-  const ours = () => refusedBuild === stimdBuildId() || (ownStoreEngine() !== null && switchedEngine() === null);
-  const job = () => (ours() ? jobRestartWaitMs() : 0);
-  const deadline = () => Math.max(base, Date.now() + job());
+  const deadline = Date.now() + (refusal?.handover ? HANDOVER_WAIT_MS : CLAIM_WAIT_MS);
   let started = false;
   for (;;) {
     if (readJsonObject(stimdRecordFile())?.build === stimdBuildId()) {
@@ -1721,7 +1693,9 @@ async function successorBound(): Promise<boolean> {
       refusal = null;
       return true;
     }
-    if (!started && !stimdLive() && readSuccessorMissing() && !currentCrashHold()) {
+    // @ref LLP 0009#service-and-engine-updates -- a command of the selected build may start the stimd the job takes back later
+    const starts = readSuccessorMissing() || (refusal?.toJob === true && refusedBuild === stimdBuildId());
+    if (!started && !stimdLive() && starts && !currentCrashHold()) {
       started = true;
       try {
         launchStimd(process.env, daemonMode(process.env), process.platform);
@@ -1729,7 +1703,7 @@ async function successorBound(): Promise<boolean> {
         break;
       }
     }
-    if (Date.now() >= deadline()) break;
+    if (Date.now() >= deadline) break;
     await new Promise((done) => setTimeout(done, CLAIM_POLL_MS));
   }
   successorMissed = true;
@@ -1872,24 +1846,31 @@ function netAnswer(reply: Record<string, unknown> | null): NetAnswer | null {
 
 /**
  * Asks this home's stimd to start its net thread, for a web share (`share`: loopback only, ending with its last share)
- * or a pairing. A web share starts a stimd first when none runs, whatever `daemon.mode` says; a pairing only where
+ * or a pairing, on `port` when one is given. A web share starts a stimd first when none runs, whatever `daemon.mode` says; a pairing only where
  * `daemon.mode` lets commands start one. Null when no stimd answers.
  */
-export async function ensureNet(share: boolean, env: NodeJS.ProcessEnv = process.env): Promise<NetAnswer | null> {
-  await awaitJobRestart();
+export async function ensureNet(
+  share: boolean,
+  env: NodeJS.ProcessEnv = process.env,
+  port?: number,
+): Promise<NetAnswer | null> {
   if (!stimdLive() && (!(share || spawnsDaemon(env)) || !(await claimTaken(launchStimd(env, daemonMode(env))))))
     return null;
-  return netAnswer(
-    await askHeldStimd(() => askStimd('net.ensure', NET_START_MS, { params: netEnsureParams({ shareOnly: share }) })),
-  );
+  const params = netEnsureParams({ shareOnly: share, ...(port === undefined ? {} : { port }) });
+  return netAnswer(await askHeldStimd(() => askStimd('net.ensure', NET_START_MS, { params })));
 }
 
 /** The `net.ensure` params stimd reads, named field by field so no caller's option names reach the wire. */
 function netEnsureParams(
-  serve: Partial<ServeOptions> & { service?: boolean; unit?: string; envValues?: Record<string, string> },
+  serve: Partial<ServeOptions> & {
+    service?: boolean;
+    unit?: string;
+    envValues?: Record<string, string>;
+    startedAt?: number;
+  },
 ): Record<string, unknown> {
-  const { shareOnly, port, loopbackOnly, extraEnv, pathPrepend, service, unit, envValues } = serve;
-  return { share: shareOnly === true, port, loopbackOnly, extraEnv, pathPrepend, service, unit, envValues };
+  const { shareOnly, port, loopbackOnly, extraEnv, pathPrepend, service, unit, envValues, startedAt } = serve;
+  return { share: shareOnly === true, port, loopbackOnly, extraEnv, pathPrepend, service, unit, envValues, startedAt };
 }
 
 /**
@@ -1902,7 +1883,7 @@ function netEnsureParams(
  * stimd outside that job leaves the home to the job at its engine switch.
  */
 export function serveThroughStimd(
-  params: ServeOptions & { service: boolean; unit?: string },
+  params: ServeOptions & { service: boolean; unit?: string; startedAt?: number },
   onAnswer: (answer: NetAnswer | null) => void,
 ): Promise<void> {
   const envValues = params.service
@@ -1929,15 +1910,7 @@ export function serveThroughStimd(
  * refused it and handed the home over to one of this build. Null when no stimd or no net thread answers.
  */
 export async function connectNet(timeoutMs: number): Promise<Socket | null> {
-  const hold = jobRestartHold();
-  const restarting = hold !== null && hold.record.pid !== process.pid && Date.now() < hold.until;
-  await awaitJobRestart();
-  let socket = await openNet(timeoutMs);
-  const deadline = restarting ? Date.now() + NET_START_MS : 0;
-  while (!socket && stimdLive() && Date.now() < deadline) {
-    await new Promise((done) => setTimeout(done, CLAIM_POLL_MS * 5));
-    socket = await openNet(timeoutMs);
-  }
+  const socket = await openNet(timeoutMs);
   if (socket || !stimdRefused() || !successorExpected() || !(await successorBound())) return socket;
   return openNet(timeoutMs);
 }
