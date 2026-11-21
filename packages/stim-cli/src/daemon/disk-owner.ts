@@ -80,15 +80,29 @@ export function releaseDisk(): void {
 export function requestGcItem<T>(work: (signal: AbortSignal) => Promise<T>): { result: Promise<T>; leave(): void } {
   const stop = new AbortController();
   const ticket = queueForDisk(ITEM);
+  let started = false;
+  let cancelWait!: () => void;
+  const cancelled = new Promise<never>((_resolve, reject) => {
+    cancelWait = () => {
+      if (started) return;
+      ticket.withdraw();
+      reject(stop.signal.reason);
+    };
+    stop.signal.addEventListener('abort', cancelWait, { once: true });
+  });
   const result = (async () => {
-    await ticket.granted;
     try {
+      await Promise.race([ticket.granted, cancelled]);
       stop.signal.throwIfAborted();
+      started = true;
       releaseReserve();
       return await work(stop.signal);
     } finally {
-      keepReserve();
-      ticket.withdraw();
+      stop.signal.removeEventListener('abort', cancelWait);
+      if (started) {
+        keepReserve();
+        ticket.withdraw();
+      }
     }
   })();
   result.catch(() => {});

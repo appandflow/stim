@@ -334,17 +334,18 @@ test('pressure precedes each independent item at the lane boundary, then the lan
   expect(order).toEqual(['pressure', 'item', 'item', 'lane']);
 });
 
-test('cancelling a queued item skips its work and leaves the next item able to run', async () => {
+test('cancelling a queued item settles while the holder keeps the turn and leaves the next item able to run', async () => {
   await acquireDisk(LANE);
-  const work = vi.fn<() => Promise<void>>();
-  const cancelled = requestGcItem(work);
-  const next = requestGcItem(async () => 'next');
-  cancelled.leave();
-  const failure = cancelled.result.catch((error: unknown) => error);
-  await diskBoundary();
-  releaseDisk();
-
-  expect(await failure).toBeInstanceOf(Error);
-  expect(work).not.toHaveBeenCalled();
-  expect(await next.result).toBe('next');
+  try {
+    const work = vi.fn<() => Promise<void>>();
+    const cancelled = requestGcItem(work);
+    const next = requestGcItem(async () => 'next');
+    cancelled.leave();
+    await expect(cancelled.result).rejects.toBeInstanceOf(Error);
+    expect(work).not.toHaveBeenCalled();
+    await diskBoundary();
+    expect(await next.result).toBe('next');
+  } finally {
+    releaseDisk();
+  }
 });
