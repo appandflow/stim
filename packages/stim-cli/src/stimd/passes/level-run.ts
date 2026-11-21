@@ -175,6 +175,7 @@ export async function runMaintenanceAtLevel({
         outcome = await executeAction(action, {
           settings,
           background: false,
+          critical: level === 'critical',
           protectedRoot: triggeringRoot(operation),
           ...(operation ? { operation } : {}),
         });
@@ -207,6 +208,7 @@ export async function runMaintenanceAtLevel({
   const context = {
     settings,
     background: false,
+    critical: level === 'critical',
     protectedRoot: triggeringRoot(operation),
     ...(plan.worktreeSweep ? { worktreeSweep: plan.worktreeSweep } : {}),
     ...(operation ? { operation } : {}),

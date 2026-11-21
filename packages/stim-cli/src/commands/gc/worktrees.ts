@@ -590,14 +590,11 @@ function dormantMs(operation?: StimContext): number {
 }
 
 /**
- * Why a finished registered worktree stays, or null: a pnpm patch or Solana keypair that cannot be copied aside first
- * (`worktreeRescue`), or a git-ignored file outside its dependency and build-output folders that its main checkout
- * lacks or holds differently.
+ * Why a finished registered worktree stays, or null: a git-ignored file outside its dependency and build-output folders
+ * that its main checkout lacks or holds differently.
  */
 async function registeredRemovalHold(path: string, operation?: StimContext): Promise<string | null> {
-  const { ignoredFilesHold, worktreeRescue } = await import('../../workspace/discovered-removal.ts');
-  const rescue = await worktreeRescue(path, false, operation?.signal);
-  if (rescue) return rescue;
+  const { ignoredFilesHold } = await import('../../workspace/discovered-removal.ts');
   const source = await resolveSourceCheckoutAsync(path, {
     env: operation?.env,
     signal: operation?.signal,
@@ -1208,8 +1205,8 @@ export async function removeWorktrees(
       const edited = await dependencyEditsHold(candidate.path, operation?.signal);
       if (edited) reasons.push(edited);
       if (!reasons.length) {
-        const { worktreeRescue } = await import('../../workspace/discovered-removal.ts');
-        const rescue = await worktreeRescue(candidate.path, true, operation?.signal);
+        const { rescueBeforeDelete } = await import('../../workspace/rescue.ts');
+        const rescue = await rescueBeforeDelete(candidate.path, { trees: [], whole: true }, operation?.signal);
         if (rescue) reasons.push(rescue);
       }
       kept = reasons;

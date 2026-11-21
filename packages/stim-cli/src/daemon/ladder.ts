@@ -241,6 +241,7 @@ async function run(
   try {
     outcome = await executeAction(plan, {
       ...actContext(context.settings),
+      critical: context.level === 'critical',
       protectedRoot: context.protectedRoot ? (canonicalOrNull(context.protectedRoot) ?? '') : '',
       operation: context.operation,
       ...(context.stop ? { stop: context.stop } : {}),
