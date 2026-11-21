@@ -243,16 +243,13 @@ remedy, the only path for such a unit.
 Maintenance children keep the priority they had: they run at stimd's priority,
 now 31, except the size walks under `nice -n 19` and the fingerprint children
 at nice 10. On macOS `nice` lowers only CPU, not I/O, so a low-priority walk
-whose root is on a device a pressure sample read at normal also runs at a
-throttled I/O policy: `/usr/sbin/taskpolicy -d utility` on macOS, by its
+of a target whose volume reads normal (as does a volume that could not be
+read) also runs at a throttled I/O policy: `/usr/sbin/taskpolicy -d utility` on macOS, by its
 absolute path so a walk's PATH cannot drop it, and `ionice -c3` on Linux when
-`ionice` is on PATH. A throttled walk that fails before printing a size (its
-wrapper missing or refused a spawn with ENOENT, EACCES or EPERM, or exiting nonzero with nothing on stdout, as an `ionice` does
-when it rejects its arguments or is refused the class) runs once more under
-`nice` alone; a walk killed at its deadline, or one that printed a partial
-size, does not. Windows keeps `nice` alone. Any other low-priority walk,
-including one whose volume could not be read or whose root sits on another
-device than the sample, gets `nice` and no I/O throttle. Today only the Cargo
+`ionice` is on PATH. A throttled walk that fails is not retried: a host whose
+`ionice` rejects its arguments is outside the supported model (#6063). Windows
+keeps `nice` alone. Any other low-priority walk gets `nice` and no I/O
+throttle. Today only the Cargo
 trim plan samples each target's volume, so only its `du` is throttled. The cap's
 size scan, the cap trim, the dependency and status walks and the
 unmanaged-usage scan keep `nice` alone: none of them has a sample of the walked
