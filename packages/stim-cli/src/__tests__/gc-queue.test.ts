@@ -7,6 +7,8 @@ import {
   joinablePass,
   LADDER,
   LANE,
+  TRASH,
+  reportDiskQueue,
   requestGcPass,
   requestGcItem,
   type GcPassReply,
@@ -312,7 +314,7 @@ test("a gc at normal that waits through the lane's dormant step joins the lane's
   expect(unexpected).not.toHaveBeenCalled();
 });
 
-test('pressure precedes each independent item at the lane boundary, then the lane resumes', async () => {
+test('pressure precedes independent items, then trash drains before the lane resumes', async () => {
   const turn = await acquireDisk(LANE);
   const order: string[] = [];
   const first = requestGcItem(async () => {
@@ -323,6 +325,9 @@ test('pressure precedes each independent item at the lane boundary, then the lan
     order.push('item');
     return 'second';
   });
+  const trash = requestGcItem(async () => {
+    order.push('trash');
+  }, TRASH);
   const high = requestGcPass(
     'high',
     'manual',
@@ -339,8 +344,46 @@ test('pressure precedes each independent item at the lane boundary, then the lan
   await high.result;
   expect(await first.result).toBe('first');
   expect(await second.result).toBe('second');
-  expect(order).toEqual(['pressure', 'item', 'item', 'lane']);
+  await trash.result;
+  expect(order).toEqual(['pressure', 'item', 'item', 'trash', 'lane']);
 });
+
+test.each([false, true])(
+  'a trash boundary yields between entries without releasing a pressure turn when cancelled=%s',
+  async (cancel) => {
+    const entered = gate();
+    const nextEntry = gate();
+    const pressureEntered = gate();
+    const pressureDone = gate();
+    const order: string[] = [];
+    const trash = requestGcItem(async (signal, turn) => {
+      order.push('first entry');
+      entered.open();
+      await nextEntry.promise;
+      await turn.boundary();
+      signal.throwIfAborted();
+      order.push('second entry');
+    }, TRASH);
+    await entered.promise;
+    const high = requestGcItem(async () => {
+      order.push('pressure');
+      pressureEntered.open();
+      await pressureDone.promise;
+    }, LADDER);
+    nextEntry.open();
+    await pressureEntered.promise;
+    if (cancel) trash.leave();
+    const item = requestGcItem(async () => {
+      order.push('item');
+    });
+    await Promise.resolve();
+    expect(order).toEqual(['first entry', 'pressure']);
+    pressureDone.open();
+    const settled = await Promise.allSettled([trash.result, high.result, item.result]);
+    expect(settled[0]?.status).toBe(cancel ? 'rejected' : 'fulfilled');
+    expect(order).toEqual(['first entry', 'pressure', 'item', ...(cancel ? [] : ['second entry'])]);
+  },
+);
 
 test('cancelling a queued item settles while the holder keeps the turn and leaves the next item able to run', async () => {
   const turn = await acquireDisk(LANE);
@@ -381,6 +424,8 @@ test('a cancelled headroom turn keeps the owner until its in-flight unit settles
 });
 
 test('a queued critical successor preempts high at a settled unit, then high and lane resume with their own results', async () => {
+  const states: unknown[] = [];
+  reportDiskQueue((state) => states.push(state));
   const owner = await acquireDisk(LANE);
   const ready = gate();
   const first = gate();
@@ -456,9 +501,11 @@ test('a queued critical successor preempts high at a settled unit, then high and
     first.open();
     await criticalStarted.promise;
     expect(order).toEqual(['high first', 'critical']);
+    expect(states.at(-1)).toMatchObject({ running: { trigger: 'desktop' }, queued: 2 });
     criticalDone.open();
     await critical.result;
     await highResumed.promise;
+    expect(states.at(-1)).toMatchObject({ running: { trigger: 'manual' }, queued: 1 });
     const resumed = requestGcPass('high', 'desktop', unexpected, ignore);
     second.open();
     const initialJoin = await joined.result;
@@ -479,6 +526,7 @@ test('a queued critical successor preempts high at a settled unit, then high and
     ready.open();
     highOwner?.release();
     owner.release();
+    reportDiskQueue(() => {});
     await Promise.allSettled([high.result, critical.result, laneResult, normal.result, joined.result]);
   }
 });
@@ -632,4 +680,18 @@ test('a last queued gc requester leaves without taking another owner or starting
     owner.release();
     await Promise.all([outcome, item.result]);
   }
+});
+
+test('queue status reports the active owner, waiting units and an idle queue', async () => {
+  const states: unknown[] = [];
+  reportDiskQueue((status) => states.push(status));
+  const turn = await acquireDisk(LANE);
+  const item = requestGcItem(async () => 'removed');
+  expect(states.at(-1)).toMatchObject({ running: { trigger: 'maintenance' }, queued: 1 });
+  await turn.boundary();
+  await item.result;
+  expect(states).toContainEqual({ running: { trigger: 'item', startedAt: expect.any(String) }, queued: 1 });
+  turn.release();
+  expect(states.at(-1)).toEqual({ running: null, queued: 0 });
+  reportDiskQueue(() => {});
 });

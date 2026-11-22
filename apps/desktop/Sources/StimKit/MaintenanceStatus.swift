@@ -2,6 +2,12 @@ import Foundation
 
 /// The `maintenance` block of `stim status --json`: the CLI's automatic resource maintenance.
 public struct MaintenanceStatus: Decodable, Hashable, Sendable {
+  public struct PendingDelete: Decodable, Hashable, Sendable {
+    public var count: Int
+    public var bytes: Int64
+  }
+
+  public var pendingDelete: PendingDelete?
   public struct Pass: Decodable, Hashable, Sendable {
     /// Epoch milliseconds.
     public var startedAt: Double
@@ -12,8 +18,6 @@ public struct MaintenanceStatus: Decodable, Hashable, Sendable {
 
     public var date: Date { Date(timeIntervalSince1970: startedAt / 1000) }
   }
-
-  public struct Claim: Decodable, Hashable, Sendable {}
 
   /// A process whose physical footprint the CLI found abnormal while memory pressure was warning or critical.
   /// `command` safely restarts or stops it; it is nil when the CLI knows no safe restart.
@@ -37,16 +41,14 @@ public struct MaintenanceStatus: Decodable, Hashable, Sendable {
 
   public var mode: String
   public var invalid: String?
-  public var claim: Claim?
   public var lastPass: Pass?
   public var pressure: Pressure?
 
   public var memoryCulprits: [MemoryCulprit] { pressure?.memory?.culprits ?? [] }
 
-  public init(mode: String, invalid: String? = nil, claim: Claim? = nil, lastPass: Pass? = nil) {
+  public init(mode: String, invalid: String? = nil, lastPass: Pass? = nil) {
     self.mode = mode
     self.invalid = invalid
-    self.claim = claim
     self.lastPass = lastPass
   }
 }

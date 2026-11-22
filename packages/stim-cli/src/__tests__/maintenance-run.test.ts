@@ -3,11 +3,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  maintenanceChildLogFile,
   maintenanceDir,
   maintenanceStateFile,
   gcLogFile,
-  maintenanceRunClaims,
   readMaintenanceState,
   workspaceLogsDir,
   sharedCompilationCache,
@@ -44,6 +42,14 @@ vi.mock('@stim-cli/core/ownership-claim', async (importOriginal) => {
         throw Object.assign(new Error(`${disk.code}: no space left, mkdir '${args[0].root}'`), { code: disk.code });
       return original.tryAcquireClaim(...args);
     },
+  };
+});
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const original = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...original,
+    statfs: () => Promise.resolve({ bavail: disk.full ? 0 : 1024 * 1024, bsize: 4096 }),
   };
 });
 
@@ -111,28 +117,25 @@ test('load deferral leaves the size check due and a failing pressure check is no
   expect(measurements.measureSizes).not.toHaveBeenCalled();
 });
 
-test('an already held pass makes the child exit silently and names the holder to its caller', async () => {
-  const attempt = tryAcquireClaim({
-    root: maintenanceRunClaims(),
-    mode: 'exclusive',
-    label: 'maintenance',
-    details: { trigger: 'first-pass' },
-  });
-  expect(attempt.acquired).toBeDefined();
-  const out = vi.spyOn(console, 'log').mockImplementation(() => {});
-  const err = vi.spyOn(console, 'error').mockImplementation(() => {});
-  try {
-    expect(await runMaintenance('second-pass')).toBe(`pid ${process.pid} runs a maintenance pass (first-pass)`);
-    expect(readMaintenanceState()).toBeNull();
-    expect(measurements.measurePressure).not.toHaveBeenCalled();
-    expect(out).not.toHaveBeenCalled();
-    expect(err).not.toHaveBeenCalled();
-  } finally {
-    releaseClaim(attempt.acquired!);
-  }
+test('a stale maintenance claim does not block a queue-owned pass', async () => {
+  const legacy = join(maintenanceDir(), 'run.claims', 'exclusive');
+  mkdirSync(legacy, { recursive: true });
+  writeFileSync(join(legacy, 'bad.claim'), '{');
+  await runMaintenance('daemon');
+  expect(readMaintenanceState()?.lastPass).toMatchObject({ trigger: 'daemon', mode: 'report' });
+  expect(measurements.measurePressure).toHaveBeenCalledOnce();
 });
 
-test('a pass creates its disk reserve, and at zero free disk frees it to take its claim and run', async () => {
+test('a healthy no-op maintenance pass leaves the existing reserve unchanged', async () => {
+  await runMaintenance('status');
+  const reserve = join(maintenanceDir(), 'disk-reserve');
+  const bytes = Buffer.alloc(1024 * 1024, 0x42);
+  writeFileSync(reserve, bytes);
+  await runMaintenance('status');
+  expect(readFileSync(reserve).equals(bytes)).toBe(true);
+});
+
+test('a pass creates its disk reserve, and at zero free disk frees it before writing', async () => {
   const reserve = join(maintenanceDir(), 'disk-reserve');
   await runMaintenance('status');
   expect(readFileSync(reserve).length).toBe(1024 * 1024);
@@ -141,10 +144,9 @@ test('a pass creates its disk reserve, and at zero free disk frees it to take it
   await runMaintenance('status');
   expect(readMaintenanceState()?.lastPass).toMatchObject({ trigger: 'status', mode: 'report' });
   expect(readFileSync(reserve).length).toBe(1024 * 1024);
-  expect(existsSync(maintenanceRunClaims())).toBe(false);
 });
 
-test('gc at zero free disk gives back the reserve to take its claim, then deletes', async () => {
+test('gc at zero free disk gives back the reserve, then deletes', async () => {
   const reserve = join(maintenanceDir(), 'disk-reserve');
   await runMaintenance('status');
   const orphan = join(home, 'workspaces', 'orphan--0000000000000000');
@@ -156,7 +158,6 @@ test('gc at zero free disk gives back the reserve to take its claim, then delete
   expect(JSON.parse(String(out.mock.calls[0]![0]))).toMatchObject({ mode: 'delete', level: 'normal', failures: 0 });
   expect(existsSync(orphan)).toBe(false);
   expect(readFileSync(reserve).length).toBe(1024 * 1024);
-  expect(existsSync(maintenanceRunClaims())).toBe(false);
 });
 
 test('a gc cancelled before transmission restores the reserve released for daemon startup', async () => {
@@ -228,27 +229,11 @@ test('each gc pass logs under a run id of its own', async () => {
   expect(runs.size).toBe(2);
 });
 
-test('a reserve that can be neither written nor removed still releases the run claim', async () => {
+test('a reserve that can be neither written nor removed does not fail the pass', async () => {
   mkdirSync(join(maintenanceDir(), 'disk-reserve', 'blocker'), { recursive: true });
   await runMaintenance('status');
   expect(readMaintenanceState()?.lastPass).toMatchObject({ trigger: 'status' });
   expect(existsSync(join(maintenanceDir(), 'disk-reserve', 'blocker'))).toBe(true);
-  expect(existsSync(maintenanceRunClaims())).toBe(false);
-});
-
-test('an unresolved claim produces only one child crash-log line', async () => {
-  mkdirSync(join(maintenanceRunClaims(), 'exclusive'), { recursive: true });
-  writeFileSync(join(maintenanceRunClaims(), 'exclusive', 'bad.claim'), '{');
-  const err = vi.spyOn(console, 'error').mockImplementation(() => {});
-  writeFileSync(maintenanceChildLogFile(), 'x'.repeat(65 * 1024));
-  await runMaintenance('status');
-  expect(maintenanceStatus().claim).toMatchObject({
-    unresolved: expect.stringContaining('bad.claim'),
-    removeCommand: expect.stringContaining('bad.claim'),
-  });
-  expect(readFileSync(maintenanceChildLogFile(), 'utf8').trim().split('\n')).toHaveLength(1);
-  expect(readMaintenanceState()).toBeNull();
-  expect(err).not.toHaveBeenCalled();
 });
 
 test('status and gc JSON each stay a single payload under the preAction disk warning', async () => {

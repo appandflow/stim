@@ -5,6 +5,8 @@ import type { ThreadTable } from '../../stimd/threads.ts';
 import { LADDER, requestGcPass, requestGcItem } from '../../daemon/disk-owner.ts';
 import { runGcPass } from '../../commands/gc.ts';
 import { runGcItem } from '../../stimd/gc-item.ts';
+import { dirtyGcMarks } from '../../fsevents-state.ts';
+import { outputMarks } from '../../daemon/marks.ts';
 
 type Log = Parameters<typeof createMaintenanceLane>[0];
 
@@ -12,6 +14,7 @@ type Log = Parameters<typeof createMaintenanceLane>[0];
 export function createThreadTable(): ThreadTable {
   const controller = new AbortController();
   return {
+    drainTrash: async () => {},
     async run() {
       await measureDependencyTrees(processContext(process.cwd(), controller.signal)).catch((error: unknown) => {
         throw controller.signal.aborted && !(error instanceof Error && 'reportCleanup' in error)
@@ -25,6 +28,15 @@ export function createThreadTable(): ThreadTable {
     },
     settle() {},
     async close() {},
+    async dirty(roots, at) {
+      dirtyGcMarks(roots, at);
+    },
+    async history(config) {
+      return (await outputMarks(config, processContext(process.cwd(), controller.signal))).map(({ root, device }) => ({
+        root,
+        device,
+      }));
+    },
     headroom: ({ headroom, cwd, act }) => {
       const asked = requestGcItem(async (signal) => {
         await runLadderToFree({ ...headroom, operation: processContext(cwd, controller.signal), signal, act });

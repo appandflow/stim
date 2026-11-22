@@ -1,5 +1,6 @@
 import { readJsonObject, isJsonObject } from './json-file.ts';
 import { maintenanceStateFile } from './paths.ts';
+import type { GcHistoryStatus } from './daemon.ts';
 import type { NdjsonRecord } from './ndjson.ts';
 
 export type MaintenanceMode = 'off' | 'report' | 'on';
@@ -150,19 +151,28 @@ export interface MaintenanceState {
   nextRemoval?: { target: string; at: number };
 }
 
+export interface CleanupQueueStatus {
+  running: { startedAt: string; trigger: string } | null;
+  queued: number;
+}
+
 export interface MaintenanceStatus {
+  /** Items moved aside whose estimated disk bytes have not yet been reclaimed. */
+  pendingDelete?: { count: number; bytes: number };
   mode: MaintenanceMode;
   invalid?: string;
-  claim?: { unresolved: string; removeCommand: string };
   lastChecks: { pressure: number | null; size: number | null; worktree: number | null; sweep: number | null };
   pressure: MaintenancePressure | null;
   sizes: MaintenanceSize[];
   lastPass: MaintenancePass | null;
-  running: { startedAt: string; trigger: string } | null;
+  running: CleanupQueueStatus['running'];
+  queued?: number;
   /** The checks deferred for host load now, and since when (epoch ms). Absent when none is. */
   deferred?: { check: MaintenanceCheck; since: number }[];
   recent: MaintenanceRecord[];
   plan: MaintenanceAction[];
+  /** The last daemon tick's filesystem-change source. */
+  history?: GcHistoryStatus;
 }
 
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);

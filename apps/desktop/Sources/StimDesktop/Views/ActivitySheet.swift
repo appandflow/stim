@@ -138,6 +138,9 @@ struct ActivitySheet: View {
           ForEach(outcome.done, id: \.self) { item in itemRow(item, icon: "checkmark", tint: Palette.tertiary) }
         }
       }
+      if !outcome.pending.isEmpty {
+        ForEach(outcome.pending, id: \.self) { item in itemRow(item, icon: "clock", tint: Palette.secondary) }
+      }
       if !outcome.failed.isEmpty {
         VStack(alignment: .leading, spacing: Space.sm) {
           Text(outcome.failed.count == 1 ? "1 failed" : "\(outcome.failed.count) failed")

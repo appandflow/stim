@@ -7,6 +7,7 @@ public struct GcOutcome: Hashable, Sendable {
     case done
     case kept
     case failed
+    case pending
   }
 
   public struct Item: Hashable, Sendable {
@@ -21,6 +22,7 @@ public struct GcOutcome: Hashable, Sendable {
   public var done: [Item]
   public var kept: [Item]
   public var failed: [Item]
+  public var pending: [Item]
   /// Entries the CLI counted as failed.
   public var failures: Int
 
@@ -40,6 +42,10 @@ public struct GcOutcome: Hashable, Sendable {
   public var headline: String {
     var parts: [String] = []
     if freedBytes > 0 { parts.append("Freed \(Format.fileSize(freedBytes))") }
+    if !pending.isEmpty {
+      let bytes = pending.compactMap(\.bytes).reduce(0, +)
+      parts.append("Queued \(Format.fileSize(bytes)) for deletion")
+    }
     if reclaimedMemoryBytes > 0 { parts.append("Reclaimed \(Format.memory(reclaimedMemoryBytes)) of memory") }
     for (phrase, count) in Self.phrases(done) { parts.append(phrase(count)) }
     if parts.isEmpty { return failures > 0 ? "Nothing was cleaned up" : "Nothing to clean up" }
@@ -73,6 +79,7 @@ public struct GcOutcome: Hashable, Sendable {
     done = items.filter { $0.status == .done }
     kept = items.filter { $0.status == .kept }
     failed = items.filter { $0.status == .failed }
+    pending = items.filter { $0.status == .pending }
     failures = max((object["failures"] as? NSNumber)?.intValue ?? 0, failed.count)
   }
 

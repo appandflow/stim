@@ -1,4 +1,6 @@
+import { packagedHistoryHelper, startHistoryFeed } from '../fsevents-helper.ts';
 import { validGcItem } from '../commands/gc/item.ts';
+import { pendingItemTrash } from '../workspace/item-trash.ts';
 import { runDirRemoved } from './run-dir.ts';
 import { createMetroTickets, handleMetroTicketRequest } from './metro/tickets.ts';
 import { createLeaseTickets, handleLeaseRequest } from './lease-tickets.ts';
@@ -24,6 +26,7 @@ import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import {
   DEFAULT_SERVER_PORT,
+  trashRoot,
   daemonClaimRoot,
   daemonDir,
   daemonNdjsonFile,
@@ -55,6 +58,7 @@ import {
   type DaemonRecentAction,
   type DaemonSnapshot,
   type PressureLevel,
+  type BuildEndMarker,
 } from '@stim-cli/core/state';
 import { startBuildEndTimer } from './build-end-timer.ts';
 import {
@@ -1092,7 +1096,19 @@ async function runStimdInner(
     log,
     () => reportUnverified(),
   );
-  const threads = createThreadTable(log, (error) => failBackground(error, 'a thread cleanup could not be verified'));
+  const threads = createThreadTable(
+    log,
+    (error) => failBackground(error, 'a thread cleanup could not be verified'),
+    () => queueTrashDrain(),
+    (cleanup) => {
+      if (!claim) return;
+      try {
+        claim = updateClaimDetails(claim, { ...claim.details, cleanup }) ?? claim;
+      } catch (error) {
+        log('warn', 'daemon_queue_report_failed', error instanceof Error ? error.message : String(error));
+      }
+    },
+  );
   let backgroundFailure: unknown;
   const cleanups = createCleanupWatch(log);
   const reportUnverified = () => {
@@ -1133,7 +1149,7 @@ async function runStimdInner(
   const statuses = createStatusSnapshots(log, join(daemonDir(), 'status-cwds.json'));
   let dependencyScanAt = -Infinity;
   let dependencyWork: Promise<void> | undefined;
-  const startMeasureJob = (input: { cwd: string; buildEnd?: true }, failedEvent: string): Promise<void> => {
+  const startMeasureJob = (input: { cwd: string; buildEnd?: BuildEndMarker[] }, failedEvent: string): Promise<void> => {
     const work = threads
       .run('measure', input)
       .then(() => undefined)
@@ -1155,7 +1171,8 @@ async function runStimdInner(
   const wokenAt = new WeakMap<Socket, number>();
   let tickReplies: Socket[] = [];
   let lastSnapshot: DaemonSnapshot | null = null;
-  let recent: DaemonRecentAction[] = readDaemonSnapshot()?.recent ?? [];
+  const previousSnapshot = readDaemonSnapshot();
+  let recent: DaemonRecentAction[] = previousSnapshot?.recent ?? [];
   let lastContact = Date.now();
   let closing = false;
   let tickRequested = false;
@@ -1182,6 +1199,29 @@ async function runStimdInner(
   const open = new Set<Socket>();
   const ops = new Map<Socket, 'pinned' | 'waiting'>();
   const gcRequests = new Set<Promise<unknown>>();
+  let trashDrain: Promise<void> | null = null;
+  let trashAgain = false;
+  const queueTrashDrain = () => {
+    if (!maintenanceAllowed()) return;
+    if (trashDrain) {
+      trashAgain = true;
+      return;
+    }
+    trashAgain = false;
+    const work = threads.drainTrash(lastSnapshot?.pressure?.level === 'critical').catch((error: unknown) => {
+      if (isUnverifiedCleanup(error) && !contain(error)) failBackground(error, 'trash cleanup could not be verified');
+      else log('warn', 'item_trash_failed', error instanceof Error ? error.message : String(error));
+    });
+    trashDrain = work;
+    gcRequests.add(work);
+    void work.finally(() => {
+      gcRequests.delete(work);
+      trashDrain = null;
+      if (trashAgain) queueTrashDrain();
+      if (effectiveMode() === 'off') requestTick();
+      void checkEngine();
+    });
+  };
   const gcDetached = new WeakSet<Socket>();
   const itemCancels = new WeakMap<Socket, () => void>();
   const logsRunning = () => logs.running() || logs.ownedRunning();
@@ -1223,6 +1263,28 @@ async function runStimdInner(
   let relaunchDone: Promise<void> | undefined;
   let handingOver = false;
   const foregroundAbort = new AbortController();
+  // @ref LLP 0018#the-filesystem-history-reader -- unread output replays from the last acknowledged cursor
+  const filesystemHistory = startHistoryFeed({
+    ...packagedHistoryHelper(),
+    dirty: (roots, at) => threads.dirty(roots, at),
+    log: (reason) => log('debug', 'gc_history_fallback', reason),
+  });
+  let historyRootsWork: Promise<void> | undefined;
+  const refreshHistory = (config: Config | null) => {
+    if (!config || historyRootsWork) return;
+    historyRootsWork = threads
+      .history(config)
+      .then((roots) => (maintenanceAllowed() ? filesystemHistory.update(roots) : undefined))
+      .catch((error: unknown) => {
+        if (isUnverifiedCleanup(error) && !contain(error))
+          failBackground(error, 'filesystem history cleanup could not be verified');
+        if (maintenanceAllowed()) log('debug', 'gc_history_refresh_failed', errorText(error));
+      })
+      .finally(() => {
+        historyRootsWork = undefined;
+      });
+  };
+
   let foregroundDone: Promise<void> | undefined;
   let foregroundFailure: unknown;
   let admissionRevision = 0;
@@ -1807,6 +1869,7 @@ async function runStimdInner(
                     return undefined;
                   }
                   opContexts.set(socket, { ...context, workspace: params.workspace });
+                  void filesystemHistory.changed([params.workspace]);
                   const token = randomUUID();
                   opTokens.set(token, socket);
                   socketTokens.set(socket, token);
@@ -2097,6 +2160,13 @@ async function runStimdInner(
       ),
       awaited('the maintenance pass', lane.settled()),
       awaited('the dependency scan', dependencyWork),
+      awaited(
+        'filesystem history',
+        (async () => {
+          await historyRootsWork;
+          await filesystemHistory.close();
+        })(),
+      ),
       awaited('Metro and tunnel children', closeMetroChildren()),
       awaited('the net thread and device logs', closeNetAndLogs()),
     ])
@@ -2189,6 +2259,22 @@ async function runStimdInner(
   startup.signal.throwIfAborted();
   await logs.ownedSync();
   startup.signal.throwIfAborted();
+  if (existsSync(trashRoot())) {
+    const recovery = pendingItemTrash()
+      .then((pending) => {
+        if (pending.count) queueTrashDrain();
+        return undefined;
+      })
+      .catch((error: unknown) =>
+        log('warn', 'item_trash_recovery_failed', error instanceof Error ? error.message : String(error)),
+      );
+    gcRequests.add(recovery);
+    void recovery.finally(() => {
+      gcRequests.delete(recovery);
+      if (effectiveMode() === 'off') requestTick();
+      void checkEngine();
+    });
+  }
   lifetime.serve(requestEnd, waitMs, instance);
   startup.finish?.();
   startup.finish = undefined;
@@ -2225,7 +2311,20 @@ async function runStimdInner(
     allowed: maintenanceAllowed,
     busy: () => dependencyWork !== undefined,
     markers: () => listBuildEndMarkers().map((marker) => marker.file),
-    start: () => startMeasureJob({ cwd: process.cwd(), buildEnd: true }, 'daemon_build_end_measure_failed'),
+    start: async () => {
+      const markers = listBuildEndMarkers();
+      try {
+        await threads.dirty(
+          markers.flatMap(({ path: checkout }) => (checkout ? [checkout] : [])),
+          Date.now(),
+        );
+      } catch (error) {
+        log('warn', 'daemon_build_end_dirty_failed', errorText(error).slice(0, 2000));
+        return;
+      }
+      if (maintenanceAllowed())
+        await startMeasureJob({ cwd: process.cwd(), buildEnd: markers }, 'daemon_build_end_measure_failed');
+    },
   });
   for (;;) {
     if (!tickRequested && !closing) {
@@ -2308,6 +2407,21 @@ async function runStimdInner(
       const { config, now, measured, workspaces, pressure, actions, operation } = passes;
       lastLadder = passes.ladder ?? null;
       operation.signal.throwIfAborted();
+      refreshHistory(config);
+      const savedWorkspaces: unknown = (lastSnapshot ?? previousSnapshot)?.workspaces;
+      const previousActivity = new Map(
+        (Array.isArray(savedWorkspaces) ? savedWorkspaces : []).flatMap((workspace: unknown): [string, unknown][] =>
+          isJsonObject(workspace) && typeof workspace.path === 'string'
+            ? [[workspace.path, isJsonObject(workspace.lastActivity) ? workspace.lastActivity.at : undefined]]
+            : [],
+        ),
+      );
+      const changedActivity = workspaces
+        .filter(
+          ({ path: checkout, lastActivity }) => lastActivity && lastActivity.at !== previousActivity.get(checkout),
+        )
+        .map(({ path: checkout }) => checkout);
+      if (changedActivity.length) void filesystemHistory.changed(changedActivity);
       syncOwned();
       actions.push(...lane.take());
       if (maintenanceAllowed() && !dependencyWork && Date.now() - dependencyScanAt >= DEPENDENCY_SCAN_MS) {
@@ -2367,6 +2481,7 @@ async function runStimdInner(
         actions,
         recent,
         waiting,
+        ...(filesystemHistory.status() ? { history: filesystemHistory.status() } : {}),
       };
       writeAtomic(daemonSnapshotFile(), lastSnapshot);
       for (const socket of replying) socket.end(`${JSON.stringify({ op: 'ticked', level: pressure.level })}\n`);
@@ -2419,6 +2534,8 @@ async function runStimdInner(
     await attachedEnding;
   } finally {
     await Promise.allSettled([lane.settled(), dependencyWork, net.close()]);
+    await historyRootsWork;
+    await filesystemHistory.close();
     await threads.close();
     await shutdownDone;
     await relaunchDone;

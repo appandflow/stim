@@ -100,6 +100,16 @@ it('measures a marked workspace once and removes only the marks it listed', asyn
   expect(listBuildEndMarkers()).toHaveLength(0);
 });
 
+it('measures only the captured dirty batch, leaving a later build marker for the next pass', async () => {
+  markBuildEnded(app);
+  const batch = listBuildEndMarkers();
+  markBuildEnded(app);
+  const later = listBuildEndMarkers().filter(({ file }) => !batch.some((marker) => marker.file === file));
+  await measureBuildEnds(operation(), Date.now(), batch);
+  expect(walked()).toContain(join(app, 'android', 'app', 'build'));
+  expect(listBuildEndMarkers()).toEqual(later);
+});
+
 it('keeps every marker while the walk claim is held', async () => {
   markBuildEnded(app);
   state.outcome = 'busy';

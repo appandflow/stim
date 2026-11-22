@@ -2023,23 +2023,25 @@ RULES
     with the time in it, or stopped.
 
   maintenance { mode, lastChecks: { pressure, size, worktree, sweep }, pressure, sizes,
-                lastPass, running, deferred?, recent, plan, invalid?, claim? }
+                lastPass, running, queued?, deferred?, recent, plan, invalid?, history? }
     mode is off, report or on. Plan actions start with would-; the records
     of actions taken drop the prefix (clear-outputs, trim-cache, empty-cache,
     remove-worktree, remove-orphan, unregister-cache).
     deferred lists the checks host load is holding back, each with the epoch
     milliseconds it was first deferred; it is absent when none is.
-    lastChecks are epoch milliseconds or null. running comes only from a
-    live maintenance/run.claims owner, never from a check stamp.
+    history is the last daemon tick's filesystem-change source: fsevents or
+    fallback, with a reason for fallback. It does not prove the daemon is live.
+    lastChecks are epoch milliseconds or null. running is the disk owner's
+    active cleanup turn, with startedAt and trigger; queued counts waiting
+    units. Both come from the worker through the live owning daemon, never
+    from a check stamp or a completed tick.
     lastPass carries startedAt, durationMs, trigger, mode, freedBytes
     (0 in report mode), actions, stopped (0), blocked. recent holds the last 20 action, failure
     and blocked records written to the cleanup log and a workspace's maintenance log.
     What each run cleared, kept or failed is in $STIM_HOME/gc/gc.ndjson,
     read with \`stim logs --source gc --json\` (\`guide logs\`, GC LOG).
     invalid names invalid settings; invalid cache caps use their defaults,
-    while invalid maintenance settings disable passes. claim contains an
-    unresolved claim's path and reason, plus removeCommand from the claim
-    protocol; inspect the holder before running that command.
+    while invalid maintenance settings disable passes.
 
   machine   null, or { memorySource, owners: [{ kind, name, workspace,
             slot?, id, owned, cpuPercent, residentMb, memoryMb,

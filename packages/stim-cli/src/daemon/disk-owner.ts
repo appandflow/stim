@@ -1,12 +1,13 @@
-import type { PressureLevel, RescuedCopy } from '@stim-cli/core/state';
+import type { CleanupQueueStatus, PressureLevel, RescuedCopy } from '@stim-cli/core/state';
 import { keepReserve, releaseReserve } from '../disk-reserve.ts';
 import type { LevelRun, LevelRunAction } from '../stimd/passes/level-run.ts';
 
-/** Disk turns rank hard floor, critical, high/headroom, explicit item, then normal lane/gc work. Equal ranks are FIFO. */
+/** Disk turns rank hard floor, critical, high/headroom, explicit item, trash, then normal lane/gc work. Equal ranks are FIFO. */
 export const HARD_FLOOR = 0;
 export const CRITICAL = 1;
 export const LADDER = 2;
 const ITEM = 3;
+export const TRASH = 4;
 export const LANE = 5;
 const NORMAL_GC = 5;
 
@@ -25,6 +26,8 @@ export interface DiskTurn {
 
 interface Ticket extends DiskTurn {
   rank: number;
+  trigger: string;
+  startedAt: string;
   grant: () => void;
   granted: Promise<void>;
   pass?: Pass;
@@ -35,6 +38,19 @@ interface Ticket extends DiskTurn {
 
 let holder: Ticket | null = null;
 const waiting: Ticket[] = [];
+let reportQueue: (status: CleanupQueueStatus) => void = () => {};
+
+/** Sends the owning worker's queue changes to stimd. */
+export function reportDiskQueue(listener: typeof reportQueue): void {
+  reportQueue = listener;
+}
+
+function report(): void {
+  reportQueue({
+    running: holder ? { startedAt: holder.startedAt, trigger: holder.trigger } : null,
+    queued: waiting.length,
+  });
+}
 
 function enqueue(ticket: Ticket): void {
   const at = waiting.findIndex((entry) => entry.rank > ticket.rank);
@@ -44,10 +60,12 @@ function enqueue(ticket: Ticket): void {
 function advance(ticket: Ticket): void {
   if (holder !== ticket) return;
   holder = waiting.shift() ?? null;
+  if (holder) holder.startedAt = new Date().toISOString();
+  report();
   holder?.grant();
 }
 
-function queueForDisk(rank: number): Ticket {
+function queueForDisk(rank: number, trigger: string): Ticket {
   let closed = false;
   let resumed: Promise<void> | null = null;
   let refuseResume: ((error: Error) => void) | undefined;
@@ -57,6 +75,8 @@ function queueForDisk(rank: number): Ticket {
   });
   const ticket: Ticket = {
     rank,
+    trigger,
+    startedAt: new Date().toISOString(),
     granted,
     grant: () => grant(),
     waiting: () => waiting.includes(ticket),
@@ -92,19 +112,21 @@ function queueForDisk(rank: number): Ticket {
       const at = waiting.indexOf(ticket);
       if (at !== -1) waiting.splice(at, 1);
       refuseResume?.(new Error('the disk turn ended before it resumed'));
-      advance(ticket);
+      if (holder === ticket) advance(ticket);
+      else report();
     },
   };
   if (holder === null) {
     holder = ticket;
     ticket.grant();
   } else enqueue(ticket);
+  report();
   return ticket;
 }
 
 /** Waits for this thread's one disk turn; the caller releases only the returned turn. */
 export async function acquireDisk(rank: number): Promise<DiskTurn> {
-  const ticket = queueForDisk(rank);
+  const ticket = queueForDisk(rank, rank === LANE ? 'maintenance' : 'pressure');
   await ticket.granted;
   return ticket;
 }
@@ -115,7 +137,7 @@ export function requestGcItem<T>(
   rank: number = ITEM,
 ): { result: Promise<T>; leave(): void } {
   const stop = new AbortController();
-  const ticket = queueForDisk(rank);
+  const ticket = queueForDisk(rank, rank === LADDER ? 'headroom' : 'item');
   let started = false;
   let cancelWait!: () => void;
   const cancelled = new Promise<never>((_resolve, reject) => {
@@ -298,7 +320,7 @@ export function requestGcPass(
 
 function queuePass(level: PressureLevel | undefined, trigger: string, run: RunGcPass): Pass {
   const stop = new AbortController();
-  const ticket = queueForDisk(turnRank(level ?? null));
+  const ticket = queueForDisk(turnRank(level ?? null), trigger);
   let adopt: ((cover: Pass) => void) | undefined;
   const adopted = new Promise<Pass>((resolve) => {
     adopt = resolve;

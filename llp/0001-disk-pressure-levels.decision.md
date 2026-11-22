@@ -339,8 +339,8 @@ cleanup refusal takes precedence over cancellation or timeout. Completed actions
 remain applied. Progress is notification delivered over IPC; an announced or
 in-flight action may complete before stimd receives a callback cancellation.
 
-An item takes no outer maintenance claim: the lane still holds that claim when
-it yields the turn. The worker's report tracks its children and pending work
+An item and the lane take no outer maintenance claim. The disk turn excludes
+this daemon's cleanup units. The worker's report tracks its children and pending work
 until cleanup settles, and its existing per-object claims remain unchanged.
 An older in-process cleanup may therefore overlap removal of a regenerable
 cache that has no per-cache claim; that may repeat work or require a rebuild.
@@ -357,6 +357,61 @@ Maintainer decision: "Like everything gc related should run in same task ro
 avoid concurrency problems", 2026-11-20. The units, the hard-floor priority
 and keeping the idle and dormant stages in the tick are the coordinator's and
 implementer's reading of it on #6029.
+
+## Explicit cache and archive items can return before removal
+
+An explicit `deleteGarbageItem` for a shared cache or archive moves eligible
+content into a typed, exclusively claimed entry under `$STIM_HOME/trash` on
+the same filesystem. Only selected directory trees move; regular files are
+unlinked in place. It returns `pending` with an estimated byte count once
+the move has completed. Pending bytes are not reclaimed bytes. Status exposes
+their count and estimate in `maintenance.pendingDelete`; Desktop labels them
+pending until physical removal.
+
+Cache selection is unchanged: entry-depth, age and directory protections still
+apply, the cache root stays, and atomic caches retain their exterior exclusive
+claim while entries move. Archives move under the archive lock; a selected
+part clears only that part's bytes and expiry. Recovery completes a part's
+metadata update if the process ended between its move and that update.
+
+The worker queues a short-lived trash drain after a successful handoff, ahead
+of the maintenance lane and behind explicit items, or at pressure-pass
+priority when the latest measurement is critical. The drain owns its child
+and claim independently of the requester's cancellation. An off-mode daemon
+stays up until the admitted drain settles. A later daemon discovers typed
+pending entries at startup and queues their drain. Unverified ownership keeps
+an entry. Unsupported moves, including Windows and another filesystem, retain
+the existing in-place deletion; report-only caches remain untouched. No Cargo
+target or automatic pressure sweep uses this handoff.
+
+This implements the lazy-free part of the cleanup redesign in #6025 and #6089.
+
+## Queue ownership replaces the maintenance claim
+
+The maintenance lane no longer takes `maintenance/run.claims`. Items, GC
+passes, headroom and the lane all use the same disk owner. Workspace, Cargo,
+archive and cache claims remain; unverified child cleanup still reaches the
+worker's existing cleanup watch (LLP 0007).
+
+`maintenance.running` is the active disk turn's start and trigger;
+`maintenance.queued` counts the waiting units, including a lane waiting to
+regain its turn. The worker publishes changes through the owning daemon's
+claim details, so status works before that daemon completes its first tick.
+Only a live shared daemon holder supplies queue state. There is no separate
+maintenance claim or unresolved maintenance-claim status.
+
+The hard-floor gate asks for the existing requested daemon tick, whose disk
+pass has the hard-floor rank. An unavailable daemon runs no inline ladder;
+the gate remeasures and retains its existing `STIM_LOW_DISK` refusal when
+still below the floor. Off mode skips that cleanup and report mode deletes
+nothing, as before. The build's headroom run remains on its own high-rank
+queue turn (LLP 0006), never a new refusal.
+
+This removes the last command-side fallback without adding a cross-build
+compatibility claim. Normal installed clients route to the selected engine;
+a deliberately run prequeue copy can still clean locally, so that copy must
+be updated before sharing a home with the queue owner (RELEASE.md,
+Compatibility and breaking changes).
 
 ## Every gc joins a pass under way
 
@@ -845,3 +900,47 @@ implementer of #5942 and its reviews, not by the maintainer.
   `packages/core/state/settings-registry.ts` (defaults),
   `packages/stim-cli/src/daemon/ladder.ts` (rungs),
   `packages/stim-cli/src/commands/gc.ts`.
+
+## Filesystem history makes marks dirty
+
+On macOS, one packaged `stim-fsevents` child of stimd replays filesystem
+history and then streams changed checkout roots. The watched roots come from
+current authorized marks, grouped by their recorded source device; newly
+unmarked roots are already due. Scan-only roots whose current route cannot yet
+be proved stay outside this watch set until [#6093](https://github.com/appandflow/stim/issues/6093).
+A root-list change replaces the watch with a
+new generation. Output indexes belong only to that generation, and older
+output cannot index the replacement list or advance its checkpoint.
+
+Watch membership is read on the passes worker, including bounded asynchronous
+checkout identities. A cancelled or timed-out filesystem read retains that
+isolate's single pending-read slot. Git cleanup failures use the daemon's
+existing containment policy, including during shutdown.
+
+The passes worker persists each batch's `dirtyAt` updates before acknowledging
+it. Publication and dirty updates use the same isolate's synchronous
+read-modify-write, so a change during a mark's reads survives publication. Only
+that acknowledgement lets the main thread atomically replace the per-device
+UUID, event id, timestamp and root membership in `gc/fsevents.json`. A failed
+write keeps the old cursor for replay. This orders process-crash recovery;
+ordinary atomic renames do not promise a power-loss transaction across files.
+Build-end measurements consume only their captured marker batch after a strict
+dirty acknowledgement; failed mark I/O leaves that batch for the timer backoff.
+
+The helper purges history whose UUID changed, whose cursor is ahead, whose
+saved timestamp is missing, future or over two hours old, or whose event stream
+reports lost events. The caller dirties that device's roots before storing the
+new cursor. History remains a refresh hint: a parent renamed away and back or
+a snapshot restored with the same UUID can hide changes. Generation TTLs stay,
+and a sweep's deletion rechecks do not change.
+
+A missing, mismatched, failed or unavailable helper makes each known root dirty
+once, then Stim activity and generation TTLs supply the fallback. Status names
+that source and reason, and doctor reports a binary digest mismatch. Shutdown
+closes helper stdin and waits for its exit. EOF also ends it if stimd dies.
+
+The npm package includes one signed universal helper, pinned by release version,
+zip SHA-256 and binary SHA-256. Release preparation downloads and verifies it;
+stimd verifies the binary once before spawning it. It is never downloaded or
+compiled at runtime. A source checkout fetches it with
+`node scripts/fetch-fsevents.mjs`.

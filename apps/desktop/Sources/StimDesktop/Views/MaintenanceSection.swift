@@ -30,6 +30,11 @@ struct MaintenanceSection: View {
         }
       }
       if let maintenance {
+        if let pending = maintenance.pendingDelete, pending.count > 0 {
+          LabeledContent("Pending deletion") {
+            Text("About \(Format.fileSize(pending.bytes))").foregroundStyle(Palette.secondary)
+          }
+        }
         LabeledContent("Last pass") { Text(lastPass(maintenance)).foregroundStyle(Palette.secondary) }
         ForEach(maintenance.lastPass?.blocked ?? [], id: \.self) { reason in
           Text(reason).font(.stim(.footnote)).foregroundStyle(Palette.warning)
@@ -64,7 +69,6 @@ struct MaintenanceSection: View {
       return statusLoaded ? "Not reported: update stim to run the stim-daemon" : "Unknown until stim status loads"
     }
     if let invalid = maintenance?.invalid { return "Off: \(invalid)" }
-    if maintenance?.claim != nil { return "Blocked by an unresolved claim; see stim status" }
     let running = daemon.running == nil ? ", not running now" : ""
     switch daemon.mode {
     case "on": return "On\(running)"

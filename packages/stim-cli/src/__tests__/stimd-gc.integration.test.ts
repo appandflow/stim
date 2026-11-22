@@ -10,18 +10,20 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { once } from 'node:events';
-import type { Socket } from 'node:net';
+import { Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { withAmbientContext } from '@stim-cli/core';
 import { readClaimSet } from '@stim-cli/core/ownership-claim';
-import { maintenanceDir, stimdClaimRoot } from '@stim-cli/core/state';
+import { daemonSnapshotFile, maintenanceDir, readGcLog, stimdClaimRoot } from '@stim-cli/core/state';
 import { createStim } from '../api.ts';
+import { maintenanceStatus } from '../stimd/passes/status.ts';
 import { runGc } from '../commands/gc.ts';
 import { runGcThroughStimd } from '../daemon/client.ts';
 import { inspectProcessIdentity } from '../process-identity.ts';
 import { killStimdUnder } from '../../../../vitest.kill-run-processes.ts';
 import { testContext } from './_context.ts';
+import { pendingItemTrash, stageItemTrash } from '../workspace/item-trash.ts';
 
 const opened = vi.hoisted(() => new Set<Socket>());
 const refusal = vi.hoisted(() => ({ after: -1, refused: false }));
@@ -141,6 +143,151 @@ async function heldGc(controller: AbortController, report = false, single = fals
 }
 
 describe.skipIf(process.platform === 'win32')('gc on stimd', () => {
+  test('an off-mode drain retains a second directory handoff queued while its remover is held', async () => {
+    const item = fixture("printf '1\\t.\\n'");
+    const payload = join(item.cache, 'artifact');
+    rmSync(payload);
+    mkdirSync(payload);
+    writeFileSync(join(payload, 'data'), 'first');
+    const marker = join(scratch, 'rm.pid');
+    const go = join(scratch, 'rm.go');
+    const rm = join(scratch, 'bin', 'rm');
+    writeFileSync(
+      rm,
+      `#!/bin/sh\necho $$ > '${marker}'\nwhile [ ! -f '${go}' ]; do sleep 0.1; done\nexec /bin/rm "$@"\n`,
+    );
+    chmodSync(rm, 0o755);
+    const client = createStim({ projectRoot: item.root, home: item.home, env: item.env });
+    let second: ReturnType<typeof client.deleteGarbageItem> | undefined;
+    const writes = vi.spyOn(Socket.prototype, 'write');
+    try {
+      const first = await client.deleteGarbageItem({ item: { kind: 'cache', dir: item.cache } });
+      expect(first.results).toMatchObject([{ status: 'pending' }]);
+      await vi.waitFor(() => expect(existsSync(marker)).toBe(true), { timeout: 20_000 });
+      mkdirSync(payload);
+      writeFileSync(join(payload, 'data'), 'second');
+      writes.mockClear();
+      second = client.deleteGarbageItem({ item: { kind: 'cache', dir: item.cache } });
+      void second.catch(() => {});
+      await vi.waitFor(() =>
+        expect(writes.mock.calls.some(([chunk]) => typeof chunk === 'string' && chunk.includes('"op":"gc.run"'))).toBe(
+          true,
+        ),
+      );
+      writes.mockRestore();
+      writeFileSync(go, 'go');
+      expect((await second).results).toMatchObject([{ status: 'pending' }]);
+      await vi.waitFor(
+        async () => {
+          expect(await pendingItemTrash()).toEqual({ count: 0, bytes: 0 });
+          expect(stimdOwner()).toBeUndefined();
+        },
+        { timeout: 20_000, interval: 100 },
+      );
+    } finally {
+      writes.mockRestore();
+      writeFileSync(go, 'go');
+      await second;
+    }
+  }, 45_000);
+  test.each(['new handoff', 'restart recovery', 'shutdown'] as const)(
+    'an off-mode %s drain survives the requester and owns its remover until completion',
+    async (mode) => {
+      const item = fixture("printf '1\\t.\\n'");
+      rmSync(join(item.cache, 'artifact'));
+      mkdirSync(join(item.cache, 'artifact'));
+      writeFileSync(join(item.cache, 'artifact', 'data'), 'cached');
+      const marker = join(scratch, 'rm.pid');
+      const go = join(scratch, 'rm.go');
+      const rm = join(scratch, 'bin', 'rm');
+      writeFileSync(
+        rm,
+        `#!/bin/sh\necho $$ > '${marker}'\nwhile [ ! -f '${go}' ]; do sleep 0.1; done\nexec /bin/rm "$@"\n`,
+      );
+      chmodSync(rm, 0o755);
+      const client = createStim({ projectRoot: item.root, home: item.home, env: item.env });
+      const stop = new AbortController();
+      let request: Promise<unknown> | undefined;
+      try {
+        let result: unknown;
+        if (mode === 'restart recovery') {
+          result = {
+            staged: await stageItemTrash(join(item.cache, 'artifact'), 1024, { kind: 'cache', id: item.cache }),
+          };
+          request = client.deleteGarbageItem({ item: { kind: 'archive', id: 'missing' } }).catch(() => undefined);
+        } else {
+          result = await client.deleteGarbageItem({
+            item: { kind: 'cache', dir: item.cache },
+            signal: stop.signal,
+          });
+        }
+        expect(result).toMatchObject(
+          mode === 'restart recovery' ? { staged: true } : { results: [{ status: 'pending', bytes: 1024 }] },
+        );
+        await vi.waitFor(() => expect(existsSync(marker)).toBe(true), { timeout: 20_000 });
+        stop.abort();
+        const owner = stimdOwner();
+        const remover = Number(readFileSync(marker, 'utf8'));
+        expect(owner).toBeDefined();
+        expect(alive(remover)).toBe(true);
+        expect(await pendingItemTrash()).toEqual({ count: 1, bytes: 1024 });
+        expect(readGcLog().filter((record) => 'status' in record && record.status === 'done')).toEqual([]);
+        expect(existsSync(join(item.cache, 'artifact'))).toBe(false);
+        if (mode === 'shutdown') {
+          if (!owner) throw new Error('the owned daemon disappeared before shutdown');
+          process.kill(owner.pid, 'SIGTERM');
+        } else writeFileSync(go, 'go');
+        await request;
+        await vi.waitFor(
+          async () => {
+            expect(await pendingItemTrash()).toEqual(
+              mode === 'shutdown' ? { count: 1, bytes: 1024 } : { count: 0, bytes: 0 },
+            );
+            expect(stimdOwner()).toBeUndefined();
+            expect(alive(remover)).toBe(false);
+          },
+          { timeout: 20_000, interval: 100 },
+        );
+      } finally {
+        writeFileSync(go, 'go');
+        await request;
+      }
+    },
+    45_000,
+  );
+  test('the first off-mode GC reports live queue state without a completed daemon snapshot', async () => {
+    const { item, gc, go } = await heldGc(new AbortController());
+    rmSync(daemonSnapshotFile(), { force: true });
+    expect(maintenanceStatus()).toMatchObject({ running: { trigger: 'manual' }, queued: 0 });
+    expect(maintenanceStatus()).not.toHaveProperty('claim');
+    writeFileSync(
+      daemonSnapshotFile(),
+      JSON.stringify({
+        version: 1,
+        pid: process.pid,
+        startedAt: new Date().toISOString(),
+        tickAt: new Date().toISOString(),
+        intervalMs: 60_000,
+        history: { source: 'fallback', reason: 'fixture history' },
+      }),
+    );
+    expect(maintenanceStatus()).toMatchObject({
+      running: { trigger: 'manual' },
+      queued: 0,
+      history: { source: 'fallback', reason: 'fixture history' },
+    });
+    const operation = testContext({ home: item.home, projectRoot: item.root, cwd: item.root, env: item.env });
+    const queued = withAmbientContext(operation, () =>
+      runGcThroughStimd({ item: { kind: 'cache', dir: item.cache }, client: 'desktop' }, operation),
+    );
+    await vi.waitFor(() => expect(maintenanceStatus().queued).toBe(1), { timeout: 10_000 });
+    writeFileSync(go, '');
+    await Promise.all([gc, queued]);
+    await vi.waitFor(() => expect(maintenanceStatus()).toMatchObject({ running: null, queued: 0 }), {
+      timeout: 10_000,
+    });
+  }, 45_000);
+
   test.each(['off', 'report'] as const)(
     'an explicit item runs on stimd with daemon mode %s',
     async (mode) => {

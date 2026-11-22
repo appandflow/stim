@@ -32,7 +32,7 @@ type GcResultKind =
   | 'runtime'
   | 'toolCache';
 
-type GcResultStatus = 'done' | 'kept' | 'failed';
+type GcResultStatus = 'done' | 'kept' | 'failed' | 'pending';
 
 export interface GcResult {
   kind: GcResultKind;
