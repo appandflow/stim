@@ -32,6 +32,20 @@ export interface GcMark {
   candidates: GcMarkCandidate[];
 }
 
+export interface GcStaleMarkEvidence {
+  root: string;
+  markedAt: string;
+  intervalMs: number;
+}
+
+export interface GcMarkHealth {
+  at: number;
+  state: 'ready' | 'partial' | 'unavailable';
+  checkedRoots?: number;
+  staleCount?: number;
+  stale: GcStaleMarkEvidence[];
+}
+
 const KINDS: readonly unknown[] = ['outputs', 'cargo-target'] satisfies GcMarkKind[];
 
 function isCandidate(value: unknown): value is GcMarkCandidate {
@@ -47,10 +61,9 @@ function isCandidate(value: unknown): value is GcMarkCandidate {
   );
 }
 
-/** The mark of the checkout at the canonical path `root`; null when there is none, or it has another version or does not parse. */
-export function readGcMark(root: string): GcMark | null {
-  const entry = readJsonObject(gcMarkFile(root));
-  if (!entry || entry.v !== GC_MARK_VERSION || entry.root !== root) return null;
+/** Validates one saved mark against its canonical root without reading the filesystem. */
+export function parseGcMark(root: string, entry: unknown): GcMark | null {
+  if (!isJsonObject(entry) || entry.v !== GC_MARK_VERSION || entry.root !== root) return null;
   const { device, markedAt, dirtyAt, lastActivityAt, candidates } = entry;
   if (
     typeof device !== 'number' ||
@@ -71,4 +84,9 @@ export function readGcMark(root: string): GcMark | null {
     lastActivityAt,
     candidates: parsed,
   };
+}
+
+/** The mark of the checkout at the canonical path `root`; null when there is none, or it has another version or does not parse. */
+export function readGcMark(root: string): GcMark | null {
+  return parseGcMark(root, readJsonObject(gcMarkFile(root)));
 }

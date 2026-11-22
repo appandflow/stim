@@ -153,7 +153,7 @@ test("status reports the running daemon's tick and mode, and the setting when th
   });
   expect(claim).toBeTruthy();
   mkdirSync(daemonDir(), { recursive: true });
-  const snapshot = (pid: number, mode: string) =>
+  const snapshot = (pid: number, mode: string, gcMarks?: DaemonStatus['gcMarks']) =>
     writeFileSync(
       daemonSnapshotFile(),
       JSON.stringify({
@@ -163,14 +163,26 @@ test("status reports the running daemon's tick and mode, and the setting when th
         startedAt: '2026-11-02T11:00:00.000Z',
         tickAt: '2026-11-02T11:01:00.000Z',
         intervalMs: 60_000,
+        ...(gcMarks ? { gcMarks } : {}),
       }),
     );
 
-  snapshot(process.pid + 1, 'on');
+  const gcMarks: NonNullable<DaemonStatus['gcMarks']> = {
+    at: NOW,
+    state: 'ready',
+    checkedRoots: 0,
+    staleCount: 0,
+    stale: [],
+  };
+  snapshot(process.pid + 1, 'on', gcMarks);
   const fresh = daemonStatus({});
   expect(fresh).toMatchObject({ mode: 'report', setting: 'on', running: { pid: process.pid }, lastTickAt: null });
+  expect(fresh).not.toHaveProperty('gcMarks');
   expect(daemonLine(fresh, NOW)).toMatch(/^Daemon \(report only; daemon\.mode resolves to on here\): running since/);
   snapshot(process.pid, 'off');
+  expect(daemonStatus({})).not.toHaveProperty('gcMarks');
+  snapshot(process.pid, 'off', gcMarks);
+  expect(daemonStatus({})).toMatchObject({ gcMarks });
   expect(daemonStatus({})).toMatchObject({ mode: 'off', setting: 'on', lastTickAt: '2026-11-02T11:01:00.000Z' });
   snapshot(process.pid, 'on');
   expect(daemonStatus({ STIM_DAEMON: 'on' })).not.toHaveProperty('setting');

@@ -55,6 +55,7 @@ import {
   type DaemonMode,
   type DaemonRecentAction,
   type DaemonSnapshot,
+  type GcMarkHealth,
   type PressureLevel,
   type BuildEndMarker,
 } from '@stim-cli/core/state';
@@ -1233,17 +1234,28 @@ async function runStimdInner(
     log: (reason) => log('debug', 'gc_history_fallback', reason),
   });
   let historyRootsWork: Promise<void> | undefined;
+  let markObservation: GcMarkHealth | undefined;
   const refreshHistory = (config: Config | null) => {
     if (!config || historyRootsWork) return;
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      markObservation = { at: Date.now(), state: 'unavailable', stale: [] };
+    }, 3000);
     historyRootsWork = threads
       .history(config)
-      .then((roots) => (maintenanceAllowed() ? filesystemHistory.update(roots) : undefined))
+      .then(({ roots, marks }) => {
+        if (!timedOut) markObservation = marks;
+        return maintenanceAllowed() && roots !== null ? filesystemHistory.update(roots) : undefined;
+      })
       .catch((error: unknown) => {
         if (isUnverifiedCleanup(error) && !contain(error))
           failBackground(error, 'filesystem history cleanup could not be verified');
+        markObservation = { at: Date.now(), state: 'unavailable', stale: [] };
         if (maintenanceAllowed()) log('debug', 'gc_history_refresh_failed', errorText(error));
       })
       .finally(() => {
+        clearTimeout(timer);
         historyRootsWork = undefined;
       });
   };
@@ -2429,6 +2441,7 @@ async function runStimdInner(
         recent,
         waiting,
         ...(filesystemHistory.status() ? { history: filesystemHistory.status() } : {}),
+        ...(markObservation ? { gcMarks: markObservation } : {}),
       };
       writeAtomic(daemonSnapshotFile(), lastSnapshot);
       for (const socket of replying) socket.end(`${JSON.stringify({ op: 'ticked', level: pressure.level })}\n`);

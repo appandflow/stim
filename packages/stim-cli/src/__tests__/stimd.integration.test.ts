@@ -1241,7 +1241,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
         close: async () => {},
         gc: () => ({ result: new Promise(() => {}), leave: () => {} }),
         dirty: async () => {},
-        history: async () => [],
+        history: async () => ({ roots: [], marks: { at: Date.now(), state: 'unavailable' as const, stale: [] } }),
         headroom: () => ({ result: Promise.resolve({ headroom: true as const }), leave: () => {} }),
         item: () => {
           if (count++) return { result: Promise.resolve({ results: [], failures: 0 }), leave: () => {} };
@@ -1342,7 +1342,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
         close: async () => {},
         gc: () => ({ result: new Promise(() => {}), leave: () => {} }),
         dirty: async () => {},
-        history: async () => [],
+        history: async () => ({ roots: [], marks: { at: Date.now(), state: 'unavailable' as const, stale: [] } }),
         headroom: () => ({ result: Promise.resolve({ headroom: true as const }), leave: () => {} }),
         item: () => ({ result: new Promise(() => {}), leave: () => {} }),
       });
@@ -1410,7 +1410,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
       close: async () => {},
       gc: () => ({ result: new Promise(() => {}), leave: () => {} }),
       dirty: async () => {},
-      history: async () => [],
+      history: async () => ({ roots: [], marks: { at: Date.now(), state: 'unavailable' as const, stale: [] } }),
       headroom: () => ({ result: Promise.resolve({ headroom: true as const }), leave: () => {} }),
       item: () => ({ result: new Promise(() => {}), leave: () => {} }),
     });
@@ -1477,7 +1477,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
         close: async () => {},
         gc: () => ({ result: new Promise(() => {}), leave: () => {} }),
         dirty: async () => {},
-        history: async () => [],
+        history: async () => ({ roots: [], marks: { at: Date.now(), state: 'unavailable' as const, stale: [] } }),
         headroom: () => ({ result: Promise.resolve({ headroom: true as const }), leave: () => {} }),
         item: () => ({ result: new Promise(() => {}), leave: () => {} }),
       });

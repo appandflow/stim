@@ -82,6 +82,7 @@ export function daemonStatus(env: NodeJS.ProcessEnv = process.env): DaemonStatus
     // compat end
     lastTickAt: snapshot?.tickAt ?? null,
     intervalMs: snapshot?.intervalMs ?? null,
+    ...(holder && snapshot?.gcMarks ? { gcMarks: snapshot.gcMarks } : {}),
     ...(snapshot?.pressure ? { pressure: snapshot.pressure } : {}),
     ...(waiting.length ? { waiting } : {}),
     ...(testWaiting.length ? { testWaiting } : {}),
