@@ -1,8 +1,8 @@
-import { mkdtempSync, rmSync } from 'fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { dependencyInstallCommand } from '../commands/worktree.ts';
-import { findEnclosingWorktreeRoot, upsertProject } from '../workspace/config.ts';
+import { dependencyInstallCommand, reclaimKeys, reclaimKeysAsync } from '../commands/worktree.ts';
+import { findEnclosingWorktreeRoot, loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 
 let tmpHome: string;
 
@@ -41,3 +41,29 @@ test.skipIf(process.platform === 'win32')(
     expect(dependencyInstallCommand("/tmp/app/it's-here")).toBe("cd '/tmp/app/it'\\''s-here' && npm install");
   },
 );
+
+test('bounded reclaim membership follows current nested registrations without accepting prefix siblings', async () => {
+  const root = join(tmpHome, 'repo');
+  const app = join(root, 'apps', 'mobile');
+  const sibling = join(tmpHome, 'repo-other');
+  mkdirSync(app, { recursive: true });
+  mkdirSync(sibling);
+  upsertProject(root, {});
+  upsertProject(app, {});
+  upsertProject(sibling, {});
+  upsertProject(join(tmpHome, 'removed'), {});
+  const expected = [root, app];
+  if (process.platform !== 'win32') {
+    const alias = join(tmpHome, 'alias');
+    symlinkSync(realpathSync(app), alias, 'dir');
+    upsertProject(alias, {});
+    expected.push(alias);
+  }
+  expect(reclaimKeys(root)).toEqual(expected.toSorted());
+  expect(await reclaimKeysAsync(root)).toEqual(expected.toSorted());
+  const config = loadConfig();
+  if (!config) throw new Error('fixture config missing');
+  delete config.projects[app];
+  saveConfig(config);
+  expect(await reclaimKeysAsync(root)).toEqual(expected.filter((key) => key !== app).toSorted());
+});

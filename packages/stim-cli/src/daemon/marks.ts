@@ -112,7 +112,8 @@ async function writeMark(
   const retainDirty =
     dirtyAt &&
     (Date.parse(dirtyAt) > reading.at ||
-      (previous?.dependencies && Date.parse(dirtyAt) > Date.parse(previous.dependencies.markedAt)));
+      (previous?.dependencies && Date.parse(dirtyAt) > Date.parse(previous.dependencies.markedAt)) ||
+      (previous?.worktree && Date.parse(dirtyAt) > Date.parse(previous.worktree.markedAt)));
   const cargoVia = cargoScope?.via ?? previous?.cargoVia;
   const mark: GcMark = {
     ...previous,
@@ -126,7 +127,10 @@ async function writeMark(
   };
   if (!retainDirty) delete mark.dirtyAt;
   if (!cargoVia?.length) delete mark.cargoVia;
-  if (previous && previous.device !== device) delete mark.dependencies;
+  if (previous && previous.device !== device) {
+    delete mark.dependencies;
+    delete mark.worktree;
+  }
   signal?.throwIfAborted();
   if (Date.now() >= expiresAt) throw new Unanswered('mark read deadline');
   writeCacheFile(gcMarkFile(root), mark);
@@ -239,7 +243,9 @@ async function authorizedMarks(
       .filter(
         (mark) =>
           !allowed.has(mark.root) &&
-          (mark.dependencies !== undefined || mark.candidates.some(({ kind }) => kind === 'cargo-target')),
+          (mark.dependencies !== undefined ||
+            mark.worktree !== undefined ||
+            mark.candidates.some(({ kind }) => kind === 'cargo-target')),
       )
       .map(({ root }) => root),
     operation,
@@ -262,8 +268,11 @@ async function authorizedMarks(
         ? mark.candidates.filter(({ kind }) => kind === 'cargo-target')
         : await discoveredCargoCandidates(mark, operation);
       const selectedMark = { ...mark, candidates };
-      // @ref LLP 0001#the-lane-marks-what-each-checkout-could-free -- Cargo-only route evidence does not authorize dependency reports
-      if (!cargoHolders.has(mark.root)) delete selectedMark.dependencies;
+      // @ref LLP 0001#the-lane-marks-what-each-checkout-could-free -- Cargo-only routes authorize neither dependency nor worktree reports
+      if (!cargoHolders.has(mark.root)) {
+        delete selectedMark.dependencies;
+        delete selectedMark.worktree;
+      }
       selected.push(selectedMark);
       holders?.set(mark.root, {
         roots: [...new Set([mark.root, ...candidates.map(({ path }) => dirname(path))])],

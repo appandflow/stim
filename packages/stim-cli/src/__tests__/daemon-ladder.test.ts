@@ -79,6 +79,7 @@ import {
   LADDER_CLOCK_SLOTS,
 } from '../daemon/disk-owner.ts';
 import * as daemonMeasure from '../daemon/measure.ts';
+import * as diskBudget from '../stimd/passes/budget.ts';
 
 const MINUTE_MS = 60_000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
@@ -1167,6 +1168,78 @@ describe('the pressure ladder', () => {
     },
   );
 
+  test.each(['same unit increase', 'later owner increase', 'predictive target met'] as const)(
+    'first-free evidence uses the completed output unit before yielding: %s',
+    async (change) => {
+      const root = workspace('first-free', 5 * MINUTE_MS, 'Shutdown').root;
+      const paths = ['derived-data', 'gradle-build'].map((name) => join(workspaceDir(root), name));
+      for (const path of paths) mkdirSync(path, { recursive: true });
+      await marks.markWriter(input().config)({
+        path: root,
+        at: Date.now(),
+        lastActivityAt: Date.now() - DAY_MS,
+        kept: null,
+      });
+      const device = statSync(paths[0] ?? root).dev;
+      let freeMb = 10_000;
+      let removed = false;
+      let sampledAt = 0;
+      const order: string[] = [];
+      const points: { device: number; at: number }[] = [];
+      vi.spyOn(diskBudget, 'readVolumeSpaceAsync').mockImplementation(async () => {
+        if (removed) {
+          await Promise.resolve();
+          vi.advanceTimersByTime(250);
+          sampledAt = Date.now();
+          order.push('sampled');
+        }
+        return [{ volume: '/', freeMb, device }];
+      });
+      let current = pressure(change === 'predictive target met' ? 'normal' : 'high');
+      const owner = await acquireDisk(LADDER);
+      let critical: ReturnType<typeof requestGcItem> | undefined;
+      vi.spyOn(idlePass, 'deleteOutputs').mockImplementation(async (selected) => {
+        for (const path of selected) rmSync(path, { recursive: true });
+        removed = true;
+        order.push('removed');
+        if (change !== 'later owner increase') freeMb += 32;
+        critical = requestGcItem(async () => {
+          order.push('critical');
+          freeMb += 1024;
+          current = pressure('normal');
+        }, CRITICAL);
+        return { bytes: 0 };
+      });
+      try {
+        await runLadder(
+          {
+            ...input(true, async () => current),
+            fromRung: 1,
+            lastRung: 1,
+            operation: testContext(),
+            between: owner.boundary,
+            ...(change === 'predictive target met'
+              ? { target: { device, freeMb: 10_016, available: () => freeMb } }
+              : {}),
+            firstFree: {
+              pending: () => points.length === 0,
+              observed: (sampleDevice, at) => {
+                points.push({ device: sampleDevice, at });
+              },
+            },
+          },
+          current,
+        );
+        expect(order).toEqual(['removed', 'sampled', 'critical']);
+        expect(points).toEqual(change !== 'later owner increase' ? [{ device, at: sampledAt }] : []);
+        expect(paths.filter(existsSync)).toHaveLength(1);
+      } finally {
+        owner.release();
+        await critical?.result;
+      }
+    },
+  );
+
   test('keeping one stopped-output candidate preserves its sibling mark', async () => {
     const root = workspace('keep-one-output', 5 * MINUTE_MS, 'Shutdown').root;
     const paths = ['derived-data', 'gradle-build'].map((name) => join(workspaceDir(root), name));
@@ -1570,7 +1643,7 @@ describe('the pressure ladder', () => {
     ]);
   });
 
-  test('rung 7 in stim gc reports a finished worktree and removes nothing', async () => {
+  test('rung 7 in a read-only preview reports a finished worktree and removes nothing', async () => {
     const worktree = join(projects, 'finished');
     vi.spyOn(sweep, 'planWorktrees').mockResolvedValue({
       sweep: {
@@ -1600,7 +1673,12 @@ describe('the pressure ladder', () => {
     const act = vi.spyOn(acting, 'executeAction');
 
     const { actions } = await runLadder(
-      { ...input(true, async () => pressure('high')), fromRung: 7, lastRung: 7, force: { level: 'high', why: 'test' } },
+      {
+        ...input(false, async () => pressure('high')),
+        fromRung: 7,
+        lastRung: 7,
+        force: { level: 'high', why: 'test' },
+      },
       pressure('high'),
     );
 

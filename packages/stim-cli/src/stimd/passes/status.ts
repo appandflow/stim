@@ -10,6 +10,7 @@ import {
 import { readClaimSet } from '@stim-cli/core/ownership-claim';
 import { formatBytes } from '../../fs-util.ts';
 import { resolveMaintenanceSettings } from './settings.ts';
+import { diskPacerVolumes } from '../../daemon/pacer.ts';
 
 const CHECKS: readonly MaintenanceCheck[] = ['pressure', 'size', 'worktree', 'sweep', 'idle'];
 
@@ -25,9 +26,11 @@ function parseQueue(value: unknown): CleanupQueueStatus | null {
 
 export function maintenanceStatus(env: NodeJS.ProcessEnv = process.env): MaintenanceStatus {
   const state = readMaintenanceState();
-  const history = readDaemonSnapshot()?.history;
+  const snapshot = readDaemonSnapshot();
+  const history = snapshot?.history;
   const holder = readClaimSet(daemonClaimRoot()).live.find((entry) => entry.mode === 'shared');
   const queue = parseQueue(holder?.details.cleanup);
+  const diskPacer = holder && snapshot?.pid === holder.owner.pid ? diskPacerVolumes(snapshot.diskPacer) : [];
   const settings = resolveMaintenanceSettings(undefined, env);
   const deferred = CHECKS.flatMap((check) => {
     const since = state?.deferredSince?.[check];
@@ -51,6 +54,7 @@ export function maintenanceStatus(env: NodeJS.ProcessEnv = process.env): Mainten
     recent: state?.recent ?? [],
     plan: state?.plan ?? [],
     ...(history ? { history } : {}),
+    ...(diskPacer.length ? { diskPacer } : {}),
   };
 }
 
@@ -72,6 +76,12 @@ export function maintenanceLine(status: MaintenanceStatus, includeLabel = true):
   const disk = status.pressure?.disk
     .map((volume) => `disk ${(volume.freeMb / 1024).toFixed(1)} GB free on ${volume.volume}`)
     .join(', ');
+  const fill = status.diskPacer
+    ?.map(
+      (volume) =>
+        `${volume.volume} ${volume.fillMbPerSecond === null ? 'fill rate unknown' : `filling ${((volume.fillMbPerSecond * 60) / 1024).toFixed(2)} GB/min`}`,
+    )
+    .join(', ');
   const devices = status.sizes.filter((size) => size.category === 'owned-devices');
   const deviceDisk = devices.length
     ? `owned devices ${formatBytes(devices.reduce((sum, size) => sum + size.bytes, 0))}`
@@ -82,7 +92,7 @@ export function maintenanceLine(status: MaintenanceStatus, includeLabel = true):
         `${culprit.name} uses ${formatBytes(culprit.bytes)}${culprit.command ? ` (\`${culprit.command}\`)` : ''}`,
     )
     .join(', ');
-  return `${includeLabel ? 'Automatic maintenance: ' : ''}${at ? `${at}: ` : ''}${status.lastPass ? summary : 'no pass has run yet'}${disk ? `; ${disk}` : ''}${deviceDisk ? `; ${deviceDisk}` : ''}${culprits ? `; memory: ${culprits}` : ''}${status.running ? '; running' : ''}${deferredNote(status)}${status.lastPass?.blocked.length ? `; ${status.lastPass.blocked.join('; ')}` : ''}${status.invalid ? `; invalid: ${status.invalid}` : ''}${status.queued ? `; ${status.queued} queued` : ''}`;
+  return `${includeLabel ? 'Automatic maintenance: ' : ''}${at ? `${at}: ` : ''}${status.lastPass ? summary : 'no pass has run yet'}${disk ? `; ${disk}` : ''}${fill ? `; ${fill}` : ''}${deviceDisk ? `; ${deviceDisk}` : ''}${culprits ? `; memory: ${culprits}` : ''}${status.running ? '; running' : ''}${deferredNote(status)}${status.lastPass?.blocked.length ? `; ${status.lastPass.blocked.join('; ')}` : ''}${status.invalid ? `; invalid: ${status.invalid}` : ''}${status.queued ? `; ${status.queued} queued` : ''}`;
 }
 
 function deferredNote(status: MaintenanceStatus): string {

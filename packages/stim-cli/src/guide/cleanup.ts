@@ -40,6 +40,9 @@ idle stage for owned devices whose workspace has no running dev server, and the
 pressure ladder from rung 2 before they build; no other command starts one, and
 with daemon.mode off none runs. gc --dry-run prints what an acting gc would
 delete at the measured level, or at the --pressure level.
+Normal volumes run high cleanup toward disk.minFreeGb plus
+5-minute fill rate × (first measured reclaim time + next tick). Status prints rates; doctor flags an uncleared target after an hour. Trash estimates never
+train it; pressure/refusals stay unchanged.
 Size, idle, worktree and sweep checks wait while the one-minute load is above 4
 per core and every volume's disk level is normal; at high or critical load defers
 none of them. Measured directories are workspace build outputs and Stim's

@@ -38,6 +38,7 @@ import { metroStoreRoot } from '../stimd/metro/metro-store.ts';
 import { saveConfig } from '../workspace/config.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import { recordWarmedFrom } from '../workspace/source-dependencies.ts';
+import { listedRoots } from '../commands/gc/worktrees.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { readRunningProcessesAsync } from '../workspace/running-from.ts';
 import { treeSignature } from '../private-size.ts';
@@ -840,6 +841,130 @@ describe('gc marks written by the lane', () => {
       },
       20_000,
     );
+  });
+
+  describe.skipIf(process.platform === 'win32')('current normal linked dependency authorization', () => {
+    it('keeps a former nested app dependency after its registration changes while holder and mark stay intact', async () => {
+      const { root, modules, age, old } = await normalLinkedDependencies();
+      rmSync(modules, { recursive: true });
+      const app = join(root, 'apps', 'mobile');
+      const target = join(app, 'node_modules');
+      mkdirSync(target, { recursive: true });
+      writeFileSync(join(app, 'package.json'), '{}');
+      writeFileSync(join(target, 'dependency.js'), 'installed');
+      config.projects[app] = {};
+      saveConfig(config);
+      recordWorkspaceUse(app, old);
+      const before = readGcMark(root);
+      if (!before) throw new Error('fixture mark missing');
+      delete before.dependencies;
+      writeFileSync(gcMarkFile(root), JSON.stringify(before));
+      age(roots);
+      await lane(true);
+      const observation = readGcMark(root)?.dependencies;
+      expect(observation?.keys).toEqual(expect.arrayContaining([root, app]));
+      mkdirSync(dirname(diskUsageCacheFile(target)), { recursive: true });
+      writeFileSync(
+        diskUsageCacheFile(target),
+        JSON.stringify({
+          path: target,
+          bytes: 1024 ** 3,
+          privateBytes: 1024 ** 3,
+          measuredAt: new Date().toISOString(),
+          signature: treeSignature(target),
+        }),
+      );
+      const list = artifacts.artifactWorktreesFor;
+      let changed = false;
+      vi.spyOn(artifacts, 'artifactWorktreesFor').mockImplementation(async (operation) => {
+        const worktrees = await list(operation);
+        changed = true;
+        delete config.projects[app];
+        saveConfig(config);
+        return worktrees;
+      });
+
+      const actions = await runDormantDependencies({
+        config,
+        act: true,
+        marks: true,
+        log: () => {},
+        ...reading,
+        operation: testContext(),
+      });
+
+      expect(changed).toBe(true);
+      expect(actions).toContainEqual(expect.objectContaining({ target, outcome: 'kept' }));
+      expect(existsSync(join(target, 'dependency.js'))).toBe(true);
+      expect(readGcMark(root)?.dependencies).toEqual(observation);
+      expect(config.projects[root]).toEqual({});
+    }, 20_000);
+
+    it('cleans an unregistered discovered linked dependency beside a definitively removed registration', async () => {
+      const source = checkout('discovered-source', 3 * day);
+      const root = join(roots, 'discovered-linked');
+      execFileSync('git', [
+        '-C',
+        source,
+        '-c',
+        'maintenance.auto=false',
+        '-c',
+        'gc.auto=0',
+        'worktree',
+        'add',
+        '-q',
+        '-b',
+        'linked',
+        root,
+      ]);
+      const modules = join(root, 'node_modules');
+      mkdirSync(modules);
+      writeFileSync(join(modules, 'dependency.js'), 'installed');
+      const removed = checkout('removed-registration', 3 * day);
+      config.projects[removed] = {};
+      saveConfig(config);
+      rmSync(removed, { recursive: true });
+      const old = new Date(Date.now() - 3 * day);
+      const age = (path: string) => {
+        for (const entry of readdirSync(path, { withFileTypes: true })) {
+          const child = join(path, entry.name);
+          if (entry.isDirectory()) age(child);
+          utimesSync(child, old, old);
+        }
+        utimesSync(path, old, old);
+      };
+      age(roots);
+      await lane(true);
+      expect(readGcMark(root)?.dependencies).toMatchObject({
+        role: 'linked',
+        candidates: [expect.objectContaining({ path: modules })],
+      });
+      expect(listedRoots()).not.toContain(root);
+      expect(config.projects[root]).toBeUndefined();
+      mkdirSync(dirname(diskUsageCacheFile(modules)), { recursive: true });
+      writeFileSync(
+        diskUsageCacheFile(modules),
+        JSON.stringify({
+          path: modules,
+          bytes: 1024 ** 3,
+          privateBytes: 1024 ** 3,
+          measuredAt: new Date().toISOString(),
+          signature: treeSignature(modules),
+        }),
+      );
+
+      const actions = await runDormantDependencies({
+        config,
+        act: true,
+        marks: true,
+        log: () => {},
+        ...reading,
+        operation: testContext(),
+      });
+
+      expect(actions).toContainEqual(expect.objectContaining({ target: modules, outcome: 'done' }));
+      expect(existsSync(modules)).toBe(false);
+    }, 20_000);
   });
 
   const normalSourceDependencies = async () => {

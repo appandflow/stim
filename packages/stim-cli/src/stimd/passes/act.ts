@@ -67,6 +67,7 @@ import { archiveExpiryReason, leaseKeepReason } from './prune.ts';
 import type { MaintenanceSettings } from './settings.ts';
 import { executeRecordAction } from './records.ts';
 import { forgetGitReads } from '../../workspace/git-reads.ts';
+import type { FirstFreeObserver } from '../../daemon/pacer.ts';
 
 import { deleteRuntimeAction, deleteUnavailableSimAction } from './runtimes.ts';
 
@@ -81,6 +82,7 @@ export interface ActionOutcome {
 }
 
 export interface ActContext {
+  firstFree?: FirstFreeObserver;
   settings: MaintenanceSettings;
   protectedRoot: string;
   background?: boolean;
@@ -573,7 +575,14 @@ export async function executeAction(action: MaintenanceAction, context: ActConte
             'the stim-daemon stops idle workspaces; maintenance stops one with a hosted device after maintenance.idleStopHours',
           );
     case 'would-clear-build-dirs':
-      return trimCargoTargetAction(action, context.operation, context.lowPriority, context.stop, context.protectedRoot);
+      return trimCargoTargetAction(
+        action,
+        context.operation,
+        context.lowPriority,
+        context.stop,
+        context.protectedRoot,
+        context.firstFree,
+      );
     case 'would-delete-dependencies':
       return clearArtifacts(action, context);
     case 'would-stop-gradle-daemons':

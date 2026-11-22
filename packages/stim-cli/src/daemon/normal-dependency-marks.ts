@@ -2,6 +2,10 @@ import type { StimContext } from '@stim-cli/core';
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import type { GcMark } from '@stim-cli/core/state';
 import { stat } from 'node:fs/promises';
+import { join } from 'node:path';
+import { reclaimKeysAsync } from '../commands/worktree.ts';
+import { matchWorktreeEntry, resolveSourceCheckoutAsync } from '../workspace/worktree.ts';
+import { ARTIFACT_DIRS } from '../workspace/regenerable-dirs.ts';
 import { realpathAsync } from '../commands/gc/paths.ts';
 import type { ArtifactCandidate, ArtifactWorktree } from '../stimd/passes/artifacts.ts';
 import { answered } from '../workspace/bounded-read.ts';
@@ -64,11 +68,22 @@ export function normalDependencySelection(
           dependencyMarkDue(mark, Date.now(), dormantAfterMs(config, operation?.env))
         )
           return 'its saved dependency generation is missing or due';
-        if (
-          candidate.keys.length !== observation.keys.length ||
-          candidate.keys.some((key) => !observation.keys.includes(key))
-        )
+        const { entries, ...checkout } = await resolveSourceCheckoutAsync(candidate.worktree, {
+          env: operation?.env,
+          signal: operation?.signal,
+          declareFor: operation,
+          cache: false,
+        });
+        const holder = matchWorktreeEntry(entries, candidate.worktree);
+        if ('refusal' in checkout || !holder || holder.bare || (holder.path === checkout.path) !== (role === 'source'))
+          return 'its current Git holder could not be verified';
+        const keys = (await reclaimKeysAsync(candidate.worktree, operation)).filter(
+          (key) => matchWorktreeEntry(entries, key)?.path === holder.path,
+        );
+        if (keys.length !== observation.keys.length || keys.some((key) => !observation.keys.includes(key)))
           return 'its workspace membership changed since the dependency observation';
+        if (!keys.some((key) => ARTIFACT_DIRS.dependencies.some((dir) => join(key, dir) === candidate.path)))
+          return 'its saved dependency path is outside its current holder';
         const saved = observation.candidates.find(({ path }) => path === candidate.path);
         if (!saved) return 'its dependency path is absent from the saved generation';
         const signal = operation?.signal;
