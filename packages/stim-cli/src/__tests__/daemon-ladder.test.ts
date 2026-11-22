@@ -588,14 +588,17 @@ describe('the pressure ladder', () => {
   });
 
   test.each([
-    ['high', 'critical', false],
-    ['critical', 'high', false],
-    ['high', 'normal', false],
-    ['critical', 'normal', true],
-    ['high', 'critical', true],
+    ['high', 'critical', 'automatic'],
+    ['critical', 'high', 'automatic'],
+    ['high', 'normal', 'automatic'],
+    ['critical', 'normal', 'explicit'],
+    ['high', 'critical', 'explicit'],
+    ['high', 'critical', 'measured'],
+    ['critical', 'high', 'measured'],
+    ['high', 'normal', 'measured'],
   ] as const)(
-    'rung 6 trash priority follows %s to %s (forced: %s) without changing other actions',
-    async (entry, current, forced) => {
+    'rung 6 trash priority follows %s to %s (%s) without changing other actions',
+    async (entry, current, mode) => {
       vi.spyOn(sweep, 'planRung6').mockResolvedValue({
         actions: [
           { kind: 'would-delete-trash', target: home, bytes: 1, reason: 'owned trash' },
@@ -604,12 +607,14 @@ describe('the pressure ladder', () => {
         blocked: [],
         skips: [],
       });
-      const act = vi.spyOn(acting, 'executeAction').mockResolvedValue({ status: 'kept', bytes: 0, detail: 'test' });
-      const remeasure = vi
-        .fn<() => Promise<DaemonPressure>>()
-        .mockResolvedValueOnce(pressure(entry))
-        .mockResolvedValueOnce(pressure(entry))
-        .mockResolvedValue(pressure(current));
+      const priorities: [string, boolean][] = [];
+      vi.spyOn(acting, 'executeAction').mockImplementation(async (action, context) => {
+        const throttled = context.trashPriority ? await context.trashPriority() : context.critical !== true;
+        if (throttled !== null) priorities.push([action.kind, !throttled]);
+        return { status: 'kept', bytes: 0, detail: 'test' };
+      });
+      const remeasure = vi.fn<() => Promise<DaemonPressure>>().mockResolvedValue(pressure(current));
+      if (mode === 'automatic') remeasure.mockResolvedValueOnce(pressure(entry)).mockResolvedValueOnce(pressure(entry));
 
       await runLadder(
         {
@@ -617,20 +622,21 @@ describe('the pressure ladder', () => {
           fromRung: 6,
           lastRung: 6,
           volume: statSync(home).dev,
-          ...(forced ? { force: { level: entry, why: 'explicit level' } } : {}),
+          ...(mode !== 'automatic'
+            ? { force: { level: entry, why: 'requested level', measured: mode === 'measured' } }
+            : {}),
         },
         pressure(entry),
       );
 
-      expect(act.mock.calls.map(([action, context]) => [action.kind, context.critical])).toEqual(
-        !forced && current === 'normal'
+      const trash =
+        current === 'normal' && mode !== 'explicit'
           ? []
-          : [
-              ['would-delete-trash', (forced ? entry : current) === 'critical'],
-              ['would-delete-temp-leftovers', entry === 'critical'],
-            ],
-      );
-      expect(remeasure.mock.calls.length === 0).toBe(forced);
+          : [['would-delete-trash', (mode === 'explicit' ? entry : current) === 'critical']];
+      const other =
+        current === 'normal' && mode === 'automatic' ? [] : [['would-delete-temp-leftovers', entry === 'critical']];
+      expect(priorities).toEqual([...trash, ...other]);
+      expect(remeasure.mock.calls.length === 0).toBe(mode === 'explicit');
     },
   );
 

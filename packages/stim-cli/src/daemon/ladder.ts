@@ -253,6 +253,14 @@ async function run(
     outcome = await executeAction(plan, {
       ...actContext(context.settings),
       critical: context.level === 'critical',
+      ...(plan.kind === 'would-delete-trash' && (!context.force || context.force.measured)
+        ? {
+            trashPriority: async () => {
+              const { disk } = await context.remeasure();
+              return disk === 'normal' ? null : disk !== 'critical';
+            },
+          }
+        : {}),
       protectedRoot: context.protectedRoot ? (canonicalOrNull(context.protectedRoot) ?? '') : '',
       operation: context.operation,
       ...(context.stop ? { stop: context.stop } : {}),
@@ -934,11 +942,7 @@ async function sweepRung(context: RungContext, causes: readonly Cause[]): Promis
     const memory = action.kind === 'would-stop-gradle-daemons' || action.kind === 'would-stop-watchman';
     if (!memory && !onShort(context, [action.dir ?? action.target])) continue;
     if (!(await context.stillShort())) return;
-    if (action.kind === 'would-delete-trash' && context.act && !context.force) {
-      const { disk } = await context.remeasure();
-      if (disk === 'normal') continue;
-      await run({ ...context, level: disk }, action);
-    } else await run(context, action);
+    await run(context, action);
   }
 }
 
