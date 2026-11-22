@@ -1139,8 +1139,8 @@ THE PRESSURE LADDER
        (compilation cache, ccache, build cache except entries in use, Metro
        cache, macOS artifacts, React Native and Android caches), with the
        fingerprint index and memo; then the Cargo trims, largest first
-    1  idle outputs: the idle stage for every workspace idle 2 minutes or more
-       under memory pressure (at idle.minutes under disk pressure alone)
+    1  stopped outputs from saved marks, with fresh safety checks: high
+       refreshes due marks if short; critical skips unmarked outputs.
     4  the dormant stage: workspaces idle 10 minutes (high) or 2 minutes
        (critical)
     6  idle Gradle and Kotlin daemons, an unused watchman, unpinned Gradle

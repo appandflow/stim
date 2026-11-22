@@ -1,25 +1,36 @@
-import { realpath } from 'node:fs';
+import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
+import { realpath, readdirSync } from 'node:fs';
+import { join, sep } from 'node:path';
+import { canonicalPath } from '../commands/gc/paths.ts';
 import { stat } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import {
   GC_MARK_VERSION,
   gcMarkFile,
+  gcLogDir,
+  readJsonObject,
   readDiskUsage,
   readGcMark,
   type GcMark,
   type GcMarkCandidate,
 } from '@stim-cli/core/state';
-import { metroCacheRoot } from '@stim-cli/core';
+import { isScopedHome, metroCacheRoot } from '@stim-cli/core';
 import { writeCacheFile } from '../cache-file.ts';
 import { answered, Unanswered } from '../workspace/bounded-read.ts';
 import type { Config } from '../workspace/config.ts';
 import { idleOutputs } from './idle.ts';
-import type { CheckoutReading } from './stages.ts';
+import { dormantAfterMs, readCheckout, type CheckoutReading, type DeviceReading } from './stages.ts';
+import { autoDiscoverEnabled, canonicalDiscoverRoots, discoverCheckouts } from '../workspace/discovery.ts';
+import { listedRoots } from '../commands/gc/worktrees.ts';
 
 const realpathAsync = promisify(realpath);
 
 /** The mark writer of one walk, which resolves the Metro cache root once for every checkout it marks. */
-export function markWriter(config: Config, signal?: AbortSignal): (reading: CheckoutReading) => Promise<void> {
+export function markWriter(
+  config: Config,
+  signal?: AbortSignal,
+  dueOnly = false,
+): (reading: CheckoutReading) => Promise<void> {
   const metroCache = metroCacheRoot();
   return async (reading) => {
     const expiresAt = Date.now() + 3_000;
@@ -27,7 +38,7 @@ export function markWriter(config: Config, signal?: AbortSignal): (reading: Chec
     const timer = setTimeout(() => deadline.abort(new Unanswered('mark read deadline')), 3_000);
     const readingSignal = signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal;
     try {
-      await writeMark(config, reading, readingSignal, metroCache, expiresAt);
+      await writeMark(config, reading, readingSignal, metroCache, expiresAt, dueOnly);
     } finally {
       clearTimeout(timer);
     }
@@ -45,8 +56,10 @@ async function writeMark(
   signal: AbortSignal | undefined,
   metroCache: string,
   expiresAt: number,
+  dueOnly: boolean,
 ): Promise<void> {
   const root = await answered(reading.path, () => realpathAsync(reading.path), 3_000, signal);
+  if (dueOnly && !markDue(readGcMark(root), reading.at, dormantAfterMs(config))) return;
   // Node's synchronous filesystem checks inside idleOutputs cannot be interrupted by this deadline.
   const { paths, targets } = await idleOutputs(reading.path, config, undefined, {
     signal,
@@ -81,4 +94,78 @@ async function writeMark(
   signal?.throwIfAborted();
   if (Date.now() >= expiresAt) throw new Unanswered('mark read deadline');
   writeCacheFile(gcMarkFile(root), mark);
+}
+
+const MINUTE_MS = 60_000;
+const DAY_MS = 86_400_000;
+
+export function markDue(mark: GcMark | null, now: number, dormantMs: number): boolean {
+  if (!mark) return true;
+  const markedAt = Date.parse(mark.markedAt);
+  const activity = Date.parse(mark.lastActivityAt ?? '');
+  const age = now - activity;
+  const dirty = Date.parse(mark.dirtyAt ?? '') > markedAt;
+  const interval =
+    dirty || !Number.isFinite(activity) || age < DAY_MS
+      ? 10 * MINUTE_MS
+      : dormantMs > 0 && age >= dormantMs
+        ? DAY_MS
+        : 60 * MINUTE_MS;
+  return !Number.isFinite(markedAt) || now >= markedAt + interval;
+}
+
+export function outputMarks(config: Config, env: NodeJS.ProcessEnv = process.env): GcMark[] {
+  const registered = new Set(Object.keys(config.projects).map(canonicalPath));
+  const roots = canonicalDiscoverRoots(config, env);
+  const automatic = !isScopedHome(env) && autoDiscoverEnabled(config, env);
+  const dir = join(gcLogDir(), 'marks');
+  let files: string[];
+  try {
+    files = readdirSync(dir);
+  } catch {
+    return [];
+  }
+  const marks: GcMark[] = [];
+  for (const file of files) {
+    const root = readJsonObject(join(dir, file))?.root;
+    if (typeof root !== 'string' || gcMarkFile(root) !== join(dir, file)) continue;
+    const mark = readGcMark(root);
+    if (mark && (registered.has(root) || automatic || roots.some((folder) => root.startsWith(`${folder}${sep}`))))
+      marks.push(mark);
+  }
+  return marks;
+}
+
+export async function refreshOutputMarks(config: Config, reading: DeviceReading): Promise<GcMark[]> {
+  const found = await discoverCheckouts(config, listedRoots(), reading.operation);
+  const roots = new Set([...Object.keys(config.projects), ...found.map(({ path }) => path)]);
+  const write = markWriter(config, reading.operation?.signal);
+  const refreshed: GcMark[] = [];
+  for (const path of roots) {
+    reading.operation?.signal.throwIfAborted();
+    try {
+      const root = await answered(path, () => realpathAsync(path), 3_000, reading.operation?.signal);
+      if (!markDue(readGcMark(root), Date.now(), dormantAfterMs(config, reading.operation?.env))) continue;
+      const current = await readCheckout(path, config.projects[path] ?? {}, reading, 2 * MINUTE_MS);
+      await write(current);
+      const mark = readGcMark(root);
+      if (mark?.markedAt === new Date(current.at).toISOString() && current.kept === null) refreshed.push(mark);
+    } catch (error) {
+      if (isClaimUnavailable(error) && 'reportCleanup' in error) throw error;
+      reading.operation?.signal.throwIfAborted();
+    }
+  }
+  return refreshed;
+}
+
+export function keepOutputMark(mark: GcMark, reason: string): void {
+  const current = readGcMark(mark.root);
+  if (!current || current.markedAt !== mark.markedAt) return;
+  const at = new Date().toISOString();
+  writeCacheFile(gcMarkFile(mark.root), {
+    ...current,
+    candidates: current.candidates.map((candidate) =>
+      candidate.kind === 'outputs' ? Object.assign({}, candidate, { keep: { reason, at } }) : candidate,
+    ),
+  });
 }

@@ -199,7 +199,7 @@ function configuredRoots(config: Config | null, env: NodeJS.ProcessEnv): { roots
 }
 
 /** The existing `maintenance.discoverRoots` folders discovery uses: symlinks resolved, too broad ones left out. */
-function canonicalDiscoverRoots(config: Config | null, env: NodeJS.ProcessEnv): string[] {
+export function canonicalDiscoverRoots(config: Config | null, env: NodeJS.ProcessEnv): string[] {
   return configuredRoots(config, env)
     .roots.filter((root) => existsSync(root))
     .map(canonicalPath)

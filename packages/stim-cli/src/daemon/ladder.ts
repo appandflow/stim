@@ -10,6 +10,7 @@ import {
   type DaemonLadderAction,
   type DaemonPressure,
   type MaintenanceAction,
+  type GcMark,
   type PressureLevel,
 } from '@stim-cli/core/state';
 import { discoverCachesAsync, pruneCache, type CacheDescriptor } from '../cache/caches.ts';
@@ -42,6 +43,7 @@ import type { Config, ProjectRecord } from '../workspace/config.ts';
 import { runBootedParkedPass } from './booted-parked.ts';
 import { LADDER_CLOCK_SLOTS } from './disk-owner.ts';
 import { measureDisk } from './measure.ts';
+import { outputMarks, refreshOutputMarks, keepOutputMark } from './marks.ts';
 import { diskThresholds, shortVolumeDevices } from './pressure.ts';
 import { collectInventory } from '../commands/gc/inventory.ts';
 import {
@@ -302,7 +304,7 @@ async function bootedParkedRung(context: RungContext): Promise<void> {
 }
 
 /** Rung 1's disk half: the regenerable outputs of workspaces with nothing running, idle 2 minutes or more. */
-async function idleOutputsRung(context: RungContext): Promise<void> {
+async function previewIdleOutputsRung(context: RungContext): Promise<void> {
   for (const candidate of await stoppedOutputCandidates(context.config, context, PRESSURE_IDLE_MS)) {
     if (!(await context.stillShort())) return;
     let result: Awaited<ReturnType<typeof clearStoppedOutputs>>;
@@ -337,6 +339,74 @@ async function idleOutputsRung(context: RungContext): Promise<void> {
       `${context.why}; idle ${Math.floor(candidate.idleMs / MINUTE_MS)} minutes`,
     );
   }
+}
+
+async function idleOutputsRung(context: RungContext): Promise<void> {
+  if (!context.act) return previewIdleOutputsRung(context);
+  const sweep = async (marks: GcMark[]) => {
+    const ranked = marks
+      .filter((mark) => mark.candidates.some(({ kind }) => kind === 'outputs'))
+      .toSorted(
+        (a, b) =>
+          Number(a.candidates.some((candidate) => candidate.kind === 'outputs' && candidate.keep)) -
+          Number(b.candidates.some((candidate) => candidate.kind === 'outputs' && candidate.keep)),
+      );
+    for (const mark of ranked) {
+      if (!(await context.stillShort())) return;
+      if (!mark.candidates.some((candidate) => candidate.kind === 'outputs' && onShort(context, [candidate.path])))
+        continue;
+      const protectedRoot = context.protectedRoot && canonicalOrNull(context.protectedRoot);
+      if (protectedRoot === mark.root) continue;
+      let result: Awaited<ReturnType<typeof clearStoppedOutputs>>;
+      try {
+        result = await clearStoppedOutputs(
+          { path: mark.root },
+          context.config,
+          PRESSURE_IDLE_MS,
+          context.operation,
+          deletable(context),
+          mark,
+          context,
+        );
+      } catch (error) {
+        if (isClaimUnavailable(error) && 'reportCleanup' in error) throw error;
+        context.operation?.signal.throwIfAborted();
+        result = {
+          outcome: 'kept',
+          bytes: 0,
+          detail: `marked output recheck failed: ${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
+      if (!result) continue;
+      if (result.outcome === 'kept') keepOutputMark(mark, result.detail ?? 'kept at sweep');
+      recordAction(
+        context,
+        {
+          rung: 1,
+          kind: 'delete-build-outputs',
+          target: mark.root,
+          workspace: mark.root,
+          ...result,
+          ...(result.outcome === 'done'
+            ? { restore: 'the next stim ios or stim android, from the build cache when nothing changed' }
+            : {}),
+        },
+        context.why,
+      );
+    }
+  };
+  const known = outputMarks(context.config, context.operation?.env);
+  await sweep(known);
+  if (context.level === 'critical') {
+    const marked = new Set(known.map(({ root }) => root));
+    const missing = Object.keys(context.config.projects).filter((root) => !marked.has(root));
+    if (missing.length)
+      context.log('info', 'gc_marks_missing', 'critical sweep leaves unmarked checkout outputs alone', {
+        roots: missing.length,
+      });
+    return;
+  }
+  if (await context.stillShort()) await sweep(await refreshOutputMarks(context.config, context));
 }
 
 /** Rung 2: parked devices, oldest first; at high until the level clears, at critical all of them. */

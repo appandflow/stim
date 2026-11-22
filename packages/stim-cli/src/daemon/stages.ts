@@ -1,5 +1,7 @@
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import { existsSync, readdirSync } from 'node:fs';
+import { realpath, stat } from 'node:fs/promises';
+import { answered } from '../workspace/bounded-read.ts';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
@@ -14,6 +16,7 @@ import {
   type DaemonLadderAction,
   type DormantStageRecord,
   type MaintenanceAction,
+  type GcMark,
 } from '@stim-cli/core/state';
 import { archiveWorkspace } from '../archive.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
@@ -253,6 +256,25 @@ export interface CheckoutReading {
   kept: string | null;
 }
 
+export async function readCheckout(
+  path: string,
+  project: ProjectRecord,
+  reading: DeviceReading,
+  thresholdMs: number,
+): Promise<CheckoutReading> {
+  const at = Date.now();
+  if (sameRoot(path, reading.protectedRoot)) return { path, at, lastActivityAt: null, kept: 'protected workspace' };
+  if (await runsSomething(path, project, reading))
+    return { path, at, lastActivityAt: at, kept: 'something of it runs' };
+  const verdict = await idleVerdict(path, thresholdMs, PRESSURE_THRESHOLD, { operation: reading.operation });
+  return {
+    path,
+    at,
+    lastActivityAt: verdict.lastAt,
+    kept: 'kept' in verdict && !verdict.active ? verdict.kept : null,
+  };
+}
+
 /** `full` reads source and git evidence even for a registered workspace; `onKept` hears why a workspace is not idle. */
 interface IdleSelection {
   full?: boolean;
@@ -410,7 +432,7 @@ type StageResult = Pick<DaemonLadderAction, 'outcome' | 'bytes' | 'partial' | 'd
  * 3 reduces.
  */
 export async function stoppedOutputs(
-  candidate: StageCandidate,
+  candidate: Pick<StageCandidate, 'path'>,
   config: Config,
   operation?: StimContext,
   deletable?: (path: string) => boolean,
@@ -436,11 +458,13 @@ export async function stoppedOutputs(
  * output it has is kept, such as a Metro store a running dev server shares.
  */
 export async function clearStoppedOutputs(
-  candidate: StageCandidate,
+  candidate: Pick<StageCandidate, 'path'>,
   config: Config,
   thresholdMs: number,
   operation?: StimContext,
   deletable?: (path: string) => boolean,
+  mark?: GcMark,
+  reading?: DeviceReading,
 ): Promise<StageResult | null> {
   const { path } = candidate;
   const run = await withIdleWorkspace(
@@ -451,6 +475,14 @@ export async function clearStoppedOutputs(
           workspaceDir(path),
           'metro-start',
           async (): Promise<StageResult | null> => {
+            if (mark) {
+              const canonical = await answered(path, () => realpath(path), 3_000, operation?.signal);
+              const info = await answered(path, () => stat(path), 3_000, operation?.signal);
+              if (canonical !== mark.root || info.dev !== mark.device)
+                return { outcome: 'kept', bytes: 0, detail: 'marked checkout moved or changed volume' };
+            }
+            if (reading && (await runsSomething(path, config.projects[path] ?? {}, reading)))
+              return { outcome: 'kept', bytes: 0, detail: 'something of it runs' };
             if (
               (await idleFor(path, thresholdMs, PRESSURE_THRESHOLD, {
                 locked: true,
@@ -460,8 +492,20 @@ export async function clearStoppedOutputs(
               return { outcome: 'kept', bytes: 0, detail: 'it is no longer idle' };
             const outputs = await stoppedOutputs(candidate, config, operation, deletable);
             if ('locked' in outputs) return { outcome: 'kept', bytes: 0, detail: outputs.locked };
-            if (!outputs.paths.length) return null;
-            const freed = await deleteOutputs(outputs.paths, operation?.signal);
+            const paths = mark
+              ? outputs.paths.filter((output) =>
+                  mark.candidates.some((entry) => entry.kind === 'outputs' && entry.path === output),
+                )
+              : outputs.paths;
+            if (!paths.length) return null;
+            if (mark)
+              for (const output of paths) {
+                const canonical = await answered(output, () => realpath(output), 3_000, operation?.signal);
+                const info = await answered(output, () => stat(output), 3_000, operation?.signal);
+                if (canonical !== output || info.dev !== mark.device)
+                  return { outcome: 'kept', bytes: 0, detail: 'marked output moved or changed volume' };
+              }
+            const freed = await deleteOutputs(paths, operation?.signal);
             return {
               outcome: 'done',
               ...freed,

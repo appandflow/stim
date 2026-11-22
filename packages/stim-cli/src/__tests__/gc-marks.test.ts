@@ -14,11 +14,12 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { diskUsageCacheFile, gcMarkFile, readGcMark, type Config } from '@stim-cli/core/state';
 import { runDormantDependencies } from '../daemon/dependencies.ts';
-import { markWriter } from '../daemon/marks.ts';
+import { markDue, markWriter, refreshOutputMarks } from '../daemon/marks.ts';
 import { stoppedOutputCandidates, stoppedOutputs } from '../daemon/stages.ts';
 import type { OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { metroStoreRoot } from '../stimd/metro/metro-store.ts';
 import { saveConfig } from '../workspace/config.ts';
+import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { readRunningProcessesAsync } from '../workspace/running-from.ts';
 import { hungRead, pendingRead, Unanswered } from '../workspace/bounded-read.ts';
 import { testContext } from './_context.ts';
@@ -111,6 +112,42 @@ describe('gc marks written by the lane', () => {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
     rmSync(base, { recursive: true, force: true });
+  });
+
+  it.each([
+    { activityAge: 0, elapsed: 10 * 60_000 - 1, dirty: false, due: false },
+    { activityAge: 0, elapsed: 10 * 60_000, dirty: false, due: true },
+    { activityAge: 2 * day, elapsed: 60 * 60_000 - 1, dirty: false, due: false },
+    { activityAge: 2 * day, elapsed: 60 * 60_000, dirty: false, due: true },
+    { activityAge: 8 * day, elapsed: day - 1, dirty: false, due: false },
+    { activityAge: 8 * day, elapsed: day, dirty: false, due: true },
+    { activityAge: 8 * day, elapsed: 10 * 60_000 - 1, dirty: true, due: false },
+    { activityAge: 8 * day, elapsed: 10 * 60_000, dirty: true, due: true },
+  ])('uses the approved mark cadence: $activityAge old, $elapsed since mark, dirty $dirty', (row) => {
+    const now = Date.now();
+    const mark = {
+      v: 1 as const,
+      root: '/root',
+      device: 1,
+      markedAt: new Date(now - row.elapsed).toISOString(),
+      lastActivityAt: new Date(now - row.activityAge).toISOString(),
+      candidates: [],
+      ...(row.dirty ? { dirtyAt: new Date(now).toISOString() } : {}),
+    };
+    expect(markDue(mark, now, 7 * day)).toBe(row.due);
+  });
+
+  it('high refresh records current activity and keeps instead of fabricating an idle checkout', async () => {
+    const path = checkout('recent', 0);
+    config.projects[path] = {};
+    saveConfig(config);
+    recordWorkspaceUse(path, new Date());
+
+    const refreshed = await refreshOutputMarks(config, reading);
+
+    expect(refreshed).toHaveLength(1);
+    expect(Date.parse(readGcMark(path)?.lastActivityAt ?? '')).toBeGreaterThanOrEqual(Date.now() - 60_000);
+    expect(markDue(readGcMark(path), Date.now(), 7 * day)).toBe(false);
   });
 
   it('marks each checkout the walk reads with the outputs rung 1 would delete there, sized from the cache', async () => {
@@ -290,7 +327,8 @@ describe('gc marks written by the lane', () => {
     dirty(idle, later);
     dirty(other, new Date(Date.now() - 60_000).toISOString());
 
-    await lane(true);
+    const write = markWriter(config);
+    for (const path of [idle, other]) await write({ path, at: Date.now(), lastActivityAt: null, kept: null });
 
     expect(readGcMark(idle)?.dirtyAt).toBe(later);
     expect(readGcMark(other)).not.toHaveProperty('dirtyAt');
