@@ -1744,54 +1744,70 @@ describe('the pressure ladder', () => {
     },
   );
 
-  test('a resumed tool-cache plan rechecks critical volume eligibility before the next command', async () => {
-    const cache = (name: string) => ({
-      tool: name,
-      label: name,
-      paths: [projects],
-      command: null,
-      running: /not-running/,
-    });
-    vi.spyOn(unowned, 'surveyToolCaches').mockResolvedValue(
-      ['first', 'second'].map((name) => ({
-        cache: cache(name),
-        bytes: 1024,
-        kept: null,
-      })),
-    );
-    let critical: ReturnType<typeof requestGcItem> | undefined;
-    const order: string[] = [];
-    const owner = await acquireDisk(CRITICAL);
-    const clean = vi.spyOn(unowned, 'cleanToolCache').mockImplementation(async (plan) => {
-      order.push(plan.cache.label);
-      critical = requestGcItem(async () => {
-        order.push('critical');
-        vi.mocked(daemonMeasure.measureDisk).mockResolvedValue([
-          { volume: '/', freeMb: 25 * 1024, device: statSync(projects).dev },
-        ]);
-      }, HARD_FLOOR);
-      await Promise.resolve();
-      expect(order).toEqual(['first']);
-      return { outcome: 'done', before: 1024, after: 0, detail: 'tool command settled' };
-    });
-    try {
-      await runLadder(
-        {
-          ...input(true, async () => pressure('critical')),
-          fromRung: 9,
-          lastRung: 9,
-          operation: testContext({ env: { ...process.env, STIM_HOME: undefined, ANDROID_HOME: projects } }),
-          between: owner.boundary,
-        },
-        pressure('critical'),
+  test.each(['done', 'failed and cleared', 'failed and still critical'] as const)(
+    'a resumed tool-cache plan rechecks critical volume eligibility before the next command: %s',
+    async (result) => {
+      const cache = (name: string) => ({
+        tool: name,
+        label: name,
+        paths: [projects],
+        command: null,
+        running: /not-running/,
+      });
+      vi.spyOn(unowned, 'surveyToolCaches').mockResolvedValue(
+        ['first', 'second'].map((name) => ({
+          cache: cache(name),
+          bytes: 1024,
+          kept: null,
+        })),
       );
-      expect(order).toEqual(['first', 'critical']);
-      expect(clean).toHaveBeenCalledTimes(1);
-    } finally {
-      owner.release();
-      await critical?.result;
-    }
-  });
+      let critical: ReturnType<typeof requestGcItem> | undefined;
+      const order: string[] = [];
+      const owner = await acquireDisk(CRITICAL);
+      const clean = vi.spyOn(unowned, 'cleanToolCache').mockImplementation(async (plan) => {
+        order.push(plan.cache.label);
+        if (plan.cache.label === 'second')
+          return { outcome: 'done', before: 1024, after: 0, detail: 'second command settled' };
+        vi.mocked(daemonMeasure.measureDisk).mockResolvedValue([
+          {
+            volume: '/',
+            freeMb: (result === 'failed and still critical' ? 5 : 25) * 1024,
+            device: statSync(projects).dev,
+          },
+        ]);
+        critical = requestGcItem(async () => {
+          order.push('critical');
+        }, HARD_FLOOR);
+        await Promise.resolve();
+        expect(order).toEqual(['first']);
+        return {
+          outcome: result === 'done' ? 'done' : 'failed',
+          before: 1024,
+          after: 0,
+          detail: 'tool command settled after freeing space',
+        };
+      });
+      try {
+        await runLadder(
+          {
+            ...input(true, async () => pressure('critical')),
+            fromRung: 9,
+            lastRung: 9,
+            operation: testContext({ env: { ...process.env, STIM_HOME: undefined, ANDROID_HOME: projects } }),
+            between: owner.boundary,
+          },
+          pressure('critical'),
+        );
+        expect(order).toEqual(
+          result === 'failed and still critical' ? ['first', 'critical', 'second'] : ['first', 'critical'],
+        );
+        expect(clean).toHaveBeenCalledTimes(result === 'failed and still critical' ? 2 : 1);
+      } finally {
+        owner.release();
+        await critical?.result;
+      }
+    },
+  );
 
   test('a whole shared-cache trim settles before critical work and the next cache rechecks its volume', async () => {
     caches('kept-key');

@@ -451,14 +451,28 @@ describe.skipIf(process.platform === 'win32')('a command not waiting on stimd wh
     const root = workspace('app');
     vi.stubEnv('STIM_DAEMON', 'off');
     const operation = context(root);
-    await ensureTunnelThroughStimd({ root, port: 8081, mode: 'off', isExpo: false, ngrokUrl: null }, 10_000, operation);
-    const first = stimdPid();
-    assert(first !== null);
-    process.kill(first, 'SIGKILL');
-    await vi.waitFor(() => expect(alive(first)).toBe(false), { timeout: 10_000, interval: 50 });
-    const answer = await ensureMetroThroughStimd({ root, port: 8081 }, 10_000, operation);
-    expect(answer).toMatchObject({ op: 'error', ...RERUN });
-    expect(stimdLive()).toBe(false);
+    const release = await holdCIStimd({ ...process.env }, root, null);
+    try {
+      const first = stimdPid();
+      assert(first !== null);
+      const owner = readClaimSet(stimdClaimRoot()).live.find((holder) => holder.owner.pid === first)?.owner;
+      assert(owner?.pid === first);
+      const tunnel = await ensureTunnelThroughStimd(
+        { root, port: 8081, mode: 'off', isExpo: false, ngrokUrl: null },
+        10_000,
+        operation,
+      );
+      expect(tunnel).toMatchObject({ op: 'error', code: 'bad-mode' });
+      expect(stimdPid()).toBe(first);
+      expect(inspectProcessIdentity(owner)).toBe('same');
+      process.kill(first, 'SIGKILL');
+      await vi.waitFor(() => expect(alive(first)).toBe(false), { timeout: 10_000, interval: 50 });
+      const answer = await ensureMetroThroughStimd({ root, port: 8081 }, 10_000, operation);
+      expect(answer).toMatchObject({ op: 'error', ...RERUN });
+      expect(stimdLive()).toBe(false);
+    } finally {
+      release();
+    }
   }, 60_000);
 
   test('its owned browser observation fails with the rerun error and starts no stimd', async () => {

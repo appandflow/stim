@@ -392,6 +392,11 @@ jobs:
           packages/server/__tests__/control-clipboard.integration.test.ts
           packages/server/__tests__/build-area-eviction.integration.test.ts
 
+      - name: Windows worktree mark retirement
+        run: >-
+          pnpm test packages/stim-cli/src/__tests__/worktree-archive.integration.test.ts
+          -t 'owned removal retires actual|worktree removal with archiveDirty|a branch cleanup failure after actual linked removal'
+
       - name: Windows startup cancellation
         run: |
           pnpm test packages/stim-cli/src/__tests__/api-start.integration.test.ts -t "cancelling startup drains dynamic Expo config"

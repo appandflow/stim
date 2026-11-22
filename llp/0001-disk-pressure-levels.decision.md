@@ -409,6 +409,17 @@ an entry. Unsupported moves, including Windows and another filesystem, retain
 the existing in-place deletion; report-only caches remain untouched. No Cargo
 target or automatic pressure sweep uses this handoff.
 
+Doctor reports the oldest verified typed payload queued for more than 24 hours.
+It reuses the pending manifest inventory with bounded asynchronous metadata
+reads, without walking payloads, changing estimated pending totals or deleting
+anything. Diagnostics check regular manifests at most 64 KiB before opening;
+these are ordinary atomic typed records, not foreign concurrently rewritten
+files. Malformed, foreign, linked and missing evidence supplies no stale claim.
+A later deadline retains a previously verified stale payload with partial
+coverage. Caller cancellation still propagates. After rendering and recording
+its run, the doctor CLI uses the existing pending-read exit path so an unanswered
+native read cannot keep the command alive.
+
 This implements the lazy-free part of the cleanup redesign in #6025 and #6089.
 
 ## Queue ownership replaces the maintenance claim
@@ -529,6 +540,15 @@ also holds the newest activity the walk read, and the walk reads at
 - A mark is rebuildable: an unknown version or a file that does not parse
   reads as absent and the next walk rewrites it, so deleting the folder is
   safe. It is written with a temporary file and a rename.
+- A successful owned Git worktree removal retires that root's validated saved
+  marks, including the authorized original removal spelling and currently
+  locked registry spellings whose native identity equals that exact Git root,
+  captured before removal. Nested and unrelated
+  roots are not included. Retirement runs before any later branch cleanup. Unlink is best
+  effort; source-only reclamation, failed removal and uncertain missing or
+  offline roots do not retire marks. An in-flight mark writer can republish
+  this rebuildable record after retirement; its later sweep still requires
+  current scope, root and device proof. Retirement adds no lock or tombstone.
 - A `dirtyAt` newer than the start of the checkout's reads stays, so a
   change seen while the walk read the checkout is not lost.
 - Output rung 1 sweeps the recorded output paths, without a new candidate
