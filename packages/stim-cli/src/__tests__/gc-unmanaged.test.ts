@@ -338,7 +338,8 @@ test.skipIf(process.platform === 'win32')(
       ]),
     );
     expect(ours(swept)).toHaveLength(3);
-    expect(swept ? formatUnmanagedUsage(swept) : []).toContainEqual(
+    const ownedReport = swept && { ...swept, entries: swept.entries.filter((entry) => entry.label.startsWith(temp)) };
+    expect(ownedReport ? formatUnmanagedUsage(ownedReport) : []).toContainEqual(
       expect.stringMatching(new RegExp(`  \\S+  ${jest}, Stim sweeps only its unused entries$`)),
     );
 
