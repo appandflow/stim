@@ -194,9 +194,13 @@ export async function outputMarkBatch(
   };
 }
 
-/** The current allowed candidates of exactly one saved root; reads no other saved mark. */
+/** The allowed candidates of one saved root; a canonical registered root is checked independently of other registrations. */
 export async function outputMark(config: Config, root: string, operation?: StimContext): Promise<GcMark | null> {
   const mark = readGcMark(root);
+  if (mark && Object.hasOwn(config.projects, root)) {
+    const current = await answered(root, () => realpathAsync(root), 3_000, operation?.signal);
+    return current === root ? mark : null;
+  }
   return mark ? ((await authorizedMarks(config, [mark], operation))[0] ?? null) : null;
 }
 
