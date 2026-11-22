@@ -111,9 +111,9 @@ function projectState(path: string): boolean | 'unknown' {
  * `examples/` or `packages/` is, as in a monorepo whose root holds no app. `'unknown'` when nothing recognised it and
  * some read that decides this failed (a manifest that does not parse, a listing that cannot be read), so it may be one.
  */
-export function recognition(path: string): boolean | 'unknown' {
+export function recognition(path: string, blocked?: ReadonlySet<string>): boolean | 'unknown' {
   let unknown = false;
-  const own = projectState(path);
+  const own = blocked?.has(path) ? 'unknown' : projectState(path);
   if (own === true) return true;
   if (own === 'unknown') unknown = true;
   for (const folder of PROJECT_FOLDERS) {
@@ -128,7 +128,8 @@ export function recognition(path: string): boolean | 'unknown' {
       continue;
     }
     for (const name of names) {
-      const child = projectState(join(path, folder, name));
+      const childPath = join(path, folder, name);
+      const child = blocked?.has(childPath) ? 'unknown' : projectState(childPath);
       if (child === true) return true;
       if (child === 'unknown') unknown = true;
     }
@@ -340,6 +341,7 @@ interface TargetedDiscovery {
   roots: string[];
   known: string[];
   read: (root: string) => Promise<DiscoveryRepository | null>;
+  requested: Map<string, string>;
 }
 
 async function scopeIdentity(path: string, identities: Map<string, string>): Promise<string | null> {
@@ -404,13 +406,13 @@ export async function targetedCheckouts(
     if (current) repositories.set(current.main, current);
     return current;
   };
-  const selection: TargetedDiscovery = { paths, identities, roots: [], known: [], read };
+  const selection: TargetedDiscovery = { paths, identities, roots: [], known: [], read, requested: new Map() };
   for (const folder of configured) {
     const identity = await scopeIdentity(folder, selection.identities);
     if (identity !== null) selection.roots.push(identity);
   }
   if (!automatic && !selection.roots.length) return [];
-  const wanted = new Map<string, string>();
+  const wanted = selection.requested;
   for (const root of roots) {
     operation?.signal.throwIfAborted();
     const identity = await scopeIdentity(root, selection.identities);
@@ -435,6 +437,34 @@ export async function targetedCheckouts(
     const original = wanted.get(checkout.path);
     return !checkout.node && original !== undefined ? [Object.assign({}, checkout, { path: original })] : [];
   });
+}
+
+async function targetedScan(
+  scan: DiscoveryScan | null,
+  selection: TargetedDiscovery,
+  proved: ReadonlySet<string>,
+  operation?: StimContext,
+): Promise<{ valid: DiscoveryChild[]; pending: string[] }> {
+  const valid: DiscoveryChild[] = [];
+  const pending: string[] = [];
+  const home = canonicalPath(homedir());
+  const rules = { home, isCheckout: recognition, skip: scanSkipper(home), ancestors: new Map() };
+  for (const path of scan?.found ?? []) {
+    const identity = scan?.safety?.[path]?.native;
+    if (
+      !isAbsolute(path) ||
+      !identity ||
+      !selection.requested.has(identity) ||
+      proved.has(identity) ||
+      selection.known.some((known) => touches(identity, known))
+    )
+      continue;
+    operation?.signal.throwIfAborted();
+    const state = await scanEntryValid(path, { ...rules, proofs: scan?.safety, identity });
+    if (state === 'valid') valid.push({ path: identity, origin: 'scan', from: 'full scan', recognised: true });
+    else if (state === 'pending') pending.push(identity);
+  }
+  return { valid, pending };
 }
 
 async function computeDiscovered(
@@ -518,9 +548,18 @@ async function computeDiscovered(
       else if (!node) outside.push({ path, from: main });
     }
   }
-  // @ref LLP 0004#automatic-discovery-is-off-by-default -- scan-only marks stay until targeted sentinel proof (#6093)
-  const { valid: scanned, pending: scanPending } =
-    automatic && !targeted ? await revalidatedScan(scan) : { valid: [], pending: [] };
+  const proved = targeted
+    ? new Set(
+        selectDiscovered({ known: targeted.known, worktrees, children })
+          .filter((entry) => !entry.node)
+          .map(({ path }) => path),
+      )
+    : new Set<string>();
+  const { valid: scanned, pending: scanPending } = !automatic
+    ? { valid: [], pending: [] }
+    : targeted
+      ? await targetedScan(scan, targeted, proved, operation)
+      : await revalidatedScan(scan);
   const allowed = [...children, ...scanned].filter(
     (child) => canonicalRoots.some((root) => inside(child.path, root)) || !isProtectedLocation(child.path),
   );
