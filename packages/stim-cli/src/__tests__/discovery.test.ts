@@ -9,7 +9,7 @@ import {
   utimesSync,
   writeFileSync,
 } from 'node:fs';
-import { lstat, readdir } from 'node:fs/promises';
+import { lstat, readdir, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type Config } from '@stim-cli/core/state';
@@ -17,11 +17,13 @@ import { testContext } from './_context.ts';
 import { collectWorktreeSweep } from '../commands/gc/worktrees.ts';
 import { saveConfig } from '../workspace/config.ts';
 import * as gitCommands from '../workspace/git.ts';
+import * as worktree from '../workspace/worktree.ts';
 import { answered, hungRead } from '../workspace/bounded-read.ts';
 import { discoveredEvidence, scanSourceWrites } from '../workspace/discovered-activity.ts';
 import { discoveredReads } from '../workspace/discovered-reads.ts';
 import {
   discoverCheckouts,
+  targetedCheckouts,
   discoveredOutside,
   isBroadFolder,
   selectDiscovered,
@@ -32,12 +34,24 @@ vi.mock('../workspace/protected-locations.ts', () => ({
   isProtectedLocation: () => false,
 }));
 
+vi.mock('node:fs', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...fs,
+    existsSync: vi.fn<typeof fs.existsSync>(fs.existsSync),
+    realpathSync: Object.assign(vi.fn<typeof fs.realpathSync>(fs.realpathSync), {
+      native: vi.fn<typeof fs.realpathSync.native>(fs.realpathSync.native),
+    }),
+  };
+});
+
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
   return {
     ...actual,
     readdir: vi.fn<typeof actual.readdir>(actual.readdir),
     lstat: vi.fn<typeof actual.lstat>(actual.lstat),
+    realpath: vi.fn<typeof actual.realpath>(actual.realpath),
   };
 });
 
@@ -333,6 +347,127 @@ describe('discoverCheckouts', () => {
     expect((await discoveredOutside(config, [repo])).map(({ path }) => path)).toEqual([elsewhere]);
   });
 
+  it('authorizes only requested automatic siblings and real nested worktrees without listing their parent folders', async () => {
+    vi.stubEnv('STIM_HOME', '');
+    const repo = join(base, 'dev', 'repo');
+    app(repo);
+    git(repo, 'init', '-q', '-b', 'main');
+    git(repo, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init');
+    const sibling = join(base, 'dev', 'sibling');
+    app(sibling);
+    git(sibling, 'init', '-q', '-b', 'main');
+    git(sibling, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init');
+    const linked = join(sibling, '.worktrees', 'feature');
+    git(sibling, 'worktree', 'add', '-q', '-b', 'feature', linked);
+    const nested = join(sibling, 'nested-app');
+    app(nested);
+    const neighbour = join(base, 'dev', 'neighbour');
+    app(neighbour);
+    const config: Config = { projects: { [repo]: {} }, repos: {}, maintenance: { autoDiscover: true } };
+    vi.mocked(readdir).mockClear();
+
+    const found = await targetedCheckouts(config, [repo], [linked, neighbour, nested]);
+
+    expect(found.map(({ path }) => path)).toEqual([neighbour, linked]);
+    const listed = vi.mocked(readdir).mock.calls.map(([path]) => String(path));
+    expect(listed).not.toContain(join(base, 'dev'));
+    expect(listed).not.toContain(join(sibling, '.worktrees'));
+    expect(
+      (await targetedCheckouts({ ...config, maintenance: { autoDiscover: false } }, [repo], [linked, neighbour])).map(
+        ({ path }) => path,
+      ),
+    ).toEqual([]);
+  });
+
+  it('keeps a targeted root when its native scope identity cannot be read', async () => {
+    vi.stubEnv('STIM_HOME', join(base, 'home'));
+    const parent = join(base, 'roots');
+    const target = join(parent, 'target');
+    app(target);
+    vi.mocked(realpath).mockRejectedValueOnce(Object.assign(new Error('denied'), { code: 'EACCES' }));
+    const config: Config = { projects: {}, repos: {}, maintenance: { discoverRoots: [parent] } };
+
+    expect(await targetedCheckouts(config, [], [target])).toEqual([]);
+  });
+
+  it('bounds targeted Git listing without sharing answers through unrelated worktree paths', async () => {
+    vi.stubEnv('STIM_HOME', '');
+    const known = join(base, 'dev', 'known');
+    const target = join(base, 'dev', 'target');
+    app(known);
+    app(target);
+    const listing = vi
+      .spyOn(gitCommands, 'gitAsync')
+      .mockRejectedValue(Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' }));
+    const config: Config = { projects: { [known]: {} }, repos: {}, maintenance: { autoDiscover: true } };
+
+    expect(await targetedCheckouts(config, [known], [target])).toEqual([]);
+
+    expect(listing).toHaveBeenCalled();
+    for (const [, args, options] of listing.mock.calls) {
+      expect(args).toEqual(['worktree', 'list', '--porcelain']);
+      expect(options).toEqual(expect.objectContaining({ timeoutMs: 3_000 }));
+    }
+    listing.mockRestore();
+  });
+
+  it('does not probe an unrelated worktree from a targeted Git listing', async () => {
+    vi.stubEnv('STIM_HOME', '');
+    const known = join(base, 'dev', 'known');
+    const target = join(base, 'dev', 'target');
+    const unrelated = join(base, 'unavailable', 'worktree');
+    app(known);
+    app(target);
+    git(known, 'init', '-q', '-b', 'main');
+    git(known, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init');
+    const paths = [await realpath(known), await realpath(target), unrelated];
+    const output = paths
+      .map((path) => `worktree ${path.split('\\').join('/')}\nHEAD ${'a'.repeat(40)}\nbranch refs/heads/main\n`)
+      .join('\n');
+    const listing = vi.spyOn(gitCommands, 'gitAsync').mockResolvedValue(output);
+    vi.mocked(existsSync).mockClear();
+    vi.mocked(realpathSync.native).mockClear();
+    const config: Config = { projects: { [known]: {} }, repos: {}, maintenance: { autoDiscover: true } };
+
+    expect((await targetedCheckouts(config, [known], [target])).map(({ path }) => path)).toEqual([target]);
+
+    expect(vi.mocked(existsSync).mock.calls.map(([path]) => String(path))).not.toContain(unrelated);
+    expect(vi.mocked(realpathSync.native).mock.calls.map(([path]) => String(path))).not.toContain(unrelated);
+    expect(listing).toHaveBeenCalledTimes(1);
+    listing.mockRestore();
+  });
+
+  it('excludes a marked ancestor covered by a registered descendant across path aliases', async (context) => {
+    vi.stubEnv('STIM_HOME', join(base, 'home'));
+    const folder = join(base, 'apps');
+    const target = join(folder, 'mobile');
+    app(target);
+    mkdirSync(join(target, 'src'));
+    const alias = join(base, 'APPS');
+    if (!existsSync(alias)) context.skip();
+    const marked = join(alias, 'mobile');
+    const registered = join(marked, 'src');
+    const config: Config = { projects: { [registered]: {} }, repos: {}, maintenance: { discoverRoots: [alias] } };
+
+    expect(await discoverCheckouts(config, [registered])).toEqual([]);
+    expect(await targetedCheckouts(config, [registered], [marked])).toEqual([]);
+  });
+
+  it('rejects a saved nested standalone checkout after discoverRoots is broadened', async () => {
+    vi.stubEnv('STIM_HOME', join(base, 'home'));
+    const parent = join(base, 'roots');
+    const team = join(parent, 'team');
+    const nested = join(team, 'app');
+    app(nested);
+    const before: Config = { projects: {}, repos: {}, maintenance: { discoverRoots: [team] } };
+    const source = vi.spyOn(worktree, 'resolveSourceCheckoutAsync');
+    expect((await targetedCheckouts(before, [], [nested])).map(({ path }) => path)).toEqual([nested]);
+
+    expect(await targetedCheckouts({ ...before, maintenance: { discoverRoots: [parent] } }, [], [nested])).toEqual([]);
+    expect(source).not.toHaveBeenCalled();
+    source.mockRestore();
+  });
+
   it('keeps maintenance.discoverRoots with automatic discovery off: its children and their worktrees inside it, nothing beside a known repository', async () => {
     vi.stubEnv('STIM_HOME', '');
     const commit = (cwd: string) => {
@@ -534,6 +669,14 @@ describe('discoverCheckouts', () => {
       truncation: 'none',
     };
     writeFileSync(join(base, 'home', '.stim', 'maintenance', 'discovery-scan.json'), JSON.stringify(scan));
+    vi.mocked(lstat).mockClear();
+    vi.mocked(readdir).mockClear();
+    expect(
+      await targetedCheckouts({ projects: {}, repos: {}, maintenance: { autoDiscover: true } }, [], [docs]),
+    ).toEqual([]);
+    expect(vi.mocked(readdir).mock.calls.map(([path]) => String(path))).not.toContain(join(base, 'home'));
+    expect(vi.mocked(readdir).mock.calls.map(([path]) => String(path))).not.toContain(join(base, 'home', 'projects'));
+    expect(vi.mocked(lstat).mock.calls.map(([path]) => String(path))).not.toContain(join(base, 'gone'));
     expect(
       (await discoverCheckouts({ projects: {}, repos: {}, maintenance: { autoDiscover: true } }, [])).map(
         ({ path, origin, reduceOnly }) => [path, origin, reduceOnly],

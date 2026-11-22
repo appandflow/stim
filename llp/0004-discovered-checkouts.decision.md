@@ -47,6 +47,24 @@ folders and the full scan's finds are not selected. On, discovery is everything 
 rest of this document describes. A scoped `STIM_HOME` behaves as before either
 way: only its own roots, no repository read.
 
+Saved GC marks use these same route rules before a sweep or watch consumes
+an unregistered root (#6087). With no enabled discovery route, they return
+before reading an unregistered root. A required target set limits child checks
+to saved roots and their resolved repository sources. Native identity covers
+both targets and registered roots; returned roots keep their saved key. Git
+listings bypass per-worktree path-cache population, filter before filesystem
+probes and use 3-second command deadlines. Filesystem reads use the bounded
+reader. Scoped homes read no repository, and registered-only mark lists skip
+route work. Mark writing and deletion rechecks share callback realpath
+spelling, because Node's promise API uses native spelling (nodejs/node#37737).
+
+Targeted validation does not call the full scan's ancestor-listing validator.
+A root proved only by a stored scan therefore stays kept until an equivalent
+non-enumerating sentinel proof is implemented in #6093, which remains required
+for the full GC redesign. An ordinary current sibling, explicit-root or Git
+route can still prove that root independently. Normal discovery keeps its
+existing scan safety, enumeration and read policy.
+
 Reason: proving that a checkout Stim never ran in is unused needs process, launcher
 and lock reads from outside, where most of the recent cleanup edge cases came from,
 and the discovery scan is one of the slowest steps of the pressure ladder on a busy

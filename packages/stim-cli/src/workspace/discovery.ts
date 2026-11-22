@@ -1,7 +1,7 @@
-import { readdir } from 'node:fs/promises';
-import { existsSync, lstatSync, readdirSync, statSync } from 'node:fs';
+import { lstat, readdir, realpath as nativeRealpath } from 'node:fs/promises';
+import { existsSync, lstatSync, readdirSync, statSync, type Dirent } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, join, parse, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, parse, resolve, sep } from 'node:path';
 import { isScopedHome, type StimContext } from '@stim-cli/core';
 import { machineSettingValue, readDiscoveryScan, type Config, type DiscoveryScan } from '@stim-cli/core/state';
 import { canonicalPath } from '../commands/gc/paths.ts';
@@ -167,14 +167,32 @@ async function childrenOf(
   origin: DiscoveryChild['origin'],
   from: string,
   operation?: StimContext,
+  targets?: ReadonlySet<string>,
 ): Promise<DiscoveryChild[]> {
-  const entries = await within(folder, () => readdir(folder, { withFileTypes: true }));
+  let entries: Pick<Dirent, 'name' | 'isDirectory' | 'isSymbolicLink'>[] | null;
+  let canonicalFolder = folder;
+  if (targets) {
+    const resolved = await within(folder, () => nativeRealpath(folder));
+    if (resolved === null) return [];
+    canonicalFolder = resolved;
+    entries = [];
+    for (const path of targets) {
+      if (dirname(path) !== canonicalFolder) continue;
+      const info = await within(path, () => lstat(path));
+      if (info)
+        entries.push({
+          name: basename(path),
+          isDirectory: () => info.isDirectory(),
+          isSymbolicLink: () => info.isSymbolicLink(),
+        });
+    }
+  } else entries = await within(folder, () => readdir(folder, { withFileTypes: true }));
   operation?.signal.throwIfAborted();
   const children: DiscoveryChild[] = [];
   for (const entry of entries ?? []) {
     operation?.signal.throwIfAborted();
     if (!entry.isDirectory() || entry.isSymbolicLink() || entry.name.startsWith('.')) continue;
-    const path = canonicalPath(join(folder, entry.name));
+    const path = canonicalPath(join(canonicalFolder, entry.name));
     const listed = (await within(path, () => readdir(path))) !== null;
     const recognised = listed && recognises(path);
     const node = listed && !recognised ? nodeCheckout(path) : undefined;
@@ -199,7 +217,7 @@ function configuredRoots(config: Config | null, env: NodeJS.ProcessEnv): { roots
 }
 
 /** The existing `maintenance.discoverRoots` folders discovery uses: symlinks resolved, too broad ones left out. */
-export function canonicalDiscoverRoots(config: Config | null, env: NodeJS.ProcessEnv): string[] {
+function canonicalDiscoverRoots(config: Config | null, env: NodeJS.ProcessEnv): string[] {
   return configuredRoots(config, env)
     .roots.filter((root) => existsSync(root))
     .map(canonicalPath)
@@ -314,40 +332,143 @@ async function revalidatedScan(scan: DiscoveryScan | null): Promise<{ valid: Dis
   return { valid, pending };
 }
 
+type DiscoveryRepository = { entries: { path: string }[]; main: string; node?: true };
+
+interface TargetedDiscovery {
+  paths: Set<string>;
+  identities: Map<string, string>;
+  roots: string[];
+  known: string[];
+  read: (root: string) => Promise<DiscoveryRepository | null>;
+}
+
+async function scopeIdentity(path: string, identities: Map<string, string>): Promise<string | null> {
+  const previous = identities.get(path);
+  if (previous !== undefined) return previous;
+  const identity = await within(path, () => nativeRealpath(path));
+  if (identity !== null) {
+    identities.set(path, identity);
+    identities.set(identity, identity);
+  }
+  return identity;
+}
+
+async function readRepository(
+  root: string,
+  operation?: StimContext,
+  targets?: ReadonlySet<string>,
+): Promise<DiscoveryRepository | null> {
+  operation?.signal.throwIfAborted();
+  const { entries, ...source } = await resolveSourceCheckoutAsync(root, {
+    env: operation?.env ?? {},
+    signal: operation?.signal,
+    declareFor: operation,
+    cache: targets ? false : undefined,
+    timeoutMs: targets ? READ_TIMEOUT_MS : undefined,
+  });
+  if ('refusal' in source) return null;
+  return {
+    entries: entries.filter(
+      (entry) =>
+        !entry.bare &&
+        !entry.prunable &&
+        (targets
+          ? entry.path === source.path || targets.has(entry.path) || inside(root, entry.path)
+          : existsSync(entry.path)),
+    ),
+    main: source.path,
+  };
+}
+
+export async function targetedCheckouts(
+  config: Config | null,
+  known: readonly string[],
+  roots: readonly string[],
+  operation?: StimContext,
+): Promise<DiscoveredCheckout[]> {
+  if (!roots.length) return [];
+  const scoped = isScopedHome(operation?.env);
+  const env = operation?.env ?? {};
+  const automatic = !scoped && autoDiscoverEnabled(config, env);
+  const configured = canonicalDiscoverRoots(config, env);
+  if (!automatic && !configured.length) return [];
+  const paths = new Set<string>();
+  const identities = new Map<string, string>();
+  const repositories = new Map<string, DiscoveryRepository | null>();
+  const read = async (root: string) => {
+    if (repositories.has(root)) return repositories.get(root) ?? null;
+    const repository = await readRepository(root, operation, paths);
+    const main = repository ? await scopeIdentity(repository.main, identities) : null;
+    const current = repository && main !== null ? Object.assign({}, repository, { main }) : null;
+    repositories.set(root, current);
+    if (current) repositories.set(current.main, current);
+    return current;
+  };
+  const selection: TargetedDiscovery = { paths, identities, roots: [], known: [], read };
+  for (const folder of configured) {
+    const identity = await scopeIdentity(folder, selection.identities);
+    if (identity !== null) selection.roots.push(identity);
+  }
+  if (!automatic && !selection.roots.length) return [];
+  const wanted = new Map<string, string>();
+  for (const root of roots) {
+    operation?.signal.throwIfAborted();
+    const identity = await scopeIdentity(root, selection.identities);
+    if (identity === null || (!automatic && !selection.roots.some((folder) => inside(identity, folder)))) continue;
+    wanted.set(identity, root);
+    selection.paths.add(identity);
+    selection.paths.add(root);
+  }
+  if (!wanted.size) return [];
+  for (const root of new Set([...known, ...Object.keys(config?.projects ?? {})])) {
+    const identity = await scopeIdentity(root, selection.identities);
+    if (identity === null) return [];
+    selection.known.push(identity);
+  }
+  if (!scoped)
+    for (const root of wanted.keys()) {
+      const repository = await read(root);
+      if (repository) selection.paths.add(repository.main);
+    }
+  const found = (await computeDiscovered(config, known, readDiscoveryScan(), operation, undefined, selection)).found;
+  return found.flatMap((checkout) => {
+    const original = wanted.get(checkout.path);
+    return !checkout.node && original !== undefined ? [Object.assign({}, checkout, { path: original })] : [];
+  });
+}
+
 async function computeDiscovered(
   config: Config | null,
   known: readonly string[],
   scan: DiscoveryScan | null,
   operation?: StimContext,
   automaticOverride?: boolean,
+  targeted?: TargetedDiscovery,
 ): Promise<Discovery> {
   const env = operation?.env ?? {};
   const scoped = isScopedHome(operation?.env);
   const automatic = !scoped && (automaticOverride ?? autoDiscoverEnabled(config, env));
-  const canonicalRoots = canonicalDiscoverRoots(config, env);
-  const repositories: { entries: { path: string }[]; main: string; node?: true }[] = [];
+  const canonicalRoots = targeted?.roots ?? canonicalDiscoverRoots(config, env);
+  const targets = targeted?.paths;
+  const repositories: DiscoveryRepository[] = [];
   const folders = new Map<string, string>();
   const children: DiscoveryChild[] = [];
-  const options = { env, signal: operation?.signal, declareFor: operation };
-  const read = async (root: string) => {
-    operation?.signal.throwIfAborted();
-    const { entries, ...source } = await resolveSourceCheckoutAsync(root, options);
-    if ('refusal' in source) return null;
-    return {
-      entries: entries.filter((entry) => !entry.bare && !entry.prunable && existsSync(entry.path)),
-      main: source.path,
-    };
-  };
+  const read = targeted?.read ?? ((root: string) => readRepository(root, operation));
   if (automatic) {
     const seen = new Set<string>();
     for (const root of Object.keys(config?.projects ?? {}).filter(isAbsolute)) {
-      if (!existsSync(root)) continue;
-      const repository = await read(root);
+      const current = targeted ? targeted.identities.get(root) : root;
+      if (!current || (!targeted && !existsSync(root))) continue;
+      const repository = await read(current);
       if (!repository) continue;
-      const holder = matchWorktreeEntry(repository.entries, root);
+      const holder = targeted
+        ? repository.entries
+            .filter((entry) => inside(current, entry.path))
+            .toSorted((a, b) => b.path.length - a.path.length)[0]
+        : matchWorktreeEntry(repository.entries, root);
       for (const folder of [
-        dirname(canonicalPath(holder?.path ?? repository.main)),
-        dirname(canonicalPath(repository.main)),
+        dirname(targeted ? (holder?.path ?? repository.main) : canonicalPath(holder?.path ?? repository.main)),
+        dirname(targeted ? repository.main : canonicalPath(repository.main)),
       ])
         if (!isBroadFolder(folder)) folders.set(folder, repository.main);
       if (!seen.has(repository.main)) {
@@ -356,18 +477,21 @@ async function computeDiscovered(
       }
     }
   }
-  for (const [folder, from] of folders) children.push(...(await childrenOf(folder, 'sibling', from, operation)));
-  for (const root of canonicalRoots) children.push(...(await childrenOf(root, 'root', root, operation)));
+  for (const [folder, from] of folders)
+    children.push(...(await childrenOf(folder, 'sibling', from, operation, targets)));
+  for (const root of canonicalRoots) children.push(...(await childrenOf(root, 'root', root, operation, targets)));
   if (!scoped) {
     const seen = new Set(repositories.map(({ main }) => main));
-    const reached = new Set(repositories.flatMap(({ entries }) => entries.map(({ path }) => canonicalPath(path))));
+    const reached = new Set(
+      repositories.flatMap(({ entries }) => entries.map(({ path }) => (targeted ? path : canonicalPath(path)))),
+    );
     const byKind = (node?: NodeCheckout) => children.filter((child) => (node ? child.node === node : child.recognised));
     for (const child of [...byKind(), ...byKind('source'), ...byKind('linked')]) {
       if (reached.has(child.path)) continue;
       const repository = await read(child.path);
       if (!repository || seen.has(repository.main)) continue;
       seen.add(repository.main);
-      for (const { path } of repository.entries) reached.add(canonicalPath(path));
+      for (const { path } of repository.entries) reached.add(targeted ? path : canonicalPath(path));
       repositories.push(child.node ? { ...repository, node: true } : repository);
     }
   }
@@ -376,11 +500,16 @@ async function computeDiscovered(
   for (const { entries, main, node } of repositories) {
     const kind = node ? { node: 'linked' as const } : {};
     for (const entry of entries) {
-      const path = canonicalPath(entry.path);
-      if (path === canonicalPath(main)) continue;
+      if (targets && !targets.has(entry.path)) continue;
+      const path = targeted ? entry.path : canonicalPath(entry.path);
+      if (path === (targeted ? main : canonicalPath(main))) continue;
       if (
         automatic
-          ? worktreeInScope(path, { main: canonicalPath(main), folders: [...folders.keys()], roots: canonicalRoots })
+          ? worktreeInScope(path, {
+              main: targeted ? main : canonicalPath(main),
+              folders: [...folders.keys()],
+              roots: canonicalRoots,
+            })
           : canonicalRoots.some((root) => inside(path, root))
       )
         worktrees.push({ path, from: main, ...kind });
@@ -389,11 +518,13 @@ async function computeDiscovered(
       else if (!node) outside.push({ path, from: main });
     }
   }
-  const { valid: scanned, pending: scanPending } = automatic ? await revalidatedScan(scan) : { valid: [], pending: [] };
+  // @ref LLP 0004#automatic-discovery-is-off-by-default -- scan-only marks stay until targeted sentinel proof (#6093)
+  const { valid: scanned, pending: scanPending } =
+    automatic && !targeted ? await revalidatedScan(scan) : { valid: [], pending: [] };
   const allowed = [...children, ...scanned].filter(
     (child) => canonicalRoots.some((root) => inside(child.path, root)) || !isProtectedLocation(child.path),
   );
-  const knownRoots = known.map(canonicalPath);
+  const knownRoots = targeted?.known ?? known.map(canonicalPath);
   const everything = selectDiscovered({ known: knownRoots, worktrees, children: allowed });
   // @ref LLP 0004#plain-node-checkouts -- a scan find not yet revalidated keeps the Node worktree that holds it
   // @ref LLP 0004#automatic-discovery-is-off-by-default -- off, every recorded scan find keeps it
