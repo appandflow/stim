@@ -292,7 +292,7 @@ async function startLosingStimd(
   root: string,
   home: string,
   beforeStart?: (exited: Promise<unknown>) => void,
-): Promise<void> {
+): Promise<string[]> {
   const bin = join(scratch, 'bin');
   mkdirSync(bin, { recursive: true });
   for (const tool of ['launchctl', 'systemd-run']) {
@@ -313,6 +313,7 @@ async function startLosingStimd(
     stdio: ['pipe', 'ignore', 'ignore'],
   });
   const exited = once(daemon, 'exit');
+  const output: string[] = [];
   const stimdPid = () => {
     try {
       return Number(JSON.parse(readFileSync(join(home, 'run', 'stimd.json'), 'utf8')).pid);
@@ -323,7 +324,7 @@ async function startLosingStimd(
   try {
     await vi.waitFor(() => expect(stimdPid()).toBe(daemon.pid), { timeout: 15_000 });
     await expect(
-      createStim({ projectRoot: root, home, env }).start({
+      createStim({ projectRoot: root, home, env, onProgress: ({ message }) => output.push(message) }).start({
         waitSeconds: 10,
         beforeStart: () => {
           daemon.kill('SIGKILL');
@@ -336,6 +337,7 @@ async function startLosingStimd(
     });
     await exited;
     expect(stimdPid()).toBe(daemon.pid);
+    return output;
   } finally {
     if (daemon.exitCode === null && daemon.signalCode === null) daemon.kill('SIGKILL');
     const successor = stimdPid();
@@ -368,7 +370,10 @@ test.skipIf(process.platform === 'win32')(
   'start that finds an external Metro after its stimd went away rejects instead of reporting it running',
   async () => {
     const item = await metroFixture('lost-external', 999999904);
-    await startLosingStimd(item.root, item.home, (exited) => useExistingMetros([item], exited));
+    const output = await startLosingStimd(item.root, item.home, (exited) => useExistingMetros([item], exited));
+    expect(output.join('\n')).toContain(
+      `A dev server for this project already answers on port ${item.port}, started outside Stim.`,
+    );
   },
   45_000,
 );
