@@ -130,6 +130,7 @@ export async function runMaintenanceAtLevel({
     try {
       early = await planCargoTargetsAtPressure({
         settings,
+        recordKeeps: act,
         pinned: maintenancePinnedReader(operation),
         now,
         signal: operation?.signal,
@@ -241,7 +242,11 @@ export async function runMaintenanceAtLevel({
       .filter((entry) => path === entry.path || path.startsWith(`${entry.path}/`))
       .toSorted((a, b) => b.path.length - a.path.length)[0]?.path;
   for (const checkout of found) {
-    const mine = actions.filter((action) => ownerOf(action.target) === checkout.path);
+    const mine = actions.filter(
+      (action) =>
+        ownerOf(action.kind === 'delete-build-outputs' ? (action.workspace ?? action.target) : action.target) ===
+        checkout.path,
+    );
     const taken = mine.some((action) => action.outcome === 'would' || action.outcome === 'done');
     const kept =
       taken || idleMs <= 0 || !existsSync(checkout.path)

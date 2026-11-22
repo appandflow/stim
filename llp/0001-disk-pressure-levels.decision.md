@@ -601,6 +601,32 @@ filesystem calls inside the output checks (including regenerable-directory
 metadata checks and the Metro package-name read) remain noninterruptible, so
 this is an asynchronous-read deadline, not a hard bound on the whole mark.
 
+## Saved candidate order
+
+Rung and substep order stay unchanged. Within the stopped-output family,
+individual saved paths go in descending cached-byte order, with kept paths
+last. A known zero comes before an unknown size; ties and unknowns retain
+input order. The bytes remain approximate yield hints, not exact space freed
+or permission to delete. Ordering starts no size walk. Per-path output
+actions name the saved folder in `target` and the checkout in `workspace`;
+other action families and grouped workspace maintenance actions keep their
+existing target meaning.
+
+A candidate actually evaluated and refused gains a keep reason on its exact
+kind and path until its checkout is marked again. Pressure clearing and a
+healthy volume exclude candidates from that pass without a keep hint. The
+synchronous keep update preserves the current mark generation, dirty time
+and siblings. Mark-based read-only reports use the same saved order and current refusal
+evidence without writing keep hints. Explicit force dry-runs keep their fresh,
+grouped preview semantics.
+
+Cargo pressure planning uses its existing saved-size order at every
+entrypoint, with individual keep hints last. A cached measurement from before
+an acting pressure trim attempt stays unknown until a newer measurement
+exists. Sorting preserves the original action objects and their private
+saved-mark proof. A newly read mark replaces old keep hints; the existing
+per-candidate safety, lock and volume rechecks still decide whether to act.
+
 ## Each rung frees only the volumes under pressure
 
 While disk sets the level, a rung deletes an item only when the path it will
