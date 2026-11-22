@@ -36,9 +36,10 @@ import { planRung6, planWorktrees } from '../stimd/passes/sweep.ts';
 import { planHistory } from '../stimd/passes/records.ts';
 import { planCacheEmptying } from '../commands/gc/caches.ts';
 import { isInsideWorkspaces } from '../commands/gc/workspaces.ts';
-import { DEFAULT_WORKTREE_IDLE_DAYS } from '../commands/gc/worktrees.ts';
+import { DEFAULT_WORKTREE_IDLE_DAYS, listedRoots } from '../commands/gc/worktrees.ts';
 import { causesOf, dormantAction, rungDecision, rungsFrom, type Cause, type Rung } from '../policy/pressure.ts';
-import type { Config, ProjectRecord } from '../workspace/config.ts';
+import { loadConfig, type Config, type ProjectRecord } from '../workspace/config.ts';
+import { targetedCheckouts } from '../workspace/discovery.ts';
 import { runBootedParkedPass } from './booted-parked.ts';
 import { LADDER_CLOCK_SLOTS } from './disk-owner.ts';
 import { measureDisk } from './measure.ts';
@@ -53,6 +54,7 @@ import {
   surveyToolCaches,
 } from '../stimd/passes/unowned.ts';
 import { rankDependencies, rankSourceDependencies, selectDependencies, type RankedDependency } from './dependencies.ts';
+import { savedDependencyReports } from './dependency-reports.ts';
 import { idleOutputs, PRESSURE_IDLE_MS, writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
 import {
   clearStoppedOutputs,
@@ -361,6 +363,18 @@ async function idleOutputsRung(context: RungContext): Promise<void> {
       if (context.act) await context.between?.();
       context.stop?.throwIfAborted();
       context.operation?.signal.throwIfAborted();
+      if (context.act && context.between) {
+        const config = loadConfig();
+        // @ref LLP 0001#one-task-runs-every-gc-deletion -- a rewritten registry alias without current discovery proof stays kept
+        if (
+          !config ||
+          (!Object.hasOwn(config.projects, mark.root) &&
+            !(await targetedCheckouts(config, listedRoots(), [mark.root], context.operation)).some(
+              ({ path }) => path === mark.root,
+            ))
+        )
+          continue;
+      }
       if (!(await context.stillShort())) return;
       if (context.act && context.between && (!context.force || context.force.measured))
         context.short = context.volume === undefined ? await shortDevices(context, 'high') : new Set([context.volume]);
@@ -838,6 +852,20 @@ function reportDependency(context: RungContext, dependency: RankedDependency, wh
  * copy-on-write clone below the threshold is reported as kept.
  */
 async function dependenciesRung(context: RungContext): Promise<void> {
+  if (context.act || !context.force) {
+    const critical = context.force && !context.force.measured ? null : await shortDevices(context, 'critical');
+    const reports = await savedDependencyReports(context.config, {
+      devices: context.devices,
+      simsFailed: context.simsFailed,
+      level: context.level === 'critical' ? 'critical' : 'high',
+      protectedRoot: context.protectedRoot,
+      operation: context.operation,
+      onVolume: (path, source) => (source ? onShortVolume([path], critical) : onShort(context, [path])),
+    });
+    for (const report of reports)
+      recordAction(context, { ...report, kind: 'delete-dependencies', outcome: 'kept', bytes: 0 }, context.why);
+    return;
+  }
   // @ref LLP 0001#rungs-5-7-and-8-only-report -- a pressure pass deletes no dependencies or worktrees
   const idleMs = context.level === 'critical' ? PRESSURE_IDLE_MS : DEPENDENCIES_HIGH_IDLE_MS;
   const idle = await idleStageCandidates(context.config, context, idleMs);

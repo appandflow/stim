@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   rmSync,
   statSync,
@@ -1290,6 +1291,58 @@ describe('the pressure ladder', () => {
     },
   );
 
+  test('a resumed saved output keeps a checkout whose only discovery route was removed', async () => {
+    resetExecutor();
+    const root = join(projects, 'discovered');
+    const output = join(root, 'android', 'app', 'build');
+    mkdirSync(output, { recursive: true });
+    writeFileSync(join(root, 'android', 'build.gradle'), '');
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+    writeFileSync(join(root, '.gitignore'), 'android/app/build/\n');
+    for (const args of [
+      ['init', '-q', '-b', 'main'],
+      ['add', '-A'],
+      ['commit', '-q', '-m', 'init'],
+    ])
+      execFileSync('git', ['-C', root, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], {
+        env: { ...process.env, GIT_AUTHOR_DATE: '2026-01-01T00:00:00Z', GIT_COMMITTER_DATE: '2026-01-01T00:00:00Z' },
+      });
+    const at = new Date(Date.now() - DAY_MS);
+    const age = (directory: string) => {
+      for (const entry of readdirSync(directory, { withFileTypes: true })) {
+        const path = join(directory, entry.name);
+        if (entry.isDirectory()) age(path);
+        utimesSync(path, at, at);
+      }
+      utimesSync(directory, at, at);
+    };
+    age(root);
+    const operation = testContext();
+    const config = input().config;
+    config.maintenance = { autoDiscover: false, discoverRoots: [projects] };
+    saveConfig(config);
+    await marks.markWriter(config)({ path: root, at: Date.now(), lastActivityAt: Date.now() - DAY_MS, kept: null });
+    expect((await marks.outputMarks(config, operation)).map((mark) => mark.root)).toContain(root);
+    const before = readFileSync(gcMarkFile(root), 'utf8');
+    let handoffs = 0;
+    await runLadder(
+      {
+        ...input(true, async () => pressure('critical')),
+        operation,
+        fromRung: 1,
+        lastRung: 1,
+        between: async () => {
+          handoffs++;
+          saveConfig({ ...config, maintenance: { autoDiscover: false, discoverRoots: [] } });
+        },
+      },
+      pressure('critical'),
+    );
+    expect(handoffs).toBe(1);
+    expect(existsSync(output)).toBe(true);
+    expect(readFileSync(gcMarkFile(root), 'utf8')).toBe(before);
+  });
+
   test('critical output sweep keeps a marked nested checkout after discoverRoots is broadened', async () => {
     const { root } = workspace('team/app', 5 * MINUTE_MS, 'Shutdown');
     const output = join(workspaceDir(root), 'derived-data');
@@ -1482,21 +1535,26 @@ describe('the pressure ladder', () => {
         mkdirSync(root, { recursive: true });
         writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
       }
-      execFileSync('git', ['-C', known, 'init', '-q', '-b', 'main']);
-      execFileSync('git', [
-        '-C',
-        known,
-        '-c',
-        'user.name=t',
-        '-c',
-        'user.email=t@t',
-        'commit',
-        '-q',
-        '--allow-empty',
-        '-m',
-        'init',
-      ]);
-      mkdirSync(join(saved, 'android', 'app', 'build'), { recursive: true });
+      writeFileSync(join(saved, '.gitignore'), 'android/app/build/\n');
+      for (const root of [known, saved]) {
+        execFileSync('git', ['-C', root, 'init', '-q', '-b', 'main']);
+        execFileSync('git', [
+          '-C',
+          root,
+          '-c',
+          'user.name=t',
+          '-c',
+          'user.email=t@t',
+          'commit',
+          '-q',
+          '--allow-empty',
+          '-m',
+          'init',
+        ]);
+      }
+      const output = join(saved, 'android', 'app', 'build');
+      mkdirSync(output, { recursive: true });
+      writeFileSync(join(output, 'app.bin'), 'regenerable build artifact');
       const native = await nativeRealpath(saved);
       if (saved === native) context.skip();
       const config = { projects: { [known]: {} }, repos: {}, maintenance: { autoDiscover: true } };
@@ -1504,7 +1562,24 @@ describe('the pressure ladder', () => {
       await marks.markWriter(config)({ path: saved, at: Date.now(), lastActivityAt: null, kept: null });
 
       expect((await marks.outputMarks(config, testContext())).map(({ root }) => root)).toEqual([saved]);
+      expect(readGcMark(saved)?.candidates).toContainEqual(expect.objectContaining({ kind: 'outputs', path: output }));
       expect(saved).not.toBe(native);
+      let handoffs = 0;
+      const { actions } = await runLadder(
+        {
+          ...input(true, async () => pressure('critical')),
+          operation: testContext(),
+          fromRung: 1,
+          lastRung: 1,
+          force: { level: 'critical', why: 'saved Windows scope' },
+          between: async () => {
+            handoffs++;
+          },
+        },
+        pressure('critical'),
+      );
+      expect(handoffs).toBe(1);
+      expect(actions).toContainEqual(expect.objectContaining({ rung: 1, target: saved }));
     },
   );
 
@@ -2489,11 +2564,11 @@ describe('rung 5 in stim gc', () => {
     recordWorkspaceUse(root, new Date(Date.now() - 2 * HOUR_MS));
   }
 
-  const ladder = (level: 'high' | 'critical', protectedRoot?: string) =>
+  const ladder = (level: 'high' | 'critical', protectedRoot?: string, act = true) =>
     runLadder(
       {
         config: loadConfig()!,
-        act: true,
+        act,
         log,
         devices: [],
         simsFailed: false,
@@ -2506,7 +2581,21 @@ describe('rung 5 in stim gc', () => {
       pressure(level),
     );
 
-  test('it reports nothing of an idle linked worktree while the running processes cannot be listed, as on win32', async () => {
+  const observe = () => {
+    const config = loadConfig();
+    if (!config) throw new Error('fixture config missing');
+    return runDormantDependencies({
+      config,
+      act: false,
+      log,
+      devices: [],
+      simsFailed: false,
+      marks: true,
+      operation: testContext(),
+    });
+  };
+
+  test('it reports unknown inventory without discovering an unmarked worktree when process reads fail', async () => {
     const listed = getExecutor();
     setExecutor({
       ...listed,
@@ -2518,8 +2607,26 @@ describe('rung 5 in stim gc', () => {
     const { actions } = await ladder('high');
     expect(existsSync(join(idle, 'node_modules'))).toBe(true);
     expect(existsSync(join(idle, 'ios', 'Pods'))).toBe(true);
-    expect(actions.filter((action) => action.rung === 5)).toEqual([]);
+    expect(actions.filter((action) => action.rung === 5)).toEqual([
+      expect.objectContaining({
+        target: idle,
+        outcome: 'kept',
+        detail: expect.stringContaining('inventory is unknown'),
+      }),
+    ]);
   });
+
+  test.skipIf(process.platform === 'win32')(
+    'a read-only dry run retains the discovery preview without publishing marks',
+    async () => {
+      const { idle } = linkedWorktrees(['idle']);
+      register(idle);
+      const { actions } = await ladder('high', undefined, false);
+      expect(actions.filter(({ rung, target }) => rung === 5 && target.startsWith(`${idle}${sep}`))).toHaveLength(2);
+      expect(readGcMark(idle)).toBeNull();
+      expect(existsSync(join(idle, 'node_modules'))).toBe(true);
+    },
+  );
 
   describe.skipIf(process.platform === 'win32')(
     'with the running processes listed (skipped on win32, where Stim cannot list them)',
@@ -2534,8 +2641,9 @@ describe('rung 5 in stim gc', () => {
         register(recent);
         register(idle);
         recordWorkspaceUse(recent, new Date(Date.now() - MINUTE_MS));
+        await observe();
         const targets = reports((await ladder('high')).actions).map(([target]) => String(target));
-        expect(targets.filter((target) => target.startsWith(`${recent}/`))).toEqual([]);
+        expect(targets.filter((target) => target.startsWith(`${recent}/`))).toHaveLength(2);
         expect(targets.filter((target) => target.startsWith(`${idle}/`))).toHaveLength(2);
       });
 
@@ -2556,6 +2664,7 @@ describe('rung 5 in stim gc', () => {
         measured(join(clone, 'ios', 'Pods'), REAL_BYTES_THRESHOLD);
         measured(join(reinstalled, 'node_modules'), 2 * REAL_BYTES_THRESHOLD);
         measured(join(reinstalled, 'ios', 'Pods'), 3 * REAL_BYTES_THRESHOLD, 'an older install');
+        await observe();
 
         const rung5 = reports((await ladder('high')).actions);
 
@@ -2577,9 +2686,14 @@ describe('rung 5 in stim gc', () => {
         register(realpathSync.native(join(projects, 'repo')));
         register(own);
         register(serving, { metroPort: 59125, supervisor: { pid: process.pid, port: 59999 } });
+        await observe();
         const { actions } = await ladder('high', own);
         for (const root of [stranger, own, serving]) expect(existsSync(join(root, 'node_modules'))).toBe(true);
-        expect(actions.filter((action) => action.rung === 5)).toEqual([]);
+        const reported = actions.filter((action) => action.rung === 5);
+        expect(reported.some(({ target }) => target.startsWith(`${stranger}${sep}`))).toBe(false);
+        expect(
+          reported.every(({ outcome, detail }) => outcome === 'kept' && !detail.startsWith('report only: deleting')),
+        ).toBe(true);
       });
     },
   );
