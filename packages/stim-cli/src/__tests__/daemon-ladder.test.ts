@@ -20,7 +20,6 @@ import {
   gcMarkFile,
   readGcMark,
   IDLE_STOP_KEY,
-  ladderRunClaims,
   readDormantStage,
   readIdleStage,
   readJsonObject,
@@ -44,7 +43,6 @@ import * as bootedParked from '../daemon/booted-parked.ts';
 import * as idlePass from '../daemon/idle.ts';
 import * as stages from '../daemon/stages.ts';
 import * as marks from '../daemon/marks.ts';
-import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { dormantCandidates, pendingDormant, runDormantPass } from '../daemon/stages.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { parkSim, readParked } from '../devices/sim-pool.ts';
@@ -65,7 +63,7 @@ import * as archive from '../archive.ts';
 import { testContext } from './_context.ts';
 import * as settings from '../workspace/settings.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
-import { LADDER_CLOCK_SLOTS } from '../daemon/disk-owner.ts';
+import { acquireDisk, releaseDisk, requestGcItem, LADDER, LADDER_CLOCK_SLOTS } from '../daemon/disk-owner.ts';
 import * as daemonMeasure from '../daemon/measure.ts';
 
 const MINUTE_MS = 60_000;
@@ -1358,6 +1356,31 @@ describe('the pressure ladder', () => {
     vi.setSystemTime(startedAt);
   });
 
+  test('headroom expiry during cache sizing never starts eviction', async () => {
+    caches('kept-key');
+    vi.stubEnv('STIM_CACHES_BUILD_CACHE_MAX_GB', '12');
+    const device = statSync(home).dev;
+    vi.spyOn(daemonMeasure, 'measureDisk').mockResolvedValue([{ volume: '/', freeMb: 100 * 1024, device }]);
+    const stop = new AbortController();
+    const prune = vi.spyOn(cacheModule, 'pruneCache');
+    const size = vi.spyOn(fsUtil, 'measuredDirectorySizeAsync').mockImplementation(async () => {
+      stop.abort();
+      return 20 * 1024 ** 3;
+    });
+    await expect(
+      runLadderToFree({
+        operation: testContext({ env: { ...process.env, CI: undefined, STIM_DAEMON: undefined } }),
+        signal: stop.signal,
+        device,
+        freeMb: 200 * 1024,
+        protectedRoot: join(projects, 'build'),
+      }),
+    ).resolves.toBeUndefined();
+    expect(size).toHaveBeenCalled();
+    expect(prune).not.toHaveBeenCalled();
+    expect(existsSync(join(buildCache(), 'ios', 'unused'))).toBe(true);
+  });
+
   test('a build headroom run goes on to the Metro cache after the build cache could not be sized and was kept', async () => {
     caches('kept-key');
     vi.stubEnv('STIM_CACHES_BUILD_CACHE_MAX_GB', '12');
@@ -1840,12 +1863,13 @@ describe('the ladder a build runs for its headroom', () => {
     return disk;
   }
 
-  const run = (targetGb: number, device = DEVICE) =>
+  const run = (targetGb: number, device = DEVICE, act?: boolean) =>
     runLadderToFree({
       operation: testContext({ env: { ...process.env, CI: undefined, STIM_DAEMON: undefined } }),
       signal: new AbortController().signal,
       device,
       freeMb: targetGb * 1024,
+      act,
       protectedRoot: join(projects, 'build'),
     });
 
@@ -1883,18 +1907,56 @@ describe('the ladder a build runs for its headroom', () => {
     expect(deleted).toEqual(['PARKED-0']);
   });
 
-  test('does nothing while another process holds the ladder claim', async () => {
+  test('a headroom read that outlives its deadline releases the owner before the filesystem answers', async () => {
+    vi.useFakeTimers();
+    let finish!: (disk: Awaited<ReturnType<typeof daemonMeasure.measureDisk>>) => void;
+    vi.spyOn(daemonMeasure, 'measureDisk').mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const asked = requestGcItem(() => run(24), LADDER);
+    const next = vi.fn<() => Promise<boolean>>(async () => true);
+    const waiting = requestGcItem(next);
+    await vi.advanceTimersByTimeAsync(60_000);
+    await asked.result;
+    await expect(waiting.result).resolves.toBe(true);
+    expect(next).toHaveBeenCalledOnce();
+    finish([]);
+    await Promise.resolve();
+  });
+
+  test.each(['report', 'off'] as const)(
+    'a queued headroom turn respects a change to %s mode before grant',
+    async (mode) => {
+      parked(2);
+      freeOnBuildDevice(10, 1);
+      await acquireDisk(LADDER);
+      const asked = requestGcItem(() => run(24, DEVICE, true), LADDER);
+      const config = loadConfig();
+      if (!config) throw new Error('missing config');
+      saveConfig({ ...config, daemon: { ...config.daemon, mode } });
+      releaseDisk();
+      await asked.result;
+      expect(deleted).toEqual([]);
+    },
+  );
+
+  test('a queued headroom turn remeasures prior cleanup and starts no duplicate deletion when its target is met', async () => {
     parked(2);
-    const disk = freeOnBuildDevice(10, 1);
-    const held = tryAcquireClaim({ root: ladderRunClaims(), mode: 'exclusive', label: 'pressure ladder' }).acquired;
-    if (!held) throw new Error('claim not acquired');
-    try {
-      await run(24);
-    } finally {
-      releaseClaim(held);
-    }
-    expect(deleted).toEqual([]);
+    let freeMb = 10 * 1024;
+    const disk = vi
+      .spyOn(daemonMeasure, 'measureDisk')
+      .mockImplementation(async () => [{ volume: '/', freeMb, device: DEVICE }]);
+    await acquireDisk(LADDER);
+    const asked = requestGcItem(() => run(24), LADDER);
     expect(disk).not.toHaveBeenCalled();
+    freeMb = 30 * 1024;
+    releaseDisk();
+    await asked.result;
+    expect(deleted).toEqual([]);
+    expect(disk).toHaveBeenCalled();
   });
 });
 

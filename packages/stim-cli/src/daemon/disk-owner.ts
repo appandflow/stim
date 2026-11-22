@@ -76,10 +76,13 @@ export function releaseDisk(): void {
   next?.grant();
 }
 
-/** Runs one explicit item as its own turn, after pressure and before the lane; leaving cancels only this item. */
-export function requestGcItem<T>(work: (signal: AbortSignal) => Promise<T>): { result: Promise<T>; leave(): void } {
+/** Runs one dedicated cleanup unit at `rank`, an explicit item by default; leaving cancels only this unit. */
+export function requestGcItem<T>(
+  work: (signal: AbortSignal) => Promise<T>,
+  rank: number = ITEM,
+): { result: Promise<T>; leave(): void } {
   const stop = new AbortController();
-  const ticket = queueForDisk(ITEM);
+  const ticket = queueForDisk(rank);
   let started = false;
   let cancelWait!: () => void;
   const cancelled = new Promise<never>((_resolve, reject) => {

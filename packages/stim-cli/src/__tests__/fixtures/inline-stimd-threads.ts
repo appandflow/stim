@@ -1,8 +1,8 @@
 import { processContext } from '../../cli-operation.ts';
 import { measureDependencyTrees } from '../../daemon/dependencies.ts';
-import { createMaintenanceLane, type MaintenanceLane } from '../../daemon/passes.ts';
+import { createMaintenanceLane, runLadderToFree, type MaintenanceLane } from '../../daemon/passes.ts';
 import type { ThreadTable } from '../../stimd/threads.ts';
-import { requestGcPass, requestGcItem } from '../../daemon/disk-owner.ts';
+import { LADDER, requestGcPass, requestGcItem } from '../../daemon/disk-owner.ts';
 import { runGcPass } from '../../commands/gc.ts';
 import { runGcItem } from '../../stimd/gc-item.ts';
 
@@ -25,6 +25,14 @@ export function createThreadTable(): ThreadTable {
     },
     settle() {},
     async close() {},
+    headroom: ({ headroom, cwd, act }) => {
+      const asked = requestGcItem(async (signal) => {
+        await runLadderToFree({ ...headroom, operation: processContext(cwd, controller.signal), signal, act });
+        return { headroom: true as const };
+      }, LADDER);
+      const timer = setTimeout(asked.leave, Math.max(0, headroom.deadline - Date.now()));
+      return { result: asked.result.finally(() => clearTimeout(timer)), leave: asked.leave };
+    },
     item: ({ item, cwd }, output) =>
       requestGcItem((signal) =>
         runGcItem(item, { ...processContext(cwd, AbortSignal.any([signal, controller.signal])), cwd, output }),

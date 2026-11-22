@@ -12,6 +12,7 @@ import type { ServeOptions } from '../stimd/main.ts';
 import type { GcPassRequest } from '../commands/gc.ts';
 import type { GcItemRequest, GcItemResult } from '../commands/gc/item.ts';
 import type { GcPassReply } from './disk-owner.ts';
+import type { HeadroomRequest, HeadroomReply } from './passes.ts';
 import type { LevelRunAction } from '../stimd/passes/level-run.ts';
 import { keepReserve, releaseReserve } from '../disk-reserve.ts';
 import { fileLeaseIo, releaseRunLease } from '../engine/device-lease.ts';
@@ -2108,13 +2109,21 @@ export function runGcThroughStimd(
   onAction: (action: LevelRunAction) => void,
 ): Promise<GcPassReply>;
 export function runGcThroughStimd(request: GcItemRequest, operation: StimContext | undefined): Promise<GcItemResult>;
+export function runGcThroughStimd(
+  request: HeadroomRequest,
+  operation: StimContext,
+  signal: AbortSignal,
+): Promise<HeadroomReply>;
 export async function runGcThroughStimd(
-  request: GcPassRequest | GcItemRequest,
+  request: GcPassRequest | GcItemRequest | HeadroomRequest,
   operation: StimContext | undefined,
-  onAction?: (action: LevelRunAction) => void,
-): Promise<GcPassReply | GcItemResult> {
-  const signal = operation?.signal;
+  actionOrSignal?: ((action: LevelRunAction) => void) | AbortSignal,
+): Promise<GcPassReply | GcItemResult | HeadroomReply> {
+  const onAction = typeof actionOrSignal === 'function' ? actionOrSignal : undefined;
+  const signal = typeof actionOrSignal === 'function' ? operation?.signal : (actionOrSignal ?? operation?.signal);
+  const headroom = 'headroom' in request;
   const env = operation?.env ?? process.env;
+  if (headroom && daemonMode(env) === 'off') return { headroom: true };
   const refused = (): Error => {
     const why = otherBuildRefusal() ?? {
       code: 'STIM_DAEMON_UNAVAILABLE',
@@ -2123,7 +2132,7 @@ export async function runGcThroughStimd(
     };
     return Object.assign(new Error(why.message), why);
   };
-  const released = releaseReserve();
+  const released = !headroom && releaseReserve();
   try {
     signal?.throwIfAborted();
     const started = await ensureStimd(
@@ -2131,10 +2140,10 @@ export async function runGcThroughStimd(
       process.platform,
       false,
       undefined,
-      'stim gc',
+      headroom ? 'build headroom' : 'stim gc',
       true,
       undefined,
-      true,
+      !headroom,
       operation,
     );
     signal?.throwIfAborted();
@@ -2146,10 +2155,10 @@ export async function runGcThroughStimd(
     throw error;
   }
   // @ref LLP 0001#every-gc-joins-a-pass-under-way -- after transmission only the pass restores the reserve
-  const terminal = new Promise<GcPassReply | GcItemResult>((resolve, reject) => {
+  const terminal = new Promise<GcPassReply | GcItemResult | HeadroomReply>((resolve, reject) => {
     let settled = false;
     let written = false;
-    const finish = (error: Error | null, reply?: GcPassReply | GcItemResult) => {
+    const finish = (error: Error | null, reply?: GcPassReply | GcItemResult | HeadroomReply) => {
       if (settled) return;
       settled = true;
       signal?.removeEventListener('abort', abort);
@@ -2193,6 +2202,10 @@ export async function runGcThroughStimd(
           });
           return;
         }
+        if (message.op === 'gc.done' && headroom && message.headroom === true) {
+          finish(null, { headroom: true });
+          return;
+        }
         if (message.op === 'gc.done' && isJsonObject(message.run)) {
           finish(null, message as unknown as GcPassReply);
           return;
@@ -2210,6 +2223,11 @@ export async function runGcThroughStimd(
     );
     socket.once('connect', () => (written = true));
     const abort = () => {
+      if (headroom) {
+        socket.destroy();
+        finish(signal?.reason instanceof Error ? signal.reason : new Error('Headroom was cancelled.'));
+        return;
+      }
       if ('item' in request) {
         const cancel = () => socket.write(`${JSON.stringify({ op: 'gc.cancel' })}\n`);
         if (socket.connecting) socket.once('connect', cancel);

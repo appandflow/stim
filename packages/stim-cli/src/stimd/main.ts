@@ -18,7 +18,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { connect, createServer, type Server, type Socket } from 'node:net';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { LOG_ROTATE_BYTES } from '@stim-cli/core';
@@ -110,7 +110,7 @@ import { ownedHere } from '../daemon/idle.ts';
 import { removeStaleHomeJobs } from '../daemon/launchd-jobs.ts';
 import { measureTick, type TickMeasurement } from '../daemon/measure.ts';
 import { listTestWaiting, listWaiting } from '../engine/wait-queue.ts';
-import { runHomePasses, type HomePasses, type LadderPass } from '../daemon/passes.ts';
+import { runHomePasses, type HomePasses, type LadderPass, type HeadroomRequest } from '../daemon/passes.ts';
 import { reclaimForBootWaiters } from '../daemon/reclaim.ts';
 import { bootedParkedPending } from '../daemon/booted-parked.ts';
 import { pendingDormant } from '../daemon/stages.ts';
@@ -456,6 +456,28 @@ function handleNetStop(
   const why = 'the net thread `stim serve` started exited';
   if (attached) end(why, 'warn');
   else shutdown(why, 'warn');
+}
+
+function headroomOf(value: unknown): HeadroomRequest['headroom'] | null {
+  if (
+    !isJsonObject(value) ||
+    !Number.isSafeInteger(value.device) ||
+    Number(value.device) < 0 ||
+    typeof value.freeMb !== 'number' ||
+    !Number.isFinite(value.freeMb) ||
+    value.freeMb < 0 ||
+    typeof value.protectedRoot !== 'string' ||
+    !isAbsolute(value.protectedRoot) ||
+    typeof value.deadline !== 'number' ||
+    !Number.isFinite(value.deadline)
+  )
+    return null;
+  return {
+    device: Number(value.device),
+    freeMb: value.freeMb,
+    protectedRoot: value.protectedRoot,
+    deadline: value.deadline,
+  };
 }
 
 const GC_LEVELS: readonly PressureLevel[] = ['normal', 'high', 'critical'];
@@ -1414,26 +1436,39 @@ async function runStimdInner(
       );
       return;
     }
+    const headroom = headroomOf(params.headroom);
+    if ('headroom' in params && (!headroom || 'item' in params)) {
+      socket.end(
+        `${JSON.stringify({ op: 'error', code: 'STIM_BAD_ARG', message: 'Invalid build headroom request.' })}\n`,
+      );
+      return;
+    }
+    if (headroom && effectiveMode() === 'off') {
+      socket.end(`${JSON.stringify({ op: 'gc.done', headroom: true })}\n`);
+      return;
+    }
     const item = validGcItem(params.item) ? params.item : undefined;
     // @ref LLP 0001#every-gc-joins-a-pass-under-way -- every acting gc runs on the passes thread
     ops.set(socket, 'pinned');
-    opCommands.set(socket, item ? 'deleteGarbageItem' : 'stim gc');
+    opCommands.set(socket, headroom ? 'build headroom' : item ? 'deleteGarbageItem' : 'stim gc');
     const cwd = typeof params.cwd === 'string' ? params.cwd : process.cwd();
-    const asked = item
-      ? threads.item({ item, client: 'desktop', cwd }, (stream, text) => reply({ op: 'gc.output', stream, text }))
-      : threads.gc(
-          {
-            ...(level ? { level } : {}),
-            client: params.client === 'desktop' ? 'desktop' : 'manual',
-            ...(params.walkUnknown === false ? { walkUnknown: false } : {}),
-            cwd,
-          },
-          (action) => reply({ op: 'gc.action', action }),
-        );
-    if (item) itemCancels.set(socket, asked.leave);
+    const asked = headroom
+      ? threads.headroom({ headroom, cwd, act: effectiveMode() === 'on' })
+      : item
+        ? threads.item({ item, client: 'desktop', cwd }, (stream, text) => reply({ op: 'gc.output', stream, text }))
+        : threads.gc(
+            {
+              ...(level ? { level } : {}),
+              client: params.client === 'desktop' ? 'desktop' : 'manual',
+              ...(params.walkUnknown === false ? { walkUnknown: false } : {}),
+              cwd,
+            },
+            (action) => reply({ op: 'gc.action', action }),
+          );
+    if (item || headroom) itemCancels.set(socket, asked.leave);
     // @ref LLP 0001#every-gc-joins-a-pass-under-way -- a detached request leaves its pass running
     socket.once('close', () => {
-      if (item || !gcDetached.has(socket)) asked.leave();
+      if (item || headroom || !gcDetached.has(socket)) asked.leave();
       if (effectiveMode() === 'off') requestTick();
     });
     const settled = asked.result.then(

@@ -302,8 +302,9 @@ so none ever runs beside another.
   ladder rank, so it takes the turn at the lane's next unit boundary; a pass
   at normal, or one whose level is still to be measured, ranks after the lane
   and waits for the lane to end its run. A request that raises a waiting pass
-  above normal moves it to the ladder rank. The hard-floor rank is kept for
-  when a build's headroom pass asks the queue for its pass.
+  above normal moves it to the ladder rank. A build's headroom request also takes the ladder rank, rechecking its own
+  volume target when it takes the turn (LLP 0006). The hard-floor rank stays
+  ahead of both.
 - The maintenance pass gives up the turn once it deletes nothing more, before
   its discovery scan and census.
 - When the passes thread ends, a disk pass it had not answered fails as
@@ -318,8 +319,8 @@ so none ever runs beside another.
 The fingerprint precompute deletes nothing and runs beside a disk pass. The
 idle stage's output deletion and the dormant stage's device and archive work
 stay in the tick, inside flows that also stop dev servers and devices and
-hold workspace claims. A build's headroom ladder runs in its own process and keeps the claims that guard
-it today. The API's `deleteGarbageItem` sends an explicit item to the same queue,
+hold workspace claims. A build's headroom ladder takes its own high-rank turn there and rechecks the
+build device's target before acting (LLP 0006). Workspace and Cargo claims stay. The API's `deleteGarbageItem` sends an explicit item to the same queue,
 after pressure passes and before the lane's next unit. Every item has its own
 turn and result, even when two requests name the same item; none joins a pass.
 It starts stimd under `off` and acts under `report`, as an explicit request.

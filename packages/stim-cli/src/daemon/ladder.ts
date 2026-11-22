@@ -243,6 +243,7 @@ async function run(
     );
     return;
   }
+  context.stop?.throwIfAborted();
   context.operation?.signal.throwIfAborted();
   let outcome: ActionOutcome;
   try {
@@ -469,14 +470,16 @@ async function trim(
           : ((await measuredDirectorySizeAsync(cache.dir, { timeoutMs: SIZE_TIMEOUT_MS })) ?? 0),
       detail: wouldDetail(context),
     };
+  const protect = await cacheEntryProtectionFor(context.config, context.operation);
+  context.stop?.throwIfAborted();
   const result = await pruneCache(cache, {
     olderThanDays: recentDays,
     byMtime: true,
-    protect: await cacheEntryProtectionFor(context.config, context.operation),
+    protect,
     evictBytes,
     // @ref LLP 0001#pressure-acts-without-waiting-for-measurement-or-load -- at critical no entry is sized
     entrySizes: Number.isFinite(evictBytes) ? 'bounded' : 'none',
-    ...(context.operation ? { signal: context.operation.signal } : {}),
+    ...(context.stop || context.operation ? { signal: context.stop ?? context.operation?.signal } : {}),
   });
   if (result.skipped) return { outcome: 'kept', bytes: 0, detail: result.skipped };
   const kept = result.protectedEntries ? `; ${result.protectedEntries} protected entries kept` : '';
