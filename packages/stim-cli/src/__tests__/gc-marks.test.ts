@@ -687,12 +687,14 @@ describe('gc marks written by the lane', () => {
     });
     await observe(inventory(initial));
     const dirtyAt = new Date(initial + 1).toISOString();
-    writeFileSync(gcMarkFile(root), JSON.stringify({ ...readGcMark(root), dirtyAt }));
+    const cargoVia = [join(root, 'apps', 'mobile')];
+    writeFileSync(gcMarkFile(root), JSON.stringify({ ...readGcMark(root), dirtyAt, cargoVia }));
     const outputAt = Date.now();
     await write({ path: root, at: outputAt, lastActivityAt: null, kept: null });
     expect(readGcMark(root)).toMatchObject({
       markedAt: new Date(outputAt).toISOString(),
       dirtyAt,
+      cargoVia,
       dependencies: { markedAt: new Date(initial).toISOString() },
     });
 
@@ -700,8 +702,18 @@ describe('gc marks written by the lane', () => {
 
     expect(readGcMark(root)).toMatchObject({
       markedAt: new Date(outputAt).toISOString(),
+      cargoVia,
       dependencies: { markedAt: expect.not.stringMatching(new Date(initial).toISOString()) },
     });
+    const dependencyAt = readGcMark(root)?.dependencies?.markedAt;
+    await markWriter(
+      config,
+      undefined,
+      false,
+      new Map([[root, { roots: [], via: [] }]]),
+    )({ path: root, at: outputAt + 1, lastActivityAt: null, kept: null });
+    expect(readGcMark(root)?.cargoVia).toBeUndefined();
+    expect(readGcMark(root)?.dependencies?.markedAt).toBe(dependencyAt);
   });
 
   it('omits malformed optional dependency evidence without invalidating existing output marks', async () => {
@@ -812,6 +824,7 @@ describe('gc marks written by the lane', () => {
           child.kill();
           await once(child, 'close');
         }
+        vi.mocked(readRunningProcessesAsync).mockReset();
       }
     },
     20_000,

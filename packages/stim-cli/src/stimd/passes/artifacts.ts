@@ -69,6 +69,8 @@ export interface ArtifactWorktree {
   linked: boolean;
   locked: boolean;
   keys: string[];
+  /** Recognized discovered apps whose current Git worktree is this holder. */
+  discoveredApps?: string[];
   /** Why a running agent session keeps the worktree, read when the worktrees were listed. */
   agents?: string[];
   reduceOnly: boolean;
@@ -158,7 +160,8 @@ export async function artifactCheckoutsAsync(
 ): Promise<ArtifactWorktree[]> {
   const found = new Map<string, ArtifactWorktree>();
   const discovered = supplied ?? (await discoverCheckouts(loadConfig(), listedRoots(), operation));
-  const known = new Set([...listedRoots(), ...discovered.map(({ path }) => path)]);
+  const discoveredRoots = new Set(discovered.map(({ path }) => path));
+  const known = new Set([...listedRoots(), ...discoveredRoots]);
   const reduceOnly = new Set(discovered.filter((entry) => entry.reduceOnly).map(({ path }) => path));
   for (const root of (await candidateRootsAsync(operation, discovered)).filter((entry) => known.has(entry))) {
     signal.throwIfAborted();
@@ -168,7 +171,20 @@ export async function artifactCheckoutsAsync(
       declareFor: operation,
     });
     const entry = artifactWorktree(root, entries, reduceOnly.has(root), source);
-    if (entry) found.set(entry.path, found.get(entry.path)?.reduceOnly ? { ...entry, reduceOnly: true } : entry);
+    if (entry) {
+      const previous = found.get(entry.path);
+      const via = [
+        ...new Set([
+          ...(previous?.discoveredApps ?? []),
+          ...(discoveredRoots.has(root) && root !== entry.path ? [root] : []),
+        ]),
+      ];
+      found.set(entry.path, {
+        ...entry,
+        ...(previous?.reduceOnly ? { reduceOnly: true } : {}),
+        ...(via.length ? { discoveredApps: via } : {}),
+      });
+    }
   }
   return [...found.values()];
 }

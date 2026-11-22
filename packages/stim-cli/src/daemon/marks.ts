@@ -27,7 +27,7 @@ import {
 } from '../workspace/discovery.ts';
 import { cargoTargetDirsAsync } from '../workspace/regenerable-dirs.ts';
 import { appRoots, artifactCheckoutsAsync, type ArtifactWorktree } from '../stimd/passes/artifacts.ts';
-import { registeredCargoHolders } from './cargo-marks.ts';
+import { discoveredCargoCandidates, discoveredCargoHolders, registeredCargoHolders } from './cargo-marks.ts';
 import { listedRoots } from '../commands/gc/worktrees.ts';
 
 /** The mark writer of one walk, which resolves the Metro cache root once for every checkout it marks. */
@@ -35,7 +35,7 @@ export function markWriter(
   config: Config,
   signal?: AbortSignal,
   dueOnly = false,
-  cargoRoots?: ReadonlyMap<string, readonly string[]>,
+  cargoRoots?: ReadonlyMap<string, { roots: readonly string[]; via: readonly string[] }>,
 ): (reading: CheckoutReading) => Promise<void> {
   const metroCache = metroCacheRoot();
   return async (reading) => {
@@ -63,7 +63,7 @@ async function writeMark(
   metroCache: string,
   expiresAt: number,
   dueOnly: boolean,
-  cargoRoots: readonly string[] = appRoots({ path: reading.path, keys: [] }, 'build'),
+  cargoScope?: { roots: readonly string[]; via: readonly string[] },
 ): Promise<void> {
   const root = await answered(reading.path, () => realpathAsync(reading.path), 3_000, signal);
   if (dueOnly && !markDue(readGcMark(root), reading.at, dormantAfterMs(config))) return;
@@ -74,7 +74,7 @@ async function writeMark(
     metroCache,
   });
   if (Date.now() >= expiresAt) throw new Unanswered('mark read deadline');
-  for (const base of cargoRoots) {
+  for (const base of cargoScope?.roots ?? appRoots({ path: reading.path, keys: [] }, 'build')) {
     for (const target of await cargoTargetDirsAsync(base, signal)) {
       if (!paths.includes(target)) paths.push(target);
       if (!targets.includes(target)) targets.push(target);
@@ -102,6 +102,7 @@ async function writeMark(
     dirtyAt &&
     (Date.parse(dirtyAt) > reading.at ||
       (previous?.dependencies && Date.parse(dirtyAt) > Date.parse(previous.dependencies.markedAt)));
+  const cargoVia = cargoScope?.via ?? previous?.cargoVia;
   const mark: GcMark = {
     ...previous,
     v: GC_MARK_VERSION,
@@ -110,8 +111,10 @@ async function writeMark(
     markedAt,
     lastActivityAt: reading.lastActivityAt === null ? null : new Date(reading.lastActivityAt).toISOString(),
     candidates,
+    ...(cargoVia?.length ? { cargoVia: [...cargoVia] } : {}),
   };
   if (!retainDirty) delete mark.dirtyAt;
+  if (!cargoVia?.length) delete mark.cargoVia;
   if (previous && previous.device !== device) delete mark.dependencies;
   signal?.throwIfAborted();
   if (Date.now() >= expiresAt) throw new Unanswered('mark read deadline');
@@ -208,8 +211,8 @@ async function authorizedMarks(config: Config, marks: GcMark[], operation?: Stim
       )
     ).map(({ path }) => path),
   );
-  // @ref LLP 0001#the-lane-marks-what-each-checkout-could-free -- discovered-only nested app holders stay without current holder proof
-  const holders = await registeredCargoHolders(
+  // @ref LLP 0001#the-lane-marks-what-each-checkout-could-free -- nested-app holder authority requires a current exact route and Git holder
+  const cargoHolders = await registeredCargoHolders(
     config,
     unregistered
       .filter(
@@ -220,11 +223,29 @@ async function authorizedMarks(config: Config, marks: GcMark[], operation?: Stim
       .map(({ root }) => root),
     operation,
   );
-  return marks.flatMap((mark) => {
-    if (registered.has(mark.root) || allowed.has(mark.root)) return [mark];
-    if (!holders.has(mark.root)) return [];
-    return [{ ...mark, candidates: mark.candidates.filter(({ kind }) => kind === 'cargo-target') }];
-  });
+  const discoveredHolders = await discoveredCargoHolders(
+    config,
+    unregistered.filter(
+      (mark) =>
+        !allowed.has(mark.root) &&
+        !cargoHolders.has(mark.root) &&
+        mark.candidates.some(({ kind }) => kind === 'cargo-target'),
+    ),
+    operation,
+  );
+  const selected: GcMark[] = [];
+  for (const mark of marks) {
+    if (registered.has(mark.root) || allowed.has(mark.root)) selected.push(mark);
+    else if (cargoHolders.has(mark.root))
+      selected.push({ ...mark, candidates: mark.candidates.filter(({ kind }) => kind === 'cargo-target') });
+    else if (discoveredHolders.has(mark.root)) {
+      // @ref LLP 0001#the-lane-marks-what-each-checkout-could-free -- Cargo-only route evidence does not authorize dependency reports
+      const cargoOnly = { ...mark, candidates: await discoveredCargoCandidates(mark, operation) };
+      delete cargoOnly.dependencies;
+      selected.push(cargoOnly);
+    }
+  }
+  return selected;
 }
 
 export async function refreshOutputMarks(config: Config, reading: DeviceReading): Promise<GcMark[]> {
@@ -287,14 +308,16 @@ async function writeCargoHolderMarks(
   between: () => Promise<void>,
   dueOnly: boolean,
 ): Promise<void> {
-  const roots = new Map(holders.map((holder) => [holder.path, appRoots(holder, 'build')]));
+  const roots = new Map(
+    holders.map((holder) => [holder.path, { roots: appRoots(holder, 'build'), via: holder.discoveredApps ?? [] }]),
+  );
   const write = markWriter(config, reading.operation?.signal, dueOnly, roots);
   for (const holder of holders) {
     await between();
     reading.operation?.signal.throwIfAborted();
     try {
       let cargo = false;
-      for (const base of roots.get(holder.path) ?? [])
+      for (const base of roots.get(holder.path)?.roots ?? [])
         if ((await cargoTargetDirsAsync(base, reading.operation?.signal)).length) {
           cargo = true;
           break;

@@ -1,6 +1,6 @@
+import { isAbsolute } from 'node:path';
 import { isJsonObject, readJsonObject } from './json-file.ts';
 import { gcMarkFile } from './paths.ts';
-import { isAbsolute } from 'node:path';
 
 export const GC_MARK_VERSION = 2;
 
@@ -43,6 +43,8 @@ export interface GcMark {
   candidates: GcMarkCandidate[];
   /** Missing or unreadable dependency evidence is unknown, not an empty inventory. */
   dependencies?: GcDependencyObservation;
+  /** Recognized nested app paths that led normal discovery to this Cargo holder. */
+  cargoVia?: string[];
 }
 
 export interface GcStaleMarkEvidence {
@@ -131,6 +133,9 @@ export function parseGcMark(root: string, entry: unknown): GcMark | null {
     lastActivityAt,
     candidates: parsed,
     ...(dependencies === undefined ? {} : { dependencies }),
+    ...(Array.isArray(entry.cargoVia) && entry.cargoVia.every((path) => typeof path === 'string' && isAbsolute(path))
+      ? { cargoVia: entry.cargoVia }
+      : {}),
   };
 }
 
