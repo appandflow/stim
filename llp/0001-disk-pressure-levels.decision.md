@@ -529,6 +529,15 @@ also holds the newest activity the walk read, and the walk reads at
 - A mark is rebuildable: an unknown version or a file that does not parse
   reads as absent and the next walk rewrites it, so deleting the folder is
   safe. It is written with a temporary file and a rename.
+- A successful owned Git worktree removal retires that root's validated saved
+  marks, including the authorized original removal spelling and currently
+  locked registry spellings whose native identity equals that exact Git root,
+  captured before removal. Nested and unrelated
+  roots are not included. Retirement runs before any later branch cleanup. Unlink is best
+  effort; source-only reclamation, failed removal and uncertain missing or
+  offline roots do not retire marks. An in-flight mark writer can republish
+  this rebuildable record after retirement; its later sweep still requires
+  current scope, root and device proof. Retirement adds no lock or tombstone.
 - A `dirtyAt` newer than the start of the checkout's reads stays, so a
   change seen while the walk read the checkout is not lost.
 - Output rung 1 sweeps the recorded output paths, without a new candidate
@@ -565,8 +574,16 @@ also holds the newest activity the walk read, and the walk reads at
   to 10 minutes, never sooner. Unknown activity uses the 10-minute interval.
   These constants implement the approved generation policy; this selector is
   brought forward so high-pressure refresh does not invent a temporary TTL.
-  The normal lane still walks hourly and publishes due marks; a normal
-  mark-first sweep scheduler is pending the generation/lane integration.
+  The normal lane still walks hourly and publishes due marks. At normal
+  pressure, a separate tracked worker request refreshes due known or cached
+  census roots without discovery. Each complete root read holds one rank-6
+  read-only disk ticket and has a three-second budget; it changes no reserve.
+  High/headroom, critical and hard-floor work cancel only that mark operation
+  and wait for its cleanup before taking ownership. An unanswered root leaves
+  one in-memory position so the next batch starts after it. Ordinary lane and explicit
+  item work wait for the bounded root. Off mode and shutdown cancel the request.
+  Fresh same-config history evidence preserves a Cargo-only holder's previously
+  authorized nested targets and provenance; stale or changed evidence is dropped.
 - The passes worker's existing history batch also observes mark freshness.
   Mark files are read once through bounded asynchronous reads and the same
   parser and scope policy the sweep uses. Invalid legacy or torn records
@@ -575,8 +592,8 @@ also holds the newest activity the walk read, and the walk reads at
   The owning daemon saves a small aggregate and at most five positively scoped
   overdue roots in its existing snapshot. `stim doctor` warns for those marks
   only when they were more than twice the effective generation interval old at
-  the observation time. The effective interval is at least hourly, matching
-  the normal lane writer cadence; partial coverage omits totals. Definite
+  the observation time. The interval follows the due-only writer policy in on
+  mode; report mode retains its hourly normal-walk floor. Partial coverage omits totals. Definite
   exclusions when discovery has no routes do not make coverage partial.
   Other unproved routes remain conservative and omit totals. An observation older
   than the daemon's existing three-interval late-tick limit is unavailable.

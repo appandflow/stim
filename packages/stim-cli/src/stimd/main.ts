@@ -115,6 +115,7 @@ import { ownedHere } from '../daemon/idle.ts';
 import { removeStaleHomeJobs } from '../daemon/launchd-jobs.ts';
 import { measureTick, type TickMeasurement } from '../daemon/measure.ts';
 import { listTestWaiting, listWaiting } from '../engine/wait-queue.ts';
+import type { HolderMarkScope } from '../daemon/marks.ts';
 import { runHomePasses, type HomePasses, type LadderPass, type HeadroomRequest } from '../daemon/passes.ts';
 import { reclaimForBootWaiters } from '../daemon/reclaim.ts';
 import { bootedParkedPending } from '../daemon/booted-parked.ts';
@@ -1272,24 +1273,72 @@ async function runStimdInner(
   });
   let historyRootsWork: Promise<void> | undefined;
   let markObservation: GcMarkHealth | undefined;
+  let markHistory: { config: string; known: string[]; holders: HolderMarkScope[]; at: number } | null = null;
+  let markRequest: ReturnType<typeof threads.marks> | null = null;
+  const cancelMarks = () => markRequest?.leave();
+  const refreshMarks = ({ config, pressure, measured }: HomePasses) => {
+    if (pressure.level !== 'normal' || effectiveMode() !== 'on') {
+      cancelMarks();
+      return;
+    }
+    if (!config || markRequest || !maintenanceAllowed()) return;
+    const priorMarks = markHistory;
+    const holders = priorMarks?.config === JSON.stringify(config) ? priorMarks.holders : [];
+    const request = threads.marks({
+      config,
+      known: priorMarks?.known ?? [],
+      holders,
+      at: priorMarks?.at ?? 0,
+      intervalMs: interval,
+      devices: measured.devices,
+      simsFailed: measured.sims === null,
+    });
+    markRequest = request;
+    const work = request.result
+      .catch((error: unknown) => {
+        if (isUnverifiedCleanup(error) && !contain(error))
+          failBackground(error, 'mark refresh cleanup could not be verified');
+        else log('debug', 'gc_mark_refresh_failed', errorText(error));
+      })
+      .finally(() => {
+        gcRequests.delete(work);
+        markRequest = null;
+        if (effectiveMode() === 'off') requestTick();
+        void checkEngine();
+      });
+    gcRequests.add(work);
+  };
   const refreshHistory = (config: Config | null) => {
     if (!config || historyRootsWork) return;
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
       markObservation = { at: Date.now(), state: 'unavailable', stale: [] };
+      markHistory = null;
     }, 3000);
     historyRootsWork = threads
-      .history(config)
-      .then(({ roots, marks }) => {
+      .history(config, effectiveMode())
+      .then(({ roots, marks, holders }) => {
         clearTimeout(timer);
-        if (!timedOut) markObservation = marks;
+        if (!timedOut) {
+          markObservation = marks;
+          markHistory =
+            roots === null
+              ? null
+              : {
+                  config: JSON.stringify(config),
+                  known: roots.map(({ root }) => root),
+                  holders: holders ?? [],
+                  at: marks.at,
+                };
+        }
         return maintenanceAllowed() && roots !== null ? filesystemHistory.update(roots) : undefined;
       })
       .catch((error: unknown) => {
         if (isUnverifiedCleanup(error) && !contain(error))
           failBackground(error, 'filesystem history cleanup could not be verified');
         markObservation = { at: Date.now(), state: 'unavailable', stale: [] };
+        markHistory = null;
         if (maintenanceAllowed()) log('debug', 'gc_history_refresh_failed', errorText(error));
       })
       .finally(() => {
@@ -2370,6 +2419,7 @@ async function runStimdInner(
     }
     void metroTick(mode, log).catch((error: unknown) => log('warn', 'metro_tick_failed', String(error)));
     if (mode === 'off') {
+      cancelMarks();
       await logs.ownedSync();
       if (hasOffWork()) {
         for (const socket of tickReplies.splice(0)) socket.destroy();
@@ -2542,7 +2592,10 @@ async function runStimdInner(
       }
       emptyTicks = 0;
     }
-    if (maintenanceAllowed()) lane.start(ticked, mode === 'on');
+    if (maintenanceAllowed()) {
+      lane.start(ticked, mode === 'on');
+      refreshMarks(ticked);
+    }
   }
   try {
     await attachedEnding;
