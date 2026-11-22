@@ -1094,7 +1094,18 @@ async function runStimdInner(
     log,
     () => reportUnverified(),
   );
-  const threads = createThreadTable(log, (error) => failBackground(error, 'a thread cleanup could not be verified'));
+  const threads = createThreadTable(
+    log,
+    (error) => failBackground(error, 'a thread cleanup could not be verified'),
+    (cleanup) => {
+      if (!claim) return;
+      try {
+        claim = updateClaimDetails(claim, { ...claim.details, cleanup }) ?? claim;
+      } catch (error) {
+        log('warn', 'daemon_queue_report_failed', error instanceof Error ? error.message : String(error));
+      }
+    },
+  );
   let backgroundFailure: unknown;
   const cleanups = createCleanupWatch(log);
   const reportUnverified = () => {

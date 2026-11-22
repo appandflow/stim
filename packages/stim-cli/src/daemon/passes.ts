@@ -16,7 +16,6 @@ import { createNdjsonWriter } from '../ndjson.ts';
 import { forgetGitReads, openGitReads } from '../workspace/git-reads.ts';
 import { loadConfig, type Config } from '../workspace/config.ts';
 import { answered } from '../workspace/bounded-read.ts';
-import { requestDaemonTick, stimdRefused } from './client.ts';
 import { runBootedParkedPass } from './booted-parked.ts';
 import { runDormantDependencies } from './dependencies.ts';
 import { createFingerprintPrecompute, type PrecomputeInput } from './fingerprint-precompute.ts';
@@ -473,7 +472,6 @@ export function createMaintenanceLane(
           holding = false;
         };
         let dependenciesMs: number;
-        let skipped: string | void;
         try {
           taken.push(
             ...(await runDormantDependencies({
@@ -497,7 +495,7 @@ export function createMaintenanceLane(
             });
           const done: LevelRunAction[] = [];
           // @ref LLP 0001#every-gc-joins-a-pass-under-way -- a gc at normal joins the lane's acting maintenance pass
-          skipped = await watchedStep(log, 'maintenance', () =>
+          await watchedStep(log, 'maintenance', () =>
             act
               ? joinablePass(
                   'normal',
@@ -517,14 +515,13 @@ export function createMaintenanceLane(
         }
         const maintenanceMs = lap();
         const tookMs = Math.round(performance.now() - started);
-        log('debug', 'daemon_maintenance', `maintenance ${tookMs}ms${skipped ? `; skipped: ${skipped}` : ''}`, {
+        log('debug', 'daemon_maintenance', `maintenance ${tookMs}ms`, {
           tookMs,
           phases: { fingerprintMs, dependenciesMs, maintenanceMs },
           eventLoopDelay: {
             maxMs: Math.round(loopDelay.max / 1e6),
             p99Ms: Math.round(loopDelay.percentile(99) / 1e6),
           },
-          ...(skipped ? { skipped } : {}),
         });
       })()
         .catch((error: unknown) => {
@@ -852,22 +849,6 @@ export async function runDormantReduction({
   } finally {
     writer?.close();
   }
-}
-
-/**
- * Runs the pressure ladder now: one daemon tick when a daemon runs, else, unless a stimd of another build refused this
- * process and runs its own, the ladder in this process, which never takes `protectedRoot`.
- */
-export async function runLadderNow(
-  env: NodeJS.ProcessEnv,
-  signal?: AbortSignal,
-  protectedRoot?: string,
-): Promise<void> {
-  if ((await requestDaemonTick(env, signal)) || stimdRefused()) return;
-  signal?.throwIfAborted();
-  try {
-    await runCommandLadder('command', env, protectedRoot);
-  } catch {}
 }
 
 export interface HeadroomRequest {

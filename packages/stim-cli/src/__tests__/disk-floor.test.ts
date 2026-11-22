@@ -1,12 +1,11 @@
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { daemonClaimRoot, daemonNdjsonFile, readDormantStage } from '@stim-cli/core/state';
+import { daemonClaimRoot, readDormantStage } from '@stim-cli/core/state';
 import * as budget from '../stimd/passes/budget.ts';
 import * as client from '../daemon/client.ts';
 import { beforeCommand } from '../daemon/client.ts';
 import { diskFloorGate } from '../daemon/floor.ts';
-import { runLadderNow } from '../daemon/passes.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceLogsDir } from '../workspace/paths.ts';
@@ -86,41 +85,19 @@ describe('with no daemon holding the home, as on Windows', () => {
     writeFileSync(join(workspaceLogsDir(root), 'device.ndjson'), '{}\n');
   });
 
-  test('under the hard floor the gate runs the ladder in the command from rung 2', async () => {
-    free = 4 * GB;
-    const tick = vi.spyOn(client, 'requestDaemonTick').mockResolvedValue(false);
-    await expect(gate({ ...process.env, STIM_DAEMON: 'on' })).resolves.toMatchObject({
-      refusal: { code: 'STIM_LOW_DISK' },
-    });
-    expect(tick).toHaveBeenCalledOnce();
-    expect(readDormantStage(readWorkspaceState(root))).toMatchObject({ dormantDays: 1 });
-    const rungs = readFileSync(daemonNdjsonFile(), 'utf8')
-      .trim()
-      .split('\n')
-      .map((line) => JSON.parse(line))
-      .filter((entry) => typeof entry.rung === 'number');
-    expect(rungs.length).toBeGreaterThan(0);
-    expect(rungs.every((entry) => entry.src === 'command' && entry.rung >= 2)).toBe(true);
-  });
-
-  test.each([
-    { level: 'high', freeGb: 10 },
-    { level: 'critical', freeGb: 5.5 },
-  ])("at $level pressure a command's ladder never takes its own workspace", async ({ freeGb }) => {
-    free = freeGb * GB;
-    writeFileSync(join(root, 'package.json'), '{}');
-    const other = join(home, 'other');
-    mkdirSync(other);
-    ensureWorkspaceStorage(other);
-    upsertProject(other, {});
-    recordWorkspaceUse(other, new Date(Date.now() - 4 * 24 * 60 * 60_000));
-    mkdirSync(workspaceLogsDir(other), { recursive: true });
-    writeFileSync(join(workspaceLogsDir(other), 'device.ndjson'), '{}\n');
-    vi.spyOn(client, 'requestDaemonTick').mockResolvedValue(false);
-    await runLadderNow({ ...process.env, STIM_DAEMON: 'on', HOME: home, USERPROFILE: home }, undefined, root);
-    expect(readDormantStage(readWorkspaceState(root))).toBeNull();
-    expect(readDormantStage(readWorkspaceState(other))).toMatchObject({ dormantDays: 1 });
-  });
+  test.each(['on', 'report', 'off'])(
+    'an unavailable daemon in %s mode never makes the gate run local cleanup',
+    async (mode) => {
+      free = 4 * GB;
+      const tick = vi.spyOn(client, 'requestDaemonTick').mockResolvedValue(false);
+      await expect(gate({ ...process.env, STIM_DAEMON: mode })).resolves.toMatchObject({
+        refusal: { code: 'STIM_LOW_DISK' },
+      });
+      expect(tick).toHaveBeenCalledOnce();
+      expect(readDormantStage(readWorkspaceState(root))).toBeNull();
+      expect(readFileSync(join(workspaceLogsDir(root), 'device.ndjson'), 'utf8')).toBe('{}\n');
+    },
+  );
 
   test('a command that creates running state records its use before any pass runs', async () => {
     writeFileSync(join(root, 'package.json'), '{}');

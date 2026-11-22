@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { rotatedLogPath } from '@stim-cli/core';
 import {
-  maintenanceRunClaims,
+  daemonClaimRoot,
   maintenanceDir,
   maintenanceStateFile,
   gcLogFile,
@@ -16,7 +16,8 @@ import { plan } from '../stimd/passes/plan.ts';
 import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
 import { maintenanceLogger } from '../stimd/passes/log.ts';
 import { maintenanceStatus, maintenanceLine } from '../stimd/passes/status.ts';
-import { tryAcquireClaim, releaseClaim } from '../ownership-claim.ts';
+import { goneClaimOwner, plantClaim } from './_factories.ts';
+import { tryAcquireClaim, releaseClaim, updateClaimDetails } from '../ownership-claim.ts';
 import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
 
 let home: string;
@@ -214,25 +215,30 @@ test('maintenance records about a removed workspace do not recreate its director
   expect(existsSync(workspaceDir(removed))).toBe(false);
 });
 
-test('status does not infer a live pass from a check stamp', () => {
+test('maintenance status follows only the live owning daemon queue, before any full snapshot', () => {
   mkdirSync(maintenanceDir());
   writeFileSync(maintenanceStateFile(), JSON.stringify({ ...emptyState(), lastAt: { pressure: Date.now() } }));
-  expect(maintenanceStatus().running).toBeNull();
+  expect(maintenanceStatus()).toMatchObject({ running: null, queued: 0 });
   expect(maintenanceLine(maintenanceStatus())).toBeNull();
-  const attempt = tryAcquireClaim({
-    root: maintenanceRunClaims(),
-    mode: 'exclusive',
-    label: 'maintenance',
-    details: { trigger: 'status' },
-  });
-  expect(attempt.acquired).toBeDefined();
+  const running = { startedAt: new Date().toISOString(), trigger: 'manual' };
+  let claim = tryAcquireClaim({
+    root: daemonClaimRoot(),
+    mode: 'shared',
+    label: 'stimd',
+    details: {
+      cleanup: { running, queued: 2 },
+      unverified: [{ since: 'now', child: 123, message: 'pending', remedy: 'wait' }],
+    },
+  }).acquired;
+  if (!claim) throw new Error('No fixture daemon claim');
   try {
-    expect(maintenanceStatus().running).toEqual({
-      startedAt: attempt.acquired!.startedAt,
-      trigger: 'status',
-    });
+    expect(maintenanceStatus()).toMatchObject({ running, queued: 2 });
+    claim = updateClaimDetails(claim, { ...claim.details, cleanup: { running: null, queued: 0 } }) ?? claim;
+    expect(maintenanceStatus()).toMatchObject({ running: null, queued: 0 });
   } finally {
-    releaseClaim(attempt.acquired!);
+    releaseClaim(claim);
   }
+  plantClaim(daemonClaimRoot(), 'shared', goneClaimOwner(), { details: { cleanup: { running, queued: 2 } } });
+  expect(maintenanceStatus()).toMatchObject({ running: null, queued: 0 });
   expect(parseMaintenanceState({ ...emptyState(), lastPass: { stopped: 1 } })).toBeNull();
 });

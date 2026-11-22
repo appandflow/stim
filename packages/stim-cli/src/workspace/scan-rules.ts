@@ -1,9 +1,9 @@
 import { lstat, readdir, readFile, realpath, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, relative, sep } from 'node:path';
+import { join, relative, resolve, sep } from 'node:path';
 import { configDir } from '@stim-cli/core';
-import { buildWorkerRoot } from '@stim-cli/core/state';
-import { canonicalPath } from '../commands/gc/paths.ts';
+import { buildWorkerRoot, type ScanFolderProof } from '@stim-cli/core/state';
+import { canonicalPath, realpathAsync } from '../commands/gc/paths.ts';
 import { answered, hungRead, Unanswered } from './bounded-read.ts';
 import { declaresAppDependency } from './project-files.ts';
 import { loadConfig } from './config.ts';
@@ -107,17 +107,38 @@ export function scanDescends(name: string, depth: number): boolean {
   return depth !== 1 || !HOME_SKIPPED.has(name.toLowerCase());
 }
 
+function skipScanPaths(home: string, paths: readonly string[]): (path: string) => boolean {
+  const stim = paths.slice(0, 2);
+  const temps = paths.slice(2);
+  const homeIsTemporary = temps.some((temp) => within(home, temp));
+  return (path) =>
+    stim.some((folder) => within(path, folder)) || (!homeIsTemporary && temps.some((temp) => within(path, temp)));
+}
+
+function scanExclusions(): string[] {
+  return [configDir(), buildWorkerRoot(loadConfig()), tmpdir(), '/tmp', '/var/tmp', '/var/folders'];
+}
+
 /**
  * The paths the scan never enters, by rule: the Stim home, the build worker root, and the system temporary directory
  * unless the home folder itself is under it. Computed once, with no per-folder realpath: the walk never follows a
  * symlink, so a path below the canonical home is already canonical.
  */
 export function scanSkipper(home: string): (path: string) => boolean {
-  const stim = [canonicalPath(configDir()), canonicalPath(buildWorkerRoot(loadConfig()))];
-  const temps = [tmpdir(), '/tmp', '/var/tmp', '/var/folders'].map(canonicalPath);
-  const homeIsTemporary = temps.some((temp) => within(home, temp));
-  return (path) =>
-    stim.some((folder) => within(path, folder)) || (!homeIsTemporary && temps.some((temp) => within(path, temp)));
+  return skipScanPaths(home, scanExclusions().map(canonicalPath));
+}
+
+export async function targetedScanSkipper(home: string, signal?: AbortSignal): Promise<(path: string) => boolean> {
+  const paths: string[] = [];
+  for (const path of scanExclusions()) {
+    try {
+      paths.push(await answered(path, () => realpathAsync(path), 3000, signal));
+    } catch (error) {
+      if (!absent(error)) throw error;
+      paths.push(resolve(path));
+    }
+  }
+  return skipScanPaths(home, paths);
 }
 
 /** The files of a folder that project detection reads or stats: the manifests every integration's `inspect` looks at. */
@@ -154,14 +175,56 @@ interface Entry {
   isSymbolicLink(): boolean;
 }
 
+export type ScanIdentity = Pick<ScanFolderProof, 'dev' | 'ino' | 'mtimeNs' | 'ctimeNs'>;
+export interface ScanMetadata {
+  dev: number;
+  identity?: ScanIdentity;
+}
+
+export async function scanMetadata(path: string): Promise<ScanMetadata> {
+  const info = await lstat(path, { bigint: true });
+  return {
+    dev: Number(info.dev),
+    ...(info.isDirectory() && !info.isSymbolicLink()
+      ? {
+          identity: {
+            dev: String(info.dev),
+            ino: String(info.ino),
+            mtimeNs: String(info.mtimeNs),
+            ctimeNs: String(info.ctimeNs),
+          },
+        }
+      : {}),
+  };
+}
+
+export function sameScanIdentity(left: ScanIdentity, right: ScanIdentity | undefined): boolean {
+  return (
+    right !== undefined &&
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.mtimeNs === right.mtimeNs &&
+    left.ctimeNs === right.ctimeNs
+  );
+}
+
+export function scanSentinels(entries: readonly Entry[]): string[] {
+  return entries
+    .filter(
+      ({ name }) => DETECTION_FILES.has(folded(name)) || OWNED_ROOTS.has(folded(name)) || XCODE_CONTAINER.test(name),
+    )
+    .map(({ name }) => name);
+}
+
 /** How the recognition gate reads the disk; injected by tests. */
 export interface RecognitionIo {
   readEntries: (path: string) => Promise<Entry[]>;
   readText: (path: string) => Promise<string>;
   /** Metadata reads of a cached entry; `realpath` is the native one, which folds case on macOS. */
-  lstat: (path: string) => Promise<{ isSymbolicLink(): boolean }>;
+  lstat: (path: string) => Promise<Omit<Entry, 'name'>>;
   stat: (path: string) => Promise<{ isDirectory(): boolean; dev: number }>;
   realpath: (path: string) => Promise<string>;
+  metadata: (path: string) => Promise<ScanMetadata>;
 }
 
 export const REAL_RECOGNITION_IO: RecognitionIo = {
@@ -170,7 +233,94 @@ export const REAL_RECOGNITION_IO: RecognitionIo = {
   lstat: (path) => lstat(path),
   stat: (path) => stat(path),
   realpath: (path) => realpath(path),
+  metadata: scanMetadata,
 };
+
+async function proofGate(
+  folder: string,
+  proof: ScanFolderProof | undefined,
+  timeoutMs: number,
+  io: RecognitionIo,
+): Promise<{ listing: Entry[]; safety: Safety }> {
+  if (!proof) return { listing: [], safety: 'unreadable' };
+  try {
+    const current = await answered(folder, () => io.metadata(folder), timeoutMs);
+    if (!sameScanIdentity(proof, current.identity)) return { listing: [], safety: 'unreadable' };
+    const listing: Entry[] = [];
+    for (const name of proof.sentinels) {
+      const info = await answered(folder, () => io.lstat(join(folder, name)), timeoutMs);
+      listing.push({
+        name,
+        isFile: () => info.isFile(),
+        isDirectory: () => info.isDirectory(),
+        isSymbolicLink: () => info.isSymbolicLink(),
+      });
+    }
+    const safety = await folderSafety(folder, listing, timeoutMs, io);
+    const after = await answered(folder, () => io.metadata(folder), timeoutMs);
+    return { listing, safety: sameScanIdentity(proof, after.identity) ? safety : 'unreadable' };
+  } catch {
+    return { listing: [], safety: 'unreadable' };
+  }
+}
+
+async function blockedNativeInspections(
+  root: string,
+  listings: ReadonlyMap<string, readonly Entry[]>,
+  timeoutMs: number,
+  io: RecognitionIo,
+): Promise<ReadonlySet<string>> {
+  const exists = async (folder: string, name: string) => {
+    try {
+      await answered(folder, () => io.lstat(join(folder, name)), timeoutMs);
+      return true;
+    } catch (error) {
+      if (absent(error)) return false;
+      throw error;
+    }
+  };
+  const explicit = new Map<string, boolean>();
+  const isExplicit = async (folder: string) => {
+    if (!explicit.has(folder))
+      explicit.set(
+        folder,
+        (await exists(folder, 'package.json')) ||
+          (await exists(folder, 'Package.swift')) ||
+          ((await exists(folder, 'exact.mjs')) && (await exists(folder, 'app.json'))),
+      );
+    return explicit.get(folder) === true;
+  };
+  const blocked = new Set<string>();
+  if (await isExplicit(root)) return blocked;
+  for (const [folder, entries] of listings) {
+    if (
+      !entries.some(({ name }) => ['settings.gradle', 'settings.gradle.kts'].includes(folded(name))) ||
+      !entries.some(({ name }) => ['gradlew', 'gradlew.bat'].includes(folded(name)))
+    )
+      continue;
+    let safe = false;
+    for (let here = folder; within(here, root); here = join(here, '..')) {
+      if (await isExplicit(here)) {
+        safe = true;
+        break;
+      }
+      if (here === root) break;
+    }
+    if (!safe) {
+      blocked.add(folder);
+      const rel = relative(root, folder).split(sep);
+      const [container, child] = rel;
+      if (
+        rel.length === 2 &&
+        container !== undefined &&
+        child !== undefined &&
+        PROJECT_FOLDERS.includes(folded(container))
+      )
+        blocked.add(join(root, folded(container), child));
+    }
+  }
+  return blocked;
+}
 
 /**
  * `unsafe`: a structural fact, the folder is not a checkout and there is nothing to record. `denied`: a read failed for a
@@ -309,15 +459,19 @@ export async function scanEntryValid(
     timeoutMs = 3000,
     io = REAL_RECOGNITION_IO,
     ancestors = new Map(),
+    proofs,
+    identity,
   }: {
     home: string;
     /** `'unknown'`: a read that decides it failed, so the folder may still be a checkout. */
-    isCheckout: (path: string) => boolean | 'unknown';
+    isCheckout: (path: string, blocked?: ReadonlySet<string>) => boolean | 'unknown';
     skip: (path: string) => boolean;
     timeoutMs?: number;
     io?: RecognitionIo;
     /** The listing and safety of folders on the way to a checkout, shared by the entries of one revalidation. */
     ancestors?: Map<string, Promise<{ listing: Entry[]; safety: Safety }>>;
+    proofs?: Readonly<Record<string, ScanFolderProof>>;
+    identity?: string;
   },
 ): Promise<'valid' | 'invalid' | 'pending'> {
   if (hungRead() !== null) return 'pending';
@@ -328,7 +482,7 @@ export async function scanEntryValid(
     if ((await answered(path, () => io.lstat(path), timeoutMs)).isSymbolicLink()) return 'invalid';
     const info = await answered(path, () => io.stat(path), timeoutMs);
     if (!info.isDirectory()) return 'invalid';
-    if ((await answered(path, () => io.realpath(path), timeoutMs)) !== path) return 'invalid';
+    if ((await answered(path, () => io.realpath(path), timeoutMs)) !== (identity ?? path)) return 'invalid';
     if ((await answered(home, () => io.stat(home), timeoutMs)).dev !== info.dev) return 'invalid';
   } catch (error) {
     return absent(error) ? 'invalid' : 'pending';
@@ -340,18 +494,40 @@ export async function scanEntryValid(
       .map((_, i, parts) => join(home, ...parts.slice(0, i + 1))),
   ];
   let own: Entry[] = [];
+  const listings = new Map<string, Entry[]>();
+  const readingIo = proofs
+    ? {
+        ...io,
+        readEntries: async (folder: string) => {
+          const entries = await io.readEntries(folder);
+          listings.set(folder, entries);
+          return entries;
+        },
+      }
+    : io;
   for (const folder of chain) {
     let gate = ancestors.get(folder);
     if (!gate) {
-      gate = gateOf(folder, timeoutMs, io);
+      gate =
+        proofs && folder !== path
+          ? proofGate(folder, proofs[folder], timeoutMs, io)
+          : gateOf(folder, timeoutMs, readingIo);
       ancestors.set(folder, gate);
     }
     const { listing, safety } = await gate;
     if (safety !== 'safe') return safety === 'unsafe' ? 'invalid' : 'pending';
     if (folder === path) own = listing;
   }
-  const nested = await nestedSafety(path, own, timeoutMs, io);
+  const nested = await nestedSafety(path, own, timeoutMs, readingIo);
   if (nested !== 'safe') return nested === 'unsafe' ? 'invalid' : 'pending';
-  const recognised = isCheckout(path);
+  let blocked: ReadonlySet<string> | undefined;
+  if (proofs) {
+    try {
+      blocked = await blockedNativeInspections(path, listings, timeoutMs, io);
+    } catch {
+      return 'pending';
+    }
+  }
+  const recognised = isCheckout(path, blocked);
   return recognised === 'unknown' ? 'pending' : recognised ? 'valid' : 'invalid';
 }
