@@ -587,6 +587,53 @@ describe('the pressure ladder', () => {
     remeasure,
   });
 
+  test.each([
+    ['high', 'critical', false],
+    ['critical', 'high', false],
+    ['high', 'normal', false],
+    ['critical', 'normal', true],
+    ['high', 'critical', true],
+  ] as const)(
+    'rung 6 trash priority follows %s to %s (forced: %s) without changing other actions',
+    async (entry, current, forced) => {
+      vi.spyOn(sweep, 'planRung6').mockResolvedValue({
+        actions: [
+          { kind: 'would-delete-trash', target: home, bytes: 1, reason: 'owned trash' },
+          { kind: 'would-delete-temp-leftovers', target: home, bytes: 1, reason: 'old temp output' },
+        ],
+        blocked: [],
+        skips: [],
+      });
+      const act = vi.spyOn(acting, 'executeAction').mockResolvedValue({ status: 'kept', bytes: 0, detail: 'test' });
+      const remeasure = vi
+        .fn<() => Promise<DaemonPressure>>()
+        .mockResolvedValueOnce(pressure(entry))
+        .mockResolvedValueOnce(pressure(entry))
+        .mockResolvedValue(pressure(current));
+
+      await runLadder(
+        {
+          ...input(true, remeasure),
+          fromRung: 6,
+          lastRung: 6,
+          volume: statSync(home).dev,
+          ...(forced ? { force: { level: entry, why: 'explicit level' } } : {}),
+        },
+        pressure(entry),
+      );
+
+      expect(act.mock.calls.map(([action, context]) => [action.kind, context.critical])).toEqual(
+        !forced && current === 'normal'
+          ? []
+          : [
+              ['would-delete-trash', (forced ? entry : current) === 'critical'],
+              ['would-delete-temp-leftovers', entry === 'critical'],
+            ],
+      );
+      expect(remeasure.mock.calls.length === 0).toBe(forced);
+    },
+  );
+
   test('at critical it trims caches in rung order and stops once the level clears, before the dormant rung', async () => {
     const { root } = workspace('idle-hour', 60 * MINUTE_MS, 'Shutdown');
     writeWorkspaceState(root, { lastBuild: { cacheKey: 'kept-key' } });

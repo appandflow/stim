@@ -934,7 +934,11 @@ async function sweepRung(context: RungContext, causes: readonly Cause[]): Promis
     const memory = action.kind === 'would-stop-gradle-daemons' || action.kind === 'would-stop-watchman';
     if (!memory && !onShort(context, [action.dir ?? action.target])) continue;
     if (!(await context.stillShort())) return;
-    await run(context, action);
+    if (action.kind === 'would-delete-trash' && context.act && !context.force) {
+      const { disk } = await context.remeasure();
+      if (disk === 'normal') continue;
+      await run({ ...context, level: disk }, action);
+    } else await run(context, action);
   }
 }
 
