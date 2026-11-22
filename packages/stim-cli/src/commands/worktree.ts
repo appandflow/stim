@@ -1149,11 +1149,11 @@ interface RemovalInspection {
   timedOut?: boolean;
 }
 
-function removalMarkRoots(path: string, lockedKeys: readonly string[]): Set<string> {
+function removalMarkRoots(path: string, keys: readonly string[]): Set<string> {
   const roots = new Set<string>();
   try {
     const nativeRoot = realpathSync.native(path);
-    for (const key of lockedKeys) {
+    for (const key of new Set(keys)) {
       try {
         if (realpathSync.native(key) !== nativeRoot) continue;
         const mark = readGcMark(realpathSync(key));
@@ -1416,6 +1416,7 @@ async function removeOrRefuse(
     return;
   }
   let path = removalPath(target, opts.operation?.cwd);
+  const removalSpelling = path;
   if (!existsSync(path)) {
     opts.beforeRemove?.(path);
     const pending = getProject(path);
@@ -1739,7 +1740,7 @@ async function removeOrRefuse(
             output.fail();
             return;
           }
-          const obsoleteMarks = removalMarkRoots(path, lockedKeys);
+          const obsoleteMarks = removalMarkRoots(path, [removalSpelling, ...lockedKeys]);
           gitRemoving = true;
           try {
             await removeWorktreeAsync(path, {

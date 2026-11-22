@@ -203,7 +203,9 @@ test('a staged version the working tree no longer holds keeps the worktree inste
 }, 60_000);
 
 test('worktree removal with archiveDirty archives and removes a dirty worktree, and keeps one it cannot archive', async () => {
-  const mark = saveMark(worktree);
+  await markWriter({ projects: {}, repos: {} })({ path: worktree, at: Date.now(), lastActivityAt: null, kept: null });
+  expect(readGcMark(worktree)?.root).toBe(worktree);
+  const mark = readFileSync(gcMarkFile(worktree), 'utf8');
   const sourceMark = saveMark(repo);
   const error = vi.spyOn(console, 'error').mockImplementation(() => {});
   onTestFinished(() => error.mockRestore());
@@ -360,11 +362,11 @@ test('source-only reclamation preserves the existing root mark and checkout', as
 test('a branch cleanup failure after actual linked removal still retires only the removed root mark', async () => {
   saveMark(worktree);
   const sourceMark = saveMark(repo);
-  upsertProject(worktree, {
+  upsertProject(realpathSync.native(worktree), {
     worktreeRoot: true,
     worktreeBranch: 'topic',
     worktreeBranchOwned: true,
-    worktreeMainRoot: repo,
+    worktreeMainRoot: realpathSync.native(repo),
   });
   const refusal = vi.spyOn(worktreeGit, 'deleteBranchAsync').mockRejectedValue(new Error('controlled branch refusal'));
   onTestFinished(() => refusal.mockRestore());

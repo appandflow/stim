@@ -358,7 +358,6 @@ jobs:
       - name: Windows CLI and cache smoke
         run: >-
           pnpm test
-          packages/stim-cli/src/__tests__/worktree-archive.integration.test.ts
           packages/stim-cli/src/__tests__/exec.integration.test.ts
           packages/stim-cli/src/__tests__/api-reports.integration.test.ts
           packages/stim-cli/src/__tests__/report-runtime.integration.test.ts
@@ -392,6 +391,11 @@ jobs:
           packages/stim-cli/src/__tests__/agent-device-command.integration.test.ts
           packages/server/__tests__/control-clipboard.integration.test.ts
           packages/server/__tests__/build-area-eviction.integration.test.ts
+
+      - name: Windows worktree mark retirement
+        run: >-
+          pnpm test packages/stim-cli/src/__tests__/worktree-archive.integration.test.ts
+          -t 'owned removal retires actual|worktree removal with archiveDirty|a branch cleanup failure after actual linked removal'
 
       - name: Windows startup cancellation
         run: |
