@@ -533,6 +533,15 @@ also holds the newest activity the walk read, and the walk reads at
   high sweep checks the latest disk level before refreshing, so a transition
   to critical skips the refresh. Daemon report mode uses known marks without
   deleting or updating them; explicit dry runs retain discovery previews.
+- The automatic normal dormant pass uses its due-refreshed marks for
+  non-Cargo build-output candidates instead of enumerating those outputs
+  again. Missing, due or uncertain saved evidence keeps that family's outputs.
+  Current root and output identities/devices, scope, recognition and Git
+  protections are checked before measurement and under the existing native-run
+  and metro-start claims, together with the full current idle/pin/use checks.
+  A saved path whose recognition changed stays without finding a replacement.
+  The shared normal checkout/dependency inventory, normal Cargo discovery and
+  policy, whole-worktree removal and explicit discovery previews are unchanged.
   A removal exception remains a failed rung, as before; accounting for bytes
   removed before a later removal failed is an existing separate limitation. Registered
   roots without marks are reported; unmarked discovered roots are not listed

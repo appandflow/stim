@@ -15,8 +15,10 @@ import {
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { diskUsageCacheFile, type DaemonLadderAction } from '@stim-cli/core/state';
+import { diskUsageCacheFile, gcMarkFile, readGcMark, type DaemonLadderAction } from '@stim-cli/core/state';
+import * as idleModule from '../daemon/idle.ts';
 import { writeCacheFile } from '../cache-file.ts';
+import * as cacheFiles from '../cache-file.ts';
 import { REAL_BYTES_THRESHOLD } from '../daemon/dependencies.ts';
 import { treeSignature } from '../private-size.ts';
 import { createMaintenanceLane, runDiskPass, runDormantReduction, type HomePasses } from '../daemon/passes.ts';
@@ -205,6 +207,163 @@ const gc = async (act = true) =>
 describe.skipIf(process.platform === 'win32')(
   'the dormant build-output step (skipped on win32, where Stim cannot list the running processes)',
   () => {
+    test('the normal producer marks missing and due outputs before its saved selection', async () => {
+      const root = register(repo('marked-first'));
+      idleFor(3, root);
+      expect(readGcMark(root)).toBeNull();
+      const discover = vi.spyOn(idleModule, 'idleOutputs');
+      await hourlyStep(false);
+      const marked = readGcMark(root);
+      expect(marked?.candidates).toContainEqual(expect.objectContaining({ kind: 'outputs', path: join(root, BUILD) }));
+      expect(discover).toHaveBeenCalledTimes(1);
+      writeFileSync(
+        gcMarkFile(root),
+        JSON.stringify({ ...marked, markedAt: new Date(Date.now() - 2 * DAY_MS).toISOString() }),
+      );
+      const actions = await hourlyStep(true);
+      expect(discover).toHaveBeenCalledTimes(2);
+      expect(readGcMark(root)?.markedAt).toBe(new Date().toISOString());
+      expect(actions).toEqual([expect.objectContaining({ target: root, outcome: 'done' })]);
+      expect(existsSync(join(root, BUILD))).toBe(false);
+    });
+
+    test('fresh normal marks select only saved output paths without another output discovery', async () => {
+      const root = register(repo('fresh-mark'));
+      idleFor(3, root);
+      await hourlyStep(false);
+      const markedAt = readGcMark(root)?.markedAt;
+      mkdirSync(join(root, 'android', 'build'));
+      writeFileSync(join(root, 'android', 'build', 'new.apk'), 'unmarked output');
+      idleFor(3, root);
+      const discover = vi.spyOn(idleModule, 'idleOutputs').mockRejectedValue(new Error('must not rediscover outputs'));
+      const actions = await hourlyStep(true);
+      expect(actions).toEqual([expect.objectContaining({ target: root, outcome: 'done' })]);
+      expect(existsSync(join(root, BUILD))).toBe(false);
+      expect(existsSync(join(root, 'android', 'build', 'new.apk'))).toBe(true);
+      expect(readGcMark(root)?.markedAt).toBe(markedAt);
+      expect(discover).not.toHaveBeenCalled();
+    });
+
+    test.each(['missing', 'expired'])(
+      'a %s generation that could not be published keeps normal outputs',
+      async (state) => {
+        const root = register(repo('unpublished-generation'));
+        const output = join(root, BUILD);
+        idleFor(3, root);
+        if (state === 'expired') {
+          await hourlyStep(false);
+          const mark = readGcMark(root);
+          writeFileSync(
+            gcMarkFile(root),
+            JSON.stringify({ ...mark, markedAt: new Date(Date.now() - 2 * DAY_MS).toISOString() }),
+          );
+        }
+        const write = cacheFiles.writeCacheFile;
+        vi.spyOn(cacheFiles, 'writeCacheFile').mockImplementation((file, value) => {
+          if (file !== gcMarkFile(root)) write(file, value);
+        });
+        const walks = vi.spyOn(fsUtil, 'measureDirectoryAsync');
+        expect(await hourlyStep(true)).toEqual([]);
+        expect(existsSync(join(output, 'app.apk'))).toBe(true);
+        expect(walks.mock.calls.map(([path]) => path)).not.toContain(output);
+      },
+    );
+
+    test('a saved DerivedData path whose layout changed stays without output rediscovery', async () => {
+      const root = register(repo('changed-derived-data'));
+      writeFileSync(join(root, '.gitignore'), 'build/\n.dd/\n');
+      git(root, 'add', '-A');
+      git(root, 'commit', '-q', '-m', 'ignore derived data');
+      const derived = join(root, '.dd');
+      mkdirSync(join(derived, 'Build', 'Products'), { recursive: true });
+      mkdirSync(join(derived, 'Logs'));
+      writeFileSync(join(derived, 'Logs', 'keep.txt'), 'keep');
+      idleFor(3, root);
+      await hourlyStep(false);
+      expect(readGcMark(root)?.candidates).toContainEqual(expect.objectContaining({ path: derived }));
+      rmSync(join(derived, 'Build'), { recursive: true });
+      idleFor(3, root);
+      const discover = vi.spyOn(idleModule, 'idleOutputs').mockRejectedValue(new Error('must not rediscover outputs'));
+      const actions = await hourlyStep(true);
+      expect(actions).toEqual([
+        expect.objectContaining({
+          target: root,
+          outcome: 'done',
+          detail: expect.stringContaining('no longer a build output'),
+        }),
+      ]);
+      expect(existsSync(join(derived, 'Logs', 'keep.txt'))).toBe(true);
+      expect(discover).not.toHaveBeenCalled();
+    });
+
+    test('files tracked after marking keep the saved build output', async () => {
+      const root = register(repo('new-tracked-file'));
+      idleFor(3, root);
+      await hourlyStep(false);
+      writeFileSync(join(root, BUILD, 'source.txt'), 'keep source');
+      git(root, 'add', '-f', join(BUILD, 'source.txt'));
+      git(root, 'commit', '-q', '-m', 'track output source');
+      idleFor(3, root);
+      const actions = await hourlyStep(true);
+      expect(actions).toEqual([
+        expect.objectContaining({ target: root, outcome: 'done', detail: expect.stringContaining('git tracks') }),
+      ]);
+      expect(existsSync(join(root, BUILD, 'source.txt'))).toBe(true);
+    });
+
+    test.each(['checkout', 'output'])(
+      'a changed marked %s volume keeps the output before measurement',
+      async (changed) => {
+        const root = register(repo('changed-volume'));
+        const output = join(root, BUILD);
+        idleFor(3, root);
+        await hourlyStep(false);
+        const mark = readGcMark(root);
+        if (!mark) throw new Error('fixture mark missing');
+        if (changed === 'checkout') mark.device++;
+        else {
+          const candidate = mark.candidates.find((entry) => entry.path === output);
+          if (!candidate) throw new Error('fixture output missing');
+          candidate.device++;
+        }
+        writeFileSync(gcMarkFile(root), JSON.stringify(mark));
+        const walks = vi.spyOn(fsUtil, 'measureDirectoryAsync');
+        await hourlyStep(true);
+        expect(existsSync(join(output, 'app.apk'))).toBe(true);
+        expect(walks.mock.calls.map(([path]) => path)).not.toContain(output);
+      },
+    );
+
+    test.each(['pin', 'registration'])(
+      'current %s changes between measurement and claims keep saved outputs',
+      async (change) => {
+        const root = register(repo('protected-after-measure'));
+        writeFileSync(join(root, '.stim.json'), JSON.stringify({ maintenance: { keep: false } }));
+        git(root, 'add', '-A');
+        git(root, 'commit', '-q', '-m', 'project settings');
+        idleFor(3, root);
+        await hourlyStep(false);
+        const measureDirectory = fsUtil.measureDirectoryAsync;
+        let changed = false;
+        vi.spyOn(fsUtil, 'measureDirectoryAsync').mockImplementation(async (...args) => {
+          const size = await measureDirectory(...args);
+          if (!changed) {
+            changed = true;
+            if (change === 'pin') {
+              writeFileSync(join(root, '.stim.json'), JSON.stringify({ maintenance: { keep: true } }));
+              age(root, new Date(Date.now() - 3 * DAY_MS));
+            } else saveConfig({ version: 2, projects: {}, repos: {}, maintenance: { autoDiscover: false } });
+          }
+          return size;
+        });
+        const actions = await hourlyStep(true);
+        expect(changed).toBe(true);
+        expect(actions).toEqual([expect.objectContaining({ target: root, outcome: 'kept' })]);
+        expect(existsSync(join(root, BUILD, 'app.apk'))).toBe(true);
+        expect(existsSync(join(workspaceDir(root), 'derived-data'))).toBe(true);
+      },
+    );
+
     test('cancelling dormant output removal keeps the tree and uses normal low-I/O priority', async () => {
       saveConfig({ version: 2, projects: {}, repos: {}, idle: { sourceDormantDays: 1 } });
       const root = register(repo('cancelled-output'));

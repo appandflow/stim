@@ -1,17 +1,19 @@
 import { removeTree } from '../engine/remove-tree.ts';
 import { existsSync } from 'node:fs';
 import { stat, utimes } from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import type { StimContext } from '@stim-cli/core';
-import type { DaemonLadderAction } from '@stim-cli/core/state';
+import type { DaemonLadderAction, GcMark, GcMarkCandidate } from '@stim-cli/core/state';
 import { workspaceOutputPaths } from '../commands/gc/workspaces.ts';
 import { RESERVE_RELEASED, releaseReserveWhenFull } from '../disk-reserve.ts';
 import { withWorkspaceProcessLock, workspaceProcessLockError } from '../engine/workspace-process-lock.ts';
 import { addSize, formatSize, measureDirectoryAsync, type DirectorySize } from '../fs-util.ts';
 import { metroStoreRoot } from '../stimd/metro/metro-store.ts';
 import { deleteCargoTarget, recentTargetUse, removablePaths, type CargoTrimResult } from '../workspace/cargo-target.ts';
-import type { Config } from '../workspace/config.ts';
+import { loadConfig, type Config } from '../workspace/config.ts';
+import { realpathAsync } from '../commands/gc/paths.ts';
+import { answered } from '../workspace/bounded-read.ts';
 import { discoveredReads, type DiscoveredReads } from '../workspace/discovered-reads.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
 import { workspaceDir } from '../workspace/paths.ts';
@@ -19,11 +21,13 @@ import {
   cargoTargetDirsAsync,
   existingBuildDirsAsync,
   isBuildDirPath,
+  isBuildDirPathAsync,
   regenerableDirProblem,
 } from '../workspace/regenerable-dirs.ts';
 import { lockReason, worktreeLockAsync } from '../workspace/worktree.ts';
 import { idleOutputs, type IdlePassInput } from './idle.ts';
-import { sourceCheckoutIdle, stillIdle, type StageCandidate } from './stages.ts';
+import { dormantAfterMs, sourceCheckoutIdle, stillIdle, type StageCandidate } from './stages.ts';
+import { markDue, outputMark } from './marks.ts';
 
 const SETTING = 'idle.dormantDays';
 const PURPOSE = 'dormant reduction';
@@ -35,6 +39,7 @@ type Input = Pick<IdlePassInput, 'act' | 'log'> & {
   operation?: StimContext;
   force?: boolean;
   throttleOutputs?: boolean;
+  outputMarks?: ReadonlyMap<string, GcMark>;
   /** Runs before each size walk and each removal, outside the workspace's claims: a unit boundary of the disk owner. */
   between?: () => Promise<void>;
 };
@@ -49,6 +54,7 @@ interface Plan {
   kept: string[];
   /** Whether a Cargo `target/` is among the outputs kept. */
   keptTarget: boolean;
+  mark?: GcMark;
 }
 
 /**
@@ -119,7 +125,21 @@ async function reduceWorkspace(
   const { path } = candidate;
   const { operation } = input;
   const signal = operation?.signal;
+  if (input.outputMarks) {
+    try {
+      const root = await answered(path, () => realpathAsync(path), 3_000, signal);
+      const outputs = input.outputMarks
+        .get(root)
+        ?.candidates.some((entry) => entry.kind === 'outputs' && entry.path !== metroStoreRoot(path));
+      if (!outputs && !(await cargoTargetDirsAsync(path, signal)).length) return null;
+    } catch (error) {
+      if (isClaimUnavailable(error) || (error instanceof Error && 'reportCleanup' in error)) throw error;
+      signal?.throwIfAborted();
+      return { outcome: 'kept', bytes: 0, detail: 'the saved output checkout could not be checked' };
+    }
+  }
   if (
+    !input.outputMarks &&
     !workspaceOutputPaths(workspaceDir(path)).length &&
     !(await existingBuildDirsAsync(path)).length &&
     !(await cargoTargetDirsAsync(path)).length
@@ -132,7 +152,7 @@ async function reduceWorkspace(
   if (lock) return keep(lockReason(lock));
   const verdict = await sourceCheckoutIdle(path, afterMs, SETTING, { operation, reads, checkout });
   if ('kept' in verdict) return keep(verdict.kept);
-  const plan = await eligible(candidate, config, afterMs);
+  const plan = await eligible(candidate, config, afterMs, input);
   if (!plan.paths.length) return plan.keptTarget ? keep(plan.kept.join('; ')) : null;
   const measure = input.act || input.force === true;
   const sizeOf = async (dir: string) => {
@@ -174,6 +194,7 @@ async function reduceWorkspace(
         afterMs,
         operation,
         input.throttleOutputs ?? true,
+        plan.targets.has(output) ? undefined : plan.mark,
       );
     } catch (error) {
       failed(output, error);
@@ -203,20 +224,82 @@ function gitOptions(operation: StimContext | undefined) {
   return { env: operation?.env, signal: operation?.signal, declareFor: operation };
 }
 
+async function markedIdentityProblem(
+  path: string,
+  output: string,
+  mark: GcMark,
+  expected: GcMarkCandidate | undefined,
+  operation: StimContext | undefined,
+): Promise<string | null> {
+  try {
+    if (!expected) return 'its saved output identity is unknown';
+    const signal = operation?.signal;
+    const root = await answered(path, () => realpathAsync(path), 3_000, signal);
+    const device = (await answered(path, () => stat(path), 3_000, signal)).dev;
+    if (root !== mark.root || device !== mark.device) return 'the marked checkout moved or changed volume';
+    const current = await answered(output, () => realpathAsync(output), 3_000, signal);
+    const outputDevice = (await answered(output, () => stat(output), 3_000, signal)).dev;
+    return current === output && outputDevice === expected.device ? null : 'the marked output moved or changed volume';
+  } catch (error) {
+    if (isClaimUnavailable(error) || (error instanceof Error && 'reportCleanup' in error)) throw error;
+    operation?.signal.throwIfAborted();
+    return 'the saved output identity could not be checked';
+  }
+}
+
+async function savedOutputs(
+  path: string,
+  config: Config,
+  input: Input,
+): Promise<{ paths: string[]; targets: string[]; kept: string[]; mark?: GcMark }> {
+  const result: { paths: string[]; targets: string[]; kept: string[]; mark?: GcMark } = {
+    paths: [],
+    targets: [],
+    kept: [],
+  };
+  const { operation } = input;
+  try {
+    const root = await answered(path, () => realpathAsync(path), 3_000, operation?.signal);
+    const mark = input.outputMarks?.get(root);
+    if (!mark || markDue(mark, Date.now(), dormantAfterMs(config, operation?.env))) {
+      result.kept.push('kept non-Cargo outputs: their normal mark is missing or due');
+      return result;
+    }
+    result.mark = mark;
+    for (const candidate of mark.candidates) {
+      if (candidate.kind !== 'outputs' || candidate.path === metroStoreRoot(path)) continue;
+      const problem =
+        (await markedIdentityProblem(path, candidate.path, mark, candidate, operation)) ??
+        (await outputProblem(path, candidate.path, false, operation?.signal));
+      if (problem) result.kept.push(`kept ${candidate.path}: ${problem}`);
+      else result.paths.push(candidate.path);
+    }
+  } catch (error) {
+    if (isClaimUnavailable(error) || (error instanceof Error && 'reportCleanup' in error)) throw error;
+    operation?.signal.throwIfAborted();
+    result.paths = [];
+    result.kept.push('kept non-Cargo outputs: current eligibility could not be checked');
+  }
+  return result;
+}
+
 /**
  * The read-only eligibility check that report and acting mode share: each output the regenerable-directory checks
  * allow, among them every recognised Cargo `target/`, which stays while it shows use within `afterMs`
  * (`recentTargetUse`).
  */
-async function eligible(candidate: StageCandidate, config: Config, afterMs: number): Promise<Plan> {
+async function eligible(candidate: StageCandidate, config: Config, afterMs: number, input: Input): Promise<Plan> {
   const store = metroStoreRoot(candidate.path);
-  const outputs = await idleOutputs(candidate.path, config, (output) => output !== store);
+  const outputs: { paths: string[]; targets: string[]; kept: string[]; mark?: GcMark } = input.outputMarks
+    ? await savedOutputs(candidate.path, config, input)
+    : await idleOutputs(candidate.path, config, (output) => output !== store);
   const kept = outputs.kept.filter((reason) => !reason.includes(store));
   const plan: Plan = { paths: [], removable: new Map(), targets: new Set(), kept, keptTarget: false };
+  plan.mark = outputs.mark;
   const targets = [...outputs.targets];
   // @ref LLP 0005#the-dormant-reduction-deletes-an-idle-target-whole -- untagged too, never build output
   for (const dir of await cargoTargetDirsAsync(candidate.path)) {
-    if (isBuildDirPath(dir)) continue;
+    if (!input.outputMarks && isBuildDirPath(dir)) continue;
     const problem = await regenerableDirProblem(candidate.path, dir, undefined);
     if (problem) {
       plan.kept.push(`kept ${dir}: ${problem}`);
@@ -261,6 +344,10 @@ async function outputProblem(
     return 'it is no longer a Cargo target/ Stim recognises';
   if (!cargo && basename(output) === 'target') return 'a Cargo target/ goes only through the Cargo delete';
   if (workspaceOutputPaths(workspaceDir(path)).includes(output)) return null;
+  const rel = relative(path, output);
+  if (!rel || isAbsolute(rel) || rel === '..' || rel.startsWith(`..${sep}`)) return 'it is outside its checkout';
+  if (!cargo && !(await isBuildDirPathAsync(output, signal ?? new AbortController().signal)))
+    return 'it is no longer a build output Stim recognises';
   return regenerableDirProblem(path, output, signal);
 }
 
@@ -278,6 +365,7 @@ async function removeOutput(
   afterMs: number,
   operation: StimContext | undefined,
   throttleIo: boolean,
+  mark?: GcMark,
 ): Promise<string | CargoTrimResult | null> {
   const signal = operation?.signal;
   const run = await withIdleWorkspace(
@@ -288,6 +376,21 @@ async function removeOutput(
           workspaceDir(path),
           'metro-start',
           async (): Promise<string | CargoTrimResult | null> => {
+            if (mark) {
+              try {
+                const current = loadConfig();
+                const allowed = current && (await outputMark(current, mark.root, operation));
+                if (!allowed?.candidates.some((entry) => entry.kind === 'outputs' && entry.path === output))
+                  return 'the saved output is no longer in the current cleanup scope';
+                const expected = mark.candidates.find((entry) => entry.kind === 'outputs' && entry.path === output);
+                const changed = await markedIdentityProblem(path, output, mark, expected, operation);
+                if (changed) return changed;
+              } catch (error) {
+                if (isClaimUnavailable(error) || (error instanceof Error && 'reportCleanup' in error)) throw error;
+                operation?.signal.throwIfAborted();
+                return 'the saved output cleanup scope could not be checked';
+              }
+            }
             if (!(await stillIdle(path, afterMs, { operation, full: true, setting: SETTING, checkout })))
               return 'it is no longer idle';
             const lock = await worktreeLockAsync(path, gitOptions(operation));

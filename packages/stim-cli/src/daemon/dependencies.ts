@@ -39,7 +39,7 @@ import { ARTIFACT_DIRS } from '../workspace/regenerable-dirs.ts';
 import { checkDependencyEdits } from '../workspace/dependency-edits.ts';
 import { writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
 import { reduceDormantOutputs } from './dormant-outputs.ts';
-import { markWriter, refreshCargoHolderMarks } from './marks.ts';
+import { markWriter, outputMarks, refreshCargoHolderMarks } from './marks.ts';
 import { dependencyMarkObserver } from './dependency-marks.ts';
 import {
   dormantAfterMs,
@@ -666,10 +666,21 @@ async function takeIdleDependencies(
   if (input.marks && !source) await refreshCargoHolderMarks(config, input, between, true, discovered);
   const actions: DaemonLadderAction[] = source
     ? []
-    : await timedStep(input.log, 'dormant_outputs', () => reduceDormantOutputs(candidates, config, afterMs, input), {
-        signal: operation?.signal,
-        items: (taken) => taken?.length,
-      });
+    : await timedStep(
+        input.log,
+        'dormant_outputs',
+        async () =>
+          reduceDormantOutputs(candidates, config, afterMs, {
+            ...input,
+            ...(input.marks
+              ? { outputMarks: new Map((await outputMarks(config, input.operation)).map((mark) => [mark.root, mark])) }
+              : {}),
+          }),
+        {
+          signal: operation?.signal,
+          items: (taken) => taken?.length,
+        },
+      );
   await between();
   const idle = candidates.filter((candidate) => source || candidate.role === 'linked');
   const inventory = input.marks
