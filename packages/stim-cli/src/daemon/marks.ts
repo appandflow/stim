@@ -281,7 +281,10 @@ export function keepOutputMark(mark: GcMark, reason: string): void {
   writeCacheFile(gcMarkFile(mark.root), {
     ...current,
     candidates: current.candidates.map((candidate) =>
-      candidate.kind === 'outputs' ? Object.assign({}, candidate, { keep: { reason, at } }) : candidate,
+      candidate.kind === 'outputs' &&
+      mark.candidates.some((saved) => saved.kind === 'outputs' && saved.path === candidate.path)
+        ? Object.assign({}, candidate, { keep: { reason, at } })
+        : candidate,
     ),
   });
 }

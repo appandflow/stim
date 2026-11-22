@@ -313,9 +313,21 @@ so none ever runs beside another.
   pass keeps ownership through its current work and observes cancellation
   after regrant. The covering pass recreates the reserve when it still owns
   the turn or the queue is idle, never while another ticket owns the turn.
-- The lane uses these ticket boundaries. Pressure, manual and headroom sweep
-  candidates still run within their whole pass; candidate-loop integration
-  and fresh rechecks after resumption are the remaining part of #6101.
+- Stopped output marks yield between individual saved paths, after each
+  workspace claim and removal has settled. Cargo pressure trims yield between
+  targets, after their profile locks close. Tick, manual and headroom callers
+  pass their own ticket boundary; manual dormant cleanup uses its existing
+  boundary outside workspace claims. A resumed candidate checks cancellation,
+  current pressure or the build's free-space target, device scope and current
+  in-use or pin protection before removal. Explicit forced runs retain their
+  selected level; read-only previews do not hand off a disk turn.
+  Keeping one saved output updates only its candidate's keep hint. Current
+  mark fields and sibling candidates stay intact. Active-workspace stopping
+  and finer units inside a whole manual workspace action remain separate from
+  these candidate families (#6101); candidate ranking is #6111.
+  A resumed saved output needs its current exact registry key or one targeted
+  discovery proof. A rewritten registry alias with no current discovery route
+  stays kept rather than resolving every registered root again per path.
 - The maintenance pass gives up the turn once it deletes nothing more, before
   its discovery scan and census.
 - When the passes thread ends, a disk pass it had not answered fails as

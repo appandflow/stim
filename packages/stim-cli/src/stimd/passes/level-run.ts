@@ -11,7 +11,7 @@ import { discoveredReads } from '../../workspace/discovered-reads.ts';
 import { deviceSweepIsScoped } from '../../commands/gc/devices.ts';
 import { executeAction, type ActionOutcome } from './act.ts';
 import { fromLadder, fromOutcome } from './ladder-run.ts';
-import { measureCargoTargets, planCargoTargetsAtPressure } from './cargo-target.ts';
+import { measureCargoTargets, measuredDiskLevel, planCargoTargetsAtPressure } from './cargo-target.ts';
 import { maintenancePinnedReader } from './protect.ts';
 import { measureSizes } from './measure.ts';
 import { discoverCachesAsync } from '../../cache/caches.ts';
@@ -96,6 +96,7 @@ export async function runMaintenanceAtLevel({
   onAction,
   onLevel,
   walkUnknown,
+  between,
 }: {
   level?: PressureLevel;
   act: boolean;
@@ -103,6 +104,7 @@ export async function runMaintenanceAtLevel({
   onAction?: (action: LevelRunAction) => void;
   onLevel?: (level: PressureLevel) => void;
   walkUnknown?: false;
+  between?: () => Promise<void>;
 }): Promise<LevelRun> {
   const env = operation?.env ?? process.env;
   const pressure = await measureLevel(operation);
@@ -140,7 +142,14 @@ export async function runMaintenanceAtLevel({
       blocked.push(`Cargo target trim could not be planned: ${error instanceof Error ? error.message : String(error)}`);
     }
     for (const action of early.actions) {
+      await between?.();
       operation?.signal.throwIfAborted();
+      if (between && action.workspace && (await maintenancePinnedReader(operation)(action.workspace))) continue;
+      if (between && chosen === undefined) {
+        const current = await measuredDiskLevel(action.target, operation?.signal);
+        if (current === 'normal') continue;
+        action.level = current === 'critical' ? 3 : 2;
+      }
       let outcome: ActionOutcome;
       try {
         outcome = await executeAction(action, {
@@ -195,6 +204,15 @@ export async function runMaintenanceAtLevel({
       });
       continue;
     }
+    if (action.kind === 'would-clear-outputs' || action.kind === 'would-clear-build-dirs') await between?.();
+    operation?.signal.throwIfAborted();
+    if (
+      between &&
+      action.kind === 'would-clear-build-dirs' &&
+      action.workspace &&
+      (await maintenancePinnedReader(operation)(action.workspace))
+    )
+      continue;
     let outcome: ActionOutcome;
     try {
       outcome = await executeAction(action, context);
@@ -208,6 +226,7 @@ export async function runMaintenanceAtLevel({
   for (const action of await runDormantReduction({
     act,
     trigger: 'gc',
+    ...(act && between ? { between } : {}),
     throttleOutputs: level === 'normal',
     ...(operation ? { operation } : {}),
     protectedRoot: context.protectedRoot,
@@ -220,6 +239,7 @@ export async function runMaintenanceAtLevel({
       act,
       why: `stim gc at ${level}`,
       trigger: 'gc',
+      ...(between ? { between } : {}),
       operation,
       protectedRoot: context.protectedRoot,
       measured: chosen === undefined,

@@ -1,7 +1,18 @@
 import { execFileSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import * as daemonMeasure from '../daemon/measure.ts';
 import {
   diskUsageCacheFile,
   gcMarkFile,
@@ -355,3 +366,49 @@ test('a discovered checkout whose source scan ran out of time is listed as kept 
     `Discovered checkout ${other}: ${scan.unknown}, so it is kept this pass and checked again on a later one`,
   );
 });
+
+test.each(['measured healthy', 'new pressure pin', 'forced healthy', 'new cap pin'] as const)(
+  'manual Cargo admission rechecks the completed handoff: %s',
+  async (change) => {
+    vi.stubEnv('STIM_MAINTENANCE_CARGO_TARGET_MAX_GB', change === 'new cap pin' ? '0.000001' : '1');
+    vi.spyOn(daemonPasses, 'runDormantReduction').mockResolvedValue([]);
+    vi.spyOn(daemonPasses, 'runForcedLadder').mockResolvedValue(null);
+    vi.spyOn(daemonMeasure, 'measureMemory').mockResolvedValue({
+      level: 'normal',
+      availableBytes: null,
+      totalBytes: 0,
+    });
+    const device = statSync(target).dev;
+    let freeMb = change === 'new cap pin' ? 100 * 1024 : 10 * 1024;
+    vi.spyOn(budget, 'readVolumeSpaceAsync').mockImplementation(async (paths) =>
+      paths.length === 1 && paths[0] === target
+        ? [{ volume: target, freeMb, device }]
+        : [
+            { volume: target, freeMb, device },
+            { volume: '/other-short-volume', freeMb: 1024, device: device + 1 },
+          ],
+    );
+    const before = readFileSync(gcMarkFile(dirname(target)), 'utf8');
+    let handoffs = 0;
+    const run = await runMaintenanceAtLevel({
+      act: true,
+      ...(change === 'forced healthy'
+        ? { level: 'critical' as const }
+        : change === 'new cap pin'
+          ? { level: 'normal' as const }
+          : {}),
+      between: async () => {
+        handoffs++;
+        if (change === 'new pressure pin' || change === 'new cap pin')
+          writeFileSync(join(dirname(target), '.stim.json'), JSON.stringify({ maintenance: { keep: true } }));
+        else freeMb = 100 * 1024;
+      },
+    });
+    expect(handoffs).toBeGreaterThan(0);
+    expect(existsSync(join(target, 'debug', 'incremental', 'data'))).toBe(change !== 'forced healthy');
+    expect(run.actions.some((action) => action.kind === 'trim-cargo' && action.outcome === 'done')).toBe(
+      change === 'forced healthy',
+    );
+    expect(readFileSync(gcMarkFile(dirname(target)), 'utf8')).toBe(before);
+  },
+);
