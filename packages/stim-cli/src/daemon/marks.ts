@@ -268,7 +268,7 @@ async function authorizedMarks(
         ? mark.candidates.filter(({ kind }) => kind === 'cargo-target')
         : await discoveredCargoCandidates(mark, operation);
       const selectedMark = { ...mark, candidates };
-      // @ref LLP 0001#the-lane-marks-what-each-checkout-could-free -- Cargo-only route evidence does not authorize dependency reports
+      // @ref LLP 0001#the-lane-marks-what-each-checkout-could-free -- Cargo-only routes authorize neither dependency nor worktree reports
       if (!cargoHolders.has(mark.root)) {
         delete selectedMark.dependencies;
         delete selectedMark.worktree;
