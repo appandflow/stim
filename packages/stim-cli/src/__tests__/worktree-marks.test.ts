@@ -10,12 +10,13 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { gcMarkFile, readGcMark, worktreeArchiveRoot, type Config } from '@stim-cli/core/state';
+import { dirname, join } from 'node:path';
+import { discoveryScanFile, gcMarkFile, readGcMark, worktreeArchiveRoot, type Config } from '@stim-cli/core/state';
 import * as worktrees from '../commands/gc/worktrees.ts';
 import * as discovery from '../workspace/discovery.ts';
 import * as pullRequests from '../pull-request-state.ts';
 import * as mergeState from '../workspace/merge-state.ts';
+import * as gitWorktrees from '../workspace/worktree.ts';
 import * as iosDevices from '../devices/ios.ts';
 import * as agentSessions from '../agent-sessions.ts';
 import * as discoveredRemoval from '../workspace/discovered-removal.ts';
@@ -486,11 +487,11 @@ describe('normal saved worktree reconciliation', () => {
     expect(existsSync(join(linked, 'feature.txt'))).toBe(true);
   }, 20_000);
 
-  test.each(['expired', 'dirty', 'device', 'membership', 'scope', 'head'] as const)(
+  test.each(['expired', 'dirty', 'device', 'membership', 'recorded-member', 'scope', 'head'] as const)(
     'preserves a planned worktree when current %s proof changes before removal',
     async (change) => {
       const app = join(linked, 'apps', 'mobile');
-      if (change === 'membership') {
+      if (change === 'membership' || change === 'recorded-member') {
         mkdirSync(app, { recursive: true });
         writeFileSync(join(app, 'package.json'), '{}');
       }
@@ -507,10 +508,12 @@ describe('normal saved worktree reconciliation', () => {
       } else if (change === 'device') {
         mark.device++;
         writeFileSync(gcMarkFile(linked), JSON.stringify(mark));
-      } else if (change === 'membership') {
-        config.projects[app] = {};
-        saveConfig(config);
-        recordWorkspaceUse(app, new Date(Date.now() - 10 * day));
+      } else if (change === 'membership' || change === 'recorded-member') {
+        if (change === 'membership') {
+          config.projects[app] = {};
+          saveConfig(config);
+        }
+        recordWorkspaceUse(app, new Date());
       } else if (change === 'scope') {
         config.projects = {};
         saveConfig(config);
@@ -525,6 +528,103 @@ describe('normal saved worktree reconciliation', () => {
     },
     20_000,
   );
+
+  test('removes an unregistered discovered plain Node worktree with current finished evidence', async () => {
+    config.projects = {};
+    config.maintenance = { autoDiscover: false, discoverRoots: [base] };
+    saveConfig(config);
+    rmSync(workspaceDir(linked), { recursive: true, force: true });
+    writeFileSync(join(linked, 'package.json'), JSON.stringify({ name: 'cli' }));
+    finished();
+    vi.setSystemTime(Date.now() + 10 * day);
+    const plan = await normalPlan();
+    expect(readGcMark(linked)?.worktree?.finished).toBeTruthy();
+    expect((await normalRemove(plan)).status).toBe('done');
+    expect(existsSync(linked)).toBe(false);
+  }, 20_000);
+
+  test('keeps a discovered worktree when only a reduce-only route remains', async () => {
+    config.projects = {};
+    config.maintenance = { autoDiscover: false, discoverRoots: [base] };
+    saveConfig(config);
+    rmSync(workspaceDir(linked), { recursive: true, force: true });
+    writeFileSync(join(linked, 'package.json'), JSON.stringify({ name: 'cli' }));
+    finished();
+    vi.setSystemTime(Date.now() + 10 * day);
+    const plan = await normalPlan();
+    const saved = readFileSync(gcMarkFile(linked));
+    vi.stubEnv('HOME', join(base, 'host'));
+    vi.stubEnv('USERPROFILE', join(base, 'host'));
+    vi.stubEnv('STIM_HOME', '');
+    config.maintenance = { autoDiscover: true, discoverRoots: [] };
+    saveConfig(config);
+    mkdirSync(dirname(gcMarkFile(linked)), { recursive: true });
+    writeFileSync(gcMarkFile(linked), saved);
+    mkdirSync(dirname(discoveryScanFile()), { recursive: true });
+    writeFileSync(
+      discoveryScanFile(),
+      JSON.stringify({
+        version: 2,
+        completedAt: 1,
+        lowScanAt: 0,
+        ranAt: 1,
+        durationMs: 1,
+        trigger: 'weekly',
+        visited: 1,
+        found: [linked],
+        dotFolderFound: [],
+        unreadable: [],
+        truncated: false,
+        truncation: 'none',
+      }),
+    );
+    const broad = vi.spyOn(discovery, 'discoverCheckouts').mockRejectedValue(new Error('must not rediscover'));
+    expect((await normalRemove(plan)).status).toBe('kept');
+    expect(broad).not.toHaveBeenCalled();
+    expect(existsSync(linked)).toBe(true);
+  }, 20_000);
+
+  test('does not promote a reduce-only normal inventory row to whole-worktree removal', async () => {
+    finished();
+    vi.setSystemTime(Date.now() + 2 * 3_600_000);
+    const plan = await normalPlan();
+    const candidate = plan.sweep.worktrees.find(({ path }) => path === linked);
+    if (!candidate) throw new Error('fixture worktree candidate missing');
+    candidate.reduceOnly = true;
+    expect((await normalRemove(plan)).status).toBe('kept');
+    expect(existsSync(linked)).toBe(true);
+  }, 20_000);
+
+  test('uses current planner holder facts once for nested-app shortlisting', async () => {
+    const roots = [linked];
+    for (let i = 1; i < 3; i++) {
+      const root = join(base, `linked-${i}`);
+      git(source, 'worktree', 'add', '-q', '-b', `feature-${i}`, root);
+      roots.push(root);
+    }
+    config.projects = {};
+    rmSync(workspaceDir(linked), { recursive: true, force: true });
+    vi.setSystemTime(Date.now() + 2 * 3_600_000);
+    for (const root of roots) {
+      const app = join(root, 'apps', 'mobile');
+      mkdirSync(app, { recursive: true });
+      writeFileSync(join(app, 'package.json'), '{}');
+      git(root, 'add', '-A');
+      git(root, 'commit', '-q', '-m', 'unfinished app');
+      git(root, 'push', '-q', '-u', 'origin', 'HEAD');
+      config.projects[app] = {};
+      recordWorkspaceUse(app, new Date(Date.now() - 10 * day));
+    }
+    saveConfig(config);
+    await observe();
+    for (const root of roots) expect(readGcMark(root)?.worktree?.finished).toBeNull();
+    const holder = vi.spyOn(gitWorktrees, 'resolveSourceCheckoutAsync');
+    const plan = await normalPlan();
+    expect(plan.actions).toEqual([]);
+    expect(holder.mock.calls.filter(([, options]) => options?.cache === false).length).toBeLessThanOrEqual(
+      roots.length,
+    );
+  }, 30_000);
 
   test('defers external completion of a fresh unfinished generation without rewriting it, then refreshes when due', async () => {
     vi.setSystemTime(Date.now() + 2 * 3_600_000);
