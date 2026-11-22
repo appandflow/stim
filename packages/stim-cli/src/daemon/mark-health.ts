@@ -2,6 +2,7 @@ import type { GcMark, GcMarkHealth, GcStaleMarkEvidence, Config, DaemonMode } fr
 import type { StimContext } from '@stim-cli/core';
 import { markInterval, outputMarkBatch, type CargoMarkScope, type HolderMarkScope } from './marks.ts';
 import { dormantAfterMs } from './stages.ts';
+import { candidateInventory } from './candidate-inventory.ts';
 
 export function markHealth(
   marks: readonly GcMark[],
@@ -40,7 +41,10 @@ export async function readMarkHealth(
   const batch = await outputMarkBatch(config, operation, holders);
   return {
     roots: batch.listed ? batch.marks.map(({ root, device }) => ({ root, device })) : null,
-    marks: markHealth(batch.marks, Date.now(), dormantAfterMs(config, operation.env), batch.complete, mode),
+    marks: {
+      ...markHealth(batch.marks, Date.now(), dormantAfterMs(config, operation.env), batch.complete, mode),
+      candidates: candidateInventory(batch.marks, batch.complete, batch.listed),
+    },
     holders: batch.marks.flatMap(({ root, device, markedAt }) => {
       const scope = holders.get(root);
       return scope ? [{ root, device, markedAt, ...scope }] : [];

@@ -440,6 +440,8 @@ export async function collectArtifactsAsync(
     /** Dependencies of source checkouts, instead of those of linked worktrees. */
     source?: boolean;
     discovered?: readonly DiscoveredCheckout[];
+    /** Saved linked dependency paths; undefined requests a complete inventory for publication. */
+    dependencyPaths?: (worktree: ArtifactWorktree) => Promise<readonly string[] | undefined>;
     onInventory?: (inventory: ArtifactInventory) => Promise<void>;
   },
   signal: AbortSignal,
@@ -457,9 +459,11 @@ export async function collectArtifactsAsync(
   const all = await artifactWorktreesAsync(signal, operation, options.discovered);
   for (const worktree of all) {
     if (kind === 'dependencies' && worktree.linked === Boolean(options.source)) continue;
-    const inventory: ArtifactInventory | null = options.onInventory
-      ? { worktree, at: Date.now(), candidates: [], complete: true }
-      : null;
+    const selected = kind === 'dependencies' && !options.source ? await options.dependencyPaths?.(worktree) : undefined;
+    const inventory: ArtifactInventory | null =
+      options.onInventory && selected === undefined
+        ? { worktree, at: Date.now(), candidates: [], complete: true }
+        : null;
     const root = canonicalPath(worktree.path);
     const protectedHere = options.protectedRoot === root || options.protectedRoot.startsWith(`${root}${sep}`);
     const pinned = await pinsOf(worktree.keys, options.pinned);
@@ -477,7 +481,9 @@ export async function collectArtifactsAsync(
         }
       }
     for (const base of bases)
-      for (const path of await artifactPathsAsync(base, kind)) {
+      for (const path of selected === undefined
+        ? await artifactPathsAsync(base, kind)
+        : ARTIFACT_DIRS.dependencies.map((dir) => join(base, dir)).filter((target) => selected.includes(target))) {
         signal.throwIfAborted();
         try {
           await pathStat(path);

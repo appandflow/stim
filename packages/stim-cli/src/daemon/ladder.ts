@@ -5,7 +5,6 @@ import { buildCacheRoot, configDir, isScopedHome, metroCacheRoot, withDirLock, t
 import {
   fingerprintIndexDir,
   fingerprintIndexLock,
-  readDiskUsage,
   sharedCompilationCache,
   type DaemonLadderAction,
   type DaemonPressure,
@@ -33,7 +32,7 @@ import { cacheEntryProtectionFor, maintenancePinned, maintenancePinnedReader } f
 import { readVolumeSpaceAsync } from '../stimd/passes/budget.ts';
 import type { FirstFreeObserver } from './pacer.ts';
 import { executedActionName } from '../maintenance-kind.ts';
-import { measuredDiskLevel, planCargoTargetsAtPressure } from '../stimd/passes/cargo-target.ts';
+import { measuredDiskLevel, planCargoTargetsAtPressure, keepCargoTarget } from '../stimd/passes/cargo-target.ts';
 import { resolveMaintenanceSettings, type MaintenanceSettings } from '../stimd/passes/settings.ts';
 import { planRung6, planWorktrees } from '../stimd/passes/sweep.ts';
 import { planHistory } from '../stimd/passes/records.ts';
@@ -46,7 +45,7 @@ import { targetedCheckouts } from '../workspace/discovery.ts';
 import { runBootedParkedPass } from './booted-parked.ts';
 import { LADDER_CLOCK_SLOTS } from './disk-owner.ts';
 import { measureDisk } from './measure.ts';
-import { outputMarks, refreshOutputMarks, refreshCargoHolderMarks, keepOutputMark } from './marks.ts';
+import { outputMarks, refreshOutputMarks, refreshCargoHolderMarks, keepMarkCandidate } from './marks.ts';
 import { diskThresholds, shortVolumeDevices } from './pressure.ts';
 import { collectInventory } from '../commands/gc/inventory.ts';
 import {
@@ -229,6 +228,15 @@ const actContext = (settings: MaintenanceSettings): ActContext => ({
   background: true,
 });
 
+async function actionBoundary(context: RungContext, level: 'high' | 'critical' = 'high'): Promise<void> {
+  if (!context.act || !context.between) return;
+  await context.between();
+  context.stop?.throwIfAborted();
+  context.operation?.signal.throwIfAborted();
+  if (!context.force || context.force.measured)
+    context.short = context.volume === undefined ? await shortDevices(context, level) : new Set([context.volume]);
+}
+
 async function run(
   context: RungContext,
   plan: MaintenanceAction,
@@ -258,6 +266,14 @@ async function run(
     outcome = await executeAction(plan, {
       ...actContext(context.settings),
       critical: context.level === 'critical',
+      ...(plan.kind === 'would-delete-trash' && (!context.force || context.force.measured)
+        ? {
+            trashPriority: async () => {
+              const { disk } = await context.remeasure();
+              return disk === 'normal' ? null : disk !== 'critical';
+            },
+          }
+        : {}),
       protectedRoot: context.protectedRoot ? (canonicalOrNull(context.protectedRoot) ?? '') : '',
       operation: context.operation,
       ...(context.firstFree ? { firstFree: context.firstFree } : {}),
@@ -358,18 +374,15 @@ async function idleOutputsRung(context: RungContext): Promise<void> {
   if (!context.act && context.force) return previewIdleOutputsRung(context);
   const sweep = async (marks: GcMark[]) => {
     const ranked = marks
-      .filter((mark) => mark.candidates.some(({ kind }) => kind === 'outputs'))
+      .flatMap((mark) =>
+        mark.candidates.filter((candidate) => candidate.kind === 'outputs').map((candidate) => ({ mark, candidate })),
+      )
       .toSorted(
         (a, b) =>
-          Number(a.candidates.some((candidate) => candidate.kind === 'outputs' && candidate.keep)) -
-          Number(b.candidates.some((candidate) => candidate.kind === 'outputs' && candidate.keep)),
-      )
-      .flatMap((mark) =>
-        mark.candidates
-          .filter((candidate) => candidate.kind === 'outputs')
-          .map((candidate) => Object.assign({}, mark, { candidates: [candidate] })),
+          Number(Boolean(a.candidate.keep)) - Number(Boolean(b.candidate.keep)) ||
+          (b.candidate.bytes ?? -1) - (a.candidate.bytes ?? -1),
       );
-    for (const mark of ranked) {
+    for (const { mark, candidate } of ranked) {
       if (context.act) await context.between?.();
       context.stop?.throwIfAborted();
       context.operation?.signal.throwIfAborted();
@@ -388,33 +401,34 @@ async function idleOutputsRung(context: RungContext): Promise<void> {
       if (!(await context.stillShort())) return;
       if (context.act && context.between && (!context.force || context.force.measured))
         context.short = context.volume === undefined ? await shortDevices(context, 'high') : new Set([context.volume]);
-      if (!mark.candidates.some((candidate) => candidate.kind === 'outputs' && onShort(context, [candidate.path])))
-        continue;
+      if (!onShort(context, [candidate.path])) continue;
       const protectedRoot = context.protectedRoot && canonicalOrNull(context.protectedRoot);
-      if (protectedRoot === mark.root) continue;
-      const selected = mark.candidates.find(({ kind }) => kind === 'outputs');
-      const before =
-        selected && context.firstFree?.pending(selected.device)
-          ? (await readVolumeSpaceAsync([selected.path], context.operation?.signal))[0]
-          : undefined;
+      if (protectedRoot === mark.root) {
+        if (context.act) keepMarkCandidate(mark, candidate, 'the command that started this pass runs in it');
+        continue;
+      }
+      const before = context.firstFree?.pending(candidate.device)
+        ? (await readVolumeSpaceAsync([candidate.path], context.operation?.signal))[0]
+        : undefined;
       const result = await clearStoppedOutputs(
         { path: mark.root },
         context.config,
         PRESSURE_IDLE_MS,
         context.operation,
         deletable(context),
-        mark,
+        { ...mark, candidates: [candidate] },
         context,
         false,
       );
       if (!result) continue;
-      if (context.act && result.outcome === 'kept') keepOutputMark(mark, result.detail ?? 'kept at sweep');
+      if (context.act && result.outcome === 'kept')
+        keepMarkCandidate(mark, candidate, result.detail ?? 'kept at sweep');
       recordAction(
         context,
         {
           rung: 1,
           kind: 'delete-build-outputs',
-          target: mark.root,
+          target: candidate.path,
           workspace: mark.root,
           ...result,
           ...(result.outcome === 'done'
@@ -425,13 +439,12 @@ async function idleOutputsRung(context: RungContext): Promise<void> {
       );
       if (
         result.outcome === 'done' &&
-        selected &&
-        before?.device === selected.device &&
-        context.firstFree?.pending(selected.device)
+        before?.device === candidate.device &&
+        context.firstFree?.pending(candidate.device)
       ) {
-        const after = (await readVolumeSpaceAsync([selected.path], context.operation?.signal))[0];
-        if (after?.device === selected.device && after.freeMb > before.freeMb)
-          context.firstFree.observed(selected.device, Date.now());
+        const after = (await readVolumeSpaceAsync([candidate.path], context.operation?.signal))[0];
+        if (after?.device === candidate.device && after.freeMb > before.freeMb)
+          context.firstFree.observed(candidate.device, Date.now());
       }
     }
   };
@@ -469,6 +482,7 @@ async function parkedRung(context: RungContext): Promise<void> {
     })),
   ].toSorted((a, b) => String(a.at).localeCompare(String(b.at)));
   for (const device of parked) {
+    await actionBoundary(context);
     if (!onShort(context, deviceDataDirs(context.sims, device.platform, device.id))) continue;
     if (context.level === 'high' && !(await context.stillShort())) return;
     if (ledger && !ledger[device.platform].has(device.id)) {
@@ -540,29 +554,9 @@ async function trim(
     : { outcome: 'kept', bytes: 0, detail: `no unprotected entry to evict${kept}` };
 }
 
-const triedAt = new Map<string, number>();
-
-/**
- * The size the disk-usage cache records for the Cargo target at `dir`, which the size scan writes for every target it
- * measures; null when none is recorded, or none since this process last tried to trim it.
- */
-function recordedBytes(dir: string): number | null {
-  // @ref LLP 0001#pressure-acts-without-waiting-for-measurement-or-load -- no size walk before a cache is freed
-  const recorded = readDiskUsage(dir);
-  return recorded && Date.parse(recorded.measuredAt) > (triedAt.get(dir) ?? -Infinity) ? recorded.bytes : null;
-}
-
 function unsizedDetail(dir: string): string {
   const failure = lastSizeFailure(dir);
   return `its size walk ${failure ? describeSizeFailure(failure) : 'failed'}, so it was left alone`;
-}
-
-/** The trims ordered by `recordedBytes`, largest first; targets with no recorded size follow in plan order. */
-function largestFirst(actions: readonly MaintenanceAction[]): MaintenanceAction[] {
-  return actions
-    .map((action) => ({ action, bytes: recordedBytes(action.target) ?? -1 }))
-    .toSorted((a, b) => b.bytes - a.bytes)
-    .map(({ action }) => action);
 }
 
 const CARGO_TRIM_RETRY_MS = 10 * 60_000;
@@ -588,6 +582,7 @@ async function cargoTargetsStep(context: RungContext): Promise<void> {
     try {
       plan = await planCargoTargetsAtPressure({
         settings: context.settings,
+        recordKeeps: context.act,
         pinned: maintenancePinnedReader(operation),
         now,
         signal: pressureSignal,
@@ -606,23 +601,27 @@ async function cargoTargetsStep(context: RungContext): Promise<void> {
       if (deadlineStopped(error)) return;
       throw error;
     }
-    for (const action of largestFirst(plan.actions)) {
+    for (const action of plan.actions) {
       if (context.act) await context.between?.();
       if (context.stop?.aborted) return;
       operation?.signal.throwIfAborted();
       const workspace = action.workspace ? canonicalOrNull(action.workspace) : null;
-      if (protectedRoot && (workspace === protectedRoot || action.target.startsWith(`${protectedRoot}${sep}`)))
+      if (protectedRoot && (workspace === protectedRoot || action.target.startsWith(`${protectedRoot}${sep}`))) {
+        if (context.act) keepCargoTarget(action, 'the command that started this pass runs in it');
         continue;
+      }
       if (!onShort(context, [action.target])) continue;
       if (!(await context.stillShort())) return;
-      if (workspace && (await maintenancePinnedReader(operation)(workspace))) continue;
+      if (workspace && (await maintenancePinnedReader(operation)(workspace))) {
+        if (context.act) keepCargoTarget(action, 'pinned by maintenance.keep');
+        continue;
+      }
       // @ref LLP 0001#the-ladder-runs-by-yield -- a larger target's trim may already have cleared this one's volume
       if (context.volume === undefined) {
         const level = await measuredDiskLevel(action.target, pressureSignal);
         if (level === 'normal') continue;
         if (context.between && !context.force) action.level = level === 'critical' ? 3 : 2;
       }
-      if (context.act) triedAt.set(action.target, Date.now());
       try {
         await run({ ...context, operation }, action);
       } catch (error) {
@@ -679,6 +678,7 @@ async function sharedCachesStep(context: RungContext): Promise<void> {
     { cache: rootCache('Metro transform caches', metroCacheRoot(), 3), capGb: context.settings.metroCacheMaxGb },
   ];
   for (const { cache, capGb } of entries) {
+    await actionBoundary(context);
     if (!existsSync(cache.dir) || !onShort(context, [cache.dir]) || !(await context.stillShort())) continue;
     let evict = Infinity;
     if (!critical) {
@@ -713,6 +713,7 @@ async function sharedCachesStep(context: RungContext): Promise<void> {
     );
   }
   const compilation = sharedCompilationCache();
+  await actionBoundary(context);
   if (existsSync(compilation) && onShort(context, [compilation]) && (await context.stillShort())) {
     const capGb = context.settings.swiftCompilationCacheMaxGb;
     const bytes = critical
@@ -760,6 +761,7 @@ async function sharedCachesStep(context: RungContext): Promise<void> {
     [fingerprintIndexDir(), fingerprintIndexLock()],
     [join(configDir(), 'fingerprint-memo'), join(configDir(), 'fingerprint-memo.lock')],
   ] as const) {
+    await actionBoundary(context);
     if (!critical || !existsSync(directory) || !onShort(context, [directory]) || !(await context.stillShort()))
       continue;
     const bytes =
@@ -804,6 +806,8 @@ async function emptyRegisteredCaches(context: RungContext, handled: readonly str
     context.operation?.env,
   );
   for (const cache of caches) {
+    await actionBoundary(context);
+    if (!onShort(context, [cache.dir])) continue;
     if (!(await context.stillShort())) return;
     if (!cache.willEmpty) {
       if (cache.prune !== 'report-only')
@@ -952,6 +956,7 @@ async function sweepRung(context: RungContext, causes: readonly Cause[]): Promis
     { signal: context.operation?.signal, items: (planned) => planned?.actions.length },
   );
   for (const action of plan.actions) {
+    await actionBoundary(context);
     const memory = action.kind === 'would-stop-gradle-daemons' || action.kind === 'would-stop-watchman';
     if (!memory && !onShort(context, [action.dir ?? action.target])) continue;
     if (!(await context.stillShort())) return;
@@ -1117,6 +1122,8 @@ async function historyRung(context: RungContext): Promise<void> {
     items: (planned) => planned?.length,
   });
   for (const action of history) {
+    await actionBoundary(context, 'critical');
+    if (context.act && context.between && !onShort(context, [configDir()])) return;
     if (!(await context.stillShort())) return;
     await run(context, action);
   }
@@ -1139,8 +1146,10 @@ async function unownedRung(context: RungContext): Promise<void> {
   if (critical?.size === 0) return;
   if (!context.force) ranAt(context, 'unowned', Date.now());
   for (const plan of await surveyToolCaches(context.operation)) {
+    await actionBoundary(context, 'critical');
+    const currentCritical = context.act && context.between ? context.short : critical;
     // @ref LLP 0003#only-on-the-short-volume -- a full external disk must not empty another volume
-    const result = onShortVolume(plan.cache.paths, critical)
+    const result = onShortVolume(plan.cache.paths, currentCritical)
       ? await cleanToolCache(plan, context.act, context.operation)
       : {
           outcome: 'kept' as const,
@@ -1170,6 +1179,7 @@ async function unownedRung(context: RungContext): Promise<void> {
       context.why,
     );
   }
+  await actionBoundary(context, 'critical');
   const env = context.operation?.env ?? process.env;
   const reported = reportedCaches(env);
   const inventory = await collectInventory(context.config, [], env, context.operation).catch(() => null);
