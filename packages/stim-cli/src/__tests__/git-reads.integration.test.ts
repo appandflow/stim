@@ -150,14 +150,14 @@ test.each([
       runDiskPass(input, () => {}, processContext(process.cwd(), new AbortController().signal)),
   ],
 ])(
-  'one report-mode ladder pass at high with its disk pass %s lists each repository once and reads no checkout',
+  'one unmarked report-mode ladder pass at high with its disk pass %s reads no repository or checkout',
   async (_where, diskPass) => {
     fleet();
     vi.stubEnv('STIM_DISK_CRITICAL_FREE_GB', '0');
     const counts = countGit();
     const passes = await runHomePasses({ act: false, log: () => {}, ...(diskPass ? { diskPass } : {}) });
     expect(passes.pressure.level).toBe('high');
-    expect(counts).toEqual({ total: 2, lists: 2, paths: 0, statuses: 0 });
+    expect(counts).toEqual({ total: 0, lists: 0, paths: 0, statuses: 0 });
   },
   30_000,
 );
