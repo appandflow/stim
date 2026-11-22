@@ -36,11 +36,6 @@ export function keepReserve(): void {
   }
 }
 
-export function diskFull(error: unknown): boolean {
-  if (typeof error !== 'object' || error === null || !('code' in error)) return false;
-  return error.code === 'ENOSPC' || error.code === 'EDQUOT';
-}
-
 const FULL_BYTES = 64 * 1024 * 1024;
 
 // @ref LLP 0005#a-full-disk-releases-the-reserve -- once, before a cleanup that writes or unlinks

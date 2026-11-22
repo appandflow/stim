@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { gcMarkFile, GC_MARK_VERSION, type Config, type GcMark } from '@stim-cli/core/state';
 import { outputMarkBatch, outputMarks } from '../daemon/marks.ts';
 import { readMarkHealth } from '../daemon/mark-health.ts';
-import { hungRead, pendingRead } from '../workspace/bounded-read.ts';
+import { hungRead, pendingRead, Unanswered } from '../workspace/bounded-read.ts';
 import { testContext } from './_context.ts';
 
 vi.mock('node:fs/promises', async (original) => {
@@ -73,6 +73,7 @@ test('a missing mark directory reports unavailable instead of zero', async () =>
 
 test('a blocked inventory times out without starting another read and remains unavailable', async () => {
   record();
+  config.projects = {};
   let release: (files: never[]) => void = () => {};
   const lookup = vi.mocked(readdir).mockImplementationOnce(
     () =>
@@ -110,6 +111,27 @@ test('cancellation propagates from an inventory read and settles its bounded rea
     const reason = new Error('cancel inventory');
     controller.abort(reason);
     expect(await result).toBe(reason);
+  } finally {
+    release([]);
+    await pendingRead();
+  }
+});
+
+test('an unanswered inventory propagates through registered scope checks to the owning daemon', async () => {
+  record();
+  let release: (files: never[]) => void = () => {};
+  const lookup = vi.mocked(readdir).mockImplementationOnce(
+    () =>
+      new Promise<never[]>((resolve) => {
+        release = resolve;
+      }),
+  );
+  const result = readMarkHealth(config, testContext()).catch((error: unknown) => error);
+  try {
+    await vi.waitFor(() => expect(lookup).toHaveBeenCalledWith(dirname(gcMarkFile(root))));
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(await result).toBeInstanceOf(Unanswered);
+    expect(hungRead()).toBe(dirname(gcMarkFile(root)));
   } finally {
     release([]);
     await pendingRead();

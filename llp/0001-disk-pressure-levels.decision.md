@@ -330,8 +330,8 @@ cleanup refusal takes precedence over cancellation or timeout. Completed actions
 remain applied. Progress is notification delivered over IPC; an announced or
 in-flight action may complete before stimd receives a callback cancellation.
 
-An item takes no outer maintenance claim: the lane still holds that claim when
-it yields the turn. The worker's report tracks its children and pending work
+An item and the lane take no outer maintenance claim. The disk turn excludes
+this daemon's cleanup units. The worker's report tracks its children and pending work
 until cleanup settles, and its existing per-object claims remain unchanged.
 An older in-process cleanup may therefore overlap removal of a regenerable
 cache that has no per-cache claim; that may repeat work or require a rebuild.
@@ -348,6 +348,33 @@ Maintainer decision: "Like everything gc related should run in same task ro
 avoid concurrency problems", 2026-11-20. The units, the hard-floor priority
 and keeping the idle and dormant stages in the tick are the coordinator's and
 implementer's reading of it on #6029.
+
+## Queue ownership replaces the maintenance claim
+
+The maintenance lane no longer takes `maintenance/run.claims`. Items, GC
+passes, headroom and the lane all use the same disk owner. Workspace, Cargo,
+archive and cache claims remain; unverified child cleanup still reaches the
+worker's existing cleanup watch (LLP 0007).
+
+`maintenance.running` is the active disk turn's start and trigger;
+`maintenance.queued` counts the waiting units, including a lane waiting to
+regain its turn. The worker publishes changes through the owning daemon's
+claim details, so status works before that daemon completes its first tick.
+Only a live shared daemon holder supplies queue state. There is no separate
+maintenance claim or unresolved maintenance-claim status.
+
+The hard-floor gate asks for the existing requested daemon tick, whose disk
+pass has the hard-floor rank. An unavailable daemon runs no inline ladder;
+the gate remeasures and retains its existing `STIM_LOW_DISK` refusal when
+still below the floor. Off mode skips that cleanup and report mode deletes
+nothing, as before. The build's headroom run remains on its own high-rank
+queue turn (LLP 0006), never a new refusal.
+
+This removes the last command-side fallback without adding a cross-build
+compatibility claim. Normal installed clients route to the selected engine;
+a deliberately run prequeue copy can still clean locally, so that copy must
+be updated before sharing a home with the queue owner (RELEASE.md,
+Compatibility and breaking changes).
 
 ## Every gc joins a pass under way
 
@@ -489,12 +516,37 @@ also holds the newest activity the walk read, and the walk reads at
   the observation time; partial coverage omits totals. An observation older
   than the daemon's existing three-interval late-tick limit is unavailable.
   Reporting starts no discovery or size walk on the socket or doctor path.
-- Cargo pressure discovery, worktree/dependency discovery and normal Cargo
-  cap planning are unchanged. Wider Cargo marks (including nested and
-  untagged targets), their sweep migration, and worktree/dependency marks
-  remain separate increments. Per-candidate disk-turn yielding and yield
-  ranking also remain pending. The no-discovery guarantee here is for output
-  rung 1 only. `stim gc --dry-run` still discovers and previews outputs.
+- The writer also recognizes untagged Cargo targets by the existing Cargo
+  manifest/profile rules and marks targets in the holder's `apps/` and
+  `packages/` children. The normal lane reads actual Git holders reached by
+  its artifact scanner and publishes their own marks. A registered app's
+  current buffered Git worktree metadata can authorize its exact holder's
+  Cargo candidates, without authorizing the holder's other outputs. The
+  helper may watch that holder; a watch grants no deletion authority. A holder
+  reached only through a discovered nested app stays when its own ordinary
+  route cannot be proved; targeted proof for that layout remains required.
+- Both Cargo pressure entrypoints consume saved target candidates. The
+  planner and executor share the same action object in one isolate; its
+  private mark proof is not serialized. A copied pressure action is kept.
+  Execution rechecks the saved generation, current scope, target ownership,
+  canonical root/target paths and devices before using the existing Cargo
+  admission, process reads and locked remover. Planning authorizes one saved
+  batch; execution reauthorizes only the selected root. Rewriting the mark makes an
+  earlier action stale. Failed safety reads keep the target. High pressure
+  tries known targets before refreshing due or missing marks while still
+  high; critical and hard-floor pressure never refresh or rediscover Cargo
+  targets. Unmarked targets stay. Acting size/cap passes use normal rules
+  even under pressure, so measured sizes cannot bypass the saved pressure
+  candidates; explicit read-only previews retain their pressure policy. The
+  existing normal sizing, cap selection and scheduling remain unchanged.
+  A build-headroom deadline cancels the same bounded Cargo refresh and
+  leaves later holders and the next sweep unstarted; failed cleanup still
+  propagates.
+- Worktree/dependency marks and pressure discovery, normal mark-first
+  scheduling, per-candidate disk-turn yielding and yield ranking remain
+  pending. The no-discovery guarantee applies to output rung 1 and Cargo
+  pressure candidate selection, not the other maintenance stages or normal
+  size/cap passes. `stim gc --dry-run` retains discovery previews.
 
 Reason: planning dominates a pressure pass (rung 5's evidence loop took about
 13,300 s for 0 bytes on the loaded MacBook), and every pass repeats the

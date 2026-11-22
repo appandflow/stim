@@ -254,6 +254,12 @@
 [*] interface CcacheActivity { @@1 hits: number | null;
 [*] interface CcacheActivity { @@1 misses: number | null;
 [*] interface CcacheActivity { @@1 status: "reported" | "unavailable" | "not-run";
+[*] interface CleanupQueueStatus {
+[*] interface CleanupQueueStatus { @@1 queued: number;
+[*] interface CleanupQueueStatus { @@1 running: {
+[*] interface CleanupQueueStatus { @@1 } | null;
+[*] interface CleanupQueueStatus { @@2 startedAt: string;
+[*] interface CleanupQueueStatus { @@2 trigger: string;
 [*] interface CollectorEntry {
 [*] interface CollectorEntry { @@1 code?: string;
 [*] interface CollectorEntry { @@1 pid: number | null;
@@ -947,7 +953,6 @@
 [*] interface MaintenanceSize { @@1 name: string;
 [*] interface MaintenanceSize { @@1 workspace?: string;
 [*] interface MaintenanceStatus {
-[*] interface MaintenanceStatus { @@1 claim?: {
 [*] interface MaintenanceStatus { @@1 deferred?: {
 [*] interface MaintenanceStatus { @@1 history?: GcHistoryStatus;
 [*] interface MaintenanceStatus { @@1 invalid?: string;
@@ -956,20 +961,16 @@
 [*] interface MaintenanceStatus { @@1 mode: MaintenanceMode;
 [*] interface MaintenanceStatus { @@1 plan: MaintenanceAction[];
 [*] interface MaintenanceStatus { @@1 pressure: MaintenancePressure | null;
+[*] interface MaintenanceStatus { @@1 queued?: number;
 [*] interface MaintenanceStatus { @@1 recent: MaintenanceRecord[];
-[*] interface MaintenanceStatus { @@1 running: {
+[*] interface MaintenanceStatus { @@1 running: CleanupQueueStatus["running"];
 [*] interface MaintenanceStatus { @@1 sizes: MaintenanceSize[];
-[*] interface MaintenanceStatus { @@1 } | null;
 [*] interface MaintenanceStatus { @@1 }[];
 [*] interface MaintenanceStatus { @@2 check: MaintenanceCheck;
 [*] interface MaintenanceStatus { @@2 pressure: number | null;
-[*] interface MaintenanceStatus { @@2 removeCommand: string;
 [*] interface MaintenanceStatus { @@2 since: number;
 [*] interface MaintenanceStatus { @@2 size: number | null;
-[*] interface MaintenanceStatus { @@2 startedAt: string;
 [*] interface MaintenanceStatus { @@2 sweep: number | null;
-[*] interface MaintenanceStatus { @@2 trigger: string;
-[*] interface MaintenanceStatus { @@2 unresolved: string;
 [*] interface MaintenanceStatus { @@2 worktree: number | null;
 [*] interface MemoryCulprit {
 [*] interface MemoryCulprit { @@1 bytes: number;

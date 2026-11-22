@@ -1,6 +1,7 @@
 import type { DaemonLadderAction, DaemonPressure, PressureLevel } from '@stim-cli/core/state';
 import {
   acquireDisk,
+  reportDiskQueue,
   diskBoundary,
   joinablePass,
   LADDER,
@@ -372,4 +373,18 @@ test('a cancelled headroom turn keeps the owner until its in-flight unit settles
   expect(await first.result).toBe('settled');
   await next.result;
   expect(nextStarted).toBe(true);
+});
+
+test('queue status reports the active owner, waiting units and an idle queue', async () => {
+  const states: unknown[] = [];
+  reportDiskQueue((status) => states.push(status));
+  await acquireDisk(LANE);
+  const item = requestGcItem(async () => 'removed');
+  expect(states.at(-1)).toMatchObject({ running: { trigger: 'maintenance' }, queued: 1 });
+  await diskBoundary();
+  await item.result;
+  expect(states).toContainEqual({ running: { trigger: 'item', startedAt: expect.any(String) }, queued: 1 });
+  releaseDisk();
+  expect(states.at(-1)).toEqual({ running: null, queued: 0 });
+  reportDiskQueue(() => {});
 });
