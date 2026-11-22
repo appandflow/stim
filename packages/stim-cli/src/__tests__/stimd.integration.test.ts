@@ -253,14 +253,12 @@ test('shutdown drains filesystem history before closing its dirty-mark worker', 
   const threads = vi
     .spyOn(stimdThreads, 'createThreadTable')
     .mockImplementation((...args) => ({ ...originalThreads(...args), close: workerClose }));
-  const helper = vi
-    .spyOn(historyHelper, 'startHistoryFeed')
-    .mockReturnValue({
-      update: async () => {},
-      changed: async () => {},
-      status: () => ({ source: 'fallback', reason: 'fixture' }),
-      close,
-    });
+  const helper = vi.spyOn(historyHelper, 'startHistoryFeed').mockReturnValue({
+    update: async () => {},
+    changed: async () => {},
+    status: () => ({ source: 'fallback', reason: 'fixture' }),
+    close,
+  });
   const before = new Set(process.listeners('SIGTERM'));
   const run = runStimd({ tickMs: 60_000, mode: 'report' });
   try {
