@@ -57,7 +57,7 @@ import { workspaceLinkLine, workspaceLinks } from '../devices/stim-desktop.ts';
 import type { ParkedDevice } from '../devices/teardown.ts';
 import { withManagedRemoteWorktreeRemovalLock, withManagedTunnelRemovalLock } from '../engine/tunnel.ts';
 import { warmClaimAcquiredLine, withWarmClaim, type WarmClaimWait } from '../engine/warm-claim.ts';
-import { trace } from '@stim-cli/core/state';
+import { gcMarkFile, readGcMark, trace } from '@stim-cli/core/state';
 import { startWarmProgress, type WarmProgress } from '../engine/warm-progress.ts';
 import { incompleteInstallRefusal, refreshMainCheckout, type RefreshFailure } from '../workspace/worktree-refresh.ts';
 import { readRemoteSession } from '../stimd/metro/state.ts';
@@ -1758,6 +1758,15 @@ async function removeOrRefuse(
             printRemovalCleanup(result, true, output);
             output.fail();
             return;
+          }
+          const obsoleteMark = readGcMark(path);
+          if (obsoleteMark) {
+            // @ref LLP 0001#the-lane-marks-what-each-checkout-could-free -- an in-flight writer may republish this rebuildable record
+            try {
+              rmSync(gcMarkFile(obsoleteMark.root), { force: true });
+            } catch (error) {
+              output.error(chalk.yellow(`Could not retire the cleanup mark of ${path}: ${String(error)}`));
+            }
           }
           if (archive) {
             opts.archiveDirty?.onArchived(archive);

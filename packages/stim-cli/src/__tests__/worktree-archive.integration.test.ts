@@ -12,9 +12,11 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { clearFreeClaimSet, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
-import { worktreeArchiveRoot } from '@stim-cli/core/state';
+import { gcMarkFile, GC_MARK_VERSION, worktreeArchiveRoot } from '@stim-cli/core/state';
+import { upsertProject } from '../workspace/config.ts';
+import * as worktreeGit from '../workspace/worktree.ts';
 import { enforceArchiveRetention } from '../archive.ts';
 import { removeWorktreeTarget } from '../commands/worktree.ts';
 import {
@@ -68,6 +70,21 @@ afterEach(() => {
   for (const key of Object.keys(process.env))
     if (key === 'STIM_HOME' || key.startsWith('STIM_ARCHIVE_')) delete process.env[key];
 });
+
+function saveMark(root: string): string {
+  const file = gcMarkFile(root);
+  mkdirSync(dirname(file), { recursive: true });
+  const text = JSON.stringify({
+    v: GC_MARK_VERSION,
+    root,
+    device: 1,
+    markedAt: new Date().toISOString(),
+    lastActivityAt: null,
+    candidates: [],
+  });
+  writeFileSync(file, text);
+  return text;
+}
 
 function dirtyTheWorktree(): void {
   writeFileSync(join(worktree, 'a.txt'), 'edited\n');
@@ -185,6 +202,8 @@ test('a staged version the working tree no longer holds keeps the worktree inste
 }, 60_000);
 
 test('worktree removal with archiveDirty archives and removes a dirty worktree, and keeps one it cannot archive', async () => {
+  const mark = saveMark(worktree);
+  const sourceMark = saveMark(repo);
   const error = vi.spyOn(console, 'error').mockImplementation(() => {});
   onTestFinished(() => error.mockRestore());
   const saved: WorktreeArchive[] = [];
@@ -196,12 +215,15 @@ test('worktree removal with archiveDirty archives and removes a dirty worktree, 
   process.env.STIM_ARCHIVE_ENABLED = 'false';
 
   expect(await removeWorktreeTarget(worktree, options)).toBe(false);
+  expect(readFileSync(gcMarkFile(worktree), 'utf8')).toBe(mark);
   expect(existsSync(join(worktree, 'scratch.txt'))).toBe(true);
   expect(error.mock.calls.flat().join('\n')).toContain('could not archive its uncommitted changes');
 
   process.env.STIM_ARCHIVE_ENABLED = 'true';
   expect(await removeWorktreeTarget(worktree, options)).toBe(true);
   expect(existsSync(worktree)).toBe(false);
+  expect(existsSync(gcMarkFile(worktree))).toBe(false);
+  expect(readFileSync(gcMarkFile(repo), 'utf8')).toBe(sourceMark);
   expect(saved).toHaveLength(1);
   expect(readFileSync(join(saved[0]?.dir ?? '', 'manifest.json'), 'utf8')).toContain('scratch.txt');
 }, 120_000);
@@ -209,6 +231,7 @@ test('worktree removal with archiveDirty archives and removes a dirty worktree, 
 test.skipIf(process.platform === 'win32')(
   'a failing git removal keeps both the worktree and its archive',
   async () => {
+    const mark = saveMark(worktree);
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     onTestFinished(() => error.mockRestore());
     const locked = join(worktree, 'locked');
@@ -226,6 +249,7 @@ test.skipIf(process.platform === 'win32')(
     }
 
     expect(removed).toBe(false);
+    expect(readFileSync(gcMarkFile(worktree), 'utf8')).toBe(mark);
     expect(existsSync(join(locked, 'held.txt'))).toBe(true);
     const [entry] = readdirSync(join(worktreeArchiveRoot(), 'repo'));
     const manifest = JSON.parse(
@@ -322,4 +346,70 @@ test('retention deletes worktree archives past archive.maxAgeDays, then the olde
       .filter((name) => !name.endsWith('.claims'))
       .toSorted(),
   ).toEqual(['in-flight', 'recent']);
+});
+
+test('source-only reclamation preserves the existing root mark and checkout', async () => {
+  const mark = saveMark(repo);
+  upsertProject(repo, {});
+  expect(await removeWorktreeTarget(repo, { output: { error: () => {}, fail: () => {} } })).toBe(false);
+  expect(existsSync(repo)).toBe(true);
+  expect(readFileSync(gcMarkFile(repo), 'utf8')).toBe(mark);
+});
+
+test('a branch cleanup failure after actual linked removal still retires only the removed root mark', async () => {
+  saveMark(worktree);
+  const sourceMark = saveMark(repo);
+  upsertProject(worktree, {
+    worktreeRoot: true,
+    worktreeBranch: 'topic',
+    worktreeBranchOwned: true,
+    worktreeMainRoot: repo,
+  });
+  const refusal = vi.spyOn(worktreeGit, 'deleteBranchAsync').mockRejectedValue(new Error('controlled branch refusal'));
+  onTestFinished(() => refusal.mockRestore());
+  expect(await removeWorktreeTarget(worktree, { linkedOnly: true, output: { error: () => {}, fail: () => {} } })).toBe(
+    true,
+  );
+  expect(refusal).toHaveBeenCalledTimes(1);
+  expect(existsSync(worktree)).toBe(false);
+  expect(existsSync(gcMarkFile(worktree))).toBe(false);
+  expect(readFileSync(gcMarkFile(repo), 'utf8')).toBe(sourceMark);
+});
+
+test('a missing linked root retains its mark rather than treating absence as owned removal', async () => {
+  const mark = saveMark(worktree);
+  git(repo, `worktree remove --force "${worktree}"`);
+  expect(await removeWorktreeTarget(worktree, { linkedOnly: true, output: { error: () => {}, fail: () => {} } })).toBe(
+    false,
+  );
+  expect(readFileSync(gcMarkFile(worktree), 'utf8')).toBe(mark);
+});
+
+test('a foreign-root saved record is not retired after linked removal', async () => {
+  const foreign = saveMark(repo);
+  mkdirSync(dirname(gcMarkFile(worktree)), { recursive: true });
+  writeFileSync(gcMarkFile(worktree), foreign);
+  expect(await removeWorktreeTarget(worktree, { linkedOnly: true, output: { error: () => {}, fail: () => {} } })).toBe(
+    true,
+  );
+  expect(existsSync(worktree)).toBe(false);
+  expect(readFileSync(gcMarkFile(worktree), 'utf8')).toBe(foreign);
+  expect(readFileSync(gcMarkFile(repo), 'utf8')).toBe(foreign);
+});
+
+test.skipIf(process.platform === 'win32')('failed mark unlink does not undo successful owned removal', async () => {
+  const mark = saveMark(worktree);
+  const directory = dirname(gcMarkFile(worktree));
+  const error = vi.fn<(message: string) => void>();
+  const fail = vi.fn<() => void>();
+  chmodSync(directory, 0o555);
+  try {
+    expect(await removeWorktreeTarget(worktree, { linkedOnly: true, output: { error, fail } })).toBe(true);
+    expect(existsSync(worktree)).toBe(false);
+    expect(readFileSync(gcMarkFile(worktree), 'utf8')).toBe(mark);
+    expect(error.mock.calls.flat().join('\n')).toContain('Could not retire the cleanup mark');
+    expect(fail).not.toHaveBeenCalled();
+  } finally {
+    chmodSync(directory, 0o755);
+  }
 });
