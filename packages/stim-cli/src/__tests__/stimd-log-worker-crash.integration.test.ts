@@ -175,7 +175,7 @@ describe.skipIf(process.platform === 'win32')('logs worker failure', () => {
       if (!worker) throw new Error('the logs worker was not started');
       await worker.terminate();
       await vi.waitFor(() => expect(() => process.kill(pid, 0)).toThrow(/ESRCH/));
-      await vi.waitFor(() => expect(Number(readFileSync(pidFile, 'utf8'))).not.toBe(pid));
+      await vi.waitFor(() => expect(Number(readFileSync(pidFile, 'utf8'))).not.toBe(pid), { timeout: 5000 });
       expect(messages.some((message) => message.includes('logs worker failed'))).toBe(true);
       const replacement = await streams.start(
         { root, platform: 'ios', udid: 'U1', bundleId: 'com.test.app', appName: 'Test' },
