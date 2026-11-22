@@ -1,4 +1,4 @@
-import { lstat, readdir } from 'node:fs/promises';
+import { readdir } from 'node:fs/promises';
 import { mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, relative, sep } from 'node:path';
@@ -10,6 +10,7 @@ import {
   readDiscoveryScanFile,
   type DaemonMeasurement,
   type DiscoveryScan,
+  type ScanFolderProof,
 } from '@stim-cli/core/state';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { diskPressure, diskThresholds } from '../daemon/pressure.ts';
@@ -25,6 +26,10 @@ import {
   scanSkipper,
   absent,
   type RecognitionIo,
+  scanMetadata,
+  scanSentinels,
+  sameScanIdentity,
+  type ScanMetadata,
 } from './scan-rules.ts';
 
 const HOUR_MS = 60 * 60_000;
@@ -34,6 +39,7 @@ const BUDGET_MS = 45_000;
 const READ_TIMEOUT_MS = 3000;
 
 interface ScanOutcome {
+  safety?: Record<string, ScanFolderProof>;
   found: string[];
   unreadable: string[];
   visited: number;
@@ -64,7 +70,7 @@ export async function scanForCheckouts(
     signal,
     skip = () => false,
     readTimeoutMs = READ_TIMEOUT_MS,
-    stat: statOf = (path) => lstat(path),
+    stat: statOf = scanMetadata,
     entries: entriesOf = (path) => readdir(path, { withFileTypes: true }),
     recognition = REAL_RECOGNITION_IO,
   }: {
@@ -72,7 +78,7 @@ export async function scanForCheckouts(
     signal?: AbortSignal;
     skip?: (path: string) => boolean;
     readTimeoutMs?: number;
-    stat?: (path: string) => Promise<{ dev: number }>;
+    stat?: (path: string) => Promise<ScanMetadata>;
     entries?: RecognitionIo['readEntries'];
     recognition?: RecognitionIo;
   } = {},
@@ -109,14 +115,20 @@ export async function scanForCheckouts(
     stop('read');
     return outcome;
   }
-  let volume: number;
+  let homeInfo: ScanMetadata;
   try {
-    volume = (await answered(home, () => statOf(home), readTimeoutMs)).dev;
+    homeInfo = await answered(home, () => statOf(home), readTimeoutMs);
   } catch (error) {
     if (!stopAt(home, error) && absent(error)) throw error;
     return outcome;
   }
-  const walk = async (folder: string, depth: number, unsafeAbove: boolean): Promise<void> => {
+  const walk = async (
+    folder: string,
+    depth: number,
+    unsafeAbove: boolean,
+    info: ScanMetadata,
+    aboveProof: ReadonlyMap<string, ScanFolderProof>,
+  ): Promise<void> => {
     if (exhausted()) return;
     outcome.visited++;
     let entries;
@@ -126,6 +138,8 @@ export async function scanForCheckouts(
       stopAt(folder, error);
       return;
     }
+    const proof = new Map(aboveProof);
+    if (info.identity) proof.set(folder, { ...info.identity, sentinels: scanSentinels(entries) });
     const safety = await folderSafety(folder, entries, readTimeoutMs, recognition, exhausted);
     signal?.throwIfAborted();
     if (safety === 'stopped') return;
@@ -157,6 +171,22 @@ export async function scanForCheckouts(
       const recognised = isCheckout(folder);
       if (recognised === true) {
         outcome.found.push(folder);
+        if (proof.size === depth + 1) {
+          try {
+            for (const [path, before] of proof) {
+              if (exhausted()) return;
+              const current = await answered(path, () => recognition.metadata(path), readTimeoutMs);
+              if (!sameScanIdentity(before, current.identity)) return;
+            }
+            if (exhausted()) return;
+            const native = await answered(folder, () => recognition.realpath(folder), readTimeoutMs);
+            const own = proof.get(folder);
+            if (own) proof.set(folder, { ...own, native });
+            outcome.safety = { ...outcome.safety, ...Object.fromEntries(proof) };
+          } catch (error) {
+            stopAt(folder, error);
+          }
+        }
         return;
       }
       if (recognised === 'unknown') outcome.unreadable.push(folder);
@@ -167,17 +197,17 @@ export async function scanForCheckouts(
       if (!entry.isDirectory() || entry.isSymbolicLink() || !scanDescends(entry.name, depth + 1)) continue;
       const path = join(folder, entry.name);
       if (skip(path)) continue;
-      let info;
+      let childInfo;
       try {
-        info = await answered(path, () => statOf(path), readTimeoutMs);
+        childInfo = await answered(path, () => statOf(path), readTimeoutMs);
       } catch (error) {
         if (stopAt(path, error)) return;
         continue;
       }
-      if (info.dev === volume) await walk(path, depth + 1, false);
+      if (childInfo.dev === homeInfo.dev) await walk(path, depth + 1, false, childInfo, proof);
     }
   };
-  await walk(home, 0, false);
+  await walk(home, 0, false, homeInfo, new Map());
   return outcome;
 }
 
@@ -292,13 +322,24 @@ export async function runDiscoveryScanIfDue(
       ...scanOptions,
     });
     operation.signal.throwIfAborted();
+    const found = mergeFound(last?.found ?? [], { ...outcome, found: outcome.found.filter((p) => !dotFolder(p)) });
+    const dotFolderFound = mergeFound(last?.dotFolderFound ?? [], {
+      ...outcome,
+      found: outcome.found.filter(dotFolder),
+    });
+    const safety = Object.fromEntries(
+      Object.entries({ ...last?.safety, ...outcome.safety }).filter(([folder]) =>
+        [...found, ...dotFolderFound].some((root) => root === folder || root.startsWith(`${folder}${sep}`)),
+      ),
+    );
     writeScan({
       ...attempt,
       completedAt: outcome.truncation === 'read' ? (last?.completedAt ?? 0) : now,
       durationMs: Date.now() - now,
       ...outcome,
-      found: mergeFound(last?.found ?? [], { ...outcome, found: outcome.found.filter((p) => !dotFolder(p)) }),
-      dotFolderFound: mergeFound(last?.dotFolderFound ?? [], { ...outcome, found: outcome.found.filter(dotFolder) }),
+      found,
+      dotFolderFound,
+      ...(Object.keys(safety).length ? { safety } : {}),
     });
   } catch {
     if (operation.signal.aborted) {
@@ -311,6 +352,7 @@ export async function runDiscoveryScanIfDue(
         found: last?.found ?? [],
         dotFolderFound: last?.dotFolderFound ?? [],
         unreadable: last?.unreadable ?? [],
+        ...(last?.safety ? { safety: last.safety } : {}),
       });
     } catch {}
   }

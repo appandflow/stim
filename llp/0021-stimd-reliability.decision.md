@@ -260,6 +260,15 @@ line below the critical level, and at stimd's priority at critical. An `rm`
 that fails is not run again on another command line; the in-process walk that
 follows, at stimd's priority, removes what it left. Maintainer
 decision: "Replace with rm -rf", 2026-11-20, relayed by the coordinator (#6048).
+Plain regenerable workspace outputs use the same short-lived, supervised
+remover (#6105). Normal cleanup throttles its I/O; callers already handling
+high or critical pressure use ordinary I/O. Existing path, volume and in-use
+checks run inside their workspace claims before launch, and those claims last
+through child cleanup. Cancellation or unverified child cleanup cannot enter
+the in-process fallback. Cargo and other lock-bearing deletes retain their
+existing paths. Windows retains the in-process remover; no low-I/O child is
+introduced there.
+
 `utility` is the milder of macOS's two throttled policies.
 `taskpolicy -b` was rejected: it also moves CPU into the background band, and
 under a load average of about 300 its walks took 2 to 3.5 times as long as a

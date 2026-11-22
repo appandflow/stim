@@ -147,6 +147,7 @@ export async function runMaintenanceAtLevel({
           settings,
           background: false,
           critical: level === 'critical',
+          throttleOutputs: false,
           protectedRoot: triggeringRoot(operation),
           ...(operation ? { operation } : {}),
         });
@@ -171,7 +172,7 @@ export async function runMaintenanceAtLevel({
     worktrees: settings.removeFinishedWorktrees,
     refresh: act,
     operation,
-    ...(chosen ? { cargoLevel: chosen } : {}),
+    ...(act ? { cargoLevel: 'normal' as const } : chosen ? { cargoLevel: chosen } : {}),
   });
   blocked.push(...plan.blocked);
   for (const skip of plan.skips)
@@ -180,6 +181,7 @@ export async function runMaintenanceAtLevel({
     settings,
     background: false,
     critical: level === 'critical',
+    throttleOutputs: level === 'normal',
     protectedRoot: triggeringRoot(operation),
     ...(plan.worktreeSweep ? { worktreeSweep: plan.worktreeSweep } : {}),
     ...(operation ? { operation } : {}),
@@ -206,6 +208,7 @@ export async function runMaintenanceAtLevel({
   for (const action of await runDormantReduction({
     act,
     trigger: 'gc',
+    throttleOutputs: level === 'normal',
     ...(operation ? { operation } : {}),
     protectedRoot: context.protectedRoot,
     ...(walkUnknown === false ? { walkUnknown } : {}),
