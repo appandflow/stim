@@ -554,8 +554,13 @@ also holds the newest activity the walk read, and the walk reads at
   current buffered Git worktree metadata can authorize its exact holder's
   Cargo candidates, without authorizing the holder's other outputs. The
   helper may watch that holder; a watch grants no deletion authority. A holder
-  reached only through a discovered nested app stays when its own ordinary
-  route cannot be proved; targeted proof for that layout remains required.
+  reached through a recognized discovered nested app saves that app path in
+  its existing mark. A targeted read must still prove the app’s current
+  discovery route and current exact Git holder before authorizing only Cargo
+  candidates whose parent still belongs to that exact Git holder. Independent
+  nested checkouts stay outside this authority. Removed routes, missing apps
+  and changed holders keep the target; old marks keep their existing scope
+  behavior.
 - Both Cargo pressure entrypoints consume saved target candidates. The
   planner and executor share the same action object in one isolate; its
   private mark proof is not serialized. A copied pressure action is kept.

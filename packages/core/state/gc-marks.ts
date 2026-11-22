@@ -1,3 +1,4 @@
+import { isAbsolute } from 'node:path';
 import { isJsonObject, readJsonObject } from './json-file.ts';
 import { gcMarkFile } from './paths.ts';
 
@@ -30,6 +31,8 @@ export interface GcMark {
   /** The newest activity the mark read; null when none is known. */
   lastActivityAt: string | null;
   candidates: GcMarkCandidate[];
+  /** Recognized nested app paths that led normal discovery to this Cargo holder. */
+  cargoVia?: string[];
 }
 
 export interface GcStaleMarkEvidence {
@@ -83,6 +86,9 @@ export function parseGcMark(root: string, entry: unknown): GcMark | null {
     ...(dirtyAt === undefined ? {} : { dirtyAt }),
     lastActivityAt,
     candidates: parsed,
+    ...(Array.isArray(entry.cargoVia) && entry.cargoVia.every((path) => typeof path === 'string' && isAbsolute(path))
+      ? { cargoVia: entry.cargoVia }
+      : {}),
   };
 }
 
