@@ -439,6 +439,7 @@ export async function stoppedOutputs(
   config: Config,
   operation?: StimContext,
   deletable?: (path: string) => boolean,
+  keptByPath?: Map<string, string>,
 ): Promise<{ paths: string[]; kept: string[] } | { locked: string }> {
   const lock = await worktreeLockAsync(candidate.path, {
     env: operation?.env,
@@ -446,7 +447,7 @@ export async function stoppedOutputs(
     declareFor: operation,
   });
   if (lock) return { locked: lockReason(lock) };
-  const outputs = await idleOutputs(candidate.path, config, deletable);
+  const outputs = await idleOutputs(candidate.path, config, deletable, { keptByPath });
   return {
     paths: outputs.paths.filter((path) => !outputs.targets.includes(path)),
     kept: [
@@ -457,8 +458,8 @@ export async function stoppedOutputs(
 }
 
 /**
- * Deletes a stopped workspace's regenerable build outputs under its native-run and metro-start locks. Null when every
- * output it has is kept, such as a Metro store a running dev server shares.
+ * Deletes a stopped workspace's regenerable outputs under its native-run and metro-start locks. A selected marked
+ * refusal returns kept; an absent selection or an unmarked all-kept workspace returns null.
  */
 export async function clearStoppedOutputs(
   candidate: Pick<StageCandidate, 'path'>,
@@ -497,14 +498,22 @@ export async function clearStoppedOutputs(
                 })) === null
               )
                 return { outcome: 'kept', bytes: 0, detail: 'it is no longer idle' };
-              outputs = await stoppedOutputs(candidate, config, operation, deletable);
+              const keptByPath = new Map<string, string>();
+              outputs = await stoppedOutputs(candidate, config, operation, deletable, keptByPath);
               if ('locked' in outputs) return { outcome: 'kept', bytes: 0, detail: outputs.locked };
               paths = mark
                 ? outputs.paths.filter((output) =>
                     mark.candidates.some((entry) => entry.kind === 'outputs' && entry.path === output),
                   )
                 : outputs.paths;
-              if (!paths.length) return null;
+              if (!paths.length) {
+                const kept =
+                  mark?.candidates.flatMap((entry) => {
+                    const reason = entry.kind === 'outputs' && keptByPath.get(entry.path);
+                    return reason ? [reason] : [];
+                  }) ?? [];
+                return kept.length ? { outcome: 'kept', bytes: 0, detail: kept.join('; ') } : null;
+              }
               if (mark) {
                 const verified: string[] = [];
                 for (const output of paths) {

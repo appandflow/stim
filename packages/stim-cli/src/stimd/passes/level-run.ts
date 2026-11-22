@@ -11,7 +11,7 @@ import { discoveredReads } from '../../workspace/discovered-reads.ts';
 import { deviceSweepIsScoped } from '../../commands/gc/devices.ts';
 import { executeAction, type ActionOutcome } from './act.ts';
 import { fromLadder, fromOutcome } from './ladder-run.ts';
-import { measureCargoTargets, measuredDiskLevel, planCargoTargetsAtPressure } from './cargo-target.ts';
+import { measureCargoTargets, measuredDiskLevel, planCargoTargetsAtPressure, keepCargoTarget } from './cargo-target.ts';
 import { maintenancePinnedReader } from './protect.ts';
 import { measureSizes } from './measure.ts';
 import { discoverCachesAsync } from '../../cache/caches.ts';
@@ -130,6 +130,7 @@ export async function runMaintenanceAtLevel({
     try {
       early = await planCargoTargetsAtPressure({
         settings,
+        recordKeeps: act,
         pinned: maintenancePinnedReader(operation),
         now,
         signal: operation?.signal,
@@ -144,11 +145,14 @@ export async function runMaintenanceAtLevel({
     for (const action of early.actions) {
       await between?.();
       operation?.signal.throwIfAborted();
-      if (between && action.workspace && (await maintenancePinnedReader(operation)(action.workspace))) continue;
       if (between && chosen === undefined) {
         const current = await measuredDiskLevel(action.target, operation?.signal);
         if (current === 'normal') continue;
         action.level = current === 'critical' ? 3 : 2;
+      }
+      if (between && action.workspace && (await maintenancePinnedReader(operation)(action.workspace))) {
+        keepCargoTarget(action, 'pinned by maintenance.keep');
+        continue;
       }
       let outcome: ActionOutcome;
       try {
@@ -254,7 +258,11 @@ export async function runMaintenanceAtLevel({
       .filter((entry) => path === entry.path || path.startsWith(`${entry.path}/`))
       .toSorted((a, b) => b.path.length - a.path.length)[0]?.path;
   for (const checkout of found) {
-    const mine = actions.filter((action) => ownerOf(action.target) === checkout.path);
+    const mine = actions.filter(
+      (action) =>
+        ownerOf(action.kind === 'delete-build-outputs' ? (action.workspace ?? action.target) : action.target) ===
+        checkout.path,
+    );
     const taken = mine.some((action) => action.outcome === 'would' || action.outcome === 'done');
     const kept =
       taken || idleMs <= 0 || !existsSync(checkout.path)

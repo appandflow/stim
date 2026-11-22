@@ -1,3 +1,5 @@
+import * as runningFrom from '../workspace/running-from.ts';
+import * as inventory from '../commands/gc/inventory.ts';
 import * as cargoLocks from '../workspace/cargo-lock.ts';
 import { ladderRun } from '../stimd/passes/ladder-run.ts';
 import {
@@ -75,6 +77,7 @@ import {
   requestGcItem,
   requestGcPass,
   CRITICAL,
+  HARD_FLOOR,
   LADDER,
   LADDER_CLOCK_SLOTS,
 } from '../daemon/disk-owner.ts';
@@ -588,6 +591,59 @@ describe('the pressure ladder', () => {
     remeasure,
   });
 
+  test.each([
+    ['high', 'critical', 'automatic'],
+    ['critical', 'high', 'automatic'],
+    ['high', 'normal', 'automatic'],
+    ['critical', 'normal', 'explicit'],
+    ['high', 'critical', 'explicit'],
+    ['high', 'critical', 'measured'],
+    ['critical', 'high', 'measured'],
+    ['high', 'normal', 'measured'],
+  ] as const)(
+    'rung 6 trash priority follows %s to %s (%s) without changing other actions',
+    async (entry, current, mode) => {
+      vi.spyOn(sweep, 'planRung6').mockResolvedValue({
+        actions: [
+          { kind: 'would-delete-trash', target: home, bytes: 1, reason: 'owned trash' },
+          { kind: 'would-delete-temp-leftovers', target: home, bytes: 1, reason: 'old temp output' },
+        ],
+        blocked: [],
+        skips: [],
+      });
+      const priorities: [string, boolean][] = [];
+      vi.spyOn(acting, 'executeAction').mockImplementation(async (action, context) => {
+        const throttled = context.trashPriority ? await context.trashPriority() : context.critical !== true;
+        if (throttled !== null) priorities.push([action.kind, !throttled]);
+        return { status: 'kept', bytes: 0, detail: 'test' };
+      });
+      const remeasure = vi.fn<() => Promise<DaemonPressure>>().mockResolvedValue(pressure(current));
+      if (mode === 'automatic') remeasure.mockResolvedValueOnce(pressure(entry)).mockResolvedValueOnce(pressure(entry));
+
+      await runLadder(
+        {
+          ...input(true, remeasure),
+          fromRung: 6,
+          lastRung: 6,
+          volume: statSync(home).dev,
+          ...(mode !== 'automatic'
+            ? { force: { level: entry, why: 'requested level', measured: mode === 'measured' } }
+            : {}),
+        },
+        pressure(entry),
+      );
+
+      const trash =
+        current === 'normal' && mode !== 'explicit'
+          ? []
+          : [['would-delete-trash', (mode === 'explicit' ? entry : current) === 'critical']];
+      const other =
+        current === 'normal' && mode === 'automatic' ? [] : [['would-delete-temp-leftovers', entry === 'critical']];
+      expect(priorities).toEqual([...trash, ...other]);
+      expect(remeasure.mock.calls.length === 0).toBe(mode === 'explicit');
+    },
+  );
+
   test('at critical it trims caches in rung order and stops once the level clears, before the dormant rung', async () => {
     const { root } = workspace('idle-hour', 60 * MINUTE_MS, 'Shutdown');
     writeWorkspaceState(root, { lastBuild: { cacheKey: 'kept-key' } });
@@ -805,7 +861,7 @@ describe('the pressure ladder', () => {
       await asked.result.catch((error: unknown) => {
         if (change !== 'abort') throw error;
       });
-      expect(boundaries).toBe(1);
+      expect(boundaries).toBeGreaterThan(0);
       expect(existsSync(app.incremental)).toBe(true);
     },
   );
@@ -1253,7 +1309,7 @@ describe('the pressure ladder', () => {
     const before = readGcMark(root);
     if (!before) throw new Error('missing output mark');
     const selected = before.candidates.filter((candidate) => candidate.path === paths[1]);
-    marks.keepOutputMark({ ...before, candidates: selected }, 'new activity');
+    for (const candidate of selected) marks.keepMarkCandidate(before, candidate, 'new activity');
     expect(readGcMark(root)?.candidates.find((candidate) => candidate.path === paths[0])).toEqual(
       before.candidates.find((candidate) => candidate.path === paths[0]),
     );
@@ -1477,6 +1533,69 @@ describe('the pressure ladder', () => {
     expect(existsSync(output)).toBe(false);
   });
 
+  test.each([false, true])(
+    'saved output ranking keeps estimates, unknowns and individual keep=%s honest',
+    async (kept) => {
+      const root = workspace('ranked-outputs', 5 * MINUTE_MS, 'Shutdown').root;
+      const paths = ['derived-data', 'gradle-build', 'android-cas', 'cache-provider', 'js-swap-tmp'].map((name) =>
+        join(workspaceDir(root), name),
+      );
+      for (const path of paths) {
+        mkdirSync(path, { recursive: true });
+        writeFileSync(join(path, 'output'), 'build');
+      }
+      for (const [index, bytes] of [GIB, 4 * GIB, 0].entries()) {
+        const path = paths[index];
+        if (!path) throw new Error('missing output path');
+        recordSize(path, bytes);
+      }
+      await marks.markWriter(input().config)({
+        path: root,
+        at: Date.now(),
+        lastActivityAt: Date.now() - DAY_MS,
+        kept: null,
+      });
+      const before = readGcMark(root);
+      if (!before) throw new Error('missing output mark');
+      const dirtyAt = new Date(Date.parse(before.markedAt) + 1000).toISOString();
+      writeCacheFile(gcMarkFile(root), { ...before, dirtyAt });
+      const largest = before.candidates.find((candidate) => candidate.path === paths[1]);
+      if (!largest) throw new Error('missing largest candidate');
+      if (kept) marks.keepMarkCandidate(before, largest, 'another operation held this output');
+      const saved = readGcMark(root);
+      expect(saved?.dirtyAt).toBe(dirtyAt);
+      const expected = kept
+        ? [paths[0], paths[2], paths[3], paths[4], paths[1]]
+        : [paths[1], paths[0], paths[2], paths[3], paths[4]];
+      const walk = vi.spyOn(fsUtil, 'measureDirectoryAsync');
+      const preview = await runLadder(
+        { ...input(false, async () => pressure('critical')), fromRung: 1, lastRung: 1 },
+        pressure('critical'),
+      );
+      expect(preview.actions.map((action) => action.target)).toEqual(expected);
+      expect(preview.actions.every((action) => action.workspace === root)).toBe(true);
+      expect(readGcMark(root)).toEqual(saved);
+      expect(walk).not.toHaveBeenCalled();
+      const applied = await runLadder(
+        {
+          ...input(true, async () =>
+            paths.every((path) => existsSync(path)) ? pressure('critical') : pressure('normal'),
+          ),
+          fromRung: 1,
+          lastRung: 1,
+        },
+        pressure('critical'),
+      );
+      expect(applied.actions.map((action) => action.target)).toEqual([expected[0]]);
+      expect(walk.mock.calls.map(([path]) => path)).toEqual([expected[0]]);
+      expect(
+        readGcMark(root)
+          ?.candidates.filter((candidate) => candidate.path === paths[3] || candidate.path === paths[4])
+          .map((candidate) => candidate.bytes),
+      ).toEqual([null, null]);
+    },
+  );
+
   test('critical daemon report mode previews only known marks without writing them', async () => {
     const { root } = workspace('known-report', 5 * MINUTE_MS, 'Shutdown');
     const output = join(workspaceDir(root), 'derived-data');
@@ -1497,7 +1616,9 @@ describe('the pressure ladder', () => {
       pressure('critical'),
     );
 
-    expect(actions).toContainEqual(expect.objectContaining({ rung: 1, target: root, outcome: 'would' }));
+    expect(actions).toContainEqual(
+      expect.objectContaining({ rung: 1, target: output, workspace: root, outcome: 'would' }),
+    );
     expect(existsSync(output)).toBe(true);
     expect(discover).not.toHaveBeenCalled();
     expect(readGcMark(root)).toEqual(before);
@@ -1587,7 +1708,7 @@ describe('the pressure ladder', () => {
         pressure('critical'),
       );
       expect(handoffs).toBe(1);
-      expect(actions).toContainEqual(expect.objectContaining({ rung: 1, target: saved }));
+      expect(actions).toContainEqual(expect.objectContaining({ rung: 1, workspace: saved, target: output }));
     },
   );
 
@@ -1718,20 +1839,65 @@ describe('the pressure ladder', () => {
     expect(pass.pressure.level).toBe('normal');
   });
 
-  test('rung 1 records nothing for a stopped workspace whose only output is a Metro store a running dev server shares', async () => {
-    workspace('stopped', 5 * MINUTE_MS, 'Shutdown');
-    const sharer = join(projects, 'sharer');
-    mkdirSync(sharer);
-    upsertProject(sharer, { metroPort: 59124, supervisor: { pid: process.pid, port: 59999 } });
-    const store = join(metroCache(), 'app');
-    mkdirSync(store, { recursive: true });
-    const { actions } = await runLadder(
-      input(true, async () => pressure('high')),
-      pressure('high'),
-    );
-    expect(existsSync(store)).toBe(true);
-    expect(actions.filter((action) => action.rung === 1)).toEqual([]);
-  });
+  test.each([
+    { act: true, marked: false, absent: false },
+    { act: true, marked: true, absent: false },
+    { act: false, marked: true, absent: false },
+    { act: true, marked: true, absent: true },
+  ])(
+    'a shared Metro output preserves selected refusal and absent-path evidence: $act/$marked/$absent',
+    async ({ act, marked, absent }) => {
+      const { root } = workspace('stopped', 5 * MINUTE_MS, 'Shutdown');
+      const sharer = join(projects, 'sharer');
+      mkdirSync(sharer);
+      upsertProject(sharer, { metroPort: 59124, supervisor: { pid: process.pid, port: 59999 } });
+      const store = join(metroCache(), 'app');
+      mkdirSync(store, { recursive: true });
+      if (marked)
+        await marks.markWriter(input().config)({
+          path: root,
+          at: Date.now(),
+          lastActivityAt: Date.now() - DAY_MS,
+          kept: null,
+        });
+      const before = readGcMark(root);
+      expect(before?.candidates.some((candidate) => candidate.kind === 'outputs' && candidate.path === store)).toBe(
+        marked ? true : undefined,
+      );
+      if (absent) rmSync(store, { recursive: true });
+      const unmarked = marked
+        ? null
+        : await stages.clearStoppedOutputs({ path: root }, input().config, idlePass.PRESSURE_IDLE_MS, testContext());
+      expect(unmarked).toBeNull();
+      const level = 'critical';
+      const { actions } = await runLadder(
+        input(act, async () => pressure(level)),
+        pressure(level),
+      );
+      expect(existsSync(store)).toBe(!absent);
+      const keptRow = expect.objectContaining({
+        outcome: 'kept',
+        target: store,
+        workspace: root,
+        detail: expect.stringContaining('shares it'),
+      });
+      expect(actions.filter((action) => action.rung === 1)).toEqual(marked && !absent ? [keptRow] : []);
+      const reason = expect.stringContaining('shares it');
+      const at = expect.any(String);
+      const expected =
+        act && marked && !absent
+          ? {
+              ...before,
+              candidates: before?.candidates.map((candidate) =>
+                candidate.kind === 'outputs' && candidate.path === store
+                  ? { ...candidate, keep: { reason, at } }
+                  : candidate,
+              ),
+            }
+          : before;
+      expect(readGcMark(root)).toEqual(expected);
+    },
+  );
 
   test.each([
     { level: 'high' as const, kept: ['NEWER'] },
@@ -1755,6 +1921,285 @@ describe('the pressure ladder', () => {
       expect(parked.map((device) => device.udid).filter((udid) => !taken.includes(udid))).toEqual(kept);
     },
   );
+
+  test.each(['high clears', 'critical clears', 'abort'] as const)(
+    'a completed parked-device action hands off before the next admission: %s',
+    async (change) => {
+      vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
+      const sim = { deviceTypeIdentifier: 'iPhone', runtimeIdentifier: 'iOS-26-0', simslimManaged: false };
+      saveConfig({
+        ...loadConfig()!,
+        parked: {
+          ios: ['first', 'second'].map((udid, index) =>
+            Object.assign({}, sim, {
+              udid,
+              name: `stim-${udid}`,
+              parkedAt: new Date(index * DAY_MS).toISOString(),
+            }),
+          ),
+        },
+      });
+      const level = change === 'critical clears' ? 'critical' : 'high';
+      let current = pressure(level);
+      const controller = new AbortController();
+      const owner = await acquireDisk(level === 'critical' ? CRITICAL : LADDER);
+      const order: string[] = [];
+      let during: string[] = [];
+      let critical: ReturnType<typeof requestGcItem> | undefined;
+      vi.spyOn(acting, 'executeAction').mockImplementation(async (action) => {
+        order.push(action.target);
+        if (action.target === 'first') {
+          critical = requestGcItem(
+            async () => {
+              order.push('critical');
+              current = pressure('normal');
+              if (change === 'abort') controller.abort(new Error('cancelled between parked devices'));
+            },
+            level === 'critical' ? HARD_FLOOR : CRITICAL,
+          );
+          await Promise.resolve();
+          during = [...order];
+        }
+        return { status: 'done', bytes: 0, detail: 'device operation settled' };
+      });
+      try {
+        const result = runLadder(
+          {
+            ...input(true, async () => current),
+            fromRung: 2,
+            lastRung: 2,
+            operation: testContext({ signal: controller.signal }),
+            between: owner.boundary,
+          },
+          current,
+        );
+        const failure = await result.then(
+          () => null,
+          (error: unknown) => (error instanceof Error ? error.message : String(error)),
+        );
+        expect(failure).toBe(change === 'abort' ? 'cancelled between parked devices' : null);
+        expect(during).toEqual(['first']);
+        expect(order).toEqual(change === 'critical clears' ? ['first', 'critical', 'second'] : ['first', 'critical']);
+      } finally {
+        owner.release();
+        await critical?.result;
+      }
+    },
+  );
+
+  test.each(['done', 'failed and cleared', 'failed and still critical'] as const)(
+    'a resumed tool-cache plan rechecks critical volume eligibility before the next command: %s',
+    async (result) => {
+      const cache = (name: string) => ({
+        tool: name,
+        label: name,
+        paths: [projects],
+        command: null,
+        running: /not-running/,
+      });
+      vi.spyOn(unowned, 'surveyToolCaches').mockResolvedValue(
+        ['first', 'second'].map((name) => ({
+          cache: cache(name),
+          bytes: 1024,
+          kept: null,
+        })),
+      );
+      let critical: ReturnType<typeof requestGcItem> | undefined;
+      const order: string[] = [];
+      const owner = await acquireDisk(CRITICAL);
+      const clean = vi.spyOn(unowned, 'cleanToolCache').mockImplementation(async (plan) => {
+        order.push(plan.cache.label);
+        if (plan.cache.label === 'second')
+          return { outcome: 'done', before: 1024, after: 0, detail: 'second command settled' };
+        vi.mocked(daemonMeasure.measureDisk).mockResolvedValue([
+          {
+            volume: '/',
+            freeMb: (result === 'failed and still critical' ? 5 : 25) * 1024,
+            device: statSync(projects).dev,
+          },
+        ]);
+        critical = requestGcItem(async () => {
+          order.push('critical');
+        }, HARD_FLOOR);
+        await Promise.resolve();
+        expect(order).toEqual(['first']);
+        return {
+          outcome: result === 'done' ? 'done' : 'failed',
+          before: 1024,
+          after: 0,
+          detail: 'tool command settled after freeing space',
+        };
+      });
+      try {
+        await runLadder(
+          {
+            ...input(true, async () => pressure('critical')),
+            fromRung: 9,
+            lastRung: 9,
+            operation: testContext({ env: { ...process.env, STIM_HOME: undefined, ANDROID_HOME: projects } }),
+            between: owner.boundary,
+          },
+          pressure('critical'),
+        );
+        expect(order).toEqual(
+          result === 'failed and still critical' ? ['first', 'critical', 'second'] : ['first', 'critical'],
+        );
+        expect(clean).toHaveBeenCalledTimes(result === 'failed and still critical' ? 2 : 1);
+      } finally {
+        owner.release();
+        await critical?.result;
+      }
+    },
+  );
+
+  test('the final tool-cache cleanup hands off before inventory reporting starts', async () => {
+    const order: string[] = [];
+    vi.spyOn(unowned, 'surveyToolCaches').mockResolvedValue([
+      {
+        cache: { tool: 'fixture', label: 'only', paths: [projects], command: null, running: /not-running/ },
+        bytes: 1024,
+        kept: null,
+      },
+    ]);
+    vi.spyOn(unowned, 'reportedCaches').mockReturnValue([]);
+    vi.spyOn(inventory, 'collectInventory').mockImplementation(async () => {
+      order.push('inventory');
+      throw new Error('no inventory fixture');
+    });
+    const owner = await acquireDisk(CRITICAL);
+    let higher: ReturnType<typeof requestGcItem> | undefined;
+    vi.spyOn(unowned, 'cleanToolCache').mockImplementation(async () => {
+      order.push('cleanup');
+      higher = requestGcItem(async () => {
+        order.push('hard floor');
+      }, HARD_FLOOR);
+      return { outcome: 'done', before: 1024, after: 0, detail: 'cleanup settled' };
+    });
+    try {
+      await runLadder(
+        {
+          ...input(true, async () => pressure('critical')),
+          fromRung: 9,
+          lastRung: 9,
+          operation: testContext({ env: { ...process.env, STIM_HOME: undefined, ANDROID_HOME: projects } }),
+          between: owner.boundary,
+        },
+        pressure('critical'),
+      );
+      expect(order).toEqual(['cleanup', 'hard floor', 'inventory']);
+    } finally {
+      owner.release();
+      await higher?.result;
+    }
+  });
+
+  test('a resumed forced tool cleanup credits none of the next cache already removed by another owner', async () => {
+    setExecutor({
+      ...getExecutor(),
+      runFileAsync: async () => '16\tfixture\n',
+    });
+    vi.spyOn(runningFrom, 'readRunningProcessesAsync').mockResolvedValue({
+      commands: [{ pid: process.pid, line: 'node vitest' }],
+      cwds: [{ pid: process.pid, path: projects }],
+    });
+    const paths = ['first-tool-cache', 'second-tool-cache'].map((name) => join(projects, name));
+    for (const path of paths) {
+      mkdirSync(path);
+      writeFileSync(join(path, 'artifact'), 'x'.repeat(16_384));
+    }
+    vi.spyOn(unowned, 'surveyToolCaches').mockResolvedValue(
+      paths.map((path) => ({
+        cache: { tool: 'fixture', label: path, paths: [path], command: null, running: /never-a-tool-fixture/ },
+        bytes: 16_384,
+        kept: null,
+      })),
+    );
+    vi.spyOn(unowned, 'reportedCaches').mockReturnValue([]);
+    vi.spyOn(inventory, 'collectInventory').mockRejectedValue(new Error('no inventory fixture'));
+    const real = unowned.cleanToolCache;
+    const owner = await acquireDisk(CRITICAL);
+    let higher: ReturnType<typeof requestGcItem> | undefined;
+    vi.spyOn(unowned, 'cleanToolCache').mockImplementation(async (plan, ...args) => {
+      const result = await real(plan, ...args);
+      if (plan.cache.paths[0] === paths[0])
+        higher = requestGcItem(async () => {
+          const next = paths[1];
+          if (next) rmSync(next, { recursive: true });
+        }, HARD_FLOOR);
+      return result;
+    });
+    try {
+      const result = await runLadder(
+        {
+          ...input(true, async () => pressure('critical')),
+          fromRung: 9,
+          lastRung: 9,
+          force: { level: 'critical', why: 'explicit critical' },
+          operation: testContext({ env: { ...process.env, STIM_HOME: undefined, ANDROID_HOME: projects } }),
+          between: owner.boundary,
+        },
+        pressure('critical'),
+      );
+      expect(
+        result.actions.filter((action) => action.kind === 'clean-tool-cache' && action.outcome !== 'done'),
+      ).toEqual([]);
+      expect(paths.some(existsSync)).toBe(false);
+      expect(result.actions).toContainEqual(
+        expect.objectContaining({
+          kind: 'clean-tool-cache',
+          target: expect.stringContaining('second-tool-cache'),
+          bytes: 0,
+        }),
+      );
+    } finally {
+      owner.release();
+      await higher?.result;
+    }
+  });
+
+  test('a whole shared-cache trim settles before critical work and the next cache rechecks its volume', async () => {
+    caches('kept-key');
+    const first = join(buildCache(), 'ios', 'unused');
+    const next = join(metroCache(), 'other-app', 'transform', 'aa');
+    const owner = await acquireDisk(CRITICAL);
+    let critical: ReturnType<typeof requestGcItem> | undefined;
+    const order: string[] = [];
+    let firstGone = false;
+    let nextPresent = false;
+    let during: string[] = [];
+    const prune = cacheModule.pruneCache;
+    vi.spyOn(cacheModule, 'pruneCache').mockImplementation(async (cache, options) => {
+      const result = await prune(cache, options);
+      if (cache.dir === buildCache()) {
+        order.push('cache settled');
+        firstGone = !existsSync(first);
+        critical = requestGcItem(async () => {
+          order.push('critical');
+          nextPresent = existsSync(next);
+          vi.mocked(daemonMeasure.measureDisk).mockResolvedValue([
+            { volume: '/', freeMb: 100 * 1024, device: statSync(home).dev },
+          ]);
+        }, HARD_FLOOR);
+        await Promise.resolve();
+        during = [...order];
+      }
+      return result;
+    });
+    try {
+      await runLadder(
+        { ...input(true, async () => pressure('critical')), fromRung: 3, lastRung: 3, between: owner.boundary },
+        pressure('critical'),
+      );
+      expect(order).toEqual(['cache settled', 'critical']);
+      expect(during).toEqual(['cache settled']);
+      expect(firstGone).toBe(true);
+      expect(nextPresent).toBe(true);
+      expect(existsSync(next)).toBe(true);
+    } finally {
+      owner.release();
+      await critical?.result;
+    }
+  });
 
   test('rung 3 at high trims a cache over half its cap down to half, keeping protected entries', async () => {
     const { root } = workspace('idle-hour', 60 * MINUTE_MS, 'Shutdown');

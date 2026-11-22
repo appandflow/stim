@@ -9,7 +9,11 @@ import { listedRoots } from '../commands/gc/worktrees.ts';
 import { answered } from '../workspace/bounded-read.ts';
 import { resolveSourceCheckoutAsync } from '../workspace/worktree.ts';
 
-async function currentCargoHolder(root: string, operation?: StimContext): Promise<string | null> {
+async function currentCargoHolder(
+  root: string,
+  operation?: StimContext,
+  unanswered?: (identity: string) => void,
+): Promise<string | null> {
   const identity = await answered(root, () => realpath(root), 3_000, operation?.signal);
   const source = await resolveSourceCheckoutAsync(root, {
     env: operation?.env,
@@ -18,7 +22,10 @@ async function currentCargoHolder(root: string, operation?: StimContext): Promis
     cache: false,
     timeoutMs: 3_000,
   });
-  if ('refusal' in source) return null;
+  if ('refusal' in source) {
+    unanswered?.(identity);
+    return null;
+  }
   return (
     source.entries
       .filter(
@@ -34,6 +41,7 @@ export async function registeredCargoHolders(
   config: Config,
   roots: readonly string[],
   operation?: StimContext,
+  unanswered?: () => void,
 ): Promise<Set<string>> {
   const registered = new Set([...Object.keys(config.projects), ...listedRoots()]);
   if (!registered.size || !roots.length) return new Set();
@@ -45,19 +53,26 @@ export async function registeredCargoHolders(
     } catch (error) {
       if (isClaimUnavailable(error) && 'reportCleanup' in error) throw error;
       operation?.signal.throwIfAborted();
+      if (!(error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR')))
+        unanswered?.();
     }
   }
   if (!wanted.size) return allowed;
   for (const root of registered) {
     operation?.signal.throwIfAborted();
     try {
-      const holder = await currentCargoHolder(root, operation);
+      const holder = await currentCargoHolder(root, operation, (identity) => {
+        if ([...wanted.keys()].some((path) => identity === path || identity.startsWith(`${path}${sep}`)))
+          unanswered?.();
+      });
       const saved = holder && wanted.get(holder);
       if (saved) allowed.add(saved);
       if (allowed.size === wanted.size) break;
     } catch (error) {
       if (isClaimUnavailable(error) && 'reportCleanup' in error) throw error;
       operation?.signal.throwIfAborted();
+      if (!(error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR')))
+        unanswered?.();
     }
   }
   return allowed;
