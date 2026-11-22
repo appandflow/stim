@@ -329,16 +329,20 @@ test.skipIf(process.platform === 'win32')(
       reason: 'test',
     } as const;
     const samples = vi.spyOn(budget, 'readVolumeSpaceAsync');
+    const observed = vi.fn<(device: number, at: number) => void>();
+    const firstFree = { pending: () => true, observed };
 
     samples.mockResolvedValueOnce(volume(1000)).mockResolvedValueOnce([]);
-    const missing = await trimCargoTargetAction(action);
+    const missing = await trimCargoTargetAction(action, undefined, false, undefined, '', firstFree);
     expect(missing).toMatchObject({ status: 'done', bytes: 0 });
+    expect(observed).not.toHaveBeenCalled();
 
     mkdirSync(join(target, 'debug', 'incremental'), { recursive: true });
     writeFileSync(join(target, 'debug', 'incremental', 'data'), 'x');
     samples.mockResolvedValueOnce(volume(1000)).mockResolvedValueOnce(volume(1005));
-    const measured = await trimCargoTargetAction(action);
+    const measured = await trimCargoTargetAction(action, undefined, false, undefined, '', firstFree);
     expect(measured).toMatchObject({ status: 'done', bytes: 5 * 1024 * 1024 });
+    expect(observed).toHaveBeenCalledExactlyOnceWith(1, Date.now());
   },
 );
 

@@ -1,6 +1,6 @@
 import { processContext } from '../../cli-operation.ts';
 import { measureDependencyTrees } from '../../daemon/dependencies.ts';
-import { createMaintenanceLane, runLadderToFree, type MaintenanceLane } from '../../daemon/passes.ts';
+import { createMaintenanceLane, runDiskPass, runLadderToFree, type MaintenanceLane } from '../../daemon/passes.ts';
 import type { ThreadTable } from '../../stimd/threads.ts';
 import { LADDER, requestGcPass, requestGcItem } from '../../daemon/disk-owner.ts';
 import { runGcPass } from '../../commands/gc.ts';
@@ -11,9 +11,10 @@ import { readMarkHealth } from '../../daemon/mark-health.ts';
 type Log = Parameters<typeof createMaintenanceLane>[0];
 
 /** stimd's thread table run on the test's own thread, so a test's spies and fake clocks reach the passes. */
-export function createThreadTable(): ThreadTable {
+export function createThreadTable(log: Log = () => {}): ThreadTable {
   const controller = new AbortController();
   return {
+    ladder: (input) => runDiskPass(input, log, processContext(process.cwd(), controller.signal)),
     drainTrash: async () => {},
     async run() {
       await measureDependencyTrees(processContext(process.cwd(), controller.signal)).catch((error: unknown) => {

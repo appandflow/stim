@@ -30,6 +30,8 @@ import { forgetGitReads } from '../workspace/git-reads.ts';
 import { executeAction, type ActContext, type ActionOutcome } from '../stimd/passes/act.ts';
 import { cacheBlocked } from '../stimd/passes/measure.ts';
 import { cacheEntryProtectionFor, maintenancePinned, maintenancePinnedReader } from '../stimd/passes/protect.ts';
+import { readVolumeSpaceAsync } from '../stimd/passes/budget.ts';
+import type { FirstFreeObserver } from './pacer.ts';
 import { executedActionName } from '../maintenance-kind.ts';
 import { measuredDiskLevel, planCargoTargetsAtPressure } from '../stimd/passes/cargo-target.ts';
 import { resolveMaintenanceSettings, type MaintenanceSettings } from '../stimd/passes/settings.ts';
@@ -90,6 +92,8 @@ function ranAt(context: Pick<LadderInput, 'clocks'>, key: ClockKey, at: number):
 }
 
 export interface LadderInput {
+  firstFree?: FirstFreeObserver;
+  target?: { device: number; freeMb: number; available: () => number | null };
   config: Config;
   /** False in `daemon.mode report`: plan and log each action, act on nothing. */
   act: boolean;
@@ -254,6 +258,7 @@ async function run(
       critical: context.level === 'critical',
       protectedRoot: context.protectedRoot ? (canonicalOrNull(context.protectedRoot) ?? '') : '',
       operation: context.operation,
+      ...(context.firstFree ? { firstFree: context.firstFree } : {}),
       ...(context.stop ? { stop: context.stop } : {}),
       ...(context.short ? { deletable: deletable(context) } : {}),
     });
@@ -385,6 +390,11 @@ async function idleOutputsRung(context: RungContext): Promise<void> {
         continue;
       const protectedRoot = context.protectedRoot && canonicalOrNull(context.protectedRoot);
       if (protectedRoot === mark.root) continue;
+      const selected = mark.candidates.find(({ kind }) => kind === 'outputs');
+      const before =
+        selected && context.firstFree?.pending(selected.device)
+          ? (await readVolumeSpaceAsync([selected.path], context.operation?.signal))[0]
+          : undefined;
       const result = await clearStoppedOutputs(
         { path: mark.root },
         context.config,
@@ -411,6 +421,16 @@ async function idleOutputsRung(context: RungContext): Promise<void> {
         },
         context.why,
       );
+      if (
+        result.outcome === 'done' &&
+        selected &&
+        before?.device === selected.device &&
+        context.firstFree?.pending(selected.device)
+      ) {
+        const after = (await readVolumeSpaceAsync([selected.path], context.operation?.signal))[0];
+        if (after?.device === selected.device && after.freeMb > before.freeMb)
+          context.firstFree.observed(selected.device, Date.now());
+      }
     }
   };
   const known = await outputMarks(context.config, context.operation);
@@ -1226,7 +1246,7 @@ export async function runLadder(
     }
     return { actions, pressure };
   }
-  if (pressure.level === 'normal') return { actions, pressure };
+  if (pressure.level === 'normal' && !input.target) return { actions, pressure };
   let current = pressure;
   let freedSinceMeasured = false;
   for (const { rung, relieves: rungRelieves } of rungsFrom(input.fromRung).filter(
@@ -1237,11 +1257,20 @@ export async function runLadder(
     if (!relieves.length) continue;
     current = await input.remeasure();
     freedSinceMeasured = false;
-    const decision = rungDecision(current, relieves);
+    if (input.target && current.level !== 'normal') break;
+    const available = input.target?.available();
+    if (input.target && (available === null || available === undefined || available >= input.target.freeMb)) break;
+    const decision = input.target
+      ? { level: 'high' as const, causes: ['disk' as const] }
+      : rungDecision(current, relieves);
     if (decision === 'stop') break;
     if (decision === 'skip') continue;
     const stillShort = async () => {
       current = await input.remeasure();
+      if (input.target) {
+        const currentFreeMb = input.target.available();
+        return current.level === 'normal' && currentFreeMb !== null && currentFreeMb < input.target.freeMb;
+      }
       return causesOf(current, relieves).length > 0;
     };
     const context: RungContext = {
@@ -1252,9 +1281,16 @@ export async function runLadder(
       settings,
       actions,
       stillShort,
-      why: `pressure level ${current.level}: ${current.reasons.join('; ')}`,
+      why: input.target
+        ? `predictive cleanup toward ${(input.target.freeMb / 1024).toFixed(1)} GB free on device ${input.target.device}; measured pressure ${current.level}`
+        : `pressure level ${current.level}: ${current.reasons.join('; ')}`,
       // @ref LLP 0001#each-rung-frees-only-the-volumes-under-pressure -- a healthy volume gains nothing
-      short: input.volume === undefined ? await shortDevices(input, 'high') : new Set([input.volume]),
+      ...(input.target ? { volume: input.target.device } : {}),
+      short: input.target
+        ? new Set([input.target.device])
+        : input.volume === undefined
+          ? await shortDevices(input, 'high')
+          : new Set([input.volume]),
     };
     const before = actions.length;
     await runRung(rung, context, decision.causes);

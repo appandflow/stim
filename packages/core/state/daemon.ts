@@ -101,6 +101,16 @@ export interface DaemonTestWaiter {
 }
 
 /** `$STIM_HOME/daemon/snapshot.json`: the daemon's identity and its last tick. */
+export interface DiskPacerVolume {
+  device: number;
+  volume: string;
+  observedAt: number;
+  freeMb: number;
+  fillMbPerSecond: number | null;
+  firstFreeMs: number | null;
+  predictive?: { since: number; targetFreeMb: number; lastAttemptAt: number; checkedAt: number; freeMb: number };
+}
+
 export interface DaemonSnapshot {
   version: 1;
   pid: number;
@@ -120,6 +130,7 @@ export interface DaemonSnapshot {
   waiting?: DaemonWaiter[];
   history?: GcHistoryStatus;
   gcMarks?: GcMarkHealth;
+  diskPacer?: DiskPacerVolume[];
 }
 
 /** A child whose cleanup the running stimd could not verify, which keeps it up until the child has stopped. */
@@ -188,6 +199,7 @@ export interface DaemonStatus {
   lastTickAt: string | null;
   intervalMs: number | null;
   gcMarks?: GcMarkHealth;
+  diskPacer?: DiskPacerVolume[];
   claim?: { unresolved: string; removeCommand: string };
   /** The last tick's pressure level; absent until a daemon with the pressure ladder ticked. */
   pressure?: DaemonPressure;

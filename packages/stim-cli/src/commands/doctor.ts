@@ -1,4 +1,5 @@
 import { gcMarkHealthFindings } from '../diagnostics/doctor-gc-marks.ts';
+import { diskPacerFindings } from '../diagnostics/doctor-gc-pacer.ts';
 import { checkHistoryHelper, packagedHistoryHelper } from '../fsevents-helper.ts';
 import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -789,6 +790,7 @@ async function assembleDoctorReport(
   findings.push(
     ...daemonFindings(answered, { probed: true, now: decidedAt }),
     ...gcMarkHealthFindings(answered, decidedAt),
+    ...diskPacerFindings(answered, decidedAt),
   );
   const silent = unansweredFindings(answered, decidedAt);
   const missingRoots = missingDiscoverRoots(loadConfig(), env);
