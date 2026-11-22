@@ -84,9 +84,25 @@ describe('gc marks written by the lane', () => {
     writeFileSync(join(path, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
     writeFileSync(join(path, '.gitignore'), 'build/\nnode_modules/\ntarget/\n');
     const git = (...args: string[]) =>
-      execFileSync('git', ['-C', path, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], {
-        env: { ...process.env, GIT_AUTHOR_DATE: '2026-01-01T00:00:00Z', GIT_COMMITTER_DATE: '2026-01-01T00:00:00Z' },
-      });
+      execFileSync(
+        'git',
+        [
+          '-C',
+          path,
+          '-c',
+          'maintenance.auto=false',
+          '-c',
+          'gc.auto=0',
+          '-c',
+          'user.name=t',
+          '-c',
+          'user.email=t@t',
+          ...args,
+        ],
+        {
+          env: { ...process.env, GIT_AUTHOR_DATE: '2026-01-01T00:00:00Z', GIT_COMMITTER_DATE: '2026-01-01T00:00:00Z' },
+        },
+      );
     git('init', '-q', '-b', 'main');
     git('add', '-A');
     git('commit', '-q', '-m', 'init');
