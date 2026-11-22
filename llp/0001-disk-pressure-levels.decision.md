@@ -325,6 +325,9 @@ so none ever runs beside another.
   mark fields and sibling candidates stay intact. Active-workspace stopping
   and finer units inside a whole manual workspace action remain separate from
   these candidate families (#6101); candidate ranking is #6111.
+  A resumed saved output needs its current exact registry key or one targeted
+  discovery proof. A rewritten registry alias with no current discovery route
+  stays kept rather than resolving every registered root again per path.
 - The maintenance pass gives up the turn once it deletes nothing more, before
   its discovery scan and census.
 - When the passes thread ends, a disk pass it had not answered fails as

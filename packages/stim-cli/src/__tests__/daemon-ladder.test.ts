@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   rmSync,
   statSync,
@@ -1290,6 +1291,58 @@ describe('the pressure ladder', () => {
     },
   );
 
+  test('a resumed saved output keeps a checkout whose only discovery route was removed', async () => {
+    resetExecutor();
+    const root = join(projects, 'discovered');
+    const output = join(root, 'android', 'app', 'build');
+    mkdirSync(output, { recursive: true });
+    writeFileSync(join(root, 'android', 'build.gradle'), '');
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+    writeFileSync(join(root, '.gitignore'), 'android/app/build/\n');
+    for (const args of [
+      ['init', '-q', '-b', 'main'],
+      ['add', '-A'],
+      ['commit', '-q', '-m', 'init'],
+    ])
+      execFileSync('git', ['-C', root, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], {
+        env: { ...process.env, GIT_AUTHOR_DATE: '2026-01-01T00:00:00Z', GIT_COMMITTER_DATE: '2026-01-01T00:00:00Z' },
+      });
+    const at = new Date(Date.now() - DAY_MS);
+    const age = (directory: string) => {
+      for (const entry of readdirSync(directory, { withFileTypes: true })) {
+        const path = join(directory, entry.name);
+        if (entry.isDirectory()) age(path);
+        utimesSync(path, at, at);
+      }
+      utimesSync(directory, at, at);
+    };
+    age(root);
+    const operation = testContext();
+    const config = input().config;
+    config.maintenance = { autoDiscover: false, discoverRoots: [projects] };
+    saveConfig(config);
+    await marks.markWriter(config)({ path: root, at: Date.now(), lastActivityAt: Date.now() - DAY_MS, kept: null });
+    expect((await marks.outputMarks(config, operation)).map((mark) => mark.root)).toContain(root);
+    const before = readFileSync(gcMarkFile(root), 'utf8');
+    let handoffs = 0;
+    await runLadder(
+      {
+        ...input(true, async () => pressure('critical')),
+        operation,
+        fromRung: 1,
+        lastRung: 1,
+        between: async () => {
+          handoffs++;
+          saveConfig({ ...config, maintenance: { autoDiscover: false, discoverRoots: [] } });
+        },
+      },
+      pressure('critical'),
+    );
+    expect(handoffs).toBe(1);
+    expect(existsSync(output)).toBe(true);
+    expect(readFileSync(gcMarkFile(root), 'utf8')).toBe(before);
+  });
+
   test('critical output sweep keeps a marked nested checkout after discoverRoots is broadened', async () => {
     const { root } = workspace('team/app', 5 * MINUTE_MS, 'Shutdown');
     const output = join(workspaceDir(root), 'derived-data');
@@ -1440,6 +1493,22 @@ describe('the pressure ladder', () => {
 
       expect((await marks.outputMarks(config, testContext())).map(({ root }) => root)).toEqual([saved]);
       expect(saved).not.toBe(native);
+      let handoffs = 0;
+      const { actions } = await runLadder(
+        {
+          ...input(true, async () => pressure('critical')),
+          operation: testContext(),
+          fromRung: 1,
+          lastRung: 1,
+          force: { level: 'critical', why: 'saved Windows scope' },
+          between: async () => {
+            handoffs++;
+          },
+        },
+        pressure('critical'),
+      );
+      expect(handoffs).toBe(1);
+      expect(actions).toContainEqual(expect.objectContaining({ rung: 1, target: saved }));
     },
   );
 
