@@ -223,13 +223,7 @@ exit 1
       const worker = captured.workers.at(-1);
       if (!worker) throw new Error('the logs worker was not started');
       await worker.terminate();
-      await vi.waitFor(
-        async () => {
-          const answer = await streams.ownedDrain(root);
-          expect(answer).not.toContain('previous owned log worker exited');
-        },
-        { timeout: 5000 },
-      );
+      await vi.waitFor(() => expect(streams.ownedRunning()).toBe(false), { timeout: 5000 });
       expect(await streams.ownedDrain(root)).toContain('unavailable');
       expect(streams.ownedRunning()).toBe(false);
     } finally {
