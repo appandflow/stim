@@ -135,9 +135,15 @@ function quietWorkspace(usedAgoMs = MINUTE_MS): string {
   return root;
 }
 
-test('active output marks refresh at ten minutes independently of normal lane ticks', async () => {
+test('due output marks refresh on quiet ticks before the next hourly walk', async () => {
   const root = quietWorkspace(0);
   writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+  const actualRefresh = markRefresh.refreshKnownMarks;
+  let settled = 0;
+  vi.spyOn(markRefresh, 'refreshKnownMarks').mockImplementation(async (...args) => {
+    await actualRefresh(...args);
+    settled++;
+  });
   const read = vi.spyOn(stages, 'readCheckout').mockImplementation(async (path) => ({
     path,
     at: Date.now(),
@@ -147,14 +153,19 @@ test('active output marks refresh at ten minutes independently of normal lane ti
   const daemon = runStimd({ mode: 'on' });
   try {
     await vi.advanceTimersByTimeAsync(MINUTE_MS);
-    await vi.waitFor(() => expect(readGcMark(root)).not.toBeNull());
+    await vi.waitFor(() => expect(settled).toBe(1));
     const first = readGcMark(root)?.markedAt;
+    expect(first).toBeDefined();
     await vi.advanceTimersByTimeAsync(5 * MINUTE_MS);
+    await vi.waitFor(() => expect(settled).toBe(2));
     expect(readGcMark(root)?.markedAt).toBe(first);
-    await vi.advanceTimersByTimeAsync(5 * MINUTE_MS);
-    await vi.waitFor(() => expect(readGcMark(root)?.markedAt).not.toBe(first));
+    for (const count of [3, 4]) {
+      await vi.advanceTimersByTimeAsync(5 * MINUTE_MS);
+      await vi.waitFor(() => expect(settled).toBe(count));
+    }
+    expect(readGcMark(root)?.markedAt).not.toBe(first);
     expect(read).toHaveBeenCalledTimes(2);
-    expect(maintenanceRun.runMaintenance).toHaveBeenCalledTimes(3);
+    expect(maintenanceRun.runMaintenance).toHaveBeenCalledTimes(4);
     expect(readDaemonSnapshot()?.gcMarks?.stale).toEqual([]);
   } finally {
     process.emit('SIGTERM', 'SIGTERM');
