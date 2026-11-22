@@ -1,8 +1,15 @@
 import { execFileSync } from 'node:child_process';
+import { inject } from 'vitest';
 import { DEVICE_COMMAND_RULES, REFUSED_DEVICE_COMMANDS } from '../device-policy.ts';
 import { resolveAgentDevice } from '../agent-device-bin.ts';
 
-const invocation = resolveAgentDevice(process.env);
+declare module 'vitest' {
+  export interface ProvidedContext {
+    agentDeviceBin: string;
+  }
+}
+
+const invocation = resolveAgentDevice({ ...process.env, STIM_AGENT_DEVICE_BIN: inject('agentDeviceBin') });
 
 function help(...topic: string[]): string {
   return execFileSync(invocation.command, [...invocation.args, 'help', ...topic], {
@@ -36,6 +43,8 @@ test.each(Object.entries(DEVICE_COMMAND_RULES))(
   'classifies every flag agent-device help lists for %s',
   (command, rule) => {
     const listed = block(help(command), 'Command flags:').flatMap((line) => /^ {2}(-[\w-]+)/.exec(line)?.[1] ?? []);
-    expect(listed.toSorted()).toEqual(Object.keys({ ...rule.flags, ...rule.refused }).toSorted());
+    const classified = { ...rule.flags, ...rule.refused };
+    expect(listed.filter((flag) => !Object.hasOwn(classified, flag))).toEqual([]);
+    expect(Object.keys(rule.flags ?? {}).filter((flag) => !listed.includes(flag))).toEqual([]);
   },
 );

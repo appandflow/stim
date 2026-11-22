@@ -1,5 +1,14 @@
 import assert from 'node:assert';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getExecutor, resetExecutor } from '../exec.ts';
@@ -382,7 +391,7 @@ describe('buildIos against a real xcodebuild', { timeout: 180_000 }, () => {
     120_000,
   );
 
-  test('builds the device slice for real: -sdk iphoneos lands the .app in Debug-iphoneos', async () => {
+  test('real generic iOS destination builds the device .app in Debug-iphoneos', async () => {
     resetExecutor();
     writeScratchProject(tmp);
     const logFile = join(workspaceLogsDir(tmp), 'build-ios-device.ndjson');
@@ -403,8 +412,8 @@ describe('buildIos against a real xcodebuild', { timeout: 180_000 }, () => {
     expect(result.bundleId).toBe('com.stimcli.scratch');
 
     const records = parseNdjsonText(readFileSync(logFile, 'utf-8'));
-    expect(records[0]?.msg).toMatch(/ -sdk iphoneos /);
     expect(records[0]?.msg).toMatch(/ -destination generic\/platform=iOS /);
+    expect(records[0]?.msg).not.toMatch(/ -sdk /);
     expect(records[0]?.msg).not.toMatch(/allowProvisioningUpdates|DEVELOPMENT_TEAM|CODE_SIGN_IDENTITY/);
     expect(records.some((r) => r.msg?.includes('BUILD SUCCEEDED'))).toBeTruthy();
   }, 180_000);
@@ -428,8 +437,8 @@ describe('buildIos against a real xcodebuild', { timeout: 180_000 }, () => {
     expect(result.exitCode).toBe(65);
     expect(result.diagnostics.length).toBe(1);
     const [diagnostic] = result.diagnostics;
-    assert(diagnostic);
-    expect(diagnostic.file).toBe(join(tmp, 'ios', 'Scratch', 'main.m'));
+    assert(diagnostic?.file);
+    expect(realpathSync(diagnostic.file)).toBe(realpathSync(join(tmp, 'ios', 'Scratch', 'main.m')));
     expect(diagnostic.line).toBe(5);
     expect(diagnostic.column).toBe(18);
     expect(diagnostic.message).toMatch(/use of undeclared identifier 'stimDeliberatelyUndefined'/);
