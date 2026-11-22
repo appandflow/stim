@@ -10,7 +10,7 @@ import { listAllIosSimsAsync, type IosSimRecord } from '../../devices/ios.ts';
 import { leaseIsExpired, listLeaseFiles } from '../../engine/device-lease.ts';
 import { isTimeoutError, type ExecOptions } from '../../exec.ts';
 import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
-import { gitQuiet } from '../../workspace/git.ts';
+import { gitQuiet, gitQuietAsync } from '../../workspace/git.ts';
 import { childEnvironment } from '../../workspace/git-read.ts';
 import { MAINTENANCE_LOG_NAME, settingDefinition, type GcWorktreeObservation } from '@stim-cli/core/state';
 import { getProject, loadConfig } from '../../workspace/config.ts';
@@ -758,6 +758,30 @@ export function worktreeReportThresholds(
   return { graceMs, emptyBranchMs: Math.max(graceMs, protectRecentMs(operation), NO_OWN_COMMITS_PRESSURE_FLOOR_MS) };
 }
 
+/** One device and agent inventory for the currently authorized saved worktrees. */
+export async function savedWorktreeUse(
+  roots: readonly { path: string; keys: string[] }[],
+  operation?: StimContext,
+): Promise<string[][]> {
+  if (!roots.length) return [];
+  const devices = await reportDeviceReads(
+    roots.flatMap(({ keys }) => keys),
+    operation,
+  );
+  const agents = await agentSessionUse(
+    roots.map(({ path }) => path),
+    Date.now(),
+    operation?.signal,
+  );
+  return Promise.all(
+    roots.map(async ({ path, keys }, i) => [
+      ...stimCliUseOf(path, canonicalPath, stimCliEntries(operation?.env)),
+      ...(await inUseOf(keys, { managedLocks: true }, devices, operation?.signal, operation)),
+      ...(agents[i] ?? []),
+    ]),
+  );
+}
+
 /** Rechecks one saved, currently authorized worktree without discovering candidates or fetching repository state. */
 export async function savedWorktreeFacts(
   path: string,
@@ -765,10 +789,11 @@ export async function savedWorktreeFacts(
   keys: string[],
   head: string,
   sourcePath: string,
+  inUse: string[],
   operation?: StimContext,
 ): Promise<WorktreeFacts | { keep: string }> {
   const read = {
-    env: operation?.env,
+    ...childEnvironment(operation?.env ?? process.env),
     signal: operation?.signal,
     declareFor: operation,
     timeoutMs: 3_000,
@@ -784,8 +809,36 @@ export async function savedWorktreeFacts(
   if (!status || status.head !== head)
     return { keep: 'its HEAD moved or could not be read since the normal observation' };
   const porcelain = await porcelainOf(path, status.dirty, operation);
-  const registry = new Set(listedRoots());
-  const managed = keys.some((key) => registry.has(key));
+  const index = await gitQuietAsync(path, ['ls-files', '-v', '-z'], read);
+  if (index === null) return { keep: 'its current index flags are unknown' };
+  if (index.split('\0').some((record) => record[0] === 'S' || /^[a-z]/.test(record)))
+    return { keep: 'its sparse or hidden tracked files need a normal eligibility check' };
+  const ignored = await gitQuietAsync(
+    path,
+    ['ls-files', '-z', '--others', '--ignored', '--exclude-standard', '--directory'],
+    read,
+  );
+  if (ignored === null) return { keep: 'its current ignored folders are unknown' };
+  const { SKIPPED_WHERE_IGNORED } = await import('../../workspace/discovered-activity.ts');
+  if (
+    ignored
+      .split('\0')
+      .filter(Boolean)
+      .some((ignoredEntry) => {
+        const rel = ignoredEntry.replace(/\/$/, '');
+        const name = rel.split('/').at(-1) ?? '';
+        return (
+          !ignoredEntry.endsWith('/') ||
+          !(
+            name === 'node_modules' ||
+            SKIPPED_WHERE_IGNORED.has(name) ||
+            rel === 'ios/Pods' ||
+            rel.endsWith('/ios/Pods')
+          )
+        );
+      })
+  )
+    return { keep: 'its custom ignored paths need a normal eligibility check' };
   const target = await localDefaultBranchAsync(source.path, {
     ...childEnvironment(operation?.env ?? process.env),
     signal: operation?.signal,
@@ -807,46 +860,23 @@ export async function savedWorktreeFacts(
     bare: false,
     locked: entry.locked === true,
     pinned: await anyPinned(keys, operation),
-    discovered: !managed,
+    discovered: false,
     nested: entries
       .filter((listed) => listed.path !== entry.path && listed.path.startsWith(`${entry.path}${sep}`))
       .map((listed) => listed.path),
     porcelain,
-    podChurn: managed ? provenPodChurn(path, porcelain, [], keys) : [],
-    hiddenEdit: managed ? await hiddenEditHold(path, operation?.signal) : null,
+    // @ref LLP 0001#the-lane-marks-what-each-checkout-could-free -- current Pod churn is uncertain without the normal dependency check
+    podChurn: [],
+    hiddenEdit: null,
     unpushed: await unpushedCommitsAsync(path, read, status),
     submodules: await hasPopulatedSubmodulesAsync(path, read),
-    inUse: [
-      ...stimCliUseOf(path, canonicalPath, stimCliEntries(operation?.env)),
-      ...(await inUseOf(
-        keys,
-        { managedLocks: true },
-        await reportDeviceReads(keys, operation),
-        operation?.signal,
-        operation,
-      )),
-      ...((await agentSessionUse([path], Date.now(), operation?.signal))[0] ?? []),
-    ],
+    inUse,
     idleDays: idleDaysOf(keys, Date.now()),
     merge,
     pullRequest,
     activity: await worktreeActivityOfAsync(path, keys, operation),
     archiveDirty: false,
   };
-  const removal = managed
-    ? await (
-        await import('../../workspace/discovered-removal.ts')
-      ).ignoredFilesHold(path, source.path, operation?.signal)
-    : await (
-        await import('../../workspace/discovered-removal.ts')
-      ).discoveredRemovalHold(path, {
-        main: source.path,
-        idleMs: dormantMs(operation),
-        reads: discoveredReads(operation?.signal),
-        reduceOnly: false,
-        operation,
-      });
-  if (removal) return { keep: removal };
   return facts;
 }
 

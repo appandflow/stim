@@ -30,6 +30,11 @@ struct MaintenanceSection: View {
         }
       }
       if let maintenance {
+        if let pending = maintenance.pendingDelete, pending.count > 0 {
+          LabeledContent("Pending deletion") {
+            Text("About \(Format.fileSize(pending.bytes))").foregroundStyle(Palette.secondary)
+          }
+        }
         LabeledContent("Last pass") { Text(lastPass(maintenance)).foregroundStyle(Palette.secondary) }
         ForEach(maintenance.lastPass?.blocked ?? [], id: \.self) { reason in
           Text(reason).font(.stim(.footnote)).foregroundStyle(Palette.warning)

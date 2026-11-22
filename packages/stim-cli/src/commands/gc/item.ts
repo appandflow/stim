@@ -16,6 +16,8 @@ import { loadConfig } from '../../workspace/config.ts';
 import { workspaceDir } from '../../workspace/paths.ts';
 import { listMountedVolumes } from '../../fs-util.ts';
 import { createGcResults, type GcOutput, type GcResult } from './results.ts';
+import { stageItemTrash } from '../../workspace/item-trash.ts';
+import { openGcLog } from './log.ts';
 
 /**
  * One item Stim Desktop deletes as its own queue unit: a registered shared cache emptied whole, the
@@ -66,10 +68,16 @@ export interface GcItemResult {
 }
 
 /** Deletes one item after resolving it again against what is on disk; never a path the caller made up. */
-export async function deleteGcItem(item: GcItem, operation?: StimContext): Promise<GcItemResult> {
+export async function deleteGcItem(
+  item: GcItem,
+  operation?: StimContext,
+  onStaged?: () => void,
+): Promise<GcItemResult> {
   const env = operation?.env ?? process.env;
   const signal = operation?.signal;
-  const results = createGcResults();
+  const results = createGcResults(
+    onStaged ? openGcLog({ trigger: 'desktop', runId: operation?.runId }).record : undefined,
+  );
   let failed = 0;
   const output: GcOutput = { log: () => {}, error: () => {}, record: results.record, fail: () => failed++ };
   let failures = 0;
@@ -94,6 +102,13 @@ export async function deleteGcItem(item: GcItem, operation?: StimContext): Promi
         output,
         signal,
         operation,
+        onStaged
+          ? async (path, bytes) => {
+              const staged = await stageItemTrash(path, bytes, { kind: 'cache', id: dir }, signal);
+              if (staged) onStaged();
+              return staged;
+            }
+          : undefined,
       );
       break;
     }
@@ -122,7 +137,23 @@ export async function deleteGcItem(item: GcItem, operation?: StimContext): Promi
       const selection = await collectArchives({ kind: item.part ?? null, id: item.id }, signal);
       const refusal = archiveRefusal(selection);
       if (refusal) return { results: [], failures: 0, refusal };
-      failures = await deleteArchives(selection, output, signal);
+      failures = await deleteArchives(
+        selection,
+        output,
+        signal,
+        onStaged
+          ? async (path, bytes, id, part) => {
+              const staged = await stageItemTrash(
+                path,
+                bytes,
+                { kind: 'archive', id, ...(part ? { part } : {}) },
+                signal,
+              );
+              if (staged) onStaged();
+              return staged;
+            }
+          : undefined,
+      );
       break;
     }
     case 'watchman':

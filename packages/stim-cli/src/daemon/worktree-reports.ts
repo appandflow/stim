@@ -1,5 +1,5 @@
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
-import type { GcWorktreeObservation } from '@stim-cli/core/state';
+import type { GcMark, GcWorktreeObservation } from '@stim-cli/core/state';
 import { realpath, stat } from 'node:fs/promises';
 import { sep } from 'node:path';
 import { processContext } from '../cli-operation.ts';
@@ -8,12 +8,12 @@ import {
   DEFAULT_WORKTREE_IDLE_DAYS,
   listedRoots,
   savedWorktreeFacts,
+  savedWorktreeUse,
   worktreeReportThresholds,
   worktreeSkipReason,
 } from '../commands/gc/worktrees.ts';
 import { answered, Unanswered } from '../workspace/bounded-read.ts';
 import type { Config } from '../workspace/config.ts';
-import { targetedCheckouts } from '../workspace/discovery.ts';
 import { endedPullRequest } from '../workspace/pull-request.ts';
 import { outputMarks } from './marks.ts';
 import { worktreeMarkDue } from './worktree-marks.ts';
@@ -81,6 +81,7 @@ export async function savedWorktreeReports(
     }
     return value;
   };
+  const selected: { mark: GcMark; observation: GcWorktreeObservation; root: string; keys: string[] }[] = [];
   for (const mark of marks) {
     const observation = mark.worktree;
     if (!observation) {
@@ -101,7 +102,6 @@ export async function savedWorktreeReports(
     const deadline = new AbortController();
     const timer = setTimeout(() => deadline.abort(new Unanswered('worktree report deadline')), 3_000);
     const signal = reading.operation ? AbortSignal.any([reading.operation.signal, deadline.signal]) : deadline.signal;
-    const operation = reading.operation ? { ...reading.operation, signal } : processContext(process.cwd(), signal);
     try {
       const root = await identity(mark.root);
       if (
@@ -117,13 +117,8 @@ export async function savedWorktreeReports(
       }
       if (!keep && (keys.length !== observation.keys.length || keys.some((key) => !observation.keys.includes(key))))
         keep = 'the worktree workspace membership changed';
-      if (!keep && !keys.some((key) => registry.has(key))) {
-        const route = (await targetedCheckouts(config, [...registry], [mark.root], operation)).find(
-          (entry) => entry.path === mark.root,
-        );
-        if (!route || route.reduceOnly)
-          keep = 'current whole-worktree scope is unproven or permits output reduction only';
-      }
+      if (!keep && !keys.some((key) => registry.has(key)))
+        keep = 'its automatic-only removal proof needs a normal eligibility check';
       if (!keep && reading.protectedRoot) {
         const protectedPath = await identity(reading.protectedRoot);
         if (protectedPath === root || protectedPath.startsWith(`${root}${sep}`))
@@ -133,20 +128,70 @@ export async function savedWorktreeReports(
         keep = 'a device uses this worktree or its device state is unknown';
       if (!keep && !observation.head) keep = 'the observed HEAD is unknown';
       if (!keep && !observation.source) keep = 'the observed source checkout is unknown';
-      if (!keep && observation.head && observation.source) {
-        const facts = await savedWorktreeFacts(mark.root, root, keys, observation.head, observation.source, operation);
-        if ('keep' in facts) keep = facts.keep;
-        else if (observation.finished && !facts.merge?.merged && !endedPullRequest(facts.pullRequest))
-          keep = 'its current finished state is unproven without a new normal check';
-        else
-          keep =
-            worktreeSkipReason(
-              facts,
-              level === 'critical' && idle ? DEFAULT_WORKTREE_IDLE_DAYS : null,
-              { ms: thresholds.graceMs, now: Date.now() },
-              thresholds.emptyBranchMs,
-            )?.text ?? null;
-      }
+      if (!keep) selected.push({ mark, observation, root, keys });
+      signal.throwIfAborted();
+      if (keep) rows.push({ target: mark.root, detail: keep });
+    } catch (error) {
+      if (isClaimUnavailable(error) && 'reportCleanup' in error) throw error;
+      reading.operation?.signal.throwIfAborted();
+      rows.push({ target: mark.root, detail: 'current worktree eligibility could not be checked; it stays' });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  let uses: string[][];
+  const first = selected[0];
+  try {
+    uses = first
+      ? await answered(
+          first.mark.root,
+          () =>
+            savedWorktreeUse(
+              selected.map(({ mark, keys }) => ({ path: mark.root, keys })),
+              reading.operation,
+            ),
+          3_000,
+          reading.operation?.signal,
+        )
+      : [];
+  } catch (error) {
+    if (isClaimUnavailable(error) && 'reportCleanup' in error) throw error;
+    reading.operation?.signal.throwIfAborted();
+    rows.push(
+      ...selected.map(({ mark }) => ({
+        target: mark.root,
+        detail: 'current device or agent use is unknown; it stays',
+      })),
+    );
+    return rows;
+  }
+  for (const [i, { mark, observation, root, keys }] of selected.entries()) {
+    const deadline = new AbortController();
+    const timer = setTimeout(() => deadline.abort(new Unanswered('worktree report deadline')), 3_000);
+    const signal = reading.operation ? AbortSignal.any([reading.operation.signal, deadline.signal]) : deadline.signal;
+    const operation = reading.operation ? { ...reading.operation, signal } : processContext(process.cwd(), signal);
+    try {
+      const facts = await savedWorktreeFacts(
+        mark.root,
+        root,
+        keys,
+        observation.head ?? '',
+        observation.source ?? '',
+        uses[i] ?? [],
+        operation,
+      );
+      let keep: string | null;
+      if ('keep' in facts) keep = facts.keep;
+      else if (observation.finished && !facts.merge?.merged && !endedPullRequest(facts.pullRequest))
+        keep = 'its current finished state is unproven without a new normal check';
+      else
+        keep =
+          worktreeSkipReason(
+            facts,
+            level === 'critical' && idle ? DEFAULT_WORKTREE_IDLE_DAYS : null,
+            { ms: thresholds.graceMs, now: Date.now() },
+            thresholds.emptyBranchMs,
+          )?.text ?? null;
       signal.throwIfAborted();
       rows.push({
         target: mark.root,

@@ -139,8 +139,8 @@ Storage page, and returns { results, exitCode }. item is { kind: 'cache', dir },
 { kind: 'workspace-outputs' }, { kind: 'archive', id, part? }, { kind:
 'watchman' } or { kind: 'gradle-daemons' }; the CLI has no command for it.
 
-deleteGarbageItem takes its own turn on this home's cleanup queue, after
-pressure passes and before the maintenance lane. It never joins another item.
+Items queue after pressure, before maintenance; none join.
+Cache/archive estimates await physical removal: maintenance.pendingDelete.
 Execution and cleanup use the report budgets above. Cancellation stops pending
 lock waits and further actions; completed actions remain applied. An archive
 whose history has started moving finishes publication before cancellation.

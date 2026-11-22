@@ -60,6 +60,22 @@ export interface GcMark {
   /** Missing or unreadable dependency evidence is unknown, not an empty inventory. */
   dependencies?: GcDependencyObservation;
   worktree?: GcWorktreeObservation;
+  /** Recognized nested app paths that led normal discovery to this Cargo holder. */
+  cargoVia?: string[];
+}
+
+export interface GcStaleMarkEvidence {
+  root: string;
+  markedAt: string;
+  intervalMs: number;
+}
+
+export interface GcMarkHealth {
+  at: number;
+  state: 'ready' | 'partial' | 'unavailable';
+  checkedRoots?: number;
+  staleCount?: number;
+  stale: GcStaleMarkEvidence[];
 }
 
 const KINDS: readonly unknown[] = ['outputs', 'cargo-target'] satisfies GcMarkKind[];
@@ -162,6 +178,9 @@ export function parseGcMark(root: string, entry: unknown): GcMark | null {
     candidates: parsed,
     ...(dependencies === undefined ? {} : { dependencies }),
     ...(isWorktreeObservation(entry.worktree) ? { worktree: entry.worktree } : {}),
+    ...(Array.isArray(entry.cargoVia) && entry.cargoVia.every((path) => typeof path === 'string' && isAbsolute(path))
+      ? { cargoVia: entry.cargoVia }
+      : {}),
   };
 }
 

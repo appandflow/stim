@@ -765,6 +765,7 @@ export async function deleteSelectedArchives(
   ids: readonly string[],
   kind: Kind | null,
   signal?: AbortSignal,
+  handoff?: (path: string, bytes: number) => Promise<boolean>,
 ): Promise<void> {
   signal?.throwIfAborted();
   await withDirLockTransaction(
@@ -772,9 +773,35 @@ export async function deleteSelectedArchives(
     async () => {
       for (const record of (await readArchivesAsync(signal)).filter((entry) => ids.includes(entry.id))) {
         signal?.throwIfAborted();
-        if (kind) await removeKind(record, kind);
-        else await removeRecord(record.id);
+        if (kind) {
+          if (await handoff?.(join(archiveDir(record.id), KIND_PATH[kind]), record.bytes[kind])) {
+            record.bytes[kind] = 0;
+            record.expires[kind] = null;
+            await writeRecord(archiveDir(record.id), record);
+          } else await removeKind(record, kind);
+        } else if (!(await handoff?.(archiveDir(record.id), record.bytes.total))) await removeRecord(record.id);
       }
+    },
+    { waitMs: 30_000, signal },
+  );
+}
+
+/** Completes a part's metadata update when its trash handoff outlived the process holding the archive lock. */
+export async function reconcileTrashedArchivePart(id: string, kind: Kind, signal?: AbortSignal): Promise<void> {
+  await withDirLockTransaction(
+    archiveLock(),
+    async () => {
+      const record = (await readArchivesAsync(signal)).find((entry) => entry.id === id);
+      if (!record) return;
+      try {
+        await lstat(join(archiveDir(id), KIND_PATH[kind]));
+        return;
+      } catch (error) {
+        if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+      }
+      record.bytes[kind] = 0;
+      record.expires[kind] = null;
+      await writeRecord(archiveDir(id), record);
     },
     { waitMs: 30_000, signal },
   );

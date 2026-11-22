@@ -62,6 +62,10 @@ export function declaresAppDependency(pkg: unknown): boolean {
   return APP_DEPENDENCIES.some((name) => name in deps);
 }
 
+export function appOwnedRoots(root: string, pkg: unknown): string[] {
+  return declaresAppDependency(pkg) ? [join(root, 'ios'), join(root, 'android')] : [];
+}
+
 export function appProjectProblem(
   projectRoot: string,
   { pkg, parseError }: ReturnType<typeof loadPackageJson> = loadPackageJson(projectRoot),

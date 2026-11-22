@@ -54,6 +54,7 @@ export async function deleteArchives(
   selection: ArchiveSelection | undefined,
   output: GcOutput = GC_OUTPUT,
   signal?: AbortSignal,
+  handoff?: (path: string, bytes: number, id: string, part: ArchiveKind | null) => Promise<boolean>,
 ): Promise<number> {
   signal?.throwIfAborted();
   if (!selection) return 0;
@@ -61,8 +62,20 @@ export async function deleteArchives(
   for (const record of selection.records.filter((entry) => entry.willDelete)) {
     signal?.throwIfAborted();
     try {
-      await deleteSelectedArchives([record.id], selection.kind, signal);
-      output.record('archive', 'done', record.id, { id: record.id, bytes: record.bytes });
+      let pending = false;
+      await deleteSelectedArchives(
+        [record.id],
+        selection.kind,
+        signal,
+        handoff
+          ? async (path, bytes) => {
+              pending = await handoff(path, bytes, record.id, selection.kind);
+              if (pending) output.record('archive', 'pending', record.id, { id: record.id, bytes });
+              return pending;
+            }
+          : undefined,
+      );
+      if (!pending) output.record('archive', 'done', record.id, { id: record.id, bytes: record.bytes });
     } catch (error) {
       signal?.throwIfAborted();
       failures++;

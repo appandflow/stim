@@ -2,6 +2,12 @@ import Foundation
 
 /// The `maintenance` block of `stim status --json`: the CLI's automatic resource maintenance.
 public struct MaintenanceStatus: Decodable, Hashable, Sendable {
+  public struct PendingDelete: Decodable, Hashable, Sendable {
+    public var count: Int
+    public var bytes: Int64
+  }
+
+  public var pendingDelete: PendingDelete?
   public struct Pass: Decodable, Hashable, Sendable {
     /// Epoch milliseconds.
     public var startedAt: Double

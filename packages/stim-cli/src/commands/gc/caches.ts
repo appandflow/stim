@@ -89,17 +89,20 @@ async function emptyCache(
   cache: CacheDescriptor,
   signal?: AbortSignal,
   operation?: StimContext,
+  handoff?: (path: string, bytes: number) => Promise<boolean>,
 ): Promise<{
   removed: number;
   bytes: number;
   skipped: string | null;
   failed?: number;
+  pending?: number;
+  pendingBytes?: number;
 }> {
   if (cache.prune === 'report-only') {
     return { removed: 0, bytes: 0, skipped: 'report-only shared cache; Stim never deletes it' };
   }
   if (cache.prune !== 'atomic') {
-    return pruneCacheAsync(cache, { olderThanDays: 0, now: Date.now() + DAY_MS, signal, operation });
+    return pruneCacheAsync(cache, { olderThanDays: 0, now: Date.now() + DAY_MS, signal, operation, handoff });
   }
 
   const claim = claimForEmptying(cache.dir);
@@ -114,9 +117,15 @@ async function emptyCache(
     }
     let removed = 0;
     let failed = 0;
+    let pending = 0;
+    const entryBytes = Math.floor((cache.bytes ?? 0) / (names.length || 1));
     for (const name of names) {
       signal?.throwIfAborted();
       try {
+        if (await handoff?.(join(cache.dir, name), entryBytes)) {
+          pending++;
+          continue;
+        }
         await rm(join(cache.dir, name), { recursive: true, force: true });
         removed++;
       } catch {
@@ -124,7 +133,14 @@ async function emptyCache(
       }
     }
     signal?.throwIfAborted();
-    return { removed, bytes: failed ? 0 : (cache.bytes ?? 0), failed, skipped: null };
+    const bytes = cache.bytes ?? 0;
+    return {
+      removed,
+      bytes: failed ? 0 : Math.floor((bytes * removed) / (names.length || 1)),
+      failed,
+      skipped: null,
+      ...(handoff ? { pending, pendingBytes: entryBytes * pending } : {}),
+    };
   } finally {
     releaseClaim(claim);
   }
@@ -144,6 +160,7 @@ export async function emptyCaches(
   output: GcOutput = GC_OUTPUT,
   signal?: AbortSignal,
   operation?: StimContext,
+  handoff?: (path: string, bytes: number) => Promise<boolean>,
 ): Promise<number> {
   const { log, record } = output;
   let cacheBytes = 0;
@@ -155,7 +172,8 @@ export async function emptyCaches(
       record('cache', 'kept', c.name, { id: c.dir, detail: c.emptySkipped ?? null });
       continue;
     }
-    const r = await emptyCache(c, signal, operation);
+    const r = await emptyCache(c, signal, operation, handoff);
+    if (r.pending) record('cache', 'pending', c.name, { id: c.dir, bytes: r.pendingBytes ?? 0 });
     if (r.skipped) {
       log(chalk.yellow(`Left ${c.name} alone: ${r.skipped}`));
       record('cache', 'kept', c.name, { id: c.dir, detail: r.skipped });
@@ -165,7 +183,7 @@ export async function emptyCaches(
       log(
         chalk.green(`Emptied ${c.name}: ${r.removed} entr${r.removed === 1 ? 'y' : 'ies'} (${formatBytes(r.bytes)})`),
       );
-    } else if (!r.failed) {
+    } else if (!r.failed && !r.pending) {
       log(chalk.dim(`${c.name}: already empty`));
     }
     if (reportFailures(c, r.failed, output)) failures++;

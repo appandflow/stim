@@ -1,5 +1,6 @@
 import { packagedHistoryHelper, startHistoryFeed } from '../fsevents-helper.ts';
 import { validGcItem } from '../commands/gc/item.ts';
+import { pendingItemTrash } from '../workspace/item-trash.ts';
 import { runDirRemoved } from './run-dir.ts';
 import { createMetroTickets, handleMetroTicketRequest } from './metro/tickets.ts';
 import { createLeaseTickets, handleLeaseRequest } from './lease-tickets.ts';
@@ -25,6 +26,7 @@ import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import {
   DEFAULT_SERVER_PORT,
+  trashRoot,
   daemonClaimRoot,
   daemonDir,
   daemonNdjsonFile,
@@ -55,6 +57,7 @@ import {
   type DaemonMode,
   type DaemonRecentAction,
   type DaemonSnapshot,
+  type GcMarkHealth,
   type PressureLevel,
   type BuildEndMarker,
 } from '@stim-cli/core/state';
@@ -1097,6 +1100,7 @@ async function runStimdInner(
   const threads = createThreadTable(
     log,
     (error) => failBackground(error, 'a thread cleanup could not be verified'),
+    () => queueTrashDrain(),
     (cleanup) => {
       if (!claim) return;
       try {
@@ -1196,6 +1200,29 @@ async function runStimdInner(
   const open = new Set<Socket>();
   const ops = new Map<Socket, 'pinned' | 'waiting'>();
   const gcRequests = new Set<Promise<unknown>>();
+  let trashDrain: Promise<void> | null = null;
+  let trashAgain = false;
+  const queueTrashDrain = () => {
+    if (!maintenanceAllowed()) return;
+    if (trashDrain) {
+      trashAgain = true;
+      return;
+    }
+    trashAgain = false;
+    const work = threads.drainTrash(lastSnapshot?.pressure?.level === 'critical').catch((error: unknown) => {
+      if (isUnverifiedCleanup(error) && !contain(error)) failBackground(error, 'trash cleanup could not be verified');
+      else log('warn', 'item_trash_failed', error instanceof Error ? error.message : String(error));
+    });
+    trashDrain = work;
+    gcRequests.add(work);
+    void work.finally(() => {
+      gcRequests.delete(work);
+      trashDrain = null;
+      if (trashAgain) queueTrashDrain();
+      if (effectiveMode() === 'off') requestTick();
+      void checkEngine();
+    });
+  };
   const gcDetached = new WeakSet<Socket>();
   const itemCancels = new WeakMap<Socket, () => void>();
   const logsRunning = () => logs.running() || logs.ownedRunning();
@@ -1244,17 +1271,29 @@ async function runStimdInner(
     log: (reason) => log('debug', 'gc_history_fallback', reason),
   });
   let historyRootsWork: Promise<void> | undefined;
+  let markObservation: GcMarkHealth | undefined;
   const refreshHistory = (config: Config | null) => {
     if (!config || historyRootsWork) return;
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      markObservation = { at: Date.now(), state: 'unavailable', stale: [] };
+    }, 3000);
     historyRootsWork = threads
       .history(config)
-      .then((roots) => (maintenanceAllowed() ? filesystemHistory.update(roots) : undefined))
+      .then(({ roots, marks }) => {
+        clearTimeout(timer);
+        if (!timedOut) markObservation = marks;
+        return maintenanceAllowed() && roots !== null ? filesystemHistory.update(roots) : undefined;
+      })
       .catch((error: unknown) => {
         if (isUnverifiedCleanup(error) && !contain(error))
           failBackground(error, 'filesystem history cleanup could not be verified');
+        markObservation = { at: Date.now(), state: 'unavailable', stale: [] };
         if (maintenanceAllowed()) log('debug', 'gc_history_refresh_failed', errorText(error));
       })
       .finally(() => {
+        clearTimeout(timer);
         historyRootsWork = undefined;
       });
   };
@@ -2233,6 +2272,22 @@ async function runStimdInner(
   startup.signal.throwIfAborted();
   await logs.ownedSync();
   startup.signal.throwIfAborted();
+  if (existsSync(trashRoot())) {
+    const recovery = pendingItemTrash()
+      .then((pending) => {
+        if (pending.count) queueTrashDrain();
+        return undefined;
+      })
+      .catch((error: unknown) =>
+        log('warn', 'item_trash_recovery_failed', error instanceof Error ? error.message : String(error)),
+      );
+    gcRequests.add(recovery);
+    void recovery.finally(() => {
+      gcRequests.delete(recovery);
+      if (effectiveMode() === 'off') requestTick();
+      void checkEngine();
+    });
+  }
   lifetime.serve(requestEnd, waitMs, instance);
   startup.finish?.();
   startup.finish = undefined;
@@ -2440,6 +2495,7 @@ async function runStimdInner(
         recent,
         waiting,
         ...(filesystemHistory.status() ? { history: filesystemHistory.status() } : {}),
+        gcMarks: markObservation,
       };
       writeAtomic(daemonSnapshotFile(), lastSnapshot);
       for (const socket of replying) socket.end(`${JSON.stringify({ op: 'ticked', level: pressure.level })}\n`);

@@ -7,6 +7,9 @@ import * as worktrees from '../commands/gc/worktrees.ts';
 import * as discovery from '../workspace/discovery.ts';
 import * as pullRequests from '../pull-request-state.ts';
 import * as mergeState from '../workspace/merge-state.ts';
+import * as iosDevices from '../devices/ios.ts';
+import * as agentSessions from '../agent-sessions.ts';
+import * as discoveredRemoval from '../workspace/discovered-removal.ts';
 import * as dependencyEdits from '../workspace/dependency-edits.ts';
 import { saveConfig } from '../workspace/config.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
@@ -236,3 +239,69 @@ test('keeps changed HEAD and independent dirty generations explicit, while malfo
   git(linked, 'commit', '-q', '--allow-empty', '-m', 'moved');
   expect((await savedWorktreeReports(config, reading(), 'critical', false))[0]?.detail).toContain('HEAD moved');
 });
+
+test('saved reports share one device and agent inventory across currently authorized worktrees', async () => {
+  finished();
+  const other = join(base, 'other');
+  git(source, 'worktree', 'add', '-q', '-b', 'feature-two', other, git(linked, 'rev-parse', 'HEAD'));
+  writeFileSync(join(other, 'other.txt'), 'other feature');
+  git(other, 'add', '-A');
+  git(other, 'commit', '-q', '-m', 'other feature');
+  git(source, 'merge', '-q', '--no-ff', 'feature-two', '-m', 'other merged');
+  git(source, 'push', '-q', 'origin', 'main');
+  config.projects[other] = {};
+  saveConfig(config);
+  recordWorkspaceUse(other, new Date(Date.now() - 10 * day));
+  await observe();
+  for (const path of [linked, other])
+    config.projects[path] = { platforms: { ios: { owned: true, deviceUdid: path, deviceName: 'stim-test' } } };
+  saveConfig(config);
+  const devices = vi.spyOn(iosDevices, 'listAllIosSimsAsync').mockResolvedValue(
+    [linked, other].map((udid) => ({
+      udid,
+      name: 'stim-test',
+      state: 'Shutdown',
+      runtime: 'test',
+      deviceTypeIdentifier: 'test',
+      available: true,
+    })),
+  );
+  const agents = vi.spyOn(agentSessions, 'discoverAgentSessions').mockResolvedValue([]);
+  const rows = await savedWorktreeReports(config, reading(), 'critical', false);
+  expect(rows).toEqual([
+    expect.objectContaining({ detail: expect.stringContaining('report only:') }),
+    expect.objectContaining({ detail: expect.stringContaining('report only:') }),
+  ]);
+  expect(agents).toHaveBeenCalledTimes(1);
+  expect(devices).toHaveBeenCalledTimes(1);
+}, 20_000);
+
+test.each(['custom ignored', 'hidden index'])(
+  'saved reports keep %s layouts without filesystem edit walks',
+  async (layout) => {
+    finished();
+    await observe();
+    if (layout === 'custom ignored') {
+      writeFileSync(join(source, '.git', 'info', 'exclude'), 'custom-cache/\n');
+      mkdirSync(join(linked, 'custom-cache'));
+      writeFileSync(join(linked, 'custom-cache', 'private.txt'), 'keep');
+    } else git(linked, 'update-index', '--assume-unchanged', 'package.json');
+    const ignored = vi
+      .spyOn(discoveredRemoval, 'ignoredFilesHold')
+      .mockRejectedValue(new Error('must not walk ignored paths'));
+    const removal = vi
+      .spyOn(discoveredRemoval, 'discoveredRemovalHold')
+      .mockRejectedValue(new Error('must not walk dependencies'));
+    const edits = vi
+      .spyOn(dependencyEdits, 'checkDependencyEdits')
+      .mockRejectedValue(new Error('must not inspect dependencies'));
+    const rows = await savedWorktreeReports(config, reading(), 'critical', false);
+    expect(rows).toEqual([
+      expect.objectContaining({ target: linked, detail: expect.stringContaining('normal eligibility check') }),
+    ]);
+    expect(ignored).not.toHaveBeenCalled();
+    expect(removal).not.toHaveBeenCalled();
+    expect(edits).not.toHaveBeenCalled();
+  },
+  20_000,
+);

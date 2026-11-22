@@ -120,7 +120,7 @@ function sameRoot(path: string, root: string | undefined): boolean {
  * placement (whose own automatic stop covers it), an owned simulator while `simctl list` failed, or an owned emulator
  * `adb devices` cannot rule out.
  */
-async function runsSomething(path: string, project: ProjectRecord, reading: DeviceReading): Promise<boolean> {
+export async function runsSomething(path: string, project: ProjectRecord, reading: DeviceReading): Promise<boolean> {
   if (reading.devices.some((device) => device.project === path)) return true;
   const slots = projectDeviceSlots(project);
   if (reading.simsFailed && slots.some(({ platforms }) => platforms.ios?.owned)) return true;

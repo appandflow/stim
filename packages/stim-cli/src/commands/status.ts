@@ -233,6 +233,7 @@ export function renderStatus(
     machine,
     slotUsage,
     daemonAnswer,
+    pendingDelete,
   }: StatusSnapshot,
   json: boolean,
   settle: (payload: StatusPayload) => StatusPayload = (payload) => payload,
@@ -260,6 +261,7 @@ export function renderStatus(
   });
 
   const maintenance = maintenanceStatus();
+  if (pendingDelete) maintenance.pendingDelete = pendingDelete;
   const daemon = withAnswer(daemonStatus(), daemonAnswer);
   if (json) {
     const payload = {

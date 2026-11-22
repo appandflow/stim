@@ -15,7 +15,16 @@ import {
 } from './server-harness.ts';
 import assert from 'node:assert';
 import { once } from 'node:events';
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import fsPromises from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
 import { execFileSync } from 'node:child_process';
@@ -1985,39 +1994,51 @@ describe.skipIf(process.platform === 'win32')('Desktop GC mutation', () => {
     }
   }
 
-  it('deletes only the selected private cache and refreshes cached reports without a CLI process', async () => {
-    const fixture = cacheFixture();
-    await start({ env: fixture.env });
-    const client = await desktop();
-    const before = await client.request('desktop.reports.get', { report: 'gc' });
-    expect(before).toMatchObject({
-      result: {
-        value: {
-          sections: {
-            caches: expect.arrayContaining([expect.objectContaining({ name: 'rpc-fixture', dir: fixture.cache })]),
+  it.each(['file', 'directory'])(
+    'deletes only the selected private %s cache and refreshes cached reports without a CLI process',
+    async (kind) => {
+      const fixture = cacheFixture();
+      if (kind === 'directory') {
+        rmSync(fixture.artifact);
+        mkdirSync(fixture.artifact);
+        writeFileSync(join(fixture.artifact, 'data'), 'cached');
+      }
+      await start({ env: fixture.env });
+      const client = await desktop();
+      const before = await client.request('desktop.reports.get', { report: 'gc' });
+      expect(before).toMatchObject({
+        result: {
+          value: {
+            sections: {
+              caches: expect.arrayContaining([expect.objectContaining({ name: 'rpc-fixture', dir: fixture.cache })]),
+            },
           },
         },
-      },
-    });
-    const config = readFileSync(join(fixture.home, 'config.json'), 'utf8');
-    expect(
-      await client.request('desktop.gc.item.subscribe', {
-        cwd: workspace,
-        item: { kind: 'cache', dir: fixture.cache },
-      }),
-    ).toHaveProperty('result.subscription');
-    const done = await ended(client);
-    expect(done.exitCode).toBe(0);
-    expect(JSON.parse(done.stdout)).toMatchObject({
-      results: [expect.objectContaining({ kind: 'cache', status: 'done' })],
-    });
-    expect(existsSync(fixture.artifact)).toBe(false);
-    expect(readFileSync(join(fixture.home, 'config.json'), 'utf8')).toBe(config);
-    expect(await client.request('desktop.reports.get', { report: 'gc' })).not.toEqual(before);
-    expect(cleanupQueue()).toMatchObject({ running: null, queued: 0 });
-    expect(readAudit()).toContainEqual(expect.objectContaining({ action: 'gc', ok: true }));
-    expect(stimCalls()).toEqual([]);
-  });
+      });
+      const config = readFileSync(join(fixture.home, 'config.json'), 'utf8');
+      expect(
+        await client.request('desktop.gc.item.subscribe', {
+          cwd: workspace,
+          item: { kind: 'cache', dir: fixture.cache },
+        }),
+      ).toHaveProperty('result.subscription');
+      const done = await ended(client);
+      expect(done.exitCode).toBe(0);
+      expect(JSON.parse(done.stdout)).toMatchObject({
+        results: [expect.objectContaining({ kind: 'cache', status: kind === 'directory' ? 'pending' : 'done' })],
+      });
+      expect(existsSync(fixture.artifact)).toBe(false);
+      expect(readFileSync(join(fixture.home, 'config.json'), 'utf8')).toBe(config);
+      expect(await client.request('desktop.reports.get', { report: 'gc' })).not.toEqual(before);
+      expect(cleanupQueue()).toMatchObject({ running: null, queued: 0 });
+      expect(readAudit()).toContainEqual(expect.objectContaining({ action: 'gc', ok: true }));
+      await vi.waitFor(() => {
+        const trash = join(fixture.home, 'trash');
+        expect(existsSync(trash) ? readdirSync(trash) : []).toEqual([]);
+      });
+      expect(stimCalls()).toEqual([]);
+    },
+  );
 
   it('denies unproved local and phone control and rejects invalid selectors before deleting files', async () => {
     const fixture = cacheFixture();
