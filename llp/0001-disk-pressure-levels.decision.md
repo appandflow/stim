@@ -357,6 +357,20 @@ so none ever runs beside another.
   A resumed saved output needs its current exact registry key or one targeted
   discovery proof. A rewritten registry alias with no current discovery route
   stays kept rather than resolving every registered root again per path.
+- Other acting ladder units hand off after a whole parked-device operation,
+  shared-cache trim or empty, rung 6 planned action, history action group, or
+  tool-cache plan has returned. The next operation checks cancellation and
+  current volume eligibility after reacquiring its turn; existing pressure
+  checks still decide whether to continue. Critical parked-device cleanup
+  retains its all-parked policy, and explicit unmeasured force retains its
+  all-volume scope. Atomic-cache claims, native children and their final
+  accounting stay within a unit, as do grouped recordings, archives and
+  multi-path tool commands. Rung 0's per-device and rung 4's stage/stop loops
+  still need boundaries outside each completed teardown or workspace claim;
+  no nested lock or claim is suspended by these outer-action boundaries.
+  The final tool cleanup hands off before inventory/reporting. Acting tool
+  cleanup measures its selected cache after reacquisition for its own credit;
+  surveyed ordering and read-only measurement stay unchanged.
 - The maintenance pass gives up the turn once it deletes nothing more, before
   its discovery scan and census.
 - When the passes thread ends, a disk pass it had not answered fails as

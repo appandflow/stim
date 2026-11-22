@@ -229,6 +229,15 @@ const actContext = (settings: MaintenanceSettings): ActContext => ({
   background: true,
 });
 
+async function actionBoundary(context: RungContext, level: 'high' | 'critical' = 'high'): Promise<void> {
+  if (!context.act || !context.between) return;
+  await context.between();
+  context.stop?.throwIfAborted();
+  context.operation?.signal.throwIfAborted();
+  if (!context.force || context.force.measured)
+    context.short = context.volume === undefined ? await shortDevices(context, level) : new Set([context.volume]);
+}
+
 async function run(
   context: RungContext,
   plan: MaintenanceAction,
@@ -469,6 +478,7 @@ async function parkedRung(context: RungContext): Promise<void> {
     })),
   ].toSorted((a, b) => String(a.at).localeCompare(String(b.at)));
   for (const device of parked) {
+    await actionBoundary(context);
     if (!onShort(context, deviceDataDirs(context.sims, device.platform, device.id))) continue;
     if (context.level === 'high' && !(await context.stillShort())) return;
     if (ledger && !ledger[device.platform].has(device.id)) {
@@ -679,6 +689,7 @@ async function sharedCachesStep(context: RungContext): Promise<void> {
     { cache: rootCache('Metro transform caches', metroCacheRoot(), 3), capGb: context.settings.metroCacheMaxGb },
   ];
   for (const { cache, capGb } of entries) {
+    await actionBoundary(context);
     if (!existsSync(cache.dir) || !onShort(context, [cache.dir]) || !(await context.stillShort())) continue;
     let evict = Infinity;
     if (!critical) {
@@ -713,6 +724,7 @@ async function sharedCachesStep(context: RungContext): Promise<void> {
     );
   }
   const compilation = sharedCompilationCache();
+  await actionBoundary(context);
   if (existsSync(compilation) && onShort(context, [compilation]) && (await context.stillShort())) {
     const capGb = context.settings.swiftCompilationCacheMaxGb;
     const bytes = critical
@@ -760,6 +772,7 @@ async function sharedCachesStep(context: RungContext): Promise<void> {
     [fingerprintIndexDir(), fingerprintIndexLock()],
     [join(configDir(), 'fingerprint-memo'), join(configDir(), 'fingerprint-memo.lock')],
   ] as const) {
+    await actionBoundary(context);
     if (!critical || !existsSync(directory) || !onShort(context, [directory]) || !(await context.stillShort()))
       continue;
     const bytes =
@@ -804,6 +817,8 @@ async function emptyRegisteredCaches(context: RungContext, handled: readonly str
     context.operation?.env,
   );
   for (const cache of caches) {
+    await actionBoundary(context);
+    if (!onShort(context, [cache.dir])) continue;
     if (!(await context.stillShort())) return;
     if (!cache.willEmpty) {
       if (cache.prune !== 'report-only')
@@ -952,6 +967,7 @@ async function sweepRung(context: RungContext, causes: readonly Cause[]): Promis
     { signal: context.operation?.signal, items: (planned) => planned?.actions.length },
   );
   for (const action of plan.actions) {
+    await actionBoundary(context);
     const memory = action.kind === 'would-stop-gradle-daemons' || action.kind === 'would-stop-watchman';
     if (!memory && !onShort(context, [action.dir ?? action.target])) continue;
     if (!(await context.stillShort())) return;
@@ -1117,6 +1133,8 @@ async function historyRung(context: RungContext): Promise<void> {
     items: (planned) => planned?.length,
   });
   for (const action of history) {
+    await actionBoundary(context, 'critical');
+    if (context.act && context.between && !onShort(context, [configDir()])) return;
     if (!(await context.stillShort())) return;
     await run(context, action);
   }
@@ -1139,8 +1157,10 @@ async function unownedRung(context: RungContext): Promise<void> {
   if (critical?.size === 0) return;
   if (!context.force) ranAt(context, 'unowned', Date.now());
   for (const plan of await surveyToolCaches(context.operation)) {
+    await actionBoundary(context, 'critical');
+    const currentCritical = context.act && context.between ? context.short : critical;
     // @ref LLP 0003#only-on-the-short-volume -- a full external disk must not empty another volume
-    const result = onShortVolume(plan.cache.paths, critical)
+    const result = onShortVolume(plan.cache.paths, currentCritical)
       ? await cleanToolCache(plan, context.act, context.operation)
       : {
           outcome: 'kept' as const,
@@ -1170,6 +1190,7 @@ async function unownedRung(context: RungContext): Promise<void> {
       context.why,
     );
   }
+  await actionBoundary(context, 'critical');
   const env = context.operation?.env ?? process.env;
   const reported = reportedCaches(env);
   const inventory = await collectInventory(context.config, [], env, context.operation).catch(() => null);

@@ -1,3 +1,5 @@
+import * as runningFrom from '../workspace/running-from.ts';
+import * as inventory from '../commands/gc/inventory.ts';
 import * as cargoLocks from '../workspace/cargo-lock.ts';
 import { ladderRun } from '../stimd/passes/ladder-run.ts';
 import {
@@ -75,6 +77,7 @@ import {
   requestGcItem,
   requestGcPass,
   CRITICAL,
+  HARD_FLOOR,
   LADDER,
   LADDER_CLOCK_SLOTS,
 } from '../daemon/disk-owner.ts';
@@ -805,7 +808,7 @@ describe('the pressure ladder', () => {
       await asked.result.catch((error: unknown) => {
         if (change !== 'abort') throw error;
       });
-      expect(boundaries).toBe(1);
+      expect(boundaries).toBeGreaterThan(0);
       expect(existsSync(app.incremental)).toBe(true);
     },
   );
@@ -1755,6 +1758,285 @@ describe('the pressure ladder', () => {
       expect(parked.map((device) => device.udid).filter((udid) => !taken.includes(udid))).toEqual(kept);
     },
   );
+
+  test.each(['high clears', 'critical clears', 'abort'] as const)(
+    'a completed parked-device action hands off before the next admission: %s',
+    async (change) => {
+      vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
+      const sim = { deviceTypeIdentifier: 'iPhone', runtimeIdentifier: 'iOS-26-0', simslimManaged: false };
+      saveConfig({
+        ...loadConfig()!,
+        parked: {
+          ios: ['first', 'second'].map((udid, index) =>
+            Object.assign({}, sim, {
+              udid,
+              name: `stim-${udid}`,
+              parkedAt: new Date(index * DAY_MS).toISOString(),
+            }),
+          ),
+        },
+      });
+      const level = change === 'critical clears' ? 'critical' : 'high';
+      let current = pressure(level);
+      const controller = new AbortController();
+      const owner = await acquireDisk(level === 'critical' ? CRITICAL : LADDER);
+      const order: string[] = [];
+      let during: string[] = [];
+      let critical: ReturnType<typeof requestGcItem> | undefined;
+      vi.spyOn(acting, 'executeAction').mockImplementation(async (action) => {
+        order.push(action.target);
+        if (action.target === 'first') {
+          critical = requestGcItem(
+            async () => {
+              order.push('critical');
+              current = pressure('normal');
+              if (change === 'abort') controller.abort(new Error('cancelled between parked devices'));
+            },
+            level === 'critical' ? HARD_FLOOR : CRITICAL,
+          );
+          await Promise.resolve();
+          during = [...order];
+        }
+        return { status: 'done', bytes: 0, detail: 'device operation settled' };
+      });
+      try {
+        const result = runLadder(
+          {
+            ...input(true, async () => current),
+            fromRung: 2,
+            lastRung: 2,
+            operation: testContext({ signal: controller.signal }),
+            between: owner.boundary,
+          },
+          current,
+        );
+        const failure = await result.then(
+          () => null,
+          (error: unknown) => (error instanceof Error ? error.message : String(error)),
+        );
+        expect(failure).toBe(change === 'abort' ? 'cancelled between parked devices' : null);
+        expect(during).toEqual(['first']);
+        expect(order).toEqual(change === 'critical clears' ? ['first', 'critical', 'second'] : ['first', 'critical']);
+      } finally {
+        owner.release();
+        await critical?.result;
+      }
+    },
+  );
+
+  test.each(['done', 'failed and cleared', 'failed and still critical'] as const)(
+    'a resumed tool-cache plan rechecks critical volume eligibility before the next command: %s',
+    async (result) => {
+      const cache = (name: string) => ({
+        tool: name,
+        label: name,
+        paths: [projects],
+        command: null,
+        running: /not-running/,
+      });
+      vi.spyOn(unowned, 'surveyToolCaches').mockResolvedValue(
+        ['first', 'second'].map((name) => ({
+          cache: cache(name),
+          bytes: 1024,
+          kept: null,
+        })),
+      );
+      let critical: ReturnType<typeof requestGcItem> | undefined;
+      const order: string[] = [];
+      const owner = await acquireDisk(CRITICAL);
+      const clean = vi.spyOn(unowned, 'cleanToolCache').mockImplementation(async (plan) => {
+        order.push(plan.cache.label);
+        if (plan.cache.label === 'second')
+          return { outcome: 'done', before: 1024, after: 0, detail: 'second command settled' };
+        vi.mocked(daemonMeasure.measureDisk).mockResolvedValue([
+          {
+            volume: '/',
+            freeMb: (result === 'failed and still critical' ? 5 : 25) * 1024,
+            device: statSync(projects).dev,
+          },
+        ]);
+        critical = requestGcItem(async () => {
+          order.push('critical');
+        }, HARD_FLOOR);
+        await Promise.resolve();
+        expect(order).toEqual(['first']);
+        return {
+          outcome: result === 'done' ? 'done' : 'failed',
+          before: 1024,
+          after: 0,
+          detail: 'tool command settled after freeing space',
+        };
+      });
+      try {
+        await runLadder(
+          {
+            ...input(true, async () => pressure('critical')),
+            fromRung: 9,
+            lastRung: 9,
+            operation: testContext({ env: { ...process.env, STIM_HOME: undefined, ANDROID_HOME: projects } }),
+            between: owner.boundary,
+          },
+          pressure('critical'),
+        );
+        expect(order).toEqual(
+          result === 'failed and still critical' ? ['first', 'critical', 'second'] : ['first', 'critical'],
+        );
+        expect(clean).toHaveBeenCalledTimes(result === 'failed and still critical' ? 2 : 1);
+      } finally {
+        owner.release();
+        await critical?.result;
+      }
+    },
+  );
+
+  test('the final tool-cache cleanup hands off before inventory reporting starts', async () => {
+    const order: string[] = [];
+    vi.spyOn(unowned, 'surveyToolCaches').mockResolvedValue([
+      {
+        cache: { tool: 'fixture', label: 'only', paths: [projects], command: null, running: /not-running/ },
+        bytes: 1024,
+        kept: null,
+      },
+    ]);
+    vi.spyOn(unowned, 'reportedCaches').mockReturnValue([]);
+    vi.spyOn(inventory, 'collectInventory').mockImplementation(async () => {
+      order.push('inventory');
+      throw new Error('no inventory fixture');
+    });
+    const owner = await acquireDisk(CRITICAL);
+    let higher: ReturnType<typeof requestGcItem> | undefined;
+    vi.spyOn(unowned, 'cleanToolCache').mockImplementation(async () => {
+      order.push('cleanup');
+      higher = requestGcItem(async () => {
+        order.push('hard floor');
+      }, HARD_FLOOR);
+      return { outcome: 'done', before: 1024, after: 0, detail: 'cleanup settled' };
+    });
+    try {
+      await runLadder(
+        {
+          ...input(true, async () => pressure('critical')),
+          fromRung: 9,
+          lastRung: 9,
+          operation: testContext({ env: { ...process.env, STIM_HOME: undefined, ANDROID_HOME: projects } }),
+          between: owner.boundary,
+        },
+        pressure('critical'),
+      );
+      expect(order).toEqual(['cleanup', 'hard floor', 'inventory']);
+    } finally {
+      owner.release();
+      await higher?.result;
+    }
+  });
+
+  test('a resumed forced tool cleanup credits none of the next cache already removed by another owner', async () => {
+    setExecutor({
+      ...getExecutor(),
+      runFileAsync: async () => '16\tfixture\n',
+    });
+    vi.spyOn(runningFrom, 'readRunningProcessesAsync').mockResolvedValue({
+      commands: [{ pid: process.pid, line: 'node vitest' }],
+      cwds: [{ pid: process.pid, path: projects }],
+    });
+    const paths = ['first-tool-cache', 'second-tool-cache'].map((name) => join(projects, name));
+    for (const path of paths) {
+      mkdirSync(path);
+      writeFileSync(join(path, 'artifact'), 'x'.repeat(16_384));
+    }
+    vi.spyOn(unowned, 'surveyToolCaches').mockResolvedValue(
+      paths.map((path) => ({
+        cache: { tool: 'fixture', label: path, paths: [path], command: null, running: /never-a-tool-fixture/ },
+        bytes: 16_384,
+        kept: null,
+      })),
+    );
+    vi.spyOn(unowned, 'reportedCaches').mockReturnValue([]);
+    vi.spyOn(inventory, 'collectInventory').mockRejectedValue(new Error('no inventory fixture'));
+    const real = unowned.cleanToolCache;
+    const owner = await acquireDisk(CRITICAL);
+    let higher: ReturnType<typeof requestGcItem> | undefined;
+    vi.spyOn(unowned, 'cleanToolCache').mockImplementation(async (plan, ...args) => {
+      const result = await real(plan, ...args);
+      if (plan.cache.paths[0] === paths[0])
+        higher = requestGcItem(async () => {
+          const next = paths[1];
+          if (next) rmSync(next, { recursive: true });
+        }, HARD_FLOOR);
+      return result;
+    });
+    try {
+      const result = await runLadder(
+        {
+          ...input(true, async () => pressure('critical')),
+          fromRung: 9,
+          lastRung: 9,
+          force: { level: 'critical', why: 'explicit critical' },
+          operation: testContext({ env: { ...process.env, STIM_HOME: undefined, ANDROID_HOME: projects } }),
+          between: owner.boundary,
+        },
+        pressure('critical'),
+      );
+      expect(
+        result.actions.filter((action) => action.kind === 'clean-tool-cache' && action.outcome !== 'done'),
+      ).toEqual([]);
+      expect(paths.some(existsSync)).toBe(false);
+      expect(result.actions).toContainEqual(
+        expect.objectContaining({
+          kind: 'clean-tool-cache',
+          target: expect.stringContaining('second-tool-cache'),
+          bytes: 0,
+        }),
+      );
+    } finally {
+      owner.release();
+      await higher?.result;
+    }
+  });
+
+  test('a whole shared-cache trim settles before critical work and the next cache rechecks its volume', async () => {
+    caches('kept-key');
+    const first = join(buildCache(), 'ios', 'unused');
+    const next = join(metroCache(), 'other-app', 'transform', 'aa');
+    const owner = await acquireDisk(CRITICAL);
+    let critical: ReturnType<typeof requestGcItem> | undefined;
+    const order: string[] = [];
+    let firstGone = false;
+    let nextPresent = false;
+    let during: string[] = [];
+    const prune = cacheModule.pruneCache;
+    vi.spyOn(cacheModule, 'pruneCache').mockImplementation(async (cache, options) => {
+      const result = await prune(cache, options);
+      if (cache.dir === buildCache()) {
+        order.push('cache settled');
+        firstGone = !existsSync(first);
+        critical = requestGcItem(async () => {
+          order.push('critical');
+          nextPresent = existsSync(next);
+          vi.mocked(daemonMeasure.measureDisk).mockResolvedValue([
+            { volume: '/', freeMb: 100 * 1024, device: statSync(home).dev },
+          ]);
+        }, HARD_FLOOR);
+        await Promise.resolve();
+        during = [...order];
+      }
+      return result;
+    });
+    try {
+      await runLadder(
+        { ...input(true, async () => pressure('critical')), fromRung: 3, lastRung: 3, between: owner.boundary },
+        pressure('critical'),
+      );
+      expect(order).toEqual(['cache settled', 'critical']);
+      expect(during).toEqual(['cache settled']);
+      expect(firstGone).toBe(true);
+      expect(nextPresent).toBe(true);
+      expect(existsSync(next)).toBe(true);
+    } finally {
+      owner.release();
+      await critical?.result;
+    }
+  });
 
   test('rung 3 at high trims a cache over half its cap down to half, keeping protected entries', async () => {
     const { root } = workspace('idle-hour', 60 * MINUTE_MS, 'Shutdown');
