@@ -2,6 +2,7 @@ import {
   readMaintenanceState,
   daemonClaimRoot,
   isJsonObject,
+  readDaemonSnapshot,
   type CleanupQueueStatus,
   type MaintenanceCheck,
   type MaintenanceStatus,
@@ -24,6 +25,7 @@ function parseQueue(value: unknown): CleanupQueueStatus | null {
 
 export function maintenanceStatus(env: NodeJS.ProcessEnv = process.env): MaintenanceStatus {
   const state = readMaintenanceState();
+  const history = readDaemonSnapshot()?.history;
   const holder = readClaimSet(daemonClaimRoot()).live.find((entry) => entry.mode === 'shared');
   const queue = parseQueue(holder?.details.cleanup);
   const settings = resolveMaintenanceSettings(undefined, env);
@@ -48,6 +50,7 @@ export function maintenanceStatus(env: NodeJS.ProcessEnv = process.env): Mainten
     ...(deferred.length ? { deferred } : {}),
     recent: state?.recent ?? [],
     plan: state?.plan ?? [],
+    ...(history ? { history } : {}),
   };
 }
 

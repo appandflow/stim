@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -153,7 +154,7 @@ test('a manifest the bump cannot rewrite leaves every version where it was', () 
   });
 });
 
-test('pnpm pack ships the CLI without private workspace runtime dependencies', () => {
+test('pnpm pack ships the CLI without private workspace runtime dependencies', (t) => {
   const out = mkdtempSync(join(tmpdir(), 'stim-release-pack-'));
   try {
     const packed = execFileSync('pnpm', ['pack', '--pack-destination', out], {
@@ -174,6 +175,22 @@ test('pnpm pack ships the CLI without private workspace runtime dependencies', (
       }
     }
     assert.equal(JSON.stringify(shipped).includes('workspace:'), false, 'a workspace: range reached the tarball');
+    const helper = join(REPO, 'packages', 'stim-cli', 'native', 'darwin', 'stim-fsevents');
+    if (existsSync(helper)) {
+      const pin = JSON.parse(
+        readFileSync(join(REPO, 'packages', 'stim-cli', 'native', 'fsevents-release.json'), 'utf8'),
+      );
+      const binary = execFileSync('tar', ['-xzOf', packed, 'package/native/darwin/stim-fsevents']);
+      assert.equal(
+        createHash('sha256').update(binary).digest('hex'),
+        pin.binarySha256,
+        'packed helper differs from its release pin',
+      );
+    } else {
+      t.diagnostic(
+        'Source checkout has no fetched FSEvents helper; fetch the real pin before checking the native payload.',
+      );
+    }
   } finally {
     rmSync(out, { recursive: true, force: true });
   }

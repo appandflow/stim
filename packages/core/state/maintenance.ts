@@ -1,5 +1,6 @@
 import { readJsonObject, isJsonObject } from './json-file.ts';
 import { maintenanceStateFile } from './paths.ts';
+import type { GcHistoryStatus } from './daemon.ts';
 import type { NdjsonRecord } from './ndjson.ts';
 
 export type MaintenanceMode = 'off' | 'report' | 'on';
@@ -168,6 +169,8 @@ export interface MaintenanceStatus {
   deferred?: { check: MaintenanceCheck; since: number }[];
   recent: MaintenanceRecord[];
   plan: MaintenanceAction[];
+  /** The last daemon tick's filesystem-change source. */
+  history?: GcHistoryStatus;
 }
 
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);

@@ -137,6 +137,9 @@ jobs:
               echo "packages/$p is $v but the tag is $tag"; exit 1
             fi
           done
+      - name: Fetch the pinned FSEvents helper
+        run: node scripts/fetch-fsevents.mjs
+
       - name: Pack the tarballs with pnpm
         run: |
           for p in $PACKAGE_DIRS; do
@@ -144,6 +147,7 @@ jobs:
             mv "$tarball" "$RUNNER_TEMP/tarballs/$p.tgz"
             tar -xzOf "$RUNNER_TEMP/tarballs/$p.tgz" package/package.json > "$RUNNER_TEMP/tarballs/$p.package.json"
           done
+          tar -tzf "$RUNNER_TEMP/tarballs/stim-cli.tgz" | grep -Fx package/native/darwin/stim-fsevents
       - name: Packed manifests name the exact tag, and a caret on it for peers
         run: |
           tag="${GITHUB_REF_NAME#v}"
@@ -448,6 +452,10 @@ jobs:
           pnpm install --frozen-lockfile --filter "./packages/*"
           pnpm -r --filter "./packages/*" run build
 
+      - name: Fetch the pinned FSEvents helper
+        if: steps.version.outputs.version != ''
+        run: node scripts/fetch-fsevents.mjs
+
       - name: Pack the tarballs
         if: steps.version.outputs.version != ''
         run: |
@@ -457,6 +465,7 @@ jobs:
             mv "$tarball" "$RUNNER_TEMP/tarballs/$p.tgz"
             tar -xzOf "$RUNNER_TEMP/tarballs/$p.tgz" package/package.json > "$RUNNER_TEMP/tarballs/$p.package.json"
           done
+          tar -tzf "$RUNNER_TEMP/tarballs/stim-cli.tgz" | grep -Fx package/native/darwin/stim-fsevents
 
       - name: Packed manifests name the exact version, and a caret on it for peers
         if: steps.version.outputs.version != ''

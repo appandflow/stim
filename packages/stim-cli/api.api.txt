@@ -405,6 +405,9 @@
 [*] interface Finding { @@1 fix: string | null;
 [*] interface Finding { @@1 level: "cost" | "note";
 [*] interface Finding { @@1 title: string;
+[*] interface GcHistoryStatus {
+[*] interface GcHistoryStatus { @@1 reason?: string;
+[*] interface GcHistoryStatus { @@1 source: "fsevents" | "fallback";
 [*] interface GcInventory {
 [*] interface GcInventory { @@1 devices: InventoryDevice[];
 [*] interface GcInventory { @@1 notices: string[];
@@ -940,6 +943,7 @@
 [*] interface MaintenanceSize { @@1 workspace?: string;
 [*] interface MaintenanceStatus {
 [*] interface MaintenanceStatus { @@1 deferred?: {
+[*] interface MaintenanceStatus { @@1 history?: GcHistoryStatus;
 [*] interface MaintenanceStatus { @@1 invalid?: string;
 [*] interface MaintenanceStatus { @@1 lastChecks: {
 [*] interface MaintenanceStatus { @@1 lastPass: MaintenancePass | null;

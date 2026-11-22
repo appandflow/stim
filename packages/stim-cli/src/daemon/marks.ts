@@ -1,7 +1,7 @@
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import { readdirSync } from 'node:fs';
-import { join } from 'node:path';
-import { canonicalPath, realpathAsync } from '../commands/gc/paths.ts';
+import { join, resolve } from 'node:path';
+import { realpathAsync } from '../commands/gc/paths.ts';
 import { stat } from 'node:fs/promises';
 import {
   GC_MARK_VERSION,
@@ -115,7 +115,16 @@ export function markDue(mark: GcMark | null, now: number, dormantMs: number): bo
 
 // @ref LLP 0001#the-lane-marks-what-each-checkout-could-free -- saved roots need current targeted discovery authorization
 export async function outputMarks(config: Config, operation?: StimContext): Promise<GcMark[]> {
-  const registered = new Set(Object.keys(config.projects).map(canonicalPath));
+  const registered = new Set<string>();
+  for (const root of Object.keys(config.projects)) {
+    try {
+      registered.add(await answered(root, () => realpathAsync(root), 3_000, operation?.signal));
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR'))
+        registered.add(resolve(root));
+      else throw error;
+    }
+  }
   const dir = join(gcLogDir(), 'marks');
   let files: string[];
   try {

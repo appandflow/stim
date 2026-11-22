@@ -29,6 +29,7 @@
     "bin/stim.mjs",
     "bin/route.mjs",
     "dist",
+    "native/darwin/stim-fsevents",
     "shim",
     "skill",
     "LICENSE",

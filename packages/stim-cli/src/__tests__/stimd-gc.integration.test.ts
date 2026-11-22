@@ -147,6 +147,22 @@ describe.skipIf(process.platform === 'win32')('gc on stimd', () => {
     rmSync(daemonSnapshotFile(), { force: true });
     expect(maintenanceStatus()).toMatchObject({ running: { trigger: 'manual' }, queued: 0 });
     expect(maintenanceStatus()).not.toHaveProperty('claim');
+    writeFileSync(
+      daemonSnapshotFile(),
+      JSON.stringify({
+        version: 1,
+        pid: process.pid,
+        startedAt: new Date().toISOString(),
+        tickAt: new Date().toISOString(),
+        intervalMs: 60_000,
+        history: { source: 'fallback', reason: 'fixture history' },
+      }),
+    );
+    expect(maintenanceStatus()).toMatchObject({
+      running: { trigger: 'manual' },
+      queued: 0,
+      history: { source: 'fallback', reason: 'fixture history' },
+    });
     const operation = testContext({ home: item.home, projectRoot: item.root, cwd: item.root, env: item.env });
     const queued = withAmbientContext(operation, () =>
       runGcThroughStimd({ item: { kind: 'cache', dir: item.cache }, client: 'desktop' }, operation),
