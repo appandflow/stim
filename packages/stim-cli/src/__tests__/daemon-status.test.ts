@@ -173,6 +173,18 @@ test("status reports the running daemon's tick and mode, and the setting when th
     checkedRoots: 0,
     staleCount: 0,
     stale: [],
+    candidates: {
+      readState: 'ready',
+      outputs: {
+        state: 'ready',
+        count: 1,
+        knownBytes: 0,
+        unknownSizeCount: 1,
+        oldestMarkedAt: '2026-11-02T10:00:00.000Z',
+      },
+      dependencies: { state: 'unavailable' },
+      worktrees: { state: 'unavailable' },
+    },
   };
   snapshot(process.pid + 1, 'on', gcMarks);
   const fresh = daemonStatus({});

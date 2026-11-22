@@ -53,12 +53,32 @@ export interface GcStaleMarkEvidence {
   intervalMs: number;
 }
 
+/** Verified saved candidate identities; partial coverage describes only the observed subset. */
+export interface GcCandidateCoverage {
+  state: 'ready' | 'partial' | 'unavailable';
+  count?: number;
+  /** Cached estimates for verified identities, not bytes reclaimed or currently eligible. */
+  knownBytes?: number;
+  unknownSizeCount?: number;
+  /** Oldest valid subtype generation, including an observed empty inventory. */
+  oldestMarkedAt?: string;
+}
+
+/** Read coverage and independent subtype evidence from one authorized saved-mark batch. */
+export interface GcCandidateInventory {
+  readState: 'ready' | 'partial' | 'unavailable';
+  outputs: GcCandidateCoverage;
+  dependencies: GcCandidateCoverage;
+  worktrees: GcCandidateCoverage;
+}
+
 export interface GcMarkHealth {
   at: number;
   state: 'ready' | 'partial' | 'unavailable';
   checkedRoots?: number;
   staleCount?: number;
   stale: GcStaleMarkEvidence[];
+  candidates?: GcCandidateInventory;
 }
 
 const KINDS: readonly unknown[] = ['outputs', 'cargo-target'] satisfies GcMarkKind[];

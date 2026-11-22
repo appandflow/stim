@@ -1,5 +1,6 @@
 import type { GcMark, GcMarkHealth, GcStaleMarkEvidence, Config } from '@stim-cli/core/state';
 import type { StimContext } from '@stim-cli/core';
+import { candidateInventory } from './candidate-inventory.ts';
 import { markInterval, outputMarkBatch } from './marks.ts';
 import { dormantAfterMs } from './stages.ts';
 
@@ -34,6 +35,9 @@ export async function readMarkHealth(
   const batch = await outputMarkBatch(config, operation);
   return {
     roots: batch.listed ? batch.marks.map(({ root, device }) => ({ root, device })) : null,
-    marks: markHealth(batch.marks, Date.now(), dormantAfterMs(config, operation.env), batch.complete),
+    marks: {
+      ...markHealth(batch.marks, Date.now(), dormantAfterMs(config, operation.env), batch.complete),
+      candidates: candidateInventory(batch.marks, batch.complete, batch.listed),
+    },
   };
 }

@@ -406,6 +406,17 @@
 [*] interface Finding { @@1 fix: string | null;
 [*] interface Finding { @@1 level: "cost" | "note";
 [*] interface Finding { @@1 title: string;
+[*] interface GcCandidateCoverage {
+[*] interface GcCandidateCoverage { @@1 count?: number;
+[*] interface GcCandidateCoverage { @@1 knownBytes?: number;
+[*] interface GcCandidateCoverage { @@1 oldestMarkedAt?: string;
+[*] interface GcCandidateCoverage { @@1 state: "ready" | "partial" | "unavailable";
+[*] interface GcCandidateCoverage { @@1 unknownSizeCount?: number;
+[*] interface GcCandidateInventory {
+[*] interface GcCandidateInventory { @@1 dependencies: GcCandidateCoverage;
+[*] interface GcCandidateInventory { @@1 outputs: GcCandidateCoverage;
+[*] interface GcCandidateInventory { @@1 readState: "ready" | "partial" | "unavailable";
+[*] interface GcCandidateInventory { @@1 worktrees: GcCandidateCoverage;
 [*] interface GcHistoryStatus {
 [*] interface GcHistoryStatus { @@1 reason?: string;
 [*] interface GcHistoryStatus { @@1 source: "fsevents" | "fallback";
@@ -534,6 +545,7 @@
 [*] interface GcJsonSections { @@3 willEmpty: boolean;
 [*] interface GcMarkHealth {
 [*] interface GcMarkHealth { @@1 at: number;
+[*] interface GcMarkHealth { @@1 candidates?: GcCandidateInventory;
 [*] interface GcMarkHealth { @@1 checkedRoots?: number;
 [*] interface GcMarkHealth { @@1 stale: GcStaleMarkEvidence[];
 [*] interface GcMarkHealth { @@1 staleCount?: number;

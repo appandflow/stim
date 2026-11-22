@@ -558,6 +558,16 @@ also holds the newest activity the walk read, and the walk reads at
   Other unproved routes remain conservative and omit totals. An observation older
   than the daemon's existing three-interval late-tick limit is unavailable.
   Reporting starts no discovery or size walk on the socket or doctor path.
+  The same authorized batch optionally publishes saved-candidate coverage for
+  outputs, dependencies and worktrees, deduplicated by kind and stored path.
+  It reports cached known bytes, unknown-size counts and each subtype's own
+  oldest generation, including a verified empty observation. Worktree sizes
+  remain unknown when their producer saved no bytes. Missing subtype evidence
+  is unavailable or partial; partial counters describe only verified saved
+  identities and omit an empty total. Read coverage describes the saved file
+  inventory, not never-marked filesystem roots. These counts and estimates are
+  neither current deletion eligibility nor reclaimed bytes. Publication adds
+  no path probes, discovery, sizing or ordinary status reads.
 - The writer also recognizes untagged Cargo targets by the existing Cargo
   manifest/profile rules and marks targets in the holder's `apps/` and
   `packages/` children. The normal lane reads actual Git holders reached by
