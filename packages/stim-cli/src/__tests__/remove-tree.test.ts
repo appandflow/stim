@@ -1,6 +1,6 @@
 import { testContext } from './_context.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
@@ -101,4 +101,46 @@ test.skipIf(process.platform === 'win32')('a workspace claim stays held until it
   expect(await withWorkspaceProcessLock(root, 'native-run', async () => 'entered', { external: true, waitMs: 0 })).toBe(
     'entered',
   );
+});
+
+test.skipIf(process.platform === 'win32')('a successful child leaves a replacement tree alone', async () => {
+  const output = join(root, 'output');
+  setExecutor({
+    ...getExecutor(),
+    runFileAsync: async () => {
+      rmSync(output, { recursive: true });
+      mkdirSync(output);
+      writeFileSync(join(output, 'replacement'), 'external build');
+      return '';
+    },
+  });
+  await removeTree(output);
+  expect(existsSync(join(output, 'replacement'))).toBe(true);
+});
+
+test.skipIf(process.platform === 'win32')(
+  'an ordinary child failure retains the existing fallback on its target',
+  async () => {
+    setExecutor({
+      ...getExecutor(),
+      runFileAsync: async () => {
+        throw new Error('rm failed');
+      },
+    });
+    await removeTree(join(root, 'output'));
+    expect(existsSync(join(root, 'output'))).toBe(false);
+  },
+);
+
+test('a read-only output directory is removed by the existing fallback', async () => {
+  const sealed = join(root, 'output', 'sealed');
+  mkdirSync(sealed);
+  writeFileSync(join(sealed, 'artifact'), 'build');
+  chmodSync(sealed, 0o555);
+  try {
+    await removeTree(join(root, 'output'));
+    expect(existsSync(join(root, 'output'))).toBe(false);
+  } finally {
+    if (existsSync(sealed)) chmodSync(sealed, 0o755);
+  }
 });

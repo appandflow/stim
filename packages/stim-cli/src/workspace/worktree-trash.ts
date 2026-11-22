@@ -204,7 +204,7 @@ export async function restoreTrashedTrees(trash: WorktreeTrash): Promise<string[
  * clears read-only directories.
  */
 export async function deleteTrashEntry(dir: string, operation?: StimContext, throttleIo = false): Promise<void> {
-  await removeTree(join(dir, TRASH_ENTRIES), operation, operation?.signal, throttleIo);
+  await removeTree(join(dir, TRASH_ENTRIES), operation, operation?.signal, throttleIo, dirname(dir));
   await removeTemporaryEntryAsync(dir, operation?.signal);
 }
 

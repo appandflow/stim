@@ -646,7 +646,15 @@ export async function clearWorkspaceOutputs(
     operation,
     signal = operation?.signal,
     lighten = false,
-  }: { olderThan: number | null; now?: number; signal?: AbortSignal; operation?: StimContext; lighten?: boolean },
+    throttleIo = true,
+  }: {
+    olderThan: number | null;
+    now?: number;
+    signal?: AbortSignal;
+    operation?: StimContext;
+    lighten?: boolean;
+    throttleIo?: boolean;
+  },
   { log, record }: GcOutput = GC_OUTPUT,
 ): Promise<{ failures: number; cleared: string[] }> {
   let failures = 0;
@@ -700,7 +708,7 @@ export async function clearWorkspaceOutputs(
             } else if (lstatSync(path, { throwIfNoEntry: false })) {
               addSize(freed, await measureDirectoryAsync(path, { timeoutMs: SIZE_TIMEOUT_MS, signal }));
               signal?.throwIfAborted();
-              await removeTree(path, operation, signal, true);
+              await removeTree(path, operation, signal, throttleIo);
               removed++;
             }
           }

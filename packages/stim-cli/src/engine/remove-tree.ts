@@ -12,6 +12,7 @@ export async function removeTree(
   operation?: StimContext,
   signal?: AbortSignal,
   throttleIo = false,
+  cwd: string = dirname(path),
 ): Promise<void> {
   const operationSignal = operation ? (operationState(operation).runSignal ?? operation.signal) : undefined;
   const removalSignal =
@@ -26,8 +27,9 @@ export async function removeTree(
       await runOperationFile(operation, getExecutor(), file, argv, {
         timeoutMs: 'unbounded',
         signal: removalSignal,
-        cwd: dirname(path),
+        cwd,
       });
+      return;
     } catch (error) {
       if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
         throw error;

@@ -624,6 +624,14 @@ export async function runMaintenance(
         protectedRoot: triggeringRoot(),
         worktreeSweep: result.worktreeSweep,
         lowPriority: cap.ran,
+        throttleOutputs:
+          (tick
+            ? diskPressure(tick.measured.measurement.disk, diskThresholds(loadConfig(), tick.operation.env).thresholds)
+                .level
+            : recordedDiskLevel(state)) === 'normal' &&
+          !(tick
+            ? pressureFromMeasurement(state.pressure, Date.now(), tick.measured.measurement).memory.pressured
+            : state.pressure?.memory.pressured),
         critical:
           (tick
             ? diskPressure(tick.measured.measurement.disk, diskThresholds(loadConfig(), tick.operation.env).thresholds)

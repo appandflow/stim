@@ -1,5 +1,6 @@
+import { removeTree } from '../engine/remove-tree.ts';
 import { existsSync } from 'node:fs';
-import { rm, stat, utimes } from 'node:fs/promises';
+import { stat, utimes } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import type { StimContext } from '@stim-cli/core';
@@ -33,6 +34,7 @@ const RESTORE = 'the next stim ios or stim android, from the build cache when no
 type Input = Pick<IdlePassInput, 'act' | 'log'> & {
   operation?: StimContext;
   force?: boolean;
+  throttleOutputs?: boolean;
   /** Runs before each size walk and each removal, outside the workspace's claims: a unit boundary of the disk owner. */
   between?: () => Promise<void>;
 };
@@ -164,7 +166,15 @@ async function reduceWorkspace(
     let outcome: string | CargoTrimResult | null;
     await input.between?.();
     try {
-      outcome = await removeOutput(path, checkout, output, plan.targets.has(output), afterMs, operation);
+      outcome = await removeOutput(
+        path,
+        checkout,
+        output,
+        plan.targets.has(output),
+        afterMs,
+        operation,
+        input.throttleOutputs ?? true,
+      );
     } catch (error) {
       failed(output, error);
       continue;
@@ -267,6 +277,7 @@ async function removeOutput(
   cargo: boolean,
   afterMs: number,
   operation: StimContext | undefined,
+  throttleIo: boolean,
 ): Promise<string | CargoTrimResult | null> {
   const signal = operation?.signal;
   const run = await withIdleWorkspace(
@@ -284,7 +295,7 @@ async function removeOutput(
             const problem = await outputProblem(path, output, cargo, signal);
             if (problem) return problem;
             if (cargo) return unseen(output, () => deleteCargoTarget(output, { idleMs: afterMs, signal }));
-            await unseen(output, () => rm(output, { recursive: true, force: true }));
+            await unseen(output, () => removeTree(output, operation, signal, throttleIo));
             return null;
           },
           { external: true, waitMs: 0, ownerPurpose: PURPOSE, signal, declareSpawnsFor: operation },
