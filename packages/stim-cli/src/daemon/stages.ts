@@ -694,6 +694,7 @@ export async function enterDormantStage(
   action: MaintenanceAction,
   operation?: StimContext,
   deletable?: (path: string) => boolean,
+  skipCompleted = false,
 ): Promise<DormantOutcome> {
   forgetGitReads(operation);
   const path = action.target;
@@ -705,6 +706,8 @@ export async function enterDormantStage(
   const run = await withIdleWorkspace(
     path,
     async (): Promise<DormantOutcome> => {
+      if (skipCompleted && alreadyDormant(path))
+        return { status: 'kept', bytes: 0, detail: 'its dormant stage is already complete' };
       const idleMs = await idleFor(path, thresholdMs, 'idle.dormantDays', { locked: true, operation });
       if (idleMs === null) return { status: 'kept', bytes: 0, detail: 'it is no longer idle' };
       const owns = (kind: 'ios' | 'android') =>

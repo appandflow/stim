@@ -278,6 +278,7 @@ async function run(
       operation: context.operation,
       ...(context.firstFree ? { firstFree: context.firstFree } : {}),
       ...(context.stop ? { stop: context.stop } : {}),
+      ...(context.rung === 4 && context.between ? { skipCompletedDormant: true } : {}),
       ...(context.short ? { deletable: deletable(context) } : {}),
     });
   } catch (error) {
@@ -325,6 +326,15 @@ async function bootedParkedRung(context: RungContext): Promise<void> {
       log: context.log,
       operation: context.operation,
       all: true,
+      ...(context.act && context.between
+        ? {
+            between: async () => {
+              await context.between?.();
+              context.stop?.throwIfAborted();
+              context.operation?.signal.throwIfAborted();
+            },
+          }
+        : {}),
     })),
   );
 }
@@ -844,8 +854,11 @@ async function dormantRung(context: RungContext): Promise<void> {
   if (dormantAfterMs(context.config) <= 0) return;
   const idleMs = context.level === 'critical' ? PRESSURE_IDLE_MS : DORMANT_HIGH_IDLE_MS;
   for (const candidate of await dormantCandidates(context.config, context, idleMs)) {
+    await actionBoundary(context);
+    const project = context.act && context.between ? loadConfig()?.projects[candidate.path] : candidate.project;
+    if (!project) continue;
     const devices: string[][] = [[workspaceDir(candidate.path)]];
-    for (const { platforms } of projectDeviceSlots(candidate.project)) {
+    for (const { platforms } of projectDeviceSlots(project)) {
       if (platforms.ios?.owned && platforms.ios.deviceUdid)
         devices.push(deviceDataDirs(context.sims, 'ios', platforms.ios.deviceUdid));
       if (platforms.android?.owned && platforms.android.avdName)
@@ -855,10 +868,17 @@ async function dormantRung(context: RungContext): Promise<void> {
     if (!(await context.stillShort())) return;
     await run(
       { ...context, why: `${context.why}; idle ${Math.floor(candidate.idleMs / MINUTE_MS)} minutes` },
-      dormantAction(candidate.path, idleMs, context.why),
-      { bytes: () => workspaceDeviceBytes(context, candidate.project) },
+      dormantAction(
+        candidate.path,
+        context.act && context.between && !context.force && (await context.remeasure()).disk !== 'critical'
+          ? DORMANT_HIGH_IDLE_MS
+          : idleMs,
+        context.why,
+      ),
+      { bytes: () => workspaceDeviceBytes(context, project) },
     );
   }
+  await actionBoundary(context);
 }
 
 function canonicalOrNull(path: string): string | null {
