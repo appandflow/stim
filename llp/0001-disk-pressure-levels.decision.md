@@ -339,6 +339,9 @@ so none ever runs beside another.
   multi-path tool commands. Rung 0's per-device and rung 4's stage/stop loops
   still need boundaries outside each completed teardown or workspace claim;
   no nested lock or claim is suspended by these outer-action boundaries.
+  The final tool cleanup hands off before inventory/reporting. Acting tool
+  cleanup measures its selected cache after reacquisition for its own credit;
+  surveyed ordering and read-only measurement stay unchanged.
 - The maintenance pass gives up the turn once it deletes nothing more, before
   its discovery scan and census.
 - When the passes thread ends, a disk pass it had not answered fails as

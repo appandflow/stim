@@ -1158,6 +1158,7 @@ async function unownedRung(context: RungContext): Promise<void> {
       context.why,
     );
   }
+  await actionBoundary(context, 'critical');
   const env = context.operation?.env ?? process.env;
   const reported = reportedCaches(env);
   const inventory = await collectInventory(context.config, [], env, context.operation).catch(() => null);

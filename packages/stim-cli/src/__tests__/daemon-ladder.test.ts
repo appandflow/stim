@@ -1,3 +1,4 @@
+import * as inventory from '../commands/gc/inventory.ts';
 import * as cargoLocks from '../workspace/cargo-lock.ts';
 import { ladderRun } from '../stimd/passes/ladder-run.ts';
 import {
@@ -1808,6 +1809,109 @@ describe('the pressure ladder', () => {
       }
     },
   );
+
+  test('the final tool-cache cleanup hands off before inventory reporting starts', async () => {
+    const order: string[] = [];
+    vi.spyOn(unowned, 'surveyToolCaches').mockResolvedValue([
+      {
+        cache: { tool: 'fixture', label: 'only', paths: [projects], command: null, running: /not-running/ },
+        bytes: 1024,
+        kept: null,
+      },
+    ]);
+    vi.spyOn(unowned, 'reportedCaches').mockReturnValue([]);
+    vi.spyOn(inventory, 'collectInventory').mockImplementation(async () => {
+      order.push('inventory');
+      throw new Error('no inventory fixture');
+    });
+    const owner = await acquireDisk(CRITICAL);
+    let higher: ReturnType<typeof requestGcItem> | undefined;
+    vi.spyOn(unowned, 'cleanToolCache').mockImplementation(async () => {
+      order.push('cleanup');
+      higher = requestGcItem(async () => {
+        order.push('hard floor');
+      }, HARD_FLOOR);
+      return { outcome: 'done', before: 1024, after: 0, detail: 'cleanup settled' };
+    });
+    try {
+      await runLadder(
+        {
+          ...input(true, async () => pressure('critical')),
+          fromRung: 9,
+          lastRung: 9,
+          operation: testContext({ env: { ...process.env, STIM_HOME: undefined, ANDROID_HOME: projects } }),
+          between: owner.boundary,
+        },
+        pressure('critical'),
+      );
+      expect(order).toEqual(['cleanup', 'hard floor', 'inventory']);
+    } finally {
+      owner.release();
+      await higher?.result;
+    }
+  });
+
+  test('a resumed forced tool cleanup credits none of the next cache already removed by another owner', async () => {
+    setExecutor({
+      ...getExecutor(),
+      runFileAsync: async () => '16\tfixture\n',
+      runFileQuietAsync: async (file) =>
+        file === 'ps' ? `${process.pid} node vitest\n` : file === 'lsof' ? `p${process.pid}\nn/\n` : null,
+    });
+    const paths = ['first-tool-cache', 'second-tool-cache'].map((name) => join(projects, name));
+    for (const path of paths) {
+      mkdirSync(path);
+      writeFileSync(join(path, 'artifact'), 'x'.repeat(16_384));
+    }
+    vi.spyOn(unowned, 'surveyToolCaches').mockResolvedValue(
+      paths.map((path) => ({
+        cache: { tool: 'fixture', label: path, paths: [path], command: null, running: /never-a-tool-fixture/ },
+        bytes: 16_384,
+        kept: null,
+      })),
+    );
+    vi.spyOn(unowned, 'reportedCaches').mockReturnValue([]);
+    vi.spyOn(inventory, 'collectInventory').mockRejectedValue(new Error('no inventory fixture'));
+    const real = unowned.cleanToolCache;
+    const owner = await acquireDisk(CRITICAL);
+    let higher: ReturnType<typeof requestGcItem> | undefined;
+    vi.spyOn(unowned, 'cleanToolCache').mockImplementation(async (plan, ...args) => {
+      const result = await real(plan, ...args);
+      if (plan.cache.paths[0] === paths[0])
+        higher = requestGcItem(async () => {
+          const next = paths[1];
+          if (next) rmSync(next, { recursive: true });
+        }, HARD_FLOOR);
+      return result;
+    });
+    try {
+      const result = await runLadder(
+        {
+          ...input(true, async () => pressure('critical')),
+          fromRung: 9,
+          lastRung: 9,
+          force: { level: 'critical', why: 'explicit critical' },
+          operation: testContext({ env: { ...process.env, STIM_HOME: undefined, ANDROID_HOME: projects } }),
+          between: owner.boundary,
+        },
+        pressure('critical'),
+      );
+      expect(
+        result.actions.filter((action) => action.kind === 'clean-tool-cache' && action.outcome !== 'done'),
+      ).toEqual([]);
+      expect(paths.some(existsSync)).toBe(false);
+      expect(result.actions).toContainEqual(
+        expect.objectContaining({
+          kind: 'clean-tool-cache',
+          target: expect.stringContaining('second-tool-cache'),
+          bytes: 0,
+        }),
+      );
+    } finally {
+      owner.release();
+      await higher?.result;
+    }
+  });
 
   test('a whole shared-cache trim settles before critical work and the next cache rechecks its volume', async () => {
     caches('kept-key');
