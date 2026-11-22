@@ -14,6 +14,8 @@ import {
 } from '@stim-cli/core/state';
 import { getProject } from '../workspace/config.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
+import { listedRoots } from '../commands/gc/worktrees.ts';
+import { discoverCheckouts } from '../workspace/discovery.ts';
 import { formatBytes } from '../fs-util.ts';
 import {
   artifactWorktreesAsync,
@@ -38,6 +40,7 @@ import { checkDependencyEdits } from '../workspace/dependency-edits.ts';
 import { writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
 import { reduceDormantOutputs } from './dormant-outputs.ts';
 import { markWriter, refreshCargoHolderMarks } from './marks.ts';
+import { dependencyMarkObserver } from './dependency-marks.ts';
 import {
   dormantAfterMs,
   idleStageCandidates,
@@ -147,7 +150,7 @@ export async function sampleLinks(ranked: readonly RankedDependency[], signal?: 
   }
 }
 
-function rankedPrivateBytes(path: string): number | null {
+export function rankedPrivateBytes(path: string): number | null {
   const privateBytes = knownPrivateBytes(path);
   return privateBytes !== null && privateBytes < REAL_BYTES_THRESHOLD && readDiskUsagePartial(path)
     ? null
@@ -242,6 +245,7 @@ export async function rankDependencies(
   operation?: StimContext,
   source = false,
   log?: DaemonLog,
+  inventory?: Awaited<ReturnType<typeof collectArtifactsAsync>>,
 ): Promise<RankedDependency[]> {
   const rank = new Map(
     idle.flatMap((candidate, index) => {
@@ -250,18 +254,20 @@ export async function rankDependencies(
     }),
   );
   if (!rank.size) return [];
-  const found = await timedStep(
-    log,
-    'collect_artifacts',
-    () =>
-      collectArtifactsAsync(
-        'dependencies',
-        { now: Date.now(), windowMs: 0, protectedRoot, pinned: maintenancePinnedReader(operation), source },
-        operation?.signal ?? new AbortController().signal,
-        operation,
-      ),
-    { signal: operation?.signal, items: (result) => result && result.candidates.length + result.skips.length },
-  );
+  const found =
+    inventory ??
+    (await timedStep(
+      log,
+      'collect_artifacts',
+      () =>
+        collectArtifactsAsync(
+          'dependencies',
+          { now: Date.now(), windowMs: 0, protectedRoot, pinned: maintenancePinnedReader(operation), source },
+          operation?.signal ?? new AbortController().signal,
+          operation,
+        ),
+      { signal: operation?.signal, items: (result) => result && result.candidates.length + result.skips.length },
+    ));
   return found.candidates
     .flatMap((candidate) => {
       const workspace =
@@ -306,6 +312,7 @@ export async function rankSourceDependencies(
   rule: SourceRule,
   operation?: StimContext,
   log?: DaemonLog,
+  inventory?: Awaited<ReturnType<typeof collectArtifactsAsync>>,
 ): Promise<{ ranked: RankedDependency[]; kept: { target: string; workspace?: string; reason: string }[] }> {
   const rank = new Map(
     idle.flatMap((candidate, index) => {
@@ -313,18 +320,20 @@ export async function rankSourceDependencies(
       return key ? [[key, index] as const] : [];
     }),
   );
-  const found = await timedStep(
-    log,
-    'collect_artifacts',
-    () =>
-      collectArtifactsAsync(
-        'dependencies',
-        { now: Date.now(), windowMs: 0, protectedRoot, pinned: maintenancePinnedReader(operation), source: true },
-        operation?.signal ?? new AbortController().signal,
-        operation,
-      ),
-    { signal: operation?.signal, items: (result) => result && result.candidates.length + result.skips.length },
-  );
+  const found =
+    inventory ??
+    (await timedStep(
+      log,
+      'collect_artifacts',
+      () =>
+        collectArtifactsAsync(
+          'dependencies',
+          { now: Date.now(), windowMs: 0, protectedRoot, pinned: maintenancePinnedReader(operation), source: true },
+          operation?.signal ?? new AbortController().signal,
+          operation,
+        ),
+      { signal: operation?.signal, items: (result) => result && result.candidates.length + result.skips.length },
+    ));
   const kept: { target: string; workspace?: string; reason: string }[] = found.skips.map(({ target, reason }) => ({
     target,
     reason,
@@ -626,6 +635,7 @@ async function takeIdleDependencies(
 ): Promise<DaemonLadderAction[]> {
   const keeps = new Map<string, string>();
   const between = input.between ?? (async () => {});
+  const discovered = input.marks ? await discoverCheckouts(config, listedRoots(), input.operation) : undefined;
   const candidates = await idleStageCandidates(
     config,
     input,
@@ -642,15 +652,17 @@ async function takeIdleDependencies(
             return trees === true;
           },
           between,
+          ...(discovered ? { discovered } : {}),
         }
       : {
           between,
+          ...(discovered ? { discovered } : {}),
           ...(input.marks ? { onRead: markWriter(config, input.operation?.signal, true) } : {}),
         },
   );
   await between();
   const { operation } = input;
-  if (input.marks && !source) await refreshCargoHolderMarks(config, input, between);
+  if (input.marks && !source) await refreshCargoHolderMarks(config, input, between, true, discovered);
   const actions: DaemonLadderAction[] = source
     ? []
     : await timedStep(input.log, 'dormant_outputs', () => reduceDormantOutputs(candidates, config, afterMs, input), {
@@ -659,6 +671,28 @@ async function takeIdleDependencies(
       });
   await between();
   const idle = candidates.filter((candidate) => source || candidate.role === 'linked');
+  const inventory = input.marks
+    ? await timedStep(
+        input.log,
+        'collect_artifacts',
+        () =>
+          collectArtifactsAsync(
+            'dependencies',
+            {
+              now: Date.now(),
+              windowMs: 0,
+              protectedRoot: input.protectedRoot ?? '',
+              pinned: maintenancePinnedReader(operation),
+              source,
+              discovered,
+              onInventory: dependencyMarkObserver(config, input, between),
+            },
+            operation?.signal ?? new AbortController().signal,
+            operation,
+          ),
+        { signal: operation?.signal, items: (found) => found && found.candidates.length + found.skips.length },
+      )
+    : undefined;
   let take: RankedDependency[];
   if (source) {
     const { ranked, kept } = await timedStep(
@@ -678,6 +712,7 @@ async function takeIdleDependencies(
           },
           operation,
           input.log,
+          inventory,
         ),
       { signal: operation?.signal, items: (found) => (found ? found.ranked.length + found.kept.length : undefined) },
     );
@@ -715,7 +750,7 @@ async function takeIdleDependencies(
     const ranked = await timedStep(
       input.log,
       'rank_dependencies',
-      () => rankDependencies(idle, input.protectedRoot ?? '', operation, false, input.log),
+      () => rankDependencies(idle, input.protectedRoot ?? '', operation, false, input.log, inventory),
       { signal: operation?.signal, items: (found) => found?.length },
     );
     await sampleLinks(ranked, operation?.signal);

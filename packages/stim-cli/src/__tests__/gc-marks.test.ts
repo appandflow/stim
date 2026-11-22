@@ -25,6 +25,9 @@ import * as gcPaths from '../commands/gc/paths.ts';
 import * as worktree from '../workspace/worktree.ts';
 import { runLadder } from '../daemon/ladder.ts';
 import { runDormantDependencies } from '../daemon/dependencies.ts';
+import { dependencyMarkObserver } from '../daemon/dependency-marks.ts';
+import { savedDependencyReports } from '../daemon/dependency-reports.ts';
+import * as artifacts from '../stimd/passes/artifacts.ts';
 import { markDue, markWriter, outputMarks, outputMark, refreshOutputMarks } from '../daemon/marks.ts';
 import { stoppedOutputCandidates, stoppedOutputs } from '../daemon/stages.ts';
 import type { OwnedDeviceActivity } from '../commands/gc/idle.ts';
@@ -32,6 +35,7 @@ import { metroStoreRoot } from '../stimd/metro/metro-store.ts';
 import { saveConfig } from '../workspace/config.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { readRunningProcessesAsync } from '../workspace/running-from.ts';
+import { treeSignature } from '../private-size.ts';
 import { hungRead, pendingRead, Unanswered } from '../workspace/bounded-read.ts';
 import { testContext } from './_context.ts';
 
@@ -618,6 +622,186 @@ describe('gc marks written by the lane', () => {
     await stoppedOutputCandidates(config, reading, 2 * 60_000);
 
     expect(existsSync(join(base, 'home', 'gc', 'marks'))).toBe(false);
+  }, 20_000);
+
+  it('observes younger dependency trees with the existing enabled normal inventories and discovers only once per phase', async () => {
+    const root = checkout('young-source', 2 * 60 * 60_000);
+    mkdirSync(join(root, 'node_modules'), { recursive: true });
+    config.projects[root] = {};
+    config.idle = { dormantDays: 1, sourceDormantDays: 7 };
+    saveConfig(config);
+    const discoveryReads = vi.spyOn(discovery, 'discoverCheckouts');
+    const inventoryReads = vi.spyOn(artifacts, 'collectArtifactsAsync');
+
+    await lane(true);
+
+    expect(discoveryReads).toHaveBeenCalledTimes(2);
+    expect(inventoryReads).toHaveBeenCalledTimes(2);
+    expect(readGcMark(root)?.dependencies).toMatchObject({
+      role: 'source',
+      keys: [root],
+      candidates: [{ path: join(root, 'node_modules') }],
+    });
+    expect(existsSync(join(root, 'node_modules'))).toBe(true);
+  }, 20_000);
+
+  it('does no inventory or discovery when both normal producers are disabled and reports unknown saved evidence', async () => {
+    const root = checkout('disabled', 2 * day);
+    config.projects[root] = {};
+    config.idle = { dormantDays: 0, sourceDormantDays: 0 };
+    saveConfig(config);
+    const discover = vi.spyOn(discovery, 'discoverCheckouts');
+    const collect = vi.spyOn(artifacts, 'collectArtifactsAsync');
+
+    await lane(true);
+    const reports = await savedDependencyReports(config, {
+      level: 'critical',
+      operation: testContext(),
+      onVolume: () => true,
+    });
+
+    expect(discover).not.toHaveBeenCalled();
+    expect(collect).not.toHaveBeenCalled();
+    expect(readGcMark(root)).toBeNull();
+    expect(reports).toEqual([
+      expect.objectContaining({ target: root, detail: expect.stringContaining('inventory is unknown') }),
+    ]);
+  });
+
+  it('keeps the output generation and shared dirty watermark independent of dependency observations', async () => {
+    const root = checkout('independent', 3 * day);
+    const path = join(root, 'node_modules');
+    mkdirSync(path);
+    config.projects[root] = {};
+    saveConfig(config);
+    const initial = Date.now() - 20 * 60_000;
+    const write = markWriter(config);
+    await write({ path: root, at: initial, lastActivityAt: null, kept: null });
+    const observe = dependencyMarkObserver(config, { ...reading, operation: testContext() }, async () => {});
+    const inventory = (at: number) => ({
+      worktree: { path: root, keys: [root], linked: false, locked: false, reduceOnly: false },
+      at,
+      complete: true,
+      candidates: [{ candidate: { worktree: root, path, keys: [root], locked: false, reduceOnly: false }, keep: null }],
+    });
+    await observe(inventory(initial));
+    const dirtyAt = new Date(initial + 1).toISOString();
+    writeFileSync(gcMarkFile(root), JSON.stringify({ ...readGcMark(root), dirtyAt }));
+    const outputAt = Date.now();
+    await write({ path: root, at: outputAt, lastActivityAt: null, kept: null });
+    expect(readGcMark(root)).toMatchObject({
+      markedAt: new Date(outputAt).toISOString(),
+      dirtyAt,
+      dependencies: { markedAt: new Date(initial).toISOString() },
+    });
+
+    await observe(inventory(Date.now()));
+
+    expect(readGcMark(root)).toMatchObject({
+      markedAt: new Date(outputAt).toISOString(),
+      dependencies: { markedAt: expect.not.stringMatching(new Date(initial).toISOString()) },
+    });
+  });
+
+  it('omits malformed optional dependency evidence without invalidating existing output marks', async () => {
+    const root = checkout('malformed-deps', 3 * day);
+    await markWriter(config)({ path: root, at: Date.now(), lastActivityAt: null, kept: null });
+    const original = readGcMark(root);
+    writeFileSync(
+      gcMarkFile(root),
+      JSON.stringify({
+        ...original,
+        dependencies: {
+          markedAt: new Date().toISOString(),
+          role: 'source',
+          keys: [root],
+          candidates: [{ path: 'relative', device: 1, bytes: null, measuredAt: null }],
+        },
+      }),
+    );
+    expect(readGcMark(root)).toEqual(original);
+  });
+
+  it('reports known critical dependency evidence without a discovery, artifact collection or new mark', async () => {
+    const root = checkout('saved-deps', 2 * 60 * 60_000);
+    const path = join(root, 'node_modules');
+    mkdirSync(path);
+    config.projects[root] = {};
+    config.idle = { dormantDays: 1, sourceDormantDays: 7 };
+    saveConfig(config);
+    await lane(true);
+    const original = readGcMark(root);
+    const discover = vi.spyOn(discovery, 'discoverCheckouts').mockRejectedValue(new Error('must not discover'));
+    const collect = vi.spyOn(artifacts, 'collectArtifactsAsync').mockRejectedValue(new Error('must not collect'));
+
+    const reports = await savedDependencyReports(config, {
+      level: 'critical',
+      operation: testContext(),
+      onVolume: () => true,
+    });
+
+    expect(reports).toEqual([expect.objectContaining({ rung: 8, target: path })]);
+    expect(discover).not.toHaveBeenCalled();
+    expect(collect).not.toHaveBeenCalled();
+    expect(readGcMark(root)).toEqual(original);
+    recordWorkspaceUse(root, new Date());
+    const recent = await savedDependencyReports(config, {
+      level: 'critical',
+      operation: testContext(),
+      onVolume: () => true,
+    });
+    expect(recent[0]?.detail).toContain('no longer idle');
+  }, 20_000);
+
+  it('keeps source sharing unknown without scanning another worktree and retains a trusted cached estimate', async () => {
+    const root = checkout('shared-source', 2 * 60 * 60_000);
+    const path = join(root, 'node_modules');
+    mkdirSync(path);
+    const linked = join(roots, 'other-linked');
+    execFileSync('git', [
+      '-C',
+      root,
+      '-c',
+      'maintenance.auto=false',
+      '-c',
+      'gc.auto=0',
+      'worktree',
+      'add',
+      '-q',
+      '-b',
+      'other',
+      linked,
+    ]);
+    config.projects[root] = {};
+    config.idle = { dormantDays: 1, sourceDormantDays: 7 };
+    saveConfig(config);
+    await lane(true);
+    mkdirSync(dirname(diskUsageCacheFile(path)), { recursive: true });
+    writeFileSync(
+      diskUsageCacheFile(path),
+      JSON.stringify({
+        path,
+        bytes: 1024 ** 3,
+        privateBytes: 512 * 1024 ** 2,
+        measuredAt: new Date().toISOString(),
+        signature: treeSignature(path),
+      }),
+    );
+
+    const reports = await savedDependencyReports(config, {
+      level: 'critical',
+      operation: testContext(),
+      onVolume: () => true,
+    });
+
+    expect(reports).toEqual([
+      expect.objectContaining({
+        target: path,
+        detail: expect.stringContaining('current sharing with linked worktrees is unproven'),
+      }),
+    ]);
+    expect(reports[0]?.detail).toContain('512');
+    expect(existsSync(path)).toBe(true);
   }, 20_000);
 
   it.each([

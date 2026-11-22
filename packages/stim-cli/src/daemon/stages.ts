@@ -42,7 +42,7 @@ import { dormantAction, dormantThresholdMs, longestIdleFirst } from '../policy/p
 import { resolveSupervisorTarget } from '../stimd/metro/ownership.ts';
 import { getProject, loadConfig, type Config, type ProjectRecord } from '../workspace/config.ts';
 import { checkoutOwnerOf, type Checkout } from '../workspace/checkout-role.ts';
-import { discoverCheckouts } from '../workspace/discovery.ts';
+import { discoverCheckouts, type DiscoveredCheckout } from '../workspace/discovery.ts';
 import { discoveredEvidence } from '../workspace/discovered-activity.ts';
 import { lockReason, worktreeLockAsync } from '../workspace/worktree.ts';
 import { discoveredReads, type DiscoveredReads } from '../workspace/discovered-reads.ts';
@@ -277,6 +277,8 @@ export async function readCheckout(
 
 /** `full` reads source and git evidence even for a registered workspace; `onKept` hears why a workspace is not idle. */
 interface IdleSelection {
+  /** The current normal phase's discovery result, shared with its artifact inventory. */
+  discovered?: readonly DiscoveredCheckout[];
   full?: boolean;
   /** The setting the threshold comes from, named in the reason a workspace is kept; default the pressure threshold. */
   setting?: string;
@@ -320,11 +322,12 @@ async function readIdleWorkspaces(
     reclaimable,
     between,
     onRead,
+    discovered: supplied,
   }: Omit<IdleSelection, 'setting'> & { discover?: boolean } = {},
 ): Promise<StageCandidate[]> {
   const readings: (Omit<StageCandidate, 'idleMs' | 'role' | 'checkout'> & { idleMs: number | null })[] = [];
   const reads = discoveredReads(reading.operation?.signal);
-  const found = discover ? await discoverCheckouts(config, listedRoots(), reading.operation) : [];
+  const found = supplied ?? (discover ? await discoverCheckouts(config, listedRoots(), reading.operation) : []);
   const discovered = found.map(({ path }): [string, ProjectRecord] => [path, {}]);
   const discoveredPaths = new Set(found.map(({ path }) => path));
   const checkouts = [...Object.entries(config.projects), ...discovered];
