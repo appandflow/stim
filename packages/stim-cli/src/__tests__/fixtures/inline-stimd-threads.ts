@@ -6,6 +6,7 @@ import { LADDER, requestGcPass, requestGcItem } from '../../daemon/disk-owner.ts
 import { runGcPass } from '../../commands/gc.ts';
 import { runGcItem } from '../../stimd/gc-item.ts';
 import { dirtyGcMarks } from '../../fsevents-state.ts';
+import { outputMarks } from '../../daemon/marks.ts';
 
 type Log = Parameters<typeof createMaintenanceLane>[0];
 
@@ -28,6 +29,12 @@ export function createThreadTable(): ThreadTable {
     async close() {},
     async dirty(roots, at) {
       dirtyGcMarks(roots, at);
+    },
+    async history(config) {
+      return (await outputMarks(config, processContext(process.cwd(), controller.signal))).map(({ root, device }) => ({
+        root,
+        device,
+      }));
     },
     headroom: ({ headroom, cwd, act }) => {
       const asked = requestGcItem(async (signal) => {

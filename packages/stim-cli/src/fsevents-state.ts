@@ -2,7 +2,14 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { configDir } from '@stim-cli/core';
-import { gcMarkFile, isJsonObject, readGcMark, readJsonObject } from '@stim-cli/core/state';
+import {
+  gcMarkFile,
+  isJsonObject,
+  readGcMark,
+  readJsonObject,
+  readStateFile,
+  withStateReadCache,
+} from '@stim-cli/core/state';
 
 interface HistoryCheckpoint {
   uuid: string | null;
@@ -28,7 +35,15 @@ function writeRecord(file: string, record: object): void {
 /** Marks existing roots dirty on the passes isolate; a missing mark is already due. Write failures propagate. */
 export function dirtyGcMarks(roots: readonly string[], at: number): void {
   for (const root of roots) {
-    const mark = readGcMark(root);
+    const mark = withStateReadCache(() => {
+      try {
+        readStateFile(gcMarkFile(root));
+      } catch (error) {
+        if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return null;
+        throw error;
+      }
+      return readGcMark(root);
+    });
     if (!mark) continue;
     const dirtyAt = new Date(Math.max(at, Date.parse(mark.markedAt) + 1)).toISOString();
     if (mark.dirtyAt && Date.parse(mark.dirtyAt) >= Date.parse(dirtyAt)) continue;

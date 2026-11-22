@@ -1,4 +1,3 @@
-import { outputMarks } from '../daemon/marks.ts';
 import { packagedHistoryHelper, startHistoryFeed } from '../fsevents-helper.ts';
 import { validGcItem } from '../commands/gc/item.ts';
 import { runDirRemoved } from './run-dir.ts';
@@ -57,6 +56,7 @@ import {
   type DaemonRecentAction,
   type DaemonSnapshot,
   type PressureLevel,
+  type BuildEndMarker,
 } from '@stim-cli/core/state';
 import { startBuildEndTimer } from './build-end-timer.ts';
 import {
@@ -1135,7 +1135,7 @@ async function runStimdInner(
   const statuses = createStatusSnapshots(log, join(daemonDir(), 'status-cwds.json'));
   let dependencyScanAt = -Infinity;
   let dependencyWork: Promise<void> | undefined;
-  const startMeasureJob = (input: { cwd: string; buildEnd?: true }, failedEvent: string): Promise<void> => {
+  const startMeasureJob = (input: { cwd: string; buildEnd?: BuildEndMarker[] }, failedEvent: string): Promise<void> => {
     const work = threads
       .run('measure', input)
       .then(() => undefined)
@@ -1233,15 +1233,14 @@ async function runStimdInner(
     log: (reason) => log('debug', 'gc_history_fallback', reason),
   });
   let historyRootsWork: Promise<void> | undefined;
-  const refreshHistory = (config: Config | null, operation: StimContext) => {
+  const refreshHistory = (config: Config | null) => {
     if (!config || historyRootsWork) return;
-    historyRootsWork = outputMarks(config, operation)
-      .then((marks) =>
-        maintenanceAllowed()
-          ? filesystemHistory.update(marks.map(({ root, device }) => ({ root, device })))
-          : undefined,
-      )
+    historyRootsWork = threads
+      .history(config)
+      .then((roots) => (maintenanceAllowed() ? filesystemHistory.update(roots) : undefined))
       .catch((error: unknown) => {
+        if (isUnverifiedCleanup(error) && !contain(error))
+          failBackground(error, 'filesystem history cleanup could not be verified');
         if (maintenanceAllowed()) log('debug', 'gc_history_refresh_failed', errorText(error));
       })
       .finally(() => {
@@ -2260,11 +2259,18 @@ async function runStimdInner(
     busy: () => dependencyWork !== undefined,
     markers: () => listBuildEndMarkers().map((marker) => marker.file),
     start: async () => {
-      await filesystemHistory.changed(
-        listBuildEndMarkers().flatMap(({ path: checkout }) => (checkout ? [checkout] : [])),
-      );
+      const markers = listBuildEndMarkers();
+      try {
+        await threads.dirty(
+          markers.flatMap(({ path: checkout }) => (checkout ? [checkout] : [])),
+          Date.now(),
+        );
+      } catch (error) {
+        log('warn', 'daemon_build_end_dirty_failed', errorText(error).slice(0, 2000));
+        return;
+      }
       if (maintenanceAllowed())
-        await startMeasureJob({ cwd: process.cwd(), buildEnd: true }, 'daemon_build_end_measure_failed');
+        await startMeasureJob({ cwd: process.cwd(), buildEnd: markers }, 'daemon_build_end_measure_failed');
     },
   });
   for (;;) {
@@ -2348,12 +2354,14 @@ async function runStimdInner(
       const { config, now, measured, workspaces, pressure, actions, operation } = passes;
       lastLadder = passes.ladder ?? null;
       operation.signal.throwIfAborted();
-      refreshHistory(config, operation);
+      refreshHistory(config);
+      const savedWorkspaces: unknown = (lastSnapshot ?? previousSnapshot)?.workspaces;
       const previousActivity = new Map(
-        (lastSnapshot ?? previousSnapshot)?.workspaces.map(({ path: checkout, lastActivity }) => [
-          checkout,
-          lastActivity?.at,
-        ]),
+        (Array.isArray(savedWorkspaces) ? savedWorkspaces : []).flatMap((workspace: unknown): [string, unknown][] =>
+          isJsonObject(workspace) && typeof workspace.path === 'string'
+            ? [[workspace.path, isJsonObject(workspace.lastActivity) ? workspace.lastActivity.at : undefined]]
+            : [],
+        ),
       );
       const changedActivity = workspaces
         .filter(

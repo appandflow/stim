@@ -21,6 +21,7 @@ import {
   type GcMark,
 } from '@stim-cli/core/state';
 import * as discovery from '../workspace/discovery.ts';
+import * as gcPaths from '../commands/gc/paths.ts';
 import * as worktree from '../workspace/worktree.ts';
 import { runLadder } from '../daemon/ladder.ts';
 import { runDormantDependencies } from '../daemon/dependencies.ts';
@@ -127,6 +128,28 @@ describe('gc marks written by the lane', () => {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
     rmSync(base, { recursive: true, force: true });
+  });
+
+  it('cancels a stalled watch identity read without starting another checkout read', async () => {
+    const root = join(base, 'first');
+    config.projects = { [root]: {}, [join(base, 'second')]: {} };
+    let release: (root: string) => void = () => {};
+    const pending = new Promise<string>((done) => {
+      release = done;
+    });
+    const lookup = vi.spyOn(gcPaths, 'realpathAsync').mockReturnValue(pending);
+    const controller = new AbortController();
+    const refused = outputMarks(config, testContext({ signal: controller.signal })).catch((error: unknown) => error);
+    try {
+      await vi.waitFor(() => expect(lookup).toHaveBeenCalledTimes(1));
+      controller.abort(new Error('stop'));
+      await expect(refused).resolves.toMatchObject({ message: 'stop' });
+      expect(hungRead()).toBe(root);
+      expect(lookup).toHaveBeenCalledTimes(1);
+    } finally {
+      release(root);
+      await pendingRead();
+    }
   });
 
   it.each([

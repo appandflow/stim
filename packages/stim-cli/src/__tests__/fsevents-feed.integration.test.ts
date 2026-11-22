@@ -65,6 +65,7 @@ describe.skipIf(process.platform !== 'darwin')('FSEvents dirty feed', () => {
         return markedAt;
       };
       writeMark();
+      expect(await threads.history({ version: 2, projects: { [root]: {} }, repos: {} })).toEqual([{ root, device }]);
       feed = startHistoryFeed({
         binary,
         sha256: released ? packaged.sha256 : createHash('sha256').update(readFileSync(binary)).digest('hex'),
@@ -99,6 +100,29 @@ describe.skipIf(process.platform !== 'darwin')('FSEvents dirty feed', () => {
       await feed.close();
       feed = undefined;
       expect(failures).toEqual([]);
+      writeMark();
+      const checkpoint = readHistoryCheckpoints();
+      chmodSync(gcMarkFile(root), 0o000);
+      try {
+        writeFileSync(join(root, 'unreadable-mark'), 'offline');
+        feed = startHistoryFeed({
+          binary,
+          sha256: released ? packaged.sha256 : createHash('sha256').update(readFileSync(binary)).digest('hex'),
+          dirty: (roots, at) => threads.dirty(roots, at),
+          log: (reason) => failures.push(reason),
+        });
+        await feed.update([{ root, device }]);
+        await vi.waitFor(() => expect(failures.join(' ')).toMatch(/EACCES|permission denied/), { timeout: 20_000 });
+        expect(readHistoryCheckpoints()).toEqual(checkpoint);
+        await feed.close();
+        feed = undefined;
+      } finally {
+        chmodSync(gcMarkFile(root), 0o600);
+      }
+      const invalid = join(scratch, 'invalid');
+      mkdirSync(dirname(gcMarkFile(invalid)), { recursive: true });
+      writeFileSync(gcMarkFile(invalid), '{');
+      await expect(threads.dirty([invalid, join(scratch, 'missing')], Date.now())).resolves.toBeUndefined();
       writeMark();
       const marks = dirname(gcMarkFile(root));
       chmodSync(marks, 0o500);

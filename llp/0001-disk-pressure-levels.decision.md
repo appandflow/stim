@@ -848,6 +848,11 @@ A root-list change replaces the watch with a
 new generation. Output indexes belong only to that generation, and older
 output cannot index the replacement list or advance its checkpoint.
 
+Watch membership is read on the passes worker, including bounded asynchronous
+checkout identities. A cancelled or timed-out filesystem read retains that
+isolate's single pending-read slot. Git cleanup failures use the daemon's
+existing containment policy, including during shutdown.
+
 The passes worker persists each batch's `dirtyAt` updates before acknowledging
 it. Publication and dirty updates use the same isolate's synchronous
 read-modify-write, so a change during a mark's reads survives publication. Only
@@ -855,6 +860,8 @@ that acknowledgement lets the main thread atomically replace the per-device
 UUID, event id, timestamp and root membership in `gc/fsevents.json`. A failed
 write keeps the old cursor for replay. This orders process-crash recovery;
 ordinary atomic renames do not promise a power-loss transaction across files.
+Build-end measurements consume only their captured marker batch after a strict
+dirty acknowledgement; failed mark I/O leaves that batch for the timer backoff.
 
 The helper purges history whose UUID changed, whose cursor is ahead, whose
 saved timestamp is missing, future or over two hours old, or whose event stream

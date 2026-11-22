@@ -10,6 +10,7 @@ import {
   readDiskUsagePrivateUnknown,
   type DaemonLadderAction,
   type PressureLevel,
+  type BuildEndMarker,
 } from '@stim-cli/core/state';
 import { getProject } from '../workspace/config.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
@@ -836,9 +837,13 @@ function dropMarkers(files: readonly string[]): void {
  * root. A layout that could not be read keeps the marker and measures nothing for that root. A held walk claim, or a
  * read that does not answer, ends the pass and keeps every marker not yet consumed. It never touches a dependency tree.
  */
-export async function measureBuildEnds(operation: StimContext, now: number = Date.now()): Promise<number> {
+export async function measureBuildEnds(
+  operation: StimContext,
+  now: number = Date.now(),
+  markers: BuildEndMarker[] = listBuildEndMarkers(),
+): Promise<number> {
   const byRoot = new Map<string, string[]>();
-  for (const { file, path, markedAt } of listBuildEndMarkers()) {
+  for (const { file, path, markedAt } of markers) {
     if (path === null || markedAt === null || now - markedAt > BUILD_END_MARKER_MAX_AGE_MS) dropMarkers([file]);
     else byRoot.set(path, [...(byRoot.get(path) ?? []), file]);
   }
