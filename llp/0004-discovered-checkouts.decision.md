@@ -203,9 +203,14 @@ hold that keeps a worktree inside a dot-folder of its main checkout
   folders, never its parents or siblings. Missing or changed evidence keeps the
   mark until a normal scan refreshes it (hourly above normal disk pressure,
   otherwise weekly). Legacy scan entries receive no inferred evidence.
-  A native-Android candidate whose recognition needs ancestry outside the
-  selected root stays kept on this route; #6106 tracks bounded authorization
-  for that ordinary layout. Normal discovery still recognizes it.
+  Native-Android candidates also prove conventional app ownership through
+  bounded named ancestor manifest reads and canonical `ios`/`android` root
+  checks, up to the first explicit project boundary or the filesystem root.
+  This includes ancestors above home and aliases into the selected root.
+  Recognition then uses the ordinary selected-root operation and ambiguity
+  rules. An unreadable ownership input leaves that candidate unproved; another
+  independently recognized app can still authorize the checkout. No ancestor
+  is listed.
 - Every reduce-only checkout is evaluated on every pass, like a sibling-discovered
   checkout, and classified from the complete discovery list. A window of 40 per
   pass was built and removed: filtering by it before classification changed

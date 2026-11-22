@@ -289,30 +289,46 @@ test('a request queued while the running pass had not measured joins it once tha
   expect(runs).toEqual([undefined]);
 });
 
-test("a gc at normal that waits through the lane's dormant step joins the lane's maintenance pass once it starts", async () => {
-  const turn = await acquireDisk(LANE);
-  const unexpected = vi.fn<Parameters<typeof requestGcPass>[2]>();
-  const seen: LevelRunAction[] = [];
-  const waiting = requestGcPass(undefined, 'manual', unexpected, (landed) => seen.push(landed));
-  await turn.boundary();
-  await joinablePass(
-    'normal',
-    'maintenance',
-    async (emit) => {
+test.each<PressureLevel | undefined>([undefined, 'normal'])(
+  'a %s GC adopts maintenance after an intervening item during the dormant step',
+  async (level) => {
+    const turn = await acquireDisk(LANE);
+    const order: string[] = [];
+    const unexpected = vi.fn<Parameters<typeof requestGcPass>[2]>(async () => {
+      order.push('standalone GC');
+      return { run: runAt('normal') };
+    });
+    const seen: LevelRunAction[] = [];
+    const waiting = requestGcPass(level, 'manual', unexpected, (landed) => seen.push(landed));
+    const item = requestGcItem(async () => {
+      order.push('item');
+    });
+    try {
       await turn.boundary();
-      emit(action);
-    },
-    () => runAt('normal', [action]),
-    'lane',
-  );
-  turn.release();
-  expect(await waiting.result).toMatchObject({
-    joined: { trigger: 'maintenance', level: 'normal' },
-    run: { actions: [action] },
-  });
-  expect(seen).toEqual([action]);
-  expect(unexpected).not.toHaveBeenCalled();
-});
+      await item.result;
+      expect(order).toEqual(['item']);
+      await joinablePass(
+        'normal',
+        'maintenance',
+        async (emit) => {
+          await turn.boundary();
+          emit(action);
+        },
+        () => runAt('normal', [action]),
+        'lane',
+      );
+      expect(await waiting.result).toMatchObject({
+        joined: { trigger: 'maintenance', level: 'normal' },
+        run: { actions: [action] },
+      });
+      expect(seen).toEqual([action]);
+      expect(unexpected).not.toHaveBeenCalled();
+    } finally {
+      turn.release();
+      await Promise.allSettled([waiting.result, item.result]);
+    }
+  },
+);
 
 test('pressure precedes independent items, then trash drains before the lane resumes', async () => {
   const turn = await acquireDisk(LANE);
@@ -534,26 +550,29 @@ test('a queued critical successor preempts high at a settled unit, then high and
 test.each([
   [LADDER, CRITICAL],
   [CRITICAL, HARD_FLOOR],
-])('a rank %s boundary yields only to higher rank %s and resumes behind waiting peers', async (rank, higherRank) => {
-  const owner = await acquireDisk(rank);
-  const order: string[] = [];
-  const equal = requestGcItem(async () => {
-    order.push('equal');
-  }, rank);
-  const lower = requestGcItem(async () => {
-    order.push('lower');
-  }, LANE);
-  await owner.boundary();
-  expect(order).toEqual([]);
-  const higher = requestGcItem(async () => {
-    order.push('critical');
-  }, higherRank);
-  await owner.boundary();
-  order.push('resumed');
-  owner.release();
-  await Promise.all([equal.result, lower.result, higher.result]);
-  expect(order).toEqual(['critical', 'equal', 'resumed', 'lower']);
-});
+])(
+  'a rank %s boundary yields only to higher rank %s and retains its position before waiting peers',
+  async (rank, higherRank) => {
+    const owner = await acquireDisk(rank);
+    const order: string[] = [];
+    const equal = requestGcItem(async () => {
+      order.push('equal');
+    }, rank);
+    const lower = requestGcItem(async () => {
+      order.push('lower');
+    }, LANE);
+    await owner.boundary();
+    expect(order).toEqual([]);
+    const higher = requestGcItem(async () => {
+      order.push('critical');
+    }, higherRank);
+    await owner.boundary();
+    order.push('resumed');
+    owner.release();
+    await Promise.all([equal.result, lower.result, higher.result]);
+    expect(order).toEqual(['critical', 'resumed', 'equal', 'lower']);
+  },
+);
 
 test('cancelling a suspended pass leaves the critical owner intact and runs no next unit', async () => {
   const first = gate();
@@ -606,6 +625,45 @@ test('cancelling a suspended pass leaves the critical owner intact and runs no n
   await expect(outcome).resolves.toBeInstanceOf(Error);
   await after.result;
   expect(units).toEqual(['first', 'item']);
+});
+
+test('a GC joining an idle post-delete scan restores the reserve when the covering pass settles', async () => {
+  const turn = await acquireDisk(LANE);
+  const finish = gate();
+  let present = true;
+  const keep = vi.spyOn(reserve, 'keepReserve').mockImplementation(() => {
+    present = true;
+  });
+  const release = vi.spyOn(reserve, 'releaseReserve').mockImplementation(() => {
+    present = false;
+    return true;
+  });
+  const unexpected = vi.fn<Parameters<typeof requestGcPass>[2]>();
+  const run = joinablePass(
+    'normal',
+    'maintenance',
+    () => finish.promise,
+    () => runAt('normal'),
+    'lane',
+  );
+  reserve.keepReserve();
+  turn.release();
+  reserve.releaseReserve();
+  const joined = requestGcPass('normal', 'desktop', unexpected, ignore);
+  try {
+    expect(present).toBe(false);
+    finish.open();
+    await run;
+    expect(await joined.result).toMatchObject({ joined: { trigger: 'maintenance' } });
+    expect(present).toBe(true);
+    expect(unexpected).not.toHaveBeenCalled();
+  } finally {
+    finish.open();
+    turn.release();
+    await Promise.allSettled([run, joined.result]);
+    keep.mockRestore();
+    release.mockRestore();
+  }
 });
 
 test('a lane finishing its post-delete reads does not recreate reserve during another disk turn', async () => {

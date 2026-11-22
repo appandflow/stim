@@ -1,3 +1,4 @@
+import { isAbsolute } from 'node:path';
 import { isJsonObject, readJsonObject } from './json-file.ts';
 import { gcMarkFile } from './paths.ts';
 
@@ -30,6 +31,22 @@ export interface GcMark {
   /** The newest activity the mark read; null when none is known. */
   lastActivityAt: string | null;
   candidates: GcMarkCandidate[];
+  /** Recognized nested app paths that led normal discovery to this Cargo holder. */
+  cargoVia?: string[];
+}
+
+export interface GcStaleMarkEvidence {
+  root: string;
+  markedAt: string;
+  intervalMs: number;
+}
+
+export interface GcMarkHealth {
+  at: number;
+  state: 'ready' | 'partial' | 'unavailable';
+  checkedRoots?: number;
+  staleCount?: number;
+  stale: GcStaleMarkEvidence[];
 }
 
 const KINDS: readonly unknown[] = ['outputs', 'cargo-target'] satisfies GcMarkKind[];
@@ -47,10 +64,9 @@ function isCandidate(value: unknown): value is GcMarkCandidate {
   );
 }
 
-/** The mark of the checkout at the canonical path `root`; null when there is none, or it has another version or does not parse. */
-export function readGcMark(root: string): GcMark | null {
-  const entry = readJsonObject(gcMarkFile(root));
-  if (!entry || entry.v !== GC_MARK_VERSION || entry.root !== root) return null;
+/** Validates one saved mark against its canonical root without reading the filesystem. */
+export function parseGcMark(root: string, entry: unknown): GcMark | null {
+  if (!isJsonObject(entry) || entry.v !== GC_MARK_VERSION || entry.root !== root) return null;
   const { device, markedAt, dirtyAt, lastActivityAt, candidates } = entry;
   if (
     typeof device !== 'number' ||
@@ -70,5 +86,13 @@ export function readGcMark(root: string): GcMark | null {
     ...(dirtyAt === undefined ? {} : { dirtyAt }),
     lastActivityAt,
     candidates: parsed,
+    ...(Array.isArray(entry.cargoVia) && entry.cargoVia.every((path) => typeof path === 'string' && isAbsolute(path))
+      ? { cargoVia: entry.cargoVia }
+      : {}),
   };
+}
+
+/** The mark of the checkout at the canonical path `root`; null when there is none, or it has another version or does not parse. */
+export function readGcMark(root: string): GcMark | null {
+  return parseGcMark(root, readJsonObject(gcMarkFile(root)));
 }

@@ -305,12 +305,14 @@ so none ever runs beside another.
   volume target on grant (LLP 0006); hard floor ranks ahead of critical.
 - Each ticket owns its release and pending handoff. Concurrent boundaries of
   one ticket share that handoff; a different ticket has its own. A resumption
-  queues after peers already waiting at its rank. Releasing an old ticket
+  keeps the granted owner ahead of waiting peers at its rank; new and reranked
+  tickets queue after equal peers. Releasing an old ticket
   cannot release the current owner. Pass identity, listeners and results stay
   with the ticket while it waits, and are current again when it resumes.
   A cancelled queued request withdraws its own ticket; a cancelled executing
   pass keeps ownership through its current work and observes cancellation
-  after regrant. Only the current owner recreates the reserve.
+  after regrant. The covering pass recreates the reserve when it still owns
+  the turn or the queue is idle, never while another ticket owns the turn.
 - Stopped output marks yield between individual saved paths, after each
   workspace claim and removal has settled. Cargo pressure trims yield between
   targets, after their profile locks close. Tick, manual and headroom callers
@@ -551,6 +553,20 @@ also holds the newest activity the walk read, and the walk reads at
   brought forward so high-pressure refresh does not invent a temporary TTL.
   The normal lane still walks hourly and publishes due marks; a normal
   mark-first sweep scheduler is pending the generation/lane integration.
+- The passes worker's existing history batch also observes mark freshness.
+  Mark files are read once through bounded asynchronous reads and the same
+  parser and scope policy the sweep uses. Invalid legacy or torn records
+  still contribute no sweep candidate, and make diagnostic coverage partial.
+  Missing, failed or timed-out inventory is unavailable, never a zero count.
+  The owning daemon saves a small aggregate and at most five positively scoped
+  overdue roots in its existing snapshot. `stim doctor` warns for those marks
+  only when they were more than twice the effective generation interval old at
+  the observation time. The effective interval is at least hourly, matching
+  the normal lane writer cadence; partial coverage omits totals. Definite
+  exclusions when discovery has no routes do not make coverage partial.
+  Other unproved routes remain conservative and omit totals. An observation older
+  than the daemon's existing three-interval late-tick limit is unavailable.
+  Reporting starts no discovery or size walk on the socket or doctor path.
 - The writer also recognizes untagged Cargo targets by the existing Cargo
   manifest/profile rules and marks targets in the holder's `apps/` and
   `packages/` children. The normal lane reads actual Git holders reached by
@@ -558,8 +574,13 @@ also holds the newest activity the walk read, and the walk reads at
   current buffered Git worktree metadata can authorize its exact holder's
   Cargo candidates, without authorizing the holder's other outputs. The
   helper may watch that holder; a watch grants no deletion authority. A holder
-  reached only through a discovered nested app stays when its own ordinary
-  route cannot be proved; targeted proof for that layout remains required.
+  reached through a recognized discovered nested app saves that app path in
+  its existing mark. A targeted read must still prove the app’s current
+  discovery route and current exact Git holder before authorizing only Cargo
+  candidates whose parent still belongs to that exact Git holder. Independent
+  nested checkouts stay outside this authority. Removed routes, missing apps
+  and changed holders keep the target; old marks keep their existing scope
+  behavior.
 - Both Cargo pressure entrypoints consume saved target candidates. The
   planner and executor share the same action object in one isolate; its
   private mark proof is not serialized. A copied pressure action is kept.
