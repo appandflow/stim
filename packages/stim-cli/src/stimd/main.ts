@@ -2495,7 +2495,7 @@ async function runStimdInner(
         recent,
         waiting,
         ...(filesystemHistory.status() ? { history: filesystemHistory.status() } : {}),
-        ...(markObservation ? { gcMarks: markObservation } : {}),
+        gcMarks: markObservation,
       };
       writeAtomic(daemonSnapshotFile(), lastSnapshot);
       for (const socket of replying) socket.end(`${JSON.stringify({ op: 'ticked', level: pressure.level })}\n`);
