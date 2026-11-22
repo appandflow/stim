@@ -150,6 +150,7 @@ export async function runMaintenanceAtLevel({
           settings,
           background: false,
           critical: level === 'critical',
+          throttleOutputs: false,
           protectedRoot: triggeringRoot(operation),
           ...(operation ? { operation } : {}),
         });
@@ -183,6 +184,7 @@ export async function runMaintenanceAtLevel({
     settings,
     background: false,
     critical: level === 'critical',
+    throttleOutputs: level === 'normal',
     protectedRoot: triggeringRoot(operation),
     ...(plan.worktreeSweep ? { worktreeSweep: plan.worktreeSweep } : {}),
     ...(operation ? { operation } : {}),
@@ -212,6 +214,7 @@ export async function runMaintenanceAtLevel({
     act,
     trigger: 'gc',
     ...(act && between ? { between } : {}),
+    throttleOutputs: level === 'normal',
     ...(operation ? { operation } : {}),
     protectedRoot: context.protectedRoot,
     ...(walkUnknown === false ? { walkUnknown } : {}),

@@ -1069,7 +1069,7 @@ describe('the pressure ladder', () => {
     expect(deleted).toEqual([]);
   });
 
-  test.each(['new activity', 'pressure cleared', 'abort'] as const)(
+  test.each(process.platform === 'win32' ? [] : ['new activity', 'pressure cleared', 'abort'])(
     'a stopped-output boundary releases claims before critical work and rechecks %s on resume',
     async (change) => {
       const root = workspace('one-checkout', 5 * MINUTE_MS, 'Shutdown').root;
@@ -1081,24 +1081,31 @@ describe('the pressure ladder', () => {
         lastActivityAt: Date.now() - DAY_MS,
         kept: null,
       });
-      let release = () => {};
-      const held = new Promise<void>((resolve) => {
-        release = resolve;
-      });
+      const started = join(home, 'output-rm.pid');
+      const go = join(home, 'output-rm.go');
+      const script = join(home, 'held-output-rm.sh');
+      writeFileSync(
+        script,
+        'echo $$ > "$1"\ni=0\nwhile [ ! -f "$2" ] && [ "$i" -lt 200 ]; do sleep 0.05; i=$((i+1)); done\nshift 2\nexec /bin/rm "$@"\n',
+      );
+      const release = () => writeFileSync(go, 'go');
       let first: string | undefined;
       let removing = false;
-      const remove = idlePass.deleteOutputs;
-      vi.spyOn(idlePass, 'deleteOutputs').mockImplementation(async (selected, ...options) => {
-        removing = true;
-        try {
-          if (first === undefined) {
-            first = selected[0];
-            await held;
+      const real = getExecutor();
+      setExecutor({
+        ...real,
+        runFileAsync: async (file, args, options) => {
+          const target = args.at(-1);
+          if (file !== 'rm' || !target || !paths.includes(target) || first !== undefined)
+            return real.runFileAsync(file, args, options);
+          first = target;
+          removing = true;
+          try {
+            return await real.runFileAsync('/bin/sh', [script, started, go, ...args], options);
+          } finally {
+            removing = false;
           }
-          return await remove(selected, ...options);
-        } finally {
-          removing = false;
-        }
+        },
       });
       let remainingKeep: unknown;
       let current = pressure('high');
@@ -1123,7 +1130,7 @@ describe('the pressure ladder', () => {
       );
       const outcome = high.result.catch((error: unknown) => error);
       try {
-        await vi.waitFor(() => expect(first).toBeDefined());
+        await vi.waitFor(() => expect(existsSync(started)).toBe(true));
         const selected = first;
         const remaining = paths.find((path) => path !== selected);
         if (!selected || !remaining) throw new Error('the first stopped output was not selected');

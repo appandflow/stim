@@ -1,3 +1,5 @@
+import { runMaintenanceAtLevel } from '../stimd/passes/level-run.ts';
+import * as daemonPasses from '../daemon/passes.ts';
 import { execSync } from 'node:child_process';
 import {
   existsSync,
@@ -239,6 +241,33 @@ test('a maintenance pass retains a zero-byte partial total in state, log and sta
   );
   expect(maintenanceLine(maintenanceStatus())).toContain('at least 0.0 GB freed');
 });
+
+test.skipIf(process.platform === 'win32')(
+  'cap cleanup selects normal or urgent removal from the forced run level',
+  async () => {
+    vi.spyOn(daemonPasses, 'runDormantReduction').mockResolvedValue([]);
+    vi.spyOn(daemonPasses, 'runForcedLadder').mockResolvedValue(null);
+    const real = getExecutor();
+    const commands: { file: string; args: string[] }[] = [];
+    setExecutor({
+      ...real,
+      runFileAsync: async (file, args, options) => {
+        if (args.includes('-rf')) commands.push({ file, args: [...args] });
+        return real.runFileAsync(file, args, options);
+      },
+    });
+    for (const level of ['normal', 'high', 'critical'] as const) {
+      const own = workspace(level, { usedDaysAgo: 30 });
+      process.env.STIM_MAINTENANCE_WORKSPACE_OUTPUTS_MAX_GB = String(0.1 / 1024);
+      commands.length = 0;
+      await runMaintenanceAtLevel({ level, act: true });
+      const selected = commands.filter(({ args }) => OUTPUTS.some((name) => args.at(-1) === join(own.dir, name)));
+      expect(hasOutputs(own.dir)).toBe(false);
+      expect(selected.length).toBeGreaterThan(0);
+      expect(selected.every(({ file }) => (file === 'rm') === (level !== 'normal'))).toBe(true);
+    }
+  },
+);
 
 test('on mode trims over-cap caches oldest first and clears only idle, unpinned, unlocked workspaces', async () => {
   const { entries, spaces } = capFixture();

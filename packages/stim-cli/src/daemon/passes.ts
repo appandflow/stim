@@ -816,6 +816,7 @@ export async function runDormantReduction({
   protectedRoot,
   walkUnknown,
   between,
+  throttleOutputs = true,
 }: {
   act: boolean;
   trigger: string;
@@ -823,6 +824,7 @@ export async function runDormantReduction({
   protectedRoot?: string;
   walkUnknown?: false;
   between?: () => Promise<void>;
+  throttleOutputs?: boolean;
 }): Promise<DaemonLadderAction[]> {
   const config = loadConfig();
   const afterMs = dormantAfterMs(config);
@@ -852,6 +854,7 @@ export async function runDormantReduction({
         ...reading,
         force: true,
         ...(act && between ? { between } : {}),
+        throttleOutputs,
         ...(walkUnknown === false ? { walkUnknown } : {}),
       })),
     );
