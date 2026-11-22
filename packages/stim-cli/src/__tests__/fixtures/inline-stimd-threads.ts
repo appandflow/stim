@@ -5,6 +5,7 @@ import type { ThreadTable } from '../../stimd/threads.ts';
 import { LADDER, requestGcPass, requestGcItem } from '../../daemon/disk-owner.ts';
 import { runGcPass } from '../../commands/gc.ts';
 import { runGcItem } from '../../stimd/gc-item.ts';
+import { dirtyGcMarks } from '../../fsevents-state.ts';
 
 type Log = Parameters<typeof createMaintenanceLane>[0];
 
@@ -25,6 +26,9 @@ export function createThreadTable(): ThreadTable {
     },
     settle() {},
     async close() {},
+    async dirty(roots, at) {
+      dirtyGcMarks(roots, at);
+    },
     headroom: ({ headroom, cwd, act }) => {
       const asked = requestGcItem(async (signal) => {
         await runLadderToFree({ ...headroom, operation: processContext(cwd, controller.signal), signal, act });
