@@ -126,7 +126,6 @@ export function markDue(mark: GcMark | null, now: number, dormantMs: number): bo
 
 // @ref LLP 0001#the-lane-marks-what-each-checkout-could-free -- saved roots need current targeted discovery authorization
 export async function outputMarks(config: Config, operation?: StimContext): Promise<GcMark[]> {
-  const registered = new Set(Object.keys(config.projects).map(canonicalPath));
   const dir = join(gcLogDir(), 'marks');
   let files: string[];
   try {
@@ -141,6 +140,17 @@ export async function outputMarks(config: Config, operation?: StimContext): Prom
     const mark = readGcMark(root);
     if (mark) marks.push(mark);
   }
+  return authorizedMarks(config, marks, operation);
+}
+
+/** The current allowed candidates of exactly one saved root; reads no other saved mark. */
+export async function outputMark(config: Config, root: string, operation?: StimContext): Promise<GcMark | null> {
+  const mark = readGcMark(root);
+  return mark ? ((await authorizedMarks(config, [mark], operation))[0] ?? null) : null;
+}
+
+async function authorizedMarks(config: Config, marks: GcMark[], operation?: StimContext): Promise<GcMark[]> {
+  const registered = new Set(Object.keys(config.projects).map(canonicalPath));
   const unregistered = marks.filter((mark) => !registered.has(mark.root));
   if (!unregistered.length) return marks;
   const allowed = new Set(

@@ -492,12 +492,18 @@ also holds the newest activity the walk read, and the walk reads at
   private mark proof is not serialized. A copied pressure action is kept.
   Execution rechecks the saved generation, current scope, target ownership,
   canonical root/target paths and devices before using the existing Cargo
-  admission, process reads and locked remover. Rewriting the mark makes an
+  admission, process reads and locked remover. Planning authorizes one saved
+  batch; execution reauthorizes only the selected root. Rewriting the mark makes an
   earlier action stale. Failed safety reads keep the target. High pressure
   tries known targets before refreshing due or missing marks while still
   high; critical and hard-floor pressure never refresh or rediscover Cargo
-  targets. Unmarked targets stay. Normal Cargo size/cap planning and its
-  scheduling are unchanged.
+  targets. Unmarked targets stay. Acting size/cap passes use normal rules
+  even under pressure, so measured sizes cannot bypass the saved pressure
+  candidates; explicit read-only previews retain their pressure policy. The
+  existing normal sizing, cap selection and scheduling remain unchanged.
+  A build-headroom deadline cancels the same bounded Cargo refresh and
+  leaves later holders and the next sweep unstarted; failed cleanup still
+  propagates.
 - Worktree/dependency marks and pressure discovery, normal mark-first
   scheduling, per-candidate disk-turn yielding and yield ranking remain
   pending. The no-discovery guarantee applies to output rung 1 and Cargo

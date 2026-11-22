@@ -46,6 +46,7 @@ export async function registeredCargoHolders(
         .toSorted((a, b) => b.path.length - a.path.length)[0];
       const saved = holder && wanted.get(holder.path);
       if (saved) allowed.add(saved);
+      if (allowed.size === wanted.size) break;
     } catch (error) {
       if (isClaimUnavailable(error) && 'reportCleanup' in error) throw error;
       operation?.signal.throwIfAborted();

@@ -697,9 +697,10 @@ including untagged targets and targets in a monorepo holder’s `apps/` and
 lock checks. A registered app can authorize its real Git holder’s Cargo
 targets without authorizing that holder’s other outputs. High pressure refreshes
 missing or expired Cargo marks only after trying known targets; critical and
-build hard-floor cleanup leave unmarked Cargo targets alone. Normal Cargo
-size/cap planning and later workspace cleanup stages retain their existing
-discovery. `stim gc --dry-run`
+build hard-floor cleanup leave unmarked Cargo targets alone. Acting size/cap
+passes apply normal cap rules even under pressure; the marked pressure path
+owns the more aggressive trims. Normal Cargo sizing and later workspace
+cleanup stages retain their existing discovery. `stim gc --dry-run`
 still discovers outputs for its preview. Saved automatic-discovery candidates
 remain usable at critical pressure after targeted current scope checks; unknown
 scope keeps the output. A root known only through the saved full scan stays

@@ -644,6 +644,31 @@ describe('the pressure ladder', () => {
     expect(writer).not.toHaveBeenCalled();
   });
 
+  test('a headroom deadline stops Cargo refresh before the next holder and next plan', async () => {
+    const first = await cargoApp('a-cargo');
+    const second = await cargoApp('b-cargo');
+    rmSync(gcMarkFile(first.app));
+    rmSync(gcMarkFile(second.app));
+    const stop = new AbortController();
+    const operation = testContext();
+    const plan = vi.spyOn(cargoTargetPasses, 'planCargoTargetsAtPressure');
+    const read = vi.spyOn(stages, 'readCheckout').mockImplementation(async (_path, _project, reading) => {
+      stop.abort(new Error('headroom deadline'));
+      expect(reading.operation?.signal.aborted).toBe(true);
+      throw stop.signal.reason;
+    });
+    const { actions } = await runLadder(
+      { ...input(true, async () => pressure('high')), operation, stop: stop.signal, fromRung: 3, lastRung: 3 },
+      pressure('high'),
+    );
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(plan).toHaveBeenCalledTimes(1);
+    expect(operation.signal.aborted).toBe(false);
+    expect(actions.filter((action) => action.outcome === 'failed')).toEqual([]);
+    expect(readGcMark(first.app)).toBeNull();
+    expect(readGcMark(second.app)).toBeNull();
+  });
+
   test.skipIf(process.platform === 'win32')(
     'high Cargo pressure refreshes a missing mark after its known sweep',
     async () => {

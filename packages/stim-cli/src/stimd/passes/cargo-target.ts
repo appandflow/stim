@@ -29,7 +29,7 @@ import {
 } from '../../workspace/cargo-target.ts';
 import type { ActionOutcome } from './act.ts';
 import type { MaintenancePlan } from './plan.ts';
-import { outputMarks } from '../../daemon/marks.ts';
+import { outputMarks, outputMark } from '../../daemon/marks.ts';
 import { answered } from '../../workspace/bounded-read.ts';
 import { resolveMaintenanceSettings, type MaintenanceSettings } from './settings.ts';
 
@@ -321,6 +321,7 @@ async function markedTargetCurrent(
   mark: GcMark,
   candidate: GcMarkCandidate,
   operation?: StimContext,
+  reauthorize = false,
 ): Promise<boolean> {
   const config = loadConfig();
   if (!config || candidate.kind !== 'cargo-target' || !candidate.path.startsWith(`${mark.root}${sep}`)) return false;
@@ -339,11 +340,9 @@ async function markedTargetCurrent(
       if ((await answered(path, () => realpathAsync(path), 3_000, operation?.signal)) !== path) return false;
       if ((await answered(path, () => stat(path), 3_000, operation?.signal)).dev !== device) return false;
     }
-    return (await outputMarks(config, operation)).some(
-      (allowed) =>
-        allowed.root === mark.root &&
-        allowed.candidates.some((entry) => entry.kind === 'cargo-target' && entry.path === candidate.path),
-    );
+    if (!reauthorize) return true;
+    const allowed = await outputMark(config, mark.root, operation);
+    return Boolean(allowed?.candidates.some((entry) => entry.kind === 'cargo-target' && entry.path === candidate.path));
   } catch (error) {
     if (isClaimUnavailable(error) && 'reportCleanup' in error) throw error;
     operation?.signal.throwIfAborted();
@@ -359,7 +358,6 @@ export async function planCargoTargetsAtPressure({
   operation,
   level,
   diskLevel = measuredDiskLevel,
-  marks,
 }: {
   settings: MaintenanceSettings;
   pinned: (workspace: string) => boolean | Promise<boolean>;
@@ -368,12 +366,11 @@ export async function planCargoTargetsAtPressure({
   operation?: StimContext;
   level?: PressureLevel;
   diskLevel?: (dir: string, signal?: AbortSignal) => Promise<PressureLevel>;
-  marks?: readonly GcMark[];
 }): Promise<MaintenancePlan> {
   const plan: MaintenancePlan = { actions: [], blocked: [], skips: [] };
   if (settings.cargoTargetMaxGb === 0) return plan;
   const config = loadConfig();
-  const candidates = marks ?? (config ? await outputMarks(config, operation) : []);
+  const candidates = config ? await outputMarks(config, operation) : [];
   const seen = new Set<string>();
   for (const mark of candidates)
     for (const candidate of mark.candidates) {
@@ -457,7 +454,11 @@ export async function trimCargoTargetAction(
     return kept('it is no longer a Cargo target/ Stim recognises');
   const admitted = await admitCargoTarget(action.target);
   if ('kept' in admitted) return kept(admitted.kept);
-  if (saved ? !(await markedTargetCurrent(saved.mark, saved.candidate, operation)) : !(await managed(root, operation)))
+  if (
+    saved
+      ? !(await markedTargetCurrent(saved.mark, saved.candidate, operation, true))
+      : !(await managed(root, operation))
+  )
     return kept('its checkout is no longer in a workspace or discovery scope');
   const problem = await regenerableDirProblem(root, action.target, operation?.signal, { processes: false });
   if (problem) return kept(problem);

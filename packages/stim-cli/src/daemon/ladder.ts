@@ -519,7 +519,14 @@ const CARGO_TRIM_RETRY_MS = 10 * 60_000;
 
 async function cargoTargetsStep(context: RungContext): Promise<void> {
   // @ref LLP 0001#pressure-acts-without-waiting-for-measurement-or-load -- the trim needs no size scan or load gate
-  if (context.force && context.level === 'critical') return;
+  if ((context.force && context.level === 'critical') || context.stop?.aborted) return;
+  const operation =
+    context.operation && context.stop
+      ? { ...context.operation, signal: AbortSignal.any([context.operation.signal, context.stop]) }
+      : context.operation;
+  const pressureSignal = operation?.signal ?? context.stop;
+  const deadlineStopped = (error: unknown) =>
+    !isClaimUnavailable(error) && context.stop?.aborted && !context.operation?.signal.aborted;
   const now = Date.now();
   const key = context.level === 'critical' ? 'cargo critical' : 'cargo high';
   const last = lastRanAt(context, key);
@@ -527,47 +534,64 @@ async function cargoTargetsStep(context: RungContext): Promise<void> {
   if (!(await context.stillShort())) return;
   const protectedRoot = context.protectedRoot ? (canonicalOrNull(context.protectedRoot) ?? '') : '';
   const sweep = async () => {
-    const plan = await planCargoTargetsAtPressure({
-      settings: context.settings,
-      pinned: maintenancePinnedReader(context.operation),
-      now,
-      signal: context.operation?.signal,
-      ...(context.force ? { level: context.level } : {}),
-      ...(context.operation ? { operation: context.operation } : {}),
-      ...(context.volume === undefined
-        ? {}
-        : {
-            diskLevel: async (dir: string, signal?: AbortSignal) => {
-              const measured = await measuredDiskLevel(dir, signal);
-              return measured === 'normal' ? context.level : measured;
-            },
-          }),
-    });
+    let plan;
+    try {
+      plan = await planCargoTargetsAtPressure({
+        settings: context.settings,
+        pinned: maintenancePinnedReader(operation),
+        now,
+        signal: pressureSignal,
+        ...(context.force ? { level: context.level } : {}),
+        ...(operation ? { operation } : {}),
+        ...(context.volume === undefined
+          ? {}
+          : {
+              diskLevel: async (dir: string, signal?: AbortSignal) => {
+                const measured = await measuredDiskLevel(dir, signal);
+                return measured === 'normal' ? context.level : measured;
+              },
+            }),
+      });
+    } catch (error) {
+      if (deadlineStopped(error)) return;
+      throw error;
+    }
     for (const action of largestFirst(plan.actions)) {
+      if (context.stop?.aborted) return;
       const workspace = action.workspace ? canonicalOrNull(action.workspace) : null;
       if (protectedRoot && (workspace === protectedRoot || action.target.startsWith(`${protectedRoot}${sep}`)))
         continue;
       if (!onShort(context, [action.target])) continue;
       if (!(await context.stillShort())) return;
       // @ref LLP 0001#the-ladder-runs-by-yield -- a larger target's trim may already have cleared this one's volume
-      if (
-        context.volume === undefined &&
-        (await measuredDiskLevel(action.target, context.operation?.signal)) === 'normal'
-      )
+      if (context.volume === undefined && (await measuredDiskLevel(action.target, pressureSignal)) === 'normal')
         continue;
       if (context.act) triedAt.set(action.target, Date.now());
-      await run(context, action);
+      try {
+        await run({ ...context, operation }, action);
+      } catch (error) {
+        if (deadlineStopped(error)) return;
+        throw error;
+      }
     }
   };
   if (!context.force) await sweep();
   if (
     context.act &&
+    !context.stop?.aborted &&
     context.level === 'high' &&
     (await context.stillShort()) &&
     (context.force || (await context.remeasure()).disk === 'high')
   ) {
-    await refreshCargoHolderMarks(context.config, context);
-    await sweep();
+    try {
+      await refreshCargoHolderMarks(context.config, { ...context, operation }, async () =>
+        pressureSignal?.throwIfAborted(),
+      );
+    } catch (error) {
+      if (deadlineStopped(error)) return;
+      throw error;
+    }
+    if (!context.stop?.aborted) await sweep();
   }
   ranAt(context, key, now);
 }

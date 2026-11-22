@@ -1,9 +1,10 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import {
   diskUsageCacheFile,
+  gcMarkFile,
   maintenanceStateFile,
   readDiskUsage,
   readJsonObject,
@@ -24,6 +25,7 @@ import { runMaintenanceAtLevel } from '../stimd/passes/level-run.ts';
 import { runMaintenance } from '../stimd/passes/run.ts';
 import * as measurements from '../stimd/passes/measure.ts';
 import { maintenanceStatus } from '../stimd/passes/status.ts';
+import * as marks from '../daemon/marks.ts';
 import { markWriter } from '../daemon/marks.ts';
 import { saveConfig, upsertProject, loadConfig } from '../workspace/config.ts';
 import { scanSourceWrites } from '../workspace/discovered-activity.ts';
@@ -174,6 +176,51 @@ test('at the high disk level the size scan runs under the same load that defers 
   expect(measurements.measureSizes).toHaveBeenCalledTimes(1);
   expect(readMaintenanceState()?.lastAt.size).toEqual(expect.any(Number));
   expect(maintenanceStatus().deferred?.map(({ check }) => check) ?? []).not.toContain('size');
+});
+
+test('the automatic Cargo cap keeps normal rules while its disk is critical', async () => {
+  vi.stubEnv('STIM_MAINTENANCE_CARGO_TARGET_MAX_GB', '100');
+  rmSync(gcMarkFile(dirname(target)));
+  vi.spyOn(budget, 'readVolumeSpaceAsync').mockResolvedValue([{ volume: '/', freeMb: 0 }]);
+  await runMaintenance('test');
+  expect(readMaintenanceState()?.plan.filter((action) => action.target === target)).toEqual([]);
+  expect(existsSync(join(target, 'debug', 'incremental', 'data'))).toBe(true);
+});
+
+test('acting forced critical leaves an unmarked under-cap running target whole', async () => {
+  vi.stubEnv('STIM_MAINTENANCE_CARGO_TARGET_MAX_GB', '100');
+  const root = dirname(target);
+  rmSync(gcMarkFile(root));
+  upsertProject(root, { supervisor: { pid: process.pid, port: 59998 } });
+  const run = await runMaintenanceAtLevel({ level: 'critical', act: true });
+  expect(existsSync(join(target, 'debug', 'incremental', 'data'))).toBe(true);
+  expect(run.actions.filter((action) => action.kind === 'trim-cargo' && action.outcome === 'done')).toEqual([]);
+});
+
+test('Cargo planning authorizes one batch and execution reads only its selected mark', async () => {
+  const first = dirname(target);
+  const other = join(base, 'other-cargo');
+  cpSync(first, other, { recursive: true });
+  upsertProject(other, { metroPort: null });
+  const config = loadConfig();
+  if (!config) throw new Error('missing fixture config');
+  await markWriter(config)({ path: other, at: Date.now(), lastActivityAt: null, kept: null });
+  const batch = vi.spyOn(marks, 'outputMarks');
+  const selected = vi.spyOn(marks, 'outputMark');
+  const plan = await planCargoTargetsAtPressure({
+    settings: resolveMaintenanceSettings(),
+    pinned: () => false,
+    now: Date.now(),
+    level: 'critical',
+  });
+  expect(plan.actions).toHaveLength(2);
+  expect(batch).toHaveBeenCalledTimes(1);
+  expect(selected).not.toHaveBeenCalled();
+  const action = plan.actions[0];
+  if (!action) throw new Error('missing pressure action');
+  await trimCargoTargetAction(action);
+  expect(batch).toHaveBeenCalledTimes(1);
+  expect(selected).toHaveBeenCalledExactlyOnceWith(config, dirname(action.target), undefined);
 });
 
 test('pressure plans retain their local mark proof and keep a copied or superseded action', async () => {
