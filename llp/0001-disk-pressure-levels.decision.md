@@ -533,6 +533,20 @@ also holds the newest activity the walk read, and the walk reads at
   brought forward so high-pressure refresh does not invent a temporary TTL.
   The normal lane still walks hourly and publishes due marks; a normal
   mark-first sweep scheduler is pending the generation/lane integration.
+- The passes worker's existing history batch also observes mark freshness.
+  Mark files are read once through bounded asynchronous reads and the same
+  parser and scope policy the sweep uses. Invalid legacy or torn records
+  still contribute no sweep candidate, and make diagnostic coverage partial.
+  Missing, failed or timed-out inventory is unavailable, never a zero count.
+  The owning daemon saves a small aggregate and at most five positively scoped
+  overdue roots in its existing snapshot. `stim doctor` warns for those marks
+  only when they were more than twice the effective generation interval old at
+  the observation time. The effective interval is at least hourly, matching
+  the normal lane writer cadence; partial coverage omits totals. Definite
+  exclusions when discovery has no routes do not make coverage partial.
+  Other unproved routes remain conservative and omit totals. An observation older
+  than the daemon's existing three-interval late-tick limit is unavailable.
+  Reporting starts no discovery or size walk on the socket or doctor path.
 - The writer also recognizes untagged Cargo targets by the existing Cargo
   manifest/profile rules and marks targets in the holder's `apps/` and
   `packages/` children. The normal lane reads actual Git holders reached by
