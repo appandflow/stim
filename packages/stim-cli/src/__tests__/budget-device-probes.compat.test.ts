@@ -35,10 +35,12 @@ test('async owned AVD and activity reads accept real emulator/adb/ps output on t
   const devices = await listAdbDevicesAsync();
   expect(devices.emulators.some((device) => device.serial === serial)).toBe(true);
   const name = await getAvdNameForSerialAsync(serial);
-  assert(name, 'The validation emulator must answer its AVD name.');
+  assert(name, 'The emulator did not report its AVD name. Use the private HOME in docs/testing.md.');
   expect(await listAvdsAsync()).toContain(name);
   const resolve = ownedAvdSerialResolverAsync({ timeoutMs: 10000 });
-  expect(await resolve(name)).toEqual({ serial });
+  expect(await resolve(name), 'Start the fixture through Stim with the private HOME in docs/testing.md.').toEqual({
+    serial,
+  });
   expect(await resolve(name)).toEqual({ serial });
   const home = mkdtempSync(join(tmpdir(), 'stim-native-activity-'));
   try {

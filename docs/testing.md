@@ -65,9 +65,17 @@ local fixture process and does not drive a simulator. Missing source fails this
 stage and never affects unit discovery. The hosted Android daemon probe requires
 agent-device 0.21.30 or later installed at the host's fixed binary location
 (or `STIM_AGENT_DEVICE_BIN`) and `STIM_AGENT_DEVICE_ANDROID_SERIAL` naming a
-booted emulator created and owned exclusively by this validation. It starts a
-private real daemon, verifies its policy digest, backend, filtered inventory and
-refusals for foreign serials, unsafe commands, shutdown and batch steps. It stops
+booted emulator created and owned exclusively by this validation. Use a short
+absolute temporary directory for `TMPDIR`. Launch the fixture through Stim with
+`HOME` set to `$TMPDIR/home` and use `$TMPDIR/home/.stim` for its Stim state.
+Run the compatibility suite with the same `TMPDIR`, `ANDROID_HOME`,
+`ANDROID_AVD_HOME` and ADB server settings. The workers use `$TMPDIR/home` to
+read the fixture's emulator-console token and Stim ownership ledger. If the
+machine already has a shared ADB server, run a dedicated one for the fixture on
+an unused loopback port and pass `ANDROID_ADB_SERVER_PORT` to both the fixture
+and the suite. The hosted probe starts a private real daemon and verifies its
+policy digest, backend, filtered inventory and refusals for foreign serials,
+unsafe commands, shutdown and batch steps. It stops
 the daemon and its fixed helpers only on that serial. It does not create or
 delete the emulator; retain the validation fixture record and clean it through
 centralized Stim teardown. Missing binary, serial, adb or emulator fails the
@@ -76,7 +84,8 @@ The hosted command probe uses the same agent-device binary. It reads
 `agent-device help commands` and `agent-device help <command>` and fails when a
 command is neither a hosted device command nor refused with a reason, when a
 hosted command is missing from the catalog, or when a hosted command's flags
-differ from the committed classification. It starts no daemon or device.
+include unclassified flags or omit a flag Stim allows. It starts no daemon or
+device.
 It builds generated scratch projects, signs temporary apps ad hoc, decodes
 fixture provisioning profiles, reads signing identities, and queries devices and
 processes through `devicectl`. It launches the installed Chrome headless with a

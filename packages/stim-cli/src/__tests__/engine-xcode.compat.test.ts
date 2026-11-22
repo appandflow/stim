@@ -382,7 +382,7 @@ describe('buildIos against a real xcodebuild', { timeout: 180_000 }, () => {
     120_000,
   );
 
-  test('builds the device slice for real: -sdk iphoneos lands the .app in Debug-iphoneos', async () => {
+  test('real generic iOS destination builds the device .app in Debug-iphoneos', async () => {
     resetExecutor();
     writeScratchProject(tmp);
     const logFile = join(workspaceLogsDir(tmp), 'build-ios-device.ndjson');
@@ -403,8 +403,8 @@ describe('buildIos against a real xcodebuild', { timeout: 180_000 }, () => {
     expect(result.bundleId).toBe('com.stimcli.scratch');
 
     const records = parseNdjsonText(readFileSync(logFile, 'utf-8'));
-    expect(records[0]?.msg).toMatch(/ -sdk iphoneos /);
     expect(records[0]?.msg).toMatch(/ -destination generic\/platform=iOS /);
+    expect(records[0]?.msg).not.toMatch(/ -sdk /);
     expect(records[0]?.msg).not.toMatch(/allowProvisioningUpdates|DEVELOPMENT_TEAM|CODE_SIGN_IDENTITY/);
     expect(records.some((r) => r.msg?.includes('BUILD SUCCEEDED'))).toBeTruthy();
   }, 180_000);

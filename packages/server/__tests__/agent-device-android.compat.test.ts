@@ -10,6 +10,7 @@ import { adbPath } from '../src/frame-helper.ts';
 
 declare module 'vitest' {
   export interface ProvidedContext {
+    agentDeviceBin: string;
     agentDeviceAndroidSerial: string;
   }
 }
@@ -25,12 +26,12 @@ test('the real Android daemon enforces serial inventory, commands and shutdown p
     killSignal: 'SIGKILL',
   });
   const avdName = stdout.split('\n')[0]!.trim();
+  if (!avdName) throw new Error('The emulator did not report its AVD name. Use the private HOME in docs/testing.md.');
   const home = mkdtempSync(join(tmpdir(), 'stim-android-agent-compat-'));
-  process.env.STIM_HOME = home;
   const session = '11111111-1111-4111-8111-111111111111';
   const stateDir = join(home, 'agent');
   const driver = new AgentDeviceDriver({
-    env: process.env,
+    env: { ...process.env, STIM_HOME: home, STIM_AGENT_DEVICE_BIN: inject('agentDeviceBin') },
     stateDir,
     claimRoot: join(home, 'claims'),
     host: createAgentDriverHost({ stateDir, claimRoot: join(home, 'claims') }),
@@ -83,7 +84,6 @@ test('the real Android daemon enforces serial inventory, commands and shutdown p
     try {
       await driver.stop();
     } finally {
-      delete process.env.STIM_HOME;
       rmSync(home, { recursive: true, force: true });
     }
   }
