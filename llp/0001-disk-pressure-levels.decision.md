@@ -736,10 +736,15 @@ also holds the newest activity the walk read, and the walk reads at
   and targeted current scope, membership, path/device, Git role/lock,
   pin, activity and warm checks. They discover no dependency candidates,
   measure no new sizes and delete nothing. Missing, due or dirty evidence
-  is reported as unknown. Source sharing with other linked worktrees stays
-  explicitly unknown: the pressure report does not scan those worktrees for
-  dependency symlinks. Restoring that detail from current targeted evidence
-  remains required. Explicit read-only dry runs retain discovery previews.
+  is reported as unknown. For a validated source dependency, the current Git
+  worktree list supplies fixed matching dependency-link locations. A current
+  direct link into that saved path reports its borrower. One supervised Node
+  query uses native canonical paths, with a three-second command timeout and
+  at most 64 total candidate–borrower locations per source; its JSON input is capped at 64 KiB.
+  No recursive listing or size walk runs, and an optional stalled lookup does
+  not occupy the passes isolate's shared filesystem-read slot. A negative, changed, deeper, inaccessible or timed-out
+  link remains sharing-unknown, never evidence that the source is unshared.
+  Explicit read-only dry runs retain discovery previews.
   Normal dependency deletion and its thresholds are unchanged.
 - The scheduled normal worktree inventory also publishes an optional section,
   preserving actual clean/dirty facts separately from archive eligibility,
