@@ -42,6 +42,7 @@ import { measureSizes } from '../stimd/passes/measure.ts';
 import { executeAction } from '../stimd/passes/act.ts';
 import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
 import { runStimd } from '../stimd/main.ts';
+import * as diskPasses from '../daemon/passes.ts';
 import * as stages from '../daemon/stages.ts';
 import * as markRefresh from '../daemon/mark-refresh.ts';
 import { pendingDormant } from '../daemon/stages.ts';
@@ -558,6 +559,139 @@ describe('the disk owner', () => {
 describe.skipIf(process.platform === 'win32')(
   'a running stim-daemon (skipped on win32, where Stim runs no daemon)',
   () => {
+    test('predictive cleanup uses the actual quiet cadence while measured pressure remains normal', async () => {
+      quietWorkspace();
+      vi.stubEnv('STIM_DISK_MIN_FREE_GB', '1');
+      vi.stubEnv('STIM_DISK_CRITICAL_FREE_GB', '0');
+      vi.stubEnv('STIM_DISK_HARD_FLOOR_GB', '0');
+      const read = vi.mocked(measure.measureTick).getMockImplementation();
+      if (!read) throw new Error('missing measurement fixture');
+      vi.mocked(measure.measureTick).mockImplementation(async (...args) => {
+        const measured = await read(...args);
+        measured.measurement.disk = [{ volume: '/', device: 1, freeMb }];
+        return measured;
+      });
+      vi.mocked(measure.measureDisk).mockImplementation(async () => [{ volume: '/', device: 1, freeMb }]);
+      const disk = vi.spyOn(diskPasses, 'runDiskPass');
+      freeMb = 8 * 1024;
+      const daemon = runStimd({ mode: 'on' });
+      try {
+        await vi.advanceTimersByTimeAsync(MINUTE_MS);
+        await vi.waitFor(() => expect(ticks()).toHaveLength(1));
+        expect(readDaemonSnapshot()?.intervalMs).toBe(5 * MINUTE_MS);
+        freeMb = 5 * 1024;
+        await vi.advanceTimersByTimeAsync(5 * MINUTE_MS);
+        await vi.waitFor(() => expect(ticks()).toHaveLength(2));
+        expect(disk).not.toHaveBeenCalled();
+        freeMb = 2 * 1024;
+        await vi.advanceTimersByTimeAsync(5 * MINUTE_MS);
+        await vi.waitFor(() => expect(ticks()).toHaveLength(3));
+        const targets = disk.mock.calls.flatMap(([input]) => (input.target ? [input.target] : []));
+        expect(targets).toHaveLength(1);
+        expect(targets[0]?.device).toBe(1);
+        expect(targets[0]?.freeMb).toBeCloseTo(4 * 1024, 0);
+        expect(readDaemonSnapshot()).toMatchObject({
+          pressure: { level: 'normal', disk: 'normal' },
+          intervalMs: 5 * MINUTE_MS,
+        });
+      } finally {
+        process.emit('SIGTERM', 'SIGTERM');
+        await daemon;
+      }
+    });
+
+    test('real critical after predictive admission runs the normal scheduler immediately at critical rank', async () => {
+      quietWorkspace();
+      vi.stubEnv('STIM_DISK_MIN_FREE_GB', '1');
+      vi.stubEnv('STIM_DISK_CRITICAL_FREE_GB', '0.75');
+      vi.stubEnv('STIM_DISK_HARD_FLOOR_GB', '0');
+      const read = vi.mocked(measure.measureTick).getMockImplementation();
+      if (!read) throw new Error('missing measurement fixture');
+      vi.mocked(measure.measureTick).mockImplementation(async (...args) => {
+        const measured = await read(...args);
+        measured.measurement.disk = [{ volume: '/', device: 1, freeMb }];
+        return measured;
+      });
+      vi.mocked(measure.measureDisk).mockImplementation(async () => [{ volume: '/', device: 1, freeMb }]);
+      const real = diskPasses.runDiskPass;
+      const disk = vi.spyOn(diskPasses, 'runDiskPass').mockImplementation(async (input, ...args) => {
+        if (input.target) {
+          freeMb = 512;
+          return {
+            actions: [],
+            pressure: {
+              level: 'critical',
+              disk: 'critical',
+              memory: 'normal',
+              reasons: ['current device is critical'],
+              memoryWarningSince: null,
+            },
+          };
+        }
+        return real(input, ...args);
+      });
+      const owner = await import('../daemon/disk-owner.ts');
+      const granted = vi.spyOn(owner, 'acquireDisk');
+      freeMb = 8 * 1024;
+      const daemon = runStimd({ mode: 'on' });
+      try {
+        await vi.advanceTimersByTimeAsync(MINUTE_MS);
+        await vi.waitFor(() => expect(ticks()).toHaveLength(1));
+        freeMb = 5 * 1024;
+        await vi.advanceTimersByTimeAsync(5 * MINUTE_MS);
+        await vi.waitFor(() => expect(ticks()).toHaveLength(2));
+        freeMb = 2 * 1024;
+        await vi.advanceTimersByTimeAsync(5 * MINUTE_MS);
+        await vi.waitFor(() => expect(ticks().length).toBeGreaterThanOrEqual(4));
+        expect(disk.mock.calls.map(([input]) => Boolean(input.target))).toEqual([true, false]);
+        expect(granted).toHaveBeenCalledWith(owner.CRITICAL);
+        expect((ticks()[3]?.at ?? Infinity) - (ticks()[2]?.at ?? 0)).toBeLessThan(MINUTE_MS);
+        expect(readDaemonSnapshot()).toMatchObject({ pressure: { disk: 'critical' }, intervalMs: MINUTE_MS });
+      } finally {
+        process.emit('SIGTERM', 'SIGTERM');
+        await daemon;
+      }
+    });
+
+    test('real pressure on the second empty tick survives idle shutdown until the critical turn', async () => {
+      saveConfig({ version: 2, projects: {}, repos: {}, idle: { dormantDays: 0 } });
+      vi.stubEnv('STIM_DISK_MIN_FREE_GB', '1');
+      vi.stubEnv('STIM_DISK_CRITICAL_FREE_GB', '0.75');
+      vi.stubEnv('STIM_DISK_HARD_FLOOR_GB', '0');
+      const read = vi.mocked(measure.measureTick).getMockImplementation();
+      if (!read) throw new Error('missing measurement fixture');
+      vi.mocked(measure.measureTick).mockImplementation(async (...args) => {
+        const measured = await read(...args);
+        measured.measurement.disk = [{ volume: '/', device: 1, freeMb }];
+        return measured;
+      });
+      vi.mocked(measure.measureDisk).mockImplementation(async () => [{ volume: '/', device: 1, freeMb }]);
+      const real = diskPasses.runDiskPass;
+      const disk = vi.spyOn(diskPasses, 'runDiskPass').mockImplementation(async (input, ...args) => {
+        if (!input.target) return real(input, ...args);
+        freeMb = 512;
+        return {
+          actions: [],
+          pressure: { level: 'critical', disk: 'critical', memory: 'normal', reasons: [], memoryWarningSince: null },
+        };
+      });
+      const owner = await import('../daemon/disk-owner.ts');
+      const granted = vi.spyOn(owner, 'acquireDisk');
+      freeMb = 5 * 1024;
+      const daemon = runStimd({ mode: 'on' });
+      try {
+        await vi.advanceTimersByTimeAsync(MINUTE_MS);
+        await vi.waitFor(() => expect(ticks()).toHaveLength(1));
+        freeMb = 2 * 1024;
+        await vi.advanceTimersByTimeAsync(5 * MINUTE_MS);
+        await vi.waitFor(() => expect(disk.mock.calls.map(([input]) => Boolean(input.target))).toEqual([true, false]));
+        expect(granted).toHaveBeenCalledWith(owner.CRITICAL);
+      } finally {
+        process.emit('SIGTERM', 'SIGTERM');
+        await daemon;
+      }
+    });
+
     test('a quiet home with a workspace not yet dormant keeps the daemon at the 5-minute cadence until dormancy, then it exits two slow ticks later', async () => {
       saveConfig({ version: 2, projects: {}, repos: {}, idle: { dormantDays: 0.01 } });
       const root = join(home, 'app');
