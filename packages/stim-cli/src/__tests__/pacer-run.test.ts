@@ -84,7 +84,7 @@ test.each([minute, 5 * minute])(
         pressure: normal,
         requested: false,
         act: true,
-        target: { device: 1, freeMb: 1024 + (3 * 1024 * intervalMs) / minute },
+        target: { device: 1, freeMb: 1024 + (3 * 1024 * intervalMs) / minute, observedAt: Date.now() },
       }),
     );
     expect(result.pressure).toEqual(normal);

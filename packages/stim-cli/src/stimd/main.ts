@@ -2467,6 +2467,7 @@ async function runStimdInner(
         pacer: diskPacer,
         passes,
         intervalMs: interval,
+        pending,
         act: mode === 'on',
         diskPass,
         log,
@@ -2474,6 +2475,7 @@ async function runStimdInner(
       pressure = prediction.pressure;
       passes.pressure = pressure;
       interval = prediction.intervalMs;
+      pending = prediction.pending;
       logKeptWorkspaces(kept, workspaces, log);
       const tickAt = new Date(now).toISOString();
       const taken = [

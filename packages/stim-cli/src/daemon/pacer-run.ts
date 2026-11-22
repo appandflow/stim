@@ -9,6 +9,7 @@ export async function runDiskPacer({
   pacer,
   passes,
   intervalMs,
+  pending = null,
   act,
   diskPass,
   log,
@@ -16,10 +17,16 @@ export async function runDiskPacer({
   pacer: ReturnType<typeof createDiskPacer>;
   passes: HomePasses;
   intervalMs: number;
+  pending?: string | null;
   act: boolean;
   diskPass?: (input: DiskPassInput) => Promise<DiskPassResult>;
   log: IdlePassInput['log'];
-}): Promise<{ pressure: HomePasses['pressure']; intervalMs: number; status: DiskPacerVolume[] }> {
+}): Promise<{
+  pressure: HomePasses['pressure'];
+  intervalMs: number;
+  pending: string | null;
+  status: DiskPacerVolume[];
+}> {
   const { config, measured, now, operation } = passes;
   const { thresholds } = diskThresholds(config, operation.env);
   pacer.observe(
@@ -42,7 +49,7 @@ export async function runDiskPacer({
           devices: measured.devices,
           sims: measured.sims,
           requested: false,
-          target: { device: target.device, freeMb: target.freeMb },
+          target: { device: target.device, freeMb: target.freeMb, observedAt: now },
         });
         passes.actions.push(...result.actions);
         for (const point of result.firstFree ?? [])
@@ -52,6 +59,7 @@ export async function runDiskPacer({
         if (pressure.level !== 'normal') {
           pacer.endPredictive();
           intervalMs = 0;
+          pending = 'measured pressure awaits its cleanup turn';
           break;
         }
         if (attempt?.admittedAt !== undefined && attempt.freeMb !== null && attempt.freeMb < attempt.targetFreeMb)
@@ -80,5 +88,5 @@ export async function runDiskPacer({
     const volume = measured.measurement.disk.find(({ device }) => device === entry.device);
     return volume ? [{ ...entry, volume: volume.volume }] : [];
   });
-  return { pressure, intervalMs, status };
+  return { pressure, intervalMs, pending, status };
 }

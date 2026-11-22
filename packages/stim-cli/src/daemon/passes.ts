@@ -1,3 +1,4 @@
+import { PREDICTION_WINDOW_MS } from './pacer.ts';
 import { keepReserve } from '../disk-reserve.ts';
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
@@ -29,7 +30,7 @@ import type { OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { classifyPressure, diskPressure, diskThresholds, shortVolumeDevices, type DiskThresholds } from './pressure.ts';
 import { onShortVolume } from '../stimd/passes/unowned.ts';
 import { dormantAfterMs, runDormantPass, sourceDormantAfterMs } from './stages.ts';
-import { acquireDisk, CRITICAL, HARD_FLOOR, joinablePass, LADDER, LANE } from './disk-owner.ts';
+import { acquireDisk, CRITICAL, HARD_FLOOR, joinablePass, LADDER, LADDER_CLOCK_SLOTS, LANE } from './disk-owner.ts';
 import { ladderRun } from '../stimd/passes/ladder-run.ts';
 import type { LevelRunAction } from '../stimd/passes/level-run.ts';
 
@@ -38,6 +39,7 @@ const LADDER_PACE_MAX_MS = 15 * 60_000;
 const LADDER_PACE_DISK_DROP_MB = 1024;
 const LADDER_PACE_SHORT_DROP_MB = 256;
 const LADDER_CRITICAL_WAIT_MS = 60_000;
+const predictiveClocks = new Map<number, BigInt64Array>();
 const RANK: Record<PressureLevel, number> = { normal: 0, high: 1, critical: 2 };
 
 /** What the tick hands the disk owner for one ladder pass; every field crosses to the passes thread. */
@@ -48,7 +50,7 @@ export interface DiskPassInput {
   sims: TickMeasurement['sims'];
   /** A command at the hard floor asked for this tick, so the pass goes first. */
   requested: boolean;
-  target?: { device: number; freeMb: number };
+  target?: { device: number; freeMb: number; observedAt: number };
 }
 
 export interface DiskPassResult {
@@ -112,7 +114,11 @@ export async function runDiskPass(
       warningSince = pressure.memoryWarningSince;
       return pressure;
     });
-    const available = () => latestDisk.find(({ device }) => device === input.target?.device)?.freeMb ?? null;
+    let forecastExpired = false;
+    const expired = () => input.target !== undefined && Date.now() - input.target.observedAt >= PREDICTION_WINDOW_MS;
+    const available = () =>
+      forecastExpired ? null : (latestDisk.find(({ device }) => device === input.target?.device)?.freeMb ?? null);
+    let passClocks = clocks;
     const firstFree = new Map<number, number>();
     let admittedAt: number | undefined;
     let pressure = input.pressure;
@@ -128,10 +134,18 @@ export async function runDiskPass(
         : undefined;
     if (input.target) {
       pressure = await remeasure();
+      forecastExpired = expired();
+      for (const device of predictiveClocks.keys())
+        if (!latestDisk.some((reading) => reading.device === device)) predictiveClocks.delete(device);
       const freeMb = available();
       if (pressure.level !== 'normal' || freeMb === null || freeMb >= input.target.freeMb)
         return { actions: [], pressure, predictive: predictive() };
       if (input.act) admittedAt = Date.now();
+      passClocks = predictiveClocks.get(input.target.device);
+      if (!passClocks) {
+        passClocks = new BigInt64Array(Object.keys(LADDER_CLOCK_SLOTS).length);
+        predictiveClocks.set(input.target.device, passClocks);
+      }
     }
     const pass = runLadder(
       {
@@ -143,7 +157,12 @@ export async function runDiskPass(
         simsFailed: input.sims === null,
         operation,
         only: 'disk',
-        between: turn.boundary,
+        between: input.target
+          ? async () => {
+              await turn.boundary();
+              forecastExpired = expired();
+            }
+          : turn.boundary,
         ...(input.act
           ? {
               firstFree: {
@@ -155,7 +174,7 @@ export async function runDiskPass(
             }
           : {}),
         ...(input.target ? { target: { ...input.target, available }, lastRung: 8 } : {}),
-        ...(clocks ? { clocks } : {}),
+        ...(passClocks ? { clocks: passClocks } : {}),
         remeasure,
       },
       pressure,

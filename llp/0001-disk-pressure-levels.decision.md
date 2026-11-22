@@ -60,6 +60,10 @@ cleanup on that device toward `disk.minFreeGb + fill rate × lead time`. Lead
 time is the last sweep's first measured positive free-space delta plus the
 actual next tick interval (one minute active, five minutes quiet); before a
 successful observation it is one tick. Flat or recovering volumes start none.
+At least 60 seconds of elapsed samples are required; a wall-clock minute
+boundary alone supplies no admission evidence. Forecasts expire after five
+minutes, checked on grant and between resumed candidates. Predictive Cargo
+retry clocks are per device and independent of measured-pressure clocks.
 Measured pressure stays normal. Real pressure stops predictive work, then the
 ordinary scheduler acquires the appropriate turn immediately. Prediction never
 runs rung 9, changes build refusals, or replaces manual pressure policy.

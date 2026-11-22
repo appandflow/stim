@@ -1,3 +1,5 @@
+import { testContext } from './_context.ts';
+import { LADDER_CLOCK_SLOTS } from '../daemon/disk-owner.ts';
 import { execFileSync } from 'node:child_process';
 import {
   cpSync,
@@ -21,6 +23,7 @@ import {
   readJsonObject,
   readMaintenanceState,
   type MaintenanceState,
+  type DaemonPressure,
 } from '@stim-cli/core/state';
 import { writeCacheFile } from '../cache-file.ts';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
@@ -414,5 +417,51 @@ test.each(['measured healthy', 'new pressure pin', 'forced healthy', 'new cap pi
       change === 'forced healthy',
     );
     expect(readFileSync(gcMarkFile(dirname(target)), 'utf8')).toBe(before);
+  },
+);
+
+test.each(['predictive', 'measured high'] as const)(
+  'a predictive empty device does not suppress Cargo on another device: %s',
+  async (kind) => {
+    const device = statSync(target).dev;
+    let freeMb = 100 * 1024;
+    vi.spyOn(daemonMeasure, 'measureDisk').mockImplementation(async () => [
+      { volume: '/cargo', device, freeMb },
+      { volume: '/other', device: device + 1, freeMb: 100 * 1024 },
+    ]);
+    vi.spyOn(daemonMeasure, 'measureMemory').mockResolvedValue({
+      level: 'normal',
+      availableBytes: null,
+      totalBytes: 0,
+    });
+    vi.spyOn(budget, 'readVolumeSpaceAsync').mockImplementation(async () => [{ volume: '/cargo', device, freeMb }]);
+    const pressure: DaemonPressure = {
+      level: 'normal',
+      disk: 'normal',
+      memory: 'normal',
+      reasons: [],
+      memoryWarningSince: null,
+    };
+    const clocks = new BigInt64Array(Object.keys(LADDER_CLOCK_SLOTS).length);
+    const input = { act: true, pressure, devices: [], sims: [], requested: false };
+    await daemonPasses.runDiskPass(
+      { ...input, target: { device: device + 1, freeMb: 120 * 1024, observedAt: Date.now() } },
+      () => {},
+      testContext(),
+      clocks,
+    );
+    if (kind === 'measured high') freeMb = 30 * 1024;
+    await daemonPasses.runDiskPass(
+      {
+        ...input,
+        ...(kind === 'predictive'
+          ? { target: { device, freeMb: 120 * 1024, observedAt: Date.now() } }
+          : { pressure: { ...pressure, level: 'high', disk: 'high' } }),
+      },
+      () => {},
+      testContext(),
+      clocks,
+    );
+    expect(existsSync(join(target, 'debug', 'incremental'))).toBe(false);
   },
 );

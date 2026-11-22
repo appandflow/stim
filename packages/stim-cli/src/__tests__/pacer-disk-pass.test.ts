@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { maintenanceDir } from '@stim-cli/core/state';
 import { keepReserve, releaseReserve } from '../disk-reserve.ts';
 import type { DaemonPressure } from '@stim-cli/core/state';
-import { acquireDisk, HARD_FLOOR, requestGcPass } from '../daemon/disk-owner.ts';
+import { acquireDisk, HARD_FLOOR, requestGcPass, requestGcItem, CRITICAL } from '../daemon/disk-owner.ts';
 import { runDiskPass, type DiskPassInput } from '../daemon/passes.ts';
 import * as ladder from '../daemon/ladder.ts';
 import * as measure from '../daemon/measure.ts';
@@ -47,7 +47,7 @@ const request = (): DiskPassInput => ({
   devices: [],
   sims: [],
   requested: false,
-  target: { device: 17, freeMb: 4 * 1024 },
+  target: { device: 17, freeMb: 4 * 1024, observedAt: Date.now() },
 });
 
 test('first-free elapsed starts before the queue wait and preserves only the first observed sample per device', async () => {
@@ -161,4 +161,33 @@ test('a predictive owner restores the reserve after queued manual cleanup is can
     finish();
     await Promise.allSettled([pass, canceled]);
   }
+});
+
+test('an expired queued forecast performs no predictive cleanup on grant', async () => {
+  const held = await acquireDisk(HARD_FLOOR);
+  const run = vi.spyOn(ladder, 'runLadder');
+  const pass = runDiskPass(request(), () => {}, testContext());
+  vi.advanceTimersByTime(5 * 60_000 + 1);
+  held.release();
+  try {
+    expect((await pass).predictive).not.toHaveProperty('admittedAt');
+    expect(run).not.toHaveBeenCalled();
+  } finally {
+    held.release();
+    await pass;
+  }
+});
+
+test('an expired forecast cannot authorize another candidate after resuming its turn', async () => {
+  vi.spyOn(ladder, 'runLadder').mockImplementation(async (input) => {
+    expect(input.target?.available()).toBe(freeMb);
+    const higher = requestGcItem(async () => {
+      vi.advanceTimersByTime(5 * 60_000 + 1);
+    }, CRITICAL);
+    await input.between?.();
+    await higher.result;
+    expect(input.target?.available()).toBeNull();
+    return { actions: [], pressure: normal };
+  });
+  await runDiskPass(request(), () => {}, testContext());
 });

@@ -1,7 +1,7 @@
 import { isJsonObject, type DiskPacerVolume, type PressureLevel } from '@stim-cli/core/state';
 
 const MINUTE_MS = 60_000;
-const WINDOW_MS = 5 * MINUTE_MS;
+export const PREDICTION_WINDOW_MS: number = 5 * MINUTE_MS;
 
 type Sample = { at: number; freeMb: number };
 interface Volume {
@@ -26,7 +26,7 @@ function fillRate(samples: readonly Sample[]): number | null {
   const first = samples[0];
   const last = samples.at(-1);
   if (!first || !last || last.at <= first.at) return null;
-  const at = Math.max(first.at, last.at - WINDOW_MS);
+  const at = Math.max(first.at, last.at - PREDICTION_WINDOW_MS);
   const next = samples[1];
   const freeMb =
     next && at > first.at
@@ -58,7 +58,7 @@ export function createDiskPacer(): DiskPacer {
         let volume = volumes.get(device);
         if (!volume) volumes.set(device, (volume = { samples: [], level }));
         volume.level = level;
-        while (volume.samples[1] && volume.samples[1].at <= at - WINDOW_MS) volume.samples.shift();
+        while (volume.samples[1] && volume.samples[1].at <= at - PREDICTION_WINDOW_MS) volume.samples.shift();
         const last = volume.samples.at(-1);
         const sample = { at, freeMb };
         if (last && Math.floor(last.at / MINUTE_MS) === Math.floor(at / MINUTE_MS))
@@ -131,7 +131,7 @@ export function createDiskPacer(): DiskPacer {
         }
         const rate = fillRate(volume.samples);
         const sample = volume.samples.at(-1);
-        if (!sample || rate === null || rate <= 0) {
+        if (!sample || rate === null || rate <= 0 || sample.at - (volume.samples[0]?.at ?? sample.at) < MINUTE_MS) {
           delete volume.predictive;
           continue;
         }

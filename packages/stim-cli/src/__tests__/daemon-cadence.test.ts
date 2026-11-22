@@ -571,6 +571,45 @@ describe.skipIf(process.platform === 'win32')(
       }
     });
 
+    test('real pressure on the second empty tick survives idle shutdown until the critical turn', async () => {
+      saveConfig({ version: 2, projects: {}, repos: {}, idle: { dormantDays: 0 } });
+      vi.stubEnv('STIM_DISK_MIN_FREE_GB', '1');
+      vi.stubEnv('STIM_DISK_CRITICAL_FREE_GB', '0.75');
+      vi.stubEnv('STIM_DISK_HARD_FLOOR_GB', '0');
+      const read = vi.mocked(measure.measureTick).getMockImplementation();
+      if (!read) throw new Error('missing measurement fixture');
+      vi.mocked(measure.measureTick).mockImplementation(async (...args) => {
+        const measured = await read(...args);
+        measured.measurement.disk = [{ volume: '/', device: 1, freeMb }];
+        return measured;
+      });
+      vi.mocked(measure.measureDisk).mockImplementation(async () => [{ volume: '/', device: 1, freeMb }]);
+      const real = diskPasses.runDiskPass;
+      const disk = vi.spyOn(diskPasses, 'runDiskPass').mockImplementation(async (input, ...args) => {
+        if (!input.target) return real(input, ...args);
+        freeMb = 512;
+        return {
+          actions: [],
+          pressure: { level: 'critical', disk: 'critical', memory: 'normal', reasons: [], memoryWarningSince: null },
+        };
+      });
+      const owner = await import('../daemon/disk-owner.ts');
+      const granted = vi.spyOn(owner, 'acquireDisk');
+      freeMb = 5 * 1024;
+      const daemon = runStimd({ mode: 'on' });
+      try {
+        await vi.advanceTimersByTimeAsync(MINUTE_MS);
+        await vi.waitFor(() => expect(ticks()).toHaveLength(1));
+        freeMb = 2 * 1024;
+        await vi.advanceTimersByTimeAsync(5 * MINUTE_MS);
+        await vi.waitFor(() => expect(disk.mock.calls.map(([input]) => Boolean(input.target))).toEqual([true, false]));
+        expect(granted).toHaveBeenCalledWith(owner.CRITICAL);
+      } finally {
+        process.emit('SIGTERM', 'SIGTERM');
+        await daemon;
+      }
+    });
+
     test('a quiet home with a workspace not yet dormant keeps the daemon at the 5-minute cadence until dormancy, then it exits two slow ticks later', async () => {
       saveConfig({ version: 2, projects: {}, repos: {}, idle: { dormantDays: 0.01 } });
       const root = join(home, 'app');

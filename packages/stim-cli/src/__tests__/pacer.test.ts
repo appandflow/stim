@@ -132,3 +132,11 @@ test.each(['rate recovers', 'measured high', 'disabled', 'prediction ends', 'can
     expect(pacer.status()[0]?.predictive).toBeUndefined();
   },
 );
+
+test.each([58_000, 63_000])('a short burst cannot authorize cleanup across a shifted minute: %d', (offset) => {
+  const pacer = createDiskPacer();
+  const at = Math.floor(Date.now() / minute) * minute + offset;
+  pacer.observe([read(1, 60 * 1024)], at);
+  pacer.observe([read(1, 58 * 1024)], at + 4000);
+  expect(pacer.targets(40 * 1024, minute)).toEqual([]);
+});
