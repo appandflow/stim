@@ -842,7 +842,9 @@ implementer of #5942 and its reviews, not by the maintainer.
 On macOS, one packaged `stim-fsevents` child of stimd replays filesystem
 history and then streams changed checkout roots. The watched roots come from
 current authorized marks, grouped by their recorded source device; newly
-unmarked roots are already due. A root-list change replaces the watch with a
+unmarked roots are already due. Scan-only roots whose current route cannot yet
+be proved stay outside this watch set until [#6093](https://github.com/appandflow/stim/issues/6093).
+A root-list change replaces the watch with a
 new generation. Output indexes belong only to that generation, and older
 output cannot index the replacement list or advance its checkpoint.
 
