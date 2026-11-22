@@ -730,7 +730,9 @@ export async function deleteCargoTarget(
   if (first.used.length) return keep(`a process uses ${first.used[0]}`);
   const app = dirname(target);
   if (isExactApp(app)) {
-    const staged = entriesOf(target)?.find((entry) => staging(entry.name));
+    const entries = entriesOf(target);
+    if (!entries) return keep(`${target} cannot be listed`);
+    const staged = entries.find((entry) => staging(entry.name));
     if (staged)
       return keep(
         `it holds ${staged.name} from an earlier Stim, which Exact's cleaner would remove with what it stages`,

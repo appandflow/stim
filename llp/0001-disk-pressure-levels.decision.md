@@ -52,6 +52,35 @@ raise to 20gb)", 2026-11-11, for `disk.criticalFreeGb`.
 Maintainer decision: "40gb for high sounds good too", 2026-11-11, for
 `disk.minFreeGb`. The 40 GB figure was proposed by the coordinator.
 
+## Predictive disk cleanup
+
+The daemon keeps five minutes of free-space readings per device in memory,
+coalesced by minute. A filling volume still measured normal can request high
+cleanup on that device toward `disk.minFreeGb + fill rate × lead time`. Lead
+time is the last sweep's first measured positive free-space delta plus the
+actual next tick interval (one minute active, five minutes quiet); before a
+successful observation it is one tick. Flat or recovering volumes start none.
+At least 60 seconds of elapsed samples are required; a wall-clock minute
+boundary alone supplies no admission evidence. Forecasts expire after five
+minutes, checked on grant and between resumed candidates. Predictive Cargo
+retry clocks are per device and independent of measured-pressure clocks.
+Measured pressure stays normal. Real pressure stops predictive work, then the
+ordinary scheduler acquires the appropriate turn immediately. Prediction never
+runs rung 9, changes build refusals, or replaces manual pressure policy.
+
+Learning currently uses completed saved-output removals and Cargo pressure
+trims. It pairs adjacent same-device free-space probes before a candidate
+handoff, after its claims, child and locks settle. The first positive delta per
+device/pass includes queue wait and probe time. Unknown devices, failed or
+kept actions, pending trash estimates and another owner's later free space do
+not train it. Uninstrumented cleanup can make the learned lead conservative.
+Rates and timing disappear when the daemon exits or a volume disappears.
+
+Status reports each volume's fill rate. Doctor reports an hour-long predictive
+episode only after admitted cleanup and fresh measurements still below its
+target; clearing the target or ending prediction resets that evidence. This
+adds no timeout, refusal or setting.
+
 ## What each level deletes
 
 Each level includes the ones below it.
@@ -565,6 +594,19 @@ also holds the newest activity the walk read, and the walk reads at
   high sweep checks the latest disk level before refreshing, so a transition
   to critical skips the refresh. Daemon report mode uses known marks without
   deleting or updating them; explicit dry runs retain discovery previews.
+- The automatic normal dormant pass uses its due-refreshed marks for
+  non-Cargo build-output candidates instead of enumerating those outputs
+  again. Missing, due or uncertain saved evidence keeps that family's outputs.
+  Only selected checkouts read marks, at their disk-turn boundaries; an
+  inaccessible unrelated registration does not stop healthy normal work.
+  Current root and output identities/devices, scope, recognition and Git
+  protections are checked before measurement and under the existing native-run
+  and metro-start claims, together with the full current idle/pin/use checks.
+  The current mark's due state and candidate device are checked again there,
+  including after measurement or a yield.
+  A saved path whose recognition changed stays without finding a replacement.
+  The shared normal checkout/dependency inventory, normal Cargo discovery and
+  policy, whole-worktree removal and explicit discovery previews are unchanged.
   A removal exception remains a failed rung, as before; accounting for bytes
   removed before a later removal failed is an existing separate limitation. Registered
   roots without marks are reported; unmarked discovered roots are not listed

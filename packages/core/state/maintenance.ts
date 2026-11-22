@@ -1,6 +1,6 @@
 import { readJsonObject, isJsonObject } from './json-file.ts';
 import { maintenanceStateFile } from './paths.ts';
-import type { GcHistoryStatus } from './daemon.ts';
+import type { DiskPacerVolume, GcHistoryStatus } from './daemon.ts';
 import type { NdjsonRecord } from './ndjson.ts';
 
 export type MaintenanceMode = 'off' | 'report' | 'on';
@@ -157,6 +157,7 @@ export interface CleanupQueueStatus {
 }
 
 export interface MaintenanceStatus {
+  diskPacer?: DiskPacerVolume[];
   /** Items moved aside whose estimated disk bytes have not yet been reclaimed. */
   pendingDelete?: { count: number; bytes: number };
   mode: MaintenanceMode;
