@@ -2023,12 +2023,13 @@ RULES
     with the time in it, or stopped.
 
   maintenance { mode, lastChecks: { pressure, size, worktree, sweep }, pressure, sizes,
-                lastPass, running, queued?, deferred?, recent, plan, invalid?, history? }
+                lastPass, running, queued?, deferred?, recent, plan, invalid?, history?, diskPacer? }
     mode is off, report or on. Plan actions start with would-; the records
     of actions taken drop the prefix (clear-outputs, trim-cache, empty-cache,
     remove-worktree, remove-orphan, unregister-cache).
     deferred lists the checks host load is holding back, each with the epoch
     milliseconds it was first deferred; it is absent when none is.
+    diskPacer: fillMbPerSecond, firstFreeMs (null if unknown), predictive target/times.
     history is the last daemon tick's filesystem-change source: fsevents or
     fallback, with a reason for fallback. It does not prove the daemon is live.
     lastChecks are epoch milliseconds or null. running is the disk owner's

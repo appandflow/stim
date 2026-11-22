@@ -22,6 +22,7 @@ import { crashHoldRemedy } from '../stimd/crash-hold.ts';
 import { ownStoreEngine } from './engine-switch.ts';
 import { isStimDaemonClaim, legacyDaemonStop } from './legacy-daemon.ts';
 import { daemonMode, parseDaemonMode } from './mode.ts';
+import { diskPacerVolumes } from './pacer.ts';
 
 const DAY_MS = 86_400_000;
 
@@ -83,6 +84,7 @@ export function daemonStatus(env: NodeJS.ProcessEnv = process.env): DaemonStatus
     lastTickAt: snapshot?.tickAt ?? null,
     intervalMs: snapshot?.intervalMs ?? null,
     ...(holder && snapshot?.gcMarks ? { gcMarks: snapshot.gcMarks } : {}),
+    ...(holder && snapshot?.diskPacer ? { diskPacer: diskPacerVolumes(snapshot.diskPacer) } : {}),
     ...(snapshot?.pressure ? { pressure: snapshot.pressure } : {}),
     ...(waiting.length ? { waiting } : {}),
     ...(testWaiting.length ? { testWaiting } : {}),

@@ -1,3 +1,5 @@
+import { PREDICTION_WINDOW_MS } from './pacer.ts';
+import { keepReserve } from '../disk-reserve.ts';
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { LOG_ROTATE_BYTES, type StimContext } from '@stim-cli/core';
@@ -28,7 +30,7 @@ import type { OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { classifyPressure, diskPressure, diskThresholds, shortVolumeDevices, type DiskThresholds } from './pressure.ts';
 import { onShortVolume } from '../stimd/passes/unowned.ts';
 import { dormantAfterMs, runDormantPass, sourceDormantAfterMs } from './stages.ts';
-import { acquireDisk, CRITICAL, HARD_FLOOR, joinablePass, LADDER, LANE } from './disk-owner.ts';
+import { acquireDisk, CRITICAL, HARD_FLOOR, joinablePass, LADDER, LADDER_CLOCK_SLOTS, LANE } from './disk-owner.ts';
 import { ladderRun } from '../stimd/passes/ladder-run.ts';
 import type { LevelRunAction } from '../stimd/passes/level-run.ts';
 
@@ -37,6 +39,7 @@ const LADDER_PACE_MAX_MS = 15 * 60_000;
 const LADDER_PACE_DISK_DROP_MB = 1024;
 const LADDER_PACE_SHORT_DROP_MB = 256;
 const LADDER_CRITICAL_WAIT_MS = 60_000;
+const predictiveClocks = new Map<number, BigInt64Array>();
 const RANK: Record<PressureLevel, number> = { normal: 0, high: 1, critical: 2 };
 
 /** What the tick hands the disk owner for one ladder pass; every field crosses to the passes thread. */
@@ -47,11 +50,14 @@ export interface DiskPassInput {
   sims: TickMeasurement['sims'];
   /** A command at the hard floor asked for this tick, so the pass goes first. */
   requested: boolean;
+  target?: { device: number; freeMb: number; observedAt: number };
 }
 
 export interface DiskPassResult {
   actions: DaemonLadderAction[];
   pressure: DaemonPressure;
+  firstFree?: { device: number; startedAt: number; observedAt: number }[];
+  predictive?: { device: number; targetFreeMb: number; admittedAt?: number; freeMb: number | null; checkedAt: number };
 }
 
 /** Measures disk and memory again and classifies them, carrying the memory warning clock. */
@@ -86,6 +92,7 @@ export async function runDiskPass(
 ): Promise<DiskPassResult> {
   const config = loadConfig();
   if (!config) return { actions: [], pressure: input.pressure };
+  const startedAt = Date.now();
   // @ref LLP 0001#one-task-runs-every-gc-deletion -- the ladder and the lane never delete at the same time
   const turn = await acquireDisk(input.requested ? HARD_FLOOR : input.pressure.disk === 'critical' ? CRITICAL : LADDER);
   const closeGitReads = openGitReads(operation);
@@ -93,6 +100,53 @@ export async function runDiskPass(
     operation.signal.throwIfAborted();
     const { thresholds } = diskThresholds(config);
     let warningSince = input.pressure.memoryWarningSince;
+    let latestDisk: DaemonMeasurement['disk'] = [];
+    let diskObservedAt = startedAt;
+    const remeasure = remeasurer(config, operation, (measurement) => {
+      latestDisk = measurement.disk;
+      diskObservedAt = Date.now();
+      const pressure = classifyPressure({
+        ...measurement,
+        thresholds,
+        previousWarningSince: warningSince,
+        now: Date.now(),
+      });
+      warningSince = pressure.memoryWarningSince;
+      return pressure;
+    });
+    let forecastExpired = false;
+    const expired = () => input.target !== undefined && Date.now() - input.target.observedAt >= PREDICTION_WINDOW_MS;
+    const available = () =>
+      forecastExpired ? null : (latestDisk.find(({ device }) => device === input.target?.device)?.freeMb ?? null);
+    let passClocks = clocks;
+    const firstFree = new Map<number, number>();
+    let admittedAt: number | undefined;
+    let pressure = input.pressure;
+    const predictive = () =>
+      input.target
+        ? {
+            device: input.target.device,
+            targetFreeMb: input.target.freeMb,
+            freeMb: available(),
+            checkedAt: diskObservedAt,
+            ...(admittedAt === undefined ? {} : { admittedAt }),
+          }
+        : undefined;
+    if (input.target) {
+      pressure = await remeasure();
+      forecastExpired = expired();
+      for (const device of predictiveClocks.keys())
+        if (!latestDisk.some((reading) => reading.device === device)) predictiveClocks.delete(device);
+      const freeMb = available();
+      if (pressure.level !== 'normal' || freeMb === null || freeMb >= input.target.freeMb)
+        return { actions: [], pressure, predictive: predictive() };
+      if (input.act) admittedAt = Date.now();
+      passClocks = predictiveClocks.get(input.target.device);
+      if (!passClocks) {
+        passClocks = new BigInt64Array(Object.keys(LADDER_CLOCK_SLOTS).length);
+        predictiveClocks.set(input.target.device, passClocks);
+      }
+    }
     const pass = runLadder(
       {
         config,
@@ -103,30 +157,47 @@ export async function runDiskPass(
         simsFailed: input.sims === null,
         operation,
         only: 'disk',
-        between: turn.boundary,
-        ...(clocks ? { clocks } : {}),
-        remeasure: remeasurer(config, operation, (measurement) => {
-          const pressure = classifyPressure({
-            ...measurement,
-            thresholds,
-            previousWarningSince: warningSince,
-            now: Date.now(),
-          });
-          warningSince = pressure.memoryWarningSince;
-          return pressure;
-        }),
+        between: input.target
+          ? async () => {
+              await turn.boundary();
+              forecastExpired = expired();
+            }
+          : turn.boundary,
+        ...(input.act
+          ? {
+              firstFree: {
+                pending: (device: number) => !firstFree.has(device),
+                observed: (device: number, at: number) => {
+                  if (!firstFree.has(device)) firstFree.set(device, at);
+                },
+              },
+            }
+          : {}),
+        ...(input.target ? { target: { ...input.target, available }, lastRung: 8 } : {}),
+        ...(passClocks ? { clocks: passClocks } : {}),
+        remeasure,
       },
-      input.pressure,
+      pressure,
     );
-    if (!input.act) return await pass;
-    return await joinablePass(
-      input.pressure.disk,
-      'pressure',
-      () => pass,
-      ({ actions, pressure }) => ladderRun(input.pressure.disk, pressure, actions),
-    );
+    const result =
+      !input.act || input.target
+        ? await pass
+        : await joinablePass(
+            input.pressure.disk,
+            'pressure',
+            () => pass,
+            ({ actions, pressure: measuredPressure }) => ladderRun(input.pressure.disk, measuredPressure, actions),
+          );
+    return {
+      ...result,
+      ...(firstFree.size
+        ? { firstFree: [...firstFree].map(([device, observedAt]) => ({ device, startedAt, observedAt })) }
+        : {}),
+      ...(input.target ? { predictive: predictive() } : {}),
+    };
   } finally {
     closeGitReads();
+    if (input.act && input.target) keepReserve();
     turn.release();
   }
 }
@@ -162,6 +233,7 @@ export interface HomePasses {
   operation: StimContext;
   /** The ladder pass to hand to the next tick as `lastLadder`; null while the level is normal. */
   ladder: LadderPass | null;
+  firstFree?: DiskPassResult['firstFree'];
 }
 
 function volumeReadings(
@@ -327,6 +399,7 @@ async function homePasses(
   operation.signal.throwIfAborted();
   lap();
   let ladderPass: LadderPass | null = null;
+  const firstFree: NonNullable<DiskPassResult['firstFree']> = [];
   const level = pressure.level;
   const volumes = volumeReadings(measured.measurement, thresholds);
   if (
@@ -374,6 +447,7 @@ async function homePasses(
         };
         const disk = await (diskPass ? diskPass(request) : runDiskPass(request, log, operation));
         ladderActions.push(...disk.actions);
+        firstFree.push(...(disk.firstFree ?? []));
         pressure = disk.pressure;
       } catch (failure) {
         if (isClaimUnavailable(failure) || (failure instanceof Error && 'reportCleanup' in failure)) throw failure;
@@ -408,6 +482,7 @@ async function homePasses(
     phases: { measureMs, idleMs, dormantMs, ladderMs },
     operation,
     ladder: ladderPass,
+    ...(firstFree.length ? { firstFree } : {}),
   };
 }
 

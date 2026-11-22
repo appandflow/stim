@@ -259,16 +259,26 @@ export function xcodebuildOutputDirs(root: string): string[] {
     .map(({ path }) => path);
 }
 
-/** Whether `path` is a directory that `existingBuildDirsAsync` lists for the checkout or app containing it. */
-export function isBuildDirPath(path: string): boolean {
+function* buildDirPathReads(path: string): DirReads<boolean> {
   if (ARTIFACT_DIRS.build.some((dir) => path.endsWith(`${sep}${dir.split('/').join(sep)}`))) return true;
   const name = basename(path);
   if (name === CXX_NAME) {
     const parent = dirname(path);
     return basename(parent) === 'android' || basename(dirname(parent)) === 'android';
   }
-  if (name === CARGO_TARGET) return readSync(wholeCargoTargetDirsReads(dirname(path))).includes(path);
-  return name === DERIVED_DATA_NAME && isDerivedDataLayout(path);
+  if (name === CARGO_TARGET) return (yield* wholeCargoTargetDirsReads(dirname(path))).includes(path);
+  return name === DERIVED_DATA_NAME && (yield* derivedDataLayout(path));
+}
+
+/** Whether `path` is a directory that `existingBuildDirsAsync` lists for the checkout or app containing it. */
+export function isBuildDirPath(path: string): boolean {
+  if (basename(path) === DERIVED_DATA_NAME) return isDerivedDataLayout(path);
+  return readSync(buildDirPathReads(path));
+}
+
+/** Revalidates one saved build-output path using the current recognition rules, without discovering siblings. */
+export function isBuildDirPathAsync(path: string, signal: AbortSignal): Promise<boolean> {
+  return readAsync(buildDirPathReads(path), signal);
 }
 
 /**

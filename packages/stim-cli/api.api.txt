@@ -297,6 +297,7 @@
 [*] interface DaemonStatus { @@1 abnormalExits?: {
 [*] interface DaemonStatus { @@1 claim?: {
 [*] interface DaemonStatus { @@1 crashHold?: {
+[*] interface DaemonStatus { @@1 diskPacer?: DiskPacerVolume[];
 [*] interface DaemonStatus { @@1 gcMarks?: GcMarkHealth;
 [*] interface DaemonStatus { @@1 intervalMs: number | null;
 [*] interface DaemonStatus { @@1 lastTickAt: string | null;
@@ -382,6 +383,19 @@
 [*] interface DiscoveryReport { @@1 groups: UnmanagedGroup[];
 [*] interface DiscoveryReport { @@1 rootsChangedSinceCensus: boolean;
 [*] interface DiscoveryReport { @@1 scan: ScanSummary;
+[*] interface DiskPacerVolume {
+[*] interface DiskPacerVolume { @@1 device: number;
+[*] interface DiskPacerVolume { @@1 fillMbPerSecond: number | null;
+[*] interface DiskPacerVolume { @@1 firstFreeMs: number | null;
+[*] interface DiskPacerVolume { @@1 freeMb: number;
+[*] interface DiskPacerVolume { @@1 observedAt: number;
+[*] interface DiskPacerVolume { @@1 predictive?: {
+[*] interface DiskPacerVolume { @@1 volume: string;
+[*] interface DiskPacerVolume { @@2 checkedAt: number;
+[*] interface DiskPacerVolume { @@2 freeMb: number;
+[*] interface DiskPacerVolume { @@2 lastAttemptAt: number;
+[*] interface DiskPacerVolume { @@2 since: number;
+[*] interface DiskPacerVolume { @@2 targetFreeMb: number;
 [*] interface DoctorReport {
 [*] interface DoctorReport { @@1 @internal daemon: DaemonStatus & {
 [*] interface DoctorReport { @@1 @internal discovery: DiscoveryReport;
@@ -406,6 +420,17 @@
 [*] interface Finding { @@1 fix: string | null;
 [*] interface Finding { @@1 level: "cost" | "note";
 [*] interface Finding { @@1 title: string;
+[*] interface GcCandidateCoverage {
+[*] interface GcCandidateCoverage { @@1 count?: number;
+[*] interface GcCandidateCoverage { @@1 knownBytes?: number;
+[*] interface GcCandidateCoverage { @@1 oldestMarkedAt?: string;
+[*] interface GcCandidateCoverage { @@1 state: "ready" | "partial" | "unavailable";
+[*] interface GcCandidateCoverage { @@1 unknownSizeCount?: number;
+[*] interface GcCandidateInventory {
+[*] interface GcCandidateInventory { @@1 dependencies: GcCandidateCoverage;
+[*] interface GcCandidateInventory { @@1 outputs: GcCandidateCoverage;
+[*] interface GcCandidateInventory { @@1 readState: "ready" | "partial" | "unavailable";
+[*] interface GcCandidateInventory { @@1 worktrees: GcCandidateCoverage;
 [*] interface GcHistoryStatus {
 [*] interface GcHistoryStatus { @@1 reason?: string;
 [*] interface GcHistoryStatus { @@1 source: "fsevents" | "fallback";
@@ -534,6 +559,7 @@
 [*] interface GcJsonSections { @@3 willEmpty: boolean;
 [*] interface GcMarkHealth {
 [*] interface GcMarkHealth { @@1 at: number;
+[*] interface GcMarkHealth { @@1 candidates?: GcCandidateInventory;
 [*] interface GcMarkHealth { @@1 checkedRoots?: number;
 [*] interface GcMarkHealth { @@1 stale: GcStaleMarkEvidence[];
 [*] interface GcMarkHealth { @@1 staleCount?: number;
@@ -954,6 +980,7 @@
 [*] interface MaintenanceSize { @@1 workspace?: string;
 [*] interface MaintenanceStatus {
 [*] interface MaintenanceStatus { @@1 deferred?: {
+[*] interface MaintenanceStatus { @@1 diskPacer?: DiskPacerVolume[];
 [*] interface MaintenanceStatus { @@1 history?: GcHistoryStatus;
 [*] interface MaintenanceStatus { @@1 invalid?: string;
 [*] interface MaintenanceStatus { @@1 lastChecks: {

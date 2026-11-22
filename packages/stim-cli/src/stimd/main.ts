@@ -117,6 +117,8 @@ import { measureTick, type TickMeasurement } from '../daemon/measure.ts';
 import { listTestWaiting, listWaiting } from '../engine/wait-queue.ts';
 import type { HolderMarkScope } from '../daemon/marks.ts';
 import { runHomePasses, type HomePasses, type LadderPass, type HeadroomRequest } from '../daemon/passes.ts';
+import { createDiskPacer } from '../daemon/pacer.ts';
+import { runDiskPacer } from '../daemon/pacer-run.ts';
 import { reclaimForBootWaiters } from '../daemon/reclaim.ts';
 import { bootedParkedPending } from '../daemon/booted-parked.ts';
 import { pendingDormant } from '../daemon/stages.ts';
@@ -2356,6 +2358,7 @@ async function runStimdInner(
   );
   let emptyTicks = 0;
   let lastLadder: LadderPass | null = null;
+  const diskPacer = createDiskPacer();
   let interval = tickMs;
   const kept = new Map<string, string>();
   const syncOwned = () => {
@@ -2446,6 +2449,7 @@ async function runStimdInner(
     let reclaimed: Awaited<ReturnType<typeof reclaimForBootWaiters>> = null;
     let reclaimMs = 0;
     try {
+      const diskPass = threads.ladder?.bind(threads);
       const passes = await runHomePasses({
         act: mode === 'on',
         log,
@@ -2453,7 +2457,7 @@ async function runStimdInner(
         signal: foregroundAbort.signal,
         lastLadder,
         requested: replying.length > 0,
-        ...(threads.ladder ? { diskPass: threads.ladder.bind(threads) } : {}),
+        diskPass,
         beforeLadder: async ({ measured: reading, operation: tickOperation }) => {
           const reclaimStarted = performance.now();
           reclaimed = await reclaimForBootWaiters({
@@ -2467,7 +2471,8 @@ async function runStimdInner(
           if (reclaimed?.outcome === 'done') wakeOldest('boot');
         },
       });
-      const { config, now, measured, workspaces, pressure, actions, operation } = passes;
+      const { config, now, measured, workspaces, actions, operation } = passes;
+      let pressure = passes.pressure;
       lastLadder = passes.ladder ?? null;
       operation.signal.throwIfAborted();
       refreshHistory(config);
@@ -2508,6 +2513,19 @@ async function runStimdInner(
             : await pendingWork(config, measured, slowTickMs, mode === 'on', operation);
       wentDormant = actions.some((action) => action.kind === 'dormant-stage' && action.outcome === 'done');
       interval = alive || pressure.level !== 'normal' ? tickMs : slowTickMs;
+      const prediction = await runDiskPacer({
+        pacer: diskPacer,
+        passes,
+        intervalMs: interval,
+        pending,
+        act: mode === 'on',
+        diskPass,
+        log,
+      });
+      pressure = prediction.pressure;
+      passes.pressure = pressure;
+      interval = prediction.intervalMs;
+      pending = prediction.pending;
       logKeptWorkspaces(kept, workspaces, log);
       const tickAt = new Date(now).toISOString();
       const taken = [
@@ -2546,6 +2564,7 @@ async function runStimdInner(
         waiting,
         ...(filesystemHistory.status() ? { history: filesystemHistory.status() } : {}),
         gcMarks: markObservation,
+        diskPacer: prediction.status,
       };
       writeAtomic(daemonSnapshotFile(), lastSnapshot);
       for (const socket of replying) socket.end(`${JSON.stringify({ op: 'ticked', level: pressure.level })}\n`);
