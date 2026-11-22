@@ -2,6 +2,8 @@ import type { StimContext } from '@stim-cli/core';
 import { runProcessOperation } from '../cli-operation.ts';
 import { operationState } from '../engine/operation-state.ts';
 import { existsSync, realpathSync, rmSync } from 'fs';
+import { realpath } from 'node:fs/promises';
+import { answered } from '../workspace/bounded-read.ts';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'path';
 import { brokenPodLinks, inspectPodsFlavor } from '../diagnostics/doctor-pods-flavor.ts';
 import { iosConfigurationSetting } from './ios/support.ts';
@@ -831,16 +833,44 @@ interface ReclaimAllResult {
   failedWorkspaceDirs: string[];
 }
 
-export function reclaimKeys(rootPath: string): string[] {
+function* reclaimKeyReads(rootPath: string): Generator<string, string[], string> {
   const cfg = loadConfig();
   const keys = new Set([rootPath]);
-  const root = nativeCanonicalPath(rootPath);
-  if (cfg?.projects) {
-    for (const key of Object.keys(cfg.projects)) {
-      if (isPathPrefix(rootPath, key) || isPathPrefix(root, nativeCanonicalPath(key))) keys.add(key);
-    }
-  }
+  const root = yield rootPath;
+  for (const key of Object.keys(cfg?.projects ?? {}))
+    if (isPathPrefix(rootPath, key) || isPathPrefix(root, yield key)) keys.add(key);
   return [...keys].toSorted();
+}
+
+export function reclaimKeys(rootPath: string): string[] {
+  const reads = reclaimKeyReads(rootPath);
+  let step = reads.next();
+  while (!step.done) step = reads.next(nativeCanonicalPath(step.value));
+  return step.value;
+}
+
+/** Current reclaim membership, with bounded identity reads and uncertain registrations refused. */
+export async function reclaimKeysAsync(rootPath: string, operation?: StimContext): Promise<string[]> {
+  const reads = reclaimKeyReads(rootPath);
+  let step = reads.next();
+  while (!step.done) {
+    const path = step.value;
+    let identity: string;
+    try {
+      identity = await answered(path, () => realpath(path), 3_000, operation?.signal);
+    } catch (error) {
+      if (
+        path !== rootPath &&
+        error instanceof Error &&
+        'code' in error &&
+        (error.code === 'ENOENT' || error.code === 'ENOTDIR')
+      )
+        identity = resolve(path);
+      else throw error;
+    }
+    step = reads.next(identity);
+  }
+  return step.value;
 }
 
 async function withReclaimLocks<T>(
