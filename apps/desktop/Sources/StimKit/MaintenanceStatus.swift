@@ -19,8 +19,6 @@ public struct MaintenanceStatus: Decodable, Hashable, Sendable {
     public var date: Date { Date(timeIntervalSince1970: startedAt / 1000) }
   }
 
-  public struct Claim: Decodable, Hashable, Sendable {}
-
   /// A process whose physical footprint the CLI found abnormal while memory pressure was warning or critical.
   /// `command` safely restarts or stops it; it is nil when the CLI knows no safe restart.
   public struct MemoryCulprit: Decodable, Hashable, Sendable, Identifiable {
@@ -43,16 +41,14 @@ public struct MaintenanceStatus: Decodable, Hashable, Sendable {
 
   public var mode: String
   public var invalid: String?
-  public var claim: Claim?
   public var lastPass: Pass?
   public var pressure: Pressure?
 
   public var memoryCulprits: [MemoryCulprit] { pressure?.memory?.culprits ?? [] }
 
-  public init(mode: String, invalid: String? = nil, claim: Claim? = nil, lastPass: Pass? = nil) {
+  public init(mode: String, invalid: String? = nil, lastPass: Pass? = nil) {
     self.mode = mode
     self.invalid = invalid
-    self.claim = claim
     self.lastPass = lastPass
   }
 }

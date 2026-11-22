@@ -10,7 +10,7 @@ import { formatBytes, measuredDirectorySizeAsync } from '../fs-util.ts';
 import { formatSpace } from '../status.ts';
 import { getConfigDir, loadConfig } from '../workspace/config.ts';
 import { sharedBuildCache } from '../workspace/paths.ts';
-import { runLadderNow } from './passes.ts';
+import { requestDaemonTick } from './client.ts';
 import { diskThresholds } from './pressure.ts';
 import { userHome } from '@stim-cli/core/state';
 
@@ -58,8 +58,8 @@ const LOW_DISK_REMEDY =
 
 /**
  * Rung 7 of the pressure ladder, before `start`, `ios` and `android` do their work: while free disk on the
- * workspace's or the Stim home's volume is under `disk.hardFloorGb`, the ladder runs now (one daemon tick, or
- * in this process without a daemon) and the run refuses with `STIM_LOW_DISK` when free disk is still under the floor
+ * workspace's or the Stim home's volume is under `disk.hardFloorGb`, the gate requests one daemon tick and
+ * refuses with `STIM_LOW_DISK` when free disk is still under the floor
  * after it.
  */
 export async function diskFloorGate({
@@ -95,7 +95,7 @@ export async function diskFloorGate({
   onReclaim?.('start');
   let completed = false;
   try {
-    await runLadderNow(env, signal, root);
+    await requestDaemonTick(env, signal);
     signal?.throwIfAborted();
     low = await under();
     completed = true;

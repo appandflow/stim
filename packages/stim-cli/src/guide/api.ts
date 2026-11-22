@@ -139,8 +139,10 @@ Storage page, and returns { results, exitCode }. item is { kind: 'cache', dir },
 { kind: 'workspace-outputs' }, { kind: 'archive', id, part? }, { kind:
 'watchman' } or { kind: 'gradle-daemons' }; the CLI has no command for it.
 
-deleteGarbageItem runs on the cleanup queue. Cache/archive directories may
-return pending byte estimates; maintenance.pendingDelete tracks their drain.
+deleteGarbageItem takes its own turn on this home's cleanup queue, after
+pressure passes and before the maintenance lane. It never joins another item.
+Cache/archive directories may return pending byte estimates;
+maintenance.pendingDelete tracks their drain.
 Execution and cleanup use the report budgets above. Cancellation stops pending
 lock waits and further actions; completed actions remain applied. An archive
 whose history has started moving finishes publication before cancellation.

@@ -330,8 +330,8 @@ cleanup refusal takes precedence over cancellation or timeout. Completed actions
 remain applied. Progress is notification delivered over IPC; an announced or
 in-flight action may complete before stimd receives a callback cancellation.
 
-An item takes no outer maintenance claim: the lane still holds that claim when
-it yields the turn. The worker's report tracks its children and pending work
+An item and the lane take no outer maintenance claim. The disk turn excludes
+this daemon's cleanup units. The worker's report tracks its children and pending work
 until cleanup settles, and its existing per-object claims remain unchanged.
 An older in-process cleanup may therefore overlap removal of a regenerable
 cache that has no per-cache claim; that may repeat work or require a rebuild.
@@ -376,6 +376,33 @@ the existing in-place deletion; report-only caches remain untouched. No Cargo
 target or automatic pressure sweep uses this handoff.
 
 This implements the lazy-free part of the cleanup redesign in #6025 and #6089.
+
+## Queue ownership replaces the maintenance claim
+
+The maintenance lane no longer takes `maintenance/run.claims`. Items, GC
+passes, headroom and the lane all use the same disk owner. Workspace, Cargo,
+archive and cache claims remain; unverified child cleanup still reaches the
+worker's existing cleanup watch (LLP 0007).
+
+`maintenance.running` is the active disk turn's start and trigger;
+`maintenance.queued` counts the waiting units, including a lane waiting to
+regain its turn. The worker publishes changes through the owning daemon's
+claim details, so status works before that daemon completes its first tick.
+Only a live shared daemon holder supplies queue state. There is no separate
+maintenance claim or unresolved maintenance-claim status.
+
+The hard-floor gate asks for the existing requested daemon tick, whose disk
+pass has the hard-floor rank. An unavailable daemon runs no inline ladder;
+the gate remeasures and retains its existing `STIM_LOW_DISK` refusal when
+still below the floor. Off mode skips that cleanup and report mode deletes
+nothing, as before. The build's headroom run remains on its own high-rank
+queue turn (LLP 0006), never a new refusal.
+
+This removes the last command-side fallback without adding a cross-build
+compatibility claim. Normal installed clients route to the selected engine;
+a deliberately run prequeue copy can still clean locally, so that copy must
+be updated before sharing a home with the queue owner (RELEASE.md,
+Compatibility and breaking changes).
 
 ## Every gc joins a pass under way
 

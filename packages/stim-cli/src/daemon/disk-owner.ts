@@ -1,4 +1,4 @@
-import type { PressureLevel, RescuedCopy } from '@stim-cli/core/state';
+import type { CleanupQueueStatus, PressureLevel, RescuedCopy } from '@stim-cli/core/state';
 import { keepReserve, releaseReserve } from '../disk-reserve.ts';
 import type { LevelRun, LevelRunAction } from '../stimd/passes/level-run.ts';
 
@@ -22,10 +22,24 @@ export const LADDER_CLOCK_SLOTS = {
 
 interface Waiter {
   rank: number;
+  trigger: string;
   grant: () => void;
 }
 
-let holder: number | null = null;
+let holder: { rank: number; startedAt: string; trigger: string } | null = null;
+let reportQueue: (status: CleanupQueueStatus) => void = () => {};
+
+/** Sends the owning worker's queue changes to stimd. */
+export function reportDiskQueue(listener: typeof reportQueue): void {
+  reportQueue = listener;
+}
+
+function report(): void {
+  reportQueue({
+    running: holder ? { startedAt: holder.startedAt, trigger: holder.trigger } : null,
+    queued: waiting.length,
+  });
+}
 const waiting: Waiter[] = [];
 
 function enqueue(waiter: Waiter): void {
@@ -37,16 +51,21 @@ function enqueue(waiter: Waiter): void {
  * Waits for the turn like `acquireDisk`; `rerank` changes the priority of a request that still waits, and `withdraw` gives
  * up the request, or the turn once it was granted.
  */
-function queueForDisk(rank: number): { granted: Promise<void>; rerank(rank: number): void; withdraw(): void } {
+function queueForDisk(
+  rank: number,
+  trigger: string,
+): { granted: Promise<void>; rerank(rank: number): void; withdraw(): void } {
   if (holder === null) {
-    holder = rank;
+    holder = { rank, trigger, startedAt: new Date().toISOString() };
+    report();
     return { granted: Promise.resolve(), rerank: () => {}, withdraw: releaseDisk };
   }
-  const waiter: Waiter = { rank, grant: () => {} };
+  const waiter: Waiter = { rank, trigger, grant: () => {} };
   const granted = new Promise<void>((grant) => {
     waiter.grant = grant;
   });
   enqueue(waiter);
+  report();
   return {
     granted,
     rerank(to) {
@@ -59,7 +78,10 @@ function queueForDisk(rank: number): { granted: Promise<void>; rerank(rank: numb
     withdraw() {
       const at = waiting.indexOf(waiter);
       if (at === -1) releaseDisk();
-      else waiting.splice(at, 1);
+      else {
+        waiting.splice(at, 1);
+        report();
+      }
     },
   };
 }
@@ -69,11 +91,12 @@ function queueForDisk(rank: number): { granted: Promise<void>; rerank(rank: numb
  * maintenance lane's dormant step and maintenance pass, runs while holding it.
  */
 export function acquireDisk(rank: number): Promise<void> {
-  return queueForDisk(rank).granted;
+  return queueForDisk(rank, rank === LANE ? 'maintenance' : 'pressure').granted;
 }
 export function releaseDisk(): void {
   const next = waiting.shift();
-  holder = next ? next.rank : null;
+  holder = next ? { rank: next.rank, trigger: next.trigger, startedAt: new Date().toISOString() } : null;
+  report();
   next?.grant();
 }
 
@@ -83,7 +106,7 @@ export function requestGcItem<T>(
   rank: number = ITEM,
 ): { result: Promise<T>; leave(): void } {
   const stop = new AbortController();
-  const ticket = queueForDisk(rank);
+  const ticket = queueForDisk(rank, rank === LADDER ? 'headroom' : 'item');
   let started = false;
   let cancelWait!: () => void;
   const cancelled = new Promise<never>((_resolve, reject) => {
@@ -124,7 +147,7 @@ let regained: Promise<void> | null = null;
  * Walks the lane runs side by side share one hand-over: each waits until the lane has the turn back.
  */
 export function diskBoundary(): Promise<void> {
-  if (!regained && holder !== LANE)
+  if (!regained && holder?.rank !== LANE)
     throw new Error('a unit boundary ran while the maintenance lane did not hold the disk');
   if (!regained && waiting.some((entry) => entry.rank < LANE)) {
     releaseDisk();
@@ -283,7 +306,7 @@ export function requestGcPass(
 
 function queuePass(level: PressureLevel | undefined, trigger: string, run: RunGcPass): Pass {
   const stop = new AbortController();
-  const ticket = queueForDisk(turnRank(level ?? null));
+  const ticket = queueForDisk(turnRank(level ?? null), trigger);
   let adopt: ((cover: Pass) => void) | undefined;
   const adopted = new Promise<Pass>((resolve) => {
     adopt = resolve;
