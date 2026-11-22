@@ -34,7 +34,7 @@ import * as ladder from '../daemon/ladder.ts';
 import * as measure from '../daemon/measure.ts';
 import * as reclaim from '../daemon/reclaim.ts';
 import { ensureStimd } from '../daemon/client.ts';
-import { acquireDisk, diskBoundary, HARD_FLOOR, LADDER, LANE, releaseDisk } from '../daemon/disk-owner.ts';
+import { acquireDisk, HARD_FLOOR, LADDER, LANE } from '../daemon/disk-owner.ts';
 import { createMaintenanceLane, runDiskPass, runHomePasses } from '../daemon/passes.ts';
 import * as fsUtil from '../fs-util.ts';
 import { measureSizes } from '../stimd/passes/measure.ts';
@@ -248,9 +248,9 @@ describe('the disk owner', () => {
       order.push('pass hard floor');
       return { actions: [], pressure };
     });
-    await acquireDisk(LANE);
+    const turn = await acquireDisk(LANE);
     try {
-      const sizes = measureSizes(Date.now(), () => {}, testContext(), [], diskBoundary);
+      const sizes = measureSizes(Date.now(), () => {}, testContext(), [], turn.boundary);
       await walking;
       const floor = runDiskPass(
         { act: true, pressure: critical('floor'), devices: [], sims: [], requested: true },
@@ -260,7 +260,7 @@ describe('the disk owner', () => {
       finish();
       await Promise.all([sizes, floor]);
     } finally {
-      releaseDisk();
+      turn.release();
     }
 
     expect(order).toEqual(['walk build cache', 'pass hard floor', 'walk Metro cache']);
@@ -291,7 +291,7 @@ describe('the disk owner', () => {
     saveConfig({ version: 2, projects: {}, repos: {} });
     const rungs = vi.spyOn(ladder, 'runLadder');
     const controller = new AbortController();
-    await acquireDisk(LANE);
+    const turn = await acquireDisk(LANE);
     const asked = runDiskPass(
       { act: true, pressure: critical('aborted'), devices: [], sims: [], requested: false },
       () => {},
@@ -299,7 +299,7 @@ describe('the disk owner', () => {
     );
     void asked.catch(() => {});
     controller.abort();
-    releaseDisk();
+    turn.release();
 
     await expect(asked).rejects.toThrow('aborted');
     expect(rungs).not.toHaveBeenCalled();
@@ -331,7 +331,7 @@ describe('the disk owner', () => {
       bytes: 1,
       privateBytes: 1,
     });
-    await acquireDisk(LANE);
+    const turn = await acquireDisk(LANE);
     try {
       const cleaned = clearSourceCheckouts(
         [tree('/a'), tree('/b')],
@@ -341,7 +341,7 @@ describe('the disk owner', () => {
         testContext(),
         'idle.sourceDormantDays is 1',
         'normal',
-        diskBoundary,
+        turn.boundary,
       );
       await clearing;
       const floor = runDiskPass(
@@ -352,7 +352,7 @@ describe('the disk owner', () => {
       finish();
       await Promise.all([cleaned, floor]);
     } finally {
-      releaseDisk();
+      turn.release();
     }
 
     expect(order).toEqual([
@@ -362,20 +362,23 @@ describe('the disk owner', () => {
     ]);
   });
 
-  test('a unit boundary refuses to run while the lane does not hold the turn', async () => {
-    expect(() => diskBoundary()).toThrow('did not hold the disk');
-    await acquireDisk(LADDER);
-    try {
-      expect(() => diskBoundary()).toThrow('did not hold the disk');
-    } finally {
-      releaseDisk();
-    }
-    await acquireDisk(LANE);
-    try {
-      await diskBoundary();
-    } finally {
-      releaseDisk();
-    }
+  test('a released disk turn cannot release or yield a different holder', async () => {
+    const released = await acquireDisk(LANE);
+    released.release();
+    const held = await acquireDisk(LADDER);
+    expect(() => released.boundary()).toThrow('without its disk turn');
+    released.release();
+    await held.boundary();
+    let granted = false;
+    const next = acquireDisk(HARD_FLOOR).then((owner) => {
+      granted = true;
+      return owner;
+    });
+    released.release();
+    await Promise.resolve();
+    expect(granted).toBe(false);
+    held.release();
+    (await next).release();
   });
 
   test('a hard-floor pass asked during a maintenance cache trim runs before its next entry', async () => {
@@ -404,7 +407,7 @@ describe('the disk owner', () => {
       order.push('pass hard floor');
       return { actions: [], pressure };
     });
-    await acquireDisk(LANE);
+    const turn = await acquireDisk(LANE);
     try {
       const trim = executeAction(
         { kind: 'would-trim-cache', target: 'Build cache', dir: buildCacheRoot(), bytes: 100, reason: 'over its cap' },
@@ -412,7 +415,7 @@ describe('the disk owner', () => {
           settings: resolveMaintenanceSettings(),
           protectedRoot: '',
           operation: testContext(),
-          between: diskBoundary,
+          between: turn.boundary,
         },
       );
       await walking;
@@ -424,7 +427,7 @@ describe('the disk owner', () => {
       finish();
       await Promise.all([trim, floor]);
     } finally {
-      releaseDisk();
+      turn.release();
     }
 
     expect(order).toEqual(['entry a', 'pass hard floor', 'entry b']);
@@ -432,17 +435,20 @@ describe('the disk owner', () => {
 
   test('walks the lane runs side by side hand the turn over once, and each waits until the lane has it back', async () => {
     const order: string[] = [];
-    await acquireDisk(LANE);
-    const floor = acquireDisk(HARD_FLOOR).then(() => void order.push('pass'));
+    const turn = await acquireDisk(LANE);
+    const floor = acquireDisk(HARD_FLOOR).then((owner) => {
+      order.push('pass');
+      return owner;
+    });
     const walks = Promise.all([
-      diskBoundary().then(() => void order.push('walk a')),
-      diskBoundary().then(() => void order.push('walk b')),
+      turn.boundary().then(() => void order.push('walk a')),
+      turn.boundary().then(() => void order.push('walk b')),
     ]);
-    await floor;
+    const floorTurn = await floor;
     order.push('pass done');
-    releaseDisk();
+    floorTurn.release();
     await walks;
-    releaseDisk();
+    turn.release();
 
     expect(order).toEqual(['pass', 'pass done', 'walk a', 'walk b']);
   });

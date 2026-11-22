@@ -2,15 +2,13 @@ import type { PressureLevel, RescuedCopy } from '@stim-cli/core/state';
 import { keepReserve, releaseReserve } from '../disk-reserve.ts';
 import type { LevelRun, LevelRunAction } from '../stimd/passes/level-run.ts';
 
-/**
- * The turn order on the disk: a hard-floor ladder pass, then any ladder pass or gc pass above normal, then the
- * explicit item, then the maintenance lane's next unit, then a gc pass at normal, which waits for the lane to end its run.
- */
+/** Disk turns rank hard floor, critical, high/headroom, explicit item, then normal lane/gc work. Equal ranks are FIFO. */
 export const HARD_FLOOR = 0;
-export const LADDER = 1;
-const ITEM = 2;
-export const LANE = 3;
-const NORMAL_GC = 4;
+export const CRITICAL = 1;
+export const LADDER = 2;
+const ITEM = 3;
+export const LANE = 5;
+const NORMAL_GC = 5;
 
 /** The slots of the stim-daemon's ladder clocks (`LadderInput.clocks`), which live as long as stimd. */
 export const LADDER_CLOCK_SLOTS = {
@@ -19,66 +17,101 @@ export const LADDER_CLOCK_SLOTS = {
   'cargo critical': 2,
 } as const;
 
-interface Waiter {
+/** One request's disk turn; only its own release or completed-unit boundary can give it up. */
+export interface DiskTurn {
+  boundary(): Promise<void>;
+  release(): void;
+}
+
+interface Ticket extends DiskTurn {
   rank: number;
   grant: () => void;
+  granted: Promise<void>;
+  pass?: Pass;
+  rerank(rank: number): void;
+  waiting(): boolean;
+  withdraw(): void;
 }
 
-let holder: number | null = null;
-const waiting: Waiter[] = [];
+let holder: Ticket | null = null;
+const waiting: Ticket[] = [];
 
-function enqueue(waiter: Waiter): void {
-  const at = waiting.findIndex((entry) => entry.rank > waiter.rank);
-  waiting.splice(at === -1 ? waiting.length : at, 0, waiter);
+function enqueue(ticket: Ticket): void {
+  const at = waiting.findIndex((entry) => entry.rank > ticket.rank);
+  waiting.splice(at === -1 ? waiting.length : at, 0, ticket);
 }
 
-/**
- * Waits for the turn like `acquireDisk`; `rerank` changes the priority of a request that still waits, and `withdraw` gives
- * up the request, or the turn once it was granted.
- */
-function queueForDisk(rank: number): { granted: Promise<void>; rerank(rank: number): void; withdraw(): void } {
-  if (holder === null) {
-    holder = rank;
-    return { granted: Promise.resolve(), rerank: () => {}, withdraw: releaseDisk };
-  }
-  const waiter: Waiter = { rank, grant: () => {} };
-  const granted = new Promise<void>((grant) => {
-    waiter.grant = grant;
+function advance(ticket: Ticket): void {
+  if (holder !== ticket) return;
+  holder = waiting.shift() ?? null;
+  holder?.grant();
+}
+
+function queueForDisk(rank: number): Ticket {
+  let closed = false;
+  let resumed: Promise<void> | null = null;
+  let refuseResume: ((error: Error) => void) | undefined;
+  let grant: () => void;
+  const granted = new Promise<void>((done) => {
+    grant = done;
   });
-  enqueue(waiter);
-  return {
+  const ticket: Ticket = {
+    rank,
     granted,
+    grant: () => grant(),
+    waiting: () => waiting.includes(ticket),
     rerank(to) {
-      const at = waiting.indexOf(waiter);
-      if (at === -1 || to === waiter.rank) return;
-      waiting.splice(at, 1);
-      waiter.rank = to;
-      enqueue(waiter);
+      if (closed || to === ticket.rank) return;
+      const at = waiting.indexOf(ticket);
+      if (at !== -1) waiting.splice(at, 1);
+      ticket.rank = to;
+      if (at !== -1) enqueue(ticket);
+    },
+    boundary() {
+      if (resumed) return resumed;
+      if (closed || holder !== ticket) throw new Error('a boundary ran without its disk turn');
+      if (!waiting.some((entry) => entry.rank < ticket.rank)) return Promise.resolve();
+      resumed = new Promise<void>((done, reject) => {
+        ticket.grant = done;
+        refuseResume = reject;
+      }).finally(() => {
+        resumed = null;
+        refuseResume = undefined;
+      });
+      resumed.catch(() => {});
+      enqueue(ticket);
+      advance(ticket);
+      return resumed;
+    },
+    release() {
+      ticket.withdraw();
     },
     withdraw() {
-      const at = waiting.indexOf(waiter);
-      if (at === -1) releaseDisk();
-      else waiting.splice(at, 1);
+      if (closed) return;
+      closed = true;
+      const at = waiting.indexOf(ticket);
+      if (at !== -1) waiting.splice(at, 1);
+      refuseResume?.(new Error('the disk turn ended before it resumed'));
+      advance(ticket);
     },
   };
+  if (holder === null) {
+    holder = ticket;
+    ticket.grant();
+  } else enqueue(ticket);
+  return ticket;
 }
 
-/**
- * Waits for the one turn on the disk this thread owns: every gc deletion of the stim-daemon, its ladder passes and its
- * maintenance lane's dormant step and maintenance pass, runs while holding it.
- */
-export function acquireDisk(rank: number): Promise<void> {
-  return queueForDisk(rank).granted;
-}
-export function releaseDisk(): void {
-  const next = waiting.shift();
-  holder = next ? next.rank : null;
-  next?.grant();
+/** Waits for this thread's one disk turn; the caller releases only the returned turn. */
+export async function acquireDisk(rank: number): Promise<DiskTurn> {
+  const ticket = queueForDisk(rank);
+  await ticket.granted;
+  return ticket;
 }
 
 /** Runs one dedicated cleanup unit at `rank`, an explicit item by default; leaving cancels only this unit. */
 export function requestGcItem<T>(
-  work: (signal: AbortSignal) => Promise<T>,
+  work: (signal: AbortSignal, turn: DiskTurn) => Promise<T>,
   rank: number = ITEM,
 ): { result: Promise<T>; leave(): void } {
   const stop = new AbortController();
@@ -99,11 +132,11 @@ export function requestGcItem<T>(
       stop.signal.throwIfAborted();
       started = true;
       releaseReserve();
-      return await work(stop.signal);
+      return await work(stop.signal, ticket);
     } finally {
       stop.signal.removeEventListener('abort', cancelWait);
       if (started) {
-        keepReserve();
+        if (holder === ticket) keepReserve();
         ticket.withdraw();
       }
     }
@@ -112,28 +145,11 @@ export function requestGcItem<T>(
   return { result, leave: () => stop.abort() };
 }
 
-let regained: Promise<void> | null = null;
-
-/**
- * A unit boundary of the lane, which holds the turn: gives the turn to a waiting pressure pass or explicit item, and takes it back after.
- * Walks the lane runs side by side share one hand-over: each waits until the lane has the turn back.
- */
-export function diskBoundary(): Promise<void> {
-  if (!regained && holder !== LANE)
-    throw new Error('a unit boundary ran while the maintenance lane did not hold the disk');
-  if (!regained && waiting.some((entry) => entry.rank < LANE)) {
-    releaseDisk();
-    regained = acquireDisk(LANE).finally(() => {
-      regained = null;
-    });
-  }
-  return regained ?? Promise.resolve();
-}
-
 const RANK: Record<PressureLevel, number> = { normal: 0, high: 1, critical: 2 };
 
 // @ref LLP 0001#one-task-runs-every-gc-deletion -- a gc pass above normal takes the turn at the lane's next unit boundary
-const turnRank = (level: PressureLevel | null) => (level === 'high' || level === 'critical' ? LADDER : NORMAL_GC);
+const turnRank = (level: PressureLevel | null) =>
+  level === 'critical' ? CRITICAL : level === 'high' ? LADDER : NORMAL_GC;
 
 /** What one disk pass did, as a gc request that ran or joined it receives it. */
 export interface GcPassReply {
@@ -152,6 +168,7 @@ interface Pass {
   listeners: Map<(action: LevelRunAction) => void, PressureLevel | undefined>;
   /** Stops a gc pass once no request waits for it; a pass of the tick or the lane has none. */
   stop?: AbortController;
+  ticket?: Ticket;
   rerank?: (rank: number) => void;
   /** Hands a queued gc pass to a pass that started since and covers it. */
   adopt?: (cover: Pass) => void;
@@ -159,7 +176,6 @@ interface Pass {
   adoptedBy?: Pass;
 }
 
-let running: Pass | null = null;
 let lane: Pass | null = null;
 let queued: Pass | null = null;
 
@@ -175,6 +191,7 @@ export async function joinablePass<T>(
   slot: 'pass' | 'lane' = 'pass',
 ): Promise<T> {
   const listeners = new Map<(action: LevelRunAction) => void, PressureLevel | undefined>();
+  const turn = holder;
   const done = work((action) => listeners.forEach((_level, listen) => listen(action)));
   const pass: Pass = {
     level,
@@ -185,14 +202,14 @@ export async function joinablePass<T>(
   };
   pass.result.catch(() => {});
   if (slot === 'lane') lane = pass;
-  else running = pass;
+  if (turn) turn.pass = pass;
   adoptQueued(pass);
   try {
     return await done;
   } finally {
-    if (running === pass) running = null;
+    if (turn?.pass === pass) delete turn.pass;
     if (lane === pass) lane = null;
-    keepReserve();
+    if (turn && holder === turn) keepReserve();
   }
 }
 
@@ -201,6 +218,7 @@ type RunGcPass = (
   signal: AbortSignal,
   onAction: (action: LevelRunAction) => void,
   onLevel: (level: PressureLevel) => void,
+  turn: DiskTurn,
 ) => Promise<Omit<GcPassReply, 'joined'>>;
 
 const joinedOf = (pass: Pass, level: PressureLevel): NonNullable<GcPassReply['joined']> => ({
@@ -215,6 +233,7 @@ function adoptQueued(cover: Pass): void {
   if (
     !held?.adopt ||
     held === cover ||
+    !held.ticket?.waiting() ||
     cover.stop?.signal.aborted ||
     RANK[cover.level ?? 'normal'] < RANK[held.level ?? 'normal']
   )
@@ -241,7 +260,8 @@ export function requestGcPass(
   // @ref LLP 0001#every-gc-joins-a-pass-under-way -- no level, or a level at or below the pass's, joins it
   const covers = (pass: Pass | null): pass is Pass =>
     pass !== null && !pass.stop?.signal.aborted && (level === undefined || RANK[pass.level ?? 'normal'] >= RANK[level]);
-  let pass = [running, lane, queued].find(covers) ?? null;
+  const suspended = waiting.flatMap(({ pass }) => (pass?.startedAt ? [pass] : []));
+  let pass = [holder?.pass ?? null, ...suspended, lane, queued].find(covers) ?? null;
   const joined = pass !== null || queued !== null;
   if (!pass && queued && level) {
     queued.level = level;
@@ -283,17 +303,27 @@ function queuePass(level: PressureLevel | undefined, trigger: string, run: RunGc
   const adopted = new Promise<Pass>((resolve) => {
     adopt = resolve;
   });
-  const turn = async (): Promise<GcPassReply> => {
-    const cover = await Promise.race([ticket.granted.then(() => null), adopted]);
-    if (cover) {
+  let started = false;
+  let cancelWait: () => void;
+  const cancelled = new Promise<never>((_resolve, reject) => {
+    cancelWait = () => {
+      if (started) return;
       ticket.withdraw();
-      const reply = await cover.result;
-      return { ...reply, joined: joinedOf(cover, reply.run.level) };
-    }
+      reject(stop.signal.reason);
+    };
+    stop.signal.addEventListener('abort', cancelWait, { once: true });
+  });
+  const turn = async (): Promise<GcPassReply> => {
     try {
+      const cover = await Promise.race([ticket.granted.then(() => null), adopted, cancelled]);
+      if (cover) {
+        ticket.withdraw();
+        const reply = await cover.result;
+        return { ...reply, joined: joinedOf(cover, reply.run.level) };
+      }
       if (queued === pass) queued = null;
       stop.signal.throwIfAborted();
-      running = pass;
+      started = true;
       pass.startedAt = new Date().toISOString();
       return await run(
         pass.level ?? undefined,
@@ -301,13 +331,16 @@ function queuePass(level: PressureLevel | undefined, trigger: string, run: RunGc
         (action) => pass.listeners.forEach((_level, listen) => listen(action)),
         (found) => {
           pass.level = found;
+          ticket.rerank(turnRank(found));
           adoptQueued(pass);
         },
+        ticket,
       );
     } finally {
-      if (running === pass) running = null;
-      keepReserve();
-      releaseDisk();
+      stop.signal.removeEventListener('abort', cancelWait);
+      if (started && holder === ticket) keepReserve();
+      if (ticket.pass === pass) delete ticket.pass;
+      ticket.withdraw();
     }
   };
   const pass: Pass = {
@@ -316,10 +349,12 @@ function queuePass(level: PressureLevel | undefined, trigger: string, run: RunGc
     startedAt: null,
     listeners: new Map(),
     stop,
+    ticket,
     rerank: ticket.rerank,
     adopt: (cover) => adopt?.(cover),
     result: turn(),
   };
+  ticket.pass = pass;
   pass.result.catch(() => {});
   queued = pass;
   return pass;
