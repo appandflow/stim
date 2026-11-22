@@ -180,6 +180,7 @@ export async function runBootedParkedPass({
   log,
   operation,
   all,
+  between,
   rung = 0,
   now = Date.now(),
 }: {
@@ -189,11 +190,13 @@ export async function runBootedParkedPass({
   log: IdlePassInput['log'];
   operation?: StimContext;
   all?: boolean;
+  between?: () => Promise<void>;
   rung?: number;
   now?: number;
 }): Promise<DaemonLadderAction[]> {
   const actions: DaemonLadderAction[] = [];
   for (const { record, why } of bootedParkedDue({ records: readParked('ios'), sims, now, memory, all })) {
+    if (act) await between?.();
     const target = record.udid;
     const label = `parked simulator ${record.name}`;
     if (!act) {
@@ -222,6 +225,7 @@ export async function runBootedParkedPass({
       detail,
     });
   }
+  if (act) await between?.();
   for (const { mark, why, shutDown } of deferredShutdownDue({
     marks: readDeferredMarks(loadConfig()),
     sims,
@@ -229,6 +233,7 @@ export async function runBootedParkedPass({
     memory,
     all,
   })) {
+    if (act) await between?.();
     const target = mark.udid;
     const label = `simulator ${mark.name}`;
     if (!shutDown || workspaceServing(mark.root)) {
@@ -270,5 +275,6 @@ export async function runBootedParkedPass({
       ...(done ? { restore: 'stim ios' } : {}),
     });
   }
+  if (act) await between?.();
   return actions;
 }

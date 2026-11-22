@@ -1,3 +1,10 @@
+import { expect, test } from 'vitest';
+import { acquireDisk, LADDER, CRITICAL, requestGcItem } from '../daemon/disk-owner.ts';
+import { runLadder } from '../daemon/ladder.ts';
+import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
+import { testContext } from './_context.ts';
+import * as iosApi from '../devices/ios.ts';
+import { parkSim, readParked, dropParked, keepParkedAfter } from '../devices/sim-pool.ts';
 import { execSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -8,6 +15,7 @@ import {
   readDeferredShutdowns,
   readDeviceIdleShutdowns,
   readIdleStage,
+  type DaemonPressure,
 } from '@stim-cli/core/state';
 import { collectOwnedDeviceActivityAsync, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import * as stopCommand from '../commands/stop.ts';
@@ -612,4 +620,193 @@ describe('a simulator that stop left booted', () => {
     expect(await run('warning')).toEqual([]);
     expect(tornDown).toEqual([]);
   });
+  test('report mode preserves deferred state without calling an owned-turn hook', async () => {
+    const { root, udid } = bootedWorkspace('report-deferred', 20 * MINUTE_MS);
+    await defer(root, udid, FUTURE());
+    const before = readDeferredShutdowns(readWorkspaceState(root));
+    const between = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
+    const result = await runBootedParkedPass({ sims, memory: 'normal', all: true, act: false, log: () => {}, between });
+    expect(result).toEqual([expect.objectContaining({ target: udid, outcome: 'would' })]);
+    expect(between).not.toHaveBeenCalled();
+    expect(tornDown).toEqual([]);
+    expect(readDeferredShutdowns(readWorkspaceState(root))).toEqual(before);
+  });
+
+  test.skipIf(process.platform !== 'darwin').each(['new deferral', 'new server', 'abort', 'last only'] as const)(
+    'a completed deferred shutdown releases its workspace before the next boundary: %s',
+    async (change) => {
+      const first = bootedWorkspace('first-deferred', 20 * MINUTE_MS);
+      const next = change === 'last only' ? null : bootedWorkspace('next-deferred', 20 * MINUTE_MS);
+      await defer(first.root, first.udid, PAST());
+      if (next) await defer(next.root, next.udid, PAST());
+      let finish = () => {};
+      const held = new Promise<void>((done) => {
+        finish = done;
+      });
+      const order: string[] = [];
+      vi.mocked(teardown.teardownOwnedIosSim).mockImplementation(async (udid) => {
+        order.push(udid);
+        tornDown.push(udid);
+        if (udid === first.udid) await held;
+        return { status: 'torn-down', label: udid };
+      });
+      const controller = new AbortController();
+      const reason = new Error('cancel between deferred devices');
+      const owner = await acquireDisk(LADDER);
+      const running = runBootedParkedPass({
+        sims,
+        memory: 'normal',
+        all: true,
+        act: true,
+        log: () => {},
+        operation: testContext({ signal: controller.signal }),
+        between: async () => {
+          await owner.boundary();
+          controller.signal.throwIfAborted();
+        },
+      });
+      const outcome = running.then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      let higher: ReturnType<typeof requestGcItem> | undefined;
+      try {
+        await vi.waitFor(() => expect(order).toEqual([first.udid]));
+        higher = requestGcItem(async () => {
+          order.push('critical');
+          expect(deferred(first.root)).toEqual([]);
+          expect(
+            await withWorkspaceProcessLock(workspaceDir(first.root), 'native-run', async () => 'free', {
+              external: true,
+              waitMs: 0,
+            }),
+          ).toBe('free');
+          if (change === 'abort') controller.abort(reason);
+          else if (next && change === 'new deferral') await defer(next.root, next.udid, FUTURE());
+          else if (next) upsertProject(next.root, { supervisor: { pid: process.pid, port: 59123 } });
+        }, CRITICAL);
+        await Promise.resolve();
+        expect(order).toEqual([first.udid]);
+        finish();
+        expect(await outcome).toBe(change === 'abort' ? reason : undefined);
+        expect(order).toEqual([first.udid, 'critical']);
+        expect(tornDown).toEqual([first.udid]);
+        expect(next ? deferred(next.root) : []).toEqual(change === 'new deferral' || change === 'abort' ? ['ios'] : []);
+      } finally {
+        finish();
+        owner.release();
+        await outcome;
+        await higher?.result;
+      }
+    },
+  );
 });
+
+test.skipIf(process.platform !== 'darwin')(
+  'parked shutdown hands off only after its pool claim settles and rechecks adoption before the next device',
+  async () => {
+    const ids = ['PARKED-FIRST', 'PARKED-NEXT'];
+    const real = getExecutor();
+    setExecutor({ ...real, findExecutable: (name) => (name === 'agent-device' ? null : real.findExecutable(name)) });
+    for (const udid of ids) {
+      recordCreatedDevice('ios', udid);
+      sims.push({
+        udid,
+        name: `stim-parked ${udid}`,
+        state: 'Booted',
+        runtime: 'iOS 26.0',
+        deviceTypeIdentifier: 'iPhone',
+        available: true,
+      });
+      const projectPath = join(projects, udid);
+      mkdirSync(projectPath);
+      upsertProject(projectPath, { platforms: { ios: { owned: true, deviceUdid: udid } } });
+      parkSim({
+        platform: 'ios',
+        projectPath,
+        max: 3,
+        record: {
+          udid,
+          name: `stim-parked ${udid}`,
+          parkedAt: new Date().toISOString(),
+          bootedUntil: new Date(Date.now() + 10 * MINUTE_MS).toISOString(),
+          deviceTypeIdentifier: 'iPhone',
+          runtimeIdentifier: 'iOS-26-0',
+          simslimManaged: false,
+        },
+      });
+    }
+    vi.spyOn(iosApi, 'listAllIosSimsAsync').mockImplementation(async () => sims);
+    let finish = () => {};
+    const held = new Promise<void>((done) => {
+      finish = done;
+    });
+    const order: string[] = [];
+    vi.spyOn(iosApi, 'shutdownIosSim').mockImplementation(async (udid) => {
+      order.push(udid);
+      if (udid === ids[0]) await held;
+      const sim = sims.find((entry) => entry.udid === udid);
+      if (sim) sim.state = 'Shutdown';
+    });
+    const config = loadConfig();
+    if (!config) throw new Error('missing parked fixture config');
+    const normal: DaemonPressure = {
+      level: 'normal',
+      disk: 'normal',
+      memory: 'normal',
+      reasons: [],
+      memoryWarningSince: null,
+    };
+    const owner = await acquireDisk(LADDER);
+    const run = runLadder(
+      {
+        config,
+        sims,
+        devices: [],
+        simsFailed: false,
+        act: true,
+        log: () => {},
+        operation: testContext(),
+        between: owner.boundary,
+        force: { level: 'high', why: 'explicit high at measured normal' },
+        fromRung: 0,
+        lastRung: 0,
+        remeasure: async () => normal,
+      },
+      normal,
+    );
+    let higher: ReturnType<typeof requestGcItem> | undefined;
+    try {
+      await vi.waitFor(() => expect(order).toEqual([ids[0]]));
+      higher = requestGcItem(async () => {
+        order.push('critical');
+        const first = ids[0];
+        const next = ids[1];
+        if (!first || !next) throw new Error('missing parked fixtures');
+        expect(
+          (
+            await keepParkedAfter(
+              'ios',
+              first,
+              async () => {},
+              (record) => record,
+            )
+          )?.udid,
+        ).toBe(first);
+        expect(readParked('ios').find((record) => record.udid === first)?.bootedUntil).toBeUndefined();
+        await dropParked('ios', next);
+      }, CRITICAL);
+      await Promise.resolve();
+      expect(order).toEqual([ids[0]]);
+      finish();
+      const result = await run;
+      expect(order).toEqual([ids[0], 'critical']);
+      expect(result.actions).toEqual([expect.objectContaining({ target: ids[0], outcome: 'done' })]);
+    } finally {
+      finish();
+      owner.release();
+      await run;
+      await higher?.result;
+    }
+  },
+);

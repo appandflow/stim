@@ -1811,6 +1811,81 @@ describe('the pressure ladder', () => {
     },
   );
 
+  test
+    .skipIf(process.platform !== 'darwin')
+    .each(['new activity', 'pressure cleared', 'abort', 'forced cleared'] as const)(
+    'a completed dormant workspace releases its claim before the next admission: %s',
+    async (change) => {
+      const forced = change === 'forced cleared';
+      const first = workspace('first-dormant', 3 * DAY_MS, 'Shutdown');
+      const next = workspace('next-dormant', 2 * DAY_MS, 'Shutdown');
+      const controller = new AbortController();
+      const reason = new Error('cancel at a completed dormant workspace');
+      let current = pressure('high');
+      let finish = () => {};
+      const held = new Promise<void>((done) => {
+        finish = done;
+      });
+      const native = vi.mocked(teardown.teardownOwnedIosSim).getMockImplementation();
+      if (!native) throw new Error('missing teardown fixture');
+      const order: string[] = [];
+      vi.mocked(teardown.teardownOwnedIosSim).mockImplementation(async (udid, options) => {
+        order.push(udid);
+        if (udid === first.udid) await held;
+        return native(udid, options);
+      });
+      const owner = await acquireDisk(LADDER);
+      const running = runLadder(
+        {
+          ...input(true, async () => current),
+          fromRung: 4,
+          lastRung: 4,
+          force: forced ? { level: 'high', why: 'explicit high' } : undefined,
+          operation: testContext({ signal: controller.signal }),
+          between: owner.boundary,
+        },
+        current,
+      );
+      const outcome = running.then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      let higher: ReturnType<typeof requestGcItem> | undefined;
+      try {
+        await vi.waitFor(() => expect(order).toEqual([first.udid]));
+        higher = requestGcItem(async () => {
+          order.push('critical');
+          expect(readDormantStage(readWorkspaceState(first.root))).not.toBeNull();
+          expect(
+            await withWorkspaceProcessLock(workspaceDir(first.root), 'native-run', async () => 'free', {
+              external: true,
+              waitMs: 0,
+            }),
+          ).toBe('free');
+          if (change === 'new activity') recordWorkspaceUse(next.root, new Date());
+          else if (change === 'pressure cleared' || forced) {
+            current = pressure('normal');
+            vi.mocked(daemonMeasure.measureDisk).mockResolvedValue([
+              { volume: '/', freeMb: 100 * 1024, device: statSync(home).dev },
+            ]);
+          } else controller.abort(reason);
+        }, CRITICAL);
+        await Promise.resolve();
+        expect(order).toEqual([first.udid]);
+        finish();
+        expect(await outcome).toBe(change === 'abort' ? reason : undefined);
+        expect(order).toEqual(forced ? [first.udid, 'critical', next.udid] : [first.udid, 'critical']);
+        expect(deleted).toEqual(forced ? [first.udid, next.udid] : [first.udid]);
+        expect(Boolean(readDormantStage(readWorkspaceState(next.root)))).toBe(forced);
+      } finally {
+        finish();
+        owner.release();
+        await outcome;
+        await higher?.result;
+      }
+    },
+  );
+
   test('the final tool-cache cleanup hands off before inventory reporting starts', async () => {
     const order: string[] = [];
     vi.spyOn(unowned, 'surveyToolCaches').mockResolvedValue([
