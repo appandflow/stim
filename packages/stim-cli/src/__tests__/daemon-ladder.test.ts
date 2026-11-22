@@ -1,3 +1,4 @@
+import * as runningFrom from '../workspace/running-from.ts';
 import * as inventory from '../commands/gc/inventory.ts';
 import * as cargoLocks from '../workspace/cargo-lock.ts';
 import { ladderRun } from '../stimd/passes/ladder-run.ts';
@@ -1855,8 +1856,10 @@ describe('the pressure ladder', () => {
     setExecutor({
       ...getExecutor(),
       runFileAsync: async () => '16\tfixture\n',
-      runFileQuietAsync: async (file) =>
-        file === 'ps' ? `${process.pid} node vitest\n` : file === 'lsof' ? `p${process.pid}\nn/\n` : null,
+    });
+    vi.spyOn(runningFrom, 'readRunningProcessesAsync').mockResolvedValue({
+      commands: [{ pid: process.pid, line: 'node vitest' }],
+      cwds: [{ pid: process.pid, path: projects }],
     });
     const paths = ['first-tool-cache', 'second-tool-cache'].map((name) => join(projects, name));
     for (const path of paths) {
