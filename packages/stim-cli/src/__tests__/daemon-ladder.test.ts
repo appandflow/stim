@@ -1,3 +1,4 @@
+import { ladderRun } from '../stimd/passes/ladder-run.ts';
 import {
   existsSync,
   mkdirSync,
@@ -64,8 +65,15 @@ import { serveShareList, shareRow } from './_share-list-server.ts';
 import * as archive from '../archive.ts';
 import { testContext } from './_context.ts';
 import * as settings from '../workspace/settings.ts';
-import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
-import { acquireDisk, requestGcItem, LADDER, LADDER_CLOCK_SLOTS } from '../daemon/disk-owner.ts';
+import { withWorkspaceProcessLock, WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
+import {
+  acquireDisk,
+  requestGcItem,
+  requestGcPass,
+  CRITICAL,
+  LADDER,
+  LADDER_CLOCK_SLOTS,
+} from '../daemon/disk-owner.ts';
 import * as daemonMeasure from '../daemon/measure.ts';
 
 const MINUTE_MS = 60_000;
@@ -882,6 +890,153 @@ describe('the pressure ladder', () => {
       expect.objectContaining({ rung: 1, kind: 'delete-build-outputs', outcome: 'done', bytes: expect.any(Number) }),
     );
     expect(deleted).toEqual([]);
+  });
+
+  test.each(['new activity', 'pressure cleared', 'abort'] as const)(
+    'a stopped-output boundary releases claims before critical work and rechecks %s on resume',
+    async (change) => {
+      const root = workspace('one-checkout', 5 * MINUTE_MS, 'Shutdown').root;
+      const paths = ['derived-data', 'gradle-build'].map((name) => join(workspaceDir(root), name));
+      for (const path of paths) mkdirSync(path, { recursive: true });
+      await marks.markWriter(input().config)({
+        path: root,
+        at: Date.now(),
+        lastActivityAt: Date.now() - DAY_MS,
+        kept: null,
+      });
+      let release = () => {};
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let first: string | undefined;
+      let removing = false;
+      const remove = idlePass.deleteOutputs;
+      vi.spyOn(idlePass, 'deleteOutputs').mockImplementation(async (selected, ...options) => {
+        removing = true;
+        try {
+          if (first === undefined) {
+            first = selected[0];
+            await held;
+          }
+          return await remove(selected, ...options);
+        } finally {
+          removing = false;
+        }
+      });
+      let remainingKeep: unknown;
+      let current = pressure('high');
+      const high = requestGcPass(
+        'high',
+        'manual',
+        async (_level, signal, _emit, found, turn) => {
+          found('high');
+          const done = await runLadder(
+            {
+              ...input(true, async () => current),
+              operation: testContext({ signal }),
+              fromRung: 1,
+              lastRung: 1,
+              between: turn.boundary,
+            },
+            current,
+          );
+          return { run: ladderRun('high', done.pressure, done.actions) };
+        },
+        () => {},
+      );
+      const outcome = high.result.catch((error: unknown) => error);
+      try {
+        await vi.waitFor(() => expect(first).toBeDefined());
+        const selected = first;
+        const remaining = paths.find((path) => path !== selected);
+        if (!selected || !remaining) throw new Error('the first stopped output was not selected');
+        const critical = requestGcItem(async () => {
+          expect(removing).toBe(false);
+          remainingKeep = readGcMark(root)?.candidates.find((candidate) => candidate.path === remaining)?.keep;
+          for (const lock of ['native-run', 'metro-start'])
+            expect(
+              await withWorkspaceProcessLock(workspaceDir(root), lock, async () => 'free', {
+                external: true,
+                waitMs: 0,
+              }),
+            ).toBe('free');
+          if (change === 'new activity') recordWorkspaceUse(root, new Date());
+          else if (change === 'pressure cleared') current = pressure('normal');
+          else high.leave();
+        }, CRITICAL);
+        expect(removing).toBe(true);
+        release();
+        await critical.result;
+        const result = await outcome;
+        expect(result instanceof Error).toBe(change === 'abort');
+        expect(existsSync(selected)).toBe(false);
+        expect(existsSync(remaining)).toBe(true);
+        const kept = readGcMark(root)?.candidates.find((candidate) => candidate.path === remaining)?.keep;
+        expect(change === 'new activity' ? kept?.reason : kept).toEqual(
+          change === 'new activity' ? 'it is no longer idle' : remainingKeep,
+        );
+      } finally {
+        release();
+        await outcome;
+      }
+    },
+  );
+
+  test('keeping one stopped-output candidate preserves its sibling mark', async () => {
+    const root = workspace('keep-one-output', 5 * MINUTE_MS, 'Shutdown').root;
+    const paths = ['derived-data', 'gradle-build'].map((name) => join(workspaceDir(root), name));
+    for (const path of paths) mkdirSync(path, { recursive: true });
+    await marks.markWriter(input().config)({
+      path: root,
+      at: Date.now(),
+      lastActivityAt: Date.now() - DAY_MS,
+      kept: null,
+    });
+    const before = readGcMark(root);
+    if (!before) throw new Error('missing output mark');
+    const selected = before.candidates.filter((candidate) => candidate.path === paths[1]);
+    marks.keepOutputMark({ ...before, candidates: selected }, 'new activity');
+    expect(readGcMark(root)?.candidates.find((candidate) => candidate.path === paths[0])).toEqual(
+      before.candidates.find((candidate) => candidate.path === paths[0]),
+    );
+    expect(readGcMark(root)?.candidates.find((candidate) => candidate.path === paths[1])?.keep?.reason).toBe(
+      'new activity',
+    );
+  });
+
+  test.each([
+    { freeMb: 50 * 1024, deleted: true },
+    { freeMb: 200 * 1024, deleted: false },
+  ])('a resumed critical output candidate preserves the minFreeGb device gate at $freeMb MB', async (sample) => {
+    const root = workspace('device-recheck', 5 * MINUTE_MS, 'Shutdown').root;
+    const output = join(workspaceDir(root), 'derived-data');
+    mkdirSync(output, { recursive: true });
+    await marks.markWriter(input().config)({
+      path: root,
+      at: Date.now(),
+      lastActivityAt: Date.now() - DAY_MS,
+      kept: null,
+    });
+    vi.stubEnv('STIM_DISK_MIN_FREE_GB', '100');
+    vi.stubEnv('STIM_DISK_CRITICAL_FREE_GB', '2');
+    const device = statSync(output).dev;
+    let freeMb = 1024;
+    vi.spyOn(daemonMeasure, 'measureDisk').mockImplementation(async () => [
+      { volume: '/', device, freeMb },
+      { volume: '/other', device: device + 1, freeMb: 1024 },
+    ]);
+    await runLadder(
+      {
+        ...input(true, async () => pressure('critical')),
+        fromRung: 1,
+        lastRung: 1,
+        between: async () => {
+          freeMb = sample.freeMb;
+        },
+      },
+      pressure('critical'),
+    );
+    expect(existsSync(output)).toBe(!sample.deleted);
   });
 
   test('critical output sweep uses only marked paths and never refreshes or rediscovers candidates', async () => {

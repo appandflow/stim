@@ -117,6 +117,7 @@ export interface LadderInput {
   protectedRoot?: string;
   /** Aborts at a build's headroom deadline; a Cargo target trim in flight stops between units. */
   stop?: AbortSignal;
+  between?: () => Promise<void>;
   /** The device id of the one volume a build's headroom run frees; without it, the volumes under `disk.minFreeGb`. */
   volume?: number;
   /** Runs only what relieves this cause: the stim-daemon's tick relieves memory, its disk owner disk. */
@@ -351,9 +352,19 @@ async function idleOutputsRung(context: RungContext): Promise<void> {
         (a, b) =>
           Number(a.candidates.some((candidate) => candidate.kind === 'outputs' && candidate.keep)) -
           Number(b.candidates.some((candidate) => candidate.kind === 'outputs' && candidate.keep)),
+      )
+      .flatMap((mark) =>
+        mark.candidates
+          .filter((candidate) => candidate.kind === 'outputs')
+          .map((candidate) => Object.assign({}, mark, { candidates: [candidate] })),
       );
     for (const mark of ranked) {
+      if (context.act) await context.between?.();
+      context.stop?.throwIfAborted();
+      context.operation?.signal.throwIfAborted();
       if (!(await context.stillShort())) return;
+      if (context.act && context.between && (!context.force || context.force.measured))
+        context.short = context.volume === undefined ? await shortDevices(context, 'high') : new Set([context.volume]);
       if (!mark.candidates.some((candidate) => candidate.kind === 'outputs' && onShort(context, [candidate.path])))
         continue;
       const protectedRoot = context.protectedRoot && canonicalOrNull(context.protectedRoot);
@@ -542,16 +553,19 @@ async function cargoTargetsStep(context: RungContext): Promise<void> {
         }),
   });
   for (const action of largestFirst(plan.actions)) {
+    if (context.act) await context.between?.();
+    context.stop?.throwIfAborted();
+    context.operation?.signal.throwIfAborted();
     const workspace = action.workspace ? canonicalOrNull(action.workspace) : null;
     if (protectedRoot && (workspace === protectedRoot || action.target.startsWith(`${protectedRoot}${sep}`))) continue;
     if (!onShort(context, [action.target])) continue;
     if (!(await context.stillShort())) return;
     // @ref LLP 0001#the-ladder-runs-by-yield -- a larger target's trim may already have cleared this one's volume
-    if (
-      context.volume === undefined &&
-      (await measuredDiskLevel(action.target, context.operation?.signal)) === 'normal'
-    )
-      continue;
+    if (context.volume === undefined) {
+      const level = await measuredDiskLevel(action.target, context.operation?.signal);
+      if (level === 'normal') continue;
+      if (context.between) action.level = level === 'critical' ? 3 : 2;
+    }
     if (context.act) triedAt.set(action.target, Date.now());
     await run(context, action);
   }
