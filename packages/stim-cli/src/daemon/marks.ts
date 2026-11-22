@@ -1,5 +1,5 @@
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { realpathAsync } from '../commands/gc/paths.ts';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import {
@@ -30,12 +30,23 @@ import { appRoots, artifactCheckoutsAsync, type ArtifactWorktree } from '../stim
 import { discoveredCargoCandidates, discoveredCargoHolders, registeredCargoHolders } from './cargo-marks.ts';
 import { listedRoots } from '../commands/gc/worktrees.ts';
 
+export interface CargoMarkScope {
+  roots: readonly string[];
+  via: readonly string[];
+}
+
+export interface HolderMarkScope extends CargoMarkScope {
+  root: string;
+  device: number;
+  markedAt: string;
+}
+
 /** The mark writer of one walk, which resolves the Metro cache root once for every checkout it marks. */
 export function markWriter(
   config: Config,
   signal?: AbortSignal,
   dueOnly = false,
-  cargoRoots?: ReadonlyMap<string, { roots: readonly string[]; via: readonly string[] }>,
+  cargoRoots?: ReadonlyMap<string, CargoMarkScope>,
 ): (reading: CheckoutReading) => Promise<void> {
   const metroCache = metroCacheRoot();
   return async (reading) => {
@@ -63,7 +74,7 @@ async function writeMark(
   metroCache: string,
   expiresAt: number,
   dueOnly: boolean,
-  cargoScope?: { roots: readonly string[]; via: readonly string[] },
+  cargoScope?: CargoMarkScope,
 ): Promise<void> {
   const root = await answered(reading.path, () => realpathAsync(reading.path), 3_000, signal);
   if (dueOnly && !markDue(readGcMark(root), reading.at, dormantAfterMs(config))) return;
@@ -150,6 +161,7 @@ export async function outputMarks(config: Config, operation?: StimContext): Prom
 export async function outputMarkBatch(
   config: Config,
   operation?: StimContext,
+  holders?: Map<string, CargoMarkScope>,
 ): Promise<{ marks: GcMark[]; complete: boolean; listed: boolean }> {
   const dir = join(gcLogDir(), 'marks');
   let files: string[];
@@ -174,7 +186,7 @@ export async function outputMarkBatch(
       complete = false;
     }
   }
-  const selected = await authorizedMarks(config, marks, operation);
+  const selected = await authorizedMarks(config, marks, operation, holders);
   return {
     marks: selected,
     complete: complete && (selected.length === marks.length || discoveryDisabled(config, operation?.env ?? {})),
@@ -192,7 +204,12 @@ export async function outputMark(config: Config, root: string, operation?: StimC
   return mark ? ((await authorizedMarks(config, [mark], operation))[0] ?? null) : null;
 }
 
-async function authorizedMarks(config: Config, marks: GcMark[], operation?: StimContext): Promise<GcMark[]> {
+async function authorizedMarks(
+  config: Config,
+  marks: GcMark[],
+  operation?: StimContext,
+  holders?: Map<string, CargoMarkScope>,
+): Promise<GcMark[]> {
   const registered = new Set<string>();
   for (const root of Object.keys(config.projects)) {
     try {
@@ -240,13 +257,18 @@ async function authorizedMarks(config: Config, marks: GcMark[], operation?: Stim
   const selected: GcMark[] = [];
   for (const mark of marks) {
     if (registered.has(mark.root) || allowed.has(mark.root)) selected.push(mark);
-    else if (cargoHolders.has(mark.root))
-      selected.push({ ...mark, candidates: mark.candidates.filter(({ kind }) => kind === 'cargo-target') });
-    else if (discoveredHolders.has(mark.root)) {
+    else if (cargoHolders.has(mark.root) || discoveredHolders.has(mark.root)) {
+      const candidates = cargoHolders.has(mark.root)
+        ? mark.candidates.filter(({ kind }) => kind === 'cargo-target')
+        : await discoveredCargoCandidates(mark, operation);
+      const selectedMark = { ...mark, candidates };
       // @ref LLP 0001#the-lane-marks-what-each-checkout-could-free -- Cargo-only route evidence does not authorize dependency reports
-      const cargoOnly = { ...mark, candidates: await discoveredCargoCandidates(mark, operation) };
-      delete cargoOnly.dependencies;
-      selected.push(cargoOnly);
+      if (!cargoHolders.has(mark.root)) delete selectedMark.dependencies;
+      selected.push(selectedMark);
+      holders?.set(mark.root, {
+        roots: [...new Set([mark.root, ...candidates.map(({ path }) => dirname(path))])],
+        via: mark.cargoVia ?? [],
+      });
     }
   }
   return selected;
