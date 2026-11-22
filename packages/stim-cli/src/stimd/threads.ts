@@ -2,7 +2,7 @@ import type { StimContext } from '@stim-cli/core';
 import { isMainThread, parentPort, Worker, workerData } from 'node:worker_threads';
 import type { Config } from '../workspace/config.ts';
 import type { HistoryRoot } from '../fsevents-helper.ts';
-import type { DaemonLadderAction, BuildEndMarker } from '@stim-cli/core/state';
+import type { CleanupQueueStatus, DaemonLadderAction, BuildEndMarker } from '@stim-cli/core/state';
 import type {
   DiskPassInput,
   DiskPassResult,
@@ -10,7 +10,14 @@ import type {
   HeadroomRequest,
   HeadroomReply,
 } from '../daemon/passes.ts';
-import { LADDER, LADDER_CLOCK_SLOTS, requestGcPass, requestGcItem, type GcPassReply } from '../daemon/disk-owner.ts';
+import {
+  LADDER,
+  LADDER_CLOCK_SLOTS,
+  reportDiskQueue,
+  requestGcPass,
+  requestGcItem,
+  type GcPassReply,
+} from '../daemon/disk-owner.ts';
 import type { GcPassRequest } from '../commands/gc.ts';
 import type { GcItemRequest, GcItemResult } from '../commands/gc/item.ts';
 import { runGcItem } from './gc-item.ts';
@@ -48,6 +55,7 @@ interface Failure {
 }
 
 type FromThread =
+  | { type: 'diskQueue'; status: CleanupQueueStatus }
   | {
       type: 'log';
       level: Parameters<Log>[0];
@@ -142,7 +150,11 @@ const lostError = (name: ThreadName, error: Error) =>
  * child held once it has stopped; the job's rejection then names that child and says whether it has stopped. A thread
  * that ends while it still watches a child reports `onLost`, since nothing can release what that child held any more.
  */
-export function createThreadTable(log: Log, onLost: (error: Error) => void = () => {}): ThreadTable {
+export function createThreadTable(
+  log: Log,
+  onLost: (error: Error) => void = () => {},
+  onQueue: (status: CleanupQueueStatus) => void = () => {},
+): ThreadTable {
   const threads = new Map<ThreadName, Thread>();
   const dependencyCadence = new BigInt64Array(new SharedArrayBuffer(BigInt64Array.BYTES_PER_ELEMENT));
   const ladderClocks = new BigInt64Array(
@@ -196,6 +208,10 @@ export function createThreadTable(log: Log, onLost: (error: Error) => void = () 
       });
     };
     worker.on('message', (message: FromThread) => {
+      if (message.type === 'diskQueue') {
+        if (threads.get(name) === thread) onQueue(message.status);
+        return;
+      }
       if (message.type === 'log') return log(message.level, message.event, message.msg, message.fields);
       if (message.type === 'settled') {
         thread.unsettled = new Set(message.pending);
@@ -221,7 +237,10 @@ export function createThreadTable(log: Log, onLost: (error: Error) => void = () 
       pending?.reject(rejection(message));
     });
     const gone = (error: Error) => {
-      if (threads.get(name) === thread) threads.delete(name);
+      if (threads.get(name) === thread) {
+        threads.delete(name);
+        if (name === 'passes') onQueue({ running: null, queued: 0 });
+      }
       for (const asked of thread.ladders.values())
         asked.reject(lostError(name, new Error(`the ${name} thread ended during a disk pass`)));
       thread.ladders.clear();
@@ -425,6 +444,7 @@ else if (thread && parentPort) {
   const { processContext } = await import('../cli-operation.ts');
   const ladderClocks: BigInt64Array | undefined = workerData.ladderClocks;
   let lane: MaintenanceLane | undefined;
+  if (thread === 'passes') reportDiskQueue((status) => port.postMessage({ type: 'diskQueue', status }));
   serveThreadJobs<
     ThreadInput,
     DiskPassInput,

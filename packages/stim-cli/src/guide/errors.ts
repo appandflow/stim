@@ -230,10 +230,6 @@ the code, never on the message.`,
   unresolved, because Stim cannot tell whether that dev server still runs.
   \`stim stop\` prints that answer's message and remedy (the port check to
   run, then the removal of that claim) as a failed Metro stop, without the code.
-  An acting \`stim gc\` takes the same exclusive maintenance claim as the
-  stim-daemon's maintenance pass. While one holds it the other refuses at once
-  with this code, naming the holder (pid, start, trigger); retry after it
-  ends. \`gc --dry-run\` takes no claim.
   \`worktree warm\` reports it for the repository-wide warm claim under
   ~/.stim/warm-locks on both paths, including a \`--refresh\` that spawned its
   install and was killed before recording which process: nothing was refreshed
