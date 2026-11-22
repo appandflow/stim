@@ -1,3 +1,5 @@
+import { execFileSync } from 'node:child_process';
+import * as worktrees from '../workspace/worktree.ts';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { readFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -44,6 +46,8 @@ function record(): GcMark {
 
 test('shared batch reads each mark once and preserves the sweep subset around malformed legacy state', async () => {
   const valid = record();
+  valid.candidates = [{ kind: 'outputs', path: join(root, 'build'), device: 1, bytes: 1, measuredAt: valid.markedAt }];
+  writeFileSync(gcMarkFile(root), JSON.stringify(valid));
   const torn = join(dirname(gcMarkFile(root)), 'torn.json');
   writeFileSync(torn, '{');
   const legacy = gcMarkFile(join(base, 'legacy'));
@@ -58,6 +62,13 @@ test('shared batch reads each mark once and preserves the sweep subset around ma
   expect(await outputMarks(config, testContext())).toEqual([valid]);
   const observed = await readMarkHealth(config, testContext());
   expect(observed.marks).toMatchObject({ state: 'partial', stale: [{ root }] });
+  expect(observed.marks.candidates?.outputs).toEqual({
+    state: 'partial',
+    count: 1,
+    knownBytes: 1,
+    unknownSizeCount: 0,
+    oldestMarkedAt: valid.markedAt,
+  });
   expect(observed.roots).toEqual([{ root, device: 1 }]);
 });
 
@@ -68,6 +79,12 @@ test('a missing mark directory reports unavailable instead of zero', async () =>
     at: Date.now(),
     state: 'unavailable',
     stale: [],
+    candidates: {
+      readState: 'unavailable',
+      outputs: { state: 'unavailable' },
+      dependencies: { state: 'unavailable' },
+      worktrees: { state: 'unavailable' },
+    },
   });
 });
 
@@ -142,7 +159,120 @@ test('explicitly disabled discovery excludes old unregistered marks without clai
   const valid = record();
   const excluded = join(base, 'excluded');
   mkdirSync(excluded);
-  writeFileSync(gcMarkFile(excluded), JSON.stringify({ ...valid, root: excluded }));
+  writeFileSync(
+    gcMarkFile(excluded),
+    JSON.stringify({
+      ...valid,
+      root: excluded,
+      candidates: [
+        { kind: 'cargo-target', path: join(excluded, 'target'), device: 1, bytes: 4096, measuredAt: valid.markedAt },
+      ],
+    }),
+  );
   config.maintenance = { autoDiscover: false, discoverRoots: [] };
   expect(await outputMarkBatch(config, testContext())).toEqual({ marks: [valid], complete: true, listed: true });
+});
+
+test('failed nested registration holder proof omits zero totals and a real retry restores the inventory', async () => {
+  execFileSync('git', ['init', '-q', root]);
+  const app = join(root, 'apps', 'mobile');
+  mkdirSync(app, { recursive: true });
+  config.projects = { [app]: {} };
+  config.maintenance = { autoDiscover: false, discoverRoots: [] };
+  const saved = record();
+  saved.candidates = [
+    { kind: 'cargo-target', path: join(root, 'target'), device: 1, bytes: 4096, measuredAt: saved.markedAt },
+  ];
+  writeFileSync(gcMarkFile(root), JSON.stringify(saved));
+  const lookup = vi.spyOn(worktrees, 'resolveSourceCheckoutAsync');
+  vi.mocked(readFile).mockClear();
+
+  expect((await readMarkHealth(config, testContext())).marks.candidates?.outputs).toMatchObject({
+    state: 'ready',
+    count: 1,
+    knownBytes: 4096,
+  });
+  lookup.mockResolvedValueOnce({ entries: [], refusal: 'Git read failed' });
+  const unanswered = await readMarkHealth(config, testContext());
+  expect(unanswered.roots).toEqual([]);
+  expect(unanswered.marks.candidates).toMatchObject({ readState: 'partial', outputs: { state: 'unavailable' } });
+  expect(unanswered.marks.candidates?.outputs.count).toBeUndefined();
+  expect(unanswered.marks.candidates?.outputs.knownBytes).toBeUndefined();
+  expect((await readMarkHealth(config, testContext())).marks.candidates?.outputs).toMatchObject({
+    state: 'ready',
+    count: 1,
+    knownBytes: 4096,
+  });
+  expect(lookup).toHaveBeenCalledTimes(3);
+  expect(vi.mocked(readFile).mock.calls.filter(([file]) => String(file) === gcMarkFile(root))).toHaveLength(3);
+});
+
+test('candidate coverage uses the same authorized file batch and cached subtype evidence without reading candidate trees', async () => {
+  const saved = record();
+  const dependencyAt = new Date(Date.now() - 2 * 3_600_000).toISOString();
+  const worktreeAt = new Date(Date.now() - 24 * 3_600_000).toISOString();
+  const observed: GcMark = {
+    ...saved,
+    candidates: [
+      { kind: 'outputs', path: join(root, 'build'), device: 1, bytes: 0, measuredAt: saved.markedAt },
+      { kind: 'cargo-target', path: join(root, 'target'), device: 1, bytes: null, measuredAt: null },
+    ],
+    worktree: {
+      markedAt: worktreeAt,
+      source: base,
+      head: 'abc',
+      keys: [root],
+      clean: true,
+      pushed: true,
+      finished: null,
+      emptyBranch: false,
+      activity: null,
+      lastUsedAt: null,
+      keep: { code: 'active', reason: 'kept', eligibleAt: null },
+    },
+    dependencies: {
+      markedAt: dependencyAt,
+      role: 'linked',
+      keys: [root],
+      candidates: [
+        {
+          path: join(root, 'node_modules'),
+          device: 1,
+          bytes: 7,
+          measuredAt: dependencyAt,
+          keep: { reason: 'active', at: dependencyAt },
+        },
+      ],
+    },
+  };
+  writeFileSync(gcMarkFile(root), JSON.stringify(observed));
+  const excluded = join(base, 'excluded');
+  mkdirSync(excluded);
+  writeFileSync(
+    gcMarkFile(excluded),
+    JSON.stringify({
+      ...observed,
+      root: excluded,
+      candidates: [
+        { kind: 'outputs', path: join(excluded, 'build'), device: 1, bytes: 999, measuredAt: saved.markedAt },
+      ],
+    }),
+  );
+  config.maintenance = { autoDiscover: false, discoverRoots: [] };
+  vi.mocked(readFile).mockClear();
+  vi.mocked(readdir).mockClear();
+  const result = await readMarkHealth(config, testContext());
+  expect(result.marks.candidates).toEqual({
+    readState: 'ready',
+    outputs: { state: 'ready', count: 2, knownBytes: 0, unknownSizeCount: 1, oldestMarkedAt: saved.markedAt },
+    dependencies: { state: 'ready', count: 1, knownBytes: 7, unknownSizeCount: 0, oldestMarkedAt: dependencyAt },
+    worktrees: { state: 'ready', count: 1, knownBytes: 0, unknownSizeCount: 1, oldestMarkedAt: worktreeAt },
+  });
+  expect(
+    vi
+      .mocked(readFile)
+      .mock.calls.map(([path]) => String(path))
+      .toSorted(),
+  ).toEqual([gcMarkFile(root), gcMarkFile(excluded)].toSorted());
+  expect(vi.mocked(readdir).mock.calls.map(([path]) => String(path))).toEqual([dirname(gcMarkFile(root))]);
 });
