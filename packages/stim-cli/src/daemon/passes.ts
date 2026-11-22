@@ -28,7 +28,7 @@ import type { OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { classifyPressure, diskPressure, diskThresholds, shortVolumeDevices, type DiskThresholds } from './pressure.ts';
 import { onShortVolume } from '../stimd/passes/unowned.ts';
 import { dormantAfterMs, runDormantPass, sourceDormantAfterMs } from './stages.ts';
-import { acquireDisk, diskBoundary, HARD_FLOOR, joinablePass, LADDER, LANE, releaseDisk } from './disk-owner.ts';
+import { acquireDisk, CRITICAL, HARD_FLOOR, joinablePass, LADDER, LANE } from './disk-owner.ts';
 import { ladderRun } from '../stimd/passes/ladder-run.ts';
 import type { LevelRunAction } from '../stimd/passes/level-run.ts';
 
@@ -87,7 +87,7 @@ export async function runDiskPass(
   const config = loadConfig();
   if (!config) return { actions: [], pressure: input.pressure };
   // @ref LLP 0001#one-task-runs-every-gc-deletion -- the ladder and the lane never delete at the same time
-  await acquireDisk(input.requested ? HARD_FLOOR : LADDER);
+  const turn = await acquireDisk(input.requested ? HARD_FLOOR : input.pressure.disk === 'critical' ? CRITICAL : LADDER);
   const closeGitReads = openGitReads(operation);
   try {
     operation.signal.throwIfAborted();
@@ -126,7 +126,7 @@ export async function runDiskPass(
     );
   } finally {
     closeGitReads();
-    releaseDisk();
+    turn.release();
   }
 }
 
@@ -465,10 +465,10 @@ export function createMaintenanceLane(
         });
         const fingerprintMs = lap();
         // @ref LLP 0001#one-task-runs-every-gc-deletion -- a ladder pass waits for one unit, never a whole step
-        await acquireDisk(LANE);
+        const turn = await acquireDisk(LANE);
         let holding = true;
         const release = () => {
-          if (holding) releaseDisk();
+          if (holding) turn.release();
           holding = false;
         };
         let dependenciesMs: number;
@@ -480,7 +480,7 @@ export function createMaintenanceLane(
               log,
               ...reading,
               cadence: dependencyCadence,
-              between: diskBoundary,
+              between: turn.boundary,
               marks: true,
             })),
           );
@@ -489,7 +489,7 @@ export function createMaintenanceLane(
             runMaintenance('daemon', {
               report: !act,
               tick: { operation, measured },
-              between: diskBoundary,
+              between: turn.boundary,
               deleted: release,
               ...(onAction ? { onAction } : {}),
             });

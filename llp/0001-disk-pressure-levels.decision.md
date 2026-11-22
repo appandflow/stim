@@ -298,13 +298,24 @@ so none ever runs beside another.
 - The disk pass measures again before each rung, so a level that fell while
   it waited takes only what the new level needs.
 - An acting `stim gc` and the API's `collectGarbage` ask the queue for a gc
-  pass (Every gc joins a pass under way). A pass at high or critical takes the
-  ladder rank, so it takes the turn at the lane's next unit boundary; a pass
-  at normal, or one whose level is still to be measured, ranks after the lane
-  and waits for the lane to end its run. A request that raises a waiting pass
-  above normal moves it to the ladder rank. A build's headroom request also takes the ladder rank, rechecking its own
-  volume target when it takes the turn (LLP 0006). The hard-floor rank stays
-  ahead of both.
+  pass (Every gc joins a pass under way). Critical ranks ahead of high, and both
+  take the turn at the lane's next unit boundary. Normal gc shares the lane's
+  rank and does not cause it to yield. Raising or measuring a queued pass
+  changes its rank to its level. Headroom takes the high rank and rechecks its
+  volume target on grant (LLP 0006); hard floor ranks ahead of critical.
+- Each ticket owns its release and pending handoff. Concurrent boundaries of
+  one ticket share that handoff; a different ticket has its own. A resumption
+  keeps the granted owner ahead of waiting peers at its rank; new and reranked
+  tickets queue after equal peers. Releasing an old ticket
+  cannot release the current owner. Pass identity, listeners and results stay
+  with the ticket while it waits, and are current again when it resumes.
+  A cancelled queued request withdraws its own ticket; a cancelled executing
+  pass keeps ownership through its current work and observes cancellation
+  after regrant. The covering pass recreates the reserve when it still owns
+  the turn or the queue is idle, never while another ticket owns the turn.
+- The lane uses these ticket boundaries. Pressure, manual and headroom sweep
+  candidates still run within their whole pass; candidate-loop integration
+  and fresh rechecks after resumption are the remaining part of #6101.
 - The maintenance pass gives up the turn once it deletes nothing more, before
   its discovery scan and census.
 - When the passes thread ends, a disk pass it had not answered fails as
@@ -587,7 +598,25 @@ also holds the newest activity the walk read, and the walk reads at
   A build-headroom deadline cancels the same bounded Cargo refresh and
   leaves later holders and the next sweep unstarted; failed cleanup still
   propagates.
-- Worktree/dependency marks and pressure discovery, normal mark-first
+- The normal dependency phases save their raw linked/source inventories in an
+  optional section of the existing mark, including younger checkouts that
+  the normal dormant thresholds keep. Each enabled phase reuses its current
+  discovered roots and inventory; disabling both normal thresholds starts
+  neither discovery nor inventory. Dependency observations have their own
+  timestamp. Output-only refreshes preserve that timestamp and any newer
+  shared dirty watermark; dependency-only writes preserve the output
+  generation. Missing or malformed optional evidence leaves output marks
+  valid and dependency eligibility unknown.
+- Acting pressure dependency reports use saved candidates, cached estimates
+  and targeted current scope, membership, path/device, Git role/lock,
+  pin, activity and warm checks. They discover no dependency candidates,
+  measure no new sizes and delete nothing. Missing, due or dirty evidence
+  is reported as unknown. Source sharing with other linked worktrees stays
+  explicitly unknown: the pressure report does not scan those worktrees for
+  dependency symlinks. Restoring that detail from current targeted evidence
+  remains required. Explicit read-only dry runs retain discovery previews.
+  Normal dependency deletion and its thresholds are unchanged.
+- Worktree marks and pressure discovery, normal mark-first
   scheduling, per-candidate disk-turn yielding and yield ranking remain
   pending. The no-discovery guarantee applies to output rung 1 and Cargo
   pressure candidate selection, not the other maintenance stages or normal
