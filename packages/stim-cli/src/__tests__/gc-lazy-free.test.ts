@@ -82,13 +82,13 @@ describe.skipIf(process.platform === 'win32')('same-volume explicit item handoff
     const paths = (await collectTrash({ itemsOnly: true }))?.entries.map((entry) => entry.path) ?? [];
     const state: { pressure?: Promise<{ count: number; bytes: number; failures: number }> } = {};
     const drain = requestGcItem(
-      (signal, between) =>
+      (signal, turn) =>
         deleteTrash(testContext({ signal }), output(), false, true, async () => {
           state.pressure ??= requestGcItem(
             (pressureSignal) => deleteTrash(testContext({ signal: pressureSignal }), output(), false, true),
             LADDER,
           ).result;
-          await between();
+          await turn.boundary();
         }),
       TRASH,
     );

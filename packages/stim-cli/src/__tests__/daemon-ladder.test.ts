@@ -67,7 +67,7 @@ import * as archive from '../archive.ts';
 import { testContext } from './_context.ts';
 import * as settings from '../workspace/settings.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
-import { acquireDisk, releaseDisk, requestGcItem, LADDER, LADDER_CLOCK_SLOTS } from '../daemon/disk-owner.ts';
+import { acquireDisk, requestGcItem, LADDER, LADDER_CLOCK_SLOTS } from '../daemon/disk-owner.ts';
 import * as daemonMeasure from '../daemon/measure.ts';
 
 const MINUTE_MS = 60_000;
@@ -2030,12 +2030,12 @@ describe('the ladder a build runs for its headroom', () => {
     async (mode) => {
       parked(2);
       freeOnBuildDevice(10, 1);
-      await acquireDisk(LADDER);
+      const turn = await acquireDisk(LADDER);
       const asked = requestGcItem(() => run(24, DEVICE, true), LADDER);
       const config = loadConfig();
       if (!config) throw new Error('missing config');
       saveConfig({ ...config, daemon: { ...config.daemon, mode } });
-      releaseDisk();
+      turn.release();
       await asked.result;
       expect(deleted).toEqual([]);
     },
@@ -2047,11 +2047,11 @@ describe('the ladder a build runs for its headroom', () => {
     const disk = vi
       .spyOn(daemonMeasure, 'measureDisk')
       .mockImplementation(async () => [{ volume: '/', freeMb, device: DEVICE }]);
-    await acquireDisk(LADDER);
+    const turn = await acquireDisk(LADDER);
     const asked = requestGcItem(() => run(24), LADDER);
     expect(disk).not.toHaveBeenCalled();
     freeMb = 30 * 1024;
-    releaseDisk();
+    turn.release();
     await asked.result;
     expect(deleted).toEqual([]);
     expect(disk).toHaveBeenCalled();

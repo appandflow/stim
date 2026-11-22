@@ -19,7 +19,7 @@ import { maintenanceStatus } from '../stimd/passes/status.ts';
 import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { runGcThroughStimd } from '../daemon/client.ts';
 import { ladderRun } from '../stimd/passes/ladder-run.ts';
-import { joinablePass } from '../daemon/disk-owner.ts';
+import { acquireDisk, joinablePass, LANE } from '../daemon/disk-owner.ts';
 import { releaseReserve } from '../disk-reserve.ts';
 import { runGc as runGcCommand, runGcPass } from '../commands/gc.ts';
 import statusOp from '../commands/status.ts';
@@ -172,6 +172,7 @@ test('a gc cancelled before transmission restores the reserve released for daemo
 });
 
 test('a covering pass restores the reserve only once its work settles', async () => {
+  const turn = await acquireDisk(LANE);
   const reserve = join(maintenanceDir(), 'disk-reserve');
   await runMaintenance('status');
   releaseReserve();
@@ -189,10 +190,16 @@ test('a covering pass restores the reserve only once its work settles', async ()
       ),
     'lane',
   );
-  expect(existsSync(reserve)).toBe(false);
-  finish();
-  await pass;
-  expect(readFileSync(reserve).length).toBe(1024 * 1024);
+  try {
+    expect(existsSync(reserve)).toBe(false);
+    finish();
+    await pass;
+    expect(readFileSync(reserve).length).toBe(1024 * 1024);
+  } finally {
+    finish();
+    await pass;
+    turn.release();
+  }
 });
 
 test('engine-store cleanup waits for an admitted gc pass', async () => {
