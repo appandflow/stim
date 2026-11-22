@@ -901,7 +901,7 @@ describe('the pressure ladder', () => {
       lastActivityAt: Date.now() - 5 * MINUTE_MS,
       kept: null,
     });
-    const newer = output(marked, 'gradle-home');
+    const newer = output(marked, 'gradle-build');
     const refresh = vi.spyOn(marks, 'refreshOutputMarks');
     const discover = vi.spyOn(stages, 'stoppedOutputCandidates');
 
@@ -951,8 +951,8 @@ describe('the pressure ladder', () => {
     },
   );
 
-  test('critical output sweep keeps a marked checkout no longer covered by discovery settings', async () => {
-    const { root } = workspace('out-of-scope', 5 * MINUTE_MS, 'Shutdown');
+  test('critical output sweep keeps a marked nested checkout after discoverRoots is broadened', async () => {
+    const { root } = workspace('team/app', 5 * MINUTE_MS, 'Shutdown');
     const output = join(workspaceDir(root), 'derived-data');
     mkdirSync(output, { recursive: true });
     await marks.markWriter(input().config)({
@@ -963,6 +963,7 @@ describe('the pressure ladder', () => {
     });
     const current = input().config;
     delete current.projects[root];
+    current.maintenance = { discoverRoots: [projects] };
     saveConfig(current);
 
     await runLadder(
@@ -971,6 +972,72 @@ describe('the pressure ladder', () => {
     );
 
     expect(existsSync(output)).toBe(true);
+  });
+
+  test('high output sweep does not refresh once the disk reaches critical', async () => {
+    workspace('missing', 5 * MINUTE_MS, 'Shutdown');
+    const refresh = vi.spyOn(marks, 'refreshOutputMarks');
+    const remeasure = vi
+      .fn<() => Promise<DaemonPressure>>()
+      .mockResolvedValueOnce(pressure('high'))
+      .mockResolvedValue(pressure('critical'));
+
+    await runLadder({ ...input(true, remeasure), fromRung: 1, lastRung: 1 }, pressure('high'));
+
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  test('critical daemon report mode previews only known marks without writing them', async () => {
+    const { root } = workspace('known-report', 5 * MINUTE_MS, 'Shutdown');
+    const output = join(workspaceDir(root), 'derived-data');
+    mkdirSync(output, { recursive: true });
+    workspace('unmarked-report', 5 * MINUTE_MS, 'Shutdown');
+    await marks.markWriter(input().config)({
+      path: root,
+      at: Date.now(),
+      lastActivityAt: Date.now() - DAY_MS,
+      kept: null,
+    });
+    const before = readGcMark(root);
+    const discover = vi.spyOn(stages, 'stoppedOutputCandidates');
+
+    const { actions } = await runLadder(
+      { ...input(false, async () => pressure('critical')), fromRung: 1, lastRung: 1 },
+      pressure('critical'),
+    );
+
+    expect(actions).toContainEqual(expect.objectContaining({ rung: 1, target: root, outcome: 'would' }));
+    expect(existsSync(output)).toBe(true);
+    expect(discover).not.toHaveBeenCalled();
+    expect(readGcMark(root)).toEqual(before);
+  });
+
+  test('marked output removal reports failure after an earlier output was deleted', async () => {
+    const { root } = workspace('partial-output', 5 * MINUTE_MS, 'Shutdown');
+    const first = join(workspaceDir(root), 'derived-data');
+    const second = join(workspaceDir(root), 'gradle-build');
+    mkdirSync(first, { recursive: true });
+    mkdirSync(second, { recursive: true });
+    await marks.markWriter(input().config)({
+      path: root,
+      at: Date.now(),
+      lastActivityAt: Date.now() - DAY_MS,
+      kept: null,
+    });
+    const remove = vi.spyOn(idlePass, 'deleteOutputs');
+    remove.mockImplementationOnce(async () => {
+      rmSync(first, { recursive: true });
+      throw new Error('removal refused');
+    });
+
+    const { actions } = await runLadder(
+      { ...input(true, async () => pressure('critical')), fromRung: 1, lastRung: 1 },
+      pressure('critical'),
+    );
+
+    expect(existsSync(first)).toBe(false);
+    expect(existsSync(second)).toBe(true);
+    expect(actions).toContainEqual(expect.objectContaining({ rung: 1, outcome: 'failed', detail: 'removal refused' }));
   });
 
   test('high output sweep stops after known marks clear pressure, before refreshing unmarked roots', async () => {

@@ -464,7 +464,7 @@ export async function clearStoppedOutputs(
   operation?: StimContext,
   deletable?: (path: string) => boolean,
   mark?: GcMark,
-  reading?: DeviceReading,
+  reading?: DeviceReading & { act?: boolean },
 ): Promise<StageResult | null> {
   const { path } = candidate;
   const run = await withIdleWorkspace(
@@ -475,36 +475,55 @@ export async function clearStoppedOutputs(
           workspaceDir(path),
           'metro-start',
           async (): Promise<StageResult | null> => {
-            if (mark) {
-              const canonical = await answered(path, () => realpath(path), 3_000, operation?.signal);
-              const info = await answered(path, () => stat(path), 3_000, operation?.signal);
-              if (canonical !== mark.root || info.dev !== mark.device)
-                return { outcome: 'kept', bytes: 0, detail: 'marked checkout moved or changed volume' };
-            }
-            if (reading && (await runsSomething(path, config.projects[path] ?? {}, reading)))
-              return { outcome: 'kept', bytes: 0, detail: 'something of it runs' };
-            if (
-              (await idleFor(path, thresholdMs, PRESSURE_THRESHOLD, {
-                locked: true,
-                operation,
-              })) === null
-            )
-              return { outcome: 'kept', bytes: 0, detail: 'it is no longer idle' };
-            const outputs = await stoppedOutputs(candidate, config, operation, deletable);
-            if ('locked' in outputs) return { outcome: 'kept', bytes: 0, detail: outputs.locked };
-            const paths = mark
-              ? outputs.paths.filter((output) =>
-                  mark.candidates.some((entry) => entry.kind === 'outputs' && entry.path === output),
-                )
-              : outputs.paths;
-            if (!paths.length) return null;
-            if (mark)
-              for (const output of paths) {
-                const canonical = await answered(output, () => realpath(output), 3_000, operation?.signal);
-                const info = await answered(output, () => stat(output), 3_000, operation?.signal);
-                if (canonical !== output || info.dev !== mark.device)
-                  return { outcome: 'kept', bytes: 0, detail: 'marked output moved or changed volume' };
+            let outputs: { paths: string[]; kept: string[] } | { locked: string };
+            let paths: string[];
+            try {
+              if (mark) {
+                const canonical = await answered(path, () => realpath(path), 3_000, operation?.signal);
+                const info = await answered(path, () => stat(path), 3_000, operation?.signal);
+                if (canonical !== mark.root || info.dev !== mark.device)
+                  return { outcome: 'kept', bytes: 0, detail: 'marked checkout moved or changed volume' };
               }
+              if (reading && (await runsSomething(path, config.projects[path] ?? {}, reading)))
+                return { outcome: 'kept', bytes: 0, detail: 'something of it runs' };
+              if (
+                (await idleFor(path, thresholdMs, PRESSURE_THRESHOLD, {
+                  locked: true,
+                  operation,
+                })) === null
+              )
+                return { outcome: 'kept', bytes: 0, detail: 'it is no longer idle' };
+              outputs = await stoppedOutputs(candidate, config, operation, deletable);
+              if ('locked' in outputs) return { outcome: 'kept', bytes: 0, detail: outputs.locked };
+              paths = mark
+                ? outputs.paths.filter((output) =>
+                    mark.candidates.some((entry) => entry.kind === 'outputs' && entry.path === output),
+                  )
+                : outputs.paths;
+              if (!paths.length) return null;
+              if (mark) {
+                const verified: string[] = [];
+                for (const output of paths) {
+                  const canonical = await answered(output, () => realpath(output), 3_000, operation?.signal);
+                  const info = await answered(output, () => stat(output), 3_000, operation?.signal);
+                  const expected = mark.candidates.find((entry) => entry.kind === 'outputs' && entry.path === output);
+                  if (canonical === output && info.dev === expected?.device) verified.push(output);
+                  else outputs.kept.push(`kept ${output}: marked output moved or changed volume`);
+                }
+                paths = verified;
+                if (!paths.length) return { outcome: 'kept', bytes: 0, detail: outputs.kept.join('; ') };
+              }
+            } catch (error) {
+              if (isClaimUnavailable(error) && 'reportCleanup' in error) throw error;
+              operation?.signal.throwIfAborted();
+              return {
+                outcome: 'kept',
+                bytes: 0,
+                detail: `output safety recheck failed: ${error instanceof Error ? error.message : String(error)}`,
+              };
+            }
+            if (reading?.act === false)
+              return { outcome: 'would', bytes: 0, detail: 'daemon.mode report acts on nothing' };
             const freed = await deleteOutputs(paths, operation?.signal);
             return {
               outcome: 'done',

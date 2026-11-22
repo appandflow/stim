@@ -342,7 +342,7 @@ async function previewIdleOutputsRung(context: RungContext): Promise<void> {
 }
 
 async function idleOutputsRung(context: RungContext): Promise<void> {
-  if (!context.act) return previewIdleOutputsRung(context);
+  if (!context.act && context.force) return previewIdleOutputsRung(context);
   const sweep = async (marks: GcMark[]) => {
     const ranked = marks
       .filter((mark) => mark.candidates.some(({ kind }) => kind === 'outputs'))
@@ -357,28 +357,17 @@ async function idleOutputsRung(context: RungContext): Promise<void> {
         continue;
       const protectedRoot = context.protectedRoot && canonicalOrNull(context.protectedRoot);
       if (protectedRoot === mark.root) continue;
-      let result: Awaited<ReturnType<typeof clearStoppedOutputs>>;
-      try {
-        result = await clearStoppedOutputs(
-          { path: mark.root },
-          context.config,
-          PRESSURE_IDLE_MS,
-          context.operation,
-          deletable(context),
-          mark,
-          context,
-        );
-      } catch (error) {
-        if (isClaimUnavailable(error) && 'reportCleanup' in error) throw error;
-        context.operation?.signal.throwIfAborted();
-        result = {
-          outcome: 'kept',
-          bytes: 0,
-          detail: `marked output recheck failed: ${error instanceof Error ? error.message : String(error)}`,
-        };
-      }
+      const result = await clearStoppedOutputs(
+        { path: mark.root },
+        context.config,
+        PRESSURE_IDLE_MS,
+        context.operation,
+        deletable(context),
+        mark,
+        context,
+      );
       if (!result) continue;
-      if (result.outcome === 'kept') keepOutputMark(mark, result.detail ?? 'kept at sweep');
+      if (context.act && result.outcome === 'kept') keepOutputMark(mark, result.detail ?? 'kept at sweep');
       recordAction(
         context,
         {
@@ -406,7 +395,9 @@ async function idleOutputsRung(context: RungContext): Promise<void> {
       });
     return;
   }
-  if (await context.stillShort()) await sweep(await refreshOutputMarks(context.config, context));
+  if (!context.act || !(await context.stillShort())) return;
+  if (!context.force && (await context.remeasure()).disk !== 'high') return;
+  await sweep(await refreshOutputMarks(context.config, context));
 }
 
 /** Rung 2: parked devices, oldest first; at high until the level clears, at critical all of them. */

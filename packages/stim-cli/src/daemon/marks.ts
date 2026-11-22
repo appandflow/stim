@@ -1,6 +1,6 @@
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import { realpath, readdirSync } from 'node:fs';
-import { join, sep } from 'node:path';
+import { dirname, join } from 'node:path';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { stat } from 'node:fs/promises';
 import { promisify } from 'node:util';
@@ -14,13 +14,13 @@ import {
   type GcMark,
   type GcMarkCandidate,
 } from '@stim-cli/core/state';
-import { isScopedHome, metroCacheRoot } from '@stim-cli/core';
+import { metroCacheRoot } from '@stim-cli/core';
 import { writeCacheFile } from '../cache-file.ts';
 import { answered, Unanswered } from '../workspace/bounded-read.ts';
 import type { Config } from '../workspace/config.ts';
 import { idleOutputs } from './idle.ts';
 import { dormantAfterMs, readCheckout, type CheckoutReading, type DeviceReading } from './stages.ts';
-import { autoDiscoverEnabled, canonicalDiscoverRoots, discoverCheckouts } from '../workspace/discovery.ts';
+import { canonicalDiscoverRoots, discoverCheckouts } from '../workspace/discovery.ts';
 import { listedRoots } from '../commands/gc/worktrees.ts';
 
 const realpathAsync = promisify(realpath);
@@ -70,17 +70,19 @@ async function writeMark(
   const device = (await answered(root, () => stat(root), 3_000, signal)).dev;
   signal?.throwIfAborted();
   const markedAt = new Date(reading.at).toISOString();
-  const candidates = paths.map((path): GcMarkCandidate => {
+  const candidates: GcMarkCandidate[] = [];
+  for (const path of paths) {
     const size = readDiskUsage(path);
     const candidate: GcMarkCandidate = {
       kind: targets.includes(path) ? 'cargo-target' : 'outputs',
       path,
+      device: (await answered(path, () => stat(path), 3_000, signal)).dev,
       bytes: size?.bytes ?? null,
       measuredAt: size?.measuredAt ?? null,
     };
     if (reading.kept !== null) candidate.keep = { reason: reading.kept, at: markedAt };
-    return candidate;
-  });
+    candidates.push(candidate);
+  }
   const dirtyAt = readGcMark(root)?.dirtyAt;
   const mark: GcMark = {
     v: GC_MARK_VERSION,
@@ -117,7 +119,6 @@ export function markDue(mark: GcMark | null, now: number, dormantMs: number): bo
 export function outputMarks(config: Config, env: NodeJS.ProcessEnv = process.env): GcMark[] {
   const registered = new Set(Object.keys(config.projects).map(canonicalPath));
   const roots = canonicalDiscoverRoots(config, env);
-  const automatic = !isScopedHome(env) && autoDiscoverEnabled(config, env);
   const dir = join(gcLogDir(), 'marks');
   let files: string[];
   try {
@@ -130,8 +131,7 @@ export function outputMarks(config: Config, env: NodeJS.ProcessEnv = process.env
     const root = readJsonObject(join(dir, file))?.root;
     if (typeof root !== 'string' || gcMarkFile(root) !== join(dir, file)) continue;
     const mark = readGcMark(root);
-    if (mark && (registered.has(root) || automatic || roots.some((folder) => root.startsWith(`${folder}${sep}`))))
-      marks.push(mark);
+    if (mark && (registered.has(root) || roots.includes(dirname(root)))) marks.push(mark);
   }
   return marks;
 }
@@ -145,7 +145,11 @@ export async function refreshOutputMarks(config: Config, reading: DeviceReading)
     reading.operation?.signal.throwIfAborted();
     try {
       const root = await answered(path, () => realpathAsync(path), 3_000, reading.operation?.signal);
-      if (!markDue(readGcMark(root), Date.now(), dormantAfterMs(config, reading.operation?.env))) continue;
+      const previous = readGcMark(root);
+      if (!markDue(previous, Date.now(), dormantAfterMs(config, reading.operation?.env))) {
+        if (previous) refreshed.push(previous);
+        continue;
+      }
       const current = await readCheckout(path, config.projects[path] ?? {}, reading, 2 * MINUTE_MS);
       await write(current);
       const mark = readGcMark(root);

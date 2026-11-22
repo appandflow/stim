@@ -445,15 +445,27 @@ also holds the newest activity the walk read, and the walk reads at
   discovery. It rechecks current idleness, settings, devices, process/claim
   protections, worktree locks, output recognition and Metro sharing before
   deletion; the mark's activity is a lower bound, never permission to delete.
-  Current registration or discovery settings must still authorize the root:
-  with automatic discovery off, an unregistered root outside the current
-  discoverRoots stays. Canonical root/output paths and the marked root
-  device must still match.
+  Known-mark sweeps require current registration or a direct child of a
+  current discoverRoots folder. An unregistered historical mark whose
+  discovery route cannot be proven without discovery stays, including with
+  automatic discovery on. High pressure can reauthorize it through current
+  discovery after known candidates are spent. With discoverRoots empty,
+  critical rung 1 therefore omits every unregistered auto-only checkout;
+  targeted automatic-route authorization remains a later migration item.
+  Canonical root/output paths
+  and their own recorded devices must still match. Each candidate records
+  its device separately: an external checkout can have Stim outputs on the
+  internal disk. Version 2 marks add that field; older marks are absent.
   An unreadable check keeps the outputs and records the reason on the mark.
 - High pressure tries existing output marks first. Only while still short does
   it discover roots, refresh missing or expired marks with current checkout
   readings, and sweep successful refreshes. Critical and hard-floor output
-  sweeps never refresh marks, and leave unmarked outputs alone. Registered
+  sweeps never refresh marks, and leave unmarked outputs alone. An unforced
+  high sweep checks the latest disk level before refreshing, so a transition
+  to critical skips the refresh. Daemon report mode uses known marks without
+  deleting or updating them; explicit dry runs retain discovery previews.
+  A removal exception remains a failed rung, as before; accounting for bytes
+  removed before a later removal failed is an existing separate limitation. Registered
   roots without marks are reported; unmarked discovered roots are not listed
   during a critical sweep.
 - A mark is due after 10 minutes for activity under a day old, hourly for idle

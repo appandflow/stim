@@ -12,7 +12,15 @@ import {
 import { lstat, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { diskUsageCacheFile, gcMarkFile, readGcMark, type Config } from '@stim-cli/core/state';
+import {
+  diskUsageCacheFile,
+  gcMarkFile,
+  readGcMark,
+  GC_MARK_VERSION,
+  type Config,
+  type GcMark,
+} from '@stim-cli/core/state';
+import { runLadder } from '../daemon/ladder.ts';
 import { runDormantDependencies } from '../daemon/dependencies.ts';
 import { markDue, markWriter, refreshOutputMarks } from '../daemon/marks.ts';
 import { stoppedOutputCandidates, stoppedOutputs } from '../daemon/stages.ts';
@@ -125,8 +133,8 @@ describe('gc marks written by the lane', () => {
     { activityAge: 8 * day, elapsed: 10 * 60_000, dirty: true, due: true },
   ])('uses the approved mark cadence: $activityAge old, $elapsed since mark, dirty $dirty', (row) => {
     const now = Date.now();
-    const mark = {
-      v: 1 as const,
+    const mark: GcMark = {
+      v: GC_MARK_VERSION,
       root: '/root',
       device: 1,
       markedAt: new Date(now - row.elapsed).toISOString(),
@@ -150,6 +158,84 @@ describe('gc marks written by the lane', () => {
     expect(markDue(readGcMark(path), Date.now(), 7 * day)).toBe(false);
   });
 
+  it('reclaims marked workspace output on a different device from its checkout', async () => {
+    const path = checkout('external-checkout', 3 * day);
+    config.projects[path] = {};
+    saveConfig(config);
+    recordWorkspaceUse(path, new Date(Date.now() - 3 * day));
+    const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    const actualDevice = (await fs.stat(path)).dev;
+    vi.mocked(stat).mockImplementation(async (file) => {
+      const info = await fs.stat(file);
+      return String(file) === path ? Object.assign(info, { dev: actualDevice + 1 }) : info;
+    });
+    await markWriter(config)({ path, at: Date.now(), lastActivityAt: Date.now() - 3 * day, kept: null });
+    const output = join(path, 'android', 'app', 'build');
+    expect(readGcMark(path)?.device).toBe(actualDevice + 1);
+    expect(readGcMark(path)?.candidates[0]?.device).toBe(actualDevice);
+    const pressure = {
+      level: 'critical' as const,
+      disk: 'critical' as const,
+      memory: 'normal' as const,
+      reasons: [],
+      memoryWarningSince: null,
+    };
+
+    const { actions } = await runLadder(
+      {
+        config,
+        act: true,
+        log: () => {},
+        ...reading,
+        fromRung: 1,
+        lastRung: 1,
+        force: { level: 'critical', why: 'test' },
+        remeasure: async () => pressure,
+        operation: testContext(),
+      },
+      pressure,
+    );
+
+    expect(existsSync(output)).toBe(false);
+    expect(actions).toContainEqual(expect.objectContaining({ rung: 1, outcome: 'done' }));
+  });
+
+  it('keeps marked outputs when the targeted root safety read times out', async () => {
+    const path = checkout('unanswered-recheck', 3 * day);
+    config.projects[path] = {};
+    saveConfig(config);
+    recordWorkspaceUse(path, new Date(Date.now() - 3 * day));
+    await markWriter(config)({ path, at: Date.now(), lastActivityAt: Date.now() - 3 * day, kept: null });
+    vi.mocked(stat).mockRejectedValueOnce(new Unanswered('root safety deadline'));
+    const pressure = {
+      level: 'critical' as const,
+      disk: 'critical' as const,
+      memory: 'normal' as const,
+      reasons: [],
+      memoryWarningSince: null,
+    };
+
+    const { actions } = await runLadder(
+      {
+        config,
+        act: true,
+        log: () => {},
+        ...reading,
+        fromRung: 1,
+        lastRung: 1,
+        force: { level: 'critical', why: 'test' },
+        remeasure: async () => pressure,
+        operation: testContext(),
+      },
+      pressure,
+    );
+
+    expect(existsSync(join(path, 'android', 'app', 'build'))).toBe(true);
+    expect(actions).toContainEqual(
+      expect.objectContaining({ rung: 1, outcome: 'kept', detail: expect.stringContaining('root safety deadline') }),
+    );
+  });
+
   it('marks each checkout the walk reads with the outputs rung 1 would delete there, sized from the cache', async () => {
     const idle = checkout('idle', 3 * day);
     const active = checkout('active', 0);
@@ -168,12 +254,20 @@ describe('gc marks written by the lane', () => {
     const planned = await stoppedOutputs(candidate, config);
     expect(planned).toEqual({ paths: [build], kept: [] });
     const mark = readGcMark(idle);
-    expect(mark?.candidates).toEqual([{ kind: 'outputs', path: build, bytes: 4096, measuredAt }]);
+    expect(mark?.candidates).toEqual([
+      { kind: 'outputs', path: build, device: expect.any(Number), bytes: 4096, measuredAt },
+    ]);
     expect(Date.parse(mark?.lastActivityAt ?? '')).toBeLessThanOrEqual(Date.now() - 3 * day);
 
     const busy = readGcMark(active);
     expect(busy?.candidates).toEqual([
-      { kind: 'outputs', path: join(active, 'android', 'app', 'build'), bytes: null, measuredAt: null },
+      {
+        kind: 'outputs',
+        path: join(active, 'android', 'app', 'build'),
+        device: expect.any(Number),
+        bytes: null,
+        measuredAt: null,
+      },
     ]);
     expect(Date.parse(busy?.lastActivityAt ?? '')).toBeGreaterThan(Date.now() - day);
   }, 20_000);
@@ -247,7 +341,7 @@ describe('gc marks written by the lane', () => {
     writeFileSync(
       gcMarkFile(root),
       JSON.stringify({
-        v: 1,
+        v: GC_MARK_VERSION,
         root,
         device: 1,
         markedAt: new Date(0).toISOString(),
@@ -295,7 +389,7 @@ describe('gc marks written by the lane', () => {
 
   it.each([
     ['a torn file', (root: string) => `{"v":1,"root":${JSON.stringify(root)},"cand`],
-    ['an unknown version', (root: string) => JSON.stringify({ v: 2, root, candidates: [] })],
+    ['an unknown version', (root: string) => JSON.stringify({ v: 99, root, candidates: [] })],
   ])(
     'reads %s as absent and replaces it with a fresh mark',
     async (_, text) => {
@@ -307,7 +401,7 @@ describe('gc marks written by the lane', () => {
 
       await lane(true);
 
-      expect(readGcMark(idle)).toMatchObject({ v: 1, root: idle, candidates: [{ kind: 'outputs' }] });
+      expect(readGcMark(idle)).toMatchObject({ v: GC_MARK_VERSION, root: idle, candidates: [{ kind: 'outputs' }] });
     },
     20_000,
   );
@@ -320,7 +414,15 @@ describe('gc marks written by the lane', () => {
       mkdirSync(dirname(gcMarkFile(root)), { recursive: true });
       writeFileSync(
         gcMarkFile(root),
-        JSON.stringify({ v: 1, root, device: 1, markedAt: dirtyAt, dirtyAt, lastActivityAt: null, candidates: [] }),
+        JSON.stringify({
+          v: GC_MARK_VERSION,
+          root,
+          device: 1,
+          markedAt: dirtyAt,
+          dirtyAt,
+          lastActivityAt: null,
+          candidates: [],
+        }),
       );
     };
     const later = new Date(Date.now() + 60_000).toISOString();
