@@ -548,7 +548,7 @@ describe('normal saved worktree reconciliation', () => {
     config.maintenance = { autoDiscover: false, discoverRoots: [base] };
     saveConfig(config);
     rmSync(workspaceDir(linked), { recursive: true, force: true });
-    writeFileSync(join(linked, 'package.json'), JSON.stringify({ name: 'cli' }));
+    writeFileSync(join(linked, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
     finished();
     vi.setSystemTime(Date.now() + 10 * day);
     const plan = await normalPlan();
@@ -556,7 +556,7 @@ describe('normal saved worktree reconciliation', () => {
     vi.stubEnv('HOME', join(base, 'host'));
     vi.stubEnv('USERPROFILE', join(base, 'host'));
     vi.stubEnv('STIM_HOME', '');
-    config.maintenance = { autoDiscover: true, discoverRoots: [] };
+    config.maintenance = { autoDiscover: true, discoverRoots: [base] };
     saveConfig(config);
     mkdirSync(dirname(gcMarkFile(linked)), { recursive: true });
     writeFileSync(gcMarkFile(linked), saved);
@@ -579,8 +579,25 @@ describe('normal saved worktree reconciliation', () => {
       }),
     );
     const broad = vi.spyOn(discovery, 'discoverCheckouts').mockRejectedValue(new Error('must not rediscover'));
-    expect((await normalRemove(plan)).status).toBe('kept');
+    const result = await normalRemove(plan);
+    expect(result.status).toBe('kept');
+    expect(result.detail).toContain('saved discovery classification');
     expect(broad).not.toHaveBeenCalled();
+    expect(existsSync(linked)).toBe(true);
+  }, 20_000);
+
+  test('keeps the real claimed checkout when its current exact route becomes reduce-only', async () => {
+    finished();
+    vi.setSystemTime(Date.now() + 2 * 3_600_000);
+    const plan = await normalPlan();
+    config.projects = {};
+    config.maintenance = { autoDiscover: false, discoverRoots: [base] };
+    saveConfig(config);
+    rmSync(workspaceDir(linked), { recursive: true, force: true });
+    vi.spyOn(discovery, 'targetedCheckouts').mockResolvedValue([
+      { path: linked, from: base, origin: 'worktree', reduceOnly: true },
+    ]);
+    expect((await normalRemove(plan)).status).toBe('kept');
     expect(existsSync(linked)).toBe(true);
   }, 20_000);
 
