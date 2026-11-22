@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import type { KnipConfig } from 'knip';
+import { buildEntries } from './packages/stim-cli/build-entries.ts';
 
 export default ({ production }: { production?: boolean }): KnipConfig => ({
   ignoreExportsUsedInFile: production,
@@ -40,7 +41,7 @@ export default ({ production }: { production?: boolean }): KnipConfig => ({
     'packages/stim-cli': {
       // TypeScript reads it as the declarations of bin/route.mjs, which the published router imports.
       ignore: ['bin/route.d.mts'],
-      entry: ['src/injected/*.cjs'],
+      entry: ['src/injected/*.cjs', ...Object.values(buildEntries).map((entry) => `${entry}!`)],
       ignoreBinaries: ['mkfifo', 'clang'],
       // tsdown bundles the workspace packages; their bare unique-pid import stays external.
       ignoreDependencies: production ? ['@stim-cli/*', 'unique-pid'] : [],

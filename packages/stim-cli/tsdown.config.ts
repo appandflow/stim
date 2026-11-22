@@ -1,6 +1,7 @@
 import { copyFileSync, cpSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { defineConfig } from 'tsdown';
+import { buildEntries } from './build-entries.ts';
 import { SETTINGS_SCHEMA_FILE, settingsJsonSchema } from '@stim-cli/core/state';
 import { PROTOCOL_SCHEMA_FILE, protocolJsonSchema } from '../server/src/protocol.ts';
 
@@ -11,38 +12,7 @@ if (!nodeFloor) throw new Error(`engines.node must have the form >=X.Y.Z, got ${
 const viewer = (name: string) => readFileSync(`../server/share-viewer/${name}`, 'utf8');
 
 export default defineConfig({
-  entry: {
-    cli: 'bin/node-check.ts',
-    status: 'src/cli/status-entry.ts',
-    api: 'src/api.ts',
-    'api-self': 'src/api-self.ts',
-    plugin: 'src/plugin.ts',
-    ci: '../ci/src/index.ts',
-    'ci/artifacts': '../ci/src/artifacts.ts',
-    'stim-server': 'bin/stim-server.ts',
-    'stim-service-runner': '../server/src/service-runner.ts',
-    protocol: '../server/src/protocol.ts',
-    'android-cas-compiler': 'bin/android-cas-compiler.ts',
-    'cache-manifest': 'src/cache-manifest.ts',
-    'pull-requests': 'src/pull-request-state.ts',
-    'share-links': 'src/workspace/share-links.ts',
-    'attached-stimd': 'src/stimd/attached.ts',
-    'stimd-thread': 'src/stimd/threads.ts',
-    'stimd-status': 'src/stimd/status-thread.ts',
-    'net-thread': '../server/src/net-thread.ts',
-    'kit-worker': 'src/kit-worker.ts',
-    'macos-run': 'src/macos/run.ts',
-    'metro-run': 'src/stimd/metro/run.ts',
-    'console-run': 'src/stimd/logs/console-run.ts',
-    'device-host-worker': 'src/device-host/run.ts',
-    'status-worker': 'src/status-worker.ts',
-    'fingerprint-precompute': 'bin/fingerprint-precompute.ts',
-    'windows-report': 'bin/windows-report.ts',
-    'engine-select': 'bin/engine-select.ts',
-    'engine-flip': 'bin/engine-flip.ts',
-    'engine-state': 'src/engine-state.ts',
-    '__self-test': 'bin/self-test.ts',
-  },
+  entry: buildEntries,
   format: 'esm',
   dts: true,
   outDir: 'dist',
