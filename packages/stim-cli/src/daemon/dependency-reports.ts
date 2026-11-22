@@ -1,8 +1,11 @@
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
+import type { StimContext } from '@stim-cli/core';
 import type { GcMark } from '@stim-cli/core/state';
 import { lstat, realpath, stat } from 'node:fs/promises';
-import { dirname, join, relative, sep } from 'node:path';
+import { dirname, join, sep } from 'node:path';
 import { realpathAsync } from '../commands/gc/paths.ts';
+import { runOperationFile } from '../engine/operation-exec.ts';
+import { getExecutor } from '../exec.ts';
 import { trustedMeasure } from '../disk-usage.ts';
 import { formatBytes } from '../fs-util.ts';
 import { maintenancePinnedReader } from '../stimd/passes/protect.ts';
@@ -71,7 +74,7 @@ export async function savedDependencyReports(
     const rung = source ? 8 : 5;
     const idleMs = options.level === 'critical' ? 2 * 60_000 : 60 * 60_000;
     let keep: string | null = null;
-    let sharing: (path: string) => Promise<string | null> = async () => keep;
+    const sharing = directSharing(mark.root, operation);
     try {
       const root = await native(mark.root);
       if (
@@ -114,9 +117,7 @@ export async function savedDependencyReports(
           config,
           reading: options,
           processes: () => (processes ??= readRunningProcessesAsync(operation?.signal)),
-          sharing: (probe) => {
-            sharing = probe;
-          },
+          sharing: sharing.linked,
         });
 
       for (const candidate of observation.candidates) {
@@ -142,7 +143,6 @@ export async function savedDependencyReports(
               (await answered(candidate.path, () => realpathAsync(candidate.path), 3_000, operation?.signal)) ===
                 candidate.path;
             if (!identityKnown) reason = 'the saved dependency path moved or changed volume';
-            else reason = (await sharing(candidate.path)) ?? reason;
           }
           if (!reason) reason = await regenerableDirProblem(mark.root, candidate.path, operation?.signal);
         } catch (error) {
@@ -152,12 +152,14 @@ export async function savedDependencyReports(
         }
         const privateBytes = identityKnown ? rankedPrivateBytes(candidate.path) : null;
         if (reason || candidate.keep) {
-          reports.push({
+          const row: DependencyReport = {
             rung,
             target: candidate.path,
             workspace: observation.keys[0],
             detail: `${reason ?? candidate.keep?.reason}; report only: cached private bytes ${privateBytes === null ? 'unknown' : formatBytes(privateBytes)}`,
-          });
+          };
+          reports.push(row);
+          sharing.record(candidate.path, identityKnown, row, privateBytes);
           continue;
         }
         eligible.push({
@@ -178,6 +180,7 @@ export async function savedDependencyReports(
           },
         });
       }
+      await sharing.finish();
     } catch (error) {
       if (isClaimUnavailable(error) && 'reportCleanup' in error) throw error;
       operation?.signal.throwIfAborted();
@@ -224,7 +227,7 @@ async function checkoutKeep(
     config: Config;
     reading: DeviceReading;
     processes: () => ReturnType<typeof readRunningProcessesAsync>;
-    sharing: (probe: (path: string) => Promise<string | null>) => void;
+    sharing: (linked: string[]) => void;
   },
 ): Promise<string | null> {
   const { config, reading } = context;
@@ -257,11 +260,7 @@ async function checkoutKeep(
     if (Date.now() - warmedFromAt(keys) < idleMs) return 'a worktree warm recently copied from it';
     if (metadata.entries.length > 1) {
       context.sharing(
-        directSharing(
-          mark.root,
-          metadata.entries.filter((other) => !other.bare && other.path !== root).map((other) => other.path),
-          operation?.signal,
-        ),
+        metadata.entries.filter((other) => !other.bare && other.path !== root).map((other) => other.path),
       );
       return 'current sharing with linked worktrees is unproven; dependency eligibility is unknown';
     }
@@ -269,28 +268,64 @@ async function checkoutKeep(
   return null;
 }
 
-function directSharing(root: string, linked: readonly string[], signal?: AbortSignal) {
-  const deadline = Date.now() + 3_000;
+const DIRECT_SHARING = `const fs = require('node:fs/promises'), p = require('node:path');
+(async () => {
+  const { root, paths, linked } = JSON.parse(process.argv[1]);
+  const base = await fs.realpath(root), found = [];
   let remaining = 64;
-  return async (path: string): Promise<string | null> => {
-    const location = relative(root, path);
+  for (const path of paths) {
+    let target;
+    try { target = await fs.realpath(path); } catch { continue; }
+    const location = p.relative(base, target);
+    if (!location || p.isAbsolute(location) || location === '..' || location.startsWith('..' + p.sep)) continue;
     for (const worktree of linked) {
-      signal?.throwIfAborted();
-      if (remaining-- <= 0 || Date.now() >= deadline) return null;
-      const link = join(worktree, location);
+      if (remaining-- <= 0) break;
       try {
-        const info = await answered(link, () => lstat(link), deadline - Date.now(), signal);
-        if (!info.isSymbolicLink()) continue;
-        if (Date.now() >= deadline) return null;
-        const target = await answered(link, () => realpath(link), deadline - Date.now(), signal);
-        if (target === path || target.startsWith(`${path}${sep}`))
-          return `the worktree ${worktree} links ${location} to it`;
-      } catch (error) {
-        signal?.throwIfAborted();
-        if (error instanceof Error && 'code' in error && error.code === 'ENOENT') continue;
-        return null;
-      }
+        const link = p.join(worktree, location);
+        if (!(await fs.lstat(link)).isSymbolicLink()) continue;
+        const into = await fs.realpath(link);
+        if (into === target || into.startsWith(target + p.sep)) {
+          found.push([path, worktree, location]);
+          break;
+        }
+      } catch {}
     }
-    return null;
+  }
+  process.stdout.write(JSON.stringify(found));
+})().catch(() => { process.exitCode = 1; });`;
+
+function directSharing(root: string, operation?: StimContext) {
+  let linked: string[] = [];
+  const selected = new Map<string, { row: DependencyReport; bytes: number | null }>();
+  return {
+    linked(paths: string[]) {
+      linked = paths.slice(0, 64);
+    },
+    record(path: string, known: boolean, row: DependencyReport, bytes: number | null) {
+      if (known && selected.size < 64) selected.set(path, { row, bytes });
+    },
+    async finish() {
+      if (!linked.length || !selected.size) return;
+      const input = JSON.stringify({ root, linked, paths: [...selected.keys()] });
+      if (Buffer.byteLength(input) > 65_536) return;
+      try {
+        const output = await runOperationFile(
+          operation,
+          getExecutor(),
+          process.execPath,
+          ['-e', DIRECT_SHARING, input],
+          { timeoutMs: 3_000, signal: operation?.signal },
+        );
+        const found: [string, string, string][] = JSON.parse(output);
+        for (const [path, worktree, location] of found) {
+          const current = selected.get(path);
+          if (current)
+            current.row.detail = `the worktree ${worktree} links ${location} to it; report only: cached private bytes ${current.bytes === null ? 'unknown' : formatBytes(current.bytes)}`;
+        }
+      } catch (error) {
+        if (isClaimUnavailable(error) || (error instanceof Error && 'reportCleanup' in error)) throw error;
+        operation?.signal.throwIfAborted();
+      }
+    },
   };
 }

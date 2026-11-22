@@ -735,9 +735,11 @@ also holds the newest activity the walk read, and the walk reads at
   measure no new sizes and delete nothing. Missing, due or dirty evidence
   is reported as unknown. For a validated source dependency, the current Git
   worktree list supplies fixed matching dependency-link locations. A current
-  direct link into that saved path reports its borrower. All such probes share
-  three seconds and at most 64 link locations per source; no recursive listing
-  or size walk runs. A negative, changed, deeper, inaccessible or timed-out
+  direct link into that saved path reports its borrower. One supervised Node
+  query uses native canonical paths, with a three-second command timeout and
+  at most 64 total candidate–borrower locations per source; its JSON input is capped at 64 KiB.
+  No recursive listing or size walk runs, and an optional stalled lookup does
+  not occupy the passes isolate's shared filesystem-read slot. A negative, changed, deeper, inaccessible or timed-out
   link remains sharing-unknown, never evidence that the source is unshared.
   Explicit read-only dry runs retain discovery previews.
   Normal dependency deletion and its thresholds are unchanged.

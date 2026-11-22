@@ -1,3 +1,5 @@
+import type { ChildProcess } from 'node:child_process';
+import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
 import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import {
@@ -13,7 +15,7 @@ import {
 } from 'node:fs';
 import { lstat, realpath, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join, relative } from 'node:path';
+import { dirname, join } from 'node:path';
 import {
   diskUsageCacheFile,
   gcMarkFile,
@@ -42,7 +44,7 @@ import { listedRoots } from '../commands/gc/worktrees.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { readRunningProcessesAsync } from '../workspace/running-from.ts';
 import { treeSignature } from '../private-size.ts';
-import { hungRead, pendingRead, Unanswered } from '../workspace/bounded-read.ts';
+import { answered, hungRead, pendingRead, Unanswered } from '../workspace/bounded-read.ts';
 import { testContext } from './_context.ts';
 
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -1220,7 +1222,7 @@ describe('gc marks written by the lane', () => {
     'reports a current direct shared %s witness without rediscovery',
     async (location) => {
       const root = checkout('shared-source', 2 * 60 * 60_000);
-      const path = join(root, location);
+      let path = join(root, location);
       mkdirSync(path, { recursive: true });
       const old = new Date(Date.now() - 2 * 60 * 60_000);
       utimesSync(dirname(path), old, old);
@@ -1243,6 +1245,21 @@ describe('gc marks written by the lane', () => {
       config.idle = { dormantDays: 1, sourceDormantDays: 7 };
       saveConfig(config);
       await lane(true);
+      if (location === 'ios/Pods' && process.platform === 'darwin') {
+        path = join(dirname(root), 'SHARED-SOURCE', location);
+        const mark = readGcMark(root);
+        if (!mark?.dependencies) throw new Error('missing source observation');
+        writeFileSync(
+          gcMarkFile(root),
+          JSON.stringify({
+            ...mark,
+            dependencies: {
+              ...mark.dependencies,
+              candidates: mark.dependencies.candidates.map((candidate) => Object.assign({}, candidate, { path })),
+            },
+          }),
+        );
+      }
       mkdirSync(dirname(diskUsageCacheFile(path)), { recursive: true });
       writeFileSync(
         diskUsageCacheFile(path),
@@ -1271,7 +1288,9 @@ describe('gc marks written by the lane', () => {
       expect(reports).toEqual([
         expect.objectContaining({
           target: path,
-          detail: expect.stringContaining(`the worktree ${linked} links ${relative(root, path)} to it`),
+          detail: expect.stringContaining(
+            `the worktree ${linked} links ${location.replaceAll('/', process.platform === 'win32' ? '\\' : '/')} to it`,
+          ),
         }),
       ]);
       expect(reports[0]?.detail).toContain('512');
@@ -1279,6 +1298,34 @@ describe('gc marks written by the lane', () => {
       expect(discover).not.toHaveBeenCalled();
       expect(collect).not.toHaveBeenCalled();
       expect(measure).not.toHaveBeenCalled();
+      const broken = join(roots, 'a-first-broken');
+      execFileSync('git', [
+        '-C',
+        root,
+        '-c',
+        'maintenance.auto=false',
+        '-c',
+        'gc.auto=0',
+        'worktree',
+        'add',
+        '-q',
+        '-b',
+        'broken',
+        broken,
+      ]);
+      const brokenLink = join(broken, location);
+      mkdirSync(dirname(brokenLink), { recursive: true });
+      symlinkSync(brokenLink, brokenLink, process.platform === 'win32' ? 'junction' : 'dir');
+      const listing = execFileSync('git', ['-C', root, 'worktree', 'list', '--porcelain'], { encoding: 'utf8' });
+      expect(listing.indexOf(broken)).toBeLessThan(listing.indexOf(linked));
+      const afterBroken = await savedDependencyReports(config, {
+        ...reading,
+        level: 'critical',
+        operation: testContext(),
+        onVolume: () => true,
+      });
+      expect(afterBroken[0]?.detail).toContain(`the worktree ${linked} links`);
+      rmSync(brokenLink);
       rmSync(link);
       const moved = join(roots, 'unrelated-dependency');
       mkdirSync(moved);
@@ -1309,22 +1356,23 @@ describe('gc marks written by the lane', () => {
       });
       expect(nested[0]?.detail).toContain('current sharing with linked worktrees is unproven');
       symlinkSync(path, link, process.platform === 'win32' ? 'junction' : 'dir');
-      const nativeLstat = vi.mocked(lstat).getMockImplementation();
-      if (!nativeLstat) throw new Error('missing native lstat fixture');
-      let started = () => {};
-      const ready = new Promise<void>((done) => {
-        started = done;
+      const real = getExecutor();
+      let started = (_child: ChildProcess) => {};
+      const ready = new Promise<ChildProcess>((resolve) => {
+        started = resolve;
       });
-      let release = () => {};
-      const held = new Promise<void>((done) => {
-        release = done;
-      });
-      vi.mocked(lstat).mockImplementation(async (...args) => {
-        if (String(args[0]) === link) {
-          started();
-          await held;
-        }
-        return nativeLstat(...args);
+      setExecutor({
+        ...real,
+        runFileAsync: (file, args, options) => {
+          if (file !== process.execPath || args[0] !== '-e') return real.runFileAsync(file, args, options);
+          return real.runFileAsync(file, ['-e', 'setInterval(() => {}, 1000)'], {
+            ...options,
+            onSpawn: (child) => {
+              options.onSpawn?.(child);
+              started(child);
+            },
+          });
+        },
       });
       try {
         const at = Date.now();
@@ -1334,15 +1382,54 @@ describe('gc marks written by the lane', () => {
           operation: testContext(),
           onVolume: () => true,
         });
-        await ready;
+        const child = await ready;
+        expect(await answered(root, () => stat(root), 1000)).toMatchObject({ dev: (await stat(root)).dev });
         await vi.advanceTimersByTimeAsync(3_000);
         const blocked = await attempt;
         expect(blocked[0]?.detail).toContain('current sharing with linked worktrees is unproven');
-        expect(Date.now() - at).toBe(3_000);
-        expect(hungRead()).toBe(link);
+        expect(Date.now() - at).toBeLessThan(8_000);
+        expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
+        expect(hungRead()).toBeNull();
+        expect(await answered(root, () => stat(root), 1000)).toMatchObject({ dev: (await stat(root)).dev });
+        for (const code of ['E2BIG', 'EINVAL']) {
+          setExecutor({
+            ...real,
+            runFileAsync: (file, args, options) => {
+              if (file === process.execPath && args[0] === '-e')
+                return Promise.reject(Object.assign(new Error('query argv refused'), { code }));
+              return real.runFileAsync(file, args, options);
+            },
+          });
+          const refused = await savedDependencyReports(config, {
+            ...reading,
+            level: 'critical',
+            operation: testContext(),
+            onVolume: () => true,
+          });
+          expect(refused[0]?.detail).toContain('current sharing with linked worktrees is unproven');
+          expect(hungRead()).toBeNull();
+        }
+        const unverified = Object.assign(new Error('the query child did not settle'), {
+          code: 'STIM_CLAIM_UNAVAILABLE',
+          reportCleanup: true,
+        });
+        setExecutor({
+          ...real,
+          runFileAsync: (file, args, options) => {
+            if (file === process.execPath && args[0] === '-e') return Promise.reject(unverified);
+            return real.runFileAsync(file, args, options);
+          },
+        });
+        await expect(
+          savedDependencyReports(config, {
+            ...reading,
+            level: 'critical',
+            operation: testContext(),
+            onVolume: () => true,
+          }),
+        ).rejects.toBe(unverified);
       } finally {
-        release();
-        await pendingRead();
+        resetExecutor();
       }
     },
     20_000,
