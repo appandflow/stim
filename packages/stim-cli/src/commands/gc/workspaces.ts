@@ -1,5 +1,6 @@
+import { removeTree } from '../../engine/remove-tree.ts';
 import { closeSync, existsSync, lstatSync, openSync, readSync, readdirSync, rmdirSync, statSync } from 'fs';
-import { readdir, readFile, rm, stat } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative } from 'path';
 import chalk from 'chalk';
 import {
@@ -645,7 +646,15 @@ export async function clearWorkspaceOutputs(
     operation,
     signal = operation?.signal,
     lighten = false,
-  }: { olderThan: number | null; now?: number; signal?: AbortSignal; operation?: StimContext; lighten?: boolean },
+    throttleIo = true,
+  }: {
+    olderThan: number | null;
+    now?: number;
+    signal?: AbortSignal;
+    operation?: StimContext;
+    lighten?: boolean;
+    throttleIo?: boolean;
+  },
   { log, record }: GcOutput = GC_OUTPUT,
 ): Promise<{ failures: number; cleared: string[] }> {
   let failures = 0;
@@ -699,7 +708,7 @@ export async function clearWorkspaceOutputs(
             } else if (lstatSync(path, { throwIfNoEntry: false })) {
               addSize(freed, await measureDirectoryAsync(path, { timeoutMs: SIZE_TIMEOUT_MS, signal }));
               signal?.throwIfAborted();
-              await rm(path, { recursive: true, force: true });
+              await removeTree(path, operation, signal, throttleIo);
               removed++;
             }
           }

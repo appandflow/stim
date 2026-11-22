@@ -96,7 +96,16 @@ export function createRefreshScheduler({
   };
 }
 
-type WatchedDir = 'archive' | 'home' | 'workspaces' | 'workspace' | 'logs' | 'leases' | 'eas' | 'maintenance';
+type WatchedDir =
+  | 'archive'
+  | 'home'
+  | 'workspaces'
+  | 'workspace'
+  | 'logs'
+  | 'leases'
+  | 'eas'
+  | 'maintenance'
+  | 'daemon';
 
 /**
  * Which refresh a change to `name` in a watched `$STIM_HOME` directory needs: `light` for a log append or a running
@@ -114,13 +123,15 @@ export function statusChange(dir: WatchedDir, name: string | null): RefreshKind 
   if (name === null) return 'full';
   switch (dir) {
     case 'home':
-      if (name === 'maintenance') return 'light';
+      if (name === 'maintenance' || name === 'daemon') return 'light';
       return name.startsWith('config.json') || name === 'archive' || name === 'workspaces' || name === 'device-locks'
         ? 'full'
         : null;
     case 'workspace':
       if (name.startsWith('build-detail.json')) return 'light';
       return name.startsWith('state.json') || name.startsWith('ended-agents.json') || name === 'logs' ? 'full' : null;
+    case 'daemon':
+      return 'light';
     case 'maintenance':
       return name === 'state.json' ? 'light' : null;
     case 'eas':
@@ -214,6 +225,9 @@ export function watchStatusSources({
       [join(home, 'archive'), 'archive'],
       [join(home, 'workspaces'), 'workspaces'],
       [join(home, 'maintenance'), 'maintenance'],
+      [join(home, 'daemon'), 'daemon'],
+      [join(home, 'daemon', 'claim'), 'daemon'],
+      [join(home, 'daemon', 'claim', 'shared'), 'daemon'],
       [join(home, 'device-locks'), 'leases'],
       [easMachineStateRoot(), 'eas'],
     ]);
@@ -260,7 +274,7 @@ export function watchStatusSources({
           }
           const change = statusChange(source, filename);
           if (!change) return;
-          if (source === 'home' || source === 'workspaces' || source === 'workspace') {
+          if (source === 'home' || source === 'workspaces' || source === 'workspace' || source === 'daemon') {
             listingVersion++;
             reconcile();
           }

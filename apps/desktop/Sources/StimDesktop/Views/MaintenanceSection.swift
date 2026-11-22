@@ -64,7 +64,6 @@ struct MaintenanceSection: View {
       return statusLoaded ? "Not reported: update stim to run the stim-daemon" : "Unknown until stim status loads"
     }
     if let invalid = maintenance?.invalid { return "Off: \(invalid)" }
-    if maintenance?.claim != nil { return "Blocked by an unresolved claim; see stim status" }
     let running = daemon.running == nil ? ", not running now" : ""
     switch daemon.mode {
     case "on": return "On\(running)"
