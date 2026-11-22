@@ -41,6 +41,7 @@ import { writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
 import { reduceDormantOutputs } from './dormant-outputs.ts';
 import { markWriter, refreshCargoHolderMarks } from './marks.ts';
 import { dependencyMarkObserver } from './dependency-marks.ts';
+import { normalDependencySelection } from './normal-dependency-marks.ts';
 import {
   dormantAfterMs,
   idleStageCandidates,
@@ -427,8 +428,11 @@ export async function clearDependency(
   operation?: StimContext,
   requireRestorable: boolean = true,
   level: PressureLevel = 'normal',
+  saved?: (candidate: ArtifactCandidate) => Promise<string | null>,
 ): Promise<{ status: 'done' | 'kept' | 'failed'; bytes: number; detail: string }> {
   try {
+    const marked = await saved?.(dependency.candidate);
+    if (marked) return { status: 'kept', bytes: 0, detail: marked };
     return await clearArtifact(
       {
         kind: 'would-delete-dependencies',
@@ -444,7 +448,9 @@ export async function clearDependency(
         pinned: maintenancePinnedReader(operation),
         worktrees,
         requireRestorable,
-        recheck: (keys, worktree) => stillUnused(false, keys, worktree, idleMs, operation),
+        recheck: async (keys, worktree) =>
+          (await saved?.({ ...dependency.candidate, keys: [...keys], worktree })) ??
+          (await stillUnused(false, keys, worktree, idleMs, operation)),
         level,
         operation,
       },
@@ -672,6 +678,8 @@ async function takeIdleDependencies(
       });
   await between();
   const idle = candidates.filter((candidate) => source || candidate.role === 'linked');
+  const saved =
+    input.marks && input.act && !source ? normalDependencySelection(operation, between, afterMs) : undefined;
   const inventory = input.marks
     ? await timedStep(
         input.log,
@@ -687,6 +695,7 @@ async function takeIdleDependencies(
               source,
               discovered,
               onInventory: dependencyMarkObserver(config, input, between),
+              ...(saved ? { dependencyPaths: saved.paths } : {}),
             },
             operation?.signal ?? new AbortController().signal,
             operation,
@@ -694,6 +703,14 @@ async function takeIdleDependencies(
         { signal: operation?.signal, items: (found) => found && found.candidates.length + found.skips.length },
       )
     : undefined;
+  if (saved && inventory) {
+    const selected: ArtifactCandidate[] = [];
+    for (const candidate of inventory.candidates) {
+      await between();
+      if (!(await saved.problem(candidate))) selected.push(candidate);
+    }
+    inventory.candidates = selected;
+  }
   let take: RankedDependency[];
   if (source) {
     const { ranked, kept } = await timedStep(
@@ -796,7 +813,17 @@ async function takeIdleDependencies(
     const result: { status: DaemonLadderAction['outcome']; bytes: number; detail: string } = input.act
       ? source
         ? (sourceResults.get(dependency) ?? { status: 'kept', bytes: 0, detail: 'it was not processed' })
-        : await clearDependency(dependency, afterMs, input.protectedRoot ?? '', worktrees, reason, operation, false)
+        : await clearDependency(
+            dependency,
+            afterMs,
+            input.protectedRoot ?? '',
+            worktrees,
+            reason,
+            operation,
+            false,
+            'normal',
+            saved?.problem,
+          )
       : await wouldDelete(
           dependency,
           'normal',

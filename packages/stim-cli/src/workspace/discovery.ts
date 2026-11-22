@@ -359,10 +359,20 @@ interface TargetedDiscovery {
   requested: Map<string, string>;
 }
 
-async function scopeIdentity(path: string, identities: Map<string, string>): Promise<string | null> {
+async function scopeIdentity(
+  path: string,
+  identities: Map<string, string>,
+  missing?: Set<string>,
+): Promise<string | null> {
   const previous = identities.get(path);
   if (previous !== undefined) return previous;
-  const identity = await within(path, () => nativeRealpath(path));
+  const identity = await within(path, () =>
+    nativeRealpath(path).catch((error: unknown) => {
+      if (error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR'))
+        missing?.add(path);
+      throw error;
+    }),
+  );
   if (identity !== null) {
     identities.set(path, identity);
     identities.set(identity, identity);
@@ -437,9 +447,13 @@ export async function targetedCheckouts(
     selection.paths.add(root);
   }
   if (!wanted.size) return [];
+  const missing = new Set<string>();
   for (const root of new Set([...known, ...Object.keys(config?.projects ?? {})])) {
-    const identity = await scopeIdentity(root, selection.identities);
-    if (identity === null) return [];
+    const identity = await scopeIdentity(root, selection.identities, missing);
+    if (identity === null) {
+      if (missing.has(root)) continue;
+      return [];
+    }
     selection.known.push(identity);
   }
   if (!scoped)

@@ -390,6 +390,23 @@ describe('discoverCheckouts', () => {
     expect(await targetedCheckouts(config, [], [target])).toEqual([]);
   });
 
+  it('keeps targeted scope when an unrelated known registration is unreadable rather than missing', async () => {
+    vi.stubEnv('STIM_HOME', join(base, 'home'));
+    const parent = join(base, 'roots');
+    const target = join(parent, 'target');
+    const known = join(base, 'unreadable');
+    app(target);
+    app(known);
+    vi.mocked(realpath)
+      .mockResolvedValueOnce(parent)
+      .mockResolvedValueOnce(target)
+      .mockRejectedValueOnce(Object.assign(new Error('denied'), { code: 'EACCES' }));
+    const config: Config = { projects: { [known]: {} }, repos: {}, maintenance: { discoverRoots: [parent] } };
+
+    expect(await targetedCheckouts(config, [known], [target])).toEqual([]);
+    expect(vi.mocked(realpath).mock.calls.map(([path]) => path)).toEqual([parent, target, known]);
+  });
+
   it('bounds targeted Git listing without sharing answers through unrelated worktree paths', async () => {
     vi.stubEnv('STIM_HOME', '');
     const known = join(base, 'dev', 'known');
