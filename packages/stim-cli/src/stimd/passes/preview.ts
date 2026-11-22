@@ -75,6 +75,7 @@ export async function plannedMaintenance(
     operation,
     deviceActivity,
     cargoLevel,
+    onWorktreeObservation,
   }: {
     devices?: boolean;
     /** Plans the cap trims of the recorded sizes. */
@@ -91,6 +92,7 @@ export async function plannedMaintenance(
     cargoLevel?: PressureLevel;
     /** Reads owned device activity for an operation, such as from the daemon tick's measurement. */
     deviceActivity?: (withSims: boolean) => Promise<OwnedDeviceActivity[]>;
+    onWorktreeObservation?: Parameters<typeof planWorktrees>[0]['onObservation'];
   } = {},
 ): Promise<PlannedMaintenance> {
   const env = operation?.env ?? process.env;
@@ -251,6 +253,7 @@ export async function plannedMaintenance(
       idleDays: sweep && settings.removeIdleWorktrees && settings.olderThanDays > 0 ? settings.olderThanDays : null,
       operation,
       deviceActivity,
+      onObservation: onWorktreeObservation,
     });
     merge('worktree', planned);
     result.worktreeSweep = planned.sweep;
