@@ -316,15 +316,14 @@ export async function refreshOutputMarks(config: Config, reading: DeviceReading)
   return refreshed;
 }
 
-export function keepOutputMark(mark: GcMark, reason: string): void {
+export function keepMarkCandidate(mark: GcMark, selected: GcMarkCandidate, reason: string): void {
   const current = readGcMark(mark.root);
   if (!current || current.markedAt !== mark.markedAt) return;
   const at = new Date().toISOString();
   writeCacheFile(gcMarkFile(mark.root), {
     ...current,
     candidates: current.candidates.map((candidate) =>
-      candidate.kind === 'outputs' &&
-      mark.candidates.some((saved) => saved.kind === 'outputs' && saved.path === candidate.path)
+      candidate.kind === selected.kind && candidate.path === selected.path
         ? Object.assign({}, candidate, { keep: { reason, at } })
         : candidate,
     ),

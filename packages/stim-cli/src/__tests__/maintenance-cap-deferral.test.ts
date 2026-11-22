@@ -1,17 +1,9 @@
+import { ensureWorkspaceStorage } from '../workspace/paths.ts';
+import * as discovery from '../workspace/discovery.ts';
 import { testContext } from './_context.ts';
 import { LADDER_CLOCK_SLOTS } from '../daemon/disk-owner.ts';
 import { execFileSync } from 'node:child_process';
-import {
-  cpSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import * as daemonMeasure from '../daemon/measure.ts';
@@ -20,6 +12,7 @@ import {
   gcMarkFile,
   maintenanceStateFile,
   readDiskUsage,
+  readGcMark,
   readJsonObject,
   readMaintenanceState,
   type MaintenanceState,
@@ -211,6 +204,133 @@ test('acting forced critical leaves an unmarked under-cap running target whole',
   expect(run.actions.filter((action) => action.kind === 'trim-cargo' && action.outcome === 'done')).toEqual([]);
 });
 
+test('saved Cargo order keeps individual refusals last, unknowns stable and action proof intact', async () => {
+  const original = dirname(target);
+  const roots = [original];
+  for (const name of ['small', 'zero', 'unknown-one', 'unknown-two']) {
+    const root = join(base, name);
+    cpSync(original, root, { recursive: true });
+    upsertProject(root, { metroPort: null });
+    roots.push(root);
+  }
+  const config = loadConfig();
+  if (!config) throw new Error('missing fixture config');
+  for (const root of roots) await markWriter(config)({ path: root, at: Date.now(), lastActivityAt: null, kept: null });
+  const plan = () =>
+    planCargoTargetsAtPressure({
+      settings: resolveMaintenanceSettings(),
+      pinned: () => false,
+      now: Date.now(),
+      level: 'high',
+    });
+  const unknownOrder = (await plan()).actions
+    .map((action) => action.target)
+    .filter((path) => roots.slice(3).some((root) => path === join(root, 'target')));
+  for (const [index, bytes] of [20 * 1024 ** 3, 1024 ** 3, 0].entries()) {
+    const root = roots[index];
+    if (!root) throw new Error('missing Cargo root');
+    writeCacheFile(diskUsageCacheFile(join(root, 'target')), {
+      path: join(root, 'target'),
+      bytes,
+      measuredAt: new Date().toISOString(),
+    });
+  }
+  const mark = readGcMark(original);
+  const candidate = mark?.candidates.find((entry) => entry.path === target);
+  if (!mark || !candidate) throw new Error('missing Cargo candidate');
+  marks.keepMarkCandidate(mark, candidate, 'a Cargo build held the target');
+  const before = roots.map((root) => readGcMark(root));
+  const walk = vi.spyOn(fsUtil, 'measuredDirectorySizeAsync');
+  const ordered = await plan();
+  expect(ordered.actions.map((action) => action.target)).toEqual([
+    join(base, 'small', 'target'),
+    join(base, 'zero', 'target'),
+    ...unknownOrder,
+    target,
+  ]);
+  expect(roots.map((root) => readGcMark(root))).toEqual(before);
+  expect(walk).not.toHaveBeenCalled();
+  const first = ordered.actions[0];
+  if (!first?.workspace) throw new Error('missing first Cargo action');
+  expect(await trimCargoTargetAction(first, undefined, false, undefined, first.workspace)).toMatchObject({
+    status: 'kept',
+    detail: 'the command that started this pass runs in it',
+  });
+  await markWriter(config)({ path: original, at: Date.parse(mark.markedAt) + 1, lastActivityAt: null, kept: null });
+  expect((await plan()).actions[0]?.target).toBe(target);
+  expect(readGcMark(original)?.candidates.find((entry) => entry.path === target)?.keep).toBeUndefined();
+});
+
+test('only acting evaluated Cargo refusals write a keep hint; healthy pressure does not', async () => {
+  const root = dirname(target);
+  const sibling = join(ensureWorkspaceStorage(root), 'derived-data');
+  mkdirSync(sibling, { recursive: true });
+  const config = loadConfig();
+  if (!config) throw new Error('missing fixture config');
+  await markWriter(config)({ path: root, at: Date.now(), lastActivityAt: null, kept: null });
+  const before = readGcMark(root);
+  if (!before) throw new Error('missing Cargo mark');
+  const dirtyAt = new Date(Date.parse(before.markedAt) + 1000).toISOString();
+  writeCacheFile(gcMarkFile(root), { ...before, dirtyAt });
+  before.dirtyAt = dirtyAt;
+  const plan = (recordKeeps: boolean, healthy = false) =>
+    planCargoTargetsAtPressure({
+      settings: resolveMaintenanceSettings(),
+      pinned: () => true,
+      now: Date.now(),
+      recordKeeps,
+      diskLevel: async () => (healthy ? 'normal' : 'high'),
+    });
+  expect((await plan(false)).skips).toContainEqual(
+    expect.objectContaining({ target, reason: 'pinned by maintenance.keep' }),
+  );
+  expect(readGcMark(root)).toEqual(before);
+  await plan(true, true);
+  expect(readGcMark(root)).toEqual(before);
+  await plan(true);
+  const kept = readGcMark(root);
+  expect(kept?.candidates.find((candidate) => candidate.path === target)?.keep?.reason).toBe(
+    'pinned by maintenance.keep',
+  );
+  expect(kept?.markedAt).toBe(before.markedAt);
+  expect(kept?.dirtyAt).toBe(dirtyAt);
+  expect(kept?.candidates.find((candidate) => candidate.path === sibling)).toEqual(
+    before.candidates.find((candidate) => candidate.path === sibling),
+  );
+});
+
+test('per-path output reports keep the checkout grouping when the target is outside it', async () => {
+  const root = dirname(target);
+  const output = join(base, 'home', 'workspaces', 'app', 'derived-data');
+  vi.spyOn(discovery, 'discoverCheckouts').mockResolvedValue([{ path: root, origin: 'root', from: base }]);
+  vi.spyOn(discovery, 'discoveredOutside').mockResolvedValue([]);
+  vi.spyOn(daemonPasses, 'runDormantReduction').mockResolvedValue([]);
+  vi.spyOn(daemonPasses, 'runForcedLadder').mockResolvedValue({
+    pressure: { level: 'normal', disk: 'normal', memory: 'normal', reasons: [], memoryWarningSince: null },
+    running: [],
+    levels: [
+      {
+        level: 'high',
+        actions: [
+          {
+            rung: 1,
+            kind: 'delete-build-outputs',
+            target: output,
+            workspace: root,
+            outcome: 'would',
+            bytes: 0,
+            detail: 'saved output',
+          },
+        ],
+      },
+    ],
+  });
+  const run = await runMaintenanceAtLevel({ level: 'high', act: false });
+  expect(run.discovered.find((entry) => entry.path === root)?.actions).toContainEqual(
+    expect.objectContaining({ kind: 'delete-build-outputs', target: output, workspace: root }),
+  );
+});
+
 test('Cargo planning authorizes one batch and execution reads only its selected mark', async () => {
   const first = dirname(target);
   const other = join(base, 'other-cargo');
@@ -374,7 +494,7 @@ test('a discovered checkout whose source scan ran out of time is listed as kept 
   );
 });
 
-test.each(['measured healthy', 'new pressure pin', 'forced healthy', 'new cap pin'] as const)(
+test.each(['measured healthy', 'new pressure pin', 'healthy renewed pin', 'forced healthy', 'new cap pin'] as const)(
   'manual Cargo admission rechecks the completed handoff: %s',
   async (change) => {
     vi.stubEnv('STIM_MAINTENANCE_CARGO_TARGET_MAX_GB', change === 'new cap pin' ? '0.000001' : '1');
@@ -395,7 +515,8 @@ test.each(['measured healthy', 'new pressure pin', 'forced healthy', 'new cap pi
             { volume: '/other-short-volume', freeMb: 1024, device: device + 1 },
           ],
     );
-    const before = readFileSync(gcMarkFile(dirname(target)), 'utf8');
+    const beforeMark = readGcMark(dirname(target));
+    expect(beforeMark?.candidates).toContainEqual(expect.objectContaining({ kind: 'cargo-target', path: target }));
     let handoffs = 0;
     const run = await runMaintenanceAtLevel({
       act: true,
@@ -406,9 +527,9 @@ test.each(['measured healthy', 'new pressure pin', 'forced healthy', 'new cap pi
           : {}),
       between: async () => {
         handoffs++;
-        if (change === 'new pressure pin' || change === 'new cap pin')
+        if (change === 'new pressure pin' || change === 'new cap pin' || change === 'healthy renewed pin')
           writeFileSync(join(dirname(target), '.stim.json'), JSON.stringify({ maintenance: { keep: true } }));
-        else freeMb = 100 * 1024;
+        if (change !== 'new pressure pin' && change !== 'new cap pin') freeMb = 100 * 1024;
       },
     });
     expect(handoffs).toBeGreaterThan(0);
@@ -416,7 +537,19 @@ test.each(['measured healthy', 'new pressure pin', 'forced healthy', 'new cap pi
     expect(run.actions.some((action) => action.kind === 'trim-cargo' && action.outcome === 'done')).toBe(
       change === 'forced healthy',
     );
-    expect(readFileSync(gcMarkFile(dirname(target)), 'utf8')).toBe(before);
+    const at = expect.any(String);
+    const expected =
+      change === 'new pressure pin'
+        ? {
+            ...beforeMark,
+            candidates: beforeMark?.candidates.map((candidate) =>
+              candidate.kind === 'cargo-target' && candidate.path === target
+                ? { ...candidate, keep: { reason: 'pinned by maintenance.keep', at } }
+                : candidate,
+            ),
+          }
+        : beforeMark;
+    expect(readGcMark(dirname(target))).toEqual(expected);
   },
 );
 

@@ -6,6 +6,7 @@ import type { StimContext } from '@stim-cli/core';
 import {
   loadConfig,
   readGcMark,
+  readDiskUsage,
   type GcMark,
   type GcMarkCandidate,
   type MaintenanceAction,
@@ -30,7 +31,7 @@ import {
 import type { ActionOutcome } from './act.ts';
 import type { FirstFreeObserver } from '../../daemon/pacer.ts';
 import type { MaintenancePlan } from './plan.ts';
-import { outputMarks, outputMark } from '../../daemon/marks.ts';
+import { outputMarks, outputMark, keepMarkCandidate } from '../../daemon/marks.ts';
 import { answered } from '../../workspace/bounded-read.ts';
 import { resolveMaintenanceSettings, type MaintenanceSettings } from './settings.ts';
 
@@ -317,6 +318,18 @@ export async function planCargoTargets({
 }
 
 const pressureMarks = new WeakMap<MaintenanceAction, { mark: GcMark; candidate: GcMarkCandidate }>();
+const triedAt = new Map<string, number>();
+
+function recordedBytes(dir: string): number | null {
+  // @ref LLP 0001#pressure-acts-without-waiting-for-measurement-or-load -- ranking reads saved sizes only
+  const recorded = readDiskUsage(dir);
+  return recorded && Date.parse(recorded.measuredAt) > (triedAt.get(dir) ?? -Infinity) ? recorded.bytes : null;
+}
+
+export function keepCargoTarget(action: MaintenanceAction, reason: string): void {
+  const saved = pressureMarks.get(action);
+  if (saved) keepMarkCandidate(saved.mark, saved.candidate, reason);
+}
 
 async function markedTargetCurrent(
   mark: GcMark,
@@ -358,6 +371,7 @@ export async function planCargoTargetsAtPressure({
   signal,
   operation,
   level,
+  recordKeeps = false,
   diskLevel = measuredDiskLevel,
 }: {
   settings: MaintenanceSettings;
@@ -366,6 +380,7 @@ export async function planCargoTargetsAtPressure({
   signal?: AbortSignal;
   operation?: StimContext;
   level?: PressureLevel;
+  recordKeeps?: boolean;
   diskLevel?: (dir: string, signal?: AbortSignal) => Promise<PressureLevel>;
 }): Promise<MaintenancePlan> {
   const plan: MaintenancePlan = { actions: [], blocked: [], skips: [] };
@@ -379,8 +394,15 @@ export async function planCargoTargetsAtPressure({
       seen.add(candidate.path);
       const dir = candidate.path;
       const workspace = dirname(dir);
+      const refuse = (reason: string) => {
+        plan.skips.push({ target: dir, workspace, reason });
+        if (recordKeeps) {
+          signal?.throwIfAborted();
+          keepMarkCandidate(mark, candidate, reason);
+        }
+      };
       if (!(await markedTargetCurrent(mark, candidate, operation))) {
-        plan.skips.push({ target: dir, workspace, reason: 'its saved Cargo target or current checkout scope changed' });
+        refuse('its saved Cargo target or current checkout scope changed');
         continue;
       }
       signal?.throwIfAborted();
@@ -388,16 +410,16 @@ export async function planCargoTargetsAtPressure({
       if (tightened === 'normal') continue;
       const problem = await regenerableDirProblem(workspace, dir, signal, { processes: false });
       if (problem) {
-        plan.skips.push({ target: dir, reason: problem, workspace });
+        refuse(problem);
         continue;
       }
       if (await pinned(workspace)) {
-        plan.skips.push({ target: dir, reason: 'pinned by maintenance.keep', workspace });
+        refuse('pinned by maintenance.keep');
         continue;
       }
       const stale = staleCargoTargetPaths(dir, now);
       if ('refusal' in stale) {
-        plan.skips.push({ target: dir, reason: stale.refusal, workspace });
+        refuse(stale.refusal);
         continue;
       }
       const gone = stale.paths.map((path) => join(dir, path));
@@ -417,6 +439,14 @@ export async function planCargoTargetsAtPressure({
       pressureMarks.set(action, { mark, candidate });
       plan.actions.push(action);
     }
+  plan.actions = plan.actions
+    .map((action) => ({
+      action,
+      bytes: recordedBytes(action.target),
+      keep: Boolean(pressureMarks.get(action)?.candidate.keep),
+    }))
+    .toSorted((a, b) => Number(a.keep) - Number(b.keep) || (b.bytes ?? -1) - (a.bytes ?? -1))
+    .map(({ action }) => action);
   return plan;
 }
 
@@ -443,27 +473,33 @@ export async function trimCargoTargetAction(
   firstFree?: FirstFreeObserver,
 ): Promise<ActionOutcome> {
   const saved = pressureMarks.get(action);
+  if (saved) triedAt.set(action.target, Date.now());
+  const refuse = (detail: string): ActionOutcome => {
+    operation?.signal.throwIfAborted();
+    if (!stop?.aborted) keepCargoTarget(action, detail);
+    return kept(detail);
+  };
   if (action.level !== undefined && action.bytes === 0 && action.overBytes === 0 && !saved)
-    return kept('its pressure mark proof is no longer available');
+    return refuse('its pressure mark proof is no longer available');
   if (
     saved &&
     protectedRoot &&
     (action.workspace === protectedRoot || action.target.startsWith(`${protectedRoot}${sep}`))
   )
-    return kept('the command that started this pass runs in it');
+    return refuse('the command that started this pass runs in it');
   const root = action.workspace;
   if (!root || !(await cargoTargetDirsAsync(dirname(action.target))).includes(action.target))
-    return kept('it is no longer a Cargo target/ Stim recognises');
+    return refuse('it is no longer a Cargo target/ Stim recognises');
   const admitted = await admitCargoTarget(action.target);
-  if ('kept' in admitted) return kept(admitted.kept);
+  if ('kept' in admitted) return refuse(admitted.kept);
   if (
     saved
       ? !(await markedTargetCurrent(saved.mark, saved.candidate, operation, true))
       : !(await managed(root, operation))
   )
-    return kept('its checkout is no longer in a workspace or discovery scope');
+    return refuse('its checkout is no longer in a workspace or discovery scope');
   const problem = await regenerableDirProblem(root, action.target, operation?.signal, { processes: false });
-  if (problem) return kept(problem);
+  if (problem) return refuse(problem);
   const measure = action.level === undefined;
   const before = measure ? null : await targetVolume(action.target, operation?.signal);
   const result = await trimCargoTarget(action.target, {
@@ -485,5 +521,7 @@ export async function trimCargoTargetAction(
   const detail = `${result.removed.length ? `removed ${result.removed.join(', ')}` : 'removed nothing'}${result.kept.length ? `; kept ${result.kept.join('; ')}` : ''}${result.reserveReleased ? `; ${RESERVE_RELEASED}` : ''}`;
   return result.removed.length
     ? { status: 'done', bytes: result.bytes, ...(result.partial ? { partial: result.partial } : {}), detail }
-    : kept(detail);
+    : result.kept.length
+      ? refuse(detail)
+      : kept(detail);
 }

@@ -207,7 +207,12 @@ export async function idleOutputs(
   path: string,
   config: Config,
   deletable?: (path: string) => boolean,
-  { signal, inUse, metroCache }: { signal?: AbortSignal; inUse?: false; metroCache?: string } = {},
+  {
+    signal,
+    inUse,
+    metroCache,
+    keptByPath,
+  }: { signal?: AbortSignal; inUse?: false; metroCache?: string; keptByPath?: Map<string, string> } = {},
 ): Promise<{ paths: string[]; targets: string[]; kept: string[] }> {
   const paths = workspaceOutputPaths(workspaceDir(path));
   const targets: string[] = [];
@@ -215,8 +220,11 @@ export async function idleOutputs(
   const { dirs, cargo } = await existingBuildDirKindsAsync(path, inUse === false ? signal : undefined);
   for (const dir of dirs) {
     const problem = await regenerableDirProblem(path, dir, signal, { processes: inUse !== false });
-    if (problem) kept.push(`kept ${dir}: ${problem}`);
-    else {
+    if (problem) {
+      const reason = `kept ${dir}: ${problem}`;
+      kept.push(reason);
+      keptByPath?.set(dir, reason);
+    } else {
       paths.push(dir);
       if (cargo.includes(dir)) targets.push(dir);
     }
@@ -232,8 +240,11 @@ export async function idleOutputs(
           supervisorOf(other, project).status !== 'none' &&
           supervisorOf(other, project).status !== 'stale',
       );
-    if (sharer) kept.push(`kept the Metro store ${store}: the running dev server of ${sharer[0]} shares it`);
-    else paths.push(store);
+    if (sharer) {
+      const reason = `kept the Metro store ${store}: the running dev server of ${sharer[0]} shares it`;
+      kept.push(reason);
+      keptByPath?.set(store, reason);
+    } else paths.push(store);
   }
   return deletable
     ? { paths: paths.filter(deletable), targets: targets.filter(deletable), kept }
