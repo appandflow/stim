@@ -392,6 +392,11 @@ jobs:
           packages/server/__tests__/control-clipboard.integration.test.ts
           packages/server/__tests__/build-area-eviction.integration.test.ts
 
+      - name: Windows normal saved-worktree removal
+        run: >-
+          pnpm test packages/stim-cli/src/__tests__/worktree-marks.test.ts
+          -t 'publishes a missing generation before a current clean finished removal'
+
       - name: Windows worktree mark retirement
         run: >-
           pnpm test packages/stim-cli/src/__tests__/worktree-archive.integration.test.ts

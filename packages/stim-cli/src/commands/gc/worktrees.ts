@@ -969,6 +969,7 @@ export async function collectWorktreeSweep({
   refresh = true,
   operation,
   onObservation,
+  select,
 }: {
   idle: boolean;
   olderThan: number | null;
@@ -977,6 +978,12 @@ export async function collectWorktreeSweep({
   refresh?: boolean;
   operation?: StimContext;
   onObservation?: (path: string, observation: GcWorktreeObservation) => Promise<void>;
+  /** False omits current planning and publication for this known holder. */
+  select?: (
+    path: string,
+    keys: readonly string[],
+    status: { head: string | null; dirty: boolean | null },
+  ) => Promise<boolean>;
 }): Promise<WorktreeSweep> {
   const days = idle ? (olderThan ?? DEFAULT_WORKTREE_IDLE_DAYS) : null;
   const grace: WorktreeGrace = { ms: graceMs ?? graceMsSetting(operation), now };
@@ -1018,7 +1025,7 @@ export async function collectWorktreeSweep({
     groups.set(entry.path, [...(groups.get(entry.path) ?? []), root]);
   }
   const registry = new Set(listedRoots());
-  const inspected: Inspected[] = [];
+  let inspected: Inspected[] = [];
   await eachLimited([...[...groups].entries()], readConcurrency(operation), async ([index, [path, roots]]) => {
     operation?.signal.throwIfAborted();
     const { entries, ...source } = await resolveSourceCheckoutAsync(path, read);
@@ -1070,6 +1077,8 @@ export async function collectWorktreeSweep({
     const status = linked
       ? await fact('status', () => unlessTimedOut(() => branchStatusAsync(path, read), null))
       : null;
+    if (linked && select && !(await select(path, keys, { head: status?.head ?? null, dirty: status?.dirty ?? null })))
+      return;
     const gitAnswered = linked ? (status?.dirty ?? null) : null;
     const porcelain = await fact('porcelain', () => porcelainOf(path, gitAnswered, operation));
     // @ref LLP 0004#removing-a-discovered-worktree-needs-more-evidence -- no pod churn exclusion
@@ -1137,6 +1146,7 @@ export async function collectWorktreeSweep({
       lastUsedAt,
     };
   });
+  inspected = inspected.filter(Boolean);
   const linked = inspected.filter(({ facts }) => facts.source === 'linked' && !facts.unregistered);
   for (const { candidate, facts } of linked) {
     for (const key of candidate.keys)
@@ -1307,7 +1317,15 @@ async function noOwnCommitsRecheck(
 
 export async function removeWorktrees(
   sweep: WorktreeSweep,
-  { now = Date.now(), operation }: { now?: number; operation?: StimContext } = {},
+  {
+    now = Date.now(),
+    operation,
+    recheck,
+  }: {
+    now?: number;
+    operation?: StimContext;
+    recheck?: (candidate: WorktreeSweep['worktrees'][number], keys: readonly string[]) => Promise<string | null>;
+  } = {},
   output: GcOutput = GC_OUTPUT,
 ): Promise<number> {
   let failures = 0;
@@ -1326,6 +1344,11 @@ export async function removeWorktrees(
     if (candidate.skipped) continue;
     let kept: string[] = [];
     const guard = async (lockedKeys: readonly string[]): Promise<string[]> => {
+      const marked = await recheck?.(candidate, lockedKeys);
+      if (marked) {
+        kept = [marked];
+        return kept;
+      }
       const keys = [...new Set([...candidate.keys, ...lockedKeys])];
       const unlocked = keys.filter((key) => !lockedKeys.includes(key));
       const devices = await reportDeviceReads(keys, operation);

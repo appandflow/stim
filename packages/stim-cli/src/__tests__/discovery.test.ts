@@ -558,6 +558,12 @@ describe('discoverCheckouts', () => {
     expect(
       (await discoverCheckouts(config, [], undefined, { nodeWorktrees: true })).map(({ path, node }) => [path, node]),
     ).toEqual([[join(roots, 'cli-feature'), 'linked']]);
+    expect(await targetedCheckouts(config, [], [join(roots, 'cli-feature')])).toEqual([]);
+    expect(
+      (await targetedCheckouts(config, [], [join(roots, 'cli-feature')], undefined, { nodeWorktrees: true })).map(
+        ({ path, node }) => [path, node],
+      ),
+    ).toEqual([[join(roots, 'cli-feature'), 'linked']]);
   });
 
   it('marks the worktrees of a Node repository through git, and never those of a repository an app leads to', async () => {
@@ -646,6 +652,11 @@ describe('discoverCheckouts', () => {
         expect((await discoverCheckouts(config, [], undefined, select)).filter(({ path }) => path === mobile)).toEqual([
           expect.objectContaining({ origin: autoDiscover ? 'scan' : 'worktree', reduceOnly: true }),
         ]);
+      expect(
+        (await targetedCheckouts(config, [], [mobile], undefined, { nodeWorktrees: true })).map(
+          ({ path, reduceOnly }) => ({ path, reduceOnly }),
+        ),
+      ).toEqual([{ path: mobile, reduceOnly: autoDiscover ? undefined : true }]);
       saveConfig({ version: 2, ...config });
       const sweep = await collectWorktreeSweep({ idle: false, olderThan: null, now: Date.now(), refresh: false });
       expect(

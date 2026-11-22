@@ -412,6 +412,7 @@ export async function targetedCheckouts(
   known: readonly string[],
   roots: readonly string[],
   operation?: StimContext,
+  { nodeWorktrees = false }: { nodeWorktrees?: boolean } = {},
 ): Promise<DiscoveredCheckout[]> {
   if (!roots.length) return [];
   const scoped = isScopedHome(operation?.env);
@@ -464,7 +465,9 @@ export async function targetedCheckouts(
   const found = (await computeDiscovered(config, known, readDiscoveryScan(), operation, undefined, selection)).found;
   return found.flatMap((checkout) => {
     const original = wanted.get(checkout.path);
-    return !checkout.node && original !== undefined ? [Object.assign({}, checkout, { path: original })] : [];
+    return (!checkout.node || (nodeWorktrees && checkout.node === 'linked')) && original !== undefined
+      ? [Object.assign({}, checkout, { path: original })]
+      : [];
   });
 }
 

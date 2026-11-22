@@ -1,12 +1,22 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { gcMarkFile, readGcMark, type Config } from '@stim-cli/core/state';
+import { dirname, join } from 'node:path';
+import { discoveryScanFile, gcMarkFile, readGcMark, worktreeArchiveRoot, type Config } from '@stim-cli/core/state';
 import * as worktrees from '../commands/gc/worktrees.ts';
 import * as discovery from '../workspace/discovery.ts';
 import * as pullRequests from '../pull-request-state.ts';
 import * as mergeState from '../workspace/merge-state.ts';
+import * as gitWorktrees from '../workspace/worktree.ts';
 import * as iosDevices from '../devices/ios.ts';
 import * as agentSessions from '../agent-sessions.ts';
 import * as discoveredRemoval from '../workspace/discovered-removal.ts';
@@ -17,6 +27,11 @@ import { worktreeMarkObserver } from '../daemon/worktree-marks.ts';
 import { savedWorktreeReports } from '../daemon/worktree-reports.ts';
 import { markWriter } from '../daemon/marks.ts';
 import { testContext } from './_context.ts';
+import { workspaceDir } from '../workspace/paths.ts';
+import { planWorktrees } from '../stimd/passes/sweep.ts';
+import { executeAction } from '../stimd/passes/act.ts';
+import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
+import * as cacheFiles from '../cache-file.ts';
 
 vi.mock('../workspace/protected-locations.ts', () => ({ isProtectedLocation: () => false }));
 
@@ -48,7 +63,7 @@ const git = (path: string, ...args: string[]) =>
 const reading = () => ({ devices: [], simsFailed: false, operation: testContext() });
 
 beforeEach(() => {
-  base = realpathSync(mkdtempSync(join(tmpdir(), 'stim-worktree-mark-')));
+  base = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-worktree-mark-')));
   vi.stubEnv('STIM_HOME', join(base, 'home'));
   vi.stubEnv('STIM_GC_WORKTREE_GRACE_MINUTES', '60');
   vi.stubEnv('STIM_MAINTENANCE_PROTECT_RECENT_HOURS', '0');
@@ -421,3 +436,285 @@ test.each([false, true])(
   },
   20_000,
 );
+
+const normalPlan = (idleDays: number | null = null) =>
+  planWorktrees({
+    protectedRoot: '',
+    pinned: () => false,
+    now: Date.now(),
+    refresh: false,
+    operation: testContext(),
+    deviceActivity: async () => [],
+    idleDays,
+    onObservation: worktreeMarkObserver(config, reading()),
+    normalMarks: true,
+  });
+
+const normalRemove = async (plan: Awaited<ReturnType<typeof normalPlan>>) => {
+  const action = plan.actions.find(({ target }) => target === linked);
+  if (!action) throw new Error('fixture worktree removal action missing');
+  return executeAction(action, {
+    settings: resolveMaintenanceSettings(config),
+    protectedRoot: '',
+    background: true,
+    worktreeSweep: plan.sweep,
+    operation: testContext(),
+    normalWorktreeMarks: true,
+  });
+};
+
+describe('normal saved worktree reconciliation', () => {
+  test(
+    'publishes a missing generation before a current clean finished removal',
+    async () => {
+      finished();
+      vi.setSystemTime(Date.now() + 2 * 3_600_000);
+      expect(readGcMark(linked)).toBeNull();
+      const plan = await normalPlan();
+      expect(readGcMark(linked)?.worktree).toMatchObject({
+        clean: true,
+        finished: { reason: 'merged into origin/main' },
+      });
+      expect((await normalRemove(plan)).status).toBe('done');
+      expect(existsSync(linked)).toBe(false);
+    },
+    process.platform === 'win32' ? 60_000 : 20_000,
+  );
+
+  test('keeps a clean finished removal when generation publication fails', async () => {
+    finished();
+    vi.setSystemTime(Date.now() + 2 * 3_600_000);
+    vi.spyOn(cacheFiles, 'writeCacheFile').mockImplementation(() => {});
+    const plan = await normalPlan();
+    expect(readGcMark(linked)).toBeNull();
+    expect((await normalRemove(plan)).status).toBe('kept');
+    expect(existsSync(join(linked, 'feature.txt'))).toBe(true);
+  }, 20_000);
+
+  test.each(['expired', 'dirty', 'device', 'membership', 'recorded-member', 'scope', 'head'] as const)(
+    'preserves a planned worktree when current %s proof changes before removal',
+    async (change) => {
+      const app = join(linked, 'apps', 'mobile');
+      if (change === 'membership' || change === 'recorded-member') {
+        mkdirSync(app, { recursive: true });
+        writeFileSync(join(app, 'package.json'), '{}');
+      }
+      finished();
+      vi.setSystemTime(Date.now() + 2 * 3_600_000);
+      const plan = await normalPlan();
+      const mark = readGcMark(linked);
+      if (!mark?.worktree) throw new Error('fixture worktree mark missing');
+      if (change === 'expired') vi.setSystemTime(Date.now() + 2 * day);
+      else if (change === 'dirty') {
+        vi.setSystemTime(Date.now() + 20 * 60_000);
+        mark.dirtyAt = new Date().toISOString();
+        writeFileSync(gcMarkFile(linked), JSON.stringify(mark));
+      } else if (change === 'device') {
+        mark.device++;
+        writeFileSync(gcMarkFile(linked), JSON.stringify(mark));
+      } else if (change === 'membership' || change === 'recorded-member') {
+        if (change === 'membership') {
+          config.projects[app] = {};
+          saveConfig(config);
+        }
+        recordWorkspaceUse(app, new Date());
+      } else if (change === 'scope') {
+        config.projects = {};
+        saveConfig(config);
+        rmSync(workspaceDir(linked), { recursive: true, force: true });
+      } else {
+        writeFileSync(join(linked, 'feature.txt'), 'new commit after selection');
+        git(linked, 'add', '-A');
+        git(linked, 'commit', '-q', '-m', 'new HEAD');
+      }
+      expect((await normalRemove(plan)).status).toBe(change === 'head' ? 'failed' : 'kept');
+      expect(existsSync(join(linked, 'feature.txt'))).toBe(true);
+    },
+    20_000,
+  );
+
+  test('removes an unregistered discovered plain Node worktree with current finished evidence', async () => {
+    config.projects = {};
+    config.maintenance = { autoDiscover: false, discoverRoots: [base] };
+    saveConfig(config);
+    rmSync(workspaceDir(linked), { recursive: true, force: true });
+    writeFileSync(join(linked, 'package.json'), JSON.stringify({ name: 'cli' }));
+    finished();
+    vi.setSystemTime(Date.now() + 10 * day);
+    const plan = await normalPlan();
+    expect(readGcMark(linked)?.worktree?.finished).toBeTruthy();
+    expect((await normalRemove(plan)).status).toBe('done');
+    expect(existsSync(linked)).toBe(false);
+  }, 20_000);
+
+  test('keeps a discovered worktree when only a reduce-only route remains', async () => {
+    config.projects = {};
+    config.maintenance = { autoDiscover: false, discoverRoots: [base] };
+    saveConfig(config);
+    rmSync(workspaceDir(linked), { recursive: true, force: true });
+    writeFileSync(join(linked, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+    finished();
+    vi.setSystemTime(Date.now() + 10 * day);
+    const plan = await normalPlan();
+    const saved = readFileSync(gcMarkFile(linked));
+    vi.stubEnv('HOME', join(base, 'host'));
+    vi.stubEnv('USERPROFILE', join(base, 'host'));
+    vi.stubEnv('STIM_HOME', '');
+    config.maintenance = { autoDiscover: true, discoverRoots: [base] };
+    saveConfig(config);
+    mkdirSync(dirname(gcMarkFile(linked)), { recursive: true });
+    writeFileSync(gcMarkFile(linked), saved);
+    mkdirSync(dirname(discoveryScanFile()), { recursive: true });
+    writeFileSync(
+      discoveryScanFile(),
+      JSON.stringify({
+        version: 2,
+        completedAt: 1,
+        lowScanAt: 0,
+        ranAt: 1,
+        durationMs: 1,
+        trigger: 'weekly',
+        visited: 1,
+        found: [linked],
+        dotFolderFound: [],
+        unreadable: [],
+        truncated: false,
+        truncation: 'none',
+      }),
+    );
+    const broad = vi.spyOn(discovery, 'discoverCheckouts').mockRejectedValue(new Error('must not rediscover'));
+    const result = await normalRemove(plan);
+    expect(result.status).toBe('kept');
+    expect(result.detail).toContain('saved discovery classification');
+    expect(broad).not.toHaveBeenCalled();
+    expect(existsSync(linked)).toBe(true);
+  }, 20_000);
+
+  test('keeps the real claimed checkout when its current exact route becomes reduce-only', async () => {
+    finished();
+    vi.setSystemTime(Date.now() + 2 * 3_600_000);
+    const plan = await normalPlan();
+    config.projects = {};
+    config.maintenance = { autoDiscover: false, discoverRoots: [base] };
+    saveConfig(config);
+    rmSync(workspaceDir(linked), { recursive: true, force: true });
+    vi.spyOn(discovery, 'targetedCheckouts').mockResolvedValue([
+      { path: linked, from: base, origin: 'worktree', reduceOnly: true },
+    ]);
+    expect((await normalRemove(plan)).status).toBe('kept');
+    expect(existsSync(linked)).toBe(true);
+  }, 20_000);
+
+  test('does not promote a reduce-only normal inventory row to whole-worktree removal', async () => {
+    finished();
+    vi.setSystemTime(Date.now() + 2 * 3_600_000);
+    const plan = await normalPlan();
+    const candidate = plan.sweep.worktrees.find(({ path }) => path === linked);
+    if (!candidate) throw new Error('fixture worktree candidate missing');
+    candidate.reduceOnly = true;
+    expect((await normalRemove(plan)).status).toBe('kept');
+    expect(existsSync(linked)).toBe(true);
+  }, 20_000);
+
+  test('uses current planner holder facts once for nested-app shortlisting', async () => {
+    const roots = [linked];
+    for (let i = 1; i < 3; i++) {
+      const root = join(base, `linked-${i}`);
+      git(source, 'worktree', 'add', '-q', '-b', `feature-${i}`, root);
+      roots.push(root);
+    }
+    config.projects = {};
+    rmSync(workspaceDir(linked), { recursive: true, force: true });
+    vi.setSystemTime(Date.now() + 2 * 3_600_000);
+    for (const root of roots) {
+      const app = join(root, 'apps', 'mobile');
+      mkdirSync(app, { recursive: true });
+      writeFileSync(join(app, 'package.json'), '{}');
+      git(root, 'add', '-A');
+      git(root, 'commit', '-q', '-m', 'unfinished app');
+      git(root, 'push', '-q', '-u', 'origin', 'HEAD');
+      config.projects[app] = {};
+      recordWorkspaceUse(app, new Date(Date.now() - 10 * day));
+    }
+    saveConfig(config);
+    await observe();
+    for (const root of roots) expect(readGcMark(root)?.worktree?.finished).toBeNull();
+    const holder = vi.spyOn(gitWorktrees, 'resolveSourceCheckoutAsync');
+    const plan = await normalPlan();
+    expect(plan.actions).toEqual([]);
+    expect(holder.mock.calls.filter(([, options]) => options?.cache === false).length).toBeLessThanOrEqual(
+      roots.length,
+    );
+  }, 30_000);
+
+  test('defers external completion of a fresh unfinished generation without rewriting it, then refreshes when due', async () => {
+    vi.setSystemTime(Date.now() + 2 * 3_600_000);
+    writeFileSync(join(linked, 'feature.txt'), 'feature');
+    git(linked, 'add', '-A');
+    git(linked, 'commit', '-q', '-m', 'feature');
+    git(linked, 'push', '-q', '-u', 'origin', 'feature');
+    await observe();
+    expect(readGcMark(linked)?.worktree).toMatchObject({ clean: true, finished: null, emptyBranch: false });
+    const before = readFileSync(gcMarkFile(linked), 'utf8');
+    git(source, 'merge', '-q', '--no-ff', 'feature', '-m', 'merged externally');
+    git(source, 'push', '-q', 'origin', 'main');
+    const merge = vi.spyOn(mergeState, 'mergeStateAsync');
+    const markModule = await import('../daemon/worktree-marks.ts');
+    const publish = vi.fn<ReturnType<typeof worktreeMarkObserver>>(async () => {});
+    const producer = vi.spyOn(markModule, 'worktreeMarkObserver').mockReturnValue(publish);
+    const plan = await normalPlan();
+    expect(plan.actions).toEqual([]);
+    expect(merge).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+    expect(readFileSync(gcMarkFile(linked), 'utf8')).toBe(before);
+    producer.mockRestore();
+    expect(existsSync(linked)).toBe(true);
+    vi.setSystemTime(Date.now() + 2 * day);
+    const refreshed = await normalPlan();
+    expect(readGcMark(linked)?.worktree?.finished).not.toBeNull();
+    expect((await normalRemove(refreshed)).status).toBe('done');
+    expect(existsSync(linked)).toBe(false);
+  }, 20_000);
+
+  test.each(['empty', 'pushed-idle'] as const)(
+    'preserves the existing %s path without saved publication',
+    async (mode) => {
+      if (mode === 'pushed-idle') {
+        writeFileSync(join(linked, 'feature.txt'), 'feature');
+        git(linked, 'add', '-A');
+        git(linked, 'commit', '-q', '-m', 'feature');
+        git(linked, 'push', '-q', '-u', 'origin', 'feature');
+        config.maintenance = { autoDiscover: false, removeIdleWorktrees: true };
+        saveConfig(config);
+      }
+      vi.setSystemTime(Date.now() + 2 * 3_600_000);
+      vi.spyOn(cacheFiles, 'writeCacheFile').mockImplementation(() => {});
+      const plan = await normalPlan(mode === 'pushed-idle' ? 1 : null);
+      expect(readGcMark(linked)).toBeNull();
+      expect((await normalRemove(plan)).status).toBe('done');
+      expect(existsSync(linked)).toBe(false);
+    },
+    20_000,
+  );
+
+  describe.skipIf(process.platform === 'win32')('POSIX archive tooling', () => {
+    test('preserves the existing dirty-archive path without saved publication', async () => {
+      vi.stubEnv('STIM_ARCHIVE_ENABLED', 'true');
+      finished();
+      writeFileSync(join(linked, 'loose.txt'), 'preserve this edit');
+      vi.setSystemTime(Date.now() + 2 * 3_600_000);
+      vi.spyOn(cacheFiles, 'writeCacheFile').mockImplementation(() => {});
+      const plan = await normalPlan();
+      expect(readGcMark(linked)).toBeNull();
+      expect((await normalRemove(plan)).status).toBe('done');
+      expect(existsSync(linked)).toBe(false);
+      const archive = readdirSync(worktreeArchiveRoot(), { recursive: true })
+        .map(String)
+        .find((file) => file.endsWith('untracked.tar'));
+      if (!archive) throw new Error('fixture archive missing');
+      expect(
+        execFileSync('tar', ['-xOf', join(worktreeArchiveRoot(), archive), 'loose.txt'], { encoding: 'utf8' }),
+      ).toBe('preserve this edit');
+    }, 20_000);
+  });
+});
