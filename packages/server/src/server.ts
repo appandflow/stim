@@ -194,7 +194,7 @@ interface ServerHealth {
   stimHome: string;
   /**
    * The work a restart would cut off: offloaded builds and hosted sessions running now. `hostedWork` counts the hosted
-   * sessions a restart would stop, because a native step is in flight or they cannot be resumed; the others are left
+   * sessions a restart would stop and mutating non-session work, such as runtime installation; resumable sessions are left
    * running for the next server, which `resumes` says this one does. `tests` counts the commands test clients run here;
    * a server without it takes no `test` approval.
    */
@@ -624,8 +624,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const commandLimits: CommandLimits = { ...COMMAND_LIMITS, ...options.commandLimits };
   const actionLimits: CommandLimits = { ...ACTION_LIMITS, ...options.actionLimits };
   let offloads = 0;
-  let hostedSessions = 0;
-  const reportBusy = () => options.busy?.(offloads + hostedSessions + busyWorkspaces.size);
+  let hostedBusy = 0;
+  const reportBusy = () => options.busy?.(offloads + hostedBusy + busyWorkspaces.size);
   const busyWorkspaces = new (class extends Set<string> {
     override add(workspace: string): this {
       super.add(workspace);
@@ -763,8 +763,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     },
   });
   const hostedDevices = new DeviceHost({
-    sessions: (count) => {
-      hostedSessions = count;
+    busy: (count) => {
+      hostedBusy = count;
       reportBusy();
     },
     worker: join(dirname(options.stimCli), 'device-host-worker.mjs'),
