@@ -12,6 +12,7 @@ import type {
 } from '../daemon/passes.ts';
 import {
   LADDER,
+  CRITICAL,
   TRASH,
   LADDER_CLOCK_SLOTS,
   reportDiskQueue,
@@ -529,7 +530,7 @@ else if (thread && parentPort) {
     (input, open, emit, output) => {
       if ('trash' in input)
         return requestGcItem(
-          async (signal, between): Promise<TrashDrainReply> => {
+          async (signal, turn): Promise<TrashDrainReply> => {
             const { deleteTrash } = await import('../commands/gc/trash.ts');
             const { createGcResults } = await import('../commands/gc/results.ts');
             const { openGcLog } = await import('../commands/gc/log.ts');
@@ -545,12 +546,12 @@ else if (thread && parentPort) {
               },
               !input.critical,
               true,
-              between,
+              turn.boundary,
             );
             log('info', 'item_trash_settled', 'item trash drain settled', result);
             return { trash: true };
           },
-          input.critical ? LADDER : TRASH,
+          input.critical ? CRITICAL : TRASH,
         );
       if ('history' in input) {
         const controller = new AbortController();
