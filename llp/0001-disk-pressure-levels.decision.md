@@ -594,6 +594,19 @@ also holds the newest activity the walk read, and the walk reads at
   high sweep checks the latest disk level before refreshing, so a transition
   to critical skips the refresh. Daemon report mode uses known marks without
   deleting or updating them; explicit dry runs retain discovery previews.
+- The automatic normal dormant pass uses its due-refreshed marks for
+  non-Cargo build-output candidates instead of enumerating those outputs
+  again. Missing, due or uncertain saved evidence keeps that family's outputs.
+  Only selected checkouts read marks, at their disk-turn boundaries; an
+  inaccessible unrelated registration does not stop healthy normal work.
+  Current root and output identities/devices, scope, recognition and Git
+  protections are checked before measurement and under the existing native-run
+  and metro-start claims, together with the full current idle/pin/use checks.
+  The current mark's due state and candidate device are checked again there,
+  including after measurement or a yield.
+  A saved path whose recognition changed stays without finding a replacement.
+  The shared normal checkout/dependency inventory, normal Cargo discovery and
+  policy, whole-worktree removal and explicit discovery previews are unchanged.
   A removal exception remains a failed rung, as before; accounting for bytes
   removed before a later removal failed is an existing separate limitation. Registered
   roots without marks are reported; unmarked discovered roots are not listed
@@ -676,10 +689,27 @@ also holds the newest activity the walk read, and the walk reads at
   dependency symlinks. Restoring that detail from current targeted evidence
   remains required. Explicit read-only dry runs retain discovery previews.
   Normal dependency deletion and its thresholds are unchanged.
-- Worktree marks and pressure discovery, normal mark-first
+- The scheduled normal worktree inventory also publishes an optional section,
+  preserving actual clean/dirty facts separately from archive eligibility,
+  HEAD/source identity, finish and activity times, exact last Stim use and
+  its existing keep verdict. It writes no mark in a read-only preview.
+  Newly observed Git activity or a finish event can select the worktree
+  section's active cadence without advancing output or dependency stamps.
+  All represented sections retain their independent dirty watermark.
+- Acting rung 7 reports saved worktrees only. It preserves finished-worktree
+  grace, the empty-branch activity floor, and the optional pushed-idle policy,
+  then rechecks selected worktrees with current local/cached Git, scope,
+  path/device, pin and claim facts and one shared device/agent inventory.
+  Automatic-only roots, custom ignored paths, hidden/sparse index flags and
+  current Pod churn stay uncertain where proving removal would need a
+  dependency or filesystem walk. Pressure performs no such walks, full
+  worktree collection, fetch or pull-request refresh. Missing, due,
+  dirty or uncertain evidence stays explicitly unknown. Normal removal and
+  its archive and final-lock safeguards are unchanged.
+- Normal mark-first
   scheduling, per-candidate disk-turn yielding and yield ranking remain
   pending. The no-discovery guarantee applies to output rung 1 and Cargo
-  pressure candidate selection, not the other maintenance stages or normal
+  pressure candidate selection and saved dependency/worktree reports, not the other maintenance stages or normal
   size/cap passes. `stim gc --dry-run` retains discovery previews.
 
 Reason: planning dominates a pressure pass (rung 5's evidence loop took about
