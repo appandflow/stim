@@ -21,11 +21,21 @@ import { registerCollector } from '../stimd/logs/state.ts';
 import { readClaimSet, releaseClaim } from '../ownership-claim.ts';
 import { claimPath, streamOwnerGone, takeStreamClaim } from '../stimd/logs/claim.ts';
 
-const writes = vi.hoisted((): { opened: string[]; gate: Promise<void> | null; drop: boolean } => ({
-  opened: [],
-  gate: null,
-  drop: false,
-}));
+const writes = vi.hoisted(
+  (): {
+    opened: string[];
+    gate: Promise<void> | null;
+    drop: boolean;
+    teardown: boolean;
+    ready: (streamId: string) => void;
+  } => ({
+    opened: [],
+    gate: null,
+    drop: false,
+    teardown: false,
+    ready: () => {},
+  }),
+);
 vi.mock('../stimd/logs/writer.ts', async (original) => {
   const actual = await original<typeof import('../stimd/logs/writer.ts')>();
   return {
@@ -34,12 +44,17 @@ vi.mock('../stimd/logs/writer.ts', async (original) => {
       const writers = actual.createLogWriters(...args);
       const open = writers.open;
       writers.open = async (...input) => {
-        const opening = open(...input);
+        const sink = await open(...input);
         writes.opened.push(input[0].streamId);
+        writes.ready(input[0].streamId);
         if (writes.gate) await writes.gate;
-        const sink = await opening;
         if (writes.drop) sink.writer.write = () => true;
         return sink;
+      };
+      const ownedClose = writers.ownedClose;
+      writers.ownedClose = () => {
+        writes.teardown = true;
+        return ownedClose();
       };
       return writers;
     },
@@ -54,6 +69,7 @@ describe.skipIf(process.platform === 'win32')('resuming a stream whose stimd die
   let starts: string;
   let simctl: string;
   let env: Record<string, string>;
+  let writerOpened: Promise<void>;
   const events: { level: string; event: string; msg: string }[] = [];
 
   beforeEach(() => {
@@ -61,6 +77,12 @@ describe.skipIf(process.platform === 'win32')('resuming a stream whose stimd die
     writes.opened.length = 0;
     writes.gate = null;
     writes.drop = false;
+    writes.teardown = false;
+    writerOpened = new Promise<void>((resolve) => {
+      writes.ready = (streamId) => {
+        if (streamId === 's-lost') resolve();
+      };
+    });
     home = realpathSync(mkdtempSync(join(tmpdir(), 'stim-resume-gates-home-')));
     root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-resume-gates-app-')));
     const bin = join(home, 'bin');
@@ -173,13 +195,11 @@ process.kill(process.pid, 'SIGKILL');`;
     return streams;
   };
 
-  const lostWriteOpened = (says: string) =>
-    vi.waitFor(() => {
-      expect(events.some((entry) => entry.event === 'device_log_stream_dropped' && entry.msg.includes(says))).toBe(
-        true,
-      );
-      expect(writes.opened).toContain('s-lost');
-    });
+  const lostWriteOpened = async (says: string) => {
+    await writerOpened;
+    expect(events.some((entry) => entry.event === 'device_log_stream_dropped' && entry.msg.includes(says))).toBe(true);
+    expect(writes.opened).toContain('s-lost');
+  };
   const persistedLost = (says: string) => {
     expect(interrupted()).toHaveLength(1);
     expect(readWorkspaceState(root)?.collectors?.ios).toHaveProperty('interruptedAt');
@@ -214,7 +234,8 @@ process.kill(process.pid, 'SIGKILL');`;
         closed = true;
         return closed;
       });
-      await Promise.resolve();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(writes.teardown).toBe(false);
       expect(closed).toBe(false);
       expect(interrupted()).toHaveLength(0);
       release();
@@ -320,8 +341,8 @@ process.kill(process.pid, 'SIGKILL');`;
     const streams = await resume();
     try {
       await lostWriteOpened(says);
+      await vi.waitFor(() => persistedLost(says));
       await streams.close();
-      persistedLost(says);
       const again = await resume();
       await new Promise((done) => setTimeout(done, 500));
       expect(interrupted()).toHaveLength(1);
