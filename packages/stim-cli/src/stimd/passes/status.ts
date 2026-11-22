@@ -1,22 +1,33 @@
 import {
-  maintenanceRunClaims,
   readMaintenanceState,
+  daemonClaimRoot,
+  isJsonObject,
   readDaemonSnapshot,
+  type CleanupQueueStatus,
   type MaintenanceCheck,
   type MaintenanceStatus,
 } from '@stim-cli/core/state';
-import { claimRemoveCommand, readClaimSet } from '@stim-cli/core/ownership-claim';
+import { readClaimSet } from '@stim-cli/core/ownership-claim';
 import { formatBytes } from '../../fs-util.ts';
 import { resolveMaintenanceSettings } from './settings.ts';
 
 const CHECKS: readonly MaintenanceCheck[] = ['pressure', 'size', 'worktree', 'sweep', 'idle'];
 
+function parseQueue(value: unknown): CleanupQueueStatus | null {
+  if (!isJsonObject(value) || typeof value.queued !== 'number' || !Number.isInteger(value.queued) || value.queued < 0)
+    return null;
+  const running = value.running;
+  if (running === null) return { running: null, queued: value.queued };
+  if (!isJsonObject(running) || typeof running.startedAt !== 'string' || typeof running.trigger !== 'string')
+    return null;
+  return { running: { startedAt: running.startedAt, trigger: running.trigger }, queued: value.queued };
+}
+
 export function maintenanceStatus(env: NodeJS.ProcessEnv = process.env): MaintenanceStatus {
   const state = readMaintenanceState();
   const history = readDaemonSnapshot()?.history;
-  const claims = readClaimSet(maintenanceRunClaims());
-  const holder = claims.live[0];
-  const unresolved = claims.unresolved[0];
+  const holder = readClaimSet(daemonClaimRoot()).live.find((entry) => entry.mode === 'shared');
+  const queue = parseQueue(holder?.details.cleanup);
   const settings = resolveMaintenanceSettings(undefined, env);
   const deferred = CHECKS.flatMap((check) => {
     const since = state?.deferredSince?.[check];
@@ -25,14 +36,6 @@ export function maintenanceStatus(env: NodeJS.ProcessEnv = process.env): Mainten
   return {
     mode: settings.mode,
     ...(settings.invalid ? { invalid: settings.invalid } : {}),
-    ...(unresolved
-      ? {
-          claim: {
-            unresolved: `${unresolved.path}: ${unresolved.reason}`,
-            removeCommand: claimRemoveCommand(unresolved.path),
-          },
-        }
-      : {}),
     lastChecks: {
       pressure: state?.lastAt.pressure ?? null,
       size: state?.lastAt.size ?? null,
@@ -42,12 +45,8 @@ export function maintenanceStatus(env: NodeJS.ProcessEnv = process.env): Mainten
     pressure: state?.pressure ?? null,
     sizes: state?.sizes ?? [],
     lastPass: state?.lastPass ?? null,
-    running: holder
-      ? {
-          startedAt: holder.startedAt,
-          trigger: String(holder.details.trigger ?? 'command'),
-        }
-      : null,
+    running: queue?.running ?? null,
+    queued: queue?.queued ?? 0,
     ...(deferred.length ? { deferred } : {}),
     recent: state?.recent ?? [],
     plan: state?.plan ?? [],
@@ -56,7 +55,7 @@ export function maintenanceStatus(env: NodeJS.ProcessEnv = process.env): Mainten
 }
 
 export function maintenanceLine(status: MaintenanceStatus, includeLabel = true): string | null {
-  if (status.mode === 'off' && !status.lastPass && !status.running && !status.invalid && !status.claim) return null;
+  if (status.mode === 'off' && !status.lastPass && !status.running && !status.invalid) return null;
   const at = status.lastPass
     ? new Date(status.lastPass.startedAt).toLocaleTimeString('en-GB', {
         hour: '2-digit',
@@ -83,7 +82,7 @@ export function maintenanceLine(status: MaintenanceStatus, includeLabel = true):
         `${culprit.name} uses ${formatBytes(culprit.bytes)}${culprit.command ? ` (\`${culprit.command}\`)` : ''}`,
     )
     .join(', ');
-  return `${includeLabel ? 'Automatic maintenance: ' : ''}${at ? `${at}: ` : ''}${status.lastPass ? summary : 'no pass has run yet'}${disk ? `; ${disk}` : ''}${deviceDisk ? `; ${deviceDisk}` : ''}${culprits ? `; memory: ${culprits}` : ''}${status.running ? '; running' : ''}${deferredNote(status)}${status.lastPass?.blocked.length ? `; ${status.lastPass.blocked.join('; ')}` : ''}${status.invalid ? `; invalid: ${status.invalid}` : ''}${status.claim ? `; unresolved claim: ${status.claim.unresolved}; ${status.claim.removeCommand}` : ''}`;
+  return `${includeLabel ? 'Automatic maintenance: ' : ''}${at ? `${at}: ` : ''}${status.lastPass ? summary : 'no pass has run yet'}${disk ? `; ${disk}` : ''}${deviceDisk ? `; ${deviceDisk}` : ''}${culprits ? `; memory: ${culprits}` : ''}${status.running ? '; running' : ''}${deferredNote(status)}${status.lastPass?.blocked.length ? `; ${status.lastPass.blocked.join('; ')}` : ''}${status.invalid ? `; invalid: ${status.invalid}` : ''}${status.queued ? `; ${status.queued} queued` : ''}`;
 }
 
 function deferredNote(status: MaintenanceStatus): string {

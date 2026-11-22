@@ -201,7 +201,7 @@ function isKnownDir(kind: ArtifactKind, path: string): boolean {
     : ARTIFACT_DIRS[kind].some((dir) => path.endsWith(`${sep}${dir.split('/').join(sep)}`));
 }
 
-export function appRoots(worktree: ArtifactWorktree, kind: ArtifactKind): string[] {
+export function appRoots(worktree: Pick<ArtifactWorktree, 'path' | 'keys'>, kind: ArtifactKind): string[] {
   const roots = new Set([worktree.path, ...worktree.keys]);
   if (kind === 'build')
     for (const parent of PACKAGE_PARENTS) {

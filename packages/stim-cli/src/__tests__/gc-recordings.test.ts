@@ -10,8 +10,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { maintenanceRunClaims, workspaceRecordingsDir } from '@stim-cli/core/state';
-import { readClaimSet } from '@stim-cli/core/ownership-claim';
+import { workspaceRecordingsDir } from '@stim-cli/core/state';
 import { withAmbientContext } from '@stim-cli/core';
 import { testContext } from './_context.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
@@ -219,9 +218,6 @@ test('cancelling the critical run while it deletes recordings keeps later footag
   expect(removed).toHaveLength(1);
   expect(existsSync(join(live.dir, `${now - 9 * DAY_MS}-${now - 9 * DAY_MS + 60_000}.seg`))).toBe(true);
   expect(existsSync(open)).toBe(true);
-  const admission = readClaimSet(maintenanceRunClaims());
-  expect(admission.live).toEqual([]);
-  expect(admission.unresolved).toEqual([]);
 });
 
 test('keeps the recordings of a workspace whose project root cannot be proven gone, even at critical', async () => {

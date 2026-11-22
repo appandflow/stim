@@ -13,14 +13,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  readArchives,
-  archiveDir,
-  pullRequestCacheFile,
-  type ArchivedWorkspace,
-  maintenanceRunClaims,
-} from '@stim-cli/core/state';
-import { readClaimSet } from '@stim-cli/core/ownership-claim';
+import { readArchives, archiveDir, pullRequestCacheFile, type ArchivedWorkspace } from '@stim-cli/core/state';
 import { runGcItem } from '../stimd/gc-item.ts';
 import { archiveWorkspace, enforceArchiveRetention, sweepArchiveStaging } from '../archive.ts';
 import { reclaimProject } from '../devices/reclaim.ts';
@@ -235,9 +228,6 @@ test('archive item cancellation keeps the completed deletion and releases its ob
   expect(moved).toHaveLength(1);
   expect(readArchives().map((entry) => entry.id)).toEqual(['later']);
   expect(readFileSync(join(archiveDir('later'), 'logs', 'a.ndjson'))).toEqual(Buffer.alloc(5));
-  const admission = readClaimSet(maintenanceRunClaims());
-  expect(admission.live).toEqual([]);
-  expect(admission.unresolved).toEqual([]);
 });
 
 test('removal keeps history and closed footage while deleting open footage and outputs', async () => {

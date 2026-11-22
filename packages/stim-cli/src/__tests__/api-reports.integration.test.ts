@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { ensureWorkspaceStorage } from '../workspace/paths.ts';
+import { daemonNdjsonFile, isJsonObject, stimdClaimRoot, stimdRecordFile, stimdRunDir } from '@stim-cli/core/state';
 import { upsertProject } from '../workspace/config.ts';
 import { PEER } from '@stim-cli/core/protocol';
 import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from '@stim-cli/core/process-identity';
@@ -13,6 +14,7 @@ import { withAmbientContext, type StimContext } from '@stim-cli/core';
 import { createStim } from '../api.ts';
 import { runGc } from '../commands/gc.ts';
 import { runGcItem } from '../stimd/gc-item.ts';
+import { hostStimd, type AttachedHost } from '../stimd/attached.ts';
 import { recordGcResult, takeGcResults } from '../commands/gc/results.ts';
 import { getExecutor } from '../exec.ts';
 import { readClaimSet, releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-claim.ts';
@@ -22,7 +24,6 @@ import * as tailnet from '../offload/tailnet.ts';
 import { testContext } from './_context.ts';
 import * as androidDevices from '../devices/android.ts';
 import { decodeSecret } from '@stim-cli/core/noise-session';
-import { maintenanceRunClaims } from '@stim-cli/core/state';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
 
 let scratch: string;
@@ -87,7 +88,7 @@ function fixture(name: string) {
             join(process.env.SystemRoot || 'C:\\Windows', 'System32'),
             join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0'),
           ].join(delimiter)
-        : `${dirname(process.execPath)}:/usr/bin:/bin`,
+        : [join(tmpdir(), 'stim-test-launchctl'), dirname(process.execPath), '/usr/bin', '/bin'].join(delimiter),
   };
   return { root, home, cache, env };
 }
@@ -264,7 +265,18 @@ test('concurrent GC mutations empty only their selected cache and return results
   const exit = process.exitCode;
   const log = vi.spyOn(console, 'log');
   const error = vi.spyOn(console, 'error');
+  const hosts: AttachedHost[] = [];
   try {
+    for (const item of items) {
+      const host = await withAmbientContext(
+        testContext({ home: item.home, env: item.env, projectRoot: item.root, signal: fixtureAbort.signal }),
+        () => hostStimd(item.env, { handover: false, signal: fixtureAbort.signal }),
+      );
+      if (!host || typeof host !== 'object' || !('end' in host))
+        throw new Error(`Fixture daemon did not become ready: ${JSON.stringify(host)}`);
+      hosts.push(host);
+    }
+    expect(new Set(hosts.map(({ instance }) => instance)).size).toBe(items.length);
     const reports = await Promise.all(
       items.map(async (item) => {
         const result = await trackRead((signal) =>
@@ -287,9 +299,60 @@ test('concurrent GC mutations empty only their selected cache and return results
     expect(process.cwd()).toBe(cwd);
     expect(process.env).toEqual(env);
     expect(process.exitCode).toBe(exit);
+  } catch (failure) {
+    for (const item of items) {
+      const files = [join(stimdRunDir(item.home), 'stimd.log'), stimdRecordFile(item.home)];
+      console.error('GC fixture daemon diagnostics', {
+        home: item.home,
+        claims: readClaimSet(stimdClaimRoot(item.home)),
+        files: files.map((file) => ({
+          file,
+          content: existsSync(file) ? readFileSync(file, 'utf8').slice(-16_384) : null,
+        })),
+      });
+    }
+    throw failure;
   } finally {
     log.mockRestore();
     error.mockRestore();
+    await Promise.allSettled(hosts.map((host) => host.end())).then((ended) => {
+      for (const result of ended) if (result.status === 'rejected') throw result.reason;
+      return undefined;
+    });
+  }
+}, 30_000);
+
+test('a cold public GC mutation starts an off-mode daemon and deletes its selected cache', async () => {
+  const item = fixture('cold-delete');
+  const config = readFileSync(join(item.home, 'config.json'), 'utf8');
+  expect(readClaimSet(stimdClaimRoot(item.home)).live).toEqual([]);
+  try {
+    const result = await trackRead((signal) =>
+      createStim({ projectRoot: item.root, home: item.home, env: item.env }).deleteGarbageItem({
+        item: { kind: 'cache', dir: item.cache },
+        signal,
+      }),
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.results).toMatchObject([{ kind: 'cache', status: 'done', id: item.cache }]);
+    expect(existsSync(join(item.cache, 'artifact'))).toBe(false);
+    expect(readFileSync(join(item.home, 'config.json'), 'utf8')).toBe(config);
+    const file = withAmbientContext(testContext({ home: item.home }), () => daemonNdjsonFile());
+    const starts = readFileSync(file, 'utf8')
+      .trim()
+      .split('\n')
+      .map((line): unknown => JSON.parse(line))
+      .filter(isJsonObject)
+      .filter(({ event }) => event === 'daemon_started');
+    expect(starts).toMatchObject([{ pid: expect.any(Number) }]);
+    for (const { pid } of starts) {
+      expect(pid).toBeGreaterThan(0);
+      expect(pid).not.toBe(process.pid);
+    }
+  } finally {
+    const owners = readClaimSet(stimdClaimRoot(item.home)).live.map(({ owner }) => owner);
+    for (const owner of owners) killFixtureChild(owner);
+    for (const owner of owners) expect(await waitForProcessExit(owner, 5000)).toBe(true);
   }
 });
 
@@ -464,25 +527,6 @@ test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
     }
   },
 );
-
-test('an item executor works while the yielded maintenance lane still holds its outer claim', async () => {
-  const item = fixture('contention');
-  vi.stubEnv('STIM_HOME', item.home);
-  const held = withAmbientContext(testContext({ home: item.home, env: item.env }), () =>
-    tryAcquireClaim({ root: maintenanceRunClaims(), mode: 'exclusive', label: 'maintenance' }),
-  ).acquired;
-  if (!held) throw new Error('The fixture maintenance claim was not taken');
-  try {
-    const result = await withAmbientContext(testContext({ home: item.home, env: item.env, cwd: item.root }), () =>
-      runGcItem({ kind: 'cache', dir: item.cache }, testContext({ home: item.home, env: item.env, cwd: item.root })),
-    );
-    expect(result.failures).toBe(0);
-    expect(existsSync(join(item.cache, 'artifact'))).toBe(false);
-    expect(readClaimSet(maintenanceRunClaims()).live).toHaveLength(1);
-  } finally {
-    releaseClaim(held);
-  }
-});
 
 test.each([undefined, 'importer-home'])(
   'scoped GC uses the client environment for Gradle remedies with importer home=%s',

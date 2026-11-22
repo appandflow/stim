@@ -25,7 +25,7 @@ import * as gcPaths from '../commands/gc/paths.ts';
 import * as worktree from '../workspace/worktree.ts';
 import { runLadder } from '../daemon/ladder.ts';
 import { runDormantDependencies } from '../daemon/dependencies.ts';
-import { markDue, markWriter, outputMarks, refreshOutputMarks } from '../daemon/marks.ts';
+import { markDue, markWriter, outputMarks, outputMark, refreshOutputMarks } from '../daemon/marks.ts';
 import { stoppedOutputCandidates, stoppedOutputs } from '../daemon/stages.ts';
 import type { OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { metroStoreRoot } from '../stimd/metro/metro-store.ts';
@@ -146,27 +146,47 @@ describe('gc marks written by the lane', () => {
     rmSync(base, { recursive: true, force: true });
   });
 
-  it('cancels a stalled watch identity read without starting another checkout read', async () => {
-    const root = join(base, 'first');
-    config.projects = { [root]: {}, [join(base, 'second')]: {} };
-    let release: (root: string) => void = () => {};
-    const pending = new Promise<string>((done) => {
-      release = done;
-    });
-    const lookup = vi.spyOn(gcPaths, 'realpathAsync').mockReturnValue(pending);
-    const controller = new AbortController();
-    const refused = outputMarks(config, testContext({ signal: controller.signal })).catch((error: unknown) => error);
-    try {
-      await vi.waitFor(() => expect(lookup).toHaveBeenCalledTimes(1));
-      controller.abort(new Error('stop'));
-      await expect(refused).resolves.toMatchObject({ message: 'stop' });
-      expect(hungRead()).toBe(root);
-      expect(lookup).toHaveBeenCalledTimes(1);
-    } finally {
-      release(root);
-      await pendingRead();
-    }
-  });
+  it.each(['batch', 'selected'])(
+    'cancels a stalled %s identity read without starting another checkout read',
+    async (mode) => {
+      const root = join(base, 'first');
+      config.projects = { [root]: {}, [join(base, 'second')]: {} };
+      let release: (root: string) => void = () => {};
+      const pending = new Promise<string>((done) => {
+        release = done;
+      });
+      const lookup = vi.spyOn(gcPaths, 'realpathAsync').mockReturnValue(pending);
+      const controller = new AbortController();
+      if (mode === 'selected') {
+        mkdirSync(dirname(gcMarkFile(root)), { recursive: true });
+        writeFileSync(
+          gcMarkFile(root),
+          JSON.stringify({
+            v: GC_MARK_VERSION,
+            root,
+            device: 1,
+            markedAt: new Date().toISOString(),
+            lastActivityAt: null,
+            candidates: [],
+          }),
+        );
+      }
+      const operation = testContext({ signal: controller.signal });
+      const refused = (
+        mode === 'selected' ? outputMark(config, root, operation) : outputMarks(config, operation)
+      ).catch((error: unknown) => error);
+      try {
+        await vi.waitFor(() => expect(lookup).toHaveBeenCalledTimes(1));
+        controller.abort(new Error('stop'));
+        await expect(refused).resolves.toMatchObject({ message: 'stop' });
+        expect(hungRead()).toBe(root);
+        expect(lookup).toHaveBeenCalledTimes(1);
+      } finally {
+        release(root);
+        await pendingRead();
+      }
+    },
+  );
 
   it.each([
     { activityAge: 0, elapsed: 10 * 60_000 - 1, dirty: false, due: false },
@@ -189,6 +209,33 @@ describe('gc marks written by the lane', () => {
       ...(row.dirty ? { dirtyAt: new Date(now).toISOString() } : {}),
     };
     expect(markDue(mark, now, 7 * day)).toBe(row.due);
+  });
+
+  it('marks untagged sibling Cargo targets under the real holder without authorizing holder outputs through a registered app', async () => {
+    const holder = checkout('monorepo', 2 * day);
+    const app = join(holder, 'apps', 'mobile');
+    const rust = join(holder, 'packages', 'native');
+    mkdirSync(app, { recursive: true });
+    mkdirSync(join(rust, 'target', 'debug', '.fingerprint'), { recursive: true });
+    writeFileSync(join(app, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+    writeFileSync(join(rust, 'Cargo.toml'), '[package]\nname="native"\nversion="0.1.0"\n');
+    writeFileSync(join(rust, 'target', '.rustc_info.json'), '{}');
+    config.projects[app] = {};
+    saveConfig(config);
+    await markWriter(config)({ path: holder, at: Date.now(), lastActivityAt: null, kept: null });
+    const saved = readGcMark(holder);
+    if (!saved) throw new Error('missing holder mark');
+    expect(saved.candidates.some(({ kind }) => kind === 'outputs')).toBe(true);
+    expect(saved.candidates).toContainEqual(
+      expect.objectContaining({ kind: 'cargo-target', path: join(rust, 'target') }),
+    );
+    const allowed = (await outputMarks(config, testContext())).find(({ root }) => root === holder);
+    if (!allowed) throw new Error('missing authorized Cargo holder');
+    expect(allowed.candidates.map(({ kind }) => kind)).toEqual(['cargo-target']);
+    config.projects = {};
+    config.maintenance = { autoDiscover: false };
+    saveConfig(config);
+    expect(await outputMarks(config, testContext())).toEqual([]);
   });
 
   it('high refresh records current activity and keeps instead of fabricating an idle checkout', async () => {
