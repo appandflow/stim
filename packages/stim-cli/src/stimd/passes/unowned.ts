@@ -352,6 +352,7 @@ export async function cleanToolCache(
       after: plan.bytes,
       detail: again.kept,
     };
+  const before = await pathsBytes(cache.paths, signal);
   const asides: string[] = [];
   try {
     if (cache.command) {
@@ -376,17 +377,17 @@ export async function cleanToolCache(
     const left = await pathsBytes([...cache.paths, ...asides], signal);
     return {
       outcome: 'failed',
-      before: plan.bytes,
-      after: left ?? plan.bytes,
+      before: before,
+      after: left ?? before,
       detail: `${how} failed${asides.length ? `, ${left === null ? 'an unknown size' : formatBytes(left)} left aside in ${asides.join(', ')} for the next run to finish` : ''}: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
   const after = await pathsBytes(cache.paths, signal);
   return {
     outcome: 'done',
-    before: plan.bytes,
+    before: before,
     after,
-    detail: `${how}: ${plan.bytes === null ? 'size unknown' : formatBytes(plan.bytes)} before, ${after === null ? 'size unknown' : formatBytes(after)} after`,
+    detail: `${how}: ${before === null ? 'size unknown' : formatBytes(before)} before, ${after === null ? 'size unknown' : formatBytes(after)} after`,
   };
 }
 
