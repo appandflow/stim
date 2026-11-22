@@ -349,6 +349,7 @@ export async function planWorktrees({
   idleDays = null,
   operation,
   deviceActivity,
+  onObservation,
 }: {
   protectedRoot: string;
   pinned: (workspace: string) => boolean;
@@ -361,12 +362,14 @@ export async function planWorktrees({
   operation?: StimContext;
   /** Reads owned device activity for an operation; a new listing when absent. */
   deviceActivity?: (withSims: boolean) => Promise<OwnedDeviceActivity[]>;
+  onObservation?: Parameters<typeof collectWorktreeSweep>[0]['onObservation'];
 }): Promise<WorktreePlan> {
   const sweep = await collectWorktreeSweep({
     idle: idleDays !== null,
     olderThan: idleDays,
     now,
     operation,
+    onObservation,
     ...(graceMs === undefined ? {} : { graceMs }),
     ...(refresh === undefined ? {} : { refresh }),
   });

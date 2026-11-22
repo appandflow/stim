@@ -45,6 +45,7 @@ import { executedActionName } from '../../maintenance-kind.ts';
 import { isUnverifiedCleanup, runDiscoveryCensusIfDue } from '../../workspace/discovery-census.ts';
 import { runDiscoveryScanIfDue } from '../../workspace/discovery-scan.ts';
 import { maintenanceItem, openGcLog, type GcLog } from '../../commands/gc/log.ts';
+import { worktreeMarkObserver } from '../../daemon/worktree-marks.ts';
 
 function writeState(state: MaintenanceState): void {
   mkdirSync(maintenanceDir(), { recursive: true });
@@ -253,6 +254,19 @@ const BACKGROUND_TRIGGERS = new Set(['daemon']);
 export interface MaintenanceTick {
   operation: StimContext;
   measured: TickMeasurement;
+}
+
+function normalWorktreeObserver(
+  report: boolean,
+  enabled: boolean,
+  tick: MaintenanceTick | undefined,
+): ReturnType<typeof worktreeMarkObserver> | undefined {
+  if (report || !enabled) return;
+  return worktreeMarkObserver(loadConfig(), {
+    devices: tick?.measured.devices ?? [],
+    simsFailed: Boolean(tick?.measured.simsError),
+    operation: tick?.operation,
+  });
 }
 
 function tickDeviceReads({ operation, measured }: MaintenanceTick, between?: () => Promise<void>): OwnedDeviceReads {
@@ -569,6 +583,7 @@ export async function runMaintenance(
         idle: ran.has('idle'),
         background,
         ...(tick ? { operation: tick.operation, deviceActivity: tickDeviceActivity(tick) } : {}),
+        onWorktreeObservation: normalWorktreeObserver(report, plannedWorktrees, tick),
       });
     } catch (error) {
       throwUnverifiedCleanup(error);

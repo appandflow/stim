@@ -96,7 +96,8 @@ async function writeMark(
   const retainDirty =
     dirtyAt &&
     (Date.parse(dirtyAt) > reading.at ||
-      (previous?.dependencies && Date.parse(dirtyAt) > Date.parse(previous.dependencies.markedAt)));
+      (previous?.dependencies && Date.parse(dirtyAt) > Date.parse(previous.dependencies.markedAt)) ||
+      (previous?.worktree && Date.parse(dirtyAt) > Date.parse(previous.worktree.markedAt)));
   const mark: GcMark = {
     ...previous,
     v: GC_MARK_VERSION,
@@ -107,7 +108,10 @@ async function writeMark(
     candidates,
   };
   if (!retainDirty) delete mark.dirtyAt;
-  if (previous && previous.device !== device) delete mark.dependencies;
+  if (previous && previous.device !== device) {
+    delete mark.dependencies;
+    delete mark.worktree;
+  }
   signal?.throwIfAborted();
   if (Date.now() >= expiresAt) throw new Unanswered('mark read deadline');
   writeCacheFile(gcMarkFile(root), mark);
