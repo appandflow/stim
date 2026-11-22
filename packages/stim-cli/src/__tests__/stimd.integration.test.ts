@@ -1235,6 +1235,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
         settleItem = reject;
       });
       const threads = vi.spyOn(stimdThreads, 'createThreadTable').mockReturnValue({
+        drainTrash: async () => {},
         run: async () => [],
         abort: () => {},
         settle: () => {},
@@ -1325,6 +1326,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
       const actual = await vi.importActual<typeof stimdThreads>('../stimd/threads.ts');
       const lane = vi.spyOn(stimdThreads, 'createPassesLane').mockImplementation(actual.createPassesLane);
       const threads = vi.spyOn(stimdThreads, 'createThreadTable').mockReturnValue({
+        drainTrash: async () => {},
         run: async (name) => {
           if (name !== worker) return [];
           if (failed) return [];
@@ -1395,6 +1397,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
   test('stopping stimd while it waits for a child is safe: its claims stay complete, the boot is not abnormal, and the next stimd starts', async () => {
     const before = new Set(process.listeners('SIGTERM'));
     const threads = vi.spyOn(stimdThreads, 'createThreadTable').mockReturnValue({
+      drainTrash: async () => {},
       run: async (name) => {
         if (name !== 'measure') return [];
         throw Object.assign(new Error('Report child 4242 did not close within the cleanup budget.'), {
@@ -1468,6 +1471,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
         'Inspect fixture child.',
       );
       const threads = vi.spyOn(stimdThreads, 'createThreadTable').mockReturnValue({
+        drainTrash: async () => {},
         run: async (name) => {
           if (worker === 'measure' && name === 'measure') throw failure;
           return [];

@@ -6,6 +6,7 @@ import {
   joinablePass,
   LADDER,
   LANE,
+  TRASH,
   releaseDisk,
   requestGcPass,
   requestGcItem,
@@ -307,7 +308,7 @@ test("a gc at normal that waits through the lane's dormant step joins the lane's
   expect(unexpected).not.toHaveBeenCalled();
 });
 
-test('pressure precedes each independent item at the lane boundary, then the lane resumes', async () => {
+test('pressure precedes independent items, then trash drains before the lane resumes', async () => {
   await acquireDisk(LANE);
   const order: string[] = [];
   const first = requestGcItem(async () => {
@@ -318,6 +319,9 @@ test('pressure precedes each independent item at the lane boundary, then the lan
     order.push('item');
     return 'second';
   });
+  const trash = requestGcItem(async () => {
+    order.push('trash');
+  }, TRASH);
   const high = requestGcPass(
     'high',
     'manual',
@@ -334,8 +338,46 @@ test('pressure precedes each independent item at the lane boundary, then the lan
   await high.result;
   expect(await first.result).toBe('first');
   expect(await second.result).toBe('second');
-  expect(order).toEqual(['pressure', 'item', 'item', 'lane']);
+  await trash.result;
+  expect(order).toEqual(['pressure', 'item', 'item', 'trash', 'lane']);
 });
+
+test.each([false, true])(
+  'a trash boundary yields between entries without releasing a pressure turn when cancelled=%s',
+  async (cancel) => {
+    const entered = gate();
+    const nextEntry = gate();
+    const pressureEntered = gate();
+    const pressureDone = gate();
+    const order: string[] = [];
+    const trash = requestGcItem(async (signal, between) => {
+      order.push('first entry');
+      entered.open();
+      await nextEntry.promise;
+      await between();
+      signal.throwIfAborted();
+      order.push('second entry');
+    }, TRASH);
+    await entered.promise;
+    const high = requestGcItem(async () => {
+      order.push('pressure');
+      pressureEntered.open();
+      await pressureDone.promise;
+    }, LADDER);
+    nextEntry.open();
+    await pressureEntered.promise;
+    if (cancel) trash.leave();
+    const item = requestGcItem(async () => {
+      order.push('item');
+    });
+    await Promise.resolve();
+    expect(order).toEqual(['first entry', 'pressure']);
+    pressureDone.open();
+    const settled = await Promise.allSettled([trash.result, high.result, item.result]);
+    expect(settled[0]?.status).toBe(cancel ? 'rejected' : 'fulfilled');
+    expect(order).toEqual(['first entry', 'pressure', 'item', ...(cancel ? [] : ['second entry'])]);
+  },
+);
 
 test('cancelling a queued item settles while the holder keeps the turn and leaves the next item able to run', async () => {
   await acquireDisk(LANE);

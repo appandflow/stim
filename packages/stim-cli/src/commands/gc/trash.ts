@@ -1,5 +1,5 @@
 import { lstat, readdir, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import chalk from 'chalk';
 import type { StimContext } from '@stim-cli/core';
 import { trashRoot } from '@stim-cli/core/state';
@@ -22,6 +22,9 @@ import {
   type TrashManifest,
 } from '../../workspace/worktree-trash.ts';
 import { GC_OUTPUT, type GcOutput } from './results.ts';
+import { ITEM_TRASH_PREFIX, readItemTrash } from '../../workspace/item-trash.ts';
+import { reconcileTrashedArchivePart } from '../../archive.ts';
+import { declareSpawnsOn, stopDeclaringSpawnsOn } from '../../engine/spawn-claims.ts';
 
 interface TrashEntry {
   path: string;
@@ -78,7 +81,8 @@ async function readManifest(dir: string): Promise<TrashManifest | null> {
 export async function collectTrash({
   signal,
   operation,
-}: { signal?: AbortSignal; operation?: StimContext } = {}): Promise<TrashReport | null> {
+  itemsOnly = false,
+}: { signal?: AbortSignal; operation?: StimContext; itemsOnly?: boolean } = {}): Promise<TrashReport | null> {
   const root = trashRoot();
   let names: string[];
   try {
@@ -88,20 +92,29 @@ export async function collectTrash({
   }
   const entries: TrashEntry[] = [];
   for (const name of names.toSorted()) {
+    if (itemsOnly && !name.startsWith(ITEM_TRASH_PREFIX)) continue;
     const path = join(root, name);
     const stat = await lstat(path).catch(() => null);
     if (!stat?.isDirectory()) continue;
     const manifest = name.startsWith(TRASH_ENTRY_PREFIX) ? await readManifest(path) : null;
-    const claim = manifest
-      ? claimKept(path)
-      : { kept: 'it has no valid trash.json, so Stim did not create it', live: false };
+    const item = name.startsWith(ITEM_TRASH_PREFIX) ? await readItemTrash(path) : null;
+    const claim =
+      manifest || item
+        ? claimKept(path)
+        : { kept: 'it has no valid trash.json, so Stim did not create it', live: false };
     const live = claim.live;
     const kept = claim.kept ?? (manifest && manifest.kind !== 'warm' ? await worktreeKept(manifest.worktree) : null);
     entries.push({
       path,
       worktree: manifest?.worktree ?? null,
-      removedAt: manifest?.createdAt ?? null,
-      bytes: live ? null : await directorySizeAsync(path, { timeoutMs: 'unbounded', signal, operation }),
+      removedAt: item?.createdAt ?? manifest?.createdAt ?? null,
+      bytes: item
+        ? (await lstat(join(path, 'entries', 'payload')).catch(() => null))
+          ? item.bytes
+          : 0
+        : live
+          ? null
+          : await directorySizeAsync(path, { timeoutMs: 'unbounded', signal, operation }),
       willDelete: kept === null,
       kept,
     });
@@ -117,11 +130,16 @@ export async function deleteTrash(
   operation: StimContext | undefined,
   output: GcOutput = GC_OUTPUT,
   throttleIo = false,
+  itemsOnly = false,
+  between?: () => Promise<void>,
 ): Promise<{ count: number; bytes: number; failures: number }> {
-  const report = await collectTrash({ signal: operation?.signal, operation });
+  const report = await collectTrash({ signal: operation?.signal, operation, itemsOnly });
   const done = { count: 0, bytes: 0, failures: 0 };
   for (const entry of report?.entries ?? []) {
     if (!entry.willDelete) continue;
+    if (!(await lstat(entry.path).catch(() => null))?.isDirectory()) continue;
+    const typed = basename(entry.path).startsWith(ITEM_TRASH_PREFIX);
+    if (typed && !(await readItemTrash(entry.path))) continue;
     let claim;
     try {
       claim = tryAcquireClaim({ root: join(entry.path, TRASH_CLAIMS), mode: 'exclusive', label: CLAIM_LABEL });
@@ -138,11 +156,19 @@ export async function deleteTrash(
       });
       continue;
     }
+    let retained = false;
+    if (operation) declareSpawnsOn(operation, claim.acquired);
     try {
+      const item = await readItemTrash(entry.path);
+      if (typed && !item) continue;
+      const payload = item ? await lstat(join(entry.path, 'entries', 'payload')).catch(() => null) : null;
+      if (payload && item?.source.kind === 'archive' && item.source.part)
+        await reconcileTrashedArchivePart(item.source.id, item.source.part, operation?.signal);
       await deleteTrashEntry(entry.path, operation, throttleIo);
       done.count++;
-      done.bytes += entry.bytes ?? 0;
+      done.bytes += item ? (payload ? item.bytes : 0) : (entry.bytes ?? 0);
     } catch (error) {
+      retained = error instanceof WorkspaceProcessCleanupError && error.claims.includes(claim.acquired);
       if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
         throw error;
       operation?.signal.throwIfAborted();
@@ -151,8 +177,10 @@ export async function deleteTrash(
       output.log(chalk.red(`Could not delete ${entry.path}: ${detail}`));
       output.record('trash', 'failed', entry.path, { bytes: entry.bytes ?? 0, detail });
     } finally {
-      releaseClaim(claim.acquired);
+      if (operation) stopDeclaringSpawnsOn(operation, claim.acquired);
+      if (!retained) releaseClaim(claim.acquired);
     }
+    await between?.();
   }
   if (done.count) {
     output.log(

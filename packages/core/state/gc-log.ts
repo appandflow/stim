@@ -4,7 +4,7 @@ import type { PressureLevel } from './daemon.ts';
 
 export type GcLogTrigger = 'manual' | 'desktop' | 'maintenance' | 'budget';
 
-export type GcLogStatus = 'done' | 'kept' | 'failed';
+export type GcLogStatus = 'done' | 'kept' | 'failed' | 'pending';
 
 export interface GcLogOptions {
   /** The pressure level the run ran at. */
@@ -53,7 +53,7 @@ export interface GcLogEntry extends NdjsonRecord {
 }
 
 const TRIGGERS: readonly string[] = ['manual', 'desktop', 'maintenance', 'budget'];
-const STATUSES: readonly string[] = ['done', 'kept', 'failed'];
+const STATUSES: readonly string[] = ['done', 'kept', 'failed', 'pending'];
 
 export function isGcLogRecord(record: NdjsonRecord): record is GcLogRecord {
   return (

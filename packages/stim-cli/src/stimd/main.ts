@@ -1,5 +1,6 @@
 import { packagedHistoryHelper, startHistoryFeed } from '../fsevents-helper.ts';
 import { validGcItem } from '../commands/gc/item.ts';
+import { pendingItemTrash } from '../workspace/item-trash.ts';
 import { runDirRemoved } from './run-dir.ts';
 import { createMetroTickets, handleMetroTicketRequest } from './metro/tickets.ts';
 import { createLeaseTickets, handleLeaseRequest } from './lease-tickets.ts';
@@ -25,6 +26,7 @@ import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import {
   DEFAULT_SERVER_PORT,
+  trashRoot,
   daemonClaimRoot,
   daemonDir,
   daemonNdjsonFile,
@@ -1097,6 +1099,7 @@ async function runStimdInner(
   const threads = createThreadTable(
     log,
     (error) => failBackground(error, 'a thread cleanup could not be verified'),
+    () => queueTrashDrain(),
     (cleanup) => {
       if (!claim) return;
       try {
@@ -1196,6 +1199,29 @@ async function runStimdInner(
   const open = new Set<Socket>();
   const ops = new Map<Socket, 'pinned' | 'waiting'>();
   const gcRequests = new Set<Promise<unknown>>();
+  let trashDrain: Promise<void> | null = null;
+  let trashAgain = false;
+  const queueTrashDrain = () => {
+    if (!maintenanceAllowed()) return;
+    if (trashDrain) {
+      trashAgain = true;
+      return;
+    }
+    trashAgain = false;
+    const work = threads.drainTrash(lastSnapshot?.pressure?.level === 'critical').catch((error: unknown) => {
+      if (isUnverifiedCleanup(error) && !contain(error)) failBackground(error, 'trash cleanup could not be verified');
+      else log('warn', 'item_trash_failed', error instanceof Error ? error.message : String(error));
+    });
+    trashDrain = work;
+    gcRequests.add(work);
+    void work.finally(() => {
+      gcRequests.delete(work);
+      trashDrain = null;
+      if (trashAgain) queueTrashDrain();
+      if (effectiveMode() === 'off') requestTick();
+      void checkEngine();
+    });
+  };
   const gcDetached = new WeakSet<Socket>();
   const itemCancels = new WeakMap<Socket, () => void>();
   const logsRunning = () => logs.running() || logs.ownedRunning();
@@ -2233,6 +2259,22 @@ async function runStimdInner(
   startup.signal.throwIfAborted();
   await logs.ownedSync();
   startup.signal.throwIfAborted();
+  if (existsSync(trashRoot())) {
+    const recovery = pendingItemTrash()
+      .then((pending) => {
+        if (pending.count) queueTrashDrain();
+        return undefined;
+      })
+      .catch((error: unknown) =>
+        log('warn', 'item_trash_recovery_failed', error instanceof Error ? error.message : String(error)),
+      );
+    gcRequests.add(recovery);
+    void recovery.finally(() => {
+      gcRequests.delete(recovery);
+      if (effectiveMode() === 'off') requestTick();
+      void checkEngine();
+    });
+  }
   lifetime.serve(requestEnd, waitMs, instance);
   startup.finish?.();
   startup.finish = undefined;

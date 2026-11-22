@@ -14,6 +14,7 @@ type Log = Parameters<typeof createMaintenanceLane>[0];
 export function createThreadTable(): ThreadTable {
   const controller = new AbortController();
   return {
+    drainTrash: async () => {},
     async run() {
       await measureDependencyTrees(processContext(process.cwd(), controller.signal)).catch((error: unknown) => {
         throw controller.signal.aborted && !(error instanceof Error && 'reportCleanup' in error)

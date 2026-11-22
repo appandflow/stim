@@ -86,6 +86,7 @@ private struct CleanupItemRow: View {
     case .done: return "checkmark.circle"
     case .kept: return "minus.circle"
     case .failed: return "xmark.octagon"
+    case .pending: return "clock"
     }
   }
 
@@ -94,6 +95,7 @@ private struct CleanupItemRow: View {
     case .done: return Palette.success
     case .kept: return Palette.tertiary
     case .failed: return Palette.error
+    case .pending: return Palette.secondary
     }
   }
 }
