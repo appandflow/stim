@@ -23,6 +23,50 @@ public struct DaemonStatus: Decodable, Equatable, Sendable {
     }
   }
 
+  public struct CandidateCoverage: Decodable, Equatable, Sendable {
+    public var state: String
+    public var count: Int?
+    public var knownBytes: Double?
+    public var unknownSizeCount: Int?
+    public var oldestMarkedAt: String?
+
+    public var oldestDate: Date? { oldestMarkedAt.flatMap(parseTimestamp) }
+
+    public var knownSubtotal: Double? {
+      guard let count, let unknownSizeCount, count > unknownSizeCount else { return nil }
+      return knownBytes
+    }
+  }
+
+  public struct CandidateInventory: Decodable, Equatable, Sendable {
+    public var readState: String
+    public var outputs: CandidateCoverage
+    public var dependencies: CandidateCoverage
+    public var worktrees: CandidateCoverage
+  }
+
+  public struct GcMarks: Decodable, Equatable, Sendable {
+    public var candidates: CandidateInventory?
+  }
+
+  public struct DiskPacerVolume: Decodable, Equatable, Sendable {
+    public struct Predictive: Decodable, Equatable, Sendable {
+      public var since: Double
+      public var targetFreeMb: Double
+      public var lastAttemptAt: Double
+      public var checkedAt: Double
+      public var freeMb: Double
+    }
+
+    public var device: Int
+    public var volume: String
+    public var observedAt: Double
+    public var freeMb: Double
+    public var fillMbPerSecond: Double?
+    public var firstFreeMs: Double?
+    public var predictive: Predictive?
+  }
+
   /// One action of the pressure ladder, the idle or dormant stage, or the reclaim for a waiting boot.
   public struct Action: Decodable, Equatable, Sendable, Identifiable {
     public var rung: Int
@@ -74,16 +118,35 @@ public struct DaemonStatus: Decodable, Equatable, Sendable {
   public var lastTickAt: String?
   public var pressure: Pressure?
   public var recent: [Action]?
+  public var gcMarks: GcMarks?
+  public var diskPacer: [DiskPacerVolume]?
 
   public init(
     mode: String, running: Running? = nil, lastTickAt: String? = nil, pressure: Pressure? = nil,
-    recent: [Action]? = nil
+    recent: [Action]? = nil, gcMarks: GcMarks? = nil, diskPacer: [DiskPacerVolume]? = nil
   ) {
     self.mode = mode
     self.running = running
     self.lastTickAt = lastTickAt
     self.pressure = pressure
     self.recent = recent
+    self.gcMarks = gcMarks
+    self.diskPacer = diskPacer
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case mode, running, lastTickAt, pressure, recent, gcMarks, diskPacer
+  }
+
+  public init(from decoder: Decoder) throws {
+    let fields = try decoder.container(keyedBy: CodingKeys.self)
+    mode = try fields.decode(String.self, forKey: .mode)
+    running = try fields.decodeIfPresent(Running.self, forKey: .running)
+    lastTickAt = try fields.decodeIfPresent(String.self, forKey: .lastTickAt)
+    pressure = try fields.decodeIfPresent(Pressure.self, forKey: .pressure)
+    recent = try fields.decodeIfPresent([Action].self, forKey: .recent)
+    gcMarks = try? fields.decodeIfPresent(GcMarks.self, forKey: .gcMarks)
+    diskPacer = try? fields.decodeIfPresent([DiskPacerVolume].self, forKey: .diskPacer)
   }
 
   /// The level of the last tick, `normal` until a daemon with the pressure ladder ticked.
