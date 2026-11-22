@@ -14,6 +14,7 @@ import { withAmbientContext, type StimContext } from '@stim-cli/core';
 import { createStim } from '../api.ts';
 import { runGc } from '../commands/gc.ts';
 import { runGcItem } from '../stimd/gc-item.ts';
+import { hostStimd, type AttachedHost } from '../stimd/attached.ts';
 import { recordGcResult, takeGcResults } from '../commands/gc/results.ts';
 import { getExecutor } from '../exec.ts';
 import { readClaimSet, releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-claim.ts';
@@ -264,7 +265,18 @@ test('concurrent GC mutations empty only their selected cache and return results
   const exit = process.exitCode;
   const log = vi.spyOn(console, 'log');
   const error = vi.spyOn(console, 'error');
+  const hosts: AttachedHost[] = [];
   try {
+    for (const item of items) {
+      const host = await withAmbientContext(
+        testContext({ home: item.home, env: item.env, projectRoot: item.root, signal: fixtureAbort.signal }),
+        () => hostStimd(item.env, { handover: false, signal: fixtureAbort.signal }),
+      );
+      if (!host || typeof host !== 'object' || !('end' in host))
+        throw new Error(`Fixture daemon did not become ready: ${JSON.stringify(host)}`);
+      hosts.push(host);
+    }
+    expect(new Set(hosts.map(({ instance }) => instance)).size).toBe(items.length);
     const reports = await Promise.all(
       items.map(async (item) => {
         const result = await trackRead((signal) =>
@@ -303,6 +315,32 @@ test('concurrent GC mutations empty only their selected cache and return results
   } finally {
     log.mockRestore();
     error.mockRestore();
+    await Promise.allSettled(hosts.map((host) => host.end())).then((ended) => {
+      for (const result of ended) if (result.status === 'rejected') throw result.reason;
+      return undefined;
+    });
+  }
+});
+
+test('a cold public GC mutation starts an off-mode daemon and deletes its selected cache', async () => {
+  const item = fixture('cold-delete');
+  const config = readFileSync(join(item.home, 'config.json'), 'utf8');
+  expect(readClaimSet(stimdClaimRoot(item.home)).live).toEqual([]);
+  try {
+    const result = await trackRead((signal) =>
+      createStim({ projectRoot: item.root, home: item.home, env: item.env }).deleteGarbageItem({
+        item: { kind: 'cache', dir: item.cache },
+        signal,
+      }),
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.results).toMatchObject([{ kind: 'cache', status: 'done', id: item.cache }]);
+    expect(existsSync(join(item.cache, 'artifact'))).toBe(false);
+    expect(readFileSync(join(item.home, 'config.json'), 'utf8')).toBe(config);
+  } finally {
+    const owners = readClaimSet(stimdClaimRoot(item.home)).live.map(({ owner }) => owner);
+    for (const owner of owners) killFixtureChild(owner);
+    for (const owner of owners) expect(await waitForProcessExit(owner, 5000)).toBe(true);
   }
 });
 
