@@ -18,7 +18,48 @@ import { upsertProject } from '../workspace/config.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { registerCollector } from '../stimd/logs/state.ts';
-import { takeStreamClaim } from '../stimd/logs/claim.ts';
+import { readClaimSet, releaseClaim } from '../ownership-claim.ts';
+import { claimPath, streamOwnerGone, takeStreamClaim } from '../stimd/logs/claim.ts';
+
+const writes = vi.hoisted(
+  (): {
+    opened: string[];
+    gate: Promise<void> | null;
+    drop: boolean;
+    teardown: boolean;
+    ready: (streamId: string) => void;
+  } => ({
+    opened: [],
+    gate: null,
+    drop: false,
+    teardown: false,
+    ready: () => {},
+  }),
+);
+vi.mock('../stimd/logs/writer.ts', async (original) => {
+  const actual = await original<typeof import('../stimd/logs/writer.ts')>();
+  return {
+    ...actual,
+    createLogWriters(...args: Parameters<typeof actual.createLogWriters>) {
+      const writers = actual.createLogWriters(...args);
+      const open = writers.open;
+      writers.open = async (...input) => {
+        const sink = await open(...input);
+        writes.opened.push(input[0].streamId);
+        writes.ready(input[0].streamId);
+        if (writes.gate) await writes.gate;
+        if (writes.drop) sink.writer.write = () => true;
+        return sink;
+      };
+      const ownedClose = writers.ownedClose;
+      writers.ownedClose = () => {
+        writes.teardown = true;
+        return ownedClose();
+      };
+      return writers;
+    },
+  };
+});
 
 const CLAIM_MODULE = fileURLToPath(new URL('../stimd/logs/claim.ts', import.meta.url));
 
@@ -28,10 +69,20 @@ describe.skipIf(process.platform === 'win32')('resuming a stream whose stimd die
   let starts: string;
   let simctl: string;
   let env: Record<string, string>;
+  let writerOpened: Promise<void>;
   const events: { level: string; event: string; msg: string }[] = [];
 
   beforeEach(() => {
     events.length = 0;
+    writes.opened.length = 0;
+    writes.gate = null;
+    writes.drop = false;
+    writes.teardown = false;
+    writerOpened = new Promise<void>((resolve) => {
+      writes.ready = (streamId) => {
+        if (streamId === 's-lost') resolve();
+      };
+    });
     home = realpathSync(mkdtempSync(join(tmpdir(), 'stim-resume-gates-home-')));
     root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-resume-gates-app-')));
     const bin = join(home, 'bin');
@@ -110,16 +161,29 @@ exit 1
         ? { spec: { root, platform: 'ios', udid: 'U1', bundleId: 'com.test.app', appName: 'Test', ...spec } }
         : {}),
     });
-  const deadClaim = async (streamId: string) => {
+  const deadClaim = async (streamId: string, claimed = true) => {
     const script = `import { takeStreamClaim } from ${JSON.stringify(CLAIM_MODULE)};
-await takeStreamClaim(${JSON.stringify(root)}, ${JSON.stringify(streamId)});
+${claimed ? `await takeStreamClaim(${JSON.stringify(root)}, ${JSON.stringify(streamId)});` : ''}
 process.kill(process.pid, 'SIGKILL');`;
     const child = spawn(
       process.execPath,
       ['--disable-warning=ExperimentalWarning', '--experimental-strip-types', '--input-type=module', '-e', script],
-      { env: { ...process.env, STIM_HOME: home }, stdio: 'ignore' },
+      { env: { ...process.env, STIM_HOME: home }, stdio: ['ignore', 'ignore', 'pipe'] },
     );
-    await once(child, 'exit');
+    let stderr = '';
+    child.stderr.on('data', (chunk) => {
+      stderr += String(chunk);
+    });
+    const [code, signal] = await once(child, 'close');
+    if (code !== null || signal !== 'SIGKILL')
+      throw new Error(`claim fixture child did not reach SIGKILL: ${JSON.stringify({ code, signal, stderr })}`);
+    const survey = readClaimSet(claimPath(root, streamId));
+    expect(survey).toMatchObject({
+      live: [],
+      unresolved: [],
+      dead: [{ owner: { pid: child.pid }, details: { streamId } }],
+    });
+    expect(streamOwnerGone(root, streamId, survey)).toEqual({ gone: true });
   };
   const resume = async () => {
     const { createStreams } = await import('../stimd/logs/streams.ts');
@@ -130,6 +194,73 @@ process.kill(process.pid, 'SIGKILL');`;
     streams.resume([root], env);
     return streams;
   };
+
+  const lostWriteOpened = async (says: string) => {
+    await writerOpened;
+    expect(events.some((entry) => entry.event === 'device_log_stream_dropped' && entry.msg.includes(says))).toBe(true);
+    expect(writes.opened).toContain('s-lost');
+  };
+  const persistedLost = (says: string) => {
+    expect(interrupted()).toHaveLength(1);
+    expect(readWorkspaceState(root)?.collectors?.ios).toHaveProperty('interruptedAt');
+    expect(interrupted()[0]?.msg).toContain(says);
+    expect(interrupted()[0]).toMatchObject({ level: 'warn', streamId: 's-lost' });
+    expect(startCount()).toBe(0);
+  };
+
+  test.each(['missing', 'rejected'])('a %s dead-owner claim fails its fixture prerequisite', async (kind) => {
+    const claim = kind === 'rejected' ? await takeStreamClaim(root, 's-bad') : null;
+    try {
+      await expect(deadClaim('s-bad', kind !== 'missing')).rejects.toThrow(
+        kind === 'missing' ? /dead/ : /Another device log stream/,
+      );
+    } finally {
+      if (claim) releaseClaim(claim);
+    }
+  });
+
+  test('closing after real writer open preserves an interruption whose write is late', async () => {
+    let release = () => {};
+    writes.gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    record('s-lost', undefined);
+    await deadClaim('s-lost');
+    const streams = await resume();
+    try {
+      await lostWriteOpened('no stream spec');
+      let closed = false;
+      const closing = streams.close().then(() => {
+        closed = true;
+        return closed;
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(writes.teardown).toBe(false);
+      expect(closed).toBe(false);
+      expect(interrupted()).toHaveLength(0);
+      release();
+      await closing;
+      persistedLost('no stream spec');
+    } finally {
+      release();
+      await streams.close().catch(() => {});
+    }
+  });
+
+  test('the persisted interruption assertion rejects a lost writer record', async () => {
+    writes.drop = true;
+    record('s-lost', undefined);
+    await deadClaim('s-lost');
+    const streams = await resume();
+    try {
+      await lostWriteOpened('no stream spec');
+      await streams.close();
+      expect(readWorkspaceState(root)?.collectors?.ios).toHaveProperty('interruptedAt');
+      expect(() => persistedLost('no stream spec')).toThrow(/length/);
+    } finally {
+      await streams.close().catch(() => {});
+    }
+  });
 
   test('an owner that is still running is neither replaced nor reaped', async () => {
     record('s-live', {});
@@ -144,7 +275,6 @@ process.kill(process.pid, 'SIGKILL');`;
       expect(existsSync(claim.path)).toBe(true);
     } finally {
       await streams.close().catch(() => {});
-      const { releaseClaim } = await import('../ownership-claim.ts');
       releaseClaim(claim);
     }
   });
@@ -210,18 +340,23 @@ process.kill(process.pid, 'SIGKILL');`;
     await deadClaim('s-lost');
     const streams = await resume();
     try {
-      await vi.waitFor(() => {
-        expect(interrupted()).toHaveLength(1);
-        expect(readWorkspaceState(root)?.collectors?.ios).toHaveProperty('interruptedAt');
-      });
-      expect(interrupted()[0]?.msg).toContain(says);
-      expect(interrupted()[0]).toMatchObject({ level: 'warn', streamId: 's-lost' });
-      expect(startCount()).toBe(0);
+      await lostWriteOpened(says);
+      await vi.waitFor(() => persistedLost(says));
       await streams.close();
       const again = await resume();
       await new Promise((done) => setTimeout(done, 500));
       expect(interrupted()).toHaveLength(1);
       await again.close();
+    } catch (error) {
+      throw new Error(
+        JSON.stringify({
+          events,
+          collector: readWorkspaceState(root)?.collectors?.ios,
+          claim: readClaimSet(claimPath(root, 's-lost')),
+          interrupted: interrupted(),
+        }),
+        { cause: error },
+      );
     } finally {
       await streams.close().catch(() => {});
     }
