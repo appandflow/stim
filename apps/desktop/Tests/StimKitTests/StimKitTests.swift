@@ -936,6 +936,13 @@ import Testing
 }
 
 @Suite struct GcOutcomeTests {
+  @Test func pendingDeletionDoesNotCountAsFreed() throws {
+    let json = #"{"results":[{"kind":"cache","status":"pending","label":"Build cache","bytes":4096}]}"#
+    let outcome = try GcOutcome(json: Data(json.utf8))
+    #expect(outcome.pending.count == 1)
+    #expect(outcome.freedBytes == 0)
+    #expect(outcome.headline == "Queued 4 KB for deletion")
+  }
   @Test func summarizesWhatARunDidApartFromWhatItLeftAlone() throws {
     let json = """
       {"mode":"delete","idle":null,"actionable":true,"failures":1,"sections":{

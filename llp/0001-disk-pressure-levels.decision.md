@@ -349,6 +349,34 @@ avoid concurrency problems", 2026-11-20. The units, the hard-floor priority
 and keeping the idle and dormant stages in the tick are the coordinator's and
 implementer's reading of it on #6029.
 
+## Explicit cache and archive items can return before removal
+
+An explicit `deleteGarbageItem` for a shared cache or archive moves eligible
+content into a typed, exclusively claimed entry under `$STIM_HOME/trash` on
+the same filesystem. Only selected directory trees move; regular files are
+unlinked in place. It returns `pending` with an estimated byte count once
+the move has completed. Pending bytes are not reclaimed bytes. Status exposes
+their count and estimate in `maintenance.pendingDelete`; Desktop labels them
+pending until physical removal.
+
+Cache selection is unchanged: entry-depth, age and directory protections still
+apply, the cache root stays, and atomic caches retain their exterior exclusive
+claim while entries move. Archives move under the archive lock; a selected
+part clears only that part's bytes and expiry. Recovery completes a part's
+metadata update if the process ended between its move and that update.
+
+The worker queues a short-lived trash drain after a successful handoff, ahead
+of the maintenance lane and behind explicit items, or at pressure-pass
+priority when the latest measurement is critical. The drain owns its child
+and claim independently of the requester's cancellation. An off-mode daemon
+stays up until the admitted drain settles. A later daemon discovers typed
+pending entries at startup and queues their drain. Unverified ownership keeps
+an entry. Unsupported moves, including Windows and another filesystem, retain
+the existing in-place deletion; report-only caches remain untouched. No Cargo
+target or automatic pressure sweep uses this handoff.
+
+This implements the lazy-free part of the cleanup redesign in #6025 and #6089.
+
 ## Queue ownership replaces the maintenance claim
 
 The maintenance lane no longer takes `maintenance/run.claims`. Items, GC
@@ -505,6 +533,20 @@ also holds the newest activity the walk read, and the walk reads at
   brought forward so high-pressure refresh does not invent a temporary TTL.
   The normal lane still walks hourly and publishes due marks; a normal
   mark-first sweep scheduler is pending the generation/lane integration.
+- The passes worker's existing history batch also observes mark freshness.
+  Mark files are read once through bounded asynchronous reads and the same
+  parser and scope policy the sweep uses. Invalid legacy or torn records
+  still contribute no sweep candidate, and make diagnostic coverage partial.
+  Missing, failed or timed-out inventory is unavailable, never a zero count.
+  The owning daemon saves a small aggregate and at most five positively scoped
+  overdue roots in its existing snapshot. `stim doctor` warns for those marks
+  only when they were more than twice the effective generation interval old at
+  the observation time. The effective interval is at least hourly, matching
+  the normal lane writer cadence; partial coverage omits totals. Definite
+  exclusions when discovery has no routes do not make coverage partial.
+  Other unproved routes remain conservative and omit totals. An observation older
+  than the daemon's existing three-interval late-tick limit is unavailable.
+  Reporting starts no discovery or size walk on the socket or doctor path.
 - The writer also recognizes untagged Cargo targets by the existing Cargo
   manifest/profile rules and marks targets in the holder's `apps/` and
   `packages/` children. The normal lane reads actual Git holders reached by

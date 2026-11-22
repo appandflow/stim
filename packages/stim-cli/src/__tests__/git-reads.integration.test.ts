@@ -146,18 +146,31 @@ test.each([
   ['in the tick', undefined],
   [
     'on its own operation, as the passes thread runs it',
-    (input: Parameters<typeof runDiskPass>[0]) =>
-      runDiskPass(input, () => {}, processContext(process.cwd(), new AbortController().signal)),
+    (input: Parameters<typeof runDiskPass>[0], log: Parameters<typeof runDiskPass>[1]) =>
+      runDiskPass(input, log, processContext(process.cwd(), new AbortController().signal)),
   ],
 ])(
-  'one report-mode ladder pass at high with its disk pass %s lists each repository once and reads no checkout',
+  'one unmarked report-mode ladder pass at high with its disk pass %s reads no repository or checkout',
   async (_where, diskPass) => {
     fleet();
     vi.stubEnv('STIM_DISK_CRITICAL_FREE_GB', '0');
     const counts = countGit();
-    const passes = await runHomePasses({ act: false, log: () => {}, ...(diskPass ? { diskPass } : {}) });
+    const log = vi.fn<Parameters<typeof runDiskPass>[1]>();
+    const passes = await runHomePasses({
+      act: false,
+      log,
+      ...(diskPass ? { diskPass: (input) => diskPass(input, log) } : {}),
+    });
     expect(passes.pressure.level).toBe('high');
-    expect(counts).toEqual({ total: 2, lists: 2, paths: 0, statuses: 0 });
+    expect(counts).toEqual({ total: 0, lists: 0, paths: 0, statuses: 0 });
+    expect(log).toHaveBeenCalledWith(
+      'debug',
+      'daemon_step',
+      expect.any(String),
+      expect.objectContaining({ step: 'rung', rung: 1, pressureLevel: 'high', outcome: 'finished' }),
+    );
+    expect(log.mock.calls.some(([, event]) => event === 'pressure_ladder_failed')).toBe(false);
+    expect(passes.actions.some(({ outcome }) => outcome === 'failed')).toBe(false);
   },
   30_000,
 );

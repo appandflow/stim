@@ -225,6 +225,15 @@ function canonicalDiscoverRoots(config: Config | null, env: NodeJS.ProcessEnv): 
     .filter((root) => !isBroadFolder(root));
 }
 
+export function discoveryDisabled(config: Config | null, env: NodeJS.ProcessEnv): boolean {
+  const configured = configuredRoots(config, env);
+  return (
+    (isScopedHome(env) || !autoDiscoverEnabled(config, env)) &&
+    configured.roots.length === 0 &&
+    configured.invalid.length === 0
+  );
+}
+
 /** The `maintenance.discoverRoots` entries that do not name a folder, for doctor to report. */
 export function missingDiscoverRoots(config: Config | null, env: NodeJS.ProcessEnv): string[] {
   return configuredRoots(config, env).roots.filter((root) => {

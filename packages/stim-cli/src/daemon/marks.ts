@@ -1,13 +1,13 @@
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
-import { readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { realpathAsync } from '../commands/gc/paths.ts';
-import { stat } from 'node:fs/promises';
+import { readFile, readdir, stat } from 'node:fs/promises';
 import {
   GC_MARK_VERSION,
   gcMarkFile,
   gcLogDir,
-  readJsonObject,
+  parseGcMark,
+  isJsonObject,
   readDiskUsage,
   readGcMark,
   type GcMark,
@@ -19,7 +19,12 @@ import { answered, Unanswered } from '../workspace/bounded-read.ts';
 import type { Config } from '../workspace/config.ts';
 import { idleOutputs } from './idle.ts';
 import { dormantAfterMs, readCheckout, type CheckoutReading, type DeviceReading } from './stages.ts';
-import { discoverCheckouts, targetedCheckouts, type DiscoveredCheckout } from '../workspace/discovery.ts';
+import {
+  discoverCheckouts,
+  discoveryDisabled,
+  targetedCheckouts,
+  type DiscoveredCheckout,
+} from '../workspace/discovery.ts';
 import { cargoTargetDirsAsync } from '../workspace/regenerable-dirs.ts';
 import { appRoots, artifactCheckoutsAsync, type ArtifactWorktree } from '../stimd/passes/artifacts.ts';
 import { registeredCargoHolders } from './cargo-marks.ts';
@@ -116,38 +121,62 @@ async function writeMark(
 const MINUTE_MS = 60_000;
 const DAY_MS = 86_400_000;
 
-export function markDue(mark: GcMark | null, now: number, dormantMs: number): boolean {
-  if (!mark) return true;
+export function markInterval(mark: GcMark, now: number, dormantMs: number): number {
   const markedAt = Date.parse(mark.markedAt);
   const activity = Date.parse(mark.lastActivityAt ?? '');
   const age = now - activity;
   const dirty = Date.parse(mark.dirtyAt ?? '') > markedAt;
-  const interval =
-    dirty || !Number.isFinite(activity) || age < DAY_MS
-      ? 10 * MINUTE_MS
-      : dormantMs > 0 && age >= dormantMs
-        ? DAY_MS
-        : 60 * MINUTE_MS;
-  return !Number.isFinite(markedAt) || now >= markedAt + interval;
+  return dirty || !Number.isFinite(activity) || age < DAY_MS
+    ? 10 * MINUTE_MS
+    : dormantMs > 0 && age >= dormantMs
+      ? DAY_MS
+      : 60 * MINUTE_MS;
+}
+
+export function markDue(mark: GcMark | null, now: number, dormantMs: number): boolean {
+  if (!mark) return true;
+  const markedAt = Date.parse(mark.markedAt);
+  return !Number.isFinite(markedAt) || now >= markedAt + markInterval(mark, now, dormantMs);
 }
 
 // @ref LLP 0001#the-lane-marks-what-each-checkout-could-free -- saved roots need current targeted discovery authorization
 export async function outputMarks(config: Config, operation?: StimContext): Promise<GcMark[]> {
+  return (await outputMarkBatch(config, operation)).marks;
+}
+
+export async function outputMarkBatch(
+  config: Config,
+  operation?: StimContext,
+): Promise<{ marks: GcMark[]; complete: boolean; listed: boolean }> {
   const dir = join(gcLogDir(), 'marks');
   let files: string[];
   try {
-    files = readdirSync(dir);
+    files = await answered(dir, () => readdir(dir), 3_000, operation?.signal);
   } catch {
-    return authorizedMarks(config, [], operation);
+    operation?.signal.throwIfAborted();
+    return { marks: await authorizedMarks(config, [], operation), complete: false, listed: false };
   }
   const marks: GcMark[] = [];
+  let complete = true;
   for (const file of files) {
-    const root = readJsonObject(join(dir, file))?.root;
-    if (typeof root !== 'string' || gcMarkFile(root) !== join(dir, file)) continue;
-    const mark = readGcMark(root);
-    if (mark) marks.push(mark);
+    const path = join(dir, file);
+    try {
+      const value: unknown = JSON.parse(await answered(path, () => readFile(path, 'utf8'), 3_000, operation?.signal));
+      const root = isJsonObject(value) ? value.root : null;
+      const mark = typeof root === 'string' && gcMarkFile(root) === path ? parseGcMark(root, value) : null;
+      if (mark) marks.push(mark);
+      else complete = false;
+    } catch {
+      operation?.signal.throwIfAborted();
+      complete = false;
+    }
   }
-  return authorizedMarks(config, marks, operation);
+  const selected = await authorizedMarks(config, marks, operation);
+  return {
+    marks: selected,
+    complete: complete && (selected.length === marks.length || discoveryDisabled(config, operation?.env ?? {})),
+    listed: true,
+  };
 }
 
 /** The current allowed candidates of exactly one saved root; reads no other saved mark. */

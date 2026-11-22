@@ -1,5 +1,6 @@
 import { isJsonObject, readJsonObject } from './json-file.ts';
 import { daemonSnapshotFile } from './paths.ts';
+import type { GcMarkHealth } from './gc-marks.ts';
 
 export type DaemonMode = 'on' | 'report' | 'off';
 
@@ -118,6 +119,7 @@ export interface DaemonSnapshot {
   recent?: DaemonRecentAction[];
   waiting?: DaemonWaiter[];
   history?: GcHistoryStatus;
+  gcMarks?: GcMarkHealth;
 }
 
 /** A child whose cleanup the running stimd could not verify, which keeps it up until the child has stopped. */
@@ -185,6 +187,7 @@ export interface DaemonStatus {
   older?: { pid: number; stop: string; verified: boolean };
   lastTickAt: string | null;
   intervalMs: number | null;
+  gcMarks?: GcMarkHealth;
   claim?: { unresolved: string; removeCommand: string };
   /** The last tick's pressure level; absent until a daemon with the pressure ladder ticked. */
   pressure?: DaemonPressure;

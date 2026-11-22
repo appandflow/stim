@@ -3,10 +3,10 @@ import { deleteGcItem, type GcItem, type GcItemResult } from '../commands/gc/ite
 import { runReport, trackReportResource } from '../report-runtime.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-error.ts';
 
-export function runGcItem(item: GcItem, operation: StimContext): Promise<GcItemResult> {
+export function runGcItem(item: GcItem, operation: StimContext, onStaged?: () => void): Promise<GcItemResult> {
   return runReport(operation, (bounded) =>
     withAmbientContext(bounded, () => {
-      const task = deleteGcItem(item, bounded);
+      const task = deleteGcItem(item, bounded, onStaged);
       trackReportResource(
         bounded,
         task.then(

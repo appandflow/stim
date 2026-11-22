@@ -4,6 +4,12 @@ import Testing
 @testable import StimKit
 
 @Suite struct MaintenanceStatusTests {
+  @Test func pendingDeletionKeepsItsEstimateSeparateFromTheLastPass() throws {
+    let status = try payload(#"{"mode":"off","pendingDelete":{"count":2,"bytes":4096}}"#).maintenance
+    #expect(status?.pendingDelete?.count == 2)
+    #expect(status?.pendingDelete?.bytes == 4096)
+    #expect(status?.lastPass == nil)
+  }
   private func payload(_ maintenance: String?) throws -> StatusPayload {
     let block = maintenance.map { ",\"maintenance\":\($0)" } ?? ""
     return try JSONDecoder().decode(StatusPayload.self, from: Data("{\"environments\":[]\(block)}".utf8))

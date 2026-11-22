@@ -45,6 +45,20 @@ export interface GcMark {
   dependencies?: GcDependencyObservation;
 }
 
+export interface GcStaleMarkEvidence {
+  root: string;
+  markedAt: string;
+  intervalMs: number;
+}
+
+export interface GcMarkHealth {
+  at: number;
+  state: 'ready' | 'partial' | 'unavailable';
+  checkedRoots?: number;
+  staleCount?: number;
+  stale: GcStaleMarkEvidence[];
+}
+
 const KINDS: readonly unknown[] = ['outputs', 'cargo-target'] satisfies GcMarkKind[];
 
 function isCandidate(value: unknown): value is GcMarkCandidate {

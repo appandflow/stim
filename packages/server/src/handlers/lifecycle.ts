@@ -431,7 +431,13 @@ function gcItemAction(
         results,
       });
       return exitCode === 0
-        ? { ok: true, stdout, summary: 'Cleanup completed.' }
+        ? {
+            ok: true,
+            stdout,
+            summary: results.some((result) => result.status === 'pending')
+              ? 'Cleanup queued for deletion.'
+              : 'Cleanup completed.',
+          }
         : {
             ok: false,
             stdout,

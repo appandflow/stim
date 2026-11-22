@@ -720,6 +720,7 @@ describe('gc marks written by the lane', () => {
       }),
     );
     expect(readGcMark(root)).toEqual(original);
+    expect((await outputMarks({ ...config, projects: { [root]: {} } }, testContext()))[0]).toEqual(original);
   });
 
   it('reports known critical dependency evidence without a discovery, artifact collection or new mark', async () => {

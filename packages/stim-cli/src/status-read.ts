@@ -1,4 +1,5 @@
 import type { readHostedAndroidStatus } from './device-host/hosted-android-status.ts';
+import { pendingItemTrash } from './workspace/item-trash.ts';
 import type { readHostedIosStatus } from './device-host/hosted-ios-status.ts';
 import { machineNumber } from './machine-number.ts';
 import type { readHostedMacosStatus } from './device-host/hosted-macos-status.ts';
@@ -187,6 +188,7 @@ function doctorRunTimes(proj: ProjectRecord): EnvironmentState['doctorRuns'] {
 }
 
 export interface StatusSnapshot {
+  pendingDelete?: { count: number; bytes: number };
   archived: ArchivedWorkspace[];
   archivedUsage: ArchivedUsage;
   projects: [string, ProjectRecord][];
@@ -581,6 +583,7 @@ async function readStatusFacts(probes: StatusProbes, gitScope: GitScope, cwd: st
   const archives = probes.archives();
   const maxCount = machineNumber('archive.maxCount', cfg, process.env);
   return {
+    pendingDelete: await pendingItemTrash(),
     archived: linkReplacedArchives(
       archives.slice(0, maxCount.value ?? 200),
       states.map((state) => state.path),
@@ -702,6 +705,7 @@ export async function refreshLightFacts(
   snapshot: StatusSnapshot,
   { tables, machine }: { tables: boolean; machine: boolean },
 ): Promise<void> {
+  snapshot.pendingDelete = await pendingItemTrash();
   if (tables) {
     const fresh = snapshot.probes.deviceTables();
     snapshot.tables = {

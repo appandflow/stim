@@ -157,6 +157,8 @@ export interface CleanupQueueStatus {
 }
 
 export interface MaintenanceStatus {
+  /** Items moved aside whose estimated disk bytes have not yet been reclaimed. */
+  pendingDelete?: { count: number; bytes: number };
   mode: MaintenanceMode;
   invalid?: string;
   lastChecks: { pressure: number | null; size: number | null; worktree: number | null; sweep: number | null };

@@ -99,5 +99,9 @@ function deferredNote(status: MaintenanceStatus): string {
 
 export function maintenanceLines(status: MaintenanceStatus): string[] {
   const line = maintenanceLine(status);
-  return line === null ? [] : [line];
+  const pending = status.pendingDelete;
+  return [
+    ...(line === null ? [] : [line]),
+    ...(pending?.count ? [`Pending deletion: about ${formatBytes(pending.bytes)} in ${pending.count} entries`] : []),
+  ];
 }
