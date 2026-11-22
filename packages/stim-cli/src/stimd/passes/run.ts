@@ -1,12 +1,12 @@
+import { randomBytes } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
-import { diskFull, keepReserve, releaseReserve } from '../../disk-reserve.ts';
+import { keepReserve, releaseReserve } from '../../disk-reserve.ts';
 import { writeCacheFile } from '../../cache-file.ts';
 import { basename, join } from 'node:path';
 import { withDirLock, type StimContext } from '@stim-cli/core';
 import {
   maintenanceChildLogFile,
   maintenanceDir,
-  maintenanceRunClaims,
   maintenanceStateFile,
   diskUsageCacheFile,
   readJsonObject,
@@ -19,7 +19,6 @@ import {
   type MaintenanceSize,
   type PressureLevel,
 } from '@stim-cli/core/state';
-import { tryAcquireClaim, releaseClaim, type ClaimHandle, type ClaimHolder } from '@stim-cli/core/ownership-claim';
 import { diskPressure, diskThresholds } from '../../daemon/pressure.ts';
 import { tickListsSims, type TickMeasurement } from '../../daemon/measure.ts';
 import { listAvdsAsync } from '../../devices/android.ts';
@@ -61,25 +60,6 @@ function writeState(state: MaintenanceState): void {
       } catch {}
     }
   });
-}
-
-function claimPass(trigger: string): { acquired?: ClaimHandle; held?: ClaimHolder } {
-  const take = () => {
-    const attempt = tryAcquireClaim({
-      root: maintenanceRunClaims(),
-      mode: 'exclusive',
-      label: 'maintenance',
-      details: { trigger },
-    });
-    if (attempt.pending) releaseClaim(attempt.pending);
-    return attempt;
-  };
-  try {
-    return take();
-  } catch (error) {
-    if (!diskFull(error) || !releaseReserve()) throw error;
-    return take();
-  }
 }
 
 const EXECUTION_ORDER: Partial<Record<MaintenanceAction['kind'], number>> = {
@@ -434,20 +414,10 @@ export async function runMaintenance(
     /** Sees each action the pass executed, with its outcome. */
     onAction?: (action: LevelRunAction) => void;
   } = {},
-): Promise<string | void> {
+): Promise<void> {
   const startedAt = Date.now();
-  let claim: ClaimHandle | undefined;
-  try {
-    const attempt = claimPass(trigger);
-    claim = attempt.acquired;
-    if (!claim)
-      return attempt.held
-        ? `pid ${attempt.held.owner.pid} runs a maintenance pass (${String(attempt.held.details.trigger ?? 'unknown trigger')})`
-        : undefined;
-  } catch (error) {
-    crashLine(error);
-    return;
-  }
+  releaseReserve();
+  const runId = `p-${randomBytes(6).toString('hex')}`;
   let scanAfter = false;
   let passFailed = false;
   let logger: ReturnType<typeof maintenanceLogger> | undefined;
@@ -481,11 +451,11 @@ export async function runMaintenance(
       }
     };
     try {
-      logger = maintenanceLogger(settings, `p-${claim.claimId}`, trigger);
+      logger = maintenanceLogger(settings, runId, trigger);
     } catch (error) {
       noteWriteError(error);
     }
-    gcLog = openGcLog({ trigger: 'maintenance', runId: `p-${claim.claimId}`, via: trigger });
+    gcLog = openGcLog({ trigger: 'maintenance', runId: runId, via: trigger });
     const record = (
       event: MaintenanceRecord['event'],
       level: MaintenanceRecord['level'],
@@ -800,13 +770,12 @@ export async function runMaintenance(
   } finally {
     logger?.close();
     keepReserve();
-    releaseClaim(claim);
     if (scanAfter) await scanAfterPass(tick, passFailed, trigger, deleted);
   }
 }
 
 /**
- * The discovery scan and the census of what it found, after the pass has released its claim. Not after a failed pass or a
+ * The discovery scan and the census of what it found, after the pass has released the disk turn. Not after a failed pass or a
  * cancellation. The scan's errors stay inside. The census's too, except an unverified child cleanup, which propagates
  * unchanged for the daemon's cleanup containment (LLP 0007): this runs only after a pass that did not fail, so it masks
  * no earlier error. A census failure it contains is recorded in the maintenance log.

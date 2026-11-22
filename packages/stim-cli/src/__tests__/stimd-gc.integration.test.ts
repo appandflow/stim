@@ -15,8 +15,9 @@ import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { withAmbientContext } from '@stim-cli/core';
 import { readClaimSet } from '@stim-cli/core/ownership-claim';
-import { maintenanceDir, stimdClaimRoot } from '@stim-cli/core/state';
+import { daemonSnapshotFile, maintenanceDir, stimdClaimRoot } from '@stim-cli/core/state';
 import { createStim } from '../api.ts';
+import { maintenanceStatus } from '../stimd/passes/status.ts';
 import { runGc } from '../commands/gc.ts';
 import { runGcThroughStimd } from '../daemon/client.ts';
 import { inspectProcessIdentity } from '../process-identity.ts';
@@ -141,6 +142,23 @@ async function heldGc(controller: AbortController, report = false, single = fals
 }
 
 describe.skipIf(process.platform === 'win32')('gc on stimd', () => {
+  test('the first off-mode GC reports live queue state without a completed daemon snapshot', async () => {
+    const { item, gc, go } = await heldGc(new AbortController());
+    rmSync(daemonSnapshotFile(), { force: true });
+    expect(maintenanceStatus()).toMatchObject({ running: { trigger: 'manual' }, queued: 0 });
+    expect(maintenanceStatus()).not.toHaveProperty('claim');
+    const operation = testContext({ home: item.home, projectRoot: item.root, cwd: item.root, env: item.env });
+    const queued = withAmbientContext(operation, () =>
+      runGcThroughStimd({ item: { kind: 'cache', dir: item.cache }, client: 'desktop' }, operation),
+    );
+    await vi.waitFor(() => expect(maintenanceStatus().queued).toBe(1), { timeout: 10_000 });
+    writeFileSync(go, '');
+    await Promise.all([gc, queued]);
+    await vi.waitFor(() => expect(maintenanceStatus()).toMatchObject({ running: null, queued: 0 }), {
+      timeout: 10_000,
+    });
+  }, 45_000);
+
   test.each(['off', 'report'] as const)(
     'an explicit item runs on stimd with daemon mode %s',
     async (mode) => {

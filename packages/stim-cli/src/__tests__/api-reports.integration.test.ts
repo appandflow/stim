@@ -22,7 +22,6 @@ import * as tailnet from '../offload/tailnet.ts';
 import { testContext } from './_context.ts';
 import * as androidDevices from '../devices/android.ts';
 import { decodeSecret } from '@stim-cli/core/noise-session';
-import { maintenanceRunClaims } from '@stim-cli/core/state';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
 
 let scratch: string;
@@ -464,25 +463,6 @@ test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
     }
   },
 );
-
-test('an item executor works while the yielded maintenance lane still holds its outer claim', async () => {
-  const item = fixture('contention');
-  vi.stubEnv('STIM_HOME', item.home);
-  const held = withAmbientContext(testContext({ home: item.home, env: item.env }), () =>
-    tryAcquireClaim({ root: maintenanceRunClaims(), mode: 'exclusive', label: 'maintenance' }),
-  ).acquired;
-  if (!held) throw new Error('The fixture maintenance claim was not taken');
-  try {
-    const result = await withAmbientContext(testContext({ home: item.home, env: item.env, cwd: item.root }), () =>
-      runGcItem({ kind: 'cache', dir: item.cache }, testContext({ home: item.home, env: item.env, cwd: item.root })),
-    );
-    expect(result.failures).toBe(0);
-    expect(existsSync(join(item.cache, 'artifact'))).toBe(false);
-    expect(readClaimSet(maintenanceRunClaims()).live).toHaveLength(1);
-  } finally {
-    releaseClaim(held);
-  }
-});
 
 test.each([undefined, 'importer-home'])(
   'scoped GC uses the client environment for Gradle remedies with importer home=%s',

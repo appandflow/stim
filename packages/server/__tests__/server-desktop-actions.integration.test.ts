@@ -21,7 +21,7 @@ import { syncBuiltinESMExports } from 'node:module';
 import { execFileSync } from 'node:child_process';
 import { createServer as createHttpServer } from 'node:http';
 import { delimiter, dirname, join } from 'node:path';
-import { readWorkspaceState, isJsonObject, loadConfig } from '@stim-cli/core/state';
+import { readWorkspaceState, isJsonObject, loadConfig, daemonClaimRoot } from '@stim-cli/core/state';
 import { createStim } from 'stim';
 import * as stim from 'stim';
 import * as stimSelf from 'stim/internal/api-self';
@@ -1954,6 +1954,12 @@ describe.skipIf(process.platform === 'win32')('Desktop worktree removal', () => 
 });
 
 describe.skipIf(process.platform === 'win32')('Desktop GC mutation', () => {
+  const cleanupQueue = () =>
+    readClaimSet(daemonClaimRoot()).live.find((claim) => claim.mode === 'shared')?.details.cleanup ?? {
+      running: null,
+      queued: 0,
+    };
+
   function cacheFixture() {
     const home = process.env.STIM_HOME;
     assert(home);
@@ -2008,7 +2014,7 @@ describe.skipIf(process.platform === 'win32')('Desktop GC mutation', () => {
     expect(existsSync(fixture.artifact)).toBe(false);
     expect(readFileSync(join(fixture.home, 'config.json'), 'utf8')).toBe(config);
     expect(await client.request('desktop.reports.get', { report: 'gc' })).not.toEqual(before);
-    expect(readClaimSet(join(fixture.home, 'maintenance', 'run.claims'))).toMatchObject({ live: [], unresolved: [] });
+    expect(cleanupQueue()).toMatchObject({ running: null, queued: 0 });
     expect(readAudit()).toContainEqual(expect.objectContaining({ action: 'gc', ok: true }));
     expect(stimCalls()).toEqual([]);
   });
@@ -2102,10 +2108,7 @@ setInterval(() => {}, 1000);
         const processToken = captureProcessToken(pid);
         assert(processToken);
         record = { pid, processToken };
-        const claims = join(fixture.home, 'maintenance', 'run.claims');
-        expect(readClaimSet(claims).live).toContainEqual(
-          expect.objectContaining({ child: expect.objectContaining({ pid }) }),
-        );
+        expect(cleanupQueue()).toMatchObject({ running: { trigger: 'item' }, queued: 0 });
         const other = await desktop();
         expect(await other.request('desktop.settings.get', { cwd: workspace })).toHaveProperty('result');
         let completion: unknown = {};
@@ -2124,8 +2127,10 @@ setInterval(() => {}, 1000);
         );
         await until(() => inspectProcessIdentity(record) !== 'same');
         expect(inspectProcessIdentity(record)).toMatch(/^(gone|different)$/);
-        await until(() => readClaimSet(claims).live.length === 0);
-        expect(readClaimSet(claims).unresolved).toEqual([]);
+        await until(() => {
+          const queue = cleanupQueue();
+          return isJsonObject(queue) && queue.running === null;
+        });
         expect(readFileSync(fixture.artifact, 'utf8')).toBe('keep until requested cleanup');
         expect(stimCalls()).toEqual([]);
       } finally {
@@ -2145,12 +2150,7 @@ setInterval(() => {}, 1000);
         caches: [{ name: 'rpc-fixture', dir: fixture.cache, prune: 'atomic' }],
       }),
     );
-    const original = fsPromises.rm;
-    const deletion = vi.spyOn(fsPromises, 'rm').mockImplementation(async (path, options) => {
-      if (path === fixture.artifact) throw new Error('fixture deletion denied');
-      return original(path, options);
-    });
-    syncBuiltinESMExports();
+    chmodSync(fixture.cache, 0o500);
     try {
       await start({ env: fixture.env });
       const client = await desktop();
@@ -2172,10 +2172,9 @@ setInterval(() => {}, 1000);
       });
       expect(existsSync(fixture.artifact)).toBe(true);
       expect(readAudit()).toContainEqual(expect.objectContaining({ action: 'gc', ok: false }));
-      expect(readClaimSet(join(fixture.home, 'maintenance', 'run.claims'))).toMatchObject({ live: [], unresolved: [] });
+      expect(cleanupQueue()).toMatchObject({ running: null, queued: 0 });
     } finally {
-      deletion.mockRestore();
-      syncBuiltinESMExports();
+      chmodSync(fixture.cache, 0o700);
     }
   });
 
@@ -2191,7 +2190,7 @@ setInterval(() => {}, 1000);
       message: expect.stringContaining('printed more than 128 bytes'),
     });
     expect(existsSync(fixture.artifact)).toBe(true);
-    expect(readClaimSet(join(fixture.home, 'maintenance', 'run.claims'))).toMatchObject({ live: [], unresolved: [] });
+    expect(cleanupQueue()).toMatchObject({ running: null, queued: 0 });
   });
 });
 
