@@ -57,6 +57,7 @@ import {
   surveyToolCaches,
 } from '../stimd/passes/unowned.ts';
 import { rankDependencies, rankSourceDependencies, selectDependencies, type RankedDependency } from './dependencies.ts';
+import { savedDependencyReports } from './dependency-reports.ts';
 import { idleOutputs, PRESSURE_IDLE_MS, writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
 import {
   clearStoppedOutputs,
@@ -887,6 +888,20 @@ function reportDependency(context: RungContext, dependency: RankedDependency, wh
  * copy-on-write clone below the threshold is reported as kept.
  */
 async function dependenciesRung(context: RungContext): Promise<void> {
+  if (context.act || !context.force) {
+    const critical = context.force && !context.force.measured ? null : await shortDevices(context, 'critical');
+    const reports = await savedDependencyReports(context.config, {
+      devices: context.devices,
+      simsFailed: context.simsFailed,
+      level: context.level === 'critical' ? 'critical' : 'high',
+      protectedRoot: context.protectedRoot,
+      operation: context.operation,
+      onVolume: (path, source) => (source ? onShortVolume([path], critical) : onShort(context, [path])),
+    });
+    for (const report of reports)
+      recordAction(context, { ...report, kind: 'delete-dependencies', outcome: 'kept', bytes: 0 }, context.why);
+    return;
+  }
   // @ref LLP 0001#rungs-5-7-and-8-only-report -- a pressure pass deletes no dependencies or worktrees
   const idleMs = context.level === 'critical' ? PRESSURE_IDLE_MS : DEPENDENCIES_HIGH_IDLE_MS;
   const idle = await idleStageCandidates(context.config, context, idleMs);

@@ -620,7 +620,9 @@ test('gc at high reports what it removed apart from what it kept', async () => {
     ]),
   );
   expect(payload.results.filter((r: { status: string }) => r.status === 'failed')).toEqual([]);
-  expect(payload.results.filter((r: { label: string }) => r.label === busy.root)).toEqual([]);
+  expect(payload.results.filter((r: { label: string }) => r.label === busy.root)).toEqual([
+    expect.objectContaining({ kind: 'worktreeDependencies', status: 'kept', label: busy.root, bytes: null }),
+  ]);
   for (const output of OUTPUTS) expect(existsSync(join(busy.dir, output))).toBe(true);
   expect(existsSync(orphan.dir)).toBe(false);
 }, 30_000);

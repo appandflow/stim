@@ -19,7 +19,12 @@ import { answered, Unanswered } from '../workspace/bounded-read.ts';
 import type { Config } from '../workspace/config.ts';
 import { idleOutputs } from './idle.ts';
 import { dormantAfterMs, readCheckout, type CheckoutReading, type DeviceReading } from './stages.ts';
-import { discoverCheckouts, discoveryDisabled, targetedCheckouts } from '../workspace/discovery.ts';
+import {
+  discoverCheckouts,
+  discoveryDisabled,
+  targetedCheckouts,
+  type DiscoveredCheckout,
+} from '../workspace/discovery.ts';
 import { cargoTargetDirsAsync } from '../workspace/regenerable-dirs.ts';
 import { appRoots, artifactCheckoutsAsync, type ArtifactWorktree } from '../stimd/passes/artifacts.ts';
 import { discoveredCargoCandidates, discoveredCargoHolders, registeredCargoHolders } from './cargo-marks.ts';
@@ -93,17 +98,24 @@ async function writeMark(
   }
   const previous = readGcMark(root);
   const dirtyAt = previous?.dirtyAt;
+  const retainDirty =
+    dirtyAt &&
+    (Date.parse(dirtyAt) > reading.at ||
+      (previous?.dependencies && Date.parse(dirtyAt) > Date.parse(previous.dependencies.markedAt)));
   const cargoVia = cargoScope?.via ?? previous?.cargoVia;
   const mark: GcMark = {
+    ...previous,
     v: GC_MARK_VERSION,
     root,
     device,
     markedAt,
-    ...(dirtyAt && Date.parse(dirtyAt) > reading.at ? { dirtyAt } : {}),
     lastActivityAt: reading.lastActivityAt === null ? null : new Date(reading.lastActivityAt).toISOString(),
     candidates,
     ...(cargoVia?.length ? { cargoVia: [...cargoVia] } : {}),
   };
+  if (!retainDirty) delete mark.dirtyAt;
+  if (!cargoVia?.length) delete mark.cargoVia;
+  if (previous && previous.device !== device) delete mark.dependencies;
   signal?.throwIfAborted();
   if (Date.now() >= expiresAt) throw new Unanswered('mark read deadline');
   writeCacheFile(gcMarkFile(root), mark);
@@ -203,7 +215,11 @@ async function authorizedMarks(config: Config, marks: GcMark[], operation?: Stim
   const cargoHolders = await registeredCargoHolders(
     config,
     unregistered
-      .filter((mark) => !allowed.has(mark.root) && mark.candidates.some(({ kind }) => kind === 'cargo-target'))
+      .filter(
+        (mark) =>
+          !allowed.has(mark.root) &&
+          (mark.dependencies !== undefined || mark.candidates.some(({ kind }) => kind === 'cargo-target')),
+      )
       .map(({ root }) => root),
     operation,
   );
@@ -222,8 +238,12 @@ async function authorizedMarks(config: Config, marks: GcMark[], operation?: Stim
     if (registered.has(mark.root) || allowed.has(mark.root)) selected.push(mark);
     else if (cargoHolders.has(mark.root))
       selected.push({ ...mark, candidates: mark.candidates.filter(({ kind }) => kind === 'cargo-target') });
-    else if (discoveredHolders.has(mark.root))
-      selected.push({ ...mark, candidates: await discoveredCargoCandidates(mark, operation) });
+    else if (discoveredHolders.has(mark.root)) {
+      // @ref LLP 0001#the-lane-marks-what-each-checkout-could-free -- Cargo-only route evidence does not authorize dependency reports
+      const cargoOnly = { ...mark, candidates: await discoveredCargoCandidates(mark, operation) };
+      delete cargoOnly.dependencies;
+      selected.push(cargoOnly);
+    }
   }
   return selected;
 }
@@ -274,10 +294,12 @@ export async function refreshCargoHolderMarks(
   reading: DeviceReading,
   between: () => Promise<void> = async () => {},
   dueOnly = true,
+  discovered?: readonly DiscoveredCheckout[],
 ): Promise<void> {
   const holders = await artifactCheckoutsAsync(
     reading.operation?.signal ?? new AbortController().signal,
     reading.operation,
+    discovered,
   );
   await writeCargoHolderMarks(config, reading, holders, between, dueOnly);
 }
