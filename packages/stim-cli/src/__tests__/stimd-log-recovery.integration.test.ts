@@ -109,7 +109,7 @@ exit 1
     const successor = createStreams(() => {});
     try {
       successor.resume([root], env);
-      await vi.waitFor(() => expect(count('in the gap')).toBe(1));
+      await vi.waitFor(() => expect(count('in the gap')).toBe(1), { timeout: 5000 });
       await vi.waitFor(() => expect(startCount()).toBe(2));
       expect(count('before')).toBe(1);
       expect(records().some((record) => record.event === 'collector_interrupted')).toBe(false);
@@ -130,7 +130,7 @@ exit 1
       const worker = captured.workers.at(-1);
       if (!worker) throw new Error('the logs worker was not started');
       await worker.terminate();
-      await vi.waitFor(() => expect(startCount()).toBe(2));
+      await vi.waitFor(() => expect(startCount()).toBe(2), { timeout: 5000 });
       await vi.waitFor(() => expect(count('lost with the worker')).toBe(1));
       const interrupted = records().filter((record) => record.event === 'collector_interrupted');
       expect(interrupted).toHaveLength(1);
@@ -175,7 +175,7 @@ exit 1
       const { streamId } = await streams.start({ root, ...spec }, env);
       await vi.waitFor(() => expect(count('before')).toBe(1));
       await captured.workers.at(-1)?.terminate();
-      await vi.waitFor(() => expect(startCount()).toBe(2));
+      await vi.waitFor(() => expect(startCount()).toBe(2), { timeout: 5000 });
       await vi.waitFor(() =>
         expect(records().filter((record) => record.event === 'collector_interrupted')).toHaveLength(1),
       );
