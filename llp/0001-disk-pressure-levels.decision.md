@@ -547,7 +547,8 @@ also holds the newest activity the walk read, and the walk reads at
   census roots without discovery. Each complete root read holds one rank-6
   read-only disk ticket and has a three-second budget; it changes no reserve.
   High/headroom, critical and hard-floor work cancel only that mark operation
-  and wait for its cleanup before taking ownership. Ordinary lane and explicit
+  and wait for its cleanup before taking ownership. An unanswered root leaves
+  one in-memory position so the next batch starts after it. Ordinary lane and explicit
   item work wait for the bounded root. Off mode and shutdown cancel the request.
   Fresh same-config history evidence preserves a Cargo-only holder's previously
   authorized nested targets and provenance; stale or changed evidence is dropped.
@@ -559,8 +560,8 @@ also holds the newest activity the walk read, and the walk reads at
   The owning daemon saves a small aggregate and at most five positively scoped
   overdue roots in its existing snapshot. `stim doctor` warns for those marks
   only when they were more than twice the effective generation interval old at
-  the observation time. The interval follows the due-only writer policy;
-  partial coverage omits totals. Definite
+  the observation time. The interval follows the due-only writer policy in on
+  mode; report mode retains its hourly normal-walk floor. Partial coverage omits totals. Definite
   exclusions when discovery has no routes do not make coverage partial.
   Other unproved routes remain conservative and omit totals. An observation older
   than the daemon's existing three-interval late-tick limit is unavailable.

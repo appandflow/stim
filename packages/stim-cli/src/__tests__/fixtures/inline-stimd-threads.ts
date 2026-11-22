@@ -42,8 +42,8 @@ export function createThreadTable(): ThreadTable {
     async dirty(roots, at) {
       dirtyGcMarks(roots, at);
     },
-    async history(config) {
-      return readMarkHealth(config, processContext(process.cwd(), controller.signal));
+    async history(config, mode) {
+      return readMarkHealth(config, processContext(process.cwd(), controller.signal), mode);
     },
     headroom: ({ headroom, cwd, act }) => {
       const asked = requestGcItem(async (signal) => {

@@ -60,3 +60,8 @@ test('a recently active mark with missed ten-minute generations is overdue at tw
     stale: [{ root: '/app' }],
   });
 });
+
+test.each(['on', 'report'] as const)('uses the effective %s writer cadence for a thirty-minute active mark', (mode) => {
+  const observed = markHealth([mark('/active', 30 * minute, 0)], now, 7 * day, true, mode);
+  expect(observed.staleCount).toBe(mode === 'on' ? 1 : 0);
+});

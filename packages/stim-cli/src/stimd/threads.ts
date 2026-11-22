@@ -4,7 +4,13 @@ import type { Config } from '../workspace/config.ts';
 import type { MarkRefreshInput } from '../daemon/mark-refresh.ts';
 import type { HolderMarkScope } from '../daemon/marks.ts';
 import type { HistoryRoot } from '../fsevents-helper.ts';
-import type { CleanupQueueStatus, DaemonLadderAction, BuildEndMarker, GcMarkHealth } from '@stim-cli/core/state';
+import type {
+  CleanupQueueStatus,
+  DaemonLadderAction,
+  BuildEndMarker,
+  GcMarkHealth,
+  DaemonMode,
+} from '@stim-cli/core/state';
 import type {
   DiskPassInput,
   DiskPassResult,
@@ -35,7 +41,7 @@ import { dirtyGcMarks } from '../fsevents-state.ts';
 
 type DirtyRequest = { dirty: { roots: readonly string[]; at: number } };
 type DirtyReply = { dirty: true };
-type HistoryRequest = { history: Config };
+type HistoryRequest = { history: Config; mode: DaemonMode };
 type HistoryReply = { roots: HistoryRoot[] | null; marks: GcMarkHealth; holders?: HolderMarkScope[] };
 type MarkRefreshRequest = { marks: MarkRefreshInput };
 type MarkRefreshReply = { marks: true };
@@ -159,7 +165,7 @@ export interface ThreadTable {
   ): { result: Promise<GcPassReply>; leave(): void };
   /** Persists dirty marks on their writer's isolate before resolving. */
   dirty(roots: readonly string[], at: number): Promise<void>;
-  history(config: Config): Promise<HistoryReply>;
+  history(config: Config, mode?: DaemonMode): Promise<HistoryReply>;
   /** Queues a build's headroom turn, bounded by its original client deadline. */
   headroom(input: HeadroomRequest & { cwd: string; act: boolean }): { result: Promise<HeadroomReply>; leave(): void };
   /** Queues an explicit item independently and streams its operation's output. */
@@ -375,8 +381,8 @@ export function createThreadTable(
         },
       };
     },
-    history(config) {
-      return ask<HistoryReply>('gc', { history: config, cwd: process.cwd() }).result;
+    history(config, mode = 'on') {
+      return ask<HistoryReply>('gc', { history: config, mode, cwd: process.cwd() }).result;
     },
     dirty(roots, at) {
       return ask<DirtyReply>('gc', { dirty: { roots, at }, cwd: process.cwd() }).result.then(() => undefined);
@@ -594,7 +600,7 @@ else if (thread && parentPort) {
         const operation = open(controller.signal);
         return {
           result: import('../daemon/mark-health.ts').then(({ readMarkHealth }): Promise<HistoryReply> =>
-            readMarkHealth(input.history, operation),
+            readMarkHealth(input.history, operation, input.mode),
           ),
           leave: () => controller.abort(),
         };

@@ -198,9 +198,14 @@ export async function discoveredEvidence(
   const scan = await sharedSourceScan(path, now - idleMs, operation);
   if ('unknown' in scan) return { activity, keep: [scan.unknown] };
   activity.push({ basis: 'file edit', at: scan.newest });
-  const isGit = await lstat(join(path, '.git')).then(
+  const gitPath = join(path, '.git');
+  const isGit = await answered(gitPath, () => lstat(gitPath), SCAN_BUDGET_MS, signal).then(
     () => true,
-    () => false,
+    (error: unknown) => {
+      signal?.throwIfAborted();
+      if (error instanceof Unanswered) throw error;
+      return false;
+    },
   );
   const git = await worktreeActivityOfAsync(path, [], operation);
   if (git) activity.push({ basis: 'git write', at: git.at });

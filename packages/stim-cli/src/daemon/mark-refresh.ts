@@ -58,25 +58,32 @@ export interface MarkRefreshInput extends Pick<DeviceReading, 'devices' | 'simsF
   intervalMs: number;
 }
 
+let lastAttempted: string | undefined;
+
 export async function refreshKnownMarks(
   input: MarkRefreshInput,
   operation: StimContext,
   log?: DeviceReading['log'],
 ): Promise<void> {
   const census = readDiscoveryCensusFile();
-  const roots = new Set([
-    ...Object.keys(input.config.projects),
-    ...input.known,
-    ...(census.status === 'read'
-      ? (census.census?.finds ?? []).filter(({ kind }) => kind === 'reduce-only').map(({ path }) => path)
-      : []),
-  ]);
+  const known = [
+    ...new Set([
+      ...Object.keys(input.config.projects),
+      ...input.known,
+      ...(census.status === 'read'
+        ? (census.census?.finds ?? []).filter(({ kind }) => kind === 'reduce-only').map(({ path }) => path)
+        : []),
+    ]),
+  ];
+  const start = lastAttempted ? known.indexOf(lastAttempted) + 1 : 0;
+  const roots = [...known.slice(start), ...known.slice(0, start)];
   const signature = JSON.stringify(input.config);
   for (const path of roots) {
     operation.signal.throwIfAborted();
     const config = loadConfig();
     if (!config) return;
     if (!markDue(readGcMark(path), Date.now(), dormantAfterMs(config, operation.env))) continue;
+    lastAttempted = path;
     const asked = requestMark((signal) => {
       const current = loadConfig();
       if (!current) return Promise.resolve();
@@ -107,4 +114,5 @@ export async function refreshKnownMarks(
       operation.signal.removeEventListener('abort', cancel);
     }
   }
+  lastAttempted = undefined;
 }

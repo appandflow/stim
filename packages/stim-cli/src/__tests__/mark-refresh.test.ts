@@ -1,17 +1,20 @@
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { stat } from 'node:fs/promises';
+import { lstat, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { gcMarkFile, readGcMark, GC_MARK_VERSION, type Config, type GcMark } from '@stim-cli/core/state';
 import * as stages from '../daemon/stages.ts';
+import * as activity from '../workspace/discovered-activity.ts';
+import { acquireDisk, CRITICAL, requestMark } from '../daemon/disk-owner.ts';
 import * as discovery from '../workspace/discovery.ts';
-import { refreshKnownOutputMark } from '../daemon/mark-refresh.ts';
+import { refreshKnownMarks, refreshKnownOutputMark } from '../daemon/mark-refresh.ts';
 import { hungRead, pendingRead } from '../workspace/bounded-read.ts';
+import { saveConfig } from '../workspace/config.ts';
 import { testContext } from './_context.ts';
 
 vi.mock('node:fs/promises', async (original) => {
   const fs = await original<typeof import('node:fs/promises')>();
-  return { ...fs, stat: vi.fn<typeof fs.stat>(fs.stat) };
+  return { ...fs, lstat: vi.fn<typeof fs.lstat>(fs.lstat), stat: vi.fn<typeof fs.stat>(fs.stat) };
 });
 
 const minute = 60_000;
@@ -23,6 +26,7 @@ let config: Config;
 beforeEach(async () => {
   const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
   vi.mocked(stat).mockImplementation(actual.stat);
+  vi.mocked(lstat).mockImplementation(actual.lstat);
   base = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-mark-refresh-')));
   root = join(base, 'app');
   output = join(root, 'target');
@@ -213,4 +217,106 @@ test.each(['generation', 'device'] as const)('changed holder %s keeps its previo
   );
   expect(stages.readCheckout).not.toHaveBeenCalled();
   expect(readFileSync(gcMarkFile(root), 'utf8')).toBe(before);
+});
+
+test('later due roots refresh across successive batches when the first root repeatedly exhausts its budget', async () => {
+  save(day, 0);
+  const later = join(base, 'later');
+  mkdirSync(later);
+  config.projects[later] = {};
+  saveConfig(config);
+  let attempts = 0;
+  let completed = 0;
+  vi.mocked(stages.readCheckout).mockImplementation((path, _project, reading) => {
+    if (path === root) {
+      attempts++;
+      return new Promise((_resolve, reject) =>
+        reading.operation?.signal.addEventListener('abort', () => reject(reading.operation?.signal.reason), {
+          once: true,
+        }),
+      );
+    }
+    completed++;
+    return Promise.resolve({ path, at: Date.now(), lastActivityAt: Date.now(), kept: null });
+  });
+  const batch = () =>
+    refreshKnownMarks(
+      { config, known: [], holders: [], at: Date.now(), intervalMs: minute, devices: [], simsFailed: false },
+      testContext(),
+    );
+  const first = batch();
+  await vi.waitFor(() => expect(attempts).toBe(1));
+  await vi.advanceTimersByTimeAsync(3_000);
+  await first;
+  expect(completed).toBe(0);
+  for (const attempt of [2, 3]) {
+    await vi.advanceTimersByTimeAsync(10 * minute);
+    const next = batch();
+    try {
+      await vi.waitFor(() => expect(attempts).toBe(attempt));
+      expect(completed).toBe(attempt - 1);
+      expect(readGcMark(later)?.markedAt).toBeDefined();
+    } finally {
+      await vi.advanceTimersByTimeAsync(3_000);
+      await next;
+    }
+  }
+  expect(hungRead()).toBeNull();
+});
+
+test('a pending discovered .git probe releases the mark turn to critical pressure without publishing', async () => {
+  const before = save(day, 0);
+  vi.mocked(stages.readCheckout).mockImplementation(async (path, _project, reading) => {
+    await activity.discoveredEvidence(path, {
+      now: Date.now(),
+      idleMs: 2 * minute,
+      operation: reading.operation,
+      reads: { processes: async () => null, sessions: async () => [] },
+    });
+    return { path, at: Date.now(), lastActivityAt: Date.now(), kept: null };
+  });
+  const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+  let pending = false;
+  let finish = () => {};
+  const gitPath = join(root, '.git');
+  vi.mocked(lstat).mockImplementation((...args) => {
+    if (String(args[0]) !== gitPath) return actual.lstat(...args);
+    pending = true;
+    return new Promise((_resolve, reject) => {
+      finish = () => reject(new Error('released pending metadata'));
+    });
+  });
+  const asked = requestMark((signal) =>
+    refreshKnownOutputMark(
+      config,
+      root,
+      {},
+      {
+        devices: [],
+        simsFailed: false,
+        operation: testContext(),
+      },
+      { signal },
+    ),
+  );
+  const result = asked.result.catch((error: unknown) => error);
+  let pressure: ReturnType<typeof acquireDisk> | undefined;
+  try {
+    await vi.waitFor(() => expect(pending).toBe(true));
+    let granted = false;
+    pressure = acquireDisk(CRITICAL).then((turn) => {
+      granted = true;
+      return turn;
+    });
+    await vi.waitFor(() => expect(granted).toBe(true));
+    expect(await result).toMatchObject({ message: 'mark refresh interrupted by pressure' });
+    expect(hungRead()).toBe(gitPath);
+    expect(readFileSync(gcMarkFile(root), 'utf8')).toBe(before);
+  } finally {
+    asked.leave();
+    finish();
+    await pendingRead();
+    await result;
+    (await pressure)?.release();
+  }
 });

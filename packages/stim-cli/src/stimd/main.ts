@@ -1317,7 +1317,7 @@ async function runStimdInner(
       markHistory = null;
     }, 3000);
     historyRootsWork = threads
-      .history(config)
+      .history(config, effectiveMode())
       .then(({ roots, marks, holders }) => {
         clearTimeout(timer);
         if (!timedOut) {
