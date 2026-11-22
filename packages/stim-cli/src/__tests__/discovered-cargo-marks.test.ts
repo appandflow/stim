@@ -102,13 +102,17 @@ test('a discovered nested app authorizes only its exact holder Cargo candidates 
   const saved = await refresh();
   expect(saved.cargoVia).toEqual([app]);
   expect(saved.candidates.some(({ kind }) => kind === 'outputs')).toBe(true);
+  saved.dependencies = { markedAt: saved.markedAt, role: 'source', keys: [holder], candidates: [] };
+  writeFileSync(gcMarkFile(holder), JSON.stringify(saved));
   const full = vi.spyOn(discovery, 'discoverCheckouts');
   const scan = vi.spyOn(artifacts, 'appRoots');
   vi.mocked(readdir).mockClear();
   vi.mocked(readdirSync).mockClear();
   for (const mark of [(await outputMarks(config, testContext()))[0], await outputMark(config, holder, testContext())]) {
     expect(mark?.candidates).toEqual([expect.objectContaining({ kind: 'cargo-target', path: target })]);
+    expect(mark?.dependencies).toBeUndefined();
   }
+  expect(readGcMark(holder)).toMatchObject({ cargoVia: [app], dependencies: saved.dependencies });
   expect(full).not.toHaveBeenCalled();
   expect(scan).not.toHaveBeenCalled();
   for (const reader of [vi.mocked(readdir), vi.mocked(readdirSync)])
