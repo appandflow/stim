@@ -1,6 +1,6 @@
+import { isAbsolute } from 'node:path';
 import { isJsonObject, readJsonObject } from './json-file.ts';
 import { gcMarkFile } from './paths.ts';
-import { isAbsolute } from 'node:path';
 
 export const GC_MARK_VERSION = 2;
 

@@ -112,7 +112,14 @@ export async function savedWorktreeReports(
       const keys = [mark.root];
       for (const key of Object.keys(config.projects)) {
         signal.throwIfAborted();
-        const path = await identity(key);
+        let path: string;
+        try {
+          path = await identity(key);
+        } catch (error) {
+          if (error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR'))
+            continue;
+          throw error;
+        }
         if ((path === root || path.startsWith(`${root}${sep}`)) && !keys.includes(key)) keys.push(key);
       }
       if (!keep && (keys.length !== observation.keys.length || keys.some((key) => !observation.keys.includes(key))))

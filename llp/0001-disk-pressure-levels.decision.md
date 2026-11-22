@@ -616,9 +616,12 @@ also holds the newest activity the walk read, and the walk reads at
   All represented sections retain their independent dirty watermark.
 - Acting rung 7 reports saved worktrees only. It preserves finished-worktree
   grace, the empty-branch activity floor, and the optional pushed-idle policy,
-  then rechecks the selected worktree with the existing local/cached Git,
-  scope, path/device, pin, claim, device, agent and edit guards. It performs
-  no full worktree collection, fetch or pull-request refresh. Missing, due,
+  then rechecks selected worktrees with current local/cached Git, scope,
+  path/device, pin and claim facts and one shared device/agent inventory.
+  Automatic-only roots, custom ignored paths, hidden/sparse index flags and
+  current Pod churn stay uncertain where proving removal would need a
+  dependency or filesystem walk. Pressure performs no such walks, full
+  worktree collection, fetch or pull-request refresh. Missing, due,
   dirty or uncertain evidence stays explicitly unknown. Normal removal and
   its archive and final-lock safeguards are unchanged.
 - Normal mark-first

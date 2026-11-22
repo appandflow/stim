@@ -305,3 +305,22 @@ test.each(['custom ignored', 'hidden index'])(
   },
   20_000,
 );
+
+test('an unrelated proven missing registration does not hide a saved worktree report', async () => {
+  finished();
+  await observe();
+  config.projects[join(base, 'removed-registration')] = {};
+  saveConfig(config);
+  const rows = await savedWorktreeReports(config, reading(), 'critical', false);
+  expect(rows).toContainEqual(
+    expect.objectContaining({ target: linked, detail: expect.stringContaining('report only:') }),
+  );
+}, 20_000);
+
+test('malformed optional worktree evidence leaves the existing output mark readable', async () => {
+  await observe();
+  const mark = readGcMark(linked);
+  if (!mark) throw new Error('fixture mark missing');
+  writeFileSync(gcMarkFile(linked), JSON.stringify({ ...mark, worktree: { ...mark.worktree, clean: 'unknown' } }));
+  expect(readGcMark(linked)).toEqual({ ...mark, worktree: undefined });
+});
