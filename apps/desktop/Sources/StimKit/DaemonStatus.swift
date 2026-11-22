@@ -31,6 +31,11 @@ public struct DaemonStatus: Decodable, Equatable, Sendable {
     public var oldestMarkedAt: String?
 
     public var oldestDate: Date? { oldestMarkedAt.flatMap(parseTimestamp) }
+
+    public var knownSubtotal: Double? {
+      guard let count, let unknownSizeCount, count > unknownSizeCount else { return nil }
+      return knownBytes
+    }
   }
 
   public struct CandidateInventory: Decodable, Equatable, Sendable {
@@ -127,6 +132,21 @@ public struct DaemonStatus: Decodable, Equatable, Sendable {
     self.recent = recent
     self.gcMarks = gcMarks
     self.diskPacer = diskPacer
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case mode, running, lastTickAt, pressure, recent, gcMarks, diskPacer
+  }
+
+  public init(from decoder: Decoder) throws {
+    let fields = try decoder.container(keyedBy: CodingKeys.self)
+    mode = try fields.decode(String.self, forKey: .mode)
+    running = try fields.decodeIfPresent(Running.self, forKey: .running)
+    lastTickAt = try fields.decodeIfPresent(String.self, forKey: .lastTickAt)
+    pressure = try fields.decodeIfPresent(Pressure.self, forKey: .pressure)
+    recent = try fields.decodeIfPresent([Action].self, forKey: .recent)
+    gcMarks = try? fields.decodeIfPresent(GcMarks.self, forKey: .gcMarks)
+    diskPacer = try? fields.decodeIfPresent([DiskPacerVolume].self, forKey: .diskPacer)
   }
 
   /// The level of the last tick, `normal` until a daemon with the pressure ladder ticked.

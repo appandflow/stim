@@ -103,8 +103,11 @@ struct MaintenanceSection: View {
         } else {
           Text(coverage.state.capitalized)
         }
-        if let bytes = coverage.knownBytes {
-          Text("About \(Format.fileSize(reported: bytes)) cached size")
+        if let bytes = coverage.knownSubtotal {
+          Text(
+            coverage.unknownSizeCount == 0
+              ? "About \(Format.fileSize(reported: bytes)) cached size"
+              : "Known sizes: about \(Format.fileSize(reported: bytes))")
         }
         if let unknown = coverage.unknownSizeCount, unknown > 0 {
           Text("\(unknown) with unknown size")

@@ -87,6 +87,45 @@ import Testing
     #expect(status.gcMarks == nil)
   }
 
+  @Test func malformedCleanupBlocksDoNotHideCriticalPressure() throws {
+    let missingSubtype = try #require(
+      try daemon(
+        #"{"mode":"on","pressure":{"level":"critical","disk":"critical","reasons":["disk low"]},"gcMarks":{"candidates":{"readState":"partial","outputs":{"state":"partial"},"dependencies":{"state":"unavailable"}}},"diskPacer":[{"device":1,"volume":"/","observedAt":1000,"freeMb":10000}]}"#
+      ))
+    #expect(missingSubtype.level == "critical")
+    #expect(missingSubtype.asksAboutPressure)
+    #expect(missingSubtype.gcMarks == nil)
+    #expect(missingSubtype.diskPacer?.count == 1)
+    let invalidPacer = try #require(
+      try daemon(
+        #"{"mode":"on","pressure":{"level":"critical","disk":"critical","reasons":["disk low"]},"gcMarks":{"state":"ready","stale":[]},"diskPacer":{"device":"invalid"}}"#
+      ))
+    #expect(invalidPacer.level == "critical")
+    #expect(invalidPacer.asksAboutPressure)
+    #expect(invalidPacer.gcMarks != nil)
+    #expect(invalidPacer.diskPacer == nil)
+  }
+
+  @Test func cachedZeroRequiresAKnownSizedCandidate() throws {
+    let decoder = JSONDecoder()
+    let unknown = try decoder.decode(
+      DaemonStatus.CandidateCoverage.self,
+      from: Data(
+        #"{"state":"ready","count":1,"knownBytes":0,"unknownSizeCount":1}"#.utf8))
+    #expect(unknown.knownSubtotal == nil)
+    let measuredZero = try decoder.decode(
+      DaemonStatus.CandidateCoverage.self,
+      from: Data(
+        #"{"state":"ready","count":1,"knownBytes":0,"unknownSizeCount":0}"#.utf8))
+    #expect(measuredZero.knownSubtotal == 0)
+    let mixed = try decoder.decode(
+      DaemonStatus.CandidateCoverage.self,
+      from: Data(
+        #"{"state":"partial","count":2,"knownBytes":4096,"unknownSizeCount":1}"#.utf8))
+    #expect(mixed.knownSubtotal == 4096)
+    #expect(mixed.unknownSizeCount == 1)
+  }
+
   @Test func olderDaemonPayloadOmitsOptionalInventoryAndPacer() throws {
     let status = try #require(try daemon(block(level: "normal")))
     #expect(status.gcMarks == nil)
