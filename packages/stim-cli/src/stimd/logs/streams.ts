@@ -301,6 +301,17 @@ function signalChild(stream: Stream): Promise<void> {
   return signalling;
 }
 
+function waitForChildClose(childClosed: Promise<void>): Promise<boolean> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(false), 2000);
+    void childClosed.then(() => {
+      clearTimeout(timer);
+      resolve(true);
+      return undefined;
+    });
+  });
+}
+
 async function waitChild(stream: Stream): Promise<void> {
   await stream.signalling;
   if (process.platform === 'win32' && stream.treePending && stream.lastStop?.signalled !== true)
@@ -326,16 +337,22 @@ async function waitChild(stream: Stream): Promise<void> {
   }
   const childClosed = stream.childClosed;
   if (childClosed) {
-    const closed = await new Promise<boolean>((resolve) => {
-      const timer = setTimeout(() => resolve(false), 2000);
-      void childClosed.then(() => {
-        clearTimeout(timer);
-        resolve(true);
-        return undefined;
-      });
-    });
+    let closed = await waitForChildClose(childClosed);
+    const child = stream.child;
+    if (
+      !closed &&
+      process.platform === 'darwin' &&
+      stream.spec.platform === 'ios' &&
+      child &&
+      (child.exitCode !== null || child.signalCode !== null) &&
+      !running()
+    ) {
+      // Node waits for shared stdio even after the spawned process exits.
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+      closed = await waitForChildClose(childClosed);
+    }
     if (!closed) {
-      const child = stream.child;
       throw new Error(
         `the device log stream pipes did not close (exit=${String(child?.exitCode)}, signal=${String(child?.signalCode)}, ` +
           `stdoutEnded=${String(child?.stdout?.readableEnded)}, stdoutFlowing=${String(child?.stdout?.readableFlowing)}, ` +

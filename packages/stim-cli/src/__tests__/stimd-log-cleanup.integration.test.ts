@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { tmpdir } from 'node:os';
@@ -33,6 +33,58 @@ vi.mock('../stimd/logs/state.ts', async (original) => {
 });
 
 describe.skipIf(process.platform === 'win32')('device stream cleanup', () => {
+  test.skipIf(process.platform !== 'darwin')(
+    'an exited iOS collector releases pipes shared outside its group',
+    async () => {
+      const { createStreams } = await import('../stimd/logs/streams.ts');
+      const home = realpathSync(mkdtempSync(join(tmpdir(), 'stim-log-shared-pipes-')));
+      const root = join(home, 'app');
+      const bin = join(home, 'bin');
+      const pidFile = join(home, 'pipe-holder.pid');
+      mkdirSync(root);
+      mkdirSync(bin);
+      vi.stubEnv('STIM_HOME', home);
+      const xcrun = join(bin, 'xcrun');
+      writeFileSync(
+        xcrun,
+        `#!${process.execPath}
+const { spawn } = require('node:child_process');
+const { writeFileSync } = require('node:fs');
+if (!process.argv.includes('stream')) process.exit(0);
+const holder = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], {
+  detached: true,
+  stdio: ['ignore', 'inherit', 'inherit'],
+});
+holder.unref();
+writeFileSync(${JSON.stringify(pidFile)}, String(holder.pid));
+setInterval(() => {}, 1000);
+`,
+      );
+      chmodSync(xcrun, 0o755);
+      const env = { ...process.env, PATH: [bin, process.env.PATH].join(delimiter) };
+      const streams = createStreams(() => {});
+      fault.fail = false;
+      let holder = 0;
+      try {
+        const { streamId } = await streams.start(
+          { root, platform: 'ios', udid: 'U1', bundleId: 'com.test.app', appName: 'Test' },
+          env,
+        );
+        await vi.waitFor(() => {
+          holder = Number(readFileSync(pidFile, 'utf8'));
+          expect(holder).toBeGreaterThan(1);
+        });
+        await expect(streams.stop(root, 'ios', 'default', streamId)).resolves.toBe(true);
+        expect(readWorkspaceState(root)?.collectors).toBeUndefined();
+        expect(() => process.kill(holder, 0)).not.toThrow();
+      } finally {
+        if (holder > 1) process.kill(holder, 'SIGTERM');
+        await streams.close().catch(() => {});
+        vi.unstubAllEnvs();
+        rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
   test('a failed state write remains recoverable after the owner exits', async () => {
     const { createStreams } = await import('../stimd/logs/streams.ts');
     const home = mkdtempSync(join(tmpdir(), 'stim-log-cleanup-home-'));
