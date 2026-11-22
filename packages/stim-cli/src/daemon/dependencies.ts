@@ -36,7 +36,7 @@ import { ARTIFACT_DIRS } from '../workspace/regenerable-dirs.ts';
 import { checkDependencyEdits } from '../workspace/dependency-edits.ts';
 import { writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
 import { reduceDormantOutputs } from './dormant-outputs.ts';
-import { markWriter } from './marks.ts';
+import { markWriter, refreshCargoHolderMarks } from './marks.ts';
 import {
   dormantAfterMs,
   idleStageCandidates,
@@ -649,6 +649,7 @@ async function takeIdleDependencies(
   );
   await between();
   const { operation } = input;
+  if (input.marks && !source) await refreshCargoHolderMarks(config, input, between);
   const actions: DaemonLadderAction[] = source
     ? []
     : await timedStep(input.log, 'dormant_outputs', () => reduceDormantOutputs(candidates, config, afterMs, input), {

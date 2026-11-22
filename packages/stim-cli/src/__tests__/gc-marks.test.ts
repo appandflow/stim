@@ -152,6 +152,33 @@ describe('gc marks written by the lane', () => {
     expect(markDue(mark, now, 7 * day)).toBe(row.due);
   });
 
+  it('marks untagged sibling Cargo targets under the real holder without authorizing holder outputs through a registered app', async () => {
+    const holder = checkout('monorepo', 2 * day);
+    const app = join(holder, 'apps', 'mobile');
+    const rust = join(holder, 'packages', 'native');
+    mkdirSync(app, { recursive: true });
+    mkdirSync(join(rust, 'target', 'debug', '.fingerprint'), { recursive: true });
+    writeFileSync(join(app, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+    writeFileSync(join(rust, 'Cargo.toml'), '[package]\nname="native"\nversion="0.1.0"\n');
+    writeFileSync(join(rust, 'target', '.rustc_info.json'), '{}');
+    config.projects[app] = {};
+    saveConfig(config);
+    await markWriter(config)({ path: holder, at: Date.now(), lastActivityAt: null, kept: null });
+    const saved = readGcMark(holder);
+    if (!saved) throw new Error('missing holder mark');
+    expect(saved.candidates.some(({ kind }) => kind === 'outputs')).toBe(true);
+    expect(saved.candidates).toContainEqual(
+      expect.objectContaining({ kind: 'cargo-target', path: join(rust, 'target') }),
+    );
+    const allowed = (await outputMarks(config, testContext())).find(({ root }) => root === holder);
+    if (!allowed) throw new Error('missing authorized Cargo holder');
+    expect(allowed.candidates.map(({ kind }) => kind)).toEqual(['cargo-target']);
+    config.projects = {};
+    config.maintenance = { autoDiscover: false };
+    saveConfig(config);
+    expect(await outputMarks(config, testContext())).toEqual([]);
+  });
+
   it('high refresh records current activity and keeps instead of fabricating an idle checkout', async () => {
     const path = checkout('recent', 0);
     config.projects[path] = {};

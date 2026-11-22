@@ -27,6 +27,8 @@ import {
   readJsonObject,
   workspaceLightenedFile,
 } from '@stim-cli/core/state';
+import * as checkoutDiscovery from '../workspace/discovery.ts';
+import * as artifactPasses from '../stimd/passes/artifacts.ts';
 import * as cacheModule from '../cache/caches.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
 import { recordGcResult } from '../commands/gc/results.ts';
@@ -595,7 +597,7 @@ describe('the pressure ladder', () => {
     expect(deleted).toEqual([]);
   });
 
-  function cargoApp(name = 'rust-app') {
+  async function cargoApp(name = 'rust-app') {
     vi.stubEnv('STIM_DISK_MIN_FREE_GB', '100000000');
     vi.stubEnv('STIM_DISK_CRITICAL_FREE_GB', '0');
     vi.stubEnv('STIM_DISK_HARD_FLOOR_GB', '0');
@@ -620,13 +622,45 @@ describe('the pressure ladder', () => {
     fill();
     writeFileSync(join(target, 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55\n');
     upsertProject(app, { metroPort: null });
+    const config = loadConfig();
+    if (!config) throw new Error('missing fixture config');
+    await marks.markWriter(config)({ path: app, at: Date.now(), lastActivityAt: null, kept: null });
     return { app, target, incremental, fill };
   }
+
+  test('critical Cargo pressure keeps unmarked targets without discovery or fresh marking', async () => {
+    const { app, incremental } = await cargoApp();
+    rmSync(gcMarkFile(app));
+    const fullDiscovery = vi.spyOn(checkoutDiscovery, 'discoverCheckouts');
+    const artifacts = vi.spyOn(artifactPasses, 'artifactCheckoutsAsync');
+    const writer = vi.spyOn(marks, 'markWriter');
+    await runLadder(
+      { ...input(true, async () => pressure('critical')), fromRung: 3, lastRung: 3 },
+      pressure('critical'),
+    );
+    expect(existsSync(incremental)).toBe(true);
+    expect(fullDiscovery).not.toHaveBeenCalled();
+    expect(artifacts).not.toHaveBeenCalled();
+    expect(writer).not.toHaveBeenCalled();
+  });
+
+  test.skipIf(process.platform === 'win32')(
+    'high Cargo pressure refreshes a missing mark after its known sweep',
+    async () => {
+      const { app, incremental } = await cargoApp();
+      rmSync(gcMarkFile(app));
+      const fullDiscovery = vi.spyOn(checkoutDiscovery, 'discoverCheckouts');
+      await runLadder({ ...input(true, async () => pressure('high')), fromRung: 3, lastRung: 3 }, pressure('high'));
+      expect(fullDiscovery).toHaveBeenCalled();
+      expect(readGcMark(app)?.candidates.some(({ kind }) => kind === 'cargo-target')).toBe(true);
+      expect(existsSync(incremental)).toBe(false);
+    },
+  );
 
   test.skipIf(process.platform === 'win32')(
     'at high rung 3 trims the incremental data of a Cargo target first, again only after 10 minutes, with no size scan',
     async () => {
-      const { target, incremental, fill } = cargoApp();
+      const { target, incremental, fill } = await cargoApp();
       const remeasure = async () => pressure('high');
 
       const first = await runLadder(input(true, remeasure), pressure('high'));
@@ -651,7 +685,7 @@ describe('the pressure ladder', () => {
   test.skipIf(process.platform === 'win32')(
     "the stim-daemon's Cargo trims wait 10 minutes per level by the clocks its disk passes share, whichever thread runs them",
     async () => {
-      const { incremental } = cargoApp();
+      const { incremental } = await cargoApp();
       const remeasure = async () => pressure('high');
       const slots = Object.keys(LADDER_CLOCK_SLOTS).length;
 
@@ -672,8 +706,8 @@ describe('the pressure ladder', () => {
   test.skipIf(process.platform === 'win32')(
     'at high rung 3 trims the shared caches before the Cargo targets, and the targets largest first by their last recorded size',
     async () => {
-      const small = cargoApp('small-app');
-      const big = cargoApp('big-app');
+      const small = await cargoApp('small-app');
+      const big = await cargoApp('big-app');
       for (const [target, gib] of [
         [small.target, 1],
         [big.target, 20],
@@ -713,9 +747,9 @@ describe('the pressure ladder', () => {
   test.skipIf(process.platform === 'win32')(
     'rung 3 orders Cargo targets by their recorded size, unsized ones last',
     async () => {
-      const unsized = cargoApp('unsized-app');
-      const rescanned = cargoApp('rescanned-app');
-      const large = cargoApp('large-app');
+      const unsized = await cargoApp('unsized-app');
+      const rescanned = await cargoApp('rescanned-app');
+      const large = await cargoApp('large-app');
       recordSize(rescanned.target, GIB);
       recordSize(large.target, 5 * GIB);
 
@@ -731,8 +765,8 @@ describe('the pressure ladder', () => {
   test.skipIf(process.platform === 'win32')(
     'a Cargo target this process tried to trim goes after the sized ones until it is measured again',
     async () => {
-      const small = cargoApp('small-app');
-      const big = cargoApp('big-app');
+      const small = await cargoApp('small-app');
+      const big = await cargoApp('big-app');
       recordSize(small.target, GIB);
       recordSize(big.target, 20 * GIB);
       const ladder = () =>
@@ -755,8 +789,8 @@ describe('the pressure ladder', () => {
   test.skipIf(process.platform === 'win32')(
     'rung 3 skips a Cargo target whose own volume is no longer short when its turn comes',
     async () => {
-      const recovered = cargoApp('recovered-app');
-      const short = cargoApp('short-app');
+      const recovered = await cargoApp('recovered-app');
+      const short = await cargoApp('short-app');
       vi.spyOn(cargoTargetPasses, 'measuredDiskLevel').mockImplementation(async (dir) =>
         dir === recovered.target ? 'normal' : 'high',
       );
@@ -777,7 +811,7 @@ describe('the pressure ladder', () => {
   test.skipIf(process.platform === 'win32')(
     'rung 3 still trims the Cargo targets after its shared caches fail, and records the failure',
     async () => {
-      const { target } = cargoApp();
+      const { target } = await cargoApp();
       caches('kept-key');
       vi.spyOn(cacheModule, 'pruneCache').mockRejectedValue(new Error('ENOSPC: no space left on device'));
 
@@ -802,7 +836,7 @@ describe('the pressure ladder', () => {
   test.skipIf(process.platform === 'win32')(
     'rung 3 plans no Cargo target when the level has cleared by the time it starts',
     async () => {
-      const { incremental } = cargoApp();
+      const { incremental } = await cargoApp();
       const plan = vi.spyOn(cargoTargetPasses, 'planCargoTargetsAtPressure');
       let calls = 0;
 
@@ -823,7 +857,7 @@ describe('the pressure ladder', () => {
   test.skipIf(process.platform === 'win32')(
     'a command ladder leaves the Cargo target of its own workspace alone',
     async () => {
-      const { app, incremental } = cargoApp();
+      const { app, incremental } = await cargoApp();
       const remeasure = async () => pressure('high');
 
       const { actions } = await runLadder({ ...input(true, remeasure), protectedRoot: app }, pressure('high'));
@@ -836,7 +870,7 @@ describe('the pressure ladder', () => {
   test.skipIf(process.platform === 'win32')(
     'a build headroom run trims a Cargo target only on the build volume, whatever disk.minFreeGb says',
     async () => {
-      const { incremental } = cargoApp();
+      const { incremental } = await cargoApp();
       vi.stubEnv('STIM_DISK_MIN_FREE_GB', '0');
       const device = statSync(home).dev;
       vi.spyOn(daemonMeasure, 'measureDisk').mockResolvedValue([

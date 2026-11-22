@@ -43,7 +43,7 @@ import type { Config, ProjectRecord } from '../workspace/config.ts';
 import { runBootedParkedPass } from './booted-parked.ts';
 import { LADDER_CLOCK_SLOTS } from './disk-owner.ts';
 import { measureDisk } from './measure.ts';
-import { outputMarks, refreshOutputMarks, keepOutputMark } from './marks.ts';
+import { outputMarks, refreshOutputMarks, refreshCargoHolderMarks, keepOutputMark } from './marks.ts';
 import { diskThresholds, shortVolumeDevices } from './pressure.ts';
 import { collectInventory } from '../commands/gc/inventory.ts';
 import {
@@ -519,41 +519,55 @@ const CARGO_TRIM_RETRY_MS = 10 * 60_000;
 
 async function cargoTargetsStep(context: RungContext): Promise<void> {
   // @ref LLP 0001#pressure-acts-without-waiting-for-measurement-or-load -- the trim needs no size scan or load gate
-  if (context.force) return;
+  if (context.force && context.level === 'critical') return;
   const now = Date.now();
   const key = context.level === 'critical' ? 'cargo critical' : 'cargo high';
   const last = lastRanAt(context, key);
-  if (last !== undefined && last <= now && now - last < CARGO_TRIM_RETRY_MS) return;
+  if (!context.force && last !== undefined && last <= now && now - last < CARGO_TRIM_RETRY_MS) return;
   if (!(await context.stillShort())) return;
   const protectedRoot = context.protectedRoot ? (canonicalOrNull(context.protectedRoot) ?? '') : '';
-  const plan = await planCargoTargetsAtPressure({
-    settings: context.settings,
-    pinned: maintenancePinnedReader(context.operation),
-    now,
-    signal: context.operation?.signal,
-    ...(context.operation ? { operation: context.operation } : {}),
-    ...(context.volume === undefined
-      ? {}
-      : {
-          diskLevel: async (dir: string, signal?: AbortSignal) => {
-            const measured = await measuredDiskLevel(dir, signal);
-            return measured === 'normal' ? context.level : measured;
-          },
-        }),
-  });
-  for (const action of largestFirst(plan.actions)) {
-    const workspace = action.workspace ? canonicalOrNull(action.workspace) : null;
-    if (protectedRoot && (workspace === protectedRoot || action.target.startsWith(`${protectedRoot}${sep}`))) continue;
-    if (!onShort(context, [action.target])) continue;
-    if (!(await context.stillShort())) return;
-    // @ref LLP 0001#the-ladder-runs-by-yield -- a larger target's trim may already have cleared this one's volume
-    if (
-      context.volume === undefined &&
-      (await measuredDiskLevel(action.target, context.operation?.signal)) === 'normal'
-    )
-      continue;
-    if (context.act) triedAt.set(action.target, Date.now());
-    await run(context, action);
+  const sweep = async () => {
+    const plan = await planCargoTargetsAtPressure({
+      settings: context.settings,
+      pinned: maintenancePinnedReader(context.operation),
+      now,
+      signal: context.operation?.signal,
+      ...(context.force ? { level: context.level } : {}),
+      ...(context.operation ? { operation: context.operation } : {}),
+      ...(context.volume === undefined
+        ? {}
+        : {
+            diskLevel: async (dir: string, signal?: AbortSignal) => {
+              const measured = await measuredDiskLevel(dir, signal);
+              return measured === 'normal' ? context.level : measured;
+            },
+          }),
+    });
+    for (const action of largestFirst(plan.actions)) {
+      const workspace = action.workspace ? canonicalOrNull(action.workspace) : null;
+      if (protectedRoot && (workspace === protectedRoot || action.target.startsWith(`${protectedRoot}${sep}`)))
+        continue;
+      if (!onShort(context, [action.target])) continue;
+      if (!(await context.stillShort())) return;
+      // @ref LLP 0001#the-ladder-runs-by-yield -- a larger target's trim may already have cleared this one's volume
+      if (
+        context.volume === undefined &&
+        (await measuredDiskLevel(action.target, context.operation?.signal)) === 'normal'
+      )
+        continue;
+      if (context.act) triedAt.set(action.target, Date.now());
+      await run(context, action);
+    }
+  };
+  if (!context.force) await sweep();
+  if (
+    context.act &&
+    context.level === 'high' &&
+    (await context.stillShort()) &&
+    (context.force || (await context.remeasure()).disk === 'high')
+  ) {
+    await refreshCargoHolderMarks(context.config, context);
+    await sweep();
   }
   ranAt(context, key, now);
 }

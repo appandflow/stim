@@ -24,7 +24,8 @@ import { runMaintenanceAtLevel } from '../stimd/passes/level-run.ts';
 import { runMaintenance } from '../stimd/passes/run.ts';
 import * as measurements from '../stimd/passes/measure.ts';
 import { maintenanceStatus } from '../stimd/passes/status.ts';
-import { saveConfig, upsertProject } from '../workspace/config.ts';
+import { markWriter } from '../daemon/marks.ts';
+import { saveConfig, upsertProject, loadConfig } from '../workspace/config.ts';
 import { scanSourceWrites } from '../workspace/discovered-activity.ts';
 import * as gitCommands from '../workspace/git.ts';
 
@@ -34,7 +35,7 @@ let target: string;
 const git = (cwd: string, ...args: string[]) =>
   execFileSync('git', ['-C', cwd, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { encoding: 'utf8' });
 
-beforeEach(() => {
+beforeEach(async () => {
   base = realpathSync(mkdtempSync(join(tmpdir(), 'stim-cap-deferral-')));
   vi.stubEnv('STIM_HOME', join(base, 'home'));
   vi.stubEnv('STIM_DAEMON', 'report');
@@ -54,6 +55,9 @@ beforeEach(() => {
   writeFileSync(join(target, 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55\n');
   writeFileSync(join(target, 'debug', 'incremental', 'data'), 'x'.repeat(200_000));
   upsertProject(app, { metroPort: null });
+  const config = loadConfig();
+  if (!config) throw new Error('missing fixture config');
+  await markWriter(config)({ path: app, at: Date.now(), lastActivityAt: null, kept: null });
   vi.spyOn(measurements, 'measurePressure').mockReturnValue({
     disk: [{ volume: '/', freeMb: 500 * 1024 }],
     memory: { level: 'normal', availableBytes: null, pressured: false },
@@ -170,6 +174,30 @@ test('at the high disk level the size scan runs under the same load that defers 
   expect(measurements.measureSizes).toHaveBeenCalledTimes(1);
   expect(readMaintenanceState()?.lastAt.size).toEqual(expect.any(Number));
   expect(maintenanceStatus().deferred?.map(({ check }) => check) ?? []).not.toContain('size');
+});
+
+test('pressure plans retain their local mark proof and keep a copied or superseded action', async () => {
+  const plan = await planCargoTargetsAtPressure({
+    settings: resolveMaintenanceSettings(),
+    pinned: () => false,
+    now: Date.now(),
+    level: 'critical',
+  });
+  const action = plan.actions[0];
+  if (!action) throw new Error('missing pressure plan');
+  expect(await trimCargoTargetAction(structuredClone(action))).toMatchObject({
+    status: 'kept',
+    detail: 'its pressure mark proof is no longer available',
+  });
+  const root = join(target, '..');
+  const config = loadConfig();
+  if (!config) throw new Error('missing fixture config');
+  await markWriter(config)({ path: root, at: Date.now() + 1_000, lastActivityAt: null, kept: null });
+  expect(await trimCargoTargetAction(action)).toMatchObject({
+    status: 'kept',
+    detail: 'its checkout is no longer in a workspace or discovery scope',
+  });
+  expect(existsSync(join(target, 'debug', 'incremental', 'data'))).toBe(true);
 });
 
 test('a target on a volume at high is planned for trimming from its structure, with no size and no walk', async () => {
