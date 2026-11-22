@@ -148,8 +148,8 @@ export interface DeviceHostOptions {
   limits?: Partial<DeviceHostLimits>;
   /** How long a stopped session's home stays after it stopped, so its client can copy the final logs. Defaults to an hour. */
   homeGraceMs?: number;
-  /** Called with the number of sessions this host owns, each time it changes. */
-  sessions?: (count: number) => void;
+  /** Owned sessions and mutating non-session workers, each time that work changes. */
+  busy?: (count: number) => void;
 }
 
 const HOSTED_HOME_GRACE_MS = 3_600_000;
@@ -264,7 +264,7 @@ function loopbackAccepts(port: number): Promise<boolean> {
 export class DeviceHost {
   private readonly owned = new Map<string, OwnedSession>();
   private readonly revoked = new Set<string>();
-  private readonly probes = new Map<WorkerRun, string>();
+  private readonly probes = new Map<WorkerRun, { client: string; mutating?: true }>();
   private closed = false;
   private readonly detachedSessions = new Set<string>();
   private readonly resuming = new Map<string, Promise<void>>();
@@ -339,7 +339,7 @@ export class DeviceHost {
     }
     const owned = { claim: attempt.acquired };
     this.owned.set(record.id, owned);
-    this.options.sessions?.(this.owned.size);
+    this.reportBusy();
     return owned;
   }
 
@@ -360,7 +360,8 @@ export class DeviceHost {
       timeoutMs: this.limits.imageInstallMs,
       maxOutputBytes: 16_384,
     });
-    this.probes.set(run, client);
+    this.probes.set(run, { client, mutating: true });
+    this.reportBusy();
     const cancel = () => run.cancel();
     signal?.addEventListener('abort', cancel, { once: true });
     if (signal?.aborted) cancel();
@@ -381,6 +382,7 @@ export class DeviceHost {
     } finally {
       signal?.removeEventListener('abort', cancel);
       this.probes.delete(run);
+      this.reportBusy();
     }
   }
 
@@ -460,7 +462,7 @@ export class DeviceHost {
       timeoutMs: this.limits.offerMs,
       maxOutputBytes: 32_768,
     });
-    this.probes.set(probe, client);
+    this.probes.set(probe, { client });
     try {
       return await probe.done;
     } finally {
@@ -1512,7 +1514,7 @@ export class DeviceHost {
       let pending: Promise<void> | undefined;
       try {
         run = this.run(record, owned, 'app-state', attempt, claim);
-        this.probes.set(run, client);
+        this.probes.set(run, { client });
         pending = run.done.then(() => undefined);
         owned.data = pending;
         const outcome = await run.done;
@@ -2064,11 +2066,11 @@ export class DeviceHost {
   }
 
   private release(id: string, owned: OwnedSession): void {
-    if (releaseClaim(owned.claim) && this.owned.delete(id)) this.options.sessions?.(this.owned.size);
+    if (releaseClaim(owned.claim) && this.owned.delete(id)) this.reportBusy();
   }
 
   revoke(): void {
-    for (const [probe, client] of this.probes) if (!this.options.allowed(client)) probe.cancel();
+    for (const [probe, { client }] of this.probes) if (!this.options.allowed(client)) probe.cancel();
     try {
       for (const record of readHostedSessions()) {
         if (this.options.allowed(record.client) || this.revoked.has(record.id)) continue;
@@ -2097,6 +2099,14 @@ export class DeviceHost {
       }
       process.stderr.write(`Hosted device revocation could not read its journal: ${(error as Error).message}\n`);
     }
+  }
+
+  private mutatingProbes(): number {
+    return [...this.probes.values()].filter((probe) => probe.mutating).length;
+  }
+
+  private reportBusy(): void {
+    this.options.busy?.(this.owned.size + this.mutatingProbes());
   }
 
   active(): number {
@@ -2479,14 +2489,17 @@ export class DeviceHost {
   }
 
   working(): number {
+    const probes = this.mutatingProbes();
     try {
       const records = readHostedSessions();
-      return [...this.owned].filter(([id, owned]) => {
-        const record = records.find((each) => each.id === id);
-        return !record || !this.detachable(record, owned);
-      }).length;
+      return (
+        [...this.owned].filter(([id, owned]) => {
+          const record = records.find((each) => each.id === id);
+          return !record || !this.detachable(record, owned);
+        }).length + probes
+      );
     } catch {
-      return this.owned.size;
+      return this.owned.size + probes;
     }
   }
 

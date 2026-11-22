@@ -310,6 +310,13 @@ The unit's process waits the same way whenever its home is already held when it 
 
 A per-user service keeps worker ownership with the approving user. A version-neutral launchd or systemd shim lets the engine switch after work drains without replacing service setup or pairings. [Engine integration](https://github.com/appandflow/stim/pull/5380).
 
+Mutating hosted work outside a reserved session, such as a runtime install,
+uses its existing tracked worker as the busy fact until that worker settles.
+The server's existing busy notification and `hostedWork` health fact include
+it. Read-only offer and report probes do not hold succession, and the existing
+owned-session takeback hold is unchanged. This closes the missing runtime
+worker case from #6049 without a separate counter for each action.
+
 ## Code
 
 - [Worker approval](../packages/server/src/setup.ts), [job launch](../packages/server/src/offload-jobs.ts), and [engine update authorization](../packages/server/src/handlers/engine.ts).

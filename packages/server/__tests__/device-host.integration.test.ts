@@ -255,11 +255,11 @@ let allowed: Set<string>;
 let connected: Set<string>;
 let hostEnv: NodeJS.ProcessEnv;
 const request = { workspace: '/client/worktree', slot: 'default', platform: 'ios', attempt: 'first' };
-let sessionCounts: number[];
+let busyCounts: number[];
 
 beforeEach(() => {
   agentCalls = [];
-  sessionCounts = [];
+  busyCounts = [];
   appRunningGate = undefined;
   appRunningResults = [];
   agentAccess = new Map();
@@ -278,7 +278,7 @@ beforeEach(() => {
     allowed: (client) => allowed.has(client),
     connected: (client) => connected.has(client),
     limits: { prepareMs: 5000, stopMs: 2000, logsMs: 1000, killGraceMs: 100 },
-    sessions: (count) => sessionCounts.push(count),
+    busy: (count) => busyCounts.push(count),
   });
 });
 afterEach(async () => {
@@ -863,11 +863,11 @@ test('a live device pause refuses new reservations, preserves existing sessions 
 test('counts an owned session from its reservation until it stops, so a service takeback waits for it', async () => {
   const first = await reserve();
   await state(first.id, 'ready');
-  expect(sessionCounts.at(-1)).toBe(1);
+  expect(busyCounts.at(-1)).toBe(1);
   host.stop('client', { session: first.id });
   await state(first.id, 'stopped');
-  for (let i = 0; i < 500 && sessionCounts.at(-1) !== 0; i++) await new Promise((done) => setTimeout(done, 10));
-  expect(sessionCounts.at(-1)).toBe(0);
+  for (let i = 0; i < 500 && busyCounts.at(-1) !== 0; i++) await new Promise((done) => setTimeout(done, 10));
+  expect(busyCounts.at(-1)).toBe(0);
 });
 
 test('reserves once across reconnect and attempt replay, isolates clients, and stops only the owned session', async () => {
@@ -2288,11 +2288,14 @@ test.each(['deadline', 'revoke', 'close'])(
       worker: join(home, 'worker.mjs'),
       env: process.env,
       agents: noAgents,
+      busy: (count) => busyCounts.push(count),
       allowed: (client) => allowed.has(client),
       limits: { offerMs: action === 'deadline' ? 1000 : 5000, killGraceMs: 100 },
     });
     const pending = host.offer('client', { platform: 'ios', deviceType: 'sdk-hang' });
     await vi.waitFor(() => expect(existsSync(join(home, 'probe-descendant'))).toBe(true));
+    expect(host.working()).toBe(0);
+    expect(busyCounts).toEqual([]);
     const leader = await readPid(join(home, 'probe-entered'));
     const descendant = await readPid(join(home, 'probe-descendant'));
     try {
@@ -3616,12 +3619,14 @@ test('runtime installs require hosting approval and a version, and preserve Xcod
   expect(await host.installRuntime('unapproved', { runtime: '26.5' })).toHaveProperty('error.code', 'forbidden');
   expect(await host.installRuntime('client', { runtime: 'latest' })).toHaveProperty('error.code', 'bad-request');
   expect(existsSync(join(home, 'runtime-entered'))).toBe(false);
+  expect(busyCounts).toEqual([]);
   expect(await host.installRuntime('client', { runtime: '26.5' })).toEqual({ result: { ok: true } });
   expect(await host.installRuntime('client', { runtime: '0.0' })).toHaveProperty(
     'error.message',
     'Xcode runtime unavailable Choose a supported Xcode runtime.',
   );
   expect(readHostedSessions()).toEqual([]);
+  expect(busyCounts).toEqual([1, 0, 1, 0]);
 });
 
 test('disconnect cancellation settles a runtime install worker before returning', async () => {
@@ -3632,19 +3637,26 @@ test('disconnect cancellation settles a runtime install worker before returning'
     worker: join(home, 'worker.mjs'),
     env: hostEnv,
     agents: noAgents,
+    busy: (count) => busyCounts.push(count),
     allowed: () => true,
     limits: { killGraceMs: 100 },
   });
   const abort = new AbortController();
   const pending = host.installRuntime('client', { runtime: '26.5' }, abort.signal);
   await vi.waitFor(() => expect(existsSync(join(home, 'runtime-entered'))).toBe(true));
+  expect(host.active()).toBe(0);
+  expect(host.working()).toBe(1);
+  expect(busyCounts).toEqual([1]);
   const pid = await readPid(join(home, 'runtime-entered'));
   const worker = { pid, processToken: processIdentity.captureProcessToken(pid) };
   expect(worker.processToken).toEqual(expect.any(String));
   abort.abort();
+  expect(busyCounts).toEqual([1]);
   if (process.platform === 'win32') writeFileSync(gate, '');
   expect(await pending).toHaveProperty('error.code', 'action-failed');
   await groupGone(pid);
+  expect(host.working()).toBe(0);
+  expect(busyCounts).toEqual([1, 0]);
   await vi.waitFor(() => expect(['gone', 'different']).toContain(processIdentity.inspectProcessIdentity(worker)));
 });
 
