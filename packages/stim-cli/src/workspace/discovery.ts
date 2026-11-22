@@ -226,7 +226,12 @@ function canonicalDiscoverRoots(config: Config | null, env: NodeJS.ProcessEnv): 
 }
 
 export function discoveryDisabled(config: Config | null, env: NodeJS.ProcessEnv): boolean {
-  return (isScopedHome(env) || !autoDiscoverEnabled(config, env)) && canonicalDiscoverRoots(config, env).length === 0;
+  const configured = configuredRoots(config, env);
+  return (
+    (isScopedHome(env) || !autoDiscoverEnabled(config, env)) &&
+    configured.roots.length === 0 &&
+    configured.invalid.length === 0
+  );
 }
 
 /** The `maintenance.discoverRoots` entries that do not name a folder, for doctor to report. */
