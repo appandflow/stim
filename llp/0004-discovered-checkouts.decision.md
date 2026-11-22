@@ -193,6 +193,19 @@ hold that keeps a worktree inside a dot-folder of its main checkout
   an error. The result is stored in `maintenance/discovery-scan.json` under the
   Stim home (when it ran, what it found, what it could not read) and discovery
   reads that file, so a maintenance pass or `stim gc` never walks the disk.
+  The same cache optionally stores shared safety evidence for the ancestors of
+  found roots: directory device/inode and full-precision modification/change
+  times, the detection sentinel names, and the root's native path identity.
+  A normal scan records it only when the directory identities still match
+  those observed before listing. A targeted saved-mark check reads those named
+  sentinels and their current contents, with bounded reads, and checks identities
+  again; it lists only the selected root and the existing bounded nested project
+  folders, never its parents or siblings. Missing or changed evidence keeps the
+  mark until a normal scan refreshes it (hourly above normal disk pressure,
+  otherwise weekly). Legacy scan entries receive no inferred evidence.
+  A native-Android candidate whose recognition needs ancestry outside the
+  selected root stays kept on this route; #6106 tracks bounded authorization
+  for that ordinary layout. Normal discovery still recognizes it.
 - Every reduce-only checkout is evaluated on every pass, like a sibling-discovered
   checkout, and classified from the complete discovery list. A window of 40 per
   pass was built and removed: filtering by it before classification changed

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   REAL_RECOGNITION_IO,
+  type RecognitionIo,
   folderSafety,
   nestedSafety,
   scanDescends,
@@ -68,7 +69,14 @@ describe('scanEntryValid with a hand-edited scan result', () => {
     const refuse = async (): Promise<never> => {
       throw new Error('read');
     };
-    const silent = { readEntries: refuse, readText: refuse, lstat: refuse, stat: refuse, realpath: refuse };
+    const silent = {
+      readEntries: refuse,
+      readText: refuse,
+      lstat: refuse,
+      stat: refuse,
+      realpath: refuse,
+      metadata: refuse,
+    };
     for (const name of ['documents', 'DOCUMENTS'])
       expect(await scanEntryValid(join(home, name, 'app'), { ...rules(), io: silent })).toBe('invalid');
   });
@@ -216,13 +224,13 @@ describe('scanEntryValid with a hand-edited scan result', () => {
 
     it('treats a metadata read that does not answer as pending, before any detection', async () => {
       const detect = vi.fn<(path: string) => boolean>(() => true);
-      let release: (value: { isSymbolicLink(): boolean }) => void = () => {};
+      let release: (value: Awaited<ReturnType<RecognitionIo['lstat']>>) => void = () => {};
       let started = 0;
       const stuck = {
         ...listing({}),
         lstat: () => {
           started++;
-          return new Promise<{ isSymbolicLink(): boolean }>((resolve) => {
+          return new Promise<Awaited<ReturnType<RecognitionIo['lstat']>>>((resolve) => {
             release = resolve;
           });
         },
@@ -236,7 +244,7 @@ describe('scanEntryValid with a hand-edited scan result', () => {
       expect(await scanEntryValid(path, { ...rules(), isCheckout: detect, io: stuck })).toBe('pending');
       expect(started).toBe(1);
       expect(detect).not.toHaveBeenCalled();
-      release({ isSymbolicLink: () => false });
+      release({ isSymbolicLink: () => false, isFile: () => false, isDirectory: () => true });
       await vi.advanceTimersByTimeAsync(0);
     });
 
