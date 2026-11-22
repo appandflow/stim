@@ -5,7 +5,8 @@ import { basename, dirname, isAbsolute, join, parse, resolve, sep } from 'node:p
 import { isScopedHome, type StimContext } from '@stim-cli/core';
 import { machineSettingValue, readDiscoveryScan, type Config, type DiscoveryScan } from '@stim-cli/core/state';
 import { canonicalPath } from '../commands/gc/paths.ts';
-import { projectRegistry } from '../integrations/projects.ts';
+import { projectIntegrations, projectRegistry } from '../integrations/projects.ts';
+import { unownedProjectState } from '../integrations/project-registry.ts';
 import { answered } from './bounded-read.ts';
 import { isProtectedLocation } from './protected-locations.ts';
 import { absent, scanEntryValid, scanSkipper, targetedScanSkipper } from './scan-rules.ts';
@@ -97,8 +98,9 @@ const PROJECT_FOLDER_ENTRIES = 50;
 const READ_TIMEOUT_MS = 3000;
 
 /** Whether project detection recognises the folder as a project; `'unknown'` when it could not read what decides that. */
-function projectState(path: string): boolean | 'unknown' {
+function projectState(path: string, unowned = false): boolean | 'unknown' {
   try {
+    if (unowned) return unownedProjectState(path, projectIntegrations);
     const { problem } = projectRegistry.selectDoctor(path);
     return problem === null ? true : problem.kind === 'unreadable' ? 'unknown' : false;
   } catch {
@@ -111,9 +113,13 @@ function projectState(path: string): boolean | 'unknown' {
  * `examples/` or `packages/` is, as in a monorepo whose root holds no app. `'unknown'` when nothing recognised it and
  * some read that decides this failed (a manifest that does not parse, a listing that cannot be read), so it may be one.
  */
-export function recognition(path: string, blocked?: ReadonlySet<string>): boolean | 'unknown' {
+export function recognition(path: string, candidates?: ReadonlyMap<string, boolean>): boolean | 'unknown' {
+  const state = (root: string) => {
+    const unowned = candidates?.get(root);
+    return unowned === false ? 'unknown' : projectState(root, unowned);
+  };
   let unknown = false;
-  const own = blocked?.has(path) ? 'unknown' : projectState(path);
+  const own = state(path);
   if (own === true) return true;
   if (own === 'unknown') unknown = true;
   for (const folder of PROJECT_FOLDERS) {
@@ -129,7 +135,7 @@ export function recognition(path: string, blocked?: ReadonlySet<string>): boolea
     }
     for (const name of names) {
       const childPath = join(path, folder, name);
-      const child = blocked?.has(childPath) ? 'unknown' : projectState(childPath);
+      const child = state(childPath);
       if (child === true) return true;
       if (child === 'unknown') unknown = true;
     }
@@ -467,7 +473,14 @@ async function targetedScan(
       pending.push(identity);
       continue;
     }
-    const state = await scanEntryValid(path, { home, isCheckout: recognition, skip, proofs: scan?.safety, identity });
+    const state = await scanEntryValid(path, {
+      home,
+      isCheckout: recognition,
+      skip,
+      proofs: scan?.safety,
+      identity,
+      signal: operation?.signal,
+    });
     if (state === 'valid') valid.push({ path: identity, origin: 'scan', from: 'full scan', recognised: true });
     else if (state === 'pending') pending.push(identity);
   }

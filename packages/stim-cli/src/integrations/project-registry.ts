@@ -107,12 +107,57 @@ function operationProblem(
   return 'problem' in selected ? selected.problem : null;
 }
 
+function doctorSelection(
+  root: string,
+  matches: readonly (ProjectMatch & { id: string })[],
+  platform?: 'ios' | 'android',
+  ownership: ProjectProblem | null = null,
+): ReturnType<ProjectRegistry['selectDoctor']> {
+  const operations: ProjectOperation[] = platform ? [platform] : ['ios', 'android', 'macos', 'dev-server'];
+  const selected = operations.map((operation) => ({
+    operation,
+    result: operationSelection(root, matches, operation),
+  }));
+  const accepted = selected.flatMap(({ operation, result }) =>
+    'match' in result && result.match.application ? [{ operation, match: result.match }] : [],
+  );
+  const invalid = selected.flatMap(({ result }) => ('problem' in result ? [result.problem] : []));
+  const problem =
+    ownership ??
+    invalid.find((value) => value.kind === 'unreadable' || value.kind === 'ambiguous') ??
+    (accepted.length
+      ? null
+      : (invalid[0] ?? {
+          kind: 'not-an-app' as const,
+          message: `No project integration recognizes an application at ${root}.`,
+          remedy: 'Run this from the directory of a supported app.',
+        }));
+  const providers = [...new Map(accepted.map(({ match }) => [match.id, match])).values()];
+  return {
+    problem,
+    platforms: problem
+      ? []
+      : accepted.flatMap(({ operation }) => (operation === 'ios' || operation === 'android' ? [operation] : [])),
+    load: async () =>
+      problem ? [] : Promise.all(providers.flatMap((match) => (match.doctor ? [match.doctor()] : []))),
+  };
+}
+
+function projectMatches(integrations: readonly ProjectIntegration[], root: string) {
+  return integrations.flatMap((integration) => {
+    const match = integration.inspect(root);
+    return match ? [{ id: integration.id, ...match }] : [];
+  });
+}
+
+/** Caller proves conventional app ownership before using selected-root recognition. */
+export function unownedProjectState(root: string, integrations: readonly ProjectIntegration[]): boolean | 'unknown' {
+  const { problem } = doctorSelection(root, projectMatches(integrations, root));
+  return problem === null ? true : problem.kind === 'unreadable' ? 'unknown' : false;
+}
+
 export function createProjectRegistry(integrations: readonly ProjectIntegration[]): ProjectRegistry {
-  const inspect = (root: string) =>
-    integrations.flatMap((integration) => {
-      const match = integration.inspect(root);
-      return match ? [{ id: integration.id, ...match }] : [];
-    });
+  const inspect = (root: string) => projectMatches(integrations, root);
 
   function findProjectRoot(startDir: string, read = inspect): string | null {
     let candidates: string[] = [];
@@ -225,34 +270,7 @@ export function createProjectRegistry(integrations: readonly ProjectIntegration[
   function selectDoctor(root: string, platform?: 'ios' | 'android'): ReturnType<ProjectRegistry['selectDoctor']> {
     root = canonicalPath(root);
     const matches = inspect(root);
-    const operations: ProjectOperation[] = platform ? [platform] : ['ios', 'android', 'macos', 'dev-server'];
-    const selected = operations.map((operation) => ({
-      operation,
-      result: operationSelection(root, matches, operation),
-    }));
-    const accepted = selected.flatMap(({ operation, result }) =>
-      'match' in result && result.match.application ? [{ operation, match: result.match }] : [],
-    );
-    const invalid = selected.flatMap(({ result }) => ('problem' in result ? [result.problem] : []));
-    const problem =
-      ownedRootProblem(root, matches) ??
-      invalid.find((value) => value.kind === 'unreadable' || value.kind === 'ambiguous') ??
-      (accepted.length
-        ? null
-        : (invalid[0] ?? {
-            kind: 'not-an-app' as const,
-            message: `No project integration recognizes an application at ${root}.`,
-            remedy: 'Run this from the directory of a supported app.',
-          }));
-    const providers = [...new Map(accepted.map(({ match }) => [match.id, match])).values()];
-    return {
-      problem,
-      platforms: problem
-        ? []
-        : accepted.flatMap(({ operation }) => (operation === 'ios' || operation === 'android' ? [operation] : [])),
-      load: async () =>
-        problem ? [] : Promise.all(providers.flatMap((match) => (match.doctor ? [match.doctor()] : []))),
-    };
+    return doctorSelection(root, matches, platform, ownedRootProblem(root, matches));
   }
 
   function keepsWorkspace(root: string): boolean {

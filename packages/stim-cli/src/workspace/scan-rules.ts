@@ -1,11 +1,11 @@
 import { lstat, readdir, readFile, realpath, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, relative, resolve, sep } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { configDir } from '@stim-cli/core';
 import { buildWorkerRoot, type ScanFolderProof } from '@stim-cli/core/state';
 import { canonicalPath, realpathAsync } from '../commands/gc/paths.ts';
 import { answered, hungRead, Unanswered } from './bounded-read.ts';
-import { declaresAppDependency } from './project-files.ts';
+import { appOwnedRoots, declaresAppDependency } from './project-files.ts';
 import { loadConfig } from './config.ts';
 
 export const MAX_DEPTH = 7;
@@ -264,12 +264,53 @@ async function proofGate(
   }
 }
 
-async function blockedNativeInspections(
+async function candidateUnowned(
+  root: string,
+  timeoutMs: number,
+  io: RecognitionIo,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  const read = <T>(path: string, start: () => Promise<T>) => answered(path, start, timeoutMs, signal);
+  const regular = async (path: string) => {
+    try {
+      const info = await read(path, () => io.lstat(path));
+      if (!info.isFile() || info.isSymbolicLink()) throw new Error('unproved project sentinel');
+      return true;
+    } catch (error) {
+      if (absent(error)) return false;
+      throw error;
+    }
+  };
+  const identity = await read(root, () => io.realpath(root));
+  for (let folder = dirname(root); ; folder = dirname(folder)) {
+    signal?.throwIfAborted();
+    const manifest = join(folder, 'package.json');
+    const hasManifest = await regular(manifest);
+    const pkg: unknown = hasManifest ? JSON.parse(await read(manifest, () => io.readText(manifest))) : null;
+    for (const owned of appOwnedRoots(folder, pkg)) {
+      try {
+        if ((await read(owned, () => io.realpath(owned))) === identity) return false;
+      } catch (error) {
+        if (!absent(error)) throw error;
+      }
+    }
+    if (
+      hasManifest ||
+      (await regular(join(folder, 'Package.swift'))) ||
+      ((await regular(join(folder, 'exact.mjs'))) && (await regular(join(folder, 'app.json'))))
+    )
+      return true;
+    if (dirname(folder) === folder) return true;
+  }
+}
+
+async function nativeCandidateProof(
   root: string,
   listings: ReadonlyMap<string, readonly Entry[]>,
   timeoutMs: number,
   io: RecognitionIo,
-): Promise<ReadonlySet<string>> {
+  signal?: AbortSignal,
+): Promise<ReadonlyMap<string, boolean>> {
   const exists = async (folder: string, name: string) => {
     try {
       await answered(folder, () => io.lstat(join(folder, name)), timeoutMs);
@@ -290,8 +331,8 @@ async function blockedNativeInspections(
       );
     return explicit.get(folder) === true;
   };
-  const blocked = new Set<string>();
-  if (await isExplicit(root)) return blocked;
+  const candidates = new Map<string, boolean>();
+  if (await isExplicit(root)) return candidates;
   for (const [folder, entries] of listings) {
     if (
       !entries.some(({ name }) => ['settings.gradle', 'settings.gradle.kts'].includes(folded(name))) ||
@@ -307,7 +348,8 @@ async function blockedNativeInspections(
       if (here === root) break;
     }
     if (!safe) {
-      blocked.add(folder);
+      const unowned = await candidateUnowned(folder, timeoutMs, io, signal);
+      candidates.set(folder, unowned);
       const rel = relative(root, folder).split(sep);
       const [container, child] = rel;
       if (
@@ -316,10 +358,10 @@ async function blockedNativeInspections(
         child !== undefined &&
         PROJECT_FOLDERS.includes(folded(container))
       )
-        blocked.add(join(root, folded(container), child));
+        candidates.set(join(root, folded(container), child), unowned);
     }
   }
-  return blocked;
+  return candidates;
 }
 
 /**
@@ -461,10 +503,11 @@ export async function scanEntryValid(
     ancestors = new Map(),
     proofs,
     identity,
+    signal,
   }: {
     home: string;
     /** `'unknown'`: a read that decides it failed, so the folder may still be a checkout. */
-    isCheckout: (path: string, blocked?: ReadonlySet<string>) => boolean | 'unknown';
+    isCheckout: (path: string, candidates?: ReadonlyMap<string, boolean>) => boolean | 'unknown';
     skip: (path: string) => boolean;
     timeoutMs?: number;
     io?: RecognitionIo;
@@ -472,6 +515,7 @@ export async function scanEntryValid(
     ancestors?: Map<string, Promise<{ listing: Entry[]; safety: Safety }>>;
     proofs?: Readonly<Record<string, ScanFolderProof>>;
     identity?: string;
+    signal?: AbortSignal;
   },
 ): Promise<'valid' | 'invalid' | 'pending'> {
   if (hungRead() !== null) return 'pending';
@@ -520,14 +564,15 @@ export async function scanEntryValid(
   }
   const nested = await nestedSafety(path, own, timeoutMs, readingIo);
   if (nested !== 'safe') return nested === 'unsafe' ? 'invalid' : 'pending';
-  let blocked: ReadonlySet<string> | undefined;
+  let candidates: ReadonlyMap<string, boolean> | undefined;
   if (proofs) {
     try {
-      blocked = await blockedNativeInspections(path, listings, timeoutMs, io);
+      candidates = await nativeCandidateProof(path, listings, timeoutMs, io, signal);
     } catch {
+      signal?.throwIfAborted();
       return 'pending';
     }
   }
-  const recognised = isCheckout(path, blocked);
+  const recognised = isCheckout(path, candidates);
   return recognised === 'unknown' ? 'pending' : recognised ? 'valid' : 'invalid';
 }

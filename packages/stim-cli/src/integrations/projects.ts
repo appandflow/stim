@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { nativeAndroidIntegration } from './native-android-discovery.ts';
 import {
   appProjectProblem,
+  appOwnedRoots,
   declaresAppDependency,
   loadPackageJson,
   detectIsExpo,
@@ -79,7 +80,7 @@ const reactNativeProject: ProjectIntegration = {
     return {
       root: existsSync(join(root, 'package.json')) ? 'explicit' : false,
       application: problem === null,
-      ownedRoots: problem === null ? [join(root, 'ios'), join(root, 'android')] : [],
+      ownedRoots: appOwnedRoots(root, manifest.pkg),
       platforms: (resolved) => nativeProjectIntegration(root).platforms(root, resolved),
       validate: (operation) =>
         operation === 'ios' || operation === 'android' || operation === 'dev-server' ? problem : undefined,
