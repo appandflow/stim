@@ -1,6 +1,5 @@
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import { existsSync } from 'node:fs';
-import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { type StimContext } from '@stim-cli/core';
 import {
@@ -15,6 +14,7 @@ import {
   type IdleStageRecord,
 } from '@stim-cli/core/state';
 import { addSize, formatSize, measureDirectoryAsync, type DirectorySize } from '../fs-util.ts';
+import { removeTree } from '../engine/remove-tree.ts';
 import { deleteCargoTarget } from '../workspace/cargo-target.ts';
 import { collectOwnedDeviceActivityAsync, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
@@ -247,7 +247,17 @@ export async function idleOutputs(
 export async function deleteOutputs(
   paths: readonly string[],
   signal?: AbortSignal,
-  { targets = [], kept = [] }: { targets?: readonly string[]; kept?: string[] } = {},
+  {
+    targets = [],
+    kept = [],
+    operation,
+    throttleIo = true,
+  }: {
+    targets?: readonly string[];
+    kept?: string[];
+    operation?: StimContext;
+    throttleIo?: boolean;
+  } = {},
 ): Promise<DirectorySize> {
   const freed: DirectorySize = { bytes: 0 };
   for (const path of paths) {
@@ -259,7 +269,7 @@ export async function deleteOutputs(
     }
     addSize(freed, await measureDirectoryAsync(path, { timeoutMs: SIZE_TIMEOUT_MS, signal }));
     signal?.throwIfAborted();
-    await rm(path, { recursive: true, force: true });
+    await removeTree(path, operation, signal, throttleIo);
   }
   return freed;
 }
@@ -364,7 +374,11 @@ async function enterIdleStage(
               config,
               volumes ? (output) => onShortVolume([output], volumes) : undefined,
             );
-            const freed = await deleteOutputs(outputs.paths, input.operation?.signal, outputs);
+            const freed = await deleteOutputs(outputs.paths, input.operation?.signal, {
+              ...outputs,
+              operation: input.operation,
+              throttleIo: !input.pressure && !input.disk,
+            });
             await recordStage(path, minutes, shutDown, freed);
             const idle = Math.floor(again.decision.idleMs / MINUTE_MS);
             const restore = revivable(path) ? 'stim revive' : 'stim ios or stim android';
