@@ -86,6 +86,7 @@ export interface ActContext {
   settings: MaintenanceSettings;
   protectedRoot: string;
   background?: boolean;
+  skipCompletedDormant?: boolean;
   worktreeSweep?: WorktreeSweep;
   protect?: (entry: string) => string | null;
   worktrees?: ArtifactWorktree[];
@@ -608,7 +609,7 @@ export async function executeAction(action: MaintenanceAction, context: ActConte
     case 'would-delete-expired-archives':
       return deleteExpiredArchivesAction(context);
     case 'would-dormant-stage':
-      return enterDormantStage(action, context.operation, context.deletable);
+      return enterDormantStage(action, context.operation, context.deletable, context.skipCompletedDormant);
     case 'would-delete-runtime':
       return deleteRuntimeAction(action, context.operation);
     case 'would-delete-unavailable-sim':
