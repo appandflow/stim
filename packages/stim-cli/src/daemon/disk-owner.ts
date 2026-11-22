@@ -4,11 +4,12 @@ import type { LevelRun, LevelRunAction } from '../stimd/passes/level-run.ts';
 
 /**
  * The turn order on the disk: a hard-floor ladder pass, then any ladder pass or gc pass above normal, then the
- * explicit item, then the maintenance lane's next unit, then a gc pass at normal, which waits for the lane to end its run.
+ * explicit item, then trash, then the maintenance lane's next unit, then a gc pass at normal, which waits for the lane to end its run.
  */
 export const HARD_FLOOR = 0;
 export const LADDER = 1;
 const ITEM = 2;
+export const TRASH = 2.5;
 export const LANE = 3;
 const NORMAL_GC = 4;
 
@@ -78,7 +79,7 @@ export function releaseDisk(): void {
 
 /** Runs one dedicated cleanup unit at `rank`, an explicit item by default; leaving cancels only this unit. */
 export function requestGcItem<T>(
-  work: (signal: AbortSignal) => Promise<T>,
+  work: (signal: AbortSignal, between: () => Promise<void>) => Promise<T>,
   rank: number = ITEM,
 ): { result: Promise<T>; leave(): void } {
   const stop = new AbortController();
@@ -99,7 +100,11 @@ export function requestGcItem<T>(
       stop.signal.throwIfAborted();
       started = true;
       releaseReserve();
-      return await work(stop.signal);
+      return await work(stop.signal, async () => {
+        if (!waiting.some((entry) => entry.rank < rank)) return;
+        releaseDisk();
+        await acquireDisk(rank);
+      });
     } finally {
       stop.signal.removeEventListener('abort', cancelWait);
       if (started) {

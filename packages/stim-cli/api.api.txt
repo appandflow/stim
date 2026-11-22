@@ -939,6 +939,7 @@
 [*] interface MaintenanceStatus { @@1 lastChecks: {
 [*] interface MaintenanceStatus { @@1 lastPass: MaintenancePass | null;
 [*] interface MaintenanceStatus { @@1 mode: MaintenanceMode;
+[*] interface MaintenanceStatus { @@1 pendingDelete?: {
 [*] interface MaintenanceStatus { @@1 plan: MaintenanceAction[];
 [*] interface MaintenanceStatus { @@1 pressure: MaintenancePressure | null;
 [*] interface MaintenanceStatus { @@1 recent: MaintenanceRecord[];
@@ -946,7 +947,9 @@
 [*] interface MaintenanceStatus { @@1 sizes: MaintenanceSize[];
 [*] interface MaintenanceStatus { @@1 } | null;
 [*] interface MaintenanceStatus { @@1 }[];
+[*] interface MaintenanceStatus { @@2 bytes: number;
 [*] interface MaintenanceStatus { @@2 check: MaintenanceCheck;
+[*] interface MaintenanceStatus { @@2 count: number;
 [*] interface MaintenanceStatus { @@2 pressure: number | null;
 [*] interface MaintenanceStatus { @@2 removeCommand: string;
 [*] interface MaintenanceStatus { @@2 since: number;
@@ -1576,7 +1579,7 @@
 [*] type GcPayload = GcRunPayload | GcRefusal;
 [*] type GcReadOptions = Pick<GcOptions, "pressure" | "measureBuildState">;
 [*] type GcResultKind = "archive" | "device" | "parkedDevice" | "parkedHostedDevice" | "idleDevice" | "deviceRecord" | "workspaceOutputs" | "worktreeDependencies" | "recording" | "workspaceDirectory" | "project" | "buildLock" | "buildSlot" | "deviceLease" | "easSession" | "worktree" | "cache" | "statusCache" | "tempLeftover" | "trash" | "watchmanRoot" | "watchman" | "gradleDaemon" | "gradleVersion" | "kotlinDaemon" | "devServer" | "workspaceLogs" | "ledgerEntry" | "easLedgerEntry" | "homeEntry" | "runtime" | "toolCache";
-[*] type GcResultStatus = "done" | "kept" | "failed";
+[*] type GcResultStatus = "done" | "kept" | "failed" | "pending";
 [*] type GeneratedTickets = Map<string, {
 [*] type GeneratedTickets = Map<string, { @@1 expiresAt: string;
 [*] type GeneratedTickets = Map<string, { @@1 ticket: string;

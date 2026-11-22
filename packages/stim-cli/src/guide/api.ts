@@ -134,6 +134,12 @@ measured level or at pressure (\`guide cleanup\`), and returns { report,
 exitCode }; exitCode is 0 or 1 and does not change process.exitCode. Past the
 report budget it rejects with STIM_REPORT_TIMEOUT; the pass goes on. An invalid pressure rejects with STIM_BAD_ARG.
 The CLI's scoped-home rules apply.
+Eligible explicit cache and archive items return a pending result after a
+same-volume move into owned trash. Its bytes are estimates, not reclaimed
+space; maintenance.pendingDelete reports the pending count and bytes. The
+cleanup queue drains them independently of the caller, including with
+daemon.mode off. Unsupported moves keep the in-place delete.
+
 deleteGarbageItem({ item, signal? }) deletes one item, for Stim Desktop's
 Storage page, and returns { results, exitCode }. item is { kind: 'cache', dir },
 { kind: 'workspace-outputs' }, { kind: 'archive', id, part? }, { kind:

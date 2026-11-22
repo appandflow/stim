@@ -151,6 +151,8 @@ export interface MaintenanceState {
 }
 
 export interface MaintenanceStatus {
+  /** Items moved aside whose estimated disk bytes have not yet been reclaimed. */
+  pendingDelete?: { count: number; bytes: number };
   mode: MaintenanceMode;
   invalid?: string;
   claim?: { unresolved: string; removeCommand: string };

@@ -8,6 +8,9 @@ import { deleteGcItem } from '../commands/gc/item.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { saveConfig } from '../workspace/config.ts';
 import { goneClaimOwner, liveClaimOwner, plantClaim } from './_factories.ts';
+import { stageItemTrash, pendingItemTrash } from '../workspace/item-trash.ts';
+import { deleteTrash } from '../commands/gc/trash.ts';
+import { testContext } from './_context.ts';
 
 const runGc: typeof runGcCommand = (opts, deps) => runGcCommand(opts, deps, runGcPass);
 
@@ -67,6 +70,35 @@ async function gc(opts: Parameters<typeof runGc>[0]) {
   err.mockRestore();
   return payload;
 }
+
+test.skipIf(process.platform === 'win32')(
+  'an explicit whole archive returns pending until its typed trash is drained',
+  async () => {
+    fixture('whole');
+    const result = await deleteGcItem({ kind: 'archive', id: 'whole' }, testContext(), () => {});
+    expect(result.results).toMatchObject([{ kind: 'archive', status: 'pending', bytes: 515 }]);
+    expect(existsSync(archiveDir('whole'))).toBe(false);
+    expect(await pendingItemTrash()).toEqual({ count: 1, bytes: 515 });
+    expect(await deleteTrash(undefined, undefined, false, true)).toEqual({ count: 1, bytes: 515, failures: 0 });
+    expect(await pendingItemTrash()).toEqual({ count: 0, bytes: 0 });
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'a crashed archive part handoff reconciles metadata and preserves its other parts',
+  async () => {
+    fixture('parts');
+    const dir = archiveDir('parts');
+    expect(await stageItemTrash(join(dir, 'logs'), 5, { kind: 'archive', id: 'parts', part: 'logs' })).toBe(true);
+    expect(JSON.parse(readFileSync(join(dir, 'archive.json'), 'utf8')).bytes.logs).toBe(5);
+    expect(await deleteTrash(undefined, undefined, false, true)).toEqual({ count: 1, bytes: 5, failures: 0 });
+    const record = JSON.parse(readFileSync(join(dir, 'archive.json'), 'utf8'));
+    expect(record.bytes).toMatchObject({ logs: 0, recordings: 5, agentActions: 5 });
+    expect(record.expires.logs).toBeNull();
+    expect(readFileSync(join(dir, 'recordings', 'ios-default', '1-2.seg'), 'utf8')).toBe('bytes');
+    expect(readFileSync(join(dir, 'agent-device', 'sessions', 'a', 'request.json'), 'utf8')).toBe('bytes');
+  },
+);
 
 test.each(['normal', 'high'] as const)(
   'gc at %s neither reports archives nor deletes one within its retention',

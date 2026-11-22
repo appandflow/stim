@@ -1,4 +1,5 @@
 import { validGcItem } from '../commands/gc/item.ts';
+import { pendingItemTrash } from '../workspace/item-trash.ts';
 import { runDirRemoved } from './run-dir.ts';
 import { createMetroTickets, handleMetroTicketRequest } from './metro/tickets.ts';
 import { createLeaseTickets, handleLeaseRequest } from './lease-tickets.ts';
@@ -1092,7 +1093,11 @@ async function runStimdInner(
     log,
     () => reportUnverified(),
   );
-  const threads = createThreadTable(log, (error) => failBackground(error, 'a thread cleanup could not be verified'));
+  const threads = createThreadTable(
+    log,
+    (error) => failBackground(error, 'a thread cleanup could not be verified'),
+    () => queueTrashDrain(),
+  );
   let backgroundFailure: unknown;
   const cleanups = createCleanupWatch(log);
   const reportUnverified = () => {
@@ -1182,6 +1187,22 @@ async function runStimdInner(
   const open = new Set<Socket>();
   const ops = new Map<Socket, 'pinned' | 'waiting'>();
   const gcRequests = new Set<Promise<unknown>>();
+  let trashDrain: Promise<void> | null = null;
+  const queueTrashDrain = () => {
+    if (trashDrain) return;
+    const work = threads.drainTrash(lastSnapshot?.pressure?.level === 'critical').catch((error: unknown) => {
+      if (isUnverifiedCleanup(error) && !contain(error)) failBackground(error, 'trash cleanup could not be verified');
+      else log('warn', 'item_trash_failed', error instanceof Error ? error.message : String(error));
+    });
+    trashDrain = work;
+    gcRequests.add(work);
+    void work.finally(() => {
+      gcRequests.delete(work);
+      trashDrain = null;
+      if (effectiveMode() === 'off') requestTick();
+      void checkEngine();
+    });
+  };
   const gcDetached = new WeakSet<Socket>();
   const itemCancels = new WeakMap<Socket, () => void>();
   const logsRunning = () => logs.running() || logs.ownedRunning();
@@ -2189,6 +2210,7 @@ async function runStimdInner(
   startup.signal.throwIfAborted();
   await logs.ownedSync();
   startup.signal.throwIfAborted();
+  if ((await pendingItemTrash()).count) queueTrashDrain();
   lifetime.serve(requestEnd, waitMs, instance);
   startup.finish?.();
   startup.finish = undefined;

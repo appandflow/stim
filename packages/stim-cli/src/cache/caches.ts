@@ -515,8 +515,22 @@ export async function pruneCacheAsync(
     now = Date.now(),
     signal,
     operation,
-  }: { olderThanDays: number; now?: number; signal?: AbortSignal; operation?: StimContext },
-): Promise<{ removed: number; bytes: number; skipped: string | null; failed?: number }> {
+    handoff,
+  }: {
+    olderThanDays: number;
+    now?: number;
+    signal?: AbortSignal;
+    operation?: StimContext;
+    handoff?: (path: string, bytes: number) => Promise<boolean>;
+  },
+): Promise<{
+  removed: number;
+  bytes: number;
+  skipped: string | null;
+  failed?: number;
+  pending?: number;
+  pendingBytes?: number;
+}> {
   if (cache.prune === 'report-only')
     return { removed: 0, bytes: 0, skipped: 'report-only shared cache; Stim never deletes it' };
   if (cache.prune === 'atomic') return { removed: 0, bytes: 0, skipped: 'index-backed; empty it whole or not at all' };
@@ -540,6 +554,8 @@ export async function pruneCacheAsync(
   let removed = 0;
   let bytes = 0;
   let failed = unlisted;
+  let pending = 0;
+  let pendingBytes = 0;
   for (const entry of entries) {
     signal?.throwIfAborted();
     try {
@@ -556,6 +572,11 @@ export async function pruneCacheAsync(
       signal?.throwIfAborted();
       if ((await stat(entry)).mtimeMs >= cutoff) continue;
       signal?.throwIfAborted();
+      if (await handoff?.(entry, size ?? 0)) {
+        pending++;
+        pendingBytes += size ?? 0;
+        continue;
+      }
       await rm(entry, { recursive: true, force: true });
       removed++;
       bytes += size ?? 0;
@@ -567,7 +588,7 @@ export async function pruneCacheAsync(
     }
   }
   signal?.throwIfAborted();
-  return { removed, bytes, failed, skipped: null };
+  return { removed, bytes, failed, skipped: null, ...(handoff ? { pending, pendingBytes } : {}) };
 }
 
 function entriesAtDepth(dir: string, depth: number): string[] {

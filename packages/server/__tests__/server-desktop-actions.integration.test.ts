@@ -2003,7 +2003,7 @@ describe.skipIf(process.platform === 'win32')('Desktop GC mutation', () => {
     const done = await ended(client);
     expect(done.exitCode).toBe(0);
     expect(JSON.parse(done.stdout)).toMatchObject({
-      results: [expect.objectContaining({ kind: 'cache', status: 'done' })],
+      results: [expect.objectContaining({ kind: 'cache', status: process.platform === 'win32' ? 'done' : 'pending' })],
     });
     expect(existsSync(fixture.artifact)).toBe(false);
     expect(readFileSync(join(fixture.home, 'config.json'), 'utf8')).toBe(config);

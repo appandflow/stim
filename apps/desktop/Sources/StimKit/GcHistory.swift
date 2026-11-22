@@ -4,7 +4,7 @@ import Foundation
 /// cleared, kept or failed to clear. Fields newer than this app are ignored.
 public struct GcHistoryItem: Decodable, Hashable, Sendable {
   public enum Status: String, Decodable, Sendable {
-    case done, kept, failed
+    case done, kept, failed, pending
   }
 
   /// Epoch milliseconds.
