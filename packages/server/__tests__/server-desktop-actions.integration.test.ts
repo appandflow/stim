@@ -2141,42 +2141,45 @@ setInterval(() => {}, 1000);
     },
   );
 
-  it('keeps a failed cache deletion in the JSON report and returns a failing exit status', async () => {
-    const fixture = cacheFixture();
-    writeFileSync(
-      join(fixture.home, 'caches.json'),
-      JSON.stringify({
-        version: 1,
-        caches: [{ name: 'rpc-fixture', dir: fixture.cache, prune: 'atomic' }],
-      }),
-    );
-    chmodSync(fixture.cache, 0o500);
-    try {
-      await start({ env: fixture.env });
-      const client = await desktop();
-      expect(
-        await client.request('desktop.gc.item.subscribe', {
-          cwd: workspace,
-          item: { kind: 'cache', dir: fixture.cache },
+  test.skipIf(process.getuid?.() === 0)(
+    'keeps a failed cache deletion in the JSON report and returns a failing exit status',
+    async () => {
+      const fixture = cacheFixture();
+      writeFileSync(
+        join(fixture.home, 'caches.json'),
+        JSON.stringify({
+          version: 1,
+          caches: [{ name: 'rpc-fixture', dir: fixture.cache, prune: 'atomic' }],
         }),
-      ).toHaveProperty('result.subscription');
-      const done = await ended(client);
-      expect(done.exitCode).toBe(1);
-      expect(JSON.parse(done.stdout)).toMatchObject({
-        mode: 'delete',
-        item: { kind: 'cache', dir: fixture.cache },
-        failures: 1,
-        results: expect.arrayContaining([
-          expect.objectContaining({ kind: 'cache', status: 'failed', id: fixture.cache }),
-        ]),
-      });
-      expect(existsSync(fixture.artifact)).toBe(true);
-      expect(readAudit()).toContainEqual(expect.objectContaining({ action: 'gc', ok: false }));
-      expect(cleanupQueue()).toMatchObject({ running: null, queued: 0 });
-    } finally {
-      chmodSync(fixture.cache, 0o700);
-    }
-  });
+      );
+      chmodSync(fixture.cache, 0o500);
+      try {
+        await start({ env: fixture.env });
+        const client = await desktop();
+        expect(
+          await client.request('desktop.gc.item.subscribe', {
+            cwd: workspace,
+            item: { kind: 'cache', dir: fixture.cache },
+          }),
+        ).toHaveProperty('result.subscription');
+        const done = await ended(client);
+        expect(done.exitCode).toBe(1);
+        expect(JSON.parse(done.stdout)).toMatchObject({
+          mode: 'delete',
+          item: { kind: 'cache', dir: fixture.cache },
+          failures: 1,
+          results: expect.arrayContaining([
+            expect.objectContaining({ kind: 'cache', status: 'failed', id: fixture.cache }),
+          ]),
+        });
+        expect(existsSync(fixture.artifact)).toBe(true);
+        expect(readAudit()).toContainEqual(expect.objectContaining({ action: 'gc', ok: false }));
+        expect(cleanupQueue()).toMatchObject({ running: null, queued: 0 });
+      } finally {
+        chmodSync(fixture.cache, 0o700);
+      }
+    },
+  );
 
   it('bounds GC progress and terminal JSON while retaining files on a read-only request', async () => {
     const fixture = cacheFixture();

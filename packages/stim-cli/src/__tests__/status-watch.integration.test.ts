@@ -14,8 +14,9 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { agentSessionsCacheFile } from '@stim-cli/core/state';
+import { basename, join } from 'node:path';
+import { agentSessionsCacheFile, daemonClaimRoot } from '@stim-cli/core/state';
+import { releaseClaim, tryAcquireClaim, updateClaimDetails } from '@stim-cli/core/ownership-claim';
 import { saveConfig } from '../workspace/config.ts';
 import { makeConfig, makeEnvironmentState } from './_factories.ts';
 
@@ -615,6 +616,31 @@ describe('stim status --watch --json', () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
   }
+
+  test('queue changes publish a light update without advancing the fallback polling clock', async () => {
+    const running = { startedAt: new Date().toISOString(), trigger: 'item' };
+    let claim = tryAcquireClaim({
+      root: daemonClaimRoot(),
+      mode: 'shared',
+      label: 'watch fixture',
+      details: { mode: 'off', cleanup: { running, queued: 0 } },
+    }).acquired;
+    assert(claim);
+    const { proc, lines } = startWatch(true);
+    try {
+      await until(() => lines.length > 0);
+      expect(JSON.parse(last(lines)).maintenance.queued).toBe(0);
+      claim = updateClaimDetails(claim, { ...claim.details, cleanup: { running, queued: 1 } }) ?? claim;
+      proc.send({ path: join(daemonClaimRoot(), 'shared'), name: basename(claim.path) });
+      await until(() => JSON.parse(last(lines)).maintenance.queued === 1);
+      claim = updateClaimDetails(claim, { ...claim.details, cleanup: { running: null, queued: 0 } }) ?? claim;
+      proc.send({ path: join(daemonClaimRoot(), 'shared'), name: basename(claim.path) });
+      await until(() => JSON.parse(last(lines)).maintenance.running === null);
+      expect(JSON.parse(last(lines)).maintenance.queued).toBe(0);
+    } finally {
+      releaseClaim(claim);
+    }
+  });
 
   describe.skipIf(process.platform !== 'darwin')('machine usage on the light interval', () => {
     async function machineWatch(cpuExpr: string) {

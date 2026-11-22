@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
-import { keepReserve, releaseReserve } from '../../disk-reserve.ts';
+import { keepReserve, releaseReserveWhenFull } from '../../disk-reserve.ts';
 import { writeCacheFile } from '../../cache-file.ts';
 import { basename, join } from 'node:path';
 import { withDirLock, type StimContext } from '@stim-cli/core';
@@ -416,7 +416,7 @@ export async function runMaintenance(
   } = {},
 ): Promise<void> {
   const startedAt = Date.now();
-  releaseReserve();
+  await releaseReserveWhenFull(maintenanceDir());
   const runId = `p-${randomBytes(6).toString('hex')}`;
   let scanAfter = false;
   let passFailed = false;
