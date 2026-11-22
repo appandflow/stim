@@ -505,12 +505,37 @@ also holds the newest activity the walk read, and the walk reads at
   brought forward so high-pressure refresh does not invent a temporary TTL.
   The normal lane still walks hourly and publishes due marks; a normal
   mark-first sweep scheduler is pending the generation/lane integration.
-- Cargo pressure discovery, worktree/dependency discovery and normal Cargo
-  cap planning are unchanged. Wider Cargo marks (including nested and
-  untagged targets), their sweep migration, and worktree/dependency marks
-  remain separate increments. Per-candidate disk-turn yielding and yield
-  ranking also remain pending. The no-discovery guarantee here is for output
-  rung 1 only. `stim gc --dry-run` still discovers and previews outputs.
+- The writer also recognizes untagged Cargo targets by the existing Cargo
+  manifest/profile rules and marks targets in the holder's `apps/` and
+  `packages/` children. The normal lane reads actual Git holders reached by
+  its artifact scanner and publishes their own marks. A registered app's
+  current buffered Git worktree metadata can authorize its exact holder's
+  Cargo candidates, without authorizing the holder's other outputs. The
+  helper may watch that holder; a watch grants no deletion authority. A holder
+  reached only through a discovered nested app stays when its own ordinary
+  route cannot be proved; targeted proof for that layout remains required.
+- Both Cargo pressure entrypoints consume saved target candidates. The
+  planner and executor share the same action object in one isolate; its
+  private mark proof is not serialized. A copied pressure action is kept.
+  Execution rechecks the saved generation, current scope, target ownership,
+  canonical root/target paths and devices before using the existing Cargo
+  admission, process reads and locked remover. Planning authorizes one saved
+  batch; execution reauthorizes only the selected root. Rewriting the mark makes an
+  earlier action stale. Failed safety reads keep the target. High pressure
+  tries known targets before refreshing due or missing marks while still
+  high; critical and hard-floor pressure never refresh or rediscover Cargo
+  targets. Unmarked targets stay. Acting size/cap passes use normal rules
+  even under pressure, so measured sizes cannot bypass the saved pressure
+  candidates; explicit read-only previews retain their pressure policy. The
+  existing normal sizing, cap selection and scheduling remain unchanged.
+  A build-headroom deadline cancels the same bounded Cargo refresh and
+  leaves later holders and the next sweep unstarted; failed cleanup still
+  propagates.
+- Worktree/dependency marks and pressure discovery, normal mark-first
+  scheduling, per-candidate disk-turn yielding and yield ranking remain
+  pending. The no-discovery guarantee applies to output rung 1 and Cargo
+  pressure candidate selection, not the other maintenance stages or normal
+  size/cap passes. `stim gc --dry-run` retains discovery previews.
 
 Reason: planning dominates a pressure pass (rung 5's evidence loop took about
 13,300 s for 0 bytes on the loaded MacBook), and every pass repeats the

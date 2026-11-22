@@ -195,8 +195,8 @@ function* cargoTargetDirsReads(root: string): DirReads<string[]> {
  * (a `.rustc_info.json`, or a direct child profile holding `.fingerprint`). Only the first two are build output; the
  * dormant reduction deletes any of them whole but a Solana keypair folder.
  */
-export function cargoTargetDirsAsync(root: string): Promise<string[]> {
-  return readAsync(cargoTargetDirsReads(root));
+export function cargoTargetDirsAsync(root: string, signal?: AbortSignal): Promise<string[]> {
+  return readAsync(cargoTargetDirsReads(root), signal);
 }
 
 function* discoveredBuildDirKindsReads(root: string): DirReads<{ dirs: string[]; cargo: string[] }> {

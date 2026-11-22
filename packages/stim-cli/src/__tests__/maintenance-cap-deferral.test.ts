@@ -1,9 +1,10 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import {
   diskUsageCacheFile,
+  gcMarkFile,
   maintenanceStateFile,
   readDiskUsage,
   readJsonObject,
@@ -24,7 +25,9 @@ import { runMaintenanceAtLevel } from '../stimd/passes/level-run.ts';
 import { runMaintenance } from '../stimd/passes/run.ts';
 import * as measurements from '../stimd/passes/measure.ts';
 import { maintenanceStatus } from '../stimd/passes/status.ts';
-import { saveConfig, upsertProject } from '../workspace/config.ts';
+import * as marks from '../daemon/marks.ts';
+import { markWriter } from '../daemon/marks.ts';
+import { saveConfig, upsertProject, loadConfig } from '../workspace/config.ts';
 import { scanSourceWrites } from '../workspace/discovered-activity.ts';
 import * as gitCommands from '../workspace/git.ts';
 
@@ -34,7 +37,7 @@ let target: string;
 const git = (cwd: string, ...args: string[]) =>
   execFileSync('git', ['-C', cwd, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { encoding: 'utf8' });
 
-beforeEach(() => {
+beforeEach(async () => {
   base = realpathSync(mkdtempSync(join(tmpdir(), 'stim-cap-deferral-')));
   vi.stubEnv('STIM_HOME', join(base, 'home'));
   vi.stubEnv('STIM_DAEMON', 'report');
@@ -54,6 +57,9 @@ beforeEach(() => {
   writeFileSync(join(target, 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55\n');
   writeFileSync(join(target, 'debug', 'incremental', 'data'), 'x'.repeat(200_000));
   upsertProject(app, { metroPort: null });
+  const config = loadConfig();
+  if (!config) throw new Error('missing fixture config');
+  await markWriter(config)({ path: app, at: Date.now(), lastActivityAt: null, kept: null });
   vi.spyOn(measurements, 'measurePressure').mockReturnValue({
     disk: [{ volume: '/', freeMb: 500 * 1024 }],
     memory: { level: 'normal', availableBytes: null, pressured: false },
@@ -170,6 +176,75 @@ test('at the high disk level the size scan runs under the same load that defers 
   expect(measurements.measureSizes).toHaveBeenCalledTimes(1);
   expect(readMaintenanceState()?.lastAt.size).toEqual(expect.any(Number));
   expect(maintenanceStatus().deferred?.map(({ check }) => check) ?? []).not.toContain('size');
+});
+
+test('the automatic Cargo cap keeps normal rules while its disk is critical', async () => {
+  vi.stubEnv('STIM_MAINTENANCE_CARGO_TARGET_MAX_GB', '100');
+  rmSync(gcMarkFile(dirname(target)));
+  vi.spyOn(budget, 'readVolumeSpaceAsync').mockResolvedValue([{ volume: '/', freeMb: 0 }]);
+  await runMaintenance('test');
+  expect(readMaintenanceState()?.plan.filter((action) => action.target === target)).toEqual([]);
+  expect(existsSync(join(target, 'debug', 'incremental', 'data'))).toBe(true);
+});
+
+test('acting forced critical leaves an unmarked under-cap running target whole', async () => {
+  vi.stubEnv('STIM_MAINTENANCE_CARGO_TARGET_MAX_GB', '100');
+  const root = dirname(target);
+  rmSync(gcMarkFile(root));
+  upsertProject(root, { supervisor: { pid: process.pid, port: 59998 } });
+  const run = await runMaintenanceAtLevel({ level: 'critical', act: true });
+  expect(existsSync(join(target, 'debug', 'incremental', 'data'))).toBe(true);
+  expect(run.actions.filter((action) => action.kind === 'trim-cargo' && action.outcome === 'done')).toEqual([]);
+});
+
+test('Cargo planning authorizes one batch and execution reads only its selected mark', async () => {
+  const first = dirname(target);
+  const other = join(base, 'other-cargo');
+  cpSync(first, other, { recursive: true });
+  upsertProject(other, { metroPort: null });
+  const config = loadConfig();
+  if (!config) throw new Error('missing fixture config');
+  await markWriter(config)({ path: other, at: Date.now(), lastActivityAt: null, kept: null });
+  const batch = vi.spyOn(marks, 'outputMarks');
+  const selected = vi.spyOn(marks, 'outputMark');
+  const plan = await planCargoTargetsAtPressure({
+    settings: resolveMaintenanceSettings(),
+    pinned: () => false,
+    now: Date.now(),
+    level: 'critical',
+  });
+  expect(plan.actions).toHaveLength(2);
+  expect(batch).toHaveBeenCalledTimes(1);
+  expect(selected).not.toHaveBeenCalled();
+  const action = plan.actions[0];
+  if (!action) throw new Error('missing pressure action');
+  await trimCargoTargetAction(action);
+  expect(batch).toHaveBeenCalledTimes(1);
+  expect(selected).toHaveBeenCalledExactlyOnceWith(config, dirname(action.target), undefined);
+});
+
+test('pressure plans retain their local mark proof and keep a copied or superseded action', async () => {
+  const plan = await planCargoTargetsAtPressure({
+    settings: resolveMaintenanceSettings(),
+    pinned: () => false,
+    now: Date.now(),
+    level: 'critical',
+  });
+  const action = plan.actions[0];
+  if (!action) throw new Error('missing pressure plan');
+  expect(await trimCargoTargetAction(structuredClone(action))).toMatchObject({
+    status: 'kept',
+    detail: 'its pressure mark proof is no longer available',
+  });
+  const root = join(target, '..');
+  const config = loadConfig();
+  if (!config) throw new Error('missing fixture config');
+  await markWriter(config)({ path: root, at: Date.now() + 1_000, lastActivityAt: null, kept: null });
+  expect(await trimCargoTargetAction(action)).toMatchObject({
+    status: 'kept',
+    detail: 'its checkout is no longer in a workspace or discovery scope',
+  });
+  expect(existsSync(join(target, 'debug', 'incremental', 'data'))).toBe(true);
 });
 
 test('a target on a volume at high is planned for trimming from its structure, with no size and no walk', async () => {
