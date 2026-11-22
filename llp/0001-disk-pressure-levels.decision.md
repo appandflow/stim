@@ -386,6 +386,17 @@ an entry. Unsupported moves, including Windows and another filesystem, retain
 the existing in-place deletion; report-only caches remain untouched. No Cargo
 target or automatic pressure sweep uses this handoff.
 
+Doctor reports the oldest verified typed payload queued for more than 24 hours.
+It reuses the pending manifest inventory with bounded asynchronous metadata
+reads, without walking payloads, changing estimated pending totals or deleting
+anything. Diagnostics check regular manifests at most 64 KiB before opening;
+these are ordinary atomic typed records, not foreign concurrently rewritten
+files. Malformed, foreign, linked and missing evidence supplies no stale claim.
+A later deadline retains a previously verified stale payload with partial
+coverage. Caller cancellation still propagates. After rendering and recording
+its run, the doctor CLI uses the existing pending-read exit path so an unanswered
+native read cannot keep the command alive.
+
 This implements the lazy-free part of the cleanup redesign in #6025 and #6089.
 
 ## Queue ownership replaces the maintenance claim
