@@ -17,6 +17,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { diskUsageCacheFile, gcMarkFile, readGcMark, type DaemonLadderAction } from '@stim-cli/core/state';
 import * as idleModule from '../daemon/idle.ts';
+import * as marksModule from '../daemon/marks.ts';
 import { writeCacheFile } from '../cache-file.ts';
 import * as cacheFiles from '../cache-file.ts';
 import { REAL_BYTES_THRESHOLD } from '../daemon/dependencies.ts';
@@ -207,6 +208,53 @@ const gc = async (act = true) =>
 describe.skipIf(process.platform === 'win32')(
   'the dormant build-output step (skipped on win32, where Stim cannot list the running processes)',
   () => {
+    test('an empty normal candidate list reads no consumer marks', async () => {
+      const root = register(repo('recent-workspace'));
+      recordWorkspaceUse(root, new Date());
+      const inventory = vi.spyOn(marksModule, 'outputMarks');
+      const selected = vi.spyOn(marksModule, 'outputMark');
+      expect(await hourlyStep(false)).toEqual([]);
+      expect(readGcMark(root)).not.toBeNull();
+      expect(inventory).not.toHaveBeenCalled();
+      expect(selected).not.toHaveBeenCalled();
+    });
+
+    test.skipIf(process.getuid?.() === 0)(
+      'an inaccessible registration does not block healthy outputs or later dependency cleanup',
+      async () => {
+        saveConfig({
+          version: 2,
+          projects: {},
+          repos: {},
+          idle: { sourceDormantDays: 1 },
+          maintenance: { autoDiscover: false },
+        });
+        const healthy = register(repo('healthy'));
+        const inaccessible = register(repo(join('restricted', 'app')));
+        const modules = join(healthy, 'node_modules');
+        mkdirSync(join(modules, 'dep'), { recursive: true });
+        writeFileSync(join(modules, 'dep', 'index.js'), 'dependency');
+        idleFor(3, healthy, inaccessible);
+        writeCacheFile(diskUsageCacheFile(modules), {
+          path: modules,
+          measuredAt: new Date().toISOString(),
+          bytes: 2 * REAL_BYTES_THRESHOLD,
+          privateBytes: 2 * REAL_BYTES_THRESHOLD,
+          signature: treeSignature(modules),
+        });
+        const parent = join(base, 'restricted');
+        chmodSync(parent, 0);
+        try {
+          expect(await hourlyStep(true)).toContainEqual(expect.objectContaining({ target: healthy, outcome: 'done' }));
+          expect(existsSync(join(healthy, BUILD))).toBe(false);
+          expect(existsSync(modules)).toBe(false);
+        } finally {
+          chmodSync(parent, 0o755);
+        }
+        expect(existsSync(join(inaccessible, BUILD, 'app.apk'))).toBe(true);
+      },
+    );
+
     test('the normal producer marks missing and due outputs before its saved selection', async () => {
       const root = register(repo('marked-first'));
       idleFor(3, root);
@@ -363,6 +411,94 @@ describe.skipIf(process.platform === 'win32')(
         expect(existsSync(join(workspaceDir(root), 'derived-data'))).toBe(true);
       },
     );
+
+    test.each(['expired', 'dirty', 'device'])(
+      'current %s mark changes after measurement keep the saved output',
+      async (change) => {
+        const root = register(repo('changed-generation'));
+        idleFor(3, root);
+        await hourlyStep(false);
+        const measureDirectory = fsUtil.measureDirectoryAsync;
+        let changed = false;
+        vi.spyOn(fsUtil, 'measureDirectoryAsync').mockImplementation(async (...args) => {
+          const size = await measureDirectory(...args);
+          if (!changed) {
+            changed = true;
+            if (change === 'expired') vi.setSystemTime(Date.now() + 2 * DAY_MS);
+            else {
+              const mark = readGcMark(root);
+              if (!mark) throw new Error('fixture mark missing');
+              if (change === 'dirty') {
+                vi.setSystemTime(Date.now() + 20 * 60_000);
+                mark.dirtyAt = new Date().toISOString();
+              } else {
+                const output = mark.candidates.find((candidate) => candidate.path === join(root, BUILD));
+                if (!output) throw new Error('fixture output missing');
+                output.device++;
+              }
+              writeFileSync(gcMarkFile(root), JSON.stringify(mark));
+            }
+          }
+          return size;
+        });
+        const actions = await hourlyStep(true);
+        expect(changed).toBe(true);
+        expect(actions).not.toContainEqual(expect.objectContaining({ outcome: 'failed' }));
+        expect(existsSync(join(root, BUILD, 'app.apk'))).toBe(true);
+      },
+    );
+
+    test('a queued hard-floor pass runs before the next selected checkout mark is read', async () => {
+      const first = register(repo('first'));
+      const second = register(repo('second'));
+      idleFor(3, first, second);
+      const order: string[] = [];
+      const seen = new Set<string>();
+      let enter = () => {};
+      let finish = () => {};
+      const entered = new Promise<void>((resolve) => {
+        enter = resolve;
+      });
+      const finished = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      const selected = marksModule.outputMark;
+      const inventory = vi.spyOn(marksModule, 'outputMarks');
+      vi.spyOn(marksModule, 'outputMark').mockImplementation(async (config, root, operation) => {
+        if (!seen.has(root)) {
+          seen.add(root);
+          order.push(root);
+          if (seen.size === 1) {
+            enter();
+            await finished;
+          }
+        }
+        return selected(config, root, operation);
+      });
+      vi.spyOn(ladderModule, 'runLadder').mockImplementation(async (_input, pressure) => {
+        order.push('pass');
+        return { actions: [], pressure };
+      });
+      const normal = hourlyStep(true);
+      await entered;
+      const urgent = runDiskPass(
+        {
+          act: true,
+          pressure: { level: 'critical', disk: 'critical', memory: 'normal', reasons: [], memoryWarningSince: null },
+          devices: [],
+          sims: [],
+          requested: true,
+        },
+        () => {},
+        testContext(),
+      );
+      finish();
+      await Promise.all([normal, urgent]);
+      expect(order).toEqual(order[0] === first ? [first, 'pass', second] : [second, 'pass', first]);
+      expect(inventory).not.toHaveBeenCalled();
+      expect(existsSync(join(first, BUILD))).toBe(false);
+      expect(existsSync(join(second, BUILD))).toBe(false);
+    });
 
     test('cancelling dormant output removal keeps the tree and uses normal low-I/O priority', async () => {
       saveConfig({ version: 2, projects: {}, repos: {}, idle: { sourceDormantDays: 1 } });

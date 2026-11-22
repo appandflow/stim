@@ -39,7 +39,7 @@ type Input = Pick<IdlePassInput, 'act' | 'log'> & {
   operation?: StimContext;
   force?: boolean;
   throttleOutputs?: boolean;
-  outputMarks?: ReadonlyMap<string, GcMark>;
+  marks?: true;
   /** Runs before each size walk and each removal, outside the workspace's claims: a unit boundary of the disk owner. */
   between?: () => Promise<void>;
 };
@@ -77,7 +77,9 @@ export async function reduceDormantOutputs(
   for (const candidate of candidates) {
     let result: Result | null;
     try {
-      result = await reduceWorkspace(candidate, config, afterMs, input, reads);
+      await input.between?.();
+      const mark = input.marks ? await selectedOutputMark(candidate.path, operation) : undefined;
+      result = await reduceWorkspace(candidate, config, afterMs, input, reads, mark);
     } catch (error) {
       if (isClaimUnavailable(error) || (error instanceof Error && 'reportCleanup' in error)) throw error;
       operation?.signal.throwIfAborted();
@@ -121,16 +123,14 @@ async function reduceWorkspace(
   afterMs: number,
   input: Input,
   reads: DiscoveredReads,
+  mark: GcMark | null | undefined,
 ): Promise<Result | null> {
   const { path } = candidate;
   const { operation } = input;
   const signal = operation?.signal;
-  if (input.outputMarks) {
+  if (input.marks) {
     try {
-      const root = await answered(path, () => realpathAsync(path), 3_000, signal);
-      const outputs = input.outputMarks
-        .get(root)
-        ?.candidates.some((entry) => entry.kind === 'outputs' && entry.path !== metroStoreRoot(path));
+      const outputs = mark?.candidates.some((entry) => entry.kind === 'outputs' && entry.path !== metroStoreRoot(path));
       if (!outputs && !(await cargoTargetDirsAsync(path, signal)).length) return null;
     } catch (error) {
       if (isClaimUnavailable(error) || (error instanceof Error && 'reportCleanup' in error)) throw error;
@@ -139,7 +139,7 @@ async function reduceWorkspace(
     }
   }
   if (
-    !input.outputMarks &&
+    !input.marks &&
     !workspaceOutputPaths(workspaceDir(path)).length &&
     !(await existingBuildDirsAsync(path)).length &&
     !(await cargoTargetDirsAsync(path)).length
@@ -152,7 +152,7 @@ async function reduceWorkspace(
   if (lock) return keep(lockReason(lock));
   const verdict = await sourceCheckoutIdle(path, afterMs, SETTING, { operation, reads, checkout });
   if ('kept' in verdict) return keep(verdict.kept);
-  const plan = await eligible(candidate, config, afterMs, input);
+  const plan = await eligible(candidate, config, afterMs, input, mark);
   if (!plan.paths.length) return plan.keptTarget ? keep(plan.kept.join('; ')) : null;
   const measure = input.act || input.force === true;
   const sizeOf = async (dir: string) => {
@@ -224,6 +224,19 @@ function gitOptions(operation: StimContext | undefined) {
   return { env: operation?.env, signal: operation?.signal, declareFor: operation };
 }
 
+async function selectedOutputMark(path: string, operation?: StimContext): Promise<GcMark | null> {
+  try {
+    const current = loadConfig();
+    if (!current) return null;
+    const root = await answered(path, () => realpathAsync(path), 3_000, operation?.signal);
+    return await outputMark(current, root, operation);
+  } catch (error) {
+    if (isClaimUnavailable(error) || (error instanceof Error && 'reportCleanup' in error)) throw error;
+    operation?.signal.throwIfAborted();
+    return null;
+  }
+}
+
 async function markedIdentityProblem(
   path: string,
   output: string,
@@ -251,6 +264,7 @@ async function savedOutputs(
   path: string,
   config: Config,
   input: Input,
+  mark: GcMark | null | undefined,
 ): Promise<{ paths: string[]; targets: string[]; kept: string[]; mark?: GcMark }> {
   const result: { paths: string[]; targets: string[]; kept: string[]; mark?: GcMark } = {
     paths: [],
@@ -259,8 +273,6 @@ async function savedOutputs(
   };
   const { operation } = input;
   try {
-    const root = await answered(path, () => realpathAsync(path), 3_000, operation?.signal);
-    const mark = input.outputMarks?.get(root);
     if (!mark || markDue(mark, Date.now(), dormantAfterMs(config, operation?.env))) {
       result.kept.push('kept non-Cargo outputs: their normal mark is missing or due');
       return result;
@@ -288,10 +300,16 @@ async function savedOutputs(
  * allow, among them every recognised Cargo `target/`, which stays while it shows use within `afterMs`
  * (`recentTargetUse`).
  */
-async function eligible(candidate: StageCandidate, config: Config, afterMs: number, input: Input): Promise<Plan> {
+async function eligible(
+  candidate: StageCandidate,
+  config: Config,
+  afterMs: number,
+  input: Input,
+  mark: GcMark | null | undefined,
+): Promise<Plan> {
   const store = metroStoreRoot(candidate.path);
-  const outputs: { paths: string[]; targets: string[]; kept: string[]; mark?: GcMark } = input.outputMarks
-    ? await savedOutputs(candidate.path, config, input)
+  const outputs: { paths: string[]; targets: string[]; kept: string[]; mark?: GcMark } = input.marks
+    ? await savedOutputs(candidate.path, config, input, mark)
     : await idleOutputs(candidate.path, config, (output) => output !== store);
   const kept = outputs.kept.filter((reason) => !reason.includes(store));
   const plan: Plan = { paths: [], removable: new Map(), targets: new Set(), kept, keptTarget: false };
@@ -299,7 +317,7 @@ async function eligible(candidate: StageCandidate, config: Config, afterMs: numb
   const targets = [...outputs.targets];
   // @ref LLP 0005#the-dormant-reduction-deletes-an-idle-target-whole -- untagged too, never build output
   for (const dir of await cargoTargetDirsAsync(candidate.path)) {
-    if (!input.outputMarks && isBuildDirPath(dir)) continue;
+    if (!input.marks && isBuildDirPath(dir)) continue;
     const problem = await regenerableDirProblem(candidate.path, dir, undefined);
     if (problem) {
       plan.kept.push(`kept ${dir}: ${problem}`);
@@ -382,8 +400,10 @@ async function removeOutput(
                 const allowed = current && (await outputMark(current, mark.root, operation));
                 if (!allowed?.candidates.some((entry) => entry.kind === 'outputs' && entry.path === output))
                   return 'the saved output is no longer in the current cleanup scope';
-                const expected = mark.candidates.find((entry) => entry.kind === 'outputs' && entry.path === output);
-                const changed = await markedIdentityProblem(path, output, mark, expected, operation);
+                if (markDue(allowed, Date.now(), dormantAfterMs(current, operation?.env)))
+                  return 'the normal output mark became due before deletion';
+                const expected = allowed.candidates.find((entry) => entry.kind === 'outputs' && entry.path === output);
+                const changed = await markedIdentityProblem(path, output, allowed, expected, operation);
                 if (changed) return changed;
               } catch (error) {
                 if (isClaimUnavailable(error) || (error instanceof Error && 'reportCleanup' in error)) throw error;

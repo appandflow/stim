@@ -547,9 +547,13 @@ also holds the newest activity the walk read, and the walk reads at
 - The automatic normal dormant pass uses its due-refreshed marks for
   non-Cargo build-output candidates instead of enumerating those outputs
   again. Missing, due or uncertain saved evidence keeps that family's outputs.
+  Only selected checkouts read marks, at their disk-turn boundaries; an
+  inaccessible unrelated registration does not stop healthy normal work.
   Current root and output identities/devices, scope, recognition and Git
   protections are checked before measurement and under the existing native-run
   and metro-start claims, together with the full current idle/pin/use checks.
+  The current mark's due state and candidate device are checked again there,
+  including after measurement or a yield.
   A saved path whose recognition changed stays without finding a replacement.
   The shared normal checkout/dependency inventory, normal Cargo discovery and
   policy, whole-worktree removal and explicit discovery previews are unchanged.
