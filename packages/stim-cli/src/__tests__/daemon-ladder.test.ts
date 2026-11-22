@@ -1470,21 +1470,26 @@ describe('the pressure ladder', () => {
         mkdirSync(root, { recursive: true });
         writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
       }
-      execFileSync('git', ['-C', known, 'init', '-q', '-b', 'main']);
-      execFileSync('git', [
-        '-C',
-        known,
-        '-c',
-        'user.name=t',
-        '-c',
-        'user.email=t@t',
-        'commit',
-        '-q',
-        '--allow-empty',
-        '-m',
-        'init',
-      ]);
-      mkdirSync(join(saved, 'android', 'app', 'build'), { recursive: true });
+      writeFileSync(join(saved, '.gitignore'), 'android/app/build/\n');
+      for (const root of [known, saved]) {
+        execFileSync('git', ['-C', root, 'init', '-q', '-b', 'main']);
+        execFileSync('git', [
+          '-C',
+          root,
+          '-c',
+          'user.name=t',
+          '-c',
+          'user.email=t@t',
+          'commit',
+          '-q',
+          '--allow-empty',
+          '-m',
+          'init',
+        ]);
+      }
+      const output = join(saved, 'android', 'app', 'build');
+      mkdirSync(output, { recursive: true });
+      writeFileSync(join(output, 'app.bin'), 'regenerable build artifact');
       const native = await nativeRealpath(saved);
       if (saved === native) context.skip();
       const config = { projects: { [known]: {} }, repos: {}, maintenance: { autoDiscover: true } };
@@ -1492,6 +1497,7 @@ describe('the pressure ladder', () => {
       await marks.markWriter(config)({ path: saved, at: Date.now(), lastActivityAt: null, kept: null });
 
       expect((await marks.outputMarks(config, testContext())).map(({ root }) => root)).toEqual([saved]);
+      expect(readGcMark(saved)?.candidates).toContainEqual(expect.objectContaining({ kind: 'outputs', path: output }));
       expect(saved).not.toBe(native);
       let handoffs = 0;
       const { actions } = await runLadder(
