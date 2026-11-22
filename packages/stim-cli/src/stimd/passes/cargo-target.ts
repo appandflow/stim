@@ -29,6 +29,7 @@ import {
   trimCargoTarget,
 } from '../../workspace/cargo-target.ts';
 import type { ActionOutcome } from './act.ts';
+import type { FirstFreeObserver } from '../../daemon/pacer.ts';
 import type { MaintenancePlan } from './plan.ts';
 import { outputMarks, outputMark, keepMarkCandidate } from '../../daemon/marks.ts';
 import { answered } from '../../workspace/bounded-read.ts';
@@ -469,6 +470,7 @@ export async function trimCargoTargetAction(
   lowPriority = false,
   stop?: AbortSignal,
   protectedRoot = '',
+  firstFree?: FirstFreeObserver,
 ): Promise<ActionOutcome> {
   const saved = pressureMarks.get(action);
   if (saved) triedAt.set(action.target, Date.now());
@@ -513,6 +515,8 @@ export async function trimCargoTargetAction(
     const after = before ? await targetVolume(action.target, operation?.signal) : null;
     const freed = after && after.device === before?.device ? after.freeMb - (before?.freeMb ?? 0) : 0;
     result.bytes = result.removed.length && freed > 0 ? Math.round(freed * 1024 * 1024) : 0;
+    if (result.removed.length && freed > 0 && after && firstFree?.pending(after.device))
+      firstFree.observed(after.device, Date.now());
   }
   const detail = `${result.removed.length ? `removed ${result.removed.join(', ')}` : 'removed nothing'}${result.kept.length ? `; kept ${result.kept.join('; ')}` : ''}${result.reserveReleased ? `; ${RESERVE_RELEASED}` : ''}`;
   return result.removed.length
