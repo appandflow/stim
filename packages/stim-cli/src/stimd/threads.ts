@@ -1,6 +1,8 @@
 import type { StimContext } from '@stim-cli/core';
 import { isMainThread, parentPort, Worker, workerData } from 'node:worker_threads';
 import type { Config } from '../workspace/config.ts';
+import type { MarkRefreshInput } from '../daemon/mark-refresh.ts';
+import type { HolderMarkScope } from '../daemon/marks.ts';
 import type { HistoryRoot } from '../fsevents-helper.ts';
 import type { CleanupQueueStatus, DaemonLadderAction, BuildEndMarker, GcMarkHealth } from '@stim-cli/core/state';
 import type {
@@ -34,7 +36,9 @@ import { dirtyGcMarks } from '../fsevents-state.ts';
 type DirtyRequest = { dirty: { roots: readonly string[]; at: number } };
 type DirtyReply = { dirty: true };
 type HistoryRequest = { history: Config };
-type HistoryReply = { roots: HistoryRoot[] | null; marks: GcMarkHealth };
+type HistoryReply = { roots: HistoryRoot[] | null; marks: GcMarkHealth; holders?: HolderMarkScope[] };
+type MarkRefreshRequest = { marks: MarkRefreshInput };
+type MarkRefreshReply = { marks: true };
 
 type ThreadName = 'passes' | 'measure';
 type PassesInput = Omit<Parameters<MaintenanceLane['start']>[0], 'operation'> & { act: boolean; cwd: string };
@@ -87,7 +91,8 @@ type FromThread =
         | HeadroomReply
         | TrashDrainReply
         | DirtyReply
-        | HistoryReply;
+        | HistoryReply
+        | MarkRefreshReply;
       failure?: Failure;
     }
   | { type: 'gcAction'; id: number; action: LevelRunAction }
@@ -116,7 +121,8 @@ interface Thread {
           | HeadroomReply
           | TrashDrainReply
           | DirtyReply
-          | HistoryReply,
+          | HistoryReply
+          | MarkRefreshReply,
       ) => void;
       reject: (error: Error) => void;
     }
@@ -128,6 +134,7 @@ interface Thread {
 }
 
 export interface ThreadTable {
+  marks(input: MarkRefreshInput): { result: Promise<MarkRefreshReply>; leave(): void };
   drainTrash(critical: boolean): Promise<void>;
   /** Runs one job on the named thread, starting the thread first when it is not running. One job per thread at a time. */
   run(name: ThreadName, input: ThreadInput): Promise<DaemonLadderAction[]>;
@@ -298,7 +305,15 @@ export function createThreadTable(
     return thread;
   };
   const ask = <
-    T extends DiskPassResult | GcPassReply | GcItemResult | HeadroomReply | TrashDrainReply | DirtyReply | HistoryReply,
+    T extends
+      | DiskPassResult
+      | GcPassReply
+      | GcItemResult
+      | HeadroomReply
+      | TrashDrainReply
+      | DirtyReply
+      | HistoryReply
+      | MarkRefreshReply,
   >(
     type: 'ladder' | 'gc',
     input: object,
@@ -319,7 +334,8 @@ export function createThreadTable(
             | HeadroomReply
             | TrashDrainReply
             | DirtyReply
-            | HistoryReply,
+            | HistoryReply
+            | MarkRefreshReply,
         ) => void,
         reject,
       });
@@ -337,6 +353,15 @@ export function createThreadTable(
     return { thread, id, result };
   };
   return {
+    marks(input) {
+      const { thread, id, result } = ask<MarkRefreshReply>('gc', { marks: input, cwd: process.cwd() });
+      return {
+        result,
+        leave: () => {
+          if (thread.ladders.has(id)) thread.worker.postMessage({ type: 'gcLeave', id });
+        },
+      };
+    },
     drainTrash(critical) {
       return ask<TrashDrainReply>('gc', { trash: true, critical, cwd: process.cwd() }).result.then(() => undefined);
     },
@@ -493,8 +518,9 @@ else if (thread && parentPort) {
     | (HeadroomRequest & { act: boolean })
     | TrashDrainInput
     | DirtyRequest
-    | HistoryRequest,
-    GcPassReply | GcItemResult | HeadroomReply | TrashDrainReply | DirtyReply | HistoryReply
+    | HistoryRequest
+    | MarkRefreshRequest,
+    GcPassReply | GcItemResult | HeadroomReply | TrashDrainReply | DirtyReply | HistoryReply | MarkRefreshReply
   >(
     port,
     processContext,
@@ -553,6 +579,16 @@ else if (thread && parentPort) {
           },
           input.critical ? CRITICAL : TRASH,
         );
+      if ('marks' in input) {
+        const controller = new AbortController();
+        const operation = open(controller.signal);
+        return {
+          result: import('../daemon/mark-refresh.ts')
+            .then(({ refreshKnownMarks }) => refreshKnownMarks(input.marks, operation, log))
+            .then((): MarkRefreshReply => ({ marks: true })),
+          leave: () => controller.abort(),
+        };
+      }
       if ('history' in input) {
         const controller = new AbortController();
         const operation = open(controller.signal);

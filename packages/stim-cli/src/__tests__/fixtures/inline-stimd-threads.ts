@@ -6,6 +6,7 @@ import { LADDER, requestGcPass, requestGcItem } from '../../daemon/disk-owner.ts
 import { runGcPass } from '../../commands/gc.ts';
 import { runGcItem } from '../../stimd/gc-item.ts';
 import { dirtyGcMarks } from '../../fsevents-state.ts';
+import { refreshKnownMarks } from '../../daemon/mark-refresh.ts';
 import { readMarkHealth } from '../../daemon/mark-health.ts';
 
 type Log = Parameters<typeof createMaintenanceLane>[0];
@@ -14,6 +15,16 @@ type Log = Parameters<typeof createMaintenanceLane>[0];
 export function createThreadTable(): ThreadTable {
   const controller = new AbortController();
   return {
+    marks(input) {
+      const stop = new AbortController();
+      return {
+        result: refreshKnownMarks(
+          input,
+          processContext(process.cwd(), AbortSignal.any([stop.signal, controller.signal])),
+        ).then(() => ({ marks: true as const })),
+        leave: () => stop.abort(),
+      };
+    },
     drainTrash: async () => {},
     async run() {
       await measureDependencyTrees(processContext(process.cwd(), controller.signal)).catch((error: unknown) => {
