@@ -222,7 +222,9 @@ async function authorizedMarks(config: Config, marks: GcMark[], operation?: Stim
       .filter(
         (mark) =>
           !allowed.has(mark.root) &&
-          (mark.dependencies !== undefined || mark.candidates.some(({ kind }) => kind === 'cargo-target')),
+          (mark.dependencies !== undefined ||
+            mark.worktree !== undefined ||
+            mark.candidates.some(({ kind }) => kind === 'cargo-target')),
       )
       .map(({ root }) => root),
     operation,

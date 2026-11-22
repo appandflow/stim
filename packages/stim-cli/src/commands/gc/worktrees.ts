@@ -253,13 +253,14 @@ export async function agentSessionUse(
   paths: readonly string[],
   now: number,
   signal?: AbortSignal,
+  operation?: StimContext,
 ): Promise<string[][]> {
   signal?.throwIfAborted();
   const workspaces = paths.map((path) => {
     const canonical = canonicalPath(path);
     return { path: canonical, root: canonical, recorded: null };
   });
-  const sessions = await discoverAgentSessions({ now });
+  const sessions = await discoverAgentSessions({ now, ...(operation ? { operation } : {}) });
   signal?.throwIfAborted();
   return attributeAgentSessions(workspaces, sessions, now).map((found) =>
     found.map((session) => `an agent session (${agentKey(session)}) is working in it`),
@@ -772,14 +773,18 @@ export async function savedWorktreeUse(
     roots.map(({ path }) => path),
     Date.now(),
     operation?.signal,
+    operation,
   );
-  return Promise.all(
+  const checked = await Promise.allSettled(
     roots.map(async ({ path, keys }, i) => [
       ...stimCliUseOf(path, canonicalPath, stimCliEntries(operation?.env)),
       ...(await inUseOf(keys, { managedLocks: true }, devices, operation?.signal, operation)),
       ...(agents[i] ?? []),
     ]),
   );
+  const failure = checked.find((result) => result.status === 'rejected');
+  if (failure?.status === 'rejected') throw failure.reason;
+  return checked.flatMap((result) => (result.status === 'fulfilled' ? [result.value] : []));
 }
 
 /** Rechecks one saved, currently authorized worktree without discovering candidates or fetching repository state. */

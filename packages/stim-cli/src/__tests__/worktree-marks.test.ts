@@ -324,3 +324,100 @@ test('malformed optional worktree evidence leaves the existing output mark reada
   writeFileSync(gcMarkFile(linked), JSON.stringify({ ...mark, worktree: { ...mark.worktree, clean: 'unknown' } }));
   expect(readGcMark(linked)).toEqual({ ...mark, worktree: undefined });
 });
+
+test('a registered nested app authorizes its worktree-only saved Git-holder evidence', async () => {
+  const app = join(linked, 'apps', 'mobile');
+  mkdirSync(app, { recursive: true });
+  writeFileSync(join(app, 'package.json'), '{}');
+  finished();
+  config.projects = { [app]: {} };
+  saveConfig(config);
+  recordWorkspaceUse(app, new Date(Date.now() - 10 * day));
+  await observe();
+  const mark = readGcMark(linked);
+  expect(mark?.dependencies).toBeUndefined();
+  expect(mark?.candidates.some(({ kind }) => kind === 'cargo-target')).toBe(false);
+  expect(mark?.worktree?.clean).toBe(true);
+  const rows = await savedWorktreeReports(config, reading(), 'critical', false);
+  expect(rows).toContainEqual(
+    expect.objectContaining({ target: linked, detail: expect.stringContaining('report only:') }),
+  );
+}, 20_000);
+
+test.each(['dirty', 'expired'])(
+  '%s worktree evidence reports uncertainty before its saved blocker',
+  async (change) => {
+    finished();
+    git(source, 'worktree', 'lock', linked);
+    await observe();
+    const mark = readGcMark(linked);
+    if (!mark?.worktree) throw new Error('fixture observation missing');
+    expect(mark.worktree.keep?.reason).toContain('locked');
+    git(source, 'worktree', 'unlock', linked);
+    if (change === 'dirty') mark.dirtyAt = new Date(Date.now() + 1).toISOString();
+    else mark.worktree.markedAt = new Date(Date.now() - 2 * day).toISOString();
+    writeFileSync(gcMarkFile(linked), JSON.stringify(mark));
+    expect((await savedWorktreeReports(config, reading(), 'critical', false))[0]?.detail).toContain('due or dirty');
+  },
+  20_000,
+);
+
+test.each([false, true])(
+  'the shared report deadline keeps evidence and awaits cleanup (refusal %s)',
+  async (refuse) => {
+    finished();
+    await observe();
+    config.projects[linked] = { platforms: { ios: { owned: true, deviceUdid: 'U1', deviceName: 'stim-test' } } };
+    saveConfig(config);
+    const before = readFileSync(gcMarkFile(linked), 'utf8');
+    const failure = Object.assign(new Error('controlled cleanup refusal'), {
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      reportCleanup: true,
+    });
+    const cleanup = new AbortController();
+    let settled = false;
+    let enter = () => {};
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    const agents = vi.spyOn(agentSessions, 'discoverAgentSessions');
+    vi.spyOn(iosDevices, 'listAllIosSimsAsync').mockImplementation(async (options) => {
+      enter();
+      await new Promise<void>((_resolve, reject) =>
+        options?.signal?.addEventListener(
+          'abort',
+          () => {
+            settled = true;
+            reject(refuse ? failure : options.signal?.reason);
+          },
+          { once: true },
+        ),
+      );
+      return [];
+    });
+    const pending = savedWorktreeReports(
+      config,
+      { ...reading(), operation: testContext({ signal: cleanup.signal }) },
+      'critical',
+      false,
+    );
+    const result = pending.then(
+      (rows) => ({ rows, error: null }),
+      (error: unknown) => ({ rows: null, error }),
+    );
+    try {
+      await entered;
+      await vi.advanceTimersByTimeAsync(3000);
+      const observed = await result;
+      expect(observed.error).toBe(refuse ? failure : null);
+      expect(observed.rows?.[0]?.detail).toBe(refuse ? undefined : 'current device or agent use is unknown; it stays');
+      expect(settled).toBe(true);
+      expect(agents).not.toHaveBeenCalled();
+      expect(readFileSync(gcMarkFile(linked), 'utf8')).toBe(before);
+    } finally {
+      cleanup.abort();
+      await result;
+    }
+  },
+  20_000,
+);

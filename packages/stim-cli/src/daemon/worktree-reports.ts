@@ -88,13 +88,11 @@ export async function savedWorktreeReports(
       rows.push({ target: mark.root, detail: 'worktree inventory is unknown; its normal producer may be disabled' });
       continue;
     }
-    let keep = savedPolicyKeep(observation, level, idle, thresholds);
-    if (
-      !keep &&
-      (Date.parse(mark.dirtyAt ?? '') > Date.parse(observation.markedAt) ||
-        worktreeMarkDue(mark, Date.now(), dormantAfterMs(config, reading.operation?.env)))
-    )
-      keep = 'the worktree observation is due or dirty; current eligibility is unknown';
+    let keep =
+      Date.parse(mark.dirtyAt ?? '') > Date.parse(observation.markedAt) ||
+      worktreeMarkDue(mark, Date.now(), dormantAfterMs(config, reading.operation?.env))
+        ? 'the worktree observation is due or dirty; current eligibility is unknown'
+        : savedPolicyKeep(observation, level, idle, thresholds);
     if (keep) {
       rows.push({ target: mark.root, detail: keep });
       continue;
@@ -147,20 +145,22 @@ export async function savedWorktreeReports(
     }
   }
   let uses: string[][];
-  const first = selected[0];
+  const inventoryDeadline = new AbortController();
+  const inventoryTimer = setTimeout(
+    () => inventoryDeadline.abort(new Unanswered('worktree inventory deadline')),
+    3_000,
+  );
+  const inventorySignal = reading.operation
+    ? AbortSignal.any([reading.operation.signal, inventoryDeadline.signal])
+    : inventoryDeadline.signal;
+  const inventoryOperation = reading.operation
+    ? { ...reading.operation, signal: inventorySignal }
+    : processContext(process.cwd(), inventorySignal);
   try {
-    uses = first
-      ? await answered(
-          first.mark.root,
-          () =>
-            savedWorktreeUse(
-              selected.map(({ mark, keys }) => ({ path: mark.root, keys })),
-              reading.operation,
-            ),
-          3_000,
-          reading.operation?.signal,
-        )
-      : [];
+    uses = await savedWorktreeUse(
+      selected.map(({ mark, keys }) => ({ path: mark.root, keys })),
+      inventoryOperation,
+    );
   } catch (error) {
     if (isClaimUnavailable(error) && 'reportCleanup' in error) throw error;
     reading.operation?.signal.throwIfAborted();
@@ -171,6 +171,8 @@ export async function savedWorktreeReports(
       })),
     );
     return rows;
+  } finally {
+    clearTimeout(inventoryTimer);
   }
   for (const [i, { mark, observation, root, keys }] of selected.entries()) {
     const deadline = new AbortController();
