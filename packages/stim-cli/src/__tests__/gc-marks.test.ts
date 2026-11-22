@@ -7,6 +7,7 @@ import {
   readdirSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs';
@@ -36,6 +37,7 @@ import type { OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { metroStoreRoot } from '../stimd/metro/metro-store.ts';
 import { saveConfig } from '../workspace/config.ts';
 import { workspaceDir } from '../workspace/paths.ts';
+import { recordWarmedFrom } from '../workspace/source-dependencies.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { readRunningProcessesAsync } from '../workspace/running-from.ts';
 import { treeSignature } from '../private-size.ts';
@@ -816,6 +818,167 @@ describe('gc marks written by the lane', () => {
               candidate.device++;
             }
             writeFileSync(gcMarkFile(root), JSON.stringify(mark));
+          }
+          return worktrees;
+        });
+
+        const actions = await runDormantDependencies({
+          config,
+          act: true,
+          marks: true,
+          log: () => {},
+          ...reading,
+          operation: testContext(),
+        });
+
+        expect(changed).toBe(true);
+        expect(actions).toContainEqual(
+          expect.objectContaining({ kind: 'delete-dependencies', target: modules, outcome: 'kept' }),
+        );
+        expect(actions.some(({ outcome }) => outcome === 'failed')).toBe(false);
+        expect(existsSync(join(modules, 'dependency.js'))).toBe(true);
+      },
+      20_000,
+    );
+  });
+
+  const normalSourceDependencies = async () => {
+    const root = checkout('normal-source-deps', 3 * day);
+    const modules = join(root, 'node_modules');
+    mkdirSync(modules);
+    writeFileSync(join(modules, 'dependency.js'), 'installed');
+    config.projects[root] = {};
+    config.idle = { dormantDays: 0, sourceDormantDays: 1 };
+    saveConfig(config);
+    recordWorkspaceUse(root, new Date(Date.now() - 3 * day));
+    const old = new Date(Date.now() - 3 * day);
+    const age = (path: string) => {
+      for (const entry of readdirSync(path, { withFileTypes: true })) {
+        const child = join(path, entry.name);
+        if (entry.isDirectory()) age(child);
+        utimesSync(child, old, old);
+      }
+      utimesSync(path, old, old);
+    };
+    age(roots);
+    await lane(true);
+    const cache = () => {
+      mkdirSync(dirname(diskUsageCacheFile(modules)), { recursive: true });
+      writeFileSync(
+        diskUsageCacheFile(modules),
+        JSON.stringify({
+          path: modules,
+          bytes: 1024 ** 3,
+          privateBytes: 1024 ** 3,
+          measuredAt: new Date().toISOString(),
+          signature: treeSignature(modules),
+        }),
+      );
+    };
+    return { root, modules, age, old, cache };
+  };
+
+  describe.skipIf(process.platform === 'win32')('normal source dependency selection', () => {
+    it('normal source dependencies select the saved paths and preserve a new unmarked tree', async () => {
+      const { root, modules, age, cache } = await normalSourceDependencies();
+      const before = readGcMark(root)?.dependencies;
+      expect(before).toMatchObject({ role: 'source', candidates: [expect.objectContaining({ path: modules })] });
+      const pods = join(root, 'ios', 'Pods');
+      mkdirSync(pods, { recursive: true });
+      writeFileSync(join(pods, 'new-pod'), 'new unmarked tree');
+      age(roots);
+      cache();
+      vi.mocked(stat).mockClear();
+
+      const actions = await runDormantDependencies({
+        config,
+        act: true,
+        marks: true,
+        log: () => {},
+        ...reading,
+        operation: testContext(),
+      });
+
+      expect(actions).toContainEqual(
+        expect.objectContaining({
+          kind: 'delete-dependencies',
+          target: modules,
+          outcome: 'done',
+          setting: 'idle.sourceDormantDays',
+        }),
+      );
+      expect(existsSync(modules)).toBe(false);
+      expect(existsSync(join(pods, 'new-pod'))).toBe(true);
+      expect(vi.mocked(stat).mock.calls.some(([path]) => String(path) === pods)).toBe(false);
+      expect(readGcMark(root)?.dependencies).toEqual(before);
+    }, 20_000);
+
+    it.each(['missing', 'due', 'failed-publication'] as const)(
+      'normal source dependencies publish a %s generation before selection',
+      async (mode) => {
+        const { root, modules, old, cache } = await normalSourceDependencies();
+        const mark = readGcMark(root);
+        if (!mark?.dependencies) throw new Error('fixture source observation missing');
+        if (mode === 'due') mark.dependencies.markedAt = old.toISOString();
+        else delete mark.dependencies;
+        writeFileSync(gcMarkFile(root), JSON.stringify(mark));
+        if (mode === 'failed-publication') vi.spyOn(cacheFiles, 'writeCacheFile').mockImplementation(() => {});
+        cache();
+
+        const actions = await runDormantDependencies({
+          config,
+          act: true,
+          marks: true,
+          log: () => {},
+          ...reading,
+          operation: testContext(),
+        });
+
+        expect(actions.some((action) => action.target === modules && action.outcome === 'done')).toBe(
+          mode !== 'failed-publication',
+        );
+        expect(existsSync(modules)).toBe(mode === 'failed-publication');
+        expect(readGcMark(root)?.dependencies?.markedAt).toBe(
+          mode === 'failed-publication' ? undefined : new Date().toISOString(),
+        );
+      },
+      20_000,
+    );
+
+    it.each(['warm', 'pin', 'sharing', 'setting'] as const)(
+      'normal source dependencies preserve current %s protection after selection',
+      async (change) => {
+        const { root, modules, age, cache } = await normalSourceDependencies();
+        cache();
+        const list = artifacts.artifactWorktreesFor;
+        let changed = false;
+        vi.spyOn(artifacts, 'artifactWorktreesFor').mockImplementation(async (operation) => {
+          const worktrees = await list(operation);
+          changed = true;
+          if (change === 'warm') recordWarmedFrom(root);
+          else if (change === 'pin')
+            writeFileSync(join(root, '.stim.json'), JSON.stringify({ maintenance: { keep: true } }));
+          else if (change === 'setting') {
+            config.idle = { dormantDays: 0, sourceDormantDays: 0 };
+            saveConfig(config);
+          } else {
+            const linked = join(roots, 'new-sharing-worktree');
+            execFileSync('git', [
+              '-C',
+              root,
+              '-c',
+              'maintenance.auto=false',
+              '-c',
+              'gc.auto=0',
+              'worktree',
+              'add',
+              '-q',
+              '-b',
+              'sharing',
+              linked,
+            ]);
+            symlinkSync(modules, join(linked, 'node_modules'), 'dir');
+            age(roots);
           }
           return worktrees;
         });

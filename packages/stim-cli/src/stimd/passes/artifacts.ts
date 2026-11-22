@@ -440,7 +440,7 @@ export async function collectArtifactsAsync(
     /** Dependencies of source checkouts, instead of those of linked worktrees. */
     source?: boolean;
     discovered?: readonly DiscoveredCheckout[];
-    /** Saved linked dependency paths; undefined requests a complete inventory for publication. */
+    /** Saved normal dependency paths; undefined requests a complete inventory for publication. */
     dependencyPaths?: (worktree: ArtifactWorktree) => Promise<readonly string[] | undefined>;
     onInventory?: (inventory: ArtifactInventory) => Promise<void>;
   },
@@ -459,7 +459,7 @@ export async function collectArtifactsAsync(
   const all = await artifactWorktreesAsync(signal, operation, options.discovered);
   for (const worktree of all) {
     if (kind === 'dependencies' && worktree.linked === Boolean(options.source)) continue;
-    const selected = kind === 'dependencies' && !options.source ? await options.dependencyPaths?.(worktree) : undefined;
+    const selected = kind === 'dependencies' ? await options.dependencyPaths?.(worktree) : undefined;
     const inventory: ArtifactInventory | null =
       options.onInventory && selected === undefined
         ? { worktree, at: Date.now(), candidates: [], complete: true }
