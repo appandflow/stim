@@ -32,6 +32,7 @@ const fsHooks = vi.hoisted(
     dev?: (path: string) => number | undefined;
     afterLstat?: (path: string) => void;
     beforeReaddir?: (path: string) => void;
+    beforeReaddirSync?: (path: string) => void;
     afterRecognise?: () => void;
   } => ({}),
 );
@@ -44,6 +45,18 @@ vi.mock('../workspace/regenerable-dirs.ts', async (importOriginal) => {
       fsHooks.afterRecognise?.();
       return found;
     },
+  };
+});
+vi.mock('node:fs', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...fs,
+    readdirSync: new Proxy(fs.readdirSync, {
+      apply: (readdir, self, args: unknown[]) => {
+        fsHooks.beforeReaddirSync?.(String(args[0]));
+        return Reflect.apply(readdir, self, args);
+      },
+    }),
   };
 });
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -68,6 +81,7 @@ afterEach(() => {
   delete fsHooks.dev;
   delete fsHooks.afterLstat;
   delete fsHooks.beforeReaddir;
+  delete fsHooks.beforeReaddirSync;
   delete fsHooks.afterRecognise;
   resetExecutor();
 });
@@ -348,6 +362,7 @@ describe.skipIf(process.platform === 'win32')('trimming in place (Cargo locks ne
     fsHooks.beforeReaddir = (path) => {
       if (path !== incremental) return;
       delete fsHooks.beforeReaddir;
+      delete fsHooks.beforeReaddirSync;
       rmSync(incremental, { recursive: true });
     };
 
@@ -749,6 +764,32 @@ describe.skipIf(process.platform === 'win32')(
       expect(result.bytes).toBeGreaterThan(0);
       expect(existsSync(join(dir, 'traces', 'trace-1.json'))).toBe(true);
       expect(await removablePaths(dir)).toMatchObject({ paths: expect.any(Array) });
+    });
+
+    test('an unreadable current staging listing keeps the target and never asks Exact', async () => {
+      const executor = getExecutor();
+      let inspected = false;
+      fsHooks.beforeReaddirSync = (path) => {
+        if (inspected && path === realpathSync(dir))
+          throw Object.assign(new Error('cannot list target'), { code: 'EACCES' });
+      };
+      setExecutor({
+        ...executor,
+        findExecutable: () => null,
+        runFileAsync: async (file, args, options) => {
+          const value = await executor.runFileAsync(file, args, options);
+          if (file === 'lsof') inspected = true;
+          return value;
+        },
+      });
+
+      const result = await remove();
+
+      expect(inspected).toBe(true);
+      expect(result.kept).toEqual([`${realpathSync(dir)} cannot be listed`]);
+      expect(result.removed).toEqual([]);
+      expect(calls).toEqual([]);
+      expect(existsSync(join(dir, 'bake', 'app', 'development', 'app.bin'))).toBe(true);
     });
 
     test.each([
