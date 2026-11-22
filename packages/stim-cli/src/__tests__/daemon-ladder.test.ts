@@ -1579,7 +1579,7 @@ describe('the pressure ladder', () => {
         pressure('critical'),
       );
       expect(handoffs).toBe(1);
-      expect(actions).toContainEqual(expect.objectContaining({ rung: 1, target: saved }));
+      expect(actions).toContainEqual(expect.objectContaining({ rung: 1, workspace: saved, target: output }));
     },
   );
 
