@@ -1,12 +1,21 @@
 import { existsSync } from 'node:fs';
-import { lstat, realpath } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { lstat, realpath, stat } from 'node:fs/promises';
+import { dirname, join, sep } from 'node:path';
+import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import type { StimContext } from '@stim-cli/core';
-import { loadConfig, type MaintenanceAction, type MaintenanceSize, type PressureLevel } from '@stim-cli/core/state';
+import {
+  loadConfig,
+  readGcMark,
+  type GcMark,
+  type GcMarkCandidate,
+  type MaintenanceAction,
+  type MaintenanceSize,
+  type PressureLevel,
+} from '@stim-cli/core/state';
 import { RESERVE_RELEASED } from '../../disk-reserve.ts';
 import { diskPressure, diskThresholds } from '../../daemon/pressure.ts';
 import { measuredDirectorySizeAsync } from '../../fs-util.ts';
-import { canonicalPath } from '../../commands/gc/paths.ts';
+import { canonicalPath, realpathAsync } from '../../commands/gc/paths.ts';
 import { listedRoots } from '../../commands/gc/worktrees.ts';
 import { discoverCheckouts } from '../../workspace/discovery.ts';
 import { cargoTargetDirsAsync, regenerableDirProblem } from '../../workspace/regenerable-dirs.ts';
@@ -20,6 +29,8 @@ import {
 } from '../../workspace/cargo-target.ts';
 import type { ActionOutcome } from './act.ts';
 import type { MaintenancePlan } from './plan.ts';
+import { outputMarks, outputMark } from '../../daemon/marks.ts';
+import { answered } from '../../workspace/bounded-read.ts';
 import { resolveMaintenanceSettings, type MaintenanceSettings } from './settings.ts';
 
 const GIB = 1024 ** 3;
@@ -304,6 +315,41 @@ export async function planCargoTargets({
   return plan;
 }
 
+const pressureMarks = new WeakMap<MaintenanceAction, { mark: GcMark; candidate: GcMarkCandidate }>();
+
+async function markedTargetCurrent(
+  mark: GcMark,
+  candidate: GcMarkCandidate,
+  operation?: StimContext,
+  reauthorize = false,
+): Promise<boolean> {
+  const config = loadConfig();
+  if (!config || candidate.kind !== 'cargo-target' || !candidate.path.startsWith(`${mark.root}${sep}`)) return false;
+  const current = readGcMark(mark.root);
+  if (current?.markedAt !== mark.markedAt) return false;
+  const base = dirname(candidate.path);
+  const parent = dirname(base);
+  const standard = base === mark.root || parent === join(mark.root, 'apps') || parent === join(mark.root, 'packages');
+  if (!standard && ![...Object.keys(config.projects), ...listedRoots()].some((root) => canonicalPath(root) === base))
+    return false;
+  try {
+    for (const [path, device] of [
+      [mark.root, mark.device],
+      [candidate.path, candidate.device],
+    ] as const) {
+      if ((await answered(path, () => realpathAsync(path), 3_000, operation?.signal)) !== path) return false;
+      if ((await answered(path, () => stat(path), 3_000, operation?.signal)).dev !== device) return false;
+    }
+    if (!reauthorize) return true;
+    const allowed = await outputMark(config, mark.root, operation);
+    return Boolean(allowed?.candidates.some((entry) => entry.kind === 'cargo-target' && entry.path === candidate.path));
+  } catch (error) {
+    if (isClaimUnavailable(error) && 'reportCleanup' in error) throw error;
+    operation?.signal.throwIfAborted();
+    return false;
+  }
+}
+
 export async function planCargoTargetsAtPressure({
   settings,
   pinned,
@@ -323,41 +369,53 @@ export async function planCargoTargetsAtPressure({
 }): Promise<MaintenancePlan> {
   const plan: MaintenancePlan = { actions: [], blocked: [], skips: [] };
   if (settings.cargoTargetMaxGb === 0) return plan;
-  const registered = Object.keys(loadConfig()?.projects ?? {});
-  const { measured } = selectCargoTargets(await cargoTargetCandidates(registered, operation), Infinity, now);
-  for (const { root: workspace, dir } of measured) {
-    signal?.throwIfAborted();
-    const tightened = level ?? (await diskLevel(dir, signal));
-    if (tightened === 'normal') continue;
-    const problem = await regenerableDirProblem(workspace, dir, signal, { processes: false });
-    if (problem) {
-      plan.skips.push({ target: dir, reason: problem, workspace });
-      continue;
+  const config = loadConfig();
+  const candidates = config ? await outputMarks(config, operation) : [];
+  const seen = new Set<string>();
+  for (const mark of candidates)
+    for (const candidate of mark.candidates) {
+      if (candidate.kind !== 'cargo-target' || seen.has(candidate.path)) continue;
+      seen.add(candidate.path);
+      const dir = candidate.path;
+      const workspace = dirname(dir);
+      if (!(await markedTargetCurrent(mark, candidate, operation))) {
+        plan.skips.push({ target: dir, workspace, reason: 'its saved Cargo target or current checkout scope changed' });
+        continue;
+      }
+      signal?.throwIfAborted();
+      const tightened = level ?? (await diskLevel(dir, signal));
+      if (tightened === 'normal') continue;
+      const problem = await regenerableDirProblem(workspace, dir, signal, { processes: false });
+      if (problem) {
+        plan.skips.push({ target: dir, reason: problem, workspace });
+        continue;
+      }
+      if (await pinned(workspace)) {
+        plan.skips.push({ target: dir, reason: 'pinned by maintenance.keep', workspace });
+        continue;
+      }
+      const stale = staleCargoTargetPaths(dir, now);
+      if ('refusal' in stale) {
+        plan.skips.push({ target: dir, reason: stale.refusal, workspace });
+        continue;
+      }
+      const gone = stale.paths.map((path) => join(dir, path));
+      const worth =
+        gone.length > 0 || profilesOutside(dir, gone).some((profile) => existsSync(join(profile, 'incremental')));
+      if (!worth) continue;
+      const action: MaintenanceAction = {
+        kind: 'would-clear-build-dirs',
+        target: dir,
+        workspace,
+        bytes: 0,
+        overBytes: 0,
+        ...(LEVELS[tightened] ? { level: LEVELS[tightened] } : {}),
+        olderThanDays: 1,
+        reason: `disk is at the ${tightened} level for ${dir}; trims the profiles unused for a day, then the incremental caches (all of them)`,
+      };
+      pressureMarks.set(action, { mark, candidate });
+      plan.actions.push(action);
     }
-    if (await pinned(workspace)) {
-      plan.skips.push({ target: dir, reason: 'pinned by maintenance.keep', workspace });
-      continue;
-    }
-    const stale = staleCargoTargetPaths(dir, now);
-    if ('refusal' in stale) {
-      plan.skips.push({ target: dir, reason: stale.refusal, workspace });
-      continue;
-    }
-    const gone = stale.paths.map((path) => join(dir, path));
-    const worth =
-      gone.length > 0 || profilesOutside(dir, gone).some((profile) => existsSync(join(profile, 'incremental')));
-    if (!worth) continue;
-    plan.actions.push({
-      kind: 'would-clear-build-dirs',
-      target: dir,
-      workspace,
-      bytes: 0,
-      overBytes: 0,
-      ...(LEVELS[tightened] ? { level: LEVELS[tightened] } : {}),
-      olderThanDays: 1,
-      reason: `disk is at the ${tightened} level for ${dir}; trims the profiles unused for a day, then the incremental caches (all of them)`,
-    });
-  }
   return plan;
 }
 
@@ -380,13 +438,28 @@ export async function trimCargoTargetAction(
   operation?: StimContext,
   lowPriority = false,
   stop?: AbortSignal,
+  protectedRoot = '',
 ): Promise<ActionOutcome> {
+  const saved = pressureMarks.get(action);
+  if (action.level !== undefined && action.bytes === 0 && action.overBytes === 0 && !saved)
+    return kept('its pressure mark proof is no longer available');
+  if (
+    saved &&
+    protectedRoot &&
+    (action.workspace === protectedRoot || action.target.startsWith(`${protectedRoot}${sep}`))
+  )
+    return kept('the command that started this pass runs in it');
   const root = action.workspace;
   if (!root || !(await cargoTargetDirsAsync(dirname(action.target))).includes(action.target))
     return kept('it is no longer a Cargo target/ Stim recognises');
   const admitted = await admitCargoTarget(action.target);
   if ('kept' in admitted) return kept(admitted.kept);
-  if (!(await managed(root, operation))) return kept('its checkout is no longer in a workspace or discovery scope');
+  if (
+    saved
+      ? !(await markedTargetCurrent(saved.mark, saved.candidate, operation, true))
+      : !(await managed(root, operation))
+  )
+    return kept('its checkout is no longer in a workspace or discovery scope');
   const problem = await regenerableDirProblem(root, action.target, operation?.signal, { processes: false });
   if (problem) return kept(problem);
   const measure = action.level === undefined;

@@ -13,6 +13,7 @@ import {
 } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { markWriter } from '../daemon/marks.ts';
 import { planCargoTargetsAtPressure } from '../stimd/passes/cargo-target.ts';
 import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
 import { clearDependency } from '../daemon/dependencies.ts';
@@ -25,7 +26,7 @@ import {
   collectArtifactsAsync,
 } from '../stimd/passes/artifacts.ts';
 import { stoppedOutputCandidates } from '../daemon/stages.ts';
-import { saveConfig } from '../workspace/config.ts';
+import { loadConfig, saveConfig } from '../workspace/config.ts';
 import { collectWorktreeSweep, removeWorktrees } from '../commands/gc/worktrees.ts';
 import { discoverCheckouts, discoveredOutside, unmanagedScanFinds } from '../workspace/discovery.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
@@ -384,6 +385,9 @@ describe('checkouts found through a tool folder or the full scan', () => {
     const dependencies = (await collectArtifactsAsync('dependencies', options, signal, testContext({ env: {} })))
       .candidates;
     expect(dependencies.map((entry) => entry.path)).toContain(join(codex, 'node_modules'));
+    const config = loadConfig();
+    if (!config) throw new Error('missing fixture config');
+    await markWriter(config)({ path: codex, at: Date.now(), lastActivityAt: null, kept: null });
     const plan = () =>
       planCargoTargetsAtPressure({
         settings: resolveMaintenanceSettings(),
