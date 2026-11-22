@@ -464,18 +464,22 @@ const normalRemove = async (plan: Awaited<ReturnType<typeof normalPlan>>) => {
 };
 
 describe('normal saved worktree reconciliation', () => {
-  test('publishes a missing generation before a current clean finished removal', async () => {
-    finished();
-    vi.setSystemTime(Date.now() + 2 * 3_600_000);
-    expect(readGcMark(linked)).toBeNull();
-    const plan = await normalPlan();
-    expect(readGcMark(linked)?.worktree).toMatchObject({
-      clean: true,
-      finished: { reason: 'merged into origin/main' },
-    });
-    expect((await normalRemove(plan)).status).toBe('done');
-    expect(existsSync(linked)).toBe(false);
-  }, 20_000);
+  test(
+    'publishes a missing generation before a current clean finished removal',
+    async () => {
+      finished();
+      vi.setSystemTime(Date.now() + 2 * 3_600_000);
+      expect(readGcMark(linked)).toBeNull();
+      const plan = await normalPlan();
+      expect(readGcMark(linked)?.worktree).toMatchObject({
+        clean: true,
+        finished: { reason: 'merged into origin/main' },
+      });
+      expect((await normalRemove(plan)).status).toBe('done');
+      expect(existsSync(linked)).toBe(false);
+    },
+    process.platform === 'win32' ? 60_000 : 20_000,
+  );
 
   test('keeps a clean finished removal when generation publication fails', async () => {
     finished();
