@@ -65,7 +65,10 @@ describe.skipIf(process.platform !== 'darwin')('FSEvents dirty feed', () => {
         return markedAt;
       };
       writeMark();
-      expect(await threads.history({ version: 2, projects: { [root]: {} }, repos: {} })).toEqual([{ root, device }]);
+      expect(await threads.history({ version: 2, projects: { [root]: {} }, repos: {} })).toMatchObject({
+        roots: [{ root, device }],
+        marks: { state: 'ready', checkedRoots: 1 },
+      });
       feed = startHistoryFeed({
         binary,
         sha256: released ? packaged.sha256 : createHash('sha256').update(readFileSync(binary)).digest('hex'),

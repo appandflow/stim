@@ -297,6 +297,7 @@
 [*] interface DaemonStatus { @@1 abnormalExits?: {
 [*] interface DaemonStatus { @@1 claim?: {
 [*] interface DaemonStatus { @@1 crashHold?: {
+[*] interface DaemonStatus { @@1 gcMarks?: GcMarkHealth;
 [*] interface DaemonStatus { @@1 intervalMs: number | null;
 [*] interface DaemonStatus { @@1 lastTickAt: string | null;
 [*] interface DaemonStatus { @@1 mode: DaemonMode;
@@ -531,6 +532,12 @@
 [*] interface GcJsonSections { @@3 state: "open" | "merged" | "closed";
 [*] interface GcJsonSections { @@3 url: string;
 [*] interface GcJsonSections { @@3 willEmpty: boolean;
+[*] interface GcMarkHealth {
+[*] interface GcMarkHealth { @@1 at: number;
+[*] interface GcMarkHealth { @@1 checkedRoots?: number;
+[*] interface GcMarkHealth { @@1 stale: GcStaleMarkEvidence[];
+[*] interface GcMarkHealth { @@1 staleCount?: number;
+[*] interface GcMarkHealth { @@1 state: "ready" | "partial" | "unavailable";
 [*] interface GcOptions {
 [*] interface GcOptions { @@1 dryRun?: boolean;
 [*] interface GcOptions { @@1 json?: boolean;
@@ -570,6 +577,10 @@
 [*] interface GcRunPayload { @@1 rescued?: RescuedCopy[];
 [*] interface GcRunPayload { @@1 results: GcResult[];
 [*] interface GcRunPayload { @@1 sections?: GcJsonSections;
+[*] interface GcStaleMarkEvidence {
+[*] interface GcStaleMarkEvidence { @@1 intervalMs: number;
+[*] interface GcStaleMarkEvidence { @@1 markedAt: string;
+[*] interface GcStaleMarkEvidence { @@1 root: string;
 [*] interface GradleVersionEntry {
 [*] interface GradleVersionEntry { @@1 bytes: number | null;
 [*] interface GradleVersionEntry { @@1 detail: string | null;

@@ -20,7 +20,7 @@ import {
 } from '../../commands/gc/workspaces.ts';
 import { reclaimKeys } from '../../commands/worktree.ts';
 import { loadConfig } from '../../workspace/config.ts';
-import { discoverCheckouts } from '../../workspace/discovery.ts';
+import { discoverCheckouts, type DiscoveredCheckout } from '../../workspace/discovery.ts';
 import { gitQuiet, gitQuietAsync } from '../../workspace/git.ts';
 import { childEnvironment } from '../../workspace/git-read.ts';
 import { withIdleWorkspace, workspaceInUse, workspaceInUseAsync } from '../../workspace/in-use.ts';
@@ -69,6 +69,8 @@ export interface ArtifactWorktree {
   linked: boolean;
   locked: boolean;
   keys: string[];
+  /** Recognized discovered apps whose current Git worktree is this holder. */
+  discoveredApps?: string[];
   /** Why a running agent session keeps the worktree, read when the worktrees were listed. */
   agents?: string[];
   reduceOnly: boolean;
@@ -83,6 +85,14 @@ export interface ArtifactCandidate {
   /** In a source checkout, whose dependencies no worktree warm restores. */
   source?: boolean;
   reduceOnly: boolean;
+}
+
+/** One holder's normal inventory, before idle eligibility removes its younger dependency trees. */
+export interface ArtifactInventory {
+  worktree: ArtifactWorktree;
+  at: number;
+  candidates: { candidate: ArtifactCandidate; keep: string | null }[];
+  complete: boolean;
 }
 
 function isDirectory(path: string): boolean {
@@ -146,10 +156,12 @@ export function artifactWorktreesFor(
 export async function artifactCheckoutsAsync(
   signal: AbortSignal,
   operation?: StimContext,
+  supplied?: readonly DiscoveredCheckout[],
 ): Promise<ArtifactWorktree[]> {
   const found = new Map<string, ArtifactWorktree>();
-  const discovered = await discoverCheckouts(loadConfig(), listedRoots(), operation);
-  const known = new Set([...listedRoots(), ...discovered.map(({ path }) => path)]);
+  const discovered = supplied ?? (await discoverCheckouts(loadConfig(), listedRoots(), operation));
+  const discoveredRoots = new Set(discovered.map(({ path }) => path));
+  const known = new Set([...listedRoots(), ...discoveredRoots]);
   const reduceOnly = new Set(discovered.filter((entry) => entry.reduceOnly).map(({ path }) => path));
   for (const root of (await candidateRootsAsync(operation, discovered)).filter((entry) => known.has(entry))) {
     signal.throwIfAborted();
@@ -159,7 +171,20 @@ export async function artifactCheckoutsAsync(
       declareFor: operation,
     });
     const entry = artifactWorktree(root, entries, reduceOnly.has(root), source);
-    if (entry) found.set(entry.path, found.get(entry.path)?.reduceOnly ? { ...entry, reduceOnly: true } : entry);
+    if (entry) {
+      const previous = found.get(entry.path);
+      const via = [
+        ...new Set([
+          ...(previous?.discoveredApps ?? []),
+          ...(discoveredRoots.has(root) && root !== entry.path ? [root] : []),
+        ]),
+      ];
+      found.set(entry.path, {
+        ...entry,
+        ...(previous?.reduceOnly ? { reduceOnly: true } : {}),
+        ...(via.length ? { discoveredApps: via } : {}),
+      });
+    }
   }
   return [...found.values()];
 }
@@ -167,8 +192,11 @@ export async function artifactCheckoutsAsync(
 export async function artifactWorktreesAsync(
   signal: AbortSignal,
   operation?: StimContext,
+  supplied?: readonly DiscoveredCheckout[],
 ): Promise<ArtifactWorktree[]> {
-  const found = new Map((await artifactCheckoutsAsync(signal, operation)).map((entry) => [entry.path, entry]));
+  const found = new Map(
+    (await artifactCheckoutsAsync(signal, operation, supplied)).map((entry) => [entry.path, entry]),
+  );
   const checkouts = [...found.values()];
   if (checkouts.length) {
     const agents = await agentSessionUse(
@@ -411,6 +439,8 @@ export async function collectArtifactsAsync(
     pinned: (workspace: string) => boolean | Promise<boolean>;
     /** Dependencies of source checkouts, instead of those of linked worktrees. */
     source?: boolean;
+    discovered?: readonly DiscoveredCheckout[];
+    onInventory?: (inventory: ArtifactInventory) => Promise<void>;
   },
   signal: AbortSignal,
   operation?: StimContext,
@@ -424,9 +454,12 @@ export async function collectArtifactsAsync(
         ? (listed = await readRunningProcessesAsync(signal))
         : listed
       : null;
-  const all = await artifactWorktreesAsync(signal, operation);
+  const all = await artifactWorktreesAsync(signal, operation, options.discovered);
   for (const worktree of all) {
     if (kind === 'dependencies' && worktree.linked === Boolean(options.source)) continue;
+    const inventory: ArtifactInventory | null = options.onInventory
+      ? { worktree, at: Date.now(), candidates: [], complete: true }
+      : null;
     const root = canonicalPath(worktree.path);
     const protectedHere = options.protectedRoot === root || options.protectedRoot.startsWith(`${root}${sep}`);
     const pinned = await pinsOf(worktree.keys, options.pinned);
@@ -448,8 +481,13 @@ export async function collectArtifactsAsync(
         signal.throwIfAborted();
         try {
           await pathStat(path);
-        } catch {
+        } catch (error) {
           signal.throwIfAborted();
+          if (
+            inventory &&
+            !(error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR'))
+          )
+            inventory.complete = false;
           continue;
         }
         const candidate = {
@@ -475,9 +513,11 @@ export async function collectArtifactsAsync(
           );
         if (!reason && candidate.source)
           reason = (await regenerableDirProblem(worktree.path, path, signal)) ?? linkedWorktreeUsing(candidate, all);
+        inventory?.candidates.push({ candidate, keep: reason });
         if (reason) skips.push({ target: path, reason });
         else candidates.push(candidate);
       }
+    if (inventory) await options.onInventory?.(inventory);
   }
   return { candidates, skips };
 }

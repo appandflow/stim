@@ -52,8 +52,8 @@ function report(): void {
   });
 }
 
-function enqueue(ticket: Ticket): void {
-  const at = waiting.findIndex((entry) => entry.rank > ticket.rank);
+function enqueue(ticket: Ticket, resuming = false): void {
+  const at = waiting.findIndex((entry) => entry.rank > ticket.rank || (resuming && entry.rank === ticket.rank));
   waiting.splice(at === -1 ? waiting.length : at, 0, ticket);
 }
 
@@ -99,7 +99,7 @@ function queueForDisk(rank: number, trigger: string): Ticket {
         refuseResume = undefined;
       });
       resumed.catch(() => {});
-      enqueue(ticket);
+      enqueue(ticket, true);
       advance(ticket);
       return resumed;
     },
@@ -231,7 +231,7 @@ export async function joinablePass<T>(
   } finally {
     if (turn?.pass === pass) delete turn.pass;
     if (lane === pass) lane = null;
-    if (turn && holder === turn) keepReserve();
+    if (turn && (holder === turn || holder === null)) keepReserve();
   }
 }
 

@@ -305,12 +305,14 @@ so none ever runs beside another.
   volume target on grant (LLP 0006); hard floor ranks ahead of critical.
 - Each ticket owns its release and pending handoff. Concurrent boundaries of
   one ticket share that handoff; a different ticket has its own. A resumption
-  queues after peers already waiting at its rank. Releasing an old ticket
+  keeps the granted owner ahead of waiting peers at its rank; new and reranked
+  tickets queue after equal peers. Releasing an old ticket
   cannot release the current owner. Pass identity, listeners and results stay
   with the ticket while it waits, and are current again when it resumes.
   A cancelled queued request withdraws its own ticket; a cancelled executing
   pass keeps ownership through its current work and observes cancellation
-  after regrant. Only the current owner recreates the reserve.
+  after regrant. The covering pass recreates the reserve when it still owns
+  the turn or the queue is idle, never while another ticket owns the turn.
 - Stopped output marks yield between individual saved paths, after each
   workspace claim and removal has settled. Cargo pressure trims yield between
   targets, after their profile locks close. Tick, manual and headroom callers
@@ -323,6 +325,9 @@ so none ever runs beside another.
   mark fields and sibling candidates stay intact. Active-workspace stopping
   and finer units inside a whole manual workspace action remain separate from
   these candidate families (#6101); candidate ranking is #6111.
+  A resumed saved output needs its current exact registry key or one targeted
+  discovery proof. A rewritten registry alias with no current discovery route
+  stays kept rather than resolving every registered root again per path.
 - Other acting ladder units hand off after a whole parked-device operation,
   shared-cache trim or empty, rung 6 planned action, history action group, or
   tool-cache plan has returned. The next operation checks cancellation and
@@ -562,6 +567,20 @@ also holds the newest activity the walk read, and the walk reads at
   brought forward so high-pressure refresh does not invent a temporary TTL.
   The normal lane still walks hourly and publishes due marks; a normal
   mark-first sweep scheduler is pending the generation/lane integration.
+- The passes worker's existing history batch also observes mark freshness.
+  Mark files are read once through bounded asynchronous reads and the same
+  parser and scope policy the sweep uses. Invalid legacy or torn records
+  still contribute no sweep candidate, and make diagnostic coverage partial.
+  Missing, failed or timed-out inventory is unavailable, never a zero count.
+  The owning daemon saves a small aggregate and at most five positively scoped
+  overdue roots in its existing snapshot. `stim doctor` warns for those marks
+  only when they were more than twice the effective generation interval old at
+  the observation time. The effective interval is at least hourly, matching
+  the normal lane writer cadence; partial coverage omits totals. Definite
+  exclusions when discovery has no routes do not make coverage partial.
+  Other unproved routes remain conservative and omit totals. An observation older
+  than the daemon's existing three-interval late-tick limit is unavailable.
+  Reporting starts no discovery or size walk on the socket or doctor path.
 - The writer also recognizes untagged Cargo targets by the existing Cargo
   manifest/profile rules and marks targets in the holder's `apps/` and
   `packages/` children. The normal lane reads actual Git holders reached by
@@ -569,8 +588,13 @@ also holds the newest activity the walk read, and the walk reads at
   current buffered Git worktree metadata can authorize its exact holder's
   Cargo candidates, without authorizing the holder's other outputs. The
   helper may watch that holder; a watch grants no deletion authority. A holder
-  reached only through a discovered nested app stays when its own ordinary
-  route cannot be proved; targeted proof for that layout remains required.
+  reached through a recognized discovered nested app saves that app path in
+  its existing mark. A targeted read must still prove the app’s current
+  discovery route and current exact Git holder before authorizing only Cargo
+  candidates whose parent still belongs to that exact Git holder. Independent
+  nested checkouts stay outside this authority. Removed routes, missing apps
+  and changed holders keep the target; old marks keep their existing scope
+  behavior.
 - Both Cargo pressure entrypoints consume saved target candidates. The
   planner and executor share the same action object in one isolate; its
   private mark proof is not serialized. A copied pressure action is kept.
@@ -588,7 +612,25 @@ also holds the newest activity the walk read, and the walk reads at
   A build-headroom deadline cancels the same bounded Cargo refresh and
   leaves later holders and the next sweep unstarted; failed cleanup still
   propagates.
-- Worktree/dependency marks and pressure discovery, normal mark-first
+- The normal dependency phases save their raw linked/source inventories in an
+  optional section of the existing mark, including younger checkouts that
+  the normal dormant thresholds keep. Each enabled phase reuses its current
+  discovered roots and inventory; disabling both normal thresholds starts
+  neither discovery nor inventory. Dependency observations have their own
+  timestamp. Output-only refreshes preserve that timestamp and any newer
+  shared dirty watermark; dependency-only writes preserve the output
+  generation. Missing or malformed optional evidence leaves output marks
+  valid and dependency eligibility unknown.
+- Acting pressure dependency reports use saved candidates, cached estimates
+  and targeted current scope, membership, path/device, Git role/lock,
+  pin, activity and warm checks. They discover no dependency candidates,
+  measure no new sizes and delete nothing. Missing, due or dirty evidence
+  is reported as unknown. Source sharing with other linked worktrees stays
+  explicitly unknown: the pressure report does not scan those worktrees for
+  dependency symlinks. Restoring that detail from current targeted evidence
+  remains required. Explicit read-only dry runs retain discovery previews.
+  Normal dependency deletion and its thresholds are unchanged.
+- Worktree marks and pressure discovery, normal mark-first
   scheduling, per-candidate disk-turn yielding and yield ranking remain
   pending. The no-discovery guarantee applies to output rung 1 and Cargo
   pressure candidate selection, not the other maintenance stages or normal
