@@ -584,6 +584,7 @@ export async function runMaintenance(
         background,
         ...(tick ? { operation: tick.operation, deviceActivity: tickDeviceActivity(tick) } : {}),
         onWorktreeObservation: normalWorktreeObserver(report, plannedWorktrees, tick),
+        ...(!report && plannedWorktrees ? { normalWorktreeMarks: true } : {}),
       });
     } catch (error) {
       throwUnverifiedCleanup(error);
@@ -609,6 +610,7 @@ export async function runMaintenance(
         background,
         protectedRoot: triggeringRoot(),
         worktreeSweep: result.worktreeSweep,
+        ...(!report && plannedWorktrees ? { normalWorktreeMarks: true as const } : {}),
         lowPriority: cap.ran,
         throttleOutputs:
           (tick

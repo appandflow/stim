@@ -376,6 +376,7 @@ jobs:
           packages/stim-cli/src/__tests__/stimd.integration.test.ts
           packages/stim-cli/src/__tests__/daemon-idle.integration.test.ts
           packages/stim-cli/src/__tests__/daemon-ladder.test.ts
+          packages/stim-cli/src/__tests__/worktree-marks.test.ts
           packages/stim-cli/src/__tests__/daemon-pressure.test.ts
           packages/stim-cli/src/__tests__/daemon-probe.test.ts
           packages/stim-cli/src/__tests__/daemon-reclaim.test.ts

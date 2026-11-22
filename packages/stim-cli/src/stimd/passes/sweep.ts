@@ -1,4 +1,5 @@
 import type { StimContext } from '@stim-cli/core';
+import { normalWorktreeSelection } from '../../daemon/normal-worktree-marks.ts';
 import { existsSync } from 'node:fs';
 import { isAbsolute, sep } from 'node:path';
 import type { MaintenanceAction, MaintenanceSize } from '@stim-cli/core/state';
@@ -350,6 +351,7 @@ export async function planWorktrees({
   operation,
   deviceActivity,
   onObservation,
+  normalMarks,
 }: {
   protectedRoot: string;
   pinned: (workspace: string) => boolean;
@@ -363,6 +365,7 @@ export async function planWorktrees({
   /** Reads owned device activity for an operation; a new listing when absent. */
   deviceActivity?: (withSims: boolean) => Promise<OwnedDeviceActivity[]>;
   onObservation?: Parameters<typeof collectWorktreeSweep>[0]['onObservation'];
+  normalMarks?: true;
 }): Promise<WorktreePlan> {
   const sweep = await collectWorktreeSweep({
     idle: idleDays !== null,
@@ -370,6 +373,7 @@ export async function planWorktrees({
     now,
     operation,
     onObservation,
+    ...(normalMarks ? { select: normalWorktreeSelection(operation, idleDays !== null).select } : {}),
     ...(graceMs === undefined ? {} : { graceMs }),
     ...(refresh === undefined ? {} : { refresh }),
   });

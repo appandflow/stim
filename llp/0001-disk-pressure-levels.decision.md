@@ -706,6 +706,17 @@ also holds the newest activity the walk read, and the walk reads at
   worktree collection, fetch or pull-request refresh. Missing, due,
   dirty or uncertain evidence stays explicitly unknown. Normal removal and
   its archive and final-lock safeguards are unchanged.
+- The acting normal worktree planner uses a fresh clean finished observation
+  as a shortlist for the existing current reconciliation, reusing its current
+  branch-status read. Dirty or unknown status, empty branches and opted-in
+  pushed-idle cleanup retain their existing planner path. A fresh clean
+  unfinished observation with unchanged HEAD and membership defers external
+  completion until refresh. Omitted roots never publish partial generations.
+  Missing or due observations use the complete current producer first;
+  failed publication keeps a clean finished removal. Current saved scope,
+  generation, identity/device and membership are checked under the existing
+  removal claims in addition to the independent deletion, archive, grace,
+  edit, pin and in-use safeguards. Saved data grants no merge or archive authority.
 - Normal mark-first
   scheduling, per-candidate disk-turn yielding and yield ranking remain
   pending. The no-discovery guarantee applies to output rung 1 and Cargo

@@ -24,6 +24,7 @@ import {
   collectWorkspaceOutputs,
   deleteOrphanedWorkspaces,
 } from '../../commands/gc/workspaces.ts';
+import { normalWorktreeSelection } from '../../daemon/normal-worktree-marks.ts';
 import { removeWorktrees, type WorktreeSweep } from '../../commands/gc/worktrees.ts';
 import {
   DEVICE_LIST_TIMEOUT_MS,
@@ -87,6 +88,7 @@ export interface ActContext {
   protectedRoot: string;
   background?: boolean;
   worktreeSweep?: WorktreeSweep;
+  normalWorktreeMarks?: true;
   protect?: (entry: string) => string | null;
   worktrees?: ArtifactWorktree[];
   /** The daemon tick's context, whose reads run without blocking its event loop. */
@@ -267,7 +269,14 @@ async function removeWorktree(action: MaintenanceAction, context: ActContext): P
   const pinned = maintenancePinnedReader(context.operation);
   for (const key of worktree.keys) if (await pinned(key)) return kept('pinned by maintenance.keep');
   const before = lowestFree(measureDisk());
-  const { results } = await quietly(() => removeWorktrees({ ...sweep, worktrees: [worktree] }));
+  const { results } = await quietly(() =>
+    removeWorktrees(
+      { ...sweep, worktrees: [worktree] },
+      context.normalWorktreeMarks
+        ? { operation: context.operation, recheck: normalWorktreeSelection(context.operation).problem }
+        : {},
+    ),
+  );
   const outcome = outcomeOf(results, freedSince(before));
   const removal = results.find((result) => result.status === 'done')?.detail;
   return outcome.status === 'done' ? { ...outcome, detail: removal ?? action.reason } : outcome;
