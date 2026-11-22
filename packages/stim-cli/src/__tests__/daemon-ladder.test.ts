@@ -591,6 +591,59 @@ describe('the pressure ladder', () => {
     remeasure,
   });
 
+  test.each([
+    ['high', 'critical', 'automatic'],
+    ['critical', 'high', 'automatic'],
+    ['high', 'normal', 'automatic'],
+    ['critical', 'normal', 'explicit'],
+    ['high', 'critical', 'explicit'],
+    ['high', 'critical', 'measured'],
+    ['critical', 'high', 'measured'],
+    ['high', 'normal', 'measured'],
+  ] as const)(
+    'rung 6 trash priority follows %s to %s (%s) without changing other actions',
+    async (entry, current, mode) => {
+      vi.spyOn(sweep, 'planRung6').mockResolvedValue({
+        actions: [
+          { kind: 'would-delete-trash', target: home, bytes: 1, reason: 'owned trash' },
+          { kind: 'would-delete-temp-leftovers', target: home, bytes: 1, reason: 'old temp output' },
+        ],
+        blocked: [],
+        skips: [],
+      });
+      const priorities: [string, boolean][] = [];
+      vi.spyOn(acting, 'executeAction').mockImplementation(async (action, context) => {
+        const throttled = context.trashPriority ? await context.trashPriority() : context.critical !== true;
+        if (throttled !== null) priorities.push([action.kind, !throttled]);
+        return { status: 'kept', bytes: 0, detail: 'test' };
+      });
+      const remeasure = vi.fn<() => Promise<DaemonPressure>>().mockResolvedValue(pressure(current));
+      if (mode === 'automatic') remeasure.mockResolvedValueOnce(pressure(entry)).mockResolvedValueOnce(pressure(entry));
+
+      await runLadder(
+        {
+          ...input(true, remeasure),
+          fromRung: 6,
+          lastRung: 6,
+          volume: statSync(home).dev,
+          ...(mode !== 'automatic'
+            ? { force: { level: entry, why: 'requested level', measured: mode === 'measured' } }
+            : {}),
+        },
+        pressure(entry),
+      );
+
+      const trash =
+        current === 'normal' && mode !== 'explicit'
+          ? []
+          : [['would-delete-trash', (mode === 'explicit' ? entry : current) === 'critical']];
+      const other =
+        current === 'normal' && mode === 'automatic' ? [] : [['would-delete-temp-leftovers', entry === 'critical']];
+      expect(priorities).toEqual([...trash, ...other]);
+      expect(remeasure.mock.calls.length === 0).toBe(mode === 'explicit');
+    },
+  );
+
   test('at critical it trims caches in rung order and stops once the level clears, before the dormant rung', async () => {
     const { root } = workspace('idle-hour', 60 * MINUTE_MS, 'Shutdown');
     writeWorkspaceState(root, { lastBuild: { cacheKey: 'kept-key' } });

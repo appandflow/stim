@@ -124,12 +124,12 @@ export async function collectTrash({
 
 /**
  * Deletes what a fresh `collectTrash` marks deletable, each entry under its own exclusive claim, at a low CPU and I/O
- * priority with `throttleIo`.
+ * priority with `throttleIo`. A callback chooses each entry's priority immediately before removal; null leaves the rest.
  */
 export async function deleteTrash(
   operation: StimContext | undefined,
   output: GcOutput = GC_OUTPUT,
-  throttleIo = false,
+  throttleIo: boolean | (() => Promise<boolean | null>) = false,
   itemsOnly = false,
   between?: () => Promise<void>,
 ): Promise<{ count: number; bytes: number; failures: number }> {
@@ -164,7 +164,9 @@ export async function deleteTrash(
       const payload = item ? await lstat(join(entry.path, 'entries', 'payload')).catch(() => null) : null;
       if (payload && item?.source.kind === 'archive' && item.source.part)
         await reconcileTrashedArchivePart(item.source.id, item.source.part, operation?.signal);
-      await deleteTrashEntry(entry.path, operation, throttleIo);
+      const throttled = typeof throttleIo === 'function' ? await throttleIo() : throttleIo;
+      if (throttled === null) break;
+      await deleteTrashEntry(entry.path, operation, throttled);
       done.count++;
       done.bytes += item ? (payload ? item.bytes : 0) : (entry.bytes ?? 0);
     } catch (error) {
