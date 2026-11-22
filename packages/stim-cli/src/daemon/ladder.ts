@@ -316,6 +316,9 @@ async function previewIdleOutputsRung(context: RungContext): Promise<void> {
         PRESSURE_IDLE_MS,
         context.operation,
         deletable(context),
+        undefined,
+        undefined,
+        false,
       );
     else {
       const outputs = await stoppedOutputs(candidate, context.config, context.operation, deletable(context));
@@ -366,6 +369,7 @@ async function idleOutputsRung(context: RungContext): Promise<void> {
         deletable(context),
         mark,
         context,
+        false,
       );
       if (!result) continue;
       if (context.act && result.outcome === 'kept') keepOutputMark(mark, result.detail ?? 'kept at sweep');
