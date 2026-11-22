@@ -1,9 +1,9 @@
 import { lstat, readdir, readFile, realpath, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, relative, sep } from 'node:path';
+import { join, relative, resolve, sep } from 'node:path';
 import { configDir } from '@stim-cli/core';
 import { buildWorkerRoot, type ScanFolderProof } from '@stim-cli/core/state';
-import { canonicalPath } from '../commands/gc/paths.ts';
+import { canonicalPath, realpathAsync } from '../commands/gc/paths.ts';
 import { answered, hungRead, Unanswered } from './bounded-read.ts';
 import { declaresAppDependency } from './project-files.ts';
 import { loadConfig } from './config.ts';
@@ -107,17 +107,38 @@ export function scanDescends(name: string, depth: number): boolean {
   return depth !== 1 || !HOME_SKIPPED.has(name.toLowerCase());
 }
 
+function skipScanPaths(home: string, paths: readonly string[]): (path: string) => boolean {
+  const stim = paths.slice(0, 2);
+  const temps = paths.slice(2);
+  const homeIsTemporary = temps.some((temp) => within(home, temp));
+  return (path) =>
+    stim.some((folder) => within(path, folder)) || (!homeIsTemporary && temps.some((temp) => within(path, temp)));
+}
+
+function scanExclusions(): string[] {
+  return [configDir(), buildWorkerRoot(loadConfig()), tmpdir(), '/tmp', '/var/tmp', '/var/folders'];
+}
+
 /**
  * The paths the scan never enters, by rule: the Stim home, the build worker root, and the system temporary directory
  * unless the home folder itself is under it. Computed once, with no per-folder realpath: the walk never follows a
  * symlink, so a path below the canonical home is already canonical.
  */
 export function scanSkipper(home: string): (path: string) => boolean {
-  const stim = [canonicalPath(configDir()), canonicalPath(buildWorkerRoot(loadConfig()))];
-  const temps = [tmpdir(), '/tmp', '/var/tmp', '/var/folders'].map(canonicalPath);
-  const homeIsTemporary = temps.some((temp) => within(home, temp));
-  return (path) =>
-    stim.some((folder) => within(path, folder)) || (!homeIsTemporary && temps.some((temp) => within(path, temp)));
+  return skipScanPaths(home, scanExclusions().map(canonicalPath));
+}
+
+export async function targetedScanSkipper(home: string, signal?: AbortSignal): Promise<(path: string) => boolean> {
+  const paths: string[] = [];
+  for (const path of scanExclusions()) {
+    try {
+      paths.push(await answered(path, () => realpathAsync(path), 3000, signal));
+    } catch (error) {
+      if (!absent(error)) throw error;
+      paths.push(resolve(path));
+    }
+  }
+  return skipScanPaths(home, paths);
 }
 
 /** The files of a folder that project detection reads or stats: the manifests every integration's `inspect` looks at. */

@@ -8,7 +8,7 @@ import { canonicalPath } from '../commands/gc/paths.ts';
 import { projectRegistry } from '../integrations/projects.ts';
 import { answered } from './bounded-read.ts';
 import { isProtectedLocation } from './protected-locations.ts';
-import { absent, scanEntryValid, scanSkipper } from './scan-rules.ts';
+import { absent, scanEntryValid, scanSkipper, targetedScanSkipper } from './scan-rules.ts';
 import { matchWorktreeEntry, resolveSourceCheckoutAsync } from './worktree.ts';
 
 const DISCOVER_ROOTS_SETTING = 'maintenance.discoverRoots';
@@ -448,7 +448,7 @@ async function targetedScan(
   const valid: DiscoveryChild[] = [];
   const pending: string[] = [];
   const home = canonicalPath(homedir());
-  const rules = { home, isCheckout: recognition, skip: scanSkipper(home), ancestors: new Map() };
+  let skip: ((path: string) => boolean) | undefined;
   for (const path of scan?.found ?? []) {
     const identity = scan?.safety?.[path]?.native;
     if (
@@ -460,7 +460,14 @@ async function targetedScan(
     )
       continue;
     operation?.signal.throwIfAborted();
-    const state = await scanEntryValid(path, { ...rules, proofs: scan?.safety, identity });
+    try {
+      skip ??= await targetedScanSkipper(home, operation?.signal);
+    } catch {
+      operation?.signal.throwIfAborted();
+      pending.push(identity);
+      continue;
+    }
+    const state = await scanEntryValid(path, { home, isCheckout: recognition, skip, proofs: scan?.safety, identity });
     if (state === 'valid') valid.push({ path: identity, origin: 'scan', from: 'full scan', recognised: true });
     else if (state === 'pending') pending.push(identity);
   }

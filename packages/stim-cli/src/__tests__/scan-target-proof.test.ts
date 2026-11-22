@@ -16,9 +16,16 @@ import { dirname, join } from 'node:path';
 import { discoveryScanFile, readDiscoveryScan, type Config, type DiscoveryScan } from '@stim-cli/core/state';
 import { runDiscoveryScanIfDue, scanForCheckouts } from '../workspace/discovery-scan.ts';
 import { recognition, targetedCheckouts } from '../workspace/discovery.ts';
-import { REAL_RECOGNITION_IO, scanEntryValid, scanMetadata, sameScanIdentity } from '../workspace/scan-rules.ts';
+import {
+  REAL_RECOGNITION_IO,
+  scanEntryValid,
+  scanMetadata,
+  sameScanIdentity,
+  targetedScanSkipper,
+} from '../workspace/scan-rules.ts';
 import { saveConfig } from '../workspace/config.ts';
 import * as git from '../workspace/git.ts';
+import * as gcPaths from '../commands/gc/paths.ts';
 import { testContext } from './_context.ts';
 
 vi.mock('../workspace/protected-locations.ts', () => ({ isProtectedLocation: () => false }));
@@ -227,4 +234,46 @@ test('the normal scanner admits a plain native-Android repository but targeted p
   clearListings();
   expect(await targetedCheckouts(config, [], [root])).toEqual([]);
   expectNoParentListings(root);
+});
+
+test('each sibling mark rechecks ancestor evidence changed after the first root check', async () => {
+  const first = app();
+  const second = join(dirname(first), 'second');
+  mkdirSync(second);
+  writeFileSync(join(second, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+  await refresh();
+  const read = readdir;
+  const native = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+  vi.mocked(read).mockImplementation(async (path, options) => {
+    if (String(path) === first) mkdirSync(join(dirname(first), 'NewApp.xcodeproj'), { recursive: true });
+    return native.readdir(path, options);
+  });
+  clearListings();
+  expect((await targetedCheckouts(config, [], [first, second])).map(({ path }) => path)).toEqual([first]);
+  expectNoParentListings(first);
+});
+
+test('unrelated scan state never resolves the build-worker exclusion', async () => {
+  const root = app();
+  await refresh();
+  const pathReader = vi.spyOn(gcPaths, 'realpathAsync');
+  writeFileSync(discoveryScanFile(), JSON.stringify({ ...readDiscoveryScan(), found: [] }));
+  const configured = { ...config, maintenance: { autoDiscover: true, discoverRoots: [dirname(root)] } };
+  expect((await targetedCheckouts(configured, [], [root])).map(({ path }) => path)).toEqual([root]);
+  expect(pathReader).not.toHaveBeenCalled();
+});
+
+test('a stalled required exclusion read stays bounded and keeps scan-only authorization pending', async () => {
+  let release: (path: string) => void = () => {};
+  vi.spyOn(gcPaths, 'realpathAsync').mockImplementationOnce(
+    () =>
+      new Promise<string>((resolve) => {
+        release = resolve;
+      }),
+  );
+  const result = targetedScanSkipper(home).catch((error: unknown) => error);
+  await vi.advanceTimersByTimeAsync(3000);
+  expect(await result).toMatchObject({ message: 'timed out' });
+  release(home);
+  await vi.advanceTimersByTimeAsync(0);
 });
