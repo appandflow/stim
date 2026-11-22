@@ -14,6 +14,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gcMarkFile, readGcMark, type Config } from '@stim-cli/core/state';
 import { outputMark, outputMarks, refreshCargoHolderMarks } from '../daemon/marks.ts';
+import { readMarkHealth } from '../daemon/mark-health.ts';
+import { refreshKnownMarks } from '../daemon/mark-refresh.ts';
 import { saveConfig } from '../workspace/config.ts';
 import * as discovery from '../workspace/discovery.ts';
 import * as artifacts from '../stimd/passes/artifacts.ts';
@@ -235,4 +237,56 @@ test('discovered app authority excludes a Rust submodule and rechecks a newly in
   expect((await plan()).actions.map(({ target: path }) => path)).not.toContain(nativeTarget);
   expect(await trimCargoTargetAction(action, testContext())).toMatchObject({ status: 'kept' });
   expect(readFileSync(join(nativeTarget, 'debug', 'incremental', 'artifact'), 'utf8')).toBe('independent');
+});
+
+test('a bounded holder refresh preserves custom nested Cargo candidates, provenance and independent dependency generation', async () => {
+  const custom = join(holder, 'tools', 'engine');
+  const customTarget = join(custom, 'target');
+  mkdirSync(customTarget, { recursive: true });
+  writeFileSync(join(custom, 'Cargo.toml'), '[package]\nname="engine"\nversion="0.1.0"\n');
+  writeFileSync(join(customTarget, '.rustc_info.json'), '{}');
+  config.projects[custom] = {};
+  saveConfig(config);
+  const saved = await refresh();
+  expect(saved.candidates).toContainEqual(expect.objectContaining({ path: customTarget, kind: 'cargo-target' }));
+  const dependencies = {
+    markedAt: new Date(Date.now() - 30 * 60_000).toISOString(),
+    role: 'source' as const,
+    keys: [custom],
+    candidates: [],
+  };
+  const dirtyAt = new Date(Date.now() - 5 * 60_000).toISOString();
+  writeFileSync(
+    gcMarkFile(holder),
+    JSON.stringify({
+      ...saved,
+      markedAt: new Date(Date.now() - 11 * 60_000).toISOString(),
+      lastActivityAt: new Date().toISOString(),
+      dependencies,
+      dirtyAt,
+    }),
+  );
+  const history = await readMarkHealth(config, testContext());
+  expect(history.holders).toContainEqual(
+    expect.objectContaining({ root: holder, roots: expect.arrayContaining([custom]) }),
+  );
+  const full = vi.spyOn(discovery, 'discoverCheckouts');
+  await refreshKnownMarks(
+    {
+      config,
+      known: history.roots?.map(({ root }) => root) ?? [],
+      holders: history.holders,
+      at: Date.now(),
+      intervalMs: 60_000,
+      devices: [],
+      simsFailed: false,
+    },
+    testContext(),
+  );
+  expect(readGcMark(holder)).toMatchObject({ dependencies, dirtyAt, cargoVia: saved.cargoVia });
+  expect(readGcMark(holder)?.markedAt).toBe(new Date().toISOString());
+  expect(readGcMark(holder)?.candidates).toContainEqual(
+    expect.objectContaining({ path: customTarget, kind: 'cargo-target' }),
+  );
+  expect(full).not.toHaveBeenCalled();
 });

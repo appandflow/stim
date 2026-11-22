@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -160,4 +160,57 @@ test('a dirty event during the root reading survives the complete replacement ge
   await work;
   expect(readGcMark(root)).toMatchObject({ dirtyAt, candidates: [expect.objectContaining({ path: output })] });
   expect(readFileSync(join(output, 'artifact'), 'utf8')).toBe('keep');
+});
+
+test.each([false, true])(
+  'an output refresh preserves independent dependency evidence and provenance: holder=%s',
+  async (holder) => {
+    save(day, 0);
+    const dependencyAt = new Date(Date.now() - 2 * day).toISOString();
+    const dirtyAt = new Date(Date.now() - minute).toISOString();
+    const dependencies = { markedAt: dependencyAt, role: 'source' as const, keys: [root], candidates: [] };
+    const cargoVia = [join(root, 'apps', 'mobile')];
+    const previous = { ...readGcMark(root), device: statSync(root).dev, dependencies, dirtyAt, cargoVia };
+    writeFileSync(gcMarkFile(root), JSON.stringify(previous));
+    await refreshKnownOutputMark(
+      config,
+      root,
+      {},
+      { devices: [], simsFailed: false, operation: testContext() },
+      holder
+        ? {
+            holder: {
+              root,
+              device: statSync(root).dev,
+              markedAt: readGcMark(root)?.markedAt ?? '',
+              roots: [root],
+              via: cargoVia,
+            },
+          }
+        : {},
+    );
+    expect(readGcMark(root)).toMatchObject({ dependencies, dirtyAt, cargoVia, markedAt: new Date().toISOString() });
+    expect(readGcMark(root)?.candidates).toContainEqual(expect.objectContaining({ path: output }));
+  },
+);
+
+test.each(['generation', 'device'] as const)('changed holder %s keeps its previous generation', async (change) => {
+  const before = save(day, 0);
+  await refreshKnownOutputMark(
+    config,
+    root,
+    {},
+    { devices: [], simsFailed: false, operation: testContext() },
+    {
+      holder: {
+        root,
+        markedAt: change === 'generation' ? new Date().toISOString() : (readGcMark(root)?.markedAt ?? ''),
+        device: statSync(root).dev + (change === 'device' ? 1 : 0),
+        roots: [root],
+        via: [],
+      },
+    },
+  );
+  expect(stages.readCheckout).not.toHaveBeenCalled();
+  expect(readFileSync(gcMarkFile(root), 'utf8')).toBe(before);
 });

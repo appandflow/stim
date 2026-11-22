@@ -2,7 +2,7 @@ import type { CleanupQueueStatus, PressureLevel, RescuedCopy } from '@stim-cli/c
 import { keepReserve, releaseReserve } from '../disk-reserve.ts';
 import type { LevelRun, LevelRunAction } from '../stimd/passes/level-run.ts';
 
-/** Disk turns rank hard floor, critical, high/headroom, explicit item, trash, then normal lane/gc work. Equal ranks are FIFO. */
+/** Disk turns rank hard floor, critical, high/headroom, explicit item, trash, then normal lane/gc work and read-only marks. Equal ranks are FIFO. */
 export const HARD_FLOOR = 0;
 export const CRITICAL = 1;
 export const LADDER = 2;

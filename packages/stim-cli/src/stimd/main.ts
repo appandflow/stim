@@ -1277,7 +1277,7 @@ async function runStimdInner(
   let markRequest: ReturnType<typeof threads.marks> | null = null;
   const cancelMarks = () => markRequest?.leave();
   const refreshMarks = ({ config, pressure, measured }: HomePasses) => {
-    if (pressure.level !== 'normal') {
+    if (pressure.level !== 'normal' || effectiveMode() !== 'on') {
       cancelMarks();
       return;
     }
