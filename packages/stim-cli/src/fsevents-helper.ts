@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import release from '../native/fsevents-release.json' with { type: 'json' };
-import { isJsonObject } from '@stim-cli/core/state';
+import { isJsonObject, type GcHistoryStatus } from '@stim-cli/core/state';
 import { getExecutor } from './exec.ts';
 import { readHistoryCheckpoints, writeHistoryCheckpoints } from './fsevents-state.ts';
 
@@ -39,7 +39,7 @@ export interface HistoryFeed {
   update(roots: readonly HistoryRoot[]): Promise<void>;
   changed(roots: readonly string[]): Promise<void>;
   close(): Promise<void>;
-  status(): { source: 'fsevents' | 'fallback'; reason?: string } | undefined;
+  status(): GcHistoryStatus | undefined;
 }
 
 /** One helper lifetime: dirty writes are acknowledged before its checkpoint advances. */
@@ -64,6 +64,7 @@ export function startHistoryFeed({
   let signature = '';
   let failed: string | undefined;
   let closing = false;
+  let closeWork: Promise<void> | undefined;
   let child: ChildProcess | undefined;
   let exited = false;
   let stderr = '';
@@ -203,15 +204,17 @@ export function startHistoryFeed({
       if (failed) return { source: 'fallback', reason: failed };
       return child && !exited ? { source: 'fsevents' } : undefined;
     },
-    async close() {
-      closing = true;
-      await serial;
-      if (!child || exited) return;
-      child.stdin?.end();
-      const timer = setTimeout(() => {
-        if (!exited) child?.kill('SIGKILL');
-      }, 5000);
-      await ended.finally(() => clearTimeout(timer));
+    close() {
+      return (closeWork ??= (async () => {
+        closing = true;
+        await serial;
+        if (!child || exited) return;
+        child.stdin?.end();
+        const timer = setTimeout(() => {
+          if (!exited) child?.kill('SIGKILL');
+        }, 5000);
+        await ended.finally(() => clearTimeout(timer));
+      })());
     },
   };
 }

@@ -1,3 +1,5 @@
+import { outputMarks } from '../daemon/marks.ts';
+import { packagedHistoryHelper, startHistoryFeed } from '../fsevents-helper.ts';
 import { validGcItem } from '../commands/gc/item.ts';
 import { runDirRemoved } from './run-dir.ts';
 import { createMetroTickets, handleMetroTicketRequest } from './metro/tickets.ts';
@@ -1155,7 +1157,8 @@ async function runStimdInner(
   const wokenAt = new WeakMap<Socket, number>();
   let tickReplies: Socket[] = [];
   let lastSnapshot: DaemonSnapshot | null = null;
-  let recent: DaemonRecentAction[] = readDaemonSnapshot()?.recent ?? [];
+  const previousSnapshot = readDaemonSnapshot();
+  let recent: DaemonRecentAction[] = previousSnapshot?.recent ?? [];
   let lastContact = Date.now();
   let closing = false;
   let tickRequested = false;
@@ -1223,6 +1226,29 @@ async function runStimdInner(
   let relaunchDone: Promise<void> | undefined;
   let handingOver = false;
   const foregroundAbort = new AbortController();
+  // @ref LLP 0018#the-filesystem-history-reader -- unread output replays from the last acknowledged cursor
+  const filesystemHistory = startHistoryFeed({
+    ...packagedHistoryHelper(),
+    dirty: (roots, at) => threads.dirty(roots, at),
+    log: (reason) => log('debug', 'gc_history_fallback', reason),
+  });
+  let historyRootsWork: Promise<void> | undefined;
+  const refreshHistory = (config: Config | null, operation: StimContext) => {
+    if (!config || historyRootsWork) return;
+    historyRootsWork = outputMarks(config, operation)
+      .then((marks) =>
+        maintenanceAllowed()
+          ? filesystemHistory.update(marks.map(({ root, device }) => ({ root, device })))
+          : undefined,
+      )
+      .catch((error: unknown) => {
+        if (maintenanceAllowed()) log('debug', 'gc_history_refresh_failed', errorText(error));
+      })
+      .finally(() => {
+        historyRootsWork = undefined;
+      });
+  };
+
   let foregroundDone: Promise<void> | undefined;
   let foregroundFailure: unknown;
   let admissionRevision = 0;
@@ -1807,6 +1833,7 @@ async function runStimdInner(
                     return undefined;
                   }
                   opContexts.set(socket, { ...context, workspace: params.workspace });
+                  void filesystemHistory.changed([params.workspace]);
                   const token = randomUUID();
                   opTokens.set(token, socket);
                   socketTokens.set(socket, token);
@@ -2097,6 +2124,13 @@ async function runStimdInner(
       ),
       awaited('the maintenance pass', lane.settled()),
       awaited('the dependency scan', dependencyWork),
+      awaited(
+        'filesystem history',
+        (async () => {
+          await historyRootsWork;
+          await filesystemHistory.close();
+        })(),
+      ),
       awaited('Metro and tunnel children', closeMetroChildren()),
       awaited('the net thread and device logs', closeNetAndLogs()),
     ])
@@ -2225,7 +2259,13 @@ async function runStimdInner(
     allowed: maintenanceAllowed,
     busy: () => dependencyWork !== undefined,
     markers: () => listBuildEndMarkers().map((marker) => marker.file),
-    start: () => startMeasureJob({ cwd: process.cwd(), buildEnd: true }, 'daemon_build_end_measure_failed'),
+    start: async () => {
+      await filesystemHistory.changed(
+        listBuildEndMarkers().flatMap(({ path: checkout }) => (checkout ? [checkout] : [])),
+      );
+      if (maintenanceAllowed())
+        await startMeasureJob({ cwd: process.cwd(), buildEnd: true }, 'daemon_build_end_measure_failed');
+    },
   });
   for (;;) {
     if (!tickRequested && !closing) {
@@ -2308,6 +2348,19 @@ async function runStimdInner(
       const { config, now, measured, workspaces, pressure, actions, operation } = passes;
       lastLadder = passes.ladder ?? null;
       operation.signal.throwIfAborted();
+      refreshHistory(config, operation);
+      const previousActivity = new Map(
+        (lastSnapshot ?? previousSnapshot)?.workspaces.map(({ path: checkout, lastActivity }) => [
+          checkout,
+          lastActivity?.at,
+        ]),
+      );
+      const changedActivity = workspaces
+        .filter(
+          ({ path: checkout, lastActivity }) => lastActivity && lastActivity.at !== previousActivity.get(checkout),
+        )
+        .map(({ path: checkout }) => checkout);
+      if (changedActivity.length) void filesystemHistory.changed(changedActivity);
       syncOwned();
       actions.push(...lane.take());
       if (maintenanceAllowed() && !dependencyWork && Date.now() - dependencyScanAt >= DEPENDENCY_SCAN_MS) {
@@ -2367,6 +2420,7 @@ async function runStimdInner(
         actions,
         recent,
         waiting,
+        ...(filesystemHistory.status() ? { history: filesystemHistory.status() } : {}),
       };
       writeAtomic(daemonSnapshotFile(), lastSnapshot);
       for (const socket of replying) socket.end(`${JSON.stringify({ op: 'ticked', level: pressure.level })}\n`);
@@ -2419,6 +2473,8 @@ async function runStimdInner(
     await attachedEnding;
   } finally {
     await Promise.allSettled([lane.settled(), dependencyWork, net.close()]);
+    await historyRootsWork;
+    await filesystemHistory.close();
     await threads.close();
     await shutdownDone;
     await relaunchDone;

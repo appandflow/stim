@@ -76,6 +76,7 @@ import * as maintenanceMeasure from '../stimd/passes/measure.ts';
 import * as maintenanceRun from '../stimd/passes/run.ts';
 import * as spawnEntry from '../spawn-entry.ts';
 import * as ndjson from '../ndjson.ts';
+import * as historyHelper from '../fsevents-helper.ts';
 import { loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
@@ -240,6 +241,46 @@ test.skipIf(process.platform === 'win32')(
     }
   },
 );
+
+test('shutdown drains filesystem history before closing its dirty-mark worker', async () => {
+  let finish: () => void = () => {};
+  const draining = new Promise<void>((done) => {
+    finish = done;
+  });
+  const close = vi.fn<() => Promise<void>>(() => draining);
+  const workerClose = vi.fn<() => Promise<void>>(async () => {});
+  const originalThreads = stimdThreads.createThreadTable;
+  const threads = vi
+    .spyOn(stimdThreads, 'createThreadTable')
+    .mockImplementation((...args) => ({ ...originalThreads(...args), close: workerClose }));
+  const helper = vi
+    .spyOn(historyHelper, 'startHistoryFeed')
+    .mockReturnValue({
+      update: async () => {},
+      changed: async () => {},
+      status: () => ({ source: 'fallback', reason: 'fixture' }),
+      close,
+    });
+  const before = new Set(process.listeners('SIGTERM'));
+  const run = runStimd({ tickMs: 60_000, mode: 'report' });
+  try {
+    await listening();
+    const handler = process.listeners('SIGTERM').find((listener) => !before.has(listener));
+    assert(handler);
+    handler('SIGTERM');
+    await vi.waitFor(() => expect(close).toHaveBeenCalled());
+    expect(workerClose).not.toHaveBeenCalled();
+    finish();
+    await run;
+    expect(workerClose).toHaveBeenCalled();
+    expect(readClaimSet(stimdClaimRoot()).live).toEqual([]);
+  } finally {
+    finish();
+    await run;
+    helper.mockRestore();
+    threads.mockRestore();
+  }
+});
 
 test('shutdown retains the daemon claim until the net thread and observers close', async () => {
   let finish: () => void = () => {};
