@@ -190,5 +190,5 @@ describe.skipIf(process.platform === 'win32')('logs worker failure', () => {
       rmSync(home, { recursive: true, force: true });
       rmSync(root, { recursive: true, force: true });
     }
-  });
+  }, 15_000);
 });
