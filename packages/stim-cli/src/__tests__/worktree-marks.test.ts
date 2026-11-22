@@ -63,7 +63,7 @@ const git = (path: string, ...args: string[]) =>
 const reading = () => ({ devices: [], simsFailed: false, operation: testContext() });
 
 beforeEach(() => {
-  base = realpathSync(mkdtempSync(join(tmpdir(), 'stim-worktree-mark-')));
+  base = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-worktree-mark-')));
   vi.stubEnv('STIM_HOME', join(base, 'home'));
   vi.stubEnv('STIM_GC_WORKTREE_GRACE_MINUTES', '60');
   vi.stubEnv('STIM_MAINTENANCE_PROTECT_RECENT_HOURS', '0');

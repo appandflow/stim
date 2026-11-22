@@ -376,7 +376,6 @@ jobs:
           packages/stim-cli/src/__tests__/stimd.integration.test.ts
           packages/stim-cli/src/__tests__/daemon-idle.integration.test.ts
           packages/stim-cli/src/__tests__/daemon-ladder.test.ts
-          packages/stim-cli/src/__tests__/worktree-marks.test.ts
           packages/stim-cli/src/__tests__/daemon-pressure.test.ts
           packages/stim-cli/src/__tests__/daemon-probe.test.ts
           packages/stim-cli/src/__tests__/daemon-reclaim.test.ts
@@ -392,6 +391,11 @@ jobs:
           packages/stim-cli/src/__tests__/agent-device-command.integration.test.ts
           packages/server/__tests__/control-clipboard.integration.test.ts
           packages/server/__tests__/build-area-eviction.integration.test.ts
+
+      - name: Windows normal saved-worktree removal
+        run: >-
+          pnpm test packages/stim-cli/src/__tests__/worktree-marks.test.ts
+          -t 'publishes a missing generation before a current clean finished removal'
 
       - name: Windows worktree mark retirement
         run: >-
