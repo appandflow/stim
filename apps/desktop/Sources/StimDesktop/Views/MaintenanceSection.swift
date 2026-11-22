@@ -18,6 +18,22 @@ struct MaintenanceSection: View {
         LabeledContent("Pressure") {
           Text(daemon.headline).foregroundStyle(daemon.isRaised ? Palette.warning : Palette.secondary)
         }
+        if let candidates = daemon.gcMarks?.candidates {
+          LabeledContent("Saved inventory", value: candidates.readState.capitalized)
+            .help("Read coverage of saved observations, not a total of everything on this machine or what can be deleted.")
+          candidateRow("Build outputs", coverage: candidates.outputs)
+          candidateRow("Dependencies", coverage: candidates.dependencies)
+          candidateRow("Worktrees", coverage: candidates.worktrees)
+        }
+        ForEach((daemon.diskPacer ?? []).filter { $0.predictive != nil }, id: \.device) { volume in
+          if let predictive = volume.predictive {
+            LabeledContent("Early cleanup: \(volume.volume)") {
+              Text("Target \(Format.fileSize(reported: predictive.targetFreeMb * 1024 * 1024)) free")
+                .foregroundStyle(Palette.secondary)
+            }
+            .help("Cleanup started early from recent disk use. The pressure above is still the measured level.")
+          }
+        }
         ForEach(daemon.lastActions()) { action in
           LabeledContent {
             if let date = action.date {
@@ -74,6 +90,31 @@ struct MaintenanceSection: View {
     case "on": return "On\(running)"
     case "report": return "Report only: logs what it would do, deletes nothing\(running)"
     default: return "Off: nothing reclaims on its own"
+    }
+  }
+
+  private func candidateRow(_ title: String, coverage: DaemonStatus.CandidateCoverage) -> some View {
+    LabeledContent(title) {
+      VStack(alignment: .trailing, spacing: 2) {
+        if let count = coverage.count {
+          Text(coverage.state == "partial" ? "Partial: \(count) observed" : "\(count) saved")
+        } else {
+          Text(coverage.state.capitalized)
+        }
+        if let bytes = coverage.knownBytes {
+          Text("About \(Format.fileSize(reported: bytes)) cached size")
+        }
+        if let unknown = coverage.unknownSizeCount, unknown > 0 {
+          Text("\(unknown) with unknown size")
+        }
+        if let date = coverage.oldestDate {
+          HStack(spacing: Space.xs) {
+            Text("Oldest observation")
+            Text(date, style: .relative)
+          }
+        }
+      }
+      .foregroundStyle(Palette.secondary)
     }
   }
 

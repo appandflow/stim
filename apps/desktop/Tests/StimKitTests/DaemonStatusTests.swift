@@ -36,6 +36,64 @@ import Testing
     #expect(status.lastActions(1).count == 1)
   }
 
+  @Test func savedInventoryKeepsSubtypeAgesAndUnknownWorktreeSizes() throws {
+    let status = try #require(
+      try daemon(
+        #"{"mode":"on","gcMarks":{"at":1000,"state":"ready","stale":[],"candidates":{"readState":"ready","outputs":{"state":"ready","count":2,"knownBytes":2048.5,"unknownSizeCount":1,"oldestMarkedAt":"2026-11-02T10:00:00.000Z"},"dependencies":{"state":"ready","count":0,"knownBytes":0,"unknownSizeCount":0,"oldestMarkedAt":"2026-11-02T11:00:00.000Z"},"worktrees":{"state":"ready","count":1,"knownBytes":0,"unknownSizeCount":1,"oldestMarkedAt":"2026-11-01T10:00:00.000Z"}}}}"#
+      ))
+    let candidates = try #require(status.gcMarks?.candidates)
+    #expect(candidates.readState == "ready")
+    #expect(candidates.outputs.count == 2)
+    #expect(candidates.outputs.knownBytes == 2048.5)
+    #expect(candidates.outputs.unknownSizeCount == 1)
+    #expect(candidates.dependencies.count == 0)
+    #expect(candidates.worktrees.unknownSizeCount == 1)
+    let worktreeDate = try #require(candidates.worktrees.oldestDate)
+    let outputDate = try #require(candidates.outputs.oldestDate)
+    let dependencyDate = try #require(candidates.dependencies.oldestDate)
+    #expect(worktreeDate < outputDate)
+    #expect(outputDate < dependencyDate)
+  }
+
+  @Test func partialInventoryDoesNotInventMissingCountsOrDates() throws {
+    let status = try #require(
+      try daemon(
+        #"{"mode":"report","gcMarks":{"candidates":{"readState":"partial","outputs":{"state":"partial","count":1,"knownBytes":0,"unknownSizeCount":1},"dependencies":{"state":"unavailable"},"worktrees":{"state":"partial"}}}}"#
+      ))
+    let candidates = try #require(status.gcMarks?.candidates)
+    #expect(candidates.readState == "partial")
+    #expect(candidates.outputs.count == 1)
+    #expect(candidates.dependencies.count == nil)
+    #expect(candidates.dependencies.knownBytes == nil)
+    #expect(candidates.worktrees.count == nil)
+    #expect(candidates.outputs.oldestDate == nil)
+    #expect(status.diskPacer == nil)
+  }
+
+  @Test func predictiveCleanupDoesNotChangeMeasuredPressure() throws {
+    let status = try #require(
+      try daemon(
+        #"{"mode":"on","pressure":{"level":"normal","disk":"normal","reasons":[]},"diskPacer":[{"device":1,"volume":"/","observedAt":1000,"freeMb":40000,"fillMbPerSecond":2.5,"firstFreeMs":750,"predictive":{"since":500,"targetFreeMb":45000,"lastAttemptAt":700,"checkedAt":1000,"freeMb":40000}},{"device":2,"volume":"/Volumes/External","observedAt":1000,"freeMb":100000,"fillMbPerSecond":null,"firstFreeMs":null}]}"#
+      ))
+    #expect(status.level == "normal")
+    #expect(status.isRaised == false)
+    let volumes = try #require(status.diskPacer)
+    #expect(volumes.count == 2)
+    #expect(volumes[0].predictive?.targetFreeMb == 45000)
+    #expect(volumes[0].firstFreeMs == 750)
+    #expect(volumes[1].fillMbPerSecond == nil)
+    #expect(volumes[1].firstFreeMs == nil)
+    #expect(volumes[1].predictive == nil)
+    #expect(status.gcMarks == nil)
+  }
+
+  @Test func olderDaemonPayloadOmitsOptionalInventoryAndPacer() throws {
+    let status = try #require(try daemon(block(level: "normal")))
+    #expect(status.gcMarks == nil)
+    #expect(status.diskPacer == nil)
+    #expect(try daemon(#"{"mode":"on","gcMarks":{"state":"ready","stale":[]}}"#)?.gcMarks?.candidates == nil)
+  }
+
   @Test func anOlderStimOrAMalformedBlockReportsNoDaemon() throws {
     #expect(try daemon(nil) == nil)
     #expect(try daemon(#"{"mode":5}"#) == nil)
