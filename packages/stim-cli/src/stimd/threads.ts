@@ -572,10 +572,10 @@ else if (thread && parentPort) {
           leave() {},
         };
       if ('headroom' in input)
-        return requestGcItem(async (signal): Promise<HeadroomReply> => {
+        return requestGcItem(async (signal, turn): Promise<HeadroomReply> => {
           const { runLadderToFree } = await import('../daemon/passes.ts');
           const operation = open(new AbortController().signal);
-          await runLadderToFree({ ...input.headroom, operation, signal, act: input.act });
+          await runLadderToFree({ ...input.headroom, operation, signal, act: input.act, between: turn.boundary });
           return { headroom: true };
         }, LADDER);
       if ('item' in input)
@@ -588,14 +588,14 @@ else if (thread && parentPort) {
       return requestGcPass(
         level,
         client,
-        async (asked, signal, onAction, onLevel) => {
+        async (asked, signal, onAction, onLevel, turn) => {
           const { runGcPass } = await import('../commands/gc.ts');
           const request = {
             ...(asked ? { level: asked } : {}),
             client,
             ...(walkUnknown === false ? { walkUnknown } : {}),
           };
-          return runGcPass(request, open(signal), onAction, onLevel);
+          return runGcPass(request, open(signal), onAction, onLevel, turn.boundary);
         },
         emit,
       );

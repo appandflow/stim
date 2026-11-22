@@ -37,9 +37,10 @@ import { planRung6, planWorktrees } from '../stimd/passes/sweep.ts';
 import { planHistory } from '../stimd/passes/records.ts';
 import { planCacheEmptying } from '../commands/gc/caches.ts';
 import { isInsideWorkspaces } from '../commands/gc/workspaces.ts';
-import { DEFAULT_WORKTREE_IDLE_DAYS } from '../commands/gc/worktrees.ts';
+import { DEFAULT_WORKTREE_IDLE_DAYS, listedRoots } from '../commands/gc/worktrees.ts';
 import { causesOf, dormantAction, rungDecision, rungsFrom, type Cause, type Rung } from '../policy/pressure.ts';
-import type { Config, ProjectRecord } from '../workspace/config.ts';
+import { loadConfig, type Config, type ProjectRecord } from '../workspace/config.ts';
+import { targetedCheckouts } from '../workspace/discovery.ts';
 import { runBootedParkedPass } from './booted-parked.ts';
 import { LADDER_CLOCK_SLOTS } from './disk-owner.ts';
 import { measureDisk } from './measure.ts';
@@ -118,6 +119,7 @@ export interface LadderInput {
   protectedRoot?: string;
   /** Aborts at a build's headroom deadline; a Cargo target trim in flight stops between units. */
   stop?: AbortSignal;
+  between?: () => Promise<void>;
   /** The device id of the one volume a build's headroom run frees; without it, the volumes under `disk.minFreeGb`. */
   volume?: number;
   /** Runs only what relieves this cause: the stim-daemon's tick relieves memory, its disk owner disk. */
@@ -355,9 +357,31 @@ async function idleOutputsRung(context: RungContext): Promise<void> {
         (a, b) =>
           Number(a.candidates.some((candidate) => candidate.kind === 'outputs' && candidate.keep)) -
           Number(b.candidates.some((candidate) => candidate.kind === 'outputs' && candidate.keep)),
+      )
+      .flatMap((mark) =>
+        mark.candidates
+          .filter((candidate) => candidate.kind === 'outputs')
+          .map((candidate) => Object.assign({}, mark, { candidates: [candidate] })),
       );
     for (const mark of ranked) {
+      if (context.act) await context.between?.();
+      context.stop?.throwIfAborted();
+      context.operation?.signal.throwIfAborted();
+      if (context.act && context.between) {
+        const config = loadConfig();
+        // @ref LLP 0001#one-task-runs-every-gc-deletion -- a rewritten registry alias without current discovery proof stays kept
+        if (
+          !config ||
+          (!Object.hasOwn(config.projects, mark.root) &&
+            !(await targetedCheckouts(config, listedRoots(), [mark.root], context.operation)).some(
+              ({ path }) => path === mark.root,
+            ))
+        )
+          continue;
+      }
       if (!(await context.stillShort())) return;
+      if (context.act && context.between && (!context.force || context.force.measured))
+        context.short = context.volume === undefined ? await shortDevices(context, 'high') : new Set([context.volume]);
       if (!mark.candidates.some((candidate) => candidate.kind === 'outputs' && onShort(context, [candidate.path])))
         continue;
       const protectedRoot = context.protectedRoot && canonicalOrNull(context.protectedRoot);
@@ -562,15 +586,21 @@ async function cargoTargetsStep(context: RungContext): Promise<void> {
       throw error;
     }
     for (const action of largestFirst(plan.actions)) {
+      if (context.act) await context.between?.();
       if (context.stop?.aborted) return;
+      operation?.signal.throwIfAborted();
       const workspace = action.workspace ? canonicalOrNull(action.workspace) : null;
       if (protectedRoot && (workspace === protectedRoot || action.target.startsWith(`${protectedRoot}${sep}`)))
         continue;
       if (!onShort(context, [action.target])) continue;
       if (!(await context.stillShort())) return;
+      if (workspace && (await maintenancePinnedReader(operation)(workspace))) continue;
       // @ref LLP 0001#the-ladder-runs-by-yield -- a larger target's trim may already have cleared this one's volume
-      if (context.volume === undefined && (await measuredDiskLevel(action.target, pressureSignal)) === 'normal')
-        continue;
+      if (context.volume === undefined) {
+        const level = await measuredDiskLevel(action.target, pressureSignal);
+        if (level === 'normal') continue;
+        if (context.between && !context.force) action.level = level === 'critical' ? 3 : 2;
+      }
       if (context.act) triedAt.set(action.target, Date.now());
       try {
         await run({ ...context, operation }, action);

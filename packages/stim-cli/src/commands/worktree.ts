@@ -57,7 +57,7 @@ import { workspaceLinkLine, workspaceLinks } from '../devices/stim-desktop.ts';
 import type { ParkedDevice } from '../devices/teardown.ts';
 import { withManagedRemoteWorktreeRemovalLock, withManagedTunnelRemovalLock } from '../engine/tunnel.ts';
 import { warmClaimAcquiredLine, withWarmClaim, type WarmClaimWait } from '../engine/warm-claim.ts';
-import { trace } from '@stim-cli/core/state';
+import { gcMarkFile, readGcMark, trace } from '@stim-cli/core/state';
 import { startWarmProgress, type WarmProgress } from '../engine/warm-progress.ts';
 import { incompleteInstallRefusal, refreshMainCheckout, type RefreshFailure } from '../workspace/worktree-refresh.ts';
 import { readRemoteSession } from '../stimd/metro/state.ts';
@@ -1149,6 +1149,21 @@ interface RemovalInspection {
   timedOut?: boolean;
 }
 
+function removalMarkRoots(path: string, keys: readonly string[]): Set<string> {
+  const roots = new Set<string>();
+  try {
+    const nativeRoot = realpathSync.native(path);
+    for (const key of new Set(keys)) {
+      try {
+        if (realpathSync.native(key) !== nativeRoot) continue;
+        const mark = readGcMark(realpathSync(key));
+        if (mark) roots.add(mark.root);
+      } catch {}
+    }
+  } catch {}
+  return roots;
+}
+
 export function removalPath(target: string | undefined, cwd: string = process.cwd()): string {
   return canonicalExistingPath(target ?? cwd);
 }
@@ -1401,6 +1416,7 @@ async function removeOrRefuse(
     return;
   }
   let path = removalPath(target, opts.operation?.cwd);
+  const removalSpelling = path;
   if (!existsSync(path)) {
     opts.beforeRemove?.(path);
     const pending = getProject(path);
@@ -1724,6 +1740,7 @@ async function removeOrRefuse(
             output.fail();
             return;
           }
+          const obsoleteMarks = removalMarkRoots(path, [removalSpelling, ...lockedKeys]);
           gitRemoving = true;
           try {
             await removeWorktreeAsync(path, {
@@ -1758,6 +1775,14 @@ async function removeOrRefuse(
             printRemovalCleanup(result, true, output);
             output.fail();
             return;
+          }
+          // @ref LLP 0001#the-lane-marks-what-each-checkout-could-free -- an in-flight writer may republish this rebuildable record
+          for (const root of obsoleteMarks) {
+            try {
+              rmSync(gcMarkFile(root), { force: true });
+            } catch (error) {
+              output.error(chalk.yellow(`Could not retire the cleanup mark of ${root}: ${String(error)}`));
+            }
           }
           if (archive) {
             opts.archiveDirty?.onArchived(archive);
