@@ -1,4 +1,5 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
+import { once } from 'node:events';
 import {
   existsSync,
   mkdirSync,
@@ -25,6 +26,9 @@ import * as gcPaths from '../commands/gc/paths.ts';
 import * as worktree from '../workspace/worktree.ts';
 import { runLadder } from '../daemon/ladder.ts';
 import { runDormantDependencies } from '../daemon/dependencies.ts';
+import { dependencyMarkObserver } from '../daemon/dependency-marks.ts';
+import { savedDependencyReports } from '../daemon/dependency-reports.ts';
+import * as artifacts from '../stimd/passes/artifacts.ts';
 import { markDue, markWriter, outputMarks, outputMark, refreshOutputMarks } from '../daemon/marks.ts';
 import { stoppedOutputCandidates, stoppedOutputs } from '../daemon/stages.ts';
 import type { OwnedDeviceActivity } from '../commands/gc/idle.ts';
@@ -32,6 +36,7 @@ import { metroStoreRoot } from '../stimd/metro/metro-store.ts';
 import { saveConfig } from '../workspace/config.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { readRunningProcessesAsync } from '../workspace/running-from.ts';
+import { treeSignature } from '../private-size.ts';
 import { hungRead, pendingRead, Unanswered } from '../workspace/bounded-read.ts';
 import { testContext } from './_context.ts';
 
@@ -618,6 +623,352 @@ describe('gc marks written by the lane', () => {
     await stoppedOutputCandidates(config, reading, 2 * 60_000);
 
     expect(existsSync(join(base, 'home', 'gc', 'marks'))).toBe(false);
+  }, 20_000);
+
+  it('observes younger dependency trees with the existing enabled normal inventories and discovers only once per phase', async () => {
+    const root = checkout('young-source', 2 * 60 * 60_000);
+    mkdirSync(join(root, 'node_modules'), { recursive: true });
+    config.projects[root] = {};
+    config.idle = { dormantDays: 1, sourceDormantDays: 7 };
+    saveConfig(config);
+    const discoveryReads = vi.spyOn(discovery, 'discoverCheckouts');
+    const inventoryReads = vi.spyOn(artifacts, 'collectArtifactsAsync');
+
+    await lane(true);
+
+    expect(discoveryReads).toHaveBeenCalledTimes(2);
+    expect(inventoryReads).toHaveBeenCalledTimes(2);
+    expect(readGcMark(root)?.dependencies).toMatchObject({
+      role: 'source',
+      keys: [root],
+      candidates: [{ path: join(root, 'node_modules') }],
+    });
+    expect(existsSync(join(root, 'node_modules'))).toBe(true);
+  }, 20_000);
+
+  it('does no inventory or discovery when both normal producers are disabled and reports unknown saved evidence', async () => {
+    const root = checkout('disabled', 2 * day);
+    config.projects[root] = {};
+    config.idle = { dormantDays: 0, sourceDormantDays: 0 };
+    saveConfig(config);
+    const discover = vi.spyOn(discovery, 'discoverCheckouts');
+    const collect = vi.spyOn(artifacts, 'collectArtifactsAsync');
+
+    await lane(true);
+    const reports = await savedDependencyReports(config, {
+      ...reading,
+      level: 'critical',
+      operation: testContext(),
+      onVolume: () => true,
+    });
+
+    expect(discover).not.toHaveBeenCalled();
+    expect(collect).not.toHaveBeenCalled();
+    expect(readGcMark(root)).toBeNull();
+    expect(reports).toEqual([
+      expect.objectContaining({ target: root, detail: expect.stringContaining('inventory is unknown') }),
+    ]);
+  });
+
+  it('keeps the output generation and shared dirty watermark independent of dependency observations', async () => {
+    const root = checkout('independent', 3 * day);
+    const path = join(root, 'node_modules');
+    mkdirSync(path);
+    config.projects[root] = {};
+    saveConfig(config);
+    const initial = Date.now() - 20 * 60_000;
+    const write = markWriter(config);
+    await write({ path: root, at: initial, lastActivityAt: null, kept: null });
+    const observe = dependencyMarkObserver(config, { ...reading, operation: testContext() }, async () => {});
+    const inventory = (at: number) => ({
+      worktree: { path: root, keys: [root], linked: false, locked: false, reduceOnly: false },
+      at,
+      complete: true,
+      candidates: [{ candidate: { worktree: root, path, keys: [root], locked: false, reduceOnly: false }, keep: null }],
+    });
+    await observe(inventory(initial));
+    const dirtyAt = new Date(initial + 1).toISOString();
+    const cargoVia = [join(root, 'apps', 'mobile')];
+    writeFileSync(gcMarkFile(root), JSON.stringify({ ...readGcMark(root), dirtyAt, cargoVia }));
+    const outputAt = Date.now();
+    await write({ path: root, at: outputAt, lastActivityAt: null, kept: null });
+    expect(readGcMark(root)).toMatchObject({
+      markedAt: new Date(outputAt).toISOString(),
+      dirtyAt,
+      cargoVia,
+      dependencies: { markedAt: new Date(initial).toISOString() },
+    });
+
+    await observe(inventory(Date.now()));
+
+    expect(readGcMark(root)).toMatchObject({
+      markedAt: new Date(outputAt).toISOString(),
+      cargoVia,
+      dependencies: { markedAt: expect.not.stringMatching(new Date(initial).toISOString()) },
+    });
+    const dependencyAt = readGcMark(root)?.dependencies?.markedAt;
+    await markWriter(
+      config,
+      undefined,
+      false,
+      new Map([[root, { roots: [], via: [] }]]),
+    )({ path: root, at: outputAt + 1, lastActivityAt: null, kept: null });
+    expect(readGcMark(root)?.cargoVia).toBeUndefined();
+    expect(readGcMark(root)?.dependencies?.markedAt).toBe(dependencyAt);
+  });
+
+  it('omits malformed optional dependency evidence without invalidating existing output marks', async () => {
+    const root = checkout('malformed-deps', 3 * day);
+    await markWriter(config)({ path: root, at: Date.now(), lastActivityAt: null, kept: null });
+    const original = readGcMark(root);
+    writeFileSync(
+      gcMarkFile(root),
+      JSON.stringify({
+        ...original,
+        dependencies: {
+          markedAt: new Date().toISOString(),
+          role: 'source',
+          keys: [root],
+          candidates: [{ path: 'relative', device: 1, bytes: null, measuredAt: null }],
+        },
+      }),
+    );
+    expect(readGcMark(root)).toEqual(original);
+    expect((await outputMarks({ ...config, projects: { [root]: {} } }, testContext()))[0]).toEqual(original);
+  });
+
+  it('reports known critical dependency evidence without a discovery, artifact collection or new mark', async () => {
+    const root = checkout('saved-deps', 2 * 60 * 60_000);
+    const path = join(root, 'node_modules');
+    mkdirSync(path);
+    config.projects[root] = {};
+    config.idle = { dormantDays: 1, sourceDormantDays: 7 };
+    saveConfig(config);
+    await lane(true);
+    const original = readGcMark(root);
+    const discover = vi.spyOn(discovery, 'discoverCheckouts').mockRejectedValue(new Error('must not discover'));
+    const collect = vi.spyOn(artifacts, 'collectArtifactsAsync').mockRejectedValue(new Error('must not collect'));
+
+    const reports = await savedDependencyReports(config, {
+      ...reading,
+      level: 'critical',
+      operation: testContext(),
+      onVolume: () => true,
+    });
+
+    expect(reports).toEqual([expect.objectContaining({ rung: 8, target: path })]);
+    expect(discover).not.toHaveBeenCalled();
+    expect(collect).not.toHaveBeenCalled();
+    expect(readGcMark(root)).toEqual(original);
+    recordWorkspaceUse(root, new Date());
+    const recent = await savedDependencyReports(config, {
+      ...reading,
+      level: 'critical',
+      operation: testContext(),
+      onVolume: () => true,
+    });
+    expect(recent[0]?.detail).toContain('no longer idle');
+  }, 20_000);
+
+  it.each(['live', 'unavailable', 'owned'])(
+    'keeps linked dependency reports when the process table is %s after observation',
+    async (mode) => {
+      const source = checkout('process-source', 2 * day);
+      const linked = ['first', 'second'].map((name) => {
+        const root = join(roots, name);
+        execFileSync('git', [
+          '-C',
+          source,
+          '-c',
+          'maintenance.auto=false',
+          '-c',
+          'gc.auto=0',
+          'worktree',
+          'add',
+          '-q',
+          '-b',
+          name,
+          root,
+        ]);
+        mkdirSync(join(root, 'node_modules'));
+        config.projects[root] = {};
+        recordWorkspaceUse(root, new Date(Date.now() - 2 * 60 * 60_000));
+        return root;
+      });
+      const [first, second] = linked;
+      if (!first || !second) throw new Error('fixture roots missing');
+      saveConfig(config);
+      await lane(true);
+      const child =
+        mode === 'live'
+          ? spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { cwd: first, stdio: 'ignore' })
+          : null;
+      try {
+        if (child) await once(child, 'spawn');
+        if (mode === 'unavailable') vi.mocked(readRunningProcessesAsync).mockResolvedValueOnce(null);
+        vi.mocked(readRunningProcessesAsync).mockClear();
+        const reports = await savedDependencyReports(config, {
+          ...reading,
+          level: 'high',
+          operation: testContext(),
+          devices:
+            mode === 'owned'
+              ? [
+                  {
+                    kind: 'ios',
+                    id: 'sim',
+                    name: 'sim',
+                    project: first,
+                    slot: 'default',
+                    activity: { state: 'idle', basis: [] },
+                  },
+                ]
+              : [],
+          onVolume: () => true,
+        });
+        const firstReport = reports.find(({ target }) => target === join(first, 'node_modules'));
+        expect(firstReport?.detail).toContain(
+          mode === 'owned'
+            ? 'something of it runs'
+            : mode === 'unavailable' || process.platform === 'win32'
+              ? 'processes cannot be listed'
+              : `process ${child?.pid}`,
+        );
+        expect(reports.find(({ target }) => target === join(second, 'node_modules'))?.detail).toMatch(
+          mode !== 'unavailable' && process.platform !== 'win32'
+            ? /^report only: deleting/
+            : /processes cannot be listed/,
+        );
+        expect(vi.mocked(readRunningProcessesAsync)).toHaveBeenCalledTimes(1);
+      } finally {
+        if (child && child.exitCode === null && child.signalCode === null) {
+          child.kill();
+          await once(child, 'close');
+        }
+        vi.mocked(readRunningProcessesAsync).mockReset();
+      }
+    },
+    20_000,
+  );
+
+  it('does not let an unrelated removed registration suppress a healthy saved report', async () => {
+    const root = checkout('healthy', 2 * day);
+    const missing = checkout('removed', 2 * day);
+    mkdirSync(join(root, 'node_modules'));
+    const old = new Date(Date.now() - 2 * 60 * 60_000);
+    utimesSync(root, old, old);
+    config.projects = { [root]: {}, [missing]: {} };
+    config.idle = { dormantDays: 1, sourceDormantDays: 7 };
+    recordWorkspaceUse(root, old);
+    saveConfig(config);
+    await lane(true);
+    rmSync(missing, { recursive: true, force: true });
+
+    const reports = await savedDependencyReports(config, {
+      ...reading,
+      level: 'critical',
+      operation: testContext(),
+      onVolume: () => true,
+    });
+
+    expect(reports.find(({ target }) => target === join(root, 'node_modules'))?.detail).toMatch(
+      /^report only: deleting/,
+    );
+  }, 20_000);
+
+  it('reports dirty empty inventories as unknown only after checking current root identity and device', async () => {
+    const root = checkout('empty-inventory', 2 * day);
+    config.projects[root] = {};
+    config.idle = { dormantDays: 1, sourceDormantDays: 7 };
+    saveConfig(config);
+    await lane(true);
+    const original = readGcMark(root);
+    if (!original?.dependencies) throw new Error('fixture dependency observation missing');
+    expect(original.dependencies.candidates).toEqual([]);
+    const metadata = vi
+      .spyOn(worktree, 'resolveSourceCheckoutAsync')
+      .mockRejectedValue(new Error('empty observations need no eligibility read'));
+    expect(
+      await savedDependencyReports(config, {
+        ...reading,
+        level: 'critical',
+        operation: testContext(),
+        onVolume: () => true,
+      }),
+    ).toEqual([]);
+    mkdirSync(join(root, 'node_modules'));
+    const dirty = { ...original, dirtyAt: new Date(Date.parse(original.dependencies.markedAt) + 1).toISOString() };
+    writeFileSync(gcMarkFile(root), JSON.stringify(dirty));
+    expect(
+      await savedDependencyReports(config, {
+        ...reading,
+        level: 'critical',
+        operation: testContext(),
+        onVolume: () => true,
+      }),
+    ).toEqual([expect.objectContaining({ target: root, detail: expect.stringContaining('due or dirty') })]);
+    writeFileSync(gcMarkFile(root), JSON.stringify({ ...dirty, device: dirty.device + 1 }));
+    expect(
+      await savedDependencyReports(config, {
+        ...reading,
+        level: 'critical',
+        operation: testContext(),
+        onVolume: () => true,
+      }),
+    ).toEqual([expect.objectContaining({ target: root, detail: expect.stringContaining('changed volume') })]);
+    expect(metadata).not.toHaveBeenCalled();
+  }, 20_000);
+
+  it('keeps source sharing unknown without scanning another worktree and retains a trusted cached estimate', async () => {
+    const root = checkout('shared-source', 2 * 60 * 60_000);
+    const path = join(root, 'node_modules');
+    mkdirSync(path);
+    const linked = join(roots, 'other-linked');
+    execFileSync('git', [
+      '-C',
+      root,
+      '-c',
+      'maintenance.auto=false',
+      '-c',
+      'gc.auto=0',
+      'worktree',
+      'add',
+      '-q',
+      '-b',
+      'other',
+      linked,
+    ]);
+    config.projects[root] = {};
+    config.idle = { dormantDays: 1, sourceDormantDays: 7 };
+    saveConfig(config);
+    await lane(true);
+    mkdirSync(dirname(diskUsageCacheFile(path)), { recursive: true });
+    writeFileSync(
+      diskUsageCacheFile(path),
+      JSON.stringify({
+        path,
+        bytes: 1024 ** 3,
+        privateBytes: 512 * 1024 ** 2,
+        measuredAt: new Date().toISOString(),
+        signature: treeSignature(path),
+      }),
+    );
+
+    const reports = await savedDependencyReports(config, {
+      ...reading,
+      level: 'critical',
+      operation: testContext(),
+      onVolume: () => true,
+    });
+
+    expect(reports).toEqual([
+      expect.objectContaining({
+        target: path,
+        detail: expect.stringContaining('current sharing with linked worktrees is unproven'),
+      }),
+    ]);
+    expect(reports[0]?.detail).toContain('512');
+    expect(existsSync(path)).toBe(true);
   }, 20_000);
 
   it.each([
