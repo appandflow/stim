@@ -50,9 +50,9 @@ export function normalDependencySelection(
   };
   return {
     paths: (worktree: ArtifactWorktree): Promise<readonly string[] | undefined> => paths(worktree.path),
-    async reclaimable(root: string): Promise<boolean> {
+    async reclaimable(root: string): Promise<boolean | undefined> {
       const selected = await paths(root);
-      return selected === undefined || selected.length > 0;
+      return selected === undefined ? undefined : selected.length > 0;
     },
     async problem(candidate: ArtifactCandidate): Promise<string | null> {
       try {
@@ -77,9 +77,9 @@ export function normalDependencySelection(
         const holder = matchWorktreeEntry(entries, candidate.worktree);
         if ('refusal' in checkout || !holder || holder.bare || (holder.path === checkout.path) !== (role === 'source'))
           return 'its current Git holder could not be verified';
-        const keys = (await reclaimKeysAsync(candidate.worktree, operation)).filter(
-          (key) => matchWorktreeEntry(entries, key)?.path === holder.path,
-        );
+        const keys = (
+          await reclaimKeysAsync(candidate.worktree, operation, [...candidate.keys, ...observation.keys])
+        ).filter((key) => matchWorktreeEntry(entries, key)?.path === holder.path);
         if (keys.length !== observation.keys.length || keys.some((key) => !observation.keys.includes(key)))
           return 'its workspace membership changed since the dependency observation';
         if (!keys.some((key) => ARTIFACT_DIRS.dependencies.some((dir) => join(key, dir) === candidate.path)))

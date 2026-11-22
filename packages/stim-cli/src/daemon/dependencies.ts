@@ -682,7 +682,8 @@ async function takeIdleDependencies(
           setting: 'idle.sourceDormantDays',
           onKept: (path, reason) => keeps.set(canonicalOrNull(path) ?? path, reason),
           reclaimable: async (path) => {
-            if (saved) return saved.reclaimable(path);
+            const selected = await saved?.reclaimable(path);
+            if (selected !== undefined) return selected;
             const trees = await sourceTreesOf(path, input.operation);
             if (trees === 'unanswered')
               keeps.set(canonicalOrNull(path) ?? path, 'its node_modules or ios/Pods did not answer this pass');

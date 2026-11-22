@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from 'fs';
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { dependencyInstallCommand, reclaimKeys, reclaimKeysAsync } from '../commands/worktree.ts';
@@ -67,3 +67,25 @@ test('bounded reclaim membership follows current nested registrations without ac
   saveConfig(config);
   expect(await reclaimKeysAsync(root)).toEqual(expected.filter((key) => key !== app).toSorted());
 });
+
+test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+  'bounded normal membership keeps a known alias whose identity no longer answers permission checks',
+  async () => {
+    const root = join(tmpHome, 'repo');
+    const app = join(root, 'app');
+    const restricted = join(tmpHome, 'restricted');
+    const alias = join(restricted, 'alias');
+    mkdirSync(app, { recursive: true });
+    mkdirSync(restricted);
+    symlinkSync(realpathSync(app), alias, 'dir');
+    upsertProject(root, {});
+    upsertProject(alias, {});
+    expect(await reclaimKeysAsync(root, undefined, [root, alias])).toContain(alias);
+    chmodSync(restricted, 0);
+    try {
+      await expect(reclaimKeysAsync(root, undefined, [root, alias])).rejects.toMatchObject({ code: 'EACCES' });
+    } finally {
+      chmodSync(restricted, 0o755);
+    }
+  },
+);

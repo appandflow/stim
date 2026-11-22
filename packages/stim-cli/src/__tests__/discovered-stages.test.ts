@@ -218,46 +218,49 @@ describe('a discovered checkout in the idle stages', () => {
     vi.mocked(lstat).mockReset();
   });
 
-  it('probes no dependency tree of a linked worktree in the source-checkout pass, and still selects a source checkout', async () => {
-    const roots = join(base, 'roots');
-    const main = join(roots, 'main');
-    repo(main);
-    const linked = join(roots, 'main-wt');
-    gitIn(main, 'worktree', 'add', '-q', '-b', 'feature', linked);
-    const elsewhere = join(base, 'elsewhere', 'node_modules');
-    mkdirSync(elsewhere, { recursive: true });
-    symlinkSync(elsewhere, join(linked, 'node_modules'));
-    const app = join(roots, 'app');
-    repo(app);
-    mkdirSync(join(app, 'node_modules', 'dep'), { recursive: true });
-    const aged = new Date(Date.now() - 30 * day);
-    const age = (dir: string) => {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        const path = join(dir, entry.name);
-        if (entry.isDirectory() && !entry.isSymbolicLink()) age(path);
-        if (!entry.isSymbolicLink()) utimesSync(path, aged, aged);
-      }
-      utimesSync(dir, aged, aged);
-    };
-    for (const dir of [main, linked, app]) age(dir);
-    const config: Config = { maintenance: { discoverRoots: [roots] }, projects: {}, repos: {}, idle: sourcePassOnly };
-    saveConfig(config);
-    const real = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
-    const linkedTree = join(linked, 'node_modules');
-    vi.mocked(lstat).mockImplementation((path, options) =>
-      String(path).startsWith(linkedTree) || String(path).startsWith(elsewhere)
-        ? new Promise<never>(() => {})
-        : real.lstat(path, options),
-    );
-    const evidence = vi.spyOn(activity, 'discoveredEvidence');
+  it.each([false, true])(
+    'probes no linked dependency tree in the source pass and still selects a source, act=%s',
+    async (act) => {
+      const roots = join(base, 'roots');
+      const main = join(roots, 'main');
+      repo(main);
+      const linked = join(roots, 'main-wt');
+      gitIn(main, 'worktree', 'add', '-q', '-b', 'feature', linked);
+      const elsewhere = join(base, 'elsewhere', 'node_modules');
+      mkdirSync(elsewhere, { recursive: true });
+      symlinkSync(elsewhere, join(linked, 'node_modules'));
+      const app = join(roots, 'app');
+      repo(app);
+      mkdirSync(join(app, 'node_modules', 'dep'), { recursive: true });
+      const aged = new Date(Date.now() - 30 * day);
+      const age = (dir: string) => {
+        for (const entry of readdirSync(dir, { withFileTypes: true })) {
+          const path = join(dir, entry.name);
+          if (entry.isDirectory() && !entry.isSymbolicLink()) age(path);
+          if (!entry.isSymbolicLink()) utimesSync(path, aged, aged);
+        }
+        utimesSync(dir, aged, aged);
+      };
+      for (const dir of [main, linked, app]) age(dir);
+      const config: Config = { maintenance: { discoverRoots: [roots] }, projects: {}, repos: {}, idle: sourcePassOnly };
+      saveConfig(config);
+      const real = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+      const linkedTree = join(linked, 'node_modules');
+      vi.mocked(lstat).mockImplementation((path, options) =>
+        String(path).startsWith(linkedTree) || String(path).startsWith(elsewhere)
+          ? new Promise<never>(() => {})
+          : real.lstat(path, options),
+      );
+      const evidence = vi.spyOn(activity, 'discoveredEvidence');
 
-    await runDormantDependencies({ config, act: false, log: () => {}, ...reading, operation: testContext() });
+      await runDormantDependencies({ config, act, marks: true, log: () => {}, ...reading, operation: testContext() });
 
-    expect(vi.mocked(lstat).mock.calls.filter(([path]) => String(path).startsWith(linkedTree))).toEqual([]);
-    expect(evidence).toHaveBeenCalledWith(app, expect.anything());
-    expect(evidence).not.toHaveBeenCalledWith(linked, expect.anything());
-    vi.mocked(lstat).mockReset();
-  });
+      expect(vi.mocked(lstat).mock.calls.filter(([path]) => String(path).startsWith(linkedTree))).toEqual([]);
+      expect(evidence).toHaveBeenCalledWith(app, expect.anything());
+      expect(evidence).not.toHaveBeenCalledWith(linked, expect.anything());
+      vi.mocked(lstat).mockReset();
+    },
+  );
 
   it('walks a discovered checkout with only in-tree build output in the linked-worktree pass, as before', async () => {
     const { app, config } = discoveredApp({ sourceDormantDays: 0 }, join('android', 'app', 'build'));
