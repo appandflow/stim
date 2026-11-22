@@ -33,7 +33,7 @@ function record(): GcMark {
     v: GC_MARK_VERSION,
     root,
     device: 1,
-    markedAt: new Date(Date.now() - 3_600_000).toISOString(),
+    markedAt: new Date(Date.now() - 3 * 3_600_000).toISOString(),
     lastActivityAt: new Date().toISOString(),
     candidates: [],
   };
@@ -136,4 +136,13 @@ test('an unanswered inventory propagates through registered scope checks to the 
     release([]);
     await pendingRead();
   }
+});
+
+test('explicitly disabled discovery excludes old unregistered marks without claiming incomplete coverage', async () => {
+  const valid = record();
+  const excluded = join(base, 'excluded');
+  mkdirSync(excluded);
+  writeFileSync(gcMarkFile(excluded), JSON.stringify({ ...valid, root: excluded }));
+  config.maintenance = { autoDiscover: false, discoverRoots: [] };
+  expect(await outputMarkBatch(config, testContext())).toEqual({ marks: [valid], complete: true, listed: true });
 });

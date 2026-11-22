@@ -3,6 +3,8 @@ import type { StimContext } from '@stim-cli/core';
 import { markInterval, outputMarkBatch } from './marks.ts';
 import { dormantAfterMs } from './stages.ts';
 
+const HOUR_MS = 60 * 60_000;
+
 export function markHealth(marks: readonly GcMark[], now: number, dormantMs: number, complete: boolean): GcMarkHealth {
   const stale: GcStaleMarkEvidence[] = [];
   let staleCount = 0;
@@ -12,7 +14,7 @@ export function markHealth(marks: readonly GcMark[], now: number, dormantMs: num
       complete = false;
       continue;
     }
-    const intervalMs = markInterval(mark, now, dormantMs);
+    const intervalMs = Math.max(HOUR_MS, markInterval(mark, now, dormantMs));
     if (now <= at + 2 * intervalMs) continue;
     staleCount++;
     if (stale.length < 5) stale.push({ root: mark.root, markedAt: mark.markedAt, intervalMs });

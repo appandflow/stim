@@ -19,7 +19,7 @@ import { answered, Unanswered } from '../workspace/bounded-read.ts';
 import type { Config } from '../workspace/config.ts';
 import { idleOutputs } from './idle.ts';
 import { dormantAfterMs, readCheckout, type CheckoutReading, type DeviceReading } from './stages.ts';
-import { discoverCheckouts, targetedCheckouts } from '../workspace/discovery.ts';
+import { discoverCheckouts, discoveryDisabled, targetedCheckouts } from '../workspace/discovery.ts';
 import { cargoTargetDirsAsync } from '../workspace/regenerable-dirs.ts';
 import { appRoots, artifactCheckoutsAsync, type ArtifactWorktree } from '../stimd/passes/artifacts.ts';
 import { registeredCargoHolders } from './cargo-marks.ts';
@@ -160,7 +160,11 @@ export async function outputMarkBatch(
     }
   }
   const selected = await authorizedMarks(config, marks, operation);
-  return { marks: selected, complete: complete && selected.length === marks.length, listed: true };
+  return {
+    marks: selected,
+    complete: complete && (selected.length === marks.length || discoveryDisabled(config, operation?.env ?? {})),
+    listed: true,
+  };
 }
 
 /** The current allowed candidates of exactly one saved root; reads no other saved mark. */
