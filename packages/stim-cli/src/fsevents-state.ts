@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { configDir } from '@stim-cli/core';
 import { gcMarkFile, isJsonObject, readGcMark, readJsonObject } from '@stim-cli/core/state';
 
-export interface HistoryCheckpoint {
+interface HistoryCheckpoint {
   uuid: string | null;
   eventId: number;
   sinceAt: number;
