@@ -236,7 +236,10 @@ export async function runBootedParkedPass({
     if (act) await between?.();
     const target = mark.udid;
     const label = `simulator ${mark.name}`;
-    if (!shutDown || workspaceServing(mark.root)) {
+    const serving = workspaceServing(mark.root);
+    // @ref LLP 0001#one-task-runs-every-gc-deletion -- a handoff invalidates stopped-state inventory
+    if (act && between && !shutDown && !serving) continue;
+    if (!shutDown || serving) {
       if (act) await clearDeferredShutdown(mark.root, mark.slot, mark.until);
       continue;
     }

@@ -271,6 +271,7 @@ async function run(
       operation: context.operation,
       ...(context.firstFree ? { firstFree: context.firstFree } : {}),
       ...(context.stop ? { stop: context.stop } : {}),
+      ...(context.rung === 4 && context.between ? { skipCompletedDormant: true } : {}),
       ...(context.short ? { deletable: deletable(context) } : {}),
     });
   } catch (error) {
@@ -878,7 +879,13 @@ async function dormantRung(context: RungContext): Promise<void> {
     if (!(await context.stillShort())) return;
     await run(
       { ...context, why: `${context.why}; idle ${Math.floor(candidate.idleMs / MINUTE_MS)} minutes` },
-      dormantAction(candidate.path, idleMs, context.why),
+      dormantAction(
+        candidate.path,
+        context.act && context.between && !context.force && (await context.remeasure()).disk !== 'critical'
+          ? DORMANT_HIGH_IDLE_MS
+          : idleMs,
+        context.why,
+      ),
       { bytes: () => workspaceDeviceBytes(context, project) },
     );
   }

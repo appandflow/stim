@@ -373,12 +373,16 @@ so none ever runs beside another.
 - An owned rung 0 pass hands off between parked and deferred simulator
   shutdowns and after the final group. Native shutdown, pool ownership and
   deferred-marker changes settle first. The next helper rechecks current
-  parked ownership or the exact deferral and workspace use. Ordinary tick
+  parked ownership or the exact deferral and workspace use. A pre-handoff
+  stopped/absent native listing cannot clear a deferral: the owned pass keeps
+  that marker for a later fresh-inventory tick. Ordinary tick
   maintenance supplies no disk callback; forced selection stays unchanged.
 - Rung 4's pressure ladder hands off between whole dormant workspaces and
   before leaving the rung. Acting admission refreshes the exact registration
   and device-volume gate; the existing claimed stage checks idle/activity and
-  pins again. All devices and logs of one workspace remain under that stage's
+  pins again, using current measured urgency unless explicitly forced. A
+  resumed owned action keeps an already-completed dormant record under the
+  workspace claim. All devices and logs of one workspace remain under that stage's
   claim. The ordinary activity pass and finer in-claim loops stay separate.
   Read-only passes neither yield nor refresh their captured project selection.
 - The maintenance pass gives up the turn once it deletes nothing more, before

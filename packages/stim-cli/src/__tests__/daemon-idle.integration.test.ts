@@ -605,6 +605,28 @@ describe('a simulator that stop left booted', () => {
     expect(deferred(root)).toEqual(['ios']);
   });
 
+  test('keeps a new deferral when a handoff invalidates the stopped simulator inventory', async () => {
+    const { root, udid } = bootedWorkspace('booted-during-handoff', 20 * MINUTE_MS);
+    const captured = sims.map((sim) => ({ ...sim, state: 'Shutdown' as const }));
+    let deferredNow = false;
+    const actions = await runBootedParkedPass({
+      sims: captured,
+      memory: 'normal',
+      all: true,
+      act: true,
+      log: () => {},
+      operation: testContext(),
+      between: async () => {
+        if (deferredNow) return;
+        deferredNow = true;
+        await defer(root, udid, FUTURE());
+      },
+    });
+    expect(actions).toEqual([]);
+    expect(tornDown).toEqual([]);
+    expect(deferred(root)).toEqual(['ios']);
+  });
+
   test('only loses the deferral when the simulator is no longer booted', async () => {
     const { root, udid } = bootedWorkspace('down', 20 * MINUTE_MS);
     for (const sim of sims) sim.state = 'Shutdown';
