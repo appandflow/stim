@@ -600,8 +600,11 @@ describe.skipIf(process.platform === 'win32')('Metro when stimd goes away', () =
       const metro = await waitForAcceptedMetro(root, helperAccepted);
       const first = stimdPid();
       expect(first).not.toBeNull();
+      const owner = readClaimSet(stimdClaimRoot()).live.find((holder) => holder.owner.pid === first)?.owner;
+      if (!owner) throw new Error('the fixture daemon has no live ownership identity');
       process.kill(Number(first), 'SIGKILL');
       await expect(answer).resolves.toMatchObject({ op: 'error', ...RERUN });
+      expect(await waitForProcessExit(owner, 5000)).toBe(true);
       expect(stimdLive()).toBe(false);
       allowReady();
       await expect(ensureMetroThroughStimd({ root, port }, 45_000)).resolves.toMatchObject({

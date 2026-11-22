@@ -41,6 +41,7 @@ import {
 import { parseCmakeCacheLauncher } from '../diagnostics/doctor-cxx.ts';
 import { runCli } from '../cli/define-op.ts';
 import { holdDaemonClaim, serveStimdSocket } from './_stimd-socket.ts';
+import * as historyHelper from '../fsevents-helper.ts';
 import { doctorOp, doctorSuccessLines, parseDoctorPlatform, shadowedStimFinding } from '../commands/doctor.ts';
 import { daemonDir, daemonSnapshotFile, statsFile, type StatsPlacement } from '@stim-cli/core/state';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
@@ -2322,3 +2323,37 @@ describe('doctor on a stimd whose last tick is late', () => {
     expect(found[0]?.fix).not.toMatch(/kill/);
   }, 60_000);
 });
+
+test.skipIf(process.platform !== 'darwin')(
+  'doctor reports a packaged helper digest mismatch without rewriting it',
+  async () => {
+    const checked = vi
+      .spyOn(historyHelper, 'checkHistoryHelper')
+      .mockReturnValue({ ok: false, kind: 'digest', reason: 'fixture digest mismatch' });
+    const project = mkdtempSync(join(tmpdir(), 'stim-doctor-history-'));
+    writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'monorepo-root' }));
+    const cwd = process.cwd();
+    const originalLog = console.log;
+    const logs: string[] = [];
+    console.log = (line) => logs.push(String(line));
+    process.chdir(project);
+    try {
+      await runCli(
+        doctorOp(() => testStimVersions),
+        ['--json'],
+        { version: '1.2.3' },
+      );
+      const payload: { findings: Finding[] } = JSON.parse(logs.join('\n'));
+      expect(payload.findings.find(({ title }) => title === 'FSEvents helper digest mismatch')).toMatchObject({
+        level: 'cost',
+        detail: expect.stringContaining('fixture digest mismatch'),
+        fix: expect.stringContaining('scripts/fetch-fsevents.mjs'),
+      });
+    } finally {
+      process.chdir(cwd);
+      console.log = originalLog;
+      checked.mockRestore();
+      rmSync(project, { recursive: true, force: true });
+    }
+  },
+);

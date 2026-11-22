@@ -836,3 +836,47 @@ implementer of #5942 and its reviews, not by the maintainer.
   `packages/core/state/settings-registry.ts` (defaults),
   `packages/stim-cli/src/daemon/ladder.ts` (rungs),
   `packages/stim-cli/src/commands/gc.ts`.
+
+## Filesystem history makes marks dirty
+
+On macOS, one packaged `stim-fsevents` child of stimd replays filesystem
+history and then streams changed checkout roots. The watched roots come from
+current authorized marks, grouped by their recorded source device; newly
+unmarked roots are already due. Scan-only roots whose current route cannot yet
+be proved stay outside this watch set until [#6093](https://github.com/appandflow/stim/issues/6093).
+A root-list change replaces the watch with a
+new generation. Output indexes belong only to that generation, and older
+output cannot index the replacement list or advance its checkpoint.
+
+Watch membership is read on the passes worker, including bounded asynchronous
+checkout identities. A cancelled or timed-out filesystem read retains that
+isolate's single pending-read slot. Git cleanup failures use the daemon's
+existing containment policy, including during shutdown.
+
+The passes worker persists each batch's `dirtyAt` updates before acknowledging
+it. Publication and dirty updates use the same isolate's synchronous
+read-modify-write, so a change during a mark's reads survives publication. Only
+that acknowledgement lets the main thread atomically replace the per-device
+UUID, event id, timestamp and root membership in `gc/fsevents.json`. A failed
+write keeps the old cursor for replay. This orders process-crash recovery;
+ordinary atomic renames do not promise a power-loss transaction across files.
+Build-end measurements consume only their captured marker batch after a strict
+dirty acknowledgement; failed mark I/O leaves that batch for the timer backoff.
+
+The helper purges history whose UUID changed, whose cursor is ahead, whose
+saved timestamp is missing, future or over two hours old, or whose event stream
+reports lost events. The caller dirties that device's roots before storing the
+new cursor. History remains a refresh hint: a parent renamed away and back or
+a snapshot restored with the same UUID can hide changes. Generation TTLs stay,
+and a sweep's deletion rechecks do not change.
+
+A missing, mismatched, failed or unavailable helper makes each known root dirty
+once, then Stim activity and generation TTLs supply the fallback. Status names
+that source and reason, and doctor reports a binary digest mismatch. Shutdown
+closes helper stdin and waits for its exit. EOF also ends it if stimd dies.
+
+The npm package includes one signed universal helper, pinned by release version,
+zip SHA-256 and binary SHA-256. Release preparation downloads and verifies it;
+stimd verifies the binary once before spawning it. It is never downloaded or
+compiled at runtime. A source checkout fetches it with
+`node scripts/fetch-fsevents.mjs`.
