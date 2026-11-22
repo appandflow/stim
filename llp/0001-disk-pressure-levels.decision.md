@@ -718,7 +718,7 @@ also holds the newest activity the walk read, and the walk reads at
   shared dirty watermark; dependency-only writes preserve the output
   generation. Missing or malformed optional evidence leaves output marks
   valid and dependency eligibility unknown.
-- The acting normal linked-dependency phase selects its saved dependency
+- The acting normal dependency phases select their saved dependency
   generation inside the existing current Git-holder inventory. A missing or
   due subtype gets the existing complete inventory and publication first;
   failed publication keeps it. A fresh subtype supplies only its saved paths
@@ -727,8 +727,11 @@ also holds the newest activity the walk read, and the walk reads at
   membership, path/device, current generation and dormant settings are checked
   before ranking and again through the existing claimed deletion recheck.
   Existing process, activity, tracked-file, pin, lock, install-edit and size
-  protections remain. Source dependencies and explicit previews keep their
-  existing collection path.
+  protections remain. Source eligibility starts from saved paths rather than
+  probing for new trees; missing or due observations go through full normal
+  collection before selection. Source grouping, current linked-worktree sharing,
+  copied-from activity and exclusive warm claims remain required. Explicit
+  previews keep their existing collection path.
 - Acting pressure dependency reports use saved candidates, cached estimates
   and targeted current scope, membership, path/device, Git role/lock,
   pin, activity and warm checks. They discover no dependency candidates,

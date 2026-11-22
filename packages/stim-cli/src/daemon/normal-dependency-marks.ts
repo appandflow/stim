@@ -12,14 +12,17 @@ import { answered } from '../workspace/bounded-read.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { dependencyMarkDue } from './dependency-marks.ts';
 import { outputMark } from './marks.ts';
-import { dormantAfterMs } from './stages.ts';
+import { dormantAfterMs, sourceDormantAfterMs } from './stages.ts';
 
-/** Selects saved linked dependencies; complete normal inventories still publish missing or due generations. */
+/** Selects saved normal dependencies; complete normal inventories still publish missing or due generations. */
 export function normalDependencySelection(
   operation: StimContext | undefined,
   between: () => Promise<void>,
   idleMs: number,
+  source = false,
 ) {
+  const role = source ? 'source' : 'linked';
+  const threshold = source ? sourceDormantAfterMs : dormantAfterMs;
   const read = async (root: string): Promise<GcMark | null> => {
     const config = loadConfig();
     if (!config) return null;
@@ -31,20 +34,25 @@ export function normalDependencySelection(
     if (isClaimUnavailable(error) || (error instanceof Error && 'reportCleanup' in error)) throw error;
     operation?.signal.throwIfAborted();
   };
+  const paths = async (root: string): Promise<readonly string[] | undefined> => {
+    await between();
+    try {
+      const mark = await read(root);
+      const config = loadConfig();
+      if (!config || threshold(config, operation?.env) !== idleMs) return [];
+      if (dependencyMarkDue(mark, Date.now(), dormantAfterMs(config, operation?.env))) return undefined;
+      if (!mark?.dependencies || mark.dependencies.role !== role) return [];
+      return mark.dependencies.candidates.map((candidate) => candidate.path);
+    } catch (error) {
+      uncertain(error);
+      return [];
+    }
+  };
   return {
-    async paths(worktree: ArtifactWorktree): Promise<readonly string[] | undefined> {
-      await between();
-      try {
-        const mark = await read(worktree.path);
-        const config = loadConfig();
-        if (!config || dormantAfterMs(config, operation?.env) !== idleMs) return [];
-        if (dependencyMarkDue(mark, Date.now(), dormantAfterMs(config, operation?.env))) return undefined;
-        if (!mark?.dependencies || mark.dependencies.role !== 'linked') return [];
-        return mark.dependencies.candidates.map((candidate) => candidate.path);
-      } catch (error) {
-        uncertain(error);
-        return [];
-      }
+    paths: (worktree: ArtifactWorktree): Promise<readonly string[] | undefined> => paths(worktree.path),
+    async reclaimable(root: string): Promise<boolean | undefined> {
+      const selected = await paths(root);
+      return selected === undefined ? undefined : selected.length > 0;
     },
     async problem(candidate: ArtifactCandidate): Promise<string | null> {
       try {
@@ -53,25 +61,25 @@ export function normalDependencySelection(
         const observation = mark?.dependencies;
         if (
           !config ||
-          dormantAfterMs(config, operation?.env) !== idleMs ||
+          threshold(config, operation?.env) !== idleMs ||
           !mark ||
           !observation ||
-          observation.role !== 'linked' ||
+          observation.role !== role ||
           dependencyMarkDue(mark, Date.now(), dormantAfterMs(config, operation?.env))
         )
-          return 'its saved linked dependency generation is missing or due';
-        const { entries, ...source } = await resolveSourceCheckoutAsync(candidate.worktree, {
+          return 'its saved dependency generation is missing or due';
+        const { entries, ...checkout } = await resolveSourceCheckoutAsync(candidate.worktree, {
           env: operation?.env,
           signal: operation?.signal,
           declareFor: operation,
           cache: false,
         });
         const holder = matchWorktreeEntry(entries, candidate.worktree);
-        if ('refusal' in source || !holder || holder.bare || holder.path === source.path)
+        if ('refusal' in checkout || !holder || holder.bare || (holder.path === checkout.path) !== (role === 'source'))
           return 'its current Git holder could not be verified';
-        const keys = (await reclaimKeysAsync(candidate.worktree, operation)).filter(
-          (key) => matchWorktreeEntry(entries, key)?.path === holder.path,
-        );
+        const keys = (
+          await reclaimKeysAsync(candidate.worktree, operation, [...candidate.keys, ...observation.keys])
+        ).filter((key) => matchWorktreeEntry(entries, key)?.path === holder.path);
         if (keys.length !== observation.keys.length || keys.some((key) => !observation.keys.includes(key)))
           return 'its workspace membership changed since the dependency observation';
         if (!keys.some((key) => ARTIFACT_DIRS.dependencies.some((dir) => join(key, dir) === candidate.path)))

@@ -849,8 +849,15 @@ export function reclaimKeys(rootPath: string): string[] {
   return step.value;
 }
 
-/** Current reclaim membership, with bounded identity reads and uncertain registrations refused. */
-export async function reclaimKeysAsync(rootPath: string, operation?: StimContext): Promise<string[]> {
+/**
+ * Current bounded reclaim membership. With known keys, an unrelated outside registration's permission failure
+ * retains its lexical identity; known keys and identities within the holder still require current proof.
+ */
+export async function reclaimKeysAsync(
+  rootPath: string,
+  operation?: StimContext,
+  knownKeys?: readonly string[],
+): Promise<string[]> {
   const reads = reclaimKeyReads(rootPath);
   let step = reads.next();
   while (!step.done) {
@@ -863,7 +870,12 @@ export async function reclaimKeysAsync(rootPath: string, operation?: StimContext
         path !== rootPath &&
         error instanceof Error &&
         'code' in error &&
-        (error.code === 'ENOENT' || error.code === 'ENOTDIR')
+        (error.code === 'ENOENT' ||
+          error.code === 'ENOTDIR' ||
+          (knownKeys !== undefined &&
+            (error.code === 'EACCES' || error.code === 'EPERM') &&
+            !knownKeys.includes(path) &&
+            !isPathPrefix(resolve(rootPath), resolve(path))))
       )
         identity = resolve(path);
       else throw error;

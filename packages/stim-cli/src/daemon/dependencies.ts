@@ -477,13 +477,23 @@ export async function clearSourceCheckouts(
   setting: string,
   level: PressureLevel,
   between: () => Promise<void>,
+  saved?: (candidate: ArtifactCandidate) => Promise<string | null>,
 ): Promise<Map<RankedDependency, TreeResult>> {
   const groups = new Map<string, RankedDependency[]>();
   for (const tree of trees) groups.set(tree.candidate.worktree, [...(groups.get(tree.candidate.worktree) ?? []), tree]);
   const results = new Map<RankedDependency, TreeResult>();
   for (const group of groups.values()) {
     await between();
-    const outcomes = await clearSourceDependencies(group, idleMs, protectedRoot, worktrees, level, operation, setting);
+    const outcomes = await clearSourceDependencies(
+      group,
+      idleMs,
+      protectedRoot,
+      worktrees,
+      level,
+      operation,
+      setting,
+      saved,
+    );
     group.forEach((tree, index) => {
       const outcome = outcomes[index];
       if (outcome) results.set(tree, outcome);
@@ -504,16 +514,33 @@ export async function clearSourceDependencies(
   level: PressureLevel,
   operation?: StimContext,
   setting?: string,
+  saved?: (candidate: ArtifactCandidate) => Promise<string | null>,
 ): Promise<TreeResult[]> {
   forgetGitReads(operation);
   try {
+    const markedProblem = async (keys?: readonly string[], worktree?: string) => {
+      if (!saved) return null;
+      for (const { candidate } of dependencies) {
+        const problem = await saved({
+          ...candidate,
+          ...(keys ? { keys: [...keys] } : {}),
+          ...(worktree ? { worktree } : {}),
+        });
+        if (problem) return problem;
+      }
+      return null;
+    };
+    const marked = await markedProblem();
+    if (marked) return dependencies.map(() => ({ status: 'kept', bytes: 0, detail: marked }));
     const results = await clearSourceTrees(
       dependencies.map(({ candidate }) => candidate.path),
       {
         protectedRoot,
         pinned: maintenancePinnedReader(operation),
         worktrees,
-        recheck: (keys, worktree) => stillUnused(true, keys, worktree, idleMs, operation, setting),
+        recheck: async (keys, worktree) =>
+          (await markedProblem(keys, worktree)) ??
+          (await stillUnused(true, keys, worktree, idleMs, operation, setting)),
         level,
         operation,
       },
@@ -642,6 +669,8 @@ async function takeIdleDependencies(
 ): Promise<DaemonLadderAction[]> {
   const keeps = new Map<string, string>();
   const between = input.between ?? (async () => {});
+  const { operation } = input;
+  const saved = input.marks && input.act ? normalDependencySelection(operation, between, afterMs, source) : undefined;
   const discovered = input.marks ? await discoverCheckouts(config, listedRoots(), input.operation) : undefined;
   const candidates = await idleStageCandidates(
     config,
@@ -653,6 +682,8 @@ async function takeIdleDependencies(
           setting: 'idle.sourceDormantDays',
           onKept: (path, reason) => keeps.set(canonicalOrNull(path) ?? path, reason),
           reclaimable: async (path) => {
+            const selected = await saved?.reclaimable(path);
+            if (selected !== undefined) return selected;
             const trees = await sourceTreesOf(path, input.operation);
             if (trees === 'unanswered')
               keeps.set(canonicalOrNull(path) ?? path, 'its node_modules or ios/Pods did not answer this pass');
@@ -668,7 +699,6 @@ async function takeIdleDependencies(
         },
   );
   await between();
-  const { operation } = input;
   if (input.marks && !source) await refreshCargoHolderMarks(config, input, between, true, discovered);
   const actions: DaemonLadderAction[] = source
     ? []
@@ -678,8 +708,6 @@ async function takeIdleDependencies(
       });
   await between();
   const idle = candidates.filter((candidate) => source || candidate.role === 'linked');
-  const saved =
-    input.marks && input.act && !source ? normalDependencySelection(operation, between, afterMs) : undefined;
   const inventory = input.marks
     ? await timedStep(
         input.log,
@@ -801,6 +829,7 @@ async function takeIdleDependencies(
           why,
           'normal',
           between,
+          saved?.problem,
         )
       : new Map<RankedDependency, TreeResult>();
   for (const dependency of take) {
