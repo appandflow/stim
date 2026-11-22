@@ -208,7 +208,9 @@ hold that keeps a worktree inside a dot-folder of its main checkout
   checks, up to the first explicit project boundary or the filesystem root.
   This includes ancestors above home and aliases into the selected root.
   Recognition then uses the ordinary selected-root operation and ambiguity
-  rules. An unreadable ownership input keeps the mark; no ancestor is listed.
+  rules. An unreadable ownership input leaves that candidate unproved; another
+  independently recognized app can still authorize the checkout. No ancestor
+  is listed.
 - Every reduce-only checkout is evaluated on every pass, like a sibling-discovered
   checkout, and classified from the complete discovery list. A window of 40 per
   pass was built and removed: filtering by it before classification changed
