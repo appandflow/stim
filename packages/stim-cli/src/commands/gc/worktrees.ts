@@ -1,6 +1,6 @@
 import type { StimContext } from '@stim-cli/core';
 import { existsSync, readdirSync, statSync } from 'fs';
-import { isAbsolute, join } from 'path';
+import { isAbsolute, join, sep } from 'path';
 import chalk from 'chalk';
 import { machineNumber } from '../../machine-number.ts';
 import { formatLongDuration, plural } from '../../command-output.ts';
@@ -10,9 +10,9 @@ import { listAllIosSimsAsync, type IosSimRecord } from '../../devices/ios.ts';
 import { leaseIsExpired, listLeaseFiles } from '../../engine/device-lease.ts';
 import { isTimeoutError, type ExecOptions } from '../../exec.ts';
 import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
-import { gitQuiet } from '../../workspace/git.ts';
+import { gitQuiet, gitQuietAsync } from '../../workspace/git.ts';
 import { childEnvironment } from '../../workspace/git-read.ts';
-import { MAINTENANCE_LOG_NAME, settingDefinition } from '@stim-cli/core/state';
+import { MAINTENANCE_LOG_NAME, settingDefinition, type GcWorktreeObservation } from '@stim-cli/core/state';
 import { getProject, loadConfig } from '../../workspace/config.ts';
 import { workspaceLogsDir, workspaceStateFile } from '../../workspace/paths.ts';
 import { workspaceInUseAsync } from '../../workspace/in-use.ts';
@@ -253,13 +253,14 @@ export async function agentSessionUse(
   paths: readonly string[],
   now: number,
   signal?: AbortSignal,
+  operation?: StimContext,
 ): Promise<string[][]> {
   signal?.throwIfAborted();
   const workspaces = paths.map((path) => {
     const canonical = canonicalPath(path);
     return { path: canonical, root: canonical, recorded: null };
   });
-  const sessions = await discoverAgentSessions({ now });
+  const sessions = await discoverAgentSessions({ now, ...(operation ? { operation } : {}) });
   signal?.throwIfAborted();
   return attributeAgentSessions(workspaces, sessions, now).map((found) =>
     found.map((session) => `an agent session (${agentKey(session)}) is working in it`),
@@ -749,6 +750,141 @@ function reportFreshMs(operation?: StimContext): number {
   return Math.max(FETCH_FRESH_MS, 2 * minutes * MINUTE_MS);
 }
 
+/** Current report thresholds, including the existing empty-branch activity floor. */
+export function worktreeReportThresholds(
+  level: 'high' | 'critical',
+  operation?: StimContext,
+): { graceMs: number; emptyBranchMs: number } {
+  const graceMs = level === 'critical' ? 0 : graceMsSetting(operation);
+  return { graceMs, emptyBranchMs: Math.max(graceMs, protectRecentMs(operation), NO_OWN_COMMITS_PRESSURE_FLOOR_MS) };
+}
+
+/** One device and agent inventory for the currently authorized saved worktrees. */
+export async function savedWorktreeUse(
+  roots: readonly { path: string; keys: string[] }[],
+  operation?: StimContext,
+): Promise<string[][]> {
+  if (!roots.length) return [];
+  const devices = await reportDeviceReads(
+    roots.flatMap(({ keys }) => keys),
+    operation,
+  );
+  const agents = await agentSessionUse(
+    roots.map(({ path }) => path),
+    Date.now(),
+    operation?.signal,
+    operation,
+  );
+  const checked = await Promise.allSettled(
+    roots.map(async ({ path, keys }, i) => [
+      ...stimCliUseOf(path, canonicalPath, stimCliEntries(operation?.env)),
+      ...(await inUseOf(keys, { managedLocks: true }, devices, operation?.signal, operation)),
+      ...(agents[i] ?? []),
+    ]),
+  );
+  const failure = checked.find((result) => result.status === 'rejected');
+  if (failure?.status === 'rejected') throw failure.reason;
+  return checked.flatMap((result) => (result.status === 'fulfilled' ? [result.value] : []));
+}
+
+/** Rechecks one saved, currently authorized worktree without discovering candidates or fetching repository state. */
+export async function savedWorktreeFacts(
+  path: string,
+  canonicalRoot: string,
+  keys: string[],
+  head: string,
+  sourcePath: string,
+  inUse: string[],
+  operation?: StimContext,
+): Promise<WorktreeFacts | { keep: string }> {
+  const read = {
+    ...childEnvironment(operation?.env ?? process.env),
+    signal: operation?.signal,
+    declareFor: operation,
+    timeoutMs: 3_000,
+    cache: false as const,
+  };
+  const { entries, ...source } = await resolveSourceCheckoutAsync(path, read);
+  if ('refusal' in source) return { keep: source.refusal };
+  if (source.path !== sourcePath) return { keep: 'its source checkout changed since the normal observation' };
+  const entry = entries.find((listed) => listed.path === canonicalRoot);
+  if (!entry || entry.bare || entry.prunable || source.path === entry.path)
+    return { keep: 'it is no longer a listed linked worktree' };
+  const status = await branchStatusAsync(path, read);
+  if (!status || status.head !== head)
+    return { keep: 'its HEAD moved or could not be read since the normal observation' };
+  const porcelain = await porcelainOf(path, status.dirty, operation);
+  const index = await gitQuietAsync(path, ['ls-files', '-v', '-z'], read);
+  if (index === null) return { keep: 'its current index flags are unknown' };
+  if (index.split('\0').some((record) => record[0] === 'S' || /^[a-z]/.test(record)))
+    return { keep: 'its sparse or hidden tracked files need a normal eligibility check' };
+  const ignored = await gitQuietAsync(
+    path,
+    ['ls-files', '-z', '--others', '--ignored', '--exclude-standard', '--directory'],
+    read,
+  );
+  if (ignored === null) return { keep: 'its current ignored folders are unknown' };
+  const { SKIPPED_WHERE_IGNORED } = await import('../../workspace/discovered-activity.ts');
+  if (
+    ignored
+      .split('\0')
+      .filter(Boolean)
+      .some((ignoredEntry) => {
+        const rel = ignoredEntry.replace(/\/$/, '');
+        const name = rel.split('/').at(-1) ?? '';
+        return (
+          !ignoredEntry.endsWith('/') ||
+          !(
+            name === 'node_modules' ||
+            SKIPPED_WHERE_IGNORED.has(name) ||
+            rel === 'ios/Pods' ||
+            rel.endsWith('/ios/Pods')
+          )
+        );
+      })
+  )
+    return { keep: 'its custom ignored paths need a normal eligibility check' };
+  const target = await localDefaultBranchAsync(source.path, {
+    ...childEnvironment(operation?.env ?? process.env),
+    signal: operation?.signal,
+    declareFor: operation,
+  });
+  const merge =
+    'error' in target
+      ? null
+      : await mergeStateAsync(path, target, {
+          ...childEnvironment(operation?.env ?? process.env),
+          signal: operation?.signal,
+          declareFor: operation,
+        });
+  const pullRequest = entry.branch
+    ? cachedPullRequest({ path, branch: entry.branch, head }, { maxAgeMs: reportFreshMs(operation) })
+    : null;
+  const facts: WorktreeFacts = {
+    source: 'linked',
+    bare: false,
+    locked: entry.locked === true,
+    pinned: await anyPinned(keys, operation),
+    discovered: false,
+    nested: entries
+      .filter((listed) => listed.path !== entry.path && listed.path.startsWith(`${entry.path}${sep}`))
+      .map((listed) => listed.path),
+    porcelain,
+    // @ref LLP 0001#the-lane-marks-what-each-checkout-could-free -- current Pod churn is uncertain without the normal dependency check
+    podChurn: [],
+    hiddenEdit: null,
+    unpushed: await unpushedCommitsAsync(path, read, status),
+    submodules: await hasPopulatedSubmodulesAsync(path, read),
+    inUse,
+    idleDays: idleDaysOf(keys, Date.now()),
+    merge,
+    pullRequest,
+    activity: await worktreeActivityOfAsync(path, keys, operation),
+    archiveDirty: false,
+  };
+  return facts;
+}
+
 function notRefreshedNote(fetch: string | null, facts: WorktreeFacts): string | null {
   const lookup = facts.pullRequest;
   const unchecked = lookup && 'unavailable' in lookup && lookup.unavailable === PULL_REQUEST_NOT_CHECKED;
@@ -812,6 +948,7 @@ interface Inspected {
   facts: WorktreeFacts;
   repo: string | null;
   branch: string | null;
+  lastUsedAt?: number;
 }
 
 /**
@@ -831,6 +968,7 @@ export async function collectWorktreeSweep({
   graceMs,
   refresh = true,
   operation,
+  onObservation,
 }: {
   idle: boolean;
   olderThan: number | null;
@@ -838,6 +976,7 @@ export async function collectWorktreeSweep({
   graceMs?: number;
   refresh?: boolean;
   operation?: StimContext;
+  onObservation?: (path: string, observation: GcWorktreeObservation) => Promise<void>;
 }): Promise<WorktreeSweep> {
   const days = idle ? (olderThan ?? DEFAULT_WORKTREE_IDLE_DAYS) : null;
   const grace: WorktreeGrace = { ms: graceMs ?? graceMsSetting(operation), now };
@@ -885,7 +1024,8 @@ export async function collectWorktreeSweep({
     const { entries, ...source } = await resolveSourceCheckoutAsync(path, read);
     const entry = matchWorktreeEntry(entries, path);
     const keys = [...new Set([...roots, ...reclaimKeys(path)])];
-    const idleDays = idleDaysOf(keys, now);
+    const lastUsedAt = lastUsedOf(keys);
+    const idleDays = Number.isFinite(lastUsedAt) ? Math.max(0, Math.floor((now - lastUsedAt) / DAY_MS)) : null;
     const linked = !('refusal' in source) && entry !== null && source.path !== entry.path;
     const managed = roots.some((root) => registry.has(root));
     // @ref LLP 0004#automatic-discovery-is-off-by-default -- a linked worktree counts only when discovery lists its root
@@ -994,6 +1134,7 @@ export async function collectWorktreeSweep({
       facts,
       repo: 'refusal' in source ? null : source.path,
       branch: head && entry?.branch ? entry.branch : null,
+      lastUsedAt,
     };
   });
   const linked = inspected.filter(({ facts }) => facts.source === 'linked' && !facts.unregistered);
@@ -1061,6 +1202,46 @@ export async function collectWorktreeSweep({
     const hold = await registeredRemovalHold(candidate.path, operation);
     if (hold) Object.assign(candidate, { skipCode: 'dirty', skipped: `kept: ${hold}`, eligibleAt: null });
   }
+  if (onObservation)
+    for (const { candidate, facts, repo, lastUsedAt } of inspected) {
+      if (facts.unregistered || facts.source !== 'linked') continue;
+      const merged = candidate.merge?.merged ? candidate.merge : null;
+      const ended = endedPullRequest(candidate.pullRequest);
+      const finishEvidence = merged
+        ? { reason: `merged into ${merged.into}`, at: new Date(merged.mergedAt).toISOString() }
+        : ended
+          ? { reason: describePullRequest(ended), at: ended.endedAt ? new Date(ended.endedAt).toISOString() : null }
+          : null;
+      await onObservation(candidate.path, {
+        markedAt: new Date(now).toISOString(),
+        source: repo,
+        head: candidate.head,
+        keys: candidate.keys,
+        clean:
+          facts.porcelain === null
+            ? null
+            : !facts.hiddenEdit && dirtyLines(facts.porcelain, facts.podChurn).length === 0,
+        pushed: facts.unpushed === null ? null : facts.unpushed.length === 0,
+        finished: finishEvidence,
+        emptyBranch:
+          candidate.merge === null || ('unknown' in candidate.merge && candidate.merge.unknown)
+            ? null
+            : hasNoOwnCommits(candidate.merge) && !openPullRequest(candidate.pullRequest),
+        activity: candidate.activity
+          ? { at: new Date(candidate.activity.at).toISOString(), basis: candidate.activity.basis }
+          : null,
+        lastUsedAt: lastUsedAt !== undefined && Number.isFinite(lastUsedAt) ? new Date(lastUsedAt).toISOString() : null,
+        ...(candidate.skipCode && candidate.skipped
+          ? {
+              keep: {
+                code: candidate.skipCode,
+                reason: candidate.skipped,
+                eligibleAt: candidate.eligibleAt === null ? null : new Date(candidate.eligibleAt).toISOString(),
+              },
+            }
+          : {}),
+      });
+    }
   const listed = [...worktrees, ...outside].filter(
     (w) => idle || (w.skipCode !== 'not-a-worktree' && w.skipCode !== 'source-checkout'),
   );

@@ -3,6 +3,9 @@ import { readdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join, relative } from 'node:path';
 import { isJsonObject, type AgentSession, type AgentTool } from '@stim-cli/core/state';
+import type { StimContext } from '@stim-cli/core';
+import { runOperationFile } from './engine/operation-exec.ts';
+import { answered } from './workspace/bounded-read.ts';
 import { getExecutor } from './exec.ts';
 import { inspectProcessStart } from './process-identity.ts';
 
@@ -174,24 +177,35 @@ function sessionProcessRuns(session: AgentSession): boolean {
   return start.startedAtMs <= Date.parse(session.startedAt) + 2000;
 }
 
-async function claudeSessions(home: string, apps: AgentApps): Promise<AgentSession[]> {
+async function claudeSessions(home: string, apps: AgentApps, operation?: StimContext): Promise<AgentSession[]> {
   const directory = join(home, '.claude', 'sessions');
   let names: string[];
   try {
-    names = (await readdir(directory)).filter((name) => name.endsWith('.json'));
-  } catch {
+    const listed = operation
+      ? await answered(directory, () => readdir(directory), 3_000, operation.signal)
+      : await readdir(directory);
+    names = listed.filter((name) => name.endsWith('.json'));
+  } catch (error) {
+    operation?.signal.throwIfAborted();
+    if (operation && !(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
     return [];
   }
-  const sessions = await Promise.all(
-    names.map(async (name) => {
-      try {
-        const session = parseClaudeSession(JSON.parse(await readFile(join(directory, name), 'utf8')), apps);
-        return session && sessionProcessRuns(session) ? canonical(session) : null;
-      } catch {
-        return null;
-      }
-    }),
-  );
+  const readSession = async (name: string) => {
+    try {
+      const file = join(directory, name);
+      const text = operation
+        ? await answered(file, () => readFile(file, 'utf8'), 3_000, operation.signal)
+        : await readFile(file, 'utf8');
+      const session = parseClaudeSession(JSON.parse(text), apps);
+      return session && sessionProcessRuns(session) ? canonical(session) : null;
+    } catch (error) {
+      operation?.signal.throwIfAborted();
+      if (operation) throw error;
+      return null;
+    }
+  };
+  const sessions = operation ? [] : await Promise.all(names.map(readSession));
+  if (operation) for (const name of names) sessions.push(await readSession(name));
   return sessions.filter((session): session is AgentSession => session !== null);
 }
 
@@ -201,17 +215,30 @@ const rows = db.prepare('SELECT id, cwd, name, source, created_at_ms, updated_at
 db.close();
 process.stdout.write(JSON.stringify(rows));`;
 
-async function codexSessions(codexHome: string, apps: AgentApps, now: number): Promise<AgentSession[]> {
+async function codexSessions(
+  codexHome: string,
+  apps: AgentApps,
+  now: number,
+  operation?: StimContext,
+): Promise<AgentSession[]> {
   let database: string | null;
   try {
-    database = codexStateDatabase(await readdir(codexHome));
-  } catch {
+    database = codexStateDatabase(
+      operation
+        ? await answered(codexHome, () => readdir(codexHome), 3_000, operation.signal)
+        : await readdir(codexHome),
+    );
+  } catch (error) {
+    operation?.signal.throwIfAborted();
+    if (operation && !(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
     return [];
   }
   if (!database) return [];
   try {
     // node:sqlite needs --experimental-sqlite on Node 22.12, and prints an experimental warning without --no-warnings.
-    const out = await getExecutor().runFileAsync(
+    const out = await runOperationFile(
+      operation,
+      getExecutor(),
       process.execPath,
       [
         '--no-warnings',
@@ -221,25 +248,37 @@ async function codexSessions(codexHome: string, apps: AgentApps, now: number): P
         join(codexHome, database),
         String(now - CODEX_ACTIVE_MS),
       ],
-      { timeoutMs: CODEX_QUERY_TIMEOUT_MS },
+      { timeoutMs: CODEX_QUERY_TIMEOUT_MS, ...(operation ? { signal: operation.signal } : {}) },
     );
     const sessions = parseCodexThreads(JSON.parse(out), apps).map(canonical);
     return sessions.filter((session): session is AgentSession => session !== null);
-  } catch {
+  } catch (error) {
+    if (operation && error instanceof Error && 'reportCleanup' in error) throw error;
+    operation?.signal.throwIfAborted();
+    if (operation) throw error;
     return [];
   }
 }
 
 /**
  * The Claude Code sessions whose process runs and the Codex threads updated in the last 30 minutes, with canonical
- * working directories. Every source is optional: a missing, unreadable or changed format yields no sessions from it.
+ * working directories. Without an operation, missing or unreadable sources yield no sessions. An operation bounds
+ * filesystem and subprocess reads, and unreadable evidence rejects so cleanup reports can keep uncertain roots.
  */
 export async function discoverAgentSessions({
   home = homedir(),
   codexHome = process.env.CODEX_HOME || join(home, '.codex'),
   apps = installedAgentApps(home),
   now = Date.now(),
-}: { home?: string; codexHome?: string; apps?: AgentApps; now?: number } = {}): Promise<AgentSession[]> {
+  operation,
+}: { home?: string; codexHome?: string; apps?: AgentApps; now?: number; operation?: StimContext } = {}): Promise<
+  AgentSession[]
+> {
+  if (operation) {
+    const claude = await claudeSessions(home, apps, operation);
+    operation.signal.throwIfAborted();
+    return [...claude, ...(await codexSessions(codexHome, apps, now, operation))];
+  }
   const [claude, codex] = await Promise.all([claudeSessions(home, apps), codexSessions(codexHome, apps, now)]);
   return [...claude, ...codex];
 }
