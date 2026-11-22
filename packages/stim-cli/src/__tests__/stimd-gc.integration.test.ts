@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   readFileSync,
   realpathSync,
+  statSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -99,15 +100,17 @@ const alive = (pid: number) => {
  * Starts an acting gc at critical on stimd whose size walk records its pid and waits until `go` exists, through the
  * API's `collectGarbage` when `report` is set, whose 60 s report budget then runs out when `expire` is called.
  */
-async function heldGc(controller: AbortController, report = false, single = false) {
+async function heldGc(controller: AbortController, report = false, single = false, mode: 'off' | 'on' = 'off') {
   const marker = join(scratch, 'du.pid');
   const go = join(scratch, 'go');
   const item = fixture(`echo $$ > '${marker}'\nwhile [ ! -f '${go}' ]; do sleep 0.1; done\nexec /usr/bin/du "$@"`);
+  if (mode === 'on') writeFileSync(join(item.home, 'config.json'), JSON.stringify({ daemon: { mode: 'on' } }));
+  const env = mode === 'on' ? { ...item.env, CI: undefined, STIM_DAEMON: 'on' } : item.env;
   const operation = testContext({
     home: item.home,
     projectRoot: item.root,
     cwd: item.root,
-    env: item.env,
+    env,
     signal: controller.signal,
   });
   const realSetTimeout = globalThis.setTimeout;
@@ -117,7 +120,7 @@ async function heldGc(controller: AbortController, report = false, single = fals
     expire = () => callback();
     return realSetTimeout(() => {}, 2 ** 30);
   });
-  const client = createStim({ projectRoot: item.root, home: item.home, env: item.env });
+  const client = createStim({ projectRoot: item.root, home: item.home, env });
   const gc = single
     ? client.deleteGarbageItem({ item: { kind: 'cache', dir: item.cache }, signal: controller.signal })
     : report
@@ -159,6 +162,93 @@ describe.skipIf(process.platform === 'win32')('gc on stimd', () => {
     },
     45_000,
   );
+
+  test('headroom in off mode starts no daemon and leaves its cache alone', async () => {
+    const item = fixture();
+    const operation = testContext({ home: item.home, cwd: item.root, env: { ...item.env, STIM_DAEMON: 'off' } });
+    const result = await runGcThroughStimd(
+      {
+        headroom: {
+          device: statSync(item.home).dev,
+          freeMb: 1e12,
+          protectedRoot: item.root,
+          deadline: Date.now() + 60_000,
+        },
+      },
+      operation,
+      operation.signal,
+    );
+    expect(result).toEqual({ headroom: true });
+    expect(stimdOwner()).toBeUndefined();
+    expect(readFileSync(join(item.cache, 'artifact'), 'utf8')).toBe('cached');
+  });
+
+  test('headroom on a report-mode owner remains nonacting', async () => {
+    const item = fixture();
+    writeFileSync(join(item.home, 'config.json'), JSON.stringify({ daemon: { mode: 'report' } }));
+    const operation = testContext({
+      home: item.home,
+      cwd: item.root,
+      env: { ...item.env, CI: undefined, STIM_DAEMON: 'report' },
+    });
+    const result = await runGcThroughStimd(
+      {
+        headroom: {
+          device: statSync(item.home).dev,
+          freeMb: 1e12,
+          protectedRoot: item.root,
+          deadline: Date.now() + 60_000,
+        },
+      },
+      operation,
+      operation.signal,
+    );
+    expect(result).toEqual({ headroom: true });
+    expect(stimdOwner()?.pid).toEqual(expect.any(Number));
+    expect(stimdOwner()?.pid).not.toBe(process.pid);
+    expect(readFileSync(join(item.cache, 'artifact'), 'utf8')).toBe('cached');
+  }, 30_000);
+
+  test('an expired queued headroom request leaves the running GC and owner healthy', async () => {
+    const { item, gc, go } = await heldGc(new AbortController(), false, false, 'on');
+    const operation = testContext({
+      home: item.home,
+      cwd: item.root,
+      env: { ...item.env, CI: undefined, STIM_DAEMON: 'on' },
+    });
+    await expect(
+      runGcThroughStimd(
+        {
+          headroom: {
+            device: statSync(item.home).dev,
+            freeMb: 1e12,
+            protectedRoot: item.root,
+            deadline: Date.now() + 100,
+          },
+        },
+        operation,
+        operation.signal,
+      ),
+    ).rejects.toThrow(/abort/i);
+    expect(existsSync(join(item.cache, 'artifact'))).toBe(true);
+    writeFileSync(go, 'continue');
+    await gc;
+    expect(existsSync(join(item.cache, 'artifact'))).toBe(false);
+    await expect(
+      runGcThroughStimd(
+        {
+          headroom: {
+            device: statSync(item.home).dev,
+            freeMb: 0,
+            protectedRoot: item.root,
+            deadline: Date.now() + 60_000,
+          },
+        },
+        operation,
+        operation.signal,
+      ),
+    ).resolves.toEqual({ headroom: true });
+  }, 30_000);
 
   test('an acting gc starts a stimd under daemon.mode off, which runs the pass and exits after it', async () => {
     const item = fixture();

@@ -2,7 +2,7 @@ import type { StimContext } from '@stim-cli/core';
 import chalk from 'chalk';
 import { readBuildLedger, type BuildLedgerPlatform } from '@stim-cli/core/state';
 import { phaseLine } from '../command-output.ts';
-import { runLadderToFree } from '../daemon/passes.ts';
+import { runGcThroughStimd } from '../daemon/client.ts';
 import { diskThresholds } from '../daemon/pressure.ts';
 import { readVolumeSpaceAsync } from '../stimd/passes/budget.ts';
 import { projectRegistry } from '../integrations/projects.ts';
@@ -16,6 +16,7 @@ import { setBuildBytes } from './build-bytes.ts';
 import { estimateBuildBytes, type BuildProjectType } from './build-headroom.ts';
 
 const MB = 1024 ** 2;
+const HEADROOM_MS = 60_000;
 
 function buildProjectType(root: string, platform: BuildLedgerPlatform): BuildProjectType {
   if (platform === 'macos') return 'native';
@@ -55,9 +56,14 @@ export function createBuildHeadroom({
   let started = false;
   let before: number | null = null;
   const projectKey = () => statsProjectKey({ root, commonDir: gitCommonDir(root), repoRoot: repoRoot(root) });
-  const space = async () => (await readVolumeSpaceAsync([root], signal))[0] ?? null;
+  const space = async (readSignal = signal) => {
+    const volume = (await readVolumeSpaceAsync([root], readSignal))[0] ?? null;
+    readSignal.throwIfAborted();
+    return volume;
+  };
 
-  async function makeRoom(): Promise<void> {
+  async function makeRoom(stop: AbortSignal, deadline: number): Promise<void> {
+    // @ref LLP 0006#one-bounded-turn-on-the-disk-owner -- Node cannot interrupt synchronous setup reads on a stalled filesystem
     const { thresholds, error } = diskThresholds(loadConfig(), env);
     if (error) return;
     const estimate = estimateBuildBytes({
@@ -68,17 +74,22 @@ export function createBuildHeadroom({
       now: Date.now(),
     });
     const requiredMb = (estimate.bytes + thresholds.criticalMb * MB) / MB;
-    const volume = await space();
-    if (!volume || volume.device === undefined || volume.freeMb >= requiredMb) return;
-    await runLadderToFree({
-      operation: context,
-      signal,
-      device: volume.device,
-      freeMb: requiredMb,
-      protectedRoot: root,
-    });
-    signal.throwIfAborted();
-    const after = await space();
+    const volume = await space(stop);
+    const device = volume?.device;
+    if (!volume || device === undefined || volume.freeMb >= requiredMb) return;
+    try {
+      await runGcThroughStimd(
+        {
+          headroom: { device, freeMb: requiredMb, protectedRoot: root, deadline },
+        },
+        context,
+        stop,
+      );
+    } catch {
+      stop.throwIfAborted();
+    }
+    stop.throwIfAborted();
+    const after = await space(stop);
     if (!after || after.freeMb >= requiredMb) return;
     context.output(
       'stderr',
@@ -95,12 +106,30 @@ export function createBuildHeadroom({
     async begin() {
       if (started) return;
       started = true;
+      signal.throwIfAborted();
+      const deadline = Date.now() + HEADROOM_MS;
+      const expired = new AbortController();
+      const stop = AbortSignal.any([signal, expired.signal]);
+      const timer = setTimeout(() => expired.abort(new Error('Build headroom deadline reached.')), HEADROOM_MS);
+      let abort!: () => void;
+      const cancelled = new Promise<never>((_resolve, reject) => {
+        abort = () => reject(stop.reason);
+        stop.addEventListener('abort', abort, { once: true });
+      });
       try {
-        await makeRoom();
-        before = (await space())?.freeMb ?? null;
+        before = await Promise.race([
+          (async () => {
+            await makeRoom(stop, deadline);
+            return (await space(stop))?.freeMb ?? null;
+          })(),
+          cancelled,
+        ]);
       } catch (error) {
         // @ref LLP 0006#a-build-never-refuses-for-headroom -- only a cancellation passes through
         if (signal.aborted) throw error;
+      } finally {
+        clearTimeout(timer);
+        stop.removeEventListener('abort', abort);
       }
     },
     async finish() {

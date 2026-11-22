@@ -1078,6 +1078,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
         settle: () => {},
         close: async () => {},
         gc: () => ({ result: new Promise(() => {}), leave: () => {} }),
+        headroom: () => ({ result: Promise.resolve({ headroom: true as const }), leave: () => {} }),
         item: () => {
           if (count++) return { result: Promise.resolve({ results: [], failures: 0 }), leave: () => {} };
           started = true;
@@ -1176,6 +1177,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
         settle,
         close: async () => {},
         gc: () => ({ result: new Promise(() => {}), leave: () => {} }),
+        headroom: () => ({ result: Promise.resolve({ headroom: true as const }), leave: () => {} }),
         item: () => ({ result: new Promise(() => {}), leave: () => {} }),
       });
       let running: Promise<boolean> | undefined;
@@ -1241,6 +1243,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
       settle: () => {},
       close: async () => {},
       gc: () => ({ result: new Promise(() => {}), leave: () => {} }),
+      headroom: () => ({ result: Promise.resolve({ headroom: true as const }), leave: () => {} }),
       item: () => ({ result: new Promise(() => {}), leave: () => {} }),
     });
     let running: Promise<boolean> | undefined;
@@ -1305,6 +1308,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
         settle: () => {},
         close: async () => {},
         gc: () => ({ result: new Promise(() => {}), leave: () => {} }),
+        headroom: () => ({ result: Promise.resolve({ headroom: true as const }), leave: () => {} }),
         item: () => ({ result: new Promise(() => {}), leave: () => {} }),
       });
       const lane = vi.spyOn(stimdThreads, 'createPassesLane').mockImplementation((_threads, _log, onFailure) => ({

@@ -11,8 +11,8 @@
 
 Before a local native compile (`ios`, `android`, `macos`; not a cache hit or an
 offloaded build), Stim estimates what the compile will write. When the build's
-volume has less free than that estimate plus the critical floor, the build runs
-the pressure ladder once in its own process, then builds whatever the result,
+volume has less free than that estimate plus the critical floor, the build asks
+stimd's disk owner for a headroom turn, then builds whatever the result,
 with one stderr warning when the estimate still does not fit. The check adds no
 refusal and no error code: a failure inside it is ignored, and only a
 cancellation passes through. `disk.hardFloorGb` remains the only disk refusal
@@ -30,8 +30,7 @@ The run uses the high level only, rungs 2 to 8, never rung 9 (LLP 0003). It
 stops once the build's volume, found by its device id, has the target free,
 whether the target is under or over `disk.minFreeGb`. Other volumes and memory
 do not count. It ends after any action that removed something, or failed, and
-left the build volume's free space no higher, after 60 seconds, or when another
-process holds the ladder claim. An action that kept everything does not end it,
+left the build volume's free space no higher, or at the deadline. An action that kept everything does not end it,
 so a cache with nothing to evict does not stop the run before the Cargo trims,
 which rung 3 runs after the caches (LLP 0001, The ladder runs by yield). The
 cost: a run whose every action keeps goes on to the end of its rungs or the
@@ -42,6 +41,40 @@ its build slot while it waits, so the run must be bounded and must not delete
 more than the build needs.
 
 Chosen by the coordinator and the reviews of #5517, not by the maintainer.
+
+## One bounded turn on the disk owner
+
+Headroom takes the high ladder rank on stimd's existing queue, behind a pass
+already running and ahead of the lane at its next unit boundary. On grant it
+measures the build device again: if earlier cleanup met the target, it runs no
+second cleanup. If still short, it frees only the remaining need. This avoids
+duplicate work without another coalescing registry. It waits for the held pass
+or unit to finish rather than subscribing to its progress or returning early
+when that pass crosses the target.
+
+One 60-second client deadline bounds asynchronous daemon startup/contact, queue
+wait, volume probes and cleanup waits. Expiry or an ordinary error lets the build
+continue; only real user cancellation propagates. A pending asynchronous read
+cannot hold the client past that deadline or change its build baseline later.
+The inherited config, ledger, Git and project-detection setup remains synchronous:
+a read stalled on an unresponsive filesystem blocks the event loop and can
+exceed the deadline. The existing synchronous reads retain that rare limit.
+The deadline was chosen by the implementer, not required by the maintainer.
+
+A queued request that expires or is cancelled never starts cleanup. An executing request stops
+at its existing safe unit boundaries and keeps ownership until that unit
+settles; the client does not release its turn early.
+
+There is no in-process fallback. Off mode starts no daemon and skips cleanup;
+report mode does not delete. stimd's configuration governs the pass. The
+protected build root, build-device scope and rungs 2-8 are preserved. The
+independent hard-floor caller path and general maintenance claim remain until
+that path also migrates to the owner.
+
+Reason: a build already holds its slot while making room, so waiting for the
+queue must share its cleanup budget. Rechecking after the turn is granted
+observes prior cleanup without adding shared requests with different volume
+targets and protected roots.
 
 ## Estimate and measurement
 
@@ -63,7 +96,7 @@ by the coordinator and the reviews of #5517, not by the maintainer.
 
 ## Links
 
-- Issues: #5512, #5513. Pull request: #5517.
+- Issues: #5512, #5513, #6079. Pull request: #5517.
 - Code: `packages/stim-cli/src/engine/build-headroom-run.ts`
   (`createBuildHeadroom`), `packages/stim-cli/src/engine/build-headroom.ts`,
   `packages/stim-cli/src/daemon/passes.ts` (`runLadderToFree`).

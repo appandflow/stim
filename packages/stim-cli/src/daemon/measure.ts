@@ -142,10 +142,23 @@ async function listSimsRetryingTimeout(signal: AbortSignal | undefined): Promise
 export async function measureTick(
   config: Config | null,
   now: number,
-  { probe = true, signal, operation }: { probe?: boolean; signal?: AbortSignal; operation?: StimContext } = {},
+  {
+    probe = true,
+    signal,
+    operation,
+    disk: measuredDisk,
+  }: {
+    probe?: boolean;
+    signal?: AbortSignal;
+    operation?: StimContext;
+    disk?: DaemonMeasurement['disk'];
+  } = {},
 ): Promise<TickMeasurement> {
   operation ??= signal ? processContext(process.cwd(), signal) : undefined;
-  const results = await Promise.allSettled([measureDisk(config, signal), measureMemory(signal, operation)]);
+  const results = await Promise.allSettled([
+    measuredDisk ?? measureDisk(config, signal),
+    measureMemory(signal, operation),
+  ]);
   const cleanup = results.find((result) => result.status === 'rejected' && isClaimUnavailable(result.reason));
   if (cleanup?.status === 'rejected') throw cleanup.reason;
   signal?.throwIfAborted();
