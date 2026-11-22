@@ -17,6 +17,8 @@ import type { DaemonLadderAction, DaemonPressure } from '@stim-cli/core/state';
 import {
   daemonNdjsonFile,
   diskUsageCacheFile,
+  gcMarkFile,
+  readGcMark,
   IDLE_STOP_KEY,
   readDormantStage,
   readIdleStage,
@@ -40,6 +42,7 @@ import * as ladderModule from '../daemon/ladder.ts';
 import * as bootedParked from '../daemon/booted-parked.ts';
 import * as idlePass from '../daemon/idle.ts';
 import * as stages from '../daemon/stages.ts';
+import * as marks from '../daemon/marks.ts';
 import { dormantCandidates, pendingDormant, runDormantPass } from '../daemon/stages.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { parkSim, readParked } from '../devices/sim-pool.ts';
@@ -877,6 +880,182 @@ describe('the pressure ladder', () => {
       expect.objectContaining({ rung: 1, kind: 'delete-build-outputs', outcome: 'done', bytes: expect.any(Number) }),
     );
     expect(deleted).toEqual([]);
+  });
+
+  test('critical output sweep uses only marked paths and never refreshes or rediscovers candidates', async () => {
+    const marked = workspace('marked', 5 * MINUTE_MS, 'Shutdown').root;
+    const missing = workspace('unmarked', 5 * MINUTE_MS, 'Shutdown').root;
+    const output = (root: string, name: string) => {
+      const path = join(workspaceDir(root), name);
+      mkdirSync(path, { recursive: true });
+      writeFileSync(join(path, 'out'), 'regenerable');
+      return path;
+    };
+    const known = output(marked, 'derived-data');
+    const unknown = output(missing, 'derived-data');
+    await marks.markWriter(input().config)({
+      path: marked,
+      at: Date.now(),
+      lastActivityAt: Date.now() - 5 * MINUTE_MS,
+      kept: null,
+    });
+    const newer = output(marked, 'gradle-build');
+    const refresh = vi.spyOn(marks, 'refreshOutputMarks');
+    const discover = vi.spyOn(stages, 'stoppedOutputCandidates');
+
+    await runLadder(
+      { ...input(true, async () => pressure('critical')), fromRung: 1, lastRung: 1 },
+      pressure('critical'),
+    );
+
+    expect(existsSync(known)).toBe(false);
+    expect(existsSync(unknown)).toBe(true);
+    expect(existsSync(newer)).toBe(true);
+    expect(refresh).not.toHaveBeenCalled();
+    expect(discover).not.toHaveBeenCalled();
+    expect(readGcMark(missing)).toBeNull();
+    expect(log).toHaveBeenCalledWith('info', 'gc_marks_missing', expect.any(String), { roots: 1 });
+  });
+
+  test.each(['recent activity', 'maintenance.keep', 'changed volume'] as const)(
+    'a stale output mark does not override %s at critical pressure',
+    async (change) => {
+      const { root } = workspace('recheck', 5 * MINUTE_MS, 'Shutdown');
+      const output = join(workspaceDir(root), 'derived-data');
+      mkdirSync(output, { recursive: true });
+      await marks.markWriter(input().config)({
+        path: root,
+        at: Date.now(),
+        lastActivityAt: Date.now() - DAY_MS,
+        kept: null,
+      });
+      if (change === 'recent activity') recordWorkspaceUse(root, new Date());
+      else if (change === 'maintenance.keep')
+        writeFileSync(join(root, '.stim.json'), JSON.stringify({ maintenance: { keep: true } }));
+      else {
+        const mark = readGcMark(root);
+        if (!mark) throw new Error('missing fixture mark');
+        writeCacheFile(gcMarkFile(root), { ...mark, device: mark.device + 1 });
+      }
+
+      const { actions } = await runLadder(
+        { ...input(true, async () => pressure('critical')), fromRung: 1, lastRung: 1 },
+        pressure('critical'),
+      );
+
+      expect(existsSync(output)).toBe(true);
+      expect(actions).toContainEqual(expect.objectContaining({ rung: 1, outcome: 'kept' }));
+      expect(readGcMark(root)?.candidates[0]?.keep).toBeDefined();
+    },
+  );
+
+  test('critical output sweep keeps a marked nested checkout after discoverRoots is broadened', async () => {
+    const { root } = workspace('team/app', 5 * MINUTE_MS, 'Shutdown');
+    const output = join(workspaceDir(root), 'derived-data');
+    mkdirSync(output, { recursive: true });
+    await marks.markWriter(input().config)({
+      path: root,
+      at: Date.now(),
+      lastActivityAt: Date.now() - DAY_MS,
+      kept: null,
+    });
+    const current = input().config;
+    delete current.projects[root];
+    current.maintenance = { discoverRoots: [projects] };
+    saveConfig(current);
+
+    await runLadder(
+      { ...input(true, async () => pressure('critical')), fromRung: 1, lastRung: 1 },
+      pressure('critical'),
+    );
+
+    expect(existsSync(output)).toBe(true);
+  });
+
+  test('high output sweep does not refresh once the disk reaches critical', async () => {
+    workspace('missing', 5 * MINUTE_MS, 'Shutdown');
+    const refresh = vi.spyOn(marks, 'refreshOutputMarks');
+    const remeasure = vi
+      .fn<() => Promise<DaemonPressure>>()
+      .mockResolvedValueOnce(pressure('high'))
+      .mockResolvedValue(pressure('critical'));
+
+    await runLadder({ ...input(true, remeasure), fromRung: 1, lastRung: 1 }, pressure('high'));
+
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  test('critical daemon report mode previews only known marks without writing them', async () => {
+    const { root } = workspace('known-report', 5 * MINUTE_MS, 'Shutdown');
+    const output = join(workspaceDir(root), 'derived-data');
+    mkdirSync(output, { recursive: true });
+    workspace('unmarked-report', 5 * MINUTE_MS, 'Shutdown');
+    await marks.markWriter(input().config)({
+      path: root,
+      at: Date.now(),
+      lastActivityAt: Date.now() - DAY_MS,
+      kept: null,
+    });
+    const before = readGcMark(root);
+    const discover = vi.spyOn(stages, 'stoppedOutputCandidates');
+
+    const { actions } = await runLadder(
+      { ...input(false, async () => pressure('critical')), fromRung: 1, lastRung: 1 },
+      pressure('critical'),
+    );
+
+    expect(actions).toContainEqual(expect.objectContaining({ rung: 1, target: root, outcome: 'would' }));
+    expect(existsSync(output)).toBe(true);
+    expect(discover).not.toHaveBeenCalled();
+    expect(readGcMark(root)).toEqual(before);
+  });
+
+  test('marked output removal reports failure after an earlier output was deleted', async () => {
+    const { root } = workspace('partial-output', 5 * MINUTE_MS, 'Shutdown');
+    const first = join(workspaceDir(root), 'derived-data');
+    const second = join(workspaceDir(root), 'gradle-build');
+    mkdirSync(first, { recursive: true });
+    mkdirSync(second, { recursive: true });
+    await marks.markWriter(input().config)({
+      path: root,
+      at: Date.now(),
+      lastActivityAt: Date.now() - DAY_MS,
+      kept: null,
+    });
+    const remove = vi.spyOn(idlePass, 'deleteOutputs');
+    remove.mockImplementationOnce(async () => {
+      rmSync(first, { recursive: true });
+      throw new Error('removal refused');
+    });
+
+    const { actions } = await runLadder(
+      { ...input(true, async () => pressure('critical')), fromRung: 1, lastRung: 1 },
+      pressure('critical'),
+    );
+
+    expect(existsSync(first)).toBe(false);
+    expect(existsSync(second)).toBe(true);
+    expect(actions).toContainEqual(expect.objectContaining({ rung: 1, outcome: 'failed', detail: 'removal refused' }));
+  });
+
+  test('high output sweep stops after known marks clear pressure, before refreshing unmarked roots', async () => {
+    const { root } = workspace('known', 5 * MINUTE_MS, 'Shutdown');
+    const output = join(workspaceDir(root), 'derived-data');
+    mkdirSync(output, { recursive: true });
+    workspace('missing', 5 * MINUTE_MS, 'Shutdown');
+    await marks.markWriter(input().config)({
+      path: root,
+      at: Date.now(),
+      lastActivityAt: Date.now() - DAY_MS,
+      kept: null,
+    });
+    const refresh = vi.spyOn(marks, 'refreshOutputMarks');
+    const remeasure = async () => pressure(existsSync(output) ? 'high' : 'normal');
+
+    await runLadder({ ...input(true, remeasure), fromRung: 1, lastRung: 1 }, pressure('high'));
+
+    expect(existsSync(output)).toBe(false);
+    expect(refresh).not.toHaveBeenCalled();
   });
 
   test('rung 1 leaves out a stopped workspace whose only output is a Cargo target/', async () => {

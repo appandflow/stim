@@ -1,7 +1,7 @@
 import { isJsonObject, readJsonObject } from './json-file.ts';
 import { gcMarkFile } from './paths.ts';
 
-export const GC_MARK_VERSION = 1;
+export const GC_MARK_VERSION = 2;
 
 /** `outputs`: a regenerable build output or Metro store rung 1 deletes; `cargo-target`: a Cargo `target/`. */
 export type GcMarkKind = 'outputs' | 'cargo-target';
@@ -9,6 +9,7 @@ export type GcMarkKind = 'outputs' | 'cargo-target';
 export interface GcMarkCandidate {
   kind: GcMarkKind;
   path: string;
+  device: number;
   /** From the disk-usage cache; null when it holds no size for the path. */
   bytes: number | null;
   measuredAt: string | null;
@@ -35,10 +36,11 @@ const KINDS: readonly unknown[] = ['outputs', 'cargo-target'] satisfies GcMarkKi
 
 function isCandidate(value: unknown): value is GcMarkCandidate {
   if (!isJsonObject(value)) return false;
-  const { kind, path, bytes, measuredAt, keep } = value;
+  const { kind, path, device, bytes, measuredAt, keep } = value;
   return (
     KINDS.includes(kind) &&
     typeof path === 'string' &&
+    typeof device === 'number' &&
     (bytes === null || typeof bytes === 'number') &&
     (measuredAt === null || typeof measuredAt === 'string') &&
     (keep === undefined || (isJsonObject(keep) && typeof keep.reason === 'string' && typeof keep.at === 'string'))

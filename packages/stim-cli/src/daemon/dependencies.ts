@@ -644,7 +644,7 @@ async function takeIdleDependencies(
         }
       : {
           between,
-          ...(input.marks ? { onRead: markWriter(config, input.operation?.signal) } : {}),
+          ...(input.marks ? { onRead: markWriter(config, input.operation?.signal, true) } : {}),
         },
   );
   await between();
