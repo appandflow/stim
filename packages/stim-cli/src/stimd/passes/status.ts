@@ -1,6 +1,7 @@
 import {
   maintenanceRunClaims,
   readMaintenanceState,
+  readDaemonSnapshot,
   type MaintenanceCheck,
   type MaintenanceStatus,
 } from '@stim-cli/core/state';
@@ -12,6 +13,7 @@ const CHECKS: readonly MaintenanceCheck[] = ['pressure', 'size', 'worktree', 'sw
 
 export function maintenanceStatus(env: NodeJS.ProcessEnv = process.env): MaintenanceStatus {
   const state = readMaintenanceState();
+  const history = readDaemonSnapshot()?.history;
   const claims = readClaimSet(maintenanceRunClaims());
   const holder = claims.live[0];
   const unresolved = claims.unresolved[0];
@@ -49,6 +51,7 @@ export function maintenanceStatus(env: NodeJS.ProcessEnv = process.env): Mainten
     ...(deferred.length ? { deferred } : {}),
     recent: state?.recent ?? [],
     plan: state?.plan ?? [],
+    ...(history ? { history } : {}),
   };
 }
 

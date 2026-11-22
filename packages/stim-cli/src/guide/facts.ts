@@ -2023,12 +2023,14 @@ RULES
     with the time in it, or stopped.
 
   maintenance { mode, lastChecks: { pressure, size, worktree, sweep }, pressure, sizes,
-                lastPass, running, deferred?, recent, plan, invalid?, claim? }
+                lastPass, running, deferred?, recent, plan, invalid?, claim?, history? }
     mode is off, report or on. Plan actions start with would-; the records
     of actions taken drop the prefix (clear-outputs, trim-cache, empty-cache,
     remove-worktree, remove-orphan, unregister-cache).
     deferred lists the checks host load is holding back, each with the epoch
     milliseconds it was first deferred; it is absent when none is.
+    history is the last daemon tick's filesystem-change source: fsevents or
+    fallback, with a reason for fallback. It does not prove the daemon is live.
     lastChecks are epoch milliseconds or null. running comes only from a
     live maintenance/run.claims owner, never from a check stamp.
     lastPass carries startedAt, durationMs, trigger, mode, freedBytes

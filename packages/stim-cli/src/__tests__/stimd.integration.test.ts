@@ -18,6 +18,8 @@ import { fileURLToPath } from 'node:url';
 import { spawn as spawnChild, spawnSync, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import {
   daemonClaimRoot,
+  daemonSnapshotFile,
+  listBuildEndMarkers,
   legacyDaemonSocket,
   daemonNdjsonFile,
   stimdClaimRoot,
@@ -76,6 +78,9 @@ import * as maintenanceMeasure from '../stimd/passes/measure.ts';
 import * as maintenanceRun from '../stimd/passes/run.ts';
 import * as spawnEntry from '../spawn-entry.ts';
 import * as ndjson from '../ndjson.ts';
+import * as historyHelper from '../fsevents-helper.ts';
+import * as buildEndTimer from '../stimd/build-end-timer.ts';
+import { markBuildEnded } from '../build-end-marker.ts';
 import { loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
@@ -240,6 +245,163 @@ test.skipIf(process.platform === 'win32')(
     }
   },
 );
+
+test.each([
+  { workspaces: undefined },
+  { workspaces: {} },
+  { workspaces: [null, { path: 42 }, { path: '/old', lastActivity: null }] },
+])('startup replaces a saved snapshot with invalid workspace activity %j', async ({ workspaces }) => {
+  const file = daemonSnapshotFile();
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(
+    file,
+    JSON.stringify({
+      version: 1,
+      pid: process.pid,
+      startedAt: new Date().toISOString(),
+      tickAt: '2000-01-01T00:00:00.000Z',
+      intervalMs: 60_000,
+      workspaces,
+    }),
+  );
+  expect(readDaemonSnapshot()).not.toBeNull();
+  const before = new Set(process.listeners('SIGTERM'));
+  const run = runStimd({ tickMs: 60_000, mode: 'report' });
+  try {
+    await listening();
+    await requestDaemonTick({ ...process.env, STIM_DAEMON: 'on' });
+    await vi.waitFor(() => expect(readDaemonSnapshot()?.tickAt).not.toBe('2000-01-01T00:00:00.000Z'), {
+      timeout: 10_000,
+    });
+    expect(Array.isArray(readDaemonSnapshot()?.workspaces)).toBe(true);
+  } finally {
+    process.listeners('SIGTERM').find((listener) => !before.has(listener))?.('SIGTERM');
+    await run;
+  }
+});
+
+test.each([false, true])('watch discovery cleanup is supervised during shutdown=%s', async (ending) => {
+  saveConfig({ version: 2, projects: {}, repos: {} });
+  const before = new Set(process.listeners('SIGTERM'));
+  const oldExit = process.exitCode;
+  let fail: (error: Error) => void = () => {};
+  let stopped = false;
+  const pending = new Promise<never>((_resolve, reject) => {
+    fail = reject;
+  });
+  const original = stimdThreads.createThreadTable;
+  const history = vi.fn<() => Promise<never>>(() => pending);
+  const threads = vi
+    .spyOn(stimdThreads, 'createThreadTable')
+    .mockImplementation((...args) => ({ ...original(...args), history }));
+  const run = runStimd({ tickMs: 60_000, mode: 'report' });
+  const stop = () => process.listeners('SIGTERM').find((listener) => !before.has(listener))?.('SIGTERM');
+  try {
+    await listening();
+    await requestDaemonTick({ ...process.env, STIM_DAEMON: 'on' });
+    await vi.waitFor(() => expect(history).toHaveBeenCalled());
+    expect(readClaimSet(stimdClaimRoot()).live).toHaveLength(1);
+    if (ending) stop();
+    fail(
+      Object.assign(new Error('watch Git cleanup unverified'), {
+        code: 'STIM_CLAIM_UNAVAILABLE',
+        reportCleanup: true,
+        reportChild: { pid: 4242, processToken: 'fixture' },
+        cleanupSettled: () => stopped,
+      }),
+    );
+    if (ending) await run;
+    await vi.waitFor(() => {
+      const supervised = ending
+        ? readClaimSet(stimdClaimRoot()).live.map(({ childDeclared }) => childDeclared)
+        : [daemonStatus().unverified?.length];
+      expect(supervised).toEqual(ending ? [false] : [1]);
+    });
+    if (!ending) await requestDaemonTick({ ...process.env, STIM_DAEMON: 'on' });
+  } finally {
+    stopped = true;
+    stop();
+    await run.catch(() => {});
+    threads.mockRestore();
+    process.exitCode = oldExit;
+  }
+});
+
+test('build-end measurement keeps its batch when dirty acknowledgement fails, then retries the same batch', async () => {
+  const before = new Set(process.listeners('SIGTERM'));
+  let trigger: () => Promise<void> = async () => {
+    throw new Error('timer not started');
+  };
+  const timer = vi.spyOn(buildEndTimer, 'startBuildEndTimer').mockImplementation(({ start }) => {
+    trigger = start;
+    return () => {};
+  });
+  const original = stimdThreads.createThreadTable;
+  const measureJob = vi.fn<stimdThreads.ThreadTable['run']>(async () => []);
+  const dirty = vi
+    .fn<stimdThreads.ThreadTable['dirty']>()
+    .mockRejectedValueOnce(new Error('dirty IO failure'))
+    .mockResolvedValue(undefined);
+  const threads = vi
+    .spyOn(stimdThreads, 'createThreadTable')
+    .mockImplementation((...args) => ({ ...original(...args), run: measureJob, dirty }));
+  markBuildEnded(join(home, 'project'));
+  const batch = listBuildEndMarkers();
+  const run = runStimd({ tickMs: 60_000, mode: 'report' });
+  try {
+    await listening();
+    expect(timer).toHaveBeenCalled();
+    await trigger();
+    expect(measureJob).not.toHaveBeenCalled();
+    expect(listBuildEndMarkers()).toEqual(batch);
+    expect(daemonLog()).toContain('daemon_build_end_dirty_failed');
+    await trigger();
+    expect(measureJob).toHaveBeenCalledWith('measure', expect.objectContaining({ buildEnd: batch }));
+  } finally {
+    process.listeners('SIGTERM').find((listener) => !before.has(listener))?.('SIGTERM');
+    await run;
+    threads.mockRestore();
+    timer.mockRestore();
+  }
+});
+
+test('shutdown drains filesystem history before closing its dirty-mark worker', async () => {
+  let finish: () => void = () => {};
+  const draining = new Promise<void>((done) => {
+    finish = done;
+  });
+  const close = vi.fn<() => Promise<void>>(() => draining);
+  const workerClose = vi.fn<() => Promise<void>>(async () => {});
+  const originalThreads = stimdThreads.createThreadTable;
+  const threads = vi
+    .spyOn(stimdThreads, 'createThreadTable')
+    .mockImplementation((...args) => ({ ...originalThreads(...args), close: workerClose }));
+  const helper = vi.spyOn(historyHelper, 'startHistoryFeed').mockReturnValue({
+    update: async () => {},
+    changed: async () => {},
+    status: () => ({ source: 'fallback', reason: 'fixture' }),
+    close,
+  });
+  const before = new Set(process.listeners('SIGTERM'));
+  const run = runStimd({ tickMs: 60_000, mode: 'report' });
+  try {
+    await listening();
+    const handler = process.listeners('SIGTERM').find((listener) => !before.has(listener));
+    assert(handler);
+    handler('SIGTERM');
+    await vi.waitFor(() => expect(close).toHaveBeenCalled());
+    expect(workerClose).not.toHaveBeenCalled();
+    finish();
+    await run;
+    expect(workerClose).toHaveBeenCalled();
+    expect(readClaimSet(stimdClaimRoot()).live).toEqual([]);
+  } finally {
+    finish();
+    await run;
+    helper.mockRestore();
+    threads.mockRestore();
+  }
+});
 
 test('shutdown retains the daemon claim until the net thread and observers close', async () => {
   let finish: () => void = () => {};
@@ -1079,6 +1241,8 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
         settle: () => {},
         close: async () => {},
         gc: () => ({ result: new Promise(() => {}), leave: () => {} }),
+        dirty: async () => {},
+        history: async () => [],
         headroom: () => ({ result: Promise.resolve({ headroom: true as const }), leave: () => {} }),
         item: () => {
           if (count++) return { result: Promise.resolve({ results: [], failures: 0 }), leave: () => {} };
@@ -1179,6 +1343,8 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
         settle,
         close: async () => {},
         gc: () => ({ result: new Promise(() => {}), leave: () => {} }),
+        dirty: async () => {},
+        history: async () => [],
         headroom: () => ({ result: Promise.resolve({ headroom: true as const }), leave: () => {} }),
         item: () => ({ result: new Promise(() => {}), leave: () => {} }),
       });
@@ -1246,6 +1412,8 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
       settle: () => {},
       close: async () => {},
       gc: () => ({ result: new Promise(() => {}), leave: () => {} }),
+      dirty: async () => {},
+      history: async () => [],
       headroom: () => ({ result: Promise.resolve({ headroom: true as const }), leave: () => {} }),
       item: () => ({ result: new Promise(() => {}), leave: () => {} }),
     });
@@ -1312,6 +1480,8 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
         settle: () => {},
         close: async () => {},
         gc: () => ({ result: new Promise(() => {}), leave: () => {} }),
+        dirty: async () => {},
+        history: async () => [],
         headroom: () => ({ result: Promise.resolve({ headroom: true as const }), leave: () => {} }),
         item: () => ({ result: new Promise(() => {}), leave: () => {} }),
       });

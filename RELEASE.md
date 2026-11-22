@@ -203,18 +203,20 @@ preparation, `git status --short` may show only the draft
    ranges rather than what actually publishes.
 
    ```bash
+   node scripts/fetch-fsevents.mjs
    out=$(mktemp -d)
    for p in stim-cli cache-s3; do
      tgz=$(cd "packages/$p" && pnpm pack --pack-destination "$out" | tail -1)
      echo "== $p ($(tar -tzf "$tgz" | wc -l | tr -d ' ') files)"
      tar -tzf "$tgz" | grep -E 'README|LICENSE'
+     if [ "$p" = stim-cli ]; then tar -tzf "$tgz" | grep -Fx package/native/darwin/stim-fsevents; fi
      tar -xzOf "$tgz" package/package.json | grep -E '"version"|"@stim-cli/|"stim":'
    done
    rm -rf "$out"
    ```
 
    Keep the `files` whitelists tight (`dist`, `shim`, `skill`, `LICENSE`,
-   `README.md` for the CLI; `dist`, `README.md`, `LICENSE` for the other
+   `README.md` and `native/darwin/stim-fsevents` for the CLI; `dist`, `README.md`, `LICENSE` for the other
    packages). The `stim` bin lives under `bin/` and loads its bundled
    JavaScript from `dist/`. A
    `workspace:` range in that output means the tarball was not packed by pnpm;
@@ -602,8 +604,9 @@ signed unless `HOST_SIGNING_IDENTITY` is set.
 helper that reports which watched directories changed, replaying FSEvents
 history from a stored event id. The npm publish job runs on Linux and cannot
 build or sign a Mach-O, so the helper ships as its own signed GitHub release,
-like Stim Host. It only needs a new version when its source changes. Nothing in
-`stim` downloads or runs it yet.
+like Stim Host. It only needs a new version when its source changes. The npm
+package carries the verified universal binary; stimd verifies its binary digest
+once before spawning it on macOS. Runtime never downloads it.
 
 Before the first release, a maintainer, in this order:
 
@@ -646,6 +649,11 @@ tag run.
    without its secrets.
 3. Never replace a published zip: a pinned digest would stop matching. Fix a
    bad release with a new version.
+4. Pin the published version, zip SHA-256 and binary SHA-256 from `SHA256SUMS`
+   in `packages/stim-cli/native/fsevents-release.json`. Run
+   `node scripts/fetch-fsevents.mjs` in a source checkout to fetch and verify it.
+   Both npm publish jobs run that script before packing, then require
+   `package/native/darwin/stim-fsevents` in the tarball.
 
 `packages/stim-cli/native/fsevents/release.sh <version>` builds the same zip
 locally, ad hoc signed unless `FSEVENTS_SIGNING_IDENTITY` is set.

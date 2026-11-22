@@ -13,6 +13,8 @@ test('a worker cleanup refusal stays visible after the lane settles', async () =
     settle: () => {},
     close: async () => {},
     gc: () => ({ result: new Promise(() => {}), leave: () => {} }),
+    dirty: async () => {},
+    history: async () => [],
     headroom: () => ({ result: Promise.resolve({ headroom: true as const }), leave: () => {} }),
     item: () => ({ result: new Promise(() => {}), leave: () => {} }),
   };

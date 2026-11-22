@@ -1,6 +1,8 @@
 import type { StimContext } from '@stim-cli/core';
 import { isMainThread, parentPort, Worker, workerData } from 'node:worker_threads';
-import type { DaemonLadderAction } from '@stim-cli/core/state';
+import type { Config } from '../workspace/config.ts';
+import type { HistoryRoot } from '../fsevents-helper.ts';
+import type { DaemonLadderAction, BuildEndMarker } from '@stim-cli/core/state';
 import type {
   DiskPassInput,
   DiskPassResult,
@@ -25,10 +27,16 @@ import { childKey } from './cleanup-watch.ts';
 import { setReportChildLog } from '../report-child-log.ts';
 import { serveThreadJobs } from './thread-jobs.ts';
 import { trackWorker } from './workers.ts';
+import { dirtyGcMarks } from '../fsevents-state.ts';
+
+type DirtyRequest = { dirty: { roots: readonly string[]; at: number } };
+type DirtyReply = { dirty: true };
+type HistoryRequest = { history: Config };
+type HistoryReply = { roots: HistoryRoot[] };
 
 type ThreadName = 'passes' | 'measure';
 type PassesInput = Omit<Parameters<MaintenanceLane['start']>[0], 'operation'> & { act: boolean; cwd: string };
-type ThreadInput = PassesInput | { cwd: string; buildEnd?: true };
+type ThreadInput = PassesInput | { cwd: string; buildEnd?: BuildEndMarker[] };
 interface TrashDrainReply {
   trash: true;
 }
@@ -69,7 +77,14 @@ type FromThread =
       type: 'ladderDone';
       id: number;
       reading: boolean;
-      result?: DiskPassResult | GcPassReply | GcItemResult | HeadroomReply | TrashDrainReply;
+      result?:
+        | DiskPassResult
+        | GcPassReply
+        | GcItemResult
+        | HeadroomReply
+        | TrashDrainReply
+        | DirtyReply
+        | HistoryReply;
       failure?: Failure;
     }
   | { type: 'gcAction'; id: number; action: LevelRunAction }
@@ -90,7 +105,16 @@ interface Thread {
   ladders: Map<
     number,
     {
-      resolve: (result: DiskPassResult | GcPassReply | GcItemResult | HeadroomReply | TrashDrainReply) => void;
+      resolve: (
+        result:
+          | DiskPassResult
+          | GcPassReply
+          | GcItemResult
+          | HeadroomReply
+          | TrashDrainReply
+          | DirtyReply
+          | HistoryReply,
+      ) => void;
       reject: (error: Error) => void;
     }
   >;
@@ -123,6 +147,9 @@ export interface ThreadTable {
     input: GcPassRequest & { cwd: string },
     onAction: (action: LevelRunAction) => void,
   ): { result: Promise<GcPassReply>; leave(): void };
+  /** Persists dirty marks on their writer's isolate before resolving. */
+  dirty(roots: readonly string[], at: number): Promise<void>;
+  history(config: Config): Promise<HistoryRoot[]>;
   /** Queues a build's headroom turn, bounded by its original client deadline. */
   headroom(input: HeadroomRequest & { cwd: string; act: boolean }): { result: Promise<HeadroomReply>; leave(): void };
   /** Queues an explicit item independently and streams its operation's output. */
@@ -259,7 +286,9 @@ export function createThreadTable(
     threads.set(name, thread);
     return thread;
   };
-  const ask = <T extends DiskPassResult | GcPassReply | GcItemResult | HeadroomReply | TrashDrainReply>(
+  const ask = <
+    T extends DiskPassResult | GcPassReply | GcItemResult | HeadroomReply | TrashDrainReply | DirtyReply | HistoryReply,
+  >(
     type: 'ladder' | 'gc',
     input: object,
     onAction?: (action: LevelRunAction) => void,
@@ -272,7 +301,14 @@ export function createThreadTable(
     const result = new Promise<T>((resolve, reject) => {
       thread.ladders.set(id, {
         resolve: resolve as (
-          result: DiskPassResult | GcPassReply | GcItemResult | HeadroomReply | TrashDrainReply,
+          result:
+            | DiskPassResult
+            | GcPassReply
+            | GcItemResult
+            | HeadroomReply
+            | TrashDrainReply
+            | DirtyReply
+            | HistoryReply,
         ) => void,
         reject,
       });
@@ -302,6 +338,12 @@ export function createThreadTable(
           if (thread.ladders.has(id)) thread.worker.postMessage({ type: 'gcLeave', id });
         },
       };
+    },
+    history(config) {
+      return ask<HistoryReply>('gc', { history: config, cwd: process.cwd() }).result.then(({ roots }) => roots);
+    },
+    dirty(roots, at) {
+      return ask<DirtyReply>('gc', { dirty: { roots, at }, cwd: process.cwd() }).result.then(() => undefined);
     },
     headroom(input) {
       const { thread, id, result } = ask<HeadroomReply>('gc', input);
@@ -434,8 +476,13 @@ else if (thread && parentPort) {
     ThreadInput,
     DiskPassInput,
     DiskPassResult,
-    GcPassRequest | GcItemRequest | (HeadroomRequest & { act: boolean }) | TrashDrainInput,
-    GcPassReply | GcItemResult | HeadroomReply | TrashDrainReply
+    | GcPassRequest
+    | GcItemRequest
+    | (HeadroomRequest & { act: boolean })
+    | TrashDrainInput
+    | DirtyRequest
+    | HistoryRequest,
+    GcPassReply | GcItemResult | HeadroomReply | TrashDrainReply | DirtyReply | HistoryReply
   >(
     port,
     processContext,
@@ -454,7 +501,7 @@ else if (thread && parentPort) {
           log,
           'build_end_measure',
           async (tally) => {
-            tally.items = await measureBuildEnds(operation);
+            tally.items = await measureBuildEnds(operation, Date.now(), input.buildEnd);
           },
           { signal: operation.signal },
         );
@@ -494,6 +541,24 @@ else if (thread && parentPort) {
           },
           input.critical ? LADDER : TRASH,
         );
+      if ('history' in input) {
+        const controller = new AbortController();
+        const operation = open(controller.signal);
+        return {
+          result: import('../daemon/marks.ts').then(async ({ outputMarks }): Promise<HistoryReply> => ({
+            roots: (await outputMarks(input.history, operation)).map(({ root, device }) => ({ root, device })),
+          })),
+          leave: () => controller.abort(),
+        };
+      }
+      if ('dirty' in input)
+        return {
+          result: Promise.resolve().then((): DirtyReply => {
+            dirtyGcMarks(input.dirty.roots, input.dirty.at);
+            return { dirty: true };
+          }),
+          leave() {},
+        };
       if ('headroom' in input)
         return requestGcItem(async (signal): Promise<HeadroomReply> => {
           const { runLadderToFree } = await import('../daemon/passes.ts');
