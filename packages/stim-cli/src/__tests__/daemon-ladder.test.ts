@@ -2499,11 +2499,11 @@ describe('rung 5 in stim gc', () => {
     recordWorkspaceUse(root, new Date(Date.now() - 2 * HOUR_MS));
   }
 
-  const ladder = (level: 'high' | 'critical', protectedRoot?: string) =>
+  const ladder = (level: 'high' | 'critical', protectedRoot?: string, act = true) =>
     runLadder(
       {
         config: loadConfig()!,
-        act: true,
+        act,
         log,
         devices: [],
         simsFailed: false,
@@ -2516,7 +2516,21 @@ describe('rung 5 in stim gc', () => {
       pressure(level),
     );
 
-  test('it reports nothing of an idle linked worktree while the running processes cannot be listed, as on win32', async () => {
+  const observe = () => {
+    const config = loadConfig();
+    if (!config) throw new Error('fixture config missing');
+    return runDormantDependencies({
+      config,
+      act: false,
+      log,
+      devices: [],
+      simsFailed: false,
+      marks: true,
+      operation: testContext(),
+    });
+  };
+
+  test('it reports unknown inventory without discovering an unmarked worktree when process reads fail', async () => {
     const listed = getExecutor();
     setExecutor({
       ...listed,
@@ -2528,8 +2542,26 @@ describe('rung 5 in stim gc', () => {
     const { actions } = await ladder('high');
     expect(existsSync(join(idle, 'node_modules'))).toBe(true);
     expect(existsSync(join(idle, 'ios', 'Pods'))).toBe(true);
-    expect(actions.filter((action) => action.rung === 5)).toEqual([]);
+    expect(actions.filter((action) => action.rung === 5)).toEqual([
+      expect.objectContaining({
+        target: idle,
+        outcome: 'kept',
+        detail: expect.stringContaining('inventory is unknown'),
+      }),
+    ]);
   });
+
+  test.skipIf(process.platform === 'win32')(
+    'a read-only dry run retains the discovery preview without publishing marks',
+    async () => {
+      const { idle } = linkedWorktrees(['idle']);
+      register(idle);
+      const { actions } = await ladder('high', undefined, false);
+      expect(actions.filter(({ rung, target }) => rung === 5 && target.startsWith(`${idle}${sep}`))).toHaveLength(2);
+      expect(readGcMark(idle)).toBeNull();
+      expect(existsSync(join(idle, 'node_modules'))).toBe(true);
+    },
+  );
 
   describe.skipIf(process.platform === 'win32')(
     'with the running processes listed (skipped on win32, where Stim cannot list them)',
@@ -2544,8 +2576,9 @@ describe('rung 5 in stim gc', () => {
         register(recent);
         register(idle);
         recordWorkspaceUse(recent, new Date(Date.now() - MINUTE_MS));
+        await observe();
         const targets = reports((await ladder('high')).actions).map(([target]) => String(target));
-        expect(targets.filter((target) => target.startsWith(`${recent}/`))).toEqual([]);
+        expect(targets.filter((target) => target.startsWith(`${recent}/`))).toHaveLength(2);
         expect(targets.filter((target) => target.startsWith(`${idle}/`))).toHaveLength(2);
       });
 
@@ -2566,6 +2599,7 @@ describe('rung 5 in stim gc', () => {
         measured(join(clone, 'ios', 'Pods'), REAL_BYTES_THRESHOLD);
         measured(join(reinstalled, 'node_modules'), 2 * REAL_BYTES_THRESHOLD);
         measured(join(reinstalled, 'ios', 'Pods'), 3 * REAL_BYTES_THRESHOLD, 'an older install');
+        await observe();
 
         const rung5 = reports((await ladder('high')).actions);
 
@@ -2587,9 +2621,14 @@ describe('rung 5 in stim gc', () => {
         register(realpathSync.native(join(projects, 'repo')));
         register(own);
         register(serving, { metroPort: 59125, supervisor: { pid: process.pid, port: 59999 } });
+        await observe();
         const { actions } = await ladder('high', own);
         for (const root of [stranger, own, serving]) expect(existsSync(join(root, 'node_modules'))).toBe(true);
-        expect(actions.filter((action) => action.rung === 5)).toEqual([]);
+        const reported = actions.filter((action) => action.rung === 5);
+        expect(reported.some(({ target }) => target.startsWith(`${stranger}${sep}`))).toBe(false);
+        expect(
+          reported.every(({ outcome, detail }) => outcome === 'kept' && !detail.startsWith('report only: deleting')),
+        ).toBe(true);
       });
     },
   );
