@@ -1,4 +1,5 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
+import { once } from 'node:events';
 import {
   existsSync,
   mkdirSync,
@@ -752,6 +753,120 @@ describe('gc marks written by the lane', () => {
       onVolume: () => true,
     });
     expect(recent[0]?.detail).toContain('no longer idle');
+  }, 20_000);
+
+  it.each(['live', 'unavailable'])(
+    'keeps linked dependency reports when the process table is %s after observation',
+    async (mode) => {
+      const source = checkout('process-source', 2 * day);
+      const linked = ['first', 'second'].map((name) => {
+        const root = join(roots, name);
+        execFileSync('git', [
+          '-C',
+          source,
+          '-c',
+          'maintenance.auto=false',
+          '-c',
+          'gc.auto=0',
+          'worktree',
+          'add',
+          '-q',
+          '-b',
+          name,
+          root,
+        ]);
+        mkdirSync(join(root, 'node_modules'));
+        config.projects[root] = {};
+        recordWorkspaceUse(root, new Date(Date.now() - 2 * 60 * 60_000));
+        return root;
+      });
+      const [first, second] = linked;
+      if (!first || !second) throw new Error('fixture roots missing');
+      saveConfig(config);
+      await lane(true);
+      const child =
+        mode === 'live'
+          ? spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { cwd: first, stdio: 'ignore' })
+          : null;
+      try {
+        if (child) await once(child, 'spawn');
+        if (mode === 'unavailable') vi.mocked(readRunningProcessesAsync).mockResolvedValueOnce(null);
+        vi.mocked(readRunningProcessesAsync).mockClear();
+        const reports = await savedDependencyReports(config, {
+          level: 'high',
+          operation: testContext(),
+          onVolume: () => true,
+        });
+        const firstReport = reports.find(({ target }) => target === join(first, 'node_modules'));
+        expect(firstReport?.detail).toContain(
+          mode === 'unavailable' || process.platform === 'win32'
+            ? 'processes cannot be listed'
+            : `process ${child?.pid}`,
+        );
+        expect(reports.find(({ target }) => target === join(second, 'node_modules'))?.detail).toMatch(
+          mode === 'live' && process.platform !== 'win32' ? /^report only: deleting/ : /processes cannot be listed/,
+        );
+        expect(vi.mocked(readRunningProcessesAsync)).toHaveBeenCalledTimes(1);
+      } finally {
+        if (child && child.exitCode === null && child.signalCode === null) {
+          child.kill();
+          await once(child, 'close');
+        }
+      }
+    },
+    20_000,
+  );
+
+  it('does not let an unrelated removed registration suppress a healthy saved report', async () => {
+    const root = checkout('healthy', 2 * day);
+    const missing = checkout('removed', 2 * day);
+    mkdirSync(join(root, 'node_modules'));
+    const old = new Date(Date.now() - 2 * 60 * 60_000);
+    utimesSync(root, old, old);
+    config.projects = { [root]: {}, [missing]: {} };
+    config.idle = { dormantDays: 1, sourceDormantDays: 7 };
+    recordWorkspaceUse(root, old);
+    saveConfig(config);
+    await lane(true);
+    rmSync(missing, { recursive: true, force: true });
+
+    const reports = await savedDependencyReports(config, {
+      level: 'critical',
+      operation: testContext(),
+      onVolume: () => true,
+    });
+
+    expect(reports.find(({ target }) => target === join(root, 'node_modules'))?.detail).toMatch(
+      /^report only: deleting/,
+    );
+  }, 20_000);
+
+  it('reports dirty empty inventories as unknown only after checking current root identity and device', async () => {
+    const root = checkout('empty-inventory', 2 * day);
+    config.projects[root] = {};
+    config.idle = { dormantDays: 1, sourceDormantDays: 7 };
+    saveConfig(config);
+    await lane(true);
+    const original = readGcMark(root);
+    if (!original?.dependencies) throw new Error('fixture dependency observation missing');
+    expect(original.dependencies.candidates).toEqual([]);
+    const metadata = vi
+      .spyOn(worktree, 'resolveSourceCheckoutAsync')
+      .mockRejectedValue(new Error('empty observations need no eligibility read'));
+    expect(
+      await savedDependencyReports(config, { level: 'critical', operation: testContext(), onVolume: () => true }),
+    ).toEqual([]);
+    mkdirSync(join(root, 'node_modules'));
+    const dirty = { ...original, dirtyAt: new Date(Date.parse(original.dependencies.markedAt) + 1).toISOString() };
+    writeFileSync(gcMarkFile(root), JSON.stringify(dirty));
+    expect(
+      await savedDependencyReports(config, { level: 'critical', operation: testContext(), onVolume: () => true }),
+    ).toEqual([expect.objectContaining({ target: root, detail: expect.stringContaining('due or dirty') })]);
+    writeFileSync(gcMarkFile(root), JSON.stringify({ ...dirty, device: dirty.device + 1 }));
+    expect(
+      await savedDependencyReports(config, { level: 'critical', operation: testContext(), onVolume: () => true }),
+    ).toEqual([expect.objectContaining({ target: root, detail: expect.stringContaining('changed volume') })]);
+    expect(metadata).not.toHaveBeenCalled();
   }, 20_000);
 
   it('keeps source sharing unknown without scanning another worktree and retains a trusted cached estimate', async () => {

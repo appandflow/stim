@@ -12,6 +12,7 @@ import type { Config } from '../workspace/config.ts';
 import { regenerableDirProblem } from '../workspace/regenerable-dirs.ts';
 import { warmCopyingFrom, warmedFromAt } from '../workspace/source-dependencies.ts';
 import { resolveSourceCheckoutAsync } from '../workspace/worktree.ts';
+import { readRunningProcessesAsync, runningFromReason } from '../workspace/running-from.ts';
 import { rankedPrivateBytes, selectDependencies, type RankedDependency } from './dependencies.ts';
 import { dependencyMarkDue } from './dependency-marks.ts';
 import { outputMarks } from './marks.ts';
@@ -37,6 +38,7 @@ export async function savedDependencyReports(
   const { operation } = options;
   const reports: DependencyReport[] = [];
   const eligible: { rung: 5 | 8; dependency: RankedDependency }[] = [];
+  let processes: ReturnType<typeof readRunningProcessesAsync> | undefined;
   const identities = new Map<string, Promise<string>>();
   const native = (path: string) => {
     let value = identities.get(path);
@@ -85,11 +87,18 @@ export async function savedDependencyReports(
           dependencyMarkDue(mark, Date.now(), dormantAfterMs(config, operation?.env)))
       )
         keep = 'the saved dependency observation is due or dirty; current eligibility is unknown';
+      if (!observation.candidates.length) {
+        if (keep && options.onVolume(mark.root, source)) reports.push({ rung, target: mark.root, detail: keep });
+        continue;
+      }
       const currentKeys: string[] = [mark.root];
       for (const key of Object.keys(config.projects)) {
-        const path = await native(key);
-        if (path === root || path.startsWith(`${root}${sep}`)) {
-          if (!currentKeys.includes(key)) currentKeys.push(key);
+        try {
+          const path = await native(key);
+          if ((path === root || path.startsWith(`${root}${sep}`)) && !currentKeys.includes(key)) currentKeys.push(key);
+        } catch (error) {
+          if (!(error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR')))
+            throw error;
         }
       }
       if (
@@ -102,6 +111,8 @@ export async function savedDependencyReports(
         if (protectedPath === root || protectedPath.startsWith(`${root}${sep}`))
           keep = 'the command runs inside this checkout';
       }
+      if (!keep)
+        keep = runningFromReason(mark.root, await (processes ??= readRunningProcessesAsync(operation?.signal)));
       if (!keep) keep = await checkoutKeep(mark, currentKeys, source, idleMs, native, operation);
 
       for (const candidate of observation.candidates) {
@@ -164,6 +175,12 @@ export async function savedDependencyReports(
     } catch (error) {
       if (isClaimUnavailable(error) && 'reportCleanup' in error) throw error;
       operation?.signal.throwIfAborted();
+      if (!observation.candidates.length && options.onVolume(mark.root, source))
+        reports.push({
+          rung,
+          target: mark.root,
+          detail: 'current dependency eligibility could not be checked; it stays',
+        });
       for (const candidate of observation.candidates)
         if (options.onVolume(candidate.path, source))
           reports.push({
