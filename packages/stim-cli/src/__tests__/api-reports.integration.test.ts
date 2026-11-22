@@ -338,23 +338,28 @@ test('a cold public GC mutation starts an off-mode daemon and deletes its select
     expect(existsSync(join(item.cache, 'artifact'))).toBe(false);
     expect(readFileSync(join(item.home, 'config.json'), 'utf8')).toBe(config);
     const file = withAmbientContext(testContext({ home: item.home }), () => daemonNdjsonFile());
-    const starts = readFileSync(file, 'utf8')
-      .trim()
-      .split('\n')
-      .map((line): unknown => JSON.parse(line))
-      .filter(isJsonObject)
-      .filter(({ event }) => event === 'daemon_started');
-    expect(starts).toMatchObject([{ pid: expect.any(Number) }]);
-    for (const { pid } of starts) {
-      expect(pid).toBeGreaterThan(0);
-      expect(pid).not.toBe(process.pid);
-    }
+    await vi.waitFor(
+      () => {
+        const starts = readFileSync(file, 'utf8')
+          .trim()
+          .split('\n')
+          .map((line): unknown => JSON.parse(line))
+          .filter(isJsonObject)
+          .filter(({ event }) => event === 'daemon_started');
+        expect(starts).toMatchObject([{ pid: expect.any(Number) }]);
+        for (const { pid } of starts) {
+          expect(pid).toBeGreaterThan(0);
+          expect(pid).not.toBe(process.pid);
+        }
+      },
+      { timeout: 5_000, interval: 20 },
+    );
   } finally {
     const owners = readClaimSet(stimdClaimRoot(item.home)).live.map(({ owner }) => owner);
     for (const owner of owners) killFixtureChild(owner);
     for (const owner of owners) expect(await waitForProcessExit(owner, 5000)).toBe(true);
   }
-});
+}, 15_000);
 
 test.each([
   { kind: 'cache', unavailable: false },
