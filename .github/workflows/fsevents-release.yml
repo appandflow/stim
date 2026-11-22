@@ -179,7 +179,7 @@ jobs:
             -R='identifier "dev.stim.fsevents" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = "R7E8P23K3N"' \
             "$helper"
           for arch in arm64 x86_64; do
-            lipo -verify_arch "$arch" "$helper"
+            lipo "$helper" -verify_arch "$arch"
             if ! codesign -d --verbose=2 --arch "$arch" "$helper" 2>&1 | grep -Eq '^CodeDirectory .*flags=0x[0-9a-f]+\([^)]*runtime'; then
               echo "::error::The $arch slice is not signed with the hardened runtime."
               exit 1
