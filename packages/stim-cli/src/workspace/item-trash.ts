@@ -89,6 +89,7 @@ export async function stageItemTrash(
 export async function itemTrashInventory(signal?: AbortSignal): Promise<{
   count: number;
   bytes: number;
+  complete: boolean;
   oldest?: { path: string; createdAt: string };
 }> {
   const read = <T>(path: string, start: () => Promise<T>) => (signal ? answered(path, start, 3_000, signal) : start());
@@ -103,30 +104,41 @@ export async function itemTrashInventory(signal?: AbortSignal): Promise<{
     });
   let count = 0;
   let bytes = 0;
+  let complete = true;
   let oldest: { path: string; createdAt: string } | undefined;
-  const root = trashRoot();
-  const verifiedRoot = (await metadata(root))?.isDirectory() === true;
-  const names = await read(root, () => readdir(root)).catch((error: unknown) => {
-    if (error instanceof Unanswered) throw error;
-    missing();
-    return [];
-  });
-  for (const name of names) {
-    if (!name.startsWith(ITEM_TRASH_PREFIX)) continue;
-    const dir = join(root, name);
-    if (!(await metadata(dir))?.isDirectory()) continue;
-    const manifest = await read(dir, () => readItemTrash(dir));
-    if (!manifest) continue;
-    count++;
-    const payload = await metadata(join(dir, 'entries', 'payload'));
-    if (payload) bytes += manifest.bytes;
-    const created = Date.parse(manifest.createdAt);
-    if (!verifiedRoot || !payload?.isDirectory() || !Number.isFinite(created)) continue;
-    if (!(await metadata(join(dir, 'entries')))?.isDirectory()) continue;
-    if (!(await metadata(join(dir, TRASH_MANIFEST)))?.isFile()) continue;
-    if (!oldest || created < Date.parse(oldest.createdAt)) oldest = { path: dir, createdAt: manifest.createdAt };
+  try {
+    const root = trashRoot();
+    const verifiedRoot = (await metadata(root))?.isDirectory() === true;
+    if (signal && !verifiedRoot) return { count, bytes, complete: false };
+    const names = await read(root, () => readdir(root)).catch((error: unknown) => {
+      if (error instanceof Unanswered) throw error;
+      missing();
+      return [];
+    });
+    for (const name of names) {
+      if (!name.startsWith(ITEM_TRASH_PREFIX)) continue;
+      const dir = join(root, name);
+      if (!(await metadata(dir))?.isDirectory()) continue;
+      const file = join(dir, TRASH_MANIFEST);
+      const checked = signal ? await metadata(file) : undefined;
+      // @ref LLP 0001#explicit-cache-and-archive-items-can-return-before-removal -- diagnostics read small atomic manifests, not foreign concurrent rewrites
+      if (signal && (!checked?.isFile() || checked.size > 64 * 1024)) continue;
+      const manifest = await read(dir, () => readItemTrash(dir));
+      if (!manifest) continue;
+      count++;
+      const payload = await metadata(join(dir, 'entries', 'payload'));
+      if (payload) bytes += manifest.bytes;
+      const created = Date.parse(manifest.createdAt);
+      if (!verifiedRoot || !payload?.isDirectory() || !Number.isFinite(created)) continue;
+      if (!(await metadata(join(dir, 'entries')))?.isDirectory()) continue;
+      if (!(checked ?? (await metadata(file)))?.isFile()) continue;
+      if (!oldest || created < Date.parse(oldest.createdAt)) oldest = { path: dir, createdAt: manifest.createdAt };
+    }
+  } catch (error) {
+    if (!(error instanceof Unanswered) && !signal?.aborted) throw error;
+    complete = false;
   }
-  return { count, bytes, ...(oldest ? { oldest } : {}) };
+  return { count, bytes, complete, ...(oldest ? { oldest } : {}) };
 }
 
 /** Pending estimates from typed manifests, without walking or sizing their contents. */

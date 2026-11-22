@@ -73,6 +73,7 @@ test('the shared inventory keeps pending estimates and selects only the oldest v
   rmSync(join(missing, 'entries', 'payload'), { recursive: true });
   expect(await itemTrashInventory()).toEqual({
     count: 4,
+    complete: true,
     bytes: 3 * 123,
     oldest: { path: oldest, createdAt: new Date(Date.now() - 2 * day).toISOString() },
   });
@@ -100,6 +101,7 @@ test('entry, payload and manifest links cannot invent stale evidence', async () 
   rmSync(join(manifest, TRASH_MANIFEST));
   symlinkSync(join(manifestTarget, TRASH_MANIFEST), join(manifest, TRASH_MANIFEST), 'file');
   expect(await trashHealthFindings(Date.now())).toEqual([]);
+  expect(vi.mocked(readFile).mock.calls.map(([file]) => String(file))).not.toContain(join(manifest, TRASH_MANIFEST));
 });
 
 test('a missing trash root supplies no stale finding', async () => {
@@ -128,6 +130,41 @@ test.each([false, true])('a blocked manifest is bounded and caller cancellation 
     const stopped = expect.objectContaining({ message: 'caller stopped' });
     expect(await work).toEqual(cancel ? stopped : []);
     expect(hungRead()).toBe(path);
+  } finally {
+    finish();
+    await pendingRead();
+  }
+});
+
+test('an oversized manifest is skipped before opening without changing the legacy pending estimate', async () => {
+  const path = entry('large', 2 * day, { padding: 'x'.repeat(70_000) });
+  expect(await trashHealthFindings(Date.now())).toEqual([]);
+  expect(vi.mocked(readFile).mock.calls.map(([file]) => String(file))).not.toContain(join(path, TRASH_MANIFEST));
+  expect(await pendingItemTrash()).toEqual({ count: 1, bytes: 123 });
+});
+
+test('a later read deadline retains already verified stale evidence and marks the scan partial', async () => {
+  const stale = entry('a-stale', 2 * day);
+  const blocked = entry('z-blocked', 2 * day);
+  const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+  vi.mocked(readdir).mockImplementationOnce(async (...args) =>
+    (await actual.readdir(...args)).toSorted((first, second) => String(first).localeCompare(String(second))),
+  );
+  let finish = () => {};
+  let reading = false;
+  vi.mocked(readFile).mockImplementation((...args) => {
+    if (String(args[0]) !== join(blocked, TRASH_MANIFEST)) return actual.readFile(...args);
+    reading = true;
+    return new Promise((resolve) => {
+      finish = () => resolve('{}');
+    });
+  });
+  const work = trashHealthFindings(Date.now());
+  try {
+    await vi.waitFor(() => expect(reading).toBe(true));
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(await work).toMatchObject([{ detail: expect.stringContaining(stale) }]);
+    expect((await work)[0]?.detail).toContain('Other entries could not all be checked.');
   } finally {
     finish();
     await pendingRead();
