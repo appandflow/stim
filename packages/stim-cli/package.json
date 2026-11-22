@@ -89,6 +89,11 @@
       "default": "./dist/plugin.mjs"
     }
   },
+  "publishConfig": {
+    "executableFiles": [
+      "native/darwin/stim-fsevents"
+    ]
+  },
   "scripts": {
     "build": "tsdown"
   },

@@ -1201,3 +1201,6 @@ zip SHA-256 and binary SHA-256. Release preparation downloads and verifies it;
 stimd verifies the binary once before spawning it. It is never downloaded or
 compiled at runtime. A source checkout fetches it with
 `node scripts/fetch-fsevents.mjs`.
+The CLI declares this private helper in pnpm's `publishConfig.executableFiles`
+so packing preserves executable mode without exposing another public command.
+Both release paths verify mode 0755 and the pinned binary digest from the packed archive before publishing.
