@@ -4,6 +4,15 @@ import { discoveryScanFile } from './paths.ts';
 /** How an attempt ended: finished, cut short by the folder cap or the time budget, or by a read that timed out or a failure. */
 export type ScanTruncation = 'none' | 'budget' | 'folders' | 'read' | 'failed';
 
+export interface ScanFolderProof {
+  dev: string;
+  ino: string;
+  mtimeNs: string;
+  ctimeNs: string;
+  sentinels: string[];
+  native?: string;
+}
+
 const isTruncation = (value: unknown): value is ScanTruncation =>
   value === 'none' || value === 'budget' || value === 'folders' || value === 'read' || value === 'failed';
 
@@ -13,6 +22,7 @@ const isTruncation = (value: unknown): value is ScanTruncation =>
  */
 export interface DiscoveryScan {
   version: 2;
+  safety?: Record<string, ScanFolderProof>;
   /** When the last attempt started, epoch ms. A failed or truncated attempt is stamped too. */
   ranAt: number;
   /** When the last attempt that finished, neither failed nor truncated, started; 0 when none did. The weekly schedule counts from it. */
@@ -45,6 +55,41 @@ const strings = (value: unknown): value is string[] =>
   Array.isArray(value) && value.every((entry) => typeof entry === 'string');
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
 
+function safetyProofs(value: unknown): Record<string, ScanFolderProof> | undefined {
+  if (!isJsonObject(value)) return undefined;
+  const proofs: [string, ScanFolderProof][] = [];
+  for (const [path, proof] of Object.entries(value)) {
+    if (
+      !isJsonObject(proof) ||
+      !strings(proof.sentinels) ||
+      proof.sentinels.some((name) => !name || name === '.' || name === '..' || /[\\/\0]/.test(name))
+    )
+      continue;
+    const { dev, ino, mtimeNs, ctimeNs, native } = proof;
+    if (
+      typeof dev !== 'string' ||
+      typeof ino !== 'string' ||
+      typeof mtimeNs !== 'string' ||
+      typeof ctimeNs !== 'string' ||
+      ![dev, ino, mtimeNs, ctimeNs].every((field) => /^-?\d+$/.test(field)) ||
+      (native !== undefined && typeof native !== 'string')
+    )
+      continue;
+    proofs.push([
+      path,
+      {
+        dev,
+        ino,
+        mtimeNs,
+        ctimeNs,
+        sentinels: proof.sentinels,
+        ...(native === undefined ? {} : { native }),
+      },
+    ]);
+  }
+  return Object.fromEntries(proofs);
+}
+
 /** Rejects missing, corrupt or unsupported payloads without throwing. */
 export function parseDiscoveryScan(value: unknown): DiscoveryScan | null {
   if (
@@ -65,6 +110,7 @@ export function parseDiscoveryScan(value: unknown): DiscoveryScan | null {
     return null;
   return {
     version: 2,
+    ...(value.safety === undefined ? {} : { safety: safetyProofs(value.safety) }),
     ranAt: value.ranAt,
     completedAt: value.completedAt,
     lowScanAt: value.lowScanAt,

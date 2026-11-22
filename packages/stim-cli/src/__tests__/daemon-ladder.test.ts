@@ -1,3 +1,4 @@
+import * as cargoLocks from '../workspace/cargo-lock.ts';
 import { ladderRun } from '../stimd/passes/ladder-run.ts';
 import {
   existsSync,
@@ -28,6 +29,8 @@ import {
   readJsonObject,
   workspaceLightenedFile,
 } from '@stim-cli/core/state';
+import * as checkoutDiscovery from '../workspace/discovery.ts';
+import * as artifactPasses from '../stimd/passes/artifacts.ts';
 import * as cacheModule from '../cache/caches.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
 import { recordGcResult } from '../commands/gc/results.ts';
@@ -603,7 +606,7 @@ describe('the pressure ladder', () => {
     expect(deleted).toEqual([]);
   });
 
-  function cargoApp(name = 'rust-app') {
+  async function cargoApp(name = 'rust-app') {
     vi.stubEnv('STIM_DISK_MIN_FREE_GB', '100000000');
     vi.stubEnv('STIM_DISK_CRITICAL_FREE_GB', '0');
     vi.stubEnv('STIM_DISK_HARD_FLOOR_GB', '0');
@@ -628,13 +631,187 @@ describe('the pressure ladder', () => {
     fill();
     writeFileSync(join(target, 'CACHEDIR.TAG'), 'Signature: 8a477f597d28d172789f06886806bc55\n');
     upsertProject(app, { metroPort: null });
+    const config = loadConfig();
+    if (!config) throw new Error('missing fixture config');
+    await marks.markWriter(config)({ path: app, at: Date.now(), lastActivityAt: null, kept: null });
     return { app, target, incremental, fill };
   }
+
+  test('critical Cargo pressure keeps unmarked targets without discovery or fresh marking', async () => {
+    const { app, incremental } = await cargoApp();
+    rmSync(gcMarkFile(app));
+    const fullDiscovery = vi.spyOn(checkoutDiscovery, 'discoverCheckouts');
+    const artifacts = vi.spyOn(artifactPasses, 'artifactCheckoutsAsync');
+    const writer = vi.spyOn(marks, 'markWriter');
+    await runLadder(
+      { ...input(true, async () => pressure('critical')), fromRung: 3, lastRung: 3 },
+      pressure('critical'),
+    );
+    expect(existsSync(incremental)).toBe(true);
+    expect(fullDiscovery).not.toHaveBeenCalled();
+    expect(artifacts).not.toHaveBeenCalled();
+    expect(writer).not.toHaveBeenCalled();
+  });
+
+  test('a headroom deadline stops Cargo refresh before the next holder and next plan', async () => {
+    const first = await cargoApp('a-cargo');
+    const second = await cargoApp('b-cargo');
+    rmSync(gcMarkFile(first.app));
+    rmSync(gcMarkFile(second.app));
+    const stop = new AbortController();
+    const operation = testContext();
+    const plan = vi.spyOn(cargoTargetPasses, 'planCargoTargetsAtPressure');
+    const read = vi.spyOn(stages, 'readCheckout').mockImplementation(async (_path, _project, reading) => {
+      stop.abort(new Error('headroom deadline'));
+      expect(reading.operation?.signal.aborted).toBe(true);
+      throw stop.signal.reason;
+    });
+    const { actions } = await runLadder(
+      { ...input(true, async () => pressure('high')), operation, stop: stop.signal, fromRung: 3, lastRung: 3 },
+      pressure('high'),
+    );
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(plan).toHaveBeenCalledTimes(1);
+    expect(operation.signal.aborted).toBe(false);
+    expect(actions.filter((action) => action.outcome === 'failed')).toEqual([]);
+    expect(readGcMark(first.app)).toBeNull();
+    expect(readGcMark(second.app)).toBeNull();
+  });
+
+  test.skipIf(process.platform === 'win32')(
+    'high Cargo pressure refreshes a missing mark after its known sweep',
+    async () => {
+      const { app, incremental } = await cargoApp();
+      rmSync(gcMarkFile(app));
+      const fullDiscovery = vi.spyOn(checkoutDiscovery, 'discoverCheckouts');
+      await runLadder({ ...input(true, async () => pressure('high')), fromRung: 3, lastRung: 3 }, pressure('high'));
+      expect(fullDiscovery).toHaveBeenCalled();
+      expect(readGcMark(app)?.candidates.some(({ kind }) => kind === 'cargo-target')).toBe(true);
+      expect(existsSync(incremental)).toBe(false);
+    },
+  );
+
+  test.skipIf(process.platform === 'win32')(
+    'a Cargo candidate boundary releases its profile locks and rechecks a newly pinned target',
+    async () => {
+      const apps = [await cargoApp('first-cargo'), await cargoApp('second-cargo')];
+      let release = () => {};
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let first: string | undefined;
+      let selectedLocks: readonly string[] = [];
+      let inside = false;
+      const lock = cargoLocks.withCargoLocks;
+      vi.spyOn(cargoLocks, 'withCargoLocks').mockImplementation(
+        <T>(paths: readonly string[], body: () => Promise<T>, signal?: AbortSignal) =>
+          lock(
+            paths,
+            async () => {
+              const own = apps.find((app) => paths.some((path) => path.startsWith(app.target)));
+              if (own && first === undefined) {
+                first = own.target;
+                selectedLocks = [...paths];
+                inside = true;
+                await held;
+                try {
+                  return await body();
+                } finally {
+                  inside = false;
+                }
+              }
+              return body();
+            },
+            signal,
+          ),
+      );
+      const high = requestGcPass(
+        'high',
+        'manual',
+        async (_level, signal, _emit, found, turn) => {
+          found('high');
+          const done = await runLadder(
+            {
+              ...input(true, async () => pressure('high')),
+              operation: testContext({ signal }),
+              fromRung: 3,
+              lastRung: 3,
+              between: turn.boundary,
+            },
+            pressure('high'),
+          );
+          return { run: ladderRun('high', done.pressure, done.actions) };
+        },
+        () => {},
+      );
+      const outcome = high.result.catch((error: unknown) => error);
+      try {
+        await vi.waitFor(() => expect(first).toBeDefined(), { timeout: 5_000 });
+        const selected = apps.find((app) => app.target === first);
+        const remaining = apps.find((app) => app.target !== first);
+        if (!selected || !remaining) throw new Error('the first Cargo target was not selected');
+        const critical = requestGcItem(async () => {
+          expect(inside).toBe(false);
+          expect(selectedLocks.every((path) => existsSync(path))).toBe(true);
+          expect(await lock(selectedLocks, async () => 'free')).toEqual({ value: 'free' });
+          writeFileSync(join(remaining.app, '.stim.json'), JSON.stringify({ maintenance: { keep: true } }));
+        }, CRITICAL);
+        expect(inside).toBe(true);
+        release();
+        await critical.result;
+        expect(await outcome).not.toBeInstanceOf(Error);
+        expect(existsSync(selected.incremental)).toBe(false);
+        expect(existsSync(remaining.incremental)).toBe(true);
+      } finally {
+        release();
+        await outcome;
+      }
+    },
+    15_000,
+  );
+
+  test.each(['target met', 'abort'] as const)(
+    'a resumed headroom Cargo candidate starts no deletion after %s',
+    async (change) => {
+      const app = await cargoApp('headroom-boundary');
+      const device = statSync(app.target).dev;
+      let freeMb = 10 * 1024;
+      vi.spyOn(daemonMeasure, 'measureDisk').mockImplementation(async () => [{ volume: '/', device, freeMb }]);
+      let boundaries = 0;
+      const operation = testContext({ env: { ...process.env, CI: undefined, STIM_DAEMON: undefined } });
+      const asked = requestGcItem(
+        (signal, turn) =>
+          runLadderToFree({
+            operation,
+            signal,
+            device,
+            freeMb: 24 * 1024,
+            act: true,
+            protectedRoot: join(projects, 'build'),
+            between: async () => {
+              boundaries++;
+              const critical = requestGcItem(async () => {
+                if (change === 'target met') freeMb = 30 * 1024;
+                else asked.leave();
+              }, CRITICAL);
+              await turn.boundary();
+              await critical.result;
+            },
+          }),
+        LADDER,
+      );
+      await asked.result.catch((error: unknown) => {
+        if (change !== 'abort') throw error;
+      });
+      expect(boundaries).toBe(1);
+      expect(existsSync(app.incremental)).toBe(true);
+    },
+  );
 
   test.skipIf(process.platform === 'win32')(
     'at high rung 3 trims the incremental data of a Cargo target first, again only after 10 minutes, with no size scan',
     async () => {
-      const { target, incremental, fill } = cargoApp();
+      const { target, incremental, fill } = await cargoApp();
       const remeasure = async () => pressure('high');
 
       const first = await runLadder(input(true, remeasure), pressure('high'));
@@ -659,7 +836,7 @@ describe('the pressure ladder', () => {
   test.skipIf(process.platform === 'win32')(
     "the stim-daemon's Cargo trims wait 10 minutes per level by the clocks its disk passes share, whichever thread runs them",
     async () => {
-      const { incremental } = cargoApp();
+      const { incremental } = await cargoApp();
       const remeasure = async () => pressure('high');
       const slots = Object.keys(LADDER_CLOCK_SLOTS).length;
 
@@ -680,8 +857,8 @@ describe('the pressure ladder', () => {
   test.skipIf(process.platform === 'win32')(
     'at high rung 3 trims the shared caches before the Cargo targets, and the targets largest first by their last recorded size',
     async () => {
-      const small = cargoApp('small-app');
-      const big = cargoApp('big-app');
+      const small = await cargoApp('small-app');
+      const big = await cargoApp('big-app');
       for (const [target, gib] of [
         [small.target, 1],
         [big.target, 20],
@@ -721,9 +898,9 @@ describe('the pressure ladder', () => {
   test.skipIf(process.platform === 'win32')(
     'rung 3 orders Cargo targets by their recorded size, unsized ones last',
     async () => {
-      const unsized = cargoApp('unsized-app');
-      const rescanned = cargoApp('rescanned-app');
-      const large = cargoApp('large-app');
+      const unsized = await cargoApp('unsized-app');
+      const rescanned = await cargoApp('rescanned-app');
+      const large = await cargoApp('large-app');
       recordSize(rescanned.target, GIB);
       recordSize(large.target, 5 * GIB);
 
@@ -739,8 +916,8 @@ describe('the pressure ladder', () => {
   test.skipIf(process.platform === 'win32')(
     'a Cargo target this process tried to trim goes after the sized ones until it is measured again',
     async () => {
-      const small = cargoApp('small-app');
-      const big = cargoApp('big-app');
+      const small = await cargoApp('small-app');
+      const big = await cargoApp('big-app');
       recordSize(small.target, GIB);
       recordSize(big.target, 20 * GIB);
       const ladder = () =>
@@ -763,8 +940,8 @@ describe('the pressure ladder', () => {
   test.skipIf(process.platform === 'win32')(
     'rung 3 skips a Cargo target whose own volume is no longer short when its turn comes',
     async () => {
-      const recovered = cargoApp('recovered-app');
-      const short = cargoApp('short-app');
+      const recovered = await cargoApp('recovered-app');
+      const short = await cargoApp('short-app');
       vi.spyOn(cargoTargetPasses, 'measuredDiskLevel').mockImplementation(async (dir) =>
         dir === recovered.target ? 'normal' : 'high',
       );
@@ -785,7 +962,7 @@ describe('the pressure ladder', () => {
   test.skipIf(process.platform === 'win32')(
     'rung 3 still trims the Cargo targets after its shared caches fail, and records the failure',
     async () => {
-      const { target } = cargoApp();
+      const { target } = await cargoApp();
       caches('kept-key');
       vi.spyOn(cacheModule, 'pruneCache').mockRejectedValue(new Error('ENOSPC: no space left on device'));
 
@@ -810,7 +987,7 @@ describe('the pressure ladder', () => {
   test.skipIf(process.platform === 'win32')(
     'rung 3 plans no Cargo target when the level has cleared by the time it starts',
     async () => {
-      const { incremental } = cargoApp();
+      const { incremental } = await cargoApp();
       const plan = vi.spyOn(cargoTargetPasses, 'planCargoTargetsAtPressure');
       let calls = 0;
 
@@ -831,7 +1008,7 @@ describe('the pressure ladder', () => {
   test.skipIf(process.platform === 'win32')(
     'a command ladder leaves the Cargo target of its own workspace alone',
     async () => {
-      const { app, incremental } = cargoApp();
+      const { app, incremental } = await cargoApp();
       const remeasure = async () => pressure('high');
 
       const { actions } = await runLadder({ ...input(true, remeasure), protectedRoot: app }, pressure('high'));
@@ -844,7 +1021,7 @@ describe('the pressure ladder', () => {
   test.skipIf(process.platform === 'win32')(
     'a build headroom run trims a Cargo target only on the build volume, whatever disk.minFreeGb says',
     async () => {
-      const { incremental } = cargoApp();
+      const { incremental } = await cargoApp();
       vi.stubEnv('STIM_DISK_MIN_FREE_GB', '0');
       const device = statSync(home).dev;
       vi.spyOn(daemonMeasure, 'measureDisk').mockResolvedValue([
@@ -1142,6 +1319,31 @@ describe('the pressure ladder', () => {
     expect(refresh).not.toHaveBeenCalled();
   });
 
+  test('a forced stopped-output candidate retains its selected level after a boundary', async () => {
+    const root = workspace('forced-output', 5 * MINUTE_MS, 'Shutdown').root;
+    const output = join(workspaceDir(root), 'derived-data');
+    mkdirSync(output, { recursive: true });
+    await marks.markWriter(input().config)({
+      path: root,
+      at: Date.now(),
+      lastActivityAt: Date.now() - DAY_MS,
+      kept: null,
+    });
+    const between = vi.fn<() => Promise<void>>(async () => {});
+    await runLadder(
+      {
+        ...input(true, async () => pressure('normal')),
+        fromRung: 1,
+        lastRung: 1,
+        between,
+        force: { level: 'high', why: 'explicit high' },
+      },
+      pressure('normal'),
+    );
+    expect(between).toHaveBeenCalled();
+    expect(existsSync(output)).toBe(false);
+  });
+
   test('critical daemon report mode previews only known marks without writing them', async () => {
     const { root } = workspace('known-report', 5 * MINUTE_MS, 'Shutdown');
     const output = join(workspaceDir(root), 'derived-data');
@@ -1155,9 +1357,10 @@ describe('the pressure ladder', () => {
     });
     const before = readGcMark(root);
     const discover = vi.spyOn(stages, 'stoppedOutputCandidates');
+    const between = vi.fn<() => Promise<void>>(async () => {});
 
     const { actions } = await runLadder(
-      { ...input(false, async () => pressure('critical')), fromRung: 1, lastRung: 1 },
+      { ...input(false, async () => pressure('critical')), fromRung: 1, lastRung: 1, between },
       pressure('critical'),
     );
 
@@ -1165,6 +1368,7 @@ describe('the pressure ladder', () => {
     expect(existsSync(output)).toBe(true);
     expect(discover).not.toHaveBeenCalled();
     expect(readGcMark(root)).toEqual(before);
+    expect(between).not.toHaveBeenCalled();
   });
 
   test('marked output removal reports failure after an earlier output was deleted', async () => {

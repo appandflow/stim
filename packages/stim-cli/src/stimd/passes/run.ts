@@ -563,6 +563,7 @@ export async function runMaintenance(
       result = await plannedMaintenance(state.sizes, settings, {
         caps,
         cargoOnly: cap.ran,
+        cargoLevel: 'normal',
         sweep: ran.has('sweep'),
         worktrees: plannedWorktrees,
         idle: ran.has('idle'),
