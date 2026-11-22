@@ -589,7 +589,25 @@ also holds the newest activity the walk read, and the walk reads at
   A build-headroom deadline cancels the same bounded Cargo refresh and
   leaves later holders and the next sweep unstarted; failed cleanup still
   propagates.
-- Worktree/dependency marks and pressure discovery, normal mark-first
+- The normal dependency phases save their raw linked/source inventories in an
+  optional section of the existing mark, including younger checkouts that
+  the normal dormant thresholds keep. Each enabled phase reuses its current
+  discovered roots and inventory; disabling both normal thresholds starts
+  neither discovery nor inventory. Dependency observations have their own
+  timestamp. Output-only refreshes preserve that timestamp and any newer
+  shared dirty watermark; dependency-only writes preserve the output
+  generation. Missing or malformed optional evidence leaves output marks
+  valid and dependency eligibility unknown.
+- Acting pressure dependency reports use saved candidates, cached estimates
+  and targeted current scope, membership, path/device, Git role/lock,
+  pin, activity and warm checks. They discover no dependency candidates,
+  measure no new sizes and delete nothing. Missing, due or dirty evidence
+  is reported as unknown. Source sharing with other linked worktrees stays
+  explicitly unknown: the pressure report does not scan those worktrees for
+  dependency symlinks. Restoring that detail from current targeted evidence
+  remains required. Explicit read-only dry runs retain discovery previews.
+  Normal dependency deletion and its thresholds are unchanged.
+- Worktree marks and pressure discovery, normal mark-first
   scheduling, per-candidate disk-turn yielding and yield ranking remain
   pending. The no-discovery guarantee applies to output rung 1 and Cargo
   pressure candidate selection, not the other maintenance stages or normal
