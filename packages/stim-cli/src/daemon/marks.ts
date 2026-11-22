@@ -22,7 +22,7 @@ import { dormantAfterMs, readCheckout, type CheckoutReading, type DeviceReading 
 import { discoverCheckouts, targetedCheckouts } from '../workspace/discovery.ts';
 import { cargoTargetDirsAsync } from '../workspace/regenerable-dirs.ts';
 import { appRoots, artifactCheckoutsAsync, type ArtifactWorktree } from '../stimd/passes/artifacts.ts';
-import { discoveredCargoHolders, registeredCargoHolders } from './cargo-marks.ts';
+import { discoveredCargoCandidates, discoveredCargoHolders, registeredCargoHolders } from './cargo-marks.ts';
 import { listedRoots } from '../commands/gc/worktrees.ts';
 
 /** The mark writer of one walk, which resolves the Metro cache root once for every checkout it marks. */
@@ -193,11 +193,15 @@ async function authorizedMarks(config: Config, marks: GcMark[], operation?: Stim
     ),
     operation,
   );
-  return marks.flatMap((mark) => {
-    if (registered.has(mark.root) || allowed.has(mark.root)) return [mark];
-    if (!cargoHolders.has(mark.root) && !discoveredHolders.has(mark.root)) return [];
-    return [{ ...mark, candidates: mark.candidates.filter(({ kind }) => kind === 'cargo-target') }];
-  });
+  const selected: GcMark[] = [];
+  for (const mark of marks) {
+    if (registered.has(mark.root) || allowed.has(mark.root)) selected.push(mark);
+    else if (cargoHolders.has(mark.root))
+      selected.push({ ...mark, candidates: mark.candidates.filter(({ kind }) => kind === 'cargo-target') });
+    else if (discoveredHolders.has(mark.root))
+      selected.push({ ...mark, candidates: await discoveredCargoCandidates(mark, operation) });
+  }
+  return selected;
 }
 
 export async function refreshOutputMarks(config: Config, reading: DeviceReading): Promise<GcMark[]> {

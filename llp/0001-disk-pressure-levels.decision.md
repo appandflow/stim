@@ -515,8 +515,10 @@ also holds the newest activity the walk read, and the walk reads at
   reached through a recognized discovered nested app saves that app path in
   its existing mark. A targeted read must still prove the app’s current
   discovery route and current exact Git holder before authorizing only Cargo
-  candidates. Removed routes, missing apps and changed holders keep the
-  target; old marks keep their existing scope behavior.
+  candidates whose parent still belongs to that exact Git holder. Independent
+  nested checkouts stay outside this authority. Removed routes, missing apps
+  and changed holders keep the target; old marks keep their existing scope
+  behavior.
 - Both Cargo pressure entrypoints consume saved target candidates. The
   planner and executor share the same action object in one isolate; its
   private mark proof is not serialized. A copied pressure action is kept.

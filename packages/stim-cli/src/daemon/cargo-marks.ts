@@ -1,8 +1,8 @@
 import { realpath } from 'node:fs/promises';
-import { sep } from 'node:path';
+import { dirname, sep } from 'node:path';
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import type { StimContext } from '@stim-cli/core';
-import type { GcMark } from '@stim-cli/core/state';
+import type { GcMark, GcMarkCandidate } from '@stim-cli/core/state';
 import { targetedCheckouts } from '../workspace/discovery.ts';
 import type { Config } from '../workspace/config.ts';
 import { listedRoots } from '../commands/gc/worktrees.ts';
@@ -93,4 +93,18 @@ export async function discoveredCargoHolders(
     }
   }
   return allowed;
+}
+
+export async function discoveredCargoCandidates(mark: GcMark, operation?: StimContext): Promise<GcMarkCandidate[]> {
+  const candidates: GcMarkCandidate[] = [];
+  for (const candidate of mark.candidates) {
+    if (candidate.kind !== 'cargo-target') continue;
+    try {
+      if ((await currentCargoHolder(dirname(candidate.path), operation)) === mark.root) candidates.push(candidate);
+    } catch (error) {
+      if (isClaimUnavailable(error) && 'reportCleanup' in error) throw error;
+      operation?.signal.throwIfAborted();
+    }
+  }
+  return candidates;
 }

@@ -180,3 +180,55 @@ test.skipIf(process.platform === 'win32')(
     expect(readFileSync(join(target, 'debug', 'incremental', 'artifact'), 'utf8')).toBe('cargo');
   },
 );
+
+test('discovered app authority excludes a Rust submodule and rechecks a newly independent package', async () => {
+  const native = join(holder, 'packages', 'native');
+  const nativeTarget = join(native, 'target');
+  mkdirSync(join(nativeTarget, 'debug', 'incremental'), { recursive: true });
+  mkdirSync(join(nativeTarget, 'debug', '.fingerprint'));
+  writeFileSync(join(native, 'Cargo.toml'), '[package]\nname="native"\nversion="0.1.0"\n');
+  writeFileSync(join(native, '.gitignore'), 'target/\n');
+  writeFileSync(join(nativeTarget, '.rustc_info.json'), '{}');
+  writeFileSync(join(nativeTarget, 'debug', '.cargo-lock'), '');
+  writeFileSync(join(nativeTarget, 'debug', 'incremental', 'artifact'), 'independent');
+  git('add', 'packages/native/Cargo.toml', 'packages/native/.gitignore');
+  git('commit', '-qm', 'native package');
+  const old = new Date(Date.now() - 3 * 86_400_000);
+  for (const path of [
+    join(nativeTarget, 'debug', 'incremental', 'artifact'),
+    join(nativeTarget, 'debug', 'incremental'),
+    join(nativeTarget, 'debug', '.cargo-lock'),
+    join(nativeTarget, 'debug', '.fingerprint'),
+    join(nativeTarget, 'debug'),
+  ])
+    utimesSync(path, old, old);
+  await refresh();
+  const before = await plan();
+  const action = before.actions.find(({ target: path }) => path === nativeTarget);
+  if (!action) throw new Error('holder-owned nested Cargo package was not eligible');
+  execFileSync('git', ['-C', native, 'init', '-q'], { timeout: 10_000 });
+  execFileSync('git', ['-C', native, '-c', 'user.name=fixture', '-c', 'user.email=fixture@example.test', 'add', '.'], {
+    timeout: 10_000,
+  });
+  execFileSync(
+    'git',
+    ['-C', native, '-c', 'user.name=fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'independent'],
+    { timeout: 10_000 },
+  );
+  git('rm', '--cached', '-r', 'packages/native');
+  git('add', 'packages/native');
+  writeFileSync(
+    join(holder, '.gitmodules'),
+    '[submodule "packages/native"]\npath = packages/native\nurl = ./packages/native\n',
+  );
+  git('add', '.gitmodules');
+  git('commit', '-qm', 'native submodule');
+  git('submodule', 'absorbgitdirs', 'packages/native');
+  expect(readFileSync(join(native, '.git'), 'utf8')).toMatch(/^gitdir:/);
+  expect(git('ls-files', '--stage', 'packages/native').toString()).toContain('160000');
+  expect(readGcMark(holder)?.candidates.map(({ path }) => path)).toContain(nativeTarget);
+  expect((await plan()).actions.map(({ target: path }) => path)).toContain(target);
+  expect((await plan()).actions.map(({ target: path }) => path)).not.toContain(nativeTarget);
+  expect(await trimCargoTargetAction(action, testContext())).toMatchObject({ status: 'kept' });
+  expect(readFileSync(join(nativeTarget, 'debug', 'incremental', 'artifact'), 'utf8')).toBe('independent');
+});
