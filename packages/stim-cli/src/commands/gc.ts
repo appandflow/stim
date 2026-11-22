@@ -334,6 +334,7 @@ export async function runGcPass(
   operation: StimContext | undefined,
   onAction: (action: LevelRunAction) => void,
   onLevel?: (level: PressureLevel) => void,
+  between?: () => Promise<void>,
 ): Promise<GcPassReply> {
   releaseReserve();
   const closeGitReads = openGitReads(operation);
@@ -354,6 +355,7 @@ export async function runGcPass(
       level: request.level,
       act: true,
       operation,
+      ...(between ? { between } : {}),
       ...(request.walkUnknown === false ? { walkUnknown: request.walkUnknown } : {}),
       ...(onLevel ? { onLevel } : {}),
       onAction: (action) => {

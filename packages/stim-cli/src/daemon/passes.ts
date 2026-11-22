@@ -103,6 +103,7 @@ export async function runDiskPass(
         simsFailed: input.sims === null,
         operation,
         only: 'disk',
+        between: turn.boundary,
         ...(clocks ? { clocks } : {}),
         remeasure: remeasurer(config, operation, (measurement) => {
           const pressure = classifyPressure({
@@ -604,7 +605,9 @@ async function runCommandLadder(
         // @ref LLP 0003#never-from-a-build-command -- the build is about to read those caches
         lastRung: 8,
         ...(protectedRoot ? { protectedRoot } : {}),
-        ...(headroom ? { operation: headroom.operation, stop: headroom.stop, volume: headroom.device } : {}),
+        ...(headroom
+          ? { operation: headroom.operation, stop: headroom.stop, volume: headroom.device, between: headroom.between }
+          : {}),
       },
       pressure,
     );
@@ -623,6 +626,7 @@ interface HeadroomRun {
   operation: StimContext;
   /** Aborts when the build is cancelled or the run's deadline passes. */
   stop: AbortSignal;
+  between?: () => Promise<void>;
   /** An action that removed something, or failed, has been logged since the build device was last measured. */
   acted: boolean;
   /** The build device's free space at the last measurement. */
@@ -699,6 +703,7 @@ export async function runForcedLadder({
   operation,
   protectedRoot,
   measured: atMeasuredLevel = false,
+  between,
 }: {
   levels: readonly ('high' | 'critical')[];
   act: boolean;
@@ -709,6 +714,7 @@ export async function runForcedLadder({
   protectedRoot?: string;
   /** The level is the one the machine measured, not one the caller chose, so rung 9 measures again before it acts. */
   measured?: boolean;
+  between?: () => Promise<void>;
 }): Promise<ForcedLadder | null> {
   const config = loadConfig();
   if (!config) return null;
@@ -784,6 +790,7 @@ export async function runForcedLadder({
           force: { level, why, measured: atMeasuredLevel },
           measure: !act,
           operation,
+          ...(act && between ? { between } : {}),
           ...(protectedRoot ? { protectedRoot } : {}),
         },
         pressure,
@@ -808,6 +815,7 @@ export async function runDormantReduction({
   operation,
   protectedRoot,
   walkUnknown,
+  between,
   throttleOutputs = true,
 }: {
   act: boolean;
@@ -815,6 +823,7 @@ export async function runDormantReduction({
   operation?: StimContext;
   protectedRoot?: string;
   walkUnknown?: false;
+  between?: () => Promise<void>;
   throttleOutputs?: boolean;
 }): Promise<DaemonLadderAction[]> {
   const config = loadConfig();
@@ -844,6 +853,7 @@ export async function runDormantReduction({
         log,
         ...reading,
         force: true,
+        ...(act && between ? { between } : {}),
         throttleOutputs,
         ...(walkUnknown === false ? { walkUnknown } : {}),
       })),
@@ -877,6 +887,7 @@ export async function runLadderToFree({
   device,
   freeMb,
   protectedRoot,
+  between,
   deadline = Date.now() + 60_000,
   act = daemonMode(operation.env) === 'on',
 }: {
@@ -885,6 +896,7 @@ export async function runLadderToFree({
   device: number;
   freeMb: number;
   protectedRoot: string;
+  between?: () => Promise<void>;
   deadline?: number;
   act?: boolean;
 }): Promise<void> {
@@ -905,6 +917,7 @@ export async function runLadderToFree({
       acted: false,
       lastFreeMb: null,
       helpless: false,
+      ...(between ? { between } : {}),
     });
   } catch (error) {
     if (isClaimUnavailable(error) || (error instanceof Error && 'reportCleanup' in error)) throw error;
