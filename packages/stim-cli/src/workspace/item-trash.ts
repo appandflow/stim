@@ -45,7 +45,7 @@ export async function readItemTrash(dir: string): Promise<ItemTrashManifest | nu
   }
 }
 
-/** Moves only the path its caller already selected and locked; false leaves the existing in-place delete responsible. */
+/** Moves only the directory tree its caller already selected and locked; false leaves the existing in-place delete responsible. */
 export async function stageItemTrash(
   path: string,
   bytes: number,
@@ -58,6 +58,7 @@ export async function stageItemTrash(
   let claim;
   let moved = false;
   try {
+    if (!(await lstat(path)).isDirectory()) return false;
     await mkdir(trashRoot(), { recursive: true });
     if (filesystemDevice(path) !== filesystemDevice(trashRoot())) return false;
     dir = await mkdtemp(join(trashRoot(), ITEM_TRASH_PREFIX));
@@ -94,9 +95,8 @@ export async function pendingItemTrash(): Promise<{ count: number; bytes: number
     if (!(await lstat(dir).catch(() => null))?.isDirectory()) continue;
     const manifest = await readItemTrash(dir);
     if (!manifest) continue;
-    if (!(await lstat(join(dir, 'entries', 'payload')).catch(() => null))) continue;
     count++;
-    bytes += manifest.bytes;
+    if (await lstat(join(dir, 'entries', 'payload')).catch(() => null)) bytes += manifest.bytes;
   }
   return { count, bytes };
 }

@@ -353,7 +353,8 @@ implementer's reading of it on #6029.
 
 An explicit `deleteGarbageItem` for a shared cache or archive moves eligible
 content into a typed, exclusively claimed entry under `$STIM_HOME/trash` on
-the same filesystem. It returns `pending` with an estimated byte count once
+the same filesystem. Only selected directory trees move; regular files are
+unlinked in place. It returns `pending` with an estimated byte count once
 the move has completed. Pending bytes are not reclaimed bytes. Status exposes
 their count and estimate in `maintenance.pendingDelete`; Desktop labels them
 pending until physical removal.

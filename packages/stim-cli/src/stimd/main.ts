@@ -25,6 +25,7 @@ import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import {
   DEFAULT_SERVER_PORT,
+  trashRoot,
   daemonClaimRoot,
   daemonDir,
   daemonNdjsonFile,
@@ -1188,8 +1189,14 @@ async function runStimdInner(
   const ops = new Map<Socket, 'pinned' | 'waiting'>();
   const gcRequests = new Set<Promise<unknown>>();
   let trashDrain: Promise<void> | null = null;
+  let trashAgain = false;
   const queueTrashDrain = () => {
-    if (trashDrain) return;
+    if (!maintenanceAllowed()) return;
+    if (trashDrain) {
+      trashAgain = true;
+      return;
+    }
+    trashAgain = false;
     const work = threads.drainTrash(lastSnapshot?.pressure?.level === 'critical').catch((error: unknown) => {
       if (isUnverifiedCleanup(error) && !contain(error)) failBackground(error, 'trash cleanup could not be verified');
       else log('warn', 'item_trash_failed', error instanceof Error ? error.message : String(error));
@@ -1199,6 +1206,7 @@ async function runStimdInner(
     void work.finally(() => {
       gcRequests.delete(work);
       trashDrain = null;
+      if (trashAgain) queueTrashDrain();
       if (effectiveMode() === 'off') requestTick();
       void checkEngine();
     });
@@ -2210,7 +2218,22 @@ async function runStimdInner(
   startup.signal.throwIfAborted();
   await logs.ownedSync();
   startup.signal.throwIfAborted();
-  if ((await pendingItemTrash()).count) queueTrashDrain();
+  if (existsSync(trashRoot())) {
+    const recovery = pendingItemTrash()
+      .then((pending) => {
+        if (pending.count) queueTrashDrain();
+        return undefined;
+      })
+      .catch((error: unknown) =>
+        log('warn', 'item_trash_recovery_failed', error instanceof Error ? error.message : String(error)),
+      );
+    gcRequests.add(recovery);
+    void recovery.finally(() => {
+      gcRequests.delete(recovery);
+      if (effectiveMode() === 'off') requestTick();
+      void checkEngine();
+    });
+  }
   lifetime.serve(requestEnd, waitMs, instance);
   startup.finish?.();
   startup.finish = undefined;

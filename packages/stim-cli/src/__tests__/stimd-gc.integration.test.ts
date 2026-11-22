@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { once } from 'node:events';
-import type { Socket } from 'node:net';
+import { Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { withAmbientContext } from '@stim-cli/core';
@@ -142,10 +142,60 @@ async function heldGc(controller: AbortController, report = false, single = fals
 }
 
 describe.skipIf(process.platform === 'win32')('gc on stimd', () => {
+  test('an off-mode drain retains a second directory handoff queued while its remover is held', async () => {
+    const item = fixture("printf '1\\t.\\n'");
+    const payload = join(item.cache, 'artifact');
+    rmSync(payload);
+    mkdirSync(payload);
+    writeFileSync(join(payload, 'data'), 'first');
+    const marker = join(scratch, 'rm.pid');
+    const go = join(scratch, 'rm.go');
+    const rm = join(scratch, 'bin', 'rm');
+    writeFileSync(
+      rm,
+      `#!/bin/sh\necho $$ > '${marker}'\nwhile [ ! -f '${go}' ]; do sleep 0.1; done\nexec /bin/rm "$@"\n`,
+    );
+    chmodSync(rm, 0o755);
+    const client = createStim({ projectRoot: item.root, home: item.home, env: item.env });
+    let second: ReturnType<typeof client.deleteGarbageItem> | undefined;
+    const writes = vi.spyOn(Socket.prototype, 'write');
+    try {
+      const first = await client.deleteGarbageItem({ item: { kind: 'cache', dir: item.cache } });
+      expect(first.results).toMatchObject([{ status: 'pending' }]);
+      await vi.waitFor(() => expect(existsSync(marker)).toBe(true), { timeout: 20_000 });
+      mkdirSync(payload);
+      writeFileSync(join(payload, 'data'), 'second');
+      writes.mockClear();
+      second = client.deleteGarbageItem({ item: { kind: 'cache', dir: item.cache } });
+      void second.catch(() => {});
+      await vi.waitFor(() =>
+        expect(writes.mock.calls.some(([chunk]) => typeof chunk === 'string' && chunk.includes('"op":"gc.run"'))).toBe(
+          true,
+        ),
+      );
+      writes.mockRestore();
+      writeFileSync(go, 'go');
+      expect((await second).results).toMatchObject([{ status: 'pending' }]);
+      await vi.waitFor(
+        async () => {
+          expect(await pendingItemTrash()).toEqual({ count: 0, bytes: 0 });
+          expect(stimdOwner()).toBeUndefined();
+        },
+        { timeout: 20_000, interval: 100 },
+      );
+    } finally {
+      writes.mockRestore();
+      writeFileSync(go, 'go');
+      await second;
+    }
+  }, 45_000);
   test.each(['new handoff', 'restart recovery', 'shutdown'] as const)(
     'an off-mode %s drain survives the requester and owns its remover until completion',
     async (mode) => {
-      const item = fixture();
+      const item = fixture("printf '1\\t.\\n'");
+      rmSync(join(item.cache, 'artifact'));
+      mkdirSync(join(item.cache, 'artifact'));
+      writeFileSync(join(item.cache, 'artifact', 'data'), 'cached');
       const marker = join(scratch, 'rm.pid');
       const go = join(scratch, 'rm.go');
       const rm = join(scratch, 'bin', 'rm');
@@ -160,7 +210,9 @@ describe.skipIf(process.platform === 'win32')('gc on stimd', () => {
       try {
         let result: unknown;
         if (mode === 'restart recovery') {
-          result = { staged: await stageItemTrash(join(item.cache, 'artifact'), 6, { kind: 'cache', id: item.cache }) };
+          result = {
+            staged: await stageItemTrash(join(item.cache, 'artifact'), 1024, { kind: 'cache', id: item.cache }),
+          };
           request = client.deleteGarbageItem({ item: { kind: 'archive', id: 'missing' } }).catch(() => undefined);
         } else {
           result = await client.deleteGarbageItem({
@@ -169,7 +221,7 @@ describe.skipIf(process.platform === 'win32')('gc on stimd', () => {
           });
         }
         expect(result).toMatchObject(
-          mode === 'restart recovery' ? { staged: true } : { results: [{ status: 'pending', bytes: 6 }] },
+          mode === 'restart recovery' ? { staged: true } : { results: [{ status: 'pending', bytes: 1024 }] },
         );
         await vi.waitFor(() => expect(existsSync(marker)).toBe(true), { timeout: 20_000 });
         stop.abort();
@@ -177,7 +229,7 @@ describe.skipIf(process.platform === 'win32')('gc on stimd', () => {
         const remover = Number(readFileSync(marker, 'utf8'));
         expect(owner).toBeDefined();
         expect(alive(remover)).toBe(true);
-        expect(await pendingItemTrash()).toEqual({ count: 1, bytes: 6 });
+        expect(await pendingItemTrash()).toEqual({ count: 1, bytes: 1024 });
         expect(readGcLog().filter((record) => 'status' in record && record.status === 'done')).toEqual([]);
         expect(existsSync(join(item.cache, 'artifact'))).toBe(false);
         if (mode === 'shutdown') {
@@ -188,7 +240,7 @@ describe.skipIf(process.platform === 'win32')('gc on stimd', () => {
         await vi.waitFor(
           async () => {
             expect(await pendingItemTrash()).toEqual(
-              mode === 'shutdown' ? { count: 1, bytes: 6 } : { count: 0, bytes: 0 },
+              mode === 'shutdown' ? { count: 1, bytes: 1024 } : { count: 0, bytes: 0 },
             );
             expect(stimdOwner()).toBeUndefined();
             expect(alive(remover)).toBe(false);
@@ -211,7 +263,7 @@ describe.skipIf(process.platform === 'win32')('gc on stimd', () => {
         item: { kind: 'cache', dir: item.cache },
       });
       expect(result.exitCode).toBe(0);
-      expect(result.results).toMatchObject([{ kind: 'cache', status: 'pending', id: item.cache }]);
+      expect(result.results).toMatchObject([{ kind: 'cache', status: 'done', id: item.cache }]);
       expect(existsSync(join(item.cache, 'artifact'))).toBe(false);
       if (mode === 'off')
         await vi.waitFor(

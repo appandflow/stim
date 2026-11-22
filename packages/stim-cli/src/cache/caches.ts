@@ -572,7 +572,7 @@ export async function pruneCacheAsync(
       signal?.throwIfAborted();
       if ((await stat(entry)).mtimeMs >= cutoff) continue;
       signal?.throwIfAborted();
-      if (await handoff?.(entry, size ?? 0)) {
+      if (st.isDirectory() && (await handoff?.(entry, size ?? 0))) {
         pending++;
         pendingBytes += size ?? 0;
         continue;

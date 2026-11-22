@@ -1,5 +1,5 @@
 import { lstat, readdir, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import chalk from 'chalk';
 import type { StimContext } from '@stim-cli/core';
 import { trashRoot } from '@stim-cli/core/state';
@@ -137,6 +137,9 @@ export async function deleteTrash(
   const done = { count: 0, bytes: 0, failures: 0 };
   for (const entry of report?.entries ?? []) {
     if (!entry.willDelete) continue;
+    if (!(await lstat(entry.path).catch(() => null))?.isDirectory()) continue;
+    const typed = basename(entry.path).startsWith(ITEM_TRASH_PREFIX);
+    if (typed && !(await readItemTrash(entry.path))) continue;
     let claim;
     try {
       claim = tryAcquireClaim({ root: join(entry.path, TRASH_CLAIMS), mode: 'exclusive', label: CLAIM_LABEL });
@@ -157,11 +160,13 @@ export async function deleteTrash(
     if (operation) declareSpawnsOn(operation, claim.acquired);
     try {
       const item = await readItemTrash(entry.path);
-      if (item?.source.kind === 'archive' && item.source.part)
+      if (typed && !item) continue;
+      const payload = item ? await lstat(join(entry.path, 'entries', 'payload')).catch(() => null) : null;
+      if (payload && item?.source.kind === 'archive' && item.source.part)
         await reconcileTrashedArchivePart(item.source.id, item.source.part, operation?.signal);
       await deleteTrashEntry(entry.path, operation, throttleIo);
       done.count++;
-      done.bytes += entry.bytes ?? 0;
+      done.bytes += item ? (payload ? item.bytes : 0) : (entry.bytes ?? 0);
     } catch (error) {
       retained = error instanceof WorkspaceProcessCleanupError && error.claims.includes(claim.acquired);
       if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
