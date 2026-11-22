@@ -165,12 +165,26 @@ test('explicitly disabled discovery excludes old unregistered marks without clai
 test('candidate coverage uses the same authorized file batch and cached subtype evidence without reading candidate trees', async () => {
   const saved = record();
   const dependencyAt = new Date(Date.now() - 2 * 3_600_000).toISOString();
+  const worktreeAt = new Date(Date.now() - 24 * 3_600_000).toISOString();
   const observed: GcMark = {
     ...saved,
     candidates: [
       { kind: 'outputs', path: join(root, 'build'), device: 1, bytes: 0, measuredAt: saved.markedAt },
       { kind: 'cargo-target', path: join(root, 'target'), device: 1, bytes: null, measuredAt: null },
     ],
+    worktree: {
+      markedAt: worktreeAt,
+      source: base,
+      head: 'abc',
+      keys: [root],
+      clean: true,
+      pushed: true,
+      finished: null,
+      emptyBranch: false,
+      activity: null,
+      lastUsedAt: null,
+      keep: { code: 'active', reason: 'kept', eligibleAt: null },
+    },
     dependencies: {
       markedAt: dependencyAt,
       role: 'linked',
@@ -207,7 +221,7 @@ test('candidate coverage uses the same authorized file batch and cached subtype 
     readState: 'ready',
     outputs: { state: 'ready', count: 2, knownBytes: 0, unknownSizeCount: 1, oldestMarkedAt: saved.markedAt },
     dependencies: { state: 'ready', count: 1, knownBytes: 7, unknownSizeCount: 0, oldestMarkedAt: dependencyAt },
-    worktrees: { state: 'unavailable' },
+    worktrees: { state: 'ready', count: 1, knownBytes: 0, unknownSizeCount: 1, oldestMarkedAt: worktreeAt },
   });
   expect(
     vi

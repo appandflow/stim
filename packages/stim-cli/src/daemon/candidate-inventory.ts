@@ -1,8 +1,6 @@
 import type { GcCandidateCoverage, GcCandidateInventory, GcMark } from '@stim-cli/core/state';
 
-type InventoryMark = Pick<GcMark, 'root' | 'markedAt' | 'candidates' | 'dependencies'> & {
-  worktree?: { markedAt: string };
-};
+type InventoryMark = Pick<GcMark, 'root' | 'markedAt' | 'candidates' | 'dependencies' | 'worktree'>;
 type Candidate = { kind: string; path: string; bytes: number | null; measuredAt: string | null };
 type Observation = { markedAt: string; candidates: readonly Candidate[] };
 
