@@ -1,3 +1,5 @@
+import { execFileSync } from 'node:child_process';
+import * as worktrees from '../workspace/worktree.ts';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { readFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -157,9 +159,52 @@ test('explicitly disabled discovery excludes old unregistered marks without clai
   const valid = record();
   const excluded = join(base, 'excluded');
   mkdirSync(excluded);
-  writeFileSync(gcMarkFile(excluded), JSON.stringify({ ...valid, root: excluded }));
+  writeFileSync(
+    gcMarkFile(excluded),
+    JSON.stringify({
+      ...valid,
+      root: excluded,
+      candidates: [
+        { kind: 'cargo-target', path: join(excluded, 'target'), device: 1, bytes: 4096, measuredAt: valid.markedAt },
+      ],
+    }),
+  );
   config.maintenance = { autoDiscover: false, discoverRoots: [] };
   expect(await outputMarkBatch(config, testContext())).toEqual({ marks: [valid], complete: true, listed: true });
+});
+
+test('failed nested registration holder proof omits zero totals and a real retry restores the inventory', async () => {
+  execFileSync('git', ['init', '-q', root]);
+  const app = join(root, 'apps', 'mobile');
+  mkdirSync(app, { recursive: true });
+  config.projects = { [app]: {} };
+  config.maintenance = { autoDiscover: false, discoverRoots: [] };
+  const saved = record();
+  saved.candidates = [
+    { kind: 'cargo-target', path: join(root, 'target'), device: 1, bytes: 4096, measuredAt: saved.markedAt },
+  ];
+  writeFileSync(gcMarkFile(root), JSON.stringify(saved));
+  const lookup = vi.spyOn(worktrees, 'resolveSourceCheckoutAsync');
+  vi.mocked(readFile).mockClear();
+
+  expect((await readMarkHealth(config, testContext())).marks.candidates?.outputs).toMatchObject({
+    state: 'ready',
+    count: 1,
+    knownBytes: 4096,
+  });
+  lookup.mockResolvedValueOnce({ entries: [], refusal: 'Git read failed' });
+  const unanswered = await readMarkHealth(config, testContext());
+  expect(unanswered.roots).toEqual([]);
+  expect(unanswered.marks.candidates).toMatchObject({ readState: 'partial', outputs: { state: 'unavailable' } });
+  expect(unanswered.marks.candidates?.outputs.count).toBeUndefined();
+  expect(unanswered.marks.candidates?.outputs.knownBytes).toBeUndefined();
+  expect((await readMarkHealth(config, testContext())).marks.candidates?.outputs).toMatchObject({
+    state: 'ready',
+    count: 1,
+    knownBytes: 4096,
+  });
+  expect(lookup).toHaveBeenCalledTimes(3);
+  expect(vi.mocked(readFile).mock.calls.filter(([file]) => String(file) === gcMarkFile(root))).toHaveLength(3);
 });
 
 test('candidate coverage uses the same authorized file batch and cached subtype evidence without reading candidate trees', async () => {
