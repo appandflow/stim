@@ -5,6 +5,7 @@ test('a worker cleanup refusal stays visible after the lane settles', async () =
   const failure = new WorkspaceProcessCleanupError([], 'worker child is unverified', 'Inspect worker child.');
   const reported = vi.fn<(error: unknown) => boolean>(() => false);
   const threads: ThreadTable = {
+    marks: () => ({ result: Promise.resolve({ marks: true as const }), leave() {} }),
     drainTrash: async () => {},
     run: async () => {
       throw failure;
