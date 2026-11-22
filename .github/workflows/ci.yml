@@ -358,6 +358,7 @@ jobs:
       - name: Windows CLI and cache smoke
         run: >-
           pnpm test
+          packages/stim-cli/src/__tests__/worktree-archive.integration.test.ts
           packages/stim-cli/src/__tests__/exec.integration.test.ts
           packages/stim-cli/src/__tests__/api-reports.integration.test.ts
           packages/stim-cli/src/__tests__/report-runtime.integration.test.ts
