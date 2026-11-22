@@ -27,6 +27,7 @@ import {
   stimdSocket,
 } from '@stim-cli/core/state';
 import { parseNdjsonText } from '../ndjson.ts';
+import { buildEntries } from '../../build-entries.ts';
 import { upsertProject } from '../workspace/config.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
@@ -220,7 +221,8 @@ for (const [root, mode] of roots) markClaimChildPending(tryAcquireClaim({ root, 
 function nextDist(dist: string): string {
   const next = `${dist}.next`;
   cpSync(dist, next, { recursive: true });
-  const chunks = readdirSync(next).filter((name) => /-[\w-]{8}\.mjs$/.test(name));
+  const entries = new Set(Object.keys(buildEntries).map((name) => `${name}.mjs`));
+  const chunks = readdirSync(next).filter((name) => !entries.has(name) && /-[\w-]{8}\.mjs$/.test(name));
   const renamed = (text: string) =>
     chunks.reduce((out, name) => out.replaceAll(name, name.replace(/\.mjs$/, 'u.mjs')), text);
   for (const name of readdirSync(next).filter((entry) => entry.endsWith('.mjs'))) {
