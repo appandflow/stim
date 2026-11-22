@@ -28,6 +28,22 @@ export interface GcDependencyObservation {
   candidates: GcDependencyCandidate[];
 }
 
+/** The normal worktree inventory's evidence, which grants no removal authority. */
+export interface GcWorktreeObservation {
+  markedAt: string;
+  source: string | null;
+  head: string | null;
+  keys: string[];
+  clean: boolean | null;
+  pushed: boolean | null;
+  finished: { reason: string; at: string | null } | null;
+  /** The existing no-own-commits policy applies, with no open pull request. */
+  emptyBranch: boolean | null;
+  activity: { at: string; basis: string } | null;
+  lastUsedAt: string | null;
+  keep?: { code: string; reason: string; eligibleAt: string | null };
+}
+
 /** What one checkout could free, as the maintenance lane last read it. Rebuildable: a missing mark is a root due for one. */
 export interface GcMark {
   v: typeof GC_MARK_VERSION;
@@ -43,6 +59,7 @@ export interface GcMark {
   candidates: GcMarkCandidate[];
   /** Missing or unreadable dependency evidence is unknown, not an empty inventory. */
   dependencies?: GcDependencyObservation;
+  worktree?: GcWorktreeObservation;
   /** Recognized nested app paths that led normal discovery to this Cargo holder. */
   cargoVia?: string[];
 }
@@ -129,6 +146,33 @@ function dependencyObservation(value: unknown): GcDependencyObservation | undefi
   return { markedAt, role, keys, candidates: parsed };
 }
 
+function isWorktreeObservation(value: unknown): value is GcWorktreeObservation {
+  if (!isJsonObject(value)) return false;
+  const { markedAt, source, head, keys, clean, pushed, finished, emptyBranch, activity, lastUsedAt, keep } = value;
+  return (
+    typeof markedAt === 'string' &&
+    (source === null || (typeof source === 'string' && isAbsolute(source))) &&
+    (head === null || typeof head === 'string') &&
+    Array.isArray(keys) &&
+    keys.every((key) => typeof key === 'string' && isAbsolute(key)) &&
+    (clean === null || typeof clean === 'boolean') &&
+    (pushed === null || typeof pushed === 'boolean') &&
+    (finished === null ||
+      (isJsonObject(finished) &&
+        typeof finished.reason === 'string' &&
+        (finished.at === null || typeof finished.at === 'string'))) &&
+    (emptyBranch === null || typeof emptyBranch === 'boolean') &&
+    (activity === null ||
+      (isJsonObject(activity) && typeof activity.at === 'string' && typeof activity.basis === 'string')) &&
+    (lastUsedAt === null || typeof lastUsedAt === 'string') &&
+    (keep === undefined ||
+      (isJsonObject(keep) &&
+        typeof keep.code === 'string' &&
+        typeof keep.reason === 'string' &&
+        (keep.eligibleAt === null || typeof keep.eligibleAt === 'string')))
+  );
+}
+
 /** Validates one saved mark against its canonical root without reading the filesystem. */
 export function parseGcMark(root: string, entry: unknown): GcMark | null {
   if (!isJsonObject(entry) || entry.v !== GC_MARK_VERSION || entry.root !== root) return null;
@@ -153,6 +197,7 @@ export function parseGcMark(root: string, entry: unknown): GcMark | null {
     lastActivityAt,
     candidates: parsed,
     ...(dependencies === undefined ? {} : { dependencies }),
+    ...(isWorktreeObservation(entry.worktree) ? { worktree: entry.worktree } : {}),
     ...(Array.isArray(entry.cargoVia) && entry.cargoVia.every((path) => typeof path === 'string' && isAbsolute(path))
       ? { cargoVia: entry.cargoVia }
       : {}),

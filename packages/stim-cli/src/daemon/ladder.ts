@@ -55,6 +55,7 @@ import {
 } from '../stimd/passes/unowned.ts';
 import { rankDependencies, rankSourceDependencies, selectDependencies, type RankedDependency } from './dependencies.ts';
 import { savedDependencyReports } from './dependency-reports.ts';
+import { savedWorktreeReports } from './worktree-reports.ts';
 import { idleOutputs, PRESSURE_IDLE_MS, writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
 import {
   clearStoppedOutputs,
@@ -917,6 +918,17 @@ async function sweepRung(context: RungContext, causes: readonly Cause[]): Promis
  */
 async function worktreesRung(context: RungContext): Promise<void> {
   if (!context.settings.removeFinishedWorktrees) return;
+  if (context.act || !context.force) {
+    for (const row of await savedWorktreeReports(
+      context.config,
+      context,
+      context.level === 'critical' ? 'critical' : 'high',
+      context.settings.removeIdleWorktrees,
+    ))
+      if (onShort(context, [row.target]))
+        recordAction(context, { ...row, rung: 7, kind: 'remove-worktree', outcome: 'kept', bytes: 0 }, context.why);
+    return;
+  }
   const protectedRoot = context.protectedRoot ? (canonicalOrNull(context.protectedRoot) ?? '') : '';
   const pins = new Map<string, boolean>();
   const planned = await timedStep(

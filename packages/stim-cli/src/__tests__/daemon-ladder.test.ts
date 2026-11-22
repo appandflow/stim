@@ -1188,7 +1188,7 @@ describe('the pressure ladder', () => {
     ]);
   });
 
-  test('rung 7 in stim gc reports a finished worktree and removes nothing', async () => {
+  test('rung 7 in a read-only preview reports a finished worktree and removes nothing', async () => {
     const worktree = join(projects, 'finished');
     vi.spyOn(sweep, 'planWorktrees').mockResolvedValue({
       sweep: {
@@ -1218,7 +1218,12 @@ describe('the pressure ladder', () => {
     const act = vi.spyOn(acting, 'executeAction');
 
     const { actions } = await runLadder(
-      { ...input(true, async () => pressure('high')), fromRung: 7, lastRung: 7, force: { level: 'high', why: 'test' } },
+      {
+        ...input(false, async () => pressure('high')),
+        fromRung: 7,
+        lastRung: 7,
+        force: { level: 'high', why: 'test' },
+      },
       pressure('high'),
     );
 
