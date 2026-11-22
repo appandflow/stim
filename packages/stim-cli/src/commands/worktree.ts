@@ -1149,6 +1149,21 @@ interface RemovalInspection {
   timedOut?: boolean;
 }
 
+function removalMarkRoots(path: string, lockedKeys: readonly string[]): Set<string> {
+  const roots = new Set<string>();
+  try {
+    const nativeRoot = realpathSync.native(path);
+    for (const key of lockedKeys) {
+      try {
+        if (realpathSync.native(key) !== nativeRoot) continue;
+        const mark = readGcMark(realpathSync(key));
+        if (mark) roots.add(mark.root);
+      } catch {}
+    }
+  } catch {}
+  return roots;
+}
+
 export function removalPath(target: string | undefined, cwd: string = process.cwd()): string {
   return canonicalExistingPath(target ?? cwd);
 }
@@ -1724,6 +1739,7 @@ async function removeOrRefuse(
             output.fail();
             return;
           }
+          const obsoleteMarks = removalMarkRoots(path, lockedKeys);
           gitRemoving = true;
           try {
             await removeWorktreeAsync(path, {
@@ -1759,13 +1775,12 @@ async function removeOrRefuse(
             output.fail();
             return;
           }
-          const obsoleteMark = readGcMark(path);
-          if (obsoleteMark) {
-            // @ref LLP 0001#the-lane-marks-what-each-checkout-could-free -- an in-flight writer may republish this rebuildable record
+          // @ref LLP 0001#the-lane-marks-what-each-checkout-could-free -- an in-flight writer may republish this rebuildable record
+          for (const root of obsoleteMarks) {
             try {
-              rmSync(gcMarkFile(obsoleteMark.root), { force: true });
+              rmSync(gcMarkFile(root), { force: true });
             } catch (error) {
-              output.error(chalk.yellow(`Could not retire the cleanup mark of ${path}: ${String(error)}`));
+              output.error(chalk.yellow(`Could not retire the cleanup mark of ${root}: ${String(error)}`));
             }
           }
           if (archive) {

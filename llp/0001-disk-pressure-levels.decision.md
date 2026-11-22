@@ -495,8 +495,10 @@ also holds the newest activity the walk read, and the walk reads at
 - A mark is rebuildable: an unknown version or a file that does not parse
   reads as absent and the next walk rewrites it, so deleting the folder is
   safe. It is written with a temporary file and a rename.
-- A successful owned Git worktree removal retires only that canonical root's
-  validated saved mark, before any later branch cleanup. Unlink is best
+- A successful owned Git worktree removal retires that root's validated saved
+  marks, including currently locked registry spellings whose native identity
+  equals that exact Git root, captured before removal. Nested and unrelated
+  roots are not included. Retirement runs before any later branch cleanup. Unlink is best
   effort; source-only reclamation, failed removal and uncertain missing or
   offline roots do not retire marks. An in-flight mark writer can republish
   this rebuildable record after retirement; its later sweep still requires

@@ -14,9 +14,10 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { clearFreeClaimSet, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
-import { gcMarkFile, GC_MARK_VERSION, worktreeArchiveRoot } from '@stim-cli/core/state';
+import { gcMarkFile, readGcMark, GC_MARK_VERSION, worktreeArchiveRoot } from '@stim-cli/core/state';
 import { upsertProject } from '../workspace/config.ts';
 import * as worktreeGit from '../workspace/worktree.ts';
+import { markWriter } from '../daemon/marks.ts';
 import { enforceArchiveRetention } from '../archive.ts';
 import { removeWorktreeTarget } from '../commands/worktree.ts';
 import {
@@ -413,3 +414,29 @@ test.skipIf(process.platform === 'win32')('failed mark unlink does not undo succ
     chmodSync(directory, 0o755);
   }
 });
+
+test.skipIf(process.platform !== 'win32')(
+  'owned removal retires actual short-spelling and native mark keys for the same worktree',
+  async (context) => {
+    const alias = realpathSync(worktree);
+    const native = realpathSync.native(worktree);
+    if (alias === native) context.skip();
+    upsertProject(alias, {});
+    await markWriter({ projects: { [alias]: {} }, repos: {} })({
+      path: alias,
+      at: Date.now(),
+      lastActivityAt: null,
+      kept: null,
+    });
+    expect(readGcMark(alias)?.root).toBe(alias);
+    saveMark(native);
+    const sourceMark = saveMark(repo);
+    expect(await removeWorktreeTarget(native, { linkedOnly: true, output: { error: () => {}, fail: () => {} } })).toBe(
+      true,
+    );
+    expect(existsSync(native)).toBe(false);
+    expect(existsSync(gcMarkFile(alias))).toBe(false);
+    expect(existsSync(gcMarkFile(native))).toBe(false);
+    expect(readFileSync(gcMarkFile(repo), 'utf8')).toBe(sourceMark);
+  },
+);
