@@ -15,11 +15,11 @@ const mark = (root: string, elapsed: number, activityAge: number | null, dirty =
 });
 
 test.each([
-  { age: 0, interval: 60 * minute, dirty: false },
-  { age: null, interval: 60 * minute, dirty: false },
+  { age: 0, interval: 10 * minute, dirty: false },
+  { age: null, interval: 10 * minute, dirty: false },
   { age: 2 * day, interval: 60 * minute, dirty: false },
   { age: 8 * day, interval: day, dirty: false },
-  { age: 8 * day, interval: 60 * minute, dirty: true },
+  { age: 8 * day, interval: 10 * minute, dirty: true },
 ])('reports stale only after twice the current generation interval: $age, dirty=$dirty', ({ age, interval, dirty }) => {
   expect(markHealth([mark('/app', 2 * interval, age, dirty)], now, 7 * day, true).stale).toEqual([]);
   const stale = mark('/app', 2 * interval + 1, age, dirty);
@@ -54,6 +54,14 @@ test('invalid generation time makes coverage partial while preserving independen
   expect(result).not.toHaveProperty('checkedRoots');
 });
 
-test('a recent active mark is not overdue before the normal hourly writer can refresh it', () => {
-  expect(markHealth([mark('/app', 21 * minute, 0)], now, 7 * day, true)).toMatchObject({ staleCount: 0, stale: [] });
+test('a recently active mark with missed ten-minute generations is overdue at twenty-one minutes', () => {
+  expect(markHealth([mark('/app', 21 * minute, 0)], now, 7 * day, true)).toMatchObject({
+    staleCount: 1,
+    stale: [{ root: '/app' }],
+  });
+});
+
+test.each(['on', 'report'] as const)('uses the effective %s writer cadence for a thirty-minute active mark', (mode) => {
+  const observed = markHealth([mark('/active', 30 * minute, 0)], now, 7 * day, true, mode);
+  expect(observed.staleCount).toBe(mode === 'on' ? 1 : 0);
 });

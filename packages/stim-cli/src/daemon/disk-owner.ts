@@ -2,7 +2,7 @@ import type { CleanupQueueStatus, PressureLevel, RescuedCopy } from '@stim-cli/c
 import { keepReserve, releaseReserve } from '../disk-reserve.ts';
 import type { LevelRun, LevelRunAction } from '../stimd/passes/level-run.ts';
 
-/** Disk turns rank hard floor, critical, high/headroom, explicit item, trash, then normal lane/gc work. Equal ranks are FIFO. */
+/** Disk turns rank hard floor, critical, high/headroom, explicit item, trash, then normal lane/gc work and read-only marks. Equal ranks are FIFO. */
 export const HARD_FLOOR = 0;
 export const CRITICAL = 1;
 export const LADDER = 2;
@@ -10,6 +10,7 @@ const ITEM = 3;
 export const TRASH = 4;
 export const LANE = 5;
 const NORMAL_GC = 5;
+const MARK = 6;
 
 /** The slots of the stim-daemon's ladder clocks (`LadderInput.clocks`), which live as long as stimd. */
 export const LADDER_CLOCK_SLOTS = {
@@ -34,6 +35,7 @@ interface Ticket extends DiskTurn {
   rerank(rank: number): void;
   waiting(): boolean;
   withdraw(): void;
+  interrupt?: () => void;
 }
 
 let holder: Ticket | null = null;
@@ -55,6 +57,11 @@ function report(): void {
 function enqueue(ticket: Ticket, resuming = false): void {
   const at = waiting.findIndex((entry) => entry.rank > ticket.rank || (resuming && entry.rank === ticket.rank));
   waiting.splice(at === -1 ? waiting.length : at, 0, ticket);
+  if (ticket.rank <= LADDER) interruptMarks();
+}
+
+function interruptMarks(): void {
+  for (const ticket of [holder, ...waiting]) ticket?.interrupt?.();
 }
 
 function advance(ticket: Ticket): void {
@@ -65,7 +72,7 @@ function advance(ticket: Ticket): void {
   holder?.grant();
 }
 
-function queueForDisk(rank: number, trigger: string): Ticket {
+function queueForDisk(rank: number, trigger: string, interrupt?: () => void): Ticket {
   let closed = false;
   let resumed: Promise<void> | null = null;
   let refuseResume: ((error: Error) => void) | undefined;
@@ -78,6 +85,7 @@ function queueForDisk(rank: number, trigger: string): Ticket {
     trigger,
     startedAt: new Date().toISOString(),
     granted,
+    ...(interrupt ? { interrupt } : {}),
     grant: () => grant(),
     waiting: () => waiting.includes(ticket),
     rerank(to) {
@@ -86,6 +94,7 @@ function queueForDisk(rank: number, trigger: string): Ticket {
       if (at !== -1) waiting.splice(at, 1);
       ticket.rank = to;
       if (at !== -1) enqueue(ticket);
+      else if (holder === ticket && to <= LADDER) interruptMarks();
     },
     boundary() {
       if (resumed) return resumed;
@@ -161,6 +170,44 @@ export function requestGcItem<T>(
         if (holder === ticket) keepReserve();
         ticket.withdraw();
       }
+    }
+  })();
+  result.catch(() => {});
+  return { result, leave: () => stop.abort() };
+}
+
+export class MarkInterrupted extends Error {
+  constructor() {
+    super('mark refresh interrupted by pressure');
+  }
+}
+
+/** Runs one read-only root on the lowest-priority disk turn; pressure interrupts only its own operation. */
+export function requestMark<T>(work: (signal: AbortSignal) => Promise<T>): { result: Promise<T>; leave(): void } {
+  const stop = new AbortController();
+  const interrupt = () => stop.abort(new MarkInterrupted());
+  const ticket = queueForDisk(MARK, 'mark', interrupt);
+  let started = false;
+  let cancelWait!: () => void;
+  const cancelled = new Promise<never>((_resolve, reject) => {
+    cancelWait = () => {
+      if (started) return;
+      ticket.withdraw();
+      reject(stop.signal.reason);
+    };
+    stop.signal.addEventListener('abort', cancelWait, { once: true });
+  });
+  if (stop.signal.aborted) cancelWait();
+  if ((holder && holder.rank <= LADDER) || waiting.some((entry) => entry.rank <= LADDER)) interrupt();
+  const result = (async () => {
+    try {
+      await Promise.race([ticket.granted, cancelled]);
+      stop.signal.throwIfAborted();
+      started = true;
+      return await work(stop.signal);
+    } finally {
+      stop.signal.removeEventListener('abort', cancelWait);
+      ticket.withdraw();
     }
   })();
   result.catch(() => {});
