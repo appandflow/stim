@@ -1,7 +1,11 @@
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { createProjectRegistry, type ProjectIntegration } from '../integrations/project-registry.ts';
+import {
+  createProjectRegistry,
+  unownedProjectState,
+  type ProjectIntegration,
+} from '../integrations/project-registry.ts';
 import { projectIntegrations, projectRegistry } from '../integrations/projects.ts';
 import { findServerWorkspace } from '../workspace/project.ts';
 import { upsertProject } from '../workspace/config.ts';
@@ -150,4 +154,25 @@ test('unreadable relevant manifests refuse instead of falling back to another in
   expect(problem?.message).toContain(join(nested, 'package.json'));
   expect(problem?.remedy).toMatch(/Fix the JSON/);
   expect(findServerWorkspace(nested, registry)).toEqual({ root: nested, from: null });
+});
+
+test.each(['swift', 'exact', 'expo'] as const)('selected-root recognition preserves the %s integration', (kind) => {
+  if (kind === 'swift') write(join(dir, 'Package.swift'));
+  else if (kind === 'exact') {
+    write(join(dir, 'exact.mjs'));
+    write(join(dir, 'app.json'), '{}');
+  } else packageAt(dir);
+  expect(projectRegistry.selectDoctor(dir).problem).toBeNull();
+  expect(unownedProjectState(dir, projectIntegrations)).toBe(true);
+});
+
+test('selected-root recognition preserves operation ambiguity and unreadable refusal', () => {
+  packageAt(dir);
+  write(join(dir, 'exact.mjs'));
+  write(join(dir, 'app.json'), '{}');
+  expect(projectRegistry.selectDoctor(dir).problem?.kind).toBe('ambiguous');
+  expect(unownedProjectState(dir, projectIntegrations)).toBe(false);
+  write(join(dir, 'package.json'), '{');
+  expect(projectRegistry.selectDoctor(dir).problem?.kind).toBe('unreadable');
+  expect(unownedProjectState(dir, projectIntegrations)).toBe('unknown');
 });

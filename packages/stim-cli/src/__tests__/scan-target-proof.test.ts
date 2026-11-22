@@ -223,7 +223,7 @@ test('a changed directory during scan proof capture never publishes the earlier 
   expect(scan.safety?.[root]).toBeUndefined();
 });
 
-test('the normal scanner admits a plain native-Android repository but targeted proof keeps its candidate ancestry', async () => {
+test('a normal scan-only native-Android repository is authorized without ancestor enumeration', async () => {
   const root = join(home, 'Developer', 'native');
   mkdirSync(root, { recursive: true });
   execFileSync('git', ['init', '-q', root]);
@@ -232,7 +232,7 @@ test('the normal scanner admits a plain native-Android repository but targeted p
   const scan = await refresh();
   expect(scan.found).toContain(root);
   clearListings();
-  expect(await targetedCheckouts(config, [], [root])).toEqual([]);
+  expect((await targetedCheckouts(config, [], [root])).map(({ path }) => path)).toEqual([root]);
   expectNoParentListings(root);
 });
 
@@ -276,4 +276,173 @@ test('a stalled required exclusion read stays bounded and keeps scan-only author
   expect(await result).toMatchObject({ message: 'timed out' });
   release(home);
   await vi.advanceTimersByTimeAsync(0);
+});
+
+test('an in-place React Native ownership change keeps its saved native Android root', async () => {
+  const parent = join(home, 'Developer', 'mobile');
+  const root = join(parent, 'android');
+  mkdirSync(root, { recursive: true });
+  writeFileSync(join(parent, 'package.json'), '{}');
+  writeFileSync(join(root, 'settings.gradle'), 'rootProject.name = "fixture"');
+  writeFileSync(join(root, 'gradlew'), '#!/bin/sh\n');
+  const scan = await refresh();
+  expect(scan.found).toContain(root);
+  writeFileSync(join(parent, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '*' } }));
+  clearListings();
+  expect(await targetedCheckouts(config, [], [root])).toEqual([]);
+  expectNoParentListings(root);
+});
+
+test('a canonical conventional-root alias above home keeps the saved native Android root', async () => {
+  const owner = home;
+  try {
+    home = join(owner, 'agent-home');
+    mkdirSync(home);
+    vi.stubEnv('HOME', home);
+    vi.stubEnv('USERPROFILE', home);
+    saveConfig(config);
+    const root = join(home, 'Developer', 'native');
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, 'settings.gradle'), 'rootProject.name = "fixture"');
+    writeFileSync(join(root, 'gradlew'), '#!/bin/sh\n');
+    writeFileSync(join(owner, 'package.json'), '{}');
+    symlinkSync(root, join(owner, 'android'), process.platform === 'win32' ? 'junction' : 'dir');
+    expect((await refresh()).found).toContain(root);
+    writeFileSync(join(owner, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+    clearListings();
+    expect(await targetedCheckouts(config, [], [root])).toEqual([]);
+    expectNoParentListings(root);
+    expect(vi.mocked(readdirSync).mock.calls.map(([path]) => String(path))).not.toContain(owner);
+    expect(vi.mocked(readdir).mock.calls.map(([path]) => String(path))).not.toContain(owner);
+  } finally {
+    home = owner;
+  }
+});
+
+test('unreadable named ownership evidence keeps a native candidate without parent enumeration', async () => {
+  const root = join(home, 'Developer', 'native');
+  mkdirSync(root, { recursive: true });
+  writeFileSync(join(root, 'settings.gradle'), 'rootProject.name = "fixture"');
+  writeFileSync(join(root, 'gradlew'), '#!/bin/sh\n');
+  const scan = await refresh();
+  const actual = REAL_RECOGNITION_IO.lstat;
+  const io = {
+    ...REAL_RECOGNITION_IO,
+    lstat: (path: string) =>
+      path === join(dirname(root), 'package.json')
+        ? Promise.reject(Object.assign(new Error('denied'), { code: 'EACCES' }))
+        : actual(path),
+  };
+  clearListings();
+  expect(
+    await scanEntryValid(root, {
+      home,
+      isCheckout: recognition,
+      skip: () => false,
+      proofs: scan.safety,
+      identity: scan.safety?.[root]?.native,
+      io,
+    }),
+  ).toBe('pending');
+  expectNoParentListings(root);
+});
+
+test('cancellation interrupts a pending named ownership read and contains its read slot', async () => {
+  const root = join(home, 'Developer', 'native');
+  mkdirSync(root, { recursive: true });
+  writeFileSync(join(root, 'settings.gradle'), 'rootProject.name = "fixture"');
+  writeFileSync(join(root, 'gradlew'), '#!/bin/sh\n');
+  const scan = await refresh();
+  let started: () => void = () => {};
+  const began = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  let release: (error: Error) => void = () => {};
+  const actual = REAL_RECOGNITION_IO.lstat;
+  const io = {
+    ...REAL_RECOGNITION_IO,
+    lstat: (path: string) => {
+      if (path !== join(dirname(root), 'package.json')) return actual(path);
+      started();
+      return new Promise<never>((_, reject) => {
+        release = reject;
+      });
+    },
+  };
+  const controller = new AbortController();
+  clearListings();
+  const result = scanEntryValid(root, {
+    home,
+    isCheckout: recognition,
+    skip: () => false,
+    proofs: scan.safety,
+    identity: scan.safety?.[root]?.native,
+    io,
+    signal: controller.signal,
+  }).catch((error: unknown) => error);
+  await began;
+  const reason = new Error('owned cancellation');
+  controller.abort(reason);
+  expect(await result).toBe(reason);
+  release(Object.assign(new Error('missing'), { code: 'ENOENT' }));
+  await vi.advanceTimersByTimeAsync(0);
+  expectNoParentListings(root);
+});
+
+test('distinct case-sensitive project containers never share an ownership proof', async (context) => {
+  const root = join(home, 'Developer', 'monorepo');
+  const upper = join(root, 'Apps', 'android');
+  const lower = join(root, 'apps', 'android');
+  for (const folder of [upper, lower]) {
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(join(folder, 'settings.gradle'), 'rootProject.name = "fixture"');
+    writeFileSync(join(folder, 'gradlew'), '#!/bin/sh\n');
+  }
+  if ((await realpath(upper)) === (await realpath(lower))) context.skip();
+  writeFileSync(join(root, 'apps', 'package.json'), '{}');
+  expect((await refresh()).found).toContain(root);
+  writeFileSync(join(root, 'apps', 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+  expect(recognition(root)).toBe(false);
+  clearListings();
+  expect(await targetedCheckouts(config, [], [root])).toEqual([]);
+  expectNoParentListings(root);
+});
+
+test('an unproved Gradle child leaves an independently recognized Expo sibling available', async () => {
+  const root = join(home, 'Developer', 'monorepo');
+  const mobile = join(root, 'apps', 'mobile');
+  const native = join(root, 'apps', 'native');
+  mkdirSync(mobile, { recursive: true });
+  mkdirSync(native);
+  writeFileSync(join(mobile, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+  writeFileSync(join(native, 'settings.gradle'), 'rootProject.name = "fixture"');
+  writeFileSync(join(native, 'gradlew'), '#!/bin/sh\n');
+  writeFileSync(join(home, 'Developer', 'package.json'), '{');
+  expect((await refresh()).found).toContain(root);
+  expect(recognition(root)).toBe(true);
+  clearListings();
+  expect((await targetedCheckouts(config, [], [root])).map(({ path }) => path)).toEqual([root]);
+  expectNoParentListings(root);
+});
+
+test('a case-insensitive container alias reuses proof only after canonical identity checks', async (context) => {
+  const root = join(home, 'Developer', 'monorepo');
+  const upper = join(root, 'Apps', 'native');
+  const lower = join(root, 'apps', 'native');
+  mkdirSync(upper, { recursive: true });
+  writeFileSync(join(upper, 'settings.gradle'), 'rootProject.name = "fixture"');
+  writeFileSync(join(upper, 'gradlew'), '#!/bin/sh\n');
+  try {
+    if ((await realpath(upper)) !== (await realpath(lower))) context.skip();
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') context.skip();
+    throw error;
+  }
+  expect((await refresh()).found).toContain(root);
+  vi.mocked(realpath).mockClear();
+  clearListings();
+  expect((await targetedCheckouts(config, [], [root])).map(({ path }) => path)).toEqual([root]);
+  expect(vi.mocked(realpath)).toHaveBeenCalledWith(upper);
+  expect(vi.mocked(realpath)).toHaveBeenCalledWith(lower);
+  expectNoParentListings(root);
 });
