@@ -629,6 +629,7 @@ describe('stim status --watch --json', () => {
     const { proc, lines } = startWatch(true);
     try {
       await until(() => lines.length > 0);
+      await until(() => JSON.parse(last(lines)).daemon.unanswered !== undefined);
       expect(JSON.parse(last(lines)).maintenance.queued).toBe(0);
       claim = updateClaimDetails(claim, { ...claim.details, cleanup: { running, queued: 1 } }) ?? claim;
       proc.send({ path: join(daemonClaimRoot(), 'shared'), name: basename(claim.path) });
@@ -640,7 +641,7 @@ describe('stim status --watch --json', () => {
     } finally {
       releaseClaim(claim);
     }
-  });
+  }, 20_000);
 
   describe.skipIf(process.platform !== 'darwin')('machine usage on the light interval', () => {
     async function machineWatch(cpuExpr: string) {

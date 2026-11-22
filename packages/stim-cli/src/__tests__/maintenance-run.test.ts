@@ -49,8 +49,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   const original = await importOriginal<typeof import('node:fs/promises')>();
   return {
     ...original,
-    statfs: (...args: Parameters<typeof original.statfs>) =>
-      disk.full ? Promise.resolve({ bavail: 0, bsize: 4096 }) : original.statfs(...args),
+    statfs: () => Promise.resolve({ bavail: disk.full ? 0 : 1024 * 1024, bsize: 4096 }),
   };
 });
 
@@ -133,7 +132,7 @@ test('a healthy no-op maintenance pass leaves the existing reserve unchanged', a
   const bytes = Buffer.alloc(1024 * 1024, 0x42);
   writeFileSync(reserve, bytes);
   await runMaintenance('status');
-  expect(readFileSync(reserve)).toEqual(bytes);
+  expect(readFileSync(reserve).equals(bytes)).toBe(true);
 });
 
 test('a pass creates its disk reserve, and at zero free disk frees it before writing', async () => {

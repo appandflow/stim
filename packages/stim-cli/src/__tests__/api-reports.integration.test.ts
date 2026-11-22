@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { ensureWorkspaceStorage } from '../workspace/paths.ts';
+import { stimdClaimRoot, stimdRecordFile, stimdRunDir } from '@stim-cli/core/state';
 import { upsertProject } from '../workspace/config.ts';
 import { PEER } from '@stim-cli/core/protocol';
 import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from '@stim-cli/core/process-identity';
@@ -286,6 +287,19 @@ test('concurrent GC mutations empty only their selected cache and return results
     expect(process.cwd()).toBe(cwd);
     expect(process.env).toEqual(env);
     expect(process.exitCode).toBe(exit);
+  } catch (failure) {
+    for (const item of items) {
+      const files = [join(stimdRunDir(item.home), 'stimd.log'), stimdRecordFile(item.home)];
+      console.error('GC fixture daemon diagnostics', {
+        home: item.home,
+        claims: readClaimSet(stimdClaimRoot(item.home)),
+        files: files.map((file) => ({
+          file,
+          content: existsSync(file) ? readFileSync(file, 'utf8').slice(-16_384) : null,
+        })),
+      });
+    }
+    throw failure;
   } finally {
     log.mockRestore();
     error.mockRestore();
