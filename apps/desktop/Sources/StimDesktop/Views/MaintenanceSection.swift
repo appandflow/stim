@@ -27,11 +27,13 @@ struct MaintenanceSection: View {
         }
         ForEach((daemon.diskPacer ?? []).filter { $0.predictive != nil }, id: \.device) { volume in
           if let predictive = volume.predictive {
-            LabeledContent("Early cleanup: \(volume.volume)") {
+            LabeledContent("Predictive target: \(volume.volume)") {
               Text("Target \(Format.fileSize(reported: predictive.targetFreeMb * 1024 * 1024)) free")
                 .foregroundStyle(Palette.secondary)
             }
-            .help("Cleanup started early from recent disk use. The pressure above is still the measured level.")
+            .help(
+              "An early-cleanup target remains uncleared after an attempt; this does not mean cleanup is running now. Pressure above is the measured level."
+            )
           }
         }
         ForEach(daemon.lastActions()) { action in
