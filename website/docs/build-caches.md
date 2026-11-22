@@ -687,6 +687,17 @@ healthy internal one. The ladder a build runs for its headroom takes only what
 lies on the build's volume, and `stim gc --pressure high` or `--pressure critical`
 takes it on every volume.
 
+For stopped build outputs (rung 1), pressure cleanup uses the maintenance
+lane's saved candidates and rechecks current activity and safety before deleting.
+At high pressure it tries known candidates before refreshing missing or expired
+marks if space is still short. At critical pressure it does no fresh mark and
+leaves unmarked outputs alone. This applies to rung 1; Cargo and the later
+workspace cleanup stages still use their existing discovery. `stim gc --dry-run`
+still discovers outputs for its preview. Historical discovered marks whose
+current scope cannot be proven stay until a high-pressure refresh reauthorizes
+them. With no explicit discoverRoots, critical rung 1 therefore skips
+unregistered automatically discovered checkouts. Each output records its own volume, which can differ from the checkout's.
+
 Rung 9 is the last. It cleans caches Stim does not own, each through the tool's
 own command and only when that tool is installed and no process of that tool
 runs, and lists each with its size before and after: `npm cache clean --force`,

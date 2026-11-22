@@ -469,8 +469,46 @@ also holds the newest activity the walk read, and the walk reads at
   safe. It is written with a temporary file and a rename.
 - A `dirtyAt` newer than the start of the checkout's reads stays, so a
   change seen while the walk read the checkout is not lost.
-- Nothing reads the marks yet: the ladder plans and deletes as before, and
-  the ladder's own walks, `stim gc` and the source-checkout walk write none.
+- Output rung 1 sweeps the recorded output paths, without a new candidate
+  discovery. It rechecks current idleness, settings, devices, process/claim
+  protections, worktree locks, output recognition and Metro sharing before
+  deletion; the mark's activity is a lower bound, never permission to delete.
+  Known-mark sweeps require current registration or a direct child of a
+  current discoverRoots folder. An unregistered historical mark whose
+  discovery route cannot be proven without discovery stays, including with
+  automatic discovery on. High pressure can reauthorize it through current
+  discovery after known candidates are spent. With discoverRoots empty,
+  critical rung 1 therefore omits every unregistered auto-only checkout;
+  targeted automatic-route authorization remains a later migration item.
+  Canonical root/output paths
+  and their own recorded devices must still match. Each candidate records
+  its device separately: an external checkout can have Stim outputs on the
+  internal disk. Version 2 marks add that field; older marks are absent.
+  An unreadable check keeps the outputs and records the reason on the mark.
+- High pressure tries existing output marks first. Only while still short does
+  it discover roots, refresh missing or expired marks with current checkout
+  readings, and sweep successful refreshes. Critical and hard-floor output
+  sweeps never refresh marks, and leave unmarked outputs alone. An unforced
+  high sweep checks the latest disk level before refreshing, so a transition
+  to critical skips the refresh. Daemon report mode uses known marks without
+  deleting or updating them; explicit dry runs retain discovery previews.
+  A removal exception remains a failed rung, as before; accounting for bytes
+  removed before a later removal failed is an existing separate limitation. Registered
+  roots without marks are reported; unmarked discovered roots are not listed
+  during a critical sweep.
+- A mark is due after 10 minutes for activity under a day old, hourly for idle
+  checkouts, and daily after `idle.dormantDays`. Dirtiness brings the interval
+  to 10 minutes, never sooner. Unknown activity uses the 10-minute interval.
+  These constants implement the approved generation policy; this selector is
+  brought forward so high-pressure refresh does not invent a temporary TTL.
+  The normal lane still walks hourly and publishes due marks; a normal
+  mark-first sweep scheduler is pending the generation/lane integration.
+- Cargo pressure discovery, worktree/dependency discovery and normal Cargo
+  cap planning are unchanged. Wider Cargo marks (including nested and
+  untagged targets), their sweep migration, and worktree/dependency marks
+  remain separate increments. Per-candidate disk-turn yielding and yield
+  ranking also remain pending. The no-discovery guarantee here is for output
+  rung 1 only. `stim gc --dry-run` still discovers and previews outputs.
 
 Reason: planning dominates a pressure pass (rung 5's evidence loop took about
 13,300 s for 0 bytes on the loaded MacBook), and every pass repeats the
@@ -478,7 +516,8 @@ walk the lane already made. Marks let a later sweep recheck and delete
 without planning again.
 
 Maintainer decision: "I really like all 6 points lets do them all!",
-2026-11-20, #6059. Point 1 of the six is the split between a background
+2026-11-20, #6059. The generation constants and pressure ordering are the
+coordinator-approved design applied in #6081. Point 1 of the six is the split between a background
 mark and a sweep that only rechecks and deletes.
 
 Mark-only asynchronous layout reads, canonical-root reads and root-device reads
