@@ -385,7 +385,7 @@ async function idleOutputsRung(context: RungContext): Promise<void> {
       );
     }
   };
-  const known = outputMarks(context.config, context.operation?.env);
+  const known = await outputMarks(context.config, context.operation);
   await sweep(known);
   if (context.level === 'critical') {
     const marked = new Set(known.map(({ root }) => root));
