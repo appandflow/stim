@@ -116,6 +116,7 @@ export function markDue(mark: GcMark | null, now: number, dormantMs: number): bo
   return !Number.isFinite(markedAt) || now >= markedAt + interval;
 }
 
+// @ref LLP 0001#the-lane-marks-what-each-checkout-could-free -- auto-only roots stay until current-route proof (#6087)
 export function outputMarks(config: Config, env: NodeJS.ProcessEnv = process.env): GcMark[] {
   const registered = new Set(Object.keys(config.projects).map(canonicalPath));
   const roots = canonicalDiscoverRoots(config, env);
