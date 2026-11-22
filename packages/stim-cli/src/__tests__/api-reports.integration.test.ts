@@ -359,7 +359,7 @@ test('a cold public GC mutation starts an off-mode daemon and deletes its select
     for (const owner of owners) killFixtureChild(owner);
     for (const owner of owners) expect(await waitForProcessExit(owner, 5000)).toBe(true);
   }
-}, 15_000);
+}, process.platform === 'win32' ? 25_000 : 15_000);
 
 test.each([
   { kind: 'cache', unavailable: false },
