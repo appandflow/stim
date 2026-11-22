@@ -388,3 +388,61 @@ test('cancellation interrupts a pending named ownership read and contains its re
   await vi.advanceTimersByTimeAsync(0);
   expectNoParentListings(root);
 });
+
+test('distinct case-sensitive project containers never share an ownership proof', async (context) => {
+  const root = join(home, 'Developer', 'monorepo');
+  const upper = join(root, 'Apps', 'android');
+  const lower = join(root, 'apps', 'android');
+  for (const folder of [upper, lower]) {
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(join(folder, 'settings.gradle'), 'rootProject.name = "fixture"');
+    writeFileSync(join(folder, 'gradlew'), '#!/bin/sh\n');
+  }
+  if ((await realpath(upper)) === (await realpath(lower))) context.skip();
+  writeFileSync(join(root, 'apps', 'package.json'), '{}');
+  expect((await refresh()).found).toContain(root);
+  writeFileSync(join(root, 'apps', 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+  expect(recognition(root)).toBe(false);
+  clearListings();
+  expect(await targetedCheckouts(config, [], [root])).toEqual([]);
+  expectNoParentListings(root);
+});
+
+test('an unproved Gradle child leaves an independently recognized Expo sibling available', async () => {
+  const root = join(home, 'Developer', 'monorepo');
+  const mobile = join(root, 'apps', 'mobile');
+  const native = join(root, 'apps', 'native');
+  mkdirSync(mobile, { recursive: true });
+  mkdirSync(native);
+  writeFileSync(join(mobile, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+  writeFileSync(join(native, 'settings.gradle'), 'rootProject.name = "fixture"');
+  writeFileSync(join(native, 'gradlew'), '#!/bin/sh\n');
+  writeFileSync(join(home, 'Developer', 'package.json'), '{');
+  expect((await refresh()).found).toContain(root);
+  expect(recognition(root)).toBe(true);
+  clearListings();
+  expect((await targetedCheckouts(config, [], [root])).map(({ path }) => path)).toEqual([root]);
+  expectNoParentListings(root);
+});
+
+test('a case-insensitive container alias reuses proof only after canonical identity checks', async (context) => {
+  const root = join(home, 'Developer', 'monorepo');
+  const upper = join(root, 'Apps', 'native');
+  const lower = join(root, 'apps', 'native');
+  mkdirSync(upper, { recursive: true });
+  writeFileSync(join(upper, 'settings.gradle'), 'rootProject.name = "fixture"');
+  writeFileSync(join(upper, 'gradlew'), '#!/bin/sh\n');
+  try {
+    if ((await realpath(upper)) !== (await realpath(lower))) context.skip();
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') context.skip();
+    throw error;
+  }
+  expect((await refresh()).found).toContain(root);
+  vi.mocked(realpath).mockClear();
+  clearListings();
+  expect((await targetedCheckouts(config, [], [root])).map(({ path }) => path)).toEqual([root]);
+  expect(vi.mocked(realpath)).toHaveBeenCalledWith(upper);
+  expect(vi.mocked(realpath)).toHaveBeenCalledWith(lower);
+  expectNoParentListings(root);
+});

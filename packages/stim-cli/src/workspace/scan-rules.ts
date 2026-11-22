@@ -348,7 +348,13 @@ async function nativeCandidateProof(
       if (here === root) break;
     }
     if (!safe) {
-      const unowned = await candidateUnowned(folder, timeoutMs, io, signal);
+      let unowned = false;
+      try {
+        unowned = await candidateUnowned(folder, timeoutMs, io, signal);
+      } catch (error) {
+        signal?.throwIfAborted();
+        if (hungRead() !== null) throw error;
+      }
       candidates.set(folder, unowned);
       const rel = relative(root, folder).split(sep);
       const [container, child] = rel;
@@ -357,8 +363,19 @@ async function nativeCandidateProof(
         container !== undefined &&
         child !== undefined &&
         PROJECT_FOLDERS.includes(folded(container))
-      )
-        candidates.set(join(root, folded(container), child), unowned);
+      ) {
+        const alias = join(root, folded(container), child);
+        if (alias === folder || listings.has(alias)) continue;
+        try {
+          const identity = await answered(folder, () => io.realpath(folder), timeoutMs, signal);
+          const aliased = await answered(alias, () => io.realpath(alias), timeoutMs, signal);
+          candidates.set(alias, identity === aliased && unowned);
+        } catch (error) {
+          signal?.throwIfAborted();
+          if (hungRead() !== null) throw error;
+          candidates.set(alias, false);
+        }
+      }
     }
   }
   return candidates;
