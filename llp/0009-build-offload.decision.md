@@ -315,7 +315,11 @@ uses its existing tracked worker as the busy fact until that worker settles.
 The server's existing busy notification and `hostedWork` health fact include
 it. Read-only offer and report probes do not hold succession, and the existing
 owned-session takeback hold is unchanged. This closes the missing runtime
-worker case from #6049 without a separate counter for each action.
+worker case from #6049 without a separate counter for each action. A bounded
+runtime RPC failure does not clear busy while its worker group is unverified;
+the existing group watcher proves later settlement and then clears the fact.
+The pre-existing cross-thread window before stimd observes a busy notification
+remains: admission racing an already committed takeback can still be cancelled.
 
 ## Code
 

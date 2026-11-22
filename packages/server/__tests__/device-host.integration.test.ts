@@ -3660,6 +3660,46 @@ test('disconnect cancellation settles a runtime install worker before returning'
   await vi.waitFor(() => expect(['gone', 'different']).toContain(processIdentity.inspectProcessIdentity(worker)));
 });
 
+test('an unresolved runtime worker stays busy until its actual group exits', async () => {
+  await host.close();
+  const gate = join(home, 'runtime-release');
+  hostEnv.RUNTIME_GATE = gate;
+  host = new DeviceHost({
+    worker: join(home, 'worker.mjs'),
+    env: hostEnv,
+    agents: noAgents,
+    busy: (count) => busyCounts.push(count),
+    allowed: () => true,
+    limits: { killGraceMs: 100 },
+  });
+  const abort = new AbortController();
+  const pending = host.installRuntime('client', { runtime: '26.5' }, abort.signal);
+  await vi.waitFor(() => expect(existsSync(join(home, 'runtime-entered'))).toBe(true));
+  const pid = await readPid(join(home, 'runtime-entered'));
+  const kill = process.kill.bind(process);
+  const withheld = vi
+    .spyOn(process, 'kill')
+    .mockImplementation((target, signal) =>
+      target === -pid && (signal === 'SIGTERM' || signal === 'SIGKILL') ? true : kill(target, signal),
+    );
+  try {
+    abort.abort();
+    expect(await pending).toHaveProperty('error.code', 'action-failed');
+    expect(processGroupAlive(pid)).toBe(true);
+    expect(host.working()).toBe(1);
+    expect(busyCounts).toEqual([1]);
+    writeFileSync(gate, '');
+    await groupGone(pid);
+    await vi.waitFor(() => expect(busyCounts).toEqual([1, 0]));
+    expect(host.working()).toBe(0);
+  } finally {
+    withheld.mockRestore();
+    writeFileSync(gate, '');
+    await pending;
+    await groupGone(pid);
+  }
+});
+
 test.each(['ios', 'android'])(
   'app state checks the current %s attempt, serializes native work and refuses revoked ownership',
   async (platform) => {

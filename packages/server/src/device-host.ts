@@ -99,6 +99,7 @@ import type { HostedAgentHost } from './agent-driver.ts';
 import { signalChild } from './stim-command.ts';
 
 interface WorkerRun {
+  settled?: Promise<void>;
   done: Promise<{ value: unknown; settled: boolean; notice?: string }>;
   cancel: () => void;
 }
@@ -357,6 +358,7 @@ export class DeviceHost {
       cwd: dirname(this.options.worker),
       env: this.options.env,
       input: { mode: 'runtime', runtime: params.runtime },
+      trackSettlement: true,
       timeoutMs: this.limits.imageInstallMs,
       maxOutputBytes: 16_384,
     });
@@ -381,8 +383,11 @@ export class DeviceHost {
       return { result: { ok: true } };
     } finally {
       signal?.removeEventListener('abort', cancel);
-      this.probes.delete(run);
-      this.reportBusy();
+      void run.settled?.then(() => {
+        this.probes.delete(run);
+        this.reportBusy();
+        return undefined;
+      });
     }
   }
 
@@ -2693,6 +2698,7 @@ export class DeviceHost {
     claim?: ClaimHandle;
     timeoutMs: number;
     maxOutputBytes: number;
+    trackSettlement?: true;
   }): WorkerRun {
     if (options.claim) markClaimChildPending(options.claim);
     let child: ChildProcess;
@@ -2728,6 +2734,12 @@ export class DeviceHost {
     let killTimer: NodeJS.Timeout | undefined;
     let finishTimer: NodeJS.Timeout | undefined;
     let groupTimer: NodeJS.Timeout | undefined;
+    let proveSettlement: (() => void) | undefined;
+    const settlement = options.trackSettlement
+      ? new Promise<void>((resolve) => {
+          proveSettlement = resolve;
+        })
+      : undefined;
     let settle!: (result: { value: unknown; settled: boolean; notice?: string }) => void;
     const done = new Promise<{ value: unknown; settled: boolean; notice?: string }>((resolve) => {
       settle = resolve;
@@ -2742,6 +2754,8 @@ export class DeviceHost {
       const groupAlive = closed && child.pid ? processGroupAlive(child.pid) : null;
       const settled = closed && groupAlive !== true;
       diagnostic('settled', { closed, groupAlive, settled, cancelling });
+      if (settled) proveSettlement?.();
+      else if (options.trackSettlement) groupTimer = setTimeout(finishGroup, 250).unref();
       if (settled && options.claim) clearClaimChild(options.claim);
       let value: unknown = null;
       try {
@@ -2777,7 +2791,13 @@ export class DeviceHost {
       finishTimer = setTimeout(finish, hostedWorkerSettleMs(this.limits));
     };
     const finishGroup = () => {
-      if (finished) return;
+      if (finished) {
+        if (!options.trackSettlement) return;
+        clearTimeout(groupTimer);
+        if (closed && (!child.pid || !processGroupAlive(child.pid))) proveSettlement?.();
+        else groupTimer = setTimeout(finishGroup, 250).unref();
+        return;
+      }
       if (!child.pid || !processGroupAlive(child.pid)) finish();
       else {
         cancel('group-after-close');
@@ -2828,7 +2848,7 @@ export class DeviceHost {
         cancel('request-write');
       }
     }
-    return { done, cancel };
+    return { done, cancel, ...(settlement ? { settled: settlement } : {}) };
   }
 }
 
