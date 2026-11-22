@@ -9,7 +9,7 @@ import {
   utimesSync,
   writeFileSync,
 } from 'node:fs';
-import { lstat, stat } from 'node:fs/promises';
+import { lstat, realpath, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
@@ -20,9 +20,11 @@ import {
   type Config,
   type GcMark,
 } from '@stim-cli/core/state';
+import * as discovery from '../workspace/discovery.ts';
+import * as worktree from '../workspace/worktree.ts';
 import { runLadder } from '../daemon/ladder.ts';
 import { runDormantDependencies } from '../daemon/dependencies.ts';
-import { markDue, markWriter, refreshOutputMarks } from '../daemon/marks.ts';
+import { markDue, markWriter, outputMarks, refreshOutputMarks } from '../daemon/marks.ts';
 import { stoppedOutputCandidates, stoppedOutputs } from '../daemon/stages.ts';
 import type { OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { metroStoreRoot } from '../stimd/metro/metro-store.ts';
@@ -34,7 +36,12 @@ import { testContext } from './_context.ts';
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const fs = await importOriginal<typeof import('node:fs/promises')>();
-  return { ...fs, lstat: vi.fn<typeof fs.lstat>(fs.lstat), stat: vi.fn<typeof fs.stat>(fs.stat) };
+  return {
+    ...fs,
+    lstat: vi.fn<typeof fs.lstat>(fs.lstat),
+    realpath: vi.fn<typeof fs.realpath>(fs.realpath),
+    stat: vi.fn<typeof fs.stat>(fs.stat),
+  };
 });
 
 vi.mock('../workspace/protected-locations.ts', () => ({
@@ -234,6 +241,146 @@ describe('gc marks written by the lane', () => {
     expect(actions).toContainEqual(
       expect.objectContaining({ rung: 1, outcome: 'kept', detail: expect.stringContaining('root safety deadline') }),
     );
+  });
+
+  it('loads registered-only marks without reading discovery topology', async () => {
+    const path = checkout('registered', 3 * day);
+    config.projects[path] = {};
+    await markWriter(config)({ path, at: Date.now(), lastActivityAt: Date.now() - 3 * day, kept: null });
+    const source = vi.spyOn(worktree, 'resolveSourceCheckoutAsync');
+
+    expect((await outputMarks(config, testContext())).map(({ root }) => root)).toEqual([path]);
+
+    expect(source).not.toHaveBeenCalled();
+  });
+
+  it.each(['checkout', 'output'] as const)(
+    'keeps the mark identity when native realpath expands the %s spelling',
+    async (kind) => {
+      const path = checkout('canonical-spelling', 3 * day);
+      config.projects[path] = {};
+      saveConfig(config);
+      recordWorkspaceUse(path, new Date(Date.now() - 3 * day));
+      await markWriter(config)({ path, at: Date.now(), lastActivityAt: Date.now() - 3 * day, kept: null });
+      const output = join(path, 'android', 'app', 'build');
+      const nativePath = kind === 'checkout' ? path : output;
+      const nativeAlias = join(base, 'expanded-native-spelling', kind);
+      const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+      vi.mocked(realpath).mockImplementation(async (value) =>
+        String(value) === nativePath ? nativeAlias : fs.realpath(value),
+      );
+      expect(await realpath(nativePath)).toBe(nativeAlias);
+      const pressure = {
+        level: 'critical' as const,
+        disk: 'critical' as const,
+        memory: 'normal' as const,
+        reasons: [],
+        memoryWarningSince: null,
+      };
+
+      const { actions } = await runLadder(
+        {
+          config,
+          act: true,
+          log: () => {},
+          ...reading,
+          fromRung: 1,
+          lastRung: 1,
+          force: { level: 'critical', why: 'test' },
+          remeasure: async () => pressure,
+          operation: testContext(),
+        },
+        pressure,
+      );
+
+      expect(existsSync(output)).toBe(false);
+      expect(actions).toContainEqual(expect.objectContaining({ rung: 1, outcome: 'done' }));
+      expect(readGcMark(path)?.root).toBe(path);
+    },
+  );
+
+  it('skips disabled historical scope before reading a stale mark and still reclaims registered outputs', async () => {
+    const path = checkout('registered-live', 3 * day);
+    const stale = checkout('historical-stale', 3 * day);
+    config = { projects: { [path]: {}, [stale]: {} }, repos: {} };
+    saveConfig(config);
+    recordWorkspaceUse(path, new Date(Date.now() - 3 * day));
+    const write = markWriter(config);
+    for (const root of [path, stale])
+      await write({ path: root, at: Date.now(), lastActivityAt: Date.now() - 3 * day, kept: null });
+    delete config.projects[stale];
+    saveConfig(config);
+    const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    vi.mocked(realpath).mockImplementation(async (value) => {
+      if (String(value) === stale) throw new Unanswered('stale mount');
+      return fs.realpath(value);
+    });
+    const pressure = {
+      level: 'critical' as const,
+      disk: 'critical' as const,
+      memory: 'normal' as const,
+      reasons: [],
+      memoryWarningSince: null,
+    };
+
+    await runLadder(
+      {
+        config,
+        act: true,
+        log: () => {},
+        ...reading,
+        fromRung: 1,
+        lastRung: 1,
+        force: { level: 'critical', why: 'test' },
+        remeasure: async () => pressure,
+        operation: testContext(),
+      },
+      pressure,
+    );
+
+    expect(existsSync(join(path, 'android', 'app', 'build'))).toBe(false);
+    expect(existsSync(join(stale, 'android', 'app', 'build'))).toBe(true);
+    expect(vi.mocked(realpath).mock.calls.map(([root]) => String(root))).not.toContain(stale);
+  });
+
+  it('critical output sweep uses an authorized automatic sibling mark without full discovery or remarking', async () => {
+    vi.stubEnv('HOME', join(base, 'user'));
+    vi.stubEnv('USERPROFILE', join(base, 'user'));
+    vi.stubEnv('STIM_HOME', '');
+    const known = checkout('known-automatic', 3 * day);
+    const path = checkout('automatic-sibling', 3 * day);
+    config = { projects: { [known]: {} }, repos: {}, maintenance: { autoDiscover: true } };
+    saveConfig(config);
+    await markWriter(config)({ path, at: Date.now(), lastActivityAt: Date.now() - 3 * day, kept: null });
+    const before = readGcMark(path);
+    const fullDiscovery = vi.spyOn(discovery, 'discoverCheckouts');
+    const pressure = {
+      level: 'critical' as const,
+      disk: 'critical' as const,
+      memory: 'normal' as const,
+      reasons: [],
+      memoryWarningSince: null,
+    };
+
+    const { actions } = await runLadder(
+      {
+        config,
+        act: true,
+        log: () => {},
+        ...reading,
+        fromRung: 1,
+        lastRung: 1,
+        force: { level: 'critical', why: 'test' },
+        remeasure: async () => pressure,
+        operation: testContext(),
+      },
+      pressure,
+    );
+
+    expect(existsSync(join(path, 'android', 'app', 'build'))).toBe(false);
+    expect(actions).toContainEqual(expect.objectContaining({ rung: 1, workspace: path, outcome: 'done' }));
+    expect(fullDiscovery).not.toHaveBeenCalled();
+    expect(readGcMark(path)?.markedAt).toBe(before?.markedAt);
   });
 
   it('marks each checkout the walk reads with the outputs rung 1 would delete there, sized from the cache', async () => {

@@ -1,6 +1,6 @@
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import { existsSync, readdirSync } from 'node:fs';
-import { realpath, stat } from 'node:fs/promises';
+import { stat } from 'node:fs/promises';
 import { answered } from '../workspace/bounded-read.ts';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -19,7 +19,7 @@ import {
   type GcMark,
 } from '@stim-cli/core/state';
 import { archiveWorkspace } from '../archive.ts';
-import { canonicalPath } from '../commands/gc/paths.ts';
+import { canonicalPath, realpathAsync } from '../commands/gc/paths.ts';
 import { deleteProjectDevices, findStaleProjectDevices, withAndroidAvdSizes } from '../commands/gc/devices.ts';
 import type { OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { workspaceOutputPaths } from '../commands/gc/workspaces.ts';
@@ -479,7 +479,7 @@ export async function clearStoppedOutputs(
             let paths: string[];
             try {
               if (mark) {
-                const canonical = await answered(path, () => realpath(path), 3_000, operation?.signal);
+                const canonical = await answered(path, () => realpathAsync(path), 3_000, operation?.signal);
                 const info = await answered(path, () => stat(path), 3_000, operation?.signal);
                 if (canonical !== mark.root || info.dev !== mark.device)
                   return { outcome: 'kept', bytes: 0, detail: 'marked checkout moved or changed volume' };
@@ -504,7 +504,7 @@ export async function clearStoppedOutputs(
               if (mark) {
                 const verified: string[] = [];
                 for (const output of paths) {
-                  const canonical = await answered(output, () => realpath(output), 3_000, operation?.signal);
+                  const canonical = await answered(output, () => realpathAsync(output), 3_000, operation?.signal);
                   const info = await answered(output, () => stat(output), 3_000, operation?.signal);
                   const expected = mark.candidates.find((entry) => entry.kind === 'outputs' && entry.path === output);
                   if (canonical === output && info.dev === expected?.device) verified.push(output);

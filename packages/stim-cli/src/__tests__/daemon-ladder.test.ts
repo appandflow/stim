@@ -9,7 +9,9 @@ import {
   utimesSync,
   writeFileSync,
 } from 'node:fs';
-import { execSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
+import { realpath as nativeRealpath } from 'node:fs/promises';
+import * as protectedLocations from '../workspace/protected-locations.ts';
 import type { MockInstance } from 'vitest';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
@@ -1037,6 +1039,43 @@ describe('the pressure ladder', () => {
     expect(existsSync(second)).toBe(true);
     expect(actions).toContainEqual(expect.objectContaining({ rung: 1, outcome: 'failed', detail: 'removal refused' }));
   });
+
+  test.skipIf(process.platform !== 'win32')(
+    'preserves saved Windows short-name keys while matching native Git routes',
+    async (context) => {
+      vi.stubEnv('STIM_HOME', '');
+      vi.spyOn(protectedLocations, 'isProtectedLocation').mockReturnValue(false);
+      const known = join(projects, 'known-long-name');
+      const saved = join(projects, 'saved-long-name');
+      for (const root of [known, saved]) {
+        mkdirSync(root, { recursive: true });
+        writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+      }
+      execFileSync('git', ['-C', known, 'init', '-q', '-b', 'main']);
+      execFileSync('git', [
+        '-C',
+        known,
+        '-c',
+        'user.name=t',
+        '-c',
+        'user.email=t@t',
+        'commit',
+        '-q',
+        '--allow-empty',
+        '-m',
+        'init',
+      ]);
+      mkdirSync(join(saved, 'android', 'app', 'build'), { recursive: true });
+      const native = await nativeRealpath(saved);
+      if (saved === native) context.skip();
+      const config = { projects: { [known]: {} }, repos: {}, maintenance: { autoDiscover: true } };
+      saveConfig(config);
+      await marks.markWriter(config)({ path: saved, at: Date.now(), lastActivityAt: null, kept: null });
+
+      expect((await marks.outputMarks(config, testContext())).map(({ root }) => root)).toEqual([saved]);
+      expect(saved).not.toBe(native);
+    },
+  );
 
   test('high output sweep stops after known marks clear pressure, before refreshing unmarked roots', async () => {
     const { root } = workspace('known', 5 * MINUTE_MS, 'Shutdown');

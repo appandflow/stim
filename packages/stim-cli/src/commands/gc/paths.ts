@@ -1,4 +1,5 @@
-import { realpathSync } from 'fs';
+import { realpath, realpathSync } from 'fs';
+import { promisify } from 'node:util';
 import { resolve } from 'path';
 
 export function canonicalPath(p: string): string {
@@ -8,3 +9,6 @@ export function canonicalPath(p: string): string {
     return resolve(p);
   }
 }
+
+// Node's promise realpath expands Windows short paths; callback spelling matches realpathSync: https://github.com/nodejs/node/issues/37737.
+export const realpathAsync: (path: string) => Promise<string> = promisify(realpath);
