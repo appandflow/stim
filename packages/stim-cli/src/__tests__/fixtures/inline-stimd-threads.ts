@@ -6,6 +6,7 @@ import { LADDER, requestGcPass, requestGcItem } from '../../daemon/disk-owner.ts
 import { runGcPass } from '../../commands/gc.ts';
 import { runGcItem } from '../../stimd/gc-item.ts';
 import { dirtyGcMarks } from '../../fsevents-state.ts';
+import { refreshKnownMarks } from '../../daemon/mark-refresh.ts';
 import { readMarkHealth } from '../../daemon/mark-health.ts';
 
 type Log = Parameters<typeof createMaintenanceLane>[0];
@@ -15,6 +16,16 @@ export function createThreadTable(log: Log = () => {}): ThreadTable {
   const controller = new AbortController();
   return {
     ladder: (input) => runDiskPass(input, log, processContext(process.cwd(), controller.signal)),
+    marks(input) {
+      const stop = new AbortController();
+      return {
+        result: refreshKnownMarks(
+          input,
+          processContext(process.cwd(), AbortSignal.any([stop.signal, controller.signal])),
+        ).then(() => ({ marks: true as const })),
+        leave: () => stop.abort(),
+      };
+    },
     drainTrash: async () => {},
     async run() {
       await measureDependencyTrees(processContext(process.cwd(), controller.signal)).catch((error: unknown) => {
@@ -32,8 +43,8 @@ export function createThreadTable(log: Log = () => {}): ThreadTable {
     async dirty(roots, at) {
       dirtyGcMarks(roots, at);
     },
-    async history(config) {
-      return readMarkHealth(config, processContext(process.cwd(), controller.signal));
+    async history(config, mode) {
+      return readMarkHealth(config, processContext(process.cwd(), controller.signal), mode);
     },
     headroom: ({ headroom, cwd, act }) => {
       const asked = requestGcItem(async (signal) => {

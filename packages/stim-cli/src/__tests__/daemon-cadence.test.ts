@@ -16,6 +16,7 @@ import {
   maintenanceStateFile,
   workspaceStateFile,
   readDaemonSnapshot,
+  readGcMark,
   readDormantStage,
   daemonClaimRoot,
   readMaintenanceState,
@@ -43,6 +44,7 @@ import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
 import { runStimd } from '../stimd/main.ts';
 import * as diskPasses from '../daemon/passes.ts';
 import * as stages from '../daemon/stages.ts';
+import * as markRefresh from '../daemon/mark-refresh.ts';
 import { pendingDormant } from '../daemon/stages.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import * as idleStop from '../stimd/passes/idle-stop.ts';
@@ -133,6 +135,86 @@ function quietWorkspace(usedAgoMs = MINUTE_MS): string {
   recordWorkspaceUse(root, new Date(Date.now() - usedAgoMs));
   return root;
 }
+
+test('due output marks refresh on quiet ticks before the next hourly walk', async () => {
+  const root = quietWorkspace(0);
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+  const actualRefresh = markRefresh.refreshKnownMarks;
+  let settled = 0;
+  vi.spyOn(markRefresh, 'refreshKnownMarks').mockImplementation(async (...args) => {
+    await actualRefresh(...args);
+    settled++;
+  });
+  const read = vi.spyOn(stages, 'readCheckout').mockImplementation(async (path) => ({
+    path,
+    at: Date.now(),
+    lastActivityAt: Date.now(),
+    kept: null,
+  }));
+  const daemon = runStimd({ mode: 'on' });
+  try {
+    await vi.advanceTimersByTimeAsync(MINUTE_MS);
+    await vi.waitFor(() => expect(settled).toBe(1));
+    const first = readGcMark(root)?.markedAt;
+    expect(first).toBeDefined();
+    await vi.advanceTimersByTimeAsync(5 * MINUTE_MS);
+    await vi.waitFor(() => expect(settled).toBe(2));
+    expect(readGcMark(root)?.markedAt).toBe(first);
+    for (const count of [3, 4]) {
+      await vi.advanceTimersByTimeAsync(5 * MINUTE_MS);
+      await vi.waitFor(() => expect(settled).toBe(count));
+    }
+    expect(readGcMark(root)?.markedAt).not.toBe(first);
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(maintenanceRun.runMaintenance).toHaveBeenCalledTimes(4);
+    expect(readDaemonSnapshot()?.gcMarks?.stale).toEqual([]);
+  } finally {
+    process.emit('SIGTERM', 'SIGTERM');
+    await daemon;
+  }
+});
+
+test('report mode starts no additional mark refresh', async () => {
+  quietWorkspace(0);
+  const refresh = vi.spyOn(markRefresh, 'refreshKnownMarks');
+  const daemon = runStimd({ mode: 'report' });
+  try {
+    await vi.advanceTimersByTimeAsync(MINUTE_MS);
+    await vi.waitFor(() => expect(ticks()).toHaveLength(1));
+    expect(refresh).not.toHaveBeenCalled();
+  } finally {
+    process.emit('SIGTERM', 'SIGTERM');
+    await daemon;
+  }
+});
+
+test('a pending mark request is unique across ticks and shutdown awaits its cancellation cleanup', async () => {
+  quietWorkspace(0);
+  let signal: AbortSignal | undefined;
+  let finish = () => {};
+  const refresh = vi.spyOn(markRefresh, 'refreshKnownMarks').mockImplementation((_input, operation) => {
+    signal = operation.signal;
+    return new Promise((_resolve, reject) => {
+      finish = () => reject(operation.signal.reason);
+    });
+  });
+  let ended = false;
+  const daemon = runStimd({ mode: 'on' }).finally(() => {
+    ended = true;
+  });
+  try {
+    await vi.advanceTimersByTimeAsync(MINUTE_MS);
+    await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+    await vi.advanceTimersByTimeAsync(10 * MINUTE_MS);
+    expect(refresh).toHaveBeenCalledTimes(1);
+    process.emit('SIGTERM', 'SIGTERM');
+    await vi.waitFor(() => expect(signal?.aborted).toBe(true));
+    expect(ended).toBe(false);
+  } finally {
+    finish();
+    await daemon;
+  }
+});
 
 describe('the disk owner', () => {
   const critical = (reason: string): DaemonPressure => ({
