@@ -48,17 +48,22 @@ rest of this document describes. A scoped `STIM_HOME` behaves as before either
 way: only its own roots, no repository read.
 
 Saved GC marks use these same route rules before a sweep or watch consumes
-an unregistered root (#6087). A required target set limits child checks to
-saved roots and their resolved repository sources, and scan revalidation to
-those exact recorded entries. It never enumerates sibling-parent folders or
-walks the full scan. Repository evidence reads have a 3-second asynchronous
-bound through the shared reader; unknown evidence keeps the root. Scoped
-homes still read no repository, and a registered-only mark list skips the
-route work. Native identity resolves Windows short-name aliases for route
-matching; the result keeps the original saved key. Mark writing and deletion
-rechecks share callback realpath spelling, because Node's promise API uses
-native spelling instead (nodejs/node#37737). Normal discovery keeps its
-existing enumeration and read policy.
+an unregistered root (#6087). With no enabled discovery route, they return
+before reading an unregistered root. A required target set limits child checks
+to saved roots and their resolved repository sources. Native identity covers
+both targets and registered roots; returned roots keep their saved key. Git
+listings bypass per-worktree path-cache population, filter before filesystem
+probes and use 3-second command deadlines. Filesystem reads use the bounded
+reader. Scoped homes read no repository, and registered-only mark lists skip
+route work. Mark writing and deletion rechecks share callback realpath
+spelling, because Node's promise API uses native spelling (nodejs/node#37737).
+
+Targeted validation does not call the full scan's ancestor-listing validator.
+A root proved only by a stored scan therefore stays kept until an equivalent
+non-enumerating sentinel proof is implemented in #6093, which remains required
+for the full GC redesign. An ordinary current sibling, explicit-root or Git
+route can still prove that root independently. Normal discovery keeps its
+existing scan safety, enumeration and read policy.
 
 Reason: proving that a checkout Stim never ran in is unused needs process, launcher
 and lock reads from outside, where most of the recent cleanup edge cases came from,

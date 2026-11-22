@@ -695,7 +695,9 @@ leaves unmarked outputs alone. This applies to rung 1; Cargo and the later
 workspace cleanup stages still use their existing discovery. `stim gc --dry-run`
 still discovers outputs for its preview. Saved automatic-discovery candidates
 remain usable at critical pressure after targeted current scope checks; unknown
-scope keeps the output. Those checks do not discover new candidates. Each output
+scope keeps the output. A root known only through the saved full scan stays
+kept until targeted scan safety is implemented; current sibling, explicit-root
+and Git-worktree routes still work. These checks do not discover new candidates. Each output
 records its own volume, which can differ from the checkout's.
 
 Rung 9 is the last. It cleans caches Stim does not own, each through the tool's

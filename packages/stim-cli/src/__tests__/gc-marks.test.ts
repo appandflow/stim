@@ -299,6 +299,50 @@ describe('gc marks written by the lane', () => {
     },
   );
 
+  it('skips disabled historical scope before reading a stale mark and still reclaims registered outputs', async () => {
+    const path = checkout('registered-live', 3 * day);
+    const stale = checkout('historical-stale', 3 * day);
+    config = { projects: { [path]: {}, [stale]: {} }, repos: {} };
+    saveConfig(config);
+    recordWorkspaceUse(path, new Date(Date.now() - 3 * day));
+    const write = markWriter(config);
+    for (const root of [path, stale])
+      await write({ path: root, at: Date.now(), lastActivityAt: Date.now() - 3 * day, kept: null });
+    delete config.projects[stale];
+    saveConfig(config);
+    const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    vi.mocked(realpath).mockImplementation(async (value) => {
+      if (String(value) === stale) throw new Unanswered('stale mount');
+      return fs.realpath(value);
+    });
+    const pressure = {
+      level: 'critical' as const,
+      disk: 'critical' as const,
+      memory: 'normal' as const,
+      reasons: [],
+      memoryWarningSince: null,
+    };
+
+    await runLadder(
+      {
+        config,
+        act: true,
+        log: () => {},
+        ...reading,
+        fromRung: 1,
+        lastRung: 1,
+        force: { level: 'critical', why: 'test' },
+        remeasure: async () => pressure,
+        operation: testContext(),
+      },
+      pressure,
+    );
+
+    expect(existsSync(join(path, 'android', 'app', 'build'))).toBe(false);
+    expect(existsSync(join(stale, 'android', 'app', 'build'))).toBe(true);
+    expect(vi.mocked(realpath).mock.calls.map(([root]) => String(root))).not.toContain(stale);
+  });
+
   it('critical output sweep uses an authorized automatic sibling mark without full discovery or remarking', async () => {
     vi.stubEnv('HOME', join(base, 'user'));
     vi.stubEnv('USERPROFILE', join(base, 'user'));

@@ -448,12 +448,14 @@ also holds the newest activity the walk read, and the walk reads at
   deletion; the mark's activity is a lower bound, never permission to delete.
   Registered marks need no discovery topology read. Unregistered marks use
   the existing discovery policy with a required target set: only those roots
-  and their repository sources are considered as children, and only their
-  recorded scan entries are revalidated. It lists no sibling-parent folder
-  and does no full discovery or source walk. Current git worktree membership,
-  sibling/explicit-root recognition and scan validation still decide scope;
-  an unresolved route keeps the mark. The bounded repository reads share
-  the single outstanding-read slot. Canonical root/output paths
+  and their repository sources are considered as children. It lists no
+  sibling-parent folder and does no full discovery or source walk. Current
+  git worktree membership and sibling/explicit-root recognition decide scope;
+  scan-only marks stay pending the targeted sentinel proof in #6093. Native
+  identity is used for both targets and registered coverage. Repository Git
+  commands have 3-second deadlines and bypass per-worktree path-cache probes;
+  filesystem identity reads share the single outstanding-read slot. An
+  unresolved route keeps the mark. Canonical root/output paths
   and their own recorded devices must still match. Each candidate records
   its device separately: an external checkout can have Stim outputs on the
   internal disk. Version 2 marks add that field; older marks are absent.

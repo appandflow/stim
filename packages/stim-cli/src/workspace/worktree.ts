@@ -35,6 +35,8 @@ interface ReadOptions {
 }
 
 interface AsyncReadOptions extends ReadOptions {
+  cache?: false;
+  timeoutMs?: number;
   /** A timeout throws its `ETIMEDOUT` error instead of reading as null; `removal` implies it. */
   timeoutThrows?: boolean;
   declareFor?: StimContext;
@@ -46,14 +48,14 @@ interface AsyncReadOptions extends ReadOptions {
 async function gitReadAsync(
   dir: string,
   args: string[],
-  { removal, timeoutThrows, env, signal, declareFor, untrimmed }: AsyncReadOptions,
+  { removal, timeoutThrows, env, signal, declareFor, untrimmed, timeoutMs }: AsyncReadOptions,
 ): Promise<string | null> {
   signal ??= getExecutor().reportSignal?.();
   try {
     return await gitAsync(dir, args, {
       ...(env ? childEnvironment(env) : {}),
       signal,
-      ...(removal ? { timeoutMs: REMOVAL_CHECK_TIMEOUT_MS } : {}),
+      ...(timeoutMs !== undefined ? { timeoutMs } : removal ? { timeoutMs: REMOVAL_CHECK_TIMEOUT_MS } : {}),
       killSignal: 'SIGKILL',
       declareFor,
       untrimmed,
@@ -1033,7 +1035,7 @@ function commonDirOf(entry: WorktreeEntry): string | null {
  * `.git` still leads to the repository's common directory: git prints the same list from any worktree of a repository.
  */
 export async function listWorktreesAsync(cwd: string, options: AsyncReadOptions = {}): Promise<WorktreeEntry[]> {
-  if (options.removal) {
+  if (options.removal || options.cache === false) {
     const out = await gitReadAsync(cwd, LIST_WORKTREES, options);
     return out ? parseWorktrees(out) : [];
   }
@@ -1197,7 +1199,13 @@ export async function resolveSourceCheckoutAsync(
   const entries = await listWorktreesAsync(cwd, options);
   const first = entries[0];
   const head = first?.bare
-    ? (await sharedGitRead(first.path, ['symbolic-ref', '--quiet', 'HEAD'], options))?.trim()
+    ? (
+        await (options.cache === false ? gitReadAsync : sharedGitRead)(
+          first.path,
+          ['symbolic-ref', '--quiet', 'HEAD'],
+          options,
+        )
+      )?.trim()
     : null;
   const branch = head?.startsWith('refs/heads/') ? head.slice('refs/heads/'.length) : null;
   return { entries, ...selectSourceCheckout(entries, branch) };
