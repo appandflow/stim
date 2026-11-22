@@ -554,6 +554,7 @@ export async function runDormantDependencies(
   input: Pick<IdlePassInput, 'config' | 'act' | 'log'> &
     DeviceReading & {
       force?: boolean;
+      throttleOutputs?: boolean;
       cadence?: BigInt64Array;
       walkUnknown?: false;
       /** Runs between checkouts, phases and deletions: a unit boundary of the disk owner. */

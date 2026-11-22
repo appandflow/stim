@@ -5,7 +5,6 @@ import type { StimContext } from '@stim-cli/core';
 import { captureProcessIdentity, childExitedWithin } from '@stim-cli/core/process-identity';
 import { trashRoot } from '@stim-cli/core/state';
 import { getExecutor } from '../exec.ts';
-import { lowPriorityCommand } from '../io-priority.ts';
 import {
   clearClaimChild,
   markClaimChildPending,
@@ -15,7 +14,7 @@ import {
   type ClaimHandle,
 } from '../ownership-claim.ts';
 import { filesystemDevice, removeTemporaryEntryAsync } from '../temporary.ts';
-import { runOperationFile } from '../engine/operation-exec.ts';
+import { removeTree } from '../engine/remove-tree.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { gitAsync } from './git.ts';
 import { childEnvironment } from './git-read.ts';
@@ -205,19 +204,7 @@ export async function restoreTrashedTrees(trash: WorktreeTrash): Promise<string[
  * clears read-only directories.
  */
 export async function deleteTrashEntry(dir: string, operation?: StimContext, throttleIo = false): Promise<void> {
-  if (process.platform !== 'win32') {
-    const args = ['-rf', '--', join(dir, TRASH_ENTRIES)];
-    const [file, argv]: [string, string[]] = throttleIo ? lowPriorityCommand('rm', args, true) : ['rm', args];
-    try {
-      await runOperationFile(operation, getExecutor(), file, argv, {
-        timeoutMs: 'unbounded',
-        signal: operation?.signal,
-        cwd: dirname(dir),
-      });
-    } catch (error) {
-      rethrowCancellation(error, operation?.signal);
-    }
-  }
+  await removeTree(join(dir, TRASH_ENTRIES), operation, operation?.signal, throttleIo, dirname(dir));
   await removeTemporaryEntryAsync(dir, operation?.signal);
 }
 

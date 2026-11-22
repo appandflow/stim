@@ -468,6 +468,7 @@ export async function clearStoppedOutputs(
   deletable?: (path: string) => boolean,
   mark?: GcMark,
   reading?: DeviceReading & { act?: boolean },
+  throttleIo = true,
 ): Promise<StageResult | null> {
   const { path } = candidate;
   const run = await withIdleWorkspace(
@@ -527,7 +528,7 @@ export async function clearStoppedOutputs(
             }
             if (reading?.act === false)
               return { outcome: 'would', bytes: 0, detail: 'daemon.mode report acts on nothing' };
-            const freed = await deleteOutputs(paths, operation?.signal);
+            const freed = await deleteOutputs(paths, operation?.signal, { operation, throttleIo });
             return {
               outcome: 'done',
               ...freed,

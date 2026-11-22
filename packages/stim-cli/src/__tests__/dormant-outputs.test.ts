@@ -1,3 +1,4 @@
+import * as treeRemoval from '../engine/remove-tree.ts';
 import {
   chmodSync,
   existsSync,
@@ -204,6 +205,33 @@ const gc = async (act = true) =>
 describe.skipIf(process.platform === 'win32')(
   'the dormant build-output step (skipped on win32, where Stim cannot list the running processes)',
   () => {
+    test('cancelling dormant output removal keeps the tree and uses normal low-I/O priority', async () => {
+      saveConfig({ version: 2, projects: {}, repos: {}, idle: { sourceDormantDays: 1 } });
+      const root = register(repo('cancelled-output'));
+      idleFor(3, root);
+      const controller = new AbortController();
+      const operation = testContext({ signal: controller.signal });
+      const real = getExecutor();
+      const commands: string[] = [];
+      setExecutor({
+        ...real,
+        runFileAsync: async (file, args, options) => {
+          if (args.includes('-rf')) {
+            commands.push(file);
+            controller.abort(new Error('cancel dormant removal'));
+            throw new Error('remover cancelled');
+          }
+          return real.runFileAsync(file, args, options);
+        },
+      });
+      await expect(runDormantReduction({ act: true, trigger: 'gc', operation })).rejects.toThrow(
+        'cancel dormant removal',
+      );
+      expect(commands.length).toBeGreaterThan(0);
+      expect(commands).not.toContain('rm');
+      expect(existsSync(join(root, BUILD, 'app.apk'))).toBe(true);
+    });
+
     test("the daemon's hourly step deletes the build outputs of a registered workspace idle a day at normal pressure, and its own deletions do not keep the next step", async () => {
       saveConfig({ version: 2, projects: {}, repos: {}, idle: { sourceDormantDays: 1 } });
       const root = register(repo('app'));
@@ -507,6 +535,11 @@ describe.skipIf(process.platform === 'win32')(
       idleFor(5, stuck);
       recordWorkspaceUse(free, new Date(Date.now() - 3 * DAY_MS));
       chmodSync(sealed, 0o555);
+      const remove = treeRemoval.removeTree;
+      vi.spyOn(treeRemoval, 'removeTree').mockImplementation(async (path, ...options) => {
+        if (path === join(stuck, BUILD)) throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
+        return remove(path, ...options);
+      });
 
       const actions = await hourlyStep(true).finally(() => chmodSync(sealed, 0o755));
       expect(actions).toEqual([
