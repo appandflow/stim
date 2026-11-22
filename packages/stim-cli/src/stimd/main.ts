@@ -1256,6 +1256,7 @@ async function runStimdInner(
     historyRootsWork = threads
       .history(config)
       .then(({ roots, marks }) => {
+        clearTimeout(timer);
         if (!timedOut) markObservation = marks;
         return maintenanceAllowed() && roots !== null ? filesystemHistory.update(roots) : undefined;
       })
