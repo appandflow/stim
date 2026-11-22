@@ -1,4 +1,3 @@
-import type { StimContext } from '@stim-cli/core';
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import type { GcMark } from '@stim-cli/core/state';
 import { lstat, realpath, stat } from 'node:fs/promises';
@@ -16,7 +15,7 @@ import { readRunningProcessesAsync, runningFromReason } from '../workspace/runni
 import { rankedPrivateBytes, selectDependencies, type RankedDependency } from './dependencies.ts';
 import { dependencyMarkDue } from './dependency-marks.ts';
 import { outputMarks } from './marks.ts';
-import { dormantAfterMs, stillIdle } from './stages.ts';
+import { dormantAfterMs, runsSomething, stillIdle, type DeviceReading } from './stages.ts';
 
 export interface DependencyReport {
   rung: 5 | 8;
@@ -28,10 +27,8 @@ export interface DependencyReport {
 /** Reports saved dependency inventory using targeted current safety reads, without discovering or measuring trees. */
 export async function savedDependencyReports(
   config: Config,
-  options: {
+  options: DeviceReading & {
     level: 'high' | 'critical';
-    protectedRoot?: string;
-    operation?: StimContext;
     onVolume: (path: string, source: boolean) => boolean;
   },
 ): Promise<DependencyReport[]> {
@@ -112,8 +109,11 @@ export async function savedDependencyReports(
           keep = 'the command runs inside this checkout';
       }
       if (!keep)
-        keep = runningFromReason(mark.root, await (processes ??= readRunningProcessesAsync(operation?.signal)));
-      if (!keep) keep = await checkoutKeep(mark, currentKeys, source, idleMs, native, operation);
+        keep = await checkoutKeep(mark, currentKeys, source, idleMs, native, {
+          config,
+          reading: options,
+          processes: () => (processes ??= readRunningProcessesAsync(operation?.signal)),
+        });
 
       for (const candidate of observation.candidates) {
         if (!options.onVolume(candidate.path, source)) continue;
@@ -140,7 +140,8 @@ export async function savedDependencyReports(
             if (!identityKnown) reason = 'the saved dependency path moved or changed volume';
           }
           if (!reason) reason = await regenerableDirProblem(mark.root, candidate.path, operation?.signal);
-        } catch {
+        } catch (error) {
+          if (isClaimUnavailable(error) && 'reportCleanup' in error) throw error;
           operation?.signal.throwIfAborted();
           reason = 'the dependency path could not be checked; current eligibility is unknown';
         }
@@ -214,8 +215,14 @@ async function checkoutKeep(
   source: boolean,
   idleMs: number,
   native: (path: string) => Promise<string>,
-  operation?: StimContext,
+  context: { config: Config; reading: DeviceReading; processes: () => ReturnType<typeof readRunningProcessesAsync> },
 ): Promise<string | null> {
+  const { config, reading } = context;
+  const { operation } = reading;
+  for (const key of keys)
+    if (await runsSomething(key, config.projects[key] ?? {}, reading)) return 'something of it runs';
+  const running = runningFromReason(mark.root, await context.processes());
+  if (running) return running;
   const metadata = await resolveSourceCheckoutAsync(mark.root, {
     cache: false,
     timeoutMs: 3_000,

@@ -841,6 +841,8 @@ async function dependenciesRung(context: RungContext): Promise<void> {
   if (context.act || !context.force) {
     const critical = context.force && !context.force.measured ? null : await shortDevices(context, 'critical');
     const reports = await savedDependencyReports(context.config, {
+      devices: context.devices,
+      simsFailed: context.simsFailed,
       level: context.level === 'critical' ? 'critical' : 'high',
       protectedRoot: context.protectedRoot,
       operation: context.operation,

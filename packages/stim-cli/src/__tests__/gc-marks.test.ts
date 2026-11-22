@@ -656,6 +656,7 @@ describe('gc marks written by the lane', () => {
 
     await lane(true);
     const reports = await savedDependencyReports(config, {
+      ...reading,
       level: 'critical',
       operation: testContext(),
       onVolume: () => true,
@@ -749,6 +750,7 @@ describe('gc marks written by the lane', () => {
     const collect = vi.spyOn(artifacts, 'collectArtifactsAsync').mockRejectedValue(new Error('must not collect'));
 
     const reports = await savedDependencyReports(config, {
+      ...reading,
       level: 'critical',
       operation: testContext(),
       onVolume: () => true,
@@ -760,6 +762,7 @@ describe('gc marks written by the lane', () => {
     expect(readGcMark(root)).toEqual(original);
     recordWorkspaceUse(root, new Date());
     const recent = await savedDependencyReports(config, {
+      ...reading,
       level: 'critical',
       operation: testContext(),
       onVolume: () => true,
@@ -767,7 +770,7 @@ describe('gc marks written by the lane', () => {
     expect(recent[0]?.detail).toContain('no longer idle');
   }, 20_000);
 
-  it.each(['live', 'unavailable'])(
+  it.each(['live', 'unavailable', 'owned'])(
     'keeps linked dependency reports when the process table is %s after observation',
     async (mode) => {
       const source = checkout('process-source', 2 * day);
@@ -805,18 +808,36 @@ describe('gc marks written by the lane', () => {
         if (mode === 'unavailable') vi.mocked(readRunningProcessesAsync).mockResolvedValueOnce(null);
         vi.mocked(readRunningProcessesAsync).mockClear();
         const reports = await savedDependencyReports(config, {
+          ...reading,
           level: 'high',
           operation: testContext(),
+          devices:
+            mode === 'owned'
+              ? [
+                  {
+                    kind: 'ios',
+                    id: 'sim',
+                    name: 'sim',
+                    project: first,
+                    slot: 'default',
+                    activity: { state: 'idle', basis: [] },
+                  },
+                ]
+              : [],
           onVolume: () => true,
         });
         const firstReport = reports.find(({ target }) => target === join(first, 'node_modules'));
         expect(firstReport?.detail).toContain(
-          mode === 'unavailable' || process.platform === 'win32'
-            ? 'processes cannot be listed'
-            : `process ${child?.pid}`,
+          mode === 'owned'
+            ? 'something of it runs'
+            : mode === 'unavailable' || process.platform === 'win32'
+              ? 'processes cannot be listed'
+              : `process ${child?.pid}`,
         );
         expect(reports.find(({ target }) => target === join(second, 'node_modules'))?.detail).toMatch(
-          mode === 'live' && process.platform !== 'win32' ? /^report only: deleting/ : /processes cannot be listed/,
+          mode !== 'unavailable' && process.platform !== 'win32'
+            ? /^report only: deleting/
+            : /processes cannot be listed/,
         );
         expect(vi.mocked(readRunningProcessesAsync)).toHaveBeenCalledTimes(1);
       } finally {
@@ -844,6 +865,7 @@ describe('gc marks written by the lane', () => {
     rmSync(missing, { recursive: true, force: true });
 
     const reports = await savedDependencyReports(config, {
+      ...reading,
       level: 'critical',
       operation: testContext(),
       onVolume: () => true,
@@ -867,17 +889,32 @@ describe('gc marks written by the lane', () => {
       .spyOn(worktree, 'resolveSourceCheckoutAsync')
       .mockRejectedValue(new Error('empty observations need no eligibility read'));
     expect(
-      await savedDependencyReports(config, { level: 'critical', operation: testContext(), onVolume: () => true }),
+      await savedDependencyReports(config, {
+        ...reading,
+        level: 'critical',
+        operation: testContext(),
+        onVolume: () => true,
+      }),
     ).toEqual([]);
     mkdirSync(join(root, 'node_modules'));
     const dirty = { ...original, dirtyAt: new Date(Date.parse(original.dependencies.markedAt) + 1).toISOString() };
     writeFileSync(gcMarkFile(root), JSON.stringify(dirty));
     expect(
-      await savedDependencyReports(config, { level: 'critical', operation: testContext(), onVolume: () => true }),
+      await savedDependencyReports(config, {
+        ...reading,
+        level: 'critical',
+        operation: testContext(),
+        onVolume: () => true,
+      }),
     ).toEqual([expect.objectContaining({ target: root, detail: expect.stringContaining('due or dirty') })]);
     writeFileSync(gcMarkFile(root), JSON.stringify({ ...dirty, device: dirty.device + 1 }));
     expect(
-      await savedDependencyReports(config, { level: 'critical', operation: testContext(), onVolume: () => true }),
+      await savedDependencyReports(config, {
+        ...reading,
+        level: 'critical',
+        operation: testContext(),
+        onVolume: () => true,
+      }),
     ).toEqual([expect.objectContaining({ target: root, detail: expect.stringContaining('changed volume') })]);
     expect(metadata).not.toHaveBeenCalled();
   }, 20_000);
@@ -918,6 +955,7 @@ describe('gc marks written by the lane', () => {
     );
 
     const reports = await savedDependencyReports(config, {
+      ...reading,
       level: 'critical',
       operation: testContext(),
       onVolume: () => true,
