@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { isJsonObject, trashRoot } from '@stim-cli/core/state';
 import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { filesystemDevice } from '../temporary.ts';
+import { answered, Unanswered } from './bounded-read.ts';
 import { TRASH_CLAIMS, TRASH_MANIFEST } from './worktree-trash.ts';
 
 export const ITEM_TRASH_PREFIX = 'item-';
@@ -84,19 +85,52 @@ export async function stageItemTrash(
   }
 }
 
-/** Pending estimates from typed manifests, without walking or sizing their contents. */
-export async function pendingItemTrash(): Promise<{ count: number; bytes: number }> {
+/** Typed manifest estimates and the oldest verified payload, without walking or sizing contents. */
+export async function itemTrashInventory(signal?: AbortSignal): Promise<{
+  count: number;
+  bytes: number;
+  oldest?: { path: string; createdAt: string };
+}> {
+  const read = <T>(path: string, start: () => Promise<T>) => (signal ? answered(path, start, 3_000, signal) : start());
+  const missing = () => {
+    signal?.throwIfAborted();
+    return null;
+  };
+  const metadata = (path: string) =>
+    read(path, () => lstat(path)).catch((error: unknown) => {
+      if (error instanceof Unanswered) throw error;
+      return missing();
+    });
   let count = 0;
   let bytes = 0;
-  const names = await readdir(trashRoot()).catch(() => []);
+  let oldest: { path: string; createdAt: string } | undefined;
+  const root = trashRoot();
+  const verifiedRoot = (await metadata(root))?.isDirectory() === true;
+  const names = await read(root, () => readdir(root)).catch((error: unknown) => {
+    if (error instanceof Unanswered) throw error;
+    missing();
+    return [];
+  });
   for (const name of names) {
     if (!name.startsWith(ITEM_TRASH_PREFIX)) continue;
-    const dir = join(trashRoot(), name);
-    if (!(await lstat(dir).catch(() => null))?.isDirectory()) continue;
-    const manifest = await readItemTrash(dir);
+    const dir = join(root, name);
+    if (!(await metadata(dir))?.isDirectory()) continue;
+    const manifest = await read(dir, () => readItemTrash(dir));
     if (!manifest) continue;
     count++;
-    if (await lstat(join(dir, 'entries', 'payload')).catch(() => null)) bytes += manifest.bytes;
+    const payload = await metadata(join(dir, 'entries', 'payload'));
+    if (payload) bytes += manifest.bytes;
+    const created = Date.parse(manifest.createdAt);
+    if (!verifiedRoot || !payload?.isDirectory() || !Number.isFinite(created)) continue;
+    if (!(await metadata(join(dir, 'entries')))?.isDirectory()) continue;
+    if (!(await metadata(join(dir, TRASH_MANIFEST)))?.isFile()) continue;
+    if (!oldest || created < Date.parse(oldest.createdAt)) oldest = { path: dir, createdAt: manifest.createdAt };
   }
+  return { count, bytes, ...(oldest ? { oldest } : {}) };
+}
+
+/** Pending estimates from typed manifests, without walking or sizing their contents. */
+export async function pendingItemTrash(): Promise<{ count: number; bytes: number }> {
+  const { count, bytes } = await itemTrashInventory();
   return { count, bytes };
 }

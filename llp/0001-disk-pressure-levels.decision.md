@@ -386,6 +386,12 @@ an entry. Unsupported moves, including Windows and another filesystem, retain
 the existing in-place deletion; report-only caches remain untouched. No Cargo
 target or automatic pressure sweep uses this handoff.
 
+Doctor reports the oldest verified typed payload queued for more than 24 hours.
+It reuses the pending manifest inventory with bounded asynchronous metadata
+reads, without walking payloads, changing estimated pending totals or deleting
+anything. Malformed, foreign, linked and missing evidence supplies no stale
+claim.
+
 This implements the lazy-free part of the cleanup redesign in #6025 and #6089.
 
 ## Queue ownership replaces the maintenance claim

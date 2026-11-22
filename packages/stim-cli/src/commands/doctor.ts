@@ -1,3 +1,4 @@
+import { trashHealthFindings } from '../diagnostics/doctor-trash.ts';
 import { gcMarkHealthFindings } from '../diagnostics/doctor-gc-marks.ts';
 import { checkHistoryHelper, packagedHistoryHelper } from '../fsevents-helper.ts';
 import { realpathSync } from 'node:fs';
@@ -789,6 +790,7 @@ async function assembleDoctorReport(
   findings.push(
     ...daemonFindings(answered, { probed: true, now: decidedAt }),
     ...gcMarkHealthFindings(answered, decidedAt),
+    ...(await trashHealthFindings(decidedAt, operation?.signal)),
   );
   const silent = unansweredFindings(answered, decidedAt);
   const missingRoots = missingDiscoverRoots(loadConfig(), env);
