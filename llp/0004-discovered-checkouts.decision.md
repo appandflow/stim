@@ -54,7 +54,11 @@ those exact recorded entries. It never enumerates sibling-parent folders or
 walks the full scan. Repository evidence reads have a 3-second asynchronous
 bound through the shared reader; unknown evidence keeps the root. Scoped
 homes still read no repository, and a registered-only mark list skips the
-route work. Normal discovery keeps its existing enumeration and read policy.
+route work. Native identity resolves Windows short-name aliases for route
+matching; the result keeps the original saved key. Mark writing and deletion
+rechecks share callback realpath spelling, because Node's promise API uses
+native spelling instead (nodejs/node#37737). Normal discovery keeps its
+existing enumeration and read policy.
 
 Reason: proving that a checkout Stim never ran in is unused needs process, launcher
 and lock reads from outside, where most of the recent cleanup edge cases came from,

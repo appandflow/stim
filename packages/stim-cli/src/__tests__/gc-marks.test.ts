@@ -9,7 +9,7 @@ import {
   utimesSync,
   writeFileSync,
 } from 'node:fs';
-import { lstat, stat } from 'node:fs/promises';
+import { lstat, realpath, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
@@ -36,7 +36,12 @@ import { testContext } from './_context.ts';
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const fs = await importOriginal<typeof import('node:fs/promises')>();
-  return { ...fs, lstat: vi.fn<typeof fs.lstat>(fs.lstat), stat: vi.fn<typeof fs.stat>(fs.stat) };
+  return {
+    ...fs,
+    lstat: vi.fn<typeof fs.lstat>(fs.lstat),
+    realpath: vi.fn<typeof fs.realpath>(fs.realpath),
+    stat: vi.fn<typeof fs.stat>(fs.stat),
+  };
 });
 
 vi.mock('../workspace/protected-locations.ts', () => ({
@@ -248,6 +253,51 @@ describe('gc marks written by the lane', () => {
 
     expect(source).not.toHaveBeenCalled();
   });
+
+  it.each(['checkout', 'output'] as const)(
+    'keeps the mark identity when native realpath expands the %s spelling',
+    async (kind) => {
+      const path = checkout('canonical-spelling', 3 * day);
+      config.projects[path] = {};
+      saveConfig(config);
+      recordWorkspaceUse(path, new Date(Date.now() - 3 * day));
+      await markWriter(config)({ path, at: Date.now(), lastActivityAt: Date.now() - 3 * day, kept: null });
+      const output = join(path, 'android', 'app', 'build');
+      const nativePath = kind === 'checkout' ? path : output;
+      const nativeAlias = join(base, 'expanded-native-spelling', kind);
+      const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+      vi.mocked(realpath).mockImplementation(async (value) =>
+        String(value) === nativePath ? nativeAlias : fs.realpath(value),
+      );
+      expect(await realpath(nativePath)).toBe(nativeAlias);
+      const pressure = {
+        level: 'critical' as const,
+        disk: 'critical' as const,
+        memory: 'normal' as const,
+        reasons: [],
+        memoryWarningSince: null,
+      };
+
+      const { actions } = await runLadder(
+        {
+          config,
+          act: true,
+          log: () => {},
+          ...reading,
+          fromRung: 1,
+          lastRung: 1,
+          force: { level: 'critical', why: 'test' },
+          remeasure: async () => pressure,
+          operation: testContext(),
+        },
+        pressure,
+      );
+
+      expect(existsSync(output)).toBe(false);
+      expect(actions).toContainEqual(expect.objectContaining({ rung: 1, outcome: 'done' }));
+      expect(readGcMark(path)?.root).toBe(path);
+    },
+  );
 
   it('critical output sweep uses an authorized automatic sibling mark without full discovery or remarking', async () => {
     vi.stubEnv('HOME', join(base, 'user'));

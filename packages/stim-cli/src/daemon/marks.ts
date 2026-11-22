@@ -1,9 +1,8 @@
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
-import { realpath, readdirSync } from 'node:fs';
+import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { canonicalPath } from '../commands/gc/paths.ts';
+import { canonicalPath, realpathAsync } from '../commands/gc/paths.ts';
 import { stat } from 'node:fs/promises';
-import { promisify } from 'node:util';
 import {
   GC_MARK_VERSION,
   gcMarkFile,
@@ -22,8 +21,6 @@ import { idleOutputs } from './idle.ts';
 import { dormantAfterMs, readCheckout, type CheckoutReading, type DeviceReading } from './stages.ts';
 import { discoverCheckouts, targetedCheckouts } from '../workspace/discovery.ts';
 import { listedRoots } from '../commands/gc/worktrees.ts';
-
-const realpathAsync = promisify(realpath);
 
 /** The mark writer of one walk, which resolves the Metro cache root once for every checkout it marks. */
 export function markWriter(

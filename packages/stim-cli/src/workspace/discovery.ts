@@ -1,4 +1,4 @@
-import { lstat, readdir } from 'node:fs/promises';
+import { lstat, readdir, realpath as nativeRealpath } from 'node:fs/promises';
 import { existsSync, lstatSync, readdirSync, statSync, type Dirent } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, parse, resolve, sep } from 'node:path';
@@ -170,10 +170,14 @@ async function childrenOf(
   targets?: ReadonlySet<string>,
 ): Promise<DiscoveryChild[]> {
   let entries: Pick<Dirent, 'name' | 'isDirectory' | 'isSymbolicLink'>[] | null;
+  let canonicalFolder = folder;
   if (targets) {
+    const resolved = await within(folder, () => nativeRealpath(folder));
+    if (resolved === null) return [];
+    canonicalFolder = resolved;
     entries = [];
     for (const path of targets) {
-      if (dirname(path) !== folder) continue;
+      if (dirname(path) !== canonicalFolder) continue;
       const info = await within(path, () => lstat(path));
       if (info)
         entries.push({
@@ -188,7 +192,7 @@ async function childrenOf(
   for (const entry of entries ?? []) {
     operation?.signal.throwIfAborted();
     if (!entry.isDirectory() || entry.isSymbolicLink() || entry.name.startsWith('.')) continue;
-    const path = canonicalPath(join(folder, entry.name));
+    const path = canonicalPath(join(canonicalFolder, entry.name));
     const listed = (await within(path, () => readdir(path))) !== null;
     const recognised = listed && recognises(path);
     const node = listed && !recognised ? nodeCheckout(path) : undefined;
@@ -324,8 +328,13 @@ async function revalidatedScan(
   const ancestors = new Map();
   for (const path of scan?.found ?? []) {
     if (!isAbsolute(path) || (targets && !targets.has(path))) continue;
-    const state = await scanEntryValid(path, { ...rules, ancestors });
-    if (state === 'valid') valid.push({ path, origin: 'scan', from: 'full scan', recognised: true });
+    const candidate = targets ? await within(path, () => nativeRealpath(path)) : path;
+    if (candidate === null) {
+      pending.push(path);
+      continue;
+    }
+    const state = await scanEntryValid(candidate, { ...rules, ancestors });
+    if (state === 'valid') valid.push({ path: candidate, origin: 'scan', from: 'full scan', recognised: true });
     else if (state === 'pending') pending.push(path);
   }
   return { valid, pending };
@@ -367,23 +376,40 @@ export async function targetedCheckouts(
   roots: readonly string[],
   operation?: StimContext,
 ): Promise<DiscoveredCheckout[]> {
-  const wanted = new Set(roots.map(canonicalPath));
+  const wanted = new Map<string, string>();
+  const targets = new Set<string>();
+  for (const root of roots) {
+    operation?.signal.throwIfAborted();
+    const identity = await within(root, () => nativeRealpath(root));
+    if (identity === null) continue;
+    wanted.set(identity, root);
+    targets.add(identity);
+    targets.add(root);
+  }
+  if (!wanted.size) return [];
   const scoped = isScopedHome(operation?.env);
   const env = operation?.env ?? {};
   if (scoped || !autoDiscoverEnabled(config, env)) {
-    const configured = canonicalDiscoverRoots(config, env);
-    for (const root of wanted) if (!configured.some((folder) => inside(root, folder))) wanted.delete(root);
+    const configured: string[] = [];
+    for (const folder of canonicalDiscoverRoots(config, env)) {
+      const identity = await within(folder, () => nativeRealpath(folder));
+      if (identity !== null) configured.push(identity);
+    }
+    for (const root of wanted.keys()) if (!configured.some((folder) => inside(root, folder))) wanted.delete(root);
   }
   if (!wanted.size) return [];
-  const targets = new Set(wanted);
   if (!scoped)
-    for (const root of wanted) {
+    for (const root of wanted.keys()) {
       const repository = await readRepository(root, operation, true);
-      if (repository) targets.add(canonicalPath(repository.main));
+      if (!repository) continue;
+      const identity = await within(repository.main, () => nativeRealpath(repository.main));
+      if (identity !== null) targets.add(identity);
     }
-  return (await computeDiscovered(config, known, readDiscoveryScan(), operation, undefined, targets)).found.filter(
-    (checkout) => !checkout.node && wanted.has(checkout.path),
-  );
+  const found = (await computeDiscovered(config, known, readDiscoveryScan(), operation, undefined, targets)).found;
+  return found.flatMap((checkout) => {
+    const original = wanted.get(checkout.path);
+    return !checkout.node && original !== undefined ? [Object.assign({}, checkout, { path: original })] : [];
+  });
 }
 
 async function computeDiscovered(
@@ -441,6 +467,7 @@ async function computeDiscovered(
   for (const { entries, main, node } of repositories) {
     const kind = node ? { node: 'linked' as const } : {};
     for (const entry of entries) {
+      if (targets && !targets.has(entry.path)) continue;
       const path = canonicalPath(entry.path);
       if (path === canonicalPath(main)) continue;
       if (

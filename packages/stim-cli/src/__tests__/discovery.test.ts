@@ -9,7 +9,7 @@ import {
   utimesSync,
   writeFileSync,
 } from 'node:fs';
-import { lstat, readdir } from 'node:fs/promises';
+import { lstat, readdir, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type Config } from '@stim-cli/core/state';
@@ -40,6 +40,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     ...actual,
     readdir: vi.fn<typeof actual.readdir>(actual.readdir),
     lstat: vi.fn<typeof actual.lstat>(actual.lstat),
+    realpath: vi.fn<typeof actual.realpath>(actual.realpath),
   };
 });
 
@@ -367,6 +368,39 @@ describe('discoverCheckouts', () => {
     ).toEqual([]);
   });
 
+  test.skipIf(process.platform !== 'win32')(
+    'preserves a saved Windows short-name key while matching native Git routes',
+    async (context) => {
+      vi.stubEnv('STIM_HOME', '');
+      const repo = join(base, 'dev', 'known-long-name');
+      app(repo);
+      git(repo, 'init', '-q', '-b', 'main');
+      git(repo, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init');
+      const sibling = join(base, 'dev', 'saved-long-name');
+      app(sibling);
+      const saved = realpathSync(sibling);
+      const native = await realpath(sibling);
+      if (saved === native) context.skip();
+      const config: Config = { projects: { [repo]: {} }, repos: {}, maintenance: { autoDiscover: true } };
+
+      const found = await targetedCheckouts(config, [repo], [saved]);
+
+      expect(found.map(({ path }) => path)).toEqual([saved]);
+      expect(saved).not.toBe(native);
+    },
+  );
+
+  it('keeps a targeted root when its native scope identity cannot be read', async () => {
+    vi.stubEnv('STIM_HOME', join(base, 'home'));
+    const parent = join(base, 'roots');
+    const target = join(parent, 'target');
+    app(target);
+    vi.mocked(realpath).mockRejectedValueOnce(Object.assign(new Error('denied'), { code: 'EACCES' }));
+    const config: Config = { projects: {}, repos: {}, maintenance: { discoverRoots: [parent] } };
+
+    expect(await targetedCheckouts(config, [], [target])).toEqual([]);
+  });
+
   it('keeps targeted roots when repository evidence times out and starts no further reads behind it', async () => {
     vi.stubEnv('STIM_HOME', '');
     const known = join(base, 'dev', 'known');
@@ -393,7 +427,7 @@ describe('discoverCheckouts', () => {
 
     expect(await result).toEqual([]);
     expect(source).toHaveBeenCalledTimes(1);
-    expect(hungRead()).toBe(target);
+    expect(hungRead()).not.toBeNull();
     release();
     await pendingRead();
     expect(hungRead()).toBeNull();
