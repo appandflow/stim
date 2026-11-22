@@ -2725,9 +2725,10 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   behind an ongoing pass and rechecks the target when it takes the turn,
   skipping cleanup if earlier work already made room. It never deletes the
   build's own workspace. The run ends after an action that removed something
-  leaves the build volume's free space no higher. One 60-second budget covers
-  setup, daemon contact, queue wait and cleanup; a step in flight settles before
-  the owner releases its turn. Off mode starts no daemon; report mode does not
+  leaves the build volume's free space no higher. A 60-second deadline bounds
+  async contact, queue, probe and cleanup waits. Inherited synchronous config,
+  ledger, Git and project reads can exceed it on a stalled filesystem. A step
+  settles before the owner releases its turn. Off mode starts no daemon; report mode does not
   delete. No daemon or an error never falls back to caller-side cleanup. If space
   is still short, one warning on stderr (also in --json mode) gives the bytes
   expected and available. The check adds no refusal and no error code, a

@@ -52,11 +52,16 @@ duplicate work without another coalescing registry. It waits for the held pass
 or unit to finish rather than subscribing to its progress or returning early
 when that pass crosses the target.
 
-One 60-second client budget covers setup, volume reads, daemon startup/contact,
-queue wait and cleanup. Expiry or an ordinary error lets the build continue;
-only real user cancellation propagates. A pending filesystem call cannot hold
-the client past that budget or change its build baseline later. A queued request
-that expires or is cancelled never starts cleanup. An executing request stops
+One 60-second client deadline bounds asynchronous daemon startup/contact, queue
+wait, volume probes and cleanup waits. Expiry or an ordinary error lets the build
+continue; only real user cancellation propagates. A pending asynchronous read
+cannot hold the client past that deadline or change its build baseline later.
+The inherited config, ledger, Git and project-detection setup remains synchronous:
+a read stalled on an unresponsive filesystem blocks the event loop and can
+exceed the deadline. The existing synchronous reads retain that rare limit.
+The deadline was chosen by the implementer, not required by the maintainer.
+
+A queued request that expires or is cancelled never starts cleanup. An executing request stops
 at its existing safe unit boundaries and keeps ownership until that unit
 settles; the client does not release its turn early.
 

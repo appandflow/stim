@@ -63,6 +63,7 @@ export function createBuildHeadroom({
   };
 
   async function makeRoom(stop: AbortSignal, deadline: number): Promise<void> {
+    // @ref LLP 0006#one-bounded-turn-on-the-disk-owner -- Node cannot interrupt synchronous setup reads on a stalled filesystem
     const { thresholds, error } = diskThresholds(loadConfig(), env);
     if (error) return;
     const estimate = estimateBuildBytes({
