@@ -1,3 +1,4 @@
+import { checkHistoryHelper, packagedHistoryHelper } from '../fsevents-helper.ts';
 import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import {
@@ -695,6 +696,17 @@ async function assembleDoctorReport(
     if (sandbox) findings.push(sandbox);
   }
 
+  if (process.platform === 'darwin') {
+    const helper = packagedHistoryHelper();
+    const checked = checkHistoryHelper(helper.binary, helper.sha256);
+    if (!checked.ok && checked.kind === 'digest')
+      findings.push({
+        level: 'cost',
+        title: 'FSEvents helper digest mismatch',
+        detail: `${checked.reason}; filesystem history uses activity and mark TTLs instead.`,
+        fix: 'Reinstall the Stim package. In a source checkout, run node scripts/fetch-fsevents.mjs.',
+      });
+  }
   const shadowed = shadowedStimFinding(stim);
   if (shadowed) findings.push(shadowed);
 

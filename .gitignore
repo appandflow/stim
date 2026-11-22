@@ -14,3 +14,5 @@ packages/stim-cli/src/**/*.d.ts
 .claude/worktrees/
 
 !.github/actions/stim-ci/dist/
+
+packages/stim-cli/native/darwin/stim-fsevents

@@ -24,6 +24,15 @@ identity, never by name. Each helper costs one Node process while its child runs
 A new design that adds a long-lived child to stimd says which side of this rule
 the child is on.
 
+## The filesystem history reader
+
+`stim-fsevents` belongs directly to stimd. Its stream may end on a restart:
+the saved cursor advances only after the passes worker persisted the dirty
+marks it names, so unread output can replay next boot. Closing stdin ends the
+native reader; shutdown waits for its exit. A missing or failed reader leaves
+mark generation TTLs and Stim activity as the fallback (LLP 0001). It has no
+adoption record and does not keep a workspace alive.
+
 ## Maintainer decisions
 
 Maintainer decision: "i think supervisors might still be needed to allow stimd restarting? I think we need to keep this in mind for future designs", 2026-11-12.

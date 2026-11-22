@@ -21,10 +21,11 @@ import {
   type GcMark,
 } from '@stim-cli/core/state';
 import * as discovery from '../workspace/discovery.ts';
+import * as gcPaths from '../commands/gc/paths.ts';
 import * as worktree from '../workspace/worktree.ts';
 import { runLadder } from '../daemon/ladder.ts';
 import { runDormantDependencies } from '../daemon/dependencies.ts';
-import { markDue, markWriter, outputMarks, refreshOutputMarks } from '../daemon/marks.ts';
+import { markDue, markWriter, outputMarks, outputMark, refreshOutputMarks } from '../daemon/marks.ts';
 import { stoppedOutputCandidates, stoppedOutputs } from '../daemon/stages.ts';
 import type { OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { metroStoreRoot } from '../stimd/metro/metro-store.ts';
@@ -84,9 +85,25 @@ describe('gc marks written by the lane', () => {
     writeFileSync(join(path, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
     writeFileSync(join(path, '.gitignore'), 'build/\nnode_modules/\ntarget/\n');
     const git = (...args: string[]) =>
-      execFileSync('git', ['-C', path, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], {
-        env: { ...process.env, GIT_AUTHOR_DATE: '2026-01-01T00:00:00Z', GIT_COMMITTER_DATE: '2026-01-01T00:00:00Z' },
-      });
+      execFileSync(
+        'git',
+        [
+          '-C',
+          path,
+          '-c',
+          'maintenance.auto=false',
+          '-c',
+          'gc.auto=0',
+          '-c',
+          'user.name=t',
+          '-c',
+          'user.email=t@t',
+          ...args,
+        ],
+        {
+          env: { ...process.env, GIT_AUTHOR_DATE: '2026-01-01T00:00:00Z', GIT_COMMITTER_DATE: '2026-01-01T00:00:00Z' },
+        },
+      );
     git('init', '-q', '-b', 'main');
     git('add', '-A');
     git('commit', '-q', '-m', 'init');
@@ -128,6 +145,48 @@ describe('gc marks written by the lane', () => {
     vi.unstubAllEnvs();
     rmSync(base, { recursive: true, force: true });
   });
+
+  it.each(['batch', 'selected'])(
+    'cancels a stalled %s identity read without starting another checkout read',
+    async (mode) => {
+      const root = join(base, 'first');
+      config.projects = { [root]: {}, [join(base, 'second')]: {} };
+      let release: (root: string) => void = () => {};
+      const pending = new Promise<string>((done) => {
+        release = done;
+      });
+      const lookup = vi.spyOn(gcPaths, 'realpathAsync').mockReturnValue(pending);
+      const controller = new AbortController();
+      if (mode === 'selected') {
+        mkdirSync(dirname(gcMarkFile(root)), { recursive: true });
+        writeFileSync(
+          gcMarkFile(root),
+          JSON.stringify({
+            v: GC_MARK_VERSION,
+            root,
+            device: 1,
+            markedAt: new Date().toISOString(),
+            lastActivityAt: null,
+            candidates: [],
+          }),
+        );
+      }
+      const operation = testContext({ signal: controller.signal });
+      const refused = (
+        mode === 'selected' ? outputMark(config, root, operation) : outputMarks(config, operation)
+      ).catch((error: unknown) => error);
+      try {
+        await vi.waitFor(() => expect(lookup).toHaveBeenCalledTimes(1));
+        controller.abort(new Error('stop'));
+        await expect(refused).resolves.toMatchObject({ message: 'stop' });
+        expect(hungRead()).toBe(root);
+        expect(lookup).toHaveBeenCalledTimes(1);
+      } finally {
+        release(root);
+        await pendingRead();
+      }
+    },
+  );
 
   it.each([
     { activityAge: 0, elapsed: 10 * 60_000 - 1, dirty: false, due: false },

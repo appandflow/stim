@@ -3,6 +3,11 @@ import { daemonSnapshotFile } from './paths.ts';
 
 export type DaemonMode = 'on' | 'report' | 'off';
 
+export interface GcHistoryStatus {
+  source: 'fsevents' | 'fallback';
+  reason?: string;
+}
+
 /** One tick's measurement of the machine. A null field is one the tick could not read. */
 export interface DaemonMeasurement {
   disk: { volume: string; freeMb: number; device?: number }[];
@@ -112,6 +117,7 @@ export interface DaemonSnapshot {
   /** The last 20 actions any daemon of this home took, the idle stage included, oldest first. */
   recent?: DaemonRecentAction[];
   waiting?: DaemonWaiter[];
+  history?: GcHistoryStatus;
 }
 
 /** A child whose cleanup the running stimd could not verify, which keeps it up until the child has stopped. */
