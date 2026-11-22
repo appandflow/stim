@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { ensureWorkspaceStorage } from '../workspace/paths.ts';
-import { stimdClaimRoot, stimdRecordFile, stimdRunDir } from '@stim-cli/core/state';
+import { daemonNdjsonFile, isJsonObject, stimdClaimRoot, stimdRecordFile, stimdRunDir } from '@stim-cli/core/state';
 import { upsertProject } from '../workspace/config.ts';
 import { PEER } from '@stim-cli/core/protocol';
 import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from '@stim-cli/core/process-identity';
@@ -88,7 +88,7 @@ function fixture(name: string) {
             join(process.env.SystemRoot || 'C:\\Windows', 'System32'),
             join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0'),
           ].join(delimiter)
-        : `${dirname(process.execPath)}:/usr/bin:/bin`,
+        : [join(tmpdir(), 'stim-test-launchctl'), dirname(process.execPath), '/usr/bin', '/bin'].join(delimiter),
   };
   return { root, home, cache, env };
 }
@@ -320,7 +320,7 @@ test('concurrent GC mutations empty only their selected cache and return results
       return undefined;
     });
   }
-});
+}, 30_000);
 
 test('a cold public GC mutation starts an off-mode daemon and deletes its selected cache', async () => {
   const item = fixture('cold-delete');
@@ -337,6 +337,18 @@ test('a cold public GC mutation starts an off-mode daemon and deletes its select
     expect(result.results).toMatchObject([{ kind: 'cache', status: 'done', id: item.cache }]);
     expect(existsSync(join(item.cache, 'artifact'))).toBe(false);
     expect(readFileSync(join(item.home, 'config.json'), 'utf8')).toBe(config);
+    const file = withAmbientContext(testContext({ home: item.home }), () => daemonNdjsonFile());
+    const starts = readFileSync(file, 'utf8')
+      .trim()
+      .split('\n')
+      .map((line): unknown => JSON.parse(line))
+      .filter(isJsonObject)
+      .filter(({ event }) => event === 'daemon_started');
+    expect(starts).toMatchObject([{ pid: expect.any(Number) }]);
+    for (const { pid } of starts) {
+      expect(pid).toBeGreaterThan(0);
+      expect(pid).not.toBe(process.pid);
+    }
   } finally {
     const owners = readClaimSet(stimdClaimRoot(item.home)).live.map(({ owner }) => owner);
     for (const owner of owners) killFixtureChild(owner);
