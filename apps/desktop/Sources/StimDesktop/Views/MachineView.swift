@@ -341,7 +341,7 @@ struct MachineView: View {
           : daemon.running == nil
             ? "No stim-daemon runs in this Stim home now; the next stim start, ios or android starts one."
             : daemon.mode == "report"
-              ? "Report mode measures pressure and early cleanup targets without reclaiming anything."
+              ? "Report mode reports measured pressure without reclaiming anything."
               : daemon.isRaised
                 ? "The stim-daemon reclaims idle workspaces, parked devices and caches each minute until the level is normal."
                 : "The stim-daemon measures the machine each minute. Recent disk use can start cleanup early, before measured pressure rises."
