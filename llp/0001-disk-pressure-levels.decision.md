@@ -446,14 +446,14 @@ also holds the newest activity the walk read, and the walk reads at
   discovery. It rechecks current idleness, settings, devices, process/claim
   protections, worktree locks, output recognition and Metro sharing before
   deletion; the mark's activity is a lower bound, never permission to delete.
-  Known-mark sweeps require current registration or a direct child of a
-  current discoverRoots folder. An unregistered historical mark whose
-  discovery route cannot be proven without discovery stays, including with
-  automatic discovery on. High pressure can reauthorize it through current
-  discovery after known candidates are spent. With discoverRoots empty,
-  critical rung 1 therefore omits every unregistered auto-only checkout;
-  targeted automatic-route authorization remains a later migration item.
-  Canonical root/output paths
+  Registered marks need no discovery topology read. Unregistered marks use
+  the existing discovery policy with a required target set: only those roots
+  and their repository sources are considered as children, and only their
+  recorded scan entries are revalidated. It lists no sibling-parent folder
+  and does no full discovery or source walk. Current git worktree membership,
+  sibling/explicit-root recognition and scan validation still decide scope;
+  an unresolved route keeps the mark. The bounded repository reads share
+  the single outstanding-read slot. Canonical root/output paths
   and their own recorded devices must still match. Each candidate records
   its device separately: an external checkout can have Stim outputs on the
   internal disk. Version 2 marks add that field; older marks are absent.

@@ -47,6 +47,15 @@ folders and the full scan's finds are not selected. On, discovery is everything 
 rest of this document describes. A scoped `STIM_HOME` behaves as before either
 way: only its own roots, no repository read.
 
+Saved GC marks use these same route rules before a sweep or watch consumes
+an unregistered root (#6087). A required target set limits child checks to
+saved roots and their resolved repository sources, and scan revalidation to
+those exact recorded entries. It never enumerates sibling-parent folders or
+walks the full scan. Repository evidence reads have a 3-second asynchronous
+bound through the shared reader; unknown evidence keeps the root. Scoped
+homes still read no repository, and a registered-only mark list skips the
+route work. Normal discovery keeps its existing enumeration and read policy.
+
 Reason: proving that a checkout Stim never ran in is unused needs process, launcher
 and lock reads from outside, where most of the recent cleanup edge cases came from,
 and the discovery scan is one of the slowest steps of the pressure ladder on a busy

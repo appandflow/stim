@@ -1,6 +1,6 @@
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import { realpath, readdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { stat } from 'node:fs/promises';
 import { promisify } from 'node:util';
@@ -14,13 +14,13 @@ import {
   type GcMark,
   type GcMarkCandidate,
 } from '@stim-cli/core/state';
-import { metroCacheRoot } from '@stim-cli/core';
+import { metroCacheRoot, type StimContext } from '@stim-cli/core';
 import { writeCacheFile } from '../cache-file.ts';
 import { answered, Unanswered } from '../workspace/bounded-read.ts';
 import type { Config } from '../workspace/config.ts';
 import { idleOutputs } from './idle.ts';
 import { dormantAfterMs, readCheckout, type CheckoutReading, type DeviceReading } from './stages.ts';
-import { canonicalDiscoverRoots, discoverCheckouts } from '../workspace/discovery.ts';
+import { discoverCheckouts, targetedCheckouts } from '../workspace/discovery.ts';
 import { listedRoots } from '../commands/gc/worktrees.ts';
 
 const realpathAsync = promisify(realpath);
@@ -116,10 +116,9 @@ export function markDue(mark: GcMark | null, now: number, dormantMs: number): bo
   return !Number.isFinite(markedAt) || now >= markedAt + interval;
 }
 
-// @ref LLP 0001#the-lane-marks-what-each-checkout-could-free -- auto-only roots stay until current-route proof (#6087)
-export function outputMarks(config: Config, env: NodeJS.ProcessEnv = process.env): GcMark[] {
+// @ref LLP 0001#the-lane-marks-what-each-checkout-could-free -- saved roots need current targeted discovery authorization
+export async function outputMarks(config: Config, operation?: StimContext): Promise<GcMark[]> {
   const registered = new Set(Object.keys(config.projects).map(canonicalPath));
-  const roots = canonicalDiscoverRoots(config, env);
   const dir = join(gcLogDir(), 'marks');
   let files: string[];
   try {
@@ -132,9 +131,21 @@ export function outputMarks(config: Config, env: NodeJS.ProcessEnv = process.env
     const root = readJsonObject(join(dir, file))?.root;
     if (typeof root !== 'string' || gcMarkFile(root) !== join(dir, file)) continue;
     const mark = readGcMark(root);
-    if (mark && (registered.has(root) || roots.includes(dirname(root)))) marks.push(mark);
+    if (mark) marks.push(mark);
   }
-  return marks;
+  const unregistered = marks.filter((mark) => !registered.has(mark.root));
+  if (!unregistered.length) return marks;
+  const allowed = new Set(
+    (
+      await targetedCheckouts(
+        config,
+        listedRoots(),
+        unregistered.map(({ root }) => root),
+        operation,
+      )
+    ).map(({ path }) => path),
+  );
+  return marks.filter((mark) => registered.has(mark.root) || allowed.has(mark.root));
 }
 
 export async function refreshOutputMarks(config: Config, reading: DeviceReading): Promise<GcMark[]> {

@@ -17,11 +17,13 @@ import { testContext } from './_context.ts';
 import { collectWorktreeSweep } from '../commands/gc/worktrees.ts';
 import { saveConfig } from '../workspace/config.ts';
 import * as gitCommands from '../workspace/git.ts';
-import { answered, hungRead } from '../workspace/bounded-read.ts';
+import * as worktree from '../workspace/worktree.ts';
+import { answered, hungRead, pendingRead } from '../workspace/bounded-read.ts';
 import { discoveredEvidence, scanSourceWrites } from '../workspace/discovered-activity.ts';
 import { discoveredReads } from '../workspace/discovered-reads.ts';
 import {
   discoverCheckouts,
+  targetedCheckouts,
   discoveredOutside,
   isBroadFolder,
   selectDiscovered,
@@ -333,6 +335,86 @@ describe('discoverCheckouts', () => {
     expect((await discoveredOutside(config, [repo])).map(({ path }) => path)).toEqual([elsewhere]);
   });
 
+  it('authorizes only requested automatic siblings and real nested worktrees without listing their parent folders', async () => {
+    vi.stubEnv('STIM_HOME', '');
+    const repo = join(base, 'dev', 'repo');
+    app(repo);
+    git(repo, 'init', '-q', '-b', 'main');
+    git(repo, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init');
+    const sibling = join(base, 'dev', 'sibling');
+    app(sibling);
+    git(sibling, 'init', '-q', '-b', 'main');
+    git(sibling, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init');
+    const linked = join(sibling, '.worktrees', 'feature');
+    git(sibling, 'worktree', 'add', '-q', '-b', 'feature', linked);
+    const nested = join(sibling, 'nested-app');
+    app(nested);
+    const neighbour = join(base, 'dev', 'neighbour');
+    app(neighbour);
+    const config: Config = { projects: { [repo]: {} }, repos: {}, maintenance: { autoDiscover: true } };
+    vi.mocked(readdir).mockClear();
+
+    const found = await targetedCheckouts(config, [repo], [linked, neighbour, nested]);
+
+    expect(found.map(({ path }) => path)).toEqual([neighbour, linked]);
+    const listed = vi.mocked(readdir).mock.calls.map(([path]) => String(path));
+    expect(listed).not.toContain(join(base, 'dev'));
+    expect(listed).not.toContain(join(sibling, '.worktrees'));
+    expect(
+      (await targetedCheckouts({ ...config, maintenance: { autoDiscover: false } }, [repo], [linked, neighbour])).map(
+        ({ path }) => path,
+      ),
+    ).toEqual([]);
+  });
+
+  it('keeps targeted roots when repository evidence times out and starts no further reads behind it', async () => {
+    vi.stubEnv('STIM_HOME', '');
+    const known = join(base, 'dev', 'known');
+    const target = join(base, 'dev', 'target');
+    app(known);
+    app(target);
+    let release = () => {};
+    let started = () => {};
+    const ready = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const stalled = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const source = vi.spyOn(worktree, 'resolveSourceCheckoutAsync').mockImplementation(async () => {
+      started();
+      await stalled;
+      return { entries: [], refusal: 'unknown source' };
+    });
+    const config: Config = { projects: { [known]: {} }, repos: {}, maintenance: { autoDiscover: true } };
+    const result = targetedCheckouts(config, [known], [target]);
+    await ready;
+    await vi.advanceTimersByTimeAsync(3_000);
+
+    expect(await result).toEqual([]);
+    expect(source).toHaveBeenCalledTimes(1);
+    expect(hungRead()).toBe(target);
+    release();
+    await pendingRead();
+    expect(hungRead()).toBeNull();
+    source.mockRestore();
+  });
+
+  it('rejects a saved nested standalone checkout after discoverRoots is broadened', async () => {
+    vi.stubEnv('STIM_HOME', join(base, 'home'));
+    const parent = join(base, 'roots');
+    const team = join(parent, 'team');
+    const nested = join(team, 'app');
+    app(nested);
+    const before: Config = { projects: {}, repos: {}, maintenance: { discoverRoots: [team] } };
+    const source = vi.spyOn(worktree, 'resolveSourceCheckoutAsync');
+    expect((await targetedCheckouts(before, [], [nested])).map(({ path }) => path)).toEqual([nested]);
+
+    expect(await targetedCheckouts({ ...before, maintenance: { discoverRoots: [parent] } }, [], [nested])).toEqual([]);
+    expect(source).not.toHaveBeenCalled();
+    source.mockRestore();
+  });
+
   it('keeps maintenance.discoverRoots with automatic discovery off: its children and their worktrees inside it, nothing beside a known repository', async () => {
     vi.stubEnv('STIM_HOME', '');
     const commit = (cwd: string) => {
@@ -534,6 +616,13 @@ describe('discoverCheckouts', () => {
       truncation: 'none',
     };
     writeFileSync(join(base, 'home', '.stim', 'maintenance', 'discovery-scan.json'), JSON.stringify(scan));
+    vi.mocked(lstat).mockClear();
+    expect(
+      (await targetedCheckouts({ projects: {}, repos: {}, maintenance: { autoDiscover: true } }, [], [docs])).map(
+        ({ path }) => path,
+      ),
+    ).toEqual([docs]);
+    expect(vi.mocked(lstat).mock.calls.map(([path]) => String(path))).not.toContain(join(base, 'gone'));
     expect(
       (await discoverCheckouts({ projects: {}, repos: {}, maintenance: { autoDiscover: true } }, [])).map(
         ({ path, origin, reduceOnly }) => [path, origin, reduceOnly],
