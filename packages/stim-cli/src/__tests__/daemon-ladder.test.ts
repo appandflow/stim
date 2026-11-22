@@ -1705,20 +1705,65 @@ describe('the pressure ladder', () => {
     expect(pass.pressure.level).toBe('normal');
   });
 
-  test('rung 1 records nothing for a stopped workspace whose only output is a Metro store a running dev server shares', async () => {
-    workspace('stopped', 5 * MINUTE_MS, 'Shutdown');
-    const sharer = join(projects, 'sharer');
-    mkdirSync(sharer);
-    upsertProject(sharer, { metroPort: 59124, supervisor: { pid: process.pid, port: 59999 } });
-    const store = join(metroCache(), 'app');
-    mkdirSync(store, { recursive: true });
-    const { actions } = await runLadder(
-      input(true, async () => pressure('high')),
-      pressure('high'),
-    );
-    expect(existsSync(store)).toBe(true);
-    expect(actions.filter((action) => action.rung === 1)).toEqual([]);
-  });
+  test.each([
+    { act: true, marked: false, absent: false },
+    { act: true, marked: true, absent: false },
+    { act: false, marked: true, absent: false },
+    { act: true, marked: true, absent: true },
+  ])(
+    'a shared Metro output preserves selected refusal and absent-path evidence: $act/$marked/$absent',
+    async ({ act, marked, absent }) => {
+      const { root } = workspace('stopped', 5 * MINUTE_MS, 'Shutdown');
+      const sharer = join(projects, 'sharer');
+      mkdirSync(sharer);
+      upsertProject(sharer, { metroPort: 59124, supervisor: { pid: process.pid, port: 59999 } });
+      const store = join(metroCache(), 'app');
+      mkdirSync(store, { recursive: true });
+      if (marked)
+        await marks.markWriter(input().config)({
+          path: root,
+          at: Date.now(),
+          lastActivityAt: Date.now() - DAY_MS,
+          kept: null,
+        });
+      const before = readGcMark(root);
+      expect(before?.candidates.some((candidate) => candidate.kind === 'outputs' && candidate.path === store)).toBe(
+        marked ? true : undefined,
+      );
+      if (absent) rmSync(store, { recursive: true });
+      const unmarked = marked
+        ? null
+        : await stages.clearStoppedOutputs({ path: root }, input().config, idlePass.PRESSURE_IDLE_MS, testContext());
+      expect(unmarked).toBeNull();
+      const level = 'critical';
+      const { actions } = await runLadder(
+        input(act, async () => pressure(level)),
+        pressure(level),
+      );
+      expect(existsSync(store)).toBe(!absent);
+      const keptRow = expect.objectContaining({
+        outcome: 'kept',
+        target: store,
+        workspace: root,
+        detail: expect.stringContaining('shares it'),
+      });
+      expect(actions.filter((action) => action.rung === 1)).toEqual(marked && !absent ? [keptRow] : []);
+      const reason = expect.stringContaining('shares it');
+      const at = expect.any(String);
+      const expected =
+        act && marked && !absent
+          ? {
+              ...before,
+              candidates: before?.candidates.map((candidate) =>
+                candidate.kind === 'outputs' && candidate.path === store
+                  ? { ...candidate, keep: { reason, at } }
+                  : candidate,
+              ),
+            }
+          : before;
+      expect(readGcMark(root)).toEqual(expected);
+    },
+  );
 
   test.each([
     { level: 'high' as const, kept: ['NEWER'] },

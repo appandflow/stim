@@ -1,17 +1,7 @@
 import { ensureWorkspaceStorage } from '../workspace/paths.ts';
 import * as discovery from '../workspace/discovery.ts';
 import { execFileSync } from 'node:child_process';
-import {
-  cpSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import * as daemonMeasure from '../daemon/measure.ts';
@@ -497,7 +487,7 @@ test('a discovered checkout whose source scan ran out of time is listed as kept 
   );
 });
 
-test.each(['measured healthy', 'new pressure pin', 'forced healthy', 'new cap pin'] as const)(
+test.each(['measured healthy', 'new pressure pin', 'healthy renewed pin', 'forced healthy', 'new cap pin'] as const)(
   'manual Cargo admission rechecks the completed handoff: %s',
   async (change) => {
     vi.stubEnv('STIM_MAINTENANCE_CARGO_TARGET_MAX_GB', change === 'new cap pin' ? '0.000001' : '1');
@@ -518,7 +508,8 @@ test.each(['measured healthy', 'new pressure pin', 'forced healthy', 'new cap pi
             { volume: '/other-short-volume', freeMb: 1024, device: device + 1 },
           ],
     );
-    const before = readFileSync(gcMarkFile(dirname(target)), 'utf8');
+    const beforeMark = readGcMark(dirname(target));
+    expect(beforeMark?.candidates).toContainEqual(expect.objectContaining({ kind: 'cargo-target', path: target }));
     let handoffs = 0;
     const run = await runMaintenanceAtLevel({
       act: true,
@@ -529,9 +520,9 @@ test.each(['measured healthy', 'new pressure pin', 'forced healthy', 'new cap pi
           : {}),
       between: async () => {
         handoffs++;
-        if (change === 'new pressure pin' || change === 'new cap pin')
+        if (change === 'new pressure pin' || change === 'new cap pin' || change === 'healthy renewed pin')
           writeFileSync(join(dirname(target), '.stim.json'), JSON.stringify({ maintenance: { keep: true } }));
-        else freeMb = 100 * 1024;
+        if (change !== 'new pressure pin' && change !== 'new cap pin') freeMb = 100 * 1024;
       },
     });
     expect(handoffs).toBeGreaterThan(0);
@@ -539,6 +530,18 @@ test.each(['measured healthy', 'new pressure pin', 'forced healthy', 'new cap pi
     expect(run.actions.some((action) => action.kind === 'trim-cargo' && action.outcome === 'done')).toBe(
       change === 'forced healthy',
     );
-    expect(readFileSync(gcMarkFile(dirname(target)), 'utf8')).toBe(before);
+    const at = expect.any(String);
+    const expected =
+      change === 'new pressure pin'
+        ? {
+            ...beforeMark,
+            candidates: beforeMark?.candidates.map((candidate) =>
+              candidate.kind === 'cargo-target' && candidate.path === target
+                ? { ...candidate, keep: { reason: 'pinned by maintenance.keep', at } }
+                : candidate,
+            ),
+          }
+        : beforeMark;
+    expect(readGcMark(dirname(target))).toEqual(expected);
   },
 );
