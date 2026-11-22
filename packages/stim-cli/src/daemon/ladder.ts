@@ -267,6 +267,14 @@ async function run(
     outcome = await executeAction(plan, {
       ...actContext(context.settings),
       critical: context.level === 'critical',
+      ...(plan.kind === 'would-delete-trash' && (!context.force || context.force.measured)
+        ? {
+            trashPriority: async () => {
+              const { disk } = await context.remeasure();
+              return disk === 'normal' ? null : disk !== 'critical';
+            },
+          }
+        : {}),
       protectedRoot: context.protectedRoot ? (canonicalOrNull(context.protectedRoot) ?? '') : '',
       operation: context.operation,
       ...(context.firstFree ? { firstFree: context.firstFree } : {}),

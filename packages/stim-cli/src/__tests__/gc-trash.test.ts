@@ -179,6 +179,33 @@ describe.skipIf(!POSIX)('the trash delete', () => {
     expect(command.slice(0, -4).includes('nice')).toBe(throttled);
   });
 
+  test('remeasures priority before each owned trash entry and leaves entries once pressure clears', async () => {
+    const entries = ['first', 'second', 'third'].map((name) =>
+      plantEntry(`remove-${name}`, join(base, `gone-${name}`)),
+    );
+    const commands = recordRm();
+    const priority = vi
+      .fn<() => Promise<boolean | null>>()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true)
+      .mockResolvedValue(null);
+
+    const result = await executeAction(
+      { kind: 'would-delete-trash', target: trash, bytes: 0, reason: '' },
+      {
+        settings: resolveMaintenanceSettings(null, { STIM_DAEMON: 'on' }),
+        protectedRoot: '',
+        critical: true,
+        trashPriority: priority,
+      },
+    );
+
+    expect(result).toMatchObject({ status: 'done', detail: '2 deleted' });
+    expect(commands.map((command) => command.slice(0, -4).includes('nice'))).toEqual([false, true]);
+    expect(entries.filter((entry) => existsSync(entry))).toHaveLength(1);
+    expect(priority).toHaveBeenCalledTimes(3);
+  });
+
   test('of an entry whose low-priority rm is killed part way still finishes it, as on main', async () => {
     const entry = plantEntry('remove-killed', join(base, 'gone'));
     writeFileSync(join(entry, 'entries', '0', 'other'), 'x');

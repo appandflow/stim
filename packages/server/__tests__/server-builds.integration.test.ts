@@ -73,6 +73,48 @@ describe('hosted device sessions', () => {
   });
 
   test.skipIf(!fakeTailscale)(
+    'a runtime install reports hosted work through the handler until its worker settles',
+    async () => {
+      const counts: number[] = [];
+      const entered = join(root, 'runtime-entered');
+      const release = join(root, 'runtime-release');
+      const port = await start({
+        busy: (count) => counts.push(count),
+        env: { RUNTIME_ENTERED: entered, RUNTIME_RELEASE: release },
+      });
+      writeFileSync(
+        join(root, 'device-host-worker.mjs'),
+        `
+      import { existsSync, writeFileSync } from 'node:fs';
+      const chunks=[]; for await (const chunk of process.stdin) chunks.push(chunk);
+      const input=JSON.parse(Buffer.concat(chunks));
+      if(input.mode!=='runtime') process.exit(1);
+      writeFileSync(process.env.RUNTIME_ENTERED,String(process.pid));
+      while(!existsSync(process.env.RUNTIME_RELEASE)) await new Promise(resolve=>setTimeout(resolve,20));
+      process.stdout.write(JSON.stringify({ok:true}));
+    `,
+      );
+      const pending = setupClient(['device-host'], 'Client');
+      const client = await returning(port, pending.keyPair, '100.64.0.2', 'device-host');
+      const install = client.request('device-host.runtime.install', { runtime: '26.5' });
+      try {
+        await vi.waitFor(() => expect(existsSync(entered)).toBe(true));
+        expect(counts.at(-1)).toBe(1);
+        const health: unknown = await (await fetch(`http://127.0.0.1:${port}/health`)).json();
+        expect(health).toMatchObject({ busy: { hostedSessions: 0, hostedWork: 1 } });
+        writeFileSync(release, '');
+        expect(await install).toMatchObject({ result: { ok: true } });
+        expect(counts.at(-1)).toBe(0);
+        expect(alive(Number(readFileSync(entered, 'utf8')))).toBe(false);
+      } finally {
+        writeFileSync(release, '');
+        await install;
+        client.socket.close();
+      }
+    },
+  );
+
+  test.skipIf(!fakeTailscale)(
     'reserves through the socket, reconnects to the same session and stops it on revocation',
     async () => {
       const port = await start();

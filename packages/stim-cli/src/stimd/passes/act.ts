@@ -95,6 +95,8 @@ export interface ActContext {
   lowPriority?: boolean;
   /** The run frees disk at the critical level, so the trash delete runs at normal priority. */
   critical?: boolean;
+  /** Current per-entry trash throttling, or null to leave the remaining entries. */
+  trashPriority?: () => Promise<boolean | null>;
   throttleOutputs?: boolean;
   /** The Cargo target trim leaves what it has not moved yet once this aborts. */
   stop?: AbortSignal;
@@ -477,7 +479,9 @@ async function deleteGradleVersionAction(action: MaintenanceAction, context: Act
 }
 
 async function deleteTrashAction(context: ActContext): Promise<ActionOutcome> {
-  const { value: done } = await quietly(() => deleteTrash(undefined, undefined, context.critical !== true));
+  const { value: done } = await quietly(() =>
+    deleteTrash(undefined, undefined, context.trashPriority ?? context.critical !== true),
+  );
   if (done.failures) return { status: 'failed', bytes: done.bytes, detail: `${done.failures} could not be deleted` };
   return done.count
     ? { status: 'done', bytes: done.bytes, detail: `${done.count} deleted` }
