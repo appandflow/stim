@@ -190,10 +190,15 @@ export async function outputMarkBatch(
       complete = false;
     }
   }
-  const selected = await authorizedMarks(config, marks, operation, holders);
+  let scopeComplete = true;
+  const selected = await authorizedMarks(config, marks, operation, holders, () => {
+    scopeComplete = false;
+  });
   return {
     marks: selected,
-    complete: complete && (selected.length === marks.length || discoveryDisabled(config, operation?.env ?? {})),
+    complete:
+      complete &&
+      (selected.length === marks.length || (scopeComplete && discoveryDisabled(config, operation?.env ?? {}))),
     listed: true,
   };
 }
@@ -213,6 +218,7 @@ async function authorizedMarks(
   marks: GcMark[],
   operation?: StimContext,
   holders?: Map<string, CargoMarkScope>,
+  unanswered?: () => void,
 ): Promise<GcMark[]> {
   const registered = new Set<string>();
   for (const root of Object.keys(config.projects)) {
@@ -249,6 +255,7 @@ async function authorizedMarks(
       )
       .map(({ root }) => root),
     operation,
+    unanswered,
   );
   const discoveredHolders = await discoveredCargoHolders(
     config,
