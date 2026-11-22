@@ -305,12 +305,14 @@ so none ever runs beside another.
   volume target on grant (LLP 0006); hard floor ranks ahead of critical.
 - Each ticket owns its release and pending handoff. Concurrent boundaries of
   one ticket share that handoff; a different ticket has its own. A resumption
-  queues after peers already waiting at its rank. Releasing an old ticket
+  keeps the granted owner ahead of waiting peers at its rank; new and reranked
+  tickets queue after equal peers. Releasing an old ticket
   cannot release the current owner. Pass identity, listeners and results stay
   with the ticket while it waits, and are current again when it resumes.
   A cancelled queued request withdraws its own ticket; a cancelled executing
   pass keeps ownership through its current work and observes cancellation
-  after regrant. Only the current owner recreates the reserve.
+  after regrant. The covering pass recreates the reserve when it still owns
+  the turn or the queue is idle, never while another ticket owns the turn.
 - The lane uses these ticket boundaries. Pressure, manual and headroom sweep
   candidates still run within their whole pass; candidate-loop integration
   and fresh rechecks after resumption are the remaining part of #6101.
