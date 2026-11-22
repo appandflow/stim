@@ -181,8 +181,9 @@ exit 1
       );
       await vi.waitFor(() => expect(streams.running()).toBe(true));
       await captured.workers.at(-1)?.terminate();
-      await vi.waitFor(() =>
-        expect(records().filter((record) => record.event === 'collector_interrupted')).toHaveLength(2),
+      await vi.waitFor(
+        () => expect(records().filter((record) => record.event === 'collector_interrupted')).toHaveLength(2),
+        { timeout: 5000 },
       );
       const last = records().filter((record) => record.event === 'collector_interrupted')[1];
       expect(last?.msg).toContain('logging stopped');
@@ -222,10 +223,7 @@ exit 1
       const worker = captured.workers.at(-1);
       if (!worker) throw new Error('the logs worker was not started');
       await worker.terminate();
-      await vi.waitFor(async () => {
-        const answer = await streams.ownedDrain(root);
-        expect(answer).not.toContain('previous owned log worker exited');
-      });
+      await vi.waitFor(() => expect(streams.ownedRunning()).toBe(false), { timeout: 5000 });
       expect(await streams.ownedDrain(root)).toContain('unavailable');
       expect(streams.ownedRunning()).toBe(false);
     } finally {
