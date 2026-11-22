@@ -1,5 +1,14 @@
 import assert from 'node:assert';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getExecutor, resetExecutor } from '../exec.ts';
@@ -428,8 +437,8 @@ describe('buildIos against a real xcodebuild', { timeout: 180_000 }, () => {
     expect(result.exitCode).toBe(65);
     expect(result.diagnostics.length).toBe(1);
     const [diagnostic] = result.diagnostics;
-    assert(diagnostic);
-    expect(diagnostic.file).toBe(join(tmp, 'ios', 'Scratch', 'main.m'));
+    assert(diagnostic?.file);
+    expect(realpathSync(diagnostic.file)).toBe(realpathSync(join(tmp, 'ios', 'Scratch', 'main.m')));
     expect(diagnostic.line).toBe(5);
     expect(diagnostic.column).toBe(18);
     expect(diagnostic.message).toMatch(/use of undeclared identifier 'stimDeliberatelyUndefined'/);

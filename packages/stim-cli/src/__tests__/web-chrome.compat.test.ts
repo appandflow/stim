@@ -50,7 +50,7 @@ beforeEach(async () => {
 afterEach(async () => {
   await teardownOwnedBrowser(root, { deleteProfile: true });
   await new Promise((resolve) => server.close(resolve));
-  rmSync(home, { recursive: true, force: true });
+  rmSync(home, { recursive: true, force: true, maxRetries: 3 });
   delete process.env.STIM_HOME;
 });
 
