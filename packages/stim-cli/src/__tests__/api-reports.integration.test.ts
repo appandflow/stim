@@ -322,44 +322,48 @@ test('concurrent GC mutations empty only their selected cache and return results
   }
 }, 30_000);
 
-test('a cold public GC mutation starts an off-mode daemon and deletes its selected cache', async () => {
-  const item = fixture('cold-delete');
-  const config = readFileSync(join(item.home, 'config.json'), 'utf8');
-  expect(readClaimSet(stimdClaimRoot(item.home)).live).toEqual([]);
-  try {
-    const result = await trackRead((signal) =>
-      createStim({ projectRoot: item.root, home: item.home, env: item.env }).deleteGarbageItem({
-        item: { kind: 'cache', dir: item.cache },
-        signal,
-      }),
-    );
-    expect(result.exitCode).toBe(0);
-    expect(result.results).toMatchObject([{ kind: 'cache', status: 'done', id: item.cache }]);
-    expect(existsSync(join(item.cache, 'artifact'))).toBe(false);
-    expect(readFileSync(join(item.home, 'config.json'), 'utf8')).toBe(config);
-    const file = withAmbientContext(testContext({ home: item.home }), () => daemonNdjsonFile());
-    await vi.waitFor(
-      () => {
-        const starts = readFileSync(file, 'utf8')
-          .trim()
-          .split('\n')
-          .map((line): unknown => JSON.parse(line))
-          .filter(isJsonObject)
-          .filter(({ event }) => event === 'daemon_started');
-        expect(starts).toMatchObject([{ pid: expect.any(Number) }]);
-        for (const { pid } of starts) {
-          expect(pid).toBeGreaterThan(0);
-          expect(pid).not.toBe(process.pid);
-        }
-      },
-      { timeout: 5_000, interval: 20 },
-    );
-  } finally {
-    const owners = readClaimSet(stimdClaimRoot(item.home)).live.map(({ owner }) => owner);
-    for (const owner of owners) killFixtureChild(owner);
-    for (const owner of owners) expect(await waitForProcessExit(owner, 5000)).toBe(true);
-  }
-}, process.platform === 'win32' ? 25_000 : 15_000);
+test(
+  'a cold public GC mutation starts an off-mode daemon and deletes its selected cache',
+  async () => {
+    const item = fixture('cold-delete');
+    const config = readFileSync(join(item.home, 'config.json'), 'utf8');
+    expect(readClaimSet(stimdClaimRoot(item.home)).live).toEqual([]);
+    try {
+      const result = await trackRead((signal) =>
+        createStim({ projectRoot: item.root, home: item.home, env: item.env }).deleteGarbageItem({
+          item: { kind: 'cache', dir: item.cache },
+          signal,
+        }),
+      );
+      expect(result.exitCode).toBe(0);
+      expect(result.results).toMatchObject([{ kind: 'cache', status: 'done', id: item.cache }]);
+      expect(existsSync(join(item.cache, 'artifact'))).toBe(false);
+      expect(readFileSync(join(item.home, 'config.json'), 'utf8')).toBe(config);
+      const file = withAmbientContext(testContext({ home: item.home }), () => daemonNdjsonFile());
+      await vi.waitFor(
+        () => {
+          const starts = readFileSync(file, 'utf8')
+            .trim()
+            .split('\n')
+            .map((line): unknown => JSON.parse(line))
+            .filter(isJsonObject)
+            .filter(({ event }) => event === 'daemon_started');
+          expect(starts).toMatchObject([{ pid: expect.any(Number) }]);
+          for (const { pid } of starts) {
+            expect(pid).toBeGreaterThan(0);
+            expect(pid).not.toBe(process.pid);
+          }
+        },
+        { timeout: 5_000, interval: 20 },
+      );
+    } finally {
+      const owners = readClaimSet(stimdClaimRoot(item.home)).live.map(({ owner }) => owner);
+      for (const owner of owners) killFixtureChild(owner);
+      for (const owner of owners) expect(await waitForProcessExit(owner, 5000)).toBe(true);
+    }
+  },
+  process.platform === 'win32' ? 25_000 : 15_000,
+);
 
 test.each([
   { kind: 'cache', unavailable: false },
