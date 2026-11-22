@@ -71,7 +71,7 @@ test('the shared inventory keeps pending estimates and selects only the oldest v
   writeFileSync(join(broken, TRASH_MANIFEST), '{');
   const missing = entry('missing', 3 * day);
   rmSync(join(missing, 'entries', 'payload'), { recursive: true });
-  expect(await itemTrashInventory()).toEqual({
+  expect(await itemTrashInventory(new AbortController().signal)).toEqual({
     count: 4,
     complete: true,
     bytes: 3 * 123,
@@ -169,4 +169,12 @@ test('a later read deadline retains already verified stale evidence and marks th
     finish();
     await pendingRead();
   }
+});
+
+test('ordinary pending status keeps the legacy entry and payload metadata reads', async () => {
+  const path = entry('pending', 2 * day);
+  expect(await pendingItemTrash()).toEqual({ count: 1, bytes: 123 });
+  expect(vi.mocked(lstat).mock.calls.map(([file]) => String(file))).toEqual([path, join(path, 'entries', 'payload')]);
+  expect(vi.mocked(readFile).mock.calls.map(([file]) => String(file))).toEqual([join(path, TRASH_MANIFEST)]);
+  expect(vi.mocked(readdir).mock.calls.map(([file]) => String(file))).toEqual([trashRoot()]);
 });

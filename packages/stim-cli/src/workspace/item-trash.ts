@@ -85,7 +85,7 @@ export async function stageItemTrash(
   }
 }
 
-/** Typed manifest estimates and the oldest verified payload, without walking or sizing contents. */
+/** Pending estimates; bounded diagnostic calls also verify the oldest payload without walking its contents. */
 export async function itemTrashInventory(signal?: AbortSignal): Promise<{
   count: number;
   bytes: number;
@@ -108,7 +108,7 @@ export async function itemTrashInventory(signal?: AbortSignal): Promise<{
   let oldest: { path: string; createdAt: string } | undefined;
   try {
     const root = trashRoot();
-    const verifiedRoot = (await metadata(root))?.isDirectory() === true;
+    const verifiedRoot = signal ? (await metadata(root))?.isDirectory() === true : false;
     if (signal && !verifiedRoot) return { count, bytes, complete: false };
     const names = await read(root, () => readdir(root)).catch((error: unknown) => {
       if (error instanceof Unanswered) throw error;
@@ -128,6 +128,7 @@ export async function itemTrashInventory(signal?: AbortSignal): Promise<{
       count++;
       const payload = await metadata(join(dir, 'entries', 'payload'));
       if (payload) bytes += manifest.bytes;
+      if (!signal) continue;
       const created = Date.parse(manifest.createdAt);
       if (!verifiedRoot || !payload?.isDirectory() || !Number.isFinite(created)) continue;
       if (!(await metadata(join(dir, 'entries')))?.isDirectory()) continue;
