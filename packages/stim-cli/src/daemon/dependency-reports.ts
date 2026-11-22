@@ -1,7 +1,7 @@
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import type { GcMark } from '@stim-cli/core/state';
 import { lstat, realpath, stat } from 'node:fs/promises';
-import { dirname, join, sep } from 'node:path';
+import { dirname, join, relative, sep } from 'node:path';
 import { realpathAsync } from '../commands/gc/paths.ts';
 import { trustedMeasure } from '../disk-usage.ts';
 import { formatBytes } from '../fs-util.ts';
@@ -71,6 +71,7 @@ export async function savedDependencyReports(
     const rung = source ? 8 : 5;
     const idleMs = options.level === 'critical' ? 2 * 60_000 : 60 * 60_000;
     let keep: string | null = null;
+    let sharing: (path: string) => Promise<string | null> = async () => keep;
     try {
       const root = await native(mark.root);
       if (
@@ -113,6 +114,9 @@ export async function savedDependencyReports(
           config,
           reading: options,
           processes: () => (processes ??= readRunningProcessesAsync(operation?.signal)),
+          sharing: (probe) => {
+            sharing = probe;
+          },
         });
 
       for (const candidate of observation.candidates) {
@@ -138,6 +142,7 @@ export async function savedDependencyReports(
               (await answered(candidate.path, () => realpathAsync(candidate.path), 3_000, operation?.signal)) ===
                 candidate.path;
             if (!identityKnown) reason = 'the saved dependency path moved or changed volume';
+            else reason = (await sharing(candidate.path)) ?? reason;
           }
           if (!reason) reason = await regenerableDirProblem(mark.root, candidate.path, operation?.signal);
         } catch (error) {
@@ -215,7 +220,12 @@ async function checkoutKeep(
   source: boolean,
   idleMs: number,
   native: (path: string) => Promise<string>,
-  context: { config: Config; reading: DeviceReading; processes: () => ReturnType<typeof readRunningProcessesAsync> },
+  context: {
+    config: Config;
+    reading: DeviceReading;
+    processes: () => ReturnType<typeof readRunningProcessesAsync>;
+    sharing: (probe: (path: string) => Promise<string | null>) => void;
+  },
 ): Promise<string | null> {
   const { config, reading } = context;
   const { operation } = reading;
@@ -245,9 +255,42 @@ async function checkoutKeep(
     const warming = warmCopyingFrom(mark.root);
     if (warming) return warming;
     if (Date.now() - warmedFromAt(keys) < idleMs) return 'a worktree warm recently copied from it';
-    // @ref LLP 0001#the-lane-marks-what-each-checkout-could-free -- pressure reports do not rediscover other worktrees' dependency links
-    if (metadata.entries.length > 1)
+    if (metadata.entries.length > 1) {
+      context.sharing(
+        directSharing(
+          mark.root,
+          metadata.entries.filter((other) => !other.bare && other.path !== root).map((other) => other.path),
+          operation?.signal,
+        ),
+      );
       return 'current sharing with linked worktrees is unproven; dependency eligibility is unknown';
+    }
   }
   return null;
+}
+
+function directSharing(root: string, linked: readonly string[], signal?: AbortSignal) {
+  const deadline = Date.now() + 3_000;
+  let remaining = 64;
+  return async (path: string): Promise<string | null> => {
+    const location = relative(root, path);
+    for (const worktree of linked) {
+      signal?.throwIfAborted();
+      if (remaining-- <= 0 || Date.now() >= deadline) return null;
+      const link = join(worktree, location);
+      try {
+        const info = await answered(link, () => lstat(link), deadline - Date.now(), signal);
+        if (!info.isSymbolicLink()) continue;
+        if (Date.now() >= deadline) return null;
+        const target = await answered(link, () => realpath(link), deadline - Date.now(), signal);
+        if (target === path || target.startsWith(`${path}${sep}`))
+          return `the worktree ${worktree} links ${location} to it`;
+      } catch (error) {
+        signal?.throwIfAborted();
+        if (error instanceof Error && 'code' in error && error.code === 'ENOENT') continue;
+        return null;
+      }
+    }
+    return null;
+  };
 }
