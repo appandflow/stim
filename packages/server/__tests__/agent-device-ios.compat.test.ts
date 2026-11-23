@@ -19,7 +19,7 @@ const fixture = vi.hoisted(() => ({ script: '' }));
 
 vi.mock('node:child_process', async (original) => ({
   ...(await original<typeof import('node:child_process')>()),
-  spawn: (_command: string, _args: string[], options: { cwd: string; env: NodeJS.ProcessEnv }) => {
+  spawn: (_command: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv }) => {
     const result = execFileSync(
       process.execPath,
       ['--experimental-strip-types', '--input-type=module', '-e', fixture.script],
@@ -32,7 +32,7 @@ vi.mock('node:child_process', async (original) => ({
     const state = options.env.AGENT_DEVICE_DAEMON_POLICY!.replace('policy.json', '');
     writeFileSync(join(state, 'result.json'), result);
     writeFileSync(
-      join(state, 'daemon.json'),
+      join(args[args.indexOf('--state-dir') + 1] ?? '', 'daemon.json'),
       JSON.stringify({
         pid: 777777,
         httpPort: 4311,

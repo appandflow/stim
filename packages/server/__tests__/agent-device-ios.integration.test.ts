@@ -34,6 +34,7 @@ const fixture = vi.hoisted(() => ({
   policy: true,
   backend: true,
   proxyStopped: true,
+  daemonDir: '',
   ps: [] as string[],
   psError: false,
   uncaptured: new Set<number>(),
@@ -80,7 +81,8 @@ vi.mock('@stim-cli/core/process-identity', async (original) => {
 
 vi.mock('node:child_process', async (original) => ({
   ...(await original<typeof import('node:child_process')>()),
-  spawn: (_command: string, _args: string[], options: { env: NodeJS.ProcessEnv }) => {
+  spawn: (_command: string, args: string[], options: { env: NodeJS.ProcessEnv }) => {
+    fixture.daemonDir = args[args.indexOf('--state-dir') + 1] ?? '';
     fixture.maxLeaseTtl = options.env.AGENT_DEVICE_LEASE_MAX_TTL_MS ?? '';
     const policy = JSON.parse(readFileSync(options.env.AGENT_DEVICE_DAEMON_POLICY!, 'utf8'));
     const canonical = JSON.stringify({
@@ -88,7 +90,7 @@ vi.mock('node:child_process', async (original) => ({
       commands: { mode: 'allow', names: policy.commands.allow.toSorted() },
       capabilities: policy.capabilities.deny,
     });
-    const file = options.env.AGENT_DEVICE_DAEMON_POLICY!.replace('policy.json', 'daemon.json');
+    const file = join(fixture.daemonDir, 'daemon.json');
     writeFileSync(
       file,
       JSON.stringify({
@@ -172,6 +174,7 @@ beforeEach(() => {
   fixture.policy = true;
   fixture.backend = true;
   fixture.proxyStopped = true;
+  fixture.daemonDir = '';
   fixture.calls = [];
   fixture.recordError = { code: '', message: '' };
   fixture.ps = [];
@@ -291,7 +294,7 @@ test('keeps an unresolved runner claim, continues stopping other runners and ret
 test('keeps the daemon claim when the process inventory cannot be read and retries cleanup', async () => {
   await start();
   fixture.psError = true;
-  await expect(driver.stop()).rejects.toThrow('process listing unavailable');
+  await expect(driver.stop()).rejects.toThrow('Could not list processes with /bin/ps');
   expect(readClaimSet(join(home, 'claims')).live).toHaveLength(1);
   fixture.psError = false;
   await driver.stop();
@@ -420,7 +423,7 @@ test('writes a recording only in a private temp directory, one at a time, and re
 
   mkdirSync(join(recordings, 'left-by-a-crash'), { recursive: true });
   await start();
-  expect(readdirSync(recordings)).toEqual(['sessions']);
+  expect(readdirSync(recordings)).toEqual([]);
 });
 
 test.skipIf(process.platform === 'win32')(
@@ -454,12 +457,18 @@ function agentDeviceRecording(name = 'recording-0a1b2c.mp4', session = 'stim.s_d
 }
 
 test.skipIf(process.platform === 'win32')(
-  'agent-device resolves its session directory off the Stim home, replacing one left there',
+  'agent-device resolves its session directory off the Stim home in a state directory free of links, replacing one left there',
   async () => {
     mkdirSync(join(SESSIONS(), 'stim.s_old'), { recursive: true });
     writeFileSync(join(SESSIONS(), 'stim.s_old', 'events.ndjson'), '');
     await start();
     expect(lstatSync(SESSIONS()).isSymbolicLink()).toBe(true);
+    expect(relative(realpathSync(home), fixture.daemonDir).startsWith('..')).toBe(true);
+    for (const entry of [
+      fixture.daemonDir,
+      ...readdirSync(fixture.daemonDir).map((name) => join(fixture.daemonDir, name)),
+    ])
+      expect(lstatSync(entry).isSymbolicLink()).toBe(false);
     const file = agentDeviceRecording();
     expect(existsSync(join(SESSIONS(), 'stim.s_old'))).toBe(false);
     const real = realpathSync(file);
@@ -469,6 +478,20 @@ test.skipIf(process.platform === 'win32')(
 
     await driver.stop();
     expect(existsSync(real)).toBe(false);
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'a launch keeps the daemon registration an earlier server left in the daemon state directory',
+  async () => {
+    await start();
+    const lock = join(fixture.daemonDir, 'daemon.lock');
+    await driver.stop();
+    mkdirSync(fixture.daemonDir, { mode: 0o700 });
+    mkdirSync(lock);
+    writeFileSync(join(lock, 'owner.json'), JSON.stringify({ pid: 777777 }));
+    await start();
+    expect(existsSync(join(lock, 'owner.json'))).toBe(true);
   },
 );
 
@@ -544,7 +567,7 @@ test('a start the daemon refuses leaves no recording behind', async () => {
   await start();
   fixture.recordError = { code: 'COMMAND_FAILED', message: 'recorder failed to start' };
   expect((await rpc(recordStart())).status).toBe(200);
-  expect(readdirSync(dirname(dirname(forwardedRecord().params.positionals[1])))).toEqual(['sessions']);
+  expect(readdirSync(dirname(dirname(forwardedRecord().params.positionals[1])))).toEqual([]);
   fixture.recordError = { code: '', message: '' };
   expect((await rpc(recordStart())).status).toBe(200);
 });
