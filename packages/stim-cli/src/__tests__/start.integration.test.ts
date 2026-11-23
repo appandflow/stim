@@ -1098,6 +1098,35 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     expect(getProject(root)).toBeNull();
   });
 
+  test('SIGTERM during the managed remote worktree lock wait reports cancellation', async () => {
+    setExecutor(metroExecutor({ listeners: {} }));
+    upsertProject(root, { settings: { metro: { tunnel: 'ngrok' } } });
+
+    const result = await runAction({ json: true, remote: true }, () =>
+      registerPosixStart({
+        withWorktreeLock: async (_root, _fn, options) => {
+          const signal = options?.signal;
+          assert(signal);
+          return new Promise((_resolve, reject) => {
+            signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), {
+              once: true,
+            });
+            process.emit('SIGTERM');
+          });
+        },
+      }),
+    );
+
+    expect(result.exitCode).toBe(143);
+    expect(result.immediateExits).toEqual([]);
+    expect(result.logs).toHaveLength(1);
+    expect(JSON.parse(result.logs[0] ?? '')).toEqual({
+      code: 'STIM_CANCELLED',
+      message: 'The Metro startup was cancelled.',
+      remedy: null,
+    });
+  });
+
   test.each(['ios', 'android'])('%s.remote gives plain start remote intent', async (platform) => {
     const { exec, port } = await runSpawnedExpoStart({
       options: { json: true, wait: '10' },

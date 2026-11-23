@@ -1203,6 +1203,8 @@ export async function startDevServer(
         signal: operationSignal,
       });
     } catch (err) {
+      if (err instanceof WorkspaceProcessCleanupError || err instanceof StartRefusal) throw err;
+      throwIfCancelled(operationSignal, 'Metro startup');
       const lockError = workspaceProcessLockError(err);
       if (lockError === 'refused') {
         return fail({
