@@ -62,22 +62,25 @@ captured. It means "no daemon that shares state with, or can be reached by, a
 successor", not "no daemon this driver started still runs".
 
 - Teardown signals only the proxy, through the child process and the identity
-  the driver captured, and a daemon of that launch: through `agent-device daemon
-stop --state-dir`, which checks pid, start time and command itself, and the
-  identity the driver captured from that launch's `daemon.json`. It releases the
-  claim once the proxy is proven gone and any captured daemon has stopped.
+  the driver captured, and a daemon of that launch. A captured daemon is stopped
+  through `agent-device daemon stop --state-dir` and its identity. When no
+  daemon was captured (a failed launch, or a stop after the server restarted),
+  teardown retires the launch as described below. The claim is released once
+  the proxy is proven gone and the daemon is proven stopped, or the launch has
+  neither `daemon.json` nor `daemon.lock`.
 - A launch that failed before its daemon registered can leave that daemon
   running in its own directories. Its proxy is gone, so nothing can reach it,
   and agent-device's idle reaper ends it: 5 minutes after it last had work
   (`AGENT_DEVICE_DAEMON_IDLE_TIMEOUT_MS`), unless it holds a lease, which a
   failed launch never put.
 - Every launch first retires the launch recorded in `<state
-dir>/agent-device-launch`. It starts only once `agent-device daemon stop
---state-dir <that launch>/state --json` reports `not-running` and this
-  device's agent-device iOS runners are stopped. Otherwise it refuses and
-  releases the claim, so a daemon that registered and survived a server crash
-  is never left driving the device beside its replacement. A launch whose
-  daemon never registered reports `not-running`.
+dir>/agent-device-launch`. Retiring needs `agent-device daemon stop
+--state-dir <launch>/state --json` to report `not-running`, unless that
+  directory has neither `daemon.json` nor `daemon.lock`, and needs this
+  device's agent-device iOS runners stopped. Otherwise the launch refuses and
+  releases the claim, and a stop refuses and keeps it. So a daemon that
+  registered and survived a server crash is never left driving the device
+  beside its replacement.
 - The driver deletes a launch directory only after it stopped that launch's
   captured daemon. `stim gc` removes a launch directory idle for 24 hours once
   `agent-device daemon stop --state-dir <dir>/state --json` reports

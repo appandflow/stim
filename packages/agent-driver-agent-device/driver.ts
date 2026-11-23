@@ -710,9 +710,16 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     } catch {}
   }
 
-  /** Stops the daemon of an earlier launch through agent-device, which checks its identity, and its iOS runners. */
+  /**
+   * Stops a launch's daemon through agent-device, which checks its identity, and this device's iOS runners. A launch
+   * with neither `daemon.json` nor `daemon.lock` never registered a daemon, and needs no answer from agent-device.
+   */
   private async retireLaunch(id: string): Promise<void> {
     const stateDir = join(this.launchRoot, id, 'state');
+    if (!existsSync(join(stateDir, 'daemon.json')) && !existsSync(join(stateDir, 'daemon.lock'))) {
+      await this.stopIosRunners();
+      return;
+    }
     for (let attempt = 0; attempt < 2; attempt++) {
       const mode = await this.daemonStopMode(stateDir);
       if (mode === 'not-running') {
@@ -722,7 +729,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       if (mode === null) break;
     }
     throw new Error(
-      `The agent-device daemon of an earlier launch could not be proven stopped. Stop it with: agent-device daemon stop --state-dir ${stateDir}`,
+      `The agent-device daemon in ${stateDir} could not be proven stopped. Stop it with: agent-device daemon stop --state-dir ${stateDir}`,
     );
   }
 
@@ -747,7 +754,9 @@ export class AgentDeviceDriver implements HostedAgentDriver {
   }
 
   private async stopDaemon(): Promise<void> {
-    if (!this.options.device || this.currentLaunch()) await this.daemonStop(this.daemonDir);
+    const launch = this.options.device ? this.currentLaunch() : null;
+    if (launch && !this.daemonRecord) return this.retireLaunch(launch);
+    if (!this.options.device || launch) await this.daemonStop(this.daemonDir);
     if (this.daemonRecord && !(await this.signalAndWait(this.daemonRecord, false)))
       throw new Error(`The agent-device daemon did not stop; its claim ${this.claim?.path} was kept.`);
   }

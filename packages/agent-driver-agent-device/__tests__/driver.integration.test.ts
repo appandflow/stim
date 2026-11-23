@@ -25,7 +25,7 @@ const FAKE_AGENT_DEVICE = `#!/usr/bin/env node
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
-import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 const args = process.argv.slice(2);
 const stateDir = args[args.indexOf('--state-dir') + 1];
@@ -108,7 +108,7 @@ if (args[0] === '--version') {
     server.listen(0, '127.0.0.1', () => console.log('Proxy listening at http://127.0.0.1:' + server.address().port));
   });
 } else if (args[0] === 'daemon' && args[1] === 'stop') {
-  if (process.env.FAKE_STOP_FAIL) {
+  if (process.env.FAKE_STOP_FAIL || (process.env.FAKE_STOP_FAIL_FILE && existsSync(process.env.FAKE_STOP_FAIL_FILE))) {
     console.error('Error (COMMAND_FAILED): daemon stop failed');
     process.exit(1);
   }
@@ -736,6 +736,10 @@ describe.skipIf(process.platform !== 'darwin' && process.platform !== 'linux')('
       } catch {}
     }
     rmSync(launchRoot(root), { recursive: true, force: true });
+    rmSync(launchRoot(root).replace('stim-server-agent-device-', 'stim-server-recordings-'), {
+      recursive: true,
+      force: true,
+    });
   });
 
   test.each([
@@ -798,6 +802,29 @@ describe.skipIf(process.platform !== 'darwin' && process.platform !== 'linux')('
       await next.stop();
       try {
         process.kill(-orphanProxy, 'SIGKILL');
+      } catch {}
+    }
+  });
+
+  test('after the server dies, stopping its session keeps the claim until agent-device proves the daemon stopped', async () => {
+    const { earlier, orphanProxy } = await crashMidSession();
+    try {
+      const failing = join(root, 'stop-fails');
+      writeFileSync(failing, '');
+      const stopping = deviceDriverIn(root, {}, { FAKE_STOP_FAIL_FILE: failing });
+      await expect(stopping.stop()).rejects.toThrow(/could not be proven stopped/);
+      expect(readClaimSet(join(root, 'agent-device.claims')).live).toHaveLength(1);
+      expect(alive(earlier)).toBe(true);
+      rmSync(failing);
+      await stopping.stop();
+      expect(readClaimSet(join(root, 'agent-device.claims')).live).toHaveLength(0);
+      expect(alive(earlier)).toBe(false);
+    } finally {
+      try {
+        process.kill(-orphanProxy, 'SIGKILL');
+      } catch {}
+      try {
+        process.kill(earlier, 'SIGKILL');
       } catch {}
     }
   });
