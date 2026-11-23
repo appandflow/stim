@@ -106,20 +106,13 @@ struct PairedMachinesTests {
     other.project = Project(root: "/w/other")
     let floco = machine(
       "floco", seed: 1,
-      workspaces: [try workspace("/w/other"), try workspace("/w/app/.worktrees/fix"), reported, other])
+      workspaces: [
+        try workspace("/w/app", live: false), try workspace("/w/other"),
+        try workspace("/w/app/.worktrees/fix"), reported, other,
+      ])
     let cards = WallCard.cards(machine: floco, project: project)
-    #expect(cards.map(\.apps[0].workspace.path) == ["/elsewhere/checkout", "/w/app/.worktrees/fix"])
+    #expect(cards.map(\.apps[0].workspace.path) == ["/w/app/.worktrees/fix", "/elsewhere/checkout", "/w/app"])
     #expect(cards.allSatisfy { $0.owner == floco.owner && $0.machine?.name == "floco" })
-  }
-
-  @Test func excludesInactiveWorkspacesFromPairedProjectCards() throws {
-    let floco = machine("floco", seed: 1, workspaces: [try workspace("/w/app", live: false)])
-    #expect(WallCard.cards(machine: floco, project: Project(root: "/w/app")).isEmpty)
-  }
-
-  @Test func excludesUnavailableMachinesFromPairedProjectCards() throws {
-    let down = machine("down", seed: 1, workspaces: [try workspace("/w/app")], available: false)
-    #expect(WallCard.cards(machine: down, project: Project(root: "/w/app")).isEmpty)
   }
 
   @Test func showsOnlyThisMacsCardsInTheThisMacScope() throws {

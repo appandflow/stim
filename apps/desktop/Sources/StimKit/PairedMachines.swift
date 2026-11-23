@@ -16,6 +16,14 @@ public struct PairedMachine: Identifiable, Equatable, Sendable {
   public var isAvailable: Bool
   public var workspaces: [Workspace]
 
+  public init(id: String, name: String, canControl: Bool, isAvailable: Bool, workspaces: [Workspace]) {
+    self.id = id
+    self.name = name
+    self.canControl = canControl
+    self.isAvailable = isAvailable
+    self.workspaces = workspaces
+  }
+
   public var owner: ServerOwner { .paired(id) }
   public var accessTitle: String { canControl ? "View and Control" : "View Only" }
 
@@ -57,10 +65,13 @@ extension WallCard {
   }
 
   public static func cards(machine: PairedMachine, project: Project) -> [WallCard] {
-    guard machine.isAvailable else { return [] }
-    return cards(machine: machine).filter {
-      let workspace = $0.apps[0].workspace
-      return (workspace.project ?? Project(fallbackFor: workspace.path)) == project
+    let environments = machine.workspaces.filter { ($0.project ?? Project(fallbackFor: $0.path)) == project }
+    guard case .worktrees(let shown) = ProjectPage.content(environments: environments, scope: .all) else { return [] }
+    return shown.flatMap { cards(environments: [$0]) }.map {
+      var card = $0
+      card.owner = machine.owner
+      card.machine = Machine(name: machine.name, accessTitle: machine.accessTitle, canControl: machine.canControl)
+      return card
     }
   }
 

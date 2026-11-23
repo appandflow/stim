@@ -39,6 +39,7 @@ enum SidebarItem: Hashable {
 
 struct RootView: View {
   @ObservedObject private var store: StatusStore
+  @ObservedObject private var sessions = PairedServerSessions.shared
   private let metrics: MetricsStore
   private let gc: GcReportStore
   @ObservedObject private var tips: TipCoordinator
@@ -1146,7 +1147,8 @@ struct RootView: View {
         focusedID: $focusedDeviceID)
     case .pairedProject(let owner, let project):
       PairedProjectPage(
-        store: store, metrics: metrics, owner: owner, project: project,
+        store: store, metrics: metrics,
+        machine: store.pairedMachines(sessions.entries).first { $0.owner == owner }, project: project,
         selection: attributed(.click("paired project page")), openLogs: openErrors,
         openDevice: { key, deviceID in
           focusedDeviceID = deviceID
