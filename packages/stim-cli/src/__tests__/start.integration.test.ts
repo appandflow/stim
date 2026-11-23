@@ -272,12 +272,14 @@ async function runAction(
   const origErr = console.error;
   const origExit = process.exit;
   let exitCode = null;
+  const immediateExits: unknown[] = [];
   console.log = (l) => logs.push(String(l));
   console.error = (l) => {
     errs.push(String(l));
     onStderr?.(String(l));
   };
   process.exit = asProcessExit((c) => {
+    immediateExits.push(c);
     exitCode = c;
   });
   process.chdir(root);
@@ -294,7 +296,7 @@ async function runAction(
     console.error = origErr;
     process.exit = origExit;
   }
-  return { logs, errs, exitCode };
+  return { logs, errs, exitCode, immediateExits };
 }
 
 async function runConcurrentActions(opts: Record<string, unknown>, register: () => Op) {
@@ -898,6 +900,39 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     expect(facts.mode).toBe('bare-inproc');
   });
 
+  test.each([
+    { signal: 'SIGINT', running: true },
+    { signal: 'SIGTERM', running: true },
+    { signal: 'SIGINT', running: false },
+  ] as const)('cancelled start reports the server state: $signal, running=$running', async ({ signal, running }) => {
+    const { server, port } = await metroListener();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    setExecutor(metroExecutor());
+    upsertProject(root, { metroPort: port });
+
+    const result = await runAction({ json: true, wait: '10' }, () =>
+      registerPosixStart({
+        ensureMetro: async () => {
+          if (running) await new Promise<void>((resolve) => server.listen(port, '127.0.0.1', resolve));
+          process.emit(signal);
+          return null;
+        },
+      }),
+    );
+
+    expect(result.exitCode).toBe(signal === 'SIGTERM' ? 143 : 130);
+    expect(result.immediateExits).toEqual([]);
+    expect(result.logs).toHaveLength(1);
+    const payload = JSON.parse(result.logs[0] ?? '');
+    expect(payload).toEqual({
+      code: 'STIM_CANCELLED',
+      message: running
+        ? `The Metro startup was cancelled. The dev server on port ${port} is running and was left running.`
+        : 'The Metro startup was cancelled.',
+      remedy: running ? 'Run `stim stop` to stop the dev server.' : null,
+    });
+  });
+
   test('a stimd that goes away while the dev server becomes ready fails start with the rerun error', async () => {
     const { server, port } = await metroListener();
     await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -1061,6 +1096,35 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     expect(error.remedy).toMatch(/retry.*worktree remove.*finishes/i);
     expect(providerChecked).toBe(false);
     expect(getProject(root)).toBeNull();
+  });
+
+  test('SIGTERM during the managed remote worktree lock wait reports cancellation', async () => {
+    setExecutor(metroExecutor({ listeners: {} }));
+    upsertProject(root, { settings: { metro: { tunnel: 'ngrok' } } });
+
+    const result = await runAction({ json: true, remote: true }, () =>
+      registerPosixStart({
+        withWorktreeLock: async (_root, _fn, options) => {
+          const signal = options?.signal;
+          assert(signal);
+          return new Promise((_resolve, reject) => {
+            signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), {
+              once: true,
+            });
+            process.emit('SIGTERM');
+          });
+        },
+      }),
+    );
+
+    expect(result.exitCode).toBe(143);
+    expect(result.immediateExits).toEqual([]);
+    expect(result.logs).toHaveLength(1);
+    expect(JSON.parse(result.logs[0] ?? '')).toEqual({
+      code: 'STIM_CANCELLED',
+      message: 'The Metro startup was cancelled.',
+      remedy: null,
+    });
   });
 
   test.each(['ios', 'android'])('%s.remote gives plain start remote intent', async (platform) => {

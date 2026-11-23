@@ -73,12 +73,13 @@ export async function withDrainingCancellation<T>(
   context: StimContext | undefined,
   signal: AbortSignal | undefined,
   work: () => Promise<T>,
+  { drainTermination = false }: { drainTermination?: boolean } = {},
 ): Promise<T> {
   if (!context) return work();
   const abort = () => {
     const state = operationState(context);
     state.handled = true;
-    if (!isTermination(context.signal.reason)) state.draining = true;
+    if (drainTermination || !isTermination(context.signal.reason)) state.draining = true;
   };
   signal?.addEventListener('abort', abort, { once: true });
   if (signal?.aborted) abort();

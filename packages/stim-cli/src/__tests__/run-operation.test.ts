@@ -3,6 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { runOperation, type ApiOperation } from '../run-operation.ts';
+import { processOperation } from '../cli-operation.ts';
+import { withDrainingCancellation } from '../engine/operation-state.ts';
+import { asProcessExit } from './_factories.ts';
 
 let dir: string;
 let env: NodeJS.ProcessEnv;
@@ -27,6 +30,41 @@ afterEach(() => {
 const api = (operation: ApiOperation | null, platform?: string, admission: 'command' | 'none' = 'command') =>
   runOperation({ caller: 'api', operation, platform, admission, cwd: dir, env });
 const cli = (command: string, plan = false) => runOperation({ caller: 'cli', command, plan, cwd: dir, env });
+
+it.each([false, true])('SIGTERM drains pending work only with the start opt-in %s', async (drainTermination) => {
+  const operation = processOperation(dir);
+  const exit = vi.spyOn(process, 'exit').mockImplementation(asProcessExit(() => {}));
+  let settle!: () => void;
+  const work = new Promise<void>((resolve) => {
+    settle = resolve;
+  });
+  let settled = false;
+  const pending = withDrainingCancellation(
+    operation.context,
+    operation.context.signal,
+    () => work.then(() => (settled = true)),
+    drainTermination ? { drainTermination: true } : undefined,
+  );
+  try {
+    operation.cancel('SIGTERM');
+    expect(exit.mock.calls).toEqual(drainTermination ? [] : [[143]]);
+    expect(settled).toBe(false);
+    expect(operation.interrupted()).toBe(143);
+    exit.mockClear();
+    operation.cancel('SIGTERM');
+    expect(exit).toHaveBeenCalledOnce();
+    expect(exit).toHaveBeenCalledWith(143);
+    settle();
+    await pending;
+    expect(settled).toBe(true);
+    expect(operation.interrupted()).toBe(143);
+  } finally {
+    settle();
+    await pending;
+    operation.dispose();
+    exit.mockRestore();
+  }
+});
 
 describe('runOperation', () => {
   it.each<[ApiOperation, string | undefined, string | null]>([

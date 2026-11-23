@@ -392,33 +392,38 @@ export function startOp(overrides: Partial<StartCommandDeps> = {}): Op {
       const cacheProviderError = cacheProviderSettingError(settings);
       if (cacheProviderError) note(chalk.yellow(`Warning: ${cacheProviderError} No cache provider is used.`));
       const { value: result, interrupted } = await runProcessOperation(root, (context) =>
-        withDrainingCancellation(context, context.signal, async () => {
-          try {
-            return await startDevServer(
-              {
-                root,
-                settings,
-                settingsContext,
-                waitSeconds,
-                remote: Boolean(opts.remote),
-                resetCache: Boolean(opts.resetCache),
-                out,
-                note,
-              },
-              d,
-            );
-          } catch (error) {
-            if (!(error instanceof Error) || !('code' in error) || error.code !== 'STIM_CANCELLED') throw error;
-            return {
-              ok: false as const,
-              error: startError({
-                code: 'STIM_CANCELLED',
-                message: error.message,
-              }),
-              lines: [],
-            };
-          }
-        }),
+        withDrainingCancellation(
+          context,
+          context.signal,
+          async () => {
+            try {
+              return await startDevServer(
+                {
+                  root,
+                  settings,
+                  settingsContext,
+                  waitSeconds,
+                  remote: Boolean(opts.remote),
+                  resetCache: Boolean(opts.resetCache),
+                  out,
+                  note,
+                },
+                d,
+              );
+            } catch (error) {
+              if (!(error instanceof Error) || !('code' in error) || error.code !== 'STIM_CANCELLED') throw error;
+              return {
+                ok: false as const,
+                error: startError({
+                  code: 'STIM_CANCELLED',
+                  message: error.message,
+                }),
+                lines: [],
+              };
+            }
+          },
+          { drainTermination: true },
+        ),
       );
       if (!result.ok)
         return fail({
@@ -1120,7 +1125,21 @@ export async function startDevServer(
         (error: unknown) => ({ error }),
       );
       metro.request?.cancel.abort();
-      if ('error' in outcome) throw outcome.error;
+      if ('error' in outcome) {
+        if (
+          metro.request &&
+          outcome.error instanceof Error &&
+          'code' in outcome.error &&
+          outcome.error.code === 'STIM_CANCELLED' &&
+          (await isMetroRunning(port, AbortSignal.timeout(500)))
+        )
+          return fail({
+            code: 'STIM_CANCELLED',
+            message: `The Metro startup was cancelled. The dev server on port ${port} is running and was left running.`,
+            remedy: 'Run `stim stop` to stop the dev server.',
+          });
+        throw outcome.error;
+      }
       const lost = lostAdmission(ambientContext());
       if (lost) return fail(lost);
       return outcome.facts;
@@ -1184,6 +1203,8 @@ export async function startDevServer(
         signal: operationSignal,
       });
     } catch (err) {
+      if (err instanceof WorkspaceProcessCleanupError || err instanceof StartRefusal) throw err;
+      throwIfCancelled(operationSignal, 'Metro startup');
       const lockError = workspaceProcessLockError(err);
       if (lockError === 'refused') {
         return fail({

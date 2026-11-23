@@ -750,22 +750,22 @@ Inspect what remains with previewGarbage() before retrying a mutation.
 `,
     },
     STIM_CANCELLED: {
-      summary: 'an ios, android or macos run was interrupted by `stim stop` or Ctrl-C before it finished',
-      body: () => `STIM_CANCELLED  (ios, android, macos; exit 130)
+      summary: 'start, ios, android or macos was interrupted',
+      body: () => `STIM_CANCELLED  (start, ios, android, macos; exit 130 or 143 on SIGTERM)
   "The ios run was cancelled by \`stim stop\` (pid <n>) before it finished."
-  The run was interrupted: by \`stim stop\`, which cancels a build it leaves
-  with nothing to deploy to, or by Ctrl-C. It forwarded the interrupt
-  to the build tool it was running (xcodebuild, Gradle, pod install, expo
-  prebuild) and failed through its own cleanup; the next line names the step it
-  stopped at. An interrupted build stores no artifact, so the next run looks
-  up the cache as usual. Stopped between build tools, a run that \`stop\`
-  cancelled starts no further build tool and stops before it installs. A
+  \`stim stop\` cancels a build with nothing left to deploy to. Ctrl-C also
+  interrupts native runs. The interrupt reaches the active build tool
+  (xcodebuild, Gradle, pod install, expo prebuild); cleanup runs and the next
+  line names the stopped step. Interrupted builds store no artifact; the next
+  run checks the cache as usual. Between build tools, a cancelled run starts
+  no further tool and stops before installing. A
   Ctrl-C while the run delivers the app to a hosting Mac, or waits for the app
   to load its bundle or report readiness, ends that work and reports
-  STIM_CANCELLED. A second Ctrl-C exits at once, and so does a Ctrl-C with no
+  STIM_CANCELLED. For native runs, a second Ctrl-C exits at once, as does Ctrl-C with no
   build tool, hosted app delivery or launch readiness wait to stop;
   those exits print no payload. Run the same command again when you want the
-  app on a device.`,
+  app on a device. A cancelled \`start\` also reports any dev server left
+  running; run \`stim stop\` to stop it.`,
     },
     STIM_LOCK_TIMEOUT: {
       summary: 'a lock held past the wait; workspace-process and short directory locks',
