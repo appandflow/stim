@@ -1,5 +1,15 @@
 import { SLOW, temps, write, expoApp, baseEnv, key, refusal } from './fingerprint-evaluate-harness.ts';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { describe, expect, test, vi } from 'vitest';
@@ -699,6 +709,38 @@ describe('fingerprint evaluators on a bare React Native app', () => {
     );
     return root;
   }
+
+  test('npm registry packages keep a portable fingerprint through a shared node_modules symlink', SLOW, async () => {
+    const root = colorApp({ 'node_modules/color': '1.0.0', 'node_modules/owner/node_modules/color': '2.0.0' }, true);
+    const packages = Object.fromEntries(
+      [
+        'node_modules/@react-native-community/cli',
+        'node_modules/@react-native-community/cli/node_modules/@react-native-community/cli-config',
+        'node_modules/owner',
+        'node_modules/color',
+        'node_modules/owner/node_modules/color',
+      ].map((path) => {
+        const { name, version } = JSON.parse(readFileSync(join(root, path, 'package.json'), 'utf8'));
+        return [
+          path,
+          { version, resolved: `https://registry.npmjs.org/${name}/-/${version}.tgz`, integrity: `sha512-${name}` },
+        ];
+      }),
+    );
+    write(join(root, 'package-lock.json'), JSON.stringify({ lockfileVersion: 3, packages }));
+    const clean = realpathSync(mkdtempSync(join(tmpdir(), 'stim-fp-bare-')));
+    temps.push(clean);
+    for (const path of ['package.json', 'package-lock.json', 'ios'])
+      cpSync(join(root, path), join(clean, path), { recursive: true });
+    symlinkSync(join(root, 'node_modules'), join(clean, 'node_modules'), 'junction');
+    const compute = (directory: string) =>
+      fingerprint(directory, { platform: 'ios' }, { env: baseEnv(), embedMode: 'development', index: 'skip' });
+    const checkout = await compute(root);
+    const shared = await compute(clean);
+    if (isUncertain(checkout) || isUncertain(shared)) throw new Error('The npm fixture did not produce a fingerprint.');
+    expect(checkout.portable).toBe(true);
+    expect(shared).toMatchObject({ portable: true, hash: checkout.hash });
+  });
 
   test('two loaded versions of one content package are two inputs, each in the key', SLOW, async () => {
     const root = colorApp({ 'node_modules/color': '1.0.0', 'node_modules/owner/node_modules/color': '2.0.0' }, true);
