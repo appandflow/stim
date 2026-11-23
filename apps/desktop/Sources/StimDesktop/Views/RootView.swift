@@ -15,6 +15,7 @@ enum SidebarItem: Hashable {
   case machine
   case builds
   case pairedWorkspace(WorkspaceKey)
+  case pairedProject(ServerOwner, Project)
 
   var logName: String {
     switch self {
@@ -30,12 +31,15 @@ enum SidebarItem: Hashable {
     case .builds: "builds"
     case .pairedWorkspace(let key):
       if case .paired(let id) = key.owner { "paired workspace on \(id)" } else { "workspace \(key.path)" }
+    case .pairedProject(let owner, let project):
+      if case .paired(let id) = owner { "paired project \(project.root) on \(id)" } else { "project \(project.root)" }
     }
   }
 }
 
 struct RootView: View {
   @ObservedObject private var store: StatusStore
+  @ObservedObject private var sessions = PairedServerSessions.shared
   private let metrics: MetricsStore
   private let gc: GcReportStore
   @ObservedObject private var tips: TipCoordinator
@@ -503,7 +507,7 @@ struct RootView: View {
       restoredProject = true
       if case .project = item {} else { showingAllWorktrees = nil }
       switch item {
-      case .overview, .wall, .discover:
+      case .overview, .wall, .discover, .pairedProject:
         projectFilter = nil
         openRequests.selectedWorkspace = nil
       case .project(let project):
@@ -894,6 +898,9 @@ struct RootView: View {
     case .pairedWorkspace(let key):
       guard case .paired(let id) = key.owner, store.paired[id]?.payload != nil else { return true }
       return store.workspace(key) != nil
+    case .pairedProject(let owner, let project):
+      guard case .paired(let id) = owner, let payload = store.paired[id]?.payload else { return true }
+      return payload.environments.contains { ($0.project ?? Project(fallbackFor: $0.path)) == project }
     default: return true
     }
   }
@@ -1138,6 +1145,15 @@ struct RootView: View {
         store: store, key: key, environment: environment, statsReader: statsReader, inspector: inspector,
         inspectorWidth: $inspectorWidth,
         focusedID: $focusedDeviceID)
+    case .pairedProject(let owner, let project):
+      PairedProjectPage(
+        store: store, metrics: metrics,
+        machine: store.pairedMachines(sessions.entries).first { $0.owner == owner }, project: project,
+        selection: attributed(.click("paired project page")), openLogs: openErrors,
+        openDevice: { key, deviceID in
+          focusedDeviceID = deviceID
+          navigate(.pairedWorkspace(key), .click("paired project page"))
+        })
     case .discover:
       DiscoverView(
         replayUnavailableReason: discoverReplayUnavailableReason,

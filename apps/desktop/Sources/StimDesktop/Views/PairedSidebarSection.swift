@@ -35,7 +35,8 @@ struct PairedSidebarSection: View {
             DisclosureGroup(isExpanded: isExpanded(tree)) {
               rows(tree.entries, subtitle: nil)
             } label: {
-              PairedProjectRow(summary: tree.summary)
+              PairedProjectRow(summary: tree.summary, selected: selection == .pairedProject(owner, tree.summary.project))
+                .sidebarTag(.pairedProject(owner, tree.summary.project), selection: selection)
             }
           }
         case .none:
@@ -146,11 +147,12 @@ private struct PairedServerHeader: View {
 
 private struct PairedProjectRow: View {
   var summary: ProjectSummary
+  var selected: Bool
 
   var body: some View {
     HStack(spacing: Space.md) {
       Image(systemName: "folder")
-        .foregroundStyle(summary.hasActive ? Palette.primary : Palette.tertiary)
+        .foregroundStyle(selected || summary.hasActive ? Palette.primary : Palette.tertiary)
         .accessibilityHidden(true)
       Text(verbatim: summary.project.name).lineLimit(1).truncationMode(.middle)
       Spacer()

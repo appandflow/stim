@@ -8,6 +8,7 @@
     var now: Date
     @StateObject private var state = PairedViewState()
     @State private var local: StatusStore?
+    @State private var metrics: MetricsStore?
     @State private var selection: SidebarItem? = .pairedWorkspace(
       WorkspaceKey(
         owner: .paired(Self.pairing.id),
@@ -84,6 +85,10 @@
         environment(
           "/home/bot/work/savemyschoolwork-app/.worktrees/issue-1234-fix-dark-mode-appearances",
           branch: "fix/1234-dark-mode-appearances", building: true, changed: 2, hostedOn: "mini-2:7443"),
+        environment(
+          "/home/bot/work/savemyschoolwork-app/.worktrees/issue-1301-onboarding-copy",
+          branch: "fix/1301-onboarding-copy", session: "Onboarding copy", pull: 1302),
+        environment("/home/bot/work/savemyschoolwork-app/.worktrees/issue-1188-old-spike", branch: "spike/1188"),
       ])
     }
 
@@ -117,15 +122,32 @@
     var body: some View {
       HStack(alignment: .top, spacing: 0) {
         if let local {
-          ForEach([SidebarWidthGuard.minimum, SidebarWidthGuard.ideal, 360], id: \.self) { width in
-            sidebar(local, width: width)
+          if case .pairedProject(_, let project) = selection, let metrics, let pairedPayload {
+            sidebar(local, width: SidebarWidthGuard.ideal)
             Divider()
+            PairedProjectPage(
+              store: local, metrics: metrics,
+              machine: PairedMachine(
+                id: Self.pairing.id, name: "floco", canControl: true, isAvailable: true,
+                workspaces: pairedPayload.environments),
+              project: project, selection: $selection, openLogs: { _ in }, openDevice: { _, _ in }
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+          } else {
+            ForEach([SidebarWidthGuard.minimum, SidebarWidthGuard.ideal, 360], id: \.self) { width in
+              sidebar(local, width: width)
+              Divider()
+            }
           }
         }
       }
       .onAppear {
         guard local == nil, let payload = localPayload else { return }
-        local = StatusStore(fixture: payload)
+        let status = StatusStore(fixture: payload)
+        let report = try! JSONDecoder().decode(GcReport.self, from: Data(#"{"sections":{}}"#.utf8))
+        let gc = GcReportStore(fixture: report)
+        local = status
+        metrics = MetricsStore(status: status, gc: gc, disks: DiskVolumeStore(status: status))
       }
     }
   }

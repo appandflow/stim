@@ -98,6 +98,23 @@ struct PairedMachinesTests {
     #expect(cards.map(\.owner.isLocal) == [true, false, false])
   }
 
+  @Test func filtersPairedCardsByReportedProjectOrFallbackProject() throws {
+    let project = Project(root: "/w/app")
+    var reported = try workspace("/elsewhere/checkout")
+    reported.project = project
+    var other = try workspace("/w/app/.worktrees/other-project")
+    other.project = Project(root: "/w/other")
+    let floco = machine(
+      "floco", seed: 1,
+      workspaces: [
+        try workspace("/w/app", live: false), try workspace("/w/other"),
+        try workspace("/w/app/.worktrees/fix"), reported, other,
+      ])
+    let cards = WallCard.cards(machine: floco, project: project)
+    #expect(cards.map(\.apps[0].workspace.path) == ["/w/app/.worktrees/fix", "/elsewhere/checkout", "/w/app"])
+    #expect(cards.allSatisfy { $0.owner == floco.owner && $0.machine?.name == "floco" })
+  }
+
   @Test func showsOnlyThisMacsCardsInTheThisMacScope() throws {
     let local = WallCard.cards(environments: [try workspace("/w/a")])
     let floco = machine("floco", seed: 1, workspaces: [try workspace("/w/b")])

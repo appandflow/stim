@@ -22,6 +22,7 @@ struct NavigationDestination: Equatable {
     case .machine: "machine"
     case .builds: "builds"
     case .pairedWorkspace: "paired-workspace"
+    case .pairedProject: "paired-project"
     case nil: "none"
     }
   }
