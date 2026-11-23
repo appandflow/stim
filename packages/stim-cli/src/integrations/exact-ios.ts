@@ -57,6 +57,8 @@ const EXACT_CLI = 'exact.mjs';
 const CACHE_INELIGIBLE = 'Exact builds incrementally in its own target/ directory';
 const BUILT_APP = /^host\/apple: (\/.+?\.app)(?: on | \(|$)/;
 const ERROR_LINE = /^error(?:\[\w+\])?: /;
+const MISSING_HERMES = /^the pinned Hermes bundle for \S+ is not installed:/;
+const HERMES_INSTALL = /^\s+cargo run --manifest-path .*\/hermes-lean-sys-installer\/Cargo\.toml /;
 // exact2's host/apple builds the simulator's Rust code under target/<triple>/<profile>: host-dev, or release with --release.
 // CARGO_TARGET_DIR moves it, so such a run does not say; an enclosing Cargo workspace or a size-optimized Release reads as a first build.
 const SIMULATOR_RUST_TARGET = process.arch === 'arm64' ? 'aarch64-apple-ios-sim' : 'x86_64-apple-ios';
@@ -115,7 +117,14 @@ export async function runExactIosBuild({
     const bundleId = await readBundleId(appPath);
     if (bundleId) return { ...common, ok: true, appPath, bundleId };
   }
-  const errorLines = run.transcript.filter((line) => ERROR_LINE.test(line));
+  const errorLines = run.transcript
+    .filter(
+      (line, index, lines) =>
+        ERROR_LINE.test(line) ||
+        MISSING_HERMES.test(line) ||
+        (HERMES_INSTALL.test(line) && MISSING_HERMES.test(lines[index - 1] ?? '')),
+    )
+    .map((line) => line.trimStart());
   const lastLine = run.transcript.at(-1);
   const errors = [
     ...(run.error ? [`could not run ./${EXACT_CLI}: ${String(run.error)}`] : []),
