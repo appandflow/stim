@@ -122,11 +122,9 @@
     var body: some View {
       HStack(alignment: .top, spacing: 0) {
         if let local {
-          ForEach([SidebarWidthGuard.minimum, SidebarWidthGuard.ideal, 360], id: \.self) { width in
-            sidebar(local, width: width)
-            Divider()
-          }
           if case .pairedProject(_, let project) = selection, let metrics, let pairedPayload {
+            sidebar(local, width: SidebarWidthGuard.ideal)
+            Divider()
             PairedProjectPage(
               store: local, metrics: metrics,
               machine: PairedMachine(
@@ -134,7 +132,12 @@
                 workspaces: pairedPayload.environments),
               project: project, selection: $selection, openLogs: { _ in }, openDevice: { _, _ in }
             )
-            .frame(width: 720)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+          } else {
+            ForEach([SidebarWidthGuard.minimum, SidebarWidthGuard.ideal, 360], id: \.self) { width in
+              sidebar(local, width: width)
+              Divider()
+            }
           }
         }
       }
