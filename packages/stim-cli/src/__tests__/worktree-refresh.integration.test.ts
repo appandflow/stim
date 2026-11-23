@@ -139,7 +139,7 @@ test('the refresh decisions read off the state without touching git', () => {
   expect(mainCheckoutRefusal('/w/main', { ...clean, dirtyTracked: ['src/a.ts'] })).toMatchObject({
     code: 'STIM_MAIN_DIRTY',
     lines: ['src/a.ts'],
-    remedy: expect.stringContaining('git -C /w/main stash push -u'),
+    remedy: expect.stringContaining('stim worktree warm'),
   });
   expect(mainCheckoutRefusal('/w/main', { ...clean, dirtyKnown: false })).toMatchObject({
     code: 'STIM_MAIN_DIRTY',

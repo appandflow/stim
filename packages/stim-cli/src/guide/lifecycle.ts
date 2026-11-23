@@ -2946,6 +2946,7 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   rebase or merge in progress (STIM_MAIN_DIRTY), a detached HEAD
   (STIM_MAIN_DETACHED), or a branch that is both ahead and behind
   (STIM_MAIN_DIVERGED) -- and each refusal names the git line that clears it.
+  Dirty main: commit there or run plain warm.
   Untracked files are not a reason to refuse. A branch with no upstream is
   left where it is. A fetch that fails is a fact, not a refusal: the run
   continues on the local state. It never switches branches, never merges, and
