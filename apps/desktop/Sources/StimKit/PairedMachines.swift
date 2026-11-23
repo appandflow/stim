@@ -56,6 +56,14 @@ extension WallCard {
     }
   }
 
+  public static func cards(machine: PairedMachine, project: Project) -> [WallCard] {
+    guard machine.isAvailable else { return [] }
+    return cards(machine: machine).filter {
+      let workspace = $0.apps[0].workspace
+      return (workspace.project ?? Project(fallbackFor: workspace.path)) == project
+    }
+  }
+
   /// This Mac's `local` cards, then each available machine's when `scope` is `all`.
   public static func merged(local: [WallCard], machines: [PairedMachine], scope: MachineScope) -> [WallCard] {
     scope == .thisMac ? local : local + machines.filter(\.isAvailable).flatMap { cards(machine: $0) }

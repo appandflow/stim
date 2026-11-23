@@ -36,6 +36,7 @@ struct PairedSidebarSection: View {
               rows(tree.entries, subtitle: nil)
             } label: {
               PairedProjectRow(summary: tree.summary)
+                .sidebarTag(.pairedProject(owner, tree.summary.project), selection: selection)
             }
           }
         case .none:
