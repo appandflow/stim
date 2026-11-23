@@ -2,7 +2,7 @@ import type { StimContext } from '@stim-cli/core';
 import { runProcessOperation } from '../cli-operation.ts';
 import { operationState } from '../engine/operation-state.ts';
 import { existsSync, realpathSync, rmSync } from 'fs';
-import { realpath } from 'node:fs/promises';
+import { lstat, readFile, realpath } from 'node:fs/promises';
 import { answered } from '../workspace/bounded-read.ts';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'path';
 import { brokenPodLinks, inspectPodsFlavor } from '../diagnostics/doctor-pods-flavor.ts';
@@ -66,9 +66,11 @@ import { readRemoteSession } from '../stimd/metro/state.ts';
 import { workspaceManagedTunnel } from '../daemon/client.ts';
 import {
   branchExistsAsync,
+  branchStatusAsync,
   depsOutOfSync,
   deleteBranchAsync,
   cloneIgnoredEntries,
+  listGitignoredEntries,
   dirtyPathsAsync,
   gitCommonDirAsync,
   hasRemoteAsync,
@@ -756,6 +758,10 @@ export function nestedWorktrees(entries: readonly WorktreeEntry[], path: string)
     .map((candidate) => candidate.path);
 }
 
+function quoteWorktree(path: string): string {
+  return /^[\w@%+=:,./-]+$/.test(path) || path === '<worktree>' ? path : `'${path.replaceAll("'", `'\\''`)}'`;
+}
+
 export function removalRemedy(
   dirtyLines: string[] | null | undefined,
   { worktree = '<worktree>' }: { worktree?: string } = {},
@@ -764,17 +770,19 @@ export function removalRemedy(
   const untracked: string[] = [];
   for (const line of dirtyLines || []) {
     if (porcelainPath(line) === null) continue;
-    (String(line).startsWith('??') ? untracked : tracked).push(line);
+    if (line.startsWith('??')) untracked.push(line);
+    else if (line[0] === ' ' && 'MDT'.includes(line[1] ?? '')) tracked.push(line);
   }
 
   const lines: string[] = [];
+  const dir = quoteWorktree(worktree);
   if (tracked.length) {
     lines.push('Tracked files were modified -- if a build or a setup script did it, restore them and retry:');
-    lines.push(`  git -C ${worktree} checkout -- ${pathArgs(tracked)}`);
+    lines.push(`  git -C ${dir} checkout -- ${pathArgs(tracked)}`);
   }
   if (untracked.length) {
-    lines.push('Untracked files are also present -- `git checkout` cannot clear those. Delete them and retry:');
-    lines.push(`  git -C ${worktree} clean -fd ${pathArgs(untracked)}        # or rm them yourself`);
+    lines.push('If a build or a setup script left these untracked files, delete them and retry:');
+    lines.push(`  git -C ${dir} clean -fd ${pathArgs(untracked)}        # or rm them yourself`);
   }
   return lines;
 }
@@ -1315,13 +1323,59 @@ async function printRemovalRefusal(
     );
   }
   for (const line of dirtyLines.slice(0, 10)) output.error(chalk.dim(`      ${line}`));
-  if (dirtyLines.length) output.error(chalk.dim(`  (git -C ${path} status -s for the full list)`));
+  if (dirtyLines.length) output.error(chalk.dim(`  (git -C ${quoteWorktree(path)} status -s for the full list)`));
+  output.error(chalk.dim('First: commit or push the branch (only commits found nowhere else are counted,'));
+  output.error(chalk.dim("so pushing publishes nothing but this worktree's own work)."));
+  const status = await branchStatusAsync(path, { env: operation?.env, signal: operation?.signal });
+  if (unpushed?.length && status?.branch === null && status.head) {
+    output.error(chalk.dim(`HEAD is detached at ${status.head}. Keep its commits before removal:`));
+    output.error(chalk.dim(`  git -C ${quoteWorktree(path)} branch <name> ${status.head}`));
+  }
   for (const line of removalRemedy(dirtyLines, { worktree: path })) output.error(chalk.dim(line));
-  output.error(chalk.dim('Otherwise: commit or push the branch (only commits found nowhere else are counted,'));
-  output.error(chalk.dim("so pushing publishes nothing but this worktree's own work). --force is a last"));
-  output.error(chalk.dim('resort -- it discards uncommitted changes and untracked files permanently; committed'));
-  output.error(chalk.dim('work stays on the branch.'));
+  output.error(
+    chalk.dim('--force is a last resort -- it discards uncommitted changes and untracked files permanently.'),
+  );
+  if (status?.branch) output.error(chalk.dim('Committed work stays on the branch.'));
   output.fail();
+}
+
+function reportIgnoredFiles(ignored: string[], output: RemovalOutput): void {
+  if (!ignored.length) return;
+  output.error(
+    chalk.dim(
+      `ignored files here differ from the source checkout and are gone with the worktree: ${ignored.slice(0, 5).join(', ')}${ignored.length > 5 ? ` (+${ignored.length - 5} more)` : ''}`,
+    ),
+  );
+}
+
+async function differingIgnoredFiles(path: string, main: string, operation?: StimContext): Promise<string[]> {
+  const listed = await listGitignoredEntries(path, {
+    env: operation?.env,
+    signal: operation?.signal,
+    declareFor: operation,
+    timeoutMs: 30_000,
+  }).catch(() => {
+    operation?.signal.throwIfAborted();
+    return [];
+  });
+  const different: string[] = [];
+  for (const rel of listed.slice(0, 200)) {
+    try {
+      const mine = await lstat(join(path, rel));
+      if (!mine.isFile() || mine.size > 64 * 1024) continue;
+      const theirs = await lstat(join(main, rel)).catch(() => null);
+      if (
+        !theirs ||
+        !theirs.isFile() ||
+        mine.size !== theirs.size ||
+        !(await readFile(join(path, rel))).equals(await readFile(join(main, rel)))
+      )
+        different.push(rel);
+    } catch {
+      operation?.signal.throwIfAborted();
+    }
+  }
+  return different;
 }
 
 function deleteWatchmanCookies(path: string, cookies: string[]): void {
@@ -1751,6 +1805,7 @@ async function removeOrRefuse(
           await restorePodChurn(path, current.podChurn, output, opts.operation);
           options.signal?.throwIfAborted();
           deleteWatchmanCookies(path, current.cookies);
+          const ignored = await differingIgnoredFiles(path, source.path, opts.operation);
           const trash = await moveIgnoredTreesToTrash(path, {
             env: options.env,
             signal: options.signal,
@@ -1818,6 +1873,7 @@ async function removeOrRefuse(
             output.fail();
             return;
           }
+          reportIgnoredFiles(ignored, output);
           // @ref LLP 0001#the-lane-marks-what-each-checkout-could-free -- an in-flight writer may republish this rebuildable record
           for (const root of obsoleteMarks) {
             try {

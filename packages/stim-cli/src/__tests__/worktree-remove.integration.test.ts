@@ -2064,3 +2064,78 @@ test.each(PARKING_PRESSURE)(
     expect(exec.calls.run.some((c) => /xcrun simctl delete U9/.test(c))).toBe(true);
   },
 );
+
+test('staged paths get no ineffective checkout remedy', () => {
+  const remedy = removalRemedy(['M  staged', 'MM both', ' M unstaged', '?? new']).join('\n');
+  expect(remedy).toContain('checkout -- unstaged');
+  expect(remedy).not.toContain('staged ');
+  expect(remedy).not.toContain('both');
+  expect(remedy).toContain('If a build or a setup script left these untracked files');
+});
+
+test('intent-to-add paths get no checkout remedy and spaced worktree paths are quoted', () => {
+  const remedy = removalRemedy([' A intent', ' M edited', '?? new'], { worktree: '/tmp/my wt' }).join('\n');
+  expect(remedy).not.toContain('intent');
+  expect(remedy).toContain("git -C '/tmp/my wt' checkout -- edited");
+  expect(remedy).toContain("git -C '/tmp/my wt' clean -fd new");
+});
+
+test('real git: detached unique commits have a recovery branch command before discard advice', async () => {
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim test detached remedy ')));
+  const errs: string[] = [];
+  try {
+    const { wt, git } = realRepoWithWorktree(base);
+    git('git checkout --detach -q', wt);
+    writeFileSync(join(wt, 'own.txt'), 'work');
+    git('git add own.txt', wt);
+    git('git commit -q -m own', wt);
+    const sha = git('git rev-parse HEAD', wt).trim();
+    writeFileSync(join(wt, 'package.json'), 'changed');
+    realGitFakeSimctl(simctlJson([]));
+    await removeWorktreeTarget(wt, { output: { error: (line) => errs.push(line), fail: () => {} } });
+    const text = errs.join('\n');
+    expect(text).toContain(`git -C '${wt}' branch <name> ${sha}`);
+    expect(text).not.toContain('work stays on the branch');
+    expect(text.indexOf('commit or push')).toBeLessThan(text.indexOf('checkout --'));
+    expect(text.indexOf('checkout --')).toBeLessThan(text.indexOf('--force is a last resort'));
+    expect(existsSync(wt)).toBe(true);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test.each([false, true])('real git: successful removal reports differing ignored files (force=%s)', async (force) => {
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-ignored-notice-')));
+  const errs: string[] = [];
+  try {
+    const { repo, wt } = realRepoWithWorktree(base);
+    writeFileSync(join(repo, '.git', 'info', 'exclude'), '.env*\nnode_modules/\n');
+    writeFileSync(join(repo, '.env.local'), 'source');
+    writeFileSync(join(wt, '.env.local'), 'edited');
+    writeFileSync(join(wt, '.env.development.local'), 'new');
+    writeFileSync(join(repo, '.env.same'), 'same');
+    writeFileSync(join(wt, '.env.same'), 'same');
+    mkdirSync(join(wt, 'node_modules'));
+    writeFileSync(join(wt, 'node_modules', 'ignored'), 'output');
+    if (force) writeFileSync(join(wt, 'dirty.txt'), 'untracked');
+    realGitFakeSimctl(simctlJson([]));
+    await removeWorktreeTarget(wt, {
+      force,
+      output: {
+        error: (line) => errs.push(line),
+        fail: () => {
+          throw new Error('removal failed');
+        },
+      },
+    });
+    expect(existsSync(wt)).toBe(false);
+    const notice = errs.filter((line) => line.includes('ignored files here differ'));
+    expect(notice).toHaveLength(1);
+    expect(notice[0]).toContain('.env.local');
+    expect(notice[0]).toContain('.env.development.local');
+    expect(notice[0]).not.toContain('.env.same');
+    expect(notice[0]).not.toContain('node_modules');
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});

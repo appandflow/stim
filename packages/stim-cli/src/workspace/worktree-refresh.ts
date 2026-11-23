@@ -63,7 +63,7 @@ export function mainCheckoutRefusal(root: string, state: MainCheckoutState): Ref
       code: 'STIM_MAIN_DIRTY',
       message: `Refusing to refresh ${root}: it has uncommitted changes to tracked files.`,
       lines: state.dirtyTracked.slice(0, DIRTY_PATHS_SHOWN),
-      remedy: `Commit them, or run \`git -C ${root} stash push -u -m warm-refresh\`, then run warm again.`,
+      remedy: `Commit the changes in the main checkout, then retry; or run plain \`stim worktree warm\`.`,
     };
   }
   if (state.branch === null) {
