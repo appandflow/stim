@@ -203,10 +203,8 @@ React Native and SwiftPM artifacts when their builds report the same
 `stim` package because `@stim-cli/core` is a ranged dependency). Bump it when a machine with the same value but
 the other version of a file listed in `scripts/build-compat.json` would
 build a different artifact or read a build or artifact message
-differently across Stim versions; messages interpreted only by the exact client
-job build do not cross that boundary. A fix that makes a failing worker build
-succeed, or a field negotiated by a `hello` feature, needs no bump.
-`pnpm run lint` fails until
+differently; a fix that makes a failing worker build succeed, or a field
+negotiated by a `hello` feature, needs no bump. `pnpm run lint` fails until
 `node scripts/build-compat.mjs --update` records the change, and the
 reviewer checks that record against this rule. The compatibility version
 never enters the local cache key.
