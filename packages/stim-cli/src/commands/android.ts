@@ -120,7 +120,7 @@ import {
 } from '../devices/android.ts';
 import type { teardownOwnedAvd } from '../devices/teardown.ts';
 import { DeviceAdmissionRefusal, checkDeviceCapacity } from '../engine/device-capacity.ts';
-import { diskFloorGate } from '../daemon/floor.ts';
+import { diskFloorGate, recordDiskFloorRefusal } from '../daemon/floor.ts';
 import {
   didSetUpDevice,
   ensureBooted,
@@ -933,6 +933,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       );
     }
     writer.close();
+    if (!context.signal.aborted) recordDiskFloorRefusal(PLATFORM, code);
     return {
       ok: false,
       error: { code, message, remedy: remedy ?? null, ...(retainedClaimRoots ? { retainedClaimRoots } : {}) },

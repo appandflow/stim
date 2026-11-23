@@ -367,6 +367,11 @@ export function legacyDaemonSocket(): string {
 }
 // compat end
 
+/** The machine-local log of final disk-floor refusals. */
+export function lowDiskRefusalLogFile(): string {
+  return join(configDir(), 'logs', 'low-disk.ndjson');
+}
+
 /** The daemon's own log, rotated like workspace logs. */
 export function daemonNdjsonFile(): string {
   return join(daemonDir(), 'daemon.ndjson');

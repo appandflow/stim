@@ -80,7 +80,7 @@ import {
 } from '../workspace/settings.ts';
 import { withManagedRemoteWorktreeLock, withManagedTunnelLock, type TunnelRecord } from '../engine/tunnel.ts';
 import type { ReclaimObserver } from '../stimd/passes/budget.ts';
-import { diskFloorGate } from '../daemon/floor.ts';
+import { diskFloorGate, recordDiskFloorRefusal } from '../daemon/floor.ts';
 import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
 import { groupExitBudgetMs } from '../process-group-exit.ts';
 import { ambientContext, ambientEnv } from '@stim-cli/core';
@@ -336,6 +336,7 @@ export function startOp(overrides: Partial<StartCommandDeps> = {}): Op {
         if (json) {
           console.log(JSON.stringify(startError({ code, message, remedy })));
         }
+        if (exitCode === 1) recordDiskFloorRefusal('start', code);
         exitCli(exitCode);
       };
 

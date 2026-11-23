@@ -5,6 +5,7 @@ import { writeDevicePlacementAsync, hostedMetroSettings } from '../workspace/pla
 import type { DevicePlacement } from '@stim-cli/core/state';
 import { type StimContext, workspaceId } from '@stim-cli/core';
 import { exitCli, runProcessOperation } from '../cli-operation.ts';
+import { recordDiskFloorRefusal } from '../daemon/floor.ts';
 import {
   acquireIosArtifact,
   acquireIosArtifactOrRecorded,
@@ -646,6 +647,7 @@ async function runIos(
       );
     }
     writer?.close?.();
+    if (!context.signal.aborted) recordDiskFloorRefusal(PLATFORM, code);
     onFailure({
       code,
       message,

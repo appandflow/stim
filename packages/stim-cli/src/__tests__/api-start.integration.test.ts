@@ -557,7 +557,14 @@ test('normal-home startup enforces the configured disk floor before spawning', a
   });
   const pending = createStim({
     projectRoot: root,
-    env: { ...process.env, HOME: userHome, USERPROFILE: userHome, STIM_HOME: undefined, STIM_DAEMON: 'off' },
+    env: {
+      ...process.env,
+      HOME: userHome,
+      USERPROFILE: userHome,
+      STIM_HOME: undefined,
+      STIM_DAEMON: 'off',
+      STIM_DEBUG: '0',
+    },
   })
     .start()
     .catch((error: unknown) => error);
@@ -570,4 +577,18 @@ test('normal-home startup enforces the configured disk floor before spawning', a
     expect(await pending).toMatchObject({ code: 'STIM_LOW_DISK' });
   }
   expect(spawn).not.toHaveBeenCalled();
+  expect(
+    readFileSync(join(home, 'logs', 'low-disk.ndjson'), 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line)),
+  ).toEqual([
+    {
+      event: 'low_disk_refused',
+      command: 'start',
+      code: 'STIM_LOW_DISK',
+      ts: expect.any(Number),
+      runId: expect.any(String),
+    },
+  ]);
 });

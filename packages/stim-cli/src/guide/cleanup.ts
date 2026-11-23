@@ -1779,6 +1779,8 @@ THE ONE CASE GC WILL NOT REAP
   not run a native command in the
   last 15 minutes (WORKSPACE BUILD OUTPUTS below). Gradle retains its normal
   project build directories while sharing task outputs through its build cache.
+  Final STIM_LOW_DISK refusals record the command, code, run ID and timestamp
+  in STIM_HOME/logs/low-disk.ndjson (rotated to .1), even with debug logging off.
 
   Android AVDs normally live under ~/.android/avd, and a booted owned AVD can
   use several GB. \`worktree remove\` parks the workspace's owned AVD with its

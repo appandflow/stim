@@ -14,6 +14,7 @@ import { phaseLine } from '../command-output.ts';
 import { stopWorkspaceNow } from '../commands/stop.ts';
 import { runReload } from '../commands/reload.ts';
 import { startDevServer } from '../commands/start.ts';
+import { recordDiskFloorRefusal } from '../daemon/floor.ts';
 import {
   findCommandWorkspaceAsync,
   findProjectRoot as findStartRoot,
@@ -850,6 +851,7 @@ async function start(context: StimContext, options: StimStartOptions): Promise<S
     });
     if (!result.ok) {
       for (const line of result.lines) note(context)(line);
+      if (!context.signal.aborted) recordDiskFloorRefusal('start', result.error.code);
       throw new StimError({
         ...result.error,
         details: {
