@@ -352,7 +352,7 @@ test('cancelling temporary cleanup yields during removal and preserves the next 
   }
 });
 
-test('retires an idle hosted agent-device launch only when agent-device reports no daemon there', async () => {
+test('removes an idle hosted agent-device launch only when agent-device reports its daemon stopped, and never stops one', async () => {
   const bin = join(home, 'agent-device.mjs');
   writeFileSync(bin, '');
   process.env.STIM_AGENT_DEVICE_BIN = bin;
@@ -369,8 +369,9 @@ test('retires an idle hosted agent-device launch only when agent-device reports 
       if (!args.includes('daemon') || at < 0) return executor.runFileQuietAsync(file, args, options);
       const stateDir = args[at + 1] ?? '';
       asked.push(stateDir);
-      const mode = stateDir.includes('aaaaaaaaaaaaaaaa') ? 'graceful' : 'not-running';
-      return JSON.stringify({ success: true, data: { stopped: mode !== 'not-running', mode } });
+      if (!args.includes('status')) throw new Error(`gc ran agent-device ${args.join(' ')}`);
+      const state = stateDir.includes('aaaaaaaaaaaaaaaa') ? 'running' : 'stopped';
+      return JSON.stringify({ success: true, data: { state, stateDir } });
     },
   });
   try {

@@ -186,7 +186,7 @@ function stimKept(identity: string, scan: Walk, projects: readonly string[]): st
   return null;
 }
 
-// @ref LLP 0007#a-hosted-device-daemon-launch-shares-nothing-with-the-next -- gc retires a launch only when agent-device reports no daemon
+// @ref LLP 0007#a-hosted-device-daemon-launch-shares-nothing-with-the-next -- gc removes a launch only when agent-device reports its daemon stopped
 async function retireAgentDeviceLaunches(
   root: string,
   now: number,
@@ -212,14 +212,14 @@ async function retireAgentDeviceLaunches(
       if (!launch || 'error' in launch || !launch.isDirectory()) continue;
       const scan = await walk(dir, launch, signal);
       if (scan.unreadable || now - scan.newest < MIN_AGE_MS) continue;
-      if ((await agentDeviceDaemonMode(join(dir, 'state'), signal, operation)) !== 'not-running') continue;
+      if ((await agentDeviceDaemonState(join(dir, 'state'), signal, operation)) !== 'stopped') continue;
       await removeTemporaryEntryAsync(dir, signal);
     }
   }
 }
 
-/** What `agent-device daemon stop --json` did for `stateDir`; it stops a daemon only after checking its identity. */
-async function agentDeviceDaemonMode(
+/** The daemon state `agent-device daemon status --json` reads for `stateDir`, without contacting or stopping it. */
+async function agentDeviceDaemonState(
   stateDir: string,
   signal: AbortSignal | undefined,
   operation: StimContext | undefined,
@@ -234,14 +234,14 @@ async function agentDeviceDaemonMode(
     operation,
     getExecutor(),
     invocation.command,
-    [...invocation.args, 'daemon', 'stop', '--state-dir', stateDir, '--json'],
+    [...invocation.args, 'daemon', 'status', '--state-dir', stateDir, '--json'],
     { timeoutMs: 30_000, env: { AGENT_DEVICE_NO_UPDATE_NOTIFIER: '1' }, cwd: operation?.cwd, signal },
   );
   if (out === null) return null;
   try {
     const value: unknown = JSON.parse(out);
-    return isJsonObject(value) && isJsonObject(value.data) && typeof value.data.mode === 'string'
-      ? value.data.mode
+    return isJsonObject(value) && isJsonObject(value.data) && typeof value.data.state === 'string'
+      ? value.data.state
       : null;
   } catch {
     return null;
@@ -276,7 +276,7 @@ export async function collectTempLeftovers({
   env?: NodeJS.ProcessEnv;
   signal?: AbortSignal;
   operation?: StimContext;
-  /** First removes idle hosted agent-device launch directories whose daemon agent-device reports not running. */
+  /** First removes idle hosted agent-device launch directories whose daemon agent-device reports stopped. */
   retireLaunches?: boolean;
 } = {}): Promise<TempLeftoverReport | null> {
   if (deviceSweepIsScoped(env)) return null;
