@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { homedir, userInfo } from 'node:os';
-import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { projectNodeBin } from '@stim-cli/core/toolchain';
 import type { StimContext } from '@stim-cli/core';
@@ -730,7 +730,21 @@ async function evaluate(
     return owners.get(dir) ?? null;
   };
   let lockfile: Classifier | null = null;
-  const classify = () => (lockfile ??= lockfileClassifier(roots.install).classify);
+  const classify = () => {
+    if (!lockfile) {
+      const inner = lockfileClassifier(roots.install).classify;
+      const lexicalModules = join(roots.install, 'node_modules');
+      const realModules = realOr(lexicalModules);
+      lockfile = (dir, identity) =>
+        inner(
+          realModules !== lexicalModules && within(dir, realModules)
+            ? join(lexicalModules, relative(realModules, dir))
+            : dir,
+          identity,
+        );
+    }
+    return lockfile;
+  };
   const content = (dir: string): boolean => {
     const identity = packageIdentity(realOr(dir));
     return !identity || classify()(realOr(dir), identity).mode === 'content';
