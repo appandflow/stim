@@ -652,6 +652,8 @@ also holds the newest activity the walk read, and the walk reads at
   and wait for its cleanup before taking ownership. An unanswered root leaves
   one in-memory position so the next batch starts after it. Ordinary lane and explicit
   item work wait for the bounded root. Off mode and shutdown cancel the request.
+  When resolving a root returns ENOENT, the worker retries that root after
+  ten minutes. The delay lives in memory and grants no cleanup authority.
   Fresh same-config history evidence preserves a Cargo-only holder's previously
   authorized nested targets and provenance; stale or changed evidence is dropped.
 - The passes worker's existing history batch also observes mark freshness.

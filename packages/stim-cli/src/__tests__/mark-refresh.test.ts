@@ -1,4 +1,13 @@
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { lstat, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -7,6 +16,7 @@ import * as stages from '../daemon/stages.ts';
 import * as activity from '../workspace/discovered-activity.ts';
 import { acquireDisk, CRITICAL, requestMark } from '../daemon/disk-owner.ts';
 import * as discovery from '../workspace/discovery.ts';
+import * as paths from '../commands/gc/paths.ts';
 import { refreshKnownMarks, refreshKnownOutputMark } from '../daemon/mark-refresh.ts';
 import { hungRead, pendingRead } from '../workspace/bounded-read.ts';
 import { saveConfig } from '../workspace/config.ts';
@@ -262,6 +272,39 @@ test('later due roots refresh across successive batches when the first root repe
     }
   }
   expect(hungRead()).toBeNull();
+});
+
+test('an absent checkout is retried at the normal mark cadence and is marked when it returns', async () => {
+  const moved = join(base, 'moved');
+  const other = join(base, 'other');
+  renameSync(root, moved);
+  mkdirSync(other);
+  config.projects[other] = {};
+  saveConfig(config);
+  const realpath = vi.spyOn(paths, 'realpathAsync');
+  const log = vi.fn<NonNullable<stages.DeviceReading['log']>>();
+  const batch = () =>
+    refreshKnownMarks(
+      { config, known: [], holders: [], at: Date.now(), intervalMs: minute, devices: [], simsFailed: false },
+      testContext(),
+      log,
+    );
+
+  await batch();
+  expect(readGcMark(root)).toBeNull();
+  expect(readGcMark(other)?.markedAt).toBe(new Date().toISOString());
+  expect(log).toHaveBeenCalledWith('debug', 'gc_mark_refresh_failed', expect.stringContaining('ENOENT'), { root });
+
+  await vi.advanceTimersByTimeAsync(minute);
+  await batch();
+  expect(realpath.mock.calls.filter(([path]) => path === root)).toHaveLength(1);
+  expect(log).toHaveBeenCalledTimes(1);
+
+  renameSync(moved, root);
+  await vi.advanceTimersByTimeAsync(9 * minute);
+  await batch();
+  expect(readGcMark(root)?.candidates).toContainEqual(expect.objectContaining({ kind: 'cargo-target', path: output }));
+  expect(log).toHaveBeenCalledTimes(1);
 });
 
 test('a pending discovered .git probe releases the mark turn to critical pressure without publishing', async () => {
