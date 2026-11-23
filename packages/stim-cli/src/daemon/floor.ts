@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { platform } from 'node:os';
 import { join, sep } from 'node:path';
-import type { StimContext } from '@stim-cli/core';
+import { LOG_ROTATE_BYTES, type StimContext } from '@stim-cli/core';
 import chalk from 'chalk';
 import { readVolumeSpaceAsync, type BudgetRefusal, type ReclaimObserver } from '../stimd/passes/budget.ts';
 import { phaseLine } from '../command-output.ts';
@@ -12,7 +12,8 @@ import { getConfigDir, loadConfig } from '../workspace/config.ts';
 import { sharedBuildCache } from '../workspace/paths.ts';
 import { requestDaemonTick } from './client.ts';
 import { diskThresholds } from './pressure.ts';
-import { userHome } from '@stim-cli/core/state';
+import { lowDiskRefusalLogFile, userHome } from '@stim-cli/core/state';
+import { createNdjsonWriter } from '../ndjson.ts';
 
 const USAGE_TIMEOUT_MS = 10_000;
 
@@ -51,6 +52,15 @@ async function spaceUsers(
     sizes[index] ? [{ label: `${label} ${path}`, bytes: sizes[index] }] : [],
   );
   return users.toSorted((a, b) => b.bytes - a.bytes).map(({ label, bytes }) => `${label}: ${formatBytes(bytes)}`);
+}
+
+const LOW_DISK_CODE = 'STIM_LOW_DISK';
+
+export function recordDiskFloorRefusal(command: 'start' | 'ios' | 'android', code: string | undefined): void {
+  if (code !== LOW_DISK_CODE) return;
+  const log = createNdjsonWriter(lowDiskRefusalLogFile(), { maxBytes: LOG_ROTATE_BYTES });
+  log.write({ event: 'low_disk_refused', command, code });
+  log.close();
 }
 
 const LOW_DISK_REMEDY =
@@ -106,7 +116,7 @@ export async function diskFloorGate({
   const users = await spaceUsers(env, signal);
   return {
     refusal: {
-      code: 'STIM_LOW_DISK',
+      code: LOW_DISK_CODE,
       message:
         `Only ${tight()} is free, below the ${formatSpace(thresholds.hardFloorMb)} hard floor (disk.hardFloorGb) after the stim-daemon's pressure ladder reclaimed what it safely could, so this run could fill the disk.` +
         (users.length ? ` Largest uses: ${users.join('; ')}.` : ''),

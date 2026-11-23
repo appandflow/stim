@@ -4187,6 +4187,15 @@ describe('concurrency limits', () => {
     expect(exitCode).toBe(1);
     expect(gate.root).toBe(root);
     expect(parseFirst(logs)).toMatchObject({ code: 'STIM_LOW_DISK' });
+    expect(sharedState.readNdjsonGenerations(join(tmpHome, 'logs', 'low-disk.ndjson'))).toEqual([
+      {
+        event: 'low_disk_refused',
+        command: 'ios',
+        code: 'STIM_LOW_DISK',
+        ts: expect.any(Number),
+        runId: expect.any(String),
+      },
+    ]);
     expect(calls.order.includes('ensureOwnedDevice')).toBe(false);
     expect(calls.order.includes('buildIos')).toBe(false);
   });
@@ -4208,6 +4217,7 @@ describe('concurrency limits', () => {
     );
     expect(exitCode).toBe(null);
     expect(parseFirst(logs)).toMatchObject({ bundleId: expect.any(String) });
+    expect(existsSync(join(tmpHome, 'logs', 'low-disk.ndjson'))).toBe(false);
   });
 
   test('maxBuilds takes a slot AFTER the single-flight lock and releases it after the build', async () => {

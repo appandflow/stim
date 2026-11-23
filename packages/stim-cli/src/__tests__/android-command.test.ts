@@ -2645,6 +2645,32 @@ describe('metro is verified before any build work', () => {
     expect(existsSync(workspaceStateFile(root))).toBe(false);
   });
 
+  test('a low-disk refusal from automatic Metro startup is recorded as one Android refusal', async () => {
+    const h = harness({
+      resolveMetro: async () => ({ missing: true }),
+      startServer: async () => ({
+        ok: false as const,
+        error: { code: 'STIM_LOW_DISK', message: 'Stim home is below the disk floor.', remedy: 'Free disk space.' },
+        lines: [],
+      }),
+    });
+    expect((await h.run()).error?.code).toBe('STIM_LOW_DISK');
+    expect(
+      readFileSync(join(home, 'logs', 'low-disk.ndjson'), 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line)),
+    ).toEqual([
+      {
+        event: 'low_disk_refused',
+        command: 'android',
+        code: 'STIM_LOW_DISK',
+        ts: expect.any(Number),
+        runId: expect.any(String),
+      },
+    ]);
+  });
+
   test('a remote run starts the dev server for the remote device', async () => {
     const starts: { remote?: boolean }[] = [];
     const h = harness({
