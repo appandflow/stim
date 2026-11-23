@@ -334,8 +334,10 @@ export async function pruneDeadProjects(
       output.record('project', 'done', path);
     }
     for (const dir of result.removedWorkspaceDirs) output.record('workspaceDirectory', 'done', dir);
-    for (const dir of result.failedWorkspaceDirs) {
-      output.record('workspaceDirectory', 'failed', dir, { detail: `could not remove it while pruning ${path}` });
+    for (const { dir, reason } of result.failedWorkspaceDirs) {
+      output.record('workspaceDirectory', 'failed', dir, {
+        detail: `could not remove it while pruning ${path}: ${reason}`,
+      });
       deleteFailures += 1;
     }
     for (const name of result.deletedDevices) output.record('device', 'done', name);

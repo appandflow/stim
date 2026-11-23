@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -11,6 +12,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildCacheRoot, metroCacheRoot } from '@stim-cli/core';
+import * as toolchain from '@stim-cli/core/toolchain';
 import {
   daemonNdjsonFile,
   maintenanceStateFile,
@@ -42,6 +44,8 @@ import { measureSizes } from '../stimd/passes/measure.ts';
 import { executeAction } from '../stimd/passes/act.ts';
 import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
 import { runStimd } from '../stimd/main.ts';
+import * as net from '../stimd/net.ts';
+import { invocation, withInvocation } from '../stimd/forwarded.ts';
 import * as diskPasses from '../daemon/passes.ts';
 import * as stages from '../daemon/stages.ts';
 import * as markRefresh from '../daemon/mark-refresh.ts';
@@ -135,6 +139,111 @@ function quietWorkspace(usedAgoMs = MINUTE_MS): string {
   recordWorkspaceUse(root, new Date(Date.now() - usedAgoMs));
   return root;
 }
+
+test.skipIf(process.platform === 'win32')(
+  'stimd startup fills its bare PATH for background lookup while a CLI invocation keeps its own environment',
+  async () => {
+    const bin = join(home, '.local', 'bin');
+    const agentDevice = join(bin, 'agent-device');
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(agentDevice, '#!/bin/sh\nexit 0\n');
+    chmodSync(agentDevice, 0o755);
+    const probe: toolchain.ToolchainProbe = {
+      home,
+      execPath: '/runtime/bin/node',
+      isDir: (path) => path === bin,
+      isFile: (path) => path === agentDevice,
+      read: () => null,
+      list: () => [],
+      link: () => null,
+    };
+    const discover = toolchain.discoverToolchain;
+    vi.spyOn(toolchain, 'discoverToolchain').mockImplementation((env) => discover(env, probe));
+    const createNetThread = vi.spyOn(net, 'createNetThread');
+    const barePath = '/usr/bin:/bin:/usr/sbin:/sbin';
+    const cliEnv = { PATH: barePath, JAVA_HOME: '/cli/jdk' };
+    const context = invocation(home, cliEnv);
+    if ('code' in context) throw new Error(context.message);
+    quietWorkspace();
+    const savedEnv = { ...process.env };
+    let daemon: Promise<boolean> | undefined;
+    try {
+      Object.assign(process.env, { PATH: barePath, JAVA_HOME: '/custom/jdk', ANDROID_HOME: '/custom/sdk' });
+      daemon = runStimd({ mode: 'report' });
+      expect(getExecutor().findExecutable('agent-device')).toBe(agentDevice);
+      expect(process.env.PATH).toBe(`${barePath}:${bin}`);
+      expect(process.env.JAVA_HOME).toBe('/custom/jdk');
+      expect(process.env.ANDROID_HOME).toBe('/custom/sdk');
+      withInvocation({ ...context, workspace: home }, new AbortController().signal, () => {
+        expect(getExecutor().findExecutable('agent-device')).toBeNull();
+      });
+      await vi.waitFor(() => expect(createNetThread).toHaveBeenCalled());
+      const netEnv = createNetThread.mock.calls[0]![5];
+      expect(netEnv?.PATH).toBe(barePath);
+      expect(netEnv?.PATH).not.toContain(bin);
+    } finally {
+      try {
+        if (daemon) {
+          process.emit('SIGTERM', 'SIGTERM');
+          await daemon;
+        }
+      } finally {
+        for (const key of Object.keys(process.env)) {
+          if (!(key in savedEnv)) delete process.env[key];
+        }
+        Object.assign(process.env, savedEnv);
+      }
+    }
+  },
+);
+
+test('stimd starts with its inherited environment and logs one warning when toolchain discovery throws', async () => {
+  const error = Object.assign(new Error('EACCES: permission denied, stat /external/android-sdk'), { code: 'EACCES' });
+  const probe: toolchain.ToolchainProbe = {
+    home,
+    execPath: '/runtime/bin/node',
+    isDir: () => {
+      throw error;
+    },
+    isFile: () => false,
+    read: () => null,
+    list: () => [],
+    link: () => null,
+  };
+  const discover = toolchain.discoverToolchain;
+  vi.spyOn(toolchain, 'discoverToolchain').mockImplementation((env) => discover(env, probe));
+  quietWorkspace();
+  const savedEnv = { ...process.env };
+  const inheritedPath = '/usr/bin:/bin:/usr/sbin:/sbin';
+  let daemon: Promise<boolean> | undefined;
+  try {
+    process.env.PATH = inheritedPath;
+    daemon = runStimd({ mode: 'report' });
+    expect(process.env.PATH).toBe(inheritedPath);
+    const records = () =>
+      readFileSync(daemonNdjsonFile(), 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line));
+    await vi.waitFor(() => expect(records()).toContainEqual(expect.objectContaining({ event: 'daemon_started' })));
+    expect(records().filter((entry) => entry.event === 'toolchain_discovery_failed')).toEqual([
+      expect.objectContaining({ src: 'stimd', level: 'warn', msg: expect.stringContaining(error.message) }),
+    ]);
+    expect(process.env.PATH).toBe(inheritedPath);
+  } finally {
+    try {
+      if (daemon) {
+        process.emit('SIGTERM', 'SIGTERM');
+        await daemon;
+      }
+    } finally {
+      for (const key of Object.keys(process.env)) {
+        if (!(key in savedEnv)) delete process.env[key];
+      }
+      Object.assign(process.env, savedEnv);
+    }
+  }
+});
 
 test('due output marks refresh on quiet ticks before the next hourly walk', async () => {
   const root = quietWorkspace(0);

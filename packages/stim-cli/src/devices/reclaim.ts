@@ -413,7 +413,7 @@ export interface ReclaimResult {
   stoppedTunnel: string | null;
   releasedLeases: ReleasedLease[];
   removedWorkspaceDirs: string[];
-  failedWorkspaceDirs: string[];
+  failedWorkspaceDirs: { dir: string; reason: string }[];
 }
 
 type ReclaimOptions = {
@@ -495,16 +495,21 @@ async function removeWorkspaceOutput(
       });
     } catch (error) {
       throwIfCleanupInterrupted(error, operation);
-      const message = `${phaseLine('agent-device', `daemon could not be stopped: ${(error as Error).message}; run agent-device daemon stop --state-dir "${stateDir}" --clean`)}\n`;
-      if (operation) operation.output('stderr', message);
-      else process.stderr.write(message);
-      throw error;
+      const message = `daemon could not be stopped: ${(error as Error).message}; run agent-device daemon stop --state-dir "${stateDir}" --clean`;
+      const line = `${phaseLine('agent-device', message)}\n`;
+      if (operation) operation.output('stderr', line);
+      else process.stderr.write(line);
+      throw new Error(message, { cause: error });
     }
   }
   operation?.signal.throwIfAborted();
   if (archive) await archiveWorkspace(path, archive.removedBy, state, operation);
   if (realpathSync(dir) !== lockDir) throw new Error('Workspace storage changed during cleanup');
   await emptyWorkspaceDir(dir, operation?.signal, `${BROWSER_LOCK}.lock`);
+}
+
+function workspaceDirectoryFailure(dir: string, error: unknown): ReclaimResult['failedWorkspaceDirs'][number] {
+  return { dir, reason: error instanceof Error ? error.message : String(error) };
 }
 
 async function reclaimIdleProject(
@@ -712,7 +717,7 @@ async function reclaimIdleProject(
   retainReplacementProcesses();
 
   const removedWorkspaceDirs: string[] = [];
-  const failedWorkspaceDirs: string[] = [];
+  const failedWorkspaceDirs: ReclaimResult['failedWorkspaceDirs'] = [];
   if (failedDevices.length === 0 && !supervisorHeld) {
     signal?.throwIfAborted();
     const dir = workspaceDir(path);
@@ -733,7 +738,7 @@ async function reclaimIdleProject(
         if (workspaceExisted) removedWorkspaceDirs.push(dir);
       } catch (error) {
         throwIfCleanupInterrupted(error, operation);
-        failedWorkspaceDirs.push(dir);
+        failedWorkspaceDirs.push(workspaceDirectoryFailure(dir, error));
       }
     }
   }

@@ -60,7 +60,12 @@ import { withEasProjectLock } from '../engine/eas-project-lock.ts';
 import { collectEasSessionSweep, deleteEasSessions } from '../commands/gc/eas-sessions.ts';
 import * as ownershipClaim from '../ownership-claim.ts';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
-import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../workspace/paths.ts';
+import {
+  ensureWorkspaceStorage,
+  workspaceAgentDeviceDir,
+  workspaceDir,
+  workspaceStateFile,
+} from '../workspace/paths.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import gcOp, {
   readGcReport,
@@ -2047,6 +2052,38 @@ test('gc exits 1 when a dead project keeps its entry because a collector could n
     );
     expect(payload.failures).toBe(1);
     expect(process.exitCode).toBe(1);
+  } finally {
+    process.exitCode = undefined;
+  }
+});
+
+test('gc records the agent-device stop failure and recovery command in the failed prune action and log', async () => {
+  const deadPath = join(fakeHome, 'no-longer-here');
+  upsertProject(deadPath, {});
+  ensureWorkspaceStorage(deadPath);
+  const stateDir = workspaceAgentDeviceDir(deadPath);
+  mkdirSync(stateDir);
+  writeFileSync(join(stateDir, 'daemon.json'), JSON.stringify({ pid: process.pid, processStartTime: 'unknown' }));
+  installExecutor();
+  const base = getExecutor();
+  setExecutor({
+    ...base,
+    findExecutable: () => '/bin/agent-device',
+    runFileAsync: async (file, args, options) => {
+      if (file === 'agent-device') throw new Error('agent-device could not prove daemon ownership');
+      return base.runFileAsync(file, args, options);
+    },
+  });
+  try {
+    const payload = await gcJson({ pressure: 'normal' });
+    const failure = payload.actions.find((action) => action.kind === 'prune-project' && action.target === deadPath);
+    expect(failure?.outcome).toBe('failed');
+    expect(failure?.detail).toContain('agent-device could not prove daemon ownership');
+    expect(failure?.detail).toContain(`agent-device daemon stop --state-dir "${stateDir}" --clean`);
+    expect(failure?.detail).not.toContain('Error:');
+    expect(readGcLog()).toContainEqual(expect.objectContaining({ status: 'failed', detail: failure?.detail }));
+    expect(existsSync(stateDir)).toBe(true);
+    expect(getProject(deadPath)).not.toBeNull();
   } finally {
     process.exitCode = undefined;
   }

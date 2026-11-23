@@ -75,7 +75,9 @@ test('reclaimProject retains daemon state after a refusal and removes it after a
   try {
     const kept = await reclaimProject('/proj', { deleteOwnedDevices: false });
     expect(kept.keptEntry).toBe(true);
-    expect(kept.failedWorkspaceDirs).toEqual([workspaceDir('/proj')]);
+    expect(kept.failedWorkspaceDirs).toEqual([
+      { dir: workspaceDir('/proj'), reason: expect.stringContaining('agent-device could not prove daemon ownership') },
+    ]);
     expect(existsSync(record)).toBe(true);
     expect(getProject('/proj')?.platforms?.ios?.deviceUdid).toBe('U1');
 
