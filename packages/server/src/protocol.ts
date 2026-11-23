@@ -40,6 +40,52 @@ import {
 
 type JsonSchema = Record<string, unknown>;
 
+const fingerprintChunkProperties = {
+  fingerprintSources: {
+    type: 'array',
+    maxItems: 20000,
+    description: 'The id and hash of each source of fingerprint, to name the sources that differ.',
+    items: {
+      type: 'object',
+      required: ['id', 'kind', 'hash'],
+      additionalProperties: false,
+      properties: {
+        id: { type: 'string', minLength: 1, maxLength: 1024 },
+        kind: { enum: ['file', 'package', 'config', 'autolinking', 'manifest', 'env'] },
+        hash: { type: 'string', pattern: '^[0-9a-f]{64}$' },
+      },
+    },
+  },
+  fingerprintEnv: {
+    type: 'object',
+    required: ['set', 'absent'],
+    additionalProperties: false,
+    properties: {
+      set: {
+        type: 'object',
+        maxProperties: 20000,
+        additionalProperties: {
+          oneOf: [
+            { type: 'string' },
+            {
+              type: 'object',
+              required: ['path'],
+              additionalProperties: false,
+              properties: { path: { type: 'string', minLength: 1, maxLength: 1024 } },
+            },
+          ],
+        },
+      },
+      absent: { type: 'array', maxItems: 20000, items: { type: 'string', minLength: 1, maxLength: 1024 } },
+    },
+  },
+  fingerprintInputs: {
+    type: 'array',
+    maxItems: 20000,
+    items: { type: 'string', minLength: 1, maxLength: 1024 },
+  },
+};
+
 const requestId: JsonSchema = { type: ['integer', 'string'] };
 
 const runText = { type: 'string', minLength: 1, maxLength: 1024, pattern: '^[^\\u0000]+$' };
@@ -2223,6 +2269,12 @@ export function protocolJsonSchema(): JsonSchema {
               done: { type: 'boolean' },
             },
           }),
+          request('build.fingerprint', {
+            type: 'object',
+            required: ['repo'],
+            additionalProperties: false,
+            properties: { repo: buildRepo, ...fingerprintChunkProperties },
+          }),
           request('build.start', {
             type: 'object',
             if: { required: ['native'], properties: { native: { properties: { provider: { const: 'gradle' } } } } },
@@ -2254,45 +2306,8 @@ export function protocolJsonSchema(): JsonSchema {
               iosProjectPath: { type: ['string', 'null'] },
               runtime: { type: ['string', 'null'], minLength: 1 },
               fingerprint: { type: ['string', 'null'], minLength: 1 },
-              fingerprintSources: {
-                type: 'array',
-                maxItems: 20000,
-                description: 'The id and hash of each source of fingerprint, to name the sources that differ.',
-                items: {
-                  type: 'object',
-                  required: ['id', 'kind', 'hash'],
-                  additionalProperties: false,
-                  properties: {
-                    id: { type: 'string', minLength: 1, maxLength: 1024 },
-                    kind: { enum: ['file', 'package', 'config', 'autolinking', 'manifest', 'env'] },
-                    hash: { type: 'string', pattern: '^[0-9a-f]{64}$' },
-                  },
-                },
-              },
+              ...fingerprintChunkProperties,
               fingerprintSchema: { type: 'integer', minimum: 1 },
-              fingerprintEnv: {
-                type: 'object',
-                required: ['set', 'absent'],
-                additionalProperties: false,
-                properties: {
-                  set: {
-                    type: 'object',
-                    maxProperties: 20000,
-                    additionalProperties: {
-                      oneOf: [
-                        { type: 'string' },
-                        {
-                          type: 'object',
-                          required: ['path'],
-                          additionalProperties: false,
-                          properties: { path: { type: 'string', minLength: 1, maxLength: 1024 } },
-                        },
-                      ],
-                    },
-                  },
-                  absent: { type: 'array', maxItems: 20000, items: { type: 'string', minLength: 1, maxLength: 1024 } },
-                },
-              },
               fingerprintNative: { enum: ['tracked', 'generated'] },
               fingerprintLayout: {
                 type: 'object',
@@ -2313,11 +2328,6 @@ export function protocolJsonSchema(): JsonSchema {
                   evaluator: { type: 'string', pattern: '^[0-9a-f]{64}$' },
                   packages: { type: 'object', maxProperties: 16, additionalProperties: { type: ['string', 'null'] } },
                 },
-              },
-              fingerprintInputs: {
-                type: 'array',
-                maxItems: 20000,
-                items: { type: 'string', minLength: 1, maxLength: 1024 },
               },
               podsOnWorker: { type: 'boolean' },
               reuseArtifact: { type: 'boolean' },

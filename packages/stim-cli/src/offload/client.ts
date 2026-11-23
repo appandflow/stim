@@ -46,7 +46,7 @@ import { operationState } from '../engine/operation-state.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { pairedMachines, resolveEndpoint, type Endpoint } from './build-machines.ts';
 import { openAuthenticated, sayHello, type ConnectFailure } from './tailnet.ts';
-import type { NoiseSocket } from '@stim-cli/core/noise-session';
+import { MAX_CLIENT_MESSAGE_BYTES, type NoiseSocket } from '@stim-cli/core/noise-session';
 import { manifestDigest } from './manifest.ts';
 import {
   checkNativeTransferMembership,
@@ -77,6 +77,7 @@ import {
   type OffloadJobKind,
   type BuildArtifactIdentity,
   type BuildOfferParams,
+  type BuildFingerprintParams,
   type BuildGradleArtifactQuery,
   type BuildReactNativeArtifactQuery,
   type BuildSwiftpmArtifactQuery,
@@ -675,9 +676,24 @@ export class BuildConnection {
     return this.host.includes(capability);
   }
 
-  request(method: string, params: unknown, timeoutMs: number = REQUEST_TIMEOUT_MS): Promise<Reply> {
-    if (this.closed) return Promise.resolve({ error: { code: 'closed', message: this.closed } });
+  prepareRequest(method: string, params: unknown, timeoutMs: number = REQUEST_TIMEOUT_MS): PreparedRequest {
     const id = this.nextId++;
+    const message = () => JSON.stringify({ id, method, params });
+    return {
+      get bytes() {
+        return Buffer.byteLength(message());
+      },
+      send: (): Promise<Reply> => this.request(method, params, timeoutMs, id),
+    };
+  }
+
+  request(
+    method: string,
+    params: unknown,
+    timeoutMs: number = REQUEST_TIMEOUT_MS,
+    id: number = this.nextId++,
+  ): Promise<Reply> {
+    if (this.closed) return Promise.resolve({ error: { code: 'closed', message: this.closed } });
     const started = performance.now();
     const done = (reply: Reply): Reply => {
       const ms = Math.round(performance.now() - started);
@@ -1684,14 +1700,58 @@ async function fetchArtifact({
 function fingerprintParams(inputs: FingerprintInputs | null) {
   if (!inputs) return {};
   return {
-    fingerprintSources: inputs.sources.map(({ name, kind, hash }) => ({ id: name, kind, hash })),
     fingerprintSchema: inputs.schema,
-    fingerprintEnv: inputs.env,
     fingerprintNative: inputs.native,
     fingerprintLayout: inputs.layout,
     fingerprintRuntime: inputs.runtime,
-    ...(inputs.fingerprintInputs === undefined ? {} : { fingerprintInputs: inputs.fingerprintInputs }),
   };
+}
+
+type PreparedRequest = { readonly bytes: number; send: () => Promise<Reply> };
+
+function fingerprintChunks(
+  connection: BuildConnection,
+  repo: string,
+  inputs: FingerprintInputs | null,
+): PreparedRequest[] | string {
+  if (!inputs) return [];
+  const chunks: PreparedRequest[] = [];
+  const page = <T>(values: readonly T[], params: (rows: T[]) => BuildFingerprintParams): string | null => {
+    let index = 0;
+    do {
+      const rows: T[] = [];
+      const chunkParams = params(rows);
+      const chunk = connection.prepareRequest('build.fingerprint', chunkParams);
+      for (const value of values.slice(index)) {
+        rows.push(value);
+        Object.assign(chunkParams, params(rows));
+        if (chunk.bytes > MAX_CLIENT_MESSAGE_BYTES) {
+          if (rows.length === 1)
+            return `build.fingerprint row needs ${chunk.bytes} bytes; the limit is 64 KiB (${MAX_CLIENT_MESSAGE_BYTES} bytes). Reduce this fingerprint input or build locally.`;
+          rows.pop();
+          Object.assign(chunkParams, params(rows));
+          break;
+        }
+        index++;
+      }
+      chunks.push(chunk);
+    } while (index < values.length);
+    return null;
+  };
+  const failure =
+    page(inputs.sources, (rows) => ({
+      repo,
+      fingerprintSources: rows.map(({ name, kind, hash }) => ({ id: name, kind, hash })),
+    })) ??
+    page(Object.entries(inputs.env.set), (rows) => ({
+      repo,
+      fingerprintEnv: { set: Object.fromEntries(rows), absent: [] },
+    })) ??
+    page(inputs.env.absent, (rows) => ({ repo, fingerprintEnv: { set: {}, absent: rows } })) ??
+    (inputs.fingerprintInputs === undefined
+      ? null
+      : page(inputs.fingerprintInputs, (rows) => ({ repo, fingerprintInputs: rows })));
+  return failure ?? chunks;
 }
 
 function buildStartParams(
@@ -1739,6 +1799,32 @@ function buildStartParams(
     compat: choice.target.local.compat,
     ...startJdk(choice),
     ...startPods(choice, request),
+  };
+}
+
+function prepareBuildStart(
+  choice: OffloadChoice,
+  request: BuildRequest,
+  expectedFingerprint: string | null | undefined,
+  inputs: FingerprintInputs | null,
+): { send: (digest: string, checkCancelled: () => void) => Promise<Reply> } | string {
+  const params = buildStartParams(choice, request, expectedFingerprint, '0'.repeat(64), inputs);
+  const start = choice.connection.prepareRequest('build.start', params);
+  if (start.bytes > MAX_CLIENT_MESSAGE_BYTES)
+    return `build.start needs ${start.bytes} bytes; the limit is 64 KiB (${MAX_CLIENT_MESSAGE_BYTES} bytes). Reduce the build parameters or build locally.`;
+  const chunks = fingerprintChunks(choice.connection, choice.identity.repo, inputs);
+  if (typeof chunks === 'string') return chunks;
+  return {
+    send: async (digest, checkCancelled) => {
+      for (const chunk of chunks) {
+        const reply = await chunk.send();
+        checkCancelled();
+        if ('error' in reply) return reply;
+      }
+      Object.assign(params, startIdentity(request, digest, expectedFingerprint));
+      if (params.native) params.native.sourceDigest = digest;
+      return start.send();
+    },
   };
 }
 
@@ -1978,6 +2064,11 @@ export async function offloadBuild(
         break;
       }
       if (choice.cacheOnly) return fail('The exact artifact is no longer available.');
+      const start = prepareBuildStart(choice, request, expectedFingerprint, inputs);
+      if (typeof start === 'string') {
+        if (moveOn(start)) continue;
+        return fail(start);
+      }
       const synced = await syncSource(
         choice.connection,
         identity,
@@ -2004,10 +2095,7 @@ export async function offloadBuild(
       choice.connection.onProgress((event) => (job === null ? early.push(event) : handle(event)));
       if (!namedBuildMachine(choice.selected)) requireAutomaticMachine('build', choice.machine);
       checkCancelled();
-      const reply = await choice.connection.request(
-        'build.start',
-        buildStartParams(choice, request, expectedFingerprint, synced.digest, inputs),
-      );
+      const reply = await start.send(synced.digest, checkCancelled);
       checkCancelled();
       if ('result' in reply) {
         job = (reply.result as { job: string }).job;

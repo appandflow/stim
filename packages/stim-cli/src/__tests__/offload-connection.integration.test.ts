@@ -1,4 +1,9 @@
 import { PEER } from '@stim-cli/core/protocol';
+import { PassThrough } from 'node:stream';
+import { JobFrameReader, jobFrame } from '@stim-cli/core/noise-session';
+import { serveOffloadJob } from '../job/offload/serve.ts';
+import { fingerprintInputsRow } from '../fingerprint/key.ts';
+import type { FingerprintInputs } from '../fingerprint/operation.ts';
 import { STIM_VERSION } from '../stim-version.ts';
 import { withAmbientContext } from '@stim-cli/core';
 import { testContext } from './_context.ts';
@@ -69,6 +74,7 @@ interface FakeMachine {
   requests: Array<{ method: string; params: Record<string, unknown> }>;
   closed: Promise<void>;
   closeCodes: number[];
+  messageBytes: number[];
   release: () => void;
   stop: () => Promise<void>;
 }
@@ -84,6 +90,7 @@ async function fakeMachine(
   offer: BuildOffer,
   start: { error: { code: string; message: string } } | { result: { job: string } },
   {
+    jobWorker = undefined,
     drop = false,
     closeAfterStart = null,
     hello = () => ({ result: { capabilities: ['build'], peer: PEER } }),
@@ -96,6 +103,7 @@ async function fakeMachine(
     lostJob = null,
     jobStart = (params: Record<string, unknown>) => ({ result: { job: String(params.attach ?? 'job-1') } }),
   }: {
+    jobWorker?: string;
     drop?: boolean;
     closeAfterStart?: number | null;
     dropOnSync?: boolean;
@@ -118,6 +126,8 @@ async function fakeMachine(
   const server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
   await new Promise((resolve) => server.once('listening', resolve));
   ports.set(machine, (server.address() as AddressInfo).port);
+  const jobRuns: Promise<number>[] = [];
+  const messageBytes: number[] = [];
   const methods: string[] = [];
   const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
   const closeCodes: number[] = [];
@@ -134,8 +144,31 @@ async function fakeMachine(
       closeCodes.push(code);
       closed();
     });
+    const input = new PassThrough();
+    if (jobWorker) {
+      const output = new PassThrough();
+      const reader = new JobFrameReader();
+      output.on('data', (chunk: Buffer) => {
+        for (const frame of reader.push(chunk)) socket.send(frame.data, { binary: frame.binary });
+      });
+      socket.once('close', () => input.end());
+      jobRuns.push(
+        serveOffloadJob(
+          'offload-build',
+          { client: 'fixture-client', clientName: 'Fixture', limits: { minFreeBytes: 0 } },
+          input,
+          output,
+          new AbortController().signal,
+          [jobWorker],
+        ),
+      );
+    }
     socket.on('message', (data: Buffer, isBinary: boolean) => {
-      if (isBinary) return;
+      messageBytes.push(data.length);
+      if (isBinary) {
+        if (jobWorker) input.write(jobFrame(data, true));
+        return;
+      }
       const { id, method, params } = JSON.parse(String(data)) as {
         id: number;
         method: string;
@@ -148,6 +181,8 @@ async function fakeMachine(
       if (method === 'job.start') return reply(jobStart(params));
       if (method === 'build.cancel') return;
       if (method === 'build.offer') return reply({ result: offer });
+      if (jobWorker) return void input.write(jobFrame(data, false));
+      if (method === 'build.fingerprint') return reply({ result: {} });
       if (method === 'build.sync') return dropOnSync ? socket.terminate() : reply({ result: { missing: [] } });
       const fail = (job: string) =>
         deliver(pause === 'build.start' || pause === 'build.attach' ? pause : 'build.progress', () =>
@@ -206,12 +241,16 @@ async function fakeMachine(
     requests,
     closed: done,
     closeCodes,
+    messageBytes,
     release: () => {
       pause = null;
       for (const send of pending.splice(0)) send();
       artifact = null;
     },
-    stop: () => new Promise((resolve) => server.close(() => resolve())),
+    stop: async () => {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await Promise.all(jobRuns);
+    },
   };
 }
 
@@ -301,6 +340,129 @@ async function run(names: string[], note: (line: string) => void) {
     note,
   });
 }
+
+test('a large replay starts through the exact-client job host with every Noise message within 64 KiB', async () => {
+  const worker = join(home, 'worker.mjs');
+  const observed = join(home, 'observed.json');
+  writeFileSync(
+    worker,
+    `
+import { writeFileSync } from 'node:fs';
+let text = '';
+process.stdin.setEncoding('utf8');
+for await (const chunk of process.stdin) text += chunk;
+writeFileSync(${JSON.stringify(observed)}, text);
+console.log(JSON.stringify({ type: 'result', ok: false, code: 'fixture-built', message: 'build ran', fingerprintSettled: true }));
+`,
+  );
+  writeFileSync(join(home, 'config.json'), JSON.stringify({ server: { maxLoadPerCore: 100_000 } }));
+  const paths = Array.from({ length: 1500 }, (_, i) => `native/input-${i}-${'x'.repeat(40)}.json`);
+  mkdirSync(join(repo, 'native'));
+  for (const path of paths) writeFileSync(join(repo, path), '{}');
+  const inputs: FingerprintInputs = {
+    ...(await replayInputs()),
+    sources: paths.map((name) => ({ name, kind: 'file' as const, hash: 'a'.repeat(64) })),
+    env: {
+      set: Object.fromEntries(paths.map((_, i) => [`APP_VALUE_${i}`, '\u5e97'.repeat(20)])),
+      absent: paths.map((_, i) => `APP_ABSENT_${i}_${'x'.repeat(40)}`),
+    },
+    fingerprintInputs: paths,
+  };
+  inputs.sources = [...inputs.sources, fingerprintInputsRow(paths)];
+  const machine = await fakeMachine('mini', offer(0.1), { result: { job: 'unused' } }, { jobWorker: worker });
+  machines.push(machine);
+  const choice = await chooseBuildMachine({
+    projectRoot: repo,
+    target: TARGET,
+    here: HERE,
+    note: () => {},
+    machines: [credential('mini')],
+  });
+  if (typeof choice === 'string') throw new Error(choice);
+  const result = await offloadBuild({
+    choice,
+    expectedFingerprint: 'a'.repeat(64),
+    fingerprintInputs: async () => inputs,
+    request: {
+      platform: 'ios',
+      runtime: 'iOS-27-0',
+      configuration: null,
+      scheme: null,
+      iosProjectPath: 'ios',
+      isExpo: false,
+      optimizations: null,
+    },
+    stagingDir: join(repo, 'staging'),
+    onPhase: () => {},
+    onEnter: () => {},
+    onRecord: () => {},
+    note: () => {},
+  });
+  expect(result).toMatchObject({ ok: false, reason: expect.stringContaining('build ran') });
+  const job = JSON.parse(readFileSync(observed, 'utf8'));
+  expect(job.expectedSources).toEqual(inputs.sources.map(({ name, kind, hash }) => ({ id: name, kind, hash })));
+  expect(job.fingerprintEnv).toEqual(inputs.env);
+  expect(job.fingerprintInputs).toEqual(paths);
+  expect(job.manifest).toHaveLength(paths.length + 1);
+  for (const params of [
+    { fingerprintSources: job.expectedSources },
+    { fingerprintEnv: { set: inputs.env.set, absent: [] } },
+    { fingerprintEnv: { set: {}, absent: inputs.env.absent } },
+    { fingerprintInputs: paths },
+  ])
+    expect(Buffer.byteLength(JSON.stringify({ id: 1, method: 'build.start', params }))).toBeGreaterThan(64 * 1024);
+  expect(machine.messageBytes.every((bytes) => bytes <= 64 * 1024)).toBe(true);
+  expect(machine.methods.indexOf('build.fingerprint')).toBeGreaterThan(machine.methods.lastIndexOf('build.sync'));
+  expect(machine.methods.lastIndexOf('build.fingerprint')).toBeLessThan(machine.methods.indexOf('build.start'));
+  expect(job.compat).toBe(TARGET.local.compat);
+}, 30_000);
+
+test.each([
+  { kind: 'remainder', large: '\u5e97'.repeat(24_000) },
+  { kind: 'source', large: '\u5e97'.repeat(24_000) },
+  { kind: 'environment', large: '\u5e97'.repeat(24_000) },
+  { kind: 'environment', large: '"\\'.repeat(20_000) },
+])('oversized $kind refuses before source sync with its JSON byte size and limit', async ({ kind, large }) => {
+  const machine = await fakeMachine('mini', offer(0.1), { result: { job: 'unused' } });
+  machines.push(machine);
+  const choice = await chooseBuildMachine({
+    projectRoot: repo,
+    target: TARGET,
+    here: HERE,
+    note: () => {},
+    machines: [credential('mini')],
+  });
+  if (typeof choice === 'string') throw new Error(choice);
+  const inputs = await replayInputs();
+  const result = await offloadBuild({
+    choice,
+    expectedFingerprint: 'a'.repeat(64),
+    fingerprintInputs: async () => ({
+      ...inputs,
+      ...(kind === 'source' ? { sources: [{ name: large, kind: 'file', hash: 'a'.repeat(64) }] } : {}),
+      ...(kind === 'environment' ? { env: { set: { APP_VALUE: large }, absent: [] } } : {}),
+    }),
+    request: {
+      platform: 'ios',
+      runtime: 'iOS-27-0',
+      configuration: null,
+      scheme: kind === 'remainder' ? large : null,
+      isExpo: false,
+      optimizations: null,
+    },
+    stagingDir: join(repo, 'staging'),
+    onPhase: () => {},
+    onEnter: () => {},
+    onRecord: () => {},
+    note: () => {},
+  });
+  expect(result).toMatchObject({
+    ok: false,
+    reason: expect.stringMatching(/needs [0-9]+ bytes; the limit is 64 KiB \(65536 bytes\)/),
+  });
+  expect(machine.methods).not.toContain('build.sync');
+  expect(machine.methods).not.toContain('build.start');
+});
 
 test('linked checkouts offer separate areas but one project id, while projects in one checkout reuse their area', async () => {
   execFileSync('git', ['add', 'package.json'], { cwd: repo });
