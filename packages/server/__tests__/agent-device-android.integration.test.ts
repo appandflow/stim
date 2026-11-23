@@ -166,6 +166,13 @@ afterEach(async () => {
   fixture.shellMissing = false;
   fixture.avdName = AVD;
   await driver.stop();
+  rmSync(
+    join(
+      tmpdir(),
+      `stim-server-agent-device-${createHash('sha256').update(join(home, 'agent')).digest('hex').slice(0, 16)}`,
+    ),
+    { recursive: true, force: true },
+  );
   vi.restoreAllMocks();
   delete process.env.STIM_HOME;
   rmSync(home, { recursive: true, force: true });

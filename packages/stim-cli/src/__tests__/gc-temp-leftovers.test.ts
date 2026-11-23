@@ -351,3 +351,48 @@ test('cancelling temporary cleanup yields during removal and preserves the next 
     await outcome;
   }
 });
+
+test('retires an idle hosted agent-device launch only when agent-device reports no daemon there', async () => {
+  const bin = join(home, 'agent-device.mjs');
+  writeFileSync(bin, '');
+  process.env.STIM_AGENT_DEVICE_BIN = bin;
+  const asked: string[] = [];
+  const executor = getExecutor();
+  setExecutor({
+    ...executor,
+    runFileQuietAsync: async (
+      file: string,
+      args: string[],
+      options: Parameters<typeof executor.runFileQuietAsync>[2],
+    ) => {
+      const at = args.indexOf('--state-dir');
+      if (!args.includes('daemon') || at < 0) return executor.runFileQuietAsync(file, args, options);
+      const stateDir = args[at + 1] ?? '';
+      asked.push(stateDir);
+      const mode = stateDir.includes('aaaaaaaaaaaaaaaa') ? 'graceful' : 'not-running';
+      return JSON.stringify({ success: true, data: { stopped: mode !== 'not-running', mode } });
+    },
+  });
+  try {
+    const root = join(fakeTmp, 'stim-server-agent-device-0123456789abcdef');
+    const launch = (id: string) => {
+      mkdirSync(join(root, id, 'state', 'daemon.lock'), { recursive: true });
+      writeFileSync(join(root, id, 'state', 'daemon.log'), '');
+      return join(root, id);
+    };
+    const running = launch('aaaaaaaaaaaaaaaa');
+    const gone = launch('bbbbbbbbbbbbbbbb');
+    age(running, 2 * DAY_MS);
+    age(gone, 2 * DAY_MS);
+    const recent = launch('cccccccccccccccc');
+
+    await deleteTempLeftovers();
+
+    expect(existsSync(gone)).toBe(false);
+    expect(existsSync(running)).toBe(true);
+    expect(existsSync(recent)).toBe(true);
+    expect(asked).toEqual([join(running, 'state'), join(gone, 'state')]);
+  } finally {
+    delete process.env.STIM_AGENT_DEVICE_BIN;
+  }
+});

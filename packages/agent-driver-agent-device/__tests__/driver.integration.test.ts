@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { createAgentDriverHost } from '@stim-cli/agent-driver';
 import {
   chmodSync,
@@ -5,6 +6,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -21,12 +23,37 @@ import { parseHostedAgentGrant } from '@stim-cli/core/state';
 
 const FAKE_AGENT_DEVICE = `#!/usr/bin/env node
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 const args = process.argv.slice(2);
 const stateDir = args[args.indexOf('--state-dir') + 1];
-if (args[0] === 'proxy' && process.env.FAKE_PROXY === 'daemon-only') {
+const unregistered = () => {
+  const daemon = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });
+  daemon.unref();
+  appendFileSync(process.env.FAKE_PIDS, daemon.pid + '\\n');
+  appendFileSync(process.env.FAKE_STRAYS, daemon.pid + '\\n');
+};
+const digest = () => {
+  const policy = JSON.parse(readFileSync(process.env.AGENT_DEVICE_DAEMON_POLICY, 'utf8'));
+  if (!policy.devices) return undefined;
+  return createHash('sha256').update(JSON.stringify({
+    devices: policy.devices.allow.map((device) => device.udid ?? device.serial),
+    commands: { mode: 'allow', names: policy.commands.allow.toSorted() },
+    capabilities: policy.capabilities.deny,
+  })).digest('hex');
+};
+if (args[0] === '--version') {
+  console.log('0.21.42');
+} else if (args[0] === 'proxy' && process.env.FAKE_PROXY === 'exit-unregistered') {
+  unregistered();
+  console.error('Error (COMMAND_FAILED): Failed to start daemon');
+  process.exit(1);
+} else if (args[0] === 'proxy' && process.env.FAKE_PROXY === 'silent-unregistered') {
+  unregistered();
+  setInterval(() => {}, 1000);
+} else if (args[0] === 'proxy' && process.env.FAKE_PROXY === 'daemon-only') {
   const daemon = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });
   daemon.unref();
   appendFileSync(process.env.FAKE_PIDS, daemon.pid + '\\n');
@@ -38,6 +65,7 @@ if (args[0] === 'proxy' && process.env.FAKE_PROXY === 'daemon-only') {
 } else if (args[0] === 'proxy' && process.env.FAKE_PROXY === 'silent') {
   setInterval(() => {}, 1000);
 } else if (args[0] === 'proxy') {
+  if (process.env.FAKE_PROXIES) appendFileSync(process.env.FAKE_PROXIES, process.pid + '\\n');
   const code = (process.env.FAKE_DAEMON === 'stubborn' ? "process.on('SIGTERM', () => {});" : '') + 'setInterval(() => {}, 1000)';
   const daemon = spawn(process.execPath, ['-e', code], { detached: true, stdio: 'ignore' });
   daemon.unref();
@@ -62,7 +90,7 @@ if (args[0] === 'proxy' && process.env.FAKE_PROXY === 'daemon-only') {
     });
   });
   admin.listen(0, '127.0.0.1', () => {
-    writeFileSync(join(stateDir, 'daemon.json'), JSON.stringify({ pid: daemon.pid, httpPort: admin.address().port, token: 'daemon-secret' }));
+    writeFileSync(join(stateDir, 'daemon.json'), JSON.stringify({ pid: daemon.pid, httpPort: admin.address().port, token: 'daemon-secret', policyDigest: digest() }));
     const server = createServer((request, response) => {
       const chunks = [];
       request.on('data', (chunk) => chunks.push(chunk));
@@ -650,6 +678,111 @@ describe.skipIf(process.platform === 'win32')('agent-device confinement', () => 
       expect((await through(driver, SESSION, 'GET', another)).status).toBe(404);
     } finally {
       await driver.stop();
+    }
+  });
+});
+
+function deviceDriverIn(
+  home: string,
+  extra: Partial<ConstructorParameters<typeof AgentDeviceDriver>[0]> = {},
+  env: Record<string, string> = {},
+) {
+  return driverIn(
+    home,
+    { device: { session: SESSION, udid: 'SIM-1' }, ...extra },
+    { FAKE_STRAYS: join(home, 'strays.log'), ...env },
+  );
+}
+
+function strays(home: string): number[] {
+  const log = join(home, 'strays.log');
+  return existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter(Boolean).map(Number) : [];
+}
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function launchRoot(home: string): string {
+  return join(
+    tmpdir(),
+    `stim-server-agent-device-${createHash('sha256').update(join(home, 'state')).digest('hex').slice(0, 16)}`,
+  );
+}
+
+describe.skipIf(process.platform !== 'darwin' && process.platform !== 'linux')('hosted device launch recovery', () => {
+  afterEach(() => {
+    for (const pid of strays(root)) {
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {}
+    }
+    rmSync(launchRoot(root), { recursive: true, force: true });
+  });
+
+  test.each([
+    { mode: 'exit-unregistered', error: /exited with 1 before it was ready/, options: {} },
+    { mode: 'silent-unregistered', error: /did not report a listening address/, options: { startTimeoutMs: 500 } },
+  ])(
+    'a launch whose proxy $mode releases the claim, signals no daemon it cannot identify, and the next launch starts',
+    async ({ mode, error, options }) => {
+      install(root);
+      const failing = deviceDriverIn(root, options, { FAKE_PROXY: mode });
+      await expect(failing.start()).rejects.toThrow(error);
+      const [stray] = strays(root);
+      if (stray === undefined) throw new Error('the fake proxy started no daemon');
+      expect(alive(stray)).toBe(true);
+      expect(readClaimSet(join(root, 'agent-device.claims')).live).toHaveLength(0);
+
+      const next = deviceDriverIn(root);
+      await next.start();
+      try {
+        expect(readClaimSet(join(root, 'agent-device.claims')).live).toHaveLength(1);
+        expect(alive(stray)).toBe(true);
+      } finally {
+        await next.stop();
+      }
+      expect(readClaimSet(join(root, 'agent-device.claims')).live).toHaveLength(0);
+    },
+  );
+
+  test('after the server dies mid-session, the next server launches and retires the earlier daemon through agent-device', async () => {
+    install(root);
+    const proxies = join(root, 'proxies.log');
+    const crashed = deviceDriverIn(root, {}, { FAKE_PROXIES: proxies });
+    await crashed.start();
+    const earlier = Number(readFileSync(join(root, 'daemon-pids.log'), 'utf8').split('\n')[0]);
+    const claimDir = join(root, 'agent-device.claims', 'exclusive');
+    const claimFile = readdirSync(claimDir).find((name) => name.endsWith('.claim'));
+    const dead = spawn(process.execPath, ['-e', ''], { stdio: 'ignore' });
+    const deadPid = dead.pid;
+    if (!claimFile || deadPid === undefined)
+      throw new Error('the crashed server left no claim, or no stand-in started');
+    const identity = captureProcessIdentity(deadPid);
+    await new Promise((resolve) => dead.once('exit', resolve));
+    if (!identity.ok) throw new Error('the stand-in server identity could not be captured');
+    const claim: unknown = JSON.parse(readFileSync(join(claimDir, claimFile), 'utf8'));
+    writeFileSync(
+      join(claimDir, claimFile),
+      JSON.stringify(Object.assign({}, claim, { owner: { pid: deadPid, processToken: identity.token } })),
+    );
+    const orphanProxy = Number(readFileSync(proxies, 'utf8').split('\n')[0]);
+
+    const next = deviceDriverIn(root);
+    try {
+      await next.start();
+      expect(readClaimSet(join(root, 'agent-device.claims')).live).toHaveLength(1);
+      await vi.waitFor(() => expect(alive(earlier)).toBe(false));
+    } finally {
+      await next.stop();
+      try {
+        process.kill(-orphanProxy, 'SIGKILL');
+      } catch {}
     }
   });
 });

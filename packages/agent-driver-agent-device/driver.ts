@@ -8,6 +8,7 @@ import {
   readFileSync,
   readdirSync,
   readlinkSync,
+  rmdirSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -21,7 +22,7 @@ import {
   type ServerResponse,
 } from 'node:http';
 import { homedir, tmpdir } from 'node:os';
-import { delimiter, dirname, extname, join } from 'node:path';
+import { delimiter, dirname, extname, join, relative, sep } from 'node:path';
 import type {
   AGENT_DRIVER_UNAVAILABLE,
   AgentDriverGrant,
@@ -239,6 +240,7 @@ const FORWARDED = [
 ];
 const HOP_BY_HOP = new Set(['connection', 'keep-alive', 'transfer-encoding', 'upgrade', 'proxy-authenticate']);
 const LISTENING = /Proxy listening at (http:\/\/127\.0\.0\.1:\d+)/;
+const LAUNCH_ID = /^[0-9a-f]{16}$/;
 
 export class AgentDeviceDriver implements HostedAgentDriver {
   readonly name = 'agent-device';
@@ -249,6 +251,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
   private starting: Promise<void> | null = null;
   private stopping = false;
   private daemonRecord: AgentDriverProcess | null = null;
+  private launchId: string | null = null;
   private deviceProxy: { child: ChildProcess; record: AgentDriverProcess | null } | null = null;
   private listener: (() => void) | null = null;
   private loopback: Promise<{ server: Server; port: number; secret: string }> | null = null;
@@ -288,8 +291,26 @@ export class AgentDeviceDriver implements HostedAgentDriver {
   // agent-device 0.21.35 and later write a remote recording to <state dir>/sessions/<session>/recording-<uuid>.<ext>
   // whatever output path the request names (callstack/agent-device#4215), and 0.21.42 refuses a state directory that is
   // or holds a symbolic link, so a hosted device's daemon gets a real private state directory off the Stim home.
+  private get launchRoot(): string {
+    return join(tmpdir(), `stim-server-agent-device-${this.stateHash}`);
+  }
+
+  // @ref LLP 0007#a-hosted-device-daemon-launch-shares-nothing-with-the-next -- one state and claims directory per launch
+  private get launchDir(): string {
+    return join(this.launchRoot, this.currentLaunch() ?? 'none');
+  }
+
   private get daemonDir(): string {
-    return this.options.device ? join(tmpdir(), `stim-server-agent-device-${this.stateHash}`) : this.options.stateDir;
+    return this.options.device ? join(this.launchDir, 'state') : this.options.stateDir;
+  }
+
+  private currentLaunch(): string | null {
+    if (this.launchId) return this.launchId;
+    try {
+      const [id, state, sessions, ...rest] = relative(this.launchRoot, readlinkSync(this.sessionsLink)).split(sep);
+      if (id && LAUNCH_ID.test(id) && state === 'state' && sessions === 'sessions' && rest.length === 0) return id;
+    } catch {}
+    return null;
   }
 
   private get sessionsLink(): string {
@@ -304,8 +325,11 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     privateDirectory(this.recordings);
   }
 
-  private prepareDaemonDir(): void {
+  private prepareLaunchDir(): void {
+    privateDirectory(this.launchRoot);
+    privateDirectory(this.launchDir);
     privateDirectory(this.daemonDir);
+    privateDirectory(join(this.launchDir, 'device-claims'));
     mkdirSync(this.sessionsTarget, { recursive: true, mode: 0o700 });
   }
 
@@ -364,7 +388,11 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     }
     mkdirSync(this.options.stateDir, { recursive: true, mode: 0o700 });
     chmodSync(this.options.stateDir, 0o700);
-    if (this.options.device) this.prepareDaemonDir();
+    const previous = this.options.device && !this.claim ? this.currentLaunch() : null;
+    if (this.options.device) {
+      this.launchId = randomBytes(8).toString('hex');
+      this.prepareLaunchDir();
+    }
     const taken = await this.host.claims.take(this.options.claimRoot, 'agent-device daemon');
     if (!('claim' in taken))
       throw new Error(`The agent-device daemon is held by another process: ${this.options.claimRoot}`);
@@ -372,7 +400,11 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     this.claim = claim;
     this.stopping = false;
     this.androidVerifiedAt = 0;
-    rmSync(join(this.daemonDir, 'daemon.json'), { force: true });
+    if (previous && previous !== this.launchId) {
+      await this.daemonStop(join(this.launchRoot, previous, 'state'));
+      await this.stopIosRunners();
+    }
+    if (!this.options.device) rmSync(join(this.daemonDir, 'daemon.json'), { force: true });
     clearTimeout(this.recording?.timer);
     this.recording = null;
     rmSync(this.recordings, { recursive: true, force: true });
@@ -388,7 +420,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     writeFileSync(policy, `${JSON.stringify(this.options.device ? devicePolicy(this.options.device) : POLICY)}\n`, {
       mode: 0o600,
     });
-    await this.host.claims.childPending(claim.id);
+    if (!this.options.device) await this.host.claims.childPending(claim.id);
     const token = newToken();
     let proxy: ChildProcess | undefined;
     try {
@@ -405,7 +437,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
             AGENT_DEVICE_NO_UPDATE_NOTIFIER: '1',
             ...(this.options.device ? { AGENT_DEVICE_LEASE_MAX_TTL_MS: String(DEVICE_LEASE_TTL_MS) } : {}),
             ...(this.options.device?.serial ? { AGENT_DEVICE_ANDROID_SNAPSHOT_HELPER_SESSION: '0' } : {}),
-            ...(this.options.device ? { AGENT_DEVICE_CLAIMS_DIR: join(this.options.stateDir, 'device-claims') } : {}),
+            ...(this.options.device ? { AGENT_DEVICE_CLAIMS_DIR: join(this.launchDir, 'device-claims') } : {}),
           },
           ...(this.options.device ? { cwd: '/' } : {}),
           detached: true,
@@ -424,7 +456,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       this.daemonRecord = daemon;
       const proxyRecord = proxy.pid === undefined ? null : await this.captured(proxy.pid, proxy);
       if (!proxyRecord) throw new Error('The agent-device proxy identity could not be captured.');
-      await this.host.claims.setChild(claim.id, daemon);
+      if (!this.options.device) await this.host.claims.setChild(claim.id, daemon);
       if (!(await leasesBackend(url, this.options.device ? deviceScope(this.options.device).backend : 'macos-app')))
         throw unavailable(this.options.device ? DEVICE_AGENT_DEVICE : UNSCOPED);
       const watch = setInterval(() => void this.watchDaemon(), this.options.watchMs);
@@ -610,14 +642,20 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     }
     clearTimeout(this.recording?.timer);
     this.recording = null;
-    if (running || this.claim) await this.teardown(running?.proxy, running ?? undefined);
+    const stoppedDaemon = running || this.claim ? await this.teardown(running?.proxy, running ?? undefined) : false;
     for (const session of sessions) this.removeSessionDirectories(session);
     rmSync(this.recordings, { recursive: true, force: true });
-    if (this.options.device) rmSync(this.daemonDir, { recursive: true, force: true });
+    if (this.options.device && stoppedDaemon) {
+      rmSync(this.launchDir, { recursive: true, force: true });
+      try {
+        rmdirSync(this.launchRoot);
+      } catch {}
+    }
     if (recorderError !== undefined) throw recorderError;
   }
 
-  private async teardown(proxy?: ChildProcess, running?: Running): Promise<void> {
+  /** Resolves whether it stopped a daemon whose identity this driver had captured. */
+  private async teardown(proxy?: ChildProcess, running?: Running): Promise<boolean> {
     proxy ??= this.deviceProxy?.child;
     if (proxy?.pid !== undefined) {
       const record =
@@ -631,16 +669,18 @@ export class AgentDeviceDriver implements HostedAgentDriver {
           `The agent-device proxy is unresolved; its claim ${this.claim?.path} was kept. Once it is gone, clear it with: ${await this.host.claims.removeCommand(this.claim!.path)}`,
         );
     }
+    const stoppedDaemon = this.daemonRecord !== null;
     await this.stopDaemon();
     await this.stopIosRunners();
     await this.stopAndroidHelpers();
     this.daemonRecord = null;
     this.deviceProxy = null;
-    if (!this.claim) return;
+    if (!this.claim) return stoppedDaemon;
     await this.host.claims.clearChild(this.claim.id);
     if (!(await this.host.claims.release(this.claim.id)))
       throw new Error(`The agent-device claim could not be released: ${this.claim.path}`);
     this.claim = null;
+    return stoppedDaemon;
   }
 
   private async captured(pid: number, child?: ChildProcess): Promise<AgentDriverProcess | null> {
@@ -648,24 +688,22 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     return child && (child.exitCode != null || child.signalCode != null) ? null : record;
   }
 
+  private async daemonStop(stateDir: string): Promise<void> {
+    try {
+      const invocation = resolveAgentDevice(this.options.env);
+      await new Promise<void>((resolve) => {
+        execFile(
+          invocation.command,
+          [...invocation.args, 'daemon', 'stop', '--state-dir', stateDir],
+          { env: { ...this.options.env, AGENT_DEVICE_NO_UPDATE_NOTIFIER: '1' }, timeout: this.options.stopTimeoutMs },
+          () => resolve(),
+        );
+      });
+    } catch {}
+  }
+
   private async stopDaemon(): Promise<void> {
-    if (!this.options.device || this.deviceProxy) {
-      try {
-        const invocation = resolveAgentDevice(this.options.env);
-        await new Promise<void>((resolve) => {
-          execFile(
-            invocation.command,
-            [...invocation.args, 'daemon', 'stop', '--state-dir', this.daemonDir],
-            { env: { ...this.options.env, AGENT_DEVICE_NO_UPDATE_NOTIFIER: '1' }, timeout: this.options.stopTimeoutMs },
-            () => resolve(),
-          );
-        });
-      } catch {}
-    }
-    if (this.deviceProxy?.child.pid !== undefined && !this.daemonRecord)
-      throw new Error(
-        `The agent-device daemon identity is unresolved; its claim ${this.claim?.path} was kept. Once it is gone, clear it with: ${await this.host.claims.removeCommand(this.claim!.path)}`,
-      );
+    if (!this.options.device || this.currentLaunch()) await this.daemonStop(this.daemonDir);
     if (this.daemonRecord && !(await this.signalAndWait(this.daemonRecord, false)))
       throw new Error(`The agent-device daemon did not stop; its claim ${this.claim?.path} was kept.`);
   }
@@ -1036,7 +1074,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     };
     try {
       this.prepareRecordings();
-      this.prepareDaemonDir();
+      this.prepareLaunchDir();
       this.assertSessionsLinked();
       mkdirSync(dir, { mode: 0o700 });
     } catch (error) {
