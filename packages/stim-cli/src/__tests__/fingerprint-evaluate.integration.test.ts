@@ -16,7 +16,7 @@ import { describe, expect, test, vi } from 'vitest';
 import { getExecutor, setExecutor } from '../exec.ts';
 import { readFingerprint, runFingerprintVerification } from '../fingerprint-precompute.ts';
 import { fingerprintPendingVerifyDir } from '@stim-cli/core/state';
-import { writeWorkspaceEnv } from '../fingerprint/index-store.ts';
+import { indexDir, recordFiles, writeWorkspaceEnv, type EvalRecord } from '../fingerprint/index-store.ts';
 import { workspaceEnv } from '../fingerprint/env.ts';
 import { captureProcessIdentity, inspectProcessIdentity } from '../process-identity.ts';
 import { runReport } from '../report-runtime.ts';
@@ -733,13 +733,26 @@ describe('fingerprint evaluators on a bare React Native app', () => {
     for (const path of ['package.json', 'package-lock.json', 'ios'])
       cpSync(join(root, path), join(clean, path), { recursive: true });
     symlinkSync(join(root, 'node_modules'), join(clean, 'node_modules'), 'junction');
-    const compute = (directory: string) =>
-      fingerprint(directory, { platform: 'ios' }, { env: baseEnv(), embedMode: 'development', index: 'skip' });
+    const compute = (directory: string, index: 'use' | 'skip' = 'skip') =>
+      fingerprint(directory, { platform: 'ios' }, { env: baseEnv(), embedMode: 'development', index });
     const checkout = await compute(root);
     const shared = await compute(clean);
     if (isUncertain(checkout) || isUncertain(shared)) throw new Error('The npm fixture did not produce a fingerprint.');
     expect(checkout.portable).toBe(true);
     expect(shared).toMatchObject({ portable: true, hash: checkout.hash });
+    await settleBareIndex();
+    await compute(clean, 'use');
+    expect(await compute(clean, 'use')).toMatchObject({ portable: true, hash: shared.hash, from: 'index' });
+    const files = recordFiles(indexDir('ios', clean, { projectPath: 'ios', gradleRoot: null, module: null }));
+    expect(files.length).toBeGreaterThan(0);
+    for (const file of files) {
+      const record: EvalRecord = JSON.parse(readFileSync(file, 'utf8'));
+      record.format = 4;
+      for (const part of Object.values(record.parts)) part.derived.portable = false;
+      writeFileSync(file, JSON.stringify(record));
+    }
+    const refreshed = await compute(clean, 'use');
+    expect(refreshed).toMatchObject({ portable: shared.portable, hash: shared.hash, from: 'evaluated' });
   });
 
   test('two loaded versions of one content package are two inputs, each in the key', SLOW, async () => {
