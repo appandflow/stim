@@ -74,6 +74,7 @@ export function createNetThread(
   onUpdate: (why: string) => void = () => {},
   onRestart: (why: string) => void = () => {},
   onBusy: (count: number) => void = () => {},
+  inheritedEnv: NodeJS.ProcessEnv = process.env,
 ): NetThread {
   let worker: Worker | null = null;
   let started: Promise<NetAnswer> | null = null;
@@ -148,7 +149,9 @@ export function createNetThread(
       }
       shareOnly = options.shareOnly;
       loopbackOnly = options.loopbackOnly;
-      const thread = trackWorker(new Worker(spawnEntry('net-thread'), { workerData: { net: options } }));
+      const thread = trackWorker(
+        new Worker(spawnEntry('net-thread'), { env: inheritedEnv, workerData: { net: options } }),
+      );
       let clean = false;
       worker = thread;
       started = new Promise<NetAnswer>((answer) => {

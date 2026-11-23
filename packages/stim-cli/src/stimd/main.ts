@@ -7,6 +7,7 @@ import { createLeaseTickets, handleLeaseRequest } from './lease-tickets.ts';
 import { randomUUID } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { StimContext } from '@stim-cli/core';
+import { discoverToolchain } from '@stim-cli/core/toolchain';
 import {
   chmodSync,
   existsSync,
@@ -824,6 +825,8 @@ async function runCrashHold(
  * dependency size scan and waits for its cleanup and for any slow pass already running.
  */
 export async function runStimd(options: RunStimdOptions = {}): Promise<boolean> {
+  const netEnv = { ...process.env };
+  Object.assign(process.env, discoverToolchain(process.env).env);
   const controller = new AbortController();
   const startup: StimdStartup = { signal: controller.signal };
   if (options.attached) {
@@ -833,7 +836,7 @@ export async function runStimd(options: RunStimdOptions = {}): Promise<boolean> 
     startup.finish = () => process.stdin.off('end', abort).off('error', abort);
   }
   try {
-    return await runStimdInner(options, startup);
+    return await runStimdInner(options, startup, netEnv);
   } catch (error) {
     await startup.cleanup?.(error);
     throw error;
@@ -858,6 +861,7 @@ async function runStimdInner(
     attached,
   }: RunStimdOptions,
   startup: StimdStartup,
+  netEnv: NodeJS.ProcessEnv,
 ): Promise<boolean> {
   const identity = stimBuild();
   const build = stimdBuildId();
@@ -1044,6 +1048,7 @@ async function runStimdInner(
       netBusy = count;
       if (count === 0) void checkEngine();
     },
+    netEnv,
   );
   let restartingNet = false;
   const netAskers = new Set<Socket>();

@@ -972,7 +972,7 @@ async function reclaimAll(
     if (r.stoppedTunnel) stoppedTunnels.push(r.stoppedTunnel);
     releasedLeases.push(...r.releasedLeases);
     removedWorkspaceDirs.push(...r.removedWorkspaceDirs);
-    failedWorkspaceDirs.push(...r.failedWorkspaceDirs);
+    failedWorkspaceDirs.push(...r.failedWorkspaceDirs.map(({ dir }) => dir));
     if (r.keptEntry) {
       keptEntries.push(key);
       for (const resource of r.failedDevices) retainedResources.push({ ...resource, project: key });
