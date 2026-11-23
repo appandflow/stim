@@ -99,15 +99,41 @@ extension OwnedDevice {
 
 /// A workspace row's note that a device runs on another machine. A device this machine's server placed reads "on
 /// mini"; one a paired server placed reads "theirs, on mini", so the two never look alike in the sidebar.
-public struct PlacementBadge: Hashable, Sendable {
+public struct PlacementBadge: Hashable, Sendable, Identifiable {
+  public struct ID: Hashable, Sendable {
+    public var machine: String
+    public var owned: Bool
+  }
+
+  public var id: ID { ID(machine: machine, owned: owned) }
+  public var count: Int = 1
   public var machine: String
   public var reason: String?
   /// Whether the work belongs to this machine's Stim home.
   public var owned: Bool
 
-  public var text: String { owned ? "on \(machine)" : "theirs, on \(machine)" }
+  public var text: String {
+    let placement = count == 1 ? "on \(machine)" : "\(count) on \(machine)"
+    return owned ? placement : "theirs, \(placement)"
+  }
 
-  public var accessibilityLabel: String { owned ? "Yours, running on \(machine)" : "Theirs, running on \(machine)" }
+  public var accessibilityLabel: String {
+    let placement = count == 1 ? "running on \(machine)" : "\(count) running on \(machine)"
+    return "\(owned ? "Yours" : "Theirs"), \(placement)"
+  }
+}
+
+public func groupedPlacementBadges(_ badges: [PlacementBadge]) -> [PlacementBadge] {
+  var grouped: [PlacementBadge] = []
+  for badge in badges {
+    if let index = grouped.firstIndex(where: { $0.id == badge.id }) {
+      grouped[index].count += badge.count
+      if grouped[index].reason != badge.reason { grouped[index].reason = nil }
+    } else {
+      grouped.append(badge)
+    }
+  }
+  return grouped
 }
 
 private struct ScannedWork {

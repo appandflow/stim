@@ -152,7 +152,8 @@ actions use typed local-server operations for the selected workspace. The comman
   with a computer icon (VoiceOver: "Running on &lt;machine&gt;"), and a sidebar row
   shows "on &lt;machine&gt;" (VoiceOver: "Yours, running on &lt;machine&gt;"), or
   "theirs, on &lt;machine&gt;" in a paired machine's section, where the work belongs to that machine,
-  with the placement reason as hover text. Local devices show no placement label. The
+  with the placement reason as hover text. Same-machine devices in one row show one line
+  with a count, such as "3 on &lt;machine&gt;" or "theirs, 3 on &lt;machine&gt;". Local devices show no placement label. The
   same views label EAS Simulator sessions **EAS**. The
   menus offer the platforms `stim status` reports in `platforms`, plus any
   with a device or a last build; an older `stim` that does not report them
