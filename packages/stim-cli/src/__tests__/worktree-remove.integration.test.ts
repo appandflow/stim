@@ -2073,8 +2073,15 @@ test('staged paths get no ineffective checkout remedy', () => {
   expect(remedy).toContain('If a build or a setup script left these untracked files');
 });
 
+test('intent-to-add paths get no checkout remedy and spaced worktree paths are quoted', () => {
+  const remedy = removalRemedy([' A intent', ' M edited', '?? new'], { worktree: '/tmp/my wt' }).join('\n');
+  expect(remedy).not.toContain('intent');
+  expect(remedy).toContain("git -C '/tmp/my wt' checkout -- edited");
+  expect(remedy).toContain("git -C '/tmp/my wt' clean -fd new");
+});
+
 test('real git: detached unique commits have a recovery branch command before discard advice', async () => {
-  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-detached-remedy-')));
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim test detached remedy ')));
   const errs: string[] = [];
   try {
     const { wt, git } = realRepoWithWorktree(base);
@@ -2087,7 +2094,7 @@ test('real git: detached unique commits have a recovery branch command before di
     realGitFakeSimctl(simctlJson([]));
     await removeWorktreeTarget(wt, { output: { error: (line) => errs.push(line), fail: () => {} } });
     const text = errs.join('\n');
-    expect(text).toContain(`branch <name> ${sha}`);
+    expect(text).toContain(`git -C '${wt}' branch <name> ${sha}`);
     expect(text).not.toContain('work stays on the branch');
     expect(text.indexOf('commit or push')).toBeLessThan(text.indexOf('checkout --'));
     expect(text.indexOf('checkout --')).toBeLessThan(text.indexOf('--force is a last resort'));

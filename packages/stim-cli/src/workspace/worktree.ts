@@ -313,7 +313,7 @@ export async function listGitignoredEntries(root: string, options: AsyncReadOpti
       ...(options.env ? childEnvironment(options.env) : {}),
       signal: options.signal,
       declareFor: options.declareFor,
-      timeoutMs: 'unbounded',
+      timeoutMs: options.timeoutMs ?? 'unbounded',
       untrimmed: true,
     },
   );

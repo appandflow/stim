@@ -758,6 +758,10 @@ export function nestedWorktrees(entries: readonly WorktreeEntry[], path: string)
     .map((candidate) => candidate.path);
 }
 
+function quoteWorktree(path: string): string {
+  return /^[\w@%+=:,./-]+$/.test(path) || path === '<worktree>' ? path : `'${path.replaceAll("'", `'\\''`)}'`;
+}
+
 export function removalRemedy(
   dirtyLines: string[] | null | undefined,
   { worktree = '<worktree>' }: { worktree?: string } = {},
@@ -767,17 +771,18 @@ export function removalRemedy(
   for (const line of dirtyLines || []) {
     if (porcelainPath(line) === null) continue;
     if (line.startsWith('??')) untracked.push(line);
-    else if (line[0] === ' ' && line[1] !== ' ') tracked.push(line);
+    else if (line[0] === ' ' && 'MDT'.includes(line[1] ?? '')) tracked.push(line);
   }
 
   const lines: string[] = [];
+  const dir = quoteWorktree(worktree);
   if (tracked.length) {
     lines.push('Tracked files were modified -- if a build or a setup script did it, restore them and retry:');
-    lines.push(`  git -C ${worktree} checkout -- ${pathArgs(tracked)}`);
+    lines.push(`  git -C ${dir} checkout -- ${pathArgs(tracked)}`);
   }
   if (untracked.length) {
     lines.push('If a build or a setup script left these untracked files, delete them and retry:');
-    lines.push(`  git -C ${worktree} clean -fd ${pathArgs(untracked)}        # or rm them yourself`);
+    lines.push(`  git -C ${dir} clean -fd ${pathArgs(untracked)}        # or rm them yourself`);
   }
   return lines;
 }
@@ -1318,21 +1323,19 @@ async function printRemovalRefusal(
     );
   }
   for (const line of dirtyLines.slice(0, 10)) output.error(chalk.dim(`      ${line}`));
-  if (dirtyLines.length) output.error(chalk.dim(`  (git -C ${path} status -s for the full list)`));
+  if (dirtyLines.length) output.error(chalk.dim(`  (git -C ${quoteWorktree(path)} status -s for the full list)`));
   output.error(chalk.dim('First: commit or push the branch (only commits found nowhere else are counted,'));
   output.error(chalk.dim("so pushing publishes nothing but this worktree's own work)."));
-  const status = unpushed?.length
-    ? await branchStatusAsync(path, { env: operation?.env, signal: operation?.signal })
-    : null;
-  if (status?.branch === null && status.head) {
+  const status = await branchStatusAsync(path, { env: operation?.env, signal: operation?.signal });
+  if (unpushed?.length && status?.branch === null && status.head) {
     output.error(chalk.dim(`HEAD is detached at ${status.head}. Keep its commits before removal:`));
-    output.error(chalk.dim(`  git -C ${path} branch <name> ${status.head}`));
+    output.error(chalk.dim(`  git -C ${quoteWorktree(path)} branch <name> ${status.head}`));
   }
   for (const line of removalRemedy(dirtyLines, { worktree: path })) output.error(chalk.dim(line));
   output.error(
     chalk.dim('--force is a last resort -- it discards uncommitted changes and untracked files permanently.'),
   );
-  if (status?.branch !== null) output.error(chalk.dim('Committed work stays on the branch.'));
+  if (status?.branch) output.error(chalk.dim('Committed work stays on the branch.'));
   output.fail();
 }
 
@@ -1350,6 +1353,7 @@ async function differingIgnoredFiles(path: string, main: string, operation?: Sti
     env: operation?.env,
     signal: operation?.signal,
     declareFor: operation,
+    timeoutMs: 30_000,
   }).catch(() => {
     operation?.signal.throwIfAborted();
     return [];
