@@ -482,6 +482,26 @@ test.skipIf(process.platform === 'win32')(
 );
 
 test.skipIf(process.platform === 'win32')(
+  'refuses a planted daemon directory link before touching what it points at',
+  async () => {
+    await start();
+    const daemonDir = fixture.daemonDir;
+    await driver.stop();
+    const target = join(home, 'planted');
+    mkdirSync(target, { mode: 0o700 });
+    writeFileSync(join(target, 'daemon.json'), '{}');
+    symlinkSync(target, daemonDir, 'dir');
+    try {
+      await expect(driver.start()).rejects.toThrow('is not a private directory of this user');
+      expect(existsSync(join(target, 'daemon.json'))).toBe(true);
+      expect(readClaimSet(join(home, 'claims')).live).toHaveLength(0);
+    } finally {
+      rmSync(daemonDir);
+    }
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
   'a launch keeps the daemon registration an earlier server left in the daemon state directory',
   async () => {
     await start();

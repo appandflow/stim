@@ -364,6 +364,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     }
     mkdirSync(this.options.stateDir, { recursive: true, mode: 0o700 });
     chmodSync(this.options.stateDir, 0o700);
+    if (this.options.device) this.prepareDaemonDir();
     const taken = await this.host.claims.take(this.options.claimRoot, 'agent-device daemon');
     if (!('claim' in taken))
       throw new Error(`The agent-device daemon is held by another process: ${this.options.claimRoot}`);
@@ -376,7 +377,6 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     this.recording = null;
     rmSync(this.recordings, { recursive: true, force: true });
     if (this.options.device) {
-      this.prepareDaemonDir();
       try {
         this.prepareRecordings();
         this.linkSessions();
