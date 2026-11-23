@@ -45,7 +45,7 @@
     private func environment(
       _ path: String, branch: String, live: Bool = false, building: Bool = false, session: String? = nil, pull: Int? = nil,
       changed: Int = 0, ahead: Int = 1, behind: Int = 0,
-      hostedOn: String? = nil
+      hostedOn: String? = nil, slots: String = "[]"
     ) -> String {
       let started = ISO8601DateFormatter().string(from: now.addingTimeInterval(-95))
       let repository = path.components(separatedBy: "/.worktrees/")[0]
@@ -72,7 +72,7 @@
         {"path":"\#(path)","live":\#(live || building || session != nil),"warnings":[],
          "worktree":{"path":"\#(path)","branch":"\#(branch)","repository":"\#(repository)",
                      "git":{"changed":\#(changed),"untracked":0,"upstream":"origin/\#(branch)","ahead":\#(ahead),"behind":\#(behind)},
-                     "gitChip":{"parts":[\#(chip)],"ci":"passing"}\#(request)}\#(build)\#(agents)\#(ios)}
+                     "gitChip":{"parts":[\#(chip)],"ci":"passing"}\#(request)}\#(build)\#(agents)\#(ios),"slots":\#(slots)}
         """#
     }
 
@@ -112,7 +112,11 @@
           session: changedRowHeight ? "Investigate the selected row" : nil,
           pull: updatedGitSummaries ? nil : 1235,
           changed: updatedGitSummaries ? 2 : 14, ahead: updatedGitSummaries ? 0 : 1234,
-          behind: updatedGitSummaries ? 0 : 5678, hostedOn: "mini-2:7443"),
+          behind: updatedGitSummaries ? 0 : 5678, hostedOn: "mini-2:7443",
+          slots: #"""
+            [{"slot":"second","ios":{"name":"iPhone 17","udid":"","owned":false,"state":"ready","host":{"machine":"mini-2:7443","session":"paired-second"}}},
+             {"slot":"third","ios":{"name":"iPhone 17 Pro","udid":"","owned":false,"state":"ready","host":{"machine":"mini-2:7443","session":"paired-third"}}}]
+            """#),
         environment(
           "/home/bot/work/savemyschoolwork-app/.worktrees/issue-1301-onboarding-copy",
           branch: "fix/1301-onboarding-copy", live: true, session: changedRowHeight ? nil : "Onboarding copy", pull: 1302,

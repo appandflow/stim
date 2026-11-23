@@ -458,9 +458,9 @@ struct WorkspaceRowContent: View {
           RowDetailLine(context: context(env.rowDevices(now: now)), git: showsGit ? GitChip(env.worktree) : nil)
         }
         if archive == nil {
-          ForEach(env.orderedDevices.map { OwnedDevice(owner: owner, ref: $0) }.filter { $0.placementBadge != nil }) {
-            device in
-            if let badge = device.placementBadge { PlacementBadgeView(badge: badge) }
+          ForEach(groupedPlacementBadges(env.orderedDevices.compactMap { OwnedDevice(owner: owner, ref: $0).placementBadge })) {
+            badge in
+            PlacementBadgeView(badge: badge)
           }
         }
       }
