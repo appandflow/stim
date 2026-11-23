@@ -68,6 +68,7 @@ export async function serveOffloadJob(
     if (kind === 'offload-probe' || !(OFFLOAD_JOB_METHODS as readonly string[]).includes(method))
       return { error: { code: 'unknown-method', message: `Unknown method ${method}.` } };
     if (method === 'build.sync') return session.sync(params);
+    if (method === 'build.fingerprint') return session.fingerprint(params);
     if (method === 'build.start') return session.start(params);
     if (method === 'build.cancel') return session.cancel(params);
     if (method === 'build.attach') return session.attach(params);

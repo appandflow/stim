@@ -159,6 +159,7 @@ export const METHODS = [
   'notifications.list',
   'build.offer',
   'build.sync',
+  'build.fingerprint',
   'build.start',
   'build.cancel',
   'build.artifact',
@@ -229,6 +230,7 @@ export const BUILD_METHODS = ['job.start'] as const;
 export const OFFLOAD_JOB_METHODS = [
   'build.offer',
   'build.sync',
+  'build.fingerprint',
   'build.start',
   'build.cancel',
   'build.artifact',
@@ -1244,6 +1246,12 @@ export interface BuildSyncParams {
   done: boolean;
 }
 
+/** A chunk of replay inputs for this connection's synced build, consumed by its next build.start. */
+export type BuildFingerprintParams = Pick<
+  BuildStartParams,
+  'repo' | 'fingerprintSources' | 'fingerprintEnv' | 'fingerprintInputs'
+>;
+
 /** The digests of this page the machine lacks; the client sends each as binary frames before `build.start`. */
 export interface BuildSyncResult {
   missing: string[];
@@ -1984,6 +1992,7 @@ export interface Methods {
   'notifications.list': { params?: NotificationsListParams; result: NotificationsListResult };
   'build.offer': { params: BuildOfferParams; result: BuildOfferResult };
   'build.sync': { params: BuildSyncParams; result: BuildSyncResult };
+  'build.fingerprint': { params: BuildFingerprintParams; result: Record<string, never> };
   'build.start': { params: BuildStartParams; result: BuildJobParams };
   'build.cancel': { params: BuildJobParams; result: Record<string, never> };
   'build.artifact': { params: BuildJobParams; result: BuildArtifactResult };

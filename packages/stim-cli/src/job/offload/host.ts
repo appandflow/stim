@@ -58,6 +58,7 @@ import {
   type BuildCapacity,
   type BuildFile,
   type BuildFingerprintSource,
+  type BuildFingerprintParams,
   type BuildGradleArtifactQuery,
   type BuildJobOutcome,
   type BuildOfferParams,
@@ -156,6 +157,7 @@ function capacityLine(loadPerCore: number | null | undefined, running: number, d
 const optional = (value: unknown): string | null => (typeof value === 'string' ? value : null);
 
 const MAX_FINGERPRINT_SOURCES = 20_000;
+const MAX_FINGERPRINT_BYTES = 16 * 1024 * 1024;
 
 function fingerprintSources(value: unknown): BuildFingerprintSource[] | null | undefined {
   if (value === undefined) return undefined;
@@ -1588,6 +1590,9 @@ export class BuildSession {
   private files = new Map<string, BuildFile>();
   private bytes = 0;
   private done = false;
+  private fingerprintPending = false;
+  private fingerprintBytes = 0;
+  private fingerprintChunks: Omit<BuildFingerprintParams, 'repo'> = {};
   private readonly expected = new Map<string, number>();
   private incoming: { sha256: string; size: number; received: number; hash: Hash; tmp: string } | null = null;
   private readonly jobs = new Map<string, Job>();
@@ -1622,6 +1627,9 @@ export class BuildSession {
     const low = this.host.lowDisk();
     if (low) return refusal('build-busy', `This machine declines the upload: ${low}.`);
     if (this.done || this.repo !== params.repo) {
+      this.fingerprintPending = true;
+      this.fingerprintBytes = 0;
+      this.fingerprintChunks = {};
       this.repo = params.repo;
       this.files = new Map();
       this.bytes = 0;
@@ -1646,6 +1654,63 @@ export class BuildSession {
     }
     this.done = params.done;
     return { result: { missing } };
+  }
+
+  fingerprint(params: unknown): { result: Record<string, never> } | Refusal {
+    if (this.closed || !this.fingerprintPending || !this.done || !isJsonObject(params) || params.repo !== this.repo)
+      return refusal('bad-request', 'build.fingerprint needs a pending build with a complete build.sync manifest.');
+    if (
+      Object.keys(params).some(
+        (key) => !['repo', 'fingerprintSources', 'fingerprintEnv', 'fingerprintInputs'].includes(key),
+      )
+    )
+      return refusal('bad-request', 'Unknown build.fingerprint field.');
+    const bytes = Buffer.byteLength(JSON.stringify(params));
+    if (this.fingerprintBytes + bytes > MAX_FINGERPRINT_BYTES)
+      return refusal(
+        'limit-exceeded',
+        `Fingerprint chunks hold at most ${MAX_FINGERPRINT_BYTES} bytes per connection.`,
+      );
+    const next = { ...this.fingerprintChunks };
+    if (params.fingerprintSources !== undefined) {
+      if (
+        !Array.isArray(params.fingerprintSources) ||
+        (next.fingerprintSources?.length ?? 0) + params.fingerprintSources.length > MAX_FINGERPRINT_SOURCES
+      )
+        return refusal('limit-exceeded', `Fingerprint sources hold at most ${MAX_FINGERPRINT_SOURCES} rows.`);
+      const sources = fingerprintSources([...(next.fingerprintSources ?? []), ...params.fingerprintSources]);
+      if (!sources)
+        return refusal('bad-request', 'Fingerprint sources need unique ids, typed inputs and SHA-256 hashes.');
+      next.fingerprintSources = sources;
+    }
+    if (params.fingerprintEnv !== undefined) {
+      const env = fingerprintEnv(params.fingerprintEnv);
+      if (!env) return refusal('bad-request', 'Invalid fingerprint environment chunk.');
+      const previous = next.fingerprintEnv ?? { set: {}, absent: [] };
+      if (
+        Object.keys(previous.set).length + Object.keys(env.set).length > MAX_FINGERPRINT_SOURCES ||
+        previous.absent.length + env.absent.length > MAX_FINGERPRINT_SOURCES
+      )
+        return refusal(
+          'limit-exceeded',
+          `Fingerprint environment holds at most ${MAX_FINGERPRINT_SOURCES} set and absent rows each.`,
+        );
+      const combined = { set: { ...previous.set, ...env.set }, absent: [...previous.absent, ...env.absent] };
+      if (Object.keys(env.set).some((name) => Object.hasOwn(previous.set, name)) || !fingerprintEnv(combined))
+        return refusal('bad-request', 'Fingerprint environment names must be unique.');
+      next.fingerprintEnv = combined;
+    }
+    if (params.fingerprintInputs !== undefined) {
+      const paths = params.fingerprintInputs;
+      if (!Array.isArray(paths) || (next.fingerprintInputs?.length ?? 0) + paths.length > MAX_FINGERPRINT_SOURCES)
+        return refusal('limit-exceeded', `Fingerprint inputs hold at most ${MAX_FINGERPRINT_SOURCES} rows.`);
+      if (!paths.every((path) => typeof path === 'string' && path.length > 0 && path.length <= MAX_PATH_CHARS))
+        return refusal('bad-request', 'Invalid fingerprint input path.');
+      next.fingerprintInputs = [...(next.fingerprintInputs ?? []), ...paths];
+    }
+    this.fingerprintChunks = next;
+    this.fingerprintBytes += bytes;
+    return { result: {} };
   }
 
   digests(): string[] {
@@ -1690,6 +1755,16 @@ export class BuildSession {
   }
 
   async start(params: unknown): Promise<{ result: { job: string } } | Refusal> {
+    const chunks = this.fingerprintChunks;
+    this.fingerprintPending = false;
+    this.fingerprintChunks = {};
+    this.fingerprintBytes = 0;
+    if (isJsonObject(params)) {
+      const inline = params;
+      if (Object.keys(chunks).some((key) => inline[key] !== undefined))
+        return refusal('bad-request', 'Fingerprint inputs cannot be sent both as chunks and in build.start.');
+      params = { ...params, ...chunks };
+    }
     if (!isJsonObject(params) || !validRepo(params.repo))
       return refusal('bad-request', 'build.start needs params.repo.');
     const strings = ['stimBuild'] as const;
@@ -1988,6 +2063,9 @@ export class BuildSession {
   /** Cancels this session's jobs: the client closed the connection, or the job is ending. */
   close(reason: CancelReason = 'connection-closed'): void {
     this.closed = true;
+    this.fingerprintPending = false;
+    this.fingerprintChunks = {};
+    this.fingerprintBytes = 0;
     this.transfers.abort();
     for (const job of this.jobs.values()) this.host.abandon(job, reason);
     this.jobs.clear();
