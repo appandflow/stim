@@ -108,8 +108,21 @@ if (args[0] === '--version') {
     server.listen(0, '127.0.0.1', () => console.log('Proxy listening at http://127.0.0.1:' + server.address().port));
   });
 } else if (args[0] === 'daemon' && args[1] === 'stop') {
-  if (!process.env.FAKE_STOP_NOOP) try { process.kill(JSON.parse(readFileSync(join(stateDir, 'daemon.json'), 'utf8')).pid, 'SIGTERM'); } catch {}
-  console.log('Daemon stopped (graceful).');
+  if (process.env.FAKE_STOP_FAIL) {
+    console.error('Error (COMMAND_FAILED): daemon stop failed');
+    process.exit(1);
+  }
+  let pid;
+  try { pid = JSON.parse(readFileSync(join(stateDir, 'daemon.json'), 'utf8')).pid; } catch {}
+  const running = () => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  const found = pid !== undefined && running();
+  if (found && !process.env.FAKE_STOP_NOOP) {
+    process.kill(pid, 'SIGTERM');
+    const until = Date.now() + 2000;
+    while (running() && Date.now() < until) {}
+  }
+  if (args.includes('--json')) console.log(JSON.stringify({ success: true, data: { stopped: found, mode: found ? 'graceful' : 'not-running' } }));
+  else console.log('Daemon stopped (graceful).');
 }
 `;
 
@@ -751,7 +764,7 @@ describe.skipIf(process.platform !== 'darwin' && process.platform !== 'linux')('
     },
   );
 
-  test('after the server dies mid-session, the next server launches and retires the earlier daemon through agent-device', async () => {
+  async function crashMidSession(): Promise<{ earlier: number; orphanProxy: number }> {
     install(root);
     const proxies = join(root, 'proxies.log');
     const crashed = deviceDriverIn(root, {}, { FAKE_PROXIES: proxies });
@@ -771,17 +784,44 @@ describe.skipIf(process.platform !== 'darwin' && process.platform !== 'linux')('
       join(claimDir, claimFile),
       JSON.stringify(Object.assign({}, claim, { owner: { pid: deadPid, processToken: identity.token } })),
     );
-    const orphanProxy = Number(readFileSync(proxies, 'utf8').split('\n')[0]);
+    return { earlier, orphanProxy: Number(readFileSync(proxies, 'utf8').split('\n')[0]) };
+  }
 
+  test('after the server dies mid-session, the next server retires the earlier daemon through agent-device and launches', async () => {
+    const { earlier, orphanProxy } = await crashMidSession();
     const next = deviceDriverIn(root);
     try {
       await next.start();
       expect(readClaimSet(join(root, 'agent-device.claims')).live).toHaveLength(1);
-      await vi.waitFor(() => expect(alive(earlier)).toBe(false));
+      expect(alive(earlier)).toBe(false);
     } finally {
       await next.stop();
       try {
         process.kill(-orphanProxy, 'SIGKILL');
+      } catch {}
+    }
+  });
+
+  test('after the server dies, a launch refuses while the earlier daemon cannot be proven stopped, and signals nothing', async () => {
+    const { earlier, orphanProxy } = await crashMidSession();
+    try {
+      const blocked = deviceDriverIn(root, {}, { FAKE_STOP_FAIL: '1' });
+      await expect(blocked.start()).rejects.toThrow(/could not be proven stopped/);
+      expect(readClaimSet(join(root, 'agent-device.claims')).live).toHaveLength(0);
+      expect(alive(earlier)).toBe(true);
+      const next = deviceDriverIn(root);
+      await next.start();
+      try {
+        expect(alive(earlier)).toBe(false);
+      } finally {
+        await next.stop();
+      }
+    } finally {
+      try {
+        process.kill(-orphanProxy, 'SIGKILL');
+      } catch {}
+      try {
+        process.kill(earlier, 'SIGKILL');
       } catch {}
     }
   });

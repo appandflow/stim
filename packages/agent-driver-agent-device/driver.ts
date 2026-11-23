@@ -22,7 +22,7 @@ import {
   type ServerResponse,
 } from 'node:http';
 import { homedir, tmpdir } from 'node:os';
-import { delimiter, dirname, extname, join, relative, sep } from 'node:path';
+import { delimiter, dirname, extname, join } from 'node:path';
 import type {
   AGENT_DRIVER_UNAVAILABLE,
   AgentDriverGrant,
@@ -304,11 +304,15 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     return this.options.device ? join(this.launchDir, 'state') : this.options.stateDir;
   }
 
+  private get launchFile(): string {
+    return join(this.options.stateDir, 'agent-device-launch');
+  }
+
   private currentLaunch(): string | null {
     if (this.launchId) return this.launchId;
     try {
-      const [id, state, sessions, ...rest] = relative(this.launchRoot, readlinkSync(this.sessionsLink)).split(sep);
-      if (id && LAUNCH_ID.test(id) && state === 'state' && sessions === 'sessions' && rest.length === 0) return id;
+      const id = readFileSync(this.launchFile, 'utf8').trim();
+      if (LAUNCH_ID.test(id)) return id;
     } catch {}
     return null;
   }
@@ -388,11 +392,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     }
     mkdirSync(this.options.stateDir, { recursive: true, mode: 0o700 });
     chmodSync(this.options.stateDir, 0o700);
-    const previous = this.options.device && !this.claim ? this.currentLaunch() : null;
-    if (this.options.device) {
-      this.launchId = randomBytes(8).toString('hex');
-      this.prepareLaunchDir();
-    }
+    const previous = this.options.device ? this.currentLaunch() : null;
     const taken = await this.host.claims.take(this.options.claimRoot, 'agent-device daemon');
     if (!('claim' in taken))
       throw new Error(`The agent-device daemon is held by another process: ${this.options.claimRoot}`);
@@ -400,9 +400,17 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     this.claim = claim;
     this.stopping = false;
     this.androidVerifiedAt = 0;
-    if (previous && previous !== this.launchId) {
-      await this.daemonStop(join(this.launchRoot, previous, 'state'));
-      await this.stopIosRunners();
+    if (this.options.device) {
+      try {
+        if (previous) await this.retireLaunch(previous);
+        this.launchId = randomBytes(8).toString('hex');
+        this.prepareLaunchDir();
+        writeFileSync(this.launchFile, `${this.launchId}\n`, { mode: 0o600 });
+      } catch (error) {
+        await this.host.claims.release(claim.id).catch(() => false);
+        this.claim = null;
+        throw error;
+      }
     }
     if (!this.options.device) rmSync(join(this.daemonDir, 'daemon.json'), { force: true });
     clearTimeout(this.recording?.timer);
@@ -700,6 +708,42 @@ export class AgentDeviceDriver implements HostedAgentDriver {
         );
       });
     } catch {}
+  }
+
+  /** Stops the daemon of an earlier launch through agent-device, which checks its identity, and its iOS runners. */
+  private async retireLaunch(id: string): Promise<void> {
+    const stateDir = join(this.launchRoot, id, 'state');
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const mode = await this.daemonStopMode(stateDir);
+      if (mode === 'not-running') {
+        await this.stopIosRunners();
+        return;
+      }
+      if (mode === null) break;
+    }
+    throw new Error(
+      `The agent-device daemon of an earlier launch could not be proven stopped. Stop it with: agent-device daemon stop --state-dir ${stateDir}`,
+    );
+  }
+
+  private async daemonStopMode(stateDir: string): Promise<string | null> {
+    try {
+      const invocation = resolveAgentDevice(this.options.env);
+      const stdout = await new Promise<string | null>((resolve) => {
+        execFile(
+          invocation.command,
+          [...invocation.args, 'daemon', 'stop', '--state-dir', stateDir, '--json'],
+          { env: { ...this.options.env, AGENT_DEVICE_NO_UPDATE_NOTIFIER: '1' }, timeout: this.options.stopTimeoutMs },
+          (error, out) => resolve(error ? null : String(out)),
+        );
+      });
+      const value: unknown = stdout === null ? null : JSON.parse(stdout);
+      return isJsonObject(value) && isJsonObject(value.data) && typeof value.data.mode === 'string'
+        ? value.data.mode
+        : null;
+    } catch {
+      return null;
+    }
   }
 
   private async stopDaemon(): Promise<void> {

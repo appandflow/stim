@@ -71,9 +71,13 @@ stop --state-dir`, which checks pid, start time and command itself, and the
   and agent-device's idle reaper ends it: 5 minutes after it last had work
   (`AGENT_DEVICE_DAEMON_IDLE_TIMEOUT_MS`), unless it holds a lease, which a
   failed launch never put.
-- A driver starting fresh, after the server restarted, first runs `agent-device
-daemon stop` for the launch its `sessions` link names and stops this device's
-  agent-device iOS runners, then starts a new launch.
+- Every launch first retires the launch recorded in `<state
+dir>/agent-device-launch`. It starts only once `agent-device daemon stop
+--state-dir <that launch>/state --json` reports `not-running` and this
+  device's agent-device iOS runners are stopped. Otherwise it refuses and
+  releases the claim, so a daemon that registered and survived a server crash
+  is never left driving the device beside its replacement. A launch whose
+  daemon never registered reports `not-running`.
 - The driver deletes a launch directory only after it stopped that launch's
   captured daemon. `stim gc` removes a launch directory idle for 24 hours once
   `agent-device daemon stop --state-dir <dir>/state --json` reports

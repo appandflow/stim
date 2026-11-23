@@ -131,7 +131,13 @@ vi.mock('node:child_process', async (original) => ({
     const ps = command === '/bin/ps' && fixture.ps.length > 1 ? fixture.ps.shift() : fixture.ps[0];
     (args.at(-1) as (error: null, stdout: string) => void)(
       null,
-      command === '/bin/ps' ? (ps ?? '') : version ? fixture.version : '',
+      command === '/bin/ps'
+        ? (ps ?? '')
+        : version
+          ? fixture.version
+          : Array.isArray(args[0]) && args[0].includes('--json')
+            ? '{"success":true,"data":{"stopped":false,"mode":"not-running"}}'
+            : '',
     );
   },
 }));

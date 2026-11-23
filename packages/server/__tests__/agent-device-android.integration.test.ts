@@ -95,11 +95,13 @@ vi.mock('node:child_process', async (original) => ({
       null,
       argv.includes('--version')
         ? fixture.version
-        : argv.includes('emu')
-          ? `${fixture.avdName}\nOK\n`
-          : argv.includes('pidof') && fixture.helperBusy
-            ? '4444'
-            : '',
+        : argv.includes('--json')
+          ? '{"success":true,"data":{"stopped":false,"mode":"not-running"}}'
+          : argv.includes('emu')
+            ? `${fixture.avdName}\nOK\n`
+            : argv.includes('pidof') && fixture.helperBusy
+              ? '4444'
+              : '',
       '',
     );
   },
