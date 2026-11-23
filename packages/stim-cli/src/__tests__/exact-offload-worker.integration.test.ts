@@ -184,6 +184,30 @@ async function build(
 
 const LAUNCHER = '#!/bin/sh\n# ensureBun("1.4.2")\nenv > env-seen.txt\nexit 3\n';
 
+test('the worker returns the missing Hermes bundle and its install command', async () => {
+  const checkout = '/worker/repos/shop-app-checkout/exact2';
+  const target = 'aarch64-apple-ios-sim';
+  const missing = `the pinned Hermes bundle for ${target} is not installed: \`bun ${checkout}/scripts/exact.mjs setup\` installs it and the rest a native build needs (a copied checkout or a fresh HOME needs it too); this bundle alone:`;
+  const install = `cargo run --manifest-path ${checkout}/vendor/ibex/crates/hermes-lean-sys-installer/Cargo.toml -- --target ${target}`;
+  const { result } = await build({
+    'app.json': '{}',
+    'exact.mjs': `#!/bin/sh
+# ensureBun("1.4.2")
+cat >&2 <<'EOF'
+${missing}
+  ${install}
+exact: if this was unclear or slow, tell the exact2 team in one line: bun exact.mjs feedback note "<what happened>"
+EOF
+exit 1
+`,
+  });
+  expect(result).toMatchObject({
+    ok: false,
+    code: 'exact-build-failed',
+    message: `${missing} | ${install}`,
+  });
+});
+
 test('the worker runs Exact without the simulator, the worker caches or Exact settings of its own environment', async () => {
   const { result, area } = await build(
     { 'exact.mjs': LAUNCHER, 'app.json': JSON.stringify({ env: ['API_URL', 'STORE_ID'] }) },
