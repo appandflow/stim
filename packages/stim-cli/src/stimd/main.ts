@@ -826,7 +826,12 @@ async function runCrashHold(
  */
 export async function runStimd(options: RunStimdOptions = {}): Promise<boolean> {
   const netEnv = { ...process.env };
-  Object.assign(process.env, discoverToolchain(process.env).env);
+  const toolchainErrors: string[] = [];
+  try {
+    Object.assign(process.env, discoverToolchain(process.env).env);
+  } catch (error) {
+    toolchainErrors.push(errorText(error));
+  }
   const controller = new AbortController();
   const startup: StimdStartup = { signal: controller.signal };
   if (options.attached) {
@@ -836,7 +841,7 @@ export async function runStimd(options: RunStimdOptions = {}): Promise<boolean> 
     startup.finish = () => process.stdin.off('end', abort).off('error', abort);
   }
   try {
-    return await runStimdInner(options, startup, netEnv);
+    return await runStimdInner(options, startup, netEnv, toolchainErrors);
   } catch (error) {
     await startup.cleanup?.(error);
     throw error;
@@ -862,6 +867,7 @@ async function runStimdInner(
   }: RunStimdOptions,
   startup: StimdStartup,
   netEnv: NodeJS.ProcessEnv,
+  toolchainErrors: string[],
 ): Promise<boolean> {
   const identity = stimBuild();
   const build = stimdBuildId();
@@ -882,6 +888,7 @@ async function runStimdInner(
   const inDaemonContext = AsyncLocalStorage.snapshot();
   const log = (level: Level, event: string, msg: string, fields: Record<string, unknown> = {}) =>
     writer.write({ src: 'stimd', level, event, msg, ...fields });
+  toolchainErrors.forEach((message) => log('warn', 'toolchain_discovery_failed', message));
   setReportChildLog(log);
   const path = stimdSocket();
   const bootAt = Date.now();

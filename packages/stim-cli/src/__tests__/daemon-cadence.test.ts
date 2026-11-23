@@ -197,6 +197,54 @@ test.skipIf(process.platform === 'win32')(
   },
 );
 
+test('stimd starts with its inherited environment and logs one warning when toolchain discovery throws', async () => {
+  const error = Object.assign(new Error('EACCES: permission denied, stat /external/android-sdk'), { code: 'EACCES' });
+  const probe: toolchain.ToolchainProbe = {
+    home,
+    execPath: '/runtime/bin/node',
+    isDir: () => {
+      throw error;
+    },
+    isFile: () => false,
+    read: () => null,
+    list: () => [],
+    link: () => null,
+  };
+  const discover = toolchain.discoverToolchain;
+  vi.spyOn(toolchain, 'discoverToolchain').mockImplementation((env) => discover(env, probe));
+  quietWorkspace();
+  const savedEnv = { ...process.env };
+  const inheritedPath = '/usr/bin:/bin:/usr/sbin:/sbin';
+  let daemon: Promise<boolean> | undefined;
+  try {
+    process.env.PATH = inheritedPath;
+    daemon = runStimd({ mode: 'report' });
+    expect(process.env.PATH).toBe(inheritedPath);
+    const records = () =>
+      readFileSync(daemonNdjsonFile(), 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line));
+    await vi.waitFor(() => expect(records()).toContainEqual(expect.objectContaining({ event: 'daemon_started' })));
+    expect(records().filter((entry) => entry.event === 'toolchain_discovery_failed')).toEqual([
+      expect.objectContaining({ src: 'stimd', level: 'warn', msg: expect.stringContaining(error.message) }),
+    ]);
+    expect(process.env.PATH).toBe(inheritedPath);
+  } finally {
+    try {
+      if (daemon) {
+        process.emit('SIGTERM', 'SIGTERM');
+        await daemon;
+      }
+    } finally {
+      for (const key of Object.keys(process.env)) {
+        if (!(key in savedEnv)) delete process.env[key];
+      }
+      Object.assign(process.env, savedEnv);
+    }
+  }
+});
+
 test('due output marks refresh on quiet ticks before the next hourly walk', async () => {
   const root = quietWorkspace(0);
   writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
