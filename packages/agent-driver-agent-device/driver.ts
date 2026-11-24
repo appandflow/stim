@@ -246,6 +246,10 @@ const HOP_BY_HOP = new Set(['connection', 'keep-alive', 'transfer-encoding', 'up
 const LISTENING = /Proxy listening at (http:\/\/127\.0\.0\.1:\d+)/;
 const LAUNCH_ID = /^[0-9a-f]{16}$/;
 
+function registered(stateDir: string): boolean {
+  return existsSync(join(stateDir, 'daemon.json')) || existsSync(join(stateDir, 'daemon.lock'));
+}
+
 export class AgentDeviceDriver implements HostedAgentDriver {
   readonly name = 'agent-device';
   private readonly options: Required<Omit<AgentDeviceDriverOptions, 'env' | 'device'>> &
@@ -407,7 +411,9 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       try {
         this.launchId = null;
         const previous = this.currentLaunch();
-        if (previous) await this.retireLaunch(previous);
+        if (previous) await this.retire(join(this.launchRoot, previous, 'state'));
+        // @ref LLP 0007#a-hosted-device-daemon-launch-shares-nothing-with-the-next -- the 2.0.0-rc.3 flat root is retired like a launch
+        else if (registered(this.launchRoot)) await this.retire(this.launchRoot);
         this.launchId = randomBytes(8).toString('hex');
         this.prepareLaunchDir();
         writeFileSync(this.launchFile, `${this.launchId}\n`, { mode: 0o600 });
@@ -716,12 +722,12 @@ export class AgentDeviceDriver implements HostedAgentDriver {
   }
 
   /**
-   * Stops a launch's daemon through agent-device, which checks its identity, and this device's iOS runners. A launch
-   * with neither `daemon.json` nor `daemon.lock` never registered a daemon, and needs no answer from agent-device.
+   * Stops the daemon of a launch's state directory through agent-device, which checks its identity, and this device's
+   * iOS runners. A state directory with neither `daemon.json` nor `daemon.lock` never registered a daemon, and needs no
+   * answer from agent-device.
    */
-  private async retireLaunch(id: string): Promise<void> {
-    const stateDir = join(this.launchRoot, id, 'state');
-    if (!existsSync(join(stateDir, 'daemon.json')) && !existsSync(join(stateDir, 'daemon.lock'))) {
+  private async retire(stateDir: string): Promise<void> {
+    if (!registered(stateDir)) {
       await this.stopIosRunners();
       return;
     }
@@ -763,7 +769,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
 
   private async stopDaemon(): Promise<void> {
     const launch = this.options.device ? this.currentLaunch() : null;
-    if (launch && !this.daemonRecord) return this.retireLaunch(launch);
+    if (launch && !this.daemonRecord) return this.retire(join(this.launchRoot, launch, 'state'));
     if (!this.options.device || launch) await this.daemonStop(this.daemonDir);
     if (this.daemonRecord && !(await this.signalAndWait(this.daemonRecord, false)))
       throw new Error(`The agent-device daemon did not stop; its claim ${this.claim?.path} was kept.`);

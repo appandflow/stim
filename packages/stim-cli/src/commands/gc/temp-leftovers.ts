@@ -185,7 +185,6 @@ function stimKept(identity: string, scan: Walk, projects: readonly string[]): st
   return null;
 }
 
-/** The launch directories in a `stim-server-agent-device-*` root, or none when it cannot be listed. */
 async function launchDirs(root: string): Promise<string[]> {
   let names: string[];
   try {
@@ -202,28 +201,42 @@ async function launchDirs(root: string): Promise<string[]> {
   return dirs;
 }
 
+// @ref LLP 0007#a-hosted-device-daemon-launch-shares-nothing-with-the-next -- 2.0.0-rc.3 kept its daemon state in the root itself
+async function legacyPaths(root: string, launches: readonly string[]): Promise<string[] | null> {
+  const marked = await Promise.all(['daemon.json', 'daemon.lock'].map((name) => lstatOrError(join(root, name))));
+  if (!marked.some(Boolean)) return null;
+  if (!launches.length) return [root];
+  let names: string[];
+  try {
+    names = await readdir(root);
+  } catch {
+    return [root];
+  }
+  return names
+    .toSorted()
+    .map((name) => join(root, name))
+    .filter((path) => !launches.includes(path));
+}
+
 // @ref LLP 0007#a-hosted-device-daemon-launch-shares-nothing-with-the-next -- gc removes a launch only when agent-device reports its daemon stopped
-async function judgeLaunch(
-  dir: string,
+async function judgeDaemonState(
+  paths: readonly string[],
+  stateDir: string,
   now: number,
   signal: AbortSignal | undefined,
   operation: StimContext | undefined,
 ): Promise<{ bytes: number; kept: string | null }> {
-  const stat = await lstatOrError(dir);
-  if (!stat || 'error' in stat || !stat.isDirectory())
-    return {
-      bytes: 0,
-      kept: !stat
-        ? `${dir} is gone`
-        : 'error' in stat
-          ? `${dir} cannot be read: ${stat.error}`
-          : `${dir} is not a directory`,
-    };
-  const scan = await walk(dir, stat, signal);
+  const scan: Walk = { bytes: 0, newest: 0, claimRoots: [], locks: [], unreadable: null };
+  for (const path of paths) {
+    const stat = await lstatOrError(path);
+    if (!stat) continue;
+    if ('error' in stat) scan.unreadable ??= `${path} cannot be read: ${stat.error}`;
+    else await walk(path, stat, signal, scan);
+  }
   if (scan.unreadable) return { bytes: scan.bytes, kept: scan.unreadable };
   if (now - scan.newest < MIN_AGE_MS)
     return { bytes: scan.bytes, kept: `modified within the last ${TEMP_LEFTOVER_MIN_AGE_HOURS}h` };
-  const state = await agentDeviceDaemonState(join(dir, 'state'), signal, operation);
+  const state = await agentDeviceDaemonState(stateDir, signal, operation);
   if (state === 'stopped') return { bytes: scan.bytes, kept: null };
   return {
     bytes: scan.bytes,
@@ -275,9 +288,11 @@ function temporaryRoot(env: NodeJS.ProcessEnv): string {
 
 /**
  * Recognized leftovers directly inside the user's TMPDIR, never following a symlink: Stim's own temp directories,
- * xctrace recordings and SwiftPM's `TemporaryDirectory.*`. They are deleted only once
- * nothing in them changed for 24 hours. Null with STIM_HOME set, because TMPDIR is shared by every Stim home, and for the real TMPDIR a test
- * process recorded in STIM_TEST_GUARD_REAL_TMPDIR.
+ * xctrace recordings and SwiftPM's `TemporaryDirectory.*`, plus, each on its own, the hosted agent-device launches and
+ * the 2.0.0-rc.3 daemon state in a `stim-server-agent-device-*` directory. They are deleted only once nothing in them
+ * changed for 24 hours, and agent-device state only once agent-device also reports its daemon stopped. Null with
+ * STIM_HOME set, because TMPDIR is shared by every Stim home, and for the real TMPDIR a test process recorded in
+ * STIM_TEST_GUARD_REAL_TMPDIR.
  */
 export async function collectTempLeftovers({
   now = Date.now(),
@@ -338,9 +353,14 @@ export async function collectTempLeftovers({
     const kind = kindOf(name, stat);
     if (!kind) continue;
     const launches = kind === 'stim' && name.startsWith(AGENT_DEVICE_LAUNCHES) ? await launchDirs(path) : [];
-    if (launches.length) {
+    const legacy = kind === 'stim' && name.startsWith(AGENT_DEVICE_LAUNCHES) ? await legacyPaths(path, launches) : null;
+    if (launches.length || legacy) {
+      if (legacy) {
+        const { bytes, kept } = await judgeDaemonState(legacy, path, now, signal, operation);
+        entries.push({ kind, path, bytes, willDelete: kept === null, kept });
+      }
       for (const dir of launches) {
-        const { bytes, kept } = await judgeLaunch(dir, now, signal, operation);
+        const { bytes, kept } = await judgeDaemonState([dir], join(dir, 'state'), now, signal, operation);
         entries.push({ kind, path: dir, bytes, willDelete: kept === null, kept });
       }
       continue;
@@ -390,6 +410,14 @@ export function tempLeftoverSection(
   return report ? { root: report.root, groups: summarize(report) } : null;
 }
 
+async function agentDeviceState(path: string, root: string): Promise<{ paths: string[]; stateDir: string } | null> {
+  if (dirname(dirname(path)) === root)
+    return { paths: (await lstatOrError(path)) ? [path] : [], stateDir: join(path, 'state') };
+  if (dirname(path) !== root || !basename(path).startsWith(AGENT_DEVICE_LAUNCHES)) return null;
+  const legacy = await legacyPaths(path, await launchDirs(path));
+  return legacy && { paths: legacy, stateDir: path };
+}
+
 /** Deletes what a fresh `collectTempLeftovers` marks for deletion. Returns the bytes freed and the failures. */
 export async function deleteTempLeftovers(
   options: { now?: number; env?: NodeJS.ProcessEnv; signal?: AbortSignal; operation?: StimContext } = {},
@@ -402,15 +430,23 @@ export async function deleteTempLeftovers(
     if (!entry.willDelete) continue;
     try {
       if (entry.kind === 'jest') continue;
-      if (dirname(dirname(entry.path)) === report.root) {
-        if (!(await lstatOrError(entry.path))) continue;
-        const again = (await judgeLaunch(entry.path, options.now ?? Date.now(), options.signal, options.operation))
-          .kept;
+      const agentDevice = await agentDeviceState(entry.path, report.root);
+      if (agentDevice) {
+        if (!agentDevice.paths.length) continue;
+        const again = (
+          await judgeDaemonState(
+            agentDevice.paths,
+            agentDevice.stateDir,
+            options.now ?? Date.now(),
+            options.signal,
+            options.operation,
+          )
+        ).kept;
         if (again) {
           output.record('tempLeftover', 'kept', entry.path, { bytes: entry.bytes, detail: again });
           continue;
         }
-        await removeTemporaryEntryAsync(entry.path, options.signal);
+        for (const path of agentDevice.paths) await removeTemporaryEntryAsync(path, options.signal);
         done.count++;
         done.bytes += entry.bytes;
         continue;
