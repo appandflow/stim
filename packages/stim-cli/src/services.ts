@@ -521,7 +521,9 @@ async function waitReady(root: string, name: string, record: ServiceRecord, opti
   const deadline = Date.now() + READY_TIMEOUT_MS;
   for (;;) {
     options.signal?.throwIfAborted();
-    if (await ready(root, name, record, options, Math.min(READY_COMMAND_TIMEOUT_MS, deadline - Date.now())))
+    if (
+      await ready(root, name, record, options, Math.max(1, Math.min(READY_COMMAND_TIMEOUT_MS, deadline - Date.now())))
+    )
       return true;
     if (record.kind === 'process' && !(await serviceRunning(record))) return false;
     if (Date.now() >= deadline) return false;
