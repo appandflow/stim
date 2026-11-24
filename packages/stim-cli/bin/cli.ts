@@ -149,6 +149,9 @@ export async function main(argv: string[], ctx: MainContext = {}): Promise<void>
     } else if (err instanceof CliUsageError) {
       process.stderr.write(`${err.message}\n`);
       exitCode = 1;
+    } else if (err instanceof Error && 'syscall' in err && err.syscall === 'uv_cwd') {
+      console.error('The current working directory no longer exists. Run `cd` to another directory and try again.');
+      exitCode = 1;
     } else {
       const code = (err as { code?: unknown })?.code;
       const message = err instanceof Error ? err.message : String(err);
