@@ -25,6 +25,15 @@ vi.mock('../workspace/protected-locations.ts', () => ({
 
 const day = 86_400_000;
 
+function ageGitActivity(gitDir: string, at: Date) {
+  const reflog = join(gitDir, 'logs', 'HEAD');
+  writeFileSync(
+    reflog,
+    readFileSync(reflog, 'utf8').replace(/> \d+ ([+-]\d{4}\t)/g, `> ${Math.floor(at.getTime() / 1000)} $1`),
+  );
+  for (const file of ['index', 'HEAD', join('logs', 'HEAD')]) utimesSync(join(gitDir, file), at, at);
+}
+
 describe('worktreeInScope', () => {
   const where = { main: '/dev/repo', folders: ['/dev'], roots: ['/roots'] };
 
@@ -63,7 +72,7 @@ describe('a discovered worktree on the removal path', () => {
     git(main, 'worktree', 'add', '-q', ...(detached ? ['--detach', path] : ['-b', name, path]));
     const gitdir = git(path, 'rev-parse', '--absolute-git-dir').trim();
     age(path);
-    for (const file of ['index', 'HEAD', join('logs', 'HEAD')]) utimesSync(join(gitdir, file), old, old);
+    ageGitActivity(gitdir, old);
     return path;
   };
 
@@ -110,6 +119,18 @@ describe('a discovered worktree on the removal path', () => {
     expect(found.quiet?.skipped).toBeNull();
     expect(found.busy).toMatchObject({ skipCode: 'recent-activity', skipped: expect.stringContaining('file edit') });
     expect(quiet).toBeTruthy();
+  });
+
+  it('treats an old reflog with a fresh mtime after git gc as idle', async () => {
+    vi.spyOn(reads, 'discoveredReads').mockImplementation(() => ({
+      processes: async () => ({ commands: [], cwds: [] }),
+      sessions: async () => [],
+    }));
+    const wt = worktree('gc-touched');
+    const gitDir = git(wt, 'rev-parse', '--absolute-git-dir').trim();
+    const now = new Date();
+    utimesSync(join(gitDir, 'logs', 'HEAD'), now, now);
+    expect((await sweep())['gc-touched']).toMatchObject({ skipped: null });
   });
 
   it('keeps a git-ignored file the main checkout lacks, and removes the worktree once the main checkout holds the same bytes', async () => {
@@ -260,7 +281,7 @@ describe('a worktree of a plain Node repository on the removal path', () => {
     writeFileSync(join(path, 'node_modules', 'dep', 'index.js'), 'x');
     const gitdir = git(path, 'rev-parse', '--absolute-git-dir').trim();
     age(path);
-    for (const file of ['index', 'HEAD', join('logs', 'HEAD')]) utimesSync(join(gitdir, file), old, old);
+    ageGitActivity(gitdir, old);
     return path;
   };
 

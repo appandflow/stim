@@ -1,5 +1,5 @@
 import type { StimContext } from '@stim-cli/core';
-import { existsSync, readdirSync, statSync } from 'fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import { isAbsolute, join, sep } from 'path';
 import chalk from 'chalk';
 import { machineNumber } from '../../machine-number.ts';
@@ -566,12 +566,24 @@ export async function worktreeActivityOfAsync(
   return activityFromGitDir(gitDir, keys);
 }
 
+function reflogActivity(gitDir: string): WorktreeActivity | null | 'unreadable' {
+  const path = join(gitDir, 'logs', 'HEAD');
+  try {
+    const mtime = statSync(path).mtimeMs;
+    const lastLine = readFileSync(path, 'utf8').trimEnd().split('\n').at(-1) ?? '';
+    const match = /^[^\t]*> (\d+) [+-]\d{4}\t/.exec(lastLine);
+    const timestamp = match ? Number(match[1]) * 1000 : NaN;
+    return { at: Number.isFinite(timestamp) ? timestamp : mtime, basis: 'a git reflog entry' };
+  } catch (error) {
+    return error instanceof Error && 'code' in error && error.code === 'ENOENT' ? null : 'unreadable';
+  }
+}
+
 function activityFromGitDir(gitDir: string | undefined, keys: readonly string[]): WorktreeActivity | null {
   if (!gitDir) return null;
   const paths = [
     { path: join(gitDir, 'index'), basis: 'a git index write' },
     { path: join(gitDir, 'HEAD'), basis: 'a git HEAD change' },
-    { path: join(gitDir, 'logs', 'HEAD'), basis: 'a git reflog entry' },
   ];
   for (const key of keys) {
     const logs = logFiles(key);
@@ -579,7 +591,9 @@ function activityFromGitDir(gitDir: string | undefined, keys: readonly string[])
     paths.push({ path: workspaceStateFile(key), basis: 'a Stim workspace state write' }, ...logs);
   }
   const newest = newestMtime(paths);
-  return newest === 'unreadable' ? null : newest;
+  const reflog = reflogActivity(gitDir);
+  if (newest === 'unreadable' || reflog === 'unreadable') return null;
+  return reflog && (!newest || reflog.at > newest.at) ? reflog : newest;
 }
 
 const DAY_MS_FOR_DORMANT = 24 * 60 * MINUTE_MS;
