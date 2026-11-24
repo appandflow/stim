@@ -313,7 +313,8 @@ export async function planRung6(
       kind: 'would-delete-temp-leftovers',
       target: leftovers.root,
       bytes: deletable.reduce((sum, entry) => sum + entry.bytes, 0),
-      reason: 'Stim temp directories, xctrace recordings and SwiftPM temp directories unmodified for 24 hours',
+      reason:
+        'Stim temp directories, stopped hosted agent-device launches, xctrace recordings and SwiftPM temp directories unmodified for 24 hours',
     });
   const trash = await collectTrash({ signal: operation?.signal, operation });
   const trashed = trash?.entries.filter((entry) => entry.willDelete) ?? [];

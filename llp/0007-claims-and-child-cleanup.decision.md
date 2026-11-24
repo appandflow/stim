@@ -84,7 +84,8 @@ dir>/agent-device-launch`. Retiring needs `agent-device daemon stop
 - The driver deletes a launch directory only after it stopped that launch's
   captured daemon. `stim gc` removes a launch directory idle for 24 hours once
   `agent-device daemon status --state-dir <dir>/state --json` reports its
-  daemon `stopped`. gc never stops a daemon: a live session's daemon may sit
+  daemon `stopped`, whatever lock or claim directories it holds, and lists each
+  launch on its own under TMPDIR leftovers. gc never stops a daemon: a live session's daemon may sit
   idle that long, and an unreachable one ends through agent-device's idle
   reaper.
 

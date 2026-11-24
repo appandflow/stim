@@ -54,6 +54,8 @@ interface TempLeftover {
   bytes: number;
   willDelete: boolean;
   kept: string | null;
+  /** A hosted agent-device launch directory inside a `stim-server-agent-device-*` root, judged on its own. */
+  launch?: true;
 }
 
 export interface TempLeftoverReport {
@@ -64,7 +66,7 @@ export interface TempLeftoverReport {
 }
 
 const REMEDIES: Record<DeletableKind, string> = {
-  stim: 'stim gc --pressure high removes them once they are idle for 24 hours',
+  stim: 'stim gc --pressure high removes them once they are idle for 24 hours, and a hosted agent-device launch once agent-device also reports its daemon stopped',
   xctrace:
     'stim gc --pressure high removes them once they are idle for 24 hours and no xctrace or Instruments process runs; export a recording you need first',
   swiftpm:
@@ -185,36 +187,42 @@ function stimKept(identity: string, scan: Walk, projects: readonly string[]): st
   return null;
 }
 
+/** The launch directories in a `stim-server-agent-device-*` root, or none when it cannot be listed. */
+async function launchDirs(root: string): Promise<string[]> {
+  let names: string[];
+  try {
+    names = await readdir(root);
+  } catch {
+    return [];
+  }
+  const dirs: string[] = [];
+  for (const id of names.toSorted()) {
+    if (!LAUNCH_ID.test(id)) continue;
+    const stat = await lstatOrError(join(root, id));
+    if (stat && !('error' in stat) && stat.isDirectory()) dirs.push(join(root, id));
+  }
+  return dirs;
+}
+
 // @ref LLP 0007#a-hosted-device-daemon-launch-shares-nothing-with-the-next -- gc removes a launch only when agent-device reports its daemon stopped
-async function retireAgentDeviceLaunches(
-  root: string,
+async function judgeLaunch(
+  dir: string,
   now: number,
   signal: AbortSignal | undefined,
   operation: StimContext | undefined,
-): Promise<void> {
-  const uid = process.getuid?.();
-  for (const name of await readdir(root)) {
-    if (!name.startsWith(AGENT_DEVICE_LAUNCHES)) continue;
-    const parent = join(root, name);
-    const stat = await lstatOrError(parent);
-    if (!stat || 'error' in stat || !stat.isDirectory() || (uid !== undefined && stat.uid !== uid)) continue;
-    let launches: string[];
-    try {
-      launches = await readdir(parent);
-    } catch {
-      continue;
-    }
-    for (const id of launches) {
-      if (!LAUNCH_ID.test(id)) continue;
-      const dir = join(parent, id);
-      const launch = await lstatOrError(dir);
-      if (!launch || 'error' in launch || !launch.isDirectory()) continue;
-      const scan = await walk(dir, launch, signal);
-      if (scan.unreadable || now - scan.newest < MIN_AGE_MS) continue;
-      if ((await agentDeviceDaemonState(join(dir, 'state'), signal, operation)) !== 'stopped') continue;
-      await removeTemporaryEntryAsync(dir, signal);
-    }
-  }
+): Promise<{ bytes: number; kept: string | null }> {
+  const stat = await lstatOrError(dir);
+  if (!stat || 'error' in stat || !stat.isDirectory()) return { bytes: 0, kept: 'it changed since the scan' };
+  const scan = await walk(dir, stat, signal);
+  if (scan.unreadable) return { bytes: scan.bytes, kept: scan.unreadable };
+  if (now - scan.newest < MIN_AGE_MS)
+    return { bytes: scan.bytes, kept: `modified within the last ${TEMP_LEFTOVER_MIN_AGE_HOURS}h` };
+  const state = await agentDeviceDaemonState(join(dir, 'state'), signal, operation);
+  if (state === 'stopped') return { bytes: scan.bytes, kept: null };
+  return {
+    bytes: scan.bytes,
+    kept: state ? `agent-device reports its daemon ${state}` : 'agent-device could not report its daemon state',
+  };
 }
 
 /** The daemon state `agent-device daemon status --json` reads for `stateDir`, without contacting or stopping it. */
@@ -270,14 +278,11 @@ export async function collectTempLeftovers({
   env = process.env,
   signal,
   operation,
-  retireLaunches = false,
 }: {
   now?: number;
   env?: NodeJS.ProcessEnv;
   signal?: AbortSignal;
   operation?: StimContext;
-  /** First removes idle hosted agent-device launch directories whose daemon agent-device reports stopped. */
-  retireLaunches?: boolean;
 } = {}): Promise<TempLeftoverReport | null> {
   if (deviceSweepIsScoped(env)) return null;
   let root: string;
@@ -286,7 +291,6 @@ export async function collectTempLeftovers({
     root = await realpath(temporaryRoot(env));
     const guarded = process.env[TEMP_LEFTOVERS_TEST_GUARD_ENV];
     if (guarded && root === guarded) return null;
-    if (retireLaunches) await retireAgentDeviceLaunches(root, now, signal, operation);
     names = await readdir(root);
   } catch (error) {
     if (signal?.aborted) throw error;
@@ -327,6 +331,14 @@ export async function collectTempLeftovers({
     if (!stat || 'error' in stat || stat.isSymbolicLink() || (uid !== undefined && stat.uid !== uid)) continue;
     const kind = kindOf(name, stat);
     if (!kind) continue;
+    const launches = kind === 'stim' && name.startsWith(AGENT_DEVICE_LAUNCHES) ? await launchDirs(path) : [];
+    if (launches.length) {
+      for (const dir of launches) {
+        const { bytes, kept } = await judgeLaunch(dir, now, signal, operation);
+        entries.push({ kind, path: dir, bytes, willDelete: kept === null, kept, launch: true });
+      }
+      continue;
+    }
     const identity =
       kind === 'stim' && name.startsWith(STAGING_PREFIX) ? join(root, name.slice(STAGING_PREFIX.length)) : path;
     const { bytes, kept } = await judge(path, stat, kind, identity);
@@ -377,13 +389,25 @@ export async function deleteTempLeftovers(
   options: { now?: number; env?: NodeJS.ProcessEnv; signal?: AbortSignal; operation?: StimContext } = {},
   output: GcOutput = GC_OUTPUT,
 ): Promise<{ count: number; bytes: number; failures: number }> {
-  const report = await collectTempLeftovers({ ...options, retireLaunches: true });
+  const report = await collectTempLeftovers(options);
   const done = { count: 0, bytes: 0, failures: 0 };
   if (!report) return done;
   for (const entry of report.entries) {
     if (!entry.willDelete) continue;
     try {
       if (entry.kind === 'jest') continue;
+      if (entry.launch) {
+        const again = (await judgeLaunch(entry.path, options.now ?? Date.now(), options.signal, options.operation))
+          .kept;
+        if (again) {
+          output.record('tempLeftover', 'kept', entry.path, { bytes: entry.bytes, detail: again });
+          continue;
+        }
+        await removeTemporaryEntryAsync(entry.path, options.signal);
+        done.count++;
+        done.bytes += entry.bytes;
+        continue;
+      }
       const name = basename(entry.path);
       if (name.startsWith(PARITY_PREFIX)) {
         const parity = await removeParityLeftover(entry.path, options.signal);
