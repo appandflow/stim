@@ -50,6 +50,55 @@ The unresolved-claim reason in `stim status`, `stim gc` and maintenance names
 the claim path, its owner (pid and claim time, and whether it still runs) and the
 command that removes the claim and child files.
 
+Exception: the hosted device agent-device daemon claim (next section) records no child.
+
+## A hosted device daemon launch shares nothing with the next
+
+Each hosted iOS or Android agent-device launch gets its own daemon state
+directory and its own device-claims directory,
+`<tmpdir>/stim-server-agent-device-<hash>/<launch id>/{state,device-claims}`, and
+no later launch reuses them. The daemon claim records no child, pending or
+captured. It means "no daemon that shares state with, or can be reached by, a
+successor", not "no daemon this driver started still runs".
+
+- Teardown signals only the proxy, through the child process and the identity
+  the driver captured, and a daemon of that launch. A captured daemon is stopped
+  through `agent-device daemon stop --state-dir` and its identity. When no
+  daemon was captured (a failed launch, or a stop after the server restarted),
+  teardown retires the launch as described below. The claim is released once
+  the proxy is proven gone and the daemon is proven stopped, or the launch has
+  neither `daemon.json` nor `daemon.lock`.
+- A launch that failed before its daemon registered can leave that daemon
+  running in its own directories. Its proxy is gone, so nothing can reach it,
+  and agent-device's idle reaper ends it: 5 minutes after it last had work
+  (`AGENT_DEVICE_DAEMON_IDLE_TIMEOUT_MS`), unless it holds a lease, which a
+  failed launch never put.
+- Every launch first retires the launch recorded in `<state
+dir>/agent-device-launch`. Retiring needs `agent-device daemon stop
+--state-dir <launch>/state --json` to report `not-running`, unless that
+  directory has neither `daemon.json` nor `daemon.lock`, and needs this
+  device's agent-device iOS runners stopped. Otherwise the launch refuses and
+  releases the claim, and a stop refuses and keeps it. So a daemon that
+  registered and survived a server crash is never left driving the device
+  beside its replacement.
+- The driver deletes a launch directory only after it stopped that launch's
+  captured daemon. `stim gc` removes a launch directory idle for 24 hours once
+  `agent-device daemon status --state-dir <dir>/state --json` reports its
+  daemon `stopped`. gc never stops a daemon: a live session's daemon may sit
+  idle that long, and an unreachable one ends through agent-device's idle
+  reaper.
+
+Reason: a launch that fails before the daemon is captured cannot prove that
+daemon gone. agent-device starts it detached, so stim cannot find it by
+inference, and keeping the claim wedged the device until stimd restarted
+(#6195). With nothing shared, an unreachable daemon cannot interfere with a
+successor. In agent-device 0.21.42, its startup device-claim reconciliation and
+Android keyboard restore read only its own state and claims directories.
+
+Maintainer decision: "Yes, allow it", 2026-11-23, answering "May a failed launch
+leave one unreachable agent-device daemon to idle out, so stim can never wedge?"
+(https://github.com/appandflow/stim/issues/6195#issuecomment-7113973794).
+
 ## stimd stays up for a child it can watch
 
 A cleanup refusal that names one child and carries a way to tell when that
@@ -248,3 +297,5 @@ Related: #5766, #5769, #5771.
 - `packages/stim-cli/bin/fingerprint-precompute.ts`: the bootstrap.
 - `packages/stim-cli/src/exec.ts` (`reportChild`): the kill of an uncaptured report child.
 - `packages/stim-cli/src/stimd/cleanup-watch.ts` and `packages/stim-cli/src/stimd/threads.ts`: what stimd stays up for.
+- `packages/agent-driver-agent-device/driver.ts` (`launchDir`, `teardown`) and
+  `packages/stim-cli/src/commands/gc/temp-leftovers.ts` (`retireAgentDeviceLaunches`): per-launch agent-device directories.

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { createAgentDriverHost } from '@stim-cli/agent-driver';
 import { execFileSync } from 'node:child_process';
@@ -150,7 +151,12 @@ test('upstream accepts the hosted policy, agrees on its digest and filters inven
       local: [{ id: UDID }],
       provider: [{ id: UDID }],
       workspace: '/',
-      claims: join(stateDir, 'device-claims'),
+      claims: join(
+        tmpdir(),
+        `stim-server-agent-device-${createHash('sha256').update(stateDir).digest('hex').slice(0, 16)}`,
+        readFileSync(join(stateDir, 'agent-device-launch'), 'utf8').trim(),
+        'device-claims',
+      ),
     });
   } finally {
     await driver.stop();

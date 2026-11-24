@@ -34,6 +34,7 @@ const fixture = vi.hoisted(() => ({
   policy: true,
   backend: true,
   proxyStopped: true,
+  proxyExit: false,
   daemonDir: '',
   ps: [] as string[],
   psError: false,
@@ -90,6 +91,18 @@ vi.mock('node:child_process', async (original) => ({
       commands: { mode: 'allow', names: policy.commands.allow.toSorted() },
       capabilities: policy.capabilities.deny,
     });
+    if (fixture.proxyExit) {
+      const failing = Object.assign(new EventEmitter(), {
+        pid: 777778,
+        stdout: new PassThrough(),
+        stderr: new PassThrough(),
+      });
+      queueMicrotask(() => {
+        failing.stderr.write('Error (COMMAND_FAILED): Failed to start daemon\n');
+        failing.emit('close', 1);
+      });
+      return failing;
+    }
     const file = join(fixture.daemonDir, 'daemon.json');
     writeFileSync(
       file,
@@ -118,7 +131,13 @@ vi.mock('node:child_process', async (original) => ({
     const ps = command === '/bin/ps' && fixture.ps.length > 1 ? fixture.ps.shift() : fixture.ps[0];
     (args.at(-1) as (error: null, stdout: string) => void)(
       null,
-      command === '/bin/ps' ? (ps ?? '') : version ? fixture.version : '',
+      command === '/bin/ps'
+        ? (ps ?? '')
+        : version
+          ? fixture.version
+          : Array.isArray(args[0]) && args[0].includes('--json')
+            ? '{"success":true,"data":{"stopped":false,"mode":"not-running"}}'
+            : '',
     );
   },
 }));
@@ -174,6 +193,7 @@ beforeEach(() => {
   fixture.policy = true;
   fixture.backend = true;
   fixture.proxyStopped = true;
+  fixture.proxyExit = false;
   fixture.daemonDir = '';
   fixture.calls = [];
   fixture.recordError = { code: '', message: '' };
@@ -204,6 +224,13 @@ beforeEach(() => {
 
 afterEach(async () => {
   await driver.stop();
+  rmSync(
+    join(
+      tmpdir(),
+      `stim-server-agent-device-${createHash('sha256').update(join(home, 'agent')).digest('hex').slice(0, 16)}`,
+    ),
+    { recursive: true, force: true },
+  );
   vi.restoreAllMocks();
   delete process.env.STIM_HOME;
   rmSync(home, { recursive: true, force: true });
@@ -482,36 +509,39 @@ test.skipIf(process.platform === 'win32')(
 );
 
 test.skipIf(process.platform === 'win32')(
-  'refuses a planted daemon directory link before touching what it points at',
+  'refuses a planted launch root link before touching what it points at',
   async () => {
     await start();
-    const daemonDir = fixture.daemonDir;
+    const root = dirname(dirname(fixture.daemonDir));
     await driver.stop();
+    rmSync(root, { recursive: true, force: true });
     const target = join(home, 'planted');
     mkdirSync(target, { mode: 0o700 });
     writeFileSync(join(target, 'daemon.json'), '{}');
-    symlinkSync(target, daemonDir, 'dir');
+    symlinkSync(target, root, 'dir');
     try {
       await expect(driver.start()).rejects.toThrow('is not a private directory of this user');
-      expect(existsSync(join(target, 'daemon.json'))).toBe(true);
+      expect(readdirSync(target)).toEqual(['daemon.json']);
       expect(readClaimSet(join(home, 'claims')).live).toHaveLength(0);
     } finally {
-      rmSync(daemonDir);
+      rmSync(root);
     }
   },
 );
 
 test.skipIf(process.platform === 'win32')(
-  'a launch keeps the daemon registration an earlier server left in the daemon state directory',
+  'a launch that fails before its daemon registers releases the claim, signals nothing and leaves its directory',
   async () => {
+    fixture.proxyExit = true;
+    await expect(driver.start()).rejects.toThrow('exited with 1 before it was ready');
+    const failed = fixture.daemonDir;
+    expect(readClaimSet(join(home, 'claims')).live).toHaveLength(0);
+    expect(fixture.events.some((event) => event.startsWith('signal:'))).toBe(false);
+    fixture.proxyExit = false;
     await start();
-    const lock = join(fixture.daemonDir, 'daemon.lock');
-    await driver.stop();
-    mkdirSync(fixture.daemonDir, { mode: 0o700 });
-    mkdirSync(lock);
-    writeFileSync(join(lock, 'owner.json'), JSON.stringify({ pid: 777777 }));
-    await start();
-    expect(existsSync(join(lock, 'owner.json'))).toBe(true);
+    expect(fixture.daemonDir).not.toBe(failed);
+    expect(existsSync(failed)).toBe(true);
+    expect(readClaimSet(join(home, 'claims')).live).toHaveLength(1);
   },
 );
 

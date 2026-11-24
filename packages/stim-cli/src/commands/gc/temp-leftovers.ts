@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative, resolve, sep, isAbsolute } from 'node:path';
 import chalk from 'chalk';
 import { readClaimSet } from '@stim-cli/core/ownership-claim';
+import { isJsonObject } from '@stim-cli/core/state';
 import { getExecutor } from '../../exec.ts';
 import { formatBytes } from '../../fs-util.ts';
 import { plural } from '../../command-output.ts';
@@ -29,6 +30,8 @@ const STIM_PREFIXES = [
   PARITY_PREFIX,
 ];
 const STAGING_PREFIX = '.stim-delete-';
+const AGENT_DEVICE_LAUNCHES = 'stim-server-agent-device-';
+const LAUNCH_ID = /^[0-9a-f]{16}$/;
 export const TRACE_PATTERN: RegExp = /^instruments.*\.ktrace$/;
 const TRACE_PROCESSES = new Set(['xctrace', 'Instruments']);
 export const SWIFTPM_PATTERN: RegExp = /^TemporaryDirectory\.[A-Za-z0-9]{6}$/;
@@ -182,6 +185,69 @@ function stimKept(identity: string, scan: Walk, projects: readonly string[]): st
   return null;
 }
 
+// @ref LLP 0007#a-hosted-device-daemon-launch-shares-nothing-with-the-next -- gc removes a launch only when agent-device reports its daemon stopped
+async function retireAgentDeviceLaunches(
+  root: string,
+  now: number,
+  signal: AbortSignal | undefined,
+  operation: StimContext | undefined,
+): Promise<void> {
+  const uid = process.getuid?.();
+  for (const name of await readdir(root)) {
+    if (!name.startsWith(AGENT_DEVICE_LAUNCHES)) continue;
+    const parent = join(root, name);
+    const stat = await lstatOrError(parent);
+    if (!stat || 'error' in stat || !stat.isDirectory() || (uid !== undefined && stat.uid !== uid)) continue;
+    let launches: string[];
+    try {
+      launches = await readdir(parent);
+    } catch {
+      continue;
+    }
+    for (const id of launches) {
+      if (!LAUNCH_ID.test(id)) continue;
+      const dir = join(parent, id);
+      const launch = await lstatOrError(dir);
+      if (!launch || 'error' in launch || !launch.isDirectory()) continue;
+      const scan = await walk(dir, launch, signal);
+      if (scan.unreadable || now - scan.newest < MIN_AGE_MS) continue;
+      if ((await agentDeviceDaemonState(join(dir, 'state'), signal, operation)) !== 'stopped') continue;
+      await removeTemporaryEntryAsync(dir, signal);
+    }
+  }
+}
+
+/** The daemon state `agent-device daemon status --json` reads for `stateDir`, without contacting or stopping it. */
+async function agentDeviceDaemonState(
+  stateDir: string,
+  signal: AbortSignal | undefined,
+  operation: StimContext | undefined,
+): Promise<string | null> {
+  const { resolveAgentDevice } = await import('@stim-cli/agent-driver-agent-device/agent-device-bin');
+  let invocation;
+  try {
+    invocation = resolveAgentDevice(process.env);
+  } catch {
+    return null;
+  }
+  const out = await runOperationFileQuiet(
+    operation,
+    getExecutor(),
+    invocation.command,
+    [...invocation.args, 'daemon', 'status', '--state-dir', stateDir, '--json'],
+    { timeoutMs: 30_000, env: { AGENT_DEVICE_NO_UPDATE_NOTIFIER: '1' }, cwd: operation?.cwd, signal },
+  );
+  if (out === null) return null;
+  try {
+    const value: unknown = JSON.parse(out);
+    return isJsonObject(value) && isJsonObject(value.data) && typeof value.data.state === 'string'
+      ? value.data.state
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 /** The temporary root `env` selects, with Node's `os.tmpdir()` precedence. */
 function temporaryRoot(env: NodeJS.ProcessEnv): string {
   if (env === process.env) return tmpdir();
@@ -204,11 +270,14 @@ export async function collectTempLeftovers({
   env = process.env,
   signal,
   operation,
+  retireLaunches = false,
 }: {
   now?: number;
   env?: NodeJS.ProcessEnv;
   signal?: AbortSignal;
   operation?: StimContext;
+  /** First removes idle hosted agent-device launch directories whose daemon agent-device reports stopped. */
+  retireLaunches?: boolean;
 } = {}): Promise<TempLeftoverReport | null> {
   if (deviceSweepIsScoped(env)) return null;
   let root: string;
@@ -217,8 +286,10 @@ export async function collectTempLeftovers({
     root = await realpath(temporaryRoot(env));
     const guarded = process.env[TEMP_LEFTOVERS_TEST_GUARD_ENV];
     if (guarded && root === guarded) return null;
+    if (retireLaunches) await retireAgentDeviceLaunches(root, now, signal, operation);
     names = await readdir(root);
-  } catch {
+  } catch (error) {
+    if (signal?.aborted) throw error;
     return null;
   }
   const uid = process.getuid?.();
@@ -306,7 +377,7 @@ export async function deleteTempLeftovers(
   options: { now?: number; env?: NodeJS.ProcessEnv; signal?: AbortSignal; operation?: StimContext } = {},
   output: GcOutput = GC_OUTPUT,
 ): Promise<{ count: number; bytes: number; failures: number }> {
-  const report = await collectTempLeftovers(options);
+  const report = await collectTempLeftovers({ ...options, retireLaunches: true });
   const done = { count: 0, bytes: 0, failures: 0 };
   if (!report) return done;
   for (const entry of report.entries) {
