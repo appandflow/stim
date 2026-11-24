@@ -102,9 +102,10 @@ successor", not "no daemon this driver started still runs".
   but launch directories in the root, so gc treats every other entry of a root
   that holds a launch, `daemon.json` or `daemon.lock` as one leftover, removed
   under the same rule with `--state-dir <root>`. It removes those entries one by
-  one and then the root only if it is empty. agent-device's `daemon stop` and a
-  graceful daemon exit remove `daemon.json` and `daemon.lock` but leave
-  `sessions` and `daemon.log`. Both go once no host runs rc.3.
+  one and then the root only if it is empty. A daemon that exits gracefully, or
+  that `daemon stop` ends, removes `daemon.json` and `daemon.lock` but leaves
+  `sessions` and `daemon.log`; a stale record stays. Both go once no host runs
+  rc.3.
 
 Reason: a launch that fails before the daemon is captured cannot prove that
 daemon gone. agent-device starts it detached, so stim cannot find it by
