@@ -55,7 +55,7 @@ export default ({ production }: { production?: boolean }): KnipConfig => ({
     },
     'packages/server': {
       ignore: ['share-viewer/**'],
-      ignoreBinaries: ['plutil', 'ditto', 'mkfifo'],
+      ignoreBinaries: ['plutil', 'ditto', 'mkfifo', 'cc'],
     },
     'apps/mobile': {
       entry: [
