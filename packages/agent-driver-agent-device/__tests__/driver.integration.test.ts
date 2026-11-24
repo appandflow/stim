@@ -116,13 +116,20 @@ if (args[0] === '--version') {
   try { pid = JSON.parse(readFileSync(join(stateDir, 'daemon.json'), 'utf8')).pid; } catch {}
   const running = () => { try { process.kill(pid, 0); return true; } catch { return false; } };
   const found = pid !== undefined && running();
+  let mode = found ? 'graceful' : 'not-running';
   if (found && !process.env.FAKE_STOP_NOOP) {
     process.kill(pid, 'SIGTERM');
-    const until = Date.now() + 2000;
+    let until = Date.now() + Number(process.env.FAKE_STOP_GRACE_MS ?? 2000);
     while (running() && Date.now() < until) {}
+    if (running()) {
+      process.kill(pid, 'SIGKILL');
+      mode = 'forced';
+      until = Date.now() + 2000;
+      while (running() && Date.now() < until) {}
+    }
   }
-  if (args.includes('--json')) console.log(JSON.stringify({ success: true, data: { stopped: found, mode: found ? 'graceful' : 'not-running' } }));
-  else console.log('Daemon stopped (graceful).');
+  if (args.includes('--json')) console.log(JSON.stringify({ success: true, data: { stopped: found, mode } }));
+  else console.log('Daemon stopped (' + mode + ').');
 }
 `;
 
@@ -768,10 +775,10 @@ describe.skipIf(process.platform !== 'darwin' && process.platform !== 'linux')('
     },
   );
 
-  async function crashMidSession(): Promise<{ earlier: number; orphanProxy: number }> {
+  async function crashMidSession(env: Record<string, string> = {}): Promise<{ earlier: number; orphanProxy: number }> {
     install(root);
     const proxies = join(root, 'proxies.log');
-    const crashed = deviceDriverIn(root, {}, { FAKE_PROXIES: proxies });
+    const crashed = deviceDriverIn(root, {}, { FAKE_PROXIES: proxies, ...env });
     await crashed.start();
     const earlier = Number(readFileSync(join(root, 'daemon-pids.log'), 'utf8').split('\n')[0]);
     const claimDir = join(root, 'agent-device.claims', 'exclusive');
@@ -802,6 +809,50 @@ describe.skipIf(process.platform !== 'darwin' && process.platform !== 'linux')('
       await next.stop();
       try {
         process.kill(-orphanProxy, 'SIGKILL');
+      } catch {}
+    }
+  });
+
+  test('after the server dies, a launch waits out agent-device force-stopping an earlier daemon that ignores SIGTERM', async () => {
+    const { earlier, orphanProxy } = await crashMidSession({ FAKE_DAEMON: 'stubborn' });
+    const next = deviceDriverIn(root, { stopTimeoutMs: 200 }, { FAKE_STOP_GRACE_MS: '1000' });
+    try {
+      await next.start();
+      expect(readClaimSet(join(root, 'agent-device.claims')).live).toHaveLength(1);
+      expect(alive(earlier)).toBe(false);
+    } finally {
+      await next.stop();
+      try {
+        process.kill(-orphanProxy, 'SIGKILL');
+      } catch {}
+      try {
+        process.kill(earlier, 'SIGKILL');
+      } catch {}
+    }
+  });
+
+  test('a launch retires the launch recorded when it takes the claim, not the one recorded before', async () => {
+    const { earlier, orphanProxy } = await crashMidSession();
+    const launchFile = join(root, 'state', 'agent-device-launch');
+    const recorded = readFileSync(launchFile, 'utf8');
+    writeFileSync(launchFile, '0000000000000000\n');
+    const host = createAgentDriverHost({ stateDir: join(root, 'state'), claimRoot: join(root, 'agent-device.claims') });
+    const take = host.claims.take.bind(host.claims);
+    host.claims.take = (...args) => {
+      writeFileSync(launchFile, recorded);
+      return take(...args);
+    };
+    const next = deviceDriverIn(root, { host });
+    try {
+      await next.start();
+      expect(alive(earlier)).toBe(false);
+    } finally {
+      await next.stop();
+      try {
+        process.kill(-orphanProxy, 'SIGKILL');
+      } catch {}
+      try {
+        process.kill(earlier, 'SIGKILL');
       } catch {}
     }
   });
