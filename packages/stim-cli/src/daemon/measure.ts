@@ -149,8 +149,10 @@ export async function measureTick(
     signal,
     operation,
     disk: measuredDisk,
+    appleServices: sampleAppleServices = false,
   }: {
     probe?: boolean;
+    appleServices?: boolean;
     signal?: AbortSignal;
     operation?: StimContext;
     disk?: DaemonMeasurement['disk'];
@@ -180,7 +182,10 @@ export async function measureTick(
     }
   }
   signal?.throwIfAborted();
-  const host = process.platform === 'darwin' ? await readHostProcessTableAsync(signal, operation) : undefined;
+  const host =
+    sampleAppleServices && process.platform === 'darwin'
+      ? await readHostProcessTableAsync(signal, operation)
+      : undefined;
   const devices = await collectOwnedDeviceActivityAsync(config, sims ?? [], now, undefined, signal, operation, host);
   const appleServices = host === undefined ? undefined : appleServicesStatus(host ?? [], await helperStatus(), now);
   signal?.throwIfAborted();

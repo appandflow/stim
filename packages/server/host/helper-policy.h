@@ -18,6 +18,10 @@ static const char *const helper_paths[] = {
 #define HELPER_COOLDOWN_SECONDS 3600
 #define HELPER_SAMPLE_SECONDS 60
 
+static inline uint64_t helper_ticks_to_ns(uint64_t ticks, uint32_t numer, uint32_t denom) {
+  return (uint64_t)((__uint128_t)ticks * numer / denom);
+}
+
 struct helper_window { double cpu_since, rss_since, sampled_at; };
 
 static inline int helper_service(const char *path) {

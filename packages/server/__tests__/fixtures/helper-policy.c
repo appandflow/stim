@@ -1,7 +1,12 @@
 #include "../../host/helper-policy.h"
 #include <assert.h>
+#include <math.h>
 
 int main(void) {
+  double cpu = (double)helper_ticks_to_ns(24000000, 125, 3) / 1e9 * 100;
+  assert(fabs(cpu - 100) < 0.01);
+  assert(helper_ticks_to_ns(1000000000, 1, 1) == 1000000000);
+  assert(helper_ticks_to_ns(UINT64_C(240000000000000000), 125, 3) == UINT64_C(10000000000000000000));
   assert(helper_service("/usr/libexec/PerfPowerServices") == 0);
   assert(helper_service("/tmp/PerfPowerServices") == -1);
   assert(helper_service("/usr/libexec/PerfPowerServices-extra") == -1);

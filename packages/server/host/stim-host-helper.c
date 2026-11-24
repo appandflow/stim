@@ -2,6 +2,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <libproc.h>
+#include <mach/mach_time.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -23,7 +24,7 @@ struct observation {
 static bool trusted(int fd, bool directory) {
   struct stat st;
   return fd >= 0 && fstat(fd, &st) == 0 && st.st_uid == 0 && !(st.st_mode & 0022) &&
-         (directory ? S_ISDIR(st.st_mode) : S_ISREG(st.st_mode) && st.st_nlink == 1);
+         (directory ? S_ISDIR(st.st_mode) : S_ISREG(st.st_mode));
 }
 
 static int open_log(int dir, const char *name, bool create) {
@@ -34,16 +35,31 @@ static int open_log(int dir, const char *name, bool create) {
 }
 
 static bool rotate_log(int dir, int *fd, const double *last) {
-  struct stat st;
-  if (fstat(*fd, &st) != 0) return false;
-  if (st.st_size < LOG_LIMIT) return true;
-  if (renameat(dir, "helper.ndjson", dir, "helper.ndjson.1") != 0) return false;
-  close(*fd);
+  if (*fd >= 0) {
+    struct stat st;
+    if (fstat(*fd, &st) != 0) return false;
+    if (st.st_size < LOG_LIMIT) return true;
+    if (renameat(dir, "helper.ndjson", dir, "helper.ndjson.1") != 0) return false;
+    close(*fd);
+    *fd = -1;
+  }
   *fd = open_log(dir, "helper.ndjson", true);
   if (*fd < 0) return false;
   for (unsigned i = 0; i < HELPER_SERVICES; i++)
     if (dprintf(*fd, "{\"event\":\"cooldown\",\"at\":%.0f,\"service\":%u}\n", last[i], i) < 0) return false;
   return fsync(*fd) == 0;
+}
+
+static bool heartbeat(int dir, const char *error) {
+  int fd = openat(dir, "helper.heartbeat.tmp", O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0644);
+  if (!trusted(fd, false)) { if (fd >= 0) close(fd); return false; }
+  bool ok = fchmod(fd, 0644) == 0 && ftruncate(fd, 0) == 0 &&
+    dprintf(fd, "{\"at\":%lld,\"ok\":%s,\"error\":\"%s\"}\n",
+      (long long)time(NULL), error ? "false" : "true", error ? error : "") >= 0 && fsync(fd) == 0;
+  close(fd);
+  if (ok) ok = renameat(dir, "helper.heartbeat.tmp", dir, "helper.heartbeat") == 0;
+  if (!ok) unlinkat(dir, "helper.heartbeat.tmp", 0);
+  return ok;
 }
 
 static void restore_cooldowns(int dir, const char *name, double *last) {
@@ -75,13 +91,18 @@ int main(void) {
   if (geteuid() != 0) { fputs("stim-host-helper must run as a root LaunchDaemon.\n", stderr); return 1; }
   umask(0022);
   int logs = open("/Library/Logs", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-  if (!trusted(logs, true)) return 1;
-  if (mkdirat(logs, "Stim", 0755) != 0 && errno != EEXIST) return 1;
+  if (!trusted(logs, true)) { perror("stim-host-helper: /Library/Logs"); return 1; }
+  if (mkdirat(logs, "Stim", 0755) != 0 && errno != EEXIST) { perror("stim-host-helper: log directory"); return 1; }
   int dir = openat(logs, "Stim", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
   close(logs);
-  if (!trusted(dir, true) || fchmod(dir, 0755) != 0) return 1;
+  if (!trusted(dir, true) || fchmod(dir, 0755) != 0) { perror("stim-host-helper: untrusted log directory"); return 1; }
   int lock = openat(dir, "helper.lock", O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0600);
-  if (!trusted(lock, false) || flock(lock, LOCK_EX | LOCK_NB) != 0) return 1;
+  if (!trusted(lock, false) || flock(lock, LOCK_EX | LOCK_NB) != 0) { perror("stim-host-helper: lock"); return 1; }
+  mach_timebase_info_data_t timebase;
+  if (mach_timebase_info(&timebase) != KERN_SUCCESS || timebase.denom == 0) {
+    fputs("stim-host-helper: cannot read Mach timebase.\n", stderr);
+    return 1;
+  }
   double last[HELPER_SERVICES] = {0};
   double last_monotonic[HELPER_SERVICES] = {0};
   restore_cooldowns(dir, "helper.ndjson.1", last);
@@ -90,18 +111,26 @@ int main(void) {
   double boot_monotonic = (double)clock_gettime_nsec_np(CLOCK_MONOTONIC) / 1e9;
   for (unsigned i = 0; i < HELPER_SERVICES; i++)
     if (last[i] > 0) last_monotonic[i] = boot_monotonic - (boot_wall > last[i] ? boot_wall - last[i] : 0);
-  int log = open_log(dir, "helper.ndjson", true);
-  if (log < 0) return 1;
+  int log = -1;
   struct observation *previous = NULL;
   size_t previous_count = 0;
   for (;;) {
-    int capacity = proc_listallpids(NULL, 0) + 256;
-    if (capacity <= 256) return 1;
-    pid_t *pids = calloc((size_t)capacity, sizeof *pids);
-    struct observation *current = calloc((size_t)capacity, sizeof *current);
-    if (!pids || !current) return 1;
+    const char *error = NULL;
+    pid_t *pids = NULL;
+    struct observation *current = NULL;
+    error = "log open or rotation failed";
+    if (!rotate_log(dir, &log, last)) goto retry;
+    error = "process listing failed";
+    int listed = proc_listallpids(NULL, 0);
+    if (listed <= 0) goto retry;
+    int capacity = listed + 256;
+    pids = calloc((size_t)capacity, sizeof *pids);
+    current = calloc((size_t)capacity, sizeof *current);
+    error = "sample allocation failed";
+    if (!pids || !current) goto retry;
+    error = "process listing failed";
     int count = proc_listallpids(pids, capacity * (int)sizeof *pids);
-    if (count < 0 || count >= capacity) return 1;
+    if (count <= 0 || count >= capacity) goto retry;
     size_t kept = 0;
     double now = (double)time(NULL);
     double monotonic = (double)clock_gettime_nsec_np(CLOCK_MONOTONIC) / 1e9;
@@ -115,7 +144,7 @@ int main(void) {
       if (proc_pidinfo(pids[i], PROC_PIDTBSDINFO, 0, &bsd, sizeof bsd) != sizeof bsd ||
           proc_pidinfo(pids[i], PROC_PIDTASKINFO, 0, &task, sizeof task) != sizeof task) continue;
       struct observation row = {.pid = pids[i], .service = service, .start_sec = bsd.pbi_start_tvsec,
-        .start_usec = bsd.pbi_start_tvusec, .cpu_ns = task.pti_total_user + task.pti_total_system, .at = monotonic};
+        .start_usec = bsd.pbi_start_tvusec, .cpu_ns = helper_ticks_to_ns(task.pti_total_user + task.pti_total_system, timebase.numer, timebase.denom), .at = monotonic};
       double cpu = 0;
       for (size_t j = 0; j < previous_count; j++) {
         struct observation old = previous[j];
@@ -127,28 +156,40 @@ int main(void) {
       }
       row.window = helper_observe(row.window, monotonic, cpu, task.pti_resident_size);
       const char *name = strrchr(path, '/') + 1;
-      if (!rotate_log(dir, &log, last)) return 1;
+      error = "sample log write failed";
       if (dprintf(log, "{\"event\":\"sample\",\"at\":%.0f,\"service\":%d,\"name\":\"%s\",\"pid\":%d,\"cpu\":%.1f,\"rss\":%llu,\"seconds\":%.0f,\"decision\":\"%s\"}\n",
         now, service, name, row.pid, cpu, task.pti_resident_size, helper_duration(row.window, monotonic),
-        helper_restart_due(row.window, monotonic, last_monotonic[service]) ? "restart" : "observe") < 0) return 1;
+        helper_restart_due(row.window, monotonic, last_monotonic[service]) ? "restart" : "observe") < 0) goto retry;
       if (helper_restart_due(row.window, monotonic, last_monotonic[service]) && identity(row.pid, service, &bsd)) {
         /* @ref LLP 0001#opt-in-apple-service-restarts -- durable attempts preserve the hourly limit */
-        if (dprintf(log, "{\"event\":\"restart\",\"at\":%.0f,\"service\":%d,\"name\":\"%s\",\"pid\":%d,\"cpu\":%.1f,\"rss\":%llu,\"seconds\":%.0f}\n",
-          now, service, name, row.pid, cpu, task.pti_resident_size, helper_duration(row.window, monotonic)) < 0 || fsync(log) != 0) return 1;
         last[service] = now;
         last_monotonic[service] = monotonic;
-        int error = ESRCH;
-        if (identity(row.pid, service, &bsd)) error = kill(row.pid, SIGTERM) == 0 ? 0 : errno;
+        error = "restart attempt write or sync failed";
+        if (dprintf(log, "{\"event\":\"restart\",\"at\":%.0f,\"service\":%d,\"name\":\"%s\",\"pid\":%d,\"cpu\":%.1f,\"rss\":%llu,\"seconds\":%.0f}\n",
+          now, service, name, row.pid, cpu, task.pti_resident_size, helper_duration(row.window, monotonic)) < 0 || fsync(log) != 0) goto retry;
+        int signal_error = ESRCH;
+        if (identity(row.pid, service, &bsd)) signal_error = kill(row.pid, SIGTERM) == 0 ? 0 : errno;
+        error = "restart result write failed";
         if (dprintf(log, "{\"event\":\"result\",\"at\":%.0f,\"service\":%d,\"name\":\"%s\",\"pid\":%d,\"cpu\":%.1f,\"rss\":%llu,\"seconds\":%.0f,\"error\":%d}\n",
-          now, service, name, row.pid, cpu, task.pti_resident_size, helper_duration(row.window, monotonic), error) < 0) return 1;
+          now, service, name, row.pid, cpu, task.pti_resident_size, helper_duration(row.window, monotonic), signal_error) < 0) goto retry;
         row.window = (struct helper_window){0};
       }
       current[kept++] = row;
     }
-    free(pids);
+    error = NULL;
     free(previous);
     previous = current;
     previous_count = kept;
+    current = NULL;
+retry:
+    if (error) {
+      fprintf(stderr, "stim-host-helper: %s (errno %d); retrying in %d seconds.\n", error, errno, HELPER_SAMPLE_SECONDS);
+      if (log >= 0) close(log);
+      log = -1;
+    }
+    if (!heartbeat(dir, error)) perror("stim-host-helper: heartbeat write failed");
+    free(pids);
+    free(current);
     sleep(HELPER_SAMPLE_SECONDS);
   }
 }

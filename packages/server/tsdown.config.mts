@@ -33,14 +33,7 @@ export default defineConfig({
       writeFileSync(`dist/${PROTOCOL_SCHEMA_FILE}`, `${JSON.stringify(protocolJsonSchema(), null, 2)}\n`);
       rmSync('dist/stim-host', { recursive: true, force: true });
       mkdirSync('dist/stim-host');
-      for (const name of [
-        'stim-host.c',
-        'helper-service.m',
-        'helper-policy.h',
-        'stim-host-helper.c',
-        'dev.stim.host.helper.plist',
-        'Info.plist',
-      ])
+      for (const name of ['stim-host.c', 'helper-service.m', 'Info.plist'])
         copyFileSync(`host/${name}`, `dist/stim-host/${name}`);
       rmSync('dist/share-viewer', { recursive: true, force: true });
       cpSync('share-viewer', 'dist/share-viewer', { recursive: true });

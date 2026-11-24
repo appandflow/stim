@@ -34,6 +34,7 @@ struct AppPreferencesView: View {
   @State private var helperState = "not registered"
   @State private var helperBusy = false
   @State private var helperError: String?
+  @State private var helperExplanation: String?
 
   var body: some View {
     ScrollViewReader { proxy in
@@ -141,6 +142,7 @@ struct AppPreferencesView: View {
           Text("Approve Stim Host with an administrator password to allow the root helper to run.")
             .foregroundStyle(Palette.secondary)
         }
+        if let helperExplanation { Text(helperExplanation).foregroundStyle(Palette.secondary) }
         if let helperError { Text(helperError).foregroundStyle(Palette.error).textSelection(.enabled) }
       }
 
@@ -252,6 +254,8 @@ struct AppPreferencesView: View {
   @MainActor private func runHelper(_ action: String) async {
     guard !helperBusy else { return }
     helperBusy = true
+    helperError = nil
+    helperExplanation = nil
     defer { helperBusy = false }
     let homes = [
       FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications"),
@@ -262,8 +266,9 @@ struct AppPreferencesView: View {
         .first(where: { FileManager.default.isExecutableFile(atPath: $0) })
     else {
       helperState = "not registered"
-      helperError =
+      let message =
         "Install a current Developer ID-signed, notarized Stim Host.app in ~/Applications or /Applications to enable the helper."
+      if action == "status" { helperExplanation = message } else { helperError = message }
       return
     }
     do {
@@ -275,7 +280,13 @@ struct AppPreferencesView: View {
         let state = value["state"],
         ["registered", "requires approval", "not registered", "unavailable on this OS"].contains(state)
       else {
-        helperError = "Install a helper-capable Developer ID-signed, notarized Stim Host and retry. " + result.stderrText
+        let message = "Install a helper-capable Developer ID-signed, notarized Stim Host and retry. " + result.stderrText
+        if action == "status" {
+          helperState = "unavailable"
+          helperExplanation = message
+        } else {
+          helperError = message
+        }
         return
       }
       helperState = state

@@ -548,7 +548,7 @@ export async function runService(
           ? JSON.stringify({ ...status, helper: values.helper })
           : [
               ...statusLines(status, panes),
-              ...(values.helper
+              ...(process.platform === 'darwin' && values.helper
                 ? [
                     `Runaway service helper: ${values.helper}${values.helper === 'requires approval' ? '; approve Stim Host in System Settings > General > Login Items & Extensions' : ''}`,
                   ]

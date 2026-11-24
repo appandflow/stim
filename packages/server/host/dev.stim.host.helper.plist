@@ -12,6 +12,10 @@
   <true/>
   <key>RunAtLoad</key>
   <true/>
+  <key>ThrottleInterval</key>
+  <integer>60</integer>
+  <key>StandardErrorPath</key>
+  <string>/Library/Logs/Stim/helper.err</string>
   <key>ProcessType</key>
   <string>Background</string>
 </dict>

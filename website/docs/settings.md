@@ -5,8 +5,6 @@ description: 'Project, repository, machine, and environment settings'
 ---
 
 import StimTabs from '@site/src/components/StimTabs';
-import Tabs from '@theme/Tabs';
-import TabItem from '@theme/TabItem';
 import ArchiveSettings from './_generated/settings-archive.md';
 import BudgetSettings from './_generated/settings-budget.md';
 import EnvSettings from './_generated/settings-env.md';
@@ -1265,30 +1263,14 @@ Registration requires macOS and administrator approval in **System Settings >
 General > Login Items & Extensions**. Stim Desktop preferences offers the same
 toggle and a button opening that pane.
 
-<Tabs groupId="stim-invocation" defaultValue="global">
-<TabItem value="global" label="Global">
-
-```sh
-stim service install --helper
+<StimTabs code={`stim service install --helper
 stim service status
-stim service uninstall --helper
-```
-
-</TabItem>
-<TabItem value="npx" label="npx">
-
-```sh
-npx stim service install --helper
-npx stim service status
-npx stim service uninstall --helper
-```
-
-</TabItem>
-</Tabs>
+stim service uninstall --helper`} />
 
 These install/uninstall commands affect only the helper; run server service
 options separately. `service status --json` includes `helper`, with `registered`,
-`requires approval`, `not registered`, or `unavailable on this OS`.
+`requires approval`, `not registered`, `unavailable on this OS`,
+`Stim Host missing`, `Stim Host too old`, `status timed out` or `status error`.
 
 The helper samples every minute using exact system executable paths. More than
 150% CPU or 2 GiB resident memory for 10 continuous minutes triggers SIGTERM so
@@ -1298,9 +1280,14 @@ CoreSimulator and all other processes are excluded. This opt-in exception does
 not change device ownership or teardown. The helper runs independently of
 `daemon.mode` and `STIM_HOME` until you unregister it.
 
-Without an enabled helper, `stim status` and the daemon log show excess usage
+Without a healthy helper, `stim status` and the daemon log show excess usage
 and suggest both `sudo killall -TERM <name>` for a one-off restart and
 `stim service install --helper`. Stimd never kills these services itself.
+Registration suppresses warnings only while a successful heartbeat is less than
+three minutes old. A missing, stale or failed heartbeat keeps the warning; check
+`/Library/Logs/Stim/helper.heartbeat` and `/Library/Logs/Stim/helper.err`.
+Stimd requires two consecutive excessive samples and logs warnings only when
+they start or change. Each recent restart is logged once.
 With the helper enabled, status reports successful restart signals from the
 last hour; `status --json` includes `appleServices` with `helper`, `warnings`
 (including both `commands`) and `restarts`. A signal receipt does not verify

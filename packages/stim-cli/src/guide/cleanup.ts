@@ -428,7 +428,8 @@ Developer ID-signed, notarized Stim Host.app (~/Applications or /Applications).
 Approve Stim Host in System Settings > General > Login Items & Extensions with
 an administrator password. Desktop preferences has the same toggle and a button
 opening that pane. stim service status (--json too) reports registered,
-requires approval, not registered, or unavailable on this OS.
+requires approval, not registered, unavailable on this OS, Stim Host missing,
+Stim Host too old, status timed out or status error.
 stim service uninstall --helper unregisters only the helper. Do not combine
 --helper with server service options. Linux and Windows refuse these mutations.
 
@@ -441,7 +442,7 @@ one restart per service per hour, including across helper restarts. It never
 signals WindowServer, launchd, coreaudiod, CoreSimulator or any other process.
 This explicit opt-in exception does not change owned-device teardown.
 
-Without an enabled helper, stimd only reports excessive usage, with both
+Without a healthy helper, stimd reports usage over two consecutive samples, with both
 commands: sudo killall -TERM <name> for a one-off restart, and
 stim service install --helper for automatic restarts. Never run either without
 the user's authorization. stimd never kills these processes itself. The helper
@@ -452,6 +453,9 @@ signals from /Library/Logs/Stim/helper.ndjson. The root-owned, world-readable
 log records samples, attempts and signal results; at 4 MiB it rotates to .1.
 A successful signal means a restart was requested, not that launchd's replacement
 has been observed. An ad hoc build can compile but cannot register the daemon.
+Registration suppresses advice only with a successful heartbeat under 3 minutes
+old. Otherwise status reports registered but not running/healthy; inspect
+/Library/Logs/Stim/helper.heartbeat and /Library/Logs/Stim/helper.err.
 After updating Stim Host, unregister and register the helper again.`,
     },
     archive: {
