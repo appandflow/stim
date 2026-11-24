@@ -13,6 +13,11 @@ const CANDIDATES = (home: string): string[] => [
 
 const UNAVAILABLE: typeof AGENT_DRIVER_UNAVAILABLE = 'agent-driver-unavailable';
 
+// agent-device 0.21.42 `daemon stop` waits DAEMON_TEARDOWN_GRACE_MS (75 s; 10 s up to 0.21.39) after SIGTERM, 2 s after
+// SIGKILL, then up to 1 s each for a startup join and the registration lock before it removes daemon.json, and it
+// accepts no shorter grace (callstack/agent-device#4806).
+export const AGENT_DEVICE_RETIRE_MS: number = 75_000 + 2000 + 1000 + 1000;
+
 export interface AgentDeviceInvocation {
   command: string;
   args: string[];
