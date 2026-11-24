@@ -19,20 +19,27 @@ import {
 import { findCommandWorkspace } from '../workspace/project.ts';
 import { recordWorkspaceUseAsync } from '../workspace/workspace-state.ts';
 
-function refuse(error: unknown, json: boolean): void {
+function refuse(error: unknown, json: boolean, interrupted: number | null = null): void {
+  const cancelled = error instanceof Error && 'code' in error && error.code === 'STIM_CANCELLED';
   const failure =
     claimFailure(error, null) ??
     (error instanceof ServiceError || error instanceof BuildSlotCapacityError
       ? { code: error.code, message: error.message, remedy: error.remedy }
-      : {
-          code: 'STIM_SERVICE_FAILED',
-          message: error instanceof Error ? error.message : String(error),
-          remedy: 'Run stim services to see each service, and stim logs for its command output.',
-        });
+      : cancelled || interrupted !== null
+        ? {
+            code: 'STIM_CANCELLED',
+            message: cancelled ? error.message : 'The service start was cancelled.',
+            remedy: undefined,
+          }
+        : {
+            code: 'STIM_SERVICE_FAILED',
+            message: error instanceof Error ? error.message : String(error),
+            remedy: 'Run stim services to see each service, and stim logs for its command output.',
+          });
   if (json) console.log(JSON.stringify(failure));
   console.error(chalk.red(phaseLine('error', `${failure.code}: ${failure.message}`)));
   if (failure.remedy) console.error(phaseLine('remedy', failure.remedy));
-  process.exitCode = 1;
+  process.exitCode = interrupted ?? 1;
 }
 
 async function inWorkspace(json: boolean, action: (root: string) => Promise<void>): Promise<void> {
@@ -69,12 +76,17 @@ const startCommand = defineOp({
   run: ({ args: [name], options: opts }) =>
     inWorkspace(Boolean(opts.json), async (root) => {
       await recordWorkspaceUseAsync(root);
-      const { value } = await runProcessOperation(root, (context) =>
-        startServices(root, name, { operation: context, signal: context.signal }),
+      const { value, interrupted } = await runProcessOperation(root, (context) =>
+        startServices(root, name, { operation: context, signal: context.signal }).then(
+          (outcomes) => ({ outcomes }),
+          (error: unknown) => ({ error }),
+        ),
       );
+      if ('error' in value) return refuse(value.error, Boolean(opts.json), interrupted);
       // @ref LLP 0027#the-idle-pass-stops-services -- stimd must run to stop them once the workspace idles
       await ensurePersistentStimd();
-      report(value, Boolean(opts.json));
+      report(value.outcomes, Boolean(opts.json));
+      if (interrupted !== null) process.exitCode = interrupted;
     }),
 });
 

@@ -566,6 +566,9 @@ export function reviveOp(overrides: Partial<ReviveDeps> = {}): Op {
           note: writeNote,
           requestedDevice: context.env.AGENT_DEVICE_BOOT_HOOK_DEVICE_ID || null,
           deps: { ...reviveDeps(context), ...overrides },
+        }).catch((error: unknown) => {
+          if (!context.signal.aborted) throw error;
+          return failure('STIM_CANCELLED', 'The revive was cancelled.', null);
         }),
       );
       if (!result.ok) {

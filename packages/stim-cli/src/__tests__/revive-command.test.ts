@@ -2,10 +2,12 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { ambientContext } from '@stim-cli/core';
 import { runCli } from '../cli/define-op.ts';
 import type { WorkspaceState } from '@stim-cli/core/state';
 import { resolveBuild } from '../cache/build-cache.ts';
 import { reviveOp, reviveLines, runRevive, type ReviveDeps } from '../commands/revive.ts';
+import { withDrainingCancellation } from '../engine/operation-state.ts';
 import type { WorkspaceLaunchRecord } from '../stimd/metro/state.ts';
 import type { ProjectRecord } from '../workspace/config.ts';
 
@@ -522,6 +524,23 @@ describe('the command output', () => {
       expect(process.exitCode).toBe(code);
     },
   );
+
+  test('Ctrl-C while a service starts again exits 130 with one STIM_CANCELLED payload', async () => {
+    await revive(['--json'], {
+      readState: () => ({ ...idleState, services: { db: serviceRecord('stopped', 'idle') } }),
+      resumeServices: () => {
+        const context = ambientContext();
+        return withDrainingCancellation(context, context?.signal, async () => {
+          process.emit('SIGINT');
+          context?.signal.throwIfAborted();
+          return [];
+        });
+      },
+    });
+    expect(process.exitCode).toBe(130);
+    expect(out).toHaveLength(1);
+    expect(JSON.parse(out[0] ?? '')).toMatchObject({ code: 'STIM_CANCELLED' });
+  });
 
   test('plain output leaves stdout empty', async () => {
     await revive([], {});
