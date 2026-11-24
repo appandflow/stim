@@ -6,8 +6,7 @@ public enum SidebarFooterStatus: Equatable, Sendable {
   case desktopUpdateAvailable
   case pressureHigh(reasons: [String])
   case stimUpdateAvailable(installed: SemanticVersion, latest: SemanticVersion)
-  /// `nil` before `Onboarding.check()` reports, when the footer has no version to show yet.
-  case normal(SemanticVersion?)
+  case normal
 
   public static func decide(
     stim: CLICompatibility?, pressure: DaemonStatus.Pressure?, desktopUpdateAvailable: Bool,
@@ -18,9 +17,9 @@ public enum SidebarFooterStatus: Equatable, Sendable {
     if let pressure, pressure.level == "high" { return .pressureHigh(reasons: pressure.reasons) }
     if case .compatible(let version) = stim {
       if let stimUpdate { return .stimUpdateAvailable(installed: version, latest: stimUpdate) }
-      return .normal(version)
+      return .normal
     }
-    return .normal(nil)
+    return .normal
   }
 }
 

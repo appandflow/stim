@@ -79,10 +79,10 @@ struct SidebarFooter: View {
       }
       .buttonStyle(.hoverRow(outset: Space.sm))
       .help((reasons + ["click to open Machine"]).joined(separator: " \u{2014} "))
-    case .normal(let version):
+    case .normal:
       let help: String =
-        version.map { "Optional agent CLI stim \($0) is installed" } ?? "Stim Desktop uses the Stim engine"
-      statusLabel(dot: Palette.success, text: version.map { "Stim \($0)" } ?? "Stim")
+        server.record.map { "Stim engine \($0.version)" } ?? "Stim Desktop uses the Stim engine"
+      statusLabel(dot: Palette.success, text: server.record.map { "Stim \($0.version)" } ?? "Stim")
         .help(help)
     }
   }
