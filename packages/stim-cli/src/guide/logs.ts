@@ -380,9 +380,6 @@ between its rung's startedAt and its end. Steps and what items counts:
 A step writes one record. A normal tick writes one (dormant_candidates), a high
 one up to 16, a critical one up to 22; the dormant step adds ~7/hour,
 build_end_measure one a pass. None alter a pass.
-daemon_worktree_read (info; path) is written once per worktree path per stimd
-process before stimd reads its .git, so a hung read is named by the last such
-record.
 A step running 10 minutes writes daemon_step_running (warn; step, startedAt,
 runningMs) every 10 minutes until it ends, as do the measure, booted_parked,
 idle_stage, fingerprint_precompute and maintenance phases; they only log. A

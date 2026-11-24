@@ -1,10 +1,9 @@
 import type { StimContext } from '@stim-cli/core';
 import { isPathPrefix } from '@stim-cli/core/state';
-import { chmod, lstat, mkdir, readdir, realpath, utimes } from 'node:fs/promises';
+import { access, chmod, lstat, mkdir, readFile, readdir, realpath, stat as statAsync, utimes } from 'node:fs/promises';
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from 'fs';
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from 'path';
 import { getExecutor, isTimeoutError } from '../exec.ts';
-import { logReportChild } from '../report-child-log.ts';
 import { git, gitAsync, gitQuiet, gitQuietAsync } from './git.ts';
 import { removeTemporaryEntryAsync } from '../temporary.ts';
 import { warmTrash } from './worktree-trash.ts';
@@ -1021,18 +1020,11 @@ export function listWorktrees(cwd: string, opts: ReadOptions = {}): WorktreeEntr
 }
 
 const LIST_WORKTREES = ['worktree', 'list', '--porcelain'];
-const loggedWorktreeReads = new Set<string>();
 
-function commonDirOf(entry: WorktreeEntry): string | null {
-  if (!entry.bare) {
-    if (!loggedWorktreeReads.has(entry.path)) {
-      loggedWorktreeReads.add(entry.path);
-      logReportChild(`reading ${join(entry.path, '.git')}`, { path: entry.path }, 'daemon_worktree_read', 'info');
-    }
-    return gitCommonDirOnDisk(entry.path);
-  }
+async function commonDirOf(entry: WorktreeEntry): Promise<string | null> {
+  if (!entry.bare) return gitCommonDirOnDiskAsync(entry.path);
   try {
-    return realpathSync.native(entry.path);
+    return await realpath(entry.path);
   } catch {
     return null;
   }
@@ -1050,9 +1042,9 @@ export async function listWorktreesAsync(cwd: string, options: AsyncReadOptions 
   const entries = await sharedRead(options.declareFor, readKey(cwd, LIST_WORKTREES, options), async (share) => {
     const out = await gitReadAsync(cwd, LIST_WORKTREES, options);
     const listed = out ? parseWorktrees(out) : [];
-    const common = listed[0] ? commonDirOf(listed[0]) : null;
+    const common = listed[0] ? await commonDirOf(listed[0]) : null;
     for (const entry of listed)
-      if (common && !entry.prunable && commonDirOf(entry) === common)
+      if (common && !entry.prunable && (await commonDirOf(entry)) === common)
         share(readKey(entry.path, LIST_WORKTREES, options), Promise.resolve(listed));
     return listed;
   });
@@ -1121,6 +1113,34 @@ export function linkedWorktreesOnDisk(commonDir: string): WorktreeEntry[] {
  */
 export function gitCommonDirOnDisk(start: string): string | null {
   return gitLocationOnDisk(start)?.commonDir ?? null;
+}
+
+const exists = (path: string) =>
+  access(path).then(
+    () => true,
+    () => false,
+  );
+
+/** `gitCommonDirOnDisk` without blocking the event loop on a slow or hung path. */
+export async function gitCommonDirOnDiskAsync(start: string): Promise<string | null> {
+  try {
+    for (let dir = await realpath(start); ; dir = dirname(dir)) {
+      const dotGit = join(dir, '.git');
+      if (await exists(dotGit)) {
+        if ((await statAsync(dotGit)).isDirectory()) return await realpath(dotGit);
+        const gitdir = /^gitdir: (.+)$/m.exec(await readFile(dotGit, 'utf-8'))?.[1]?.trim();
+        if (!gitdir) return null;
+        const linked = resolve(dir, gitdir);
+        const commondir = join(linked, 'commondir');
+        return await realpath(
+          (await exists(commondir)) ? resolve(linked, (await readFile(commondir, 'utf-8')).trim()) : linked,
+        );
+      }
+      if (dirname(dir) === dir) return null;
+    }
+  } catch {
+    return null;
+  }
 }
 
 /** The canonical on-disk Git location; Git has not verified that it is a valid checkout. */
