@@ -15,6 +15,12 @@ committed .stim.json, so every worktree gets its own copy on its own ports.
 Stim never starts one on its own: run stim services start. stim start does not
 start them either.
 
+Each start, including revive, queues for a native build slot under
+concurrency.maxBuilds. Queue progress goes to stderr, also with --json. The
+slot covers the start command, then up to 60 seconds of readiness wait, releasing
+when ready, on failure, timeout or cancellation. Running services, stop and
+teardown hold no slot.
+
 KINDS
 
 Without a stop command, start is a long-running process Stim supervises. It

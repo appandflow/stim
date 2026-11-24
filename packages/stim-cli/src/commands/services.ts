@@ -2,6 +2,8 @@ import chalk from 'chalk';
 import { defineOp, type Op } from '../cli/define-op.ts';
 import { runProcessOperation } from '../cli-operation.ts';
 import { phaseLine, refuseNoProject } from '../command-output.ts';
+import { BuildSlotCapacityError } from '../engine/build-slots.ts';
+import { claimFailure } from '../ownership-claim.ts';
 import { ensurePersistentStimd } from '../daemon/client.ts';
 import {
   declaredServices,
@@ -19,13 +21,14 @@ import { recordWorkspaceUseAsync } from '../workspace/workspace-state.ts';
 
 function refuse(error: unknown, json: boolean): void {
   const failure =
-    error instanceof ServiceError
+    claimFailure(error, null) ??
+    (error instanceof ServiceError || error instanceof BuildSlotCapacityError
       ? { code: error.code, message: error.message, remedy: error.remedy }
       : {
           code: 'STIM_SERVICE_FAILED',
           message: error instanceof Error ? error.message : String(error),
           remedy: 'Run stim services to see each service, and stim logs for its command output.',
-        };
+        });
   if (json) console.log(JSON.stringify(failure));
   console.error(chalk.red(phaseLine('error', `${failure.code}: ${failure.message}`)));
   if (failure.remedy) console.error(phaseLine('remedy', failure.remedy));
