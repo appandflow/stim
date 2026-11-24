@@ -20,6 +20,7 @@ import { releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import { easSessionLedgerLock } from '@stim-cli/core/state';
 import { readEasSessionLedger, recordEasSessionClaim } from '../engine/eas-session-ledger.ts';
 import { saveConfig } from '../workspace/config.ts';
+import { remoteSessionExpired } from '../stimd/metro/state.ts';
 
 const EAS_CLI_VERSION = () => 'eas-cli/24.8.0 darwin-arm64 node-v22.22.2';
 
@@ -1044,4 +1045,78 @@ test('concurrent recorded-session cleanup verifies the first stop before another
     { status: 'torn-down', reason: undefined },
   ]);
   expect(stops).toBe(1);
+});
+
+test('a recorded session past its expiry is ended without eas-cli; one inside it or with no expiry is kept', async () => {
+  const ledgerRoot = join(tmpHome, 'machine-eas');
+  const run = async (record: Record<string, unknown>) => {
+    ensureWorkspaceStorage(root);
+    writeFileSync(
+      workspaceStateFile(root),
+      JSON.stringify({ remoteDevice: { platform: 'ios', sessionId: 'drs_cap', ...record } }),
+    );
+    await recordEasSessionClaim(
+      {
+        sessionId: 'drs_cap',
+        name: 'stim-wt',
+        platform: 'ios',
+        workspaceRoot: root,
+        workspaceHome: tmpHome,
+        stateFile: workspaceStateFile(root),
+      },
+      ledgerRoot,
+    );
+    const result = await endRecordedSession({ root, sessionId: 'drs_cap', easBin: null, ledgerRoot });
+    return { status: result.status, claimed: readEasSessionLedger(ledgerRoot).claims.has('drs_cap') };
+  };
+
+  expect(await run({ expiresAt: new Date(Date.now() - 1000).toISOString() })).toEqual({
+    status: 'torn-down',
+    claimed: false,
+  });
+  expect(await run({ expiresAt: new Date(Date.now() + 60_000).toISOString() })).toEqual({
+    status: 'failed',
+    claimed: true,
+  });
+  expect(await run({})).toEqual({ status: 'failed', claimed: true });
+});
+
+test('the expiry is taken after the lock wait and the boot, from the cap and the injected clock', async () => {
+  let at = Date.parse('2026-11-24T10:00:00.000Z');
+  let patch: Record<string, unknown> | undefined;
+  await ensureRemoteBootOwned({
+    root,
+    platform: 'ios',
+    sessionName: 'stim-wt',
+    startedAt: new Date(at).toISOString(),
+    maxDurationMinutes: 30,
+    boot: async () => {
+      at += 40 * 60_000;
+      return { ok: true };
+    },
+    createdSessionId: () => 'drs_late',
+    abandonCreatedSession: () => ({ ok: true, sessionId: 'drs_late' }),
+    writeState: (_root, next) => {
+      patch = next;
+    },
+    ledgerRoot: join(tmpHome, 'machine-eas'),
+    now: () => at,
+  });
+  expect(patch).toEqual({
+    remoteDevice: {
+      platform: 'ios',
+      sessionId: 'drs_late',
+      startedAt: '2026-11-24T10:00:00.000Z',
+      expiresAt: '2026-11-24T11:15:00.000Z',
+    },
+  });
+});
+
+test('remoteSessionExpired is true only strictly past a recorded expiry', () => {
+  const record = { platform: 'ios' as const, sessionId: 'drs_x', startedAt: null, webPreviewUrl: null };
+  const expiresAt = '2026-11-24T11:15:00.000Z';
+  const at = Date.parse(expiresAt);
+  expect(remoteSessionExpired({ ...record, expiresAt }, at)).toBe(false);
+  expect(remoteSessionExpired({ ...record, expiresAt }, at + 1)).toBe(true);
+  expect(remoteSessionExpired(record, at + 1e12)).toBe(false);
 });

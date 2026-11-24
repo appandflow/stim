@@ -5,7 +5,7 @@ import { deviceSlotKey, projectDeviceSlots } from './devices/device-slots.ts';
 import { clockTime, formatElapsed, formatLongDuration, plural } from './command-output.ts';
 import type { ProjectRecord } from './workspace/config.ts';
 import type { LeaseFileEntry } from './engine/device-lease.ts';
-import type { RemoteSessionRecord } from './stimd/metro/state.ts';
+import { remoteSessionExpired, type RemoteSessionRecord } from './stimd/metro/state.ts';
 import { cdpEndpoint, type WebFacts } from './web/state.ts';
 import type {
   AndroidRuntimeFacts,
@@ -75,7 +75,7 @@ export function remoteDeviceState(
   ledger: { claims: ReadonlyMap<string, { workspaceRoot: string }>; safe: boolean },
   root: string,
 ): RemoteDeviceState | null {
-  if (!record) return null;
+  if (!record || remoteSessionExpired(record, Date.now())) return null;
   const claim = ledger.claims.get(record.sessionId);
   return {
     platform: record.platform,
