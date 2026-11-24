@@ -112,6 +112,19 @@ describe('a discovered worktree on the removal path', () => {
     expect(quiet).toBeTruthy();
   });
 
+  it('treats a worktree whose reflog entry is old but whose logs/HEAD mtime is fresh, as after git gc, as idle', async () => {
+    vi.spyOn(reads, 'discoveredReads').mockImplementation(() => ({
+      processes: async () => ({ commands: [], cwds: [] }),
+      sessions: async () => [],
+    }));
+    const wt = worktree('gc-touched');
+    const reflog = join(git(wt, 'rev-parse', '--absolute-git-dir').trim(), 'logs', 'HEAD');
+    writeFileSync(reflog, readFileSync(reflog, 'utf8').replace(/> \d+ /g, `> ${Math.floor(old.getTime() / 1000)} `));
+    const now = new Date();
+    utimesSync(reflog, now, now);
+    expect((await sweep())['gc-touched']).toMatchObject({ skipped: null });
+  });
+
   it('keeps a git-ignored file the main checkout lacks, and removes the worktree once the main checkout holds the same bytes', async () => {
     const wt = worktree('env-wt');
     writeFileSync(join(wt, '.env'), 'SECRET=1');
