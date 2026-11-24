@@ -505,7 +505,7 @@ leased until <time>" for each one.`,
 
   stim revive --json
 
-  { revived: { metro, devices } }. Human lines on stderr say the same.
+  { revived: { metro, devices, services } }. Human lines on stderr say the same.
   metro           { port, stoppedAt, reason, restarted }. restarted is true
                   when revive started the dev server an idle stop had
                   stopped; stoppedAt and reason ("idle") describe that stop,
@@ -521,6 +521,21 @@ leased until <time>" for each one.`,
                   so in-app state is gone. launched is the relaunch's launch
                   state as in ios and android, or null when the app was
                   left running
+  services        the services the idle pass had stopped that revive
+                  started again (guide services); [] when none. One that
+                  does not start refuses with STIM_SERVICE_FAILED
+
+  stim services --json
+
+  { services: [{ name, kind, running, ports, stoppedBy, pid?, log?,
+  teardownFailure? }] }; teardownFailure says why removal kept it and what
+  to run by hand
+  kind            "process" (Stim supervises start) or "commands"
+  ports           label to number; null until the first start
+  stoppedBy       "idle", "command" or null
+  start, stop --json print { services: [{ name, outcome, detail }] }, outcome
+  one of started, running, stopped, not-running, failed; env --json prints
+  { services: { <name>: { VAR: value } } }
 
   stim web --json
 
@@ -1521,6 +1536,10 @@ RULES
   with no Stim command since, carries dormantStage and a plain stage line:
 
   dormantStage  { at, dormantDays, deletedDevices, archived }
+  services      the services stim services start started here, in start
+                order: [{ name, running, ports, stoppedBy,
+                teardownFailure? }], stoppedBy "idle", "command" or null;
+                absent when it started none
   A source (main) checkout whose node_modules or ios/Pods maintenance or gc
   deleted carries sourceDependenciesCleared { at, dirs } and a plain "source
   checkout" line while any of those directories is still missing; worktree

@@ -68,6 +68,99 @@ export function readIdleStage(state: WorkspaceState | null | undefined): IdleSta
   };
 }
 
+export const SERVICES_KEY = 'services';
+
+/**
+ * A workspace service as `stim services start` resolved it: every command and value the idle pass, revive and removal
+ * run come from this record, never from the project's settings at that time.
+ */
+export interface ServiceRecord {
+  /** `commands` when the service declares a stop command, else `process`: Stim supervises its start command. */
+  kind: 'commands' | 'process';
+  /** Absolute working directory. */
+  cwd: string;
+  /** The variables Stim sets for the service's commands: its ports, its id and its derived values. */
+  env: Record<string, string>;
+  /** The `PATH` of the `stim services start` that recorded it; every later run of its commands uses it. */
+  path?: string;
+  /** The services it starts after and stops before. */
+  dependsOn: string[];
+  ports: Record<string, number>;
+  /** The ports Stim reverses to the workspace's devices while the service runs. */
+  reverse: number[];
+  start: string[];
+  stop?: string[];
+  teardown?: string[];
+  orphanTeardown?: string[];
+  ready?: string[];
+  /** The supervised process of a `process` service, by captured identity. */
+  process?: { pid: number; processToken: string };
+  state: 'running' | 'stopped';
+  /** Who stopped it: only an `idle` stop is resumed by `stim revive`. */
+  stoppedBy?: 'idle' | 'command';
+  at: string;
+  /** When the idle pass last failed to stop it; it waits `idle.minutes` before trying again. */
+  idleStopFailedAt?: string;
+  /** Why the last teardown failed, naming what to run by hand; removal keeps the workspace until one succeeds. */
+  teardownFailure?: string;
+}
+
+function argvField(value: unknown): string[] | undefined {
+  return Array.isArray(value) && value.length > 0 && value.every((arg) => typeof arg === 'string') ? value : undefined;
+}
+
+function stringMap(value: unknown): Record<string, string> {
+  if (!isJsonObject(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+  );
+}
+
+/** The services `stim services start` recorded in the workspace, by name; malformed entries are left out. */
+export function readServiceRecords(state: WorkspaceState | null | undefined): Record<string, ServiceRecord> {
+  const all = state?.[SERVICES_KEY];
+  if (!isJsonObject(all)) return {};
+  const records: Record<string, ServiceRecord> = {};
+  for (const [name, value] of Object.entries(all)) {
+    const start = argvField(isJsonObject(value) ? value.start : undefined);
+    if (!isJsonObject(value) || !start || typeof value.cwd !== 'string' || typeof value.at !== 'string') continue;
+    if (value.kind !== 'commands' && value.kind !== 'process') continue;
+    const ports = Object.fromEntries(
+      Object.entries(isJsonObject(value.ports) ? value.ports : {}).filter(
+        (entry): entry is [string, number] => typeof entry[1] === 'number',
+      ),
+    );
+    const record: ServiceRecord = {
+      kind: value.kind,
+      cwd: value.cwd,
+      env: stringMap(value.env),
+      ports,
+      reverse: Array.isArray(value.reverse)
+        ? value.reverse.filter((port): port is number => typeof port === 'number')
+        : [],
+      start,
+      dependsOn: Array.isArray(value.dependsOn)
+        ? value.dependsOn.filter((each): each is string => typeof each === 'string')
+        : [],
+      state: value.state === 'running' ? 'running' : 'stopped',
+      at: value.at,
+    };
+    for (const key of ['stop', 'teardown', 'orphanTeardown', 'ready'] as const) {
+      const argv = argvField(value[key]);
+      if (argv) record[key] = argv;
+    }
+    const proc = value.process;
+    if (isJsonObject(proc) && typeof proc.pid === 'number' && typeof proc.processToken === 'string')
+      record.process = { pid: proc.pid, processToken: proc.processToken };
+    if (value.stoppedBy === 'idle' || value.stoppedBy === 'command') record.stoppedBy = value.stoppedBy;
+    if (typeof value.idleStopFailedAt === 'string') record.idleStopFailedAt = value.idleStopFailedAt;
+    if (typeof value.teardownFailure === 'string') record.teardownFailure = value.teardownFailure;
+    if (typeof value.path === 'string') record.path = value.path;
+    records[name] = record;
+  }
+  return records;
+}
+
 export const DORMANT_STAGE_KEY = 'dormantStage';
 
 /** The dormant stage the daemon last moved the workspace into: the owned devices it deleted, and its archived logs. */

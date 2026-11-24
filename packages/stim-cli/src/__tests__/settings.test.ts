@@ -260,6 +260,7 @@ const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: 
   'cache.fingerprintInputs': { valid: ['shared'], invalid: [7], expected: 'an array of strings' },
   'cache.provider': { valid: './cache.cjs', invalid: {}, expected: 'a string' },
   'cache.options': { valid: { bucket: 'a' }, invalid: 'nope', expected: 'an object' },
+  services: { valid: { web: { start: 'serve' } }, invalid: 'nope', expected: 'an object' },
 };
 
 test('every known setting has a shape, and a wrong-typed value is one refusal naming the key and the shape', () => {

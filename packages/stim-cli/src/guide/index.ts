@@ -3,6 +3,7 @@ import api from './api.ts';
 import facts from './facts.ts';
 import metro from './metro.ts';
 import ports from './ports.ts';
+import services from './services.ts';
 import logs from './logs.ts';
 import errors from './errors.ts';
 import lifecycle from './lifecycle.ts';
@@ -21,6 +22,7 @@ const TOPICS: Record<string, GuideTopic> = {
   facts,
   metro,
   ports,
+  services,
   logs,
   errors,
   lifecycle,

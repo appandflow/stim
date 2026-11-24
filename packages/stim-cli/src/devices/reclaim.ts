@@ -2,6 +2,7 @@ import { endWorkspaceShares } from '../local-server.ts';
 import type { StimContext } from '@stim-cli/core';
 import { archiveWorkspace } from '../archive.ts';
 import { clearNamedPorts } from '../named-ports.ts';
+import { serviceRecords, settleServicesForReclaim } from '../services.ts';
 import { parseDeviceSlotKey, projectDeviceSlots } from './device-slots.ts';
 import {
   type ProjectRecord,
@@ -505,6 +506,9 @@ async function removeWorkspaceOutput(
   operation?.signal.throwIfAborted();
   if (archive) await archiveWorkspace(path, archive.removedBy, state, operation);
   if (realpathSync(dir) !== lockDir) throw new Error('Workspace storage changed during cleanup');
+  const started = Object.keys(serviceRecords(path));
+  // @ref LLP 0027#removal-tears-services-down -- a service started during the reclaim keeps the workspace
+  if (started.length) throw new Error(`service ${started.join(', ')} started during the cleanup; run it again`);
   await emptyWorkspaceDir(dir, operation?.signal, `${BROWSER_LOCK}.lock`);
 }
 
@@ -532,10 +536,9 @@ async function reclaimIdleProject(
 ): Promise<ReclaimResult> {
   const signal = operation?.signal;
   signal?.throwIfAborted();
-  await clearNamedPorts(
-    path,
-    operation ? { signal, log: (line) => operation.output('stderr', `${line}\n`) } : undefined,
-  );
+  const output = operation ? { signal, log: (line: string) => operation.output('stderr', `${line}\n`) } : undefined;
+  await settleServicesForReclaim(path, output, operation);
+  await clearNamedPorts(path, output);
   signal?.throwIfAborted();
   const project = getProject(path);
   verifyAvdClaims(project, operation);

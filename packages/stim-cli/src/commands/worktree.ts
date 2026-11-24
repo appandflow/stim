@@ -40,6 +40,7 @@ import { recordWorkspaceUseAsync } from '../workspace/workspace-state.ts';
 import { recordWarmedFrom, sourceDependenciesNotice } from '../workspace/source-dependencies.ts';
 import { forgetStatusMeasures } from '../status-measures.ts';
 import { reclaimProject, type ReclaimResult } from '../devices/reclaim.ts';
+import { teardownServices } from '../services.ts';
 import { classifyProjectEntries } from './gc/projects.ts';
 import { listMountedVolumes } from '../fs-util.ts';
 import { claimFailure } from '../ownership-claim.ts';
@@ -911,6 +912,40 @@ async function withReclaimLocks<T>(
   return acquire(0);
 }
 
+async function archiveRefusal(
+  path: string,
+  archive: WorktreeArchive | null,
+  operation?: StimContext,
+): Promise<string | null> {
+  if (!archive) return null;
+  try {
+    return await worktreeArchiveMismatch(path, archive, operation);
+  } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
+    return `its archive could not be checked: ${error instanceof Error ? error.message : String(error)}`;
+  }
+}
+
+/** Tears down the services of the workspaces a removal deletes; null when every one went, else why one did not. */
+async function teardownReclaimed(
+  keys: readonly string[],
+  force: boolean,
+  operation?: StimContext,
+): Promise<string | null> {
+  for (const key of keys) {
+    try {
+      await teardownServices(key, { force, ...(operation ? { operation, signal: operation.signal } : {}) });
+    } catch (error) {
+      if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+        throw error;
+      operation?.signal.throwIfAborted();
+      return error instanceof Error ? error.message : String(error);
+    }
+  }
+  return null;
+}
+
 async function reclaimAll(
   rootPath: string,
   keys: readonly string[] = reclaimKeys(rootPath),
@@ -1768,6 +1803,15 @@ async function removeOrRefuse(
           const discardArchive = async (): Promise<void> => {
             if (archive) await discardWorktreeArchive(archive);
           };
+          // @ref LLP 0027#removal-tears-services-down -- the data goes first, so a failure refuses with nothing touched
+          const keptBack = await teardownReclaimed(lockedKeys, opts.force === true, opts.operation);
+          if (keptBack) {
+            await discardArchive();
+            output.error(chalk.red(`Refusing to remove ${path}: ${keptBack}`));
+            output.error(chalk.dim(`The directory and Stim ownership record for ${path} were kept.`));
+            output.fail();
+            return;
+          }
           const result = await reclaimAll(path, lockedKeys, {
             preserveAllProjects: true,
             removedBy: opts.removedBy ?? 'worktree-remove',
@@ -1811,16 +1855,7 @@ async function removeOrRefuse(
             signal: options.signal,
             declareFor: opts.operation,
           });
-          let stale: string | null = null;
-          if (archive) {
-            try {
-              stale = await worktreeArchiveMismatch(path, archive, opts.operation);
-            } catch (error) {
-              if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
-                throw error;
-              stale = `its archive could not be checked: ${error instanceof Error ? error.message : String(error)}`;
-            }
-          }
+          const stale = await archiveRefusal(path, archive, opts.operation);
           if (stale) {
             const unrestored = trash ? await restoreTrashedTrees(trash) : [];
             if (trash && unrestored.length) {

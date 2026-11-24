@@ -53,6 +53,7 @@ import {
   listBuildEndMarkers,
   readHostedSessions,
   readHostedAppMetadata,
+  readServiceRecords,
   type HostedDeviceSession,
   type CrashLoop,
   type DaemonMode,
@@ -362,6 +363,10 @@ function homeAlive(
     if (browser && browser.status !== 'stopped') return `${path} has an owned Chrome`;
     const macos = macosAppState(readMacosRecord(path));
     if (macos && macos.state !== 'stopped') return `${path} has a macOS app`;
+    const service = Object.entries(readServiceRecords(readWorkspaceState(path))).find(
+      ([, record]) => record.state === 'running',
+    );
+    if (service) return `${path} runs the service ${service[0]}`;
   }
   if (listBuildSlots().some((slot) => slot.alive || slot.unresolved)) return 'a build slot is held';
   const owned = measured.devices.filter(ownedHere);

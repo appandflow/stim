@@ -9,6 +9,8 @@ import { formatElapsed, phaseLine } from '../command-output.ts';
 import { debugLog } from '../debug-log.ts';
 import { operationState } from '../engine/operation-state.ts';
 import { spawnDeclared } from '../engine/spawn-claims.ts';
+import { serviceRecords } from '../services.ts';
+import { findCommandWorkspace } from '../workspace/project.ts';
 import {
   AVAILABLE_KINDS,
   detectKinds,
@@ -358,7 +360,16 @@ async function runTest(
         ? `${workers} workers (${fixed ? 'set by concurrency.testWorkers' : basis}) through ${plan.applied}`
         : `no worker count passed: ${plan.skipped} (${fixed ? `concurrency.testWorkers ${fixed}` : basis})`,
     );
-    const result = await runCommand(context, plan.argv, dir, { ...env, STIM_TEST_RUN: marker }, slot !== undefined);
+    const root = findCommandWorkspace(cwd);
+    // @ref LLP 0027#commands-get-the-services-env -- service values win over the caller's environment
+    const services = root ? Object.assign({}, ...Object.values(serviceRecords(root)).map((record) => record.env)) : {};
+    const result = await runCommand(
+      context,
+      plan.argv,
+      dir,
+      { ...env, ...services, STIM_TEST_RUN: marker },
+      slot !== undefined,
+    );
     retain = result.survivors;
     signal = result.signal;
     exit = signal ? 128 + (constants.signals[signal] ?? 0) : (result.code ?? 1);

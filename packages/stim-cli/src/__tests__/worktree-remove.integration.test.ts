@@ -2139,3 +2139,74 @@ test.each([false, true])('real git: successful removal reports differing ignored
     rmSync(base, { recursive: true, force: true });
   }
 });
+
+test.each<[string, (marker: string) => Record<string, unknown>, boolean, boolean]>([
+  [
+    'a teardown that needs the ignored node_modules runs before they move to the trash',
+    (marker) => ({ teardown: [process.execPath, 'node_modules/tool.js', marker] }),
+    false,
+    true,
+  ],
+  [
+    'a failing teardown refuses with the worktree and the record kept',
+    () => ({ teardown: node('process.exit(1)') }),
+    false,
+    false,
+  ],
+  [
+    '--force gets past a failing stop of a service with no teardown',
+    () => ({ state: 'running', stop: node('process.exit(1)') }),
+    true,
+    true,
+  ],
+])(
+  'real git: %s',
+  async (name, service, force, removed) => {
+    const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-service-teardown-')));
+    const errs: string[] = [];
+    try {
+      const { repo, wt } = realRepoWithWorktree(base);
+      writeFileSync(join(repo, '.git', 'info', 'exclude'), 'node_modules/\n');
+      mkdirSync(join(wt, 'node_modules'));
+      writeFileSync(join(wt, 'node_modules', 'tool.js'), "require('fs').writeFileSync(process.argv[2], 'gone')");
+      const marker = join(base, 'torn-down');
+      upsertProject(wt, {});
+      ensureWorkspaceStorage(wt);
+      writeFileSync(
+        workspaceStateFile(wt),
+        JSON.stringify({
+          services: {
+            db: {
+              kind: 'commands',
+              cwd: wt,
+              env: {},
+              dependsOn: [],
+              ports: {},
+              reverse: [],
+              start: node(''),
+              stop: node(''),
+              state: 'stopped',
+              at: 'T',
+              ...service(marker),
+            },
+          },
+        }),
+      );
+      resetExecutor();
+      await removeWorktreeTarget(wt, { force, output: { error: (line) => errs.push(line), fail: () => {} } });
+      expect(existsSync(wt)).toBe(!removed);
+      expect(/Refusing to remove .*exited with status 1/.test(errs.join('\n'))).toBe(!removed);
+      expect(
+        existsSync(workspaceStateFile(wt)) && readFileSync(workspaceStateFile(wt), 'utf8').includes('teardownFailure'),
+      ).toBe(!removed);
+      expect(existsSync(marker)).toBe(name.includes('node_modules'));
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  },
+  30_000,
+);
+
+function node(code: string): string[] {
+  return [process.execPath, '-e', code];
+}
