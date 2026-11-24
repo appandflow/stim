@@ -10,6 +10,8 @@ import {
   unpushedCommitsAsync,
   hasUncommittedWorkAsync,
   listWorktrees,
+  gitCommonDirOnDisk,
+  gitCommonDirOnDiskAsync,
   cloneIgnoredEntries,
   depsOutOfSync,
   listGitignoredEntries,
@@ -338,3 +340,18 @@ function copyContext(target: string) {
   const context = processContext(target);
   return { ...context, home: target, env: { ...context.env, STIM_HOME: target } };
 }
+
+test('gitCommonDirOnDiskAsync returns the common dir of a main checkout and a linked worktree', async () => {
+  const repo = realpathSync(mkdtempSync(join(tmpdir(), 'stim-test-common-dir-')));
+  try {
+    execSync('git init -q -b main && git -c user.email=a@b -c user.name=n commit -q --allow-empty -m i', { cwd: repo });
+    const linked = join(repo, 'linked');
+    execSync(`git worktree add -q ${linked}`, { cwd: repo });
+    const common = join(repo, '.git');
+    expect(await gitCommonDirOnDiskAsync(repo)).toBe(common);
+    expect(await gitCommonDirOnDiskAsync(linked)).toBe(common);
+    expect(await gitCommonDirOnDiskAsync(join(repo, 'missing'))).toBe(gitCommonDirOnDisk(join(repo, 'missing')));
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
