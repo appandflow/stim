@@ -867,6 +867,9 @@ import Testing
       """
     let report = try GcPreview(json: Data(json.utf8))
     #expect(report.sections.map(\.title) == ["Simulator launchd folders with no simulator"])
+    let notices = try GcPreview(json: Data(#"{"sections":{"memoryNotices":[{"message":"Memory sweep skipped"}]}}"#.utf8))
+    #expect(notices.sections.map(\.title) == ["Memory notices"])
+    #expect(notices.sections[0].entries[0].kept != nil)
     #expect(report.sections[0].entries.count == 1)
     #expect(
       report.sections[0].entries[0].kept?.hasSuffix(

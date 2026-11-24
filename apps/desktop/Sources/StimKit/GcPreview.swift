@@ -66,6 +66,7 @@ public struct GcPreview: Sendable {
     ("keptDeviceLeases", "Kept device leases"),
     ("deviceSweepNotices", "Device sweep notices"),
     ("easSessionSweepNotices", "EAS session sweep notices"),
+    ("memoryNotices", "Memory notices"),
     ("skipped", "Skipped"),
     ("workspaceLogs", "Workspace logs"),
     ("workspaceBuildOutputs", "Workspace build outputs"),
@@ -76,7 +77,7 @@ public struct GcPreview: Sendable {
   /// Sections `stim guide facts gc` documents as never deleted.
   static let reportOnly: Set<String> = [
     "unresolvedBuildClaims", "buildsInProgress", "keptDeviceLeases", "deviceSweepNotices",
-    "easSessionSweepNotices", "skipped", "unverifiedDevices", "simulatorLaunchdFolders",
+    "easSessionSweepNotices", "memoryNotices", "skipped", "unverifiedDevices", "simulatorLaunchdFolders",
   ]
 
   /// The `stim gc` arguments that act on what a dry run with `preview` reported: the same run without
