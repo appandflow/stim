@@ -169,6 +169,21 @@ export function writeWorkspaceLaunchAsync(
   return withWorkspaceStateLockAsync(root, () => writeWorkspaceLaunch(root, platform, record, slot));
 }
 
+export function clearWorkspaceLaunchAsync(
+  root: string,
+  platform: WorkspaceLaunchPlatform,
+  slot = 'default',
+): Promise<void> {
+  return withWorkspaceStateLockAsync(root, () => {
+    updateWorkspaceState(root, (state) => {
+      if (!state.launches || typeof state.launches !== 'object') return state;
+      const launches = { ...state.launches };
+      delete launches[deviceSlotKey(platform, slot)];
+      return { ...state, launches };
+    });
+  });
+}
+
 export function clearWorkspaceLaunches(root: string, slot: string): void {
   updateWorkspaceState(root, (state) => {
     if (!state.launches || typeof state.launches !== 'object') return state;

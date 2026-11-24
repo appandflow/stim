@@ -93,7 +93,7 @@ import {
   statsProjectKey,
   type RunEstimates,
 } from '../engine/stats.ts';
-import { writeWorkspaceLaunchAsync } from '../stimd/metro/state.ts';
+import { clearWorkspaceLaunchAsync, writeWorkspaceLaunchAsync } from '../stimd/metro/state.ts';
 import { readWorkspaceState, recordWorkspaceUseAsync, writeWorkspaceStateAsync } from '../workspace/workspace-state.ts';
 import { printLightenedFailure, restoreLightenedDependencies } from '../workspace/lightened.ts';
 import {
@@ -463,6 +463,7 @@ interface RunAndroidOptions {
   startLogStream?: typeof startDeviceLogStream;
   kill?: (pid: number, signal: NodeJS.Signals) => boolean;
   createWriter?: typeof createNdjsonWriter;
+  clearLaunch?: typeof clearWorkspaceLaunchAsync;
   writeLaunch?: typeof writeWorkspaceLaunchAsync;
   writeState?: (root: string, patch: Record<string, unknown>) => unknown;
   recordBuild?: typeof recordFinishedBuild;
@@ -549,6 +550,7 @@ function resolveRunAndroidOptions(
     startLogStream = startDeviceLogStream,
     kill = (pid, signal) => process.kill(pid, signal),
     createWriter = createNdjsonWriter,
+    clearLaunch = clearWorkspaceLaunchAsync,
     writeLaunch = writeWorkspaceLaunchAsync,
     writeState = writeWorkspaceStateAsync,
     recordBuild,
@@ -632,6 +634,7 @@ function resolveRunAndroidOptions(
     startLogStream,
     kill,
     createWriter,
+    clearLaunch,
     writeLaunch,
     writeState,
     recordBuild,
@@ -661,6 +664,7 @@ function androidSlotOptions(options: RunAndroidOptions) {
     selectPool: (args: Parameters<typeof base.selectPool>[0]) => base.selectPool({ ...args, slot }),
     acquireLease: (args: Parameters<typeof base.acquireLease>[0]) => base.acquireLease({ ...args, slot }),
     makeRunLease: (args: Parameters<typeof base.makeRunLease>[0]) => base.makeRunLease({ ...args, slot }),
+    clearLaunch: (projectRoot: string, platform: 'ios' | 'android') => base.clearLaunch(projectRoot, platform, slot),
     writeLaunch: ((projectRoot, platform, record) =>
       base.writeLaunch(projectRoot, platform, record, slot)) as typeof base.writeLaunch,
   };
@@ -812,6 +816,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     startLogStream,
     kill,
     createWriter,
+    clearLaunch,
     writeLaunch,
     writeState,
     recordBuild,
@@ -1707,6 +1712,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         kill,
         pidAlive,
         verifyCollector,
+        clearLaunch,
         writeLaunch,
         recordBuild,
         now,

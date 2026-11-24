@@ -6640,6 +6640,19 @@ describe('ios --device: selecting a phone and building the device slice', () => 
     };
   }
 
+  test.each([true, false])('only a physical run clears its slot launch: %s', async (physical) => {
+    reserve();
+    const clearWorkspaceLaunch = vi.fn<(root: string, platform: string, slot?: string) => Promise<void>>(
+      async () => {},
+    );
+    const { exitCode } = await run(
+      { ...(physical ? { device: PHONE } : {}), slot: 'tablet', json: true },
+      { ...connected(), clearWorkspaceLaunch },
+    );
+    expect(exitCode).toBe(null);
+    expect(clearWorkspaceLaunch.mock.calls).toEqual(physical ? [[root, 'ios', 'tablet']] : []);
+  });
+
   test('--device with an empty udid refuses before anything is spawned', async () => {
     reserve();
     const { errs, exitCode, calls } = await run({ device: '' }, connected());

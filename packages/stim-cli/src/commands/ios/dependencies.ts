@@ -92,7 +92,7 @@ import {
   settingsLayers,
   settingOriginScope,
 } from '../../workspace/settings.ts';
-import { writeWorkspaceLaunchAsync } from '../../stimd/metro/state.ts';
+import { clearWorkspaceLaunchAsync, writeWorkspaceLaunchAsync } from '../../stimd/metro/state.ts';
 import { readWorkspaceState, writeWorkspaceStateAsync } from '../../workspace/workspace-state.ts';
 import { gitCommonDirAsync, repoRootAsync } from '../../workspace/worktree.ts';
 import { warmMetro } from '../../engine/metro-warmup.ts';
@@ -215,6 +215,7 @@ export interface IosDeps {
   ensureWorkspaceStorage: typeof ensureWorkspaceStorageSafely;
   replaceCollector: typeof replaceCollector;
   stopPreviousCollector: typeof stopPreviousCollector;
+  clearWorkspaceLaunch: typeof clearWorkspaceLaunchAsync;
   writeWorkspaceLaunch: typeof writeWorkspaceLaunchAsync;
   writeWorkspaceState: typeof writeWorkspaceStateAsync;
   createWriter: typeof createNdjsonWriter;
@@ -330,6 +331,7 @@ export const DEFAULT_DEPS: IosDeps = {
   ensureWorkspaceStorage: ensureWorkspaceStorageSafely,
   replaceCollector,
   stopPreviousCollector,
+  clearWorkspaceLaunch: clearWorkspaceLaunchAsync,
   writeWorkspaceLaunch: writeWorkspaceLaunchAsync,
   writeWorkspaceState: writeWorkspaceStateAsync,
   createWriter: createNdjsonWriter,

@@ -244,6 +244,18 @@ test.each<[string, Partial<ReviveDeps>, string | null]>([
   expect(calls).toEqual([]);
 });
 
+test('an unrecorded requested device names the phone run commands', async () => {
+  const { deps } = harness();
+  const result = await runRevive({ root: '/project', note: () => {}, requestedDevice: 'OTHER-SIM', deps });
+  assert(!result.ok);
+  expect(result.error.message).toBe(
+    'Device OTHER-SIM is not a simulator or emulator this workspace last launched its app on, so revive started nothing for it.',
+  );
+  expect(result.error.remedy).toBe(
+    "Revive relaunches only owned simulators and emulators; for a physical device, run `stim ios --device 'OTHER-SIM'` or `stim android --device 'OTHER-SIM'` again.",
+  );
+});
+
 test.each<[string, string, Partial<ReviveDeps>, string]>([
   [
     'an emulator launch an older Stim recorded without its AVD name',
@@ -516,4 +528,13 @@ describe('the command output', () => {
     expect(out).toEqual([]);
     expect(err.join('\n')).toContain('in-app state is gone');
   });
+});
+
+test('an idle-stopped Metro restarts without devices after the older launch is cleared', async () => {
+  const { deps, calls } = harness({ readLaunches: () => ({}) });
+  const result = await runRevive({ root: '/project', note: () => {}, deps });
+  assert(result.ok);
+  expect(calls).toEqual(['metro']);
+  expect(result.facts.revived.devices).toEqual([]);
+  expect(result.facts.revived.metro?.restarted).toBe(true);
 });
