@@ -1237,6 +1237,7 @@ Maintainer decision: "would it be safe to have stim restart it automatically, it
 Maintainer decision: "Can we do this", 2026-11-24, on the privileged helper in Stim Host.app.
 Maintainer decision: "Sounds good, if helper isnt setup and we detect high usage from a process ti could kill can we suggest the command to run to setup the helper", 2026-11-24, accepting the design below.
 Maintainer decision: "lets do both", 2026-11-24, for the Desktop toggle and the CLI flag.
+Maintainer decision: "Setup command only (Recommended)", 2026-11-24, choosing that the advice without a helper prints only the setup command and drops the one-off kill command.
 
 Registration is opt-in through the signed Stim Host executable, using
 SMAppService.daemon and an embedded LaunchDaemon plist with BundleProgram.
