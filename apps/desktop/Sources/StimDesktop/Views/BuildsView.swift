@@ -244,9 +244,11 @@ struct LedgerBuildDetail: View {
       Text(failure.message ?? "No reason was recorded.").textStyle(.callout)
       if let remedy = failure.remedy {
         Text(remedy).textStyle(.footnote).foregroundStyle(Palette.secondary)
-      } else if failure.code != nil {
-        Text("No remedy was recorded. stim guide errors lists the remedy for each code.")
-          .textStyle(.footnote).foregroundStyle(Palette.tertiary)
+      } else if let code = failure.code {
+        Text(
+          "No remedy was recorded. Check the printed remedy first; stim guide errors \(code) has a procedure for some codes."
+        )
+        .textStyle(.footnote).foregroundStyle(Palette.tertiary)
       }
     }
   }

@@ -15,7 +15,7 @@ private let warning = DaemonStatus.Pressure(level: "high", disk: "high", reasons
         == .pressureCritical(reasons: critical.reasons))
     #expect(
       SidebarFooterStatus.decide(stim: .missing, pressure: nil, desktopUpdateAvailable: false)
-        == .normal(nil))
+        == .normal)
   }
 
   @Test func criticalDiskOutranksADesktopUpdate() {
@@ -49,17 +49,7 @@ private let warning = DaemonStatus.Pressure(level: "high", disk: "high", reasons
         == .pressureHigh(reasons: warning.reasons))
     #expect(
       SidebarFooterStatus.decide(stim: outdated, pressure: nil, desktopUpdateAvailable: false, stimUpdate: newer)
-        == .normal(nil))
-  }
-
-  @Test func normalShowsTheCheckedCLIVersion() {
-    #expect(
-      SidebarFooterStatus.decide(stim: compatible, pressure: nil, desktopUpdateAvailable: false)
-        == .normal(SemanticVersion("1.11.0")!))
-  }
-
-  @Test func normalWithNoVersionBeforeTheLaunchCheckReports() {
-    #expect(SidebarFooterStatus.decide(stim: nil, pressure: nil, desktopUpdateAvailable: false) == .normal(nil))
+        == .normal)
   }
 }
 

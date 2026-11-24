@@ -240,7 +240,8 @@ public final class PairedServers {
     } catch {
       let failure =
         (error as? ServerError) ?? ServerError(code: "pairing-failed", message: error.localizedDescription)
-      pairingState = .failed(PairedServerWording.notice(for: failure, context: .pairing, name: payload.name))
+      pairingState = .failed(
+        PairedServerWording.notice(for: failure, context: .pairing, name: payload.name, network: payload.network))
     }
   }
 
