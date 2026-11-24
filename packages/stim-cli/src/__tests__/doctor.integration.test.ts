@@ -226,7 +226,9 @@ test('seed findings are reported from inside a linked worktree, about the source
     expect(findings[0]?.level).toBe('note');
     expect(findings[0]?.detail).toContain('stim worktree warm --refresh');
     expect(findings[0]?.detail).toContain('README.md');
-    expect(findings[0]?.fix).toBe(`Commit them, or run \`git -C '${main}' stash push -u -m warm-refresh\`.`);
+    expect(findings[0]?.fix).toBe(
+      `Commit the changes in the main checkout, then retry; or run plain \`stim worktree warm\`.`,
+    );
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
