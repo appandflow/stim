@@ -206,7 +206,6 @@ export async function savedDependencyReports(
   return reports;
 }
 
-/** Whether `protectedRoot` lies in `root`; a protected root that does not exist, as outside any project, lies nowhere. */
 async function runsInside(
   protectedRoot: string,
   root: string,

@@ -1025,11 +1025,12 @@ describe('gc marks written by the lane', () => {
     };
 
     it.each([
-      ['takes the node_modules of a linked worktree with only a workspace record', false, 'done'],
-      ['leaves it to the registered app inside it, used a minute ago', true, undefined],
+      ['takes the node_modules of a linked worktree with only a workspace record', false, false, 'done'],
+      ['keeps it while a source file in it changed a minute ago', false, true, undefined],
+      ['leaves it to the registered app inside it, used a minute ago', true, false, undefined],
     ] as const)(
       '%s',
-      async (_name, registeredApp, outcome) => {
+      async (_name, registeredApp, edited, outcome) => {
         const source = checkout('recorded-source', 20 * day);
         const linked = join(roots, 'recorded-linked');
         execFileSync('git', ['-C', source, '-c', 'gc.auto=0', 'worktree', 'add', '-q', '-b', 'recorded', linked]);
@@ -1045,6 +1046,7 @@ describe('gc marks written by the lane', () => {
         ensureWorkspaceStorage(linked);
         age(roots);
         recordWorkspaceUse(linked, new Date(Date.now() - 20 * day));
+        if (edited) writeFileSync(join(linked, 'index.js'), 'edited');
         if (registeredApp) {
           ensureWorkspaceStorage(app);
           recordWorkspaceUse(app, new Date(Date.now() - 60_000));

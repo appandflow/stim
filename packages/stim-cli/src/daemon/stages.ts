@@ -330,7 +330,9 @@ async function readIdleWorkspaces(
   const found = supplied ?? (discover ? await discoverCheckouts(config, listedRoots(), reading.operation) : []);
   const discovered = found.map(({ path }): [string, ProjectRecord] => [path, {}]);
   const discoveredPaths = new Set(found.map(({ path }) => path));
-  const checkouts = [...Object.entries(config.projects), ...recordedOnly(config), ...discovered];
+  const recorded = discover ? recordedOnly(config) : [];
+  const recordedPaths = new Set(recorded.map(([path]) => path));
+  const checkouts = [...Object.entries(config.projects), ...recorded, ...discovered];
   tally.items = checkouts.length;
   for (const [path, project] of checkouts) {
     await between?.();
@@ -353,7 +355,7 @@ async function readIdleWorkspaces(
         const verdict = await idleVerdict(path, thresholdMs, setting, {
           operation: reading.operation,
           reads,
-          full,
+          full: full || recordedPaths.has(path),
         });
         if ('idleMs' in verdict) idleMs = verdict.idleMs;
         else onKept?.(path, verdict.kept);
@@ -376,21 +378,14 @@ async function readIdleWorkspaces(
 const overlaps = (path: string, other: string): boolean =>
   path === other || path.startsWith(`${other}${sep}`) || other.startsWith(`${path}${sep}`);
 
-/**
- * The roots a Stim command recorded a workspace for that have no registry entry, still exist, and hold or lie inside no
- * registered project, which covers them otherwise.
- */
 function recordedOnly(config: Config): [string, ProjectRecord][] {
   const registered = Object.keys(config.projects);
   const roots = new Set<string>();
-  for (const { projectRoot } of listWorkspaceDirs())
-    if (
-      projectRoot &&
-      isAbsolute(projectRoot) &&
-      !registered.some((key) => overlaps(projectRoot, key)) &&
-      existsSync(projectRoot)
-    )
-      roots.add(projectRoot);
+  for (const { projectRoot } of listWorkspaceDirs()) {
+    if (!projectRoot || !isAbsolute(projectRoot) || !existsSync(projectRoot)) continue;
+    const root = canonicalPath(projectRoot);
+    if (!registered.some((key) => overlaps(root, key))) roots.add(projectRoot);
+  }
   return [...roots].map((root) => [root, {}]);
 }
 

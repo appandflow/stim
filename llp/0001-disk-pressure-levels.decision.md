@@ -1009,12 +1009,16 @@ reduced to minimal size", 2026-11-11.
 Maintainer decision: "Need to be more aggressive in our resources reclaim, i
 dont want to have computers in this situation again", 2026-11-11.
 
-The stage reads the registered workspaces, the discovered checkouts, and every
-root a Stim command recorded a workspace for (`workspaces/<id>/workspace.json`)
-that has no registry entry, still exists, and holds or lies inside no
-registered project. Such a root follows the registered-workspace rules. A
-registered app inside a worktree covers that worktree instead, so a recorded
-worktree root never takes the trees of an app in use.
+Wherever the stages and the ladder read discovered checkouts (the dormant
+stage's output and dependency steps, and the `stim gc --dry-run` previews of
+rungs 1, 5 and 8), they also read
+every root a Stim command recorded a workspace for
+(`workspaces/<id>/workspace.json`) that has no registry entry, still exists, and
+holds or lies inside no registered project. Such a root is judged idle by the
+full evidence, as a discovered checkout is, since most commands run in an
+unregistered root do not record their use. A registered app inside a worktree
+covers that worktree instead, so a recorded worktree root never takes the trees
+of an app in use.
 
 Reason: `stim worktree warm` at a repository root records use of the root but
 registers only the app it finds, and older Stim versions dropped the app's
