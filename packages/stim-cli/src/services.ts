@@ -15,6 +15,7 @@ import { withWorkspaceProcessLock } from './engine/workspace-process-lock.ts';
 import { getExecutor, isTimeoutError } from './exec.ts';
 import { signalProcessTree } from './metro.ts';
 import { getNamedPort } from './named-ports.ts';
+import { recordReversePort, reverseOnDevices } from './reverse-ports.ts';
 import { createNdjsonWriter } from './ndjson.ts';
 import { createPortProbe } from './ports.ts';
 import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from './process-identity.ts';
@@ -42,6 +43,8 @@ export interface ServiceDefinition {
   cwd: string;
   /** Named port labels, each to the environment variable that receives its number, or null. */
   ports: Record<string, string | null>;
+  /** The labels among `ports` whose port is not reversed to the workspace's devices. */
+  local: string[];
   idEnv: string | null;
   env: Record<string, string>;
   start: string[];
@@ -138,6 +141,7 @@ function parseService(name: string, value: unknown): ServiceDefinition {
   if (typeof cwd !== 'string' || isAbsolute(cwd))
     throw bad(name, '.cwd must be a path relative to the workspace, inside its checkout.');
   const ports: Record<string, string | null> = {};
+  const local: string[] = [];
   const rawPorts = value.ports ?? {};
   const entries = Array.isArray(rawPorts)
     ? rawPorts.map((label): [unknown, unknown] => [label, null])
@@ -158,9 +162,20 @@ function parseService(name: string, value: unknown): ServiceDefinition {
       );
     if (RESERVED_PLACEHOLDERS.has(label))
       throw bad(name, `.ports cannot use the label ${label}, which is a placeholder.`);
-    if (envName !== null && (typeof envName !== 'string' || !ENV_NAME.test(envName)))
-      throw bad(name, `.ports.${label} must be an environment variable name or null.`);
-    ports[label] = envName;
+    const spec = isJsonObject(envName) ? envName : { env: envName };
+    const unknownKey = Object.keys(spec).find((key) => key !== 'env' && key !== 'reverse');
+    const variable = spec.env ?? null;
+    if (
+      unknownKey ||
+      (variable !== null && (typeof variable !== 'string' || !ENV_NAME.test(variable))) ||
+      (spec.reverse !== undefined && typeof spec.reverse !== 'boolean')
+    )
+      throw bad(
+        name,
+        `.ports.${label} must be an environment variable name, null, or { "env": name, "reverse": false }.`,
+      );
+    ports[label] = variable;
+    if (spec.reverse === false) local.push(label);
   }
   const idEnv = value.idEnv ?? null;
   if (idEnv !== null && (typeof idEnv !== 'string' || !ENV_NAME.test(idEnv)))
@@ -176,7 +191,7 @@ function parseService(name: string, value: unknown): ServiceDefinition {
   const dependsOn = value.dependsOn ?? [];
   if (!Array.isArray(dependsOn) || !dependsOn.every((each) => typeof each === 'string'))
     throw bad(name, '.dependsOn must be a list of service names.');
-  const definition: ServiceDefinition = { name, cwd, ports, idEnv, env, start, dependsOn: [...dependsOn] };
+  const definition: ServiceDefinition = { name, cwd, ports, local, idEnv, env, start, dependsOn: [...dependsOn] };
   for (const key of ['stop', 'teardown', 'orphanTeardown', 'ready'] as const) {
     const argv = argvOf(name, key, value[key]);
     if (argv) definition[key] = argv;
@@ -320,6 +335,7 @@ async function resolveService(
     cwd,
     env,
     ports,
+    reverse: Object.entries(ports).flatMap(([label, port]) => (definition.local.includes(label) ? [] : [port])),
     start: definition.start.map((arg) => substitute(arg, values, 'start')),
   };
   for (const key of ['stop', 'teardown', 'orphanTeardown', 'ready'] as const) {
@@ -373,7 +389,6 @@ export function serviceLogFile(root: string, name: string): string {
 interface RunOptions {
   signal?: AbortSignal;
   operation?: StimContext;
-  /** How long to wait for another command's services lock; the daemon passes 0 and skips a busy workspace. */
   waitMs?: number;
 }
 
@@ -441,6 +456,12 @@ async function listening(ports: readonly number[], isFree = createPortProbe()): 
   return taken;
 }
 
+function processLives(record: ServiceRecord, alive: readonly string[]): boolean {
+  if (!record.process) return false;
+  const status = inspectProcessIdentity(record.process);
+  return alive.includes(status) || (status === 'gone' && groupAlive(record.process.pid));
+}
+
 /**
  * Whether the service runs, without starting anything: a supervised process by its captured identity, a commands
  * service by a listener on one of its ports, else by its record.
@@ -449,7 +470,7 @@ export async function serviceRunning(
   record: ServiceRecord,
   isFree?: (port: number) => Promise<boolean>,
 ): Promise<boolean> {
-  if (record.kind === 'process') return !!record.process && inspectProcessIdentity(record.process) === 'same';
+  if (record.kind === 'process') return processLives(record, ['same']);
   const ports = Object.values(record.ports);
   if (!ports.length) return record.state === 'running';
   return (await listening(ports, isFree)).length > 0;
@@ -552,7 +573,9 @@ async function stopProcess(record: ServiceRecord, signal?: AbortSignal): Promise
   if (!proc) return null;
   const status = inspectProcessIdentity(proc);
   if (status === 'unknown') return `the identity of pid ${proc.pid} cannot be verified`;
-  if (status !== 'same') return null;
+  if (status === 'different') return null;
+  // @ref LLP 0027#a-service-without-a-stop-command-is-a-process -- a live group keeps its leader's pid from reuse
+  if (status === 'gone' && !groupAlive(proc.pid)) return null;
   try {
     signalProcessTree(proc.pid, 'SIGTERM', { group: true });
     const leader = await waitForProcessExit(proc, PROCESS_STOP_GRACE_MS, signal);
@@ -568,12 +591,26 @@ async function stopProcess(record: ServiceRecord, signal?: AbortSignal): Promise
   return null;
 }
 
-/** Whether removal must keep the workspace for the service: its process may live, or its ports still listen. */
 async function mayStillRun(record: ServiceRecord): Promise<boolean> {
-  if (record.kind === 'process')
-    return !!record.process && ['same', 'unknown'].includes(inspectProcessIdentity(record.process));
+  if (record.kind === 'process') return processLives(record, ['same', 'unknown']);
   const ports = Object.values(record.ports);
   return ports.length > 0 && (await listening(ports)).length > 0;
+}
+
+// @ref LLP 0027#a-running-service-is-reachable-from-the-devices -- through the workspace's recorded reverses
+async function syncReverses(root: string, record: ServiceRecord, add: boolean): Promise<string> {
+  const notes: string[] = [];
+  for (const port of record.reverse) {
+    try {
+      await recordReversePort(root, port, add);
+      for (const report of await reverseOnDevices(root, port, add ? 'add' : 'remove'))
+        if (report.status === 'failed' || report.status === 'unsupported')
+          notes.push(`reverse ${port} on ${report.device}: ${report.detail}`);
+    } catch (error) {
+      notes.push(`reverse ${port}: ${messageOf(error)}`);
+    }
+  }
+  return notes.length ? `; ${notes.join('; ')}` : '';
 }
 
 export interface ServiceOutcome {
@@ -593,17 +630,38 @@ async function startOne(
     'record' in source ? source.record : await resolveService(root, source.definition, source.definitions);
   const { stoppedBy: _, idleStopFailedAt: __, ...fresh } = resolved;
   const base: ServiceRecord = { ...fresh, state: 'running', at: new Date().toISOString() };
+  const outcome = await launch(root, name, base, previous, options);
+  if (outcome.outcome === 'failed') return outcome;
+  return { ...outcome, detail: outcome.detail + (await syncReverses(root, serviceRecords(root)[name] ?? base, true)) };
+}
+
+async function launch(
+  root: string,
+  name: string,
+  base: ServiceRecord,
+  previous: ServiceRecord | null,
+  options: RunOptions,
+): Promise<ServiceOutcome> {
   const stopped = (record: ServiceRecord): ServiceRecord => ({
     ...record,
     state: 'stopped',
     stoppedBy: previous?.stoppedBy === 'idle' ? 'idle' : 'command',
   });
+  const alreadyRunning = async (): Promise<ServiceOutcome> => {
+    if (previous && previous.state !== 'running') {
+      const { stoppedBy: _, idleStopFailedAt: __, ...rest } = previous;
+      await writeRecord(root, name, { ...rest, state: 'running', at: new Date().toISOString() });
+    }
+    return { name, outcome: 'running', detail: 'already running' };
+  };
+  if (previous?.kind === 'process' && previous.process && inspectProcessIdentity(previous.process) === 'unknown')
+    return { name, outcome: 'failed', detail: `the identity of its pid ${previous.process.pid} cannot be verified` };
   if (previous && (await serviceRunning(previous))) {
-    if (await ready(root, name, previous, options)) return { name, outcome: 'running', detail: 'already running' };
+    if (await ready(root, name, previous, options)) return alreadyRunning();
     // @ref LLP 0027#a-service-without-a-stop-command-is-a-process -- never spawn over a live recorded process
     if (previous.kind === 'process')
       return (await waitReady(root, name, previous, options))
-        ? { name, outcome: 'running', detail: 'already running' }
+        ? alreadyRunning()
         : {
             name,
             outcome: 'failed',
@@ -615,11 +673,7 @@ async function startOne(
     try {
       proc = await spawnProcess(root, name, base, options.operation);
     } catch (error) {
-      return {
-        name,
-        outcome: 'failed',
-        detail: `start command ${base.start.join(' ')} failed: ${messageOf(error)}`,
-      };
+      return { name, outcome: 'failed', detail: `start command ${base.start.join(' ')} failed: ${messageOf(error)}` };
     }
     const record = { ...base, process: proc };
     await writeRecord(root, name, record);
@@ -634,7 +688,8 @@ async function startOne(
   const failure = await runCommand(root, name, 'start', base.start, base, base.cwd, START_TIMEOUT_MS, options);
   const notReady = !failure && !(await waitReady(root, name, base, options));
   if (!failure && !notReady) return { name, outcome: 'started', detail: base.start.join(' ') };
-  await writeRecord(root, name, stopped(base));
+  // @ref LLP 0027#the-idle-pass-stops-services -- a stack that partly came up stays running, so the idle pass reaches it
+  if (!(await mayStillRun(base))) await writeRecord(root, name, stopped(base));
   return {
     name,
     outcome: 'failed',
@@ -696,7 +751,8 @@ async function stopOne(
   }
   const { idleStopFailedAt: _, process: __, ...rest } = record;
   await writeRecord(root, name, { ...rest, state: 'stopped', stoppedBy: by, at: now });
-  return { name, outcome: running ? 'stopped' : 'not-running', detail: running ? 'stopped' : 'not running' };
+  const notes = await syncReverses(root, record, false);
+  return { name, outcome: running ? 'stopped' : 'not-running', detail: (running ? 'stopped' : 'not running') + notes };
 }
 
 /** Stops the services Stim started, or the one named; `idle` marks them for `stim revive`. */
@@ -859,6 +915,7 @@ export async function teardownServices(
       }
       if (failure && !reported) reported = `${failure}; nothing of it runs, so removal goes on`;
       if (reported) log(`service ${name}: ${reported}`);
+      await syncReverses(root, record, false);
       await writeRecord(root, name, null);
       outcomes.push({ name, outcome: reported ? 'reported' : 'torn-down', detail: reported ?? 'torn down' });
     }

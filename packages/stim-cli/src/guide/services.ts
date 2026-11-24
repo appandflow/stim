@@ -37,7 +37,9 @@ FIELDS
   ready           a command that exits 0 once it serves; default: every port
                   listens, else the process lives. Waited up to 60 seconds
   ports           named port labels it owns, a list, or an object of label to
-                  the environment variable that receives the number (or null)
+                  the environment variable that receives the number (or null),
+                  or to { "env": name, "reverse": false } for a port the app
+                  never uses
   idEnv           a variable that receives the service id, <name>-<workspace
                   id>, stable for the workspace path, for per-workspace
                   container and volume names
@@ -66,6 +68,10 @@ LIFECYCLE
   command, file edit, git write or commit, and no process or agent session
   working in its checkout), the idle pass stops its running services. Their
   ports stay. maintenance.keep and idle.minutes 0 keep them.
+- While it runs, each port is reversed to the workspace's devices, as stim
+  ports reverse does: the app reaches http://localhost:<port> on a local
+  emulator, a hosted device (with stim start running) and a simulator. Stop
+  and teardown drop the reverses. A failed reverse is reported, not fatal.
 - stim revive starts again the services the idle pass stopped, before Metro,
   never one stim services stop or you stopped.
 - worktree remove, gc and automatic maintenance tear a workspace's services
@@ -95,7 +101,8 @@ A mock API server, its port by environment:
 A docker compose stack with postgres and redis:
 
   "deps": {
-    "ports": { "pg": "PG_PORT", "redis": "REDIS_PORT" },
+    "ports": { "pg": { "env": "PG_PORT", "reverse": false },
+               "redis": { "env": "REDIS_PORT", "reverse": false } },
     "idEnv": "COMPOSE_PROJECT_NAME",
     "start": "docker compose up -d --wait",
     "stop": "docker compose stop",
@@ -112,11 +119,12 @@ A local Supabase stack in ../api, its CLI reading SUPABASE_* variables:
 
   "supabase": {
     "cwd": "../api",
-    "ports": { "sb-api": "SUPABASE_API_PORT", "sb-db": "SUPABASE_DB_PORT",
-               "sb-shadow": "SUPABASE_DB_SHADOW_PORT",
-               "sb-studio": "SUPABASE_STUDIO_PORT",
-               "sb-smtp": "SUPABASE_LOCAL_SMTP_PORT",
-               "sb-analytics": "SUPABASE_ANALYTICS_PORT" },
+    "ports": { "sb-api": "SUPABASE_API_PORT",
+               "sb-db": { "env": "SUPABASE_DB_PORT", "reverse": false },
+               "sb-shadow": { "env": "SUPABASE_DB_SHADOW_PORT", "reverse": false },
+               "sb-studio": { "env": "SUPABASE_STUDIO_PORT", "reverse": false },
+               "sb-smtp": { "env": "SUPABASE_LOCAL_SMTP_PORT", "reverse": false },
+               "sb-analytics": { "env": "SUPABASE_ANALYTICS_PORT", "reverse": false } },
     "idEnv": "SUPABASE_PROJECT_ID",
     "env": { "SUPABASE_URL": "http://127.0.0.1:{sb-api}" },
     "start": "supabase start",
@@ -128,7 +136,8 @@ A local Supabase stack in ../api, its CLI reading SUPABASE_* variables:
 
 Map every port the stack binds, or a second workspace's start collides on it.
 
-An API that needs the compose stack, and a webhook forwarder to the API:
+An API that needs the compose stack, and a webhook forwarder to the API; the
+app reaches the API at http://localhost:{api.http} on its devices:
 
   "api": {
     "cwd": "../api",

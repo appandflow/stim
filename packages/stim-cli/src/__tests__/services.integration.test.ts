@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createPortProbe } from '../ports.ts';
@@ -14,6 +15,9 @@ import {
   teardownServices,
 } from '../services.ts';
 import { getProject } from '../workspace/config.ts';
+import * as reverse from '../reverse-ports.ts';
+import { readWorkspaceState } from '../workspace/workspace-state.ts';
+import { reversePorts } from '@stim-cli/core/state';
 import { testContext } from './_context.ts';
 
 let home: string;
@@ -24,11 +28,13 @@ const pids = new Set<number>();
 const server = `
 import { createServer } from 'node:net';
 import { writeFileSync } from 'node:fs';
-const [port, pidFile] = process.argv.slice(2);
-createServer().listen(Number(port), '127.0.0.1', () => {
-  if (pidFile) writeFileSync(pidFile, String(process.pid));
-  console.log('listening on ' + port);
-});
+const args = process.argv.slice(2);
+const pidFile = args.find((arg) => !/^\\d+$/.test(arg));
+for (const port of args.filter((arg) => /^\\d+$/.test(arg)))
+  createServer().listen(Number(port), '127.0.0.1', () => {
+    if (pidFile) writeFileSync(pidFile, String(process.pid));
+    console.log('listening on ' + port);
+  });
 `;
 
 const db = `
@@ -56,6 +62,11 @@ if (action === 'start') {
 } else if (action === 'orphan') {
   writeFileSync(process.env.MARKER, process.env.DB_ID + ' ' + process.cwd());
 } else if (action === 'fail') {
+  process.exit(1);
+} else if (action === 'start-then-fail') {
+  const child = spawn(process.execPath, [process.env.SERVER, process.env.DB_PORT, dir + '/db.pid'], { detached: true, stdio: 'ignore' });
+  child.unref();
+  for (;;) { if (existsSync('db.pid')) break; await new Promise((r) => setTimeout(r, 20)); }
   process.exit(1);
 }
 `;
@@ -110,6 +121,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const pid of pids) {
     try {
       process.kill(pid, 'SIGKILL');
@@ -128,7 +140,13 @@ afterEach(() => {
 
 describe.skipIf(process.platform === 'win32')('workspace services (skipped on win32)', () => {
   test('a one-line service is supervised: started with its port as an argument, idle-stopped by signal, revived, then stopped by identity once its folder is gone', async () => {
-    declare({ web: { ports: { web: 'WEB_PORT' }, start: [process.execPath, join(scripts, 'server.mjs'), '{web}'] } });
+    declare({
+      web: {
+        ports: { web: 'WEB_PORT', admin: { env: 'ADMIN_PORT', reverse: false } },
+        start: [process.execPath, join(scripts, 'server.mjs'), '{web}', '{admin}'],
+      },
+    });
+    const devices = vi.spyOn(reverse, 'reverseOnDevices').mockResolvedValue([]);
     const operation = ctx();
     expect(await startServices(root, undefined, { operation })).toMatchObject([{ name: 'web', outcome: 'started' }]);
     const first = recorded('web');
@@ -136,12 +154,17 @@ describe.skipIf(process.platform === 'win32')('workspace services (skipped on wi
     const port = first.port;
     expect(await listens(port)).toBe(true);
     expect(await serviceProcessPids(root)).toContain(first.pid);
-    expect(await servicesEnv(root)).toEqual({ web: { WEB_PORT: String(port) } });
+    const admin = serviceRecords(root).web?.ports.admin;
+    expect(await servicesEnv(root)).toEqual({ web: { WEB_PORT: String(port), ADMIN_PORT: String(admin) } });
+    expect(reversePorts(readWorkspaceState(root))).toEqual([port]);
+    expect(devices).toHaveBeenLastCalledWith(root, port, 'add');
     expect(await startServices(root, 'web', { operation })).toMatchObject([{ outcome: 'running' }]);
 
     expect(await stopServices(root, undefined, 'idle', { operation })).toMatchObject([{ outcome: 'stopped' }]);
     expect(await listens(port)).toBe(false);
     expect(serviceRecords(root).web).toMatchObject({ state: 'stopped', stoppedBy: 'idle' });
+    expect(reversePorts(readWorkspaceState(root))).toEqual([]);
+    expect(devices).toHaveBeenLastCalledWith(root, port, 'remove');
 
     expect(await resumeServices(root, { operation })).toMatchObject([{ name: 'web', outcome: 'started' }]);
     const second = recorded('web');
@@ -263,12 +286,36 @@ describe.skipIf(process.platform === 'win32')('workspace services (skipped on wi
     const { pid } = recorded('web');
     pids.add(pid);
     rmSync(flag);
-    setTimeout(() => writeFileSync(flag, ''), 1500);
+    const timer = setTimeout(() => writeFileSync(flag, ''), 1500);
+    onTestFinished(() => clearTimeout(timer));
     expect(await startServices(root, 'web', { operation })).toMatchObject([{ outcome: 'running' }]);
     expect(recorded('web').pid).toBe(pid);
 
     expect(await startServices(root, 'broken', { operation })).toMatchObject([{ outcome: 'failed' }]);
     expect(serviceRecords(root).broken).toMatchObject({ state: 'stopped' });
     expect(await startServices(root, 'broken', { operation })).toMatchObject([{ outcome: 'failed' }]);
+  });
+
+  test('a stack that partly came up before its start failed stays running, and a service started by hand after an idle stop is not revived', async () => {
+    declare({ db: { ports: { pg: 'DB_PORT' }, start: run('start-then-fail'), stop: run('stop') } });
+    const operation = ctx();
+    expect(await startServices(root, undefined, { operation })).toMatchObject([{ outcome: 'failed' }]);
+    pids.add(Number(readFileSync(join(root, 'db.pid'), 'utf8')));
+    expect(serviceRecords(root).db).toMatchObject({ state: 'running' });
+    expect(await stopServices(root, undefined, 'idle', { operation })).toMatchObject([{ outcome: 'stopped' }]);
+
+    declare({ db: { ports: { pg: 'DB_PORT' }, start: run('start'), stop: run('stop') } });
+    await resumeServices(root, { operation });
+    await stopServices(root, undefined, 'idle', { operation });
+    const { port } = recorded('db');
+    execFileSync(process.execPath, [join(scripts, 'db.mjs'), 'start'], {
+      cwd: root,
+      env: { ...process.env, SERVER: join(scripts, 'server.mjs'), DB_PORT: String(port) },
+    });
+    pids.add(Number(readFileSync(join(root, 'db.pid'), 'utf8')));
+    expect(await startServices(root, undefined, { operation })).toMatchObject([{ outcome: 'running' }]);
+    expect(serviceRecords(root).db).toMatchObject({ state: 'running' });
+    expect(serviceRecords(root).db?.stoppedBy).toBeUndefined();
+    expect(await resumeServices(root, { operation })).toEqual([]);
   });
 });

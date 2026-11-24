@@ -82,6 +82,8 @@ export interface ServiceRecord {
   /** The variables Stim sets for the service's commands: its ports, its id and its derived values. */
   env: Record<string, string>;
   ports: Record<string, number>;
+  /** The ports Stim reverses to the workspace's devices while the service runs. */
+  reverse: number[];
   start: string[];
   stop?: string[];
   teardown?: string[];
@@ -127,6 +129,9 @@ export function readServiceRecords(state: WorkspaceState | null | undefined): Re
       cwd: value.cwd,
       env: stringMap(value.env),
       ports,
+      reverse: Array.isArray(value.reverse)
+        ? value.reverse.filter((port): port is number => typeof port === 'number')
+        : [],
       start,
       state: value.state === 'running' ? 'running' : 'stopped',
       at: value.at,

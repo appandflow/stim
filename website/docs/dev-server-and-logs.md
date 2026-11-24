@@ -771,7 +771,10 @@ copy on its own ports:
   "services": {
     "web": { "ports": ["web"], "start": "python3 -m http.server {web}" },
     "deps": {
-      "ports": { "pg": "PG_PORT", "redis": "REDIS_PORT" },
+      "ports": {
+        "pg": { "env": "PG_PORT", "reverse": false },
+        "redis": { "env": "REDIS_PORT", "reverse": false }
+      },
       "idEnv": "COMPOSE_PROJECT_NAME",
       "start": "docker compose up -d --wait",
       "stop": "docker compose stop",
@@ -814,6 +817,10 @@ started:
 - `worktree remove`, `gc` and automatic maintenance tear them down: a process
   by identity, otherwise `teardown` (else `stop`), or `orphanTeardown` from the
   home folder once the worktree folder is gone;
+- while one runs, its ports are reversed to the workspace's devices like
+  [`stim ports reverse`](#reverse-ports), so the app reaches
+  `http://localhost:<port>`; mark a port the app never uses
+  `{ "env": "PG_PORT", "reverse": false }`;
 - `stim test` passes their environment to the test command, and `stim status`
   lists them.
 

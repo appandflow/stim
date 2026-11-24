@@ -83,6 +83,24 @@ relayed by the coordinating session; the placeholder names follow the
 relayed examples rather than `web.url`'s `{port:<label>}`, chosen by the
 implementing agent.
 
+## A running service is reachable from the devices
+
+While a service runs, Stim reverses its ports to the workspace's devices
+through the records `stim ports reverse` keeps, so `http://localhost:<port>`
+works from the app on a local Android emulator (`adb reverse`), a hosted
+simulator or emulator (the hosting Mac's bridge, which needs `stim start`
+running), and is already reachable from a local simulator. A device that
+starts later gets the recorded ports when `stim android` launches the app.
+Stopping or tearing down a service drops its reverses. Every port is reversed
+unless its `ports` entry says `{ "env": ..., "reverse": false }`, for a port only
+host tools use, such as a database. Reason for the default: the app reaching
+the service is why it runs in a workspace, and the cost is one recorded port
+of the 16 a workspace may reverse. A reverse that fails is reported with the
+start and does not fail it.
+
+Maintainer decision: "Reachability should prob be fixed tho", 2026-11-24
+(#6202).
+
 ## Stim runs only what it recorded
 
 `stim services start` records each service as it resolved it: argv with
@@ -150,6 +168,14 @@ test command, over the caller's environment, so tests reach this workspace's
 services and not a stack an outer shell pointed at. `stim services env` prints
 the values the current settings resolve to, for commands an agent runs itself;
 they match the records unless the settings changed since the start.
+
+## Follow-ups
+
+Maintainer decision: "Lets keep it simple for now", 2026-11-24 (#6202). Left
+out, each with its own issue: an HTTP readiness check (#6207), a per-service
+env file (#6208), `stim logs --service` (#6209), rendering a config file with
+the ports (#6210), and capturing a value from a service's output, such as a
+tunnel URL (#6211).
 
 ## Links
 
