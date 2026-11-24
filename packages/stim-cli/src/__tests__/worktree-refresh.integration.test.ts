@@ -350,7 +350,7 @@ test('a current refresh copies under its shared claim while a sibling copy still
   expect(copyModes).toEqual([['shared', 'shared']]);
 }, 120_000);
 
-test.each(['fast-forward', 'remote changes', 'dependencies', 'pods'])(
+test.each(['fast-forward', 'remote changes', 'dependencies', ...(process.platform === 'darwin' ? ['pods'] : [])])(
   'a refresh needing %s drains copies before fetching or installing',
   async (change) => {
     if (change === 'dependencies') {
@@ -539,7 +539,7 @@ test('worktree.defaultBranch outranks origin/HEAD, and neither resolving says wh
   expect(unknown.stderr).toContain('git remote set-head origin -a');
 }, 120_000);
 
-test.each(['.', 'apps/mobile'])(
+test.each(process.platform === 'darwin' ? ['.', 'apps/mobile'] : [])(
   '--refresh names the source dependency root at %s and the invoking app for pods',
   async (dependencyPath) => {
     const depsRoot = join(root, dependencyPath);
