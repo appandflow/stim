@@ -109,7 +109,7 @@ each gets `floor(7 / 4) = 1` worker per run from it.
 The load-based reduction does not apply to a fixed count. That host runs at a
 load near its core count by design, so the reduction would cut the count back
 to 1 in exactly the case the setting exists for. The operator who sets both
-values has already chosen the total: at most
+values has already chosen the total for the runs Stim sizes: at most
 `concurrency.maxTests x concurrency.testWorkers` workers, which the test slots
 enforce for every run that is not nested in another `stim test` run.
 

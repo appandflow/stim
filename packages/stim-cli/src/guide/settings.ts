@@ -633,7 +633,7 @@ machine's. They live under a top-level \`concurrency\` key in
 The keys are concurrency.maxBuilds and concurrency.maxDevices, plus the
 per-platform device caps concurrency.maxIosDevices,
 concurrency.maxAndroidDevices and concurrency.maxMacosApps, and
-concurrency.maxTests for test commands, and concurrency.testWorkers for the
+concurrency.maxTests for test commands, with concurrency.testWorkers for the
 workers of each. A boot must fit
 its platform cap and concurrency.maxDevices; the per-platform caps only
 tighten (see \`guide lifecycle concurrency\`).

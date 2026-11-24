@@ -330,8 +330,7 @@ async function runTest(
     const cores = availableParallelism();
     const slots = testSlotLimit({ env }).max;
     const load1 = Math.round((loadavg()[0] ?? 0) * 10) / 10;
-    // @ref LLP 0020#a-fixed-worker-count -- a set count skips the load reduction
-    const workers = fixed || testWorkerCount({ cores, slots, load1 });
+    const workers = testWorkerCount({ cores, slots, load1, fixed });
     const plan = planTestRun({
       argv,
       workers,

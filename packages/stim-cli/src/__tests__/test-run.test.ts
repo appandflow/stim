@@ -24,8 +24,10 @@ test.each([
   { cores: 14, slots: 2, load1: 2, workers: 6, why: 'two slots split the cores but one' },
   { cores: 14, slots: 2, load1: 28, workers: 3, why: 'a loaded 14-core machine scales each share down' },
   { cores: 1, slots: 1, load1: 40, workers: 1, why: 'never under one worker' },
-])('$cores cores, $slots slots, load $load1: $workers workers ($why)', ({ cores, slots, load1, workers }) => {
-  expect(testWorkerCount({ cores, slots, load1 })).toBe(workers);
+  { cores: 8, slots: 4, load1: 16, fixed: 2, workers: 2, why: 'concurrency.testWorkers is not cut by the load' },
+  { cores: 8, slots: 1, load1: 0, fixed: 12, workers: 12, why: 'concurrency.testWorkers is not capped by the cores' },
+])('$cores cores, $slots slots, load $load1: $workers workers ($why)', ({ cores, slots, load1, fixed, workers }) => {
+  expect(testWorkerCount({ cores, slots, load1, fixed })).toBe(workers);
 });
 
 const pnpm = 'pnpm' as const;
