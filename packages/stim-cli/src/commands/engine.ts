@@ -11,7 +11,8 @@ import { migrateHomes, promote, type Promotion } from '../engine-store/promote.t
 import { npmEnv } from '../engine-store/npm.ts';
 import { newestBad } from '../engine-store/select.ts';
 import { machineRoot, readSchema, SCHEMA } from '../engine-store/schema.ts';
-import { engineRoot, readManifest, readRecords } from '../engine-store/store.ts';
+import { BUILD_DIR, engineRoot, readManifest, readRecords } from '../engine-store/store.ts';
+import { setWritable } from '../engine-store/tree.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 
 function refuse(code: string, message: string, remedy: string): never {
@@ -160,6 +161,7 @@ const uninstall = defineOp({
         rmSync(join(root, name), { recursive: true, force: true });
       collectStore(root);
       for (const name of ['state.json', '.trash']) rmSync(join(root, name), { recursive: true, force: true });
+      for (const name of readdirSync(root)) if (BUILD_DIR.test(name)) setWritable(join(root, name), true);
     } finally {
       await lock.release();
     }
