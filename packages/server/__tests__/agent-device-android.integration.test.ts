@@ -52,7 +52,7 @@ vi.mock('@stim-cli/core/process-identity', async (original) => {
 
 vi.mock('node:child_process', async (original) => ({
   ...(await original<typeof import('node:child_process')>()),
-  spawn: (_command: string, _args: string[], options: { env: NodeJS.ProcessEnv }) => {
+  spawn: (_command: string, args: string[], options: { env: NodeJS.ProcessEnv }) => {
     fixture.helperSession = options.env.AGENT_DEVICE_ANDROID_SNAPSHOT_HELPER_SESSION!;
     const policy = JSON.parse(readFileSync(options.env.AGENT_DEVICE_DAEMON_POLICY!, 'utf8'));
     const canonical = JSON.stringify({
@@ -60,7 +60,7 @@ vi.mock('node:child_process', async (original) => ({
       commands: { mode: 'allow', names: policy.commands.allow.toSorted() },
       capabilities: policy.capabilities.deny,
     });
-    const file = options.env.AGENT_DEVICE_DAEMON_POLICY!.replace('policy.json', 'daemon.json');
+    const file = join(args[args.indexOf('--state-dir') + 1] ?? '', 'daemon.json');
     writeFileSync(
       file,
       JSON.stringify({

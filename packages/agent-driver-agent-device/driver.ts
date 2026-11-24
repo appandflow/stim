@@ -276,12 +276,20 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     return this.options.host;
   }
 
+  private get stateHash(): string {
+    return createHash('sha256').update(this.options.stateDir).digest('hex').slice(0, 16);
+  }
+
   // SimRenderServer writes simulator recordings and lacks access to removable volumes (TCC), where the Stim home may live.
   private get recordings(): string {
-    return join(
-      tmpdir(),
-      `stim-server-recordings-${createHash('sha256').update(this.options.stateDir).digest('hex').slice(0, 16)}`,
-    );
+    return join(tmpdir(), `stim-server-recordings-${this.stateHash}`);
+  }
+
+  // agent-device 0.21.35 and later write a remote recording to <state dir>/sessions/<session>/recording-<uuid>.<ext>
+  // whatever output path the request names (callstack/agent-device#4215), and 0.21.42 refuses a state directory that is
+  // or holds a symbolic link, so a hosted device's daemon gets a real private state directory off the Stim home.
+  private get daemonDir(): string {
+    return this.options.device ? join(tmpdir(), `stim-server-agent-device-${this.stateHash}`) : this.options.stateDir;
   }
 
   private get sessionsLink(): string {
@@ -289,24 +297,19 @@ export class AgentDeviceDriver implements HostedAgentDriver {
   }
 
   private get sessionsTarget(): string {
-    return join(this.recordings, 'sessions');
+    return join(this.daemonDir, 'sessions');
   }
 
-  // agent-device 0.21.35 and later ignore a remote request's output path and write
-  // <state dir>/sessions/<session>/recording-<uuid>.<ext>, so that directory has to resolve off the Stim home.
   private prepareRecordings(): void {
-    mkdirSync(this.recordings, { recursive: true, mode: 0o700 });
-    const root = lstatSync(this.recordings);
-    if (
-      !root.isDirectory() ||
-      (process.getuid !== undefined && (root.uid !== process.getuid() || (root.mode & 0o077) !== 0))
-    )
-      throw new Error(`${this.recordings} is not a private directory of this user`);
+    privateDirectory(this.recordings);
+  }
+
+  private prepareDaemonDir(): void {
+    privateDirectory(this.daemonDir);
     mkdirSync(this.sessionsTarget, { recursive: true, mode: 0o700 });
   }
 
   private linkSessions(): void {
-    this.prepareRecordings();
     rmSync(this.sessionsLink, { recursive: true, force: true });
     symlinkSync(this.sessionsTarget, this.sessionsLink, 'dir');
   }
@@ -361,6 +364,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     }
     mkdirSync(this.options.stateDir, { recursive: true, mode: 0o700 });
     chmodSync(this.options.stateDir, 0o700);
+    if (this.options.device) this.prepareDaemonDir();
     const taken = await this.host.claims.take(this.options.claimRoot, 'agent-device daemon');
     if (!('claim' in taken))
       throw new Error(`The agent-device daemon is held by another process: ${this.options.claimRoot}`);
@@ -368,12 +372,13 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     this.claim = claim;
     this.stopping = false;
     this.androidVerifiedAt = 0;
-    rmSync(join(this.options.stateDir, 'daemon.json'), { force: true });
+    rmSync(join(this.daemonDir, 'daemon.json'), { force: true });
     clearTimeout(this.recording?.timer);
     this.recording = null;
     rmSync(this.recordings, { recursive: true, force: true });
     if (this.options.device) {
       try {
+        this.prepareRecordings();
         this.linkSessions();
       } catch (error) {
         process.stderr.write(`Hosted recording directory failed: ${String(error).replace(/\s+/g, ' ')}\n`);
@@ -389,7 +394,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     try {
       proxy = spawn(
         invocation.command,
-        [...invocation.args, 'proxy', '--host', '127.0.0.1', '--state-dir', this.options.stateDir],
+        [...invocation.args, 'proxy', '--host', '127.0.0.1', '--state-dir', this.daemonDir],
         {
           env: {
             ...this.options.env,
@@ -490,7 +495,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
   }
 
   private async readDaemon(): Promise<{ record: AgentDriverProcess; admin: DaemonAdmin }> {
-    const value: unknown = JSON.parse(readFileSync(join(this.options.stateDir, 'daemon.json'), 'utf8'));
+    const value: unknown = JSON.parse(readFileSync(join(this.daemonDir, 'daemon.json'), 'utf8'));
     if (!isJsonObject(value) || typeof value.pid !== 'number' || !Number.isInteger(value.pid) || value.pid < 2)
       throw new Error('The agent-device daemon record has no pid.');
     const record = await this.host.processes.capture(value.pid);
@@ -608,6 +613,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     if (running || this.claim) await this.teardown(running?.proxy, running ?? undefined);
     for (const session of sessions) this.removeSessionDirectories(session);
     rmSync(this.recordings, { recursive: true, force: true });
+    if (this.options.device) rmSync(this.daemonDir, { recursive: true, force: true });
     if (recorderError !== undefined) throw recorderError;
   }
 
@@ -649,7 +655,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
         await new Promise<void>((resolve) => {
           execFile(
             invocation.command,
-            [...invocation.args, 'daemon', 'stop', '--state-dir', this.options.stateDir],
+            [...invocation.args, 'daemon', 'stop', '--state-dir', this.daemonDir],
             { env: { ...this.options.env, AGENT_DEVICE_NO_UPDATE_NOTIFIER: '1' }, timeout: this.options.stopTimeoutMs },
             () => resolve(),
           );
@@ -803,7 +809,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
   }
 
   private removeSessionDirectories(session: string): void {
-    const sessionsDir = join(this.options.stateDir, 'sessions');
+    const sessionsDir = this.sessionsTarget;
     try {
       for (const entry of readdirSync(sessionsDir, { withFileTypes: true })) {
         if (!entry.isDirectory() || !entry.name.startsWith(`stim.${session}_`)) continue;
@@ -1030,6 +1036,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     };
     try {
       this.prepareRecordings();
+      this.prepareDaemonDir();
       this.assertSessionsLinked();
       mkdirSync(dir, { mode: 0o700 });
     } catch (error) {
@@ -1884,4 +1891,14 @@ function daemonPath(session: string, url: string, method: string | undefined, te
   if (isTenantDiagnostics(path, tenant)) return method === 'GET' ? rest : null;
   if (!DAEMON_PATHS.test(path)) return null;
   return (path.startsWith('/rpc') ? method === 'POST' : method === 'GET') ? rest : null;
+}
+
+function privateDirectory(path: string): void {
+  mkdirSync(path, { recursive: true, mode: 0o700 });
+  const stat = lstatSync(path);
+  if (
+    !stat.isDirectory() ||
+    (process.getuid !== undefined && (stat.uid !== process.getuid() || (stat.mode & 0o077) !== 0))
+  )
+    throw new Error(`${path} is not a private directory of this user`);
 }

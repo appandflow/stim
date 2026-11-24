@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { createAgentDriverHost } from '@stim-cli/agent-driver';
 import { promisify } from 'node:util';
@@ -44,7 +45,11 @@ test('the real Android daemon enforces serial inventory, commands and shutdown p
     ).resolves.toMatchObject({
       lease: { backend: 'android-instance', deviceKey: `android:mobile:${serial}` },
     });
-    const daemon = JSON.parse(readFileSync(join(stateDir, 'daemon.json'), 'utf8'));
+    const daemonDir = join(
+      tmpdir(),
+      `stim-server-agent-device-${createHash('sha256').update(stateDir).digest('hex').slice(0, 16)}`,
+    );
+    const daemon = JSON.parse(readFileSync(join(daemonDir, 'daemon.json'), 'utf8'));
     const rpc = async (params: object) => {
       const response = await fetch(`http://127.0.0.1:${daemon.httpPort}/rpc`, {
         method: 'POST',
