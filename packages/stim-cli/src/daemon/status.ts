@@ -2,12 +2,14 @@ import {
   daemonClaimRoot,
   daemonNdjsonFile,
   anyCrashLoop,
+  CRASHES,
   daemonSnapshotFile,
   parseUnverifiedCleanups,
   parseUnverifiedConsoles,
   readDaemonSnapshot,
   readStimdBoots,
   type DaemonStatus,
+  UNKNOWN_DEATHS,
   UPGRADE_GUIDE_URL,
 } from '@stim-cli/core/state';
 import { formatBytes } from '../fs-util.ts';
@@ -278,7 +280,7 @@ export function daemonFindings(
     findings.push({
       level: 'note',
       title: `stimd exited abnormally ${status.abnormalExits.length === 1 ? 'once' : `${status.abnormalExits.length} times`} in the last day`,
-      detail: `The last exit was at ${last?.at}: ${last?.reason.split('\n')[0]}. Three in 10 minutes hold stimd back.`,
+      detail: `The last exit was at ${last?.at}: ${last?.reason.split('\n')[0]}. ${CRASHES} exits of a known cause, or ${UNKNOWN_DEATHS} of an unknown one, in 10 minutes hold stimd back.`,
       fix: `${daemonNdjsonFile()} has the stimd_predecessor_lost and daemon_exited records.`,
     });
   }

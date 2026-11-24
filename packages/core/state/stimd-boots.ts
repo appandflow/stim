@@ -5,8 +5,8 @@ import { join } from 'node:path';
 const BOOT_WINDOW_MS = 10 * 60_000;
 const BOOTS_KEPT = 20;
 const ABNORMAL_KEPT = 10;
-const CRASHES = 3;
-const UNKNOWN_DEATHS = 5;
+export const CRASHES = 3;
+export const UNKNOWN_DEATHS = 5;
 
 /** One stimd start in a Stim home: when, from which build, and whether that stimd exited abnormally. */
 export type Boot = {
