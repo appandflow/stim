@@ -1526,6 +1526,11 @@ async function runRemove(target: string | undefined, opts: RemoveOptions, onRemo
   }
 }
 
+function recordedSpelling(canonical: string, target: string | undefined, operation?: StimContext): string {
+  const literal = resolve(target ?? operation?.cwd ?? process.cwd());
+  return !hasRegisteredProjectUnder(canonical) && hasRegisteredProjectUnder(literal) ? literal : canonical;
+}
+
 async function removeOrRefuse(
   target: string | undefined,
   opts: RemoveOptions,
@@ -1549,6 +1554,7 @@ async function removeOrRefuse(
   let path = removalPath(target, opts.operation?.cwd);
   const removalSpelling = path;
   if (!existsSync(path)) {
+    path = recordedSpelling(path, target, opts.operation);
     opts.beforeRemove?.(path);
     const pending = getProject(path);
     if (
