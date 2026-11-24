@@ -6,7 +6,8 @@ import { writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'fs';
 import { execFileSync } from 'child_process';
 import { availableParallelism, loadavg, tmpdir } from 'os';
-import { join } from 'path';
+import { dirname, join } from 'path';
+import { daemonSnapshotFile } from '@stim-cli/core/state';
 import { createServer } from 'http';
 import { type ExecOptions, getExecutor, setExecutor, resetExecutor } from '../exec.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
@@ -395,8 +396,22 @@ test('status says a stimd that holds the claim and did not answer, in the text a
 
   const logs = await runStatus(process.platform);
   expect(logs.find((line) => line.startsWith('Daemon'))).toContain(`pid ${process.pid}), did not answer within 3 s`);
-  expect(logs.join('\n')).not.toContain('kill -9');
+  expect(logs.join('\n')).not.toContain('still does not answer');
   expect((await runStatusJson(process.platform)).daemon.unanswered).toEqual({ pid: process.pid, waitedMs: 3000 });
+}, 20_000);
+
+test('status prints the end command for a stimd that did not answer and ticked over three intervals ago', async () => {
+  holdDaemonClaim();
+  await serveStimdSocket(null);
+  mkdirSync(dirname(daemonSnapshotFile()), { recursive: true });
+  const old = new Date(Date.now() - 600_000).toISOString();
+  writeFileSync(
+    daemonSnapshotFile(),
+    JSON.stringify({ version: 1, pid: process.pid, startedAt: old, tickAt: old, intervalMs: 1 }),
+  );
+
+  const logs = await runStatus(process.platform);
+  expect(logs.join('\n')).toContain(`end stimd pid ${process.pid} with`);
 }, 20_000);
 
 test('status --watch paints before the probe of a silent stimd ends, then says it once', async () => {

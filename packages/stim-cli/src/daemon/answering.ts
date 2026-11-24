@@ -106,9 +106,10 @@ export function stuckStimdRemedy(status: DaemonStatus, now: number): string | nu
   } catch {}
   const next =
     typeof serviceUnit === 'string' && serviceUnit
-      ? `its service unit ${serviceUnit} restarts it`
-      : 'the next stim start, ios or android starts a fresh stimd';
-  return `End stimd pid ${running.pid} with \`kill -9 ${running.pid}\` (SIGTERM stays pending on a stopped or blocked process); its claims are kept, and ${next}.`;
+      ? `its service unit ${serviceUnit} restarts it and the new stimd takes over the claims`
+      : 'the next stim start, ios or android starts a fresh stimd that takes over the claims';
+  const end = process.platform === 'win32' ? `taskkill /PID ${running.pid} /F` : `kill -9 ${running.pid}`;
+  return `If \`stim status\` still does not answer after a few minutes, end stimd pid ${running.pid} with \`${end}\` (SIGTERM stays pending on a stopped or blocked process); ${next}.`;
 }
 
 /** The finding for a stimd that holds the claim and did not answer the probe. */

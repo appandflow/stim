@@ -185,11 +185,13 @@ The wording is an observation, never "dead" or "hung": event-loop stalls of up t
 against: it is dropped when the claim holder changed during the probe, and never
 joined to a status that names another pid. The probe starts no stimd, writes no
 claim, signals nothing and replaces nothing. With an unanswered probe and a last
-tick older than three intervals, status and doctor print the pid and
-`kill -9 <pid>` and what follows: its claims are kept, and the next stim start,
-ios or android starts a fresh stimd, or its service unit restarts it when the
-live claim names a unit. SIGKILL is used because SIGTERM stays pending on a
-stopped or blocked stimd. The killed stimd leaves an `unknown` abnormal boot.
+tick older than three intervals, status and doctor tell the reader to run
+`stim status` again after a few minutes and, only if it still does not answer, to
+end the pid with `kill -9 <pid>` (`taskkill /PID <pid> /F` on Windows). A new
+stimd then takes over the claims: the next stim start, ios or android starts it,
+or the stimd's service unit restarts it when the live claim names a unit. SIGKILL
+is used because SIGTERM stays pending on a stopped or blocked stimd. Off Windows
+the killed stimd leaves an `unknown` abnormal boot; Windows records none.
 A watchdog or replacement stays undecided.
 
 Maintainer decision: "sure", 2026-11-24, answering "add a line to status and doctor naming a stuck stimd's pid and the command to end it".

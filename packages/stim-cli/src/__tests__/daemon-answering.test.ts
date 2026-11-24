@@ -106,7 +106,9 @@ describe('a stimd that holds the claim and did not answer', () => {
     const recent = status({ unanswered: { pid: 4242, waitedMs: 3000 }, lastTickAt: '2026-11-02T11:59:00.000Z' });
     expect(unansweredFindings(recent, NOW)[0]?.fix).not.toMatch(/kill/);
     expect(stuckStimdRemedy(recent, NOW)).toBeNull();
-    expect(unansweredFindings(silent, NOW)[0]?.fix).toContain('`kill -9 4242`');
+    expect(unansweredFindings(silent, NOW)[0]?.fix).toContain(
+      process.platform === 'win32' ? '`taskkill /PID 4242 /F`' : '`kill -9 4242`',
+    );
   });
 
   test('the remedy names the live holder service unit', () => {
@@ -120,7 +122,7 @@ describe('a stimd that holds the claim and did not answer', () => {
       releaseClaim(claim);
     });
     expect(stuckStimdRemedy({ ...silent, running: { ...running, pid: process.pid } }, NOW)).toContain(
-      'its claims are kept, and its service unit dev.stim.stimd restarts it.',
+      'its service unit dev.stim.stimd restarts it and the new stimd takes over the claims.',
     );
   });
 
