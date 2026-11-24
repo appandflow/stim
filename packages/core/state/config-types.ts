@@ -95,6 +95,7 @@ export interface StimConfig {
   concurrency?: {
     maxBuilds?: unknown;
     maxTests?: unknown;
+    testWorkers?: unknown;
     maxDevices?: unknown;
     maxIosDevices?: unknown;
     maxAndroidDevices?: unknown;

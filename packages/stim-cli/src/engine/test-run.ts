@@ -181,10 +181,23 @@ export function vitestWorkerFlags(version: string | null, workers: number): stri
 }
 
 /**
- * Workers for one test run: the cores but one, shared between the `concurrency.maxTests` slots, and scaled down by
- * `cores / load1` when the 1-minute load is already past the core count, never under 1.
+ * Workers for one test run: `fixed` (`concurrency.testWorkers`) when above 0, unchanged by the load; else the cores but
+ * one, shared between the `concurrency.maxTests` slots, and scaled down by `cores / load1` when the 1-minute load is
+ * already past the core count, never under 1.
  */
-export function testWorkerCount({ cores, slots, load1 }: { cores: number; slots: number; load1: number }): number {
+export function testWorkerCount({
+  cores,
+  slots,
+  load1,
+  fixed = 0,
+}: {
+  cores: number;
+  slots: number;
+  load1: number;
+  fixed?: number;
+}): number {
+  // @ref LLP 0020#a-fixed-worker-count -- a set count skips the load reduction
+  if (fixed > 0) return fixed;
   const share = Math.max(1, Math.floor((cores - 1) / Math.max(1, slots)));
   return Math.max(1, load1 > cores ? Math.floor((share * cores) / load1) : share);
 }

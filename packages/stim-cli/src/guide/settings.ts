@@ -633,7 +633,8 @@ machine's. They live under a top-level \`concurrency\` key in
 The keys are concurrency.maxBuilds and concurrency.maxDevices, plus the
 per-platform device caps concurrency.maxIosDevices,
 concurrency.maxAndroidDevices and concurrency.maxMacosApps, and
-concurrency.maxTests for test commands. A boot must fit
+concurrency.maxTests for test commands, with concurrency.testWorkers for the
+workers of each. A boot must fit
 its platform cap and concurrency.maxDevices; the per-platform caps only
 tighten (see \`guide lifecycle concurrency\`).
 
@@ -645,6 +646,7 @@ or via the environment, which overrides the file:
   concurrency.maxAndroidDevices  STIM_MAX_ANDROID_DEVICES
   concurrency.maxMacosApps       STIM_MAX_MACOS_APPS
   concurrency.maxTests           STIM_MAX_TESTS
+  concurrency.testWorkers        STIM_TEST_WORKERS
 
 Unset or 0 means the derived cap: concurrency.maxBuilds max(1, floor(CPU
 cores / 6)), concurrency.maxTests max(1, floor(CPU cores / 6)),

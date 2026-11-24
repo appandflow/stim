@@ -92,6 +92,36 @@ name decided there, "Test".
   group for the same reason. Windows refuses the command, since Stim cannot
   stop that tree there.
 
+## A fixed worker count
+
+The machine setting `concurrency.testWorkers` (environment
+`STIM_TEST_WORKERS`) fixes the worker count every `stim test` run passes. At
+`0`, the default, the count comes from the formula above. Above `0`, each run
+passes exactly that count, wherever it would pass a derived one: the same
+Jest, Vitest and `node --test` rules decide whether a run gets a count at all,
+and the setting changes only the number. The stderr line and the
+`test_workers` debug log name the setting as the source.
+
+The formula leaves no way to pick the slot count and the worker count
+together. A shared 8-core agent host that wants 4 test slots at 2 workers
+each gets `floor(7 / 4) = 1` worker per run from it.
+
+The load-based reduction does not apply to a fixed count. That host runs at a
+load near its core count by design, so the reduction would cut the count back
+to 1 in exactly the case the setting exists for. The operator who sets both
+values has already chosen the total for the runs Stim sizes: at most
+`concurrency.maxTests x concurrency.testWorkers` workers, which the test slots
+enforce for every run that is not nested in another `stim test` run.
+
+Maintainer decision: "Can worker count be configured", 2026-11-24
+([#6223](https://github.com/appandflow/stim/issues/6223)).
+
+Maintainer decision: "add the setting", 2026-11-24
+([#6223](https://github.com/appandflow/stim/issues/6223)).
+
+The name, the `0` default, the environment variable and skipping the load
+reduction are proposals in the pull request, not quoted decisions.
+
 ## The plain form reads the test script
 
 Without a command, `stim test` runs the project's `test` script through the

@@ -688,6 +688,15 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Concurrent test commands; 0 derives max(1, floor(CPU cores / 6))',
   },
   {
+    key: 'concurrency.testWorkers',
+    type: CAPACITY,
+    scopes: MACHINE,
+    default: 0,
+    env: 'STIM_TEST_WORKERS',
+    description:
+      'Workers stim test passes to Jest, Vitest or node --test in each run, with no load-based reduction; 0 derives floor((CPU cores - 1) / concurrency.maxTests), reduced when the load is past the core count',
+  },
+  {
     key: 'concurrency.maxDevices',
     type: CAPACITY,
     scopes: MACHINE,

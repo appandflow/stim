@@ -2455,6 +2455,9 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
     workers = floor((cores - 1) / concurrency.maxTests), times cores / load1
               when the 1-minute load is past the core count, at least 1
 
+  concurrency.testWorkers above 0 replaces the formula: each run passes
+  exactly that count, with no load reduction, and the line says so.
+
   Jest and Vitest get --maxWorkers=<n> only when Stim can tell nothing else
   sets workers or a serial run: the command runs jest or vitest directly (also
   behind npx, bunx, pnpm exec, or pnpm or yarn with no script of that name,
