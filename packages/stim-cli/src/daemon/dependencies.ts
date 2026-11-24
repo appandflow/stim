@@ -878,7 +878,8 @@ async function takeIdleDependencies(
     const level = result.status === 'failed' ? 'warn' : 'info';
     const msg = `dormant stage: ${VERBS[result.status]} ${target} (${formatBytes(result.bytes)} freed): ${result.detail}; ${reason}${result.status === 'done' ? `; restore with ${restoreWith}` : ''}`;
     const fields = { target, outcome: result.status, bytes: result.bytes, reason, ...restore };
-    if (result.status !== 'kept') input.log(level, 'dormant_dependencies', msg, { ...fields, workspace: dependency.workspace });
+    if (result.status !== 'kept')
+      input.log(level, 'dormant_dependencies', msg, { ...fields, workspace: dependency.workspace });
     if (result.status === 'done' || result.status === 'failed')
       try {
         writeWorkspaceEvent(dependency.workspace, level, 'dormant_dependencies', msg, fields);

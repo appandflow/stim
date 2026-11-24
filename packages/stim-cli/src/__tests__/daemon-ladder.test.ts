@@ -601,7 +601,12 @@ describe('the pressure ladder', () => {
     const execute = vi.spyOn(acting, 'executeAction');
     const tick = () =>
       runLadder(
-        { ...input(true, async () => pressure('high')), fromRung: 6, lastRung: 6, force: { level: 'high', why: 'requested level' } },
+        {
+          ...input(true, async () => pressure('high')),
+          fromRung: 6,
+          lastRung: 6,
+          force: { level: 'high', why: 'requested level' },
+        },
         pressure('high'),
       );
     execute.mockResolvedValue({ status: 'kept', bytes: 0, detail: 'busy' });
@@ -610,7 +615,9 @@ describe('the pressure ladder', () => {
     execute.mockResolvedValue({ status: 'done', bytes: 0, detail: 'ready' });
     await tick();
     expect(
-      log.mock.calls.filter(([, event]) => event === 'pressure_action').map(([level, , , fields]) => [level, fields?.outcome]),
+      log.mock.calls
+        .filter(([, event]) => event === 'pressure_action')
+        .map(([level, , , fields]) => [level, fields?.outcome]),
     ).toEqual([['info', 'done']]);
   });
 
