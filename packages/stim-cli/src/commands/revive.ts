@@ -319,9 +319,7 @@ export async function runRevive({
   });
   const launches = resumesMetro ? recorded : recorded.filter(({ record }) => launchWithoutMetro(record) !== null);
   // @ref LLP 0027#revive-resumes-what-the-idle-pass-stopped -- never a service Stim did not stop
-  const idleStopped = Object.values(readServiceRecords(state)).some(
-    (record) => record.state === 'stopped' && record.stoppedBy === 'idle',
-  );
+  const idleStopped = Object.values(readServiceRecords(state)).some((record) => record.stoppedBy === 'idle');
   if (!resumesMetro && launches.length === 0 && !idleStopped) return noMetroRefusal(root, state, idle, recorded, d);
   const selected = requestedDevice
     ? launches.filter((launch) => launchDeviceNames(launch.record).includes(requestedDevice))

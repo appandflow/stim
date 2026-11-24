@@ -2,8 +2,7 @@ import { endWorkspaceShares } from '../local-server.ts';
 import type { StimContext } from '@stim-cli/core';
 import { archiveWorkspace } from '../archive.ts';
 import { clearNamedPorts } from '../named-ports.ts';
-import { restoreServiceRecords, stopServicesForReclaim, teardownServices } from '../services.ts';
-import type { ServiceRecord } from '@stim-cli/core/state';
+import { serviceRecords, settleServicesForReclaim } from '../services.ts';
 import { parseDeviceSlotKey, projectDeviceSlots } from './device-slots.ts';
 import {
   type ProjectRecord,
@@ -431,8 +430,6 @@ type ReclaimOptions = {
   stopStream?: typeof stopDeviceLogStream;
   teardownBrowser?: typeof teardownOwnedBrowser;
   stopRequester?: StopRequester;
-  /** `keep`: the services' records and ports stay for the teardown just before the folder is deleted. */
-  services?: { keep?: boolean; force?: boolean };
 };
 
 export async function reclaimProject(path: string, options: ReclaimOptions = {}): Promise<ReclaimResult> {
@@ -509,31 +506,14 @@ async function removeWorkspaceOutput(
   operation?.signal.throwIfAborted();
   if (archive) await archiveWorkspace(path, archive.removedBy, state, operation);
   if (realpathSync(dir) !== lockDir) throw new Error('Workspace storage changed during cleanup');
-  // @ref LLP 0027#removal-tears-services-down -- a service started since the first stop is stopped before its state goes
-  await stopServicesForReclaim(path, operation ? { operation, signal: operation.signal } : {});
+  const started = Object.keys(serviceRecords(path));
+  // @ref LLP 0027#removal-tears-services-down -- a service started during the reclaim keeps the workspace
+  if (started.length) throw new Error(`service ${started.join(', ')} started during the cleanup; run it again`);
   await emptyWorkspaceDir(dir, operation?.signal, `${BROWSER_LOCK}.lock`);
 }
 
 function workspaceDirectoryFailure(dir: string, error: unknown): ReclaimResult['failedWorkspaceDirs'][number] {
   return { dir, reason: error instanceof Error ? error.message : String(error) };
-}
-
-async function teardownAndRelease(
-  path: string,
-  operation: StimContext | undefined,
-  { keep = false, force = false }: NonNullable<ReclaimOptions['services']>,
-): Promise<Record<string, ServiceRecord> | null> {
-  const output = operation
-    ? { signal: operation.signal, log: (line: string) => operation.output('stderr', `${line}\n`) }
-    : undefined;
-  const run = output ? { ...output, operation } : {};
-  // @ref LLP 0027#removal-tears-services-down -- data goes only with the folder: here, only once it is gone
-  if (!existsSync(path)) await teardownServices(path, { ...run, force });
-  const stopped = existsSync(path) ? await stopServicesForReclaim(path, run) : {};
-  const kept = keep && Object.keys(stopped).length ? stopped : null;
-  const labels = Object.values(kept ?? {}).flatMap((record) => Object.keys(record.ports));
-  await clearNamedPorts(path, { ...output, keep: labels });
-  return kept;
 }
 
 async function reclaimIdleProject(
@@ -551,13 +531,14 @@ async function reclaimIdleProject(
     stopStream,
     teardownBrowser = teardownOwnedBrowser,
     stopRequester = { by: 'stim gc' },
-    services = {},
     operation,
   }: ReclaimOptions,
 ): Promise<ReclaimResult> {
   const signal = operation?.signal;
   signal?.throwIfAborted();
-  const keptServices = await teardownAndRelease(path, operation, services);
+  const output = operation ? { signal, log: (line: string) => operation.output('stderr', `${line}\n`) } : undefined;
+  await settleServicesForReclaim(path, output, operation);
+  await clearNamedPorts(path, output);
   signal?.throwIfAborted();
   const project = getProject(path);
   verifyAvdClaims(project, operation);
@@ -765,7 +746,6 @@ async function reclaimIdleProject(
     }
   }
 
-  await restoreServiceRecords(path, keptServices);
   const keptEntry = supervisorHeld || failedDevices.length > 0 || failedWorkspaceDirs.length > 0;
   signal?.throwIfAborted();
   if (project && !keptEntry && !preserveProjectRecord) await withConfigLockAsync(() => removeProject(path));

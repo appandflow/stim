@@ -44,31 +44,40 @@ import { spawn } from 'node:child_process';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 const [action] = process.argv.slice(2);
 const dir = process.cwd();
+const pidFile = process.env.PIDFILE ?? 'db.pid';
+const alive = () => {
+  if (!existsSync(pidFile)) return false;
+  try { process.kill(Number(readFileSync(pidFile, 'utf8')), 0); return true; } catch { return false; }
+};
 const stop = async () => {
-  if (!existsSync('db.pid')) return;
-  const pid = Number(readFileSync('db.pid', 'utf8'));
+  if (!alive()) { console.error('not running'); process.exit(1); }
+  const pid = Number(readFileSync(pidFile, 'utf8'));
   try { process.kill(pid, 'SIGTERM'); } catch {}
   for (;;) { try { process.kill(pid, 0); } catch { break; } await new Promise((r) => setTimeout(r, 20)); }
-  rmSync('db.pid');
+  rmSync(pidFile);
 };
-if (action === 'start') {
+if (action === 'start' && alive()) {
+  process.exit(0);
+} else if (action === 'start') {
   writeFileSync('data', 'rows');
-  const child = spawn(process.execPath, [process.env.SERVER, process.env.DB_PORT, dir + '/db.pid'], { detached: true, stdio: 'ignore' });
+  const child = spawn(process.execPath, [process.env.SERVER, process.env.DB_PORT, process.env.PIDFILE ?? dir + '/db.pid'], { detached: true, stdio: 'ignore' });
   child.unref();
-  for (;;) { if (existsSync('db.pid')) break; await new Promise((r) => setTimeout(r, 20)); }
+  for (;;) { if (existsSync(pidFile)) break; await new Promise((r) => setTimeout(r, 20)); }
 } else if (action === 'stop') {
   await stop();
 } else if (action === 'teardown') {
-  await stop();
+  if (alive()) await stop();
   rmSync('data', { force: true });
 } else if (action === 'orphan') {
+  await stop();
   writeFileSync(process.env.MARKER, process.env.DB_ID + ' ' + process.cwd());
 } else if (action === 'fail') {
   process.exit(1);
 } else if (action === 'start-then-fail') {
-  const child = spawn(process.execPath, [process.env.SERVER, process.env.DB_PORT, dir + '/db.pid'], { detached: true, stdio: 'ignore' });
+  if (alive()) process.exit(1);
+  const child = spawn(process.execPath, [process.env.SERVER, process.env.DB_PORT, process.env.PIDFILE ?? dir + '/db.pid'], { detached: true, stdio: 'ignore' });
   child.unref();
-  for (;;) { if (existsSync('db.pid')) break; await new Promise((r) => setTimeout(r, 20)); }
+  for (;;) { if (existsSync(pidFile)) break; await new Promise((r) => setTimeout(r, 20)); }
   process.exit(1);
 }
 `;
@@ -218,7 +227,7 @@ describe.skipIf(process.platform === 'win32')('workspace services (skipped on wi
       db: {
         ports: { pg: 'DB_PORT' },
         idEnv: 'DB_ID',
-        env: { MARKER: marker },
+        env: { MARKER: marker, PIDFILE: join(home, 'db.pid') },
         start: run('start'),
         stop: run('stop'),
         orphanTeardown: run('orphan'),
@@ -226,7 +235,7 @@ describe.skipIf(process.platform === 'win32')('workspace services (skipped on wi
     });
     const operation = ctx();
     await startServices(root, undefined, { operation });
-    pids.add(Number(readFileSync(join(root, 'db.pid'), 'utf8')));
+    pids.add(Number(readFileSync(join(home, 'db.pid'), 'utf8')));
     rmSync(root, { recursive: true, force: true });
     expect(await teardownServices(root, { operation })).toMatchObject([{ name: 'db', outcome: 'torn-down' }]);
     expect(readFileSync(marker, 'utf8')).toBe(`${serviceId(root, 'db')} ${realpathSync(homedir())}`);
@@ -298,20 +307,32 @@ describe.skipIf(process.platform === 'win32')('workspace services (skipped on wi
     expect(await startServices(root, 'broken', { operation })).toMatchObject([{ outcome: 'failed' }]);
   });
 
-  test('a stack that partly came up before its start failed stays running, so the idle pass can stop it', async () => {
+  test('a stack that partly came up stays running for the idle pass, a later start runs start again, and a failed revive keeps the idle mark', async () => {
     declare({ db: { ports: { pg: 'DB_PORT' }, start: run('start-then-fail'), stop: run('stop') } });
     const operation = ctx();
     expect(await startServices(root, undefined, { operation })).toMatchObject([{ outcome: 'failed' }]);
     pids.add(Number(readFileSync(join(root, 'db.pid'), 'utf8')));
     expect(serviceRecords(root).db).toMatchObject({ state: 'running' });
     expect(await stopServices(root, undefined, 'idle', { operation })).toMatchObject([{ outcome: 'stopped' }]);
+    expect(await stopServices(root, undefined, 'idle', { operation })).toMatchObject([{ outcome: 'not-running' }]);
+
+    expect(await resumeServices(root, { operation })).toMatchObject([{ outcome: 'failed' }]);
+    pids.add(Number(readFileSync(join(root, 'db.pid'), 'utf8')));
+    expect(serviceRecords(root).db).toMatchObject({ state: 'running', stoppedBy: 'idle' });
+
+    declare({ db: { ports: { pg: 'DB_PORT' }, start: run('start'), stop: run('stop') } });
+    expect(await startServices(root, undefined, { operation })).toMatchObject([{ outcome: 'running' }]);
+    expect(serviceRecords(root).db?.stoppedBy).toBeUndefined();
   });
 
-  test.each<[string, Record<string, unknown>, string]>([
-    ['without a ready check it refuses to adopt it', {}, 'failed'],
-    ['its ready check passing adopts it as the service', { ready: [process.execPath, '-e', ''] }, 'running'],
-  ])('a foreign listener on the port: %s', async (_name, extra, outcome) => {
-    declare({ db: { ports: { pg: 'DB_PORT' }, start: run('start'), stop: run('stop'), ...extra } });
+  test.each<[string, () => Record<string, unknown>]>([
+    [
+      'a commands service, even when its ready check passes',
+      () => ({ start: run('start'), stop: run('stop'), ready: [process.execPath, '-e', ''] }),
+    ],
+    ['a supervised process', () => ({ start: [process.execPath, join(scripts, 'server.mjs'), '{pg}'] })],
+  ])('a port held by a process Stim did not start refuses the start of %s', async (_name, service) => {
+    declare({ db: { ports: { pg: 'DB_PORT' }, ...service() } });
     const port = await getNamedPort(root, 'pg');
     execFileSync(process.execPath, [join(scripts, 'db.mjs'), 'start'], {
       cwd: root,
@@ -319,60 +340,73 @@ describe.skipIf(process.platform === 'win32')('workspace services (skipped on wi
     });
     pids.add(Number(readFileSync(join(root, 'db.pid'), 'utf8')));
     const [result] = await startServices(root, undefined, { operation: ctx() });
-    expect(result).toMatchObject({ outcome });
-    expect(/held by a process Stim did not start/.test(result?.detail ?? '')).toBe(outcome === 'failed');
-    expect(serviceRecords(root).db?.state).toBe(outcome === 'running' ? 'running' : undefined);
+    expect(result).toMatchObject({ outcome: 'failed' });
+    expect(result?.detail).toMatch(/held by a process Stim did not start/);
+    expect(serviceRecords(root).db).toBeUndefined();
   });
 
-  test('removal that keeps the folder only stops a service; the teardown runs when the folder goes, and a failed one keeps the record and ports until --force', async () => {
-    declare({ db: { ports: { pg: 'DB_PORT' }, start: run('start'), stop: run('stop'), teardown: run('teardown') } });
+  test('a reclaim that keeps the folder stops each service once, keeps its data, and forgets it with its ports', async () => {
+    declare({
+      db: { ports: { pg: 'DB_PORT' }, start: run('start'), stop: run('stop'), teardown: run('teardown') },
+      web: { ports: ['web'], start: [process.execPath, join(scripts, 'server.mjs'), '{web}'] },
+    });
+    const operation = ctx();
+    await startServices(root, undefined, { operation });
+    const dbPort = recorded('db').port;
+    await stopServices(root, 'web', 'command', { operation });
+    const result = await reclaimProject(root, { operation });
+    expect(result.keptEntry).toBe(false);
+    expect(await listens(dbPort)).toBe(false);
+    expect(readFileSync(join(root, 'data'), 'utf8')).toBe('rows');
+    expect(serviceRecords(root)).toEqual({});
+    expect(getProject(root)).toBeNull();
+  });
+
+  test('a teardown that fails keeps the record and ports until --force, and one after a stop does not stop again', async () => {
+    declare({ db: { ports: { pg: 'DB_PORT' }, start: run('start'), stop: run('stop'), teardown: run('fail') } });
     const operation = ctx();
     await startServices(root, undefined, { operation });
     const { port } = recorded('db');
-    await reclaimProject(root, { operation });
-    expect(await listens(port)).toBe(false);
-    expect(readFileSync(join(root, 'data'), 'utf8')).toBe('rows');
-
-    await startServices(root, undefined, { operation });
-    await reclaimProject(root, { operation, preserveProjectRecord: true, services: { keep: true } });
-    expect(await listens(port)).toBe(false);
-    expect(serviceRecords(root).db).toMatchObject({ state: 'stopped' });
-    expect(getProject(root)?.ports).toEqual({ pg: port });
-    expect(existsSync(join(root, 'data'))).toBe(true);
-    await teardownServices(root, { operation });
-    expect(existsSync(join(root, 'data'))).toBe(false);
-    expect(getProject(root)?.ports).toEqual({});
-
-    declare({ db: { ports: { pg: 'DB_PORT' }, start: run('start'), stop: run('stop'), teardown: run('fail') } });
-    await startServices(root, undefined, { operation });
     await expect(teardownServices(root, { operation })).rejects.toThrow(/run by hand in .*DB_PORT=\d+ .*db\.mjs fail/);
     expect(serviceRecords(root).db?.teardownFailure).toMatch(/exited with status 1/);
     expect(getProject(root)?.ports).toEqual({ pg: port });
     expect(await teardownServices(root, { operation, force: true })).toMatchObject([{ outcome: 'torn-down' }]);
     expect(serviceRecords(root)).toEqual({});
+    expect(getProject(root)?.ports).toEqual({});
+    execFileSync(process.execPath, [join(scripts, 'db.mjs'), 'stop'], { cwd: root });
+
+    declare({ db: { ports: { pg: 'DB_PORT' }, start: run('start'), stop: run('stop') } });
+    await startServices(root, undefined, { operation });
+    await stopServices(root, undefined, 'command', { operation });
+    expect(await teardownServices(root, { operation })).toMatchObject([{ outcome: 'torn-down' }]);
   });
 
-  test('a failing orphan teardown keeps the record and is retried by the next removal', async () => {
-    const marker = join(home, 'later', 'orphan.txt');
+  test('gc of a workspace whose folder is gone tries a failing orphan teardown once, prints what to run, and goes on', async () => {
+    const marker = join(home, 'missing-dir', 'orphan.txt');
     declare({
       db: {
         ports: { pg: 'DB_PORT' },
         idEnv: 'DB_ID',
-        env: { MARKER: marker },
+        env: { MARKER: marker, PIDFILE: join(home, 'db.pid') },
         start: run('start'),
         stop: run('stop'),
         orphanTeardown: run('orphan'),
       },
     });
-    const operation = ctx();
+    const lines: string[] = [];
+    const operation = testContext({
+      env: ctx().env,
+      output: (_stream, text) => {
+        lines.push(text);
+      },
+    });
     await startServices(root, undefined, { operation });
-    pids.add(Number(readFileSync(join(root, 'db.pid'), 'utf8')));
+    pids.add(Number(readFileSync(join(home, 'db.pid'), 'utf8')));
     rmSync(root, { recursive: true, force: true });
-    await expect(teardownServices(root, { operation })).rejects.toThrow(/orphan_teardown command/);
-    expect(serviceRecords(root).db?.teardownFailure).toBeTruthy();
-    mkdirSync(join(home, 'later'));
-    expect(await teardownServices(root, { operation })).toMatchObject([{ outcome: 'torn-down' }]);
-    expect(readFileSync(marker, 'utf8')).toBe(`${serviceId(root, 'db')} ${realpathSync(homedir())}`);
+    const result = await reclaimProject(root, { operation });
+    expect(result.keptEntry).toBe(false);
+    expect(serviceRecords(root)).toEqual({});
+    expect(lines.join('')).toMatch(/service db: orphan_teardown command .* run by hand in .*DB_ID=db-/);
   });
 
   test("commands run later use the PATH the start recorded, not the caller's", async () => {
@@ -391,10 +425,10 @@ describe.skipIf(process.platform === 'win32')('workspace services (skipped on wi
     expect(await listens(port)).toBe(false);
   });
 
-  test('a service started while removal runs is stopped before the workspace state is deleted', async () => {
+  test('a service started while a reclaim runs keeps the workspace instead of losing its record', async () => {
     declare({ web: { ports: ['web'], start: [process.execPath, join(scripts, 'server.mjs'), '{web}'] } });
     const operation = ctx();
-    await reclaimProject(root, {
+    const result = await reclaimProject(root, {
       operation,
       teardownBrowser: async () => {
         await startServices(root, undefined, { operation });
@@ -402,9 +436,8 @@ describe.skipIf(process.platform === 'win32')('workspace services (skipped on wi
         return { status: 'missing' };
       },
     });
-    const port = getProject(root)?.ports?.web;
-    expect(port === undefined || !(await listens(port))).toBe(true);
-    for (const pid of pids) expect(alive(pid)).toBe(false);
+    expect(result.keptEntry).toBe(true);
+    expect(serviceRecords(root).web).toMatchObject({ state: 'running' });
   });
 
   test('revive resumes in dependency order whatever order the records were written in', async () => {

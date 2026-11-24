@@ -177,7 +177,6 @@ export async function clearNamedPorts(
   projectPath: string,
   {
     label,
-    keep = [],
     stop = false,
     dryRun = false,
     log = console.error,
@@ -185,8 +184,6 @@ export async function clearNamedPorts(
     signal,
   }: {
     label?: string;
-    /** Labels left allocated: the ports of services a removal still has to tear down. */
-    keep?: readonly string[];
     stop?: boolean;
     dryRun?: boolean;
     log?: (line: string) => void;
@@ -198,7 +195,7 @@ export async function clearNamedPorts(
   await withPortsLock(async () => {
     const ports = getProject(projectPath)?.ports ?? {};
     const selected = Object.entries(ports).filter(
-      ([name]) => name !== BROWSER_LABEL && !keep.includes(name) && (label === undefined || name === label),
+      ([name]) => name !== BROWSER_LABEL && (label === undefined || name === label),
     );
     if (stop && selected.length > 0 && platform !== 'win32' && !getExecutor().findExecutable('lsof')) {
       throw new Error('Cannot stop named ports: lsof is not installed.');

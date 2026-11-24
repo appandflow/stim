@@ -74,16 +74,18 @@ LIFECYCLE
   and teardown drop the reverses. A failed reverse is reported, not fatal.
 - stim revive starts again the services the idle pass stopped, before Metro,
   never one stim services stop or you stopped.
-- Removal deletes a service's data only with its folder: worktree remove of a
-  linked worktree stops it, then runs teardown (else stop) just before git
-  removes the folder; gc runs orphanTeardown once the folder is gone. Every
-  other reclaim (a source checkout, a subfolder project) only stops it.
-- A failed teardown keeps the worktree, the record and its ports; stim status
-  and stim services show teardownFailure with the command, folder and env to
-  run by hand, and each later removal or gc tries again. stim worktree remove
-  --force drops them. A failed idle stop is retried after idle.minutes.
+- worktree remove of a linked worktree (also gc and maintenance removing a
+  finished one) runs teardown first, before anything else, else stop while the
+  service runs. A failure refuses the removal and keeps the worktree, the
+  record and its ports; stim status and stim services show teardownFailure
+  with the command, folder and env to run by hand. --force drops them.
+- A reclaim that keeps the folder (the source checkout, a subfolder project)
+  stops the services and forgets them; the data stays. Once the folder is gone,
+  gc runs orphanTeardown once, prints the command to run by hand if it fails,
+  and forgets the service. A failed idle stop is retried after idle.minutes.
 - A port held by a process Stim did not start for the service refuses the
-  start, unless the service's ready command passes, which adopts it.
+  start. A record still running, even one that only partly came up, runs its
+  start again.
 - Later runs use the PATH of the stim services start that recorded the
   service; put any other variable a command needs in env.
 - stim test passes the started services' env to the test command, so tests

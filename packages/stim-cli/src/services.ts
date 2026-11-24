@@ -625,10 +625,132 @@ export interface ServiceOutcome {
   detail: string;
 }
 
+type StartSource = { definition: ServiceDefinition; definitions: ServiceDefinition[] } | { record: ServiceRecord };
+
+type Transition =
+  | { op: 'start'; source: StartSource }
+  | { op: 'stop'; by: 'idle' | 'command' }
+  | { op: 'teardown'; force: boolean }
+  | { op: 'forget' };
+
+function byHand(record: ServiceRecord, argv: readonly string[], cwd: string): string {
+  const env = Object.entries(record.env).map(([key, value]) => `${key}=${value}`);
+  return `run by hand in ${cwd}: ${[...env, ...argv].join(' ')}`;
+}
+
+/** Runs `argv` as one of the service's commands, then checks that its ports closed. */
+async function runAndClose(
+  root: string,
+  name: string,
+  kind: string,
+  argv: string[],
+  record: ServiceRecord,
+  cwd: string,
+  options: RunOptions,
+): Promise<string | null> {
+  const failure = await runCommand(root, name, kind, argv, record, cwd, STOP_TIMEOUT_MS, options);
+  if (failure) return failure;
+  const still = await listening(Object.values(record.ports));
+  return still.length ? `${kind} command ${argv.join(' ')} exited, but port ${still.join(', ')} still listens` : null;
+}
+
+/** Stops the service and checks it stopped: a process by identity with its whole group, else its `stop` command. */
+async function halt(root: string, name: string, record: ServiceRecord, options: RunOptions): Promise<string | null> {
+  if (record.kind === 'process') return stopProcess(record, options.signal);
+  return runAndClose(root, name, 'stop', record.stop ?? [], record, record.cwd, options);
+}
+
+async function forget(root: string, name: string, record: ServiceRecord): Promise<void> {
+  await syncReverses(root, record, false);
+  for (const label of Object.keys(record.ports)) await clearNamedPorts(root, { label, log: () => {} });
+  await writeRecord(root, name, null);
+}
+
+/**
+ * Moves one service through `op` under the services lock its caller holds: it runs the command, checks the result
+ * (ports closed or the process group gone, or the service ready), writes the record, then syncs the device reverses.
+ */
+// @ref LLP 0027#one-transition-per-service-change -- every start, stop and teardown goes through here
+async function transition(
+  root: string,
+  name: string,
+  change: Transition,
+  options: RunOptions,
+): Promise<ServiceOutcome> {
+  const record = serviceRecords(root)[name] ?? null;
+  if (change.op === 'start') return startOne(root, name, change.source, record, options);
+  if (!record) return { name, outcome: 'not-running', detail: 'Stim did not start it' };
+  if (change.op === 'forget') {
+    await forget(root, name, record);
+    return { name, outcome: 'torn-down', detail: 'forgotten' };
+  }
+  if (change.op === 'stop') return stopOne(root, name, record, change.by, options);
+  return teardownOne(root, name, record, change.force, options);
+}
+
+async function stopOne(
+  root: string,
+  name: string,
+  record: ServiceRecord,
+  by: 'idle' | 'command',
+  options: RunOptions,
+): Promise<ServiceOutcome> {
+  const now = new Date().toISOString();
+  const { idleStopFailedAt: _, process: __, ...rest } = record;
+  const stopped: ServiceRecord = { ...rest, state: 'stopped', stoppedBy: by, at: now };
+  if (record.state === 'stopped') {
+    if (by === 'command' && record.stoppedBy !== 'command') await writeRecord(root, name, stopped);
+    return { name, outcome: 'not-running', detail: 'already stopped' };
+  }
+  const failure = await halt(root, name, record, options);
+  if (failure) {
+    if (by === 'idle') await writeRecord(root, name, { ...record, idleStopFailedAt: now });
+    return { name, outcome: 'failed', detail: failure };
+  }
+  await writeRecord(root, name, stopped);
+  return { name, outcome: 'stopped', detail: 'stopped' + (await syncReverses(root, record, false)) };
+}
+
+// @ref LLP 0027#removal-tears-services-down -- teardown alone, stop only while it runs; a failure keeps the record
+async function teardownOne(
+  root: string,
+  name: string,
+  record: ServiceRecord,
+  force: boolean,
+  options: RunOptions,
+): Promise<ServiceOutcome> {
+  const present = existsSync(root);
+  const [kind, argv, cwd] = present
+    ? (['teardown', record.teardown, record.cwd] as const)
+    : (['orphan_teardown', record.orphanTeardown, homedir()] as const);
+  let failure: string | null = null;
+  if (record.kind === 'process') failure = await stopProcess(record, options.signal);
+  else if (argv) failure = await runAndClose(root, name, kind, argv, record, cwd, options);
+  else if (present && (record.state === 'running' || (await mayStillRun(record))))
+    failure = await halt(root, name, record, options);
+  const shown = byHand(
+    record,
+    argv ?? record.teardown ?? record.stop ?? ['kill', '--', `-${record.process?.pid}`],
+    cwd,
+  );
+  if (failure && !force) {
+    const reason = `${failure}; ${shown}`;
+    await writeRecord(root, name, { ...record, teardownFailure: reason });
+    return { name, outcome: 'failed', detail: reason };
+  }
+  await forget(root, name, record);
+  const note = failure
+    ? `${failure}; dropped (--force); ${shown}`
+    : !present && !argv && record.kind === 'commands'
+      ? `not torn down: no orphanTeardown; ${shown}`
+      : 'torn down';
+  return { name, outcome: 'torn-down', detail: note };
+}
+
 async function startOne(
   root: string,
-  source: { definition: ServiceDefinition; definitions: ServiceDefinition[] } | { record: ServiceRecord },
   name: string,
+  source: StartSource,
   previous: ServiceRecord | null,
   options: RunOptions,
 ): Promise<ServiceOutcome> {
@@ -636,53 +758,40 @@ async function startOne(
     'record' in source
       ? source.record
       : await resolveService(root, source.definition, source.definitions, options.operation?.env.PATH);
-  const { stoppedBy: _, idleStopFailedAt: __, teardownFailure: ___, ...fresh } = resolved;
+  const { stoppedBy: _, idleStopFailedAt: __, teardownFailure: ___, process: ____, ...fresh } = resolved;
   const base: ServiceRecord = { ...fresh, state: 'running', at: new Date().toISOString() };
-  const outcome = await launch(root, name, base, previous, options);
-  if (outcome.outcome === 'failed') return outcome;
-  return { ...outcome, detail: outcome.detail + (await syncReverses(root, serviceRecords(root)[name] ?? base, true)) };
-}
-
-async function launch(
-  root: string,
-  name: string,
-  base: ServiceRecord,
-  previous: ServiceRecord | null,
-  options: RunOptions,
-): Promise<ServiceOutcome> {
-  const stopped = (record: ServiceRecord): ServiceRecord => ({
-    ...record,
-    state: 'stopped',
-    stoppedBy: previous?.stoppedBy === 'idle' ? 'idle' : 'command',
-  });
-  const alreadyRunning = async (): Promise<ServiceOutcome> => {
-    if (!previous || previous.state !== 'running') await writeRecord(root, name, base);
-    return { name, outcome: 'running', detail: 'already running' };
+  // @ref LLP 0027#revive-resumes-what-the-idle-pass-stopped -- the idle mark stays until a start succeeds
+  const pending: ServiceRecord = previous?.stoppedBy === 'idle' ? { ...base, stoppedBy: 'idle' } : base;
+  const failed = async (detail: string, record: ServiceRecord, mayRun: boolean): Promise<ServiceOutcome> => {
+    const stoppedBy = previous?.stoppedBy === 'idle' ? 'idle' : 'command';
+    await writeRecord(root, name, mayRun ? record : { ...record, state: 'stopped', stoppedBy, process: undefined });
+    return { name, outcome: 'failed', detail };
   };
-  if (previous?.kind === 'process' && previous.process && inspectProcessIdentity(previous.process) === 'unknown')
-    return { name, outcome: 'failed', detail: `the identity of its pid ${previous.process.pid} cannot be verified` };
-  if (previous && (await serviceRunning(previous))) {
-    if (await ready(root, name, previous, options)) return alreadyRunning();
+  const started = async (record: ServiceRecord, outcome: 'started' | 'running', detail: string) => {
+    await writeRecord(root, name, record);
+    return { name, outcome, detail: detail + (await syncReverses(root, record, true)) };
+  };
+  if (base.kind === 'process') {
+    const live = previous?.process;
+    if (live && inspectProcessIdentity(live) === 'unknown')
+      return { name, outcome: 'failed', detail: `the identity of its pid ${live.pid} cannot be verified` };
     // @ref LLP 0027#a-service-without-a-stop-command-is-a-process -- never spawn over a live recorded process
-    if (previous.kind === 'process')
+    if (live && previous && processLives(previous, ['same']))
       return (await waitReady(root, name, previous, options))
-        ? alreadyRunning()
-        : {
-            name,
-            outcome: 'failed',
-            detail: `pid ${previous.process?.pid} runs but is not ready.${logTail(root, name)}`,
-          };
+        ? started({ ...base, process: live }, 'running', 'already running')
+        : { name, outcome: 'failed', detail: `pid ${live.pid} runs but is not ready.${logTail(root, name)}` };
   }
-  const held = await listening(Object.values(base.ports));
-  if (held.length) {
-    // @ref LLP 0027#a-port-only-counts-as-the-service-it-recorded -- a foreign listener is never adopted silently
-    if (base.ready && (await ready(root, name, base, options))) return alreadyRunning();
+  const ours = base.kind === 'commands' && previous?.state === 'running';
+  const held = ours ? [] : await listening(Object.values(base.ports));
+  // @ref LLP 0027#a-port-only-counts-as-the-service-it-recorded -- a held port is never adopted
+  if (held.length)
     return {
       name,
       outcome: 'failed',
       detail: `port ${held.join(', ')} is held by a process Stim did not start for this service; stop it, then start again`,
     };
-  }
+  if (ours && previous && (await ready(root, name, previous, options)))
+    return started(base, 'running', 'already running');
   if (base.kind === 'process') {
     let proc;
     try {
@@ -690,26 +799,23 @@ async function launch(
     } catch (error) {
       return { name, outcome: 'failed', detail: `start command ${base.start.join(' ')} failed: ${messageOf(error)}` };
     }
-    const record = { ...base, process: proc };
+    const record = { ...pending, process: proc };
     await writeRecord(root, name, record);
     logEvent(root, 'info', 'service_start', `${name}: ${base.start.join(' ')} (pid ${proc.pid})`, { service: name });
     if (await waitReady(root, name, record, options))
-      return { name, outcome: 'started', detail: `pid ${proc.pid}; output in ${serviceLogFile(root, name)}` };
+      return started({ ...base, process: proc }, 'started', `pid ${proc.pid}; output in ${serviceLogFile(root, name)}`);
     const left = await stopProcess(record, options.signal);
-    await writeRecord(root, name, left ? record : { ...stopped(record), process: undefined });
-    return { name, outcome: 'failed', detail: `${base.start.join(' ')} did not become ready.${logTail(root, name)}` };
+    return failed(`${base.start.join(' ')} did not become ready.${logTail(root, name)}`, record, left !== null);
   }
-  await writeRecord(root, name, base);
+  await writeRecord(root, name, pending);
   const failure = await runCommand(root, name, 'start', base.start, base, base.cwd, START_TIMEOUT_MS, options);
-  const notReady = !failure && !(await waitReady(root, name, base, options));
-  if (!failure && !notReady) return { name, outcome: 'started', detail: base.start.join(' ') };
+  if (!failure && (await waitReady(root, name, base, options))) return started(base, 'started', base.start.join(' '));
   // @ref LLP 0027#the-idle-pass-stops-services -- a stack that partly came up stays running, so the idle pass reaches it
-  if (!(await mayStillRun(base))) await writeRecord(root, name, stopped(base));
-  return {
-    name,
-    outcome: 'failed',
-    detail: failure ?? `${base.start.join(' ')} exited, but the service did not become ready`,
-  };
+  return failed(
+    failure ?? `${base.start.join(' ')} exited, but the service did not become ready`,
+    pending,
+    await mayStillRun(base),
+  );
 }
 
 /** Starts the declared services, or the one named, dependencies first; one already running is left alone. */
@@ -727,11 +833,10 @@ export async function startServices(
       if (!getProject(root)) upsertProject(root, {});
       const outcomes: ServiceOutcome[] = [];
       for (const definition of order) {
-        const outcome = await startOne(
+        const outcome = await transition(
           root,
-          { definition, definitions },
           definition.name,
-          serviceRecords(root)[definition.name] ?? null,
+          { op: 'start', source: { definition, definitions } },
           options,
         );
         outcomes.push(outcome);
@@ -758,34 +863,6 @@ function recordedInOrder(records: Record<string, ServiceRecord>): [string, Servi
   return order;
 }
 
-async function stopOne(
-  root: string,
-  name: string,
-  record: ServiceRecord,
-  by: 'idle' | 'command',
-  options: RunOptions,
-): Promise<ServiceOutcome> {
-  const running = await serviceRunning(record);
-  if (!running && by === 'idle') return { name, outcome: 'not-running', detail: 'not running' };
-  let failure: string | null;
-  if (record.kind === 'process') failure = await stopProcess(record, options.signal);
-  else {
-    const stop = record.stop ?? [];
-    failure = await runCommand(root, name, 'stop', stop, record, record.cwd, STOP_TIMEOUT_MS, options);
-    const still = failure ? [] : await listening(Object.values(record.ports));
-    if (still.length) failure = `stop command ${stop.join(' ')} exited, but port ${still.join(', ')} still listens`;
-  }
-  const now = new Date().toISOString();
-  if (failure) {
-    await writeRecord(root, name, { ...record, ...(by === 'idle' ? { idleStopFailedAt: now } : {}) });
-    return { name, outcome: 'failed', detail: failure };
-  }
-  const { idleStopFailedAt: _, process: __, ...rest } = record;
-  await writeRecord(root, name, { ...rest, state: 'stopped', stoppedBy: by, at: now });
-  const notes = await syncReverses(root, record, false);
-  return { name, outcome: running ? 'stopped' : 'not-running', detail: (running ? 'stopped' : 'not running') + notes };
-}
-
 /** Stops the services Stim started, or the one named; `idle` marks them for `stim revive`. */
 export async function stopServices(
   root: string,
@@ -799,11 +876,10 @@ export async function stopServices(
       const records = serviceRecords(root);
       if (name !== undefined && !records[name]) selectServices(declaredServices(root), name);
       const outcomes: ServiceOutcome[] = [];
-      for (const [each, record] of recordedInOrder(records).toReversed()) {
+      for (const [each] of recordedInOrder(records).toReversed()) {
         if (name !== undefined && each !== name) continue;
         if (options.names && !options.names.includes(each)) continue;
-        if (record.state !== 'running' && by === 'idle') continue;
-        outcomes.push(await stopOne(root, each, record, by, options));
+        outcomes.push(await transition(root, each, { op: 'stop', by }, options));
       }
       return outcomes;
     },
@@ -866,15 +942,15 @@ export async function forgetExitedServices(
   );
 }
 
-/** Starts again, from their records, the services the idle pass stopped. */
+/** Starts again, from their records, the services the idle pass stopped, dependencies first. */
 export async function resumeServices(root: string, options: RunOptions = {}): Promise<ServiceOutcome[]> {
   return withServicesLock(
     root,
     async () => {
       const outcomes: ServiceOutcome[] = [];
       for (const [name, record] of recordedInOrder(serviceRecords(root))) {
-        if (record.state !== 'stopped' || record.stoppedBy !== 'idle') continue;
-        const outcome = await startOne(root, { record }, name, record, options);
+        if (record.stoppedBy !== 'idle') continue;
+        const outcome = await transition(root, name, { op: 'start', source: { record } }, options);
         outcomes.push(outcome);
         if (outcome.outcome === 'failed') break;
       }
@@ -884,106 +960,74 @@ export async function resumeServices(root: string, options: RunOptions = {}): Pr
   );
 }
 
-function byHand(record: ServiceRecord, argv: readonly string[], cwd: string): string {
-  const env = Object.entries(record.env).map(([key, value]) => `${key}=${value}`);
-  return `run by hand in ${cwd}: ${[...env, ...argv].join(' ')}`;
-}
-
 /**
- * Stops every running service Stim started in the workspace before a reclaim that keeps their data: a process by
- * identity, a commands service through `stop`. A stop that fails throws, which keeps the workspace. With `keep`, the
- * records stay for the teardown that runs just before the folder is deleted; otherwise they go with the workspace.
+ * Deletes the services' data just before a linked worktree goes: `teardown`, or `stop` while one still runs, from each
+ * service's folder. A record and its ports go only when its command exited 0, or when it declares none; a failure keeps
+ * them, records what to run by hand, and throws so the removal refuses with nothing else touched. `force` drops them.
  */
-// @ref LLP 0027#removal-tears-services-down -- only the deletion of the folder deletes a service's data
-export async function stopServicesForReclaim(
+export async function teardownServices(
   root: string,
-  options: RunOptions = {},
-): Promise<Record<string, ServiceRecord>> {
+  { force = false, ...options }: RunOptions & { force?: boolean } = {},
+): Promise<ServiceOutcome[]> {
+  if (!Object.keys(serviceRecords(root)).length) return [];
   return withServicesLock(
     root,
     async () => {
-      const records = serviceRecords(root);
-      const failures: string[] = [];
-      for (const [name, record] of recordedInOrder(records).toReversed()) {
-        if (record.state !== 'running' && !(await mayStillRun(record))) continue;
-        const failure =
-          record.kind === 'process'
-            ? await stopProcess(record, options.signal)
-            : await runCommand(root, name, 'stop', record.stop ?? [], record, record.cwd, STOP_TIMEOUT_MS, options);
-        if (failure) failures.push(`service ${name}: ${failure}; ${byHand(record, record.stop ?? [], record.cwd)}`);
-        else await syncReverses(root, record, false);
-      }
+      const outcomes: ServiceOutcome[] = [];
+      for (const [name] of recordedInOrder(serviceRecords(root)).toReversed())
+        outcomes.push(await transition(root, name, { op: 'teardown', force }, options));
+      const failures = outcomes.filter((outcome) => outcome.outcome === 'failed');
       if (failures.length)
         throw new ServiceError(
-          failures.join('\n'),
+          failures.map((outcome) => `service ${outcome.name}: ${outcome.detail}`).join('\n'),
           'STIM_SERVICE_FAILED',
-          'Stop each named service, then remove again.',
+          'Fix the cause and remove again, or run the command by hand and then stim worktree remove --force.',
         );
-      return records;
+      return outcomes;
     },
     options.signal,
   );
 }
 
-/** Writes back the records a reclaim that keeps them stopped, after it emptied the workspace state. */
-export async function restoreServiceRecords(
-  root: string,
-  records: Record<string, ServiceRecord> | null,
-): Promise<void> {
-  if (!records) return;
-  for (const [name, record] of Object.entries(records))
-    await writeRecord(root, name, { ...record, state: 'stopped', stoppedBy: 'command' });
-}
-
 /**
- * Deletes the services' data just before their workspace folder goes, or once it is gone: `teardown` (else `stop`)
- * from each service's folder, or `orphanTeardown` from the home folder when the folder no longer exists. A record and
- * its ports go only when its command exited 0 or it declares none; any failure keeps the record and its ports, records
- * what to run by hand, and throws, so the removal keeps the workspace. `force` drops them anyway.
+ * Settles the services of a workspace that a reclaim does not delete through `git worktree remove`: in a folder that
+ * stays, each is stopped (its data kept), then forgotten with its ports; a stop that fails throws before anything else
+ * changes. In a folder that is gone, each gets one `orphanTeardown`, and a failure is logged with the command to run.
  */
-export async function teardownServices(
+// @ref LLP 0027#removal-tears-services-down -- reclaim never deletes the data of a folder that stays
+export async function settleServicesForReclaim(
   root: string,
-  { log = () => {}, force = false, ...options }: RunOptions & { log?: (line: string) => void; force?: boolean } = {},
-): Promise<ServiceOutcome[]> {
-  if (!Object.keys(serviceRecords(root)).length) return [];
-  const present = existsSync(root);
-  return withServicesLock(
+  output: { signal?: AbortSignal; log?: (line: string) => void } | undefined,
+  operation?: StimContext,
+): Promise<void> {
+  if (!Object.keys(serviceRecords(root)).length) return;
+  const options: RunOptions = operation ? { operation, signal: operation.signal } : {};
+  const log = output?.log ?? (() => {});
+  await withServicesLock(
     root,
     async () => {
-      const outcomes: ServiceOutcome[] = [];
+      const present = existsSync(root);
       const failures: string[] = [];
       for (const [name, record] of recordedInOrder(serviceRecords(root)).toReversed()) {
-        const stopFirst = record.kind === 'process' ? await stopProcess(record, options.signal) : null;
-        const [kind, argv, cwd] = present
-          ? (['teardown', record.teardown ?? record.stop, record.cwd] as const)
-          : (['orphan_teardown', record.orphanTeardown, homedir()] as const);
-        const failure =
-          stopFirst ??
-          (record.kind === 'commands' && argv
-            ? await runCommand(root, name, kind, argv, record, cwd, STOP_TIMEOUT_MS, options)
-            : null);
-        if (failure && !force) {
-          const reason = `${failure}; ${byHand(record, argv ?? ['kill', '--', `-${record.process?.pid}`], cwd)}`;
-          await writeRecord(root, name, { ...record, teardownFailure: reason });
-          failures.push(`service ${name}: ${reason}`);
-          outcomes.push({ name, outcome: 'failed', detail: reason });
+        const outcome = await transition(
+          root,
+          name,
+          present ? { op: 'stop', by: 'command' } : { op: 'teardown', force: true },
+          options,
+        );
+        if (outcome.outcome === 'failed') {
+          failures.push(`service ${name}: ${outcome.detail}; ${byHand(record, record.stop ?? [], record.cwd)}`);
           continue;
         }
-        if (failure) log(`service ${name}: ${failure}; dropped anyway (--force)`);
-        if (!present && !argv && record.kind === 'commands')
-          log(`service ${name}: no orphanTeardown; ${byHand(record, record.teardown ?? record.stop ?? [], '~')}`);
-        await syncReverses(root, record, false);
-        for (const label of Object.keys(record.ports)) await clearNamedPorts(root, { label, log });
-        await writeRecord(root, name, null);
-        outcomes.push({ name, outcome: 'torn-down', detail: failure ? `${failure}; dropped (--force)` : 'torn down' });
+        if (outcome.detail !== 'torn down' && !present) log(`service ${name}: ${outcome.detail}`);
+        if (present) await transition(root, name, { op: 'forget' }, options);
       }
       if (failures.length)
         throw new ServiceError(
           failures.join('\n'),
           'STIM_SERVICE_FAILED',
-          'Fix the cause and remove again, or run the command by hand and then stim worktree remove --force.',
+          'Stop each named service, then run the cleanup again.',
         );
-      return outcomes;
     },
     options.signal,
   );

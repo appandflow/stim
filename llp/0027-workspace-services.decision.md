@@ -85,12 +85,14 @@ implementing agent.
 
 ## A port only counts as the service it recorded
 
-A commands service runs when its record says so and one of its ports listens.
-When `stim services start` finds a port held by a process Stim did not start
-for that service, it refuses, unless the service's `ready` command passes, in
-which case it adopts the running instance (one started by hand with the same
-id). Reason: a foreign listener must not pass for the service. Chosen by the
-coordinating session.
+A commands service runs when its record says so and one of its ports listens. A
+record that is `running` (also one that only partly came up) runs its
+idempotent `start` again on the next start. With no record, or a stopped one, a
+held port refuses the start; so does a held port for a supervised process
+without a live recorded identity. Stim never adopts a listener it did not start,
+not even when the service's `ready` passes. Reason: a foreign listener must not
+pass for the service, and an adopted process has no identity Stim could stop.
+Chosen by the independent design review and the coordinating session.
 
 ## A running service is reachable from the devices
 
@@ -152,50 +154,70 @@ Chosen by the implementing agent with the coordinating session.
 `stim revive` starts again, from their records and before Metro, the services
 the idle pass stopped, and waits for each to be ready. A service
 `stim services stop` stopped, one that exited, or one Stim never started is not
-resumed; a start clears the idle mark, and a failed restart keeps it, so the
-next revive tries again. A failure refuses with `STIM_SERVICE_FAILED`, naming the service.
+resumed. The idle mark clears only on a successful start or an explicit stop;
+a restart that fails keeps it, also when the stack partly came up and stays
+`running` for the idle pass, so the next revive tries again. A failure refuses with `STIM_SERVICE_FAILED`, naming the service.
 
 Maintainer decision: "Can we also have a resume command for when revive is
 called", 2026-11-23 (#6202). The resume is the service's `start`.
 
+## One transition per service change
+
+Every start, stop, teardown and forget of a service goes through one transition
+under the workspace's services lock: it runs the command, checks the result
+(the ports closed or the process group gone, or the service ready), writes the
+record, then syncs the device reverses. A stop runs only while the record is
+not already stopped, so a stop command that fails when nothing runs (`pg_ctl
+stop`) never runs twice. A teardown runs `teardown` alone, and `stop` only
+while the service still runs. Reason: the earlier design carried records
+through the reclaim and spread these steps over several helpers, where most
+review findings sat. Proposed by an independent design review and the
+coordinating session.
+
 ## Removal tears services down
 
-Three rules decide what a reclaim does to a service Stim started:
+Services are settled before a reclaim touches anything else, and a reclaim
+never runs a service command after that:
 
-- `stop`, or killing a supervised process, may run unattended: the idle pass,
-  and every reclaim that keeps the folder (a source checkout, a project in a
-  subfolder, a removal that ends up keeping its entries) stops the service and
-  keeps its data. A stop that fails keeps the workspace.
-- `teardown` (else `stop`) runs only in the operation that deletes the folder,
-  just before `git worktree remove`, after every other refusal has passed. A
-  linked-worktree removal therefore stops its services first, keeps their
-  records and ports through the reclaim, and tears them down at the end. A
-  workspace whose folder is already gone (gc, or `stim worktree remove` on a
-  missing path) runs `orphanTeardown` from the home folder instead; without
-  one, removal names the command to run by hand.
-- A record and its ports go only when its teardown command exited 0, or when
-  it declares none. Any failure keeps the worktree, the record and its ports,
-  records the reason with the command, folder and env to run by hand
-  (`teardownFailure`, shown by `stim status`, `stim services` and the removal
-  or gc output), and the next removal, gc or maintenance pass tries again.
-  `stim worktree remove --force` drops them anyway.
-
-Just before a reclaim deletes the workspace state, it stops again, under the
-services lock, any service that started since its first stop; `stim services
-start` registers the workspace under that lock. A start in the short window
-between that stop and the deletion is not fenced (#6212).
+- A linked-worktree removal (`stim worktree remove`, and gc and maintenance
+  removing a finished worktree) tears the services down right after its
+  blocker and dirty-archive checks, before the reclaim and before ignored
+  folders such as `node_modules` move to the trash, so a teardown can still use
+  them. A teardown that fails refuses the removal with nothing else touched:
+  the worktree, the record (with `teardownFailure`, naming the command, folder
+  and env to run by hand, shown by `stim status` and `stim services`) and its
+  ports stay. `stim worktree remove --force` drops them. A later refusal of
+  the removal leaves the folder with the services' data already deleted;
+  `stim services start` recreates it.
+- A reclaim that keeps the folder (a source checkout, a project in a
+  subfolder) stops each service, keeping its data, then forgets its record and
+  ports. The service id is stable for the path, so the next start finds the same
+  containers and volumes. A stop that fails refuses the reclaim before anything
+  else changes.
+- When the folder is gone (gc, or `stim worktree remove` on a missing path),
+  each service gets one `orphanTeardown` from the home folder; a failure, or a
+  service that declares none, is printed and logged with the command to run by
+  hand, the service is forgotten, and the reclaim goes on. Retrying it is #6224.
+- Just before the reclaim deletes the workspace state, a service record still
+  there (one started during the reclaim) keeps the workspace instead.
 
 Reason: a removal must not leave a stack or its data behind (the 153 volumes
 above), and must never delete the data of a checkout that stays.
 
-Maintainer decision: "Yes to all 3", 2026-11-24 (#6202), to: unattended
-maintenance and gc may delete a service's data only when they delete the
-worktree itself, immediately before; a failed teardown keeps the worktree, the
-record and its ports until a teardown succeeds or `stim worktree remove
---force`, and every report names the command, folder and env; `orphanTeardown`
-stays, is retried on each pass, and is reported in `stim status` and `stim gc`.
-The three rules were proposed by an independent design review and the
-coordinating session.
+Maintainer decision: "Yes to all 3", 2026-11-24 (#6202): unattended maintenance
+and gc delete a service's data only when they delete the worktree itself, just
+before; a failed teardown keeps the worktree, the record and its ports until a
+teardown succeeds or `--force`, and every report names the command, folder and
+env.
+
+Maintainer decision: "Use ur recs for what to do next", 2026-11-24 (#6202). He
+delegated the next three choices and approved the recommendations that way: an
+orphan teardown gets one attempt and a printed command, with the retry as
+follow-up #6224; a linked removal tears down before anything else and accepts
+that a later refusal leaves the folder without the services' data; and a reclaim
+that keeps the folder forgets the records and ports after stopping. These
+replace the earlier retry of a failed orphan teardown on each pass and the
+kept record and ports on every reclaim.
 
 ## Commands get the services env
 
