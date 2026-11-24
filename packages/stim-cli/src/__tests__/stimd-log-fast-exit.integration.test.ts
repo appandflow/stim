@@ -102,6 +102,7 @@ test.skipIf(process.platform === 'win32')(
     mkdirSync(bin);
     vi.stubEnv('STIM_HOME', home);
     const xcrun = join(bin, 'xcrun');
+    const since = Date.now() - 1000;
     const line = JSON.stringify({
       eventType: 'logEvent',
       timestamp: new Date().toISOString(),
@@ -121,7 +122,7 @@ test.skipIf(process.platform === 'win32')(
         root,
         streamId: 'ios',
         spec: { root, platform: 'ios', udid: 'U1', appName: 'Test' },
-        since: Date.now() - 1000,
+        since,
         env,
         signal: new AbortController().signal,
         warm: () => false,
@@ -151,6 +152,7 @@ test.skipIf(process.platform === 'win32')('history drains the final record after
   mkdirSync(bin);
   vi.stubEnv('STIM_HOME', home);
   const xcrun = join(bin, 'xcrun');
+  const since = Date.now() - 1000;
   const line = JSON.stringify({
     eventType: 'logEvent',
     timestamp: new Date().toISOString(),
@@ -172,7 +174,7 @@ test.skipIf(process.platform === 'win32')('history drains the final record after
       root,
       streamId: 'ios',
       spec: { root, platform: 'ios', udid: 'U1', appName: 'Test' },
-      since: Date.now() - 1000,
+      since,
       env,
       signal: new AbortController().signal,
       warm: () => false,
