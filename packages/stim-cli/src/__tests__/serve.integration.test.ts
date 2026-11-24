@@ -556,24 +556,31 @@ test('a service ask for port 0 moves the share-only thread and keeps its listene
 test.each([
   ['without Desktop input', {}],
   ['with a Desktop lifetime pipe on stdin', { STIM_DESKTOP_LIFETIME_FD: '0' }],
-])('stim serve refused on a held port by a running stimd exits 1, not by a signal, %s', async (_name, extra) => {
-  await withStimd('serve-held', async ({ holdPort }) => {
-    const port = await holdPort();
-    const home = process.env.STIM_HOME;
-    type Outcome = { code: number; signal: string | null; stderr: string };
-    const finished: Outcome = { code: 0, signal: null, stderr: '' };
-    const run = await execute(
-      process.execPath,
-      [join(root, 'packages/stim-cli/dist/cli.mjs'), 'serve', '--port', String(port), '--loopback-only'],
-      { env: { ...process.env, STIM_HOME: home, HOME: home, USERPROFILE: home, PATH: '', ...extra }, timeout: 30_000 },
-    ).then(
-      () => finished,
-      (error: Outcome) => error,
-    );
-    expect(run).toMatchObject({ code: 1, signal: null });
-    expect(run.stderr).toContain(`port ${port} is `);
-  });
-}, 60_000);
+])(
+  'stim serve refused on a held port by a running stimd exits 1, not by a signal, %s',
+  async (_name, extra) => {
+    await withStimd('serve-held', async ({ holdPort }) => {
+      const port = await holdPort();
+      const home = process.env.STIM_HOME;
+      type Outcome = { code: number; signal: string | null; stderr: string };
+      const finished: Outcome = { code: 0, signal: null, stderr: '' };
+      const run = await execute(
+        process.execPath,
+        [join(root, 'packages/stim-cli/dist/cli.mjs'), 'serve', '--port', String(port), '--loopback-only'],
+        {
+          env: { ...process.env, STIM_HOME: home, HOME: home, USERPROFILE: home, PATH: '', ...extra },
+          timeout: 30_000,
+        },
+      ).then(
+        () => finished,
+        (error: Outcome) => error,
+      );
+      expect(run).toMatchObject({ code: 1, signal: null });
+      expect(run.stderr).toContain(`port ${port} is `);
+    });
+  },
+  60_000,
+);
 
 test('stim serve stopped while its net thread starts exits 0 (flaky under load, see #5864)', async () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-serve-stop-start-'));
