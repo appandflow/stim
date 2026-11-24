@@ -432,8 +432,8 @@ async function runCommand(
         ...(signal ? { signal } : {}),
       });
     } catch (error) {
-      signal?.throwIfAborted();
       if (error instanceof Error && 'reportCleanup' in error) throw error;
+      signal?.throwIfAborted();
       const field = (key: string): unknown =>
         typeof error === 'object' && error !== null ? Reflect.get(error, key) : undefined;
       output = [field('stdout'), field('stderr')].filter((text) => typeof text === 'string' && text.trim()).join('\n');

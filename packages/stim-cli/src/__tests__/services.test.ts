@@ -401,10 +401,19 @@ describe('service start admission', () => {
     }
   });
 
-  test('unverified command cleanup keeps the build slot for claim recovery', async () => {
+  test.each([
+    ['without cancellation', false],
+    ['when the start was cancelled', true],
+  ])('unverified command cleanup keeps the build slot for claim recovery %s', async (_name, cancelled) => {
     const error = Object.assign(new Error('child cleanup cannot be verified'), { reportCleanup: true });
-    runFileAsync.mockRejectedValue(error);
-    await expect(startServices(root, 'db', { operation: testContext() })).rejects.toBe(error);
+    const controller = new AbortController();
+    runFileAsync.mockImplementation(async () => {
+      if (cancelled) controller.abort(new Error('cancelled'));
+      throw error;
+    });
+    await expect(startServices(root, 'db', { operation: testContext(), signal: controller.signal })).rejects.toBe(
+      error,
+    );
     expect(holders()).toMatchObject([{ details: { projectRoot: root, service: 'db' } }]);
   });
 
