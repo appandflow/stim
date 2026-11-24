@@ -407,7 +407,8 @@ async function stillUnused(
 ): Promise<string | null> {
   const [first] = keys;
   if (!source) {
-    const why = first ? await notIdleReason(first, idleMs, { operation, full: !getProject(first), setting }) : null;
+    const full = keys.every((key) => !getProject(key));
+    const why = first ? await notIdleReason(first, idleMs, { operation, full, setting }) : null;
     return why ? `it is no longer idle: ${why}` : null;
   }
   for (const key of new Set([...workspaceKeys(keys), worktree])) {

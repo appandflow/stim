@@ -1060,6 +1060,53 @@ describe('gc marks written by the lane', () => {
       20_000,
     );
 
+    it.each(['a source edit', 'a reflog write'] as const)(
+      'acts as it reports on a warmed worktree with a registered app after %s',
+      async (touch) => {
+        const source = checkout('warmed-source', 20 * day);
+        const linked = join(roots, 'warmed-linked');
+        execFileSync('git', ['-C', source, '-c', 'gc.auto=0', 'worktree', 'add', '-q', '-b', 'warmed', linked]);
+        const modules = installed(linked);
+        const app = join(linked, 'apps', 'mobile');
+        mkdirSync(app, { recursive: true });
+        writeFileSync(join(app, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+        config = {
+          maintenance: {},
+          projects: { [app]: {} },
+          repos: {},
+          idle: { dormantDays: 1, sourceDormantDays: 0 },
+        };
+        saveConfig(config);
+        for (const root of [linked, app]) ensureWorkspaceStorage(root);
+        age(roots);
+        for (const root of [linked, app]) recordWorkspaceUse(root, new Date(Date.now() - 20 * day));
+        if (touch === 'a source edit') writeFileSync(join(linked, 'index.js'), 'edited a minute ago');
+        else {
+          const gitDir = execFileSync('git', ['-C', linked, 'rev-parse', '--absolute-git-dir'], { encoding: 'utf8' });
+          const now = new Date();
+          utimesSync(join(gitDir.trim(), 'logs', 'HEAD'), now, now);
+        }
+        const outcomes = async (act: boolean) =>
+          (
+            await runDormantDependencies({
+              config,
+              act,
+              marks: true,
+              log: () => {},
+              ...reading,
+              operation: testContext(),
+            })
+          )
+            .filter(({ target }) => target === modules)
+            .map(({ outcome }) => outcome);
+
+        expect(await outcomes(false)).toEqual(['would']);
+        expect(await outcomes(true)).toEqual(['done']);
+        expect(existsSync(modules)).toBe(false);
+      },
+      20_000,
+    );
+
     it('rechecks a recorded worktree by the full evidence once it holds the claim', async () => {
       const source = checkout('recheck-source', 20 * day);
       const linked = join(roots, 'recheck-linked');
