@@ -184,8 +184,18 @@ The wording is an observation, never "dead" or "hung": event-loop stalls of up t
 85 s were measured while awake. The result belongs to the stimd it was taken
 against: it is dropped when the claim holder changed during the probe, and never
 joined to a status that names another pid. The probe starts no stimd, writes no
-claim and signals nothing; stopping or replacing a stimd that does not answer is
-not decided here.
+claim, signals nothing and replaces nothing. With an unanswered probe and a last
+tick older than three intervals, status and doctor tell the reader to run
+`stim status` again after a few minutes and, only if it still does not answer, to
+end the pid with `kill -9 <pid>` (`taskkill /PID <pid> /F` on Windows). A new
+stimd then takes over the claims: the next stim start, ios or android starts it,
+or the stimd's service unit restarts it when the live claim names a unit. SIGKILL
+is used because SIGTERM stays pending on a stopped or blocked stimd. Off Windows
+the killed stimd leaves an `unknown` abnormal boot; Windows records none.
+A watchdog or replacement stays undecided.
+
+Maintainer decision: "sure", 2026-11-24, answering "add a line to status and doctor naming a stuck stimd's pid and the command to end it".
+[Issue #6241](https://github.com/appandflow/stim/issues/6241#issuecomment-7140831800).
 
 Limit: a stimd that predates the probe frame cannot be told from a live one by its
 pid, so the claim's pid stands, and its `unknown-kind` reply is the only evidence
