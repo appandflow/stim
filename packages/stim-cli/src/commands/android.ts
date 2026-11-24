@@ -1402,6 +1402,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
               sessionName: ownedSessionName(remoteDevice.ctx.label),
               operation: context,
               startedAt: new Date(now()).toISOString(),
+              maxDurationMinutes: remoteDevice.ctx.maxDurationMinutes ?? null,
               boot,
               createdSessionId: remoteDevice.createdSessionId,
               abandonCreatedSession: remoteDevice.abandonCreatedSession,

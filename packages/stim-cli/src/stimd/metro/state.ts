@@ -81,6 +81,12 @@ export interface RemoteSessionRecord {
   startedAt: string | null;
   webPreviewUrl: string | null;
   deviceType?: string | null;
+  expiresAt?: string | null;
+}
+
+export function remoteSessionExpired(record: RemoteSessionRecord, now: number): boolean {
+  const expiresAt = Date.parse(record.expiresAt ?? '');
+  return Number.isFinite(expiresAt) && now > expiresAt;
 }
 
 export function readMetroTunnel(root: string): MetroTunnelRecord | null {
@@ -203,12 +209,14 @@ export function readRemoteSession(root: string): RemoteSessionRecord | null {
   const startedAt = (record as { startedAt?: unknown }).startedAt;
   const webPreviewUrl = (record as { webPreviewUrl?: unknown }).webPreviewUrl;
   const deviceType = (record as { deviceType?: unknown }).deviceType;
+  const expiresAt = 'expiresAt' in record ? record.expiresAt : undefined;
   return {
     platform: platform === 'ios' || platform === 'android' ? platform : null,
     sessionId: id,
     startedAt: typeof startedAt === 'string' ? startedAt : null,
     webPreviewUrl: typeof webPreviewUrl === 'string' && webPreviewUrl.length > 0 ? webPreviewUrl : null,
     deviceType: typeof deviceType === 'string' && deviceType.length > 0 ? deviceType : null,
+    expiresAt: typeof expiresAt === 'string' && Number.isFinite(Date.parse(expiresAt)) ? expiresAt : null,
   };
 }
 

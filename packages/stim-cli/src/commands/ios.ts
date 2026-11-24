@@ -1255,6 +1255,7 @@ async function runIos(
                 operation: context,
                 startedAt: new Date(d.now()).toISOString(),
                 deviceType: remoteDevice.ctx.deviceType ?? null,
+                maxDurationMinutes: remoteDevice.ctx.maxDurationMinutes ?? null,
                 boot,
                 createdSessionId: remoteDevice.createdSessionId,
                 abandonCreatedSession: remoteDevice.abandonCreatedSession,

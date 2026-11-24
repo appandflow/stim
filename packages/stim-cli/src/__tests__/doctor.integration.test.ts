@@ -2298,13 +2298,15 @@ describe('doctor on a stimd whose last tick is late', () => {
     expect(found[0]?.fix).not.toMatch(/kill/);
   });
 
-  test('that does not answer reports only the not-answering finding, with kill and the claim pid', async () => {
+  test('that does not answer reports only the not-answering finding, with the end command and the claim pid', async () => {
     holdDaemonClaim();
     await serveStimdSocket(null);
     writeDaemonTick(10);
     const found = await doctorDaemonFindings();
     expect(found.map((finding) => finding.code)).toEqual(['stimd-not-answering']);
-    expect(found[0]?.fix).toContain(`kill ${process.pid}`);
+    expect(found[0]?.fix).toContain(
+      process.platform === 'win32' ? `taskkill /PID ${process.pid} /F` : `kill -9 ${process.pid}`,
+    );
   }, 60_000);
 
   test('that ticks while the probe is pending names no kill', async () => {

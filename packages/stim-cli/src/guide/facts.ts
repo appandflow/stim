@@ -129,7 +129,9 @@ session. The session is billable while it runs, and it makes the environment
 live. EAS stops it by itself after remote.easMaxDurationMinutes (default 30).
 status reads only local records; it does not ask EAS whether the session is
 still running, so a session EAS already stopped stays listed until the next
-run replaces it or stop clears it.
+run replaces it or stop clears it. A session records an expiry: the time it was ready plus its cap plus 5 minutes.
+Once it has passed, status stops listing the session and gc and stop clear it
+without eas-cli. A record with no expiry (from an older Stim) stays listed.
 
   remoteDevices   [{ platform, backend, sessionId, state, startedAt,
                   webPreviewUrl }], empty when the workspace has none
