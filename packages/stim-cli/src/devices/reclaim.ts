@@ -532,10 +532,11 @@ async function reclaimIdleProject(
 ): Promise<ReclaimResult> {
   const signal = operation?.signal;
   signal?.throwIfAborted();
-  await clearNamedPorts(
-    path,
-    operation ? { signal, log: (line) => operation.output('stderr', `${line}\n`) } : undefined,
-  );
+  // @ref LLP 0027#stop-keeps-data-teardown-runs-at-removal -- removal must not leave a labelled server or its data behind
+  await clearNamedPorts(path, {
+    teardown: true,
+    ...(operation ? { signal, operation, log: (line) => operation.output('stderr', `${line}\n`) } : {}),
+  });
   signal?.throwIfAborted();
   const project = getProject(path);
   verifyAvdClaims(project, operation);

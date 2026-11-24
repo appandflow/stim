@@ -68,6 +68,25 @@ export function readIdleStage(state: WorkspaceState | null | undefined): IdleSta
   };
 }
 
+export const PORT_IDLE_STOP_KEY = 'portIdleStop';
+
+/**
+ * When the daemon last ran the stop commands of the workspace's named ports for idleness, whether one failed, and the
+ * labels whose server it stopped, which `stim revive` resumes.
+ */
+export interface PortIdleStopRecord {
+  at: string;
+  failed: boolean;
+  stopped: string[];
+}
+
+export function readPortIdleStop(state: WorkspaceState | null | undefined): PortIdleStopRecord | null {
+  const record = state?.[PORT_IDLE_STOP_KEY];
+  if (!isJsonObject(record) || typeof record.at !== 'string') return null;
+  const stopped = Array.isArray(record.stopped) ? record.stopped.filter((label) => typeof label === 'string') : [];
+  return { at: record.at, failed: record.failed === true, stopped };
+}
+
 export const DORMANT_STAGE_KEY = 'dormantStage';
 
 /** The dormant stage the daemon last moved the workspace into: the owned devices it deleted, and its archived logs. */

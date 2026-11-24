@@ -40,8 +40,19 @@ export interface PlatformRecords {
   [platform: string]: DeviceRecord | undefined;
 }
 
+/**
+ * The commands of a named port's server: `stop` stops it and keeps its data, `teardown` removes it with the workspace,
+ * `resume` starts it again after an idle stop.
+ */
+export interface PortCommands {
+  stop?: string[];
+  teardown?: string[];
+  resume?: string[];
+}
+
 export interface ProjectRecord {
   ports?: Record<string, number>;
+  portCommands?: Record<string, PortCommands>;
   metroPort?: number | null;
   platforms?: PlatformRecords;
   deviceSlots?: Record<string, PlatformRecords>;

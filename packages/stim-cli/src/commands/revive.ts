@@ -1,7 +1,14 @@
 import chalk from 'chalk';
 import { defineOp, type Op } from '../cli/define-op.ts';
 import type { StimContext } from '@stim-cli/core';
-import { hostedNativeRecords, readIdleStop, type PlatformRecords, type WorkspaceState } from '@stim-cli/core/state';
+import {
+  hostedNativeRecords,
+  PORT_IDLE_STOP_KEY,
+  readIdleStop,
+  readPortIdleStop,
+  type PlatformRecords,
+  type WorkspaceState,
+} from '@stim-cli/core/state';
 import { runProcessOperation } from '../cli-operation.ts';
 import { formatLongDuration, phaseLine, refuseNoProject } from '../command-output.ts';
 import { deviceSlotPlatforms, parseDeviceSlotKey, projectDeviceSlots } from '../devices/device-slots.ts';
@@ -17,7 +24,12 @@ import { projectRegistry } from '../integrations/projects.ts';
 import { getProject, type ProjectRecord } from '../workspace/config.ts';
 import { findCommandWorkspaceAsync } from '../workspace/project.ts';
 import { resolveProjectSettingsAsync, SETTING_SHAPE_REMEDY, settingShapeErrors } from '../workspace/settings.ts';
-import { readWorkspaceState, recordWorkspaceUseAsync } from '../workspace/workspace-state.ts';
+import {
+  readWorkspaceState,
+  recordWorkspaceUseAsync,
+  updateWorkspaceStateAsync,
+} from '../workspace/workspace-state.ts';
+import { runPortCommands } from '../named-ports.ts';
 import { repoRootAsync } from '../workspace/worktree.ts';
 import { liveSupervisor, startDevServer } from './start.ts';
 import { runIosOperation } from './ios.ts';
@@ -45,6 +57,8 @@ export interface ReviveFacts {
   revived: {
     metro: { port: number | null; stoppedAt: string | null; reason: string | null; restarted: boolean };
     devices: RevivedDevice[];
+    /** Each resume command that started named-port servers the idle pass had stopped, with their labels. */
+    servers: string[];
   };
 }
 
@@ -82,6 +96,8 @@ export interface ReviveDeps {
   ) => Promise<{ ok: true; port: number } | { ok: false; error: ReviveFailure }>;
   run: (platform: Platform, root: string, request: RunRequest) => Promise<RunOutcome>;
   detectProject: (root: string) => Promise<{ platforms: readonly string[]; devServer: boolean }>;
+  /** Runs the resume commands of `labels` whose ports have no listener; forgets the labels once none failed. */
+  resumeServers: (root: string, labels: readonly string[]) => Promise<{ done: string[]; failures: string[] }>;
 }
 
 interface Target {
@@ -307,7 +323,15 @@ export async function runRevive({
     return [{ ...parsed, record }];
   });
   const launches = resumesMetro ? recorded : recorded.filter(({ record }) => launchWithoutMetro(record) !== null);
-  if (!resumesMetro && launches.length === 0) return noMetroRefusal(root, state, idle, recorded, d);
+  // @ref LLP 0027#revive-resumes-what-the-idle-pass-stopped -- only servers Stim itself stopped
+  const idleStopped = (readPortIdleStop(state)?.stopped ?? []).filter(
+    (label) =>
+      Object.hasOwn(project.ports ?? {}, label) &&
+      Object.hasOwn(project.portCommands ?? {}, label) &&
+      Array.isArray(project.portCommands?.[label]?.resume),
+  );
+  if (!resumesMetro && launches.length === 0 && idleStopped.length === 0)
+    return noMetroRefusal(root, state, idle, recorded, d);
   const selected = requestedDevice
     ? launches.filter((launch) => launchDeviceNames(launch.record).includes(requestedDevice))
     : launches;
@@ -325,6 +349,18 @@ export async function runRevive({
     const target = await inspectTarget(project, platform, slot, record, d);
     if ('ok' in target) return target;
     targets.push(target);
+  }
+
+  let servers: string[] = [];
+  if (idleStopped.length) {
+    const resumed = await d.resumeServers(root, idleStopped);
+    if (resumed.failures.length)
+      return failure(
+        'STIM_PORT_RESUME_FAILED',
+        `A named-port server the idle pass stopped did not start again: ${resumed.failures.join('; ')}`,
+        'Fix the cause and run `stim revive` again, or start the server yourself.',
+      );
+    servers = resumed.done;
   }
 
   let metroPort = live ? port : null;
@@ -389,14 +425,15 @@ export async function runRevive({
           restarted,
         },
         devices,
+        servers,
       },
     },
   };
 }
 
 export function reviveLines(facts: ReviveFacts, now: number): string[] {
-  const { metro, devices } = facts.revived;
-  const lines: string[] = [];
+  const { metro, devices, servers } = facts.revived;
+  const lines: string[] = servers.map((entry) => `Resumed ${entry}.`);
   if (metro.restarted) {
     const ago = metro.stoppedAt ? ` ${formatLongDuration(now - Date.parse(metro.stoppedAt))} ago` : '';
     lines.push(`Metro stopped idle${ago}, restarted on port ${metro.port}.`);
@@ -413,7 +450,7 @@ export function reviveLines(facts: ReviveFacts, now: number): string[] {
       lines.push(`${device.app.bundleId} is running on ${name}; left as is.`);
     }
   }
-  if (!metro.restarted && devices.every((device) => !device.app.relaunched)) {
+  if (!metro.restarted && !servers.length && devices.every((device) => !device.app.relaunched)) {
     lines.push('Nothing to revive.');
   }
   return lines;
@@ -456,6 +493,19 @@ export function reviveDeps(context: StimContext): ReviveDeps {
       } catch {
         return { platforms: [], devServer: true };
       }
+    },
+    resumeServers: async (root, labels) => {
+      const resumed = await runPortCommands(root, 'resume', { labels, operation: context, signal: context.signal });
+      if (!resumed.failures.length)
+        await updateWorkspaceStateAsync(root, (state) => {
+          const record = readPortIdleStop(state);
+          if (!record) return state;
+          return {
+            ...state,
+            [PORT_IDLE_STOP_KEY]: { ...record, stopped: record.stopped.filter((label) => !labels.includes(label)) },
+          };
+        });
+      return resumed;
     },
     startMetro: async (root, note) => {
       const { context: settingsContext, settings } = await resolveProjectSettingsAsync(root);

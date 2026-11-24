@@ -1,6 +1,7 @@
 import { defineOp, type Op } from '../cli/define-op.ts';
 import { getProject } from '../workspace/config.ts';
-import { clearNamedPorts, getNamedPort } from '../named-ports.ts';
+import { clearNamedPorts, getNamedPort, parseStopCommand, recordedCommands } from '../named-ports.ts';
+import { portCommandsSetting, resolveProjectSettings } from '../workspace/settings.ts';
 import { findCommandWorkspace } from '../workspace/project.ts';
 import { reversePorts } from '@stim-cli/core/state';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
@@ -33,16 +34,36 @@ const getCommand = defineOp({
   name: 'get',
   arguments: '<label>',
   description: 'Allocate once and print only the port number',
-  run: ({ args: [label] }) =>
+  options: {
+    stop: {
+      flags: '--stop <command>',
+      description: 'record the command that stops this server and keeps its data; ports stop and the idle pass run it',
+    },
+    teardown: {
+      flags: '--teardown <command>',
+      description: 'record the command that removes this server and its data when the workspace is removed',
+    },
+    resume: {
+      flags: '--resume <command>',
+      description: 'record the command that starts this server again when stim revive follows an idle stop',
+    },
+  },
+  run: ({ args: [label], options: opts }) =>
     inProject(async (root) => {
-      console.log(await getNamedPort(root, label));
+      const commands = portCommandsSetting(resolveProjectSettings(root).settings, label);
+      for (const kind of ['stop', 'teardown', 'resume'] as const) {
+        const text = opts[kind];
+        if (text !== undefined) commands[kind] = parseStopCommand(text, kind);
+      }
+      console.log(await getNamedPort(root, label, { commands }));
     }),
 });
 
 const stopCommand = defineOp({
   name: 'stop',
   arguments: '[label]',
-  description: 'Stop TCP listeners and release named ports; excludes Metro',
+  description:
+    'Stop servers through their recorded stop command, else their TCP listeners, and release named ports; excludes Metro',
   options: {
     dryRun: {
       flags: '--dry-run',
@@ -112,7 +133,12 @@ const portsOp: Op = defineOp({
       if (opts.json) {
         console.log(
           JSON.stringify({
-            ports: labels.map(([label, port]) => ({ label, port, managed: label === 'web-cdp' })),
+            ports: labels.map(([label, port]) => ({
+              label,
+              port,
+              managed: label === 'web-cdp',
+              commands: recordedCommands(root, label),
+            })),
             metroPort: project?.metroPort ?? null,
             reverses: reversed.map((port) => ({
               port,
@@ -127,8 +153,12 @@ const portsOp: Op = defineOp({
         return;
       }
       const width = Math.max(...rows.map(([name]) => name.length));
-      for (const [name, port, reverse] of rows)
-        console.log(`${name.padEnd(width)}  ${port}${reverse ? '  reversed' : ''}`);
+      for (const [name, port, reverse] of rows) {
+        const commands = Object.entries(recordedCommands(root, name)).map(
+          ([kind, argv]) => `  ${kind}: ${argv.join(' ')}`,
+        );
+        console.log(`${name.padEnd(width)}  ${port}${reverse ? '  reversed' : ''}${commands.join('')}`);
+      }
     }),
 });
 

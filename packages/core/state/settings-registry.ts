@@ -440,6 +440,13 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Bundle URL `stim android` prefetches to warm Metro',
   },
   {
+    key: 'ports.commands',
+    type: OBJECT,
+    scopes: PROJECT,
+    description:
+      'Commands for the servers on named ports, keyed by label: {"stop", "teardown", "resume"}, each an argv array run without a shell from the workspace root. stim ports get <label> records them with the allocation. stop runs for stim ports stop and the idle pass, teardown (else stop) when the workspace is removed, resume for stim revive after the idle pass stopped the server',
+  },
+  {
     key: 'idle.minutes',
     type: { kind: 'number', integer: true, minimum: 0 },
     scopes: EVERY,

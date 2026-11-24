@@ -59,6 +59,10 @@ function harness(overrides: Partial<ReviveDeps> = {}) {
       return { ok: true, deviceId: 'U1', deviceName: 'stim-app', launched: true };
     },
     detectProject: async () => ({ platforms: ['ios', 'android'], devServer: true }),
+    resumeServers: async (_root, labels) => {
+      calls.push(`resume ${labels.join(',')}`);
+      return { done: [`${labels.join(', ')}: my-db start`], failures: [] };
+    },
     ...overrides,
   };
   return { deps, calls, runs };
@@ -107,6 +111,7 @@ test('an idle-stopped workspace gets Metro, its simulator and the app it launche
         app: { bundleId: 'com.example.app', relaunched: true, launched: true },
       },
     ],
+    servers: [],
   });
   expect(reviveLines(result.facts, Date.parse('2026-11-02T00:32:00.000Z'))).toEqual([
     'Metro stopped idle 14h02m ago, restarted on port 8082.',
@@ -155,6 +160,44 @@ test.each<[string, Partial<ReviveDeps>]>([
   const result = await runRevive({ root: '/project', note: () => {}, deps });
   assert(!result.ok);
   expect(result.error.code).toBe('STIM_NO_METRO');
+  expect(calls).toEqual([]);
+});
+
+const withServers: ProjectRecord = {
+  ...project,
+  ports: { db: 8900, api: 8901, web: 8902 },
+  portCommands: { db: { stop: ['my-db', 'stop'], resume: ['my-db', 'start'] }, web: { stop: ['web', 'stop'] } },
+};
+const serversStopped = (state: WorkspaceState = idleState): WorkspaceState => ({
+  ...state,
+  portIdleStop: { at: '2026-11-01T10:31:00.000Z', failed: false, stopped: ['db', 'web'] },
+});
+
+test.each<[string, Partial<ReviveDeps>, string[]]>([
+  ['the idle pass stopped them', { readState: () => serversStopped() }, ['resume db', 'metro', 'ios']],
+  ['Stim never stopped them', {}, ['metro', 'ios']],
+  ['they are the only thing the idle pass stopped', { readState: () => serversStopped({}) }, ['resume db']],
+])(
+  'revive resumes the named-port servers with a resume command only when %s, before Metro',
+  async (_name, overrides, expected) => {
+    const { deps, calls } = harness({ getProject: () => withServers, ...overrides });
+    const result = await runRevive({ root: '/project', note: () => {}, deps });
+    assert(result.ok);
+    expect(calls).toEqual(expected);
+    expect(result.facts.revived.servers).toEqual(expected[0] === 'resume db' ? ['db: my-db start'] : []);
+  },
+);
+
+test('a resume command that fails refuses with STIM_PORT_RESUME_FAILED before Metro starts', async () => {
+  const { deps, calls } = harness({
+    getProject: () => withServers,
+    readState: () => serversStopped(),
+    resumeServers: async () => ({ done: [], failures: ['db (8900): my-db start exited with status 1'] }),
+  });
+  const result = await runRevive({ root: '/project', note: () => {}, deps });
+  assert(!result.ok);
+  expect(result.error.code).toBe('STIM_PORT_RESUME_FAILED');
+  expect(result.error.message).toContain('db (8900): my-db start exited with status 1');
   expect(calls).toEqual([]);
 });
 

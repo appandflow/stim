@@ -2,7 +2,13 @@ import { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join, win32 } from 'node:path';
 import { claimMetroPort, getProject, removeProject, upsertProject } from '../workspace/config.ts';
-import { clearNamedPorts, getNamedPort, releaseBrowserPort } from '../named-ports.ts';
+import {
+  clearNamedPorts,
+  getNamedPort,
+  parseStopCommand,
+  releaseBrowserPort,
+  runPortCommands,
+} from '../named-ports.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { findReclaimablePort } from '../ports.ts';
@@ -245,4 +251,113 @@ test('Metro reclamation and registry removal retain named allocations', async ()
   expect(await findReclaimablePort(root, async () => false)).toBeNull();
   expect(() => removeProject(missing)).toThrow('Named ports remain');
   expect(getProject(missing)?.ports).toEqual({ web: 8900 });
+});
+
+type CommandRun = { file: string; args: string[]; cwd: string | undefined };
+
+function commandExecutor(
+  listening: Set<number>,
+  outcome: (run: CommandRun) => void = () => {},
+  onPath: (name: string) => boolean = () => true,
+): CommandRun[] {
+  const runs: CommandRun[] = [];
+  vi.spyOn(listeners, 'readListeningPorts').mockImplementation(async () => new Set(listening));
+  const refuse = () => {
+    throw new Error('a server with a stop command must not be signalled or inspected with lsof');
+  };
+  setExecutor({
+    findExecutable: (name: string) => (onPath(name) ? `/bin/${name}` : null),
+    runFile: refuse,
+    runFileQuiet: refuse,
+    runFileAsync: async (file: string, args: string[], opts: { cwd?: string }) => {
+      const run = { file, args, cwd: opts.cwd };
+      runs.push(run);
+      outcome(run);
+      return 'Stopped.';
+    },
+  });
+  return runs;
+}
+
+const sharedStop = { stop: ['my-db', 'stop', '--id', 'app'] };
+
+test('ports stop runs a stop command its labels share once from the workspace root, then releases them', async () => {
+  upsertProject(root, { ports: { db: 8900, api: 8901 }, portCommands: { db: sharedStop, api: sharedStop } });
+  const listening = new Set([8900, 8901]);
+  const kill = vi.spyOn(process, 'kill');
+  const runs = commandExecutor(listening, () => listening.clear());
+  await clearNamedPorts(root, { stop: true, log: () => {}, platform: 'linux' });
+  expect(runs).toEqual([{ file: '/bin/my-db', args: ['stop', '--id', 'app'], cwd: root }]);
+  expect(kill).not.toHaveBeenCalled();
+  expect(getProject(root)?.ports).toEqual({});
+  expect(getProject(root)?.portCommands).toBeUndefined();
+});
+
+test.each<[string, (run: CommandRun) => void, string, boolean]>([
+  [
+    'exits with an error',
+    () => {
+      throw Object.assign(new Error('Command failed'), { status: 1, stdout: '', stderr: 'docker is not running' });
+    },
+    'my-db stop --id app exited with status 1: docker is not running; allocation kept',
+    true,
+  ],
+  ['exits while the port still listens', () => {}, 'exited, but port 8900 still has a listener', true],
+  ['is not on PATH', () => {}, 'my-db is not on PATH', false],
+])('a stop command that %s keeps the allocation and its command', async (_name, outcome, message, onPath) => {
+  upsertProject(root, { ports: { db: 8900 }, portCommands: { db: sharedStop } });
+  commandExecutor(new Set([8900]), outcome, () => onPath);
+  await expect(clearNamedPorts(root, { stop: true, log: () => {}, platform: 'linux' })).rejects.toThrow(message);
+  expect(getProject(root)?.ports).toEqual({ db: 8900 });
+  expect(getProject(root)?.portCommands).toEqual({ db: sharedStop });
+});
+
+test.each<[string, Record<string, string[]>, number[], string[] | null]>([
+  [
+    'a teardown command runs with nothing listening',
+    { stop: ['my-db', 'stop'], teardown: ['my-db', 'rm'] },
+    [],
+    ['rm'],
+  ],
+  ['a stop command stands in while its port listens', { stop: ['my-db', 'stop'] }, [8900], ['stop']],
+  ['a stop command does not run with nothing listening', { stop: ['my-db', 'stop'] }, [], null],
+])('workspace removal: %s, and the allocation is released', async (_name, commands, ports, args) => {
+  upsertProject(root, { ports: { db: 8900 }, portCommands: { db: commands } });
+  const listening = new Set(ports);
+  const runs = commandExecutor(listening, () => listening.clear());
+  await clearNamedPorts(root, { teardown: true, log: () => {}, platform: 'linux' });
+  expect(runs.map((run) => run.args)).toEqual(args ? [args] : []);
+  expect(getProject(root)?.ports).toEqual({});
+});
+
+test('a stop command never runs for a port that is a managed Metro reservation', async () => {
+  upsertProject(join(home, 'other'), { metroPort: 8900 });
+  upsertProject(root, { ports: { db: 8900 }, portCommands: { db: sharedStop } });
+  const runs = commandExecutor(new Set([8900]));
+  await expect(clearNamedPorts(root, { stop: true, log: () => {}, platform: 'linux' })).rejects.toThrow(
+    'reserved for managed Metro',
+  );
+  expect(runs).toEqual([]);
+  expect(getProject(root)?.ports).toEqual({ db: 8900 });
+});
+
+test('ports get records commands with the allocation, keeps them on a later plain get, and a new kind adds to them', async () => {
+  const port = await getNamedPort(root, 'db', { ...free, commands: { stop: ['my-db', 'stop'] } });
+  expect(await getNamedPort(root, 'db', free)).toBe(port);
+  await getNamedPort(root, 'db', { ...free, commands: { resume: ['my-db', 'start'] } });
+  expect(getProject(root)?.portCommands).toEqual({ db: { stop: ['my-db', 'stop'], resume: ['my-db', 'start'] } });
+  expect(() => parseStopCommand('my-db stop "$ID"', 'stop')).toThrow('without a shell');
+});
+
+test.each<[string, number[], boolean]>([
+  ['runs for a port with no listener and checks it listens after', [], true],
+  ['does not run while its port already listens', [8900], false],
+])('a resume command %s', async (_name, ports, ran) => {
+  upsertProject(root, { ports: { db: 8900 }, portCommands: { db: { resume: ['my-db', 'start'] } } });
+  const listening = new Set(ports);
+  const runs = commandExecutor(listening, () => listening.add(8900));
+  const result = await runPortCommands(root, 'resume', { labels: ['db'] });
+  expect(runs.length).toBe(ran ? 1 : 0);
+  expect(result).toEqual({ done: ran ? ['db (8900): my-db start'] : [], labels: ran ? ['db'] : [], failures: [] });
+  expect(getProject(root)?.ports).toEqual({ db: 8900 });
 });

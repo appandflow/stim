@@ -16,6 +16,7 @@ import type { RemoteDeviceBackend } from '../engine/device-remote.ts';
 import {
   isLayeredSetting,
   isJsonObject as isPlainObject,
+  type PortCommands,
   settingValueAt,
   setSettingValueAt,
   coerceSettingText,
@@ -775,6 +776,24 @@ export function metroCommandSettingError(settings: SettingsObject): string | nul
     return `metro.command must pass ${METRO_COMMAND_PORT} so the dev server listens on this workspace's reserved port.`;
   }
   return null;
+}
+
+/** The `ports.commands` entry declared for `label`, empty when none is; throws when the entry is invalid. */
+export function portCommandsSetting(settings: SettingsObject, label: string): PortCommands {
+  const all = settingValueAt(settings, 'ports.commands');
+  if (!isPlainObject(all) || !Object.hasOwn(all, label)) return {};
+  const entry = all[label];
+  const bad = (detail: string) => new Error(`ports.commands.${label} ${detail}`);
+  if (!isPlainObject(entry)) throw bad('must be an object with stop, teardown or resume.');
+  const commands: PortCommands = {};
+  for (const [kind, command] of Object.entries(entry)) {
+    if (kind !== 'stop' && kind !== 'teardown' && kind !== 'resume')
+      throw bad(`has an unknown key ${kind}; use stop, teardown or resume.`);
+    if (!Array.isArray(command) || !command.every((arg) => typeof arg === 'string') || !command[0]?.trim())
+      throw bad(`.${kind} must be a non-empty array of strings whose first entry is the program to run.`);
+    commands[kind] = command;
+  }
+  return commands;
 }
 
 export function runnableMetroCommand(settings: SettingsObject): string[] | null {

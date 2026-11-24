@@ -23,6 +23,7 @@ import { runDormantDependencies } from './dependencies.ts';
 import { createFingerprintPrecompute, type PrecomputeInput } from './fingerprint-precompute.ts';
 import { configuredDaemonMode, daemonMode } from './mode.ts';
 import { onDiskVolumes, runIdlePass, type IdlePassInput } from './idle.ts';
+import { runPortStopPass } from './port-stops.ts';
 import { watchedStep } from './step-timing.ts';
 import { idleOutputBytes, runLadder } from './ladder.ts';
 import { measureDisk, measureMemory, measureTick, type TickMeasurement } from './measure.ts';
@@ -366,6 +367,9 @@ async function homePasses(
           : {}),
     }),
   );
+  operation.signal.throwIfAborted();
+  // @ref LLP 0027#the-idle-pass-stops-labelled-servers -- a stopped stack frees memory, its clients are invisible to Stim
+  await watchedStep(log, 'port_stops', () => runPortStopPass({ config, act, log, operation }));
   operation.signal.throwIfAborted();
   const actions: DaemonLadderAction[] = [
     ...parkedActions,
