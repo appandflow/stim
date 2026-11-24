@@ -99,6 +99,10 @@ const RECORDER_STOP: AgentDriverStopStep[] = [
   ['SIGINT', 10_000],
   ['SIGKILL', 2000],
 ];
+// agent-device 0.21.42 `daemon stop` waits DAEMON_TEARDOWN_GRACE_MS (75 s; 10 s up to 0.21.39) after SIGTERM, 2 s after
+// SIGKILL, then up to 1 s each for a startup join and the registration lock before it removes daemon.json, and it
+// accepts no shorter grace (callstack/agent-device#4806).
+const AGENT_DEVICE_RETIRE_MS = 75_000 + 2000 + 1000 + 1000;
 const CAP_RETRY_MS = 30_000;
 const CAP_ATTEMPTS = 10;
 // agent-device deletes a downloadable artifact nobody fetched after 15 minutes (ARTIFACT_CLEANUP_TIMEOUT_MS).
@@ -392,7 +396,6 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     }
     mkdirSync(this.options.stateDir, { recursive: true, mode: 0o700 });
     chmodSync(this.options.stateDir, 0o700);
-    const previous = this.options.device ? this.currentLaunch() : null;
     const taken = await this.host.claims.take(this.options.claimRoot, 'agent-device daemon');
     if (!('claim' in taken))
       throw new Error(`The agent-device daemon is held by another process: ${this.options.claimRoot}`);
@@ -402,6 +405,8 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     this.androidVerifiedAt = 0;
     if (this.options.device) {
       try {
+        this.launchId = null;
+        const previous = this.currentLaunch();
         if (previous) await this.retireLaunch(previous);
         this.launchId = randomBytes(8).toString('hex');
         this.prepareLaunchDir();
@@ -740,7 +745,10 @@ export class AgentDeviceDriver implements HostedAgentDriver {
         execFile(
           invocation.command,
           [...invocation.args, 'daemon', 'stop', '--state-dir', stateDir, '--json'],
-          { env: { ...this.options.env, AGENT_DEVICE_NO_UPDATE_NOTIFIER: '1' }, timeout: this.options.stopTimeoutMs },
+          {
+            env: { ...this.options.env, AGENT_DEVICE_NO_UPDATE_NOTIFIER: '1' },
+            timeout: AGENT_DEVICE_RETIRE_MS + this.options.stopTimeoutMs,
+          },
           (error, out) => resolve(error ? null : String(out)),
         );
       });

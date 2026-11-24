@@ -73,14 +73,19 @@ successor", not "no daemon this driver started still runs".
   and agent-device's idle reaper ends it: 5 minutes after it last had work
   (`AGENT_DEVICE_DAEMON_IDLE_TIMEOUT_MS`), unless it holds a lease, which a
   failed launch never put.
-- Every launch first retires the launch recorded in `<state
-dir>/agent-device-launch`. Retiring needs `agent-device daemon stop
+- Every launch first takes the daemon claim, then retires the launch recorded
+  in `<state dir>/agent-device-launch`. Retiring needs `agent-device daemon stop
 --state-dir <launch>/state --json` to report `not-running`, unless that
   directory has neither `daemon.json` nor `daemon.lock`, and needs this
   device's agent-device iOS runners stopped. Otherwise the launch refuses and
   releases the claim, and a stop refuses and keeps it. So a daemon that
   registered and survived a server crash is never left driving the device
   beside its replacement.
+- That command's deadline covers agent-device's own forced stop: the SIGTERM
+  grace (75 seconds in 0.21.42, which accepts no shorter one), the SIGKILL wait
+  and its metadata cleanup, plus the driver's stop timeout. A daemon that
+  hangs while it shuts down is then force-stopped by agent-device instead of
+  making every retry refuse.
 - The driver deletes a launch directory only after it stopped that launch's
   captured daemon. `stim gc` removes a launch directory idle for 24 hours once
   `agent-device daemon status --state-dir <dir>/state --json` reports its
