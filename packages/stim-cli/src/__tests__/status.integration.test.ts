@@ -1,3 +1,4 @@
+import { daemonSnapshotFile } from '@stim-cli/core/state';
 import { isRpcEvent } from '@stim-cli/core/receive-protocol';
 import { writeHostedNative } from '../workspace/placement-state.ts';
 import type { HostedIosPlacement, HostedAndroidPlacement } from '@stim-cli/core/state';
@@ -1791,4 +1792,65 @@ describe('status reads the shared device listing', () => {
       expect(result.payload.capacity.devices.inUse).toBe(3);
     },
   );
+});
+
+test('status reports a runaway Apple service with both remedies in plain and JSON output', async () => {
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+  saveTwoSimProjects();
+  setBootedSims(
+    `${TWO_SIMS_PS}\n123 1 1024 198.0 ${START} /usr/libexec/PerfPowerServices\n124 1 1024 200.0 ${START} /tmp/PerfPowerServices`,
+  );
+  const lines = await runStatus();
+  assert(
+    lines.some(
+      (line) =>
+        line.includes('Apple service PerfPowerServices (pid 123)') &&
+        line.includes('sudo killall -TERM PerfPowerServices') &&
+        line.includes('stim service install --helper'),
+    ),
+  );
+  assert(!lines.some((line) => line.includes('Apple service PerfPowerServices (pid 124)')));
+  const payload = await runStatusJson();
+  expect(payload.appleServices.warnings).toEqual([
+    expect.objectContaining({
+      name: 'PerfPowerServices',
+      pid: 123,
+      commands: ['sudo killall -TERM PerfPowerServices', 'stim service install --helper'],
+    }),
+  ]);
+});
+
+test('idle status uses stimd observations without another process listing and discards stale warnings', async () => {
+  const file = daemonSnapshotFile();
+  mkdirSync(join(file, '..'), { recursive: true });
+  const snapshot = {
+    version: 1,
+    pid: process.pid,
+    startedAt: new Date().toISOString(),
+    intervalMs: 60_000,
+    tickAt: new Date().toISOString(),
+    measurement: {
+      appleServices: {
+        helper: 'not registered',
+        warnings: [
+          {
+            name: 'PerfPowerServices',
+            pid: 123,
+            cpu: 198,
+            rss: 1024,
+            commands: ['sudo killall -TERM PerfPowerServices', 'stim service install --helper'],
+          },
+        ],
+        restarts: [],
+      },
+    },
+  };
+  writeFileSync(file, JSON.stringify(snapshot));
+  const calls: string[] = [];
+  setBootedSims('', calls, 'Shutdown');
+  expect((await runStatusJson()).appleServices.warnings[0].pid).toBe(123);
+  expect(calls).not.toContain('ps');
+  snapshot.tickAt = new Date(Date.now() - 11 * 60_000).toISOString();
+  writeFileSync(file, JSON.stringify(snapshot));
+  expect((await runStatusJson()).appleServices.warnings).toEqual([]);
 });

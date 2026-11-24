@@ -1,3 +1,4 @@
+import { appleServicesLines } from '../apple-services.ts';
 import { maintenanceStatus, maintenanceLines } from '../stimd/passes/status.ts';
 import { probeDaemonAnswer, withAnswer } from '../daemon/answering.ts';
 import {
@@ -234,6 +235,7 @@ export function renderStatus(
   {
     archived,
     archivedUsage: usage,
+    appleServices,
     projects,
     states,
     labelOnlyRoots,
@@ -289,6 +291,7 @@ export function renderStatus(
       simctlAvailable: simsAvailable,
       machine,
       maintenance,
+      appleServices,
       daemon,
     } satisfies StatusPayload;
     out.push(JSON.stringify(settle(payload)));
@@ -303,6 +306,7 @@ export function renderStatus(
   out.push(...waitingLines(daemon, now));
   out.push(...unverifiedLines(daemon, now).map((line) => chalk.yellow(line)));
   out.push(...crashLines(daemon).map((line) => chalk.yellow(line)));
+  out.push(...appleServicesLines(appleServices));
   out.push(...maintenanceLines(maintenance).map((line) => chalk.dim(line)));
   if (usage.count) out.push(`Archived: ${plural(usage.count, 'workspace')}, ${formatBytes(usage.bytes)}`);
 

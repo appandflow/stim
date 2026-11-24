@@ -419,6 +419,41 @@ written by a newer Stim -- costs one dim line on stderr and is otherwise left
 alone; only the next \`ios\` or \`android\` run moves an unparseable one aside
 to stats.json.corrupt-<unix ms> and starts a new one.`,
   sections: {
+    helper: {
+      summary: 'Opt-in macOS runaway service helper',
+      body: () => `Replace stim with npx stim if it is not installed globally.
+
+stim service install --helper registers only the root helper in an installed,
+Developer ID-signed, notarized Stim Host.app (~/Applications or /Applications).
+Approve Stim Host in System Settings > General > Login Items & Extensions with
+an administrator password. Desktop preferences has the same toggle and a button
+opening that pane. stim service status (--json too) reports registered,
+requires approval, not registered, or unavailable on this OS.
+stim service uninstall --helper unregisters only the helper. Do not combine
+--helper with server service options. Linux and Windows refuse these mutations.
+
+The helper has no inbound IPC or configurable thresholds. Once a minute it
+matches exact executable paths for PerfPowerServices, mds_stores,
+mdworker_shared, photoanalysisd and mediaanalysisd under /System or /usr/libexec.
+Above 150% CPU or 2 GiB RSS for 10 continuous minutes, it rechecks the process
+identity and sends SIGTERM, allowing launchd to restart it. It attempts at most
+one restart per service per hour, including across helper restarts. It never
+signals WindowServer, launchd, coreaudiod, CoreSimulator or any other process.
+This explicit opt-in exception does not change owned-device teardown.
+
+Without an enabled helper, stimd only reports excessive usage, with both
+commands: sudo killall -TERM <name> for a one-off restart, and
+stim service install --helper for automatic restarts. Never run either without
+the user's authorization. stimd never kills these processes itself. The helper
+runs independently of daemon.mode and STIM_HOME until unregistered.
+
+stim status (--json too) and the daemon log report recent successful restart
+signals from /Library/Logs/Stim/helper.ndjson. The root-owned, world-readable
+log records samples, attempts and signal results; at 4 MiB it rotates to .1.
+A successful signal means a restart was requested, not that launchd's replacement
+has been observed. An ad hoc build can compile but cannot register the daemon.
+After updating Stim Host, unregister and register the helper again.`,
+    },
     archive: {
       summary: 'retained workspace history and explicit archive cleanup',
       body: () => `ARCHIVE

@@ -63,3 +63,4 @@ export * from './rescued.ts';
 export * from './setup-journal.ts';
 export * from './status-views.ts';
 export * from './keyed-delta.ts';
+export * from './apple-services.ts';

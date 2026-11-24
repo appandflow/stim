@@ -1,3 +1,4 @@
+import { readAppleServicesStatus } from './apple-services.ts';
 import type { readHostedAndroidStatus } from './device-host/hosted-android-status.ts';
 import { pendingItemTrash } from './workspace/item-trash.ts';
 import type { readHostedIosStatus } from './device-host/hosted-ios-status.ts';
@@ -189,6 +190,7 @@ function doctorRunTimes(proj: ProjectRecord): EnvironmentState['doctorRuns'] {
 }
 
 export interface StatusSnapshot {
+  appleServices?: import('@stim-cli/core/state').AppleServicesStatus;
   pendingDelete?: { count: number; bytes: number };
   archived: ArchivedWorkspace[];
   archivedUsage: ArchivedUsage;
@@ -562,6 +564,7 @@ async function readStatusFacts(probes: StatusProbes, gitScope: GitScope, cwd: st
   const simNames = Object.fromEntries(sims.map((sim) => [sim.udid.toUpperCase(), sim.name]));
   const busy = sims.some((sim) => sim.state === 'Booted');
   const machine = await readMachineUsage({ states, roots, simNames, tables, busy, probes });
+  const appleServices = await readAppleServicesStatus(tables.host, Boolean(machine));
   const { maxBuilds, maxDevices } = admissionLimits();
   const platformLimits = getPlatformDeviceLimits();
   const slotUsage: StatusSnapshot['slotUsage'] = {
@@ -608,6 +611,7 @@ async function readStatusFacts(probes: StatusProbes, gitScope: GitScope, cwd: st
     simNames,
     probes,
     gitCommonDirs: commonDirs,
+    appleServices,
   };
 }
 
@@ -723,6 +727,7 @@ export async function refreshLightFacts(
     readLogDerivedFacts(snapshot.states);
     if (tables) readDeviceProcesses(snapshot.states, snapshot.tables, null);
   });
+  if (tables) snapshot.appleServices = await readAppleServicesStatus(snapshot.tables.host, Boolean(snapshot.machine));
   if (machine && snapshot.machine) {
     snapshot.machine = await readMachineUsage({ ...snapshot, busy: true });
   }

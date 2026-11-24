@@ -2,19 +2,19 @@
   "unit": "bytes of UTF-8 text printed by stim guide without the status block; the skill is the file size",
   "skill": 1000,
   "index": 2100,
-  "reactNativePath": 13050,
+  "reactNativePath": 13100,
   "defaults": {
     "section": 10000,
     "topic": 16000
   },
   "topics": {
-    "agent": 4150,
+    "agent": 4200,
     "errors": 5250,
     "api": 24000,
     "metro": 27500,
     "logs": 51500,
     "lifecycle": 20750,
-    "cleanup": 29450,
+    "cleanup": 29600,
     "settings": 137250,
     "share": 29250,
     "macos": 35750
@@ -26,7 +26,7 @@
     "agent report": 1500,
     "agent logs": 1050,
     "agent phone": 1000,
-    "facts payloads": 37900,
+    "facts payloads": 38500,
     "facts gc": 26400,
     "facts status": 52850,
     "facts stats": 10500,

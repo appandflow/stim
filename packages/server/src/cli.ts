@@ -508,6 +508,7 @@ export async function runService(
   sub: string,
   values: {
     label?: string;
+    helper?: import('@stim-cli/core/state').HelperState;
     serve?: boolean;
     json?: boolean;
     port?: string;
@@ -542,7 +543,18 @@ export async function runService(
     } else if (sub === 'status') {
       const status = await serviceStatus(label);
       const panes = status.manager === 'launchd' ? await hostPermissionPanes() : { screen: '', control: '' };
-      console.log(values.json ? JSON.stringify(status) : statusLines(status, panes).join('\n'));
+      console.log(
+        values.json
+          ? JSON.stringify({ ...status, helper: values.helper })
+          : [
+              ...statusLines(status, panes),
+              ...(values.helper
+                ? [
+                    `Runaway service helper: ${values.helper}${values.helper === 'requires approval' ? '; approve Stim Host in System Settings > General > Login Items & Extensions' : ''}`,
+                  ]
+                : []),
+            ].join('\n'),
+      );
     } else {
       for (const line of await uninstallService(label)) console.log(line);
     }

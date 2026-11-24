@@ -1,3 +1,4 @@
+import type { AppleServicesStatus } from './apple-services.ts';
 import type { HostedAndroidStatus } from './hosted-android.ts';
 import type { HostedIosStatus } from './hosted-ios.ts';
 import type { MaintenanceStatus } from './maintenance.ts';
@@ -939,6 +940,7 @@ export interface MachineUsageState {
 
 /** The payload `stim status --json` prints, and `status --watch --json` prints on each change. */
 export interface StatusPayload {
+  appleServices?: AppleServicesStatus;
   maintenance?: MaintenanceStatus;
   daemon?: DaemonStatus;
   archived?: ArchivedWorkspace[];

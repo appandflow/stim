@@ -118,12 +118,20 @@ jobs:
       - name: Build, sign and notarize
         run: packages/server/host/release.sh "$VERSION"
 
+      - name: Check the embedded helper
+        run: |
+          plutil -lint "packages/server/host/build/Stim Host.app/Contents/Library/LaunchDaemons/dev.stim.host.helper.plist"
+          codesign --verify --strict "packages/server/host/build/Stim Host.app/Contents/MacOS/stim-host-helper"
+
       - name: Check the signature install requires
         if: env.HOST_SIGNING_IDENTITY != ''
         run: |
           codesign --verify --strict --deep \
             -R='identifier "dev.stim.host" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = "R7E8P23K3N"' \
             "packages/server/host/build/Stim Host.app"
+          codesign --verify --strict \
+            -R='identifier "dev.stim.host.helper" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = "R7E8P23K3N"' \
+            "packages/server/host/build/Stim Host.app/Contents/MacOS/stim-host-helper"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

@@ -1,3 +1,5 @@
+import { readHostProcessTableAsync } from '../devices/activity.ts';
+import { appleServicesStatus, helperStatus } from '../apple-services.ts';
 import { cpus, freemem, loadavg, totalmem } from 'node:os';
 import { configDir, type StimContext } from '@stim-cli/core';
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
@@ -178,7 +180,9 @@ export async function measureTick(
     }
   }
   signal?.throwIfAborted();
-  const devices = await collectOwnedDeviceActivityAsync(config, sims ?? [], now, undefined, signal, operation);
+  const host = process.platform === 'darwin' ? await readHostProcessTableAsync(signal, operation) : undefined;
+  const devices = await collectOwnedDeviceActivityAsync(config, sims ?? [], now, undefined, signal, operation, host);
+  const appleServices = host === undefined ? undefined : appleServicesStatus(host ?? [], await helperStatus(), now);
   signal?.throwIfAborted();
   const use = probe ? await probeFocusedDeviceUse({ signal }) : null;
   const used = use ? focusedSlots(use, config, devices) : [];
@@ -189,6 +193,7 @@ export async function measureTick(
     simsError,
     devices,
     measurement: {
+      ...(appleServices ? { appleServices } : {}),
       disk,
       memory,
       load1: loadavg()[0] ?? 0,

@@ -525,6 +525,14 @@ leased until <time>" for each one.`,
                   started again (guide services); [] when none. One that
                   does not start refuses with STIM_SERVICE_FAILED
 
+  stim service status --json
+  Adds helper: registered | requires approval | not registered |
+  unavailable on this OS. See stim guide cleanup helper.
+  stim status --json adds appleServices on macOS: { helper, warnings:
+  [{ name, pid, cpu, rss, commands }], restarts:
+  [{ at, name, pid, cpu, rss, seconds }] }. at is epoch milliseconds, rss
+  is bytes, cpu is percent of one core. Restarts cover the last hour.
+
   stim services --json
 
   { services: [{ name, kind, running, ports, stoppedBy, pid?, log?,

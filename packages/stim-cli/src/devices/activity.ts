@@ -502,7 +502,11 @@ export async function readHostProcessTableAsync(
 
 /** Reads bounded host/instrumentation children asynchronously, sharing observations across device targets. */
 export function createActivityReaderAsync(
-  options: Omit<ActivityReaderOptions, 'tables'> & { signal?: AbortSignal; operation?: StimContext } = {},
+  options: Omit<ActivityReaderOptions, 'tables'> & {
+    signal?: AbortSignal;
+    operation?: StimContext;
+    hostProcesses?: HostProcess[] | null;
+  } = {},
 ): (target: ActivityTarget) => Promise<DeviceActivity> {
   const exec = getExecutor();
   let host: Promise<HostProcess[] | null> | undefined;
@@ -519,7 +523,10 @@ export function createActivityReaderAsync(
   });
   const probe = async (target: ActivityTarget): Promise<DeviceActivity> => {
     options.signal?.throwIfAborted();
-    host ??= readHostProcessTableAsync(options.signal, options.operation);
+    host ??=
+      options.hostProcesses === undefined
+        ? readHostProcessTableAsync(options.signal, options.operation)
+        : Promise.resolve(options.hostProcesses);
     hostValue = await host;
     options.signal?.throwIfAborted();
     if (target.platform === 'android') {

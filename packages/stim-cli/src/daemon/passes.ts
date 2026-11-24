@@ -1,3 +1,4 @@
+import { appleServicesLines } from '../apple-services.ts';
 import { PREDICTION_WINDOW_MS } from './pacer.ts';
 import { keepReserve } from '../disk-reserve.ts';
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
@@ -323,6 +324,8 @@ async function homePasses(
   );
   operation.signal.throwIfAborted();
   const measureMs = lap();
+  if (measured.measurement.appleServices)
+    for (const line of appleServicesLines(measured.measurement.appleServices)) log('info', 'apple_service', line);
   const { thresholds, error } = diskThresholds(config);
   if (error) log('warn', 'pressure_settings_invalid', `${error}; that disk threshold is off until it is fixed`);
   let warningSince = memoryWarningSince;

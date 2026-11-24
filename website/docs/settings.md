@@ -5,6 +5,8 @@ description: 'Project, repository, machine, and environment settings'
 ---
 
 import StimTabs from '@site/src/components/StimTabs';
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
 import ArchiveSettings from './_generated/settings-archive.md';
 import BudgetSettings from './_generated/settings-budget.md';
 import EnvSettings from './_generated/settings-env.md';
@@ -1253,3 +1255,61 @@ Try this with your agent:
 Run stim ios with STIM_TRACE=/tmp/ios.json, then read the file and tell me which
 build phase and which child process took the most time.
 ```
+
+## Runaway Apple background services
+
+The optional root helper in a current Developer ID-signed, notarized Stim Host.app
+restarts only PerfPowerServices, mds_stores, mdworker_shared, photoanalysisd and
+mediaanalysisd. Install Stim Host in `~/Applications` or `/Applications` first.
+Registration requires macOS and administrator approval in **System Settings >
+General > Login Items & Extensions**. Stim Desktop preferences offers the same
+toggle and a button opening that pane.
+
+<Tabs groupId="stim-invocation" defaultValue="global">
+<TabItem value="global" label="Global">
+
+```sh
+stim service install --helper
+stim service status
+stim service uninstall --helper
+```
+
+</TabItem>
+<TabItem value="npx" label="npx">
+
+```sh
+npx stim service install --helper
+npx stim service status
+npx stim service uninstall --helper
+```
+
+</TabItem>
+</Tabs>
+
+These install/uninstall commands affect only the helper; run server service
+options separately. `service status --json` includes `helper`, with `registered`,
+`requires approval`, `not registered`, or `unavailable on this OS`.
+
+The helper samples every minute using exact system executable paths. More than
+150% CPU or 2 GiB resident memory for 10 continuous minutes triggers SIGTERM so
+launchd can restart the service, at most once per service per hour. Limits are
+compiled in. There is no inbound IPC. WindowServer, launchd, coreaudiod,
+CoreSimulator and all other processes are excluded. This opt-in exception does
+not change device ownership or teardown. The helper runs independently of
+`daemon.mode` and `STIM_HOME` until you unregister it.
+
+Without an enabled helper, `stim status` and the daemon log show excess usage
+and suggest both `sudo killall -TERM <name>` for a one-off restart and
+`stim service install --helper`. Stimd never kills these services itself.
+With the helper enabled, status reports successful restart signals from the
+last hour; `status --json` includes `appleServices` with `helper`, `warnings`
+(including both `commands`) and `restarts`. A signal receipt does not verify
+that launchd has started a replacement.
+
+The root-owned, world-readable `/Library/Logs/Stim/helper.ndjson` records samples,
+restart attempts and signal results. It rotates at 4 MiB, keeping `.1`, and the
+hourly limit survives helper restarts. After updating Stim Host, unregister and
+register the helper again. Ad hoc signed development builds cannot register it.
+
+Try this agent prompt: "Check `stim status` for runaway Apple services. Show me
+the affected processes and both remedies before enabling the root helper."
