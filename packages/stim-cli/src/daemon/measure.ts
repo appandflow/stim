@@ -187,7 +187,8 @@ export async function measureTick(
       ? await readHostProcessTableAsync(signal, operation)
       : undefined;
   const devices = await collectOwnedDeviceActivityAsync(config, sims ?? [], now, undefined, signal, operation, host);
-  const appleServices = host === undefined ? undefined : appleServicesStatus(host ?? [], await helperStatus(), now);
+  const appleServices =
+    host === undefined ? undefined : appleServicesStatus(host ?? [], await helperStatus(), Date.now());
   signal?.throwIfAborted();
   const use = probe ? await probeFocusedDeviceUse({ signal }) : null;
   const used = use ? focusedSlots(use, config, devices) : [];

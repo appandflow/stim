@@ -79,7 +79,8 @@ test.each([
   ['fresh success', { at: (now - 179_999) / 1000, ok: true }, true],
   ['three minutes old', { at: (now - 180_000) / 1000, ok: true }, false],
   ['failed', { at: now / 1000, ok: false, error: 'process listing failed' }, false],
-  ['future', { at: (now + 1) / 1000, ok: true }, false],
+  ['refreshed while the check ran', { at: (now + 4_000) / 1000, ok: true }, true],
+  ['more than a minute in the future', { at: (now + 60_001) / 1000, ok: true }, false],
 ])('a %s heartbeat determines health', (_name, heartbeat, healthy) => {
   writeFileSync(join(logs.dir, 'helper.heartbeat'), JSON.stringify(heartbeat));
   const result = readHelperHeartbeat();

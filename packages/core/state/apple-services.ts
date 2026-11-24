@@ -32,7 +32,7 @@ export function readHelperHeartbeat(): HelperHeartbeat | undefined {
 }
 
 export function helperHealthy(heartbeat: HelperHeartbeat | undefined, now: number = Date.now()): boolean {
-  return Boolean(heartbeat?.ok && heartbeat.at <= now && now - heartbeat.at < 180_000);
+  return Boolean(heartbeat?.ok && heartbeat.at - now <= 60_000 && now - heartbeat.at < 180_000);
 }
 
 export interface AppleServiceRestart {
