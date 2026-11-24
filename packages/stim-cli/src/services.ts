@@ -345,6 +345,8 @@ async function resolveService(
     const argv = definition[key];
     if (argv) record[key] = argv.map((arg) => substitute(arg, values, key));
   }
+  if (!definition.orphanTeardown && definition.teardown?.some((arg) => placeholders(arg).includes('id')))
+    record.orphanTeardown = record.teardown;
   return record;
 }
 

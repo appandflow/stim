@@ -1,4 +1,16 @@
-import { declaredServicesFrom, startOrder, substitute } from '../services.ts';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { resetExecutor, setExecutor, type Executor } from '../exec.ts';
+import {
+  declaredServicesFrom,
+  serviceId,
+  serviceRecords,
+  startOrder,
+  startServices,
+  substitute,
+  teardownServices,
+} from '../services.ts';
 
 const values = { web: '8900', api: '8901', id: 'web-0123456789abcdef', dir: '/w/app', 'db.pg': '8902' };
 
@@ -57,4 +69,54 @@ test('a service that names another service starts after it, and selecting one in
     ).map((each) => each.name);
   expect(order(['webhooks', 'api', 'db'])).toEqual(['db', 'api', 'webhooks']);
   expect(order(['webhooks'])).toEqual(['db', 'api', 'webhooks']);
+});
+
+describe('teardown after the workspace folder is gone', () => {
+  let home: string;
+  let root: string;
+
+  beforeEach(() => {
+    home = realpathSync(mkdtempSync(join(tmpdir(), 'stim-services-')));
+    root = join(home, 'app');
+    mkdirSync(root);
+    writeFileSync(join(root, 'package.json'), '{}');
+    process.env.STIM_HOME = join(home, 'stim');
+  });
+
+  afterEach(() => {
+    resetExecutor();
+    rmSync(home, { recursive: true, force: true });
+    delete process.env.STIM_HOME;
+  });
+
+  test.each([
+    { name: 'reuses teardown naming {id}', teardown: 'db down --id {id}', expected: ['down', '--id'] },
+    { name: 'skips teardown without {id}', teardown: 'db down', expected: null },
+    {
+      name: 'prefers an explicit orphanTeardown',
+      teardown: 'db down --id {id}',
+      orphanTeardown: 'db orphan --id {id}',
+      expected: ['orphan', '--id'],
+    },
+    { name: 'skips teardown with literal {{id}}', teardown: 'db down --id {{id}}', expected: null },
+  ])('$name', async ({ teardown, orphanTeardown, expected }) => {
+    writeFileSync(
+      join(root, '.stim.json'),
+      JSON.stringify({ services: { db: { start: 'db up', stop: 'db stop', teardown, orphanTeardown } } }),
+    );
+    const runFile = vi.fn<Executor['runFile']>(() => '');
+    setExecutor({ runFile, runFileQuiet: () => '', findExecutable: (file) => (file === 'db' ? file : null) });
+    expect(await startServices(root, 'db')).toMatchObject([{ outcome: 'started' }]);
+    runFile.mockClear();
+    rmSync(root, { recursive: true });
+
+    const outcomes = await teardownServices(root);
+    const notTornDown = expect.stringContaining('not torn down: no orphanTeardown');
+    const fromHome = expect.objectContaining({ cwd: homedir() });
+    const detail = expected ? 'torn down' : notTornDown;
+    const calls = expected ? [['db', [...expected, serviceId(root, 'db')], fromHome]] : [];
+    expect(outcomes).toEqual([{ name: 'db', outcome: 'torn-down', detail }]);
+    expect(runFile.mock.calls).toEqual(calls);
+    expect(serviceRecords(root)).toEqual({});
+  });
 });
