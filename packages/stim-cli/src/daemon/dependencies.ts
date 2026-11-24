@@ -47,7 +47,7 @@ import {
   idleStageCandidates,
   sourceCheckoutIdle,
   sourceDormantAfterMs,
-  stillIdle,
+  notIdleReason,
   type DeviceReading,
   type StageCandidate,
 } from './stages.ts';
@@ -406,12 +406,14 @@ async function stillUnused(
   setting?: string,
 ): Promise<string | null> {
   const [first] = keys;
-  if (!source)
-    return first && !(await stillIdle(first, idleMs, { operation, setting })) ? 'it is no longer idle' : null;
-  const held = new Set(workspaceKeys(keys));
-  for (const key of new Set([...held, worktree]))
-    if (!(await stillIdle(key, idleMs, { operation, full: true, locked: held.has(key), setting })))
-      return `${key} is no longer idle`;
+  if (!source) {
+    const why = first ? await notIdleReason(first, idleMs, { operation, setting }) : null;
+    return why ? `it is no longer idle: ${why}` : null;
+  }
+  for (const key of new Set([...workspaceKeys(keys), worktree])) {
+    const why = await notIdleReason(key, idleMs, { operation, full: true, setting });
+    if (why) return `${key} is no longer idle: ${why}`;
+  }
   return Date.now() - warmedFromAt(keys) < idleMs ? 'a worktree warm copied from it since' : null;
 }
 

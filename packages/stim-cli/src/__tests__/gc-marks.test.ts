@@ -1006,6 +1006,49 @@ describe('gc marks written by the lane', () => {
     return { root, modules, age, old, cache };
   };
 
+  describe.skipIf(process.platform === 'win32')('the acting dormant stage', () => {
+    const dormant = () =>
+      runDormantDependencies({ config, act: true, marks: true, log: () => {}, ...reading, operation: testContext() });
+    const installed = (root: string) => {
+      const modules = join(root, 'node_modules');
+      mkdirSync(modules);
+      writeFileSync(join(modules, 'dependency.js'), 'installed');
+      return modules;
+    };
+    const age = (path: string) => {
+      const at = new Date(Date.now() - 20 * day);
+      for (const entry of readdirSync(path, { withFileTypes: true })) {
+        if (entry.isDirectory()) age(join(path, entry.name));
+        utimesSync(join(path, entry.name), at, at);
+      }
+      utimesSync(path, at, at);
+    };
+
+    it('takes the node_modules of a source checkout with no workspace record that a discovered root holds', async () => {
+      const root = checkout('recordless-source', 20 * day);
+      const modules = installed(root);
+      config.idle = { dormantDays: 0, sourceDormantDays: 1 };
+      saveConfig(config);
+      age(roots);
+      mkdirSync(dirname(diskUsageCacheFile(modules)), { recursive: true });
+      writeFileSync(
+        diskUsageCacheFile(modules),
+        JSON.stringify({
+          path: modules,
+          bytes: 1024 ** 3,
+          privateBytes: 1024 ** 3,
+          measuredAt: new Date().toISOString(),
+          signature: treeSignature(modules),
+        }),
+      );
+
+      expect(await dormant()).toEqual([
+        expect.objectContaining({ kind: 'delete-dependencies', target: modules, outcome: 'done' }),
+      ]);
+      expect(existsSync(modules)).toBe(false);
+    }, 20_000);
+  });
+
   describe.skipIf(process.platform === 'win32')('normal source dependency selection', () => {
     it('normal source dependencies select the saved paths and preserve a new unmarked tree', async () => {
       const { root, modules, age, cache } = await normalSourceDependencies();
