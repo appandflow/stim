@@ -440,6 +440,13 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Bundle URL `stim android` prefetches to warm Metro',
   },
   {
+    key: 'services',
+    type: OBJECT,
+    scopes: PROJECT,
+    description:
+      'Workspace services keyed by name, started by stim services start in declaration order. "start" is the command; without a "stop" command Stim runs it as a process it supervises and stops by signal, with one it must return once the service runs. Optional: "cwd", "ports" (named port labels, each to an environment variable or null), "idEnv", "env", "teardown", "orphanTeardown", "ready". The idle pass stops a service Stim started, stim revive starts it again, workspace removal tears it down',
+  },
+  {
     key: 'idle.minutes',
     type: { kind: 'number', integer: true, minimum: 0 },
     scopes: EVERY,

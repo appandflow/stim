@@ -192,6 +192,18 @@ function dependencyEditsLines({ path, dependencyEdits = [] }: EnvironmentState):
 }
 
 /** The workspace's stage and how long it has been in it: running, idle, dormant or stopped. */
+function serviceLines({ services = [] }: EnvironmentState): string[] {
+  return services.map((service) => {
+    const ports = Object.entries(service.ports)
+      .map(([label, port]) => `${label} ${port}`)
+      .join(', ');
+    const label = service.running
+      ? chalk.green('running')
+      : chalk.dim(service.stoppedBy === 'idle' ? 'stopped idle; stim revive starts it' : 'stopped');
+    return `  service ${service.name}: ${label}${ports ? chalk.dim(` (${ports})`) : ''}`;
+  });
+}
+
 function stageLine(state: EnvironmentState, snapshot: DaemonSnapshot | null, now: number): string {
   if (state.dormantStage) {
     const { at, deletedDevices, archived } = state.dormantStage;
@@ -343,6 +355,7 @@ export function renderStatus(
         out.push(`  tunnel: ${provider}${provider === 'tailscale' ? ' (tailnet-only)' : ''} ${url}`);
       }
     }
+    out.push(...serviceLines(state));
     if (state.supervisor) {
       const health = state.supervisor.healthy ? chalk.green('healthy') : chalk.yellow('not answering');
       const mode = state.supervisor.mode ? chalk.dim(` (${state.supervisor.mode})`) : '';

@@ -344,6 +344,22 @@ its reported load:
 }
 ```
 
+## `services`
+
+```text
+stim services [--json]
+stim services start [name] [--json]
+stim services stop [name] [--json]
+stim services env [name] [--json]
+```
+
+Starts, stops and lists the workspace services the project declares in the
+`services` setting, each on its own named ports. `start` starts them in
+dependency order and waits for each to be ready; `stop` stops them and keeps
+their data; `env` prints `export` lines for their variables. The idle pass stops
+them, `stim revive` starts them again and workspace removal tears them down.
+See [Workspace services](./dev-server-and-logs.md#workspace-services).
+
 ## `ports`
 
 ```text

@@ -713,6 +713,11 @@ export interface EnvironmentState {
   stage?: WorkspaceStage;
   /** Present while the workspace is in the idle stage: no activity since the daemon stopped it. */
   idleStage?: IdleStageRecord;
+  /**
+   * The services `stim services start` started in this workspace, in start order: whether each runs (its process by
+   * identity, else a listener on one of its ports) and who stopped one that does not; absent when it started none.
+   */
+  services?: { name: string; running: boolean; ports: Record<string, number>; stoppedBy: 'idle' | 'command' | null }[];
   /** Present while the workspace is dormant: no Stim command since the daemon deleted its owned devices. */
   dormantStage?: DormantStageRecord;
   /** Present while a source checkout's node_modules or Pods that maintenance deleted are still missing: worktree warm has nothing to copy. */

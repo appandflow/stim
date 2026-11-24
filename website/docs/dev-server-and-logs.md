@@ -760,6 +760,75 @@ server using that exact port, and verify it is serving this checkout. When
 finished, stop its named port with stim ports stop web.
 ```
 
+## Workspace services
+
+A project can declare its databases, API servers and workers once, in the
+`services` setting of its committed `.stim.json`, so each worktree runs its own
+copy on its own ports:
+
+```json
+{
+  "services": {
+    "web": { "ports": ["web"], "start": "python3 -m http.server {web}" },
+    "deps": {
+      "ports": { "pg": "PG_PORT", "redis": "REDIS_PORT" },
+      "idEnv": "COMPOSE_PROJECT_NAME",
+      "start": "docker compose up -d --wait",
+      "stop": "docker compose stop",
+      "teardown": "docker compose down -v",
+      "orphanTeardown": "docker compose -p {id} down -v"
+    }
+  }
+}
+```
+
+<StimTabs
+code={`stim services start
+stim services
+eval "$(stim services env)"
+stim services stop`}
+/>
+
+`stim services start` starts the declared services, dependencies first, and
+waits until each is ready; one already running is left alone. A service without
+a `stop` command is a process Stim supervises: it starts detached, writes its
+output to `logs/service-<name>.log` in the workspace, and Stim stops it by its
+process identity. A service with a `stop` command manages itself (`docker
+compose up -d`, a database CLI), and Stim runs its `stop`, `teardown` and
+`orphanTeardown` commands instead.
+
+Ports come from the [named port](#named-server-ports) pool. Each reaches the
+service as an environment variable (`ports` maps a label to one) or a
+placeholder: `{web}` for its own port, `{deps.pg}` for another service's,
+`{id}` for the service id (`<name>-<workspace id>`) and `{dir}` for its folder.
+`idEnv` sets a variable to that id, so each worktree gets its own containers.
+Commands run without a shell; `{{` and `}}` are literal braces.
+
+Stim runs only what `stim services start` recorded, and only for services it
+started:
+
+- the idle pass stops them once the workspace has had no activity for
+  `idle.minutes`: no Stim command, file edit or git write, and no process or
+  agent session in the checkout;
+- `stim revive` starts again only the services the idle pass stopped;
+- `worktree remove`, `gc` and automatic maintenance tear them down: a process
+  by identity, otherwise `teardown` (else `stop`), or `orphanTeardown` from the
+  home folder once the worktree folder is gone;
+- `stim test` passes their environment to the test command, and `stim status`
+  lists them.
+
+`stim start` does not start them. See `stim guide services` for every field and
+more examples: a mock API server, a local Supabase stack, and an API that
+depends on a compose stack with a webhook forwarder.
+
+Copy this prompt into your agent:
+
+```text
+Read stim guide services. Declare this project's local backend as a service in
+.stim.json with its ports passed by environment, start it with stim services
+start, and run the integration tests with stim test.
+```
+
 ## Reverse ports
 
 An app on a workspace's device reaches Metro through a route Stim sets up. For any other server on this machine, `ports reverse` does the same at the server's own port, like `adb reverse`:

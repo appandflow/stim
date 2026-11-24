@@ -59,6 +59,10 @@ function harness(overrides: Partial<ReviveDeps> = {}) {
       return { ok: true, deviceId: 'U1', deviceName: 'stim-app', launched: true };
     },
     detectProject: async () => ({ platforms: ['ios', 'android'], devServer: true }),
+    resumeServices: async () => {
+      calls.push('services');
+      return [{ name: 'db', outcome: 'started', detail: 'my-db start' }];
+    },
     ...overrides,
   };
   return { deps, calls, runs };
@@ -107,6 +111,7 @@ test('an idle-stopped workspace gets Metro, its simulator and the app it launche
         app: { bundleId: 'com.example.app', relaunched: true, launched: true },
       },
     ],
+    services: [],
   });
   expect(reviveLines(result.facts, Date.parse('2026-11-02T00:32:00.000Z'))).toEqual([
     'Metro stopped idle 14h02m ago, restarted on port 8082.',
@@ -155,6 +160,54 @@ test.each<[string, Partial<ReviveDeps>]>([
   const result = await runRevive({ root: '/project', note: () => {}, deps });
   assert(!result.ok);
   expect(result.error.code).toBe('STIM_NO_METRO');
+  expect(calls).toEqual([]);
+});
+
+const serviceRecord = (state: 'running' | 'stopped', stoppedBy?: 'idle' | 'command') => ({
+  kind: 'commands',
+  cwd: '/project',
+  env: {},
+  ports: { db: 8900 },
+  start: ['my-db', 'start'],
+  stop: ['my-db', 'stop'],
+  state,
+  ...(stoppedBy ? { stoppedBy } : {}),
+  at: '2026-11-01T10:31:00.000Z',
+});
+
+test.each<[string, WorkspaceState, string[]]>([
+  [
+    'the idle pass stopped one',
+    { ...idleState, services: { db: serviceRecord('stopped', 'idle') } },
+    ['services', 'metro', 'ios'],
+  ],
+  [
+    'stim services stop stopped it',
+    { ...idleState, services: { db: serviceRecord('stopped', 'command') } },
+    ['metro', 'ios'],
+  ],
+  ['it still runs', { ...idleState, services: { db: serviceRecord('running') } }, ['metro', 'ios']],
+  ['only a service was stopped idle', { services: { db: serviceRecord('stopped', 'idle') } }, ['services']],
+])('revive starts services again, before Metro, only when %s', async (_name, state, expected) => {
+  const { deps, calls } = harness({ readState: () => state });
+  const result = await runRevive({ root: '/project', note: () => {}, deps });
+  assert(result.ok);
+  expect(calls).toEqual(expected);
+  expect(result.facts.revived.services).toEqual(expected[0] === 'services' ? ['db'] : []);
+});
+
+test('a service that does not start again refuses with STIM_SERVICE_FAILED, naming it, before Metro starts', async () => {
+  const { deps, calls } = harness({
+    readState: () => ({ ...idleState, services: { db: serviceRecord('stopped', 'idle') } }),
+    resumeServices: async () => [
+      { name: 'db', outcome: 'failed', detail: 'start command my-db start exited with status 1' },
+    ],
+  });
+  const result = await runRevive({ root: '/project', note: () => {}, deps });
+  assert(!result.ok);
+  expect(result.error).toMatchObject({ code: 'STIM_SERVICE_FAILED' });
+  expect(result.error.message).toContain('db');
+  expect(result.error.message).toContain('my-db start exited with status 1');
   expect(calls).toEqual([]);
 });
 

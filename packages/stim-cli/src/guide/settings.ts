@@ -538,6 +538,13 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         named Mac exactly that Mac. The --remote flag
                         overrides it. A recorded hosted app keeps its Mac
                         until stim stop. Unset runs here. See stim guide macos.
+  services              the workspace services, keyed by name: { "start":
+                        command, "stop"?, "teardown"?, "orphanTeardown"?,
+                        "ready"?, "ports"?, "idEnv"?, "env"?, "cwd"?,
+                        "dependsOn"? }. Without stop, start is a process Stim
+                        supervises. stim services start records each service
+                        as resolved and later stops run only that record.
+                        See \`guide services\`.
   web.url               the page \`stim web\` opens in the owned Chrome, an
                         http:// or https:// URL. {port:<label>} becomes the
                         workspace's named port (allocated like \`stim ports

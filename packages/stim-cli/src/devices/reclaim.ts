@@ -2,6 +2,7 @@ import { endWorkspaceShares } from '../local-server.ts';
 import type { StimContext } from '@stim-cli/core';
 import { archiveWorkspace } from '../archive.ts';
 import { clearNamedPorts } from '../named-ports.ts';
+import { teardownServices } from '../services.ts';
 import { parseDeviceSlotKey, projectDeviceSlots } from './device-slots.ts';
 import {
   type ProjectRecord,
@@ -512,6 +513,19 @@ function workspaceDirectoryFailure(dir: string, error: unknown): ReclaimResult['
   return { dir, reason: error instanceof Error ? error.message : String(error) };
 }
 
+/** Tears the workspace's services down, then releases its named ports; the services it could only report, as kept. */
+async function teardownAndRelease(path: string, operation: StimContext | undefined): Promise<SkippedDevice[]> {
+  const output = operation
+    ? { signal: operation.signal, log: (line: string) => operation.output('stderr', `${line}\n`) }
+    : undefined;
+  // @ref LLP 0027#removal-tears-services-down -- before the ports are released
+  const services = await teardownServices(path, output && { ...output, operation });
+  await clearNamedPorts(path, output);
+  return services.flatMap(({ name, outcome, detail }) =>
+    outcome === 'reported' ? [{ name: `service ${name}`, reason: detail }] : [],
+  );
+}
+
 async function reclaimIdleProject(
   path: string,
   workspaceExisted: boolean,
@@ -532,10 +546,7 @@ async function reclaimIdleProject(
 ): Promise<ReclaimResult> {
   const signal = operation?.signal;
   signal?.throwIfAborted();
-  await clearNamedPorts(
-    path,
-    operation ? { signal, log: (line) => operation.output('stderr', `${line}\n`) } : undefined,
-  );
+  const reportedServices = await teardownAndRelease(path, operation);
   signal?.throwIfAborted();
   const project = getProject(path);
   verifyAvdClaims(project, operation);
@@ -655,7 +666,7 @@ async function reclaimIdleProject(
           skippedDevices: [] as SkippedDevice[],
           failedDevices: [] as SkippedDevice[],
         };
-  skippedDevices.push(...skippedCollectors);
+  skippedDevices.push(...skippedCollectors, ...reportedServices);
   failedDevices.push(...failedCollectors);
   for (const platform of (['ios', 'android'] as const).filter(
     (kind) => Object.keys(hostedNativeRecords(readWorkspaceState(path), kind)).length > 0,

@@ -22,6 +22,7 @@ const commands = new Map<string, () => Promise<{ default: Op }>>([
   ['worktree', () => import('../src/commands/worktree.ts')],
   ['start', () => import('../src/commands/start.ts')],
   ['ports', () => import('../src/commands/ports.ts')],
+  ['services', () => import('../src/commands/services.ts')],
   ['stop', () => import('../src/commands/stop.ts')],
   ['ios', () => import('../src/commands/ios.ts')],
   ['android', () => import('../src/commands/android.ts')],

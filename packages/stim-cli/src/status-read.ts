@@ -127,6 +127,7 @@ import {
   withWebFacts,
 } from './status.ts';
 import { readWebPage, readWebRecord, webFacts, type WebFacts } from './web/state.ts';
+import { applyServiceStatuses } from './services.ts';
 import { attributeMachineUsage, type WorkspaceProcessRoots } from './machine-usage.ts';
 import { metroBundleState } from './metro-bundle.ts';
 import { applyStatusMeasures } from './status-measures.ts';
@@ -471,6 +472,7 @@ async function readStatusFacts(probes: StatusProbes, gitScope: GitScope, cwd: st
     const state = states[states.length - 1];
     if (state) {
       applyCheckout(state, checkouts.get(path), verifiedCheckouts);
+      await applyServiceStatuses(state, saved);
       for (const [slot, record] of Object.entries(hostedIosRecords(saved))) {
         if (!parseHostedIosPlacement(record)) state.warnings.push(unreadableHostedIos(slot));
       }
