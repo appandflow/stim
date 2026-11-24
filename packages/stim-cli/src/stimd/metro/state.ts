@@ -81,18 +81,12 @@ export interface RemoteSessionRecord {
   startedAt: string | null;
   webPreviewUrl: string | null;
   deviceType?: string | null;
-  /** The `--max-duration-minutes` Stim passed when it created the session; absent in records from older Stim. */
-  maxDurationMinutes?: number | null;
+  expiresAt?: string | null;
 }
 
-/** EAS stops a session `maxDurationMinutes` after creation; the record's `startedAt` precedes creation by up to 10 minutes. */
-const SESSION_END_MARGIN_MS = 15 * 60_000;
-
-/** Whether a record's recorded cap plus a 15 minute margin has passed; a record with no cap never is. */
 export function remoteSessionExpired(record: RemoteSessionRecord, now: number): boolean {
-  const startedAt = Date.parse(record.startedAt ?? '');
-  if (!record.maxDurationMinutes || !Number.isFinite(startedAt)) return false;
-  return now > startedAt + record.maxDurationMinutes * 60_000 + SESSION_END_MARGIN_MS;
+  const expiresAt = Date.parse(record.expiresAt ?? '');
+  return Number.isFinite(expiresAt) && now > expiresAt;
 }
 
 export function readMetroTunnel(root: string): MetroTunnelRecord | null {
@@ -215,17 +209,14 @@ export function readRemoteSession(root: string): RemoteSessionRecord | null {
   const startedAt = (record as { startedAt?: unknown }).startedAt;
   const webPreviewUrl = (record as { webPreviewUrl?: unknown }).webPreviewUrl;
   const deviceType = (record as { deviceType?: unknown }).deviceType;
-  const maxDurationMinutes = 'maxDurationMinutes' in record ? record.maxDurationMinutes : undefined;
+  const expiresAt = 'expiresAt' in record ? record.expiresAt : undefined;
   return {
     platform: platform === 'ios' || platform === 'android' ? platform : null,
     sessionId: id,
     startedAt: typeof startedAt === 'string' ? startedAt : null,
     webPreviewUrl: typeof webPreviewUrl === 'string' && webPreviewUrl.length > 0 ? webPreviewUrl : null,
     deviceType: typeof deviceType === 'string' && deviceType.length > 0 ? deviceType : null,
-    maxDurationMinutes:
-      typeof maxDurationMinutes === 'number' && Number.isFinite(maxDurationMinutes) && maxDurationMinutes > 0
-        ? maxDurationMinutes
-        : null,
+    expiresAt: typeof expiresAt === 'string' && Number.isFinite(Date.parse(expiresAt)) ? expiresAt : null,
   };
 }
 

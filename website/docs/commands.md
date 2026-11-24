@@ -1946,10 +1946,10 @@ A workspace with a recorded EAS Simulator session prints a
 URL. In `--json`, each environment's `remoteDevices` array holds
 `platform`, `backend`, `sessionId`, `state`, `startedAt`, and `webPreviewUrl`.
 `status` reads Stim's local records and does not query EAS; `stim stop` in that
-workspace ends the session. A session also records the duration cap it was created
-with; once its start plus that cap plus 15 minutes has passed, `status` stops
-listing it and `stim gc` and `stim stop` clear it without eas-cli. A record with
-no cap, from an older Stim, stays listed.
+workspace ends the session. A session also records an expiry: the time it was ready plus its duration cap
+plus 5 minutes. Once it has passed, `status` stops listing the session and
+`stim gc` and `stim stop` clear it without eas-cli. A record with no expiry, from
+an older Stim, stays listed.
 
 A physical phone or tablet the workspace leases with `ios --device`,
 `android --device`, or `device lock` prints under its workspace as

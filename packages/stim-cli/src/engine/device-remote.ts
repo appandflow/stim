@@ -708,6 +708,8 @@ const EAS_START_HOLD_MS =
   EAS_SESSION_CREATE_TIMEOUT_MS +
   Math.ceil(DAEMON_WAIT_MS / DAEMON_POLL_MS) * (EAS_OPERATION_TIMEOUT_MS + DAEMON_POLL_MS);
 
+const SESSION_END_MARGIN_MS = 5 * 60_000;
+
 export async function ensureRemoteBootOwned<T extends BootResult>({
   root,
   platform,
@@ -786,7 +788,9 @@ export async function ensureRemoteBootOwned<T extends BootResult>({
                   startedAt,
                   ...(preview ? { webPreviewUrl: preview } : {}),
                   ...(deviceType ? { deviceType } : {}),
-                  ...(maxDurationMinutes ? { maxDurationMinutes } : {}),
+                  ...(maxDurationMinutes
+                    ? { expiresAt: new Date(now() + maxDurationMinutes * 60_000 + SESSION_END_MARGIN_MS).toISOString() }
+                    : {}),
                 },
               });
               return booted;
@@ -1027,9 +1031,10 @@ export async function endRecordedSession({
   if (!easBin) {
     const record = readRemoteSession(root);
     if (record?.sessionId === sessionId && remoteSessionExpired(record, Date.now())) {
+      const ledger = readEasSessionLedger(ledgerRoot);
       try {
-        await removeEasSessionClaimAsync(sessionId, ledgerRoot);
-        return { status: 'torn-down' };
+        const removed = await removeEasSessionClaimAsync(sessionId, ledgerRoot);
+        if (removed || (ledger.safe && !ledger.claims.has(sessionId))) return { status: 'torn-down' };
       } catch (error) {
         return {
           status: 'failed',
