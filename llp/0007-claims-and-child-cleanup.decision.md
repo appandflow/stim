@@ -89,7 +89,8 @@ successor", not "no daemon this driver started still runs".
 - The driver deletes a launch directory only after it stopped that launch's
   captured daemon. `stim gc` removes a launch directory idle for 24 hours once
   `agent-device daemon status --state-dir <dir>/state --json` reports its
-  daemon `stopped`. gc never stops a daemon: a live session's daemon may sit
+  daemon `stopped`, whatever lock or claim directories it holds, and lists each
+  launch on its own under TMPDIR leftovers. gc never stops a daemon: a live session's daemon may sit
   idle that long, and an unreachable one ends through agent-device's idle
   reaper.
 
@@ -303,4 +304,4 @@ Related: #5766, #5769, #5771.
 - `packages/stim-cli/src/exec.ts` (`reportChild`): the kill of an uncaptured report child.
 - `packages/stim-cli/src/stimd/cleanup-watch.ts` and `packages/stim-cli/src/stimd/threads.ts`: what stimd stays up for.
 - `packages/agent-driver-agent-device/driver.ts` (`launchDir`, `teardown`) and
-  `packages/stim-cli/src/commands/gc/temp-leftovers.ts` (`retireAgentDeviceLaunches`): per-launch agent-device directories.
+  `packages/stim-cli/src/commands/gc/temp-leftovers.ts` (`judgeLaunch`): per-launch agent-device directories.

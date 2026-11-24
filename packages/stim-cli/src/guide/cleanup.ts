@@ -1371,7 +1371,10 @@ TMPDIR LEFTOVERS
   claim or a .lock directory that is not a claim set, or cannot be listed. It
   removes a stim-parity-* directory, with its git worktree registration, only
   when its Stim record names a process that has ended; one without that record
-  stays. It
+  stays. It judges each hosted agent-device launch in a
+  stim-server-agent-device-* directory on its own, and removes one idle for 24
+  hours once \`agent-device daemon status\` reports its daemon stopped; it
+  never stops a daemon. It
   keeps a recording or SwiftPM temp directory that cannot be read, every
   recording while an xctrace or Instruments process runs, and every SwiftPM
   temp directory while a swift or xcodebuild process runs, or when the process

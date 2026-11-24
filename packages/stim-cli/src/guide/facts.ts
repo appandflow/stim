@@ -1183,7 +1183,10 @@ RULES
                               stim-fakehome-*, stim-hosted-macos-*,
                               stim-server-*, stim-ws-*, stim-parity-* directories), xctrace
                               (instruments*.ktrace), swiftpm
-                              (TemporaryDirectory.* directories). deleteCount
+                              (TemporaryDirectory.* directories). A
+                              stim-server-agent-device-* directory that holds
+                              hosted launches counts each launch instead of
+                              itself. deleteCount
                               is what a run removes. null with STIM_HOME
                               set
     trash                   { root, entries: [{ path, worktree, removedAt,

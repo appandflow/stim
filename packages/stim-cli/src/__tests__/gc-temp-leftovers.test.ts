@@ -14,7 +14,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as gcDevices from '../commands/gc/devices.ts';
-import { collectTempLeftovers, deleteTempLeftovers } from '../commands/gc/temp-leftovers.ts';
+import { collectTempLeftovers, deleteTempLeftovers, tempLeftoverSection } from '../commands/gc/temp-leftovers.ts';
 import { takeGcResults } from '../commands/gc/results.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { executeAction } from '../stimd/passes/act.ts';
@@ -352,10 +352,18 @@ test('cancelling temporary cleanup yields during removal and preserves the next 
   }
 });
 
-test('removes an idle hosted agent-device launch only when agent-device reports its daemon stopped, and never stops one', async () => {
+function fakeAgentDevice(
+  running: (stateDir: string) => boolean = (stateDir) => stateDir.includes('aaaaaaaaaaaaaaaa'),
+): {
+  asked: string[];
+  launch: (id: string, idle?: boolean) => string;
+} {
   const bin = join(home, 'agent-device.mjs');
   writeFileSync(bin, '');
   process.env.STIM_AGENT_DEVICE_BIN = bin;
+  onTestFinished(() => {
+    delete process.env.STIM_AGENT_DEVICE_BIN;
+  });
   const asked: string[] = [];
   const executor = getExecutor();
   setExecutor({
@@ -370,30 +378,74 @@ test('removes an idle hosted agent-device launch only when agent-device reports 
       const stateDir = args[at + 1] ?? '';
       asked.push(stateDir);
       if (!args.includes('status')) throw new Error(`gc ran agent-device ${args.join(' ')}`);
-      const state = stateDir.includes('aaaaaaaaaaaaaaaa') ? 'running' : 'stopped';
+      const state = running(stateDir) ? 'running' : 'stopped';
       return JSON.stringify({ success: true, data: { state, stateDir } });
     },
   });
-  try {
-    const root = join(fakeTmp, 'stim-server-agent-device-0123456789abcdef');
-    const launch = (id: string) => {
-      mkdirSync(join(root, id, 'state', 'daemon.lock'), { recursive: true });
-      writeFileSync(join(root, id, 'state', 'daemon.log'), '');
-      return join(root, id);
-    };
-    const running = launch('aaaaaaaaaaaaaaaa');
-    const gone = launch('bbbbbbbbbbbbbbbb');
-    age(running, 2 * DAY_MS);
-    age(gone, 2 * DAY_MS);
-    const recent = launch('cccccccccccccccc');
+  const root = join(fakeTmp, 'stim-server-agent-device-0123456789abcdef');
+  const launch = (id: string, idle = true) => {
+    mkdirSync(join(root, id, 'state', 'daemon.lock'), { recursive: true });
+    writeFileSync(join(root, id, 'state', 'daemon.log'), 'log');
+    if (idle) age(join(root, id), 2 * DAY_MS);
+    return join(root, id);
+  };
+  return { asked, launch };
+}
 
-    await deleteTempLeftovers();
+test('plans, lists and removes an idle hosted agent-device launch agent-device reports stopped, and never stops one', async () => {
+  const { asked, launch } = fakeAgentDevice();
+  const running = launch('aaaaaaaaaaaaaaaa');
+  const gone = launch('bbbbbbbbbbbbbbbb');
+  const recent = launch('cccccccccccccccc', false);
+  const settings = { ...resolveMaintenanceSettings(null, { STIM_DAEMON: 'on' }), removeFinishedWorktrees: false };
 
-    expect(existsSync(gone)).toBe(false);
-    expect(existsSync(running)).toBe(true);
-    expect(existsSync(recent)).toBe(true);
-    expect(asked).toEqual([join(running, 'state'), join(gone, 'state')]);
-  } finally {
-    delete process.env.STIM_AGENT_DEVICE_BIN;
-  }
+  const listed = await collectTempLeftovers();
+  expect(listed?.entries.map((entry) => [entry.path, entry.willDelete, entry.kept])).toEqual([
+    [running, false, 'agent-device reports its daemon running'],
+    [gone, true, null],
+    [recent, false, 'modified within the last 24h'],
+  ]);
+  expect(tempLeftoverSection(listed)?.groups).toEqual([
+    expect.objectContaining({ kind: 'stim', count: 3, deleteCount: 1 }),
+  ]);
+  expect(asked).toEqual([join(running, 'state'), join(gone, 'state')]);
+
+  const planned = await planRung6(settings);
+  const action = planned.actions.find((entry) => entry.kind === 'would-delete-temp-leftovers');
+  expect(action).toEqual(expect.objectContaining({ target: realpathSync.native(fakeTmp) }));
+  if (!action) return;
+  const outcome = await executeAction(action, { settings, protectedRoot: '' });
+  expect(outcome).toEqual(expect.objectContaining({ status: 'done', detail: '1 deleted' }));
+  expect([existsSync(running), existsSync(gone), existsSync(recent)]).toEqual([true, false, true]);
+  expect(new Set(asked)).toEqual(new Set([join(running, 'state'), join(gone, 'state')]));
+});
+
+test('a launch whose daemon agent-device reports running again by the time gc removes it is kept', async () => {
+  let checks = 0;
+  const { launch } = fakeAgentDevice(() => checks++ > 0);
+  const revived = launch('bbbbbbbbbbbbbbbb');
+
+  expect(await kept(revived)).toBeNull();
+  checks = 0;
+  expect(await deleteTempLeftovers()).toEqual({ count: 0, bytes: 0, failures: 0 });
+  expect(existsSync(revived)).toBe(true);
+  expect(takeGcResults()).toEqual([
+    expect.objectContaining({ status: 'kept', label: revived, detail: 'agent-device reports its daemon running' }),
+  ]);
+});
+
+test('a launch that cannot be removed is one failure, and the other leftovers are still removed', async () => {
+  const { launch } = fakeAgentDevice();
+  const blocked = launch('bbbbbbbbbbbbbbbb');
+  const gone = launch('dddddddddddddddd');
+  const idle = oldDir('stim-claim-AbC123', { 'note.txt': 'x' });
+  deletionIo.beforeRemove = async (path) => {
+    if (String(path).startsWith(blocked)) throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
+  };
+
+  expect(await deleteTempLeftovers()).toEqual({ count: 2, bytes: expect.any(Number), failures: 1 });
+  expect([existsSync(blocked), existsSync(gone), existsSync(idle)]).toEqual([true, false, false]);
+  expect(takeGcResults()).toEqual(
+    expect.arrayContaining([expect.objectContaining({ status: 'failed', label: blocked })]),
+  );
 });

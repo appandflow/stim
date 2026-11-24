@@ -27,7 +27,7 @@
     "agent logs": 1050,
     "agent phone": 1000,
     "facts payloads": 37250,
-    "facts gc": 26200,
+    "facts gc": 26400,
     "facts status": 52600,
     "facts stats": 10500,
     "lifecycle hosted-android": 12500,
@@ -38,7 +38,7 @@
     "lifecycle budget": 18150,
     "lifecycle options": 25100,
     "lifecycle devices": 11000,
-    "cleanup gc": 74300,
+    "cleanup gc": 74550,
     "cleanup disk": 16250
   }
 }
