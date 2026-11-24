@@ -33,6 +33,7 @@ import {
 import type { ReleasedLease } from '../engine/device-lease.ts';
 import { podInstallCommand } from '../engine/bundler.ts';
 import { relocatePods } from '../workspace/pods-relocate.ts';
+import { projectRegistry } from '../integrations/projects.ts';
 import { detectIsExpo, isMobileProject, findProjectRoot } from '../workspace/project.ts';
 import { nativeDirCarry, recordPrebuildAsync } from '../engine/prebuild.ts';
 import { prepareInstallCarry } from '../fingerprint/index-store.ts';
@@ -384,16 +385,17 @@ export async function warmWorktreeTarget(opts: {
     if (workspace && workspace !== app)
       await recordWorkspaceUseAsync(workspace, new Date(), operation.env, opts.cwd, operation.signal);
     if (!workspace) {
-      out(
-        chalk.dim(
-          phaseLine(
-            'project',
-            opts.refresh
-              ? 'no single app to register here; --refresh updates only the repository root. Run warm --refresh from the app directory to refresh that app and list it in status'
-              : 'no single app to register here; run warm from the app directory to list it in status while it warms',
+      if (!app || !projectRegistry.keepsWorkspace(app))
+        out(
+          chalk.dim(
+            phaseLine(
+              'project',
+              opts.refresh
+                ? 'no iOS or Android app at this directory, so warm registers nothing in status here; --refresh updates only the repository root. If the app is in a subdirectory, run warm --refresh there. stim web lists a web app'
+                : 'no iOS or Android app at this directory, so warm registers nothing in status here. If the app is in a subdirectory, run warm there. stim web lists a web app',
+            ),
           ),
-        ),
-      );
+        );
     } else {
       await registerWarmedWorkspace(workspace, out);
       progress = startWarmProgress(workspace, opts.refresh ? 'refresh' : 'copy', {
@@ -1526,6 +1528,11 @@ async function runRemove(target: string | undefined, opts: RemoveOptions, onRemo
   }
 }
 
+function recordedSpelling(canonical: string, target: string | undefined, operation?: StimContext): string {
+  const literal = resolve(target ?? operation?.cwd ?? process.cwd());
+  return !hasRegisteredProjectUnder(canonical) && hasRegisteredProjectUnder(literal) ? literal : canonical;
+}
+
 async function removeOrRefuse(
   target: string | undefined,
   opts: RemoveOptions,
@@ -1549,6 +1556,7 @@ async function removeOrRefuse(
   let path = removalPath(target, opts.operation?.cwd);
   const removalSpelling = path;
   if (!existsSync(path)) {
+    path = recordedSpelling(path, target, opts.operation);
     opts.beforeRemove?.(path);
     const pending = getProject(path);
     if (

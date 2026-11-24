@@ -724,4 +724,10 @@ describe.skipIf(process.platform !== 'darwin')('service lifecycle', () => {
     );
     expect(launchd.job).toBe('new');
   });
+
+  it('does not name the default route in the tailnet hint of a non-default service', async () => {
+    const notes = await finish(install());
+    expect(notes).toContain('No tailnet route. Install again with --serve, which picks a free https port.');
+    expect(notes.join('\n')).not.toContain('tailscale serve');
+  });
 });

@@ -24,7 +24,9 @@ public enum PairedServerWording {
     ] + ServerProtocol.desktopApiCodes.sorted()
 
   /// `name` is the pairing's name, or empty when the person has not named it yet.
-  public static func notice(for error: ServerError, context: Context, name: String) -> PairedServerNotice {
+  public static func notice(
+    for error: ServerError, context: Context, name: String, network: PairingPayload.Network = .tailnet
+  ) -> PairedServerNotice {
     let machine = name.isEmpty ? "the machine" : name
     switch error.code {
     case "unknown-secret":
@@ -123,6 +125,13 @@ public enum PairedServerWording {
         tone: .error, title: "Stim Desktop cannot use this pairing's key",
         detail: "The key stored for it is damaged. Remove this pairing and pair again.", command: nil)
     case "timeout", "unreachable":
+      if network == .localNetwork {
+        return PairedServerNotice(
+          tone: .error, title: "Can't reach \(machine)",
+          detail:
+            "\(error.message.sentence) Check that this Mac can reach \(machine) on the local network, that Stim Desktop is allowed under System Settings > Privacy & Security > Local Network, and that stim serve is running there.",
+          command: nil)
+      }
       let unresolved = error.message.contains("NoSuchRecord")
       return PairedServerNotice(
         tone: .error, title: "Can't reach \(machine)",

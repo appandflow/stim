@@ -177,7 +177,7 @@ function recordAction(
     ...(action.restore ? { restore: action.restore } : {}),
     ...(action.workspace ? { workspace: action.workspace } : {}),
   };
-  context.log(level, 'pressure_action', msg, fields);
+  if (action.outcome !== 'kept') context.log(level, 'pressure_action', msg, fields);
   if (action.workspace && action.outcome !== 'kept' && !(context.force && action.outcome === 'would'))
     try {
       writeWorkspaceEvent(action.workspace, level, 'pressure_action', msg, fields);

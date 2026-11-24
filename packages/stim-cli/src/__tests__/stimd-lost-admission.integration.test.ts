@@ -752,6 +752,7 @@ async function withFakeStimd(
   const sockets = new Set<Socket>();
   const server = createServer((socket) => {
     sockets.add(socket);
+    socket.on('error', () => {});
     socket.setEncoding('utf8');
     let input = '';
     socket.on('data', (chunk: string) => {

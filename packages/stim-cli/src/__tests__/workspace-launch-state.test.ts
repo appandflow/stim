@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setImmediate } from 'node:timers/promises';
-import { readWorkspaceLaunches, type WorkspaceLaunchRecord } from '../stimd/metro/state.ts';
+import { clearWorkspaceLaunchAsync, readWorkspaceLaunches, type WorkspaceLaunchRecord } from '../stimd/metro/state.ts';
 import { siblingPlatformSlots } from '../engine/slot-launch.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { upsertProject } from '../workspace/config.ts';
@@ -106,4 +106,18 @@ test.each([
   } finally {
     resetExecutor();
   }
+});
+
+test.each(['ios', 'android'] as const)('clearing %s preserves the other platform and other slots', async (platform) => {
+  const launches = {
+    ios: launch('ios', 'U1'),
+    android: launch('android', 'emulator-5554'),
+    'ios:tablet': launch('tablet', 'U2'),
+    'android:tablet': launch('tablet', 'emulator-5556'),
+  };
+  writeWorkspaceState(root, { launches });
+  await clearWorkspaceLaunchAsync(root, platform, 'tablet');
+  const expected: Record<string, WorkspaceLaunchRecord> = { ...launches };
+  delete expected[`${platform}:tablet`];
+  expect(readWorkspaceLaunches(root)).toEqual(expected);
 });

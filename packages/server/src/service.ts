@@ -505,6 +505,15 @@ function serviceServerDir(stimHome: string | null | undefined): string {
   return join(stimHome || join(homedir(), '.stim'), 'server');
 }
 
+function noRouteNote(
+  { label, port }: Pick<ServiceOptions, 'label' | 'port'>,
+  serveCommand: (port: number, target: number) => string,
+): string {
+  return label === DEFAULT_LABEL
+    ? `No tailnet route. Run \`${serveCommand(7443, port)}\` or install again with --serve.`
+    : 'No tailnet route. Install again with --serve, which picks a free https port.';
+}
+
 export async function installJob(
   options: ServiceOptions,
   setup?: { script: string; host: HostApp | null; requestPermissions: false },
@@ -652,7 +661,7 @@ export async function installJob(
       `Tailnet route: https port ${serve.port}, ${serve.created ? 'created by install; uninstall removes it' : 'already present; uninstall keeps it'}.`,
     );
   } else {
-    notes.push(`No tailnet route. Run \`${serveCommand(7443, options.port)}\` or install again with --serve.`);
+    notes.push(noRouteNote(options, serveCommand));
   }
   const shim = process.platform === 'win32' ? nodeShim(spec.node, spec.pathPrepend) : null;
   if (shim) {

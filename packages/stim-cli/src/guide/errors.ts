@@ -770,6 +770,7 @@ Inspect what remains with previewGarbage() before retrying a mutation.
     STIM_LOCK_TIMEOUT: {
       summary: 'a lock held past the wait; workspace-process and short directory locks',
       body: () => `STIM_LOCK_TIMEOUT
+  \`stim start\` waits for its workspace locks up to \`--wait\` and reports this code with the lock path.
   The same locks, held by an ordinary command that is still running, for
   longer than the wait -- 60s by default, 4 minutes for the remote-session lock
   and for \`gc\` deleting EAS sessions under the EAS project lock (its sweep

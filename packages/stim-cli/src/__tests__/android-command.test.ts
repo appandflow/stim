@@ -4256,6 +4256,7 @@ describe('launch verification', () => {
     expect(result.ok).toBe(true);
     expect(result.facts?.launched).toBe(LAUNCH_UNVERIFIED);
     expect(h.stderr.join('\n')).toContain('bundle delivered, but device log evidence is unavailable');
+    expect(h.stderr.join('\n')).toContain('when it reports android-reverse-missing, run `stim reload android`');
     expect(h.stderr.join('\n')).not.toContain('no bundle request reached');
   });
 
@@ -6229,6 +6230,14 @@ describe('--device (a physical Android device)', () => {
     expect(await parseDeviceOption(['--device'])).toBe(true);
     expect(await parseDeviceOption(['--device', 'RFCR7081Q9L'])).toBe('RFCR7081Q9L');
     expect(await parseDeviceOption([])).toBeUndefined();
+  });
+
+  test.each([true, false])('only a physical run clears its slot launch: %s', async (physical) => {
+    const clearLaunch = vi.fn<(root: string, platform: string, slot?: string) => Promise<void>>(async () => {});
+    const h = physical ? physicalHarness({ slot: 'qa', clearLaunch }) : harness({ slot: 'qa', clearLaunch });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(clearLaunch.mock.calls).toEqual(physical ? [[root, 'android', 'qa']] : []);
   });
 
   test('a physical run installs and launches on the resolved serial', async () => {

@@ -79,3 +79,22 @@ test("start refuses while the project's .stim.json holds the old idle settings a
   expect(refused.stderr).toContain('`stim settings unset devices.idleShutdownMinutes`');
   expect(refused.stderr).toContain('`stim settings set idle.minutes 0 --scope committed`');
 });
+
+test.skipIf(process.platform === 'win32')(
+  'a command run from a removed directory says so instead of reporting a crash',
+  () => {
+    const gone = join(home, 'gone');
+    const result = spawnSync(
+      'sh',
+      ['-c', 'mkdir "$1" && cd "$1" && rmdir "$1" && exec "$2" "$3" status', 'sh', gone, process.execPath, cli],
+      {
+        env: { ...process.env, STIM_HOME: home },
+        encoding: 'utf8',
+        timeout: 60_000,
+      },
+    );
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('The current working directory no longer exists');
+    expect(result.stderr).not.toContain('Unexpected error');
+  },
+);

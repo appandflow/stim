@@ -1,6 +1,12 @@
 import { existsSync } from 'node:fs';
 import { connect, type Socket } from 'node:net';
-import { daemonClaimRoot, daemonNdjsonFile, stimdSocket, type DaemonStatus } from '@stim-cli/core/state';
+import {
+  daemonClaimRoot,
+  daemonNdjsonFile,
+  stimdClaimRoot,
+  stimdSocket,
+  type DaemonStatus,
+} from '@stim-cli/core/state';
 import { readClaimSet } from '@stim-cli/core/ownership-claim';
 import { formatLongDuration } from '../command-output.ts';
 import type { Finding } from '../diagnostics/doctor.ts';
@@ -90,10 +96,27 @@ export function withAnswer(status: DaemonStatus, answer: Pick<DaemonStatus, 'una
   return answer.unanswered && answer.unanswered.pid === status.running?.pid ? { ...status, ...answer } : status;
 }
 
+export function stuckStimdRemedy(status: DaemonStatus, now: number): string | null {
+  const { unanswered, running } = status;
+  if (!unanswered || !running || !ticksLate(status, now)) return null;
+  let serviceUnit: unknown;
+  try {
+    serviceUnit = readClaimSet(stimdClaimRoot()).live.find((holder) => holder.owner.pid === running.pid)?.details
+      ?.serviceUnit;
+  } catch {}
+  const next =
+    typeof serviceUnit === 'string' && serviceUnit
+      ? `its service unit ${serviceUnit} restarts it and the new stimd takes over the claims`
+      : 'the next stim start, ios or android starts a fresh stimd that takes over the claims';
+  const end = process.platform === 'win32' ? `taskkill /PID ${running.pid} /F` : `kill -9 ${running.pid}`;
+  return `If stimd still does not answer \`stim status\` after a few minutes, end stimd pid ${running.pid} with \`${end}\`; ${next}.`;
+}
+
 /** The finding for a stimd that holds the claim and did not answer the probe. */
 export function unansweredFindings(status: DaemonStatus, now: number = Date.now()): Finding[] {
   const { unanswered, running } = status;
   if (!unanswered || !running) return [];
+  const remedy = stuckStimdRemedy(status, now);
   const tickAt = Date.parse(status.lastTickAt ?? '');
   const tick = Number.isFinite(tickAt) ? `${formatLongDuration(Math.max(0, now - tickAt))} ago` : 'never written';
   return [
@@ -102,8 +125,8 @@ export function unansweredFindings(status: DaemonStatus, now: number = Date.now(
       level: 'cost',
       title: 'stimd holds its claim but did not answer',
       detail: `stimd pid ${unanswered.pid} ${unansweredText(unanswered)}; its last tick was ${tick}. This is what one probe saw: a busy machine can delay an answer. Commands that need stimd wait for it and then fail with STIM_DAEMON_UNAVAILABLE.`,
-      fix: ticksLate(status, now)
-        ? `Run \`stim status\` again. If it still does not answer, stop it with \`kill ${running.pid}\`; the next stim start, ios or android starts a new one. ${daemonNdjsonFile()} has what it last did.`
+      fix: remedy
+        ? `${remedy} ${daemonNdjsonFile()} has what it last did.`
         : `Run \`stim status\` again to see whether it answers now; ${daemonNdjsonFile()} has what it last did.`,
     },
   ];

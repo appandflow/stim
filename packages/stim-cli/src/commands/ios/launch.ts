@@ -510,6 +510,7 @@ function reportUnverified({
   if (verification.record) {
     phase('verify', chalk.yellow('UNVERIFIED: bundle delivered, but device log evidence is unavailable'));
     const hasAppErrors = reportLaunchErrors(verification.errors ?? [], note, root);
+    note(chalk.yellow(phaseLine('remedy', 'Run `stim status`, then `stim logs --errors` to check the app.')));
     return {
       state: LAUNCH_UNVERIFIED,
       warning: hasAppErrors ? 'app errors detected; inspect the error above' : undefined,
@@ -839,7 +840,19 @@ async function recordIosReloadTarget({
   artifact: LaunchedArtifact | null;
   note: (line: string) => void;
 }): Promise<void> {
-  if (physical || remoteDevice) return;
+  if (remoteDevice) return;
+  if (physical) {
+    try {
+      await d.clearWorkspaceLaunch(root, 'ios');
+    } catch (error) {
+      note(
+        chalk.yellow(
+          phaseLine('state', `could not clear iOS launch: ${error instanceof Error ? error.message : error}`),
+        ),
+      );
+    }
+    return;
+  }
   try {
     await d.writeWorkspaceLaunch(root, 'ios', {
       appId: bundleId,

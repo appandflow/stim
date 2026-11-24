@@ -71,6 +71,15 @@ export async function main(argv: string[], ctx: MainContext = {}): Promise<void>
 
   let end: (() => unknown) | undefined;
   let exitCode: number | undefined;
+  const json = argv.includes('--json') && argv[2] !== 'logs' && !(argv[2] === 'status' && argv.includes('--watch'));
+  const originalWrite = process.stdout.write;
+  let stdoutWritten = false;
+  if (json) {
+    process.stdout.write = function (chunk, ...args) {
+      if ((typeof chunk === 'string' ? chunk.length : chunk.byteLength) > 0) stdoutWritten = true;
+      return Reflect.apply(originalWrite, this, [chunk, ...args]);
+    };
+  }
   try {
     refuseRelativeStimPaths();
     process.env.STIM_RUN_ID = runId();
@@ -140,6 +149,9 @@ export async function main(argv: string[], ctx: MainContext = {}): Promise<void>
     } else if (err instanceof CliUsageError) {
       process.stderr.write(`${err.message}\n`);
       exitCode = 1;
+    } else if (err instanceof Error && 'syscall' in err && err.syscall === 'uv_cwd') {
+      console.error('The current working directory no longer exists. Run `cd` to another directory and try again.');
+      exitCode = 1;
     } else {
       const code = (err as { code?: unknown })?.code;
       const message = err instanceof Error ? err.message : String(err);
@@ -147,10 +159,12 @@ export async function main(argv: string[], ctx: MainContext = {}): Promise<void>
         const remedy = err instanceof Error && 'remedy' in err && typeof err.remedy === 'string' ? err.remedy : null;
         console.error(`${code}: ${message}`);
         if (remedy && !message.endsWith(remedy)) console.error(remedy);
+        if (json && !stdoutWritten) console.log(JSON.stringify({ code, message, remedy: remedy ?? undefined }));
       } else console.error(`Unexpected error: ${message.replace(/\.$/, '')}. Report it at ${pkg.bugs.url}`);
       exitCode = 1;
     }
   } finally {
+    if (json) process.stdout.write = originalWrite;
     await end?.();
   }
   if (exitCode !== undefined) {

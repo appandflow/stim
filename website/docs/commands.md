@@ -162,8 +162,13 @@ missing. In `--json` that is `daemon.unanswered` (`pid`, `waitedMs`,
 `socketMissing`); it is absent when stimd answers. It reports one probe, so a
 machine under heavy load can show it for a stimd that answers later, and
 neither command stops or replaces the stimd. Doctor then shows only that
-finding, not a late-tick one beside it, and its fix names `kill <pid>` only when
-the last tick is also older than three intervals. A stimd that answers with late
+finding, not a late-tick one beside it. When the last tick is also older than
+three intervals, `stim status` and doctor's fix say to run `stim status` again
+after a few minutes and, only if it still does not answer, to end the pid with
+`kill -9 <pid>` (`taskkill /PID <pid> /F` on Windows). SIGTERM stays pending on a
+stopped or blocked stimd. The next stim start, ios or android starts a fresh
+stimd that takes over the claims, or the stimd's service unit restarts it when the
+live claim names a unit. A stimd that answers with late
 ticks gets a late-tick finding that does not say to kill it. `status --watch` probes in the
 background every 10 seconds and never waits for it.
 
@@ -1081,7 +1086,8 @@ and reports `strategy: "cdp"`, with `appId` set to the URL the page was on when
 Stim sent the reload.
 
 Stim does not record launches on a physical device (`--device`) or an EAS
-Simulator session (`--remote eas`). When no owned launch is live, `reload` asks
+Simulator session (`--remote eas`). A successful local phone run clears the slot's
+launch record for that platform. When no owned launch is live, `reload` asks
 this workspace's Metro for its connected apps and reloads them, so it reaches an
 app on a phone or in an EAS session that is running and connected to that Metro.
 Without a recorded package name, every connected client that is not an iOS client counts as Android. Name the platform when Metro reports apps on both, and a platform with no connected client is never sent a request. The facts have `appId: null`
@@ -1191,7 +1197,8 @@ works without a Metro idle stop. Hosted launches stay on their host.
 - `STIM_DEVICE_LOST` when a recorded launch's simulator or emulator is no longer
   this workspace's owned device, or, when agent-device runs it as its boot
   hook, when the device agent-device asked for is neither one of them nor one
-  this workspace owns.
+  this workspace owns. Revive relaunches only owned simulators and emulators;
+  run `stim ios --device <id>` or `stim android --device <id>` again for a phone.
 - `STIM_NO_RECORDED_BUILD` when the build cache entry a launch installed is
   gone or absent, when the recorded app that runs without Metro is missing from
   the device, or when the owned device requested by agent-device has no matching

@@ -320,7 +320,7 @@ async function seedFindings(mainRoot: string, upstream: UpstreamState | null): P
         'note',
         `The source checkout has ${plural(dirty.length, 'uncommitted tracked change')}`,
         `\`stim worktree warm --refresh\` refuses a source checkout it cannot move, so the seed stays where it is until this is cleared. First: ${dirty[0]}.`,
-        `Commit them, or run \`git -C ${quotedRoot} stash push -u -m warm-refresh\`.`,
+        `Commit the changes in the main checkout, then retry; or run plain \`stim worktree warm\`.`,
       ),
     );
   }

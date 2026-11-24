@@ -110,7 +110,9 @@ function bucketLine(platform: string, bucket: StatsBucket): string {
           `offloaded run ${average((bucket.offloadedRunMs ?? 0) - (bucket.offloadedCleanupMs ?? 0), bucket.offloadedRuns)} avg (${bucket.offloadedRuns}, last on ${bucket.lastOffloadHost ?? '?'})`,
         ]
       : []),
-    `saved ~${formatLongDuration(bucket.timeSavedMs)} (estimated)`,
+    ...(Math.round(bucket.timeSavedMs / 1000) > 0
+      ? [`saved ~${formatLongDuration(bucket.timeSavedMs)} (estimated)`]
+      : []),
     `since ${bucket.firstRunAt.slice(0, 10)}`,
   ];
   return `  ${platform.padEnd(PLATFORM_WIDTH)}${cells.join('   ')}`;

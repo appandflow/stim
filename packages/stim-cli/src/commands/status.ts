@@ -1,6 +1,6 @@
 import { appleServicesLines } from '../apple-services.ts';
 import { maintenanceStatus, maintenanceLines } from '../stimd/passes/status.ts';
-import { probeDaemonAnswer, withAnswer } from '../daemon/answering.ts';
+import { probeDaemonAnswer, stuckStimdRemedy, withAnswer } from '../daemon/answering.ts';
 import {
   crashLines,
   daemonLine,
@@ -301,6 +301,8 @@ export function renderStatus(
   const now = Date.now();
   const snapshot = daemon.running ? readDaemonSnapshot() : null;
   out.push(chalk.dim(daemonLine(daemon, now)));
+  const remedy = stuckStimdRemedy(daemon, now);
+  if (remedy) out.push(chalk.yellow(remedy));
   const lastAction = lastActionLine(daemon, now);
   if (lastAction) out.push(chalk.dim(lastAction));
   out.push(...waitingLines(daemon, now));

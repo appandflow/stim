@@ -1837,6 +1837,7 @@ describe('launch verification', () => {
     expect(exitCode).toBe(null);
     expect(parseFirst(logs).launched).toBe('unverified');
     expect(errs.join('\n')).toContain('bundle delivered, but device log evidence is unavailable');
+    expect(errs.join('\n')).toContain('Run `stim status`, then `stim logs --errors`');
     expect(errs.join('\n')).not.toContain('no bundle request reached');
   });
 
@@ -6639,6 +6640,19 @@ describe('ios --device: selecting a phone and building the device slice', () => 
         })),
     };
   }
+
+  test.each([true, false])('only a physical run clears its slot launch: %s', async (physical) => {
+    reserve();
+    const clearWorkspaceLaunch = vi.fn<(root: string, platform: string, slot?: string) => Promise<void>>(
+      async () => {},
+    );
+    const { exitCode } = await run(
+      { ...(physical ? { device: PHONE } : {}), slot: 'tablet', json: true },
+      { ...connected(), clearWorkspaceLaunch },
+    );
+    expect(exitCode).toBe(null);
+    expect(clearWorkspaceLaunch.mock.calls).toEqual(physical ? [[root, 'ios', 'tablet']] : []);
+  });
 
   test('--device with an empty udid refuses before anything is spawned', async () => {
     reserve();

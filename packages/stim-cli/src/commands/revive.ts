@@ -330,7 +330,7 @@ export async function runRevive({
     return failure(
       'STIM_DEVICE_LOST',
       `Device ${requestedDevice} is not a simulator or emulator this workspace last launched its app on, so revive started nothing for it.`,
-      "Stim boots only this workspace's owned devices. Run `stim status` to see them, and drive one of those.",
+      `Revive relaunches only owned simulators and emulators; for a physical device, run \`${nativeRunCommand('ios', 'default', { physical: true, deviceId: requestedDevice })}\` or \`${nativeRunCommand('android', 'default', { physical: true, deviceId: requestedDevice })}\` again.`,
     );
   }
   const targets: Target[] = [];
