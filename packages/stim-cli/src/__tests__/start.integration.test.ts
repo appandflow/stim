@@ -9,12 +9,13 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync,
 import type { SpawnOptions } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import type { Op } from '../cli/define-op.ts';
 import { getProject, upsertProject } from '../workspace/config.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { workspaceLinks } from '../devices/stim-desktop.ts';
 import { withManagedRemoteWorktreeLock, withManagedTunnelLock, type TunnelRecord } from '../engine/tunnel.ts';
+import { withWorkspaceProcessLock, workspaceProcessLockPath } from '../engine/workspace-process-lock.ts';
 import { workspaceAgentDeviceDir, workspaceLogsDir } from '../workspace/paths.ts';
 
 const metroOutputFile = (workspace: string) => join(workspaceLogsDir(workspace), 'metro.stderr.log');
@@ -1233,6 +1234,34 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     },
     30_000,
   );
+
+  test('start --wait bounds the real metro-start lock wait and preserves its path', async () => {
+    setExecutor(metroExecutor({ listeners: {} }));
+    const lockRoot = dirname(workspaceLogsDir(root));
+    const lockPath = workspaceProcessLockPath(lockRoot, 'metro-start', true);
+    let tunnelWaitMs: number | undefined;
+    await withWorkspaceProcessLock(
+      lockRoot,
+      'metro-start',
+      async () => {
+        const result = await runAction({ json: true, wait: '1' }, () =>
+          registerPosixStart({
+            withTunnelLock: (workspace, fn, options) => {
+              tunnelWaitMs = options?.waitMs;
+              return withManagedTunnelLock(workspace, fn, options);
+            },
+          }),
+        );
+        expect(result.exitCode).toBe(1);
+        const refusal = JSON.parse(result.logs[0] ?? '');
+        expect(refusal.code).toBe('STIM_LOCK_TIMEOUT');
+        expect(refusal.message).toContain(lockPath);
+        expect(refusal.message).toContain('waited 1s');
+        expect(tunnelWaitMs).toBe(1000);
+      },
+      { external: true },
+    );
+  });
 
   test('concurrent managed starts hand off one supervisor spawn inside the tunnel lock', async () => {
     const { port, exec } = await managedStartExecutor();

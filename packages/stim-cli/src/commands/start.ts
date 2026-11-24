@@ -1176,10 +1176,11 @@ export async function startDevServer(
               (claim) => runStartRetryingPortRace(claim, tunnelClaim),
               {
                 external: true,
+                waitMs: waitSeconds * 1000,
                 signal: operationSignal,
               },
             ),
-          { signal: operationSignal },
+          { signal: operationSignal, waitMs: waitSeconds * 1000 },
         );
       } catch (error) {
         if (error instanceof WorkspaceProcessCleanupError || error instanceof StartRefusal) throw error;
@@ -1192,9 +1193,9 @@ export async function startDevServer(
           });
         if (workspaceProcessLockError(error) !== 'timeout') throw error;
         return fail({
-          code: 'STIM_METRO_TIMEOUT',
-          message: 'Another Metro start or reset is still running for this app.',
-          remedy: 'Wait for it to finish, then retry `stim start`.',
+          code: 'STIM_LOCK_TIMEOUT',
+          message: `${error instanceof Error ? error.message : String(error)} It waited ${waitSeconds}s, the --wait value.`,
+          remedy: 'Another Stim command holds the lock. Retry once it finishes or raise `--wait`.',
         });
       }
     };
@@ -1202,6 +1203,7 @@ export async function startDevServer(
     try {
       return await d.withWorktreeLock(worktreeRoot, startLocked, {
         signal: operationSignal,
+        waitMs: waitSeconds * 1000,
       });
     } catch (err) {
       if (err instanceof WorkspaceProcessCleanupError || err instanceof StartRefusal) throw err;
