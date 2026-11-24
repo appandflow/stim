@@ -1409,6 +1409,13 @@ describe('a refresh from the worktree root with a nested app that has its own lo
     expect(spawned).toEqual([`npm ci in ${app}`]);
   });
 
+  test('does not ask for an app directory when the warm runs from a Swift Package app', async () => {
+    write(target, 'Package.swift', '// swift-tools-version:5.9\n');
+    const result = await runWarm(target, '--refresh');
+    expect(result.code).toBe(0);
+    expect(result.stderr).not.toContain('no single app');
+  });
+
   test('says that only the repository root is refreshed when no app is registered, and where to run the refresh', async () => {
     const result = await runWarm(target, '--refresh');
     expect(result.code).toBe(0);
