@@ -3,7 +3,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { answered } from '../workspace/bounded-read.ts';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join, sep } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
 import {
   currentStage,
@@ -22,7 +22,7 @@ import { archiveWorkspace } from '../archive.ts';
 import { canonicalPath, realpathAsync } from '../commands/gc/paths.ts';
 import { deleteProjectDevices, findStaleProjectDevices, withAndroidAvdSizes } from '../commands/gc/devices.ts';
 import type { OwnedDeviceActivity } from '../commands/gc/idle.ts';
-import { workspaceOutputPaths } from '../commands/gc/workspaces.ts';
+import { listWorkspaceDirs, workspaceOutputPaths } from '../commands/gc/workspaces.ts';
 import { avdDataDirectories, listAvdsAsync } from '../devices/android.ts';
 import { projectDeviceSlots } from '../devices/device-slots.ts';
 import { listAllIosSimsAsync, type IosSimRecord } from '../devices/ios.ts';
@@ -330,7 +330,7 @@ async function readIdleWorkspaces(
   const found = supplied ?? (discover ? await discoverCheckouts(config, listedRoots(), reading.operation) : []);
   const discovered = found.map(({ path }): [string, ProjectRecord] => [path, {}]);
   const discoveredPaths = new Set(found.map(({ path }) => path));
-  const checkouts = [...Object.entries(config.projects), ...discovered];
+  const checkouts = [...Object.entries(config.projects), ...recordedOnly(config), ...discovered];
   tally.items = checkouts.length;
   for (const [path, project] of checkouts) {
     await between?.();
@@ -371,6 +371,27 @@ async function readIdleWorkspaces(
   const candidates: StageCandidate[] = [];
   for (const entry of idle) candidates.push(Object.assign(entry, await checkoutOwnerOf(entry.path, reading.operation)));
   return linkedFirst(candidates);
+}
+
+const overlaps = (path: string, other: string): boolean =>
+  path === other || path.startsWith(`${other}${sep}`) || other.startsWith(`${path}${sep}`);
+
+/**
+ * The roots a Stim command recorded a workspace for that have no registry entry, still exist, and hold or lie inside no
+ * registered project, which covers them otherwise.
+ */
+function recordedOnly(config: Config): [string, ProjectRecord][] {
+  const registered = Object.keys(config.projects);
+  const roots = new Set<string>();
+  for (const { projectRoot } of listWorkspaceDirs())
+    if (
+      projectRoot &&
+      isAbsolute(projectRoot) &&
+      !registered.some((key) => overlaps(projectRoot, key)) &&
+      existsSync(projectRoot)
+    )
+      roots.add(projectRoot);
+  return [...roots].map((root) => [root, {}]);
 }
 
 /** Whether the checkout holds an output rung 1 deletes, which a Cargo `target/` is not. */

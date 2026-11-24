@@ -39,7 +39,7 @@ import { stoppedOutputCandidates, stoppedOutputs } from '../daemon/stages.ts';
 import type { OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { metroStoreRoot } from '../stimd/metro/metro-store.ts';
 import { saveConfig } from '../workspace/config.ts';
-import { workspaceDir } from '../workspace/paths.ts';
+import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
 import { recordWarmedFrom } from '../workspace/source-dependencies.ts';
 import { listedRoots } from '../commands/gc/worktrees.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
@@ -1023,6 +1023,40 @@ describe('gc marks written by the lane', () => {
       }
       utimesSync(path, at, at);
     };
+
+    it.each([
+      ['takes the node_modules of a linked worktree with only a workspace record', false, 'done'],
+      ['leaves it to the registered app inside it, used a minute ago', true, undefined],
+    ] as const)(
+      '%s',
+      async (_name, registeredApp, outcome) => {
+        const source = checkout('recorded-source', 20 * day);
+        const linked = join(roots, 'recorded-linked');
+        execFileSync('git', ['-C', source, '-c', 'gc.auto=0', 'worktree', 'add', '-q', '-b', 'recorded', linked]);
+        const modules = installed(linked);
+        config = { maintenance: {}, projects: {}, repos: {}, idle: { dormantDays: 1, sourceDormantDays: 0 } };
+        const app = join(linked, 'apps', 'mobile');
+        if (registeredApp) {
+          mkdirSync(app, { recursive: true });
+          writeFileSync(join(app, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+          config.projects[app] = {};
+        }
+        saveConfig(config);
+        ensureWorkspaceStorage(linked);
+        age(roots);
+        recordWorkspaceUse(linked, new Date(Date.now() - 20 * day));
+        if (registeredApp) {
+          ensureWorkspaceStorage(app);
+          recordWorkspaceUse(app, new Date(Date.now() - 60_000));
+        }
+
+        const taken = (await dormant()).filter(({ target }) => target === modules);
+
+        expect(taken.map((action) => action.outcome)).toEqual(outcome ? [outcome] : []);
+        expect(existsSync(modules)).toBe(!outcome);
+      },
+      20_000,
+    );
 
     it('takes the node_modules of a source checkout with no workspace record that a discovered root holds', async () => {
       const root = checkout('recordless-source', 20 * day);

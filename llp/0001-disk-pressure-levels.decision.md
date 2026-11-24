@@ -1009,6 +1009,20 @@ reduced to minimal size", 2026-11-11.
 Maintainer decision: "Need to be more aggressive in our resources reclaim, i
 dont want to have computers in this situation again", 2026-11-11.
 
+The stage reads the registered workspaces, the discovered checkouts, and every
+root a Stim command recorded a workspace for (`workspaces/<id>/workspace.json`)
+that has no registry entry, still exists, and holds or lies inside no
+registered project. Such a root follows the registered-workspace rules. A
+registered app inside a worktree covers that worktree instead, so a recorded
+worktree root never takes the trees of an app in use.
+
+Reason: `stim worktree warm` at a repository root records use of the root but
+registers only the app it finds, and older Stim versions dropped the app's
+registry entry on an idle stop while the root's record stayed. Discovery treats
+every recorded root as known, and the gc marks and the worktree check already
+read recorded roots, so without this the stage reached none of them (#6203).
+Chosen by the implementing lane of #6203, not the maintainer.
+
 ## The main checkout goes last
 
 Every stage and rung that reduces checkouts takes linked worktrees before the
