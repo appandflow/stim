@@ -29,7 +29,7 @@ import * as gcPaths from '../commands/gc/paths.ts';
 import * as cacheFiles from '../cache-file.ts';
 import * as worktree from '../workspace/worktree.ts';
 import { runLadder } from '../daemon/ladder.ts';
-import { runDormantDependencies } from '../daemon/dependencies.ts';
+import { clearDependency, runDormantDependencies } from '../daemon/dependencies.ts';
 import { dependencyMarkObserver } from '../daemon/dependency-marks.ts';
 import { savedDependencyReports } from '../daemon/dependency-reports.ts';
 import * as artifacts from '../stimd/passes/artifacts.ts';
@@ -1059,6 +1059,36 @@ describe('gc marks written by the lane', () => {
       },
       20_000,
     );
+
+    it('rechecks a recorded worktree by the full evidence once it holds the claim', async () => {
+      const source = checkout('recheck-source', 20 * day);
+      const linked = join(roots, 'recheck-linked');
+      execFileSync('git', ['-C', source, '-c', 'gc.auto=0', 'worktree', 'add', '-q', '-b', 'recheck', linked]);
+      const modules = installed(linked);
+      config = { maintenance: {}, projects: {}, repos: {}, idle: { dormantDays: 1, sourceDormantDays: 0 } };
+      saveConfig(config);
+      ensureWorkspaceStorage(linked);
+      age(roots);
+      recordWorkspaceUse(linked, new Date(Date.now() - 20 * day));
+      writeFileSync(join(linked, 'index.js'), 'edited after selection');
+      const operation = testContext();
+      const worktrees = await artifacts.artifactWorktreesFor(operation);
+      const keys = worktrees.find(({ path }) => path === linked)?.keys ?? [];
+      const candidate = { worktree: linked, path: modules, keys, locked: false, reduceOnly: false };
+
+      const result = await clearDependency(
+        { candidate, source: false, workspace: linked, bytes: null, privateBytes: null },
+        day,
+        '',
+        worktrees,
+        'test',
+        operation,
+        false,
+      );
+
+      expect(result).toMatchObject({ status: 'kept', detail: expect.stringContaining('no longer idle') });
+      expect(existsSync(modules)).toBe(true);
+    }, 20_000);
 
     it('takes the node_modules of a source checkout with no workspace record that a discovered root holds', async () => {
       const root = checkout('recordless-source', 20 * day);

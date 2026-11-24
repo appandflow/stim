@@ -337,7 +337,7 @@ async function readIdleWorkspaces(
   for (const [path, project] of checkouts) {
     await between?.();
     if (sameRoot(path, reading.protectedRoot) || !(await worthIt(path, project))) continue;
-    if (reclaimable && discoveredPaths.has(path) && !(await reclaimable(path))) continue;
+    if (reclaimable && (discoveredPaths.has(path) || recordedPaths.has(path)) && !(await reclaimable(path))) continue;
     const at = Date.now();
     try {
       const used = Date.parse(String(readWorkspaceState(path)?.lastUsedAt ?? ''));
