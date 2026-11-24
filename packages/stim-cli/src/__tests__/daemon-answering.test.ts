@@ -1,9 +1,10 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { DaemonStatus } from '@stim-cli/core/state';
-import { probeDaemonAnswer, unansweredFindings, withAnswer } from '../daemon/answering.ts';
+import { stimdClaimRoot, type DaemonStatus } from '@stim-cli/core/state';
+import { probeDaemonAnswer, stuckStimdRemedy, unansweredFindings, withAnswer } from '../daemon/answering.ts';
 import { daemonLine, daemonStatus } from '../daemon/status.ts';
+import { releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import { holdDaemonClaim, serveStimdSocket } from './_stimd-socket.ts';
 
 const NOW = Date.parse('2026-11-02T12:00:00.000Z');
@@ -104,7 +105,23 @@ describe('a stimd that holds the claim and did not answer', () => {
   test('the fix names kill with the claim pid only when the last tick is also late', () => {
     const recent = status({ unanswered: { pid: 4242, waitedMs: 3000 }, lastTickAt: '2026-11-02T11:59:00.000Z' });
     expect(unansweredFindings(recent, NOW)[0]?.fix).not.toMatch(/kill/);
-    expect(unansweredFindings(silent, NOW)[0]?.fix).toContain('`kill 4242`');
+    expect(stuckStimdRemedy(recent, NOW)).toBeNull();
+    expect(unansweredFindings(silent, NOW)[0]?.fix).toContain('`kill -9 4242`');
+  });
+
+  test('the remedy names the live holder service unit', () => {
+    const claim = tryAcquireClaim({
+      root: stimdClaimRoot(),
+      mode: 'shared',
+      label: 'stimd',
+      details: { serviceUnit: 'dev.stim.stimd' },
+    }).acquired;
+    onTestFinished(() => {
+      releaseClaim(claim);
+    });
+    expect(stuckStimdRemedy({ ...silent, running: { ...running, pid: process.pid } }, NOW)).toContain(
+      'its claims are kept, and its service unit dev.stim.stimd restarts it.',
+    );
   });
 
   test.each<[string, Partial<DaemonStatus>, boolean]>([
@@ -124,6 +141,7 @@ describe('a stimd that holds the claim and did not answer', () => {
 
   test('a stimd that answered gets no finding and the usual line', () => {
     expect(unansweredFindings(status(), NOW)).toEqual([]);
+    expect(stuckStimdRemedy(status(), NOW)).toBeNull();
     expect(daemonLine(status(), NOW)).toMatch(
       /^Daemon \(on\): running since \d\d:\d\d \(pid 4242\), last tick 5m ago$/,
     );

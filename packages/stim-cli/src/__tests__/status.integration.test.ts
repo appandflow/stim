@@ -395,6 +395,7 @@ test('status says a stimd that holds the claim and did not answer, in the text a
 
   const logs = await runStatus(process.platform);
   expect(logs.find((line) => line.startsWith('Daemon'))).toContain(`pid ${process.pid}), did not answer within 3 s`);
+  expect(logs.join('\n')).not.toContain('kill -9');
   expect((await runStatusJson(process.platform)).daemon.unanswered).toEqual({ pid: process.pid, waitedMs: 3000 });
 }, 20_000);
 

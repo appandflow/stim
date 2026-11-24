@@ -162,8 +162,11 @@ missing. In `--json` that is `daemon.unanswered` (`pid`, `waitedMs`,
 `socketMissing`); it is absent when stimd answers. It reports one probe, so a
 machine under heavy load can show it for a stimd that answers later, and
 neither command stops or replaces the stimd. Doctor then shows only that
-finding, not a late-tick one beside it, and its fix names `kill <pid>` only when
-the last tick is also older than three intervals. A stimd that answers with late
+finding, not a late-tick one beside it, and its fix names `kill -9 <pid>` only when
+the last tick is also older than three intervals. `stim status` prints the same
+line: its claims are kept, and the next stim start, ios or android starts a fresh
+stimd, or its service unit restarts it when the live claim names a unit. SIGTERM
+stays pending on a stopped or blocked stimd. A stimd that answers with late
 ticks gets a late-tick finding that does not say to kill it. `status --watch` probes in the
 background every 10 seconds and never waits for it.
 

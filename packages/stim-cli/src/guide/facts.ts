@@ -2036,7 +2036,7 @@ RULES
     abnormalExits lists the last day's abnormal exits, { at, build, pid,
     reason, home? }, oldest first, home naming what to fix when the Stim home
     caused it. Status prints both; doctor reports the hold. unanswered { pid,
-    waitedMs, socketMissing? } means no probe reply in waitedMs (3 s). A stimd that died with no clean exit (killed, out of memory,
+    waitedMs, socketMissing? } means no probe reply in waitedMs (3 s). Status and doctor add the end command when the last tick is also older than three intervals. A stimd that died with no clean exit (killed, out of memory,
     crashed) is logged by the next stimd as stimd_predecessor_lost in
     daemon.ndjson and counts, unless it died in an earlier system boot; a handover
     whose successor never started is logged as successor_missing and the next
