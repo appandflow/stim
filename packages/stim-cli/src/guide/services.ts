@@ -76,7 +76,10 @@ LIFECYCLE
   the service still runs keeps the workspace and names the command; stop the
   service yourself and remove again.
 - stim test passes the started services' env to the test command, so tests
-  reach this workspace's services.
+  reach this workspace's services. stim services env prints the values the
+  current settings resolve to.
+- A service that writes into its checkout (a database folder, a cache) counts
+  as a file edit, so it never idles; keep its data outside the checkout.
 - stim status lists the started services and whether each runs.
 
 EXAMPLES
@@ -110,14 +113,20 @@ A local Supabase stack in ../api, its CLI reading SUPABASE_* variables:
   "supabase": {
     "cwd": "../api",
     "ports": { "sb-api": "SUPABASE_API_PORT", "sb-db": "SUPABASE_DB_PORT",
-               "sb-shadow": "SUPABASE_DB_SHADOW_PORT" },
+               "sb-shadow": "SUPABASE_DB_SHADOW_PORT",
+               "sb-studio": "SUPABASE_STUDIO_PORT",
+               "sb-smtp": "SUPABASE_LOCAL_SMTP_PORT",
+               "sb-analytics": "SUPABASE_ANALYTICS_PORT" },
     "idEnv": "SUPABASE_PROJECT_ID",
     "env": { "SUPABASE_URL": "http://127.0.0.1:{sb-api}" },
     "start": "supabase start",
     "stop": "supabase stop",
     "teardown": "supabase stop --no-backup",
-    "orphanTeardown": "supabase stop --no-backup --project-id {id}"
+    "orphanTeardown": "supabase stop --no-backup --project-id {id}",
+    "ready": "supabase status"
   }
+
+Map every port the stack binds, or a second workspace's start collides on it.
 
 An API that needs the compose stack, and a webhook forwarder to the API:
 

@@ -20,6 +20,7 @@ import { createPortProbe } from './ports.ts';
 import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from './process-identity.ts';
 import { workspaceDir, workspaceLogsDir } from './workspace/paths.ts';
 import { resolveProjectSettings, settingValueAt } from './workspace/settings.ts';
+import { getProject, upsertProject } from './workspace/config.ts';
 import { readWorkspaceState, updateWorkspaceStateAsync } from './workspace/workspace-state.ts';
 import { repoRoot } from './workspace/worktree.ts';
 
@@ -122,12 +123,10 @@ function argvOf(name: string, key: string, value: unknown): string[] | undefined
   return value;
 }
 
-/** The names `{...}` placeholders in `text` refer to. */
 function placeholders(text: string): string[] {
   return [...text.replace(/\{\{|\}\}/g, '').matchAll(/\{([^{}]*)\}/g)].map((match) => match[1] ?? '');
 }
 
-/** Validates one declared service's shape; `declaredServicesFrom` checks its placeholders against the others. */
 function parseService(name: string, value: unknown): ServiceDefinition {
   if (!NAME.test(name))
     throw bad(name, 'needs a name of lowercase letters, digits and hyphens, starting with a letter.');
@@ -294,7 +293,6 @@ function workspaceCwd(root: string, cwd: string): string {
   return resolved;
 }
 
-/** Allocates the service's ports and resolves every command and value it runs with. */
 async function resolveService(
   root: string,
   definition: ServiceDefinition,
@@ -331,7 +329,7 @@ async function resolveService(
   return record;
 }
 
-/** The environment of every declared service whose ports are allocated or can be: for `stim services env` and `stim test`. */
+/** The variables of the declared services as the current settings resolve them, allocating their ports: `stim services env`. */
 export async function servicesEnv(root: string, name?: string): Promise<Record<string, Record<string, string>>> {
   const out: Record<string, Record<string, string>> = {};
   const definitions = declaredServices(root);
@@ -340,8 +338,12 @@ export async function servicesEnv(root: string, name?: string): Promise<Record<s
   return out;
 }
 
-function withServicesLock<T>(root: string, fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
-  return withWorkspaceProcessLock(workspaceDir(root), 'services', fn, { external: true, signal });
+function withServicesLock<T>(root: string, fn: () => Promise<T>, signal?: AbortSignal, waitMs?: number): Promise<T> {
+  return withWorkspaceProcessLock(workspaceDir(root), 'services', fn, {
+    external: true,
+    signal,
+    ...(waitMs === undefined ? {} : { waitMs }),
+  });
 }
 
 async function writeRecord(root: string, name: string, record: ServiceRecord | null): Promise<void> {
@@ -371,9 +373,10 @@ export function serviceLogFile(root: string, name: string): string {
 interface RunOptions {
   signal?: AbortSignal;
   operation?: StimContext;
+  /** How long to wait for another command's services lock; the daemon passes 0 and skips a busy workspace. */
+  waitMs?: number;
 }
 
-/** Runs one of a service's commands; null when it exited 0, else why it failed. Its output goes to the workspace log. */
 async function runCommand(
   root: string,
   name: string,
@@ -513,28 +516,64 @@ async function spawnProcess(root: string, name: string, record: ServiceRecord, o
     child.unref();
     if (child.pid === undefined) throw new Error(`${record.start.join(' ')} did not start`);
     const identity = captureProcessIdentity(child.pid);
-    if (!identity.ok) throw new Error(`cannot identify pid ${child.pid}: ${identity.reason}`);
+    if (!identity.ok) {
+      child.kill('SIGKILL');
+      throw new Error(`cannot identify pid ${child.pid}: ${identity.reason}.${logTail(root, name)}`);
+    }
     return { pid: child.pid, processToken: identity.token };
   } finally {
     closeSync(fd);
   }
 }
 
+function groupAlive(pid: number): boolean {
+  if (process.platform === 'win32') return false;
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch (error) {
+    return !(error instanceof Error && 'code' in error && error.code === 'ESRCH');
+  }
+}
+
+async function groupExited(pid: number, ms: number, signal?: AbortSignal): Promise<boolean> {
+  const deadline = Date.now() + ms;
+  while (groupAlive(pid)) {
+    if (Date.now() >= deadline) return false;
+    await new Promise((done) => setTimeout(done, 100));
+    signal?.throwIfAborted();
+  }
+  return true;
+}
+
 // @ref LLP 0027#a-service-without-a-stop-command-is-a-process -- signalled by captured identity, never a bare pid
 async function stopProcess(record: ServiceRecord, signal?: AbortSignal): Promise<string | null> {
   const proc = record.process;
-  if (!proc || inspectProcessIdentity(proc) !== 'same') return null;
+  if (!proc) return null;
+  const status = inspectProcessIdentity(proc);
+  if (status === 'unknown') return `the identity of pid ${proc.pid} cannot be verified`;
+  if (status !== 'same') return null;
   try {
     signalProcessTree(proc.pid, 'SIGTERM', { group: true });
-    if (!(await waitForProcessExit(proc, PROCESS_STOP_GRACE_MS, signal))) {
-      if (inspectProcessIdentity(proc) !== 'same') return null;
-      signalProcessTree(proc.pid, 'SIGKILL', { group: true });
-      if (!(await waitForProcessExit(proc, PROCESS_STOP_GRACE_MS, signal))) return `pid ${proc.pid} did not exit`;
-    }
+    const leader = await waitForProcessExit(proc, PROCESS_STOP_GRACE_MS, signal);
+    if (leader && (await groupExited(proc.pid, PROCESS_STOP_GRACE_MS, signal))) return null;
+    if (!leader && inspectProcessIdentity(proc) !== 'same' && !groupAlive(proc.pid)) return null;
+    signalProcessTree(proc.pid, 'SIGKILL', { group: true });
+    if (!(await waitForProcessExit(proc, PROCESS_STOP_GRACE_MS, signal))) return `pid ${proc.pid} did not exit`;
+    if (!(await groupExited(proc.pid, PROCESS_STOP_GRACE_MS, signal)))
+      return `processes of the group of pid ${proc.pid} did not exit`;
   } catch (error) {
     if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) return messageOf(error);
   }
   return null;
+}
+
+/** Whether removal must keep the workspace for the service: its process may live, or its ports still listen. */
+async function mayStillRun(record: ServiceRecord): Promise<boolean> {
+  if (record.kind === 'process')
+    return !!record.process && ['same', 'unknown'].includes(inspectProcessIdentity(record.process));
+  const ports = Object.values(record.ports);
+  return ports.length > 0 && (await listening(ports)).length > 0;
 }
 
 export interface ServiceOutcome {
@@ -552,9 +591,25 @@ async function startOne(
 ): Promise<ServiceOutcome> {
   const resolved =
     'record' in source ? source.record : await resolveService(root, source.definition, source.definitions);
-  const base: ServiceRecord = { ...resolved, state: 'running', at: new Date().toISOString() };
-  if (previous && (await serviceRunning(previous)) && (await ready(root, name, previous, options)))
-    return { name, outcome: 'running', detail: 'already running' };
+  const { stoppedBy: _, idleStopFailedAt: __, ...fresh } = resolved;
+  const base: ServiceRecord = { ...fresh, state: 'running', at: new Date().toISOString() };
+  const stopped = (record: ServiceRecord): ServiceRecord => ({
+    ...record,
+    state: 'stopped',
+    stoppedBy: previous?.stoppedBy === 'idle' ? 'idle' : 'command',
+  });
+  if (previous && (await serviceRunning(previous))) {
+    if (await ready(root, name, previous, options)) return { name, outcome: 'running', detail: 'already running' };
+    // @ref LLP 0027#a-service-without-a-stop-command-is-a-process -- never spawn over a live recorded process
+    if (previous.kind === 'process')
+      return (await waitReady(root, name, previous, options))
+        ? { name, outcome: 'running', detail: 'already running' }
+        : {
+            name,
+            outcome: 'failed',
+            detail: `pid ${previous.process?.pid} runs but is not ready.${logTail(root, name)}`,
+          };
+  }
   if (base.kind === 'process') {
     let proc;
     try {
@@ -571,19 +626,23 @@ async function startOne(
     logEvent(root, 'info', 'service_start', `${name}: ${base.start.join(' ')} (pid ${proc.pid})`, { service: name });
     if (await waitReady(root, name, record, options))
       return { name, outcome: 'started', detail: `pid ${proc.pid}; output in ${serviceLogFile(root, name)}` };
-    await stopProcess(record, options.signal);
-    await writeRecord(root, name, { ...record, state: 'stopped', stoppedBy: 'command' });
+    const left = await stopProcess(record, options.signal);
+    await writeRecord(root, name, left ? record : { ...stopped(record), process: undefined });
     return { name, outcome: 'failed', detail: `${base.start.join(' ')} did not become ready.${logTail(root, name)}` };
   }
   await writeRecord(root, name, base);
   const failure = await runCommand(root, name, 'start', base.start, base, base.cwd, START_TIMEOUT_MS, options);
-  if (failure) return { name, outcome: 'failed', detail: failure };
-  if (!(await waitReady(root, name, base, options)))
-    return { name, outcome: 'failed', detail: `${base.start.join(' ')} exited, but the service did not become ready` };
-  return { name, outcome: 'started', detail: base.start.join(' ') };
+  const notReady = !failure && !(await waitReady(root, name, base, options));
+  if (!failure && !notReady) return { name, outcome: 'started', detail: base.start.join(' ') };
+  await writeRecord(root, name, stopped(base));
+  return {
+    name,
+    outcome: 'failed',
+    detail: failure ?? `${base.start.join(' ')} exited, but the service did not become ready`,
+  };
 }
 
-/** Starts the declared services, or the one named, in declaration order; one already running is left alone. */
+/** Starts the declared services, or the one named, dependencies first; one already running is left alone. */
 export async function startServices(
   root: string,
   name: string | undefined,
@@ -591,6 +650,7 @@ export async function startServices(
 ): Promise<ServiceOutcome[]> {
   const definitions = declaredServices(root);
   const order = startOrder(definitions, selectServices(definitions, name));
+  if (!getProject(root)) upsertProject(root, {});
   return withServicesLock(
     root,
     async () => {
@@ -661,6 +721,7 @@ export async function stopServices(
       return outcomes;
     },
     options.signal,
+    options.waitMs,
   );
 }
 
@@ -699,15 +760,22 @@ export async function forgetExitedServices(
   root: string,
   names: readonly string[],
   signal?: AbortSignal,
+  waitMs?: number,
 ): Promise<void> {
   await withServicesLock(
     root,
     async () => {
       for (const [name, record] of Object.entries(serviceRecords(root)))
         if (names.includes(name) && record.state === 'running' && !(await serviceRunning(record)))
-          await writeRecord(root, name, { ...record, state: 'stopped', at: new Date().toISOString() });
+          await writeRecord(root, name, {
+            ...record,
+            state: 'stopped',
+            stoppedBy: undefined,
+            at: new Date().toISOString(),
+          });
     },
     signal,
+    waitMs,
   );
 }
 
@@ -740,10 +808,10 @@ export async function teardownServices(
   root: string,
   { log = () => {}, ...options }: RunOptions & { log?: (line: string) => void } = {},
 ): Promise<ServiceOutcome[]> {
-  const records = serviceRecords(root);
-  if (!Object.keys(records).length) return [];
+  if (!Object.keys(serviceRecords(root)).length) return [];
   const present = existsSync(root);
   const run = async () => {
+    const records = serviceRecords(root);
     const outcomes: ServiceOutcome[] = [];
     const blocking: string[] = [];
     for (const [name, record] of Object.entries(records).toReversed()) {
@@ -782,7 +850,7 @@ export async function teardownServices(
         )
           .map(([key, value]) => `${key}=${value}`)
           .join(' ')}`;
-      if (failure && !reported && (await serviceRunning(record))) {
+      if (failure && !reported && (await mayStillRun(record))) {
         blocking.push(
           `${name}: ${failure}. Stop it yourself (${record.cwd}: ${(record.stop ?? ['kill', String(record.process?.pid)]).join(' ')}), then remove the workspace again.`,
         );

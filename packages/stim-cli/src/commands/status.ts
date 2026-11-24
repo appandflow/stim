@@ -191,7 +191,6 @@ function dependencyEditsLines({ path, dependencyEdits = [] }: EnvironmentState):
   );
 }
 
-/** The workspace's stage and how long it has been in it: running, idle, dormant or stopped. */
 function serviceLines({ services = [] }: EnvironmentState): string[] {
   return services.map((service) => {
     const ports = Object.entries(service.ports)
@@ -204,6 +203,7 @@ function serviceLines({ services = [] }: EnvironmentState): string[] {
   });
 }
 
+/** The workspace's stage and how long it has been in it: running, idle, dormant or stopped. */
 function stageLine(state: EnvironmentState, snapshot: DaemonSnapshot | null, now: number): string {
   if (state.dormantStage) {
     const { at, deletedDevices, archived } = state.dormantStage;

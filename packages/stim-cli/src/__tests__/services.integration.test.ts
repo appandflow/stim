@@ -5,6 +5,7 @@ import { createPortProbe } from '../ports.ts';
 import {
   resumeServices,
   serviceId,
+  forgetExitedServices,
   serviceProcessPids,
   serviceRecords,
   servicesEnv,
@@ -12,6 +13,7 @@ import {
   stopServices,
   teardownServices,
 } from '../services.ts';
+import { getProject } from '../workspace/config.ts';
 import { testContext } from './_context.ts';
 
 let home: string;
@@ -58,17 +60,36 @@ if (action === 'start') {
 }
 `;
 
+const launcher = `
+import { spawn } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
+const child = spawn(process.execPath, ['-e', "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"], { stdio: 'ignore' });
+writeFileSync(process.argv[2], String(child.pid));
+process.on('SIGTERM', () => process.exit(0));
+setInterval(() => {}, 1000);
+`;
+
+const alive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 const ctx = () => testContext({ env: { ...process.env, SERVER: join(scripts, 'server.mjs') } });
 
 function declare(services: Record<string, unknown>) {
   writeFileSync(join(root, '.stim.json'), JSON.stringify({ services }));
 }
 
+const run = (action: string) => [process.execPath, join(scripts, 'db.mjs'), action];
+
 function recorded(name: string): { pid: number; port: number; env: Record<string, string> } {
   const record = serviceRecords(root)[name];
-  const port = Object.values(record?.ports ?? {})[0];
-  if (!record || port === undefined) throw new Error(`no record for ${name}`);
-  return { pid: record.process?.pid ?? 0, port, env: record.env };
+  if (!record) throw new Error(`no record for ${name}`);
+  return { pid: record.process?.pid ?? 0, port: Object.values(record.ports)[0] ?? 0, env: record.env };
 }
 
 async function listens(port: number | undefined): Promise<boolean> {
@@ -84,6 +105,7 @@ beforeEach(() => {
   writeFileSync(join(root, 'package.json'), '{}');
   writeFileSync(join(scripts, 'server.mjs'), server);
   writeFileSync(join(scripts, 'db.mjs'), db);
+  writeFileSync(join(scripts, 'launcher.mjs'), launcher);
   process.env.STIM_HOME = join(home, 'stim');
 });
 
@@ -134,7 +156,6 @@ describe.skipIf(process.platform === 'win32')('workspace services (skipped on wi
   });
 
   test('a service with its own commands: stop keeps its data, revive resumes only an idle stop, removal tears it down', async () => {
-    const run = (action: string) => [process.execPath, join(scripts, 'db.mjs'), action];
     declare({
       db: {
         ports: { pg: 'DB_PORT' },
@@ -167,7 +188,6 @@ describe.skipIf(process.platform === 'win32')('workspace services (skipped on wi
   });
 
   test('a workspace whose folder is gone runs the orphan teardown from the home folder with the service id', async () => {
-    const run = (action: string) => [process.execPath, join(scripts, 'db.mjs'), action];
     const marker = join(home, 'orphan.txt');
     declare({
       db: {
@@ -188,11 +208,67 @@ describe.skipIf(process.platform === 'win32')('workspace services (skipped on wi
   });
 
   test('a teardown that fails while the service still runs keeps its record and names the service and command', async () => {
-    const run = (action: string) => [process.execPath, join(scripts, 'db.mjs'), action];
     declare({ db: { ports: { pg: 'DB_PORT' }, start: run('start'), stop: run('stop'), teardown: run('fail') } });
     const operation = ctx();
     await startServices(root, undefined, { operation });
     await expect(teardownServices(root, { operation })).rejects.toThrow(/db: teardown command .* exited with status 1/);
     expect(serviceRecords(root).db).toMatchObject({ state: 'running' });
+  });
+
+  test('a supervised process that exited after revive is not revived again, and its stop reaches its whole process group', async () => {
+    const workerFile = join(home, 'worker.pid');
+    declare({
+      worker: {
+        start: [process.execPath, join(scripts, 'launcher.mjs'), workerFile],
+        ready: [
+          process.execPath,
+          '-e',
+          `process.exit(require('fs').existsSync(${JSON.stringify(workerFile)}) ? 0 : 1)`,
+        ],
+      },
+    });
+    const operation = ctx();
+    expect(await startServices(root, undefined, { operation })).toMatchObject([{ outcome: 'started' }]);
+    expect(getProject(root)).not.toBeNull();
+    const { pid } = recorded('worker');
+    pids.add(pid);
+    const worker = Number(readFileSync(workerFile, 'utf8'));
+    pids.add(worker);
+    expect(await stopServices(root, undefined, 'idle', { operation })).toMatchObject([{ outcome: 'stopped' }]);
+    expect(alive(worker)).toBe(false);
+
+    rmSync(workerFile);
+    await resumeServices(root, { operation });
+    const again = recorded('worker').pid;
+    pids.add(again);
+    pids.add(Number(readFileSync(workerFile, 'utf8')));
+    process.kill(-again, 'SIGKILL');
+    await expect.poll(() => alive(again)).toBe(false);
+    await forgetExitedServices(root, ['worker']);
+    expect(serviceRecords(root).worker).toMatchObject({ state: 'stopped' });
+    expect(serviceRecords(root).worker?.stoppedBy).toBeUndefined();
+    expect(await resumeServices(root, { operation })).toEqual([]);
+  }, 30_000);
+
+  test('a live process that is not ready yet is waited for, not started twice, and a failed start can be retried', async () => {
+    const flag = join(home, 'ready');
+    writeFileSync(flag, '');
+    const check = [process.execPath, '-e', `process.exit(require('fs').existsSync(${JSON.stringify(flag)}) ? 0 : 1)`];
+    declare({
+      web: { ports: ['web'], start: [process.execPath, join(scripts, 'server.mjs'), '{web}'], ready: check },
+      broken: { start: run('fail'), stop: run('stop') },
+    });
+    const operation = ctx();
+    await startServices(root, 'web', { operation });
+    const { pid } = recorded('web');
+    pids.add(pid);
+    rmSync(flag);
+    setTimeout(() => writeFileSync(flag, ''), 1500);
+    expect(await startServices(root, 'web', { operation })).toMatchObject([{ outcome: 'running' }]);
+    expect(recorded('web').pid).toBe(pid);
+
+    expect(await startServices(root, 'broken', { operation })).toMatchObject([{ outcome: 'failed' }]);
+    expect(serviceRecords(root).broken).toMatchObject({ state: 'stopped' });
+    expect(await startServices(root, 'broken', { operation })).toMatchObject([{ outcome: 'failed' }]);
   });
 });

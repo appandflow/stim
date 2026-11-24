@@ -513,7 +513,6 @@ function workspaceDirectoryFailure(dir: string, error: unknown): ReclaimResult['
   return { dir, reason: error instanceof Error ? error.message : String(error) };
 }
 
-/** Tears the workspace's services down, then releases its named ports; the services it could only report, as kept. */
 async function teardownAndRelease(path: string, operation: StimContext | undefined): Promise<SkippedDevice[]> {
   const output = operation
     ? { signal: operation.signal, log: (line: string) => operation.output('stderr', `${line}\n`) }

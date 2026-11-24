@@ -45,7 +45,10 @@ A service without `stop` is a long-running process Stim supervises: `start`
 runs detached, in its own process group, with the service env, its output in
 `logs/service-<name>.log` of the workspace. Stim records its captured process
 identity and stops it by that identity, SIGTERM to the group, then SIGKILL after
-5 seconds. With `stop`, `start` must return once the service runs in the
+5 seconds, and waits until the whole group is gone; a process whose identity
+cannot be read counts as possibly running. A start never spawns over a
+recorded process that still runs; it waits for it to be ready. With `stop`,
+`start` must return once the service runs in the
 background, and Stim runs the service's own commands instead of signalling.
 `teardown` and `orphanTeardown` need `stop`.
 
@@ -99,7 +102,10 @@ evidence: Stim commands, source and git writes and commits, and no process or
 agent session working in its checkout. `maintenance.keep`, `idle.minutes` 0, a
 workspace in use and `daemon.mode report` keep them. The ports stay. A failed
 stop is retried after another `idle.minutes`. A recorded service that no longer
-runs is recorded stopped. stimd stays alive while a recorded service runs, and
+runs is recorded stopped, with no idle mark. The services' own processes (each
+supervised process group, and the listeners `lsof` shows on a commands
+service's ports) do not count as processes working in the checkout. A service
+that writes into its checkout counts as a file edit and never idles. stimd stays alive while a recorded service runs, and
 `stim services start` starts stimd.
 
 Reason for the idle stage rather than dormancy: a stack costs memory, not disk,
@@ -116,7 +122,8 @@ Chosen by the implementing agent with the coordinating session.
 `stim revive` starts again, from their records and before Metro, the services
 the idle pass stopped, and waits for each to be ready. A service
 `stim services stop` stopped, one that exited, or one Stim never started is not
-resumed. A failure refuses with `STIM_SERVICE_FAILED`, naming the service.
+resumed; a start clears the idle mark, and a failed restart keeps it, so the
+next revive tries again. A failure refuses with `STIM_SERVICE_FAILED`, naming the service.
 
 Maintainer decision: "Can we also have a resume command for when revive is
 called", 2026-11-23 (#6202). The resume is the service's `start`.
@@ -128,7 +135,8 @@ gc`, automatic maintenance) tears down each recorded service in reverse start
 order: a process by identity; a commands service through `teardown`, else
 `stop` while it runs. When the workspace folder is gone, `orphanTeardown` runs
 from the home folder; without one, removal names the command to run by hand.
-A teardown that fails while the service still runs throws, so removal keeps the
+A teardown that fails while the service may still run (its process lives or
+cannot be verified, or its ports listen) throws, so removal keeps the
 workspace and names the command; once the user stops it by hand, removal goes
 on, and a failure that leaves nothing running is only reported. Reason: a
 removal must not leave a stack or its data behind (the 153 volumes above), and
@@ -140,7 +148,8 @@ agent with the coordinating session.
 `stim test` passes the env of the services Stim started in the workspace to the
 test command, over the caller's environment, so tests reach this workspace's
 services and not a stack an outer shell pointed at. `stim services env` prints
-the same values for commands an agent runs itself.
+the values the current settings resolve to, for commands an agent runs itself;
+they match the records unless the settings changed since the start.
 
 ## Links
 

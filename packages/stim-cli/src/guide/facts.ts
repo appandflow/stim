@@ -1534,6 +1534,9 @@ RULES
   with no Stim command since, carries dormantStage and a plain stage line:
 
   dormantStage  { at, dormantDays, deletedDevices, archived }
+  services      the services stim services start started here, in start
+                order: [{ name, running, ports, stoppedBy }], stoppedBy
+                "idle", "command" or null; absent when it started none
   A source (main) checkout whose node_modules or ios/Pods maintenance or gc
   deleted carries sourceDependenciesCleared { at, dirs } and a plain "source
   checkout" line while any of those directories is still missing; worktree
