@@ -525,13 +525,21 @@ describe('the command output', () => {
     },
   );
 
-  test('Ctrl-C while a service starts again exits 130 with one STIM_CANCELLED payload', async () => {
+  test.each([
+    ['', 'STIM_CANCELLED'],
+    ['with unverified child cleanup', 'STIM_CLAIM_UNAVAILABLE'],
+  ] as const)('Ctrl-C while a service starts again %s exits 130 with one %s payload', async (cleanup, code) => {
     await revive(['--json'], {
       readState: () => ({ ...idleState, services: { db: serviceRecord('stopped', 'idle') } }),
       resumeServices: () => {
         const context = ambientContext();
         return withDrainingCancellation(context, context?.signal, async () => {
           process.emit('SIGINT');
+          if (cleanup)
+            throw Object.assign(new Error('child cleanup cannot be verified'), {
+              code: 'STIM_CLAIM_UNAVAILABLE',
+              reportCleanup: true,
+            });
           context?.signal.throwIfAborted();
           return [];
         });
@@ -539,7 +547,7 @@ describe('the command output', () => {
     });
     expect(process.exitCode).toBe(130);
     expect(out).toHaveLength(1);
-    expect(JSON.parse(out[0] ?? '')).toMatchObject({ code: 'STIM_CANCELLED' });
+    expect(JSON.parse(out[0] ?? '')).toMatchObject({ code });
   });
 
   test('plain output leaves stdout empty', async () => {

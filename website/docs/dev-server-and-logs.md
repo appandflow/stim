@@ -804,6 +804,8 @@ with native builds under `concurrency.maxBuilds`. Queue progress goes to stderr,
 also with `--json`. The slot covers the start command and readiness wait only
 (up to 60 seconds after the start command): it releases when ready, on failure,
 timeout or cancellation. Running services, stop and teardown hold no slot.
+Ctrl+C during a start exits 130 with `STIM_CANCELLED`, or with
+`STIM_CLAIM_UNAVAILABLE` when child cleanup cannot be verified.
 Readiness uses `ready` when declared, otherwise every declared port listening,
 otherwise the process alive.
 

@@ -375,41 +375,49 @@ describe('service start admission', () => {
     }
   });
 
-  test.each(['queue', 'start'] as const)(
-    'Ctrl-C during the %s exits 130 with one STIM_CANCELLED payload',
-    async (stage) => {
-      const held = stage === 'queue' ? tryAcquireBuildSlot({ max: 1, root: '/other/build' }) : null;
-      runFileAsync.mockImplementation(async (_file, args, options) => {
-        if (args[0] !== 'up') return '';
-        const aborted = new Promise<string>((_resolve, reject) =>
-          options.signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true }),
-        );
+  test.each([
+    ['the queue', 'STIM_CANCELLED'],
+    ['the start command', 'STIM_CANCELLED'],
+    ['unverified child cleanup', 'STIM_CLAIM_UNAVAILABLE'],
+  ] as const)('Ctrl-C during %s exits 130 with one %s payload', async (stage, code) => {
+    const held = stage === 'the queue' ? tryAcquireBuildSlot({ max: 1, root: '/other/build' }) : null;
+    runFileAsync.mockImplementation(async (_file, args, options) => {
+      if (args[0] !== 'up') return '';
+      if (stage === 'unverified child cleanup') {
         process.emit('SIGINT');
-        return aborted;
-      });
-      const previousCwd = process.cwd();
-      const previousExitCode = process.exitCode;
-      const stdout = vi.spyOn(console, 'log').mockImplementation(() => {});
-      vi.spyOn(console, 'error').mockImplementation(() => {});
-      vi.spyOn(daemon, 'ensurePersistentStimd').mockResolvedValue(false);
-      process.chdir(root);
-      try {
-        const pending = runCli(servicesOp, ['start', 'db', '--json'], { version: '0.0.0' });
-        if (stage === 'queue') {
-          await vi.waitUntil(() => liveWaiters('build').length === 1);
-          process.emit('SIGINT');
-        }
-        await pending;
-        expect(process.exitCode).toBe(130);
-        expect(stdout).toHaveBeenCalledOnce();
-        expect(JSON.parse(stdout.mock.calls[0]?.[0])).toMatchObject({ code: 'STIM_CANCELLED' });
-      } finally {
-        process.chdir(previousCwd);
-        process.exitCode = previousExitCode;
-        releaseBuildSlot(held);
+        throw Object.assign(new Error('child cleanup cannot be verified'), {
+          code: 'STIM_CLAIM_UNAVAILABLE',
+          reportCleanup: true,
+        });
       }
-    },
-  );
+      const aborted = new Promise<string>((_resolve, reject) =>
+        options.signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true }),
+      );
+      process.emit('SIGINT');
+      return aborted;
+    });
+    const previousCwd = process.cwd();
+    const previousExitCode = process.exitCode;
+    const stdout = vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(daemon, 'ensurePersistentStimd').mockResolvedValue(false);
+    process.chdir(root);
+    try {
+      const pending = runCli(servicesOp, ['start', 'db', '--json'], { version: '0.0.0' });
+      if (stage === 'the queue') {
+        await vi.waitUntil(() => liveWaiters('build').length === 1);
+        process.emit('SIGINT');
+      }
+      await pending;
+      expect(process.exitCode).toBe(130);
+      expect(stdout).toHaveBeenCalledOnce();
+      expect(JSON.parse(stdout.mock.calls[0]?.[0])).toMatchObject({ code });
+    } finally {
+      process.chdir(previousCwd);
+      process.exitCode = previousExitCode;
+      releaseBuildSlot(held);
+    }
+  });
 
   test('recovers a dead build holder but refuses a pending child with its claim removal remedy in JSON', async () => {
     plantClaim(buildSlotPath(0), 'exclusive', goneClaimOwner(), { details: { index: 0 } });

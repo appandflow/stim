@@ -19,7 +19,7 @@ Each start, including revive, queues for a native build slot under
 concurrency.maxBuilds. Queue progress goes to stderr, also with --json. The
 slot covers the start command, then up to 60 seconds of readiness wait, releasing
 when ready, on failure, timeout or cancellation. Running services, stop and
-teardown hold no slot.
+teardown hold no slot. Ctrl+C during a start exits 130 with STIM_CANCELLED.
 
 KINDS
 
