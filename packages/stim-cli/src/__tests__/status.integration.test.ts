@@ -1,5 +1,4 @@
 import * as helperState from '@stim-cli/core/state';
-import { daemonSnapshotFile } from '@stim-cli/core/state';
 import { isRpcEvent } from '@stim-cli/core/receive-protocol';
 import { writeHostedNative } from '../workspace/placement-state.ts';
 import type { HostedIosPlacement, HostedAndroidPlacement } from '@stim-cli/core/state';
@@ -1813,7 +1812,7 @@ describe('status reads the shared device listing', () => {
   );
 });
 
-test('status reports a runaway Apple service with both remedies in plain and JSON output', async () => {
+test('status reports a runaway Apple service with the helper setup command in plain and JSON output', async () => {
   vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
   saveTwoSimProjects();
   setBootedSims(

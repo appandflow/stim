@@ -1292,7 +1292,7 @@ when a cached registered helper has an unhealthy heartbeat. Each recent restart
 is logged once.
 With the helper enabled, status reports successful restart signals from the
 last hour; `status --json` includes `appleServices` with `helper`, `warnings`
-(including both `commands`) and `restarts`. A signal receipt does not verify
+(including the setup command in `commands`) and `restarts`. A signal receipt does not verify
 that launchd has started a replacement.
 
 The root-owned, world-readable `/Library/Logs/Stim/helper.ndjson` records samples,
@@ -1301,4 +1301,4 @@ hourly limit survives helper restarts. After updating Stim Host, unregister and
 register the helper again. Ad hoc signed development builds cannot register it.
 
 Try this agent prompt: "Check `stim status` for runaway Apple services. Show me
-the affected processes and both remedies before enabling the root helper."
+the affected processes and the setup command before enabling the root helper."
