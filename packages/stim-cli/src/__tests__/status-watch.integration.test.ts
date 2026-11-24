@@ -267,6 +267,57 @@ describe('watchChangeKey', () => {
     ...extra,
   });
 
+  const appleServices = (): NonNullable<StatusPayload['appleServices']> => ({
+    helper: 'registered',
+    heartbeat: { at: Date.now(), ok: true },
+    warnings: [
+      {
+        name: 'PerfPowerServices',
+        pid: 123,
+        cpu: 198,
+        rss: 1024,
+        commands: ['stim service install --helper'],
+      },
+    ],
+    restarts: [],
+  });
+
+  test('heartbeat refreshes and CPU/RSS samples do not reprint unchanged Apple service state', () => {
+    const services = appleServices();
+    const original = payload(10, 'open', { appleServices: services });
+    const serialized = JSON.stringify(original);
+    const key = watchChangeKey(original);
+    expect(
+      watchChangeKey(
+        payload(10, 'open', {
+          appleServices: {
+            ...services,
+            heartbeat: { at: Date.now() + 1000, ok: true },
+            warnings: services.warnings.map((row) => Object.assign({}, row, { cpu: 210, rss: 2048 })),
+          },
+        }),
+      ),
+    ).toBe(key);
+    expect(JSON.stringify(original)).toBe(serialized);
+  });
+
+  test.each(['helper', 'failed heartbeat', 'stale heartbeat', 'warnings', 'restart'] as const)(
+    'a changed Apple service %s reprints status',
+    (change) => {
+      const services = appleServices();
+      const key = watchChangeKey(payload(10, 'open', { appleServices: services }));
+      if (change === 'helper') services.helper = 'not registered';
+      if (change === 'failed heartbeat') services.heartbeat = { at: Date.now(), ok: false, error: 'sample failed' };
+      if (change === 'stale heartbeat') services.heartbeat = { at: Date.now() - 180_000, ok: true };
+      if (change === 'warnings') services.warnings = [];
+      if (change === 'restart')
+        services.restarts = [
+          { name: 'PerfPowerServices', pid: 123, at: Date.now(), cpu: 198, rss: 1024, seconds: 600 },
+        ];
+      expect(watchChangeKey(payload(10, 'open', { appleServices: services }))).not.toBe(key);
+    },
+  );
+
   test('the key is not the printed payload: masking leaves the payload untouched', () => {
     const value = payload(10);
     watchChangeKey(value);

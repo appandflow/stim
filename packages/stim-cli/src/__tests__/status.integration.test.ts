@@ -1,3 +1,4 @@
+import * as helperState from '@stim-cli/core/state';
 import { isRpcEvent } from '@stim-cli/core/receive-protocol';
 import { writeHostedNative } from '../workspace/placement-state.ts';
 import type { HostedIosPlacement, HostedAndroidPlacement } from '@stim-cli/core/state';
@@ -18,6 +19,7 @@ import { EventEmitter } from 'node:events';
 import { captureProcessToken } from '../process-identity.ts';
 import { makeConfig } from './_factories.ts';
 import { holdDaemonClaim, serveStimdSocket } from './_stimd-socket.ts';
+import service from '../commands/service.ts';
 import statusOp, { readVolumes, runStatusWatch } from '../commands/status.ts';
 import { runCli } from '../cli/define-op.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
@@ -91,6 +93,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   process.chdir(initialCwd);
   resetExecutor();
   rmSync(tmpHome, { recursive: true, force: true });
@@ -1807,4 +1810,179 @@ describe('status reads the shared device listing', () => {
       expect(result.payload.capacity.devices.inUse).toBe(3);
     },
   );
+});
+
+test('status reports a runaway Apple service with the helper setup command in plain and JSON output', async () => {
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+  saveTwoSimProjects();
+  setBootedSims(
+    `${TWO_SIMS_PS}\n123 1 1024 198.0 ${START} /usr/libexec/PerfPowerServices\n124 1 1024 200.0 ${START} /tmp/PerfPowerServices`,
+  );
+  expect((await runStatus()).some((line) => line.includes('Apple service PerfPowerServices'))).toBe(false);
+  expect((await runStatusJson()).appleServices.warnings).toEqual([]);
+  const file = daemonSnapshotFile();
+  mkdirSync(join(file, '..'), { recursive: true });
+  writeFileSync(
+    file,
+    JSON.stringify({
+      version: 1,
+      pid: process.pid,
+      startedAt: new Date().toISOString(),
+      intervalMs: 60_000,
+      tickAt: new Date().toISOString(),
+      measurement: {
+        appleServices: {
+          helper: 'not registered',
+          warnings: [
+            {
+              name: 'PerfPowerServices',
+              pid: 123,
+              cpu: 198,
+              rss: 1024,
+              commands: ['stim service install --helper'],
+            },
+          ],
+          restarts: [],
+        },
+      },
+    }),
+  );
+  const lines = await runStatus();
+  assert(
+    lines.some(
+      (line) =>
+        line.includes('Apple service PerfPowerServices (pid 123)') && line.includes('stim service install --helper'),
+    ),
+  );
+  assert(!lines.some((line) => line.startsWith('Apple service') && line.includes('kill')));
+  assert(!lines.some((line) => line.includes('Apple service PerfPowerServices (pid 124)')));
+  const payload = await runStatusJson();
+  expect(payload.appleServices.warnings).toEqual([
+    expect.objectContaining({
+      name: 'PerfPowerServices',
+      pid: 123,
+      commands: ['stim service install --helper'],
+    }),
+  ]);
+});
+
+test('idle status uses stimd observations without another process listing and discards stale warnings', async () => {
+  const file = daemonSnapshotFile();
+  mkdirSync(join(file, '..'), { recursive: true });
+  const snapshot = {
+    version: 1,
+    pid: process.pid,
+    startedAt: new Date().toISOString(),
+    intervalMs: 60_000,
+    tickAt: new Date().toISOString(),
+    measurement: {
+      appleServices: {
+        helper: 'not registered',
+        warnings: [
+          {
+            name: 'PerfPowerServices',
+            pid: 123,
+            cpu: 198,
+            rss: 1024,
+            commands: ['stim service install --helper'],
+          },
+        ],
+        restarts: [],
+      },
+    },
+  };
+  writeFileSync(file, JSON.stringify(snapshot));
+  const calls: string[] = [];
+  setBootedSims('', calls, 'Shutdown');
+  expect((await runStatusJson()).appleServices.warnings[0].pid).toBe(123);
+  expect(calls).not.toContain('ps');
+  snapshot.tickAt = new Date(Date.now() - 11 * 60_000).toISOString();
+  writeFileSync(file, JSON.stringify(snapshot));
+  expect((await runStatusJson()).appleServices.warnings).toEqual([]);
+});
+
+test.each([
+  ['missing', undefined, false],
+  ['stale', { at: Date.now() - 180_000, ok: true }, false],
+  ['failed', { at: Date.now(), ok: false, error: 'sample log write failed' }, false],
+  ['fresh', { at: Date.now(), ok: true }, true],
+] as const)(
+  'registered helper with %s heartbeat suppresses runaway advice only when healthy',
+  async (_name, heartbeat, healthy) => {
+    vi.stubEnv('HOME', tmpHome);
+    const executable = join(tmpHome, 'Applications', 'Stim Host.app', 'Contents', 'MacOS', 'stim-host');
+    mkdirSync(join(executable, '..'), { recursive: true });
+    writeFileSync(executable, '');
+    vi.spyOn(helperState, 'readHelperHeartbeat').mockReturnValue(heartbeat);
+    saveTwoSimProjects();
+    setBootedSims(`${TWO_SIMS_PS}\n123 1 1024 198.0 ${START} /usr/libexec/PerfPowerServices`);
+    const registration = vi.fn<() => Promise<string>>(async () => '{"state":"registered"}');
+    const withRegistration = () => {
+      const previous = getExecutor();
+      setExecutor({
+        ...previous,
+        async runFileAsync(file, args, options) {
+          return file === executable ? registration() : previous.runFileAsync(file, args, options);
+        },
+      });
+    };
+    withRegistration();
+    const file = daemonSnapshotFile();
+    mkdirSync(join(file, '..'), { recursive: true });
+    writeFileSync(
+      file,
+      JSON.stringify({
+        version: 1,
+        pid: process.pid,
+        startedAt: new Date().toISOString(),
+        intervalMs: 60_000,
+        tickAt: new Date().toISOString(),
+        measurement: {
+          appleServices: {
+            helper: 'registered',
+            warnings: [
+              {
+                name: 'PerfPowerServices',
+                pid: 123,
+                cpu: 198,
+                rss: 1024,
+                commands: ['stim service install --helper'],
+              },
+            ],
+            restarts: [],
+          },
+        },
+      }),
+    );
+    const lines = await runStatus();
+    expect(lines.some((line) => line.includes('stim service install --helper'))).toBe(!healthy);
+    expect(lines.some((line) => line.includes('registered but not running/healthy'))).toBe(!healthy);
+    expect(lines.join('\n')).toContain(heartbeat && 'error' in heartbeat ? heartbeat.error : '');
+    const payload = await runStatusJson();
+    expect(payload.appleServices.helper).toBe('registered');
+    expect(payload.appleServices.warnings).toHaveLength(healthy ? 0 : 1);
+    const calls: string[] = [];
+    setBootedSims('', calls, 'Shutdown');
+    withRegistration();
+    expect((await runStatusJson()).appleServices.warnings).toHaveLength(healthy ? 0 : 1);
+    expect(calls).not.toContain('ps');
+    expect(registration).toHaveBeenCalledTimes(healthy ? 1 : 3);
+  },
+);
+
+test('non-macOS service status omits the helper line and preserves its JSON OS state', async () => {
+  vi.stubEnv('HOME', tmpHome);
+  const bin = join(tmpHome, 'service-bin');
+  mkdirSync(bin);
+  writeFileSync(join(bin, 'systemctl'), '#!/bin/sh\nprintf "LoadState=not-found\\n"\n');
+  chmodSync(join(bin, 'systemctl'), 0o755);
+  vi.stubEnv('PATH', `${bin}:${process.env.PATH}`);
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('linux');
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+  await runCli(service, ['status'], { version: '1' });
+  expect(log.mock.calls.flat().join('\n')).not.toContain('Runaway service helper:');
+  log.mockClear();
+  await runCli(service, ['status', '--json'], { version: '1' });
+  expect(log.mock.calls).toHaveLength(1);
+  expect(JSON.parse(String(log.mock.calls[0]?.[0])).helper).toBe('unavailable on this OS');
 });

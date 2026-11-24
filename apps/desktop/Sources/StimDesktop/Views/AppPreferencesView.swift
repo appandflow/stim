@@ -31,12 +31,20 @@ struct AppPreferencesView: View {
   @State private var launchesAtLogin = SMAppService.mainApp.status == .enabled
   @State private var loginError: String?
   @State private var scrolledToTop = false
+  @State private var helperState = "not registered"
+  @State private var helperBusy = false
+  @State private var helperError: String?
+  @State private var helperExplanation: String?
 
   var body: some View {
     ScrollViewReader { proxy in
       form
         .background(ResignFirstResponder())
         .task { await history.poll() }
+        .task { await runHelper("status") }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+          Task { await runHelper("status") }
+        }
         .onAppear {
           onboarding.refreshLatestStim(interval: StimRelease.settingsInterval)
           guard !scrolledToTop else { return }
@@ -114,6 +122,29 @@ struct AppPreferencesView: View {
       MaintenanceSection(
         maintenance: pressure.cliMaintenance, daemon: pressure.daemon, statusLoaded: pressure.statusLoaded,
         settings: settings)
+
+      Section("Apple Background Services") {
+        Toggle(
+          "Restart runaway Apple services",
+          isOn: Binding(
+            get: { helperState == "registered" || helperState == "requires approval" },
+            set: { enabled in Task { await runHelper(enabled ? "register" : "unregister") } })
+        )
+        .disabled(helperBusy)
+        Text("Helper: \(helperState)").foregroundStyle(Palette.secondary)
+        Text(
+          "Restarts only PerfPowerServices, mds_stores, mdworker_shared, photoanalysisd and mediaanalysisd after 10 minutes above 150% CPU or 2 GB RSS, at most once per service per hour."
+        )
+        .font(.stim(.footnote)).foregroundStyle(Palette.tertiary)
+        if helperState == "requires approval" {
+          Button("Open Login Items & Extensions") { SMAppService.openSystemSettingsLoginItems() }
+            .buttonStyle(.stim())
+          Text("Approve Stim Host with an administrator password to allow the root helper to run.")
+            .foregroundStyle(Palette.secondary)
+        }
+        if let helperExplanation { Text(helperExplanation).foregroundStyle(Palette.secondary) }
+        if let helperError { Text(helperError).foregroundStyle(Palette.error).textSelection(.enabled) }
+      }
 
       CleanupHistorySection(history: history)
 
@@ -218,6 +249,51 @@ struct AppPreferencesView: View {
     .formStyle(.grouped)
     .scrollContentBackground(.hidden)
     .background(Palette.background)
+  }
+
+  @MainActor private func runHelper(_ action: String) async {
+    guard !helperBusy else { return }
+    helperBusy = true
+    helperError = nil
+    helperExplanation = nil
+    defer { helperBusy = false }
+    let homes = [
+      FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications"),
+      URL(fileURLWithPath: "/Applications"),
+    ]
+    guard
+      let executable = homes.map({ $0.appendingPathComponent("Stim Host.app/Contents/MacOS/stim-host").path })
+        .first(where: { FileManager.default.isExecutableFile(atPath: $0) })
+    else {
+      helperState = "not registered"
+      let message =
+        "Install a current Developer ID-signed, notarized Stim Host.app in ~/Applications or /Applications to enable the helper."
+      if action == "status" { helperExplanation = message } else { helperError = message }
+      return
+    }
+    do {
+      var request = ProcessRequest(executable, ["helper-\(action)"], timeout: 30)
+      request.captureStderr = true
+      let result = try await request.run()
+      guard result.succeeded,
+        let value = try JSONSerialization.jsonObject(with: result.stdout) as? [String: String],
+        let state = value["state"],
+        ["registered", "requires approval", "not registered", "unavailable on this OS"].contains(state)
+      else {
+        let message = "Install a helper-capable Developer ID-signed, notarized Stim Host and retry. " + result.stderrText
+        if action == "status" {
+          helperState = "unavailable"
+          helperExplanation = message
+        } else {
+          helperError = message
+        }
+        return
+      }
+      helperState = state
+      helperError = nil
+    } catch {
+      helperError = error.localizedDescription
+    }
   }
 
   @ViewBuilder private var stimVersionRow: some View {

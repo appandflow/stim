@@ -44,6 +44,7 @@ Then choose the guide for the app or task. Read only the matching route.
 | Queued build, device or test run | stim guide lifecycle concurrency |
 | Named ports | stim guide ports |
 | Workspace services | stim guide services |
+| Runaway Apple services | stim guide cleanup helper |
 | Share the running app | stim guide share |
 | Clean up, park, or reclaim resources | stim guide agent ownership |
 | Report a Stim problem | stim guide agent report |

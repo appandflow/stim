@@ -280,7 +280,7 @@
     "exitCode": 0
   },
   "[\"service\",\"install\",\"--help\"]": {
-    "out": "Usage: stim service install [options]\n\nOptions:\n  --label <name>        service label\n  --port <n>            server port\n  --serve               add a tailnet-only Tailscale route\n  --env <KEY=VALUE>     set a server environment variable (default: [])\n  --path-prepend <dir>  prepend a server tool directory (default: [])\n  -h, --help            display help for command\n",
+    "out": "Usage: stim service install [options]\n\nOptions:\n  --label <name>        service label\n  --helper              register the macOS runaway service helper only\n  --port <n>            server port\n  --serve               add a tailnet-only Tailscale route\n  --env <KEY=VALUE>     set a server environment variable (default: [])\n  --path-prepend <dir>  prepend a server tool directory (default: [])\n  -h, --help            display help for command\n",
     "err": "",
     "exitCode": 0
   },
@@ -290,7 +290,7 @@
     "exitCode": 0
   },
   "[\"service\",\"uninstall\",\"--help\"]": {
-    "out": "Usage: stim service uninstall [options]\n\nOptions:\n  --label <name>  service label (default: \"dev.stim.server\")\n  -h, --help      display help for command\n",
+    "out": "Usage: stim service uninstall [options]\n\nOptions:\n  --label <name>  service label\n  --helper        unregister the macOS runaway service helper only\n  -h, --help      display help for command\n",
     "err": "",
     "exitCode": 0
   },
@@ -2602,9 +2602,7 @@
     "ran": {
       "path": ["service", "uninstall"],
       "args": [],
-      "options": {
-        "label": "dev.stim.server"
-      },
+      "options": {},
       "parent": {}
     }
   },

@@ -1226,3 +1226,71 @@ compiled at runtime. A source checkout fetches it with
 The CLI declares this private helper in pnpm's `publishConfig.executableFiles`
 so packing preserves executable mode without exposing another public command.
 Both release paths verify mode 0755 and the pinned binary digest from the packed archive before publishing.
+
+## Opt-in Apple service restarts
+
+[#6256](https://github.com/appandflow/stim/issues/6256) approves this narrow
+exception to signalling only Stim-owned processes. It belongs to the separate
+root helper in Stim Host, not the cleanup ladder or owned-device teardown.
+
+Maintainer decision: "would it be safe to have stim restart it automatically, it could keep a list of problematic services", 2026-11-24.
+Maintainer decision: "Can we do this", 2026-11-24, on the privileged helper in Stim Host.app.
+Maintainer decision: "Sounds good, if helper isnt setup and we detect high usage from a process ti could kill can we suggest the command to run to setup the helper", 2026-11-24, accepting the design below.
+Maintainer decision: "lets do both", 2026-11-24, for the Desktop toggle and the CLI flag.
+Maintainer decision: "Setup command only (Recommended)", 2026-11-24, choosing that the advice without a helper prints only the setup command and drops the one-off kill command.
+
+Registration is opt-in through the signed Stim Host executable, using
+SMAppService.daemon and an embedded LaunchDaemon plist with BundleProgram.
+An administrator approves it under Login Items & Extensions. Both Desktop
+preferences and service install/uninstall --helper use that executable; these
+flags affect only the helper. The helper has no listener, Mach service, socket
+or request file. It does not accept targets, paths or thresholds from callers.
+It is independent of daemon.mode and STIM_HOME until unregistered.
+
+Only the exact system executable paths of PerfPowerServices, mds_stores,
+mdworker_shared, photoanalysisd and mediaanalysisd qualify. These paths were
+checked on macOS 27.0 (26A428) on 2026-11-24. Once a minute libproc
+samples CPU time and RSS. More than 150% CPU or 2 GiB RSS for 10 continuous
+minutes qualifies one process for SIGTERM; a changed identity, missing sample,
+sample gap over 90 seconds, or recovery resets the relevant window. CPU and
+memory each need their own continuous window. The helper verifies path and
+start identity again immediately before signalling. Nothing else is signalled:
+WindowServer, launchd, coreaudiod and CoreSimulator stay outside this exception.
+
+A service gets at most one attempt per hour across all its instances. The
+helper syncs an attempt before signalling and restores cooldowns from its
+root-owned log after restart; a crash between the receipt and signal costs an
+attempt rather than allowing another. Rotation carries cooldowns into the new
+log. A root-owned lock prevents multiple helper instances. The helper opens
+only root-owned regular logs without symlinks under a
+root-owned non-writable directory. Logs are readable by other users and rotate
+at 4 MiB, keeping one previous file. Samples, attempts and signal outcomes are
+JSON lines; reporting uses successful signal outcomes from the last hour.
+This reports a restart request, not proof of launchd's replacement.
+
+Only the home maintenance pass samples Apple services, reusing its process
+table for device activity. stimd names an allowlisted process over either limit
+on two consecutive samples and logs the same advice status shows: stim service install --helper.
+Status reads these observations for up to ten minutes and never warns from its
+own process sample. stimd never sends a signal to these services. An enabled
+helper's recent restart receipts appear in plain and JSON status and daemon logs. An approval-pending helper remains
+eligible for the advice because it cannot run yet. Registration suppresses
+warnings only with a successful heartbeat less than three minutes old. The
+helper atomically refreshes `/Library/Logs/Stim/helper.heartbeat` each cycle,
+including errors; transient failures retry in the helper loop. A stale, missing
+or failed heartbeat names the health problem and `/Library/Logs/Stim/helper.err`.
+Registration checks are cached in-process for five minutes; a cached registered
+state is rechecked when its heartbeat is unhealthy. Readers scan only
+the tails of the current and rotated logs for restart results. stimd logs each
+restart once and warnings only when they start or their state changes.
+
+Chosen by the implementer within the issue's approximate limits: strict
+threshold comparisons, separate CPU and memory windows, the 90-second maximum
+sample gap, durable attempted-restart cooldowns, log rotation size and retention,
+and reporting the last hour. No settings are added.
+
+Code: [helper](../packages/server/host/stim-host-helper.c),
+[policy](../packages/server/host/helper-policy.h),
+[ServiceManagement bridge](../packages/server/host/helper-service.m),
+[CLI and reporting](../packages/stim-cli/src/apple-services.ts),
+[Desktop preferences](../apps/desktop/Sources/StimDesktop/Views/AppPreferencesView.swift).

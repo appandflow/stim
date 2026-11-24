@@ -1,3 +1,4 @@
+import type { AppleServicesStatus } from './apple-services.ts';
 import { isJsonObject, readJsonObject } from './json-file.ts';
 import { daemonSnapshotFile } from './paths.ts';
 import type { GcMarkHealth } from './gc-marks.ts';
@@ -11,6 +12,7 @@ export interface GcHistoryStatus {
 
 /** One tick's measurement of the machine. A null field is one the tick could not read. */
 export interface DaemonMeasurement {
+  appleServices?: AppleServicesStatus;
   disk: { volume: string; freeMb: number; device?: number }[];
   memory: {
     level: 'normal' | 'warning' | 'critical' | null;

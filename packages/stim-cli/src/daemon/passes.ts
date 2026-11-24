@@ -1,3 +1,4 @@
+import { createAppleServicesObserver } from '../apple-services.ts';
 import { PREDICTION_WINDOW_MS } from './pacer.ts';
 import { keepReserve } from '../disk-reserve.ts';
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
@@ -40,6 +41,7 @@ const LADDER_PACE_MAX_MS = 15 * 60_000;
 const LADDER_PACE_DISK_DROP_MB = 1024;
 const LADDER_PACE_SHORT_DROP_MB = 256;
 const LADDER_CRITICAL_WAIT_MS = 60_000;
+const observeAppleServices = createAppleServicesObserver();
 const predictiveClocks = new Map<number, BigInt64Array>();
 const RANK: Record<PressureLevel, number> = { normal: 0, high: 1, critical: 2 };
 
@@ -319,10 +321,15 @@ async function homePasses(
   const config = loadConfig();
   const now = Date.now();
   const measured = await watchedStep(log, 'measure', () =>
-    measureTick(config, now, { signal: operation.signal, operation }),
+    measureTick(config, now, { signal: operation.signal, operation, appleServices: true }),
   );
   operation.signal.throwIfAborted();
   const measureMs = lap();
+  if (measured.measurement.appleServices) {
+    const observed = observeAppleServices(measured.measurement.appleServices);
+    measured.measurement.appleServices = observed.status;
+    for (const line of observed.lines) log('info', 'apple_service', line);
+  }
   const { thresholds, error } = diskThresholds(config);
   if (error) log('warn', 'pressure_settings_invalid', `${error}; that disk threshold is off until it is fixed`);
   let warningSince = memoryWarningSince;

@@ -1,6 +1,7 @@
 import type { StimContext } from '@stim-cli/core';
 import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
 import {
+  type HostProcess,
   createActivityReader,
   createActivityReaderAsync,
   type ActivityTarget,
@@ -120,6 +121,7 @@ async function deviceActivityInputsAsync(
   deadProjects: readonly string[] = [],
   signal?: AbortSignal,
   operation?: StimContext,
+  hostProcesses?: HostProcess[] | null,
 ) {
   const resolve = ownedAvdSerialResolverAsync({ timeoutMs: 5000, signal, operation });
   const serials = new Map<string, string | null>();
@@ -142,7 +144,7 @@ async function deviceActivityInputsAsync(
   return {
     config,
     sims,
-    readActivity: createActivityReaderAsync({ now, env, signal, operation }),
+    readActivity: createActivityReaderAsync({ now, env, signal, operation, hostProcesses }),
     androidSerial: (name: string) => serials.get(name) ?? null,
   };
 }
@@ -154,9 +156,10 @@ export async function collectOwnedDeviceActivityAsync(
   env?: NodeJS.ProcessEnv,
   signal?: AbortSignal,
   operation?: StimContext,
+  hostProcesses?: HostProcess[] | null,
 ): Promise<OwnedDeviceActivity[]> {
   const devices = findOwnedDeviceActivity(
-    await deviceActivityInputsAsync(config, sims, now, env, [], signal, operation),
+    await deviceActivityInputsAsync(config, sims, now, env, [], signal, operation, hostProcesses),
   );
   const results = await Promise.allSettled(
     devices.map(async (device) => Object.assign({}, device, { activity: await device.activity })),

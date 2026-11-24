@@ -14,18 +14,24 @@ app="build/Stim Host.app"
 zip=$out/StimHost-$version.zip
 
 rm -rf build
-mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$out"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$app/Contents/Library/LaunchDaemons" "$out"
 clang -Wall -Wextra -Werror -O2 -arch arm64 -arch x86_64 -mmacosx-version-min=14.0 \
-  -framework ApplicationServices -framework CoreGraphics -o "$app/Contents/MacOS/stim-host" stim-host.c
+  -framework ApplicationServices -framework CoreGraphics -framework Foundation -framework ServiceManagement \
+  -o "$app/Contents/MacOS/stim-host" stim-host.c helper-service.m
+clang -Wall -Wextra -Werror -O2 -arch arm64 -arch x86_64 -mmacosx-version-min=14.0 \
+  -o "$app/Contents/MacOS/stim-host-helper" stim-host-helper.c
+cp dev.stim.host.helper.plist "$app/Contents/Library/LaunchDaemons/"
 cp Info.plist "$app/Contents/Info.plist"
 cp ../../../apps/desktop/Support/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $version" -c "Set :CFBundleVersion $build_number" \
   -c "Add :CFBundleIconFile string AppIcon" "$app/Contents/Info.plist"
 
 if [ -n "$identity" ]; then
+  codesign --force --options runtime --timestamp --sign "$identity" --identifier dev.stim.host.helper "$app/Contents/MacOS/stim-host-helper"
   codesign --force --options runtime --timestamp --sign "$identity" "$app"
 else
   echo "release.sh: HOST_SIGNING_IDENTITY is not set, so this build is signed ad hoc and is not notarized. Use it for testing only." >&2
+  codesign --force --options runtime --sign - --identifier dev.stim.host.helper "$app/Contents/MacOS/stim-host-helper"
   codesign --force --options runtime --sign - "$app"
 fi
 codesign --verify --strict --deep "$app"

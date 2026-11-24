@@ -12,6 +12,7 @@
 #include <unistd.h>
 
 extern char **environ;
+int helper_service_command(const char *command);
 
 #define PROMPT_WAIT_SECONDS 120
 #define PROMPT_POLL_MICROSECONDS 100000
@@ -145,9 +146,11 @@ static int request_permissions(void) {
 }
 
 int main(int argc, char **argv) {
+  if (argc == 2 && (strcmp(argv[1], "helper-register") == 0 || strcmp(argv[1], "helper-unregister") == 0 ||
+                    strcmp(argv[1], "helper-status") == 0)) return helper_service_command(argv[1]);
   if (argc >= 2 && strcmp(argv[1], "run") == 0) return run(argc, argv);
   if (argc == 2 && strcmp(argv[1], "permissions") == 0) return permissions();
   if (argc == 2 && strcmp(argv[1], "request-permissions") == 0) return request_permissions();
-  fprintf(stderr, "usage: stim-host run <program> [args...] | permissions | request-permissions\n");
+  fprintf(stderr, "usage: stim-host run <program> [args...] | permissions | request-permissions | helper-register | helper-unregister | helper-status\n");
   return 64;
 }
