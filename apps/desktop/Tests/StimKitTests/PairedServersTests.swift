@@ -159,6 +159,17 @@ private let code =
     #expect(try store.pairings() == [kept])
   }
 
+  @Test func reachabilityNoticeUsesThePairingNetwork() {
+    for code in ["timeout", "unreachable"] {
+      let error = ServerError(code: code, message: "Connection failed")
+      let lan = PairedServerWording.notice(for: error, context: .pairing, name: "floco", network: .localNetwork)
+      #expect(lan.detail.contains("Local Network"))
+      #expect(!lan.detail.contains("Tailscale"))
+      let tailnet = PairedServerWording.notice(for: error, context: .pairing, name: "floco")
+      #expect(tailnet.detail.contains("Tailscale"))
+    }
+  }
+
   @Test func everyRefusalCodeHasItsOwnWording() {
     let fallback = PairedServerWording.notice(
       for: ServerError(code: "something-else", message: "x"), context: .pairing, name: "floco")
