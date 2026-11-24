@@ -488,9 +488,10 @@ async function removeWorkspaceOutput(
     const exec = getExecutor();
     try {
       if (!exec.findExecutable('agent-device')) throw new Error('agent-device is not on PATH');
+      const { AGENT_DEVICE_RETIRE_MS } = await import('@stim-cli/agent-driver-agent-device/agent-device-bin');
       await runOperationFile(operation, exec, 'agent-device', ['daemon', 'stop', '--state-dir', stateDir, '--clean'], {
         cwd: operation?.cwd,
-        timeoutMs: 20_000,
+        timeoutMs: AGENT_DEVICE_RETIRE_MS + 20_000,
         killSignal: 'SIGKILL',
         env: { AGENT_DEVICE_NO_UPDATE_NOTIFIER: '1' },
       });

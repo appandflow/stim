@@ -42,7 +42,7 @@ import {
   remoteScreenshot,
   type DeviceCommandRule,
 } from './device-policy.ts';
-import { resolveAgentDevice } from './agent-device-bin.ts';
+import { AGENT_DEVICE_RETIRE_MS, resolveAgentDevice } from './agent-device-bin.ts';
 import { listProcesses } from './processes.ts';
 
 function adbPath(env: NodeJS.ProcessEnv): string {
@@ -99,10 +99,6 @@ const RECORDER_STOP: AgentDriverStopStep[] = [
   ['SIGINT', 10_000],
   ['SIGKILL', 2000],
 ];
-// agent-device 0.21.42 `daemon stop` waits DAEMON_TEARDOWN_GRACE_MS (75 s; 10 s up to 0.21.39) after SIGTERM, 2 s after
-// SIGKILL, then up to 1 s each for a startup join and the registration lock before it removes daemon.json, and it
-// accepts no shorter grace (callstack/agent-device#4806).
-const AGENT_DEVICE_RETIRE_MS = 75_000 + 2000 + 1000 + 1000;
 const CAP_RETRY_MS = 30_000;
 const CAP_ATTEMPTS = 10;
 // agent-device deletes a downloadable artifact nobody fetched after 15 minutes (ARTIFACT_CLEANUP_TIMEOUT_MS).
