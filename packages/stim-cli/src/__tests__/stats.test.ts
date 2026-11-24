@@ -244,6 +244,18 @@ describe('stim stats', async () => {
     expect(existsSync(join(tmpHome, 'config.json'))).toBe(false);
   });
 
+  test('a cold run keeps the other cells without a saved estimate', async () => {
+    const record = updateStats(emptyStats(), run({ projectKey: root, durationMs: 60_000 }), T0);
+    writeFileSync(statsFile(), JSON.stringify(record));
+
+    const { out: lines } = await inDir(root, () => runStats());
+
+    expect(lines[1]).not.toContain('saved');
+    expect(lines[1]).toMatch(
+      /^ {2}ios {6}1 runs {3}0 hits \(0%\) {3}cold run 1m avg {3}hit run - avg {3}since 2026-09-01$/,
+    );
+  });
+
   test('an hours estimate reads in hours', async () => {
     let record = updateStats(emptyStats(), run({ projectKey: root, durationMs: 8_000_000 }), T0);
     record = updateStats(record, run({ projectKey: root, cacheHit: 'local', durationMs: 20_000 }), T1);
