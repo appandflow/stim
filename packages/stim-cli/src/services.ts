@@ -747,6 +747,12 @@ async function teardownOne(
   return { name, outcome: 'torn-down', detail: note };
 }
 
+// @ref LLP 0027#stim-runs-only-what-it-recorded -- a service left running keeps the record it was started with
+function asRunning(record: ServiceRecord): ServiceRecord {
+  const { stoppedBy: _, idleStopFailedAt: __, ...rest } = record;
+  return { ...rest, state: 'running' };
+}
+
 async function startOne(
   root: string,
   name: string,
@@ -778,7 +784,7 @@ async function startOne(
     // @ref LLP 0027#a-service-without-a-stop-command-is-a-process -- never spawn over a live recorded process
     if (live && previous && processLives(previous, ['same']))
       return (await waitReady(root, name, previous, options))
-        ? started({ ...base, process: live }, 'running', 'already running')
+        ? started(asRunning(previous), 'running', 'already running')
         : { name, outcome: 'failed', detail: `pid ${live.pid} runs but is not ready.${logTail(root, name)}` };
   }
   const ours = base.kind === 'commands' && previous?.state === 'running';
@@ -791,7 +797,7 @@ async function startOne(
       detail: `port ${held.join(', ')} is held by a process Stim did not start for this service; stop it, then start again`,
     };
   if (ours && previous && (await ready(root, name, previous, options)))
-    return started(base, 'running', 'already running');
+    return started(asRunning(previous), 'running', 'already running');
   if (base.kind === 'process') {
     let proc;
     try {

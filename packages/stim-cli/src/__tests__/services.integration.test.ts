@@ -440,6 +440,16 @@ describe.skipIf(process.platform === 'win32')('workspace services (skipped on wi
     expect(serviceRecords(root).web).toMatchObject({ state: 'running' });
   });
 
+  test('a start that leaves a running service alone keeps the record it was started with', async () => {
+    declare({ db: { ports: { pg: 'DB_PORT' }, env: { STACK: 'one' }, start: run('start'), stop: run('stop') } });
+    const operation = ctx();
+    await startServices(root, undefined, { operation });
+    pids.add(Number(readFileSync(join(root, 'db.pid'), 'utf8')));
+    declare({ db: { ports: { pg: 'DB_PORT' }, env: { STACK: 'two' }, start: run('start'), stop: run('stop') } });
+    expect(await startServices(root, undefined, { operation })).toMatchObject([{ outcome: 'running' }]);
+    expect(serviceRecords(root).db?.env.STACK).toBe('one');
+  });
+
   test('revive resumes in dependency order whatever order the records were written in', async () => {
     const forever = [process.execPath, '-e', 'setInterval(() => {}, 1000)'];
     const record = (dependsOn: string[]) => ({
