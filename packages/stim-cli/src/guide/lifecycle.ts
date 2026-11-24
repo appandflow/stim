@@ -43,9 +43,9 @@ install-from-source and uninstall (Stim installs the app and tracks it), boot,
 shutdown and close --shutdown (use stim stop), logs (use stim logs), trace,
 audio, doctor, prepare, replay, test, clipboard (a ${noun} can share the
 clipboard of the hosting Mac), hover, viewport, tv-remote, audit and shake
-(an older host's agent-device refuses a policy that names them) and
-agent-device's client-side commands. Both machines need agent-device 0.21.30 or later; an
-older host reports driver: none.`;
+(refused on every host: an agent-device older than these commands refuses a
+policy that names them) and agent-device's client-side commands. Both machines
+need agent-device 0.21.30 or later; an older host reports driver: none.`;
 
 const lifecycle: GuideTopic = {
   summary:
