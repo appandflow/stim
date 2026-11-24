@@ -244,11 +244,21 @@ export interface PodsInputs {
   podfileLockChanged: boolean;
   stale: { noPods?: boolean; stale: boolean; reason?: string };
   dir?: string;
+  platform: NodeJS.Platform;
 }
 
-export function podsPlan({ hasIos, hasPodfile, podfileLockChanged, stale, dir = 'ios/' }: PodsInputs): StepPlan {
+export function podsPlan({
+  hasIos,
+  hasPodfile,
+  podfileLockChanged,
+  stale,
+  dir = 'ios/',
+  platform,
+}: PodsInputs): StepPlan {
   if (!hasIos) return { run: false, reason: `no ${dir || './'} directory` };
   if (!hasPodfile) return { run: false, reason: `no ${dir}Podfile` };
+  if (platform !== 'darwin')
+    return { run: false, reason: 'not on macOS, so pod install is skipped (iOS builds need a Mac)' };
   if (stale.noPods) return { run: false, reason: `no ${dir}Pods and no ${dir}Podfile.lock` };
   if (podfileLockChanged) return { run: true, reason: `${dir}Podfile.lock changed` };
   if (stale.stale) return { run: true, reason: stale.reason ?? `${dir}Pods does not match ${dir}Podfile.lock` };
@@ -772,6 +782,7 @@ export async function refreshMainCheckout({
     podfileLockChanged: pathChangedBetween(root, before, head, gitPath(app, ios.relative, 'Podfile.lock')),
     stale: podsAreStale(podState.lockText, podState.manifestText, podState.dir),
     dir: podState.dir,
+    platform: process.platform,
   });
   if (!pods.run) {
     emit(stepLine('pods', `${where}${pods.reason}`, 'skipped'));

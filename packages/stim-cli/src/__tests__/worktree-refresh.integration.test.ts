@@ -232,15 +232,27 @@ test('the refresh decisions read off the state without touching git', () => {
   expect(depsPlan(npmDeps(npmInstalledOf(null))).run).toBe(true);
 
   const fresh = { stale: false } as const;
-  expect(podsPlan({ hasIos: false, hasPodfile: false, podfileLockChanged: true, stale: fresh })).toEqual({
+  expect(
+    podsPlan({ hasIos: false, hasPodfile: false, podfileLockChanged: true, stale: fresh, platform: 'darwin' }),
+  ).toEqual({
     run: false,
     reason: 'no ios/ directory',
   });
-  expect(podsPlan({ hasIos: true, hasPodfile: false, podfileLockChanged: true, stale: fresh }).run).toBe(false);
   expect(
-    podsPlan({ hasIos: true, hasPodfile: true, podfileLockChanged: false, stale: { noPods: true, stale: false } }),
+    podsPlan({ hasIos: true, hasPodfile: false, podfileLockChanged: true, stale: fresh, platform: 'darwin' }).run,
+  ).toBe(false);
+  expect(
+    podsPlan({
+      hasIos: true,
+      hasPodfile: true,
+      podfileLockChanged: false,
+      stale: { noPods: true, stale: false },
+      platform: 'darwin',
+    }),
   ).toEqual({ run: false, reason: 'no ios/Pods and no ios/Podfile.lock' });
-  expect(podsPlan({ hasIos: true, hasPodfile: true, podfileLockChanged: true, stale: fresh })).toEqual({
+  expect(
+    podsPlan({ hasIos: true, hasPodfile: true, podfileLockChanged: true, stale: fresh, platform: 'darwin' }),
+  ).toEqual({
     run: true,
     reason: 'ios/Podfile.lock changed',
   });
@@ -250,12 +262,19 @@ test('the refresh decisions read off the state without touching git', () => {
       hasPodfile: true,
       podfileLockChanged: false,
       stale: { stale: true, reason: 'ios/Podfile.lock and ios/Pods/Manifest.lock differ' },
+      platform: 'darwin',
     }),
   ).toEqual({ run: true, reason: 'ios/Podfile.lock and ios/Pods/Manifest.lock differ' });
-  expect(podsPlan({ hasIos: true, hasPodfile: true, podfileLockChanged: false, stale: fresh })).toEqual({
+  expect(
+    podsPlan({ hasIos: true, hasPodfile: true, podfileLockChanged: false, stale: fresh, platform: 'darwin' }),
+  ).toEqual({
     run: false,
     reason: 'ios/Podfile.lock unchanged',
   });
+
+  expect(
+    podsPlan({ hasIos: true, hasPodfile: true, podfileLockChanged: true, stale: fresh, platform: 'linux' }),
+  ).toEqual({ run: false, reason: 'not on macOS, so pod install is skipped (iOS builds need a Mac)' });
 
   expect(defaultBranchNote('main', 'main')).toEqual({ kind: 'match' });
   expect(defaultBranchNote('wip', 'develop')).toMatchObject({
@@ -331,7 +350,7 @@ test('a current refresh copies under its shared claim while a sibling copy still
   expect(copyModes).toEqual([['shared', 'shared']]);
 }, 120_000);
 
-test.each(['fast-forward', 'remote changes', 'dependencies', 'pods'])(
+test.each(['fast-forward', 'remote changes', 'dependencies', ...(process.platform === 'darwin' ? ['pods'] : [])])(
   'a refresh needing %s drains copies before fetching or installing',
   async (change) => {
     if (change === 'dependencies') {
@@ -520,7 +539,7 @@ test('worktree.defaultBranch outranks origin/HEAD, and neither resolving says wh
   expect(unknown.stderr).toContain('git remote set-head origin -a');
 }, 120_000);
 
-test.each(['.', 'apps/mobile'])(
+test.each(process.platform === 'darwin' ? ['.', 'apps/mobile'] : [])(
   '--refresh names the source dependency root at %s and the invoking app for pods',
   async (dependencyPath) => {
     const depsRoot = join(root, dependencyPath);
