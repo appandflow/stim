@@ -1348,7 +1348,6 @@ describe('a refresh from the worktree root with a nested app that has its own lo
   beforeEach(() => {
     app = join(root, 'app');
     spawned.length = 0;
-    write(root, 'package.json', '{"name":"refresh-fixture","workspaces":["app"]}\n');
     write(root, 'package-lock.json', '{"lockfileVersion":3}\n');
     write(app, 'package.json', '{"name":"app","dependencies":{"react-native":"0.80.0"}}\n');
     write(app, 'package-lock.json', '{"lockfileVersion":3}\n');
@@ -1391,9 +1390,8 @@ describe('a refresh from the worktree root with a nested app that has its own lo
     expect(spawned).toEqual([`npm ci in ${app}`]);
   });
 
-  test('does not ask for an app directory when the warm runs from a web app that is not registered', async () => {
-    write(target, 'package.json', '{"name":"refresh-fixture","devDependencies":{"vite":"5.0.0"}}\n');
-    write(target, 'vite.config.js', 'export default {}\n');
+  test('does not ask for an app directory when the warm runs from a Swift Package app', async () => {
+    write(target, 'Package.swift', '// swift-tools-version:5.9\n');
     const result = await runWarm(target, '--refresh');
     expect(result.code).toBe(0);
     expect(result.stderr).not.toContain('no single app');

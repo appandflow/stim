@@ -1,7 +1,7 @@
 import type { StimContext } from '@stim-cli/core';
 import { runProcessOperation } from '../cli-operation.ts';
 import { operationState } from '../engine/operation-state.ts';
-import { existsSync, readFileSync, realpathSync, rmSync } from 'fs';
+import { existsSync, realpathSync, rmSync } from 'fs';
 import { lstat, readFile, realpath } from 'node:fs/promises';
 import { answered } from '../workspace/bounded-read.ts';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'path';
@@ -33,6 +33,7 @@ import {
 import type { ReleasedLease } from '../engine/device-lease.ts';
 import { podInstallCommand } from '../engine/bundler.ts';
 import { relocatePods } from '../workspace/pods-relocate.ts';
+import { projectRegistry } from '../integrations/projects.ts';
 import { detectIsExpo, isMobileProject, findProjectRoot } from '../workspace/project.ts';
 import { nativeDirCarry, recordPrebuildAsync } from '../engine/prebuild.ts';
 import { prepareInstallCarry } from '../fingerprint/index-store.ts';
@@ -362,15 +363,6 @@ export const warmOp: Op = defineOp({
   },
 });
 
-function isWorkspaceRoot(dir: string): boolean {
-  if (existsSync(join(dir, 'pnpm-workspace.yaml'))) return true;
-  try {
-    return 'workspaces' in JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
-  } catch {
-    return false;
-  }
-}
-
 export async function warmWorktreeTarget(opts: {
   cwd: string;
   refresh?: boolean;
@@ -393,7 +385,7 @@ export async function warmWorktreeTarget(opts: {
     if (workspace && workspace !== app)
       await recordWorkspaceUseAsync(workspace, new Date(), operation.env, opts.cwd, operation.signal);
     if (!workspace) {
-      if (!app || isWorkspaceRoot(app))
+      if (!app || !projectRegistry.keepsWorkspace(app))
         out(
           chalk.dim(
             phaseLine(
