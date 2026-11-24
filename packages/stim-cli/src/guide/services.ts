@@ -32,8 +32,9 @@ FIELDS
                   quotes refuse; or an argv array
   stop            the command that stops it and keeps its data
   teardown        what removal runs instead of stop, to delete its data
-  orphanTeardown  what removal runs once the workspace folder is gone, from
-                  the home folder, so it must name its target by id
+                  also runs from home when the folder is gone if it names {id}
+  orphanTeardown  overrides teardown for a gone folder; runs from home,
+                  so it must name its target by id
   ready           a command that exits 0 once it serves; default: every port
                   listens, else the process lives. Waited up to 60 seconds
   ports           named port labels it owns, a list, or an object of label to
@@ -113,8 +114,7 @@ A docker compose stack with postgres and redis:
     "idEnv": "COMPOSE_PROJECT_NAME",
     "start": "docker compose up -d --wait",
     "stop": "docker compose stop",
-    "teardown": "docker compose down -v",
-    "orphanTeardown": "docker compose -p {id} down -v"
+    "teardown": "docker compose -p {id} down -v"
   }
 
 The compose file must take its host ports from the environment
@@ -136,8 +136,7 @@ A local Supabase stack in ../api, its CLI reading SUPABASE_* variables:
     "env": { "SUPABASE_URL": "http://127.0.0.1:{sb-api}" },
     "start": "supabase start",
     "stop": "supabase stop",
-    "teardown": "supabase stop --no-backup",
-    "orphanTeardown": "supabase stop --no-backup --project-id {id}",
+    "teardown": "supabase stop --no-backup --project-id {id}",
     "ready": "supabase status"
   }
 

@@ -195,14 +195,21 @@ never runs a service command after that:
   containers and volumes. A stop that fails refuses the reclaim before anything
   else changes.
 - When the folder is gone (gc, or `stim worktree remove` on a missing path),
-  each service gets one `orphanTeardown` from the home folder; a failure, or a
-  service that declares none, is printed and logged with the command to run by
-  hand, the service is forgotten, and the reclaim goes on. Retrying it is #6224.
+  each service gets one `orphanTeardown` from the home folder. When recording
+  a service with no explicit `orphanTeardown`, Stim uses its `teardown` if the
+  definition names the `{id}` placeholder. An explicit `orphanTeardown` wins;
+  existing records are unchanged. A failure, or a service with no usable orphan teardown,
+  is printed and logged with the command to run by hand, the service is
+  forgotten, and the reclaim goes on. Retrying it is #6224.
 - Just before the reclaim deletes the workspace state, a service record still
   there (one started during the reclaim) keeps the workspace instead.
 
 Reason: a removal must not leave a stack or its data behind (the 153 volumes
 above), and must never delete the data of a checkout that stays.
+
+Maintainer decision: "Yes lets simplify teardown command", 2026-11-24 (#6243).
+A teardown naming `{id}` can target the service after its folder is gone,
+without declaring the same command twice.
 
 Maintainer decision: "Yes to all 3", 2026-11-24 (#6202): unattended maintenance
 and gc delete a service's data only when they delete the worktree itself, just

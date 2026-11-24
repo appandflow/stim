@@ -778,8 +778,7 @@ copy on its own ports:
       "idEnv": "COMPOSE_PROJECT_NAME",
       "start": "docker compose up -d --wait",
       "stop": "docker compose stop",
-      "teardown": "docker compose down -v",
-      "orphanTeardown": "docker compose -p {id} down -v"
+      "teardown": "docker compose -p {id} down -v"
     }
   }
 }
@@ -806,6 +805,11 @@ placeholder: `{web}` for its own port, `{deps.pg}` for another service's,
 `{id}` for the service id (`<name>-<workspace id>`) and `{dir}` for its folder.
 `idEnv` sets a variable to that id, so each worktree gets its own containers.
 Commands run without a shell; `{{` and `}}` are literal braces.
+
+When the workspace folder is gone, a `teardown` that names the `{id}` placeholder
+runs from the home folder. An explicit `orphanTeardown` overrides it. Without
+either, Stim reports `not torn down: no orphanTeardown` and forgets the service.
+This applies to newly recorded services; existing records are unchanged.
 
 Stim runs only what `stim services start` recorded, and only for services it
 started:
