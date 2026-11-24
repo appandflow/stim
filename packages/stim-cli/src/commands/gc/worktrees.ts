@@ -573,7 +573,7 @@ function reflogActivity(gitDir: string): WorktreeActivity | null | 'unreadable' 
     const lastLine = readFileSync(path, 'utf8').trimEnd().split('\n').at(-1) ?? '';
     const match = /^[^\t]*> (\d+) [+-]\d{4}\t/.exec(lastLine);
     const timestamp = match ? Number(match[1]) * 1000 : NaN;
-    return { at: Number.isFinite(timestamp) ? timestamp : mtime, basis: 'a git reflog entry' };
+    return { at: Number.isFinite(timestamp) ? Math.min(mtime, timestamp) : mtime, basis: 'a git reflog entry' };
   } catch (error) {
     return error instanceof Error && 'code' in error && error.code === 'ENOENT' ? null : 'unreadable';
   }

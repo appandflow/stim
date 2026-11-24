@@ -25,15 +25,6 @@ vi.mock('../workspace/protected-locations.ts', () => ({
 
 const day = 86_400_000;
 
-function ageGitActivity(gitDir: string, at: Date) {
-  const reflog = join(gitDir, 'logs', 'HEAD');
-  writeFileSync(
-    reflog,
-    readFileSync(reflog, 'utf8').replace(/> \d+ ([+-]\d{4}\t)/g, `> ${Math.floor(at.getTime() / 1000)} $1`),
-  );
-  for (const file of ['index', 'HEAD', join('logs', 'HEAD')]) utimesSync(join(gitDir, file), at, at);
-}
-
 describe('worktreeInScope', () => {
   const where = { main: '/dev/repo', folders: ['/dev'], roots: ['/roots'] };
 
@@ -72,7 +63,7 @@ describe('a discovered worktree on the removal path', () => {
     git(main, 'worktree', 'add', '-q', ...(detached ? ['--detach', path] : ['-b', name, path]));
     const gitdir = git(path, 'rev-parse', '--absolute-git-dir').trim();
     age(path);
-    ageGitActivity(gitdir, old);
+    for (const file of ['index', 'HEAD', join('logs', 'HEAD')]) utimesSync(join(gitdir, file), old, old);
     return path;
   };
 
@@ -121,15 +112,16 @@ describe('a discovered worktree on the removal path', () => {
     expect(quiet).toBeTruthy();
   });
 
-  it('treats an old reflog with a fresh mtime after git gc as idle', async () => {
+  it('treats a worktree whose reflog entry is old but whose logs/HEAD mtime is fresh, as after git gc, as idle', async () => {
     vi.spyOn(reads, 'discoveredReads').mockImplementation(() => ({
       processes: async () => ({ commands: [], cwds: [] }),
       sessions: async () => [],
     }));
     const wt = worktree('gc-touched');
-    const gitDir = git(wt, 'rev-parse', '--absolute-git-dir').trim();
+    const reflog = join(git(wt, 'rev-parse', '--absolute-git-dir').trim(), 'logs', 'HEAD');
+    writeFileSync(reflog, readFileSync(reflog, 'utf8').replace(/> \d+ /g, `> ${Math.floor(old.getTime() / 1000)} `));
     const now = new Date();
-    utimesSync(join(gitDir, 'logs', 'HEAD'), now, now);
+    utimesSync(reflog, now, now);
     expect((await sweep())['gc-touched']).toMatchObject({ skipped: null });
   });
 
@@ -281,7 +273,7 @@ describe('a worktree of a plain Node repository on the removal path', () => {
     writeFileSync(join(path, 'node_modules', 'dep', 'index.js'), 'x');
     const gitdir = git(path, 'rev-parse', '--absolute-git-dir').trim();
     age(path);
-    ageGitActivity(gitdir, old);
+    for (const file of ['index', 'HEAD', join('logs', 'HEAD')]) utimesSync(join(gitdir, file), old, old);
     return path;
   };
 
