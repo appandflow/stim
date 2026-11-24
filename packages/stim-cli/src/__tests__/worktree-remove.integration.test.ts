@@ -812,6 +812,21 @@ test('action: removing a deleted worktree drops the record of its project and th
   expect(existsSync(workspaceDir(app))).toBe(false);
 });
 
+test('action: removing a deleted folder registered under a symlink alias reclaims its entry', async () => {
+  const alias = join(tmpHome, 'alias');
+  symlinkSync(wtDir, alias, process.platform === 'win32' ? 'junction' : 'dir');
+  const missing = join(alias, 'missing');
+  upsertProject(missing, { platforms: {} });
+  ensureWorkspaceStorage(missing);
+  setExecutor(makeExecutor());
+
+  await captureAction(removeOp)(missing, {});
+
+  expect(process.exitCode).not.toBe(1);
+  expect(getProject(missing)).toBe(null);
+  expect(existsSync(workspaceDir(missing))).toBe(false);
+});
+
 test.skipIf(process.platform === 'win32')(
   'action: removing a worktree whose volume is not mounted keeps its record and says why',
   async () => {
