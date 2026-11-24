@@ -129,6 +129,7 @@ async function serveInStimd(serve: ServeOptions, service: boolean, unit: string 
     if (answer?.listening)
       console.log(`stimd's net thread listens on port ${answer.port}; this process exits with it.`);
     answered(answer, false);
+    if (desktop && !answer?.listening) process.exit();
   });
   if (!heard) refuse('stimd closed the connection without starting its net thread.');
 }
