@@ -12,7 +12,7 @@ import { readJsonObject, settingDefinition, settingValueError, type RemoteDevice
 import { pidExists } from '../metro.ts';
 import { gateMetroOrigin, REMOTE_METRO_WRONG } from './metro-gate.ts';
 import { workspaceDir, workspaceId, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
-import { clearRemoteSession, readMetroTunnel, readRemoteSession } from '../stimd/metro/state.ts';
+import { clearRemoteSession, readMetroTunnel, readRemoteSession, remoteSessionExpired } from '../stimd/metro/state.ts';
 import { ownedDeviceLabel } from '../workspace/project.ts';
 import { remoteCommand } from './node-cli.ts';
 import {
@@ -714,6 +714,7 @@ export async function ensureRemoteBootOwned<T extends BootResult>({
   sessionName,
   startedAt,
   deviceType = null,
+  maxDurationMinutes = null,
   operation,
   boot,
   createdSessionId,
@@ -733,6 +734,7 @@ export async function ensureRemoteBootOwned<T extends BootResult>({
   sessionName: string;
   startedAt: string;
   deviceType?: string | null;
+  maxDurationMinutes?: number | null;
   operation?: StimContext;
   boot: () => Promise<T>;
   createdSessionId: () => string | null;
@@ -784,6 +786,7 @@ export async function ensureRemoteBootOwned<T extends BootResult>({
                   startedAt,
                   ...(preview ? { webPreviewUrl: preview } : {}),
                   ...(deviceType ? { deviceType } : {}),
+                  ...(maxDurationMinutes ? { maxDurationMinutes } : {}),
                 },
               });
               return booted;
@@ -1022,6 +1025,18 @@ export async function endRecordedSession({
 }): Promise<{ status: 'torn-down' | 'failed'; reason?: string }> {
   const agentDeviceBin = (lookupAgentDevice ?? defaultLookupAgentDevice)();
   if (!easBin) {
+    const record = readRemoteSession(root);
+    if (record?.sessionId === sessionId && remoteSessionExpired(record, Date.now())) {
+      try {
+        await removeEasSessionClaimAsync(sessionId, ledgerRoot);
+        return { status: 'torn-down' };
+      } catch (error) {
+        return {
+          status: 'failed',
+          reason: `EAS session ${sessionId} has ended, but its ownership claim could not be removed: ${describe(error)}.`,
+        };
+      }
+    }
     return {
       status: 'failed',
       reason: `No eas-cli to stop session ${sessionId} with; it keeps billing until its max duration. Run \`eas simulator:stop --id ${sessionId}\`.`,

@@ -1045,3 +1045,32 @@ test('concurrent recorded-session cleanup verifies the first stop before another
   ]);
   expect(stops).toBe(1);
 });
+
+test('a recorded session past its cap is ended without eas-cli; one inside its cap or with no cap is kept', async () => {
+  const ledgerRoot = join(tmpHome, 'machine-eas');
+  const startedAt = new Date(Date.now() - 60 * 60_000).toISOString();
+  const run = async (record: Record<string, unknown>) => {
+    ensureWorkspaceStorage(root);
+    writeFileSync(
+      workspaceStateFile(root),
+      JSON.stringify({ remoteDevice: { platform: 'ios', sessionId: 'drs_cap', startedAt, ...record } }),
+    );
+    await recordEasSessionClaim(
+      {
+        sessionId: 'drs_cap',
+        name: 'stim-wt',
+        platform: 'ios',
+        workspaceRoot: root,
+        workspaceHome: tmpHome,
+        stateFile: workspaceStateFile(root),
+      },
+      ledgerRoot,
+    );
+    const result = await endRecordedSession({ root, sessionId: 'drs_cap', easBin: null, ledgerRoot });
+    return { status: result.status, claimed: readEasSessionLedger(ledgerRoot).claims.has('drs_cap') };
+  };
+
+  expect(await run({ maxDurationMinutes: 30 })).toEqual({ status: 'torn-down', claimed: false });
+  expect(await run({ maxDurationMinutes: 120 })).toEqual({ status: 'failed', claimed: true });
+  expect(await run({})).toEqual({ status: 'failed', claimed: true });
+});
