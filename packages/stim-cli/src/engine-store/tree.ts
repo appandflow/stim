@@ -12,7 +12,7 @@ const SELF_TEST_TIMEOUT_MS = 60_000;
 /** A fresh scratch directory name under the root; GC removes one whose owner is gone or that is an hour old. */
 export const scratchName = (): string => `.tmp-${process.pid}-${Math.random().toString(36).slice(2, 10)}`;
 
-function setWritable(path: string, writable: boolean): void {
+export function setWritable(path: string, writable: boolean): void {
   const entries = readdirSync(path, { recursive: true, withFileTypes: true }).map((each) =>
     join(each.parentPath, each.name),
   );
