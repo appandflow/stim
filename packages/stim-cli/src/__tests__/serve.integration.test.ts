@@ -559,7 +559,7 @@ test.each([
 ])(
   'stim serve refused on a held port by a running stimd exits 1, not by a signal, %s',
   async (_name, extra) => {
-    await withStimd('serve-held', async ({ holdPort }) => {
+    await withStimd('serve-held', async ({ holdPort, stimdExited }) => {
       const port = await holdPort();
       const home = process.env.STIM_HOME;
       type Outcome = { code: number; signal: string | null; stderr: string };
@@ -577,6 +577,7 @@ test.each([
       );
       expect(run).toMatchObject({ code: 1, signal: null });
       expect(run.stderr).toContain(`port ${port} is `);
+      await Promise.race([stimdExited, new Promise((done) => setTimeout(done, 5000))]);
     });
   },
   60_000,
@@ -700,6 +701,7 @@ async function withStimd(
     build: string;
     holdPort: () => Promise<number>;
     releasePort: () => Promise<void>;
+    stimdExited: Promise<unknown>;
   }) => Promise<void>,
 ) {
   const home = mkdtempSync(join(tmpdir(), `stim-net-${name}-`));
@@ -722,6 +724,7 @@ async function withStimd(
     await body({
       socket,
       build,
+      stimdExited,
       holdPort: async () => {
         holder.listen(0, '127.0.0.1');
         await once(holder, 'listening');
