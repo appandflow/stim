@@ -4256,6 +4256,7 @@ describe('launch verification', () => {
     expect(result.ok).toBe(true);
     expect(result.facts?.launched).toBe(LAUNCH_UNVERIFIED);
     expect(h.stderr.join('\n')).toContain('bundle delivered, but device log evidence is unavailable');
+    expect(h.stderr.join('\n')).toContain('when it reports android-reverse-missing, run `stim reload android`');
     expect(h.stderr.join('\n')).not.toContain('no bundle request reached');
   });
 

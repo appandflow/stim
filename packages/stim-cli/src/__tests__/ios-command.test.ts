@@ -1837,6 +1837,7 @@ describe('launch verification', () => {
     expect(exitCode).toBe(null);
     expect(parseFirst(logs).launched).toBe('unverified');
     expect(errs.join('\n')).toContain('bundle delivered, but device log evidence is unavailable');
+    expect(errs.join('\n')).toContain('Run `stim status`, then `stim logs --errors`');
     expect(errs.join('\n')).not.toContain('no bundle request reached');
   });
 

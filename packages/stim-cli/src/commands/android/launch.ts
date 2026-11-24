@@ -471,6 +471,10 @@ export async function verifyAndroidMetroRun({
     const report = launchErrorReport(verification.errors ?? [], root);
     if (report.summary) phase('launch', chalk.dim(report.summary));
     for (const line of report.lines) phase('launch', chalk.yellow(line));
+    phase(
+      'remedy',
+      chalk.yellow('Run `stim status`; when it reports android-reverse-missing, run `stim reload android`.'),
+    );
     return {
       state: LAUNCH_UNVERIFIED,
       warning: report.lines.length ? 'app errors detected; inspect the error above' : undefined,

@@ -510,6 +510,7 @@ function reportUnverified({
   if (verification.record) {
     phase('verify', chalk.yellow('UNVERIFIED: bundle delivered, but device log evidence is unavailable'));
     const hasAppErrors = reportLaunchErrors(verification.errors ?? [], note, root);
+    note(chalk.yellow(phaseLine('remedy', 'Run `stim status`, then `stim logs --errors` to check the app.')));
     return {
       state: LAUNCH_UNVERIFIED,
       warning: hasAppErrors ? 'app errors detected; inspect the error above' : undefined,
