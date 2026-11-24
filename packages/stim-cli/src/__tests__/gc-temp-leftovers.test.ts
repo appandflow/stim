@@ -352,7 +352,12 @@ test('cancelling temporary cleanup yields during removal and preserves the next 
   }
 });
 
-function fakeAgentDevice(): { asked: string[]; launch: (id: string, idle?: boolean) => string; root: string } {
+function fakeAgentDevice(
+  running: (stateDir: string) => boolean = (stateDir) => stateDir.includes('aaaaaaaaaaaaaaaa'),
+): {
+  asked: string[];
+  launch: (id: string, idle?: boolean) => string;
+} {
   const bin = join(home, 'agent-device.mjs');
   writeFileSync(bin, '');
   process.env.STIM_AGENT_DEVICE_BIN = bin;
@@ -373,7 +378,7 @@ function fakeAgentDevice(): { asked: string[]; launch: (id: string, idle?: boole
       const stateDir = args[at + 1] ?? '';
       asked.push(stateDir);
       if (!args.includes('status')) throw new Error(`gc ran agent-device ${args.join(' ')}`);
-      const state = stateDir.includes('aaaaaaaaaaaaaaaa') ? 'running' : 'stopped';
+      const state = running(stateDir) ? 'running' : 'stopped';
       return JSON.stringify({ success: true, data: { state, stateDir } });
     },
   });
@@ -384,7 +389,7 @@ function fakeAgentDevice(): { asked: string[]; launch: (id: string, idle?: boole
     if (idle) age(join(root, id), 2 * DAY_MS);
     return join(root, id);
   };
-  return { asked, launch, root };
+  return { asked, launch };
 }
 
 test('plans, lists and removes an idle hosted agent-device launch agent-device reports stopped, and never stops one', async () => {
@@ -412,6 +417,21 @@ test('plans, lists and removes an idle hosted agent-device launch agent-device r
   const outcome = await executeAction(action, { settings, protectedRoot: '' });
   expect(outcome).toEqual(expect.objectContaining({ status: 'done', detail: '1 deleted' }));
   expect([existsSync(running), existsSync(gone), existsSync(recent)]).toEqual([true, false, true]);
+  expect(new Set(asked)).toEqual(new Set([join(running, 'state'), join(gone, 'state')]));
+});
+
+test('a launch whose daemon agent-device reports running again by the time gc removes it is kept', async () => {
+  let checks = 0;
+  const { launch } = fakeAgentDevice(() => checks++ > 0);
+  const revived = launch('bbbbbbbbbbbbbbbb');
+
+  expect(await kept(revived)).toBeNull();
+  checks = 0;
+  expect(await deleteTempLeftovers()).toEqual({ count: 0, bytes: 0, failures: 0 });
+  expect(existsSync(revived)).toBe(true);
+  expect(takeGcResults()).toEqual([
+    expect.objectContaining({ status: 'kept', label: revived, detail: 'agent-device reports its daemon running' }),
+  ]);
 });
 
 test('a launch that cannot be removed is one failure, and the other leftovers are still removed', async () => {

@@ -54,8 +54,6 @@ interface TempLeftover {
   bytes: number;
   willDelete: boolean;
   kept: string | null;
-  /** A hosted agent-device launch directory inside a `stim-server-agent-device-*` root, judged on its own. */
-  launch?: true;
 }
 
 export interface TempLeftoverReport {
@@ -212,7 +210,15 @@ async function judgeLaunch(
   operation: StimContext | undefined,
 ): Promise<{ bytes: number; kept: string | null }> {
   const stat = await lstatOrError(dir);
-  if (!stat || 'error' in stat || !stat.isDirectory()) return { bytes: 0, kept: 'it changed since the scan' };
+  if (!stat || 'error' in stat || !stat.isDirectory())
+    return {
+      bytes: 0,
+      kept: !stat
+        ? `${dir} is gone`
+        : 'error' in stat
+          ? `${dir} cannot be read: ${stat.error}`
+          : `${dir} is not a directory`,
+    };
   const scan = await walk(dir, stat, signal);
   if (scan.unreadable) return { bytes: scan.bytes, kept: scan.unreadable };
   if (now - scan.newest < MIN_AGE_MS)
@@ -335,7 +341,7 @@ export async function collectTempLeftovers({
     if (launches.length) {
       for (const dir of launches) {
         const { bytes, kept } = await judgeLaunch(dir, now, signal, operation);
-        entries.push({ kind, path: dir, bytes, willDelete: kept === null, kept, launch: true });
+        entries.push({ kind, path: dir, bytes, willDelete: kept === null, kept });
       }
       continue;
     }
@@ -396,7 +402,8 @@ export async function deleteTempLeftovers(
     if (!entry.willDelete) continue;
     try {
       if (entry.kind === 'jest') continue;
-      if (entry.launch) {
+      if (dirname(dirname(entry.path)) === report.root) {
+        if (!(await lstatOrError(entry.path))) continue;
         const again = (await judgeLaunch(entry.path, options.now ?? Date.now(), options.signal, options.operation))
           .kept;
         if (again) {
