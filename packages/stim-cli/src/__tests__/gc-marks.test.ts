@@ -29,7 +29,7 @@ import * as gcPaths from '../commands/gc/paths.ts';
 import * as cacheFiles from '../cache-file.ts';
 import * as worktree from '../workspace/worktree.ts';
 import { runLadder } from '../daemon/ladder.ts';
-import { runDormantDependencies } from '../daemon/dependencies.ts';
+import { clearDependency, runDormantDependencies } from '../daemon/dependencies.ts';
 import { dependencyMarkObserver } from '../daemon/dependency-marks.ts';
 import { savedDependencyReports } from '../daemon/dependency-reports.ts';
 import * as artifacts from '../stimd/passes/artifacts.ts';
@@ -39,7 +39,7 @@ import { stoppedOutputCandidates, stoppedOutputs } from '../daemon/stages.ts';
 import type { OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { metroStoreRoot } from '../stimd/metro/metro-store.ts';
 import { saveConfig } from '../workspace/config.ts';
-import { workspaceDir } from '../workspace/paths.ts';
+import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
 import { recordWarmedFrom } from '../workspace/source-dependencies.ts';
 import { listedRoots } from '../commands/gc/worktrees.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
@@ -1005,6 +1005,162 @@ describe('gc marks written by the lane', () => {
     };
     return { root, modules, age, old, cache };
   };
+
+  describe.skipIf(process.platform === 'win32')('the acting dormant stage', () => {
+    const dormant = () =>
+      runDormantDependencies({ config, act: true, marks: true, log: () => {}, ...reading, operation: testContext() });
+    const installed = (root: string) => {
+      const modules = join(root, 'node_modules');
+      mkdirSync(modules);
+      writeFileSync(join(modules, 'dependency.js'), 'installed');
+      return modules;
+    };
+    const age = (path: string) => {
+      const at = new Date(Date.now() - 20 * day);
+      for (const entry of readdirSync(path, { withFileTypes: true })) {
+        if (entry.isDirectory()) age(join(path, entry.name));
+        utimesSync(join(path, entry.name), at, at);
+      }
+      utimesSync(path, at, at);
+    };
+
+    it.each([
+      ['takes the node_modules of a linked worktree with only a workspace record', false, false, 'done'],
+      ['keeps it while a source file in it changed a minute ago', false, true, undefined],
+      ['leaves it to the registered app inside it, used a minute ago', true, false, undefined],
+    ] as const)(
+      '%s',
+      async (_name, registeredApp, edited, outcome) => {
+        const source = checkout('recorded-source', 20 * day);
+        const linked = join(roots, 'recorded-linked');
+        execFileSync('git', ['-C', source, '-c', 'gc.auto=0', 'worktree', 'add', '-q', '-b', 'recorded', linked]);
+        const modules = installed(linked);
+        config = { maintenance: {}, projects: {}, repos: {}, idle: { dormantDays: 1, sourceDormantDays: 0 } };
+        const app = join(linked, 'apps', 'mobile');
+        if (registeredApp) {
+          mkdirSync(app, { recursive: true });
+          writeFileSync(join(app, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+          config.projects[app] = {};
+        }
+        saveConfig(config);
+        ensureWorkspaceStorage(linked);
+        age(roots);
+        recordWorkspaceUse(linked, new Date(Date.now() - 20 * day));
+        if (edited) writeFileSync(join(linked, 'index.js'), 'edited');
+        if (registeredApp) {
+          ensureWorkspaceStorage(app);
+          recordWorkspaceUse(app, new Date(Date.now() - 60_000));
+        }
+
+        const taken = (await dormant()).filter(({ target }) => target === modules);
+
+        expect(taken.map((action) => action.outcome)).toEqual(outcome ? [outcome] : []);
+        expect(existsSync(modules)).toBe(!outcome);
+      },
+      20_000,
+    );
+
+    it.each(['a source edit', 'a reflog write'] as const)(
+      'acts as it reports on a warmed worktree with a registered app after %s',
+      async (touch) => {
+        const source = checkout('warmed-source', 20 * day);
+        const linked = join(roots, 'warmed-linked');
+        execFileSync('git', ['-C', source, '-c', 'gc.auto=0', 'worktree', 'add', '-q', '-b', 'warmed', linked]);
+        const modules = installed(linked);
+        const app = join(linked, 'apps', 'mobile');
+        mkdirSync(app, { recursive: true });
+        writeFileSync(join(app, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
+        config = {
+          maintenance: {},
+          projects: { [app]: {} },
+          repos: {},
+          idle: { dormantDays: 1, sourceDormantDays: 0 },
+        };
+        saveConfig(config);
+        for (const root of [linked, app]) ensureWorkspaceStorage(root);
+        age(roots);
+        for (const root of [linked, app]) recordWorkspaceUse(root, new Date(Date.now() - 20 * day));
+        if (touch === 'a source edit') writeFileSync(join(linked, 'index.js'), 'edited a minute ago');
+        else {
+          const gitDir = execFileSync('git', ['-C', linked, 'rev-parse', '--absolute-git-dir'], { encoding: 'utf8' });
+          const now = new Date();
+          utimesSync(join(gitDir.trim(), 'logs', 'HEAD'), now, now);
+        }
+        const outcomes = async (act: boolean) =>
+          (
+            await runDormantDependencies({
+              config,
+              act,
+              marks: true,
+              log: () => {},
+              ...reading,
+              operation: testContext(),
+            })
+          )
+            .filter(({ target }) => target === modules)
+            .map(({ outcome }) => outcome);
+
+        expect(await outcomes(false)).toEqual(['would']);
+        expect(await outcomes(true)).toEqual(['done']);
+        expect(existsSync(modules)).toBe(false);
+      },
+      20_000,
+    );
+
+    it('rechecks a recorded worktree by the full evidence once it holds the claim', async () => {
+      const source = checkout('recheck-source', 20 * day);
+      const linked = join(roots, 'recheck-linked');
+      execFileSync('git', ['-C', source, '-c', 'gc.auto=0', 'worktree', 'add', '-q', '-b', 'recheck', linked]);
+      const modules = installed(linked);
+      config = { maintenance: {}, projects: {}, repos: {}, idle: { dormantDays: 1, sourceDormantDays: 0 } };
+      saveConfig(config);
+      ensureWorkspaceStorage(linked);
+      age(roots);
+      recordWorkspaceUse(linked, new Date(Date.now() - 20 * day));
+      writeFileSync(join(linked, 'index.js'), 'edited after selection');
+      const operation = testContext();
+      const worktrees = await artifacts.artifactWorktreesFor(operation);
+      const keys = worktrees.find(({ path }) => path === linked)?.keys ?? [];
+      const candidate = { worktree: linked, path: modules, keys, locked: false, reduceOnly: false };
+
+      const result = await clearDependency(
+        { candidate, source: false, workspace: linked, bytes: null, privateBytes: null },
+        day,
+        '',
+        worktrees,
+        'test',
+        operation,
+        false,
+      );
+
+      expect(result).toMatchObject({ status: 'kept', detail: expect.stringContaining('no longer idle') });
+      expect(existsSync(modules)).toBe(true);
+    }, 20_000);
+
+    it('takes the node_modules of a source checkout with no workspace record that a discovered root holds', async () => {
+      const root = checkout('recordless-source', 20 * day);
+      const modules = installed(root);
+      config.idle = { dormantDays: 0, sourceDormantDays: 1 };
+      saveConfig(config);
+      age(roots);
+      mkdirSync(dirname(diskUsageCacheFile(modules)), { recursive: true });
+      writeFileSync(
+        diskUsageCacheFile(modules),
+        JSON.stringify({
+          path: modules,
+          bytes: 1024 ** 3,
+          privateBytes: 1024 ** 3,
+          measuredAt: new Date().toISOString(),
+          signature: treeSignature(modules),
+        }),
+      );
+
+      expect(await dormant()).toEqual([
+        expect.objectContaining({ kind: 'delete-dependencies', target: modules, outcome: 'done' }),
+      ]);
+      expect(existsSync(modules)).toBe(false);
+    }, 20_000);
+  });
 
   describe.skipIf(process.platform === 'win32')('normal source dependency selection', () => {
     it('normal source dependencies select the saved paths and preserve a new unmarked tree', async () => {

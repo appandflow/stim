@@ -125,8 +125,12 @@ export async function savedWorktreeReports(
       if (!keep && !keys.some((key) => registry.has(key)))
         keep = 'its automatic-only removal proof needs a normal eligibility check';
       if (!keep && reading.protectedRoot) {
-        const protectedPath = await identity(reading.protectedRoot);
-        if (protectedPath === root || protectedPath.startsWith(`${root}${sep}`))
+        const protectedPath = await identity(reading.protectedRoot).catch((error: unknown) => {
+          if (error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR'))
+            return null;
+          throw error;
+        });
+        if (protectedPath && (protectedPath === root || protectedPath.startsWith(`${root}${sep}`)))
           keep = 'the command runs inside this worktree';
       }
       if (!keep && (reading.simsFailed || reading.devices.some((device) => keys.includes(device.project))))
@@ -139,7 +143,10 @@ export async function savedWorktreeReports(
     } catch (error) {
       if (isClaimUnavailable(error) && 'reportCleanup' in error) throw error;
       reading.operation?.signal.throwIfAborted();
-      rows.push({ target: mark.root, detail: 'current worktree eligibility could not be checked; it stays' });
+      rows.push({
+        target: mark.root,
+        detail: `current worktree eligibility could not be checked (${error instanceof Error ? error.message : String(error)}); it stays`,
+      });
     } finally {
       clearTimeout(timer);
     }
@@ -211,7 +218,10 @@ export async function savedWorktreeReports(
     } catch (error) {
       if (isClaimUnavailable(error) && 'reportCleanup' in error) throw error;
       reading.operation?.signal.throwIfAborted();
-      rows.push({ target: mark.root, detail: 'current worktree eligibility could not be checked; it stays' });
+      rows.push({
+        target: mark.root,
+        detail: `current worktree eligibility could not be checked (${error instanceof Error ? error.message : String(error)}); it stays`,
+      });
     } finally {
       clearTimeout(timer);
     }

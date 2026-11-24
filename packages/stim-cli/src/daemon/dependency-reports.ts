@@ -18,7 +18,7 @@ import { readRunningProcessesAsync, runningFromReason } from '../workspace/runni
 import { rankedPrivateBytes, selectDependencies, type RankedDependency } from './dependencies.ts';
 import { dependencyMarkDue } from './dependency-marks.ts';
 import { outputMarks } from './marks.ts';
-import { dormantAfterMs, runsSomething, stillIdle, type DeviceReading } from './stages.ts';
+import { dormantAfterMs, notIdleReason, runsSomething, type DeviceReading } from './stages.ts';
 
 export interface DependencyReport {
   rung: 5 | 8;
@@ -107,11 +107,8 @@ export async function savedDependencyReports(
         (currentKeys.length !== observation.keys.length || currentKeys.some((key) => !observation.keys.includes(key)))
       )
         keep = 'the checkout workspace membership changed since the dependency observation';
-      if (!keep && options.protectedRoot) {
-        const protectedPath = await native(options.protectedRoot);
-        if (protectedPath === root || protectedPath.startsWith(`${root}${sep}`))
-          keep = 'the command runs inside this checkout';
-      }
+      if (!keep && options.protectedRoot && (await runsInside(options.protectedRoot, root, native)))
+        keep = 'the command runs inside this checkout';
       if (!keep)
         keep = await checkoutKeep(mark, currentKeys, source, idleMs, native, {
           config,
@@ -184,19 +181,11 @@ export async function savedDependencyReports(
     } catch (error) {
       if (isClaimUnavailable(error) && 'reportCleanup' in error) throw error;
       operation?.signal.throwIfAborted();
+      const detail = `current dependency eligibility could not be checked (${error instanceof Error ? error.message : String(error)}); it stays`;
       if (!observation.candidates.length && options.onVolume(mark.root, source))
-        reports.push({
-          rung,
-          target: mark.root,
-          detail: 'current dependency eligibility could not be checked; it stays',
-        });
+        reports.push({ rung, target: mark.root, detail });
       for (const candidate of observation.candidates)
-        if (options.onVolume(candidate.path, source))
-          reports.push({
-            rung,
-            target: candidate.path,
-            detail: 'current dependency eligibility could not be checked; it stays',
-          });
+        if (options.onVolume(candidate.path, source)) reports.push({ rung, target: candidate.path, detail });
     }
   }
   for (const rung of [5, 8] as const) {
@@ -215,6 +204,21 @@ export async function savedDependencyReports(
       });
   }
   return reports;
+}
+
+async function runsInside(
+  protectedRoot: string,
+  root: string,
+  native: (path: string) => Promise<string>,
+): Promise<boolean> {
+  try {
+    const path = await native(protectedRoot);
+    return path === root || path.startsWith(`${root}${sep}`);
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR'))
+      return false;
+    throw error;
+  }
 }
 
 async function checkoutKeep(
@@ -251,8 +255,8 @@ async function checkoutKeep(
   const pinned = maintenancePinnedReader(operation);
   for (const key of new Set([mark.root, ...keys])) {
     if (await pinned(key)) return `${key} is pinned`;
-    if (!(await stillIdle(key, idleMs, { operation, full: source, locked: false, checkout: mark.root })))
-      return `${key} is no longer idle`;
+    const why = await notIdleReason(key, idleMs, { operation, full: source, locked: false, checkout: mark.root });
+    if (why) return `${key} is no longer idle: ${why}`;
   }
   if (source) {
     const warming = warmCopyingFrom(mark.root);
