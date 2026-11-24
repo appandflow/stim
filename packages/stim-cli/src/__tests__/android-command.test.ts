@@ -6231,6 +6231,14 @@ describe('--device (a physical Android device)', () => {
     expect(await parseDeviceOption([])).toBeUndefined();
   });
 
+  test.each([true, false])('only a physical run clears its slot launch: %s', async (physical) => {
+    const clearLaunch = vi.fn<(root: string, platform: string, slot?: string) => Promise<void>>(async () => {});
+    const h = physical ? physicalHarness({ slot: 'qa', clearLaunch }) : harness({ slot: 'qa', clearLaunch });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(clearLaunch.mock.calls).toEqual(physical ? [[root, 'android', 'qa']] : []);
+  });
+
   test('a physical run installs and launches on the resolved serial', async () => {
     const h = physicalHarness();
     const result = await h.run();

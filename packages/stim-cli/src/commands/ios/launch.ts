@@ -839,7 +839,19 @@ async function recordIosReloadTarget({
   artifact: LaunchedArtifact | null;
   note: (line: string) => void;
 }): Promise<void> {
-  if (physical || remoteDevice) return;
+  if (remoteDevice) return;
+  if (physical) {
+    try {
+      await d.clearWorkspaceLaunch(root, 'ios');
+    } catch (error) {
+      note(
+        chalk.yellow(
+          phaseLine('state', `could not clear iOS launch: ${error instanceof Error ? error.message : error}`),
+        ),
+      );
+    }
+    return;
+  }
   try {
     await d.writeWorkspaceLaunch(root, 'ios', {
       appId: bundleId,

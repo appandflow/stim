@@ -453,6 +453,7 @@ function iosSlotDeps(d: IosDeps, slot: string): IosDeps {
       replaceCollector: (args) => base.replaceCollector({ ...args, slot }),
       stopPreviousCollector: (args) => base.stopPreviousCollector({ ...args, slot }),
       clearIosAdoptionPending: (root) => base.clearIosAdoptionPending(root, slot),
+      clearWorkspaceLaunch: (root, platform) => base.clearWorkspaceLaunch(root, platform, slot),
       writeWorkspaceLaunch: (root, platform, record) => base.writeWorkspaceLaunch(root, platform, record, slot),
       createWriter: (file, options) => base.createWriter(file, { ...options, fields: { slot } }),
     };

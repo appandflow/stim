@@ -348,7 +348,9 @@ end the job with \`stim stop\`.
   If the installed app is gone, revive refuses with STIM_NO_RECORDED_BUILD
   and names the platform launch command. STIM_NO_METRO means the dev server
   was never started, stopped for a different reason, or was stopped since
-  the idle stop. STIM_DEVICE_LOST means the recorded owned device is gone.
+  the idle stop. STIM_DEVICE_LOST means the recorded owned device is gone
+  or the requested device has no launch record. Local phone runs clear that
+  platform's slot record; rerun the phone command to relaunch.
   stimd reads the
   setting on each tick; a value that is not a whole number of 0 or more is
   refused, as \`stim settings set\` refuses it.

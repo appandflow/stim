@@ -44,7 +44,12 @@ import {
 } from '../../engine/app-install.ts';
 import { appReadinessMessage, formatDuration, launchErrorReport, phaseLine, stepTimer } from '../../command-output.ts';
 import { launchErrorPreview } from '../../diagnostics/launch-error-preview.ts';
-import { workspaceDevServerMode, writeWorkspaceLaunchAsync, type LaunchedArtifact } from '../../stimd/metro/state.ts';
+import {
+  workspaceDevServerMode,
+  clearWorkspaceLaunchAsync,
+  writeWorkspaceLaunchAsync,
+  type LaunchedArtifact,
+} from '../../stimd/metro/state.ts';
 import { recordPhoneReverse } from '../../devices/phone-reverses.ts';
 import { applyRecordedReverses } from '../../reverse-ports.ts';
 import type {
@@ -556,6 +561,7 @@ interface FinishAndroidRunArgs {
   kill: (pid: number, signal: NodeJS.Signals) => boolean;
   pidAlive: typeof pidExists;
   verifyCollector: typeof verifyCollectorOwnership;
+  clearLaunch: typeof clearWorkspaceLaunchAsync;
   writeLaunch: typeof writeWorkspaceLaunchAsync;
   recordBuild?: typeof recordFinishedBuild;
   now: () => number;
@@ -804,6 +810,7 @@ export async function finishAndroidRun({
   kill,
   pidAlive,
   verifyCollector,
+  clearLaunch,
   writeLaunch,
   recordBuild,
   now,
@@ -1077,6 +1084,18 @@ export async function finishAndroidRun({
   });
   phase('launch', `${androidPackage}${restartedAppNote(launched.restartedPid)} ${launchTimer()}`);
 
+  if (physical && !remoteDevice) {
+    try {
+      await clearLaunch(root, 'android');
+    } catch (error) {
+      out(
+        phaseLine(
+          'state',
+          chalk.yellow(`could not clear Android launch: ${error instanceof Error ? error.message : error}`),
+        ),
+      );
+    }
+  }
   if (!physical && !remoteDevice) {
     try {
       await writeLaunch(root, 'android', {
