@@ -1,6 +1,8 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { runCli } from '../cli/define-op.ts';
+import servicesOp from '../commands/services.ts';
 import { resetExecutor, setExecutor, type Executor } from '../exec.ts';
 import {
   declaredServicesFrom,
@@ -11,6 +13,48 @@ import {
   substitute,
   teardownServices,
 } from '../services.ts';
+import { updateWorkspaceState } from '../workspace/workspace-state.ts';
+
+test('plain services output shows a failed teardown and its recovery command', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-services-output-'));
+  const previousHome = process.env.STIM_HOME;
+  const previousCwd = process.cwd();
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+  try {
+    process.env.STIM_HOME = join(home, 'stim');
+    process.chdir(home);
+    const root = process.cwd();
+    writeFileSync(join(root, 'package.json'), '{}');
+    writeFileSync(join(root, '.stim.json'), JSON.stringify({ services: { db: { start: 'db up', stop: 'db stop' } } }));
+    const failure = `teardown command exited with status 1; run by hand in ${root}: db destroy`;
+    updateWorkspaceState(root, (state) => ({
+      ...state,
+      services: {
+        db: {
+          kind: 'commands',
+          cwd: root,
+          env: {},
+          dependsOn: [],
+          ports: {},
+          reverse: [],
+          start: ['db', 'up'],
+          stop: ['db', 'stop'],
+          state: 'stopped',
+          at: new Date().toISOString(),
+          teardownFailure: failure,
+        },
+      },
+    }));
+    await runCli(servicesOp, [], { version: '0.0.0' });
+    expect(log).toHaveBeenCalledWith(`db  stopped; teardown failed: ${failure}`);
+  } finally {
+    log.mockRestore();
+    process.chdir(previousCwd);
+    if (previousHome === undefined) delete process.env.STIM_HOME;
+    else process.env.STIM_HOME = previousHome;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
 
 const values = { web: '8900', api: '8901', id: 'web-0123456789abcdef', dir: '/w/app', 'db.pg': '8902' };
 

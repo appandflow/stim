@@ -143,7 +143,9 @@ const servicesOp: Op = defineOp({
           .map(([label, port]) => `${label} ${port ?? '-'}`)
           .join(', ');
         const state = row.running ? 'running' : row.stoppedBy === 'idle' ? 'stopped idle' : 'stopped';
-        console.log(`${row.name}  ${state}${ports ? `  ${ports}` : ''}`);
+        console.log(
+          `${row.name}  ${state}${ports ? `  ${ports}` : ''}${row.teardownFailure ? `; teardown failed: ${row.teardownFailure}` : ''}`,
+        );
       }
     }),
 });
