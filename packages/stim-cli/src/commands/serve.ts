@@ -101,10 +101,10 @@ async function serveInStimd(serve: ServeOptions, service: boolean, unit: string 
   if (lifetimeFd === '0' && !desktop)
     desktop = { key: '', closed: new Promise((done) => process.stdin.on('data', () => {}).once('close', done)) };
   void desktop?.closed.then(() => process.kill(process.pid, 'SIGTERM'));
-  const answered = (answer: NetAnswer | null) => {
+  const answered = (answer: NetAnswer | null, inProcess = true) => {
     if (!answer) refuse('stimd did not answer.');
     else if (!answer.listening) refuse(answer.message);
-    if (!answer?.listening) process.kill(process.pid, 'SIGTERM');
+    if (inProcess && !answer?.listening) process.kill(process.pid, 'SIGTERM');
   };
   let served: boolean;
   try {
@@ -128,7 +128,7 @@ async function serveInStimd(serve: ServeOptions, service: boolean, unit: string 
       return refuse(`the stimd of this Stim home serves port ${answer.port}, not the service's port ${serve.port}.`);
     if (answer?.listening)
       console.log(`stimd's net thread listens on port ${answer.port}; this process exits with it.`);
-    answered(answer);
+    answered(answer, false);
   });
   if (!heard) refuse('stimd closed the connection without starting its net thread.');
 }
