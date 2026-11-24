@@ -195,6 +195,22 @@ export function createThreadTable(
   onQueue: (status: CleanupQueueStatus) => void = () => {},
 ): ThreadTable {
   const threads = new Map<ThreadName, Thread>();
+  const keptMessages = new Map<string, string>();
+  function logLevel({ level, event, msg, fields }: Extract<FromThread, { type: 'log' }>): Parameters<Log>[0] {
+    if (event !== 'pressure_action' && event !== 'dormant_dependencies') return level;
+    const key = `${event}\0${fields.target}\0${fields.rung ?? ''}\0${fields.kind ?? ''}`;
+    if (fields.outcome !== 'kept') {
+      keptMessages.delete(key);
+      return level;
+    }
+    const repeated = keptMessages.get(key) === msg;
+    keptMessages.set(key, msg);
+    if (keptMessages.size > 256) {
+      const oldest = keptMessages.keys().next().value;
+      if (oldest !== undefined) keptMessages.delete(oldest);
+    }
+    return repeated ? 'debug' : 'info';
+  }
   const dependencyCadence = new BigInt64Array(new SharedArrayBuffer(BigInt64Array.BYTES_PER_ELEMENT));
   const ladderClocks = new BigInt64Array(
     new SharedArrayBuffer(Object.keys(LADDER_CLOCK_SLOTS).length * BigInt64Array.BYTES_PER_ELEMENT),
@@ -252,7 +268,7 @@ export function createThreadTable(
         if (threads.get(name) === thread) onQueue(message.status);
         return;
       }
-      if (message.type === 'log') return log(message.level, message.event, message.msg, message.fields);
+      if (message.type === 'log') return log(logLevel(message), message.event, message.msg, message.fields);
       if (message.type === 'settled') {
         thread.unsettled = new Set(message.pending);
         thread.reading = message.reading;
