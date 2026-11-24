@@ -5,11 +5,13 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, realpa
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resetExecutor } from '../exec.ts';
+import { setReportChildLog } from '../report-child-log.ts';
 import {
   branchStatusAsync,
   unpushedCommitsAsync,
   hasUncommittedWorkAsync,
   listWorktrees,
+  listWorktreesAsync,
   cloneIgnoredEntries,
   depsOutOfSync,
   listGitignoredEntries,
@@ -24,6 +26,27 @@ import {
 } from '../workspace/worktree.ts';
 
 afterEach(() => resetExecutor());
+
+test('listing worktrees twice logs the git read once per path', async () => {
+  resetExecutor();
+  const repo = realpathSync(mkdtempSync(join(tmpdir(), 'stim-test-worktree-read-')));
+  const records: { level: string; event: string; path: unknown }[] = [];
+  try {
+    execSync('git init -q -b main', { cwd: repo });
+    setReportChildLog((level, event, _msg, fields) => {
+      records.push({ level, event, path: fields.path });
+    });
+
+    expect(await listWorktreesAsync(repo)).toEqual([{ path: repo, branch: 'main' }]);
+    expect(await listWorktreesAsync(repo)).toEqual([{ path: repo, branch: 'main' }]);
+    expect(records.filter((record) => record.event === 'daemon_worktree_read')).toEqual([
+      { level: 'info', event: 'daemon_worktree_read', path: repo },
+    ]);
+  } finally {
+    setReportChildLog(undefined);
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
 
 test('unpushedCommits against a real repo: empty right after push, reports a commit made only locally', async () => {
   resetExecutor();

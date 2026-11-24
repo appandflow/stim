@@ -4,6 +4,7 @@ import { chmod, lstat, mkdir, readdir, realpath, utimes } from 'node:fs/promises
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from 'fs';
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from 'path';
 import { getExecutor, isTimeoutError } from '../exec.ts';
+import { logReportChild } from '../report-child-log.ts';
 import { git, gitAsync, gitQuiet, gitQuietAsync } from './git.ts';
 import { removeTemporaryEntryAsync } from '../temporary.ts';
 import { warmTrash } from './worktree-trash.ts';
@@ -1020,9 +1021,16 @@ export function listWorktrees(cwd: string, opts: ReadOptions = {}): WorktreeEntr
 }
 
 const LIST_WORKTREES = ['worktree', 'list', '--porcelain'];
+const loggedWorktreeReads = new Set<string>();
 
 function commonDirOf(entry: WorktreeEntry): string | null {
-  if (!entry.bare) return gitCommonDirOnDisk(entry.path);
+  if (!entry.bare) {
+    if (!loggedWorktreeReads.has(entry.path)) {
+      loggedWorktreeReads.add(entry.path);
+      logReportChild(`reading ${join(entry.path, '.git')}`, { path: entry.path }, 'daemon_worktree_read', 'info');
+    }
+    return gitCommonDirOnDisk(entry.path);
+  }
   try {
     return realpathSync.native(entry.path);
   } catch {
