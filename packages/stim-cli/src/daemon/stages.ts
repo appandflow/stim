@@ -375,16 +375,13 @@ async function readIdleWorkspaces(
   return linkedFirst(candidates);
 }
 
-const overlaps = (path: string, other: string): boolean =>
-  path === other || path.startsWith(`${other}${sep}`) || other.startsWith(`${path}${sep}`);
-
 function recordedOnly(config: Config): [string, ProjectRecord][] {
   const registered = Object.keys(config.projects);
   const roots = new Set<string>();
   for (const { projectRoot } of listWorkspaceDirs()) {
     if (!projectRoot || !isAbsolute(projectRoot) || !existsSync(projectRoot)) continue;
     const root = canonicalPath(projectRoot);
-    if (!registered.some((key) => overlaps(root, key))) roots.add(projectRoot);
+    if (!registered.some((key) => root === key || key.startsWith(`${root}${sep}`))) roots.add(projectRoot);
   }
   return [...roots].map((root) => [root, {}]);
 }
