@@ -814,9 +814,12 @@ started:
   `idle.minutes`: no Stim command, file edit or git write, and no process or
   agent session in the checkout;
 - `stim revive` starts again only the services the idle pass stopped;
-- `worktree remove`, `gc` and automatic maintenance tear them down: a process
-  by identity, otherwise `teardown` (else `stop`), or `orphanTeardown` from the
-  home folder once the worktree folder is gone;
+- removal deletes their data only with the folder: `worktree remove` of a
+  linked worktree runs `teardown` (else `stop`) just before git removes it, and
+  `gc` runs `orphanTeardown` once the folder is gone; any other reclaim only
+  stops them. A failed teardown keeps the worktree, the record and its ports,
+  and `stim status` shows what to run by hand (`worktree remove --force` drops
+  them);
 - while one runs, its ports are reversed to the workspace's devices like
   [`stim ports reverse`](#reverse-ports), so the app reaches
   `http://localhost:<port>`; mark a port the app never uses

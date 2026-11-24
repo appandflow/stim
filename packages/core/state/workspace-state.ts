@@ -81,6 +81,10 @@ export interface ServiceRecord {
   cwd: string;
   /** The variables Stim sets for the service's commands: its ports, its id and its derived values. */
   env: Record<string, string>;
+  /** The `PATH` of the `stim services start` that recorded it; every later run of its commands uses it. */
+  path?: string;
+  /** The services it starts after and stops before. */
+  dependsOn: string[];
   ports: Record<string, number>;
   /** The ports Stim reverses to the workspace's devices while the service runs. */
   reverse: number[];
@@ -97,6 +101,8 @@ export interface ServiceRecord {
   at: string;
   /** When the idle pass last failed to stop it; it waits `idle.minutes` before trying again. */
   idleStopFailedAt?: string;
+  /** Why the last teardown failed, naming what to run by hand; removal keeps the workspace until one succeeds. */
+  teardownFailure?: string;
 }
 
 function argvField(value: unknown): string[] | undefined {
@@ -133,6 +139,9 @@ export function readServiceRecords(state: WorkspaceState | null | undefined): Re
         ? value.reverse.filter((port): port is number => typeof port === 'number')
         : [],
       start,
+      dependsOn: Array.isArray(value.dependsOn)
+        ? value.dependsOn.filter((each): each is string => typeof each === 'string')
+        : [],
       state: value.state === 'running' ? 'running' : 'stopped',
       at: value.at,
     };
@@ -145,6 +154,8 @@ export function readServiceRecords(state: WorkspaceState | null | undefined): Re
       record.process = { pid: proc.pid, processToken: proc.processToken };
     if (value.stoppedBy === 'idle' || value.stoppedBy === 'command') record.stoppedBy = value.stoppedBy;
     if (typeof value.idleStopFailedAt === 'string') record.idleStopFailedAt = value.idleStopFailedAt;
+    if (typeof value.teardownFailure === 'string') record.teardownFailure = value.teardownFailure;
+    if (typeof value.path === 'string') record.path = value.path;
     records[name] = record;
   }
   return records;

@@ -2139,3 +2139,52 @@ test.each([false, true])('real git: successful removal reports differing ignored
     rmSync(base, { recursive: true, force: true });
   }
 });
+
+test.each([
+  ['succeeds', '', true],
+  ['fails', 'process.exit(1)', false],
+])(
+  'real git: a recorded service is torn down only just before the worktree goes, and a teardown that %s decides whether it goes',
+  async (_name, failure, removed) => {
+    const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-service-teardown-')));
+    const errs: string[] = [];
+    try {
+      const { wt } = realRepoWithWorktree(base);
+      const marker = join(base, 'torn-down');
+      upsertProject(wt, {});
+      ensureWorkspaceStorage(wt);
+      const node = (code: string) => [process.execPath, '-e', code];
+      writeFileSync(
+        workspaceStateFile(wt),
+        JSON.stringify({
+          services: {
+            db: {
+              kind: 'commands',
+              cwd: wt,
+              env: {},
+              dependsOn: [],
+              ports: {},
+              reverse: [],
+              start: node(''),
+              stop: node(''),
+              teardown: node(failure || `require('fs').writeFileSync(${JSON.stringify(marker)}, 'gone')`),
+              state: 'stopped',
+              at: 'T',
+            },
+          },
+        }),
+      );
+      resetExecutor();
+      await removeWorktreeTarget(wt, { output: { error: (line) => errs.push(line), fail: () => {} } });
+      expect(existsSync(wt)).toBe(!removed);
+      expect(existsSync(marker)).toBe(removed);
+      expect(/Refusing to remove .*teardown command .* exited with status 1/.test(errs.join('\n'))).toBe(!removed);
+      expect(
+        existsSync(workspaceStateFile(wt)) && readFileSync(workspaceStateFile(wt), 'utf8').includes('teardownFailure'),
+      ).toBe(!removed);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  },
+  30_000,
+);

@@ -527,7 +527,9 @@ leased until <time>" for each one.`,
 
   stim services --json
 
-  { services: [{ name, kind, running, ports, stoppedBy, pid?, log? }] }
+  { services: [{ name, kind, running, ports, stoppedBy, pid?, log?,
+  teardownFailure? }] }; teardownFailure says why removal kept it and what
+  to run by hand
   kind            "process" (Stim supervises start) or "commands"
   ports           label to number; null until the first start
   stoppedBy       "idle", "command" or null
@@ -1535,8 +1537,9 @@ RULES
 
   dormantStage  { at, dormantDays, deletedDevices, archived }
   services      the services stim services start started here, in start
-                order: [{ name, running, ports, stoppedBy }], stoppedBy
-                "idle", "command" or null; absent when it started none
+                order: [{ name, running, ports, stoppedBy,
+                teardownFailure? }], stoppedBy "idle", "command" or null;
+                absent when it started none
   A source (main) checkout whose node_modules or ios/Pods maintenance or gc
   deleted carries sourceDependenciesCleared { at, dirs } and a plain "source
   checkout" line while any of those directories is still missing; worktree

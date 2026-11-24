@@ -199,7 +199,8 @@ function serviceLines({ services = [] }: EnvironmentState): string[] {
     const label = service.running
       ? chalk.green('running')
       : chalk.dim(service.stoppedBy === 'idle' ? 'stopped idle; stim revive starts it' : 'stopped');
-    return `  service ${service.name}: ${label}${ports ? chalk.dim(` (${ports})`) : ''}`;
+    const failure = service.teardownFailure ? chalk.yellow(`; teardown failed: ${service.teardownFailure}`) : '';
+    return `  service ${service.name}: ${label}${ports ? chalk.dim(` (${ports})`) : ''}${failure}`;
   });
 }
 

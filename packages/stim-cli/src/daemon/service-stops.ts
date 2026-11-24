@@ -64,7 +64,8 @@ async function decide(
   );
   const exited: string[] = [];
   for (const [name, record] of running) if (!(await serviceRunning(record))) exited.push(name);
-  if (exited.length && input.act) await forgetExitedServices(path, exited, operation?.signal, 0);
+  // @ref LLP 0027#the-idle-pass-stops-services -- bookkeeping, also in report mode, so a dead service lets stimd exit
+  if (exited.length) await forgetExitedServices(path, exited, operation?.signal, 0);
   const minutes = idleMinutesSetting(settings);
   if (minutes <= 0) return null;
   const thresholdMs = minutes * MINUTE_MS;

@@ -126,6 +126,7 @@ const servicesOp: Op = defineOp({
           running: record ? await serviceRunning(record) : false,
           ports: record?.ports ?? Object.fromEntries(Object.keys(definition.ports).map((label) => [label, null])),
           stoppedBy: record?.state === 'stopped' ? (record.stoppedBy ?? null) : null,
+          ...(record?.teardownFailure ? { teardownFailure: record.teardownFailure } : {}),
           ...(record?.process ? { pid: record.process.pid, log: serviceLogFile(root, definition.name) } : {}),
         });
       }

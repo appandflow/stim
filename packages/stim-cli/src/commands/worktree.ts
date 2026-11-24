@@ -40,6 +40,7 @@ import { recordWorkspaceUseAsync } from '../workspace/workspace-state.ts';
 import { recordWarmedFrom, sourceDependenciesNotice } from '../workspace/source-dependencies.ts';
 import { forgetStatusMeasures } from '../status-measures.ts';
 import { reclaimProject, type ReclaimResult } from '../devices/reclaim.ts';
+import { teardownServices } from '../services.ts';
 import { classifyProjectEntries } from './gc/projects.ts';
 import { listMountedVolumes } from '../fs-util.ts';
 import { claimFailure } from '../ownership-claim.ts';
@@ -911,6 +912,45 @@ async function withReclaimLocks<T>(
   return acquire(0);
 }
 
+async function archiveRefusal(
+  path: string,
+  archive: WorktreeArchive | null,
+  operation?: StimContext,
+): Promise<string | null> {
+  if (!archive) return null;
+  try {
+    return await worktreeArchiveMismatch(path, archive, operation);
+  } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
+    return `its archive could not be checked: ${error instanceof Error ? error.message : String(error)}`;
+  }
+}
+
+/** Tears down the services of the reclaimed workspaces; null when every one went, else why one did not. */
+async function teardownReclaimed(
+  keys: readonly string[],
+  force: boolean,
+  output: RemovalOutput,
+  operation?: StimContext,
+): Promise<string | null> {
+  for (const key of keys) {
+    try {
+      await teardownServices(key, {
+        force,
+        log: (line) => output.error(chalk.yellow(phaseLine('service', line))),
+        ...(operation ? { operation, signal: operation.signal } : {}),
+      });
+    } catch (error) {
+      if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+        throw error;
+      operation?.signal.throwIfAborted();
+      return error instanceof Error ? error.message : String(error);
+    }
+  }
+  return null;
+}
+
 async function reclaimAll(
   rootPath: string,
   keys: readonly string[] = reclaimKeys(rootPath),
@@ -918,11 +958,13 @@ async function reclaimAll(
     preserveRootProject = false,
     preserveAllProjects = false,
     removedBy,
+    services,
     operation,
   }: {
     preserveRootProject?: boolean;
     preserveAllProjects?: boolean;
     removedBy?: 'worktree-remove' | 'gc' | 'maintenance';
+    services?: { keep?: boolean; force?: boolean };
     operation?: StimContext;
   } = {},
 ): Promise<ReclaimAllResult> {
@@ -955,6 +997,7 @@ async function reclaimAll(
         parkOwnedDevices: pressure !== 'critical',
         preserveProjectRecord: preserveAllProjects || (preserveRootProject && key === rootPath),
         stopRequester: { by: 'stim worktree remove' },
+        ...(services ? { services } : {}),
         operation,
       });
     } catch (error) {
@@ -1093,6 +1136,7 @@ async function reclaimEnvironment(
   operation?: StimContext,
   beforeRemove?: (workspace: string) => void,
   preserveRootProject = false,
+  force = false,
 ): Promise<void> {
   await withManagedRemoteWorktreeRemovalLock(
     root,
@@ -1103,6 +1147,7 @@ async function reclaimEnvironment(
           const result = await reclaimAll(root, lockedKeys, {
             preserveRootProject,
             removedBy: 'worktree-remove',
+            services: { force },
             operation,
           });
           for (const line of poolLines(result)) output.error(line);
@@ -1583,7 +1628,15 @@ async function removeOrRefuse(
       return;
     }
     if (deadProjects.length) {
-      await reclaimEnvironment(path, 'its folder is already gone', output, opts.operation, opts.beforeRemove);
+      await reclaimEnvironment(
+        path,
+        'its folder is already gone',
+        output,
+        opts.operation,
+        opts.beforeRemove,
+        false,
+        opts.force,
+      );
       return;
     }
     output.error(chalk.red(`No such worktree: ${path}`));
@@ -1771,6 +1824,7 @@ async function removeOrRefuse(
           const result = await reclaimAll(path, lockedKeys, {
             preserveAllProjects: true,
             removedBy: opts.removedBy ?? 'worktree-remove',
+            services: { keep: true },
             operation: opts.operation,
           });
           if (result.keptEntries.length) {
@@ -1811,16 +1865,10 @@ async function removeOrRefuse(
             signal: options.signal,
             declareFor: opts.operation,
           });
-          let stale: string | null = null;
-          if (archive) {
-            try {
-              stale = await worktreeArchiveMismatch(path, archive, opts.operation);
-            } catch (error) {
-              if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
-                throw error;
-              stale = `its archive could not be checked: ${error instanceof Error ? error.message : String(error)}`;
-            }
-          }
+          // @ref LLP 0027#removal-tears-services-down -- the data goes just before the folder, after every refusal
+          const stale =
+            (await archiveRefusal(path, archive, opts.operation)) ??
+            (await teardownReclaimed(result.reclaimedKeys, opts.force === true, output, opts.operation));
           if (stale) {
             const unrestored = trash ? await restoreTrashedTrees(trash) : [];
             if (trash && unrestored.length) {

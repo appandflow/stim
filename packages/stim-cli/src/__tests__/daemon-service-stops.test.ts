@@ -105,6 +105,7 @@ function register(record: ProjectRecord = {}, lastUsedMinutesAgo = 30) {
         cwd: root,
         env: { DB_PORT: '8900' },
         ports: { db: 8900 },
+        dependsOn: [],
         start: ['my-db', 'start'],
         stop: ['my-db', 'stop'],
         state: 'running',
@@ -136,6 +137,14 @@ describe.skipIf(process.platform === 'win32')(
       vi.spyOn(services, 'serviceProcessPids').mockResolvedValue(new Set([EXTERNAL_PID]));
       await pass();
       expect(runs).toEqual([['stop', '8900']]);
+    });
+
+    test('in daemon.mode report a service that no longer runs is still recorded stopped, so stimd can exit', async () => {
+      register();
+      listening.clear();
+      await runServiceStopPass({ config: loadConfig(), act: false, log: () => {}, operation: testContext() });
+      expect(serviceRecords(root).db).toMatchObject({ state: 'stopped' });
+      expect(runs).toEqual([]);
     });
 
     test.each<[string, () => void]>([
