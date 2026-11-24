@@ -391,8 +391,8 @@ export async function warmWorktreeTarget(opts: {
             phaseLine(
               'project',
               opts.refresh
-                ? 'no single app to register here; --refresh updates only the repository root. Run warm --refresh from the app directory to refresh that app and list it in status'
-                : 'no single app to register here; run warm from the app directory to list it in status while it warms',
+                ? 'no iOS or Android app at this directory, so warm registers nothing in status here; --refresh updates only the repository root. If the app is in a subdirectory, run warm --refresh there. stim web lists a web app'
+                : 'no iOS or Android app at this directory, so warm registers nothing in status here. If the app is in a subdirectory, run warm there. stim web lists a web app',
             ),
           ),
         );

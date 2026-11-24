@@ -1397,7 +1397,7 @@ describe('a refresh from the worktree root with a nested app that has its own lo
     expect(result.code).toBe(0);
     expect(result.stdout).toEqual([]);
     expect(spawned).toEqual([`npm ci in ${app}`]);
-    expect(result.stderr).not.toContain('no single app');
+    expect(result.stderr).not.toContain('registers nothing in status');
   });
 
   test('keeps the source checkout app when the worktree root, which also declares react-native, is registered too', async () => {
@@ -1413,7 +1413,7 @@ describe('a refresh from the worktree root with a nested app that has its own lo
     write(target, 'Package.swift', '// swift-tools-version:5.9\n');
     const result = await runWarm(target, '--refresh');
     expect(result.code).toBe(0);
-    expect(result.stderr).not.toContain('no single app');
+    expect(result.stderr).not.toContain('registers nothing in status');
   });
 
   test('says that only the repository root is refreshed when no app is registered, and where to run the refresh', async () => {
@@ -1422,7 +1422,7 @@ describe('a refresh from the worktree root with a nested app that has its own lo
     expect(result.stdout).toEqual([]);
     expect(spawned).toEqual([]);
     expect(result.stderr).toContain('--refresh updates only the repository root');
-    expect(result.stderr).toContain('from the app directory');
+    expect(result.stderr).toContain('If the app is in a subdirectory, run warm --refresh there');
   });
 
   test('the refresh the hint names, from the app directory, installs the source checkout app', async () => {
