@@ -208,6 +208,36 @@ const gc = async (act = true) =>
 describe.skipIf(process.platform === 'win32')(
   'the dormant build-output step (skipped on win32, where Stim cannot list the running processes)',
   () => {
+    test('an acting dormant pass reduces a recorded-only linked worktree inside a registered main checkout', async () => {
+      saveConfig({ version: 2, projects: {}, repos: {}, idle: { dormantDays: 1, sourceDormantDays: 0 } });
+      const main = register(repo('main'));
+      const linked = join(main, '.worktrees', 'feature');
+      git(main, 'worktree', 'add', '-q', '-b', 'feature', linked);
+      ensureWorkspaceStorage(linked);
+      const modules = join(linked, 'node_modules');
+      mkdirSync(join(modules, 'dep'), { recursive: true });
+      writeFileSync(join(modules, 'dep', 'index.js'), 'x');
+      idleFor(3, linked);
+      recordWorkspaceUse(main, new Date());
+      writeCacheFile(diskUsageCacheFile(modules), {
+        path: modules,
+        measuredAt: new Date().toISOString(),
+        bytes: 2 * REAL_BYTES_THRESHOLD,
+        privateBytes: 2 * REAL_BYTES_THRESHOLD,
+        signature: treeSignature(modules),
+      });
+
+      const actions = await runDormantReduction({ act: true, trigger: 'gc', operation: testContext() });
+
+      expect(actions).toContainEqual(
+        expect.objectContaining({ kind: 'delete-dependencies', target: modules, outcome: 'done' }),
+      );
+      expect(existsSync(modules)).toBe(false);
+      expect(existsSync(join(linked, 'package.json'))).toBe(true);
+      expect(existsSync(join(main, BUILD, 'app.apk'))).toBe(true);
+      expect(Object.keys(loadConfig()?.projects ?? {})).toEqual([main]);
+    });
+
     test('an empty normal candidate list reads no consumer marks', async () => {
       const root = register(repo('recent-workspace'));
       recordWorkspaceUse(root, new Date());

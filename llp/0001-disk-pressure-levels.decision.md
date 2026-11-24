@@ -1013,7 +1013,7 @@ Wherever the stages and the ladder read discovered checkouts (the dormant
 stage's output and dependency steps, and the `stim gc --dry-run` previews of
 rungs 1, 5 and 8), they also read every root a Stim command recorded a
 workspace for (`workspaces/<id>/workspace.json`) that has no registry entry,
-still exists, and holds or lies inside no registered project. Such a root is
+still exists, and holds no registered project. Such a root is
 judged idle by the full evidence, as a discovered checkout is, since most
 commands run in an unregistered root do not record their use. A registered app
 inside a worktree covers that worktree instead, so a recorded worktree root
