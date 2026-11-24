@@ -77,6 +77,7 @@ export const DEVICE_COMMAND_RULES: Readonly<Record<string, DeviceCommandRule>> =
       '--no-record': 'noRecord',
       '--timeout': 'timeoutMs',
       '--wait': 'waitMs',
+      '--no-post-gesture-stabilization': 'postGestureStabilization',
     },
     refused: {
       '--force': 'force',
@@ -91,6 +92,8 @@ export const DEVICE_COMMAND_RULES: Readonly<Record<string, DeviceCommandRule>> =
       '--os': 'osVersion',
       '--image-tag': 'imageTag',
       '--physical': 'physical',
+      '--device-mode': 'deviceMode',
+      '--device-baseline': 'deviceBaseline',
     },
     positionals: openClose('Open'),
   },
@@ -132,6 +135,7 @@ export const DEVICE_COMMAND_RULES: Readonly<Record<string, DeviceCommandRule>> =
       '--pixels': 'pixels',
       '--until': 'until',
       '--max-passes': 'maxPasses',
+      '--no-post-gesture-stabilization': 'postGestureStabilization',
       ...SETTLE,
     },
   },
@@ -144,6 +148,8 @@ export const DEVICE_COMMAND_RULES: Readonly<Record<string, DeviceCommandRule>> =
       '--scale': 'screenshotScale',
       '--no-stabilize': 'screenshotNoStabilize',
       '--normalize-status-bar': 'screenshotNormalizeStatusBar',
+      '--screen-mask': 'screenshotScreenMask',
+      '--capture-backend': 'screenshotCaptureBackend',
     },
     refused: { '--fullscreen': 'screenshotFullscreen' },
     positionals: (positionals) =>
@@ -166,11 +172,19 @@ export const DEVICE_COMMAND_RULES: Readonly<Record<string, DeviceCommandRule>> =
       '--overlay-refs': 'overlayRefs',
       '--threshold': 'threshold',
     },
-    refused: { '--out': 'out', '--baseline': 'baseline' },
+    refused: { '--out': 'out', '--baseline': 'baseline', '--screen-mask': 'screenshotScreenMask' },
     keys: ['kind'],
   },
   longpress: { flags: { ...SETTLE, ...SNAPSHOT_VIEW }, keys: ['durationMs'] },
-  swipe: { flags: { '--count': 'count', '--pause-ms': 'pauseMs', '--pattern': 'pattern' }, keys: ['from', 'to'] },
+  swipe: {
+    flags: {
+      '--count': 'count',
+      '--pause-ms': 'pauseMs',
+      '--pattern': 'pattern',
+      '--no-post-gesture-stabilization': 'postGestureStabilization',
+    },
+    keys: ['from', 'to'],
+  },
   back: { flags: { ...SETTLE, '--in-app': 'backMode', '--system': 'backMode' } },
   home: {},
   orientation: {},
@@ -222,7 +236,13 @@ export const DEVICE_COMMAND_RULES: Readonly<Record<string, DeviceCommandRule>> =
   events: {},
   fold: { flags: { '--keyframes': 'keyframes' } },
   gesture: {
-    flags: { '--count': 'count', '--pointer-count': 'pointerCount', '--hold-ms': 'holdMs', '--pause-ms': 'pauseMs' },
+    flags: {
+      '--count': 'count',
+      '--pointer-count': 'pointerCount',
+      '--hold-ms': 'holdMs',
+      '--pause-ms': 'pauseMs',
+      '--no-post-gesture-stabilization': 'postGestureStabilization',
+    },
     keys: [
       'kind',
       'deviceTarget',
@@ -304,6 +324,8 @@ export const DEVICE_COMMAND_RULES: Readonly<Record<string, DeviceCommandRule>> =
   },
 };
 
+const newerThanHost = (release: string) =>
+  `agent-device ${release} added it, and the hosted daemon of an older agent-device refuses to start with a policy that names it.`;
 const CLIENT_SIDE = 'it runs in the agent-device client on your Mac, not on the hosted device.';
 const STIM_INSTALLS = 'Stim installs the hosted app; an install reads app files on the hosting Mac.';
 
@@ -328,6 +350,8 @@ export const REFUSED_DEVICE_COMMANDS: Readonly<Record<string, string>> = {
   hover: 'it drives web pages only.',
   viewport: 'it resizes web pages only.',
   'tv-remote': 'it drives TV devices only.',
+  audit: newerThanHost('0.21.39'),
+  shake: newerThanHost('0.21.42'),
   auth: CLIENT_SIDE,
   cdp: CLIENT_SIDE,
   connect: CLIENT_SIDE,

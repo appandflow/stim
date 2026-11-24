@@ -27,6 +27,33 @@ function block(text: string, heading: string): string[] {
   return end < 0 ? lines : lines.slice(0, end);
 }
 
+const release = execFileSync(invocation.command, [...invocation.args, '--version'], {
+  encoding: 'utf8',
+  env: { ...process.env, AGENT_DEVICE_NO_UPDATE_NOTIFIER: '1' },
+  timeout: 30_000,
+})
+  .trim()
+  .split('.')
+  .map(Number);
+
+/** The release that added a flag Stim allows; hosts run agent-device from 0.21.30, so an older binary omits it. */
+const ADDED_FLAGS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  open: { '--no-post-gesture-stabilization': '0.21.38' },
+  scroll: { '--no-post-gesture-stabilization': '0.21.37' },
+  swipe: { '--no-post-gesture-stabilization': '0.21.37' },
+  gesture: { '--no-post-gesture-stabilization': '0.21.37' },
+  screenshot: { '--screen-mask': '0.21.37', '--capture-backend': '0.21.37' },
+};
+
+function predates(added: string | undefined): boolean {
+  if (added === undefined) return false;
+  for (const [i, part] of added.split('.').map(Number).entries()) {
+    const have = release[i] ?? 0;
+    if (have !== part) return have < part;
+  }
+  return false;
+}
+
 const catalog = block(help('commands'), 'Commands:').flatMap((line) => /^ {2}([a-z][a-z-]*)/.exec(line)?.[1] ?? []);
 
 test('every agent-device command is either a hosted device command or refused with a reason', () => {
@@ -45,6 +72,8 @@ test.each(Object.entries(DEVICE_COMMAND_RULES))(
     const listed = block(help(command), 'Command flags:').flatMap((line) => /^ {2}(-[\w-]+)/.exec(line)?.[1] ?? []);
     const classified = { ...rule.flags, ...rule.refused };
     expect(listed.filter((flag) => !Object.hasOwn(classified, flag))).toEqual([]);
-    expect(Object.keys(rule.flags ?? {}).filter((flag) => !listed.includes(flag))).toEqual([]);
+    expect(
+      Object.keys(rule.flags ?? {}).filter((flag) => !listed.includes(flag) && !predates(ADDED_FLAGS[command]?.[flag])),
+    ).toEqual([]);
   },
 );
