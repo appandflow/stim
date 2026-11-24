@@ -1,5 +1,5 @@
 import { lstatSync, realpathSync, type Stats } from 'node:fs';
-import { lstat, readdir, realpath, rename } from 'node:fs/promises';
+import { lstat, readdir, realpath, rename, rmdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative, resolve, sep, isAbsolute } from 'node:path';
 import chalk from 'chalk';
@@ -203,19 +203,15 @@ async function launchDirs(root: string): Promise<string[]> {
 
 // @ref LLP 0007#a-hosted-device-daemon-launch-shares-nothing-with-the-next -- 2.0.0-rc.3 kept its daemon state in the root itself
 async function legacyPaths(root: string, launches: readonly string[]): Promise<string[] | null> {
-  const marked = await Promise.all(['daemon.json', 'daemon.lock'].map((name) => lstatOrError(join(root, name))));
-  if (!marked.some(Boolean)) return null;
-  if (!launches.length) return [root];
   let names: string[];
   try {
     names = await readdir(root);
   } catch {
-    return [root];
+    return null;
   }
-  return names
-    .toSorted()
-    .map((name) => join(root, name))
-    .filter((path) => !launches.includes(path));
+  const legacy = names.filter((name) => !LAUNCH_ID.test(name));
+  const marked = legacy.includes('daemon.json') || legacy.includes('daemon.lock');
+  return legacy.length && (marked || launches.length) ? legacy.toSorted().map((name) => join(root, name)) : null;
 }
 
 // @ref LLP 0007#a-hosted-device-daemon-launch-shares-nothing-with-the-next -- gc removes a launch only when agent-device reports its daemon stopped
@@ -227,12 +223,15 @@ async function judgeDaemonState(
   operation: StimContext | undefined,
 ): Promise<{ bytes: number; kept: string | null }> {
   const scan: Walk = { bytes: 0, newest: 0, claimRoots: [], locks: [], unreadable: null };
+  let found = 0;
   for (const path of paths) {
     const stat = await lstatOrError(path);
     if (!stat) continue;
+    found++;
     if ('error' in stat) scan.unreadable ??= `${path} cannot be read: ${stat.error}`;
     else await walk(path, stat, signal, scan);
   }
+  if (!found) return { bytes: 0, kept: 'it is gone' };
   if (scan.unreadable) return { bytes: scan.bytes, kept: scan.unreadable };
   if (now - scan.newest < MIN_AGE_MS)
     return { bytes: scan.bytes, kept: `modified within the last ${TEMP_LEFTOVER_MIN_AGE_HOURS}h` };
@@ -447,6 +446,7 @@ export async function deleteTempLeftovers(
           continue;
         }
         for (const path of agentDevice.paths) await removeTemporaryEntryAsync(path, options.signal);
+        if (agentDevice.stateDir === entry.path) await rmdir(entry.path).catch(() => {});
         done.count++;
         done.bytes += entry.bytes;
         continue;

@@ -354,6 +354,7 @@ test('cancelling temporary cleanup yields during removal and preserves the next 
 
 function fakeAgentDevice(
   running: (stateDir: string) => boolean = (stateDir) => stateDir.includes('aaaaaaaaaaaaaaaa'),
+  onStatus?: (stateDir: string) => void,
 ): {
   asked: string[];
   launch: (id: string, idle?: boolean) => string;
@@ -380,6 +381,7 @@ function fakeAgentDevice(
       asked.push(stateDir);
       if (!args.includes('status')) throw new Error(`gc ran agent-device ${args.join(' ')}`);
       const state = running(stateDir) ? 'running' : 'stopped';
+      onStatus?.(stateDir);
       return JSON.stringify({ success: true, data: { state, stateDir } });
     },
   });
@@ -458,6 +460,35 @@ test('rc.3 daemon state beside launches is removed without the launches, and onl
   expect(await deleteTempLeftovers()).toEqual({ count: 1, bytes: expect.any(Number), failures: 0 });
   expect(readdirSync(root).toSorted()).toEqual(['aaaaaaaaaaaaaaaa', 'bbbbbbbbbbbbbbbb']);
   expect([existsSync(running), existsSync(recent)]).toEqual([true, true]);
+});
+
+test('rc.3 sessions and log left beside launches after agent-device removed the daemon record are removed', async () => {
+  const { flat, launch } = fakeAgentDevice();
+  const root = flat();
+  rmSync(join(root, 'daemon.json'));
+  rmSync(join(root, 'daemon.lock'), { recursive: true });
+  const recent = launch('bbbbbbbbbbbbbbbb', false);
+
+  expect(await kept(root)).toBeNull();
+  expect(await deleteTempLeftovers()).toEqual({ count: 1, bytes: expect.any(Number), failures: 0 });
+  expect(readdirSync(root)).toEqual(['bbbbbbbbbbbbbbbb']);
+  expect(existsSync(recent)).toBe(true);
+});
+
+test('a launch created in an rc.3 root while gc removes its daemon state survives', async () => {
+  let root = '';
+  let checks = 0;
+  const { flat } = fakeAgentDevice(
+    () => false,
+    () => {
+      if (checks++ === 1) mkdirSync(join(root, 'cccccccccccccccc', 'state'), { recursive: true });
+    },
+  );
+  root = flat();
+  age(root, 2 * DAY_MS);
+
+  expect(await deleteTempLeftovers()).toEqual({ count: 1, bytes: expect.any(Number), failures: 0 });
+  expect(readdirSync(root)).toEqual(['cccccccccccccccc']);
 });
 
 test('a launch whose daemon agent-device reports running again by the time gc removes it is kept', async () => {

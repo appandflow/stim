@@ -721,11 +721,6 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     } catch {}
   }
 
-  /**
-   * Stops the daemon of a launch's state directory through agent-device, which checks its identity, and this device's
-   * iOS runners. A state directory with neither `daemon.json` nor `daemon.lock` never registered a daemon, and needs no
-   * answer from agent-device.
-   */
   private async retire(stateDir: string): Promise<void> {
     if (!registered(stateDir)) {
       await this.stopIosRunners();

@@ -852,11 +852,9 @@ describe.skipIf(process.platform !== 'darwin' && process.platform !== 'linux')('
     const identity = captureProcessIdentity(deadPid);
     await new Promise((resolve) => dead.once('exit', resolve));
     if (!identity.ok) throw new Error('the stand-in server identity could not be captured');
-    const claimFile = join(
-      claims,
-      'exclusive',
-      readdirSync(join(claims, 'exclusive')).find((name) => name.endsWith('.claim'))!,
-    );
+    const claimName = readdirSync(join(claims, 'exclusive')).find((name) => name.endsWith('.claim'));
+    if (!claimName) throw new Error('the rc.3 claim file is missing');
+    const claimFile = join(claims, 'exclusive', claimName);
     const claim: unknown = JSON.parse(readFileSync(claimFile, 'utf8'));
     writeFileSync(
       claimFile,
