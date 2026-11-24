@@ -1270,15 +1270,17 @@ This reports a restart request, not proof of launchd's replacement.
 Only the home maintenance pass samples Apple services, reusing its process
 table for device activity. stimd names an allowlisted process over either limit
 on two consecutive samples and logs the same advice status shows: the one-off
-sudo killall -TERM <name> and stim service install --helper. stimd never sends
-a signal to these services. An enabled helper's recent restart receipts appear
-in plain and JSON status and daemon logs. An approval-pending helper remains
+sudo kill -TERM <pid> for that process and stim service install --helper.
+Status reads these observations for up to ten minutes and never warns from its
+own process sample. stimd never sends a signal to these services. An enabled
+helper's recent restart receipts appear in plain and JSON status and daemon logs. An approval-pending helper remains
 eligible for the advice because it cannot run yet. Registration suppresses
 warnings only with a successful heartbeat less than three minutes old. The
 helper atomically refreshes `/Library/Logs/Stim/helper.heartbeat` each cycle,
 including errors; transient failures retry in the helper loop. A stale, missing
 or failed heartbeat names the health problem and `/Library/Logs/Stim/helper.err`.
-Registration checks are cached in-process for five minutes. Readers scan only
+Registration checks are cached in-process for five minutes; a cached registered
+state is rechecked when its heartbeat is unhealthy. Readers scan only
 the tails of the current and rotated logs for restart results. stimd logs each
 restart once and warnings only when they start or their state changes.
 

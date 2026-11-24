@@ -1281,13 +1281,16 @@ not change device ownership or teardown. The helper runs independently of
 `daemon.mode` and `STIM_HOME` until you unregister it.
 
 Without a healthy helper, `stim status` and the daemon log show excess usage
-and suggest both `sudo killall -TERM <name>` for a one-off restart and
+and suggest both `sudo kill -TERM <pid>` for a one-off restart and
 `stim service install --helper`. Stimd never kills these services itself.
 Registration suppresses warnings only while a successful heartbeat is less than
 three minutes old. A missing, stale or failed heartbeat keeps the warning; check
 `/Library/Logs/Stim/helper.heartbeat` and `/Library/Logs/Stim/helper.err`.
 Stimd requires two consecutive excessive samples and logs warnings only when
-they start or change. Each recent restart is logged once.
+they start or change. Status uses those observations for up to 10 minutes and
+shows no usage warning without a fresh observation. Registration is rechecked
+when a cached registered helper has an unhealthy heartbeat. Each recent restart
+is logged once.
 With the helper enabled, status reports successful restart signals from the
 last hour; `status --json` includes `appleServices` with `helper`, `warnings`
 (including both `commands`) and `restarts`. A signal receipt does not verify

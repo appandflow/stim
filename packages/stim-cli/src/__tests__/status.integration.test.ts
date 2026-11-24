@@ -1803,12 +1803,41 @@ test('status reports a runaway Apple service with both remedies in plain and JSO
   setBootedSims(
     `${TWO_SIMS_PS}\n123 1 1024 198.0 ${START} /usr/libexec/PerfPowerServices\n124 1 1024 200.0 ${START} /tmp/PerfPowerServices`,
   );
+  expect((await runStatus()).some((line) => line.includes('Apple service PerfPowerServices'))).toBe(false);
+  expect((await runStatusJson()).appleServices.warnings).toEqual([]);
+  const file = daemonSnapshotFile();
+  mkdirSync(join(file, '..'), { recursive: true });
+  writeFileSync(
+    file,
+    JSON.stringify({
+      version: 1,
+      pid: process.pid,
+      startedAt: new Date().toISOString(),
+      intervalMs: 60_000,
+      tickAt: new Date().toISOString(),
+      measurement: {
+        appleServices: {
+          helper: 'not registered',
+          warnings: [
+            {
+              name: 'PerfPowerServices',
+              pid: 123,
+              cpu: 198,
+              rss: 1024,
+              commands: ['sudo kill -TERM 123', 'stim service install --helper'],
+            },
+          ],
+          restarts: [],
+        },
+      },
+    }),
+  );
   const lines = await runStatus();
   assert(
     lines.some(
       (line) =>
         line.includes('Apple service PerfPowerServices (pid 123)') &&
-        line.includes('sudo killall -TERM PerfPowerServices') &&
+        line.includes('sudo kill -TERM 123') &&
         line.includes('stim service install --helper'),
     ),
   );
@@ -1818,7 +1847,7 @@ test('status reports a runaway Apple service with both remedies in plain and JSO
     expect.objectContaining({
       name: 'PerfPowerServices',
       pid: 123,
-      commands: ['sudo killall -TERM PerfPowerServices', 'stim service install --helper'],
+      commands: ['sudo kill -TERM 123', 'stim service install --helper'],
     }),
   ]);
 });
@@ -1841,7 +1870,7 @@ test('idle status uses stimd observations without another process listing and di
             pid: 123,
             cpu: 198,
             rss: 1024,
-            commands: ['sudo killall -TERM PerfPowerServices', 'stim service install --helper'],
+            commands: ['sudo kill -TERM 123', 'stim service install --helper'],
           },
         ],
         restarts: [],
@@ -1873,21 +1902,17 @@ test.each([
     vi.spyOn(helperState, 'readHelperHeartbeat').mockReturnValue(heartbeat);
     saveTwoSimProjects();
     setBootedSims(`${TWO_SIMS_PS}\n123 1 1024 198.0 ${START} /usr/libexec/PerfPowerServices`);
-    const previous = getExecutor();
     const registration = vi.fn<() => Promise<string>>(async () => '{"state":"registered"}');
-    setExecutor({
-      ...previous,
-      async runFileAsync(file, args, options) {
-        return file === executable ? registration() : previous.runFileAsync(file, args, options);
-      },
-    });
-    const lines = await runStatus();
-    expect(lines.some((line) => line.includes('sudo killall -TERM PerfPowerServices'))).toBe(!healthy);
-    expect(lines.some((line) => line.includes('registered but not running/healthy'))).toBe(!healthy);
-    expect(lines.join('\n')).toContain(heartbeat && 'error' in heartbeat ? heartbeat.error : '');
-    const payload = await runStatusJson();
-    expect(payload.appleServices.helper).toBe('registered');
-    expect(payload.appleServices.warnings).toHaveLength(healthy ? 0 : 1);
+    const withRegistration = () => {
+      const previous = getExecutor();
+      setExecutor({
+        ...previous,
+        async runFileAsync(file, args, options) {
+          return file === executable ? registration() : previous.runFileAsync(file, args, options);
+        },
+      });
+    };
+    withRegistration();
     const file = daemonSnapshotFile();
     mkdirSync(join(file, '..'), { recursive: true });
     writeFileSync(
@@ -1907,7 +1932,7 @@ test.each([
                 pid: 123,
                 cpu: 198,
                 rss: 1024,
-                commands: ['sudo killall -TERM PerfPowerServices', 'stim service install --helper'],
+                commands: ['sudo kill -TERM 123', 'stim service install --helper'],
               },
             ],
             restarts: [],
@@ -1915,11 +1940,19 @@ test.each([
         },
       }),
     );
+    const lines = await runStatus();
+    expect(lines.some((line) => line.includes('sudo kill -TERM 123'))).toBe(!healthy);
+    expect(lines.some((line) => line.includes('registered but not running/healthy'))).toBe(!healthy);
+    expect(lines.join('\n')).toContain(heartbeat && 'error' in heartbeat ? heartbeat.error : '');
+    const payload = await runStatusJson();
+    expect(payload.appleServices.helper).toBe('registered');
+    expect(payload.appleServices.warnings).toHaveLength(healthy ? 0 : 1);
     const calls: string[] = [];
     setBootedSims('', calls, 'Shutdown');
+    withRegistration();
     expect((await runStatusJson()).appleServices.warnings).toHaveLength(healthy ? 0 : 1);
     expect(calls).not.toContain('ps');
-    expect(registration).toHaveBeenCalledTimes(1);
+    expect(registration).toHaveBeenCalledTimes(healthy ? 1 : 3);
   },
 );
 

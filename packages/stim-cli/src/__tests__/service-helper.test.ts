@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import * as helperState from '@stim-cli/core/state';
 import { runCli } from '../cli/define-op.ts';
 import service from '../commands/service.ts';
 import { appleServicesLines, createAppleServicesObserver, helperStatus } from '../apple-services.ts';
@@ -12,6 +13,7 @@ beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'stim-helper-'));
   vi.stubEnv('STIM_HOME', home);
   vi.stubEnv('HOME', home);
+  vi.spyOn(helperState, 'readHelperHeartbeat').mockImplementation(() => ({ at: Date.now(), ok: true }));
 });
 afterEach(() => {
   resetExecutor();
@@ -100,12 +102,40 @@ test('helper status caches registration for five minutes and invalidates it afte
   expect(run).toHaveBeenCalledTimes(4);
 });
 
+test.each(['not registered', 'registered'] as const)(
+  'a stale heartbeat rechecks cached registration before reporting %s',
+  async (state) => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+    installHost();
+    const run = vi.fn<(file: string, args: string[]) => Promise<string>>(async () => '{"state":"registered"}');
+    setExecutor({
+      runFileAsync: run,
+      async runFileQuietAsync() {
+        return '';
+      },
+    });
+    expect(await helperStatus()).toBe('registered');
+    vi.mocked(helperState.readHelperHeartbeat).mockReturnValue({ at: Date.now() - 180_000, ok: true });
+    run.mockImplementation(async (file) => {
+      if (!file.endsWith('stim-host')) return '';
+      if (state === 'registered')
+        vi.mocked(helperState.readHelperHeartbeat).mockReturnValue({ at: Date.now(), ok: true });
+      return JSON.stringify({ state });
+    });
+    const measured = await measureTick(null, Date.now(), { probe: false, disk: [], appleServices: true });
+    const status = measured.measurement.appleServices;
+    expect(status?.helper).toBe(state);
+    expect(status && createAppleServicesObserver()(status).lines).toEqual([]);
+    expect(run.mock.calls.filter((args) => args[0]?.endsWith('stim-host'))).toHaveLength(2);
+  },
+);
+
 const warning = {
   name: 'PerfPowerServices',
   pid: 123,
   cpu: 198,
   rss: 1024,
-  commands: ['sudo killall -TERM PerfPowerServices', 'stim service install --helper'],
+  commands: ['sudo kill -TERM 123', 'stim service install --helper'],
 };
 
 test('stimd requires consecutive high samples and logs only warning transitions and new restart receipts', () => {
@@ -146,11 +176,16 @@ test('measureTick samples Apple services only when the home pass opts in', async
   setExecutor({
     async runFileAsync(file) {
       calls.push(file);
-      return file.endsWith('stim-host') ? '{"state":"registered"}' : '';
+      return file.endsWith('stim-host') ? '{"state":"not registered"}' : '';
     },
     async runFileQuietAsync(file) {
       calls.push(file);
-      return '';
+      return file === 'ps'
+        ? [
+            '123 1 1024 198.0 Sat Sep 26 15:33:49 2026 /System/Library/PrivateFrameworks/PhotoAnalysis.framework/Versions/A/Support/photoanalysisd',
+            '124 1 1024 198.0 Sat Sep 26 15:33:49 2026 /Library/Developer/CoreSimulator/Volumes/iOS/RuntimeRoot/System/Library/PrivateFrameworks/PhotoAnalysis.framework/Versions/A/Support/photoanalysisd',
+          ].join('\n')
+        : '';
     },
   });
   const ordinary = await measureTick(null, Date.now(), { probe: false, disk: [] });
@@ -158,7 +193,16 @@ test('measureTick samples Apple services only when the home pass opts in', async
   expect(calls).not.toContain('ps');
   expect(calls.some((file) => file.endsWith('stim-host'))).toBe(false);
   const maintenance = await measureTick(null, Date.now(), { probe: false, disk: [], appleServices: true });
-  expect(maintenance.measurement.appleServices?.helper).toBe('registered');
+  expect(maintenance.measurement.appleServices?.helper).toBe('not registered');
+  expect(maintenance.measurement.appleServices?.warnings).toEqual([
+    {
+      name: 'photoanalysisd',
+      pid: 123,
+      cpu: 198,
+      rss: 1024 * 1024,
+      commands: ['sudo kill -TERM 123', 'stim service install --helper'],
+    },
+  ]);
   expect(calls).toContain('ps');
   expect(calls.filter((file) => file.endsWith('stim-host'))).toHaveLength(1);
 });

@@ -78,6 +78,8 @@ export async function helperStatus(): Promise<HelperState> {
   const executable = hostExecutable();
   if (!helperCache || helperCache.executable !== executable || Date.now() - helperCache.at >= 300_000) {
     helperCache = { executable, at: Date.now(), state: helperCommand('status') };
+  } else if ((await helperCache.state) === 'registered' && !helperHealthy(readHelperHeartbeat())) {
+    helperCache = { executable, at: Date.now(), state: helperCommand('status') };
   }
   return helperCache.state;
 }
@@ -105,7 +107,7 @@ export function appleServicesStatus(
                 pid: row.pid,
                 cpu: row.cpuPercent,
                 rss: row.rssKb * 1024,
-                commands: [`sudo killall -TERM ${name}`, 'stim service install --helper'],
+                commands: [`sudo kill -TERM ${row.pid}`, 'stim service install --helper'],
               },
             ];
           }),
@@ -135,14 +137,10 @@ export function appleServicesLines(status?: AppleServicesStatus): string[] {
   ];
 }
 
-export async function readAppleServicesStatus(
-  processes: () => readonly HostProcess[] | null | Promise<HostProcess[] | null>,
-  sample: boolean,
-): Promise<AppleServicesStatus | undefined> {
+export async function readAppleServicesStatus(): Promise<AppleServicesStatus | undefined> {
   if (process.platform !== 'darwin') return undefined;
   const helper = await helperStatus();
   const heartbeat = readHelperHeartbeat();
-  if (sample) return appleServicesStatus((await processes()) ?? [], helper, Date.now(), heartbeat);
   const snapshot = readDaemonSnapshot();
   const fresh = snapshot && Date.now() - Date.parse(snapshot.tickAt) <= 10 * 60_000;
   return {

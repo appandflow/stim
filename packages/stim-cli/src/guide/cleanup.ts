@@ -442,9 +442,10 @@ one restart per service per hour, including across helper restarts. It never
 signals WindowServer, launchd, coreaudiod, CoreSimulator or any other process.
 This explicit opt-in exception does not change owned-device teardown.
 
-Without a healthy helper, stimd reports usage over two consecutive samples, with both
-commands: sudo killall -TERM <name> for a one-off restart, and
-stim service install --helper for automatic restarts. Never run either without
+Without a healthy helper, stimd requires two consecutive excessive samples.
+Status uses these observations for up to 10 minutes. Both suggest sudo kill -TERM <pid> for a one-off
+restart of that process, and stim service install --helper for automatic restarts.
+Never run either without
 the user's authorization. stimd never kills these processes itself. The helper
 runs independently of daemon.mode and STIM_HOME until unregistered.
 

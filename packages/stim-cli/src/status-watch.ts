@@ -1,7 +1,7 @@
 import { type FSWatcher, existsSync, readdirSync, statSync, watch } from 'node:fs';
 import type { ChildProcess } from 'node:child_process';
 import { basename, dirname, join } from 'node:path';
-import type { MachineOwner, StatusCapacityLoad, StatusPayload } from '@stim-cli/core/state';
+import { helperHealthy, type MachineOwner, type StatusCapacityLoad, type StatusPayload } from '@stim-cli/core/state';
 import { getExecutor } from './exec.ts';
 import { androidToolPath } from './devices/android.ts';
 import { easMachineStateRoot } from './engine/eas-session-ledger.ts';
@@ -601,15 +601,20 @@ const holdPullRequest = <T extends { pullRequest?: { checkedAt: string } | null 
   worktree.pullRequest ? { ...worktree, pullRequest: { ...worktree.pullRequest, checkedAt: '' } } : worktree;
 
 /**
- * The string `status --watch --json` compares to decide whether a line is new. It is the payload with the bookkeeping
- * timestamps masked: each `pullRequest.checkedAt`, `maintenance.lastChecks`, `maintenance.lastPass.startedAt` and
- * `durationMs`, and `maintenance.running.startedAt`. A change in only those fields prints no line; any printed line
- * carries the current values.
+ * The comparison key for `status --watch --json` ignores polling timestamps and Apple service sample measurements.
+ * Helper health, warnings and restart receipts still change the key. The printed payload keeps current values.
  */
 export function watchChangeKey(payload: StatusPayload): string {
-  const { maintenance } = payload;
+  const { maintenance, appleServices } = payload;
   return JSON.stringify({
     ...payload,
+    appleServices: appleServices && {
+      helper: appleServices.helper,
+      healthy: helperHealthy(appleServices.heartbeat),
+      error: appleServices.heartbeat?.error,
+      warnings: appleServices.warnings.map(({ name, pid, commands }) => ({ name, pid, commands })),
+      restarts: appleServices.restarts,
+    },
     environments: payload.environments.map((env) =>
       env.worktree ? { ...env, worktree: holdPullRequest(env.worktree) } : env,
     ),
