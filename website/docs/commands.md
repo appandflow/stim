@@ -1363,7 +1363,13 @@ stim test --list --json
 - It then picks a worker count: `floor((cores - 1) / concurrency.maxTests)`,
   scaled by `cores / load` when the 1-minute load average is already past the
   core count, and never under 1. On an idle 4-core machine with one test slot
-  that is 3; on a 14-core Mac with two slots it is 6.
+  that is 3; on a 14-core Mac with two slots it is 6. The machine setting
+  `concurrency.testWorkers` (also `STIM_TEST_WORKERS`) above `0` replaces the
+  formula: each run passes exactly that count, with no load reduction, and the
+  stderr line says `set by concurrency.testWorkers`. An 8-core host with
+  `concurrency.maxTests` 4 and `concurrency.testWorkers` 2 runs four suites of
+  two workers each. The setting changes only the count; the rules below for
+  which runs get one stay the same.
 - Jest and Vitest get `--maxWorkers=<n>` only when Stim can establish that
   nothing else sets workers or a serial run. The command must run `jest` or
   `vitest` directly (also behind `npx`, `bunx`, `pnpm exec`, or `pnpm` or

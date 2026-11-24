@@ -167,6 +167,11 @@ export function testSlotLimit({ env = ambientEnv(), cores }: { env?: NodeJS.Proc
   return { max: set || derivedTestCap(cores), derived: set === 0 };
 }
 
+/** `concurrency.testWorkers`: the worker count each `stim test` run passes when above 0; 0 means derive it. */
+export function testWorkersSetting({ env = ambientEnv() }: { env?: NodeJS.ProcessEnv } = {}): number {
+  return limit('concurrency.testWorkers', loadConfig(), env);
+}
+
 export function getPlatformDeviceLimits({
   env = ambientEnv(),
 }: { env?: NodeJS.ProcessEnv } = {}): PlatformDeviceLimits {

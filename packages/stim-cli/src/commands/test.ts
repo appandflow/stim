@@ -2,7 +2,7 @@ import { constants, availableParallelism, loadavg } from 'node:os';
 import { basename } from 'node:path';
 import chalk from 'chalk';
 import type { StimContext } from '@stim-cli/core';
-import { testSlotLimit } from '@stim-cli/core/state';
+import { testSlotLimit, testWorkersSetting } from '@stim-cli/core/state';
 import { defineOp, type Op } from '../cli/define-op.ts';
 import { exitCli, processContext, runProcessOperation } from '../cli-operation.ts';
 import { formatElapsed, phaseLine } from '../command-output.ts';
@@ -312,6 +312,7 @@ async function runTest(
   let retain = false;
   let marker = '1';
   try {
+    const fixed = testWorkersSetting({ env });
     const parent = env.STIM_TEST_RUN;
     if (parent && heldTestRun(parent)) {
       note(context, 'inside another stim test run, which holds the test slot; running without one');
@@ -329,7 +330,8 @@ async function runTest(
     const cores = availableParallelism();
     const slots = testSlotLimit({ env }).max;
     const load1 = Math.round((loadavg()[0] ?? 0) * 10) / 10;
-    const workers = testWorkerCount({ cores, slots, load1 });
+    // @ref LLP 0020#a-fixed-worker-count -- a set count skips the load reduction
+    const workers = fixed || testWorkerCount({ cores, slots, load1 });
     const plan = planTestRun({
       argv,
       workers,
@@ -341,8 +343,18 @@ async function runTest(
       vitestVersion: vitestVersionFor(argv, dir, (file) => getExecutor().findExecutable(file, { env, cwd: dir })),
       nodeOptions: env.NODE_OPTIONS,
     });
-    debugLog.log('test_workers', { workers, cores, slots, load1, applied: plan.applied, skipped: plan.skipped });
-    const basis = `${cores} cores, ${slots} test slot${slots === 1 ? '' : 's'}, load ${load1}`;
+    debugLog.log('test_workers', {
+      workers,
+      source: fixed ? 'concurrency.testWorkers' : 'derived',
+      cores,
+      slots,
+      load1,
+      applied: plan.applied,
+      skipped: plan.skipped,
+    });
+    const basis = fixed
+      ? 'set by concurrency.testWorkers'
+      : `${cores} cores, ${slots} test slot${slots === 1 ? '' : 's'}, load ${load1}`;
     note(
       context,
       plan.applied

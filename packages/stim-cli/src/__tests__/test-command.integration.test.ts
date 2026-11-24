@@ -156,6 +156,19 @@ describe.skipIf(process.platform === 'win32')('stim test', () => {
     expect(jest.stderr).toContain('no worker count passed: the command already sets Jest workers');
   }, 60_000);
 
+  test('concurrency.testWorkers fixes the count whatever concurrency.maxTests is, only where a count is passed, and 0 derives it', async () => {
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ concurrency: { testWorkers: 2 } }));
+    const fixed = await start(['--', 'npx', 'jest'], { STIM_MAX_TESTS: '4' }).done;
+    expect(fixed.code).toBe(0);
+    expect(ran(fixed.stdout).argv).toEqual(['--maxWorkers=2']);
+    expect(fixed.stderr).toMatch(/2 workers \(set by concurrency\.testWorkers\) through --maxWorkers=2/);
+    const kept = await start(['--', 'jest', '-w', '3'], { STIM_MAX_TESTS: '4' }).done;
+    expect(ran(kept.stdout).argv).toEqual(['-w', '3']);
+    expect(kept.stderr).toContain('no worker count passed: the command already sets Jest workers');
+    const derived = await start(['--', 'npx', 'jest'], { STIM_TEST_WORKERS: '0' }).done;
+    expect(derived.stderr).toMatch(/\d+ workers \(\d+ cores, 1 test slot, load [\d.]+\) through --maxWorkers=\d+/);
+  }, 60_000);
+
   test('a test script that is not a plain runner command runs unchanged, with no worker variables', async () => {
     writeFileSync(
       join(app, 'package.json'),
