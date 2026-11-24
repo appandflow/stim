@@ -159,6 +159,16 @@ test('saves a clean finished worktree still inside normal grace, reports it only
   expect(existsSync(linked)).toBe(true);
 }, 20_000);
 
+test('reports a finished worktree from a stim gc run outside any project, whose protected root does not exist', async () => {
+  finished();
+  await observe();
+  const outside = { ...reading(), protectedRoot: join(base, 'home', 'maintenance', 'no-project') };
+
+  expect(await savedWorktreeReports(config, outside, 'critical', false)).toEqual([
+    expect.objectContaining({ target: linked, detail: expect.stringContaining('report only:') }),
+  ]);
+});
+
 test('records actual dirty work separately from archive eligibility and keeps it in a critical report', async () => {
   finished();
   writeFileSync(join(linked, 'feature.txt'), 'uncommitted');

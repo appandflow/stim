@@ -3233,6 +3233,18 @@ describe('rung 5 in stim gc', () => {
         );
       }, 20_000);
 
+      test('it reports an idle worktree from a run outside any project, whose protected root does not exist', async () => {
+        const { idle } = linkedWorktrees(['idle']);
+        register(idle);
+        await observe();
+
+        const rung5 = reports((await ladder('high', join(home, 'maintenance', 'no-project'))).actions);
+
+        expect(rung5.toSorted()).toEqual(
+          [join(idle, 'ios', 'Pods'), join(idle, 'node_modules')].map((target) => [target, 'kept', true]),
+        );
+      });
+
       test("it skips a worktree with no workspace in this home, the command's own workspace and one whose dev server runs", async () => {
         const { stranger, own, serving } = linkedWorktrees(['stranger', 'own', 'serving']);
         register(realpathSync.native(join(projects, 'repo')));

@@ -380,8 +380,8 @@ async function hasOutputs(path: string): Promise<boolean> {
   return dirs.some((dir) => !cargo.includes(dir));
 }
 
-/** Whether the workspace is still idle `thresholdMs`, for a caller that holds its native-run claim. */
-export async function stillIdle(
+/** Why the workspace is no longer idle `thresholdMs`, or null while it is, for a caller that holds its native-run claim. */
+export async function notIdleReason(
   path: string,
   thresholdMs: number,
   {
@@ -391,15 +391,23 @@ export async function stillIdle(
     setting = PRESSURE_THRESHOLD,
     checkout,
   }: { operation?: StimContext; full?: boolean; locked?: boolean; setting?: string; checkout?: string },
+): Promise<string | null> {
+  const verdict = await idleVerdict(path, thresholdMs, setting, {
+    locked,
+    operation,
+    full,
+    ...(checkout ? { checkout } : {}),
+  });
+  return 'kept' in verdict ? verdict.kept : null;
+}
+
+/** Whether the workspace is still idle `thresholdMs`, for a caller that holds its native-run claim. */
+export async function stillIdle(
+  path: string,
+  thresholdMs: number,
+  options: Parameters<typeof notIdleReason>[2],
 ): Promise<boolean> {
-  return (
-    (await idleFor(path, thresholdMs, setting, {
-      locked,
-      operation,
-      full,
-      ...(checkout ? { checkout } : {}),
-    })) !== null
-  );
+  return (await notIdleReason(path, thresholdMs, options)) === null;
 }
 
 /** Workspaces with nothing running, idle `thresholdMs` by the activity definition: linked worktrees, then source checkouts, longest-idle first in each. */
