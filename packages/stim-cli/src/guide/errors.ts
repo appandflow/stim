@@ -750,8 +750,8 @@ Inspect what remains with previewGarbage() before retrying a mutation.
 `,
     },
     STIM_CANCELLED: {
-      summary: 'start, ios, android or macos was interrupted',
-      body: () => `STIM_CANCELLED  (start, ios, android, macos; exit 130 or 143 on SIGTERM)
+      summary: 'start, ios, android, macos, revive or services start was interrupted',
+      body: () => `STIM_CANCELLED  (start, ios, android, macos, revive, services start; exit 130 or 143 on SIGTERM)
   "The ios run was cancelled by \`stim stop\` (pid <n>) before it finished."
   \`stim stop\` cancels a build with nothing left to deploy to. Ctrl-C also
   interrupts native runs. The interrupt reaches the active build tool

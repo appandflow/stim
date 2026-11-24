@@ -61,6 +61,26 @@ never learns its exit code; `stim services` shows it stopped. A helper parent
 like `metro-run` would keep the exit code for one Node process per service;
 the implementing agent chose not to add one until an exit code is needed.
 
+## A service start shares the build slots
+
+Every service start, including a restart from `stim revive`, takes a build
+slot before running its start command. It shares native builds' queue and
+`concurrency.maxBuilds` cap, with the workspace and service name in the claim.
+Queue progress goes to stderr, including in JSON mode. Cancellation and claim
+recovery follow LLP 0007; unresolved child cleanup retains its claim.
+
+The slot covers the start command and readiness wait only: an explicit `ready`
+command, otherwise all declared ports listening, otherwise the process alive.
+It releases at readiness, start failure, the 60-second readiness deadline or
+cancellation. A running service, stop and teardown hold no slot. Services start
+only through `services start` and `revive`, before any native build takes a slot.
+
+Reason: starting a database stack competes with native builds for disk I/O.
+Sharing their admission limit bounds that load without another setting or cap.
+
+Maintainer decision: "ok lets use slot then", 2026-11-24
+([#6282](https://github.com/appandflow/stim/issues/6282)), for startup only.
+
 ## Ports, ids and placeholders
 
 `ports` names the service's named port labels, as a list or as an object of

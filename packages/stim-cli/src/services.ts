@@ -10,6 +10,9 @@ import {
   type ServiceRecord,
   type WorkspaceState,
 } from '@stim-cli/core/state';
+import { cancellableSleep } from './cancellation.ts';
+import { acquireBuildSlot, releaseBuildSlot } from './engine/build-slots.ts';
+import { withDrainingCancellation } from './engine/operation-state.ts';
 import { runOperationFile } from './engine/operation-exec.ts';
 import { withWorkspaceProcessLock } from './engine/workspace-process-lock.ts';
 import { getExecutor, isTimeoutError } from './exec.ts';
@@ -429,8 +432,8 @@ async function runCommand(
         ...(signal ? { signal } : {}),
       });
     } catch (error) {
-      signal?.throwIfAborted();
       if (error instanceof Error && 'reportCleanup' in error) throw error;
+      signal?.throwIfAborted();
       const field = (key: string): unknown =>
         typeof error === 'object' && error !== null ? Reflect.get(error, key) : undefined;
       output = [field('stdout'), field('stderr')].filter((text) => typeof text === 'string' && text.trim()).join('\n');
@@ -500,12 +503,15 @@ export async function applyServiceStatuses(target: EnvironmentState, state: Work
   target.services = out;
 }
 
-async function ready(root: string, name: string, record: ServiceRecord, options: RunOptions): Promise<boolean> {
+async function ready(
+  root: string,
+  name: string,
+  record: ServiceRecord,
+  options: RunOptions,
+  timeoutMs = READY_COMMAND_TIMEOUT_MS,
+): Promise<boolean> {
   if (record.ready)
-    return (
-      (await runCommand(root, name, 'ready', record.ready, record, record.cwd, READY_COMMAND_TIMEOUT_MS, options)) ===
-      null
-    );
+    return (await runCommand(root, name, 'ready', record.ready, record, record.cwd, timeoutMs, options)) === null;
   const ports = Object.values(record.ports);
   if (ports.length) return (await listening(ports)).length === ports.length;
   return serviceRunning(record);
@@ -514,11 +520,18 @@ async function ready(root: string, name: string, record: ServiceRecord, options:
 async function waitReady(root: string, name: string, record: ServiceRecord, options: RunOptions): Promise<boolean> {
   const deadline = Date.now() + READY_TIMEOUT_MS;
   for (;;) {
-    if (await ready(root, name, record, options)) return true;
+    options.signal?.throwIfAborted();
+    if (
+      await ready(root, name, record, options, Math.max(1, Math.min(READY_COMMAND_TIMEOUT_MS, deadline - Date.now())))
+    )
+      return true;
     if (record.kind === 'process' && !(await serviceRunning(record))) return false;
     if (Date.now() >= deadline) return false;
-    await new Promise((done) => setTimeout(done, READY_POLL_MS));
-    options.signal?.throwIfAborted();
+    await cancellableSleep(Math.min(READY_POLL_MS, deadline - Date.now()), {
+      signal: options.signal,
+      what: `service ${name} readiness`,
+    });
+    if (Date.now() >= deadline) return false;
   }
 }
 
@@ -762,6 +775,8 @@ async function startOne(
   previous: ServiceRecord | null,
   options: RunOptions,
 ): Promise<ServiceOutcome> {
+  const signal = options.signal ?? options.operation?.signal;
+  options = { ...options, signal };
   const resolved =
     'record' in source
       ? source.record
@@ -800,30 +815,67 @@ async function startOne(
     };
   if (ours && previous && (await ready(root, name, previous, options)))
     return started(asRunning(previous), 'running', 'already running');
-  if (base.kind === 'process') {
-    let proc;
+  // @ref LLP 0027#a-service-start-shares-the-build-slots -- only startup and readiness hold capacity
+  return withDrainingCancellation(options.operation, signal, async () => {
+    const slot = await acquireBuildSlot({
+      root,
+      service: name,
+      context: options.operation,
+      logFile: serviceLogFile(root, name),
+      signal,
+      out: (line) => options.operation?.output('stderr', `${line}\n`),
+    });
+    let record = pending;
+    let failure: string | null = null;
+    let isReady = false;
+    let retained = false;
     try {
-      proc = await spawnProcess(root, name, base, options.operation);
+      signal?.throwIfAborted();
+      if (base.kind === 'process') {
+        let proc;
+        try {
+          proc = await spawnProcess(root, name, base, options.operation);
+        } catch (error) {
+          return {
+            name,
+            outcome: 'failed',
+            detail: `start command ${base.start.join(' ')} failed: ${messageOf(error)}`,
+          };
+        }
+        record = { ...pending, process: proc };
+        await writeRecord(root, name, record);
+        logEvent(root, 'info', 'service_start', `${name}: ${base.start.join(' ')} (pid ${proc.pid})`, {
+          service: name,
+        });
+      } else {
+        await writeRecord(root, name, pending);
+        failure = await runCommand(root, name, 'start', base.start, base, base.cwd, START_TIMEOUT_MS, options);
+      }
+      if (!failure) isReady = await waitReady(root, name, record, options);
     } catch (error) {
-      return { name, outcome: 'failed', detail: `start command ${base.start.join(' ')} failed: ${messageOf(error)}` };
+      // @ref LLP 0007#a-null-child-is-never-recovered -- unresolved child cleanup retains its slot
+      retained = error instanceof Error && 'reportCleanup' in error;
+      throw error;
+    } finally {
+      releaseBuildSlot(slot, retained);
     }
-    const record = { ...pending, process: proc };
-    await writeRecord(root, name, record);
-    logEvent(root, 'info', 'service_start', `${name}: ${base.start.join(' ')} (pid ${proc.pid})`, { service: name });
-    if (await waitReady(root, name, record, options))
-      return started({ ...base, process: proc }, 'started', `pid ${proc.pid}; output in ${serviceLogFile(root, name)}`);
-    const left = await stopProcess(record, options.signal);
-    return failed(`${base.start.join(' ')} did not become ready.${logTail(root, name)}`, record, left !== null);
-  }
-  await writeRecord(root, name, pending);
-  const failure = await runCommand(root, name, 'start', base.start, base, base.cwd, START_TIMEOUT_MS, options);
-  if (!failure && (await waitReady(root, name, base, options))) return started(base, 'started', base.start.join(' '));
-  // @ref LLP 0027#the-idle-pass-stops-services -- a stack that partly came up stays running, so the idle pass reaches it
-  return failed(
-    failure ?? `${base.start.join(' ')} exited, but the service did not become ready`,
-    pending,
-    await mayStillRun(base),
-  );
+    if (isReady)
+      return started(
+        { ...base, ...(record.process ? { process: record.process } : {}) },
+        'started',
+        record.process ? `pid ${record.process.pid}; output in ${serviceLogFile(root, name)}` : base.start.join(' '),
+      );
+    if (base.kind === 'process') {
+      const left = await stopProcess(record, signal);
+      return failed(`${base.start.join(' ')} did not become ready.${logTail(root, name)}`, record, left !== null);
+    }
+    // @ref LLP 0027#the-idle-pass-stops-services -- a stack that partly came up stays running, so the idle pass reaches it
+    return failed(
+      failure ?? `${base.start.join(' ')} exited, but the service did not become ready`,
+      pending,
+      await mayStillRun(base),
+    );
+  });
 }
 
 /** Starts the declared services, or the one named, dependencies first; one already running is left alone. */

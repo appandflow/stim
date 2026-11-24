@@ -10,7 +10,7 @@ import {
   type ClaimProblem,
 } from '../ownership-claim.ts';
 import { declareSpawnsOn, stopDeclaringSpawnsOn } from './spawn-claims.ts';
-import { ambientContext } from '@stim-cli/core';
+import { ambientContext, type StimContext } from '@stim-cli/core';
 import { daemonWaiter, notifyReleased, opWaiting } from '../daemon/client.ts';
 import { endForSwitch, ownStoreEngine, stagedHold, switchedEngine, type StoreEngine } from '../daemon/engine-switch.ts';
 import { liveWaiters, queuePosition, takeWaitTicket, waitCeiling, type WaitResource } from './wait-queue.ts';
@@ -74,6 +74,7 @@ export interface SlotHandle {
   index?: number;
   slot?: SlotRecord;
   claim?: ClaimHandle;
+  context?: StimContext;
 }
 
 interface SlotWait {
@@ -88,6 +89,8 @@ export interface TryAcquireSlotOptions {
   max: number;
   root?: string | null;
   logFile?: string | null;
+  service?: string;
+  context?: StimContext;
 }
 
 export interface AcquireSlotOptions extends Omit<TryAcquireSlotOptions, 'max'> {
@@ -141,12 +144,12 @@ function toRecord(holder: ClaimHolder): SlotRecord {
 
 export function tryAcquireSlot(
   claim: (options: { max: number; details: Record<string, unknown> }) => SlotClaim | null,
-  { max, root = null, logFile = null }: TryAcquireSlotOptions,
+  { max, root = null, logFile = null, service, context = ambientContext() }: TryAcquireSlotOptions,
 ): SlotHandle | null {
   if (!max || max <= 0) return { acquired: true, unlimited: true };
-  const got = claim({ max, details: { projectRoot: root, logFile } });
+  const got = claim({ max, details: { projectRoot: root, logFile, ...(service ? { service } : {}) } });
   if (!got) return null;
-  declareSpawnsOn(ambientContext(), got.claim);
+  declareSpawnsOn(context, got.claim);
   return {
     acquired: true,
     path: got.path,
@@ -160,6 +163,7 @@ export function tryAcquireSlot(
       client: null,
     },
     claim: got.claim,
+    context,
   };
 }
 
@@ -244,6 +248,8 @@ export async function acquireSlot(
     max: maxOption,
     root = null,
     logFile = null,
+    service,
+    context,
     now = Date.now,
     out = () => {},
     waitingFor = () => {},
@@ -288,7 +294,7 @@ export async function acquireSlot(
       const position = queuePosition(waiters, ticket);
       const turn = slotTurn(position, max, busySlots(listSlots(slots), max));
       if (turn.claim) {
-        const got = slots.tryAcquire({ max, root, logFile });
+        const got = slots.tryAcquire({ max, root, logFile, service, context });
         if (got) return { ...got, slotWaitMs: ticket ? Math.max(0, Math.round(now() - started)) : 0 };
       }
       if (!ticket) {
@@ -338,7 +344,7 @@ export async function acquireSlot(
 
 export function releaseSlot(slots: SlotClass, handle?: SlotHandle | null, retain = false): boolean {
   if (!handle || handle.unlimited) return false;
-  stopDeclaringSpawnsOn(ambientContext(), handle.claim);
+  stopDeclaringSpawnsOn(handle.context ?? ambientContext(), handle.claim);
   if (retain) return false;
   const released = releaseClaim(handle.claim);
   if (released) notifyReleased(slots.resource);

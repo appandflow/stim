@@ -9,6 +9,7 @@ import {
   type WorkspaceState,
 } from '@stim-cli/core/state';
 import { runProcessOperation } from '../cli-operation.ts';
+import { claimFailure } from '../ownership-claim.ts';
 import { formatLongDuration, phaseLine, refuseNoProject } from '../command-output.ts';
 import { deviceSlotPlatforms, parseDeviceSlotKey, projectDeviceSlots } from '../devices/device-slots.ts';
 import { resolveOwnedAvdSerialAsync, type ResolvedAvdSerial } from '../devices/android.ts';
@@ -566,6 +567,12 @@ export function reviveOp(overrides: Partial<ReviveDeps> = {}): Op {
           note: writeNote,
           requestedDevice: context.env.AGENT_DEVICE_BOOT_HOOK_DEVICE_ID || null,
           deps: { ...reviveDeps(context), ...overrides },
+        }).catch((error: unknown) => {
+          if (!context.signal.aborted) throw error;
+          const claim = claimFailure(error, 'stim revive');
+          return claim
+            ? failure(claim.code, claim.message, claim.remedy)
+            : failure('STIM_CANCELLED', 'The revive was cancelled.', null);
         }),
       );
       if (!result.ok) {

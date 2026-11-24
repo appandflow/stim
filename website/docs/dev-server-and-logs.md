@@ -799,6 +799,16 @@ process identity. A service with a `stop` command manages itself (`docker
 compose up -d`, a database CLI), and Stim runs its `stop`, `teardown` and
 `orphanTeardown` commands instead.
 
+Each start, including a restart from `stim revive`, waits for a slot shared
+with native builds under `concurrency.maxBuilds`. Queue progress goes to stderr,
+also with `--json`. The slot covers the start command and readiness wait only
+(up to 60 seconds after the start command): it releases when ready, on failure,
+timeout or cancellation. Running services, stop and teardown hold no slot.
+Ctrl+C during a start exits 130 with `STIM_CANCELLED`, or with
+`STIM_CLAIM_UNAVAILABLE` when child cleanup cannot be verified.
+Readiness uses `ready` when declared, otherwise every declared port listening,
+otherwise the process alive.
+
 Ports come from the [named port](#named-server-ports) pool. Each reaches the
 service as an environment variable (`ports` maps a label to one) or a
 placeholder: `{web}` for its own port, `{deps.pg}` for another service's,
