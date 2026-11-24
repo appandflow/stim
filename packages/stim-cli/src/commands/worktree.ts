@@ -1,7 +1,7 @@
 import type { StimContext } from '@stim-cli/core';
 import { runProcessOperation } from '../cli-operation.ts';
 import { operationState } from '../engine/operation-state.ts';
-import { existsSync, realpathSync, rmSync } from 'fs';
+import { existsSync, readFileSync, realpathSync, rmSync } from 'fs';
 import { lstat, readFile, realpath } from 'node:fs/promises';
 import { answered } from '../workspace/bounded-read.ts';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'path';
@@ -362,6 +362,15 @@ export const warmOp: Op = defineOp({
   },
 });
 
+function isWorkspaceRoot(dir: string): boolean {
+  if (existsSync(join(dir, 'pnpm-workspace.yaml'))) return true;
+  try {
+    return 'workspaces' in JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
+  } catch {
+    return false;
+  }
+}
+
 export async function warmWorktreeTarget(opts: {
   cwd: string;
   refresh?: boolean;
@@ -384,16 +393,17 @@ export async function warmWorktreeTarget(opts: {
     if (workspace && workspace !== app)
       await recordWorkspaceUseAsync(workspace, new Date(), operation.env, opts.cwd, operation.signal);
     if (!workspace) {
-      out(
-        chalk.dim(
-          phaseLine(
-            'project',
-            opts.refresh
-              ? 'no single app to register here; --refresh updates only the repository root. Run warm --refresh from the app directory to refresh that app and list it in status'
-              : 'no single app to register here; run warm from the app directory to list it in status while it warms',
+      if (!app || isWorkspaceRoot(app))
+        out(
+          chalk.dim(
+            phaseLine(
+              'project',
+              opts.refresh
+                ? 'no single app to register here; --refresh updates only the repository root. Run warm --refresh from the app directory to refresh that app and list it in status'
+                : 'no single app to register here; run warm from the app directory to list it in status while it warms',
+            ),
           ),
-        ),
-      );
+        );
     } else {
       await registerWarmedWorkspace(workspace, out);
       progress = startWarmProgress(workspace, opts.refresh ? 'refresh' : 'copy', {
