@@ -90,9 +90,22 @@ successor", not "no daemon this driver started still runs".
   captured daemon. `stim gc` removes a launch directory idle for 24 hours once
   `agent-device daemon status --state-dir <dir>/state --json` reports its
   daemon `stopped`, whatever lock or claim directories it holds, and lists each
-  launch on its own under TMPDIR leftovers. gc never stops a daemon: a live session's daemon may sit
-  idle that long, and an unreachable one ends through agent-device's idle
-  reaper.
+  launch on its own under TMPDIR leftovers. gc never stops a daemon: a live
+  session's daemon may sit idle that long, and an unreachable one ends through
+  agent-device's idle reaper.
+- 2.0.0-rc.3 kept a hosted daemon's state in the root itself
+  (`<root>/{daemon.json,daemon.lock,daemon.log,sessions}`) and its device
+  claims under `<state dir>/device-claims`. A clean stop removed that root, so
+  it is left only after a crash. When `<state dir>/agent-device-launch` names no
+  launch and the root holds `daemon.json` or `daemon.lock`, a launch retires the
+  root as its previous launch, with the same rules. Later layouts write nothing
+  but launch directories in the root, so gc treats every other entry of a root
+  that holds a launch, `daemon.json` or `daemon.lock` as one leftover, removed
+  under the same rule with `--state-dir <root>`. It removes those entries one by
+  one and then the root only if it is empty. A daemon that exits gracefully, or
+  that `daemon stop` ends, removes `daemon.json` and `daemon.lock` but leaves
+  `sessions` and `daemon.log`; a stale record stays. Both go once no host runs
+  rc.3.
 
 Reason: a launch that fails before the daemon is captured cannot prove that
 daemon gone. agent-device starts it detached, so stim cannot find it by

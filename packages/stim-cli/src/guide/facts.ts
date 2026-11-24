@@ -1185,8 +1185,8 @@ RULES
                               (instruments*.ktrace), swiftpm
                               (TemporaryDirectory.* directories). A
                               stim-server-agent-device-* directory that holds
-                              hosted launches counts each launch instead of
-                              itself. deleteCount
+                              hosted launches counts each launch, plus itself
+                              for 2.0.0-rc.3 daemon state. deleteCount
                               is what a run removes. null with STIM_HOME
                               set
     trash                   { root, entries: [{ path, worktree, removedAt,

@@ -831,6 +831,48 @@ describe.skipIf(process.platform !== 'darwin' && process.platform !== 'linux')('
     }
   });
 
+  test('an rc.3 daemon that outlived its server keeps its claim, and once that claim is cleared the next launch retires it', async () => {
+    install(root);
+    const legacy = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });
+    legacy.unref();
+    if (legacy.pid === undefined) throw new Error('the rc.3 stand-in daemon did not start');
+    writeFileSync(join(root, 'daemon-pids.log'), `${legacy.pid}\n`);
+    writeFileSync(join(root, 'strays.log'), `${legacy.pid}\n`);
+    mkdirSync(launchRoot(root), { recursive: true, mode: 0o700 });
+    writeFileSync(join(launchRoot(root), 'daemon.json'), JSON.stringify({ pid: legacy.pid }));
+    const claims = join(root, 'agent-device.claims');
+    const rc3 = createAgentDriverHost({ stateDir: join(root, 'state'), claimRoot: claims });
+    const taken = await rc3.claims.take(claims, 'agent-device daemon');
+    const child = await rc3.processes.capture(legacy.pid);
+    if (!('claim' in taken) || !child) throw new Error('the rc.3 claim could not be planted');
+    await rc3.claims.setChild(taken.claim, child);
+    const dead = spawn(process.execPath, ['-e', ''], { stdio: 'ignore' });
+    const deadPid = dead.pid;
+    if (deadPid === undefined) throw new Error('no stand-in server started');
+    const identity = captureProcessIdentity(deadPid);
+    await new Promise((resolve) => dead.once('exit', resolve));
+    if (!identity.ok) throw new Error('the stand-in server identity could not be captured');
+    const claimName = readdirSync(join(claims, 'exclusive')).find((name) => name.endsWith('.claim'));
+    if (!claimName) throw new Error('the rc.3 claim file is missing');
+    const claimFile = join(claims, 'exclusive', claimName);
+    const claim: unknown = JSON.parse(readFileSync(claimFile, 'utf8'));
+    writeFileSync(
+      claimFile,
+      JSON.stringify(Object.assign({}, claim, { owner: { pid: deadPid, processToken: identity.token } })),
+    );
+
+    await expect(deviceDriverIn(root).start()).rejects.toThrow(/held by another process/);
+    expect(alive(legacy.pid)).toBe(true);
+    rmSync(claims, { recursive: true, force: true });
+    const next = deviceDriverIn(root);
+    try {
+      await next.start();
+      expect(alive(legacy.pid)).toBe(false);
+    } finally {
+      await next.stop();
+    }
+  });
+
   test('a launch retires the launch recorded when it takes the claim, not the one recorded before', async () => {
     const { earlier, orphanProxy } = await crashMidSession();
     const launchFile = join(root, 'state', 'agent-device-launch');

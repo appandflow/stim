@@ -12,7 +12,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import * as gcDevices from '../commands/gc/devices.ts';
 import { collectTempLeftovers, deleteTempLeftovers, tempLeftoverSection } from '../commands/gc/temp-leftovers.ts';
 import { takeGcResults } from '../commands/gc/results.ts';
@@ -354,9 +354,11 @@ test('cancelling temporary cleanup yields during removal and preserves the next 
 
 function fakeAgentDevice(
   running: (stateDir: string) => boolean = (stateDir) => stateDir.includes('aaaaaaaaaaaaaaaa'),
+  onStatus?: (stateDir: string) => void,
 ): {
   asked: string[];
   launch: (id: string, idle?: boolean) => string;
+  flat: () => string;
 } {
   const bin = join(home, 'agent-device.mjs');
   writeFileSync(bin, '');
@@ -379,6 +381,7 @@ function fakeAgentDevice(
       asked.push(stateDir);
       if (!args.includes('status')) throw new Error(`gc ran agent-device ${args.join(' ')}`);
       const state = running(stateDir) ? 'running' : 'stopped';
+      onStatus?.(stateDir);
       return JSON.stringify({ success: true, data: { state, stateDir } });
     },
   });
@@ -389,7 +392,16 @@ function fakeAgentDevice(
     if (idle) age(join(root, id), 2 * DAY_MS);
     return join(root, id);
   };
-  return { asked, launch };
+  const flat = () => {
+    mkdirSync(join(root, 'daemon.lock'), { recursive: true });
+    mkdirSync(join(root, 'sessions', 'default'), { recursive: true });
+    writeFileSync(join(root, 'daemon.json'), '{"pid":2}');
+    writeFileSync(join(root, 'daemon.log'), 'log');
+    writeFileSync(join(root, 'sessions', 'default', 'recording.mp4'), 'video');
+    for (const name of ['daemon.lock', 'sessions', 'daemon.json', 'daemon.log']) age(join(root, name), 2 * DAY_MS);
+    return root;
+  };
+  return { asked, launch, flat };
 }
 
 test('plans, lists and removes an idle hosted agent-device launch agent-device reports stopped, and never stops one', async () => {
@@ -418,6 +430,65 @@ test('plans, lists and removes an idle hosted agent-device launch agent-device r
   expect(outcome).toEqual(expect.objectContaining({ status: 'done', detail: '1 deleted' }));
   expect([existsSync(running), existsSync(gone), existsSync(recent)]).toEqual([true, false, true]);
   expect(new Set(asked)).toEqual(new Set([join(running, 'state'), join(gone, 'state')]));
+});
+
+test('a 2.0.0-rc.3 flat daemon directory goes whole once agent-device reports its daemon stopped', async () => {
+  const { asked, flat } = fakeAgentDevice();
+  const root = flat();
+  age(root, 2 * DAY_MS);
+
+  expect((await leftovers()).map((entry) => [entry.path, entry.willDelete])).toEqual([[root, true]]);
+  expect(await deleteTempLeftovers()).toEqual({ count: 1, bytes: expect.any(Number), failures: 0 });
+  expect(existsSync(root)).toBe(false);
+  expect(new Set(asked)).toEqual(new Set([root]));
+});
+
+test('rc.3 daemon state beside launches is removed without the launches, and only once its daemon is stopped', async () => {
+  let rootRunning = true;
+  const { flat, launch } = fakeAgentDevice(
+    (stateDir) =>
+      stateDir.includes('aaaaaaaaaaaaaaaa') ||
+      (rootRunning && basename(stateDir).startsWith('stim-server-agent-device-')),
+  );
+  const root = flat();
+  const running = launch('aaaaaaaaaaaaaaaa');
+  const recent = launch('bbbbbbbbbbbbbbbb', false);
+
+  expect(await kept(root)).toBe('agent-device reports its daemon running');
+  expect((await deleteTempLeftovers()).count).toBe(0);
+  rootRunning = false;
+  expect(await deleteTempLeftovers()).toEqual({ count: 1, bytes: expect.any(Number), failures: 0 });
+  expect(readdirSync(root).toSorted()).toEqual(['aaaaaaaaaaaaaaaa', 'bbbbbbbbbbbbbbbb']);
+  expect([existsSync(running), existsSync(recent)]).toEqual([true, true]);
+});
+
+test('rc.3 sessions and log left beside launches after agent-device removed the daemon record are removed', async () => {
+  const { flat, launch } = fakeAgentDevice();
+  const root = flat();
+  rmSync(join(root, 'daemon.json'));
+  rmSync(join(root, 'daemon.lock'), { recursive: true });
+  const recent = launch('bbbbbbbbbbbbbbbb', false);
+
+  expect(await kept(root)).toBeNull();
+  expect(await deleteTempLeftovers()).toEqual({ count: 1, bytes: expect.any(Number), failures: 0 });
+  expect(readdirSync(root)).toEqual(['bbbbbbbbbbbbbbbb']);
+  expect(existsSync(recent)).toBe(true);
+});
+
+test('a launch created in an rc.3 root while gc removes its daemon state survives', async () => {
+  let root = '';
+  let checks = 0;
+  const { flat } = fakeAgentDevice(
+    () => false,
+    () => {
+      if (checks++ === 1) mkdirSync(join(root, 'cccccccccccccccc', 'state'), { recursive: true });
+    },
+  );
+  root = flat();
+  age(root, 2 * DAY_MS);
+
+  expect(await deleteTempLeftovers()).toEqual({ count: 1, bytes: expect.any(Number), failures: 0 });
+  expect(readdirSync(root)).toEqual(['cccccccccccccccc']);
 });
 
 test('a launch whose daemon agent-device reports running again by the time gc removes it is kept', async () => {

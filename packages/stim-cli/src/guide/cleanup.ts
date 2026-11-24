@@ -1374,7 +1374,8 @@ TMPDIR LEFTOVERS
   stays. It judges each hosted agent-device launch in a
   stim-server-agent-device-* directory on its own, and removes one idle for 24
   hours once \`agent-device daemon status\` reports its daemon stopped; it
-  never stops a daemon. It
+  never stops a daemon. The 2.0.0-rc.3 daemon state kept in that directory
+  itself, with or without launches, is one more such entry. It
   keeps a recording or SwiftPM temp directory that cannot be read, every
   recording while an xctrace or Instruments process runs, and every SwiftPM
   temp directory while a swift or xcodebuild process runs, or when the process
