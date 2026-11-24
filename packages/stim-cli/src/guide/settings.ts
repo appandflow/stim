@@ -538,6 +538,15 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         named Mac exactly that Mac. The --remote flag
                         overrides it. A recorded hosted app keeps its Mac
                         until stim stop. Unset runs here. See stim guide macos.
+  ports.commands        commands for the servers on named ports, keyed by
+                        label: {"db": {"stop": ["my-db", "stop"],
+                        "teardown": ["my-db", "rm"], "resume": ["my-db",
+                        "start"]}}, each an argv array run without a shell
+                        from the workspace root. stim ports get <label>
+                        records the label's entry with its allocation; Stim
+                        runs only the recorded copy, so run get again after
+                        changing it. The --stop, --teardown and --resume
+                        flags of get override it. See \`guide ports\`.
   web.url               the page \`stim web\` opens in the owned Chrome, an
                         http:// or https:// URL. {port:<label>} becomes the
                         workspace's named port (allocated like \`stim ports

@@ -348,7 +348,7 @@ its reported load:
 
 ```text
 stim ports
-stim ports get <label>
+stim ports get <label> [--stop <command>] [--teardown <command>] [--resume <command>]
 stim ports stop [label] [--dry-run]
 stim ports release [label]
 stim ports reverse <label|port> [--remove] [--json]
@@ -362,9 +362,16 @@ Allocation reads native TCP tables through `netstat` on macOS and Windows and
 each port with `lsof` and loopback connects instead, and refuses only when
 none of them can answer. Stopping listeners still requires `lsof` on macOS and
 Linux, or `netstat` on Windows.
-`ports` lists named allocations and Metro, marked managed, and the ports the
-workspace reverses. `ports --json` prints one payload with `ports`, `metroPort`
-and `reverses`.
+`ports` lists named allocations and Metro, marked managed, the ports the
+workspace reverses and each label's recorded commands. `ports --json` prints one
+payload with `ports` (each with its `commands`), `metroPort` and `reverses`.
+
+`--stop`, `--teardown` and `--resume` record the commands of the server on a
+label, run without a shell from the workspace root: `ports stop` and the idle
+pass run the stop command, workspace removal the teardown command (else the
+stop command), and `stim revive` the resume command after an idle stop. The
+`ports.commands` setting declares them per label. See
+[Server commands](./dev-server-and-logs.md#server-commands).
 
 `ports reverse <label|port>` makes a server on this machine reachable at the
 same `localhost:<port>` from the workspace's devices, like `adb reverse`. It

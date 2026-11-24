@@ -353,8 +353,9 @@ Treat a refusal as an ownership or state mismatch: read its code and remedy.
 Never reach for --force first.
 Stim leaves externally started Metro servers alone. Stop them with their original
 tool; neither a matching Metro port nor --force grants process ownership.
-Named ports are separate: ports stop kills TCP listeners on the workspace's
-reserved named ports, even outside the workspace. Read guide ports before use.
+Named ports are separate: ports stop runs a label's recorded stop command, or
+kills TCP listeners on the workspace's reserved named ports, even outside the
+workspace. Read guide ports before use.
 
 Ask the user before these actions:
 

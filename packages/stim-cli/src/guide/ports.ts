@@ -12,6 +12,7 @@ If Stim is not installed globally, replace stim with npx stim.
   stim ports stop web --dry-run
   stim ports stop web
   stim ports release api
+  stim ports get db --stop "my-db stop --id app" --teardown "my-db rm --id app" --resume "my-db start --id app"
 
 get <label> allocates on first use and prints only the number to stdout.
 Repeated calls reuse it, even while a server is listening. Labels start with
@@ -54,9 +55,39 @@ can bind it before your server does. Use strict-port behavior when supported
 and verify the server bound the number supplied. Stim does not start,
 supervise, or capture logs for these servers.
 
-ports lists named labels and ports, plus Metro marked managed.
-ports stop [label] kills TCP listeners on those named ports and releases
-the allocations. It sends SIGTERM, waits two seconds, then SIGKILL if needed;
+ports lists named labels and ports, plus Metro marked managed, and each
+label's recorded commands.
+
+SERVER COMMANDS
+
+A label can record how its server stops, for a server whose listener Stim
+cannot stop, such as a container stack behind docker-proxy:
+  --stop      stops it and keeps its data: ports stop and the idle pass run it.
+  --teardown  removes it and its data: worktree remove, gc and automatic
+              maintenance run it when they remove the workspace, whether or
+              not it listens; without one they run the stop command while a
+              port listens.
+  --resume    starts it again: stim revive runs it for the labels the idle
+              pass stopped, never for one ports stop or you stopped.
+Each value is split on spaces and runs without a shell, from the workspace
+root; quotes and shell syntax refuse. The ports.commands setting declares the
+same per label, {"<label>": {"stop": [argv], "teardown": [argv], "resume":
+[argv]}}, so a repository commits them once (guide settings). get records the
+flags, else the setting, with the allocation, and keeps the recorded ones when
+neither names a kind; Stim runs only what get recorded. Labels that share a
+command run it once. The program must be on PATH where it runs, which for the
+idle pass is stimd's. Stop and teardown time out after 2 minutes, resume after
+5; the output goes to stim logs. After a stop or teardown the ports must have
+no listener, after a resume they must listen; otherwise the allocation is kept
+and the error names the label and command. A workspace folder that is gone
+runs its teardown once from the home folder, then releases.
+The idle pass runs the stop commands of a workspace idle for idle.minutes by
+its full activity: Stim commands, file edits, git writes and commits, and no
+process or agent session working in its checkout. maintenance.keep and
+idle.minutes 0 keep it. The allocations stay.
+
+ports stop [label] runs each label's stop command, else kills the TCP
+listeners on those named ports, and releases the allocations. It sends SIGTERM, waits two seconds, then SIGKILL if needed;
 on Windows it terminates the listener's process tree with taskkill.
 Stopping listeners requires lsof on macOS and Linux, or netstat on Windows.
 It prints the PID and command (the image name on Windows) for each stopped
@@ -69,9 +100,9 @@ ports release [label] releases without signalling a process.
 Omitting the label selects every named port, never Metro. stim stop leaves
 named ports alone.
 
-worktree remove, gc and automatic maintenance release named
-allocations without signalling their listeners; run ports stop first to stop
-a server this workspace started. gc reports allocations whose workspace no
+worktree remove, gc and automatic maintenance run the recorded teardown or
+stop commands and release named allocations; they never signal a listener, so
+run ports stop first to stop a server without a recorded command. gc reports allocations whose workspace no
 longer exists; gc releases them. Unmounted or unresolved workspace
 paths are retained. Use the same current Stim version for cleanup: versions
 without ports do not know about named allocations.

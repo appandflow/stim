@@ -1,5 +1,5 @@
 import { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join, win32 } from 'node:path';
 import { claimMetroPort, getProject, removeProject, upsertProject } from '../workspace/config.ts';
 import {
@@ -360,4 +360,17 @@ test.each<[string, number[], boolean]>([
   expect(runs.length).toBe(ran ? 1 : 0);
   expect(result).toEqual({ done: ran ? ['db (8900): my-db start'] : [], labels: ran ? ['db'] : [], failures: [] });
   expect(getProject(root)?.ports).toEqual({ db: 8900 });
+});
+
+test('removal of a workspace whose folder is gone runs its teardown once from the home folder and releases even when it fails', async () => {
+  const gone = join(home, 'gone');
+  upsertProject(gone, { ports: { db: 8900 }, portCommands: { db: { teardown: ['my-db', 'rm', '--id', 'app'] } } });
+  const runs = commandExecutor(new Set(), () => {
+    throw Object.assign(new Error('Command failed'), { status: 1, stdout: '', stderr: 'no such project' });
+  });
+  const log = vi.fn<(line: string) => void>();
+  await clearNamedPorts(gone, { teardown: true, log, platform: 'linux' });
+  expect(runs).toEqual([{ file: '/bin/my-db', args: ['rm', '--id', 'app'], cwd: homedir() }]);
+  expect(log).toHaveBeenCalledWith(expect.stringContaining('run my-db rm --id app yourself'));
+  expect(getProject(gone)?.ports).toEqual({});
 });

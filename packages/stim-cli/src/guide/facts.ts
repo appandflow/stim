@@ -505,7 +505,7 @@ leased until <time>" for each one.`,
 
   stim revive --json
 
-  { revived: { metro, devices } }. Human lines on stderr say the same.
+  { revived: { metro, devices, servers } }. Human lines on stderr say the same.
   metro           { port, stoppedAt, reason, restarted }. restarted is true
                   when revive started the dev server an idle stop had
                   stopped; stoppedAt and reason ("idle") describe that stop,
@@ -521,6 +521,10 @@ leased until <time>" for each one.`,
                   so in-app state is gone. launched is the relaunch's launch
                   state as in ios and android, or null when the app was
                   left running
+  servers         "<labels>: <command>" for each resume command that
+                  started named-port servers the idle pass had stopped
+                  (guide ports, SERVER COMMANDS); [] when none. A failed
+                  resume refuses with STIM_PORT_RESUME_FAILED
 
   stim web --json
 

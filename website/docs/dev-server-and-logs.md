@@ -729,7 +729,37 @@ prints its PID and command. Stopping listeners requires `lsof` on macOS and
 Linux, or `netstat` on Windows. Reserve a port only for a service this workspace
 may stop. Use `ports release` to forget the allocation without killing the
 server. Both leave Metro alone. `worktree remove`, `gc` and automatic
-maintenance release named allocations without stopping their listeners.
+maintenance never signal a listener; they run the label's recorded commands,
+described next, and release the allocation.
+
+### Server commands
+
+A server Stim cannot stop by its listener, such as a container stack whose
+ports `docker-proxy` publishes, can record its own commands when you reserve
+its port:
+
+<StimTabs
+code={`stim ports get db --stop "my-db stop --id app" --teardown "my-db rm --id app" --resume "my-db start --id app"`}
+/>
+
+- `--stop` stops the server and keeps its data. `ports stop` runs it, and so
+  does the idle pass once the workspace has had no activity for
+  `idle.minutes`: no Stim command, file edit, git write or commit, and no
+  process or agent session working in the checkout. The allocation stays.
+  `maintenance.keep` and `idle.minutes` 0 keep the server running.
+- `--teardown` removes the server and its data. `worktree remove`, `gc` and
+  automatic maintenance run it when they remove the workspace. Without one they
+  run the stop command while a port listens.
+- `--resume` starts the server again. `stim revive` runs it for the labels the
+  idle pass stopped, never for one you or `ports stop` stopped.
+
+Each command is split on spaces and runs without a shell from the workspace
+root, with its output in `stim logs`. Labels that share a command run it once.
+Afterwards Stim checks that the ports are free, or listening after a resume,
+and keeps the allocation when they are not. To commit the commands for every
+worktree, declare them in the `ports.commands` setting as argv arrays keyed by
+label; `ports get` records them with the allocation, and Stim runs only the
+recorded copy.
 
 Allocations belong to the nearest directory with a `package.json`, resolved
 through symlinks. In a monorepo whose web app lives in its own package, a
@@ -758,6 +788,15 @@ Copy this prompt into your agent:
 Read stim guide ports. Allocate a web port for this workspace, start the web
 server using that exact port, and verify it is serving this checkout. When
 finished, stop its named port with stim ports stop web.
+```
+
+For a container-backed server:
+
+```text
+Read stim guide ports. Reserve this workspace's database port with stim ports
+get db, recording --stop, --teardown and --resume commands that stop, remove
+and start this workspace's own stack by its id. Start the stack on that port,
+then show the recorded commands with stim ports.
 ```
 
 ## Reverse ports

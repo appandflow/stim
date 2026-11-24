@@ -124,3 +124,4 @@ govern the workflow.
 - [LLP 0024](./0024-fingerprint-package-copies.decision.md) covers how installed package copies become fingerprint inputs.
 - [LLP 0025](./0025-agent-evals.decision.md) covers the on-demand agent eval runner, its scripted `stim` and its graders.
 - [LLP 0026](./0026-printed-remedies.decision.md) covers where the guidance for a refusal lives: the remedy a command prints, and the few procedures `stim guide errors` keeps.
+- [LLP 0027](./0027-named-port-servers.decision.md) covers the commands that stop, tear down and resume the servers on named ports.

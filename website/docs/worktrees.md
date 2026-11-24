@@ -60,7 +60,7 @@ stim worktree remove`}
 
 Stim reclaims owned resources and removes the linked checkout. It refuses uncommitted, untracked or unpushed work and initialized submodules unless you pass `--force`. A Git-locked worktree, a worktree containing another worktree, or one providing your running CLI or server is protected even with `--force`. Git-created branches stay.
 
-From a linked worktree's app subdirectory, removal reclaims that app's environment and leaves the checkout. From the source checkout root, it reclaims the Stim environments and leaves the source checkout. If you deleted a worktree outside Stim, pass its missing path to `stim worktree remove` to reclaim its resources. Use `stim ports stop` separately to stop any server you started on a [named port](./dev-server-and-logs.md#named-server-ports).
+From a linked worktree's app subdirectory, removal reclaims that app's environment and leaves the checkout. From the source checkout root, it reclaims the Stim environments and leaves the source checkout. If you deleted a worktree outside Stim, pass its missing path to `stim worktree remove` to reclaim its resources. Removal runs the teardown or stop command a [named port](./dev-server-and-logs.md#named-server-ports) recorded; use `stim ports stop` first for a server without one.
 
 ## Remove finished worktrees in bulk
 
