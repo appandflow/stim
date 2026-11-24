@@ -592,6 +592,35 @@ describe('the pressure ladder', () => {
     remeasure,
   });
 
+  test('a kept action is returned for the snapshot but not logged, while a deleted one is logged', async () => {
+    vi.spyOn(sweep, 'planRung6').mockResolvedValue({
+      actions: [{ kind: 'would-delete-trash', target: home, bytes: 1, reason: 'owned trash' }],
+      blocked: [],
+      skips: [],
+    });
+    const execute = vi.spyOn(acting, 'executeAction');
+    const tick = () =>
+      runLadder(
+        {
+          ...input(true, async () => pressure('high')),
+          fromRung: 6,
+          lastRung: 6,
+          force: { level: 'high', why: 'requested level' },
+        },
+        pressure('high'),
+      );
+    execute.mockResolvedValue({ status: 'kept', bytes: 0, detail: 'busy' });
+    expect((await tick()).actions).toContainEqual(expect.objectContaining({ outcome: 'kept', detail: 'busy' }));
+    expect(log.mock.calls.filter(([, event]) => event === 'pressure_action')).toEqual([]);
+    execute.mockResolvedValue({ status: 'done', bytes: 0, detail: 'ready' });
+    await tick();
+    expect(
+      log.mock.calls
+        .filter(([, event]) => event === 'pressure_action')
+        .map(([level, , , fields]) => [level, fields?.outcome]),
+    ).toEqual([['info', 'done']]);
+  });
+
   test.each([
     ['high', 'critical', 'automatic'],
     ['critical', 'high', 'automatic'],
@@ -2485,10 +2514,12 @@ describe('the pressure ladder', () => {
     const device = statSync(home).dev;
     vi.spyOn(daemonMeasure, 'measureDisk').mockResolvedValue([{ volume: '/', freeMb: 100 * 1024, device }]);
     const real = getExecutor();
+    const sized: unknown[] = [];
     setExecutor({
       ...getExecutor(),
       runFileAsync: async (file, args, options) => {
         if (file === 'du' && args.at(-1) === buildCache()) throw Object.assign(new Error('du: denied'), { status: 1 });
+        if (file === 'du') sized.push(args.at(-1));
         if (file === 'du' && args.at(-1) === metroCache()) return `${4 * 1024 * 1024}\t${metroCache()}\n`;
         return real.runFileAsync(file, args, options);
       },
@@ -2502,13 +2533,7 @@ describe('the pressure ladder', () => {
       protectedRoot: join(projects, 'build'),
     });
 
-    const reached = readFileSync(daemonNdjsonFile(), 'utf8')
-      .split('\n')
-      .filter(Boolean)
-      .map((line): { event?: unknown; target?: unknown } => JSON.parse(line))
-      .filter((record) => record.event === 'pressure_action')
-      .map((record) => record.target);
-    expect(reached).toEqual([buildCache(), metroCache()]);
+    expect(sized).toContain(metroCache());
     expect(existsSync(join(buildCache(), 'ios', 'unused'))).toBe(true);
   });
 
@@ -2545,10 +2570,7 @@ describe('the pressure ladder', () => {
       .filter(Boolean)
       .map((line): { event?: unknown; target?: unknown; outcome?: unknown } => JSON.parse(line))
       .filter((record) => record.event === 'pressure_action');
-    expect(reached).toEqual([
-      expect.objectContaining({ target: buildCache(), outcome: 'kept' }),
-      expect.objectContaining({ target: metroCache(), outcome: 'done' }),
-    ]);
+    expect(reached).toEqual([expect.objectContaining({ target: metroCache(), outcome: 'done' })]);
     expect(existsSync(transform)).toBe(false);
   });
 

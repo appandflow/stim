@@ -2688,9 +2688,10 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   rung 6.
   Memory never refuses: it holds boots (\`guide lifecycle concurrency\`).
 
-  Every action goes to $STIM_HOME/daemon/daemon.ndjson and to the workspace's
+  Every action that was taken, planned or failed goes to $STIM_HOME/daemon/daemon.ndjson and to the workspace's
   metro.ndjson as a pressure_action record with its reason, bytes freed and
-  the command that brings back what it removed. daemon.mode report logs each
+  the command that brings back what it removed. A kept target is not logged each tick; the
+  daemon snapshot and \`stim gc --dry-run\` list it with its reason. daemon.mode report logs each
   action it would take and acts on nothing; daemon.mode off runs no rung.
   \`stim gc --dry-run\` shows what a run would do now, with
   sizes; \`stim gc\` runs the ladder at the measured level,
