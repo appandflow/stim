@@ -276,7 +276,7 @@ describe('watchChangeKey', () => {
         pid: 123,
         cpu: 198,
         rss: 1024,
-        commands: ['sudo kill -TERM 123', 'stim service install --helper'],
+        commands: ['stim service install --helper'],
       },
     ],
     restarts: [],

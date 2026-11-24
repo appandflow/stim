@@ -1824,7 +1824,7 @@ test('status reports a runaway Apple service with both remedies in plain and JSO
               pid: 123,
               cpu: 198,
               rss: 1024,
-              commands: ['sudo kill -TERM 123', 'stim service install --helper'],
+              commands: ['stim service install --helper'],
             },
           ],
           restarts: [],
@@ -1836,18 +1836,17 @@ test('status reports a runaway Apple service with both remedies in plain and JSO
   assert(
     lines.some(
       (line) =>
-        line.includes('Apple service PerfPowerServices (pid 123)') &&
-        line.includes('sudo kill -TERM 123') &&
-        line.includes('stim service install --helper'),
+        line.includes('Apple service PerfPowerServices (pid 123)') && line.includes('stim service install --helper'),
     ),
   );
+  assert(!lines.some((line) => line.startsWith('Apple service') && line.includes('kill')));
   assert(!lines.some((line) => line.includes('Apple service PerfPowerServices (pid 124)')));
   const payload = await runStatusJson();
   expect(payload.appleServices.warnings).toEqual([
     expect.objectContaining({
       name: 'PerfPowerServices',
       pid: 123,
-      commands: ['sudo kill -TERM 123', 'stim service install --helper'],
+      commands: ['stim service install --helper'],
     }),
   ]);
 });
@@ -1870,7 +1869,7 @@ test('idle status uses stimd observations without another process listing and di
             pid: 123,
             cpu: 198,
             rss: 1024,
-            commands: ['sudo kill -TERM 123', 'stim service install --helper'],
+            commands: ['stim service install --helper'],
           },
         ],
         restarts: [],
@@ -1932,7 +1931,7 @@ test.each([
                 pid: 123,
                 cpu: 198,
                 rss: 1024,
-                commands: ['sudo kill -TERM 123', 'stim service install --helper'],
+                commands: ['stim service install --helper'],
               },
             ],
             restarts: [],
@@ -1941,7 +1940,7 @@ test.each([
       }),
     );
     const lines = await runStatus();
-    expect(lines.some((line) => line.includes('sudo kill -TERM 123'))).toBe(!healthy);
+    expect(lines.some((line) => line.includes('stim service install --helper'))).toBe(!healthy);
     expect(lines.some((line) => line.includes('registered but not running/healthy'))).toBe(!healthy);
     expect(lines.join('\n')).toContain(heartbeat && 'error' in heartbeat ? heartbeat.error : '');
     const payload = await runStatusJson();

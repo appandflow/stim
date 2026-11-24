@@ -1269,8 +1269,7 @@ This reports a restart request, not proof of launchd's replacement.
 
 Only the home maintenance pass samples Apple services, reusing its process
 table for device activity. stimd names an allowlisted process over either limit
-on two consecutive samples and logs the same advice status shows: the one-off
-sudo kill -TERM <pid> for that process and stim service install --helper.
+on two consecutive samples and logs the same advice status shows: stim service install --helper.
 Status reads these observations for up to ten minutes and never warns from its
 own process sample. stimd never sends a signal to these services. An enabled
 helper's recent restart receipts appear in plain and JSON status and daemon logs. An approval-pending helper remains

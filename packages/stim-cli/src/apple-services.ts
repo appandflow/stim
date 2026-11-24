@@ -107,7 +107,7 @@ export function appleServicesStatus(
                 pid: row.pid,
                 cpu: row.cpuPercent,
                 rss: row.rssKb * 1024,
-                commands: [`sudo kill -TERM ${row.pid}`, 'stim service install --helper'],
+                commands: ['stim service install --helper'],
               },
             ];
           }),
@@ -128,7 +128,7 @@ export function appleServicesLines(status?: AppleServicesStatus): string[] {
     ...(health ? [health] : []),
     ...status.warnings.map(
       (row) =>
-        `Apple service ${row.name} (pid ${row.pid}): ${Math.round(row.cpu)}% CPU, ${(row.rss / 1024 ** 3).toFixed(1)} GB RSS; one-off restart: \`${row.commands[0]}\`; enable automatic restarts: \`${row.commands[1]}\``,
+        `Apple service ${row.name} (pid ${row.pid}): ${Math.round(row.cpu)}% CPU, ${(row.rss / 1024 ** 3).toFixed(1)} GB RSS; enable automatic restarts: \`${row.commands[0]}\``,
     ),
     ...status.restarts.map(
       (row) =>

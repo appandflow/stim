@@ -135,7 +135,7 @@ const warning = {
   pid: 123,
   cpu: 198,
   rss: 1024,
-  commands: ['sudo kill -TERM 123', 'stim service install --helper'],
+  commands: ['stim service install --helper'],
 };
 
 test('stimd requires consecutive high samples and logs only warning transitions and new restart receipts', () => {
@@ -200,7 +200,7 @@ test('measureTick samples Apple services only when the home pass opts in', async
       pid: 123,
       cpu: 198,
       rss: 1024 * 1024,
-      commands: ['sudo kill -TERM 123', 'stim service install --helper'],
+      commands: ['stim service install --helper'],
     },
   ]);
   expect(calls).toContain('ps');

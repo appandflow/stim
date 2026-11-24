@@ -1281,8 +1281,7 @@ not change device ownership or teardown. The helper runs independently of
 `daemon.mode` and `STIM_HOME` until you unregister it.
 
 Without a healthy helper, `stim status` and the daemon log show excess usage
-and suggest both `sudo kill -TERM <pid>` for a one-off restart and
-`stim service install --helper`. Stimd never kills these services itself.
+and suggest `stim service install --helper` for automatic restarts. Stimd never kills these services itself.
 Registration suppresses warnings only while a successful heartbeat is less than
 three minutes old. A missing, stale or failed heartbeat keeps the warning; check
 `/Library/Logs/Stim/helper.heartbeat` and `/Library/Logs/Stim/helper.err`.

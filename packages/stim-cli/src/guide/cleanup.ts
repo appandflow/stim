@@ -443,9 +443,8 @@ signals WindowServer, launchd, coreaudiod, CoreSimulator or any other process.
 This explicit opt-in exception does not change owned-device teardown.
 
 Without a healthy helper, stimd requires two consecutive excessive samples.
-Status uses these observations for up to 10 minutes. Both suggest sudo kill -TERM <pid> for a one-off
-restart of that process, and stim service install --helper for automatic restarts.
-Never run either without
+Status uses these observations for up to 10 minutes. Both suggest
+stim service install --helper for automatic restarts. Never run it without
 the user's authorization. stimd never kills these processes itself. The helper
 runs independently of daemon.mode and STIM_HOME until unregistered.
 
