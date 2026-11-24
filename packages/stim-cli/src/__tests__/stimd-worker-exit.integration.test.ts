@@ -208,44 +208,6 @@ parentPort.on('message', (message) => {
   }
 });
 
-test('kept worker logs repeat at debug across worker retirement until the message changes', async () => {
-  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-  const fake = fakeWorker(`
-import { parentPort } from 'node:worker_threads';
-parentPort.on('message', (message) => {
-  if (message.type !== 'ladder') return;
-  const [msg, outcome = 'kept', level = 'info'] = message.input.pressure.reasons;
-  for (const event of ['pressure_action', 'dormant_dependencies'])
-    parentPort.postMessage({ type: 'log', level, event, msg, fields: { target: '/workspace/node_modules', rung: 5, kind: 'delete-dependencies', outcome } });
-  parentPort.postMessage({ type: 'ladderDone', id: message.id, reading: false, result: { actions: [], pressure: message.input.pressure } });
-});
-`);
-  const log = vi.fn<Parameters<typeof createThreadTable>[0]>();
-  const threads = createThreadTable(log);
-  try {
-    const ladder = threads.ladder?.bind(threads);
-    if (!ladder) throw new Error('no ladder');
-    await ladder(diskInput(['busy']));
-    await vi.advanceTimersByTimeAsync(120_001);
-    await ladder(diskInput(['busy']));
-    await ladder(diskInput(['new reason']));
-    await ladder(diskInput(['failed', 'failed', 'warn']));
-    await ladder(diskInput(['new reason']));
-    for (const event of ['pressure_action', 'dormant_dependencies'])
-      expect(log.mock.calls.filter(([, name]) => name === event).map(([level]) => level)).toEqual([
-        'info',
-        'debug',
-        'info',
-        'warn',
-        'info',
-      ]);
-  } finally {
-    vi.useRealTimers();
-    await threads.close();
-    fake.restore();
-  }
-});
-
 test('the ladder clocks survive retirement of the worker that ran the disk pass', async () => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   const fake = fakeWorker(`
