@@ -111,7 +111,7 @@ load near its core count by design, so the reduction would cut the count back
 to 1 in exactly the case the setting exists for. The operator who sets both
 values has already chosen the total: at most
 `concurrency.maxTests x concurrency.testWorkers` workers, which the test slots
-enforce.
+enforce for every run that is not nested in another `stim test` run.
 
 Maintainer decision: "Can worker count be configured", 2026-11-24
 ([#6223](https://github.com/appandflow/stim/issues/6223)).

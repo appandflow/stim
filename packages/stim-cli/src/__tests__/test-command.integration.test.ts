@@ -164,7 +164,9 @@ describe.skipIf(process.platform === 'win32')('stim test', () => {
     expect(fixed.stderr).toMatch(/2 workers \(set by concurrency\.testWorkers\) through --maxWorkers=2/);
     const kept = await start(['--', 'jest', '-w', '3'], { STIM_MAX_TESTS: '4' }).done;
     expect(ran(kept.stdout).argv).toEqual(['-w', '3']);
-    expect(kept.stderr).toContain('no worker count passed: the command already sets Jest workers');
+    expect(kept.stderr).toMatch(
+      /no worker count passed: the command already sets Jest workers.*\(concurrency\.testWorkers 2\)/,
+    );
     const derived = await start(['--', 'npx', 'jest'], { STIM_TEST_WORKERS: '0' }).done;
     expect(derived.stderr).toMatch(/\d+ workers \(\d+ cores, 1 test slot, load [\d.]+\) through --maxWorkers=\d+/);
   }, 60_000);

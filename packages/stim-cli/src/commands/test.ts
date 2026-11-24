@@ -352,14 +352,12 @@ async function runTest(
       applied: plan.applied,
       skipped: plan.skipped,
     });
-    const basis = fixed
-      ? 'set by concurrency.testWorkers'
-      : `${cores} cores, ${slots} test slot${slots === 1 ? '' : 's'}, load ${load1}`;
+    const basis = `${cores} cores, ${slots} test slot${slots === 1 ? '' : 's'}, load ${load1}`;
     note(
       context,
       plan.applied
-        ? `${workers} workers (${basis}) through ${plan.applied}`
-        : `no worker count passed: ${plan.skipped} (${basis})`,
+        ? `${workers} workers (${fixed ? 'set by concurrency.testWorkers' : basis}) through ${plan.applied}`
+        : `no worker count passed: ${plan.skipped} (${fixed ? `concurrency.testWorkers ${fixed}` : basis})`,
     );
     const result = await runCommand(context, plan.argv, dir, { ...env, STIM_TEST_RUN: marker }, slot !== undefined);
     retain = result.survivors;
