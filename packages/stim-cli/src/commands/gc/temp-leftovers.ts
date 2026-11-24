@@ -5,7 +5,6 @@ import { basename, dirname, join, relative, resolve, sep, isAbsolute } from 'nod
 import chalk from 'chalk';
 import { readClaimSet } from '@stim-cli/core/ownership-claim';
 import { isJsonObject } from '@stim-cli/core/state';
-import { resolveAgentDevice } from '@stim-cli/agent-driver-agent-device/agent-device-bin';
 import { getExecutor } from '../../exec.ts';
 import { formatBytes } from '../../fs-util.ts';
 import { plural } from '../../command-output.ts';
@@ -224,6 +223,7 @@ async function agentDeviceDaemonState(
   signal: AbortSignal | undefined,
   operation: StimContext | undefined,
 ): Promise<string | null> {
+  const { resolveAgentDevice } = await import('@stim-cli/agent-driver-agent-device/agent-device-bin');
   let invocation;
   try {
     invocation = resolveAgentDevice(process.env);
