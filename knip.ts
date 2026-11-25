@@ -43,6 +43,7 @@ export default ({ production }: { production?: boolean }): KnipConfig => ({
       ignore: ['bin/route.d.mts'],
       entry: ['src/injected/*.cjs', ...Object.values(buildEntries).map((entry) => `${entry}!`)],
       ignoreBinaries: ['mkfifo', 'clang'],
+      node: false,
       // tsdown bundles the workspace packages; their bare unique-pid import stays external.
       ignoreDependencies: production ? ['@stim-cli/*', 'unique-pid'] : [],
     },
