@@ -12,7 +12,7 @@ import {
   type Match,
 } from '../graders.ts';
 import { REPO_ROOT } from '../trial.ts';
-import type { EvalCase, GradeInput, Invocation, ScriptRule } from '../types.ts';
+import type { Check, EvalCase, GradeInput, Invocation, ScriptRule } from '../types.ts';
 import { expoApp, workspaceRules } from './fixtures.ts';
 
 function websitePrompt(page: string, title: string): string {
@@ -58,17 +58,27 @@ const NO_ERRORS: ScriptRule = {
 
 const LOGS_ERRORS: Match = { argv: ['logs'], predicate: (each) => each.argv.includes('--errors') };
 
-function guided(input: GradeInput, action: Match): ReturnType<typeof ran>[] {
-  return [
-    ran(input, action),
-    exitedBefore(input, { argv: ['guide'] }, action),
-    atMostUnscripted(input, 2),
-    observe('guide bytes read', guideBytes(input.invocations)),
-  ];
+function guideFirst(input: GradeInput): Check {
+  return exitedBefore(input, { argv: ['guide', 'agent'] }, { argv: [], predicate: (each) => each.argv[0] !== 'guide' });
 }
 
 function launches(input: GradeInput): Invocation[] {
   return input.invocations.filter((each) => matches(each, IOS_LAUNCH));
+}
+
+function guided(input: GradeInput, action: Match, everyLaunch = false): Check[] {
+  const offTarget = everyLaunch ? launches(input).filter((each) => !matches(each, action)) : [];
+  return [
+    ran(input, action),
+    guideFirst(input),
+    {
+      name: 'every stim ios launch targets the requested device',
+      pass: offTarget.length === 0,
+      detail: offTarget.map((each) => each.argv.join(' ')).join(' | ') || 'none',
+    },
+    atMostUnscripted(input, 2),
+    observe('guide bytes read', guideBytes(input.invocations)),
+  ];
 }
 
 const simulator: EvalCase = {
@@ -77,14 +87,18 @@ const simulator: EvalCase = {
   workspace: { files: expoApp('demo') },
   script: [...workspaceRules, IOS_OK],
   grade(input) {
-    return guided(input, {
-      ...IOS_LAUNCH,
-      predicate: (each) =>
-        IOS_LAUNCH.predicate!(each) &&
-        flag(each.argv, '--device-type') === 'iPhone 17' &&
-        String(flag(each.argv, '--runtime')).includes('26.5') &&
-        flag(each.argv, '--device') === undefined,
-    });
+    return guided(
+      input,
+      {
+        ...IOS_LAUNCH,
+        predicate: (each) =>
+          IOS_LAUNCH.predicate!(each) &&
+          flag(each.argv, '--device-type') === 'iPhone 17' &&
+          String(flag(each.argv, '--runtime')).includes('26.5') &&
+          flag(each.argv, '--device') === undefined,
+      },
+      true,
+    );
   },
 };
 
@@ -94,13 +108,17 @@ const phone: EvalCase = {
   workspace: { files: expoApp('demo') },
   script: [...workspaceRules, IOS_OK],
   grade(input) {
-    return guided(input, {
-      ...IOS_LAUNCH,
-      predicate: (each) =>
-        IOS_LAUNCH.predicate!(each) &&
-        flag(each.argv, '--device') !== undefined &&
-        flag(each.argv, '--device-type') === undefined,
-    });
+    return guided(
+      input,
+      {
+        ...IOS_LAUNCH,
+        predicate: (each) =>
+          IOS_LAUNCH.predicate!(each) &&
+          flag(each.argv, '--device') !== undefined &&
+          flag(each.argv, '--device-type') === undefined,
+      },
+      true,
+    );
   },
 };
 
@@ -120,13 +138,14 @@ const recentErrors: EvalCase = {
 const WORKTREE_CONTEXT =
   ' The change: in App.tsx, replace the text Hello with Hello, Stim. Create the worktree under .worktrees/ in this checkout.';
 
+const inWorktree = (each: Invocation) => /^\.worktrees\/[^/]+$/.test(each.cwdRelative);
+
 const separateWorktree: EvalCase = {
   id: 'website-worktree',
   prompt: websitePrompt('getting-started', 'Work in parallel') + WORKTREE_CONTEXT,
   workspace: { files: expoApp('demo') },
   script: [...workspaceRules, IOS_OK, NO_ERRORS],
   grade(input) {
-    const inWorktree = (each: Invocation) => /^\.worktrees\/[^/]+$/.test(each.cwdRelative);
     const warms = input.invocations.filter(
       (each) => inWorktree(each) && matches(each, { argv: ['worktree', 'warm'], exit: 0 }),
     );
@@ -178,7 +197,7 @@ const slots: EvalCase = {
         detail: wrong.map((each) => each.argv.join(' ')).join(' | ') || 'none',
       },
       { name: 'left the devices running', pass: stops.length === 0, detail: `${stops.length} stim stop` },
-      exitedBefore(input, { argv: ['guide'] }, IOS_LAUNCH),
+      guideFirst(input),
       atMostUnscripted(input, 2),
       observe('ran stim logs --errors after a launch', ranAfter(input, IOS_LAUNCH, LOGS_ERRORS).pass),
       observe('guide bytes read', guideBytes(input.invocations)),

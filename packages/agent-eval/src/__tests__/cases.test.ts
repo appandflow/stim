@@ -358,8 +358,13 @@ test.each([
   expect(grade(id, [guideAgent(), ...argvs.map((argv) => call(argv))])).toBe(expected);
 });
 
-test('website prompts fail when the action comes before the guide', () => {
+test('website prompts fail when any stim action comes before the guide', () => {
   expect(grade('website-phone', [call(['ios', '--device']), guideAgent()])).toBe(false);
+  expect(grade('website-phone', [call(['ios']), guideAgent(), call(['ios', '--device'])])).toBe(false);
+});
+
+test('website phone fails when another launch targets a simulator', () => {
+  expect(grade('website-phone', [guideAgent(), call(['ios']), call(['ios', '--device'])])).toBe(false);
 });
 
 test('website slots fail when the devices are stopped', () => {
