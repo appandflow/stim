@@ -356,7 +356,9 @@ export async function collectTempLeftovers({
     const launches = kind === 'stim' && name.startsWith(AGENT_DEVICE_LAUNCHES) ? await launchDirs(path) : [];
     // compat C34 until 2.1.0
     const legacy = kind === 'stim' && name.startsWith(AGENT_DEVICE_LAUNCHES) ? await legacyPaths(path, launches) : null;
+    // compat end
     if (launches.length || legacy) {
+      // compat C34 until 2.1.0
       if (legacy) {
         const { bytes, kept } = await judgeDaemonState(legacy, path, now, signal, operation);
         entries.push({ kind, path, bytes, willDelete: kept === null, kept });
@@ -452,7 +454,9 @@ export async function deleteTempLeftovers(
           continue;
         }
         for (const path of agentDevice.paths) await removeTemporaryEntryAsync(path, options.signal);
+        // compat C34 until 2.1.0
         if (agentDevice.stateDir === entry.path) await rmdir(entry.path).catch(() => {});
+        // compat end
         done.count++;
         done.bytes += entry.bytes;
         continue;

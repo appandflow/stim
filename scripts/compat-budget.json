@@ -108,7 +108,7 @@
     "C34": {
       "loc": 23,
       "end": "2.1.0",
-      "mechanism": "a hosted agent-device launch retires, and gc judges, the daemon state 2.0.0-rc.3 kept in the launch root itself"
+      "mechanism": "on a host whose stim-server ran 2.0.0-rc.3, a hosted agent-device launch retires, and gc judges and removes, the daemon state rc.3 kept in the launch root itself"
     }
   },
   "words": {
