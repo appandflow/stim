@@ -39,6 +39,17 @@ never appears in arguments, environment or output.
 
 The OS-owned socket establishes the local user. The separate bootstrap proof reserves privileged Desktop actions for the matching-home client, even when another local process can open that socket. [Single engine per home](https://github.com/appandflow/stim/pull/5380).
 
+## A paired device renames only itself
+
+A paired device with read access may rename its own record through
+`device.rename`, using the id from its own `hello.device.id`. It cannot rename
+another record or change its capabilities. The name follows the
+`stim-server devices rename` rule. Every attempt is written to the action log.
+
+> Maintainer decision, Nov 13: allow a paired phone with view access to rename only its own display name on that machine. Validate the name and audit the change. Access permissions remain separate.
+
+[Issue 5035](https://github.com/appandflow/stim/issues/5035).
+
 ## Code
 
 - [Network admission](../packages/server/src/server.ts), [Desktop proof](../packages/server/src/desktop-bootstrap.ts), and [device and machine records](../packages/server/src/registry.ts).

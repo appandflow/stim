@@ -1924,6 +1924,79 @@ describe('push.register', () => {
   });
 });
 
+describe('device.rename', () => {
+  it('renames its own record with view access and returns the stored name on a new hello', async () => {
+    const port = await start();
+    const { id, keyPair } = await pair(port);
+    const before = readDevices()[0];
+    assert(before);
+    expect(before.capabilities).toEqual(['read']);
+    const client = await returning(port, keyPair);
+    expect(await client.request('device.rename', { id, name: '  Kitchen iPad  ' })).toEqual({
+      id: 2,
+      result: { name: 'Kitchen iPad' },
+    });
+    expect(readDevices()[0]).toMatchObject({ name: 'Kitchen iPad', capabilities: ['read'] });
+    expect(readAudit()).toContainEqual(
+      expect.objectContaining({
+        action: 'device.rename',
+        device: { id, name: before.name },
+        workspace: null,
+        ok: true,
+        name: 'Kitchen iPad',
+      }),
+    );
+    const again = await connect(port, undefined, { keyPair });
+    expect(await again.request('hello', { client: CLIENT })).toMatchObject({
+      result: { device: { id, name: 'Kitchen iPad' }, capabilities: ['read'] },
+    });
+  });
+
+  it('refuses to rename another device', async () => {
+    const port = await start();
+    const first = await authed(port);
+    await pair(port);
+    const before = readDevices();
+    const other = before[1];
+    assert(other);
+    expect(await first.request('device.rename', { id: other.id, name: 'Other' })).toMatchObject({
+      error: { code: 'forbidden' },
+    });
+    expect(readDevices()).toEqual(before);
+    expect(readAudit()).toContainEqual(
+      expect.objectContaining({
+        action: 'device.rename',
+        ok: false,
+        error: {
+          code: 'forbidden',
+          message: "device.rename renames only this connection's own record.",
+        },
+      }),
+    );
+    expect(readAudit()[0]).not.toHaveProperty('name');
+  });
+
+  it.each(['   ', 'Kitchen\niPad', 'x'.repeat(65)])('refuses invalid name %j', async (name) => {
+    const port = await start();
+    const client = await authed(port);
+    const before = readDevices();
+    const own = before[0];
+    assert(own);
+    expect(await client.request('device.rename', { id: own.id, name })).toMatchObject({
+      error: { code: 'bad-request' },
+    });
+    expect(readDevices()).toEqual(before);
+    expect(readAudit()).toContainEqual(
+      expect.objectContaining({
+        action: 'device.rename',
+        ok: false,
+        error: { code: 'bad-request', message: 'The name must be 1 to 64 characters of printable text on one line.' },
+      }),
+    );
+    expect(readAudit()[0]).not.toHaveProperty('name');
+  });
+});
+
 describe('workspace diff reads', () => {
   it('serves a registered worktree to a read-only paired phone without exposing another directory', async () => {
     execFileSync('git', ['init', '-q', workspace]);
