@@ -547,6 +547,13 @@ the Metro cache, and no agent-device daemon may still be running in that
 workspace's directory. If both names exist, Stim uses the new one and leaves the old one where it is,
 and `gc` measures and trims it like the cache it was.
 
+The rename is one-way. After `stim engine rollback` to a release from before
+it, the older engine sees only the old names: its builds and dev servers start
+with cold caches, its `gc` does not measure the `.noindex` folders, and its
+`worktree remove` can empty a workspace while an agent-device daemon still runs
+in `agent-device.noindex`. Stop agent-device sessions before rolling back past
+this release.
+
 A path you set yourself never moves: `caches.metroCache`, `STIM_METRO_CACHE` and
 `server.workerRoot` stay as they are. The build worker's default root,
 `$STIM_HOME/build-worker`, keeps its name, since its checkouts hold absolute

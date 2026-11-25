@@ -78,9 +78,30 @@ build that resolved the old path just before the rename refills it, or an
 agent keeps the `AGENT_DEVICE_STATE_DIR` printed before the rename. Stim then
 uses the new folder and never merges, moves or deletes the old one for being
 old. Maintenance measures an old shared cache folder under its category and
-trims or empties it like the cache, and every reader of workspace agent-device
-state (activity, the action follower, usage, session close and workspace
-removal) reads both names.
+trims or empties it like the cache. Every reader of workspace agent-device
+state reads both names: device activity, the agent-action reader and its
+follower, agent-device usage, the idle stop's session times, owned-session
+close, the daemon stop and archive of workspace removal (which merges both
+`sessions` folders into the archive's `agent-device/sessions`, numbering a
+session name found in both instead of overwriting it), and gc's leftover
+check. `stim agent-device` reads only the directory it hands agent-device for
+that run.
+
+## Rolling back past this layout
+
+The rename is one-way. An engine from before it, reached with `stim engine
+rollback` or an older install on the same home, knows only the old names:
+
+- it creates and fills `metro-cache`, `compilation-cache` and `ccache` again,
+  so its builds and dev servers start cold;
+- its gc and maintenance neither measure nor trim the `*.noindex` folders;
+- its `worktree remove` and reclaim look for a daemon only in
+  `agent-device/daemon.json`, so they can empty a workspace while a daemon
+  still runs in `agent-device.noindex`, and they archive only the old
+  `sessions` folder.
+
+This is a known limitation of rolling back past this release; going forward
+again finds both names and uses the new ones, as above.
 
 Reason: a rename under a running dev server, build or daemon sends its writes
 to a new copy of the old path, and a copy-then-delete of a multi-GB cache could

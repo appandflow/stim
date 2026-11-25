@@ -334,7 +334,7 @@ kind or label.
 CLEANUP AND DISK
 
 worktree remove stops the agent-device daemon when the workspace's
-agent-device/daemon.json exists, then removes its state directory with the
+agent-device(.noindex)/daemon.json exists, then removes its state directory with the
 workspace. If agent-device is missing or the stop fails, it keeps the directory
 and reports the retry command: agent-device daemon stop --state-dir <dir> --clean.
 A daemon.json whose process is gone is stale and does not block removal.
@@ -2036,12 +2036,12 @@ SHARED BUILD CACHES
   Spotlight out of them: metro-cache.noindex, compilation-cache.noindex and
   ccache.noindex, and agent-device.noindex in each workspace. A home that
   still has the old names keeps using them until stimd renames each folder
-  (daemon.mode on, not report), once no build, dev server or agent-device
-  daemon holds it. An old folder left
-  beside its new name stays, and gc measures and trims it like the cache.
+  (daemon.mode on), once no build, dev server or agent-device daemon holds
+  it. An old folder left beside its new name stays, and gc measures and
+  trims it like the cache.
   A path that caches.metroCache, STIM_METRO_CACHE or server.workerRoot
-  names never moves; set server.workerRoot to a *.noindex path to keep a
-  build worker's checkouts out of Spotlight.
+  names never moves; set server.workerRoot to a *.noindex path to keep
+  worker checkouts out of Spotlight.
 
   The Gradle build cache under GRADLE_USER_HOME (default ~/.gradle) is
   report-only as a registered cache because every Gradle build shares it:
