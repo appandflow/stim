@@ -5,6 +5,8 @@ import Foundation
 /// Rotate Right do. Returns false when the simulator cannot be reached.
 /// A CoreSimulator lookup and input activation can block; call this off the main thread.
 public enum SimulatorRotation {
+  /// Posted after `rotate` turned a simulator; the object is its udid.
+  public static let didRotate = Notification.Name("SimulatorRotation.didRotate")
   private static let lock = NSLock()
   private static var sent: [String: UInt32] = [:]
 
@@ -45,6 +47,7 @@ public enum SimulatorRotation {
     lock.lock()
     sent[udid] = next
     lock.unlock()
+    NotificationCenter.default.post(name: didRotate, object: udid)
     return true
   }
 
