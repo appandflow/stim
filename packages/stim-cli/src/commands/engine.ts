@@ -171,7 +171,7 @@ const uninstall = defineOp({
     } catch {}
     console.log(
       kept.length
-        ? `Removed the engine pointer; ${root} keeps ${kept.join(', ')}, which a running stim still uses; delete it once that stops.`
+        ? `Removed the engine pointer; ${root} keeps ${kept.join(', ')}; delete them once no stim runs from ${root}.`
         : `Removed ${root}.`,
     );
   },
