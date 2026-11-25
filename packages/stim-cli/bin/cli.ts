@@ -71,7 +71,10 @@ export async function main(argv: string[], ctx: MainContext = {}): Promise<void>
 
   let end: (() => unknown) | undefined;
   let exitCode: number | undefined;
-  const json = argv.includes('--json') && argv[2] !== 'logs' && !(argv[2] === 'status' && argv.includes('--watch'));
+  const json =
+    argv.slice(0, terminator(argv)).includes('--json') &&
+    argv[2] !== 'logs' &&
+    !(argv[2] === 'status' && argv.includes('--watch'));
   const originalWrite = process.stdout.write;
   let stdoutWritten = false;
   if (json) {
@@ -113,7 +116,7 @@ export async function main(argv: string[], ctx: MainContext = {}): Promise<void>
       });
       if ('refusal' in entered) {
         const { refusal } = entered;
-        if (argv.includes('--json')) console.log(JSON.stringify(refusal));
+        if (argv.slice(0, terminator(argv)).includes('--json')) console.log(JSON.stringify(refusal));
         console.error(`${refusal.code}: ${refusal.message}`);
         console.error(refusal.remedy);
         process.exit(1);
