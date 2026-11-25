@@ -52,6 +52,10 @@ FIELDS
                   id>, stable for the workspace path, for per-workspace
                   container and volume names
   env             more variables; values may use placeholders
+  envFile         a dotenv file relative to the workspace, inside its
+                  checkout, read at each launch; env, ports and idEnv win.
+                  Its values stay out of Stim state and services env; the
+                  orphan teardown runs without it
   cwd             its folder, relative to the workspace (default the
                   workspace), anywhere in its checkout, e.g. ../api
   dependsOn       services started before it and stopped after it; naming

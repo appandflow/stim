@@ -799,6 +799,13 @@ process identity. A service with a `stop` command manages itself (`docker
 compose up -d`, a database CLI), and Stim runs its `stop`, `teardown` and
 `orphanTeardown` commands instead.
 
+`envFile` names a dotenv file, relative to the workspace and inside its
+checkout, for secrets kept out of `.stim.json`. Stim reads it each time it runs
+one of the service's commands or starts its process; `env`, ports and `idEnv`
+win over it, and a missing file fails the command. Only its path is recorded,
+so its values stay out of Stim state and `stim services env`. The orphan
+teardown runs without it.
+
 Each start, including a restart from `stim revive`, waits for a slot shared
 with native builds under `concurrency.maxBuilds`. Queue progress goes to stderr,
 also with `--json`. The slot covers the start command and readiness wait only
