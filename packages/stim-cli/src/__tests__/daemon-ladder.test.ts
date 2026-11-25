@@ -12,6 +12,7 @@ import {
   realpathSync,
   rmSync,
   statSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs';
@@ -28,6 +29,7 @@ import {
   gcMarkFile,
   readGcMark,
   IDLE_STOP_KEY,
+  readArchives,
   readDormantStage,
   readIdleStage,
   readJsonObject,
@@ -387,6 +389,38 @@ describe('the dormant stage', () => {
       runDormantPass({ config: loadConfig(), act: true, log, devices: [], simsFailed: false, operation }),
     ).rejects.toBe(failure);
     expect(write).toHaveBeenCalledWith(root, 'maintenance', expect.anything(), operation);
+  });
+
+  test('a refused archive leaves the logs in the workspace and the event does not claim them archived', async () => {
+    const root = join(projects, 'refused-archive');
+    mkdirSync(root);
+    ensureWorkspaceStorage(root);
+    upsertProject(root, {});
+    recordWorkspaceUse(root, new Date(Date.now() - 4 * DAY_MS));
+    mkdirSync(workspaceLogsDir(root), { recursive: true });
+    writeFileSync(join(workspaceLogsDir(root), 'metro.ndjson'), '{"kept":true}\n');
+    const outside = join(home, 'outside');
+    mkdirSync(outside);
+    mkdirSync(join(workspaceDir(root), 'agent-device.noindex'));
+    symlinkSync(
+      outside,
+      join(workspaceDir(root), 'agent-device.noindex', 'sessions'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
+    vi.stubEnv('STIM_ARCHIVE_ENABLED', 'true');
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    expect(await dormant()).toEqual([expect.objectContaining({ target: root, outcome: 'done' })]);
+
+    const [kept, event] = readFileSync(join(workspaceLogsDir(root), 'metro.ndjson'), 'utf8')
+      .trim()
+      .split('\n');
+    expect(kept).toBe('{"kept":true}');
+    expect(JSON.parse(event ?? '')).toMatchObject({ event: 'workspace_dormant', archived: false });
+    expect(JSON.parse(event ?? '').msg).not.toContain('archived its logs');
+    expect(readArchives()).toEqual([]);
+    expect(readdirSync(join(home, 'archive')).filter((name) => name.startsWith('.incoming-'))).toEqual([]);
+    expect(readDormantStage(readWorkspaceState(root))).toMatchObject({ archived: false });
   });
 
   test.skipIf(process.platform !== 'darwin')(
