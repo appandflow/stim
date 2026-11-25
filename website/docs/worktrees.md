@@ -66,7 +66,8 @@ From a linked worktree's app subdirectory, removal reclaims that app's environme
 
 Use [`stim worktree list`](./commands.md#worktree-list) to see sizes, age and
 cleanup verdicts without deleting anything; `--all` includes repositories from
-saved maintenance observations.
+saved maintenance observations. `stim doctor` notes the same summary from the
+saved verdicts and sizes, with their age.
 
 <StimTabs
 code={`stim gc --dry-run
