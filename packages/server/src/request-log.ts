@@ -14,7 +14,7 @@ export interface RequestTracker {
   /** The connection's client, once hello names it: the paired device id and the CLI run id, never a token. */
   identify(client: { id: string | null; runId: string | null }): void;
   begin(id: Id, method: string): void;
-  /** A step's duration in ms, or a fixed label such as a report target: never a parameter value. */
+  /** A step's duration in ms, or a fixed label such as a report target: never an unvalidated parameter value. */
   step(id: Id, name: string, value: number | string): void;
   /** Sees every message the server sends on the connection; a reply to a tracked request ends it. */
   reply(message: unknown): void;
