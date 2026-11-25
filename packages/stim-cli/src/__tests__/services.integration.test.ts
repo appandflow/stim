@@ -259,6 +259,24 @@ describe.skipIf(process.platform === 'win32')('workspace services (skipped on wi
     expect(JSON.parse(readFileSync(marker, 'utf8'))).toEqual(['second', port]);
   });
 
+  test('a supervised process gets its envFile variables', async () => {
+    const marker = join(root, 'env-marker');
+    writeFileSync(join(root, '.service.env'), 'SECRET=process\n');
+    declare({
+      worker: {
+        envFile: '.service.env',
+        start: [
+          process.execPath,
+          '-e',
+          `require('fs').writeFileSync(${JSON.stringify(marker)}, process.env.SECRET); setInterval(Object, 1000)`,
+        ],
+      },
+    });
+    expect(await startServices(root, undefined, { operation: ctx() })).toMatchObject([{ outcome: 'started' }]);
+    pids.add(recorded('worker').pid);
+    await expect.poll(() => existsSync(marker) && readFileSync(marker, 'utf8')).toBe('process');
+  }, 30_000);
+
   test('a missing envFile fails the start and names the file', async () => {
     declare({
       broken: { envFile: 'missing.env', start: [process.execPath, '-e', ''], stop: [process.execPath, '-e', ''] },

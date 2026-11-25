@@ -699,9 +699,9 @@ type Transition =
   | { op: 'teardown'; force: boolean }
   | { op: 'forget' };
 
-function byHand(record: ServiceRecord, argv: readonly string[], cwd: string): string {
+function byHand(record: ServiceRecord, argv: readonly string[], cwd: string, envFile = record.envFile): string {
   const env = Object.entries(record.env).map(([key, value]) => `${key}=${value}`);
-  return `run by hand in ${cwd}: ${[...env, ...argv].join(' ')}`;
+  return `run by hand in ${cwd}${envFile ? ` with the variables of ${envFile}` : ''}: ${[...env, ...argv].join(' ')}`;
 }
 
 /** Runs `argv` as one of the service's commands, then checks that its ports closed. */
@@ -798,6 +798,7 @@ async function teardownOne(
     record,
     argv ?? record.teardown ?? record.stop ?? ['kill', '--', `-${record.process?.pid}`],
     cwd,
+    present ? record.envFile : undefined,
   );
   if (failure && !force) {
     const reason = `${failure}; ${shown}`;
