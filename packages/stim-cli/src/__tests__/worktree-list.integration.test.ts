@@ -173,7 +173,9 @@ test('machine listing uses saved observations and leaves unobserved worktrees un
   expect(findings[0]).toMatchObject({ code: 'linked-worktrees', level: 'note' });
   expect(findings[0]?.detail).toContain(`.worktrees/dirty (dirty, ${formatBytes(2 * GIB)}, idle 40d)`);
   expect(findings[0]?.detail).toContain('Verdicts checked 3h ago.');
-  expect(findings[0]?.detail).toContain('checked on this machine: 2 linked worktrees in 1 repository');
+  expect(findings[0]?.detail).toContain(
+    'Here and in the repositories maintenance has checked on this machine: 2 linked worktrees in 1 repository',
+  );
   expect(findings[0]?.detail).toContain('Automatic maintenance is off on this machine (daemon.mode)');
   const error = vi.spyOn(console, 'error').mockImplementation(() => {});
   const output = await run({ all: true, json: true });
@@ -226,11 +228,12 @@ test('doctor omits repositories without linked worktrees or saved marks', async 
 
 const merged = { reason: 'merged into origin/main', at: null };
 test.each([
-  { finished: merged, setting: 'removeFinishedWorktrees', off: true },
-  { finished: null, setting: 'removeIdleWorktrees', off: true },
-  { finished: merged, setting: 'removeIdleWorktrees', off: false },
-])('saved removal with $setting false, finished $finished, is off: $off', async ({ finished, setting, off }) => {
-  save(getConfigPath(), { ...loadConfig(), maintenance: { [setting]: false } });
+  { finished: merged, settings: { removeFinishedWorktrees: false }, off: 'removeFinishedWorktrees is off' },
+  { finished: null, settings: { removeIdleWorktrees: false }, off: 'removeIdleWorktrees is off' },
+  { finished: null, settings: { removeIdleWorktrees: true, olderThanDays: 0 }, off: 'olderThanDays is 0' },
+  { finished: merged, settings: { removeIdleWorktrees: false }, off: null },
+])('saved removal with settings $settings and finished $finished is off: $off', async ({ finished, settings, off }) => {
+  save(getConfigPath(), { ...loadConfig(), maintenance: settings });
   save(gcMarkFile(roots[1]), {
     v: GC_MARK_VERSION,
     root: roots[1],
@@ -257,10 +260,10 @@ test.each([
     willRemove: !off,
     reason: off ? 'removal-off' : null,
   });
-  expect(payload.repositories[0]?.worktrees[0]?.detail?.includes(`maintenance.${setting} is off`)).toBe(off);
+  expect(payload.repositories[0]?.worktrees[0]?.detail?.endsWith(`but maintenance.${off}`)).toBe(Boolean(off));
   expect(payload.total.removeBytes).toBe(off ? 0 : 2 * GIB);
   expect(payload.total.keptBytes).toBe(off ? 2 * GIB : 0);
-  expect((await linkedWorktreeFindings(repository))[0]?.detail.includes('removal-off')).toBe(off);
+  expect((await linkedWorktreeFindings(repository))[0]?.detail.includes('removal-off')).toBe(Boolean(off));
 });
 
 test('live listing keeps a merged registered worktree when removal is off', async () => {

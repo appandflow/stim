@@ -48,14 +48,18 @@ interface Summary {
 function applyRemovalSettings(entry: ListingEntry, finished: boolean, settings: MaintenanceSettings): void {
   if (!entry.willRemove) return;
   const setting = !settings.removeFinishedWorktrees
-    ? 'removeFinishedWorktrees'
-    : !finished && !settings.removeIdleWorktrees
-      ? 'removeIdleWorktrees'
-      : null;
+    ? 'maintenance.removeFinishedWorktrees is off'
+    : finished
+      ? null
+      : !settings.removeIdleWorktrees
+        ? 'maintenance.removeIdleWorktrees is off'
+        : settings.olderThanDays <= 0
+          ? 'maintenance.olderThanDays is 0'
+          : null;
   if (!setting) return;
   entry.willRemove = false;
   entry.reason = 'removal-off';
-  entry.detail = `${entry.detail}; cleanup would remove it but maintenance.${setting} is off`;
+  entry.detail = `${entry.detail}; cleanup would remove it but ${setting}`;
 }
 
 function summarize(entries: ListingEntry[]): Summary {

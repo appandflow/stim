@@ -35,7 +35,7 @@ export async function linkedWorktreeFindings(
     const kept = repo?.worktrees.filter((entry) => entry.willRemove === false && (entry.old || entry.large)) ?? [];
     if (kept.length) {
       const names = kept.slice(0, 3).map((entry) => {
-        const rel = relative(source.path, entry.path);
+        const rel = relative(repo?.repository ?? source.path, entry.path);
         const path = rel && rel !== '..' && !rel.startsWith(`..${sep}`) ? rel : entry.path;
         return `${path} (${entry.reason}, ${entry.realBytes === null ? 'size not measured' : formatBytes(entry.realBytes)}, idle ${entry.idleDays === null ? 'unknown' : `${entry.idleDays}d`})`;
       });
@@ -65,7 +65,7 @@ export async function linkedWorktreeFindings(
         detail.push(`Sizes measured up to ${formatLongDuration(Math.max(0, now - Math.min(...times)))} ago.`);
     }
     detail.push(
-      `In the repositories maintenance has checked on this machine: ${plural(total.count, 'linked worktree')} in ${plural(payload.repositories.filter((entry) => entry.summary.count > 0).length, 'repository', 'repositories')}, ${formatBytes(total.realBytes)} real, ${formatBytes(total.keptBytes)} held by kept ones${total.unmeasured ? `, ${total.unmeasured} not measured` : ''}${total.unchecked ? `, ${total.unchecked} not checked` : ''}.`,
+      `Here and in the repositories maintenance has checked on this machine: ${plural(total.count, 'linked worktree')} in ${plural(payload.repositories.filter((entry) => entry.summary.count > 0).length, 'repository', 'repositories')}, ${formatBytes(total.realBytes)} real, ${formatBytes(total.keptBytes)} held by kept ones${total.unmeasured ? `, ${total.unmeasured} not measured` : ''}${total.unchecked ? `, ${total.unchecked} not checked` : ''}.`,
     );
     return [
       {

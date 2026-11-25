@@ -250,7 +250,8 @@ Old is 30 days idle; large is 1 GiB real.
 Doctor reports one note from saved verdicts and measures only, stating their
 age; it never measures or runs the check. List and doctor describe removals
 disabled by `maintenance.removeFinishedWorktrees` or
-`maintenance.removeIdleWorktrees` as kept with reason `removal-off`.
+`maintenance.removeIdleWorktrees`, and idle removals while
+`maintenance.olderThanDays` is 0, as kept with reason `removal-off`.
 
 [Issue #6365](https://github.com/appandflow/stim/issues/6365)
 
