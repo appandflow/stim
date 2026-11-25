@@ -166,6 +166,7 @@ export const METHODS = [
   'build.cached-artifact',
   'build.attach',
   'job.start',
+  'build.area.drop',
   'device-host.runtime.install',
   'device-host.offer',
   'device-host.reserve',
@@ -220,8 +221,11 @@ export const METHODS = [
  */
 export const ENGINE_UPDATE_METHODS = ['engine.update.status', 'engine.update', 'engine.update.chunk'] as const;
 
-/** The methods a connection with the `build` capability may call; they need `build`, not `read`. */
-export const BUILD_METHODS = ['job.start'] as const;
+/**
+ * The methods a connection with the `build` capability may call; they need `build`, not `read`. `build.area.drop`
+ * asks the machine to drop the caller's own area for a checkout it removed.
+ */
+export const BUILD_METHODS = ['job.start', 'build.area.drop'] as const;
 
 /**
  * The methods a build connection sends after `job.start`: stimd passes them to the job unread, and the job, which runs
@@ -1674,6 +1678,12 @@ export type JobStartParams =
 /** `job` once every later message goes to the job; `upload` when the worker waits for the client's package. */
 export type JobStartResult = { job: string } | { upload: string };
 
+/**
+ * `dropped` once the area is out of use and its deletion has started; otherwise `kept` names why the area stays, and
+ * neither is set when the caller has no area of that name here.
+ */
+export type BuildAreaDropResult = { dropped: true } | { dropped: false; kept?: string };
+
 /** A `.tgz` package of a client-supplied Stim build: its file name, size in bytes and sha256. */
 export interface EngineUpdatePackage {
   name: string;
@@ -2008,6 +2018,7 @@ export interface Methods {
   };
   'build.attach': { params: BuildJobParams; result: BuildAttachResult };
   'job.start': { params: JobStartParams; result: JobStartResult };
+  'build.area.drop': { params: { repo: string }; result: BuildAreaDropResult };
 }
 
 export type ClientRequest = {

@@ -48,7 +48,7 @@ import {
   type WorkerArea,
   type WorkerRootUsage,
 } from './worker-areas.ts';
-import { BUILD_REPO_PATTERN, type BuildToolchain } from './protocol.ts';
+import { BUILD_REPO_PATTERN, type BuildAreaDropResult, type BuildToolchain } from './protocol.ts';
 
 export { readAvailableMemory } from './machine.ts';
 export { listCommandLines } from './processes.ts';
@@ -757,6 +757,49 @@ export class BuildWorkerRoot {
     this.reportedLow = stillLow;
   }
 
+  /**
+   * Drops `client`'s area `repo` at the client's request, once the checkout it mirrors is removed there. It keeps the
+   * area under the same per-area rules as eviction and moves it aside the same way; the deletion goes on after this
+   * resolves, as eviction's does.
+   */
+  async dropArea(client: string, repo: string): Promise<BuildAreaDropResult> {
+    // @ref LLP 0009#repository-ownership-and-cleanup -- a removed checkout's area goes under eviction's per-area rules
+    const key = areaKey(client, repo);
+    const refuse = (kept: string): BuildAreaDropResult => {
+      console.error(`stim-server: retaining the build area ${key} its client removed: ${kept}.`);
+      return { dropped: false, kept };
+    };
+    if (this.closed) return refuse('this machine is stopping');
+    if (!(this.options.ready?.() ?? true)) return refuse('this machine is not ready');
+    if (this.removals.has(client)) return refuse("this client's areas are being removed");
+    const repos = join(this.clientDir(client), 'repos');
+    if (notRealDirectory(this.clientDir(client)) || notRealDirectory(repos))
+      return refuse(`${repos} is not a real directory`);
+    const area = join(repos, repo);
+    if (!existsSync(area)) return { dropped: false };
+    if (notRealDirectory(area)) return refuse(`${area} is not a real directory`);
+    const processes = await listCommandLines();
+    if (this.closed) return refuse('this machine is stopping');
+    const outcome = this.evictArea({ client, repo }, processes);
+    if ('kept' in outcome) return refuse(outcome.kept);
+    const { eviction } = outcome;
+    void (async () => {
+      const failure = outcome.failure ?? (await this.serialized(client, () => this.deleteEvicted(client, eviction)));
+      if (failure) {
+        this.reported.set(eviction.id, failure);
+        console.error(
+          `stim-server: moved the build area ${key} out of repos (its client removed the checkout) but could not delete it: ${failure}. ${this.evictedRemedy(client, eviction.id)}`,
+        );
+        return;
+      }
+      this.pruneBlobs(client);
+      console.error(`stim-server: removed the build area ${key}: its client removed the checkout.`);
+    })().catch((error: unknown) =>
+      console.error(`stim-server: could not delete the build area ${key}: ${String(error)}`),
+    );
+    return { dropped: true };
+  }
+
   private workerClients(all = false): string[] {
     let entries: Dirent[];
     try {
@@ -823,7 +866,7 @@ export class BuildWorkerRoot {
   }
 
   private evictArea(
-    { client, repo }: AreaEviction,
+    { client, repo }: Pick<WorkerArea, 'client' | 'repo'>,
     processes: string,
   ): { kept: string } | { eviction: Eviction; failure: string | null } {
     const area = join(this.clientDir(client), 'repos', repo);

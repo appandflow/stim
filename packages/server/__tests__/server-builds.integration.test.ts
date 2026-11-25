@@ -881,6 +881,33 @@ describe('offloaded builds', () => {
   );
 
   test.skipIf(!fakeTailscale)(
+    "a client drops only its own build area, by the area's name, and a connection without build access cannot",
+    async () => {
+      const port = await startWorker();
+      const mine = await buildClient(port, '100.64.0.2', setupClient(['build'], 'Mine'), false);
+      const theirs = await buildClient(port, '100.64.0.3', setupClient(['build'], 'Theirs'), false);
+      const areaOf = (id: string) => join(String(process.env.STIM_HOME), 'build-worker', id, 'repos', 'app-1');
+      for (const id of [mine.id, theirs.id]) mkdirSync(join(areaOf(id), 'src'), { recursive: true });
+
+      expect(await mine.client.request('build.area.drop', { repo: 'app-1' })).toMatchObject({
+        result: { dropped: true },
+      });
+      await eventually(() => !existsSync(areaOf(mine.id)));
+      expect(existsSync(areaOf(theirs.id))).toBe(true);
+      for (const repo of [`../../${theirs.id}/repos/app-1`, 'app-1.claims'])
+        expect(await mine.client.request('build.area.drop', { repo })).toMatchObject({
+          error: { code: 'bad-request' },
+        });
+
+      const reader = await authed(port, true);
+      expect(await reader.request('build.area.drop', { repo: 'app-1' })).toMatchObject({
+        error: { code: 'forbidden' },
+      });
+      expect(existsSync(areaOf(theirs.id))).toBe(true);
+    },
+  );
+
+  test.skipIf(!fakeTailscale)(
     'a machine that cannot host refuses device-host access and still takes builds',
     async () => {
       const port = await startWorker({ hostsDevices: false });

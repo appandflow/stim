@@ -1,5 +1,5 @@
 import { send, type ConnectionContext } from './context.ts';
-import { type RequestId, BUILD_METHODS, ENGINE_UPDATE_METHODS } from '../protocol.ts';
+import { type RequestId, BUILD_METHODS, BUILD_REPO_PATTERN, ENGINE_UPDATE_METHODS } from '../protocol.ts';
 import { isJsonObject } from '@stim-cli/core/state';
 import { SLOT_NAME } from '../control.ts';
 import { type StimPlanOptions, StimError } from 'stim';
@@ -77,6 +77,26 @@ async function jobMethod(ctx: ConnectionContext, id: RequestId, params: unknown,
   send(ctx.socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
 }
 
+async function dropAreaMethod(
+  ctx: ConnectionContext,
+  id: RequestId,
+  params: unknown,
+  session: PairedDevice,
+): Promise<void> {
+  if (!ctx.buildAllowed(session)) {
+    return ctx.error(
+      id,
+      'forbidden',
+      'build.area.drop needs build access, which this machine has not granted this device.',
+    );
+  }
+  const repo = isJsonObject(params) ? params.repo : undefined;
+  if (typeof repo !== 'string' || !new RegExp(BUILD_REPO_PATTERN).test(repo) || repo.endsWith('.claims'))
+    return ctx.error(id, 'bad-request', 'build.area.drop needs repo, the name of a build area.');
+  const result = await ctx.builds.dropArea(session.id, repo);
+  send(ctx.socket, { id, result });
+}
+
 export function machineMethod(
   ctx: ConnectionContext,
   id: RequestId,
@@ -84,6 +104,7 @@ export function machineMethod(
   params: unknown,
   session: PairedDevice,
 ): Promise<void> | null {
+  if (method === 'build.area.drop') return dropAreaMethod(ctx, id, params, session);
   if ((BUILD_METHODS as readonly string[]).includes(method)) return jobMethod(ctx, id, params, session);
   if ((ENGINE_UPDATE_METHODS as readonly string[]).includes(method))
     return updateMethod(ctx, id, method, params, session);
