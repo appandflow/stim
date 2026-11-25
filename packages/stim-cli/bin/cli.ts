@@ -175,7 +175,7 @@ export async function main(argv: string[], ctx: MainContext = {}): Promise<void>
   if (hung && exitCode === undefined) exitCode = typeof process.exitCode === 'number' ? process.exitCode : 0;
   if (exitCode !== undefined) {
     await new Promise<void>((resolve) => process.stdout.write('', () => resolve()));
-    if (hung && process.execve) {
+    if (hung && process.platform !== 'win32' && process.execve) {
       // process.exit joins every libuv thread pool thread, so it blocks on a filesystem read that never answers.
       process.emit('exit', exitCode);
       process.execve('/bin/sh', ['sh', '-c', `exit ${exitCode}`]);
