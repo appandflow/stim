@@ -57,6 +57,13 @@ const KIND_PATH: Record<Kind, string> = {
   agentActions: 'agent-device/sessions',
 };
 
+/** Whether `path` exists; a symbolic link there refuses the archive, so nothing is moved through it. */
+async function presentNotLinked(path: string): Promise<boolean> {
+  const entry = await lstat(path).catch(() => null);
+  if (entry?.isSymbolicLink()) throw new Error(`refusing symlink ${path}`);
+  return entry !== null;
+}
+
 function archiveSettings(env: NodeJS.ProcessEnv = process.env) {
   const config = loadConfig();
   const numbers = Object.fromEntries(
@@ -393,12 +400,19 @@ async function writeArchive(
           const data = readJsonObject(join(dir, name));
           if (data) await writeFile(join(staging!, name), `${JSON.stringify(stripPids(data))}\n`, { mode: 0o600 });
         }
+        const sessionSources = async () => {
+          const sources: string[] = [];
+          for (const stateDir of agentDeviceStateDirsIn(dir)) {
+            const sessions = join(stateDir, 'sessions');
+            if ((await presentNotLinked(stateDir)) && (await presentNotLinked(sessions))) sources.push(sessions);
+          }
+          return sources;
+        };
         const move = async (kind: Kind) => {
-          const sources = (
+          const sources =
             kind === 'agentActions'
-              ? agentDeviceStateDirsIn(dir).map((stateDir) => join(stateDir, 'sessions'))
-              : [join(dir, KIND_PATH[kind])]
-          ).filter((from) => existsSync(from));
+              ? await sessionSources()
+              : [join(dir, KIND_PATH[kind])].filter((from) => existsSync(from));
           const [first, ...rest] = sources;
           if (!limits[`${kind}.maxAgeDays`] || first === undefined) return;
           const to = join(staging!, KIND_PATH[kind]);

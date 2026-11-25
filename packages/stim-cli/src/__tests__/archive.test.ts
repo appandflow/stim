@@ -335,21 +335,35 @@ test('a deleted root whose repo layer could disable archives fails closed', asyn
   expect(readArchives()).toEqual([]);
 });
 
-test('a mid-archive failure removes staging and does not block removal or print stdout', async () => {
-  const dir = live();
-  const sessions = join(dir, 'agent-device.noindex', 'sessions');
-  mkdirSync(join(sessions, '..'), { recursive: true });
-  symlinkSync(root, sessions, process.platform === 'win32' ? 'junction' : 'dir');
-  const out = vi.spyOn(console, 'log').mockImplementation(() => {});
-  const err = vi.spyOn(console, 'error').mockImplementation(() => {});
-  const result = await reclaimProject(root, { archive: { removedBy: 'gc' } });
-  expect(result.keptEntry).toBe(false);
-  expect(readArchives()).toEqual([]);
-  expect(readdirSync(join(home, 'archive')).filter((name) => name.startsWith('.incoming-'))).toEqual([]);
-  expect(existsSync(dir)).toBe(false);
-  expect(out).not.toHaveBeenCalled();
-  expect(err.mock.calls.map(([line]) => line)).toEqual([expect.stringMatching(/^could not archive: /)]);
-});
+test.each([
+  ['agent-device.noindex', []],
+  ['agent-device', []],
+  ['agent-device', ['agent-device.noindex']],
+  ['agent-device.noindex', ['agent-device']],
+] as const)(
+  'a sessions link under %s (real sessions under %j) fails the archive, leaves the link target alone and does not block removal',
+  async (linked, real) => {
+    const dir = live();
+    const outside = join(home, 'outside');
+    mkdirSync(join(outside, 'theirs'), { recursive: true });
+    writeFileSync(join(outside, 'theirs', 'keep'), 'not Stim');
+    const sessions = join(dir, linked, 'sessions');
+    mkdirSync(join(sessions, '..'), { recursive: true });
+    symlinkSync(outside, sessions, process.platform === 'win32' ? 'junction' : 'dir');
+    for (const stateDir of real) mkdirSync(join(dir, stateDir, 'sessions', 'ours'), { recursive: true });
+    const out = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const result = await reclaimProject(root, { archive: { removedBy: 'gc' } });
+    expect(result.keptEntry).toBe(false);
+    expect(readArchives()).toEqual([]);
+    expect(readdirSync(join(home, 'archive')).filter((name) => name.startsWith('.incoming-'))).toEqual([]);
+    expect(existsSync(dir)).toBe(false);
+    expect(readdirSync(outside)).toEqual(['theirs']);
+    expect(readFileSync(join(outside, 'theirs', 'keep'), 'utf8')).toBe('not Stim');
+    expect(out).not.toHaveBeenCalled();
+    expect(err.mock.calls.map(([line]) => line)).toEqual([expect.stringMatching(/^could not archive: /)]);
+  },
+);
 
 test('symlink workspace storage is not moved into an archive', async () => {
   const dir = workspaceDir(root);
