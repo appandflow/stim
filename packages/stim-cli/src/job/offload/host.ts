@@ -1521,11 +1521,10 @@ function areaBuilt(area: string): string[] {
   }
 }
 
-/** Whether live or unresolved claims block `build.start` in this area. */
+/** Whether a live holder of the area's claim, exclusive or shared, would make `build.start` refuse. */
 function areaBuilding(area: string): boolean {
   try {
-    const claims = readClaimSet(`${area}.claims`);
-    return claims.live.length > 0 || claims.unresolved.length > 0;
+    return readClaimSet(`${area}.claims`).live.length > 0;
   } catch {
     return false;
   }
