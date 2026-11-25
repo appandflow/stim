@@ -209,7 +209,8 @@ async function flip(
   } finally {
     await flipLock.release();
   }
-  const router = join(root, build, 'bin', 'stim.mjs');
+  const bootstrap = join(root, build, 'bin', 'stim.cjs');
+  const router = existsSync(bootstrap) ? bootstrap : join(root, build, 'bin', 'stim.mjs');
   mkdirSync(join(root, 'bin'), { recursive: true });
   const shimNode = shimNodePath(node.path);
   writeRecord(join(root, 'bin', 'stim'), `#!/bin/sh\nexec "${shimNode}" "${router}" "$@"`, 0o755);
