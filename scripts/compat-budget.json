@@ -104,6 +104,11 @@
       "loc": 19,
       "end": "2026-12-12",
       "mechanism": "createStim and stim/ci refuse the renamed buildCache, run wait, diagnostics errors and gc() for 30 days, naming the new name"
+    },
+    "C34": {
+      "loc": 23,
+      "end": "2.1.0",
+      "mechanism": "a hosted agent-device launch retires, and gc judges, the daemon state 2.0.0-rc.3 kept in the launch root itself"
     }
   },
   "words": {

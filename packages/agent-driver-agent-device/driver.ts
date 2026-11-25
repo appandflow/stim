@@ -405,8 +405,10 @@ export class AgentDeviceDriver implements HostedAgentDriver {
         this.launchId = null;
         const previous = this.currentLaunch();
         if (previous) await this.retire(join(this.launchRoot, previous, 'state'));
+        // compat C34 until 2.1.0
         // @ref LLP 0007#a-hosted-device-daemon-launch-shares-nothing-with-the-next -- the 2.0.0-rc.3 flat root is retired like a launch
         else if (registered(this.launchRoot)) await this.retire(this.launchRoot);
+        // compat end
         this.launchId = randomBytes(8).toString('hex');
         this.prepareLaunchDir();
         writeFileSync(this.launchFile, `${this.launchId}\n`, { mode: 0o600 });
