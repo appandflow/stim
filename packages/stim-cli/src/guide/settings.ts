@@ -1538,6 +1538,8 @@ daemon, or a held or unresolved claim; its log names each removal and why an
 area stays. When a client removes a checkout (\`guide cleanup\`), each worker
 that built it drops its area at once under those retain rules; one that does not
 answer within 5 seconds, or runs an older Stim, keeps it until the age limit.
+A client revoked there loses its areas at the next pass, unless the
+worker cannot read its approvals.
 The next build of a removed area starts cold.
 \`stim service status\` prints a \`worker root:\` line with the root's size
 as last measured, about every 6 hours (not measured on Windows).
