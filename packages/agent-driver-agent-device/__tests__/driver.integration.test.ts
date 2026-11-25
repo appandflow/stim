@@ -915,9 +915,10 @@ describe.skipIf(process.platform !== 'darwin' && process.platform !== 'linux')('
         await driver.start();
         const launch = readFileSync(join(root, 'state', 'agent-device-launch'), 'utf8').trim();
         expect(readlinkSync(join(root, 'state', 'sessions'))).toBe(join(launchRoot(root), launch, 'state', 'sessions'));
+        expect(readdirSync(tmp)).toEqual([launchRoot(root).slice(tmp.length + 1)]);
       } finally {
-        await driver.stop();
         chmodSync(tmp, 0o700);
+        await driver.stop();
         if (previous === undefined) delete process.env.TMPDIR;
         else process.env.TMPDIR = previous;
       }
