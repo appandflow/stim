@@ -1047,9 +1047,9 @@ test('concurrent recorded-session cleanup verifies the first stop before another
   expect(stops).toBe(1);
 });
 
-test('a recorded session past its expiry is ended without eas-cli; one inside it or with no expiry is kept', async () => {
+test('a recorded session past its expiry is ended regardless of eas-cli; one inside it or with no expiry is kept', async () => {
   const ledgerRoot = join(tmpHome, 'machine-eas');
-  const run = async (record: Record<string, unknown>) => {
+  const run = async (record: Record<string, unknown>, easBin: string | null = null) => {
     ensureWorkspaceStorage(root);
     writeFileSync(
       workspaceStateFile(root),
@@ -1066,11 +1066,16 @@ test('a recorded session past its expiry is ended without eas-cli; one inside it
       },
       ledgerRoot,
     );
-    const result = await endRecordedSession({ root, sessionId: 'drs_cap', easBin: null, ledgerRoot });
+    const result = await endRecordedSession({ root, sessionId: 'drs_cap', easBin, ledgerRoot });
     return { status: result.status, claimed: readEasSessionLedger(ledgerRoot).claims.has('drs_cap') };
   };
 
   expect(await run({ expiresAt: new Date(Date.now() - 1000).toISOString() })).toEqual({
+    status: 'torn-down',
+    claimed: false,
+  });
+  mockExec({ fail: '/fake/eas' });
+  expect(await run({ expiresAt: new Date(Date.now() - 1000).toISOString() }, '/fake/eas')).toEqual({
     status: 'torn-down',
     claimed: false,
   });
