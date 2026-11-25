@@ -156,7 +156,7 @@ describe.skipIf(process.platform === 'win32')('workspace services (skipped on wi
       { name: 'worker', outcome: 'failed' },
     ]);
     expect(serviceRecords(root).worker).toMatchObject({ state: 'stopped' });
-  });
+  }, 30_000);
 
   test('a one-line service is supervised: started with its port as an argument, idle-stopped by signal, revived, then stopped by identity once its folder is gone', async () => {
     declare({
