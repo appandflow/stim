@@ -42,7 +42,8 @@ FIELDS
   orphanTeardown  overrides teardown for a gone folder; runs from home,
                   so it must name its target by id
   ready           a command that exits 0 once it serves; default: every port
-                  listens, else the process lives. Waited up to 60 seconds
+                  listens, else it lives one second after the start. Waited
+                  up to 60 seconds
   ports           named port labels it owns, a list, or an object of label to
                   the environment variable that receives the number (or null),
                   or to { "env": name, "reverse": false } for a port the app

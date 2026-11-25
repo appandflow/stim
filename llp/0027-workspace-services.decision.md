@@ -70,7 +70,8 @@ Queue progress goes to stderr, including in JSON mode. Cancellation and claim
 recovery follow LLP 0007; unresolved child cleanup retains its claim.
 
 The slot covers the start command and readiness wait only: an explicit `ready`
-command, otherwise all declared ports listening, otherwise the process alive.
+command, otherwise all declared ports listening, otherwise the process alive
+one second after the start.
 It releases at readiness, start failure, the 60-second readiness deadline or
 cancellation. A running service, stop and teardown hold no slot. Services start
 only through `services start` and `revive`, before any native build takes a slot.
