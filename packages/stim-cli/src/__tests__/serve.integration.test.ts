@@ -266,7 +266,7 @@ test('a Desktop net.ensure keeps the running listener while busy and applies the
   const stimdExited = once(stimd, 'exit');
   try {
     await vi.waitFor(() => expect(existsSync(stimdRecordFile())).toBe(true), { timeout: 15_000 });
-    const { socket } = JSON.parse(readFileSync(stimdRecordFile(), 'utf8'));
+    const { socket, build } = JSON.parse(readFileSync(stimdRecordFile(), 'utf8'));
     const loopback = await desktopEnsure(socket, { port: 0, loopbackOnly: true });
     expect(loopback).toMatchObject({ listening: true });
     await vi.waitFor(
@@ -295,6 +295,7 @@ test('a Desktop net.ensure keeps the running listener while busy and applies the
     expect(wider).toEqual(loopback);
     expect((await fetch(`http://127.0.0.1:${loopback.port}/health`)).status).toBeLessThan(600);
     expect(readFileSync(daemonNdjsonFile(), 'utf8')).not.toContain('net_restart');
+    expect(await ensureAs(socket, { kind: 'cli', build }, { share: true })).toMatchObject({ listening: true });
     releaseClaim(lock);
     lock = undefined;
     await logged('"net_restart"');

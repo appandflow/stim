@@ -1060,9 +1060,7 @@ async function runStimdInner(
     (count) => {
       netBusy = count;
       if (count === 0) {
-        const restart = pendingNetRestart;
-        pendingNetRestart = undefined;
-        if (restart) netTurns = netTurns.then(restart).catch(() => undefined);
+        if (pendingNetRestart) netTurns = netTurns.then(() => pendingNetRestart?.()).catch(() => undefined);
         void checkEngine();
       }
     },
@@ -1762,7 +1760,7 @@ async function runStimdInner(
           admissionRevision++;
           netTurns = netTurns
             .then(() => {
-              pendingNetRestart = undefined;
+              if (kind === 'desktop') pendingNetRestart = undefined;
               if (socket.destroyed) return undefined;
               if (closing) {
                 socket.destroy();
@@ -1807,6 +1805,8 @@ async function runStimdInner(
                 return (
                   kind === 'desktop' &&
                   !closing &&
+                  !ending &&
+                  !sealed &&
                   !serviceNet &&
                   !pinned() &&
                   current !== null &&
@@ -1854,7 +1854,11 @@ async function runStimdInner(
                   });
               };
               if (!serviceMove && netBusy > 0 && desktopRestart())
-                pendingNetRestart = () => (netBusy === 0 && desktopRestart() ? restartNet() : undefined);
+                pendingNetRestart = () => {
+                  if (netBusy > 0) return undefined;
+                  pendingNetRestart = undefined;
+                  return desktopRestart() ? restartNet() : undefined;
+                };
               const answer = mismatch
                 ? Promise.resolve({
                     listening: false as const,
