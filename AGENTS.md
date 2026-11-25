@@ -58,7 +58,7 @@ behavior and the applicable formatting, lint, build and type checks. A prose-onl
 change needs formatting, not the unit suite. Use CI for the full unit suite,
 dead-code, runtime-floor and RPC gates; all required checks and the merge gate
 must pass before merging. A PR that only modifies existing root unit test files
-runs those files first; its merge candidate still runs the full unit suite.
+runs only those files; the push to `main` after it lands runs the full unit suite.
 Other PRs run the unit stage on their pushed head; main and manual runs also
 run integrations. Run a full local suite when investigating a broad regression, changing shared test setup or discovery, or
 when CI cannot validate the affected behavior. Do not repeat a passing check on

@@ -168,7 +168,7 @@ preparation, `git status --short` may show only the draft
    ```
 
 2. **Install and run the pre-flight against those exact files.** Run only
-   what CI does not. The version PR and the merge queue run format, lint,
+   what CI does not. The version PR's checks run format, lint,
    typecheck, knip, the RPC check and the full unit suite, and the push to
    `main` runs the same suite on Node 22 and 24, the cross-platform e2e and
    the published-runtime check on the exact release commit (section 4 step 4).
@@ -189,7 +189,7 @@ preparation, `git status --short` may show only the draft
    test "$(node packages/stim-cli/dist/cli.mjs --version)" = "X.Y.Z"
    ```
 
-   When CI or the merge queue is unavailable, run `pnpm run format:check`,
+   When CI is unavailable, run `pnpm run format:check`,
    `pnpm run lint`, `pnpm run typecheck`, `pnpm run knip`, `pnpm test`,
    `pnpm run test:e2e` and `pnpm run test:runtime` here as well, and record that
    in the release report.
@@ -234,14 +234,15 @@ preparation, `git status --short` may show only the draft
    candidate verification. Correct the notes and rerun affected checks before
    continuing.
 2. **Open the version commit as a pull request** with a
-   `chore: X.Y.Z — <one-line summary>` title and let the merge queue land it.
+   `chore: X.Y.Z — <one-line summary>` title and merge it with
+   `gh pr merge --squash --auto`.
    The body can be terse; the GitHub release notes carry the real changelog.
-   The queue's `Merge gate` run builds and tests the merge-group commit
-   (format, lint, build, typecheck, knip, the RPC check and the full unit
-   suite), and that commit is the one that lands on `main`.
-3. **Record the exact release commit** once the queue has merged the pull
-   request. It is the version commit, not the tip of `main`: a pull request
-   queued behind it may already have landed.
+   Its checks build and test the pull request head (format, lint, build,
+   typecheck, knip, the RPC check and the full unit suite), and the required
+   `merge gate` check waits for them before the squashed commit lands on `main`.
+3. **Record the exact release commit** once the pull request has merged. It is
+   the version commit, not the tip of `main`: another pull request may already
+   have landed after it.
 
    ```bash
    release_commit=$(gh pr view <version-pr> --json mergeCommit --jq .mergeCommit.oid)
@@ -251,30 +252,22 @@ preparation, `git status --short` may show only the draft
    the notes do not name it, add it with a notes pull request. The notes commit
    becomes the release commit, and steps 3 and 4 repeat for it.
 
-4. **Wait for the release gate on that exact commit.** The gate is the
-   `Merge gate` run of the merge queue plus three jobs of the `CI` run that the
-   push to `main` started: `test (node 22)`, `test (node 24)` and
-   `published runtime (node 22.12.0)`. Every other job of that run, and every
-   other workflow the push started, is not part of the gate (section 5
-   says what to do with them).
+4. **Wait for the release gate on that exact commit.** The gate is three jobs
+   of the `CI` run that the push to `main` started: `test (node 22)`,
+   `test (node 24)` and `published runtime (node 22.12.0)`, the jobs the `Release`
+   workflow also accepts before it publishes a commit to `next`. Every
+   other job of that run, and every other workflow the push started, is not
+   part of the gate (section 5 says what to do with them).
 
-   The commit match is checked by SHA. The merge-queue run and the push run
-   both carry `head_sha == $release_commit`, so the check below proves the
-   jobs ran on the commit about to be tagged. It exits non-zero when the merge
-   gate is missing or red, when no push run exists, or when a gate job is not
-   green:
+   The commit match is checked by SHA. The push run carries
+   `head_sha == $release_commit`, so the check below proves the jobs ran on
+   the commit about to be tagged. It exits non-zero when no push run exists,
+   or when a gate job is not green:
 
    ```bash
    release_commit=<release-commit-sha> ci_event=push ci_branch=main
    repo=appandflow/stim
    (
-     gh api "repos/$repo/actions/runs?head_sha=$release_commit&event=merge_group&per_page=100" |
-       jq -e -r --arg sha "$release_commit" '
-         [.workflow_runs[] | select(.name == "Merge gate" and .head_sha == $sha)]
-         | sort_by(.created_at) | last
-         | select(.conclusion == "success")
-         | "merge gate ok: run \(.id) on \(.head_branch)"' || { echo "merge gate not green"; exit 1; }
-
      run_id=$(gh api "repos/$repo/actions/runs?head_sha=$release_commit&event=$ci_event&per_page=100" |
        jq -e -r --arg sha "$release_commit" --arg branch "$ci_branch" '
          [.workflow_runs[] | select(.name == "CI" and .head_branch == $branch and .head_sha == $sha)]
@@ -296,8 +289,8 @@ preparation, `git status --short` may show only the draft
    )
    ```
 
-   Do not wait for the rest of the `CI` run. For 1.34.0 the merge gate took 7
-   minutes and the slowest gate job finished 9 minutes after the push.
+   Do not wait for the rest of the `CI` run. For 1.34.0 the slowest gate job
+   finished 9 minutes after the push.
 
    The push run is cancelled when another pull request lands on `main` before
    it finishes (its concurrency group is the branch), and it may be missing
@@ -535,12 +528,13 @@ npm install --global stim@next
   publish. A head already published is skipped. An hourly schedule is a
   safety net, and Actions -> Release -> Run workflow on `main` publishes
   without waiting.
-- **Gate.** The job publishes a head that passed the merge queue's
-  `merge gate`, or, for a push that bypassed the queue, the CI jobs
-  `test (node 22)`, `test (node 24)` and `published runtime (node 22.12.0)`.
-  It runs no tests of its own. Those CI jobs are still running when the push
-  starts the job, so a bypassing push usually waits for the hourly schedule
-  or a dispatch.
+- **Gate.** The job publishes a head on which the CI jobs `test (node 22)`,
+  `test (node 24)` and `published runtime (node 22.12.0)` passed. It also
+  accepts a passing `merge gate` check on that commit, which only a merge
+  queue run leaves; `main` has no merge queue, so pull requests land by
+  auto-merge and the CI jobs decide. It runs no tests of its own. Those CI
+  jobs are still running when the push starts the job, so a push usually
+  waits for the hourly schedule or a dispatch.
 - **Guards.** The job runs only on `main` of this repository, refuses a
   version without the `-next.` suffix and publishes only with `--tag next`.
   It never touches `latest`, so the stable dist-tag logic in section 1 is
