@@ -17,10 +17,11 @@ const ownerAlive = (name: string): boolean => inspectProcessStart(Number(name.sp
 /**
  * Removes store entries nothing can run: trees `keptEntries` does not keep, nor the three client builds offload jobs
  * used most recently within 24 hours (`keptJobUses`, whose npm tarballs stay too), that no process runs from, scratch
- * directories whose owner is gone or that are an hour old, `.trash` leftovers, and `.npm-cache` files untouched for a
- * week. Each entry goes by rename into `.trash` first, so a half-removed read-only tree never stays in place. Runs
- * under the promotion lock, so no fetch writes `.npm-cache` meanwhile. Where processes cannot be listed (Windows),
- * every tree is kept. The build running this module is always kept.
+ * directories whose owner is gone or that are an hour old, `.trash` leftovers, and every other `.npm-cache` file once
+ * any of them is a week old, so no npm index record outlives its content file. Each entry goes by rename into
+ * `.trash` first, so a half-removed read-only tree never stays in place. Runs under the promotion lock, so no fetch
+ * writes `.npm-cache` meanwhile. Where processes cannot be listed (Windows), every tree is kept. The build running
+ * this module is always kept.
  */
 export function collectStore(root: string, now: number = Date.now()): string[] {
   if (!existsSync(root)) return [];
@@ -57,10 +58,12 @@ export function collectStore(root: string, now: number = Date.now()): string[] {
 
 function trimNpmCache(cache: string, now: number, keep: ReadonlySet<string>): void {
   if (!existsSync(cache)) return;
-  for (const entry of readdirSync(cache, { recursive: true, withFileTypes: true })) {
-    const path = join(entry.parentPath, entry.name);
-    if (entry.isFile() && !keep.has(path) && now - statSync(path).mtimeMs > NPM_CACHE_MAX_AGE_MS)
-      rmSync(path, { force: true });
+  const files = readdirSync(cache, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => join(entry.parentPath, entry.name))
+    .filter((path) => !keep.has(path));
+  if (files.some((path) => now - statSync(path).mtimeMs > NPM_CACHE_MAX_AGE_MS)) {
+    for (const path of files) rmSync(path, { force: true });
   }
 }
 
