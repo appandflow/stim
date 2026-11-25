@@ -278,10 +278,14 @@ seconds, to drop that area with `build.area.drop`, a method of the `build` capab
 worker takes the client from the authenticated connection, so a client reaches only its own areas, and refuses a
 name that is not an area. It drops the area, its client's newest included, unless one of eviction's per-area retain
 rules holds (a live build, unfetched output, a running Gradle daemon, a held or unresolved claim, or a device its
-home lists), with the same claim-guarded move aside, answers once the area is out of `repos/`, and deletes it
-after. The planner's age, free-space and newest-area rules do not apply. Removal never waits longer or fails for
-it: a worker that is unreachable, unpaired, refuses or answers late is skipped, as is one older than this method,
-which answers `forbidden` to a build-only connection; that worker's `server.workerAreaMaxAgeDays` still applies.
+home lists, or a process list it cannot read), with the same claim-guarded move aside, answers once the area is
+out of `repos/`, and deletes it after. The planner's age, free-space and newest-area rules do not apply. It prunes
+the client's unreferenced blobs only while another area of that client remains, so the next checkout of a
+worktree-per-task client reuses them. Removal never waits longer or fails for it: a worker that is unreachable,
+unpaired, refuses or answers late is skipped, as is one older than this method, which answers `forbidden` to a
+build-only connection; that worker's `server.workerAreaMaxAgeDays` still applies. A worker that could not be
+reached or did not answer in time is not asked again by the same process for 10 minutes, so a `gc` pass or a
+long-running stimd that removes many worktrees waits for it once.
 
 A worktree per task leaves one area per removed worktree on the worker, each 14 to 28 GB, for the full age limit.
 A worker serving one agent machine held 670 GB of such areas at 94% disk while the least-recently-used floor never
@@ -294,8 +298,9 @@ Maintainer decision: "Yes, file it (Recommended)", 2026-11-24, choosing to file 
 
 Maintainer decision: "can u file and implement too", 2026-11-24.
 
-The method name, the record in workspace state, the 5-second deadline, dropping a client's newest area, and
-answering before the deletion finishes were chosen by the implementer of #6289, not by the maintainer.
+The method name, the record in workspace state, the 5-second deadline and 10-minute skip, dropping a client's
+newest area, keeping its blobs when no area remains, and answering before the deletion finishes were chosen by the
+implementer of #6289, not by the maintainer.
 
 ## Service and engine updates
 

@@ -2550,6 +2550,9 @@ path; from a subfolder it reclaims only that project and leaves the tree. A bare
 repository directory is refused because it is not a worktree. `--force` permits removal
 with uncommitted, untracked, or unpushed work or initialized submodules. A
 worktree locked with `git worktree lock` is refused until you unlock it.
+Once the checkout is gone, each build machine that built it is asked to drop its
+area there ([worker disk](./remote-machines.md#worker-disk)); a machine that does
+not answer within 5 seconds is skipped and the removal still succeeds.
 
 Removal restores a modified `ios/Podfile.lock` itself only when
 `Pods/Manifest.lock`, the copy `pod install` makes, holds the same text, or when
