@@ -330,6 +330,10 @@ msgstr "{mac} runs stim {stim}. On {mac}, run npm i -g stim@latest && stim servi
 msgid "{mac} runs stim {stim}. On {mac}, run npm i -g stim@latest, then restart stim serve."
 msgstr "{mac} runs stim {stim}. On {mac}, run npm i -g stim@latest, then restart stim serve."
 
+#: src/screens/rename.tsx
+msgid "{machine} runs a Stim that cannot rename this phone yet. Update Stim there, or on {machine} run stim pairings rename {deviceId} <name>."
+msgstr "{machine} runs a Stim that cannot rename this phone yet. Update Stim there, or on {machine} run stim pairings rename {deviceId} <name>."
+
 #: src/intl/format.ts
 msgid "{mb} MB"
 msgstr "{mb} MB"
@@ -2532,6 +2536,10 @@ msgid "Name"
 msgstr "Name"
 
 #: src/screens/rename.tsx
+msgid "Name on the machine"
+msgstr "Name on the machine"
+
+#: src/screens/rename.tsx
 msgid "Name on this phone"
 msgstr "Name on this phone"
 
@@ -3465,6 +3473,15 @@ msgstr "Rename {name} on this phone"
 msgid "Rename on This Phone"
 msgstr "Rename on This Phone"
 
+#: src/screens/mac-list.tsx
+#: src/screens/rename.tsx
+msgid "Rename This Phone"
+msgstr "Rename This Phone"
+
+#: src/screens/mac-list.tsx
+msgid "Rename this phone on {name}"
+msgstr "Rename this phone on {name}"
+
 #: src/screens/workspace-detail.tsx
 msgid "Replaced By"
 msgstr "Replaced By"
@@ -4202,6 +4219,10 @@ msgid "This archive is no longer available."
 msgstr "This archive is no longer available."
 
 #: src/screens/rename.tsx
+msgid "This changes how {machine} lists this phone. The name this phone shows for the machine stays the same."
+msgstr "This changes how {machine} lists this phone. The name this phone shows for the machine stays the same."
+
+#: src/screens/rename.tsx
 msgid "This changes only the name this phone shows for the machine. The name on the machine and its record of this phone stay the same."
 msgstr "This changes only the name this phone shows for the machine. The name on the machine and its record of this phone stay the same."
 
@@ -4267,6 +4288,10 @@ msgstr "This Phone Is Read-Only"
 #: src/screens/mac-status.tsx
 msgid "This phone is read-only: it cannot reload or stop workspaces, or control devices."
 msgstr "This phone is read-only: it cannot reload or stop workspaces, or control devices."
+
+#: src/screens/rename.tsx
+msgid "This phone must be connected to the machine to rename itself there."
+msgstr "This phone must be connected to the machine to rename itself there."
 
 #: src/screens/mac-list.tsx
 msgid "This phone stops connecting to it. {notice}"

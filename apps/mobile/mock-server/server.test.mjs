@@ -99,6 +99,7 @@ test('mock hello, RPCs and subscription events pass the phone receive validators
     ['build.plan', { workspace, platform: 'android' }],
     ['settings.get', {}],
     ['recording.set', { enabled: true }],
+    ['device.rename', { id: result.device.id, name: 'Renamed phone' }],
     ['replay.range', { workspace, platform: 'ios' }],
     ['machine.get', {}],
     ['machine.history', {}],
