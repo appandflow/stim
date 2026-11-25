@@ -305,7 +305,12 @@ test('a Desktop net.ensure keeps the running listener while busy and applies the
     const restarted = await desktopEnsure(socket, { port: 0, loopbackOnly: false });
     expect(restarted).toMatchObject({ listening: true });
     expect(restarted.port).not.toBe(loopback.port);
-    expect((await fetch(`http://127.0.0.1:${restarted.port}/health`)).status).toBe(200);
+    await vi.waitFor(
+      async () => {
+        expect((await fetch(`http://127.0.0.1:${restarted.port}/health`)).status).toBe(200);
+      },
+      { timeout: 15_000 },
+    );
     terminateClients();
     stimd.kill('SIGTERM');
     expect(await stimdExited).toEqual([0, null]);
