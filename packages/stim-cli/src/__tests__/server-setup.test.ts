@@ -35,12 +35,10 @@ describe('parseServerProcesses', () => {
       `804 1 node ${router} serve --help`,
       `805 1 node ${cli} serve --version`,
       '806 1 node /Users/me/other/cli.mjs serve',
-      '807 1 node /Users/me/.stim/engine/abc123/bin/stim.cjs serve --port 47961',
     ].join('\n');
     expect(parseServerProcesses(ps).map(({ pid, script, port, share }) => ({ pid, script, port, share }))).toEqual([
       { pid: 800, script: router, port: 54011, share: true },
       { pid: 801, script: cli, port: 7787, share: false },
-      { pid: 807, script: '/Users/me/.stim/engine/abc123/bin/stim.cjs', port: 47961, share: false },
     ]);
   });
 

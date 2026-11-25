@@ -163,14 +163,3 @@ test('a recorded pid that is no longer in the table claims nothing', () => {
   });
   expect(machine.owners.filter((o) => o.workspace === '/w/d')).toEqual([]);
 });
-
-test('attributes the engine CommonJS serve process to stim-server', () => {
-  const machine = attributeMachineUsage({
-    processes: table([[800, 1, 0.5, 'node /Users/me/.stim/engine/abc123/bin/stim.cjs serve --port 47961']]),
-    footprints: null,
-    environments: [],
-    roots: [],
-    simNames: {},
-  });
-  expect(machine.owners).toEqual([expect.objectContaining({ kind: 'server', name: 'stim-server', processes: 1 })]);
-});

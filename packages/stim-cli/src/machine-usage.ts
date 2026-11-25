@@ -27,7 +27,7 @@ const SHARED: { name: string; pattern: RegExp }[] = [
 ];
 
 export const STIM_SERVER_COMMAND: RegExp =
-  /(^|[\s/])(stim-server(\.mjs)?(\s|$)|stim(\.(?:mjs|cjs))?\s+serve(\s|$)|stimd$|__stimd(\s|$))/;
+  /(^|[\s/])(stim-server(\.mjs)?(\s|$)|stim(\.mjs)?\s+serve(\s|$)|stimd$|__stimd(\s|$))/;
 const LAUNCHD_SIM = /^launchd_sim\s.*\/Devices\/([^/\s]+)\//;
 const MAX_DEPTH = 64;
 
