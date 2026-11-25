@@ -91,7 +91,7 @@ async function dropAreaMethod(
     );
   }
   const repo = isJsonObject(params) ? params.repo : undefined;
-  if (typeof repo !== 'string' || !new RegExp(BUILD_REPO_PATTERN).test(repo) || repo.endsWith('.claims'))
+  if (typeof repo !== 'string' || !new RegExp(BUILD_REPO_PATTERN).test(repo) || /\.claims$/i.test(repo))
     return ctx.error(id, 'bad-request', 'build.area.drop needs repo, the name of a build area.');
   const result = await ctx.builds.dropArea(session.id, repo);
   send(ctx.socket, { id, result });

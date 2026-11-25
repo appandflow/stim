@@ -1469,6 +1469,51 @@ describe('an area its client removed', () => {
     expect(await start().dropArea('a', 'absent')).toEqual({ dropped: false });
   });
 
+  test('a name that is not exactly an area, such as another case or its claim set, drops nothing', async () => {
+    const path = area('a', 'subject', 0);
+    const claim = tryAcquireClaim({ root: `${path}.claims`, mode: 'exclusive' }).acquired;
+    assert(claim);
+    onTestFinished(() => void releaseClaim(claim));
+    const host = start();
+    const end = host.connect('a', 'subject');
+    onTestFinished(end);
+
+    for (const name of ['SUBJECT', 'subject.claims', 'subject.CLAIMS'])
+      expect(await host.dropArea('a', name)).toEqual({ dropped: false });
+    await host.evictAreas();
+
+    expect(existsSync(path)).toBe(true);
+    expect(existsSync(`${path}.claims`)).toBe(true);
+    expect(existsSync(join(root, 'a', 'evicted'))).toBe(false);
+  });
+
+  test('checks again after listing processes, answering no area for one that moved away meanwhile', async () => {
+    const path = area('a', 'subject', 0);
+    const host = start();
+    processList.requested = () => rmSync(path, { recursive: true });
+
+    expect(await host.dropArea('a', 'subject')).toEqual({ dropped: false });
+    expect(existsSync(join(root, 'a', 'evicted'))).toBe(false);
+  });
+
+  test('checks again after listing processes, keeping out of a client removal that started meanwhile', async () => {
+    const path = area('a', 'subject', 0);
+    const host = start();
+    const gate = gateRemovalOf((each) => each === join(root, 'a'));
+    let removal: Promise<void> = Promise.resolve();
+    processList.requested = () => void (removal = host.remove('a'));
+
+    expect(await host.dropArea('a', 'subject')).toEqual({
+      dropped: false,
+      kept: expect.stringMatching(/being removed/),
+    });
+    expect(existsSync(join(root, 'a', 'evicted'))).toBe(false);
+    await gate.reached;
+    gate.release();
+    await removal;
+    expect(existsSync(path)).toBe(false);
+  });
+
   const crashedClaim = (path: string) => {
     const core = pathToFileURL(join(import.meta.dirname, '../../core/ownership-claim.ts')).href;
     spawnSync(process.execPath, [

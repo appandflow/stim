@@ -894,7 +894,7 @@ describe('offloaded builds', () => {
       });
       await eventually(() => !existsSync(areaOf(mine.id)));
       expect(existsSync(areaOf(theirs.id))).toBe(true);
-      for (const repo of [`../../${theirs.id}/repos/app-1`, 'app-1.claims'])
+      for (const repo of [`../../${theirs.id}/repos/app-1`, 'app-1.claims', 'app-1.CLAIMS'])
         expect(await mine.client.request('build.area.drop', { repo })).toMatchObject({
           error: { code: 'bad-request' },
         });

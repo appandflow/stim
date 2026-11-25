@@ -182,6 +182,9 @@ const isMissing = (error: unknown): boolean => error instanceof Error && 'code' 
 
 const areaKey = (client: string, repo: string): string => `${client}/${repo}`;
 
+const isAreaEntry = (entry: Dirent): boolean =>
+  entry.isDirectory() && !entry.name.endsWith('.claims') && new RegExp(BUILD_REPO_PATTERN).test(entry.name);
+
 function areaDevices(area: string): string | null {
   const home = join(area, 'home');
   let ledger: unknown;
@@ -769,22 +772,31 @@ export class BuildWorkerRoot {
       console.error(`stim-server: retaining the build area ${key} its client removed: ${kept}.`);
       return { dropped: false, kept };
     };
-    if (this.closed) return refuse('this machine is stopping');
-    if (!(this.options.ready?.() ?? true)) return refuse('this machine is not ready');
-    if (this.removals.has(client)) return refuse("this client's areas are being removed");
     const repos = join(this.clientDir(client), 'repos');
-    if (notRealDirectory(this.clientDir(client)) || notRealDirectory(repos))
-      return refuse(`${repos} is not a real directory`);
-    const area = join(repos, repo);
-    if (!existsSync(area)) return { dropped: false };
-    if (notRealDirectory(area)) return refuse(`${area} is not a real directory`);
+    const check = (): string | boolean => {
+      if (this.closed) return 'this machine is stopping';
+      if (!(this.options.ready?.() ?? true)) return 'this machine is not ready';
+      if (this.removals.has(client)) return "this client's areas are being removed";
+      if (notRealDirectory(this.clientDir(client)) || notRealDirectory(repos))
+        return `${repos} is not a real directory`;
+      try {
+        return readdirSync(repos, { withFileTypes: true }).some((entry) => entry.name === repo && isAreaEntry(entry));
+      } catch (error) {
+        return isMissing(error) ? false : `its areas cannot be read: ${String(error)}`;
+      }
+    };
+    const before = check();
+    if (typeof before === 'string') return refuse(before);
+    if (!before) return { dropped: false };
     let processes: string;
     try {
       processes = await listCommandLines();
     } catch (error) {
       return refuse(`its Gradle processes could not be checked: ${String(error)}`);
     }
-    if (this.closed) return refuse('this machine is stopping');
+    const after = check();
+    if (typeof after === 'string') return refuse(after);
+    if (!after) return { dropped: false };
     const outcome = this.evictArea({ client, repo }, processes);
     if ('kept' in outcome) return refuse(outcome.kept);
     const { eviction } = outcome;
@@ -831,10 +843,7 @@ export class BuildWorkerRoot {
       }
       try {
         return readdirSync(repos, { withFileTypes: true })
-          .filter(
-            (entry) =>
-              entry.isDirectory() && !entry.name.endsWith('.claims') && new RegExp(BUILD_REPO_PATTERN).test(entry.name),
-          )
+          .filter(isAreaEntry)
           .map((entry) => ({ client, repo: entry.name, usedAt: areaLastUsed(join(repos, entry.name)) }));
       } catch (error) {
         if (!isMissing(error))
