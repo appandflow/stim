@@ -61,7 +61,7 @@ export function podsFailedRemedy(machine: string, reason: string, localCocoapods
 
 export function prebuildFailedRemedy(machine: string, reason: string): string | undefined {
   if (!reason.startsWith('prebuild-failed: ')) return undefined;
-  return `\`expo prebuild\` failed on ${machine}; rerun with --remote-build local to see its output here, fix what it reports, then run the same command again.`;
+  return `\`stim logs --source build\` shows the \`expo prebuild\` output from ${machine}. Fix what it reports, then run the same command again, or rerun with --remote-build local.`;
 }
 
 export class OffloadRefusal extends Error {

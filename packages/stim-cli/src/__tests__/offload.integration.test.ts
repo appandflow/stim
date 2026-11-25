@@ -934,9 +934,9 @@ describe('missingPackageManagerRemedy', () => {
   });
 });
 
-it('a worker prebuild failure names local output recovery instead of build approval', () => {
+it('a worker prebuild failure points at its relayed output instead of build approval', () => {
   expect(prebuildFailedRemedy('build-mac', workerFailureReason('prebuild-failed', 'config plugin failed'))).toBe(
-    '`expo prebuild` failed on build-mac; rerun with --remote-build local to see its output here, fix what it reports, then run the same command again.',
+    '`stim logs --source build` shows the `expo prebuild` output from build-mac. Fix what it reports, then run the same command again, or rerun with --remote-build local.',
   );
   expect(prebuildFailedRemedy('build-mac', 'deps-failed: spawn pnpm ENOENT')).toBeUndefined();
 });

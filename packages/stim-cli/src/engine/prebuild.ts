@@ -520,7 +520,7 @@ export async function runPrebuild(
   };
 
   const remedy =
-    'Fix what the `expo prebuild` output above reports, then run again.' +
+    'Fix what the error or the `expo prebuild` output above reports, then run again.' +
     (logWriter ? ' `stim logs --source build` shows the full transcript.' : '');
   let child: ChildProcess;
   try {
