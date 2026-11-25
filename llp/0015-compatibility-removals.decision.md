@@ -125,7 +125,8 @@ maintainer has not ruled on these, and the code keeps them:
 - `maintenance.idleStopHours`, which is still a live setting for hosted
   sessions.
 - `stim settings unset <removed key>`, which edits config files and is the only
-  command that clears a leftover key.
+  command that clears a leftover key. It also clears the retired 1.x keys that
+  the STATUS block names (`RETIRED_SETTING_KEYS`), which have no replacement.
 
 ## Agents migrate an upgraded home from the website guide
 

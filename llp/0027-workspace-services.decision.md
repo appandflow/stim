@@ -18,8 +18,8 @@ not, because a container stack takes tens of seconds and needs its runtime,
 which would slow and break the Metro command an agent runs most.
 
 A service has a `start` command and optionally `stop`, `teardown`,
-`orphanTeardown`, `ready`, `ports`, `idEnv`, `env`, `cwd` and `dependsOn`. A
-command is an argv array, or a string Stim splits on spaces that refuses quotes
+`orphanTeardown`, `ready`, `ports`, `idEnv`, `env`, `envFile`, `cwd` and
+`dependsOn`. A command is an argv array, or a string Stim splits on spaces that refuses quotes
 and shell syntax; nothing runs through a shell. `stim ports` stays the
 reservation primitive for a server Stim does not manage.
 
@@ -137,15 +137,22 @@ Maintainer decision: "Reachability should prob be fixed tho", 2026-11-24
 
 `stim services start` records each service as it resolved it: argv with
 placeholders substituted, absolute folder (refused outside the checkout),
-ports, env, dependencies and the caller's `PATH`. The idle pass, `stim revive`
-and removal read only that record, never the settings of the moment, and act
-only on services Stim started; they run its commands with the recorded `PATH`,
-since stimd's may lack the tools the start found (other variables belong in
-`env`), and in dependency order.
+ports, env, the absolute `envFile` path, dependencies and the caller's `PATH`.
+The idle pass, `stim revive` and removal read only that record, never the
+settings of the moment, and act only on services Stim started; they run its
+commands with the recorded `PATH`, since stimd's may lack the tools the start
+found (other variables belong in `env`), and in dependency order.
 Reason: unattended runs execute only what the user's own `stim services
 start` resolved, not what a branch checked out later declares, and the record
 survives the folder, which an orphan teardown needs. Chosen by the
 implementing agent with the coordinating session.
+
+The `envFile` contents are the exception: Stim reads the file at each launch,
+below `env`, ports and `idEnv`, and the orphan teardown runs without it, since
+the file went with the folder. Reason: the file holds secrets, and the recorded
+env is written to Stim state, printed in failure remedies and returned by
+`stim services env`. Chosen by the implementing agent with the coordinating
+session (#6208).
 
 ## The idle pass stops services
 
@@ -258,10 +265,9 @@ they match the records unless the settings changed since the start.
 ## Follow-ups
 
 Maintainer decision: "Lets keep it simple for now", 2026-11-24 (#6202). Left
-out, each with its own issue: an HTTP readiness check (#6207), a per-service
-env file (#6208), `stim logs --service` (#6209), rendering a config file with
-the ports (#6210), and capturing a value from a service's output, such as a
-tunnel URL (#6211).
+out, each with its own issue: an HTTP readiness check (#6207),
+`stim logs --service` (#6209), rendering a config file with the ports (#6210),
+and capturing a value from a service's output, such as a tunnel URL (#6211).
 
 ## Links
 

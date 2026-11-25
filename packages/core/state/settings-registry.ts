@@ -143,6 +143,28 @@ export function replacementAdvice(key: string, old: unknown): (RemovedSetting & 
 }
 // compat end
 
+/** The setting keys a 1.x Stim read that 2.0 does not; other unknown keys are left to stim settings and doctor. */
+export const RETIRED_SETTING_KEYS: ReadonlySet<string> = new Set([
+  ...[...REMOVED_SETTINGS].flatMap(([key, entry]) => (entry.kept ? [] : [key])),
+  'remote.buildMode',
+  'daemon.enabled',
+  'caches.injectMetroStore',
+  'devices.reclaimIdleMinutes',
+  'share.webrtc',
+  'budget.maxCommittedMemoryGb',
+  'budget.maxLiveWorkspaces',
+  'maintenance.pressureCheckMinutes',
+  'maintenance.sizeCheckMinutes',
+  'maintenance.maxLoadPerCore',
+  'maintenance.memoryPressureLevel',
+  'maintenance.memoryWarningMinutes',
+  'maintenance.minAvailableMemoryGb',
+  'maintenance.capTargetPercent',
+  'maintenance.idleCheckMinutes',
+  'maintenance.urgentFreeDiskGb',
+  'maintenance.pressureProtectMinutes',
+]);
+
 /** The migration steps for an agent working in a home or project an earlier Stim used. */
 export const UPGRADE_GUIDE_URL = 'https://stim.appandflow.com/docs/migrate-to-2#for-agents';
 
@@ -444,7 +466,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     type: OBJECT,
     scopes: PROJECT,
     description:
-      'Workspace services keyed by name, started by stim services start, dependencies first. "start" is the command; without a "stop" command Stim runs it as a process it supervises and stops by signal, with one it must return once the service runs. Optional: "cwd", "ports" (named port labels, each to an environment variable or null), "idEnv", "env", "teardown", "orphanTeardown", "ready", "dependsOn". The idle pass stops a service Stim started, stim revive starts it again, workspace removal tears it down',
+      'Workspace services keyed by name, started by stim services start, dependencies first. "start" is the command; without a "stop" command Stim runs it as a process it supervises and stops by signal, with one it must return once the service runs. Optional: "cwd", "ports" (named port labels, each to an environment variable or null), "idEnv", "env", "envFile" (a dotenv file read at each launch, below env, ports and idEnv), "teardown", "orphanTeardown", "ready", "dependsOn". The idle pass stops a service Stim started, stim revive starts it again, workspace removal tears it down',
   },
   {
     key: 'idle.minutes',

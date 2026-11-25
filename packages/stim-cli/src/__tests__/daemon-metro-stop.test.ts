@@ -8,6 +8,7 @@ const state = vi.hoisted(() => {
     live: unknown[];
     unresolved: unknown[];
     daemonLive: unknown[] | undefined;
+    boots: unknown[];
   } = {
     reply: null,
     refuse: false,
@@ -17,6 +18,7 @@ const state = vi.hoisted(() => {
     live: [],
     unresolved: [],
     daemonLive: undefined,
+    boots: [],
   };
   return result;
 });
@@ -54,7 +56,12 @@ vi.mock('@stim-cli/core/ownership-claim', async (original) => ({
       : { live: [], unresolved: [] },
 }));
 
-import { stopMetroTree } from '../daemon/client.ts';
+vi.mock('@stim-cli/core/state', async (original) => ({
+  ...(await original<typeof import('@stim-cli/core/state')>()),
+  readStimdBoots: () => state.boots,
+}));
+
+import { stimdBuildId, stopMetroTree } from '../daemon/client.ts';
 
 beforeEach(() => {
   state.reply = null;
@@ -65,6 +72,7 @@ beforeEach(() => {
   state.live = [{ path: '/home/workspaces/w/metro.claim/exclusive/a.claim' }];
   state.unresolved = [];
   state.daemonLive = undefined;
+  state.boots = [];
 });
 
 test('uses the acknowledged managed stop without invoking the fallback', async () => {
@@ -141,6 +149,27 @@ test('an unanswered stop under an unresolved stimd claim names that claim, not t
     reason: expect.stringContaining('/home/stimd.claim/exclusive/d.claim'),
     remedy: expect.stringContaining("rm -f '/home/stimd.claim/exclusive/d.claim'"),
   });
+  expect(fallback).not.toHaveBeenCalled();
+});
+
+test('a stop whose stimd is held after crashes names the hold and stim doctor --fix, not a claim removal', async () => {
+  state.daemon = false;
+  const now = Date.now();
+  state.boots = [1, 2, 3, 4, 5].map((i) => ({
+    at: now - i * 1000,
+    pid: 100 + i,
+    build: stimdBuildId(),
+    abnormal: true,
+    cause: 'unknown',
+  }));
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+  onTestFinished(() => error.mockRestore());
+  const fallback = vi.fn<() => boolean>(() => true);
+  const stopping = stopMetroTree('/project', 42, 'token', fallback);
+  await vi.runAllTimersAsync();
+  const stopped = await stopping;
+  expect(stopped).toMatchObject({ stopped: false, remedy: expect.stringContaining('stim doctor --fix') });
+  expect(JSON.stringify(stopped)).not.toContain('rm -f');
   expect(fallback).not.toHaveBeenCalled();
 });
 

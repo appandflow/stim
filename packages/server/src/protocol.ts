@@ -2165,6 +2165,12 @@ export function protocolJsonSchema(): JsonSchema {
               session({ action: { const: 'slow-animations' }, enabled: { type: 'boolean' } }, ['action', 'enabled']),
             ],
           }),
+          request('device.rename', {
+            type: 'object',
+            required: ['id', 'name'],
+            additionalProperties: false,
+            properties: { id: { type: 'string' }, name: { type: 'string' } },
+          }),
           request('push.register', {
             type: 'object',
             required: ['token', 'events', 'ref'],

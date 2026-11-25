@@ -154,6 +154,7 @@ export const METHODS = [
   'input.window',
   'input.clipboard.set',
   'input.clipboard.get',
+  'device.rename',
   'push.register',
   'push.unregister',
   'notifications.list',
@@ -1563,6 +1564,17 @@ export interface QuietHours {
   timeZone: string;
 }
 
+/** Renames only this connection's own record: id is hello.device.id; name follows stim-server devices rename. */
+export interface DeviceRenameParams {
+  id: string;
+  name: string;
+}
+
+/** The stored, trimmed name of this connection's own record, using the stim-server devices rename rule. */
+export interface DeviceRenameResult {
+  name: string;
+}
+
 /**
  * Asks the server to push this device's notifications through the Expo push service to `token`, an Expo push
  * token, for at least one event. Registering again replaces the previous registration. `ref` is echoed as
@@ -1997,6 +2009,7 @@ export interface Methods {
   'input.window': { params: InputWindowParams; result: Record<string, never> };
   'input.clipboard.set': { params: InputClipboardSetParams; result: InputClipboardSetResult };
   'input.clipboard.get': { params: InputClipboardGetParams; result: InputClipboardGetResult };
+  'device.rename': { params: DeviceRenameParams; result: DeviceRenameResult };
   'push.register': { params: PushRegisterParams; result: Record<string, never> };
   'push.unregister': { params?: Record<string, never>; result: Record<string, never> };
   'notifications.list': { params?: NotificationsListParams; result: NotificationsListResult };

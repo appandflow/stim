@@ -69,8 +69,10 @@ The worker records each successful build's platform and project id (a hash of
 the client's canonical git common directory and the app's path in the
 repository, so every worktree of a repository, bare or not, shares it) in
 `built.json` in the area, and answers `build.offer` from it. An offer from an
-area whose exclusive claim another build holds declines a fresh build there,
-which `build.start` would refuse, while an exact artifact is still served. The record goes
+area whose claim another build or a concurrent artifact query holds declines a
+fresh build there, which `build.start` would refuse, while an exact artifact is
+still served. An unresolved claim is left to `build.start`, whose refusal names
+the claim and how to clear it. The record goes
 with the area when stim-server evicts it, is deleted when the area's home is
 replaced for another schema, and is deleted when a build fails on a corrupt
 compilation cache, which empties that cache. The worker's own maintenance

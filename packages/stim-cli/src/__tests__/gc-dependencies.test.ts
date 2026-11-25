@@ -1356,6 +1356,22 @@ test.skipIf(process.platform === 'win32')(
 );
 
 test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+  'a pnpm tree whose .pnpm folder cannot be listed records no verdict, and is sampled once it can',
+  async () => {
+    const modules = join(projects, 'unlisted', 'node_modules');
+    pnpmTree(modules, 'linked', new Date());
+    chmodSync(join(modules, '.pnpm'), 0o000);
+    try {
+      expect(await hardLinkSample(modules)).toBeNull();
+      expect(existsSync(diskUsageLinksFile(modules))).toBe(false);
+    } finally {
+      chmodSync(join(modules, '.pnpm'), 0o755);
+    }
+    expect(await hardLinkSample(modules)).not.toBeNull();
+  },
+);
+
+test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
   'a hoisted tree whose scope folder cannot be listed gets no links verdict until it can, and then its build output is found',
   async () => {
     const hoisted = join(projects, 'scoped', 'node_modules');

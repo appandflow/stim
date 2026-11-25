@@ -5,9 +5,7 @@ skill, guides and command output. A trial starts an agent CLI headless in a clea
 temporary workspace with a scripted `stim` first on its `PATH`, then grades what
 the agent ran. The package is private and is never part of pull request CI: every
 trial is a real agent run on the maintainer's Claude or ChatGPT subscription.
-Decisions: [LLP 0025](../../llp/0025-agent-evals.decision.md). The older
-`scripts/prompt-eval` checks a single prompt per case through the Codex app
-server; this runner drives whole sessions.
+Decisions: [LLP 0025](../../llp/0025-agent-evals.decision.md).
 
 **This is not a security boundary against the agent under test.** The scripted `stim`
 runs in the agent's own sandbox, so the agent can write the invocation log and read
@@ -35,7 +33,9 @@ agents are denied. The home folder is the real one of the OS user; no option or 
   `worktree list` then works in the linked workspace), the same checkout packages and Node install, `/usr`, `/bin`, `/sbin`,
   `/System`, `/Library`, `/private/etc`, `/dev`, `/opt/homebrew`,
   `/Applications/Xcode.app`, and whatever macOS `:minimal` adds (its contents are
-  not listed by Codex). The home folder, `/tmp`, `/Volumes` and the rest of the
+  not listed by Codex). The `.git` folder of the trial's own main checkout is
+  writable, so `git` works in the linked worktree and can add another one inside
+  it. The home folder, `/tmp`, `/Volumes` and the rest of the
   checkout are denied, the temporary `HOME` is empty, commands get no network (a
   `curl` inside the profile cannot resolve a host), and the login link in the
   temporary `CODEX_HOME` cannot be read through the symlink.
@@ -116,7 +116,7 @@ MCP server it should not.
 One trial is one agent session of roughly 5 to 15 model turns. Defaults are the
 cheapest setting that works: Claude `haiku`; Codex its default model at `low`
 reasoning effort. The default `--max-runs 12` covers four cases at three trials and one arm;
-raise it for the whole suite (eight cases, 24 runs). Run it sparingly; the lanes share the same limits.
+raise it for the whole suite (fifteen cases, 45 runs). Run it sparingly; the lanes share the same limits.
 
 ## Cases
 
@@ -156,6 +156,32 @@ says to ask the user before `gc`, and code cannot judge a question.
   `stim worktree remove` on this worktree (from its root, or naming it); fails on
   `--force`, on another path, on `git worktree remove`, on a recursive `rm` and on a
   `stim gc` that can delete.
+
+The seven `website-*` cases send a copyable prompt read from `website/docs` at load
+time, so a renamed or reworded prompt box fails the cases test or changes what is
+measured. Each needs the guide read before its action; the scripted outputs are
+`synthetic`.
+
+- `website-simulator` ("Choose an iOS simulator"): a `stim ios` with `--device-type
+"iPhone 17"` and a `--runtime` of 26.5, not `--device`.
+- `website-phone` ("Run on a connected phone"): a `stim ios --device` without
+  `--device-type`.
+- `website-logs` ("Inspect recent errors"): `stim logs --errors --since 10m`.
+- `website-worktree` ("Work in parallel", plus a sentence naming the change and
+  `.worktrees/` as the place): a successful `stim worktree warm` in a `.worktrees/<name>`
+  root, and every `stim start` and `stim ios` run from a root where warm already
+  exited; a subdirectory, another worktree or the original checkout fails. The grader
+  trusts the directory name and does not check git. Claude's allow list denies `git worktree add`, so the Claude arm cannot
+  pass this case.
+- `website-slots` ("Test a change on multiple devices"): successful launches of the
+  `phone`, `tablet` and `hardware` slots, where `tablet` names an iPad
+  `--device-type`, `hardware` uses `--device` and `phone` neither; no `stim stop`.
+- `website-failure` ("Build and run"): every `stim ios` fails with
+  `STIM_LAUNCH_FAILED`. Needs `logs --errors` after the failure and before any rerun;
+  whether `stim guide errors STIM_LAUNCH_FAILED` was read is recorded, not graded.
+- `website-stop` ("Stop the environment", plus a sentence saying the workspace is
+  running): a successful workspace-wide `stim stop`, no launch and no
+  `stim worktree remove`.
 
 `stim ios --plan` builds and launches nothing, so it never counts as a launch. In
 `free-disk`, a successful `gc` with `--dry-run` anywhere in its arguments counts as the
@@ -270,8 +296,8 @@ plugins or `~/.agents` skills. Its login shell reorders `PATH`, so the temporary
 `HOME` holds a `.zprofile` that puts the trial `bin` first again.
 The skill is `$CODEX_HOME/skills/stim`.
 Flags: `exec --json --ephemeral --ignore-rules`, `default_permissions="eval"` with a
-`permissions.eval.filesystem` table (see above; the workspace and the harness
-directory are writable), apps, plugins, hooks, multi-agent, browser and computer-use
+`permissions.eval.filesystem` table (see above; the workspace, the harness
+directory and the main checkout's `.git` are writable), apps, plugins, hooks, multi-agent, browser and computer-use
 features off, bundled skills off, and `model_reasoning_effort="low"`.
 `codex debug prompt-input` shows the model-visible prompt and lists only the `stim`
 skill.

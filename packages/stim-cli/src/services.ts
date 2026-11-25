@@ -1,4 +1,5 @@
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync } from 'node:fs';
+import { parseEnv } from 'node:util';
 import { homedir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { workspaceId, type StimContext } from '@stim-cli/core';
@@ -44,6 +45,7 @@ const RESERVED_PLACEHOLDERS = new Set(['id', 'dir']);
 export interface ServiceDefinition {
   name: string;
   cwd: string;
+  envFile?: string;
   /** Named port labels, each to the environment variable that receives its number, or null. */
   ports: Record<string, string | null>;
   /** The labels among `ports` whose port is not reversed to the workspace's devices. */
@@ -137,12 +139,27 @@ function parseService(name: string, value: unknown): ServiceDefinition {
   if (!NAME.test(name))
     throw bad(name, 'needs a name of lowercase letters, digits and hyphens, starting with a letter.');
   if (!isJsonObject(value)) throw bad(name, 'must be an object with at least a start command.');
-  const known = ['cwd', 'ports', 'idEnv', 'env', 'start', 'stop', 'teardown', 'orphanTeardown', 'ready', 'dependsOn'];
+  const known = [
+    'cwd',
+    'envFile',
+    'ports',
+    'idEnv',
+    'env',
+    'start',
+    'stop',
+    'teardown',
+    'orphanTeardown',
+    'ready',
+    'dependsOn',
+  ];
   const unknown = Object.keys(value).find((key) => !known.includes(key));
   if (unknown) throw bad(name, `has an unknown key ${unknown}; use ${known.join(', ')}.`);
   const cwd = value.cwd ?? '.';
   if (typeof cwd !== 'string' || isAbsolute(cwd))
     throw bad(name, '.cwd must be a path relative to the workspace, inside its checkout.');
+  const envFile = value.envFile;
+  if (envFile !== undefined && (typeof envFile !== 'string' || isAbsolute(envFile)))
+    throw bad(name, '.envFile must be a path relative to the workspace, inside its checkout.');
   const ports: Record<string, string | null> = {};
   const local: string[] = [];
   const rawPorts = value.ports ?? {};
@@ -195,6 +212,7 @@ function parseService(name: string, value: unknown): ServiceDefinition {
   if (!Array.isArray(dependsOn) || !dependsOn.every((each) => typeof each === 'string'))
     throw bad(name, '.dependsOn must be a list of service names.');
   const definition: ServiceDefinition = { name, cwd, ports, local, idEnv, env, start, dependsOn: [...dependsOn] };
+  if (envFile !== undefined) definition.envFile = envFile;
   for (const key of ['stop', 'teardown', 'orphanTeardown', 'ready'] as const) {
     const argv = argvOf(name, key, value[key]);
     if (argv) definition[key] = argv;
@@ -296,7 +314,7 @@ export function serviceId(root: string, name: string): string {
   return `${name}-${workspaceId(root)}`;
 }
 
-function workspaceCwd(root: string, cwd: string): string {
+function workspaceCwd(root: string, cwd: string, key = 'cwd'): string {
   const real = realpathSync(root);
   const checkout = realpathSync(repoRoot(real) ?? real);
   const dir = resolve(real, cwd);
@@ -304,9 +322,9 @@ function workspaceCwd(root: string, cwd: string): string {
   const inside = relative(checkout, resolved);
   if (inside.startsWith('..') || isAbsolute(inside))
     throw new ServiceError(
-      `The service cwd ${cwd} leaves the checkout ${checkout}.`,
+      `The service ${key} ${cwd} leaves the checkout ${checkout}.`,
       'STIM_BAD_ARG',
-      'Point cwd at a folder inside this checkout (stim guide services).',
+      `Point ${key} at a path inside this checkout (stim guide services).`,
     );
   return resolved;
 }
@@ -337,6 +355,7 @@ async function resolveService(
   const record: Omit<ServiceRecord, 'state' | 'at'> = {
     kind: definition.stop ? 'commands' : 'process',
     cwd,
+    ...(definition.envFile !== undefined ? { envFile: workspaceCwd(root, definition.envFile, 'envFile') } : {}),
     env,
     ...(path ? { path } : {}),
     dependsOn: [...definition.dependsOn],
@@ -400,12 +419,22 @@ interface RunOptions {
   waitMs?: number;
 }
 
+function readEnvFile(record: Pick<ServiceRecord, 'envFile'>): NodeJS.Dict<string> {
+  if (record.envFile === undefined) return {};
+  try {
+    return parseEnv(readFileSync(record.envFile, 'utf8'));
+  } catch (error) {
+    const reason = error instanceof Error && 'code' in error ? String(error.code) : messageOf(error);
+    throw new Error(`could not read envFile ${record.envFile}: ${reason}`, { cause: error });
+  }
+}
+
 async function runCommand(
   root: string,
   name: string,
   kind: string,
   argv: string[],
-  record: Pick<ServiceRecord, 'cwd' | 'env' | 'path'>,
+  record: Pick<ServiceRecord, 'cwd' | 'env' | 'path' | 'envFile'>,
   cwd: string,
   timeoutMs: number,
   { signal, operation }: RunOptions,
@@ -415,14 +444,20 @@ async function runCommand(
   const command = argv.join(' ');
   let output = '';
   let failure: string | null = null;
+  let fileEnv: NodeJS.Dict<string> = {};
+  try {
+    if (kind !== 'orphan_teardown') fileEnv = readEnvFile(record);
+  } catch (error) {
+    failure = messageOf(error);
+  }
   // @ref LLP 0027#stim-runs-only-what-it-recorded -- stimd's PATH may lack the tools the start found
-  const env = { ...record.env, ...(record.path ? { PATH: record.path } : {}) };
+  const env = { ...fileEnv, ...record.env, ...(record.path ? { PATH: record.path } : {}) };
   const file = exec.findExecutable(program, {
     cwd,
     ...(operation || record.path ? { env: { ...operation?.env, ...env } } : {}),
   });
-  if (!file) failure = `${program} is not on PATH`;
-  else {
+  if (!failure && !file) failure = `${program} is not on PATH`;
+  if (!failure && file) {
     try {
       output = await runOperationFile(operation, exec, file, args, {
         cwd,
@@ -558,7 +593,12 @@ function logTail(root: string, name: string): string {
 async function spawnProcess(root: string, name: string, record: ServiceRecord, operation: StimContext | undefined) {
   if (!operation) throw new Error('a supervised service starts only from a Stim command');
   const [program = '', ...args] = record.start;
-  const env = { ...operation.env, ...record.env, ...(record.path ? { PATH: record.path } : {}) };
+  const env = {
+    ...operation.env,
+    ...readEnvFile(record),
+    ...record.env,
+    ...(record.path ? { PATH: record.path } : {}),
+  };
   const file = getExecutor().findExecutable(program, { cwd: record.cwd, env });
   if (!file) throw new Error(`${program} is not on PATH`);
   mkdirSync(workspaceLogsDir(root), { recursive: true });
@@ -659,9 +699,9 @@ type Transition =
   | { op: 'teardown'; force: boolean }
   | { op: 'forget' };
 
-function byHand(record: ServiceRecord, argv: readonly string[], cwd: string): string {
+function byHand(record: ServiceRecord, argv: readonly string[], cwd: string, envFile = record.envFile): string {
   const env = Object.entries(record.env).map(([key, value]) => `${key}=${value}`);
-  return `run by hand in ${cwd}: ${[...env, ...argv].join(' ')}`;
+  return `run by hand in ${cwd}${envFile ? ` with the variables of ${envFile}` : ''}: ${[...env, ...argv].join(' ')}`;
 }
 
 /** Runs `argv` as one of the service's commands, then checks that its ports closed. */
@@ -758,6 +798,7 @@ async function teardownOne(
     record,
     argv ?? record.teardown ?? record.stop ?? ['kill', '--', `-${record.process?.pid}`],
     cwd,
+    present ? record.envFile : undefined,
   );
   if (failure && !force) {
     const reason = `${failure}; ${shown}`;
@@ -775,7 +816,7 @@ async function teardownOne(
 
 // @ref LLP 0027#stim-runs-only-what-it-recorded -- a service left running keeps the record it was started with
 function asRunning(record: ServiceRecord): ServiceRecord {
-  const { stoppedBy: _, idleStopFailedAt: __, ...rest } = record;
+  const { stoppedBy: _, idleStopFailedAt: __, teardownFailure: ___, ...rest } = record;
   return { ...rest, state: 'running' };
 }
 
