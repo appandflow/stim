@@ -2358,7 +2358,7 @@ WHAT MAKES THE CACHE ACTUALLY HIT: .FINGERPRINTIGNORE
     },
     concurrency: {
       summary:
-        "waiting on another workspace's build, --no-build-cache, concurrency.maxBuilds, maxDevices and maxTests, stim test",
+        "waiting on another workspace's build, --no-build-cache, concurrency.maxBuilds, maxDevices, maxTests and testWorkers, stim test",
       body: () => `ONE COMPILE PER FINGERPRINT, ACROSS EVERY WORKSPACE
   The cache makes the SECOND workspace on a commit free -- but only once the
   first has finished. Three agents starting within the same minute all miss it,
@@ -2456,7 +2456,8 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
               when the 1-minute load is past the core count, at least 1
 
   concurrency.testWorkers above 0 replaces the formula: each run passes
-  exactly that count, with no load reduction, and the line says so.
+  exactly that count, with no load reduction, and the line says so. It caps
+  the runs Stim sizes at maxTests x testWorkers workers, nested runs aside.
 
   Jest and Vitest get --maxWorkers=<n> only when Stim can tell nothing else
   sets workers or a serial run: the command runs jest or vitest directly (also
