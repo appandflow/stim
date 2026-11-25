@@ -467,26 +467,27 @@ run's build log: remote_connect_failed { host, capability, ms, timeoutMs, msg,
 code } (could not connect or say hello, e.g. "no reply in time" when the machine
 did not answer hello) and remote_request_failed { method, ms, code, msg }.
 Timings of requests that succeed are debug records (below).
-stim-server writes to its service log (~/Library/Logs/Stim/<label>.log), with
-no tokens or tickets, each of these lines starting with an ISO time:
-"request failed method=<m> client=<device id> run=<runId>
-ms=<n> report=<desktop.reports.get target> error=<code>" for an error reply (once a minute per client, method,
-code and reason, ignoring its numbers), ending in reason="<message>" for a build-busy or build-refused
-refusal; and "host_connect ... error=<reason_with_underscores>" when its connection to a hosting
-machine fails; and, whatever debug.logs says, "build job cancel job=<id>
-client=<id> reason=<why> silentSeconds=<n>" and "build job ended job=<id>
-client=<id> code=<code> stopped=<why> exit=<n> signal=<s> claimsReleased=<bool>"
-(empty fields omitted) for an offloaded build that is stopped or ends without
-an artifact; a client that ends its build closes its connection, so why reads
-connection-closed, as can a stim-server stop. With debug.logs on or STIM_DEBUG=1 for the server, every request and
-host_connect is recorded only in STIM_HOME/logs/debug/server.ndjson. Request
-fields: method, client, runId, ms, slow, steps such as whois and probe, report,
-error, reason (error message). slow means 1000
-ms or more; whois and probe time hello's Tailscale identity lookup and host
-permission probe. Unknown method names log as unknown. host_connect carries
-host, ms, connectMs and helloMs, or reused=true when an open connection was shared. Errors still reach the service log as
-request failed lines. Search runId in server.ndjson and run=<runId> in service
-error lines.
+stim-server writes to its service log (~/Library/Logs/Stim/<label>.log), with no
+tokens or tickets, each of these lines starting with an ISO time: "request
+failed method=<m> client=<device id> run=<runId> ms=<n> report=<target>
+error=<code>" for an error reply (report only on desktop.reports.get; once a
+minute per client, method, code and reason, ignoring its numbers), ending in
+reason="<message>" for a build-busy or build-refused refusal; and "host_connect
+... error=<reason_with_underscores>" when its connection to a hosting machine
+fails; and, whatever debug.logs says, "build job cancel job=<id> client=<id>
+reason=<why> silentSeconds=<n>" and "build job ended job=<id> client=<id>
+code=<code> stopped=<why> exit=<n> signal=<s> claimsReleased=<bool>" (empty
+fields omitted) for an offloaded build that is stopped or ends without an
+artifact; a client that ends its build closes its connection, so why reads
+connection-closed, as can a stim-server stop. With debug.logs on or STIM_DEBUG=1
+for the server, every request and host_connect is recorded only in
+STIM_HOME/logs/debug/server.ndjson. Request fields: method, client, runId, ms,
+slow, steps such as whois and probe, report, error, reason (error message). slow
+means 1000 ms or more; whois and probe time hello's Tailscale identity lookup
+and host permission probe. Unknown method names are logged as unknown.
+host_connect carries host, ms, connectMs and helloMs, or reused=true when an
+open connection was shared. Errors still reach the service log as request failed
+lines. Search the run id in both logs.
 
 DEBUG LOGS
 With debug.logs on or STIM_DEBUG=1 (stim guide settings), the CLI also appends
