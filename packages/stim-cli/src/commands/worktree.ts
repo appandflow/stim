@@ -40,6 +40,7 @@ import { prepareInstallCarry } from '../fingerprint/index-store.ts';
 import { recordWorkspaceUseAsync } from '../workspace/workspace-state.ts';
 import { recordWarmedFrom, sourceDependenciesNotice } from '../workspace/source-dependencies.ts';
 import { forgetStatusMeasures } from '../status-measures.ts';
+import { dropBuildAreas, recordedBuildAreas } from '../offload/build-areas.ts';
 import { reclaimProject, type ReclaimResult } from '../devices/reclaim.ts';
 import { teardownServices } from '../services.ts';
 import { classifyProjectEntries } from './gc/projects.ts';
@@ -61,7 +62,7 @@ import { workspaceLinkLine, workspaceLinks } from '../devices/stim-desktop.ts';
 import type { ParkedDevice } from '../devices/teardown.ts';
 import { withManagedRemoteWorktreeRemovalLock, withManagedTunnelRemovalLock } from '../engine/tunnel.ts';
 import { warmClaimAcquiredLine, withWarmClaim, type WarmClaimWait } from '../engine/warm-claim.ts';
-import { gcMarkFile, readGcMark, trace } from '@stim-cli/core/state';
+import { gcMarkFile, readGcMark, trace, type BuildAreaRecord } from '@stim-cli/core/state';
 import { startWarmProgress, type WarmProgress } from '../engine/warm-progress.ts';
 import { incompleteInstallRefusal, refreshMainCheckout, type RefreshFailure } from '../workspace/worktree-refresh.ts';
 import { readRemoteSession } from '../stimd/metro/state.ts';
@@ -1131,12 +1132,14 @@ async function reclaimEnvironment(
   beforeRemove?: (workspace: string) => void,
   preserveRootProject = false,
 ): Promise<void> {
+  let buildAreas: BuildAreaRecord[] = [];
   await withManagedRemoteWorktreeRemovalLock(
     root,
     () =>
       withReclaimLocks(
         root,
         async (lockedKeys) => {
+          const recorded = recordedBuildAreas(lockedKeys);
           const result = await reclaimAll(root, lockedKeys, {
             preserveRootProject,
             removedBy: 'worktree-remove',
@@ -1169,6 +1172,7 @@ async function reclaimEnvironment(
             reportRetainedResources(root, result, output);
             return;
           }
+          buildAreas = recorded;
           for (const s of result.skippedDevices) {
             output.error(chalk.yellow(phaseLine('device', `kept ${describeKeptDevice(s)} (${s.reason})`)));
           }
@@ -1185,6 +1189,19 @@ async function reclaimEnvironment(
       ),
     { signal: operation?.signal, declareSpawnsFor: operation },
   );
+  await dropRemovedBuildAreas(buildAreas, output, operation);
+}
+
+async function dropRemovedBuildAreas(
+  areas: readonly BuildAreaRecord[],
+  output: RemovalOutput,
+  operation?: StimContext,
+): Promise<void> {
+  for (const drop of await dropBuildAreas(areas, operation?.signal)) {
+    if ('dropped' in drop) output.error(chalk.dim(phaseLine('worker', `dropped its build area on ${drop.machine}`)));
+    else if ('kept' in drop)
+      output.error(chalk.dim(phaseLine('worker', `${drop.machine} kept its build area (${drop.kept})`)));
+  }
 }
 
 interface RemovalOutput {
@@ -1783,6 +1800,7 @@ async function removeOrRefuse(
 
   let archive: WorktreeArchive | null = null;
   let gitRemoving = false;
+  let buildAreas: BuildAreaRecord[] = [];
   await withManagedRemoteWorktreeRemovalLock(
     path,
     () =>
@@ -1820,6 +1838,7 @@ async function removeOrRefuse(
             output.fail();
             return;
           }
+          const recorded = recordedBuildAreas(lockedKeys);
           const result = await reclaimAll(path, lockedKeys, {
             preserveAllProjects: true,
             removedBy: opts.removedBy ?? 'worktree-remove',
@@ -1937,6 +1956,7 @@ async function removeOrRefuse(
             );
           }
           onRemoved();
+          buildAreas = recorded;
           try {
             for (const key of result.reclaimedKeys) {
               if (key === path) continue;
@@ -2054,6 +2074,7 @@ async function removeOrRefuse(
     .finally(() => {
       if (archive) releaseWorktreeArchive(archive);
     });
+  await dropRemovedBuildAreas(buildAreas, output, opts.operation);
 }
 
 export const removeOp: Op = defineOp({

@@ -8,6 +8,7 @@ import { listBuildSlots, type BuildSlotInfo } from '../../engine/build-slots.ts'
 import { clearFreeClaimSet } from '../../ownership-claim.ts';
 import { detectIsExpo, findProjectRoot } from '../../workspace/project.ts';
 import { reclaimProject } from '../../devices/reclaim.ts';
+import { dropBuildAreas, recordedBuildAreas } from '../../offload/build-areas.ts';
 import { listAllIosSimsAsync, listIosLaunchdOverridesFolders, type IosSimRecord } from '../../devices/ios.ts';
 import { listAvdsAsync, listOrphanedAvdDirectories, ownedAvdDirectory } from '../../devices/android.ts';
 import { readCreatedDevices } from '../../devices/created-devices.ts';
@@ -314,6 +315,7 @@ export async function pruneDeadProjects(
       output.record('project', 'kept', path, { detail: 'its absence can no longer be confirmed' });
       continue;
     }
+    const buildAreas = recordedBuildAreas([path]);
     const result = await reclaimProject(path, {
       archive: { removedBy: 'gc' },
       deleteOwnedDevices: deviceSweepIsScoped(operation?.env ?? process.env),
@@ -332,6 +334,7 @@ export async function pruneDeadProjects(
       output.record('project', 'kept', path, { detail: 'it could not be fully pruned; its registry entry was kept' });
     } else {
       output.record('project', 'done', path);
+      await dropBuildAreas(buildAreas, operation?.signal);
     }
     for (const dir of result.removedWorkspaceDirs) output.record('workspaceDirectory', 'done', dir);
     for (const { dir, reason } of result.failedWorkspaceDirs) {

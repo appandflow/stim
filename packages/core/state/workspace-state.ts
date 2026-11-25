@@ -612,6 +612,30 @@ export function readBuildHistory(
   return builds;
 }
 
+export const BUILD_AREAS_KEY = 'buildAreas';
+
+/**
+ * A build worker this workspace's checkout was sent to: its `remote.machines` name, the name of the checkout's area
+ * there, and the checkout's canonical root, which removal asks the worker to drop once it is gone.
+ */
+export interface BuildAreaRecord {
+  machine: string;
+  repo: string;
+  checkout: string;
+}
+
+export function readBuildAreas(state: WorkspaceState | null | undefined): BuildAreaRecord[] {
+  const list = state?.[BUILD_AREAS_KEY];
+  if (!Array.isArray(list)) return [];
+  return list.filter(
+    (each): each is BuildAreaRecord =>
+      isJsonObject(each) &&
+      typeof each.machine === 'string' &&
+      typeof each.repo === 'string' &&
+      typeof each.checkout === 'string',
+  );
+}
+
 export function readWorkspaceState(root: string): WorkspaceState | null {
   return readJsonObject(workspaceStateFile(root));
 }
