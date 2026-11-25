@@ -126,16 +126,21 @@ const separateWorktree: EvalCase = {
   workspace: { files: expoApp('demo') },
   script: [...workspaceRules, IOS_OK, NO_ERRORS],
   grade(input) {
-    const inPlace = input.invocations.filter(
-      (each) => each.cwdRelative === '.' && (matches(each, IOS_LAUNCH) || matches(each, { argv: ['start'] })),
+    const inWorktree = (each: Invocation) => /^\.worktrees\/[^/]+$/.test(each.cwdRelative);
+    const warms = input.invocations.filter(
+      (each) => inWorktree(each) && matches(each, { argv: ['worktree', 'warm'], exit: 0 }),
+    );
+    const unwarmed = input.invocations.filter(
+      (each) =>
+        (matches(each, IOS_LAUNCH) || matches(each, { argv: ['start'] })) &&
+        !warms.some((warm) => warm.cwdRelative === each.cwdRelative && warm.endedAt <= each.startedAt),
     );
     return [
-      ...guided(input, { argv: ['worktree', 'warm'], exit: 0, predicate: (each) => each.cwdRelative !== '.' }),
-      exitedBefore(input, { argv: ['worktree', 'warm'], predicate: (each) => each.cwdRelative !== '.' }, IOS_LAUNCH),
+      ...guided(input, { argv: ['worktree', 'warm'], exit: 0, predicate: inWorktree }),
       {
-        name: 'no stim start or ios in the original checkout',
-        pass: inPlace.length === 0,
-        detail: `${inPlace.length} matching invocations`,
+        name: 'every stim start and ios runs in a new worktree root after warm exited there',
+        pass: unwarmed.length === 0,
+        detail: unwarmed.map((each) => `${each.cwdRelative}: ${each.argv.join(' ')}`).join(' | ') || 'none',
       },
     ];
   },

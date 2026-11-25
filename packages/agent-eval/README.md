@@ -167,9 +167,10 @@ measured. Each needs the guide read before its action; the scripted outputs are
   `--device-type`.
 - `website-logs` ("Inspect recent errors"): `stim logs --errors --since 10m`.
 - `website-worktree` ("Work in parallel", plus a sentence naming the change and
-  `.worktrees/` as the place): a successful `stim worktree warm` outside the workspace
-  root that exits before any `stim ios`, and no `start` or `ios` in the original
-  checkout. Claude's allow list denies `git worktree add`, so the Claude arm cannot
+  `.worktrees/` as the place): a successful `stim worktree warm` in a `.worktrees/<name>`
+  root, and every `stim start` and `stim ios` run from a root where warm already
+  exited; a subdirectory, another worktree or the original checkout fails. The grader
+  trusts the directory name and does not check git. Claude's allow list denies `git worktree add`, so the Claude arm cannot
   pass this case.
 - `website-slots` ("Test a change on multiple devices"): successful launches of the
   `phone`, `tablet` and `hardware` slots, where `tablet` names an iPad
