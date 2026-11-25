@@ -104,8 +104,6 @@ const DAY_MS = 24 * HOUR_MS;
 const EVICTED_DIR = 'evicted';
 const HANDOFFS_DIR = 'handoffs';
 const HANDOFF_TOKEN = /^[0-9a-f]{64}$/;
-const CLIENT_ID = /^[0-9a-f]{8}$/;
-const CLIENT_ENTRIES = new Set(['repos', 'blobs', 'cache', HANDOFFS_DIR, EVICTED_DIR]);
 
 export const gb = (bytes: number): string => (bytes / 1024 ** 3).toFixed(1);
 
@@ -344,8 +342,13 @@ export interface BuildWorkerRootOptions {
   limits?: Partial<BuildLimits>;
   /** Whether a client still holds `build`; the Gradle daemons of one that does not are stopped. */
   allowed?: (client: string) => boolean;
-  /** The clients the build approvals name, or null when they cannot be read; an eviction pass removes the others. */
-  listed?: () => ReadonlySet<string> | null;
+  /**
+   * The clients recorded as dropped from the build approvals and not approved now, or null when that is unknown; an
+   * eviction pass removes their folders.
+   */
+  removed?: () => readonly string[] | null;
+  /** Drops `client` from that record once this process removed its folder. */
+  forget?: (client: string) => void;
   /** Whether the periodic daemon sweep may read the Stim home yet; it runs unconditionally when absent. */
   ready?: () => boolean;
   /** The offload jobs running now. */
@@ -534,32 +537,43 @@ export class BuildWorkerRoot {
     if (!client || client === '.' || client === '..' || basename(client) !== client) return Promise.resolve();
     const pending = this.removals.get(client);
     if (pending) return pending;
-    const notes: string[] = [];
-    const note = (line: string) => void notes.push(line);
-    const removal = this.removeClient(client, note)
-      .catch((error: unknown) => note(`stim-server: retaining the build area of ${client}: ${String(error)}`))
-      .finally(() => {
-        this.removals.delete(client);
-        const said = notes.join('\n');
-        if (said && this.removalNotes.get(client) !== said) for (const line of notes) console.error(line);
-        if (said) this.removalNotes.set(client, said);
-        else this.removalNotes.delete(client);
-      });
+    const removal = this.removeAndReport(client).finally(() => this.removals.delete(client));
     this.removals.set(client, removal);
     return removal;
   }
 
-  private async removeClient(client: string, note: (line: string) => void): Promise<void> {
+  private async removeAndReport(client: string): Promise<void> {
+    const notes: string[] = [];
+    const note = (line: string) => void notes.push(line);
+    let removed = false;
+    try {
+      removed = await this.removeClient(client, note);
+    } catch (error) {
+      note(`stim-server: retaining the build area of ${client}: ${String(error)}`);
+    }
+    if (removed && this.options.forget) {
+      try {
+        this.options.forget(client);
+      } catch (error) {
+        note(`stim-server: could not drop ${client} from the removed build clients: ${String(error)}`);
+      }
+    }
+    const said = notes.join('\n');
+    if (said && this.removalNotes.get(client) !== said) for (const line of notes) console.error(line);
+    if (said) this.removalNotes.set(client, said);
+    else this.removalNotes.delete(client);
+  }
+
+  /** Whether it deleted a folder of `client` that was there. */
+  private async removeClient(client: string, note: (line: string) => void): Promise<boolean> {
     await this.options.stopJobs(client);
     const clientDir = this.clientDir(client);
     for (const token of handoffTokens(clientDir)) dropHandoff(clientDir, token);
-    if (notRealDirectory(clientDir)) {
-      await this.removeDir(client, clientDir, note);
-      return;
-    }
+    const existed = lstatSync(clientDir, { throwIfNoEntry: false }) !== undefined;
+    if (notRealDirectory(clientDir)) return await this.removeDir(client, clientDir, note);
     if (!(await this.resumeEvicted(client))) {
       note(`stim-server: retaining the build area of ${client} because an evicted area is not deleted yet.`);
-      return;
+      return false;
     }
     let areas: string[];
     try {
@@ -568,7 +582,7 @@ export class BuildWorkerRoot {
     } catch (error) {
       if (!isMissing(error)) {
         note(`stim-server: retaining unreadable build areas of ${client}: ${String(error)}`);
-        return;
+        return false;
       }
       areas = [];
     }
@@ -581,14 +595,14 @@ export class BuildWorkerRoot {
       const clearance = clearFreeClaimSet({ root, label: 'build worker' });
       if (clearance.status !== 'cleared') {
         note(`stim-server: retaining the build area of ${client}; ownership at ${root} is ${clearance.status}.`);
-        return;
+        return false;
       }
     }
     for (const area of areas.filter((name) => !name.endsWith('.claims'))) {
       const devices = areaDevices(join(clientDir, 'repos', area));
       if (devices) {
         note(`stim-server: retaining the build area of ${client}; ${area}: ${devices}.`);
-        return;
+        return false;
       }
     }
     if (process.platform === 'win32') await this.sweepDaemons(client);
@@ -596,9 +610,9 @@ export class BuildWorkerRoot {
       const repos = join(clientDir, 'repos');
       const dirs = areas.flatMap((repo) => this.windowsAreaDirs(join(repos, repo)));
       if (ownsWindowsGradleHome(clientDir)) dirs.push(gradleUserHome(clientDir));
-      if (!(await this.removeWindowsDirs(client, dirs, note))) return;
+      if (!(await this.removeWindowsDirs(client, dirs, note))) return false;
     }
-    await this.removeDir(client, clientDir, note);
+    return (await this.removeDir(client, clientDir, note)) && existed;
   }
 
   private async removeDir(client: string, dir: string, note: (line: string) => void): Promise<boolean> {
@@ -696,9 +710,9 @@ export class BuildWorkerRoot {
   }
 
   /**
-   * Removes the folders of clients the build approvals do not name, then evicts repository areas of approved clients:
-   * those unused for longer than `server.workerAreaMaxAgeDays` and, while the volume is near the disk floor, the least
-   * recently used. Calls made during a pass join it.
+   * Removes the folders of clients recorded as dropped from the build approvals, then evicts repository areas of
+   * approved clients: those unused for longer than `server.workerAreaMaxAgeDays` and, while the volume is near the disk
+   * floor, the least recently used. Calls made during a pass join it.
    */
   evictAreas(): Promise<void> {
     this.evicting ??= this.evictionPass()
@@ -720,7 +734,7 @@ export class BuildWorkerRoot {
 
   private async evictionPass(): Promise<void> {
     this.lastEviction = Date.now();
-    await Promise.all(this.removeUnlisted());
+    await Promise.all(this.removeRecorded());
     const maxAgeMs = workerAreaMaxAgeDays() * DAY_MS;
     for (const client of this.workerClients()) {
       if (this.closed) return;
@@ -834,51 +848,20 @@ export class BuildWorkerRoot {
     return { dropped: true };
   }
 
-  private removeUnlisted(): Promise<void>[] {
-    // @ref LLP 0009#repository-ownership-and-cleanup -- a client the approvals read do not name loses its folder
+  private removeRecorded(): Promise<void>[] {
+    // @ref LLP 0009#repository-ownership-and-cleanup -- only a recorded removal the approvals confirm deletes a folder
     if (this.closed || !(this.options.ready?.() ?? true)) return [];
-    const listed = this.options.listed?.() ?? null;
-    if (listed === null) return [];
-    const hasRepos = (client: string) => {
-      try {
-        return lstatSync(join(this.clientDir(client), 'repos'), { throwIfNoEntry: false })?.isDirectory() === true;
-      } catch {
-        return false;
-      }
-    };
+    const recorded = new Set(this.options.removed?.() ?? []);
+    if (recorded.size === 0) return [];
     return this.workerClients(true)
-      .filter((client) => CLIENT_ID.test(client) && !listed.has(client) && hasRepos(client))
-      .flatMap((client) => {
-        const unproven = this.unownedEntry(client);
+      .filter((client) => recorded.has(client))
+      .map((client) => {
         this.reportOnce(
-          `unlisted ${client}`,
-          unproven
-            ? `stim-server: retaining the build area of ${client}, which the build approvals do not name: ${unproven}.`
-            : `stim-server: removing the build area of ${client}: the build approvals do not name it.`,
+          `recorded ${client}`,
+          `stim-server: removing the build area of ${client}: its build approval was removed.`,
         );
-        return unproven ? [] : [this.remove(client)];
+        return this.remove(client);
       });
-  }
-
-  private unownedEntry(client: string): string | null {
-    const clientDir = this.clientDir(client);
-    const repos = join(clientDir, 'repos');
-    try {
-      for (const entry of readdirSync(clientDir, { withFileTypes: true }))
-        if (!entry.isDirectory() || !CLIENT_ENTRIES.has(entry.name))
-          return `${join(clientDir, entry.name)} is not something stim-server creates there`;
-      for (const entry of readdirSync(repos, { withFileTypes: true })) {
-        const claims = entry.isDirectory() && entry.name.endsWith('.claims');
-        if (
-          !isAreaEntry(entry) &&
-          !(claims && new RegExp(BUILD_REPO_PATTERN).test(entry.name.slice(0, -'.claims'.length)))
-        )
-          return `${join(repos, entry.name)} is not a build area or its claims`;
-      }
-      return null;
-    } catch (error) {
-      return `its folder cannot be read: ${String(error)}`;
-    }
   }
 
   private workerClients(all = false): string[] {

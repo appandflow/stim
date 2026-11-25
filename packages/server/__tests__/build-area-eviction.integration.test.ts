@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { once } from 'node:events';
 import fs, {
   existsSync,
@@ -21,11 +21,18 @@ import { pathToFileURL } from 'node:url';
 import { WebSocket } from 'ws';
 import { BuildArtifactCache } from '../../stim-cli/src/offload/build-artifact-cache.ts';
 import { releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
-import { tryAcquireBuildSlotClaim, windowsShortDir, windowsShortDirKey } from '@stim-cli/core/state';
+import { isJsonObject, tryAcquireBuildSlotClaim, windowsShortDir, windowsShortDirKey } from '@stim-cli/core/state';
 import { BuildWorkerRoot, writeHandoff, type BuildLimits, type BuildWorkerRootOptions } from '../src/build.ts';
 import { BuildHost, type BuildHostOptions } from '../../stim-cli/src/job/offload/host.ts';
 import { areaLastUsed, recordAreaUse, recordRootUsage } from '../src/worker-areas.ts';
-import { listedBuildClients } from '../src/registry.ts';
+import {
+  forgetRemovedBuildClient,
+  removedBuildClients,
+  revokeDevice,
+  spendSecret,
+  storeSetupSecret,
+} from '../src/registry.ts';
+import { newSecret, secretValues } from '@stim-cli/core/noise-session';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
 
@@ -60,14 +67,15 @@ class Worker {
 
   constructor(
     limits: Partial<BuildLimits>,
-    options: Partial<BuildHostOptions> & Pick<BuildWorkerRootOptions, 'allowed' | 'ready' | 'listed'>,
+    options: Partial<BuildHostOptions> & Pick<BuildWorkerRootOptions, 'allowed' | 'ready' | 'removed' | 'forget'>,
   ) {
     this.host = new BuildHost({ worker: join(home, 'worker.mjs'), env: process.env, limits, ...options });
     this.root = new BuildWorkerRoot({
       limits,
       allowed: options.allowed,
       ready: options.ready,
-      listed: options.listed,
+      removed: options.removed,
+      forget: options.forget,
       jobs: () => this.live.values(),
       stopJobs: async (client) => {
         for (const [entry, owner] of this.live) {
@@ -140,7 +148,7 @@ class Worker {
 
 const start = (
   limits: Partial<BuildLimits> = {},
-  options: Partial<BuildHostOptions> & Pick<BuildWorkerRootOptions, 'allowed' | 'ready' | 'listed'> = {},
+  options: Partial<BuildHostOptions> & Pick<BuildWorkerRootOptions, 'allowed' | 'ready' | 'removed' | 'forget'> = {},
 ) => {
   running = new Worker({ daemonSweepMs: 60 * 60_000, ...limits }, options);
   return running;
@@ -1634,89 +1642,121 @@ markClaimChildPending(tryAcquireClaim({ root: ${JSON.stringify(`${path}.claims`)
   });
 });
 
-describe('a client the build approvals do not name', () => {
-  const APPROVED = 'aaaa0001';
-  const REVOKED = 'bbbb0002';
-  const buildClients = (text: string) => {
-    mkdirSync(join(home, 'server'), { recursive: true });
-    writeFileSync(join(home, 'server', 'build-clients.json'), text);
+describe('a build client whose approval was removed', () => {
+  const registry = () => join(home, 'server', 'build-clients.json');
+  const recordFile = () => join(home, 'server', 'removed-build-clients.json');
+  const recorded = () => {
+    const record: unknown = JSON.parse(readFileSync(recordFile(), 'utf8'));
+    return isJsonObject(record) ? record.clients : undefined;
   };
-  const approved = (id: string) => ({
-    id,
-    name: 'Laptop',
-    publicKey: 'A'.repeat(43),
-    pairedAt: new Date().toISOString(),
-    capabilities: ['build'],
-  });
-  const approve = (...entries: unknown[]) => buildClients(JSON.stringify({ version: 2, devices: entries }));
+  const newKey = () => randomBytes(32).toString('base64url');
+  const removals = { removed: removedBuildClients, forget: forgetRemovedBuildClient };
 
-  test('loses its folder on a pass with no job of it in this process; a listed client and other folders stay', async () => {
-    const kept = area(APPROVED, 'subject', 0);
-    area(REVOKED, 'subject', 0);
-    mkdirSync(join(root, REVOKED, 'blobs'));
-    mkdirSync(join(root, 'jobs', 'repos'), { recursive: true });
-    mkdirSync(join(root, 'cccc0003'));
-    approve(approved(APPROVED));
-    await start({}, { listed: listedBuildClients }).evictAreas();
+  function approveBuild(publicKey = newKey()): string {
+    const ticket = Buffer.from(newSecret(), 'base64url');
+    storeSetupSecret(ticket, ['build'], new Date(Date.now() + 60_000).toISOString());
+    const records = spendSecret(secretValues(ticket).lookup.toString('hex'), publicKey, 'Laptop', 'laptop.ts.net');
+    assert(records?.build);
+    return records.build.id;
+  }
 
-    expect(existsSync(join(root, REVOKED))).toBe(false);
-    expect(logs.join('\n')).toMatch(
-      new RegExp(`removing the build area of ${REVOKED}: the build approvals do not name it`),
-    );
+  function addApproval(id: string, capabilities: unknown = ['build']): void {
+    const file: unknown = JSON.parse(readFileSync(registry(), 'utf8'));
+    assert(isJsonObject(file) && Array.isArray(file.devices));
+    file.devices.push({
+      id,
+      name: 'Laptop',
+      publicKey: 'A'.repeat(43),
+      pairedAt: new Date().toISOString(),
+      capabilities,
+    });
+    writeFileSync(registry(), JSON.stringify(file));
+  }
+
+  function revoked(): string {
+    const id = approveBuild();
+    area(id, 'subject', 0);
+    expect(revokeDevice(id)).toBe(true);
+    return id;
+  }
+
+  test('loses its folder at the next pass with no job of it in this process, and leaves the removal record', async () => {
+    const kept = area(approveBuild(), 'subject', 0);
+    const stray = join(root, 'deadbeef', 'repos', 'personal-notes');
+    mkdirSync(stray, { recursive: true });
+    writeFileSync(join(stray, 'notes.txt'), 'mine');
+    const id = revoked();
+    expect(recorded()).toEqual([id]);
+    await start({}, removals).evictAreas();
+
+    expect(existsSync(join(root, id))).toBe(false);
+    expect(recorded()).toEqual([]);
+    expect(logs.join('\n')).toMatch(new RegExp(`removing the build area of ${id}: its build approval was removed`));
     expect(existsSync(kept)).toBe(true);
-    expect(existsSync(join(root, 'jobs', 'repos'))).toBe(true);
-    expect(existsSync(join(root, 'cccc0003'))).toBe(true);
+    expect(readFileSync(join(stray, 'notes.txt'), 'utf8')).toBe('mine');
+  });
+
+  test("a fresh setup of the same key removes the replaced record's folder and keeps the new one", async () => {
+    const publicKey = newKey();
+    const old = approveBuild(publicKey);
+    area(old, 'subject', 0);
+    const fresh = area(approveBuild(publicKey), 'subject', 0);
+    await start({}, removals).evictAreas();
+
+    expect(existsSync(join(root, old))).toBe(false);
+    expect(existsSync(fresh)).toBe(true);
   });
 
   test.each([
-    { name: 'no build-clients.json', write: () => mkdirSync(join(home, 'server'), { recursive: true }) },
-    { name: 'a build-clients.json that does not parse', write: () => buildClients('{"version":2,"devices":[') },
-    { name: 'a build-clients.json a newer Stim wrote', write: () => buildClients('{"version":3,"devices":[]}') },
-    { name: 'an entry with no id', write: () => approve(approved(APPROVED), '"opaque"') },
-    { name: 'an unreadable entry with its id', write: () => approve({ id: REVOKED, record: { kind: 'passkey' } }) },
-    { name: 'its entry missing capabilities', write: () => approve({ ...approved(REVOKED), capabilities: undefined }) },
-    {
-      name: 'its entry with capabilities "build"',
-      write: () => approve({ ...approved(REVOKED), capabilities: 'build' }),
-    },
-    { name: 'a Stim home that is not ready', write: () => approve(), ready: false },
-  ])('keeps every folder with $name', async ({ write, ready }) => {
-    const path = area(REVOKED, 'subject', 0);
-    write();
-    await start({}, { listed: listedBuildClients, ready: () => ready ?? true }).evictAreas();
-    expect(existsSync(path)).toBe(true);
+    { name: 'an approval entry with an empty id', arrange: () => addApproval('') },
+    { name: 'its id approved again', arrange: (id: string) => addApproval(id) },
+    { name: 'its id again with capabilities "build"', arrange: (id: string) => addApproval(id, 'build') },
+    { name: 'a record that does not parse', arrange: () => writeFileSync(recordFile(), '{"version":1,"clients":[') },
+    { name: 'approvals that do not parse', arrange: () => writeFileSync(registry(), '{"version":2,"devices":[') },
+    { name: 'a Stim home that is not ready', arrange: () => {}, ready: false },
+  ])('keeps its folder with $name', async ({ arrange, ready }) => {
+    const id = revoked();
+    arrange(id);
+    await start({}, { ...removals, ready: () => ready ?? true }).evictAreas();
+    expect(existsSync(areaPath(id, 'subject'))).toBe(true);
   });
 
-  test.each([
-    { name: 'a sibling file', extra: () => writeFileSync(join(root, 'deadbeef', 'notes.txt'), 'mine') },
-    { name: 'a file in its repos', extra: () => writeFileSync(join(root, 'deadbeef', 'repos', 'notes.txt'), 'mine') },
-  ])('keeps a hex-named folder with a repos child and $name, saying why once', async ({ extra }) => {
-    const path = area('deadbeef', 'subject', 0);
-    extra();
-    approve();
-    const host = start({}, { listed: listedBuildClients });
-    await host.evictAreas();
-    await host.evictAreas();
-    expect(existsSync(join(path, 'src', 'file'))).toBe(true);
-    expect(logs.filter((line) => /retaining the build area of deadbeef, which .*notes\.txt/.test(line))).toHaveLength(
-      1,
-    );
-  });
-
-  test('keeps the folder while an area claim is held, saying why once, and a later pass removes it', async () => {
-    const path = area(REVOKED, 'subject', 0);
-    const claim = tryAcquireClaim({ root: `${path}.claims`, mode: 'exclusive' }).acquired;
+  test('keeps the folder and its record while an area claim is held, saying why once', async () => {
+    const id = revoked();
+    const claim = tryAcquireClaim({ root: `${areaPath(id, 'subject')}.claims`, mode: 'exclusive' }).acquired;
     assert(claim);
-    approve();
-    const host = start({}, { listed: listedBuildClients });
+    const host = start({}, removals);
     await host.evictAreas();
     await host.evictAreas();
-    expect(existsSync(path)).toBe(true);
-    const held = new RegExp(`retaining the build area of ${REVOKED}; ownership .* is held`);
+    expect(existsSync(areaPath(id, 'subject'))).toBe(true);
+    expect(recorded()).toEqual([id]);
+    const held = new RegExp(`retaining the build area of ${id}; ownership .* is held`);
     expect(logs.filter((line) => held.test(line))).toHaveLength(1);
 
     releaseClaim(claim);
     await host.evictAreas();
-    expect(existsSync(join(root, REVOKED))).toBe(false);
+    expect(existsSync(join(root, id))).toBe(false);
+    expect(recorded()).toEqual([]);
+  });
+
+  test('a removal that finds no folder, as on an unmounted volume, keeps the record', async () => {
+    const id = revoked();
+    rmSync(join(root, id), { recursive: true });
+    await start({}, removals).remove(id);
+    expect(recorded()).toEqual([id]);
+  });
+
+  test('keeps the record through a failed deletion, and drops it once a later pass deletes the folder', async () => {
+    const id = revoked();
+    const restore = failDeletionOf((target) => target === join(root, id));
+    const host = start({}, removals);
+    await host.evictAreas();
+    expect(recorded()).toEqual([id]);
+    expect(logs.join('\n')).toMatch(new RegExp(`could not delete the build area of ${id}`));
+
+    restore();
+    await host.evictAreas();
+    expect(existsSync(join(root, id))).toBe(false);
+    expect(recorded()).toEqual([]);
   });
 });

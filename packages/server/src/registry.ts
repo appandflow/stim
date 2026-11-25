@@ -195,6 +195,8 @@ function newId(): string {
   return randomBytes(4).toString('hex');
 }
 
+const RECORD_ID = /^[0-9a-f]{8}$/;
+
 function parseCapabilities(value: unknown): Capability[] {
   return Array.isArray(value) ? CAPABILITIES.filter((capability) => value.includes(capability)) : [];
 }
@@ -492,9 +494,9 @@ export function buildClientsReadable(): boolean {
 /**
  * The ids `build-clients.json` names with `build`, counting by its id an entry this version cannot read or whose
  * capabilities are not a list of names, or null when the file is missing, unreadable, of another version or holds an
- * entry without an id, so that an id it leaves out is one the worker positively does not approve.
+ * entry whose id is not a record id, so that an id it leaves out is one the worker positively does not approve.
  */
-export function listedBuildClients(): ReadonlySet<string> | null {
+function listedBuildClients(): ReadonlySet<string> | null {
   const file = clientsFile('build');
   try {
     const text = readRegistryText(file);
@@ -504,7 +506,7 @@ export function listedBuildClients(): ReadonlySet<string> | null {
     const ids = new Set<string>();
     for (const slot of parseContents(file, text, registry).slots) {
       const id = slotId(slot);
-      if (id === undefined) return null;
+      if (id === undefined || !RECORD_ID.test(id)) return null;
       const raw = isJsonObject(slot.value) ? slot.value.capabilities : undefined;
       const intact = Array.isArray(raw) && raw.every((capability) => typeof capability === 'string');
       if (!slot.device || !intact || slot.device.capabilities.includes('build')) ids.add(id);
@@ -514,6 +516,64 @@ export function listedBuildClients(): ReadonlySet<string> | null {
     if (error instanceof RegistryUnavailable) return null;
     throw error;
   }
+}
+
+const REMOVED_VERSION = 1;
+
+function removedBuildClientsFile(): string {
+  return join(serverDir(), 'removed-build-clients.json');
+}
+
+/** The recorded ids, none for no record, or null for a record that cannot be read whole. */
+function readRemovedRecord(): string[] | null {
+  const file = removedBuildClientsFile();
+  try {
+    const record = readRegistryFile(file);
+    if (record === null) return [];
+    const { version, clients } = record;
+    if (version !== REMOVED_VERSION || !Array.isArray(clients)) return null;
+    const ids = clients.filter((id): id is string => typeof id === 'string' && RECORD_ID.test(id));
+    return ids.length === clients.length ? ids : null;
+  } catch (error) {
+    if (error instanceof RegistryUnavailable) return null;
+    throw error;
+  }
+}
+
+/**
+ * Records build client ids whose records are about to leave `build-clients.json`, inside the registry transaction and
+ * before that write. A record that cannot be read whole is left as it is, and records nothing.
+ */
+function recordRemovedBuildClients(ids: readonly string[]): void {
+  const added = ids.filter((id) => RECORD_ID.test(id));
+  const recorded = added.length === 0 ? null : readRemovedRecord();
+  if (recorded === null) return;
+  const clients = [...new Set([...recorded, ...added])];
+  writeJson(removedBuildClientsFile(), { version: REMOVED_VERSION, clients });
+}
+
+/**
+ * The build clients whose worker folders may be removed: recorded as dropped from `build-clients.json` and not named
+ * there now. Null when either file cannot be read whole.
+ */
+export function removedBuildClients(): string[] | null {
+  const recorded = readRemovedRecord();
+  if (recorded === null) return null;
+  if (recorded.length === 0) return [];
+  const listed = listedBuildClients();
+  return listed === null ? null : recorded.filter((id) => !listed.has(id));
+}
+
+/** Drops `id` from the record once its worker folder is removed. */
+export function forgetRemovedBuildClient(id: string): void {
+  transaction(() => {
+    const recorded = readRemovedRecord();
+    if (!recorded?.includes(id)) return;
+    writeJson(removedBuildClientsFile(), {
+      version: REMOVED_VERSION,
+      clients: recorded.filter((each) => each !== id),
+    });
+  });
 }
 
 /** Device-host approvals live apart from read/control pairings and build clients. */
@@ -738,10 +798,10 @@ export function spendSecret(
     for (const capability of CLIENT_CAPABILITIES) {
       if (!secret.capabilities.includes(capability)) continue;
       const created = record([capability], 'Machine');
-      writeRecords(clientsFile(capability), [
-        ...readRecords(clientsFile(capability)).filter((each) => each.publicKey !== publicKey),
-        created,
-      ]);
+      const existing = readRecords(clientsFile(capability));
+      if (capability === 'build')
+        recordRemovedBuildClients(existing.filter((each) => each.publicKey === publicKey).map((each) => each.id));
+      writeRecords(clientsFile(capability), [...existing.filter((each) => each.publicKey !== publicKey), created]);
       made[capability] = created;
     }
     spend();
@@ -872,6 +932,7 @@ export function revokeDevice(id: string): boolean {
       const clients = readRecords(clientsFile(capability));
       const kept = clients.filter((client) => client.id !== id);
       if (kept.length === clients.length) continue;
+      if (capability === 'build') recordRemovedBuildClients([id]);
       writeRecords(clientsFile(capability), kept);
       return true;
     }
