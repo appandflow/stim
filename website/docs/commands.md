@@ -2568,6 +2568,34 @@ file on disk, hides edits from `git status`, so removal refuses and names it
 with the `git update-index` command that shows it, until you pass `--force`.
 Files a sparse checkout leaves out are not on disk and do not count.
 
+## `worktree list`
+
+```bash
+stim worktree list
+stim worktree list --all --json
+```
+
+Lists linked worktrees by real size, with branch, idle age, apparent size and
+cleanup's verdict. `old` means idle at least 30 days; `large` means at least
+1 GiB real. The summary splits kept bytes by reason. `--all` lists repositories
+from saved maintenance observations and marks unobserved worktrees not checked.
+Each `--all` repository header shows when its worktrees were last checked,
+and the oldest check when it differs by more than a day. A repository with no
+observations says the maintenance worktree check has not run; run
+`stim worktree list` there for current verdicts. When automatic maintenance is
+off, a notice on stderr explains that saved verdicts are not refreshed.
+JSON includes top-level `daemonMode` (`on`, `report` or `off`) and each
+repository's `checkedAt` (newest) and `oldestCheckedAt` (oldest), or null with
+no observations. For a current repository check, both are now. Per-worktree
+`checkedAt` and `measuredAt` remain the verdict and measurement times.
+Neither form deletes anything. A worktree with no measure, or one over an hour
+old, is walked again, within a two-minute budget for the whole command; what the
+budget leaves unmeasured prints `not measured`. JSON includes measurement and check dates.
+Real size is the private bytes of the whole worktree; apparent size is its
+allocated bytes. Shared clone and hard-link bytes are excluded from real size
+when the volume can count them (APFS on macOS, link counts on Linux); otherwise
+real size is unknown. Neither size includes Stim workspace data outside the checkout.
+
 ## `gc`
 
 ```text

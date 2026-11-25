@@ -1,6 +1,7 @@
-import { isAbsolute } from 'node:path';
+import { readdirSync } from 'node:fs';
+import { basename, join, isAbsolute } from 'node:path';
 import { isJsonObject, readJsonObject } from './json-file.ts';
-import { gcMarkFile } from './paths.ts';
+import { gcLogDir, gcMarkFile } from './paths.ts';
 
 export const GC_MARK_VERSION = 2;
 
@@ -207,4 +208,22 @@ export function parseGcMark(root: string, entry: unknown): GcMark | null {
 /** The mark of the checkout at the canonical path `root`; null when there is none, or it has another version or does not parse. */
 export function readGcMark(root: string): GcMark | null {
   return parseGcMark(root, readJsonObject(gcMarkFile(root)));
+}
+
+/** Lists valid saved marks whose root hashes to their filename. */
+export function readGcMarks(): GcMark[] {
+  const dir = join(gcLogDir(), 'marks');
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return [];
+  }
+  return names.flatMap((name) => {
+    if (!name.endsWith('.json')) return [];
+    const entry = readJsonObject(join(dir, name));
+    if (!entry || typeof entry.root !== 'string' || basename(gcMarkFile(entry.root)) !== name) return [];
+    const mark = parseGcMark(entry.root, entry);
+    return mark ? [mark] : [];
+  });
 }

@@ -1,3 +1,4 @@
+import { listOp } from './worktree-list.ts';
 import type { StimContext } from '@stim-cli/core';
 import { runProcessOperation } from '../cli-operation.ts';
 import { operationState } from '../engine/operation-state.ts';
@@ -2118,8 +2119,8 @@ export const removeOp: Op = defineOp({
 
 const worktree: Op = defineOp({
   name: 'worktree',
-  description: 'Warm and remove Git worktrees',
-  commands: [warmOp, removeOp],
+  description: 'Warm, remove and list Git worktrees',
+  commands: [warmOp, removeOp, listOp],
 });
 
 export default worktree;
