@@ -1120,7 +1120,13 @@ function reportRetainedResources(root: string, result: ReclaimAllResult, output:
     if (result.retainedResources.some((resource) => resource.project === kept)) continue;
     output.error(chalk.yellow(`  - retained Stim ownership state for ${kept}`));
   }
-  output.error(chalk.dim('Fix the reported cause, then run `stim worktree remove` again.'));
+  output.error(
+    chalk.dim(
+      result.retainedResources.some((resource) => resource.reason)
+        ? 'Fix the reported cause, then run `stim worktree remove` again.'
+        : 'Run `stim worktree remove` again; if it refuses again, run `stim doctor`.',
+    ),
+  );
   output.fail();
 }
 
