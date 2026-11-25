@@ -1601,7 +1601,7 @@ list, a \`note\` finding only the doctor report:
                          \`stim engine rollback\` when the engine has a
                          previous build); note: it restarted but runs now
   server-service-override   note: a systemd drop-in sets ExecStart=, so the unit
-                         cannot move onto the engine, or KillMode=, so stimd
+                         does not run the engine, or KillMode=, so stimd
                          keeps the successor handover; it names the drop-in
   server-service-stale   note: launchd runs an outdated LaunchAgent definition, or
                          a systemd unit lacks KillMode=process or names node
