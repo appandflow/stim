@@ -31,7 +31,8 @@ agents are denied. The home folder is the real one of the OS user; no option or 
   system folders broke the sandboxed Node on this Mac, so they are not set. Network:
   no domain is allowed to Bash (not exercised).
 - **Codex**: a permissions profile lists what is readable: the workspace, the trial
-  directories, the same checkout packages and Node install, `/usr`, `/bin`, `/sbin`,
+  directories, the trial repository's `.git` (read-only `git` such as `status` and
+  `worktree list` then works in the linked workspace), the same checkout packages and Node install, `/usr`, `/bin`, `/sbin`,
   `/System`, `/Library`, `/private/etc`, `/dev`, `/opt/homebrew`,
   `/Applications/Xcode.app`, and whatever macOS `:minimal` adds (its contents are
   not listed by Codex). The home folder, `/tmp`, `/Volumes` and the rest of the
