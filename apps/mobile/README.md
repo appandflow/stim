@@ -139,8 +139,7 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
   connected, a row also shows the machine's own name when this phone labels it
   differently, and this phone's record on that machine (the name and id
   `stim pairings` lists, from `hello`'s `device`). **Rename** changes only
-  the name this phone shows; renaming this phone's record on the machine needs
-  `stim pairings rename <id> <name>` there. **Remove** forgets the pairing
+  the name this phone shows. **Rename This Phone** changes how the machine lists it; an older machine shows how to rename it there instead. **Remove** forgets the pairing
   on this phone; its confirmation first shows the `stim pairings revoke <id>`
   command that revokes this phone on the machine, which keeps listing it until then. A
   connected machine's row shows the pairing's scope, **Can control** or
@@ -1123,7 +1122,7 @@ workspace runs an iOS simulator and an Android emulator, so reload there asks
 for a platform, and the mock server refuses a reload without one, like
 `stim reload`. Start it with
 `pnpm run mock-server --read` to see a read-only pairing, which gets no
-actions.
+actions. Use `pnpm run mock-server --no-device-rename` to simulate an older server without phone renaming.
 It keeps one clipboard for `input.clipboard.set` and `input.clipboard.get`, so the
 paste and copy actions round-trip.
 
