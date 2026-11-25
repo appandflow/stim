@@ -11,6 +11,7 @@ import {
   tryAcquireClaim,
 } from '@stim-cli/core/ownership-claim';
 import {
+  agentDeviceStateDirsIn,
   archiveDir,
   archiveLock,
   archiveRoot,
@@ -55,6 +56,15 @@ const KIND_PATH: Record<Kind, string> = {
   recordings: 'recordings',
   agentActions: 'agent-device/sessions',
 };
+
+async function lstatOrNull(path: string): Promise<Awaited<ReturnType<typeof lstat>> | null> {
+  try {
+    return await lstat(path);
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return null;
+    throw error;
+  }
+}
 
 function archiveSettings(env: NodeJS.ProcessEnv = process.env) {
   const config = loadConfig();
@@ -393,12 +403,31 @@ async function writeArchive(
           if (data) await writeFile(join(staging!, name), `${JSON.stringify(stripPids(data))}\n`, { mode: 0o600 });
         }
         const move = async (kind: Kind) => {
-          const from = join(dir, KIND_PATH[kind]);
-          if (!limits[`${kind}.maxAgeDays`] || !existsSync(from)) return;
+          if (!limits[`${kind}.maxAgeDays`]) return;
+          const stateDirs = kind === 'agentActions' ? agentDeviceStateDirsIn(dir) : [];
+          for (const stateDir of stateDirs)
+            if ((await lstatOrNull(stateDir))?.isSymbolicLink()) throw new Error(`refusing symlink ${stateDir}`);
+          const sources = stateDirs.length
+            ? stateDirs.map((stateDir) => join(stateDir, 'sessions'))
+            : [join(dir, KIND_PATH[kind])];
           const to = join(staging!, KIND_PATH[kind]);
-          await mkdir(join(to, '..'), { recursive: true, mode: 0o700 });
-          await moveHistory(from, to);
-          await secureTree(to);
+          for (const [index, from] of sources.entries()) {
+            if (!(await lstatOrNull(from))) continue;
+            await mkdir(join(to, '..'), { recursive: true, mode: 0o700 });
+            const part = `${to}.part-${index}`;
+            await moveHistory(from, part);
+            await secureTree(part);
+            if (!existsSync(to)) {
+              await rename(part, to);
+              continue;
+            }
+            for (const name of await readdir(part)) {
+              let target = name;
+              for (let n = 2; existsSync(join(to, target)); n++) target = `${name}-${n}`;
+              await rename(join(part, name), join(to, target));
+            }
+            await rmdir(part);
+          }
         };
         await move('logs');
         await move('agentActions');

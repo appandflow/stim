@@ -2032,7 +2032,7 @@ WHY ANDROID NEEDS CCACHE, AND WHAT IT COSTS
 Every AGP CMake task is uncacheable by Gradle, so --build-cache serves not one
 C++ compile. Without a launcher a fresh worktree recompiles every translation
 unit, which on a React Native app with native modules is most of a first build.
-The shared objects live at $STIM_HOME/ccache (default ~/.stim/ccache), which is
+The shared objects live at $STIM_HOME/ccache.noindex (default ~/.stim/ccache.noindex), which is
 registered for \`gc\` and prunes itself at CCACHE_MAXSIZE.
 
 CCACHE_BASEDIR rewrites paths under the workspace root relative to the compile

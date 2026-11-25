@@ -1,8 +1,15 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildCacheRoot as sharedBuildCache, metroCacheRoot as sharedMetroCache } from '../index.ts';
-import { sharedCcache, sharedCompilationCache, sharedGradle, sharedPods, stimdSocket } from '../state/paths.ts';
+import { buildCacheRoot as sharedBuildCache, metroCacheRoot as sharedMetroCache, workspaceStateDir } from '../index.ts';
+import {
+  sharedCcache,
+  sharedCompilationCache,
+  sharedGradle,
+  sharedPods,
+  stimdSocket,
+  workspaceAgentDeviceDir,
+} from '../state/paths.ts';
 
 describe('shared paths', () => {
   let tmpHome: string;
@@ -16,12 +23,25 @@ describe('shared paths', () => {
   });
 
   test('shared caches honour STIM_HOME', () => {
-    expect(sharedMetroCache()).toBe(join(tmpHome, 'metro-cache'));
+    expect(sharedMetroCache()).toBe(join(tmpHome, 'metro-cache.noindex'));
     expect(sharedBuildCache()).toBe(join(tmpHome, 'build-cache'));
-    expect(sharedCompilationCache()).toBe(join(tmpHome, 'compilation-cache'));
-    expect(sharedCcache()).toBe(join(tmpHome, 'ccache'));
+    expect(sharedCompilationCache()).toBe(join(tmpHome, 'compilation-cache.noindex'));
+    expect(sharedCcache()).toBe(join(tmpHome, 'ccache.noindex'));
     expect(sharedGradle()).toBe(join(tmpHome, 'gradle'));
     expect(sharedPods()).toBe(join(tmpHome, 'pods'));
+    expect(workspaceAgentDeviceDir('/repo/app')).toBe(join(workspaceStateDir('/repo/app'), 'agent-device.noindex'));
+  });
+
+  test('a folder that keeps its old name until the CLI renames it is still the one in use', () => {
+    mkdirSync(join(tmpHome, 'metro-cache'));
+    mkdirSync(join(tmpHome, 'compilation-cache'));
+    symlinkSync(tmpdir(), join(tmpHome, 'ccache'), 'junction');
+    mkdirSync(join(workspaceStateDir('/repo/app'), 'agent-device'), { recursive: true });
+    mkdirSync(join(tmpHome, 'compilation-cache.noindex'));
+    expect(sharedMetroCache()).toBe(join(tmpHome, 'metro-cache'));
+    expect(sharedCompilationCache()).toBe(join(tmpHome, 'compilation-cache.noindex'));
+    expect(sharedCcache()).toBe(join(tmpHome, 'ccache'));
+    expect(workspaceAgentDeviceDir('/repo/app')).toBe(join(workspaceStateDir('/repo/app'), 'agent-device'));
   });
 
   test.skipIf(process.platform !== 'darwin')(

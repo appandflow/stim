@@ -334,7 +334,7 @@ kind or label.
 CLEANUP AND DISK
 
 worktree remove stops the agent-device daemon when the workspace's
-agent-device/daemon.json exists, then removes its state directory with the
+agent-device(.noindex)/daemon.json exists, then removes its state directory with the
 workspace. If agent-device is missing or the stop fails, it keeps the directory
 and reports the retry command: agent-device daemon stop --state-dir <dir> --clean.
 A daemon.json whose process is gone is stale and does not block removal.
@@ -2016,7 +2016,7 @@ SHARED BUILD CACHES
   The caches that make a second workspace fast are alive by design and, with
   one exception, not touched by \`gc\` below critical, apart from trimming over
   their caps. The exception is the
-  Swift compilation cache (the Xcode CAS under $STIM_HOME/compilation-cache):
+  Swift compilation cache (the Xcode CAS under $STIM_HOME/compilation-cache.noindex):
   once it is over caches.swiftCompilationCacheMaxGb (default 0, no cap), \`gc\`
   empties it whole, since age trimming would corrupt its
   index. It is kept, with the build named, while an iOS build holds its shared
@@ -2026,12 +2026,23 @@ SHARED BUILD CACHES
     stim gc --pressure high            # trim Build and Metro caches to half their caps
     stim gc --pressure critical        # empty every shared cache Stim registered,
                                          # index-backed ones (the Xcode CAS) included
-  $STIM_HOME/ccache (default ~/.stim/ccache) holds the Android C++ objects
+  $STIM_HOME/ccache.noindex (default ~/.stim/ccache.noindex) holds the Android C++ objects
   \`stim android\` compiles through ccache. ccache keeps it under CCACHE_MAXSIZE
   on its own, so \`gc\` reports its size and leaves it alone below critical,
   where it empties it whole like the Xcode CAS. That
   bound is Stim's: it sets CCACHE_MAXSIZE on the Gradle run, which wins over
   a max_size written into the cache directory's own ccache.conf.
+
+  The folders Stim fills with churn end in .noindex, which keeps macOS
+  Spotlight out of them: metro-cache.noindex, compilation-cache.noindex and
+  ccache.noindex, and agent-device.noindex in each workspace. A home that
+  still has the old names keeps using them until stimd renames each folder
+  (daemon.mode on), once no build, dev server or agent-device daemon holds
+  it. An old folder left beside its new name stays, and gc measures and
+  trims it like the cache.
+  A path that caches.metroCache, STIM_METRO_CACHE or server.workerRoot
+  names never moves; set server.workerRoot to a *.noindex path to keep
+  worker checkouts out of Spotlight.
 
   The Gradle build cache under GRADLE_USER_HOME (default ~/.gradle) is
   report-only as a registered cache because every Gradle build shares it:
