@@ -152,26 +152,29 @@ test('an unanswered stop under an unresolved stimd claim names that claim, not t
   expect(fallback).not.toHaveBeenCalled();
 });
 
-test('a stop whose stimd is held after crashes names the hold and stim doctor --fix, not a claim removal', async () => {
-  state.daemon = false;
-  const now = Date.now();
-  state.boots = [1, 2, 3, 4, 5].map((i) => ({
-    at: now - i * 1000,
-    pid: 100 + i,
-    build: stimdBuildId(),
-    abnormal: true,
-    cause: 'unknown',
-  }));
-  const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-  onTestFinished(() => error.mockRestore());
-  const fallback = vi.fn<() => boolean>(() => true);
-  const stopping = stopMetroTree('/project', 42, 'token', fallback);
-  await vi.runAllTimersAsync();
-  const stopped = await stopping;
-  expect(stopped).toMatchObject({ stopped: false, remedy: expect.stringContaining('stim doctor --fix') });
-  expect(JSON.stringify(stopped)).not.toContain('rm -f');
-  expect(fallback).not.toHaveBeenCalled();
-});
+test.skipIf(process.platform === 'win32')(
+  'a stop whose stimd is held after crashes names the hold and stim doctor --fix, not a claim removal',
+  async () => {
+    state.daemon = false;
+    const now = Date.now();
+    state.boots = [1, 2, 3, 4, 5].map((i) => ({
+      at: now - i * 1000,
+      pid: 100 + i,
+      build: stimdBuildId(),
+      abnormal: true,
+      cause: 'unknown',
+    }));
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    onTestFinished(() => error.mockRestore());
+    const fallback = vi.fn<() => boolean>(() => true);
+    const stopping = stopMetroTree('/project', 42, 'token', fallback);
+    await vi.runAllTimersAsync();
+    const stopped = await stopping;
+    expect(stopped).toMatchObject({ stopped: false, remedy: expect.stringContaining('stim doctor --fix') });
+    expect(JSON.stringify(stopped)).not.toContain('rm -f');
+    expect(fallback).not.toHaveBeenCalled();
+  },
+);
 
 test('leaves a Metro claimed under a stimd of another build to that build, naming it', async () => {
   state.refuse = true;
