@@ -778,7 +778,12 @@ export class BuildWorkerRoot {
     const area = join(repos, repo);
     if (!existsSync(area)) return { dropped: false };
     if (notRealDirectory(area)) return refuse(`${area} is not a real directory`);
-    const processes = await listCommandLines();
+    let processes: string;
+    try {
+      processes = await listCommandLines();
+    } catch (error) {
+      return refuse(`its Gradle processes could not be checked: ${String(error)}`);
+    }
     if (this.closed) return refuse('this machine is stopping');
     const outcome = this.evictArea({ client, repo }, processes);
     if ('kept' in outcome) return refuse(outcome.kept);
@@ -792,7 +797,7 @@ export class BuildWorkerRoot {
         );
         return;
       }
-      this.pruneBlobs(client);
+      if (this.workerAreas().some((each) => each.client === client)) this.pruneBlobs(client);
       console.error(`stim-server: removed the build area ${key}: its client removed the checkout.`);
     })().catch((error: unknown) =>
       console.error(`stim-server: could not delete the build area ${key}: ${String(error)}`),

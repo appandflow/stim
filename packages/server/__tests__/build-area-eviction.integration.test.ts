@@ -1432,7 +1432,7 @@ test('after an unmount or a change of root the old size is no longer reported', 
 });
 
 describe('an area its client removed', () => {
-  test('goes at once, even the newest, leaving the other areas, and prunes the blobs only it used', async () => {
+  test('goes at once, even the newest, leaving the other areas, and prunes the blobs no area left uses', async () => {
     const newest = area('a', 'newest', 0);
     const older = area('a', 'older', 1);
     const other = area('b', 'newest', 0);
@@ -1457,6 +1457,11 @@ describe('an area its client removed', () => {
     expect(existsSync(join(root, 'a', 'blobs', sha('only-newest').slice(0, 2), sha('only-newest')))).toBe(false);
     expect(existsSync(join(root, 'a', 'blobs', sha('shared').slice(0, 2), sha('shared')))).toBe(true);
     expect(logs.join('\n')).toMatch(/removed the build area a\/newest: its client removed the checkout/);
+
+    expect(await host.dropArea('a', 'older')).toEqual({ dropped: true });
+    await host.evictAreas();
+    expect(existsSync(older)).toBe(false);
+    expect(existsSync(join(root, 'a', 'blobs', sha('shared').slice(0, 2), sha('shared')))).toBe(true);
   });
 
   test('an area that is not there is reported as no area, not as kept', async () => {
@@ -1528,6 +1533,33 @@ markClaimChildPending(tryAcquireClaim({ root: ${JSON.stringify(`${path}.claims`)
         return () => rmSync(log);
       },
     },
+    ...(process.platform === 'win32'
+      ? []
+      : [
+          {
+            name: 'a running Gradle daemon',
+            kept: /a Gradle daemon is running in it/,
+            hold: async (_host: Worker, path: string) => {
+              const daemon = spawn(
+                process.execPath,
+                [
+                  '-e',
+                  'process.stdout.write("ready"); setInterval(() => {}, 1000)',
+                  join(path, 'cache', 'gradle', 'wrapper', 'daemon.jar'),
+                  'org.gradle.launcher.daemon.bootstrap.GradleDaemon',
+                ],
+                { stdio: ['ignore', 'pipe', 'ignore'] },
+              );
+              const closed = once(daemon, 'close');
+              onTestFinished(() => void daemon.kill());
+              await once(daemon.stdout, 'data');
+              return async () => {
+                daemon.kill();
+                await closed;
+              };
+            },
+          },
+        ]),
     {
       name: 'a device its Stim home created',
       kept: /SIM-UDID/,
@@ -1541,14 +1573,14 @@ markClaimChildPending(tryAcquireClaim({ root: ${JSON.stringify(`${path}.claims`)
   ])('is kept while it has $name, and goes when asked again after', async ({ kept, hold }) => {
     const path = area('a', 'subject', 0);
     const host = start();
-    const release = hold(host, path);
+    const release = await hold(host, path);
 
     const refused = await host.dropArea('a', 'subject');
     expect(refused).toEqual({ dropped: false, kept: expect.stringMatching(kept) });
     await host.evictAreas();
     expect(existsSync(path)).toBe(true);
 
-    release();
+    await release();
     expect(await host.dropArea('a', 'subject')).toEqual({ dropped: true });
     await host.evictAreas();
     expect(existsSync(path)).toBe(false);
