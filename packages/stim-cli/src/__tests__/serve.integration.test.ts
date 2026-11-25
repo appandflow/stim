@@ -247,7 +247,7 @@ test('a Desktop net.ensure with other listener options restarts the net thread w
   }
 }, 60_000);
 
-test('a Desktop net.ensure keeps the running listener while a workspace action is busy', async () => {
+test('a Desktop net.ensure keeps the running listener while busy and applies the options once the action ends', async () => {
   const home = realpathSync(mkdtempSync(join(tmpdir(), 'stim-net-busy-')));
   const env = { ...process.env, STIM_HOME: home, HOME: home, USERPROFILE: home, PATH: '' };
   const previousHome = process.env.STIM_HOME;
@@ -295,7 +295,16 @@ test('a Desktop net.ensure keeps the running listener while a workspace action i
     expect(wider).toEqual(loopback);
     expect((await fetch(`http://127.0.0.1:${loopback.port}/health`)).status).toBeLessThan(600);
     expect(readFileSync(daemonNdjsonFile(), 'utf8')).not.toContain('net_restart');
-    if (lock) releaseClaim(lock);
+    releaseClaim(lock);
+    lock = undefined;
+    await logged('"net_restart"');
+    await vi.waitFor(async () => {
+      await expect(fetch(`http://127.0.0.1:${loopback.port}/health`)).rejects.toThrow('fetch failed');
+    });
+    const restarted = await desktopEnsure(socket, { port: 0, loopbackOnly: false });
+    expect(restarted).toMatchObject({ listening: true });
+    expect(restarted.port).not.toBe(loopback.port);
+    expect((await fetch(`http://127.0.0.1:${restarted.port}/health`)).status).toBe(200);
     terminateClients();
     stimd.kill('SIGTERM');
     expect(await stimdExited).toEqual([0, null]);

@@ -1040,6 +1040,7 @@ async function runStimdInner(
   const script = realpathSync(process.argv[1] ?? '');
   /** The offloads, hosted device sessions and workspace actions under way in the net thread, which a takeback waits for. */
   let netBusy = 0;
+  let pendingNetRestart: (() => Promise<unknown> | undefined) | undefined;
   const net = createNetThread(
     log,
     (failure) => {
@@ -1058,7 +1059,12 @@ async function runStimdInner(
     },
     (count) => {
       netBusy = count;
-      if (count === 0) void checkEngine();
+      if (count === 0) {
+        const restart = pendingNetRestart;
+        pendingNetRestart = undefined;
+        if (restart) netTurns = netTurns.then(restart).catch(() => undefined);
+        void checkEngine();
+      }
     },
     netEnv,
   );
@@ -1068,6 +1074,7 @@ async function runStimdInner(
   let takeBackAt = 0;
   const jobWaiters = new Map<Socket, string>();
   const netGone = () => {
+    pendingNetRestart = undefined;
     recordNet(null);
     netBusy = 0;
     for (const socket of netAskers) socket.end();
@@ -1755,6 +1762,7 @@ async function runStimdInner(
           admissionRevision++;
           netTurns = netTurns
             .then(() => {
+              pendingNetRestart = undefined;
               if (socket.destroyed) return undefined;
               if (closing) {
                 socket.destroy();
@@ -1794,15 +1802,19 @@ async function runStimdInner(
                 (running.loopbackOnly !== options.loopbackOnly ||
                   (port !== undefined && port !== 0 && running.port !== null && running.port !== port));
               const serviceMove = forService && running?.shareOnly === true;
-              const restart =
-                serviceMove ||
-                (kind === 'desktop' &&
-                  netBusy === 0 &&
+              const desktopRestart = () => {
+                const current = net.running();
+                return (
+                  kind === 'desktop' &&
+                  !closing &&
                   !serviceNet &&
                   !pinned() &&
-                  running !== null &&
-                  (running.loopbackOnly !== options.loopbackOnly ||
-                    (port !== undefined && port !== 0 && running.port !== null && port !== running.port)));
+                  current !== null &&
+                  (current.loopbackOnly !== options.loopbackOnly ||
+                    (port !== undefined && port !== 0 && current.port !== null && port !== current.port))
+                );
+              };
+              const restart = serviceMove || (netBusy === 0 && desktopRestart());
               const reserved = forService && (serviceMove || !running);
               const wasService = serviceNet;
               const previous = netServes?.shareOnly ? netServes : null;
@@ -1841,6 +1853,8 @@ async function runStimdInner(
                     if (!net.running()) netGone();
                   });
               };
+              if (!serviceMove && netBusy > 0 && desktopRestart())
+                pendingNetRestart = () => (netBusy === 0 && desktopRestart() ? restartNet() : undefined);
               const answer = mismatch
                 ? Promise.resolve({
                     listening: false as const,
