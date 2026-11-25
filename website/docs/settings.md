@@ -1258,8 +1258,9 @@ build phase and which child process took the most time.
 
 The optional root helper in a current Developer ID-signed, notarized Stim Host.app
 restarts only PerfPowerServices, mds_stores, mdworker_shared, photoanalysisd and
-mediaanalysisd. Install Stim Host in `~/Applications` or `/Applications` first.
-Registration requires macOS and administrator approval in **System Settings >
+mediaanalysisd. `stim service install --helper` first installs or updates the
+pinned Stim Host in `~/Applications`, downloading it when the installed version
+differs, then registers the helper. Registration requires macOS and administrator approval in **System Settings >
 General > Login Items & Extensions**. Stim Desktop preferences offers the same
 toggle and a button opening that pane.
 
@@ -1268,9 +1269,10 @@ stim service status
 stim service uninstall --helper`} />
 
 These install/uninstall commands affect only the helper; run server service
-options separately. `service status --json` includes `helper`, with `registered`,
+options separately. Uninstall downloads nothing. `service status --json` includes `helper`, with `registered`,
 `requires approval`, `not registered`, `unavailable on this OS`,
 `Stim Host missing`, `Stim Host too old`, `status timed out` or `status error`.
+For a missing or too old Stim Host, run `stim service install --helper`.
 
 The helper samples every minute using exact system executable paths. More than
 150% CPU or 2 GiB resident memory for 10 continuous minutes triggers SIGTERM so

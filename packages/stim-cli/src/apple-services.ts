@@ -13,6 +13,7 @@ import {
 } from '@stim-cli/core/state';
 import { CliUsageError } from './cli/define-op.ts';
 import { getExecutor, isTimeoutError } from './exec.ts';
+import { loadServerCli } from './server-cli.ts';
 import type { HostProcess } from './devices/activity.ts';
 
 const PATHS = [
@@ -37,7 +38,14 @@ export async function helperCommand(action: 'register' | 'unregister' | 'status'
       'The runaway service helper requires macOS. Run `stim service install --helper` or `stim service uninstall --helper` on a Mac with Stim Host installed.',
     );
   }
-  const executable = hostExecutable();
+  let executable: string | undefined;
+  if (action === 'register') {
+    try {
+      executable = (await (await loadServerCli()).installHostApp()).executable;
+    } catch (error) {
+      throw new CliUsageError(error instanceof Error ? error.message : String(error));
+    }
+  } else executable = hostExecutable();
   if (!executable) {
     if (action === 'status') return 'Stim Host missing';
     throw new CliUsageError(
@@ -66,7 +74,7 @@ export async function helperCommand(action: 'register' | 'unregister' | 'status'
       return isTimeoutError(error) ? 'status timed out' : 'status error';
     }
     throw new CliUsageError(
-      `Could not ${action} the helper: ${error instanceof Error ? error.message : error}. Install a helper-capable Developer ID-signed, notarized Stim Host and retry; approve it in System Settings > General > Login Items & Extensions.`,
+      `Could not ${action} the helper: ${error instanceof Error ? error.message : error}. ${action === 'register' ? 'Retry' : 'Run `stim service install --helper` to update Stim Host, then retry'}; approve Stim Host in System Settings > General > Login Items & Extensions.`,
     );
   }
 }

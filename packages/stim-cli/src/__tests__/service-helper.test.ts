@@ -1,6 +1,9 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { Mock } from 'vitest';
 import * as helperState from '@stim-cli/core/state';
 import { runCli } from '../cli/define-op.ts';
 import service from '../commands/service.ts';
@@ -8,30 +11,76 @@ import { appleServicesLines, createAppleServicesObserver, helperStatus } from '.
 import { measureTick } from '../daemon/measure.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 
+const pinned = vi.hoisted(() => ({ version: '9.9.9', sha256: '0'.repeat(64) }));
+
+vi.mock('../server-cli.ts', async () => {
+  const server = await import('@stim-cli/server/cli');
+  return {
+    loadServerCli: async () => ({
+      ...server,
+      installHostApp: (sources?: string) => server.installHostApp(sources, pinned),
+    }),
+  };
+});
+
+vi.mock('node:child_process', async (importOriginal) => {
+  const original = await importOriginal<typeof import('node:child_process')>();
+  return {
+    ...original,
+    execFile: (
+      file: string,
+      args: string[],
+      options: import('node:child_process').ExecFileOptionsWithStringEncoding,
+      callback: (error: import('node:child_process').ExecFileException | null, stdout: string, stderr: string) => void,
+    ) =>
+      file === '/usr/bin/codesign' && args[0] === '--verify'
+        ? callback(null, '', '')
+        : original.execFile(file, args, options, callback),
+  };
+});
+
 let home: string;
+let download: Mock<(url: string, init?: RequestInit) => Promise<Response>>;
 beforeEach(() => {
+  pinned.sha256 = '0'.repeat(64);
   home = mkdtempSync(join(tmpdir(), 'stim-helper-'));
   vi.stubEnv('STIM_HOME', home);
   vi.stubEnv('HOME', home);
   vi.spyOn(helperState, 'readHelperHeartbeat').mockImplementation(() => ({ at: Date.now(), ok: true }));
+  download = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(
+    async () => new Response('missing', { status: 404 }),
+  );
+  vi.stubGlobal('fetch', download);
 });
 afterEach(() => {
   resetExecutor();
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
   rmSync(home, { recursive: true, force: true });
 });
+
+function installHost(version = pinned.version, applications = join(home, 'Applications')): string {
+  const app = join(applications, 'Stim Host.app');
+  mkdirSync(join(app, 'Contents', 'MacOS'), { recursive: true });
+  writeFileSync(
+    join(app, 'Contents', 'Info.plist'),
+    `<plist><dict><key>CFBundleIdentifier</key><string>dev.stim.host</string><key>CFBundleShortVersionString</key><string>${version}</string></dict></plist>`,
+  );
+  const executable = join(app, 'Contents', 'MacOS', 'stim-host');
+  writeFileSync(executable, version);
+  return executable;
+}
 
 test.each(['install', 'uninstall'])('%s --helper refuses on non-macOS with a Mac remedy', async (action) => {
   vi.spyOn(process, 'platform', 'get').mockReturnValue('linux');
   await expect(runCli(service, [action, '--helper'], { version: '1' })).rejects.toThrow(/requires macOS.*on a Mac/);
+  expect(download).not.toHaveBeenCalled();
 });
 
-test('helper registration reports approval and unregistration does not require the server service', async () => {
+test('helper registration through the pinned Stim Host reports approval without a download', async () => {
   vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
-  const executable = join(home, 'Applications', 'Stim Host.app', 'Contents', 'MacOS', 'stim-host');
-  mkdirSync(join(executable, '..'), { recursive: true });
-  writeFileSync(executable, '');
+  const executable = installHost();
   const calls: string[][] = [];
   setExecutor({
     async runFileAsync(file, args) {
@@ -48,19 +97,69 @@ test('helper registration reports approval and unregistration does not require t
   await runCli(service, ['uninstall', '--helper'], { version: '1' });
   expect(log).toHaveBeenLastCalledWith('Runaway service helper: not registered\n');
   expect(calls).toEqual([['helper-register'], ['helper-unregister']]);
+  expect(download).not.toHaveBeenCalled();
 });
+
+test('helper unregistration uses an older Stim Host as it is', async () => {
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+  const executable = installHost('0.1.1');
+  const calls: string[][] = [];
+  setExecutor({
+    async runFileAsync(file, args) {
+      calls.push([file, ...args]);
+      return '{"state":"not registered"}';
+    },
+  });
+  vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+  await runCli(service, ['uninstall', '--helper'], { version: '1' });
+  expect(calls).toEqual([[executable, 'helper-unregister']]);
+  expect(download).not.toHaveBeenCalled();
+});
+
+test('helper registration stops when the pinned Stim Host cannot be downloaded', async () => {
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+  installHost('0.1.1');
+  const run = vi.fn<() => Promise<string>>(async () => '{"state":"registered"}');
+  setExecutor({ runFileAsync: run });
+  await expect(runCli(service, ['install', '--helper'], { version: '1' })).rejects.toThrow(
+    /Could not download Stim Host 9\.9\.9 .*host-v9\.9\.9.*HTTP 404/,
+  );
+  expect(run).not.toHaveBeenCalled();
+});
+
+test.skipIf(process.platform !== 'darwin')(
+  'helper registration replaces an older Stim Host with the pinned release before registering',
+  async () => {
+    const executable = installHost('0.1.1');
+    const release = join(home, 'release');
+    installHost(pinned.version, release);
+    const archive = join(home, 'StimHost.zip');
+    execFileSync('/usr/bin/ditto', ['-c', '-k', '--keepParent', join(release, 'Stim Host.app'), archive]);
+    const zip = readFileSync(archive);
+    pinned.sha256 = createHash('sha256').update(zip).digest('hex');
+    download.mockResolvedValue(new Response(zip));
+    const registeredWith: string[] = [];
+    setExecutor({
+      async runFileAsync(file, args) {
+        expect(args).toEqual(['helper-register']);
+        registeredWith.push(readFileSync(file, 'utf8'));
+        return '{"state":"requires approval"}';
+      },
+    });
+    vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    await runCli(service, ['install', '--helper'], { version: '1' });
+    expect(download).toHaveBeenCalledWith(expect.stringContaining('/host-v9.9.9/'), expect.anything());
+    expect(registeredWith).toEqual([pinned.version]);
+    expect(readFileSync(executable, 'utf8')).toBe(pinned.version);
+  },
+  30_000,
+);
 
 test('helper install refuses server options before changing either service', async () => {
   await expect(runCli(service, ['install', '--helper', '--serve'], { version: '1' })).rejects.toThrow(
     /cannot be combined/,
   );
 });
-
-function installHost(): void {
-  const executable = join(home, 'Applications', 'Stim Host.app', 'Contents', 'MacOS', 'stim-host');
-  mkdirSync(join(executable, '..'), { recursive: true });
-  writeFileSync(executable, '');
-}
 
 test('helper status distinguishes non-macOS and missing Stim Host', async () => {
   vi.spyOn(process, 'platform', 'get').mockReturnValue('linux');
