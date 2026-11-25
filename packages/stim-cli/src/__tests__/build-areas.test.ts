@@ -1,8 +1,10 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { EventEmitter } from 'node:events';
+import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildMachinesFile, MACHINE_CREDENTIALS_VERSION, type BuildAreaRecord } from '@stim-cli/core/state';
 import * as buildMachines from '../offload/build-machines.ts';
+import * as tailnet from '../offload/tailnet.ts';
 import { BuildConnection, type Reply } from '../offload/client.ts';
 import { dropBuildAreas } from '../offload/build-areas.ts';
 
@@ -46,7 +48,23 @@ function workers(answers: Record<string, (() => Promise<Reply>) | 'unreachable'>
   return { open, requests, closed };
 }
 
-const record = (machine: string, checkout: string): BuildAreaRecord => ({ machine, repo: `app-${machine}`, checkout });
+const record = (machine: string, checkout: string): BuildAreaRecord => ({
+  machine,
+  repo: `app-${machine}`,
+  checkout,
+  device: statSync(home).dev,
+});
+
+/** A connection to `machine` that records each request it is sent and its close. */
+function connectionTo(machine: string, requests: string[], closed: string[]) {
+  return Object.assign(Object.create(BuildConnection.prototype), {
+    request: async () => {
+      requests.push(machine);
+      return { result: { dropped: true } };
+    },
+    close: () => closed.push(machine),
+  });
+}
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'stim-build-areas-'));
@@ -131,4 +149,70 @@ test('skips a worker that is older, closes, cannot be reached, never answers or 
   await vi.advanceTimersByTimeAsync(10 * 60_000);
   await dropBuildAreas([record('offline', gone)]);
   expect(open).toHaveBeenCalledTimes(1);
+});
+
+test('a worker that connects after the deadline is closed without being asked', async () => {
+  pair('slow');
+  const requests: string[] = [];
+  const closed: string[] = [];
+  let connecting!: () => void;
+  const started = new Promise<void>((resolve) => (connecting = resolve));
+  vi.spyOn(BuildConnection, 'open').mockImplementation(
+    (_target, _key, _timeout, _capability, signal) =>
+      new Promise((resolve) => {
+        connecting();
+        signal?.addEventListener('abort', () => resolve(connectionTo('slow', requests, closed)));
+      }),
+  );
+
+  const dropping = dropBuildAreas([record('slow', join(home, 'gone'))]);
+  await started;
+  await vi.advanceTimersByTimeAsync(5_000);
+
+  expect(await dropping).toMatchObject([{ machine: 'slow', skipped: 'it did not answer in time' }]);
+  await vi.waitFor(() => expect(closed).toEqual(['slow']));
+  expect(requests).toEqual([]);
+});
+
+test('a checkout that is back, or whose volume is not the one recorded, is never dropped', async () => {
+  pair('mini', 'studio');
+  const requests: string[] = [];
+  const closed: string[] = [];
+  const back = join(home, 'back');
+  vi.spyOn(BuildConnection, 'open').mockImplementation(async (target) => {
+    mkdirSync(back, { recursive: true });
+    return connectionTo(target.host, requests, closed);
+  });
+  const unmounted = { ...record('studio', join(home, 'mnt', 'ssd', 'wt')), device: statSync(home).dev + 1 };
+
+  const drops = await dropBuildAreas([record('mini', back), unmounted]);
+
+  expect(drops).toMatchObject([{ machine: 'mini', skipped: 'its checkout is back' }]);
+  expect(requests).toEqual([]);
+  expect(closed).toEqual(['mini']);
+});
+
+describe('the hello of a build connection', () => {
+  test('ends when its signal aborts, closing the socket', async () => {
+    const socket = Object.assign(Object.create(EventEmitter.prototype), {
+      send: vi.fn<(data: string) => void>(),
+      terminate: vi.fn<() => void>(),
+      ping: vi.fn<() => void>(),
+    });
+    vi.spyOn(tailnet, 'openAuthenticated').mockResolvedValue(socket);
+    const controller = new AbortController();
+
+    const opening = BuildConnection.open(
+      { url: 'ws://mini', host: 'mini', servername: 'mini' },
+      'key',
+      60_000,
+      'build',
+      controller.signal,
+    );
+    await vi.waitFor(() => expect(socket.send).toHaveBeenCalled());
+    controller.abort();
+
+    expect(await opening).toMatchObject({ failure: 'the hello was cancelled' });
+    expect(socket.terminate).toHaveBeenCalled();
+  });
 });

@@ -291,14 +291,17 @@ export function sayHello(
   socket: NoiseSocket,
   params: Record<string, unknown>,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<{ result: Record<string, unknown> } | { error: { code: string; message: string } }> {
   return new Promise((resolve) => {
     const done = (reply: { result: Record<string, unknown> } | { error: { code: string; message: string } }) => {
       clearTimeout(timer);
       socket.off('message', onMessage);
       socket.off('close', onClose);
+      signal?.removeEventListener('abort', onAbort);
       resolve(reply);
     };
+    const onAbort = () => done({ error: { code: 'aborted', message: 'the hello was cancelled' } });
     const onMessage = (data: Buffer, isBinary: boolean) => {
       if (isBinary) return;
       let message: unknown;
@@ -320,6 +323,8 @@ export function sayHello(
         },
       });
     const timer = setTimeout(() => done({ error: { code: 'timeout', message: 'no reply in time' } }), timeoutMs);
+    if (signal?.aborted) return onAbort();
+    signal?.addEventListener('abort', onAbort, { once: true });
     socket.on('message', onMessage);
     socket.on('close', onClose);
     socket.send(JSON.stringify({ id: 1, method: 'hello', params }));

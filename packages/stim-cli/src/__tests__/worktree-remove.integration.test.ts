@@ -8,6 +8,7 @@ import {
   readdirSync,
   realpathSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -787,7 +788,12 @@ test('action: removing a worktree asks the workers that built it to drop its are
   const app = join(wtDir, 'apps/mobile');
   upsertProject(wtDir, { worktreeRoot: true });
   upsertProject(app, { platforms: {} });
-  const areas = ['mini', 'studio'].map((machine) => ({ machine, repo: 'wt-0123456789ab', checkout: wtDir }));
+  const areas = ['mini', 'studio'].map((machine) => ({
+    machine,
+    repo: 'wt-0123456789ab',
+    checkout: wtDir,
+    device: statSync(wtDir).dev,
+  }));
   ensureWorkspaceStorage(app);
   writeFileSync(workspaceStateFile(app), JSON.stringify({ buildAreas: areas }));
   const asked = fakeBuildWorkers(areas);
@@ -883,14 +889,15 @@ test('action: a branch deletion failure keeps ownership state and exits unsucces
   expect(getProject(wtDir)).toBe(null);
 });
 
-test('action: removing a deleted worktree drops the record of its project and the projects inside it, and its build area', async () => {
+test('action: removing a deleted worktree drops the record of its project and the projects inside it, and its build area where the volume is proven', async () => {
   const app = join(wtDir, 'apps/mobile');
   upsertProject(wtDir, { worktreeRoot: true });
   upsertProject(app, { platforms: {} });
   ensureWorkspaceStorage(app);
-  const area = { machine: 'mini', repo: 'wt-0123456789ab', checkout: wtDir };
-  writeFileSync(workspaceStateFile(app), JSON.stringify({ buildAreas: [area] }));
-  const asked = fakeBuildWorkers([area]);
+  const area = { machine: 'mini', repo: 'wt-0123456789ab', checkout: wtDir, device: statSync(wtDir).dev };
+  const unproven = { machine: 'studio', repo: 'wt-0123456789ab', checkout: wtDir };
+  writeFileSync(workspaceStateFile(app), JSON.stringify({ buildAreas: [area, unproven] }));
+  const asked = fakeBuildWorkers([area, unproven]);
   rmSync(wtDir, { recursive: true, force: true });
   setExecutor(makeExecutor({ worktrees: porcelain([{ path: mainDir, branch: 'main' }]) }));
 

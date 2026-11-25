@@ -592,6 +592,7 @@ export class BuildConnection {
       socket,
       { client: { name: 'stim', version: '1', runId: runId(), peer: PEER }, access: capability },
       Math.max(1, timeoutMs - (Date.now() - started)),
+      signal,
     );
     if ('error' in reply) {
       socket.terminate();

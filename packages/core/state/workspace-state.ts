@@ -616,12 +616,14 @@ export const BUILD_AREAS_KEY = 'buildAreas';
 
 /**
  * A build worker this workspace's checkout was sent to: its `remote.machines` name, the name of the checkout's area
- * there, and the checkout's canonical root, which removal asks the worker to drop once it is gone.
+ * there, the checkout's canonical root, and the device id (`st_dev`) of the volume that held it, which removal asks
+ * the worker to drop once the checkout is gone from that volume. A record without `device` is not read.
  */
 export interface BuildAreaRecord {
   machine: string;
   repo: string;
   checkout: string;
+  device: number;
 }
 
 export function readBuildAreas(state: WorkspaceState | null | undefined): BuildAreaRecord[] {
@@ -632,7 +634,8 @@ export function readBuildAreas(state: WorkspaceState | null | undefined): BuildA
       isJsonObject(each) &&
       typeof each.machine === 'string' &&
       typeof each.repo === 'string' &&
-      typeof each.checkout === 'string',
+      typeof each.checkout === 'string' &&
+      typeof each.device === 'number',
   );
 }
 
