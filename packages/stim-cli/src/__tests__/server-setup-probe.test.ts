@@ -3,8 +3,22 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { renderPlist } from '@stim-cli/server/service-plist';
 import { readServerSetup } from '../diagnostics/server-setup-probe.ts';
+import { serverPermissionFindings } from '../diagnostics/server-permissions.ts';
 import { serverSetupFindings } from '../diagnostics/server-setup.ts';
 import { getExecutor, resetExecutor, setExecutor, type ExecOptions } from '../exec.ts';
+
+vi.mock('node:fs', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs')>();
+  const sdk = '/Volumes/ExternalSSD/Android/sdk';
+  return {
+    ...fs,
+    realpathSync: (...args: Parameters<typeof fs.realpathSync>) => (args[0] === sdk ? sdk : fs.realpathSync(...args)),
+    readdirSync: (...args: Parameters<typeof fs.readdirSync>) => {
+      if (args[0] === sdk) throw Object.assign(new Error('Operation not permitted'), { code: 'EPERM' });
+      return fs.readdirSync(...args);
+    },
+  };
+});
 
 describe.skipIf(process.platform !== 'darwin')('doctor on a LaunchAgent that install wrote for the engine shim', () => {
   let home: string;
@@ -69,7 +83,7 @@ describe.skipIf(process.platform !== 'darwin')('doctor on a LaunchAgent that ins
     });
     const setup = await readServerSetup('2.0.0');
     labels = [...(setup?.services ?? []), ...(setup?.staleServices ?? [])].map((service) => service.label);
-    return setup ? serverSetupFindings(setup) : [];
+    return setup ? [...serverSetupFindings(setup), ...serverPermissionFindings(setup)] : [];
   };
 
   it('finds the default unit by its StimService marker and reports the definition launchd still runs', async () => {
@@ -77,6 +91,12 @@ describe.skipIf(process.platform !== 'darwin')('doctor on a LaunchAgent that ins
     const stale = findings.find((finding) => finding.code === 'server-service-stale');
     expect(stale?.detail).toMatch(/launchd still runs the definition it loaded before/i);
     expect(stale?.fix).toContain('stim service install --port 7787');
+  });
+
+  it('reports only the stale shim unit when an external Android SDK denies access without a server or socket', async () => {
+    vi.stubEnv('ANDROID_HOME', '/Volumes/ExternalSSD/Android/sdk');
+    const findings = await readUnit(false, (_node, _script, shimArgs) => [...shimArgs, '--old-option']);
+    expect(findings.map((finding) => finding.code)).toEqual(['server-service-stale']);
   });
 
   it('finds a binary plist by its StimService marker', async () => {
