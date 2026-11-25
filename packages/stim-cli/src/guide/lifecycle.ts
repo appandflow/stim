@@ -35,7 +35,8 @@ Refused inputs: host paths, launch inputs, client-chosen Metro addresses,
 save-script, device or OS selection, recording repair flags and fullscreen
 screenshots. Stim's Metro bridge already points the app at this machine's Metro.
 Guarded commands: open and close take app ids only; screenshot and record use
-remote destinations; push takes <bundle id> <inline JSON object>; settings
+remote destinations; push takes <bundle id> <inline JSON object>; perf allows
+only frames and memory sample; settings
 refuses host macOS permissions and takes app ids only; artifacts takes no
 provider session id and lists only this session's artifacts. Both machines
 need agent-device 0.21.30 or later; an older host reports driver: none.`;

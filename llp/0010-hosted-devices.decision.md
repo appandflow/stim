@@ -112,7 +112,9 @@ Connected machines are trusted; the guard protects the host, other sessions and
 Stim's records from an agent's honest mistake. Refused commands name known
 harmful operations. One refused request key list covers host paths, launch
 inputs and device selection. Positional guards constrain app ids, remote
-artifacts, inline push JSON and session artifacts. The daemon policy pins the
+artifacts, inline push JSON, perf to frames and memory sample (its other forms
+take host paths as positionals) and session artifacts. Command names are
+matched trimmed and lowercased, as agent-device runs batch steps. The daemon policy pins the
 device and denies shutdown without a commands field. Unknown commands and keys
 pass. A future agent-device command acting on the host stays open until added
 to the refused commands or keys. macOS app leases retain their command allow list.

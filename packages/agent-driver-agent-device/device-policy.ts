@@ -91,6 +91,15 @@ export const DEVICE_POSITIONAL_CHECKS: Readonly<
           message:
             'Refused push: a hosted device takes push <bundle id> <inline JSON object>; a payload file on the hosting Mac is refused.',
         },
+  perf: (positionals) =>
+    (positionals.length === 1 && positionals[0] === 'frames') ||
+    (positionals.length === 2 && positionals[0] === 'memory' && positionals[1] === 'sample')
+      ? undefined
+      : {
+          rule: 'host-path',
+          message:
+            'Refused perf: a hosted device allows only perf frames and perf memory sample; snapshots, profiles and traces write files on the hosting Mac.',
+        },
   artifacts: (positionals) =>
     positionals.length === 0
       ? undefined
@@ -132,6 +141,7 @@ export const REFUSED_DEVICE_COMMANDS: Readonly<Record<string, string>> = {
   release_materialized_paths: STIM_INSTALLS,
   runtime: "it sets the Metro address the hosted app loads; Stim's Metro bridge already does.",
   session_save_script: 'it writes a script file on the hosting Mac.',
+  human_control: 'a takeover hold on the hosted device would pause the control Stim gives this connection.',
   lease_allocate: 'Stim holds the lease for this connection.',
   lease_heartbeat: 'Stim holds the lease for this connection.',
   lease_release: 'Stim holds the lease for this connection.',

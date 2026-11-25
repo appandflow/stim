@@ -1604,7 +1604,8 @@ function inspectDeviceCommand(
   device: { platform: string; selector: string; id: string },
 ): Refusal | null {
   const refuse = (rule: Refusal['rule'], message: string): Refusal => ({ id, rule, message, details: {} });
-  const command = typeof params.command === 'string' ? params.command : '';
+  // agent-device trims and lowercases a batch step command before it runs it (normalizeBatchCommandName).
+  const command = typeof params.command === 'string' ? params.command.trim().toLowerCase() : '';
   if (Object.hasOwn(REFUSED_DEVICE_COMMANDS, command))
     return refuse(
       'command',
@@ -1648,7 +1649,7 @@ function inspectDeviceCommand(
     if (!Array.isArray(fields.batchSteps)) return refuse('request', 'Invalid batch steps.');
     for (const step of fields.batchSteps) {
       if (!isJsonObject(step)) return refuse('request', 'Invalid batch step.');
-      if (step.command === 'record')
+      if (typeof step.command === 'string' && step.command.trim().toLowerCase() === 'record')
         return refuse(
           'command',
           'Refused record inside batch: run record start and record stop as their own commands.',
