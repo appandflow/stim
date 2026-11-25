@@ -151,9 +151,9 @@ export interface NetworkReading {
 const STIM_HOST_LAUNCHER = /\/Contents\/MacOS\/stim-host run /;
 
 const SERVER_COMMAND =
-  /^\S*[/\\]?node(?:\.exe)?\s+(?:-\S+\s+)*(.*?(?:stim-server(?:\.mjs)?|(?:bin\/stim|dist\/cli)\.mjs))(?=\s|$)(?:\s+(.*))?$/;
+  /^\S*[/\\]?node(?:\.exe)?\s+(?:-\S+\s+)*(.*?(?:stim-server(?:\.mjs)?|(?:bin\/stim\.(?:mjs|cjs)|dist\/cli\.mjs)))(?=\s|$)(?:\s+(.*))?$/;
 const SERVER_SCRIPT = /(?:^|\/)stim-server(?:\.mjs)?$/;
-const CLI_SCRIPT = /(?:^|\/)(?:bin\/stim|dist\/cli)\.mjs$/;
+const CLI_SCRIPT = /(?:^|\/)(?:bin\/stim\.(?:mjs|cjs)|dist\/cli\.mjs)$/;
 
 export function parseServerProcesses(ps: string): ServerProcess[] {
   const servers: ServerProcess[] = [];
