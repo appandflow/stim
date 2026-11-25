@@ -184,18 +184,18 @@ async function decide(
   for (const device of found.booted) {
     const key = deviceSlotKey(device.kind, device.slot);
     const record = readDeviceIdleShutdowns(readWorkspaceState(path))[key];
-    if (!input.act || !record || record.bootedAgainAt || !(Date.parse(record.at) < now)) continue;
+    if (!input.act || !record || record.bootedAgainAt || !(Date.parse(record.at) < input.now)) continue;
     let stamped = false;
     await updateWorkspaceStateAsync(path, (state) => {
       const records = readDeviceIdleShutdowns(state);
       const current = records[key];
-      if (!current || current.bootedAgainAt || !(Date.parse(current.at) < now)) return state;
+      if (!current || current.bootedAgainAt || !(Date.parse(current.at) < input.now)) return state;
       records[key] = { ...current, bootedAgainAt: new Date(now).toISOString() };
       stamped = true;
       return { ...state, [DEVICE_IDLE_SHUTDOWN_KEY]: records };
     });
     if (stamped) {
-      const msg = `${path}: ${device.kind === 'ios' ? 'simulator' : 'emulator'} ${device.name} was found booted again after the idle stage shut it down at ${record.at}; that boot counts as activity for one idle window`;
+      const msg = `${path}: ${device.kind === 'ios' ? 'simulator' : 'emulator'} ${device.name} was found booted again after it was shut down for being idle at ${record.at}; that boot counts as activity for one idle window`;
       input.log('info', 'device_booted_after_idle', msg, { workspace: path, device: device.id });
       writeWorkspaceEvent(path, 'info', 'device_booted_after_idle', msg, { device: device.id });
     }
