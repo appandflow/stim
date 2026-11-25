@@ -1028,20 +1028,20 @@ export async function endRecordedSession({
   operation?: StimContext;
 }): Promise<{ status: 'torn-down' | 'failed'; reason?: string }> {
   const agentDeviceBin = (lookupAgentDevice ?? defaultLookupAgentDevice)();
-  if (!easBin) {
-    const record = readRemoteSession(root);
-    if (record?.sessionId === sessionId && remoteSessionExpired(record, Date.now())) {
-      const ledger = readEasSessionLedger(ledgerRoot);
-      try {
-        const removed = await removeEasSessionClaimAsync(sessionId, ledgerRoot);
-        if (removed || (ledger.safe && !ledger.claims.has(sessionId))) return { status: 'torn-down' };
-      } catch (error) {
-        return {
-          status: 'failed',
-          reason: `EAS session ${sessionId} has ended, but its ownership claim could not be removed: ${describe(error)}.`,
-        };
-      }
+  const record = readRemoteSession(root);
+  if (record?.sessionId === sessionId && remoteSessionExpired(record, Date.now())) {
+    const ledger = readEasSessionLedger(ledgerRoot);
+    try {
+      const removed = await removeEasSessionClaimAsync(sessionId, ledgerRoot);
+      if (removed || (ledger.safe && !ledger.claims.has(sessionId))) return { status: 'torn-down' };
+    } catch (error) {
+      return {
+        status: 'failed',
+        reason: `EAS session ${sessionId} has ended, but its ownership claim could not be removed: ${describe(error)}.`,
+      };
     }
+  }
+  if (!easBin) {
     return {
       status: 'failed',
       reason: `No eas-cli to stop session ${sessionId} with; it keeps billing until its max duration. Run \`eas simulator:stop --id ${sessionId}\`.`,
