@@ -267,8 +267,14 @@ declare native modules stay on the client's own simulator.
 
 Each source checkout a client builds from, including each worktree, gets its own
 repository area on the worker with its checkout, dependencies, build outputs and
-Gradle home. The worker removes these areas by itself:
+Gradle home. The worker removes these areas:
 
+- An area whose checkout the client removed. `stim worktree remove`, and `stim gc`
+  or automatic maintenance when they remove a linked worktree or clean up one
+  whose folder is gone, ask each worker that built that checkout to drop its
+  area at once. This is best effort and never fails the removal: a worker that
+  does not answer within 5 seconds or runs an older Stim keeps the area until
+  the age limit below.
 - An area with no build or cached artifact fetch for
   `server.workerAreaMaxAgeDays` days (default 7, `0` turns this off).
 - While the volume of `server.workerRoot` has less than 50 GB free, the least
@@ -278,7 +284,7 @@ Gradle home. The worker removes these areas by itself:
 - Under 10 GB free the worker declines builds, so those recent areas can go too,
   until the volume is back over 10 GB.
 
-It always keeps each client's most recently used area. It retains an area with a
+Age and free space never remove a client's most recently used area. It retains an area with a
 running or unfetched build, a bundle a hosted session can still take, an open
 connection sending it a manifest, a running Gradle daemon, or an ownership claim
 that is held or unresolved. The server log has one line for each removal and

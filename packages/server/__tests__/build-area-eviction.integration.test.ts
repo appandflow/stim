@@ -22,7 +22,7 @@ import { WebSocket } from 'ws';
 import { BuildArtifactCache } from '../../stim-cli/src/offload/build-artifact-cache.ts';
 import { releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import { tryAcquireBuildSlotClaim, windowsShortDir, windowsShortDirKey } from '@stim-cli/core/state';
-import { BuildWorkerRoot, type BuildLimits } from '../src/build.ts';
+import { BuildWorkerRoot, writeHandoff, type BuildLimits } from '../src/build.ts';
 import { BuildHost, type BuildHostOptions } from '../../stim-cli/src/job/offload/host.ts';
 import { areaLastUsed, recordAreaUse, recordRootUsage } from '../src/worker-areas.ts';
 
@@ -120,6 +120,10 @@ class Worker {
 
   remove(client: string) {
     return this.root.remove(client);
+  }
+
+  dropArea(client: string, repo: string) {
+    return this.root.dropArea(client, repo);
   }
 
   workerRootUsage() {
@@ -1425,4 +1429,205 @@ test('after an unmount or a change of root the old size is no longer reported', 
   expect(host.workerRootUsage()).toEqual({ path: root, bytes: 42, measuredAt });
   rmSync(root, { recursive: true });
   expect(host.workerRootUsage()).toBeNull();
+});
+
+describe('an area its client removed', () => {
+  test('goes at once, even the newest, leaving the other areas, and prunes the blobs no area left uses', async () => {
+    const newest = area('a', 'newest', 0);
+    const older = area('a', 'older', 1);
+    const other = area('b', 'newest', 0);
+    for (const { repo, text } of [
+      { repo: 'newest', text: 'only-newest' },
+      { repo: 'older', text: 'shared' },
+    ]) {
+      const blob = join(root, 'a', 'blobs', sha(text).slice(0, 2), sha(text));
+      mkdirSync(dirname(blob), { recursive: true });
+      writeFileSync(blob, text);
+      writeFileSync(join(areaPath('a', repo), 'mirror.json'), JSON.stringify({ file: { sha256: sha(text) } }));
+    }
+    const host = start();
+
+    expect(await host.dropArea('a', 'newest')).toEqual({ dropped: true });
+    await host.evictAreas();
+
+    expect(existsSync(newest)).toBe(false);
+    expect(existsSync(older)).toBe(true);
+    expect(existsSync(other)).toBe(true);
+    expect(readdirSync(join(root, 'a'))).not.toContain('evicted');
+    expect(existsSync(join(root, 'a', 'blobs', sha('only-newest').slice(0, 2), sha('only-newest')))).toBe(false);
+    expect(existsSync(join(root, 'a', 'blobs', sha('shared').slice(0, 2), sha('shared')))).toBe(true);
+    expect(logs.join('\n')).toMatch(/removed the build area a\/newest: its client removed the checkout/);
+
+    expect(await host.dropArea('a', 'older')).toEqual({ dropped: true });
+    await host.evictAreas();
+    expect(existsSync(older)).toBe(false);
+    expect(existsSync(join(root, 'a', 'blobs', sha('shared').slice(0, 2), sha('shared')))).toBe(true);
+  });
+
+  test('an area that is not there is reported as no area, not as kept', async () => {
+    area('a', 'present', 0);
+    expect(await start().dropArea('a', 'absent')).toEqual({ dropped: false });
+  });
+
+  test('a name that is not exactly an area, such as another case or its claim set, drops nothing', async () => {
+    const path = area('a', 'subject', 0);
+    const claim = tryAcquireClaim({ root: `${path}.claims`, mode: 'exclusive' }).acquired;
+    assert(claim);
+    onTestFinished(() => void releaseClaim(claim));
+    const host = start();
+    const end = host.connect('a', 'subject');
+    onTestFinished(end);
+
+    for (const name of ['SUBJECT', 'subject.claims', 'subject.CLAIMS'])
+      expect(await host.dropArea('a', name)).toEqual({ dropped: false });
+    await host.evictAreas();
+
+    expect(existsSync(path)).toBe(true);
+    expect(existsSync(`${path}.claims`)).toBe(true);
+    expect(existsSync(join(root, 'a', 'evicted'))).toBe(false);
+  });
+
+  test('checks again after listing processes, answering no area for one that moved away meanwhile', async () => {
+    const path = area('a', 'subject', 0);
+    const host = start();
+    processList.requested = () => rmSync(path, { recursive: true });
+
+    expect(await host.dropArea('a', 'subject')).toEqual({ dropped: false });
+    expect(existsSync(join(root, 'a', 'evicted'))).toBe(false);
+  });
+
+  test('checks again after listing processes, keeping out of a client removal that started meanwhile', async () => {
+    const path = area('a', 'subject', 0);
+    const host = start();
+    const gate = gateRemovalOf((each) => each === join(root, 'a'));
+    let removal: Promise<void> = Promise.resolve();
+    processList.requested = () => void (removal = host.remove('a'));
+
+    expect(await host.dropArea('a', 'subject')).toEqual({
+      dropped: false,
+      kept: expect.stringMatching(/being removed/),
+    });
+    expect(existsSync(join(root, 'a', 'evicted'))).toBe(false);
+    await gate.reached;
+    gate.release();
+    await removal;
+    expect(existsSync(path)).toBe(false);
+  });
+
+  const crashedClaim = (path: string) => {
+    const core = pathToFileURL(join(import.meta.dirname, '../../core/ownership-claim.ts')).href;
+    spawnSync(process.execPath, [
+      '--input-type=module',
+      '-e',
+      `import { markClaimChildPending, tryAcquireClaim } from ${JSON.stringify(core)};
+markClaimChildPending(tryAcquireClaim({ root: ${JSON.stringify(`${path}.claims`)}, mode: 'exclusive' }).acquired);`,
+    ]);
+  };
+
+  test.each([
+    {
+      name: 'a live offload job',
+      kept: /an offload job is using it/,
+      hold: (host: Worker) => host.connect('a', 'subject'),
+    },
+    {
+      name: 'a kept bundle',
+      kept: /it holds a bundle for a hosted session/,
+      hold: (_host: Worker, path: string) => {
+        const dir = join(path, 'out', 'job');
+        mkdirSync(dir, { recursive: true });
+        const token = writeHandoff(join(root, 'a'), {
+          repo: 'subject',
+          dir,
+          bundle: join(dir, 'App.app'),
+          sha256: sha('x'),
+          expiresAt: Date.now() + DAY,
+        });
+        return () => rmSync(join(root, 'a', 'handoffs', `${token}.json`));
+      },
+    },
+    {
+      name: 'a held claim',
+      kept: /its claim .* is held/,
+      hold: (_host: Worker, path: string) => {
+        const claim = tryAcquireClaim({ root: `${path}.claims`, mode: 'exclusive' }).acquired;
+        assert(claim);
+        return () => releaseClaim(claim);
+      },
+    },
+    {
+      name: 'an unresolved claim',
+      kept: /its claim is unresolved/,
+      hold: (_host: Worker, path: string) => {
+        crashedClaim(path);
+        return () => rmSync(`${path}.claims`, { recursive: true, force: true });
+      },
+    },
+    {
+      name: 'a Gradle process its daemon log names',
+      kept: /may still use/,
+      hold: (_host: Worker, path: string) => {
+        vi.stubEnv('SystemDrive', home);
+        const gradleHome =
+          process.platform === 'win32'
+            ? windowsShortDir(win32.join(path, 'cache', 'gradle'))
+            : join(path, 'cache', 'gradle');
+        mkdirSync(join(gradleHome, 'daemon', '8.14'), { recursive: true });
+        const log = join(gradleHome, 'daemon', '8.14', `daemon-${process.pid}.out.log`);
+        writeFileSync(log, '');
+        return () => rmSync(log);
+      },
+    },
+    ...(process.platform === 'win32'
+      ? []
+      : [
+          {
+            name: 'a running Gradle daemon',
+            kept: /a Gradle daemon is running in it/,
+            hold: async (_host: Worker, path: string) => {
+              const daemon = spawn(
+                process.execPath,
+                [
+                  '-e',
+                  'process.stdout.write("ready"); setInterval(() => {}, 1000)',
+                  join(path, 'cache', 'gradle', 'wrapper', 'daemon.jar'),
+                  'org.gradle.launcher.daemon.bootstrap.GradleDaemon',
+                ],
+                { stdio: ['ignore', 'pipe', 'ignore'] },
+              );
+              const closed = once(daemon, 'close');
+              onTestFinished(() => void daemon.kill());
+              await once(daemon.stdout, 'data');
+              return async () => {
+                daemon.kill();
+                await closed;
+              };
+            },
+          },
+        ]),
+    {
+      name: 'a device its Stim home created',
+      kept: /SIM-UDID/,
+      hold: (_host: Worker, path: string) => {
+        const ledger = join(path, 'home', 'created-devices.json');
+        mkdirSync(dirname(ledger), { recursive: true });
+        writeFileSync(ledger, JSON.stringify({ version: 1, ios: ['SIM-UDID'], android: [], web: [] }));
+        return () => rmSync(ledger);
+      },
+    },
+  ])('is kept while it has $name, and goes when asked again after', async ({ kept, hold }) => {
+    const path = area('a', 'subject', 0);
+    const host = start();
+    const release = await hold(host, path);
+
+    const refused = await host.dropArea('a', 'subject');
+    expect(refused).toEqual({ dropped: false, kept: expect.stringMatching(kept) });
+    await host.evictAreas();
+    expect(existsSync(path)).toBe(true);
+
+    await release();
+    expect(await host.dropArea('a', 'subject')).toEqual({ dropped: true });
+    await host.evictAreas();
+    expect(existsSync(path)).toBe(false);
+  });
 });

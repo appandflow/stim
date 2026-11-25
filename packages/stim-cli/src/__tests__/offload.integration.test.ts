@@ -1,5 +1,5 @@
 import assert from 'node:assert';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setExecutor, resetExecutor } from '../exec.ts';
@@ -15,6 +15,7 @@ import {
 } from '../build-placement.ts';
 import { withAmbientContext } from '@stim-cli/core';
 import { testContext } from './_context.ts';
+import { readBuildAreas, readWorkspaceState } from '@stim-cli/core/state';
 import type { MachineCapacity, BuildMachineCredential } from '@stim-cli/core/state';
 import {
   BuildConnection,
@@ -593,6 +594,14 @@ describe('strict client routing', () => {
         note: () => {},
       });
       expect(outcome).toEqual({ ok: false, machine: 'mini', reason: `${failedMethod}: busy: cannot take this build` });
+      expect(readBuildAreas(readWorkspaceState(root))).toEqual([
+        {
+          machine: 'mini',
+          repo: expect.stringMatching(/-[0-9a-f]{12}$/),
+          checkout: realpathSync(root),
+          device: statSync(root).dev,
+        },
+      ]);
       expect(open.mock.calls.map(([endpoint]) => endpoint.url)).toEqual(['mini']);
       expect(close).toHaveBeenCalled();
     },

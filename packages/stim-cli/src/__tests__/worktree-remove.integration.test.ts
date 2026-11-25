@@ -1,4 +1,4 @@
-import { readArchives } from '@stim-cli/core/state';
+import { buildMachinesFile, MACHINE_CREDENTIALS_VERSION, readArchives } from '@stim-cli/core/state';
 import { execSync, spawn, type ChildProcess } from 'node:child_process';
 import {
   existsSync,
@@ -8,11 +8,14 @@ import {
   readdirSync,
   realpathSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
+import * as buildMachines from '../offload/build-machines.ts';
+import { BuildConnection } from '../offload/client.ts';
 import {
   excludePodChurn,
   porcelainPath,
@@ -737,6 +740,96 @@ test('action: force removal keeps an owned branch that has unique commits', asyn
   expect(errs.some((line) => /branch\s+kept worktree-feat-x \(it has 1 unique commit/.test(line))).toBe(true);
 });
 
+/** Pairs each area's machine for builds; `mini` drops its area and every other worker is too old to know how. */
+function fakeBuildWorkers(areas: ReadonlyArray<{ machine: string }>): Array<[string, string, unknown]> {
+  onTestFinished(() => void vi.restoreAllMocks());
+  mkdirSync(dirname(buildMachinesFile()), { recursive: true });
+  writeFileSync(
+    buildMachinesFile(),
+    JSON.stringify({
+      version: MACHINE_CREDENTIALS_VERSION,
+      machines: areas.map(({ machine }) => ({
+        machine,
+        transport: 'tailscale',
+        address: machine,
+        state: 'approved',
+        requestedAt: '2026-11-01T00:00:00.000Z',
+        serverKey: `${'K'.repeat(42)}A`,
+        deviceId: machine,
+      })),
+    }),
+  );
+  vi.spyOn(buildMachines, 'resolveEndpoint').mockImplementation(async (credential) => ({
+    url: credential.machine,
+    servername: credential.machine,
+    host: credential.machine,
+  }));
+  const asked: Array<[string, string, unknown]> = [];
+  vi.spyOn(BuildConnection, 'open').mockImplementation(async (target) =>
+    Object.assign(Object.create(BuildConnection.prototype), {
+      request: async (method: string, params: unknown) => {
+        asked.push([target.host, method, params]);
+        return target.host === 'mini'
+          ? { result: { dropped: true } }
+          : {
+              error: {
+                code: 'forbidden',
+                message: 'build.area.drop needs read access, which this connection does not have.',
+              },
+            };
+      },
+      close: () => {},
+    }),
+  );
+  return asked;
+}
+
+test('action: removing a worktree asks the workers that built it to drop its area and ignores one that cannot', async () => {
+  const app = join(wtDir, 'apps/mobile');
+  upsertProject(wtDir, { worktreeRoot: true });
+  upsertProject(app, { platforms: {} });
+  const areas = ['mini', 'studio'].map((machine) => ({
+    machine,
+    repo: 'wt-0123456789ab',
+    checkout: wtDir,
+    device: statSync(wtDir).dev,
+  }));
+  ensureWorkspaceStorage(app);
+  writeFileSync(workspaceStateFile(app), JSON.stringify({ buildAreas: areas }));
+  const asked = fakeBuildWorkers(areas);
+  const exec = makeExecutor({
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'feat-x' },
+    ]),
+  });
+  const runFile = exec.runFile;
+  exec.runFile = (file, args = []) => {
+    const out = runFile(file, args);
+    if (args.includes('remove') && args.includes('worktree')) rmSync(wtDir, { recursive: true, force: true });
+    return out;
+  };
+  setExecutor(exec);
+  const errs: string[] = [];
+  const original = console.error;
+  console.error = (message) => errs.push(String(message));
+  try {
+    await captureAction(removeOp)(wtDir, {});
+  } finally {
+    console.error = original;
+  }
+
+  expect(process.exitCode).not.toBe(1);
+  expect(getProject(wtDir)).toBe(null);
+  expect(asked.toSorted()).toEqual([
+    ['mini', 'build.area.drop', { repo: 'wt-0123456789ab' }],
+    ['studio', 'build.area.drop', { repo: 'wt-0123456789ab' }],
+  ]);
+  expect(errs.filter((line) => /build area/.test(line))).toEqual([
+    expect.stringMatching(/dropped its build area on mini/),
+  ]);
+});
+
 test('action: a branch deletion failure keeps ownership state and exits unsuccessfully', async () => {
   upsertProject(wtDir, {
     worktreeRoot: true,
@@ -796,11 +889,15 @@ test('action: a branch deletion failure keeps ownership state and exits unsucces
   expect(getProject(wtDir)).toBe(null);
 });
 
-test('action: removing a deleted worktree drops the record of its project and the projects inside it', async () => {
+test('action: removing a deleted worktree drops the record of its project and the projects inside it, and its build area where the volume is proven', async () => {
   const app = join(wtDir, 'apps/mobile');
   upsertProject(wtDir, { worktreeRoot: true });
   upsertProject(app, { platforms: {} });
   ensureWorkspaceStorage(app);
+  const area = { machine: 'mini', repo: 'wt-0123456789ab', checkout: wtDir, device: statSync(wtDir).dev };
+  const unproven = { machine: 'studio', repo: 'wt-0123456789ab', checkout: wtDir };
+  writeFileSync(workspaceStateFile(app), JSON.stringify({ buildAreas: [area, unproven] }));
+  const asked = fakeBuildWorkers([area, unproven]);
   rmSync(wtDir, { recursive: true, force: true });
   setExecutor(makeExecutor({ worktrees: porcelain([{ path: mainDir, branch: 'main' }]) }));
 
@@ -810,6 +907,7 @@ test('action: removing a deleted worktree drops the record of its project and th
   expect(getProject(wtDir)).toBe(null);
   expect(getProject(app)).toBe(null);
   expect(existsSync(workspaceDir(app))).toBe(false);
+  expect(asked).toEqual([['mini', 'build.area.drop', { repo: 'wt-0123456789ab' }]]);
 });
 
 test('action: removing a deleted folder registered under a symlink alias reclaims its entry', async () => {

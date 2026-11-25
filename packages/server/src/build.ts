@@ -48,7 +48,7 @@ import {
   type WorkerArea,
   type WorkerRootUsage,
 } from './worker-areas.ts';
-import { BUILD_REPO_PATTERN, type BuildToolchain } from './protocol.ts';
+import { BUILD_REPO_PATTERN, type BuildAreaDropResult, type BuildToolchain } from './protocol.ts';
 
 export { readAvailableMemory } from './machine.ts';
 export { listCommandLines } from './processes.ts';
@@ -181,6 +181,9 @@ export function workerGradleDaemons(
 const isMissing = (error: unknown): boolean => error instanceof Error && 'code' in error && error.code === 'ENOENT';
 
 const areaKey = (client: string, repo: string): string => `${client}/${repo}`;
+
+const isAreaEntry = (entry: Dirent): boolean =>
+  entry.isDirectory() && !entry.name.endsWith('.claims') && new RegExp(BUILD_REPO_PATTERN).test(entry.name);
 
 function areaDevices(area: string): string | null {
   const home = join(area, 'home');
@@ -757,6 +760,63 @@ export class BuildWorkerRoot {
     this.reportedLow = stillLow;
   }
 
+  /**
+   * Drops `client`'s area `repo` at the client's request, once the checkout it mirrors is removed there. It keeps the
+   * area under the same per-area rules as eviction and moves it aside the same way; the deletion goes on after this
+   * resolves, as eviction's does.
+   */
+  async dropArea(client: string, repo: string): Promise<BuildAreaDropResult> {
+    // @ref LLP 0009#repository-ownership-and-cleanup -- a removed checkout's area goes under eviction's per-area rules
+    const key = areaKey(client, repo);
+    const refuse = (kept: string): BuildAreaDropResult => {
+      console.error(`stim-server: retaining the build area ${key} its client removed: ${kept}.`);
+      return { dropped: false, kept };
+    };
+    const repos = join(this.clientDir(client), 'repos');
+    const check = (): string | boolean => {
+      if (this.closed) return 'this machine is stopping';
+      if (!(this.options.ready?.() ?? true)) return 'this machine is not ready';
+      if (this.removals.has(client)) return "this client's areas are being removed";
+      if (notRealDirectory(this.clientDir(client)) || notRealDirectory(repos))
+        return `${repos} is not a real directory`;
+      try {
+        return readdirSync(repos, { withFileTypes: true }).some((entry) => entry.name === repo && isAreaEntry(entry));
+      } catch (error) {
+        return isMissing(error) ? false : `its areas cannot be read: ${String(error)}`;
+      }
+    };
+    const before = check();
+    if (typeof before === 'string') return refuse(before);
+    if (!before) return { dropped: false };
+    let processes: string;
+    try {
+      processes = await listCommandLines();
+    } catch (error) {
+      return refuse(`its Gradle processes could not be checked: ${String(error)}`);
+    }
+    const after = check();
+    if (typeof after === 'string') return refuse(after);
+    if (!after) return { dropped: false };
+    const outcome = this.evictArea({ client, repo }, processes);
+    if ('kept' in outcome) return refuse(outcome.kept);
+    const { eviction } = outcome;
+    void (async () => {
+      const failure = outcome.failure ?? (await this.serialized(client, () => this.deleteEvicted(client, eviction)));
+      if (failure) {
+        this.reported.set(eviction.id, failure);
+        console.error(
+          `stim-server: moved the build area ${key} out of repos (its client removed the checkout) but could not delete it: ${failure}. ${this.evictedRemedy(client, eviction.id)}`,
+        );
+        return;
+      }
+      if (this.workerAreas().some((each) => each.client === client)) this.pruneBlobs(client);
+      console.error(`stim-server: removed the build area ${key}: its client removed the checkout.`);
+    })().catch((error: unknown) =>
+      console.error(`stim-server: could not delete the build area ${key}: ${String(error)}`),
+    );
+    return { dropped: true };
+  }
+
   private workerClients(all = false): string[] {
     let entries: Dirent[];
     try {
@@ -783,10 +843,7 @@ export class BuildWorkerRoot {
       }
       try {
         return readdirSync(repos, { withFileTypes: true })
-          .filter(
-            (entry) =>
-              entry.isDirectory() && !entry.name.endsWith('.claims') && new RegExp(BUILD_REPO_PATTERN).test(entry.name),
-          )
+          .filter(isAreaEntry)
           .map((entry) => ({ client, repo: entry.name, usedAt: areaLastUsed(join(repos, entry.name)) }));
       } catch (error) {
         if (!isMissing(error))
@@ -823,7 +880,7 @@ export class BuildWorkerRoot {
   }
 
   private evictArea(
-    { client, repo }: AreaEviction,
+    { client, repo }: Pick<WorkerArea, 'client' | 'repo'>,
     processes: string,
   ): { kept: string } | { eviction: Eviction; failure: string | null } {
     const area = join(this.clientDir(client), 'repos', repo);

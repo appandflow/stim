@@ -44,6 +44,7 @@ import { runCancellationSignal } from '../engine/native-run.ts';
 import { throwIfCancelled } from '../cancellation.ts';
 import { operationState } from '../engine/operation-state.ts';
 import { loadConfig } from '../workspace/config.ts';
+import { recordBuildArea } from './build-areas.ts';
 import { pairedMachines, resolveEndpoint, type Endpoint } from './build-machines.ts';
 import { openAuthenticated, sayHello, type ConnectFailure } from './tailnet.ts';
 import { MAX_CLIENT_MESSAGE_BYTES, type NoiseSocket } from '@stim-cli/core/noise-session';
@@ -591,6 +592,7 @@ export class BuildConnection {
       socket,
       { client: { name: 'stim', version: '1', runId: runId(), peer: PEER }, access: capability },
       Math.max(1, timeoutMs - (Date.now() - started)),
+      signal,
     );
     if ('error' in reply) {
       socket.terminate();
@@ -971,6 +973,8 @@ export interface OffloadChoice extends OfferingMachine {
   target: BuildTarget;
   offerMs: number;
   identity: RepoIdentity;
+  /** The workspace the build is for, which records each machine its checkout goes to. */
+  workspace: string;
   runnersUp: OfferingMachine[];
   cacheOnly?: boolean;
   gradleArtifact?: BuildGradleArtifactQuery;
@@ -1215,6 +1219,7 @@ export async function chooseBuildMachine({
     target,
     offerMs: Date.now() - started,
     identity,
+    workspace: projectRoot,
     runnersUp: rest,
     cacheOnly,
     ...(gradleQuery ? { gradleArtifact: gradleQuery } : {}),
@@ -2052,6 +2057,7 @@ export async function offloadBuild(
         if ('uncertain' in candidate) return fail(candidate.uncertain);
       }
       const inputs = candidate && !('uncertain' in candidate) ? candidate : null;
+      recordBuildArea(choice.workspace, { machine: choice.machine, repo: identity.repo, checkout: identity.repoRoot });
       cached = await peerArtifact(choice, request, expectedFingerprint);
       if (cached) {
         cacheHit = true;

@@ -1535,7 +1535,10 @@ unless the volume is under its 10 GB floor. It keeps each client's most recently
 area and retains an area with a running or unfetched build, a bundle a hosted
 session can take, an open connection sending it a manifest, a running Gradle
 daemon, or a held or unresolved claim; its log names each removal and why an
-area stays. The next build of a removed area starts cold.
+area stays. When a client removes a checkout (\`guide cleanup\`), each worker
+that built it drops its area at once under those retain rules; one that does not
+answer within 5 seconds, or runs an older Stim, keeps it until the age limit.
+The next build of a removed area starts cold.
 \`stim service status\` prints a \`worker root:\` line with the root's size
 as last measured, about every 6 hours (not measured on Windows).
 \`stim service install [--serve]\` on a remote machine keeps stim-server
