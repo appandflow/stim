@@ -92,8 +92,8 @@ fingerprint evaluation problems. The checkout is left untouched unless
 
 In a git repository, doctor also notes the linked worktrees: their count, real
 size and the bytes kept worktrees hold, up to three old or large kept ones with
-their reason, how old the saved verdicts and sizes are, and the machine-wide
-totals. It reads only the verdicts and sizes maintenance saved; it never
+their reason, how old the saved verdicts and sizes are, and the totals for
+every repository maintenance has checked on this machine. It reads only the verdicts and sizes maintenance saved; it never
 measures or checks a worktree. Run `stim worktree list` for current numbers.
 
 Fingerprint checks evaluate project configuration, including

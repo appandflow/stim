@@ -247,7 +247,10 @@ Sizes come from saved whole-worktree measures: private bytes for real size,
 allocated bytes for apparent size. Real size is unknown when private bytes
 cannot be counted. Neither includes Stim workspace data outside the checkout.
 Old is 30 days idle; large is 1 GiB real.
-Doctor reports one note from saved verdicts and measures only, stating their age; it never measures or runs the check. List and doctor describe removals disabled by `maintenance.removeFinishedWorktrees` or `maintenance.removeIdleWorktrees` as kept with reason `removal-off`.
+Doctor reports one note from saved verdicts and measures only, stating their
+age; it never measures or runs the check. List and doctor describe removals
+disabled by `maintenance.removeFinishedWorktrees` or
+`maintenance.removeIdleWorktrees` as kept with reason `removal-off`.
 
 [Issue #6365](https://github.com/appandflow/stim/issues/6365)
 
