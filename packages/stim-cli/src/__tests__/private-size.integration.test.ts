@@ -54,7 +54,7 @@ describe.skipIf(process.platform !== 'darwin')('measureTree with real-size', () 
   }, 120_000);
 });
 
-describe.runIf(process.platform === 'linux')('measureTree on Linux', () => {
+describe.runIf(process.platform === 'darwin' || process.platform === 'linux')('measureTree on macOS and Linux', () => {
   let root: string;
 
   beforeEach(async () => {
@@ -71,7 +71,10 @@ describe.runIf(process.platform === 'linux')('measureTree on Linux', () => {
     if (root !== scratch) rmSync(root, { recursive: true, force: true });
   });
 
-  test('counts a file hard-linked from a package store outside the tree as shared, and one linked only inside once as its own', async () => {
+  test('counts a file hard-linked from a package store outside the tree as shared, and one linked only inside once as its own', async ({
+    skip,
+  }) => {
+    skip(process.platform !== 'linux');
     const store = join(root, 'store');
     const tree = join(root, 'tree');
     mkdirSync(store);
@@ -90,7 +93,7 @@ describe.runIf(process.platform === 'linux')('measureTree on Linux', () => {
   }, 120_000);
 
   test.skipIf(process.getuid?.() === 0)(
-    'reports partial allocated bytes with private bytes unknown for an unreadable directory',
+    'reports both sizes as lower bounds for an unreadable directory',
     async () => {
       const tree = join(root, 'tree');
       mkdirSync(join(tree, 'sealed'), { recursive: true });
@@ -100,7 +103,7 @@ describe.runIf(process.platform === 'linux')('measureTree on Linux', () => {
       try {
         const size = await measureTree(tree, { timeoutMs: 60_000 });
 
-        expect(size).toMatchObject({ privateBytes: null, partial: true, privateUnknown: 'walk' });
+        expect(size).toMatchObject({ privateBytes: expect.any(Number), partial: true });
         expect(size?.bytes).toBeGreaterThanOrEqual(allocated(join(tree, 'own')));
       } finally {
         chmodSync(join(tree, 'sealed'), 0o755);
