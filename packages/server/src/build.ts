@@ -836,7 +836,13 @@ export class BuildWorkerRoot {
     };
     return this.workerClients(true)
       .filter((client) => CLIENT_ID.test(client) && !listed.has(client) && hasRepos(client))
-      .map((client) => this.remove(client));
+      .map((client) => {
+        this.reportOnce(
+          `unlisted ${client}`,
+          `stim-server: removing the build area of ${client}: the build approvals do not name it.`,
+        );
+        return this.remove(client);
+      });
   }
 
   private workerClients(all = false): string[] {

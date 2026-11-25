@@ -1660,6 +1660,9 @@ describe('a client the build approvals do not name', () => {
     await start({}, { listed: listedBuildClients }).evictAreas();
 
     expect(existsSync(join(root, REVOKED))).toBe(false);
+    expect(logs.join('\n')).toMatch(
+      new RegExp(`removing the build area of ${REVOKED}: the build approvals do not name it`),
+    );
     expect(existsSync(kept)).toBe(true);
     expect(existsSync(join(root, 'jobs', 'repos'))).toBe(true);
     expect(existsSync(join(root, 'cccc0003'))).toBe(true);
