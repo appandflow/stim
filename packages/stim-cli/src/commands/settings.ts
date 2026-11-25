@@ -7,13 +7,7 @@ import {
   settingEntry,
   SettingsRefusal,
 } from '../workspace/settings-payload.ts';
-import {
-  REMOVED_SETTINGS,
-  settingDefinition,
-  SETTING_SCOPES,
-  type SettingEntry,
-  type SettingWriteResult,
-} from '@stim-cli/core/state';
+import { RETIRED_SETTING_KEYS, SETTING_SCOPES, type SettingEntry, type SettingWriteResult } from '@stim-cli/core/state';
 import {
   mutateSetting,
   readScope,
@@ -123,7 +117,7 @@ export function settingsOp(io: Output = CONSOLE, env: NodeJS.ProcessEnv = proces
     },
     run: ({ args: [key], options: opts, parent }) =>
       run(wantsJson(opts.json, parent), io, async () => {
-        if (REMOVED_SETTINGS.has(key) && !settingDefinition(key)) {
+        if (RETIRED_SETTING_KEYS.has(key)) {
           const removal = await unsetReplacedSetting(
             { key, scope: opts.scope },
             { cwd: process.cwd(), env, note: io.note },
