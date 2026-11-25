@@ -56,6 +56,14 @@ delete process.env.SHELL;
 // npx installs react-native (about 330 MB) from the registry when the project has none. Offline, npx fails at once.
 process.env.npm_config_offline ??= 'true';
 
+// git starts a detached `git maintenance run --auto` after a commit, which creates and removes
+// .git/objects/maintenance.lock while a test walks or ages that repository.
+process.env.GIT_CONFIG_COUNT = '2';
+process.env.GIT_CONFIG_KEY_0 = 'maintenance.auto';
+process.env.GIT_CONFIG_VALUE_0 = 'false';
+process.env.GIT_CONFIG_KEY_1 = 'gc.auto';
+process.env.GIT_CONFIG_VALUE_1 = '0';
+
 beforeEach(({ task }) => {
   if (/\.(?:integration|compat)\.test\.(?:ts|mjs)$/.test(task.file.filepath)) return;
   vi.useFakeTimers({
