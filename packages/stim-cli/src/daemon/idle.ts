@@ -210,7 +210,7 @@ async function decide(
     pressured,
     operation: input.operation,
   });
-  const records = readDeviceIdleShutdowns(readWorkspaceState(path));
+  const records = pressured ? {} : readDeviceIdleShutdowns(readWorkspaceState(path));
   for (const device of found.booted) {
     const at = Date.parse(records[deviceSlotKey(device.kind, device.slot)]?.bootedAgainAt ?? '');
     if (Number.isFinite(at)) evidence.activity.push({ basis: 'device booted again', at });

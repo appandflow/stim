@@ -175,6 +175,35 @@ test('a device booted again after idle shutdown gets one activity window without
   expect(readDeviceIdleShutdowns(readWorkspaceState(root)).ios?.bootedAgainAt).toBeUndefined();
 });
 
+test.each([
+  ['memory pressure', { pressure: { level: 'high' as const, reasons: ['memory'] } }],
+  ['disk pressure', { disk: {} }],
+])('under %s a device booted again after idle shutdown gets no activity window', async (_name, pressure) => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  const { root, udid } = bootedWorkspace('booted-again-pressure', 20 * MINUTE_MS);
+  expect(await pass()).toEqual([expect.objectContaining({ outcome: 'idle' })]);
+
+  vi.setSystemTime(Date.now() + MINUTE_MS);
+  expect(await pass()).toEqual([expect.objectContaining({ outcome: 'active' })]);
+  expect(readDeviceIdleShutdowns(readWorkspaceState(root)).ios?.bootedAgainAt).toBe(new Date().toISOString());
+
+  vi.setSystemTime(Date.now() + MINUTE_MS);
+  const config = loadConfig();
+  const devices = await collectOwnedDeviceActivityAsync(config, sims, Date.now());
+  const decisions = await runIdlePass({
+    config,
+    now: Date.now(),
+    sims,
+    simsError: null,
+    devices,
+    act: true,
+    log: () => {},
+    ...pressure,
+  });
+  expect(decisions).toEqual([expect.objectContaining({ path: root, outcome: 'idle' })]);
+  expect(tornDown).toEqual([udid, udid]);
+});
+
 test('a timed-out idle cleanup persists its partial size', async () => {
   const { root, derivedData } = bootedWorkspace('partial', 20 * MINUTE_MS);
   const real = getExecutor();
