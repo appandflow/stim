@@ -173,7 +173,9 @@ describe('offload job builds on a worker', () => {
     for (const [content, index] of [revalidated, untouched]) expect(existsSync(index)).toBe(existsSync(content));
   });
 
-  test('the npm cache trim keeps a cache with nothing older than a week whole', () => {
+  test('the npm cache trim keeps a cache whose only week-old files are kept tarballs whole', () => {
+    used(A, '1.0.0', 1);
+    tarball('1.0.0');
     const files = [...tarball('2.0.0'), ...tarball('2.0.1')];
     const now = new Date();
     for (const file of files) utimesSync(file, now, now);
