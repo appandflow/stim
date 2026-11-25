@@ -25,9 +25,11 @@ export function activityWindowMs(basis: string, idleMs: number, pressured: boole
 /**
  * The activity signals: a Stim command or the native run it started, a Metro bundle, manifest or HMR request, an
  * agent-device action, an input stim-server forwarded, and a person using the focused Simulator or emulator window.
+ * A device booted again after an idle shutdown counts for one idle window.
  * Device logs, in-app logs, dev server output and log modification times are not activity.
  */
 type IdleStopBasis =
+  | 'device booted again'
   | 'stim command'
   | 'native run'
   | 'Metro request'
