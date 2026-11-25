@@ -80,12 +80,6 @@ the daemon and its fixed helpers only on that serial. It does not create or
 delete the emulator; retain the validation fixture record and clean it through
 centralized Stim teardown. Missing binary, serial, adb or emulator fails the
 explicit stage and is unavailable validation, never a compatibility pass.
-The hosted command probe uses the same agent-device binary. It reads
-`agent-device help commands` and `agent-device help <command>` and fails when a
-command is neither a hosted device command nor refused with a reason, when a
-hosted command is missing from the catalog, or when a hosted command's flags
-include unclassified flags or omit a flag Stim allows. A flag that a release
-newer than the binary added may be absent. It starts no daemon or device.
 It builds generated scratch projects, signs temporary apps ad hoc, decodes
 fixture provisioning profiles, reads signing identities, and queries devices and
 processes through `devicectl`. It launches the installed Chrome headless with a

@@ -88,7 +88,7 @@ vi.mock('node:child_process', async (original) => ({
     const policy = JSON.parse(readFileSync(options.env.AGENT_DEVICE_DAEMON_POLICY!, 'utf8'));
     const canonical = JSON.stringify({
       devices: policy.devices.allow.map((device: { udid: string }) => device.udid),
-      commands: { mode: 'allow', names: policy.commands.allow.toSorted() },
+      commands: null,
       capabilities: policy.capabilities.deny,
     });
     if (fixture.proxyExit) {
@@ -332,6 +332,9 @@ test.each([
   { command: 'fold', positionals: ['open'], flags: { keyframes: '[{"atMs":0,"angle":90},{"atMs":500,"angle":180}]' } },
   { command: 'push', positionals: ['dev.app', '{"aps":{"alert":"x"}}'] },
   { command: 'perf', positionals: ['memory', 'sample'] },
+  { command: 'future-command', flags: { futureFlag: true } },
+  { command: 'audit', flags: { kind: 'screen', force: true } },
+  { command: 'session_list' },
   { command: 'settings', positionals: ['permission', 'grant', 'camera'], input: { app: 'dev.app' } },
   { command: 'wait', positionals: ['100'], flags: { durationMs: 100 } },
   { command: 'apps', flags: { appsFilter: 'user-installed' } },
@@ -350,7 +353,7 @@ test.each([
   expect(forwarded.input).toEqual(params.input && { ...params.input, platform: 'ios', udid: UDID });
 });
 
-test('an agent-device older than the hosted command list gets no daemon or claim', async () => {
+test('an agent-device older than the hosted device minimum gets no daemon or claim', async () => {
   fixture.version = '0.21.29';
   await expect(driver.start()).rejects.toThrow('0.21.30');
   expect(fixture.calls).toEqual([]);
@@ -359,6 +362,9 @@ test('an agent-device older than the hosted command list gets no daemon or claim
 
 test('allows screenshot artifacts but refuses uploads and stops forwarding after revoke', async () => {
   await start();
+  const policy = JSON.parse(readFileSync(join(home, 'agent', 'policy.json'), 'utf8'));
+  expect(policy).not.toHaveProperty('commands');
+  expect(policy.devices).toEqual({ allow: [{ udid: UDID }] });
   expect(
     (
       await rpc({
@@ -726,14 +732,20 @@ test('a request too deep to serialize fails without rejecting the relay', async 
 
 test.each([
   { command: 'screenshot', positionals: ['/host/file.png'] },
+  { command: 'snapshot', flags: { udid: 'OTHER-SIMULATOR' } },
   { command: 'record', positionals: ['start'], meta: {} },
   { command: 'record', positionals: ['stop', '/tmp/agent-device-recording-1-ab.mp4'] },
   { command: 'record', positionals: ['list'] },
   { command: 'batch', flags: { batchSteps: [{ command: 'record', positionals: ['stop'] }] } },
+  { command: 'batch', flags: { batchSteps: [{ command: ' Record ', positionals: ['stop'] }] } },
+  { command: 'batch', flags: { batchSteps: [{ command: ' Logs ' }] } },
   { command: 'push', positionals: ['dev.app', '/Users/me/payload.json'] },
   { command: 'push', positionals: ['dev.app', '{"a":"/../../tmp/x}"}'] },
   { command: 'push', positionals: ['/host/App.app', '{"aps":{}}'] },
   { command: 'perf', positionals: ['memory', 'snapshot'] },
+  { command: 'perf', positionals: ['trace', 'start', 'perfetto', '', '/tmp/host-file'] },
+  { command: 'Perf', positionals: ['trace', 'start', 'perfetto', '', '/tmp/host-file'] },
+  { command: 'human_control' },
   { command: 'artifacts', positionals: ['provider-session'] },
   { command: 'settings', positionals: ['permission', 'grant', 'accessibility'] },
   { command: 'settings', positionals: [' Permission', 'grant', 'Screen-Recording'] },

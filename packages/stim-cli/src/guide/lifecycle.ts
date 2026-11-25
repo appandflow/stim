@@ -20,31 +20,25 @@ path, record inside batch and a record stop from another agent-device session
 are refused. The host stops a recording after 10 minutes; a record stop within
 the next 15 minutes downloads it. A finished recording over 512 MiB is deleted
 instead. A host whose Stim predates hosted recording refuses
-record as a command outside its allowed list.`;
+record.`;
 
 const HOSTED_COMMANDS = (noun: 'simulator' | 'emulator') => `\
-Allowed commands: devices, open, close, snapshot, diff, wait, find, get, is,
-click, fill, press, type, focus, scroll, screenshot, longpress, swipe, gesture,
-back, home, orientation, fold, appstate, alert, batch, record start and stop,
-action-button, app-switcher, hardware-button, keyboard, apps, capabilities,
-events, network, react-native, telephony and trigger-app-event. Guarded: push
-takes <app id> <inline JSON object>, never a payload file; perf allows only
-frames and memory sample; artifacts lists this session's artifacts and takes no
-provider session; settings refuses permission accessibility, screen-recording
-and input-monitoring, which are permissions of the hosting Mac. Each command
-takes only the flags and input fields Stim lists for it, so a flag a newer
-agent-device adds is refused until Stim allows it. Host paths and launch inputs
-are refused: open refuses --metro-host, --metro-port, --bundle-url,
---launch-url, --launch-args, --launch-console, --surface and --save-script.
-Stim's Metro bridge already points the app at this machine's Metro; a client
-address would let the hosted app reach any service the hosting Mac can.
-These are refused, each with its reason in the error: install, reinstall,
-install-from-source and uninstall (Stim installs the app and tracks it), boot,
-shutdown and close --shutdown (use stim stop), logs (use stim logs), trace,
-audio, doctor, prepare, replay, test, clipboard (a ${noun} can share the
-clipboard of the hosting Mac), hover, viewport, tv-remote, audit and shake
-(refused on every host: an agent-device older than these commands refuses a
-policy that names them) and agent-device's client-side commands. Both machines
+Any agent-device command and flag passes on this one hosted ${noun} except
+these refused commands and inputs. Refused commands: install, reinstall,
+install-from-source and uninstall (Stim installs and tracks the app), boot,
+shutdown and close --shutdown (use stim stop), logs (use stim logs), trace
+(writes host files), audio (host audio), doctor (host tools), prepare (host
+helpers), replay and test (host scripts), clipboard (the ${noun} can share the
+host clipboard), hover and viewport (web only), tv-remote (TV only), and
+agent-device's client-side commands.
+Refused inputs: host paths, launch inputs, client-chosen Metro addresses,
+save-script, device or OS selection, recording repair flags and fullscreen
+screenshots. Stim's Metro bridge already points the app at this machine's Metro.
+Guarded commands: open and close take app ids only; screenshot and record use
+remote destinations; push takes <bundle id> <inline JSON object>; perf allows
+only frames and memory sample; settings
+refuses host macOS permissions and takes app ids only; artifacts takes no
+provider session id and lists only this session's artifacts. Both machines
 need agent-device 0.21.30 or later; an older host reports driver: none.`;
 
 const lifecycle: GuideTopic = {
