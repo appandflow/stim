@@ -1521,10 +1521,11 @@ function areaBuilt(area: string): string[] {
   }
 }
 
-/** Whether a build holds the area's exclusive claim, which `build.start` would refuse on. */
+/** Whether live or unresolved claims block `build.start` in this area. */
 function areaBuilding(area: string): boolean {
   try {
-    return readClaimSet(`${area}.claims`).live.some((holder) => holder.mode === 'exclusive');
+    const claims = readClaimSet(`${area}.claims`);
+    return claims.live.length > 0 || claims.unresolved.length > 0;
   } catch {
     return false;
   }
