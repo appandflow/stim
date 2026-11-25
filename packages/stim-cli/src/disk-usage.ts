@@ -45,7 +45,7 @@ function cloneMembers(own: string, suffix: string, roots: readonly string[]): st
 }
 
 /** The clone members through bounded filesystem reads; null when a read did not answer. Aborts propagate. */
-export async function dependencyCloneMembersAsync(path: string, signal?: AbortSignal): Promise<string[] | null> {
+async function dependencyCloneMembersAsync(path: string, signal?: AbortSignal): Promise<string[] | null> {
   const read = async <T>(label: string, start: () => Promise<T>): Promise<T | null> => {
     try {
       return await answered(label, start, READ_TIMEOUT_MS, signal);
@@ -101,7 +101,7 @@ export async function dependencyCloneMembersAsync(path: string, signal?: AbortSi
 }
 
 /** A stable stamp of member paths and their install signatures; null signatures represent absent trees. */
-export function dependencyCloneStamp(members: readonly (readonly [string, string | null])[]): string {
+function dependencyCloneStamp(members: readonly (readonly [string, string | null])[]): string {
   const lines = members.map(([path, signature]) => `${path}\0${signature ?? ABSENT}`).toSorted();
   return createHash('sha256').update(lines.join('\n')).digest('hex').slice(0, 16);
 }
