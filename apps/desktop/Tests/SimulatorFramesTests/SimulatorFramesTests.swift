@@ -194,22 +194,13 @@ import Testing
 }
 
 @Suite struct RememberedRotationTests {
-  @Test @MainActor func aSimulatorWithNoScreenBootsUprightAgain() {
+  @Test func aTurnFromAnEarlierBootIsNotTheDevicesOrientation() {
     let udid = UUID().uuidString
-    SimulatorRotation.remember(3, udid: udid)
-    let view = SimulatorDisplayNSView(frame: .zero)
-    view.attach(udid: udid, screenID: 1)
-    #expect(SimulatorRotation.orientation(udid: udid) == nil)
-    #expect(screenOrientation(app: 1, device: SimulatorRotation.orientation(udid: udid)) == 1)
-    view.detach()
-  }
-
-  @Test @MainActor func detachingFromAShutDownSimulatorForgetsItsTurn() {
-    let udid = UUID().uuidString
-    let view = SimulatorDisplayNSView(frame: .zero)
-    view.attach(udid: udid, screenID: 1)
-    SimulatorRotation.remember(4, udid: udid)
-    view.detach()
-    #expect(SimulatorRotation.orientation(udid: udid) == nil)
+    let firstBoot = Date(timeIntervalSince1970: 1_000)
+    SimulatorRotation.remember(3, udid: udid, bootedAt: firstBoot)
+    #expect(SimulatorRotation.orientation(udid: udid, bootedAt: firstBoot) == 3)
+    let device = SimulatorRotation.orientation(udid: udid, bootedAt: Date(timeIntervalSince1970: 2_000))
+    #expect(device == nil)
+    #expect(screenOrientation(app: 1, device: device) == 1)
   }
 }

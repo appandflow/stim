@@ -265,7 +265,6 @@ public final class SimulatorDisplayNSView: NSView {
 
   func detach() {
     disconnect()
-    if let udid, CoreSimulator.displays(udid: udid).isEmpty { SimulatorRotation.forget(udid: udid) }
     udid = nil
   }
 
@@ -295,9 +294,8 @@ public final class SimulatorDisplayNSView: NSView {
       watchInput()
       return
     }
-    let displays = CoreSimulator.displays(udid: udid)
-    guard let display = displays.first(where: { $0.screenProperties?.screenID == screenID }) else {
-      if displays.isEmpty { SimulatorRotation.forget(udid: udid) }
+    guard let display = CoreSimulator.displays(udid: udid).first(where: { $0.screenProperties?.screenID == screenID })
+    else {
       watchInput()
       retryTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: false) { [weak self] _ in
         self?.retryTimer = nil
@@ -325,7 +323,8 @@ public final class SimulatorDisplayNSView: NSView {
     guard let display, let udid else { return }
     let app = display.screenProperties?.uiOrientation ?? 1
     let panels = CoreSimulator.displays(udid: udid).filter { $0.screenProperties?.screenType == 0 }.count
-    let device = panels < 2 ? SimulatorRotation.orientation(udid: udid) : nil
+    let device =
+      panels < 2 ? SimulatorRotation.orientation(udid: udid, bootedAt: SimulatorRotation.bootedAt(udid: udid)) : nil
     showSurface(display.framebufferSurface, orientation: screenOrientation(app: app, device: device))
   }
 

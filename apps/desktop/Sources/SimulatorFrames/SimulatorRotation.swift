@@ -8,25 +8,46 @@ public enum SimulatorRotation {
   /// Posted after `rotate` turned a simulator; the object is its udid.
   public static let didRotate = Notification.Name("SimulatorRotation.didRotate")
   private static let lock = NSLock()
-  private static var sent: [String: UInt32] = [:]
+  private static var sent: [String: (orientation: UInt32, bootedAt: Date?)] = [:]
 
   /// The UIDeviceOrientation this process last turned the simulator to, or nil before it did.
   /// CoreSimulator reports only the foreground app's orientation, so this is the one record of the device's.
   public static func orientation(udid: String) -> UInt32? {
     lock.lock()
     defer { lock.unlock() }
-    return sent[udid]
+    return sent[udid]?.orientation
+  }
+
+  /// The orientation this process turned the simulator to during the boot that started at `bootedAt`; a simulator
+  /// boots upright, so a turn from an earlier boot is nil.
+  public static func orientation(udid: String, bootedAt: Date?) -> UInt32? {
+    lock.lock()
+    defer { lock.unlock() }
+    guard let turn = sent[udid], turn.bootedAt == bootedAt else { return nil }
+    return turn.orientation
+  }
+
+  /// When the simulator last booted, from CoreSimulator's SimDevice `lastBootedAt`.
+  public static func bootedAt(udid: String) -> Date? {
+    CoreSimulator.device(udid: udid).flatMap(bootedAt(device:))
+  }
+
+  private static func bootedAt(device: NSObject) -> Date? {
+    guard device.responds(to: NSSelectorFromString("lastBootedAt")) else { return nil }
+    return device.value(forKey: "lastBootedAt") as? Date
   }
 
   /// Drops the remembered orientation of a simulator that shut down: it boots upright.
   public static func forget(udid: String) {
-    remember(nil, udid: udid)
-  }
-
-  static func remember(_ orientation: UInt32?, udid: String) {
     lock.lock()
     defer { lock.unlock() }
-    sent[udid] = orientation
+    sent[udid] = nil
+  }
+
+  static func remember(_ orientation: UInt32, udid: String, bootedAt: Date?) {
+    lock.lock()
+    defer { lock.unlock() }
+    sent[udid] = (orientation, bootedAt)
   }
 
   public static func rotate(udid: String, clockwise: Bool) -> Bool {
@@ -34,11 +55,9 @@ public enum SimulatorRotation {
     let displays = CoreSimulator.displays(udid: udid).filter { $0.screenProperties?.screenType == 0 }
     let duo = displays.count > 1
     let display = duo ? displays.first { $0.framebufferSurface.map { !isBlack($0) } ?? false } : displays.first
-    lock.lock()
-    let remembered = sent[udid]
-    lock.unlock()
+    let booted = bootedAt(device: device)
     let current =
-      remembered
+      orientation(udid: udid, bootedAt: booted)
       ?? deviceOrientation(
         interface: display?.screenProperties?.uiOrientation ?? 1,
         innerPanel: duo && display?.screenProperties?.screenID == displays.last?.screenProperties?.screenID)
@@ -48,7 +67,7 @@ public enum SimulatorRotation {
     } else {
       guard send(orientation: next, to: device) else { return false }
     }
-    remember(next, udid: udid)
+    remember(next, udid: udid, bootedAt: booted)
     NotificationCenter.default.post(name: didRotate, object: udid)
     return true
   }
