@@ -264,7 +264,8 @@ keyboard lets Stim Desktop and stim-server type through the emulator's gRPC
 endpoint; the on-screen keyboard still opens.
 
 The validated keys cover CPU count, RAM, heap size, screen density, graphics,
-orientation, network conditions, and common hardware switches. On displayless Linux,
+orientation, network conditions, cold boot (`fastboot.forceColdBoot`), and common
+hardware switches. On displayless Linux,
 Stim also launches the emulator with `-no-window -noaudio -no-boot-anim`.
 With `androidEmulatorApp` resolved to `"stim-desktop"` on macOS, Stim launches it with
 `-no-window -gpu host`; see [Machine settings](#machine-settings).

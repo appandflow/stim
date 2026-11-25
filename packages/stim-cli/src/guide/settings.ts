@@ -285,10 +285,14 @@ KEYS STIM READS
                         Supported keys and values:
 ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).join('\n')}
                         Identity, architecture, host path, storage, image,
-                        kernel, camera, snapshot, boot-lifecycle, and unknown
-                        keys are protected. The emulator may normalize a valid
-                        value. These overrides apply only to a newly created
-                        AVD; existing and recovered AVDs are never rewritten.
+                        kernel, camera, other snapshot and boot-lifecycle, and
+                        unknown keys are protected. fastboot.forceColdBoot=yes
+                        cold boots the AVD on every start without saving a
+                        Quick Boot snapshot, useful for tools such as Maestro
+                        that fail on snapshot boots. The emulator may normalize
+                        a valid value. These overrides apply only to a newly
+                        created AVD; existing and recovered AVDs are never
+                        rewritten.
                         Unless these settings set hw.keyboard, every AVD Stim
                         creates gets hw.keyboard=yes, so the emulator takes
                         gRPC key events. The one rewrite: a parked AVD created
