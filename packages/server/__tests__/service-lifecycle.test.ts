@@ -138,7 +138,7 @@ vi.mock('node:child_process', async (importOriginal) => {
           '',
         );
       }
-      if (file === '/fake/tailscale' && args.join(' ') === 'serve --https=7449 off') {
+      if (file === '/fake/tailscale' && args.join() === 'serve,--https=7449,--set-path=/,off') {
         if (tailnet.offFails) return callback(new Error('failed'), '', 'serve config locked');
         tailnet.offs++;
         tailnet.route = { state: 'missing', port: 443 };
