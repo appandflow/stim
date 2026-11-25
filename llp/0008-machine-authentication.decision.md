@@ -44,7 +44,8 @@ The OS-owned socket establishes the local user. The separate bootstrap proof res
 A paired device with read access may rename its own record through
 `device.rename`, using the id from its own `hello.device.id`. It cannot rename
 another record or change its capabilities. The name follows the
-`stim-server devices rename` rule. Every attempt is written to the action log.
+`stim-server devices rename` rule. Each rename and each refusal is written to
+the action log.
 
 > Maintainer decision, Nov 13: allow a paired phone with view access to rename only its own display name on that machine. Validate the name and audit the change. Access permissions remain separate.
 

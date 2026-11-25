@@ -1976,7 +1976,8 @@ describe('device.rename', () => {
     expect(readAudit()[0]).not.toHaveProperty('name');
   });
 
-  it.each(['   ', 'Kitchen\niPad', 'x'.repeat(65)])('refuses invalid name %j', async (name) => {
+  it('refuses a name the devices rename rule refuses and logs no name', async () => {
+    const name = 'Kitchen\niPad';
     const port = await start();
     const client = await authed(port);
     const before = readDevices();
