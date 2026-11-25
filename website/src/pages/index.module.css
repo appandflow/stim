@@ -332,7 +332,6 @@
   align-items: center;
   gap: 6px;
   min-width: 44px;
-  opacity: 0.75;
 }
 
 .frameworkName {
@@ -346,6 +345,7 @@
   display: inline-block;
   height: 26px;
   background: var(--stim-muted);
+  opacity: 0.75;
   mask: var(--logo) center / contain no-repeat;
 }
 

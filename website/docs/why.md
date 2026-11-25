@@ -17,7 +17,7 @@ The agent can build, install, launch, inspect errors, and clean up through one
 small command surface.
 
 Stim supports Expo, React Native Community CLI and Re.Pack projects, native
-Xcode and Gradle apps, and web pages in an owned Chrome. Builds run on this
+Xcode and Gradle apps, Exact apps, and web pages in an owned Chrome. Builds run on this
 machine or on an approved [remote machine](./remote-machines.md). Apps can run
 on owned simulators and emulators, connected physical devices, or configured
 remote devices.
@@ -71,7 +71,7 @@ terms.
 
 Beyond its own resources, Stim watches CPU, memory and disk for the whole
 machine. It sets concurrency limits so builds, devices and test runs wait their
-turn instead of overloading it. When disk or memory runs low, Stim frees space.
+turn instead of overloading it. When disk or memory runs low, Stim reclaims it.
 With `maintenance.autoDiscover` on, or folders named in
 `maintenance.discoverRoots`, it also reaches checkouts no `stim` command ran in.
 [Automatic maintenance](./build-caches.md#automatic-maintenance) lists what it frees.
@@ -103,7 +103,8 @@ If those aren't slowing you down, it may add little.
 - **Your existing setup already handles this.** If your scripts or development
   platform provide isolated environments and reliable build reuse, Stim may
   duplicate what you have.
-- **You want cloud builds or app distribution.** Stim builds locally; it doesn't
-  replace hosted build infrastructure, signing workflows, or store submission.
+- **You want cloud builds or app distribution.** Stim builds on your own
+  machines; it doesn't replace hosted build services, signing workflows, or
+  store submission.
 
 You don't need to replace a workflow that already works.

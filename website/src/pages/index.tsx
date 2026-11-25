@@ -14,12 +14,13 @@ import styles from './index.module.css';
 const desktopDownloadUrl = 'https://github.com/appandflow/stim/releases/download/desktop-latest/Stim.dmg';
 
 const launchOutput = `$ stim ios
-OK: com.acme.shop on stim-shop (iPhone 17 26.5), Metro port 8083 (from cache)
-  device      stim-shop (iPhone 17 26.5)
+OK: com.acme.shop on stim-shop (iPhone 17 26.5) (4F2A..), Metro port 8083 (from cache, 58.8s)
+  device      stim-shop (iPhone 17 26.5) (4F2A91C6-7D3B-4E58-9A1F-2C6B8E0D5A73)
   app         com.acme.shop
   metro       running on port 8083
   cache       from cache
-  logs        ~/.stim/workspaces/shop--3f9c2a1b/logs`;
+  logs        ~/.stim/workspaces/shop--3f9c2a1b7d3b4e58/logs
+  agent-device stim agent-device open com.acme.shop --platform ios --udid 4F2A91C6-7D3B-4E58-9A1F-2C6B8E0D5A73`;
 
 type Pillar = {
   title: string;
@@ -34,18 +35,18 @@ type Pillar = {
 const pillars: Pillar[] = [
   {
     title: 'Worktree-based workflow',
-    body: 'One git worktree per task. Stim warms its dependencies and gives it its own Metro port and device, so parallel agents never collide.',
+    body: 'One git worktree per task. stim worktree warm copies in its dependencies, and Stim gives it its own Metro port and device, so parallel agents never collide.',
     doc: '/docs/worktrees',
-    docLabel: 'Read about worktrees',
+    docLabel: 'View doc: worktrees',
     art: 'parallel-agents',
     width: 324,
     height: 298,
   },
   {
     title: 'Builds you only pay for once',
-    body: 'React Native, Expo, Xcode and Gradle builds are cached and shared across worktrees, so a new one rarely compiles from scratch.',
+    body: 'React Native and Expo builds are cached and shared across worktrees, so a new one rarely compiles from scratch. Xcode and Gradle share their compiler caches too.',
     doc: '/docs/build-caches',
-    docLabel: 'Read about build caches',
+    docLabel: 'View doc: build caches',
     art: 'fast-builds',
     width: 448,
     height: 250,
@@ -54,16 +55,16 @@ const pillars: Pillar[] = [
     title: 'Every device, every machine',
     body: 'Simulators, emulators, connected phones, other Macs, EAS and CI. Send builds to another machine when this one is busy.',
     doc: '/docs/remote-machines',
-    docLabel: 'Read about remote machines',
+    docLabel: 'View doc: remote machines',
     art: 'react-native-expo',
     width: 386,
     height: 248,
   },
   {
     title: 'Watches the whole machine',
-    body: 'Concurrency limits make builds, devices and test runs wait their turn instead of overloading the machine. When disk or memory runs low, Stim frees space.',
+    body: 'Concurrency limits make builds, devices and test runs wait their turn instead of overloading the machine. When disk or memory runs low, Stim reclaims it.',
     doc: '/docs/build-caches#automatic-maintenance',
-    docLabel: 'Read about automatic maintenance',
+    docLabel: 'View doc: automatic maintenance',
     art: 'cleanup',
     width: 338,
     height: 433,
