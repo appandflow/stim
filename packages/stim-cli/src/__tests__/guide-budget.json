@@ -15,7 +15,7 @@
     "logs": 51500,
     "lifecycle": 20750,
     "cleanup": 29750,
-    "settings": 137435,
+    "settings": 137502,
     "share": 29250,
     "macos": 35750
   },
@@ -34,7 +34,7 @@
     "lifecycle hosted-ios": 23750,
     "lifecycle pool": 13750,
     "lifecycle builds": 38500,
-    "lifecycle concurrency": 15050,
+    "lifecycle concurrency": 15101,
     "lifecycle budget": 18150,
     "lifecycle options": 25100,
     "lifecycle devices": 11000,

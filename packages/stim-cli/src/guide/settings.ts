@@ -658,7 +658,8 @@ or via the environment, which overrides the file:
 Unset or 0 means the derived cap: concurrency.maxBuilds max(1, floor(CPU
 cores / 6)), concurrency.maxTests max(1, floor(CPU cores / 6)),
 concurrency.maxDevices max(2, floor((RAM - 4 GB) / 1.5 GB)). The
-per-platform caps stay unlimited at 0. See \`guide lifecycle concurrency\` for
+per-platform caps stay unlimited at 0, and concurrency.testWorkers at 0 keeps
+the per-run worker formula. See \`guide lifecycle concurrency\` for
 what each cap does.
 
 DISK PRESSURE THRESHOLDS ARE MACHINE-LEVEL AND ON BY DEFAULT
