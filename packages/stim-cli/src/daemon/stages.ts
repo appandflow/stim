@@ -375,7 +375,7 @@ async function readIdleWorkspaces(
   return linkedFirst(candidates);
 }
 
-function recordedOnly(config: Config): [string, ProjectRecord][] {
+export function recordedOnly(config: Config): [string, ProjectRecord][] {
   const registered = Object.keys(config.projects);
   const roots = new Set<string>();
   for (const { projectRoot } of listWorkspaceDirs()) {

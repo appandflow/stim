@@ -1017,10 +1017,9 @@ still exists, and holds no registered project. Such a root is
 judged idle by the full evidence, as a discovered checkout is, since most
 commands run in an unregistered root do not record their use. A registered app
 inside a worktree covers that worktree instead, so a recorded worktree root
-never takes the trees of an app in use. The stim-daemon takes such a root's
-`node_modules` and Pods but not yet its non-Cargo build outputs, which only
-`stim gc` removes, because its saved output marks are not authorized for
-recorded roots (#6214).
+never takes the trees of an app in use. Saved output marks of such a root are
+authorized like a registered root's, so the daemon removes its outputs as
+`stim gc` does.
 
 Reason: `stim worktree warm` at a repository root records use of the root but
 registers only the app it finds, and older Stim versions dropped the app's

@@ -1,6 +1,6 @@
 import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import { dirname, join, resolve } from 'node:path';
-import { realpathAsync } from '../commands/gc/paths.ts';
+import { canonicalPath, realpathAsync } from '../commands/gc/paths.ts';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import {
   GC_MARK_VERSION,
@@ -18,7 +18,7 @@ import { writeCacheFile } from '../cache-file.ts';
 import { answered, Unanswered } from '../workspace/bounded-read.ts';
 import type { Config } from '../workspace/config.ts';
 import { idleOutputs } from './idle.ts';
-import { dormantAfterMs, readCheckout, type CheckoutReading, type DeviceReading } from './stages.ts';
+import { dormantAfterMs, readCheckout, recordedOnly, type CheckoutReading, type DeviceReading } from './stages.ts';
 import {
   discoverCheckouts,
   discoveryDisabled,
@@ -230,7 +230,8 @@ async function authorizedMarks(
       else throw error;
     }
   }
-  const unregistered = marks.filter((mark) => !registered.has(mark.root));
+  const recorded = new Set(recordedOnly(config).map(([root]) => canonicalPath(root)));
+  const unregistered = marks.filter((mark) => !registered.has(mark.root) && !recorded.has(mark.root));
   if (!unregistered.length) return marks;
   const allowed = new Set(
     (
@@ -269,7 +270,7 @@ async function authorizedMarks(
   );
   const selected: GcMark[] = [];
   for (const mark of marks) {
-    if (registered.has(mark.root) || allowed.has(mark.root)) selected.push(mark);
+    if (registered.has(mark.root) || recorded.has(mark.root) || allowed.has(mark.root)) selected.push(mark);
     else if (cargoHolders.has(mark.root) || discoveredHolders.has(mark.root)) {
       const candidates = cargoHolders.has(mark.root)
         ? mark.candidates.filter(({ kind }) => kind === 'cargo-target')
