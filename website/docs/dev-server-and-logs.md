@@ -807,7 +807,9 @@ timeout or cancellation. Running services, stop and teardown hold no slot.
 Ctrl+C during a start exits 130 with `STIM_CANCELLED`, or with
 `STIM_CLAIM_UNAVAILABLE` when child cleanup cannot be verified.
 Readiness uses `ready` when declared, otherwise every declared port listening,
-otherwise the process alive one second after the start.
+otherwise the process alive one second after the start. For a server that
+listens before it answers, `"ready": "curl -sf http://127.0.0.1:{api}/health"`
+waits until its health URL answers without an HTTP error.
 
 Ports come from the [named port](#named-server-ports) pool. Each reaches the
 service as an environment variable (`ports` maps a label to one) or a

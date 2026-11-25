@@ -109,6 +109,10 @@ A web server that takes its port as an argument:
 
   "services": { "web": { "ports": ["web"], "start": "python3 -m http.server {web}" } }
 
+An API that listens before it answers, ready once its health URL does:
+
+  "api": { "ports": ["api"], "start": "node api.js {api}", "ready": "curl -sf http://127.0.0.1:{api}/health" }
+
 A mock API server, its port by environment:
 
   "mock": { "ports": { "mock": "PORT" }, "start": "node mock/server.js" }
