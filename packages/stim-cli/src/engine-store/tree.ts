@@ -13,14 +13,13 @@ const SELF_TEST_TIMEOUT_MS = 60_000;
 export const scratchName = (): string => `.tmp-${process.pid}-${Math.random().toString(36).slice(2, 10)}`;
 
 export function setWritable(path: string, writable: boolean): void {
-  const entries = readdirSync(path, { recursive: true, withFileTypes: true }).map((each) =>
-    join(each.parentPath, each.name),
-  );
-  for (const each of writable ? [path, ...entries] : [...entries.toReversed(), path]) {
-    const stat = lstatSync(each);
-    if (stat.isSymbolicLink()) continue;
-    chmodSync(each, writable ? stat.mode | 0o200 : stat.mode & ~0o222);
+  const stat = lstatSync(path);
+  if (stat.isSymbolicLink()) return;
+  if (writable) chmodSync(path, stat.mode | 0o200);
+  if (stat.isDirectory()) {
+    for (const entry of readdirSync(path)) setWritable(join(path, entry), writable);
   }
+  if (!writable) chmodSync(path, stat.mode & ~0o222);
 }
 
 /** Removes a tree that `seal` made read-only. */
