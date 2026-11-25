@@ -984,7 +984,9 @@ export async function collectWorktreeSweep({
   operation,
   onObservation,
   select,
+  within,
 }: {
+  within?: readonly string[];
   idle: boolean;
   olderThan: number | null;
   now: number;
@@ -1008,10 +1010,16 @@ export async function collectWorktreeSweep({
   operation?.signal.throwIfAborted();
   const read = { env: operation?.env, signal: operation?.signal, declareFor: operation };
   const outside: WorktreeCandidate[] = [];
+  const scope = within?.map(canonicalPath);
+  const inside = (path: string) => !scope || scope.some((root) => path === root || path.startsWith(root + sep));
   const discovered = await discoverCheckouts(loadConfig(), listedRoots(), operation, { nodeWorktrees: true });
   const discoveredPaths = new Set(discovered.map(({ path }) => path));
   const reduceOnlyPaths = new Set(discovered.filter((entry) => entry.reduceOnly).map(({ path }) => path));
-  const candidates = await candidateRootsAsync(operation, discovered);
+  const candidates = scope
+    ? [...new Set([...listedRoots(), ...discovered.map(({ path }) => path), ...scope].map(canonicalPath))]
+        .filter((root) => inside(root) && existsSync(root))
+        .toSorted()
+    : await candidateRootsAsync(operation, discovered);
   if (candidates.length)
     phase('worktrees', `checking ${plural(candidates.length, 'project')} for merged or idle worktrees`, operation);
   const matched: ReturnType<typeof matchWorktreeEntry>[] = [];

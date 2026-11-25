@@ -64,6 +64,10 @@ From a linked worktree's app subdirectory, removal reclaims that app's environme
 
 ## Remove finished worktrees in bulk
 
+Use [`stim worktree list`](./commands.md#worktree-list) to see sizes, age and
+cleanup verdicts without deleting anything; `--all` includes repositories from
+saved maintenance observations.
+
 <StimTabs
 code={`stim gc --dry-run
 stim gc
