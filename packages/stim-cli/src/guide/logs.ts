@@ -377,6 +377,9 @@ between its rung's startedAt and its end. Steps and what items counts:
   dormant_dependencies          the dormant dependency step, when it runs (at
                                 most hourly); the actions it took or kept
   build_end_measure             folders walked
+Rung 1 adds ms per part: marksMs, queueMs (disk queue yields), authorizeMs,
+measureMs, clearMs, refreshDiscoverMs, refreshReadMs; targets, and
+slowestTarget and slowestRoot with their ms. A part that never ran is absent.
 A step writes one record. A normal tick writes one (dormant_candidates), a high
 one up to 16, a critical one up to 22; the dormant step adds ~7/hour,
 build_end_measure one a pass. None alter a pass.

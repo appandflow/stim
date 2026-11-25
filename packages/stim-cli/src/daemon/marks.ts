@@ -299,13 +299,24 @@ async function authorizedMarks(
   return selected;
 }
 
-export async function refreshOutputMarks(config: Config, reading: DeviceReading): Promise<GcMark[]> {
-  const found = await discoverCheckouts(config, listedRoots(), reading.operation);
+export async function refreshOutputMarks(
+  config: Config,
+  reading: DeviceReading,
+  timing?: { refreshDiscoverMs?: number; refreshReadMs?: number; slowestRoot?: string; slowestRootMs?: number },
+): Promise<GcMark[]> {
+  const discoveryStarted = performance.now();
+  let found;
+  try {
+    found = await discoverCheckouts(config, listedRoots(), reading.operation);
+  } finally {
+    if (timing) timing.refreshDiscoverMs = Math.round(performance.now() - discoveryStarted);
+  }
   const roots = new Set([...Object.keys(config.projects), ...found.map(({ path }) => path)]);
   const write = markWriter(config, reading.operation?.signal);
   const refreshed: GcMark[] = [];
   for (const path of roots) {
     reading.operation?.signal.throwIfAborted();
+    const started = performance.now();
     try {
       const root = await answered(path, () => realpathAsync(path), 3_000, reading.operation?.signal);
       const previous = readGcMark(root);
@@ -320,6 +331,15 @@ export async function refreshOutputMarks(config: Config, reading: DeviceReading)
     } catch (error) {
       if (isClaimUnavailable(error) && 'reportCleanup' in error) throw error;
       reading.operation?.signal.throwIfAborted();
+    } finally {
+      if (timing) {
+        const elapsed = Math.round(performance.now() - started);
+        timing.refreshReadMs = (timing.refreshReadMs ?? 0) + elapsed;
+        if (timing.slowestRootMs === undefined || elapsed > timing.slowestRootMs) {
+          timing.slowestRoot = path;
+          timing.slowestRootMs = elapsed;
+        }
+      }
     }
   }
   return refreshed;
