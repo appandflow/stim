@@ -1,3 +1,4 @@
+import { linkedWorktreeFindings } from '../diagnostics/doctor-worktrees.ts';
 import { trashHealthFindings } from '../diagnostics/doctor-trash.ts';
 import { gcMarkHealthFindings } from '../diagnostics/doctor-gc-marks.ts';
 import { diskPacerFindings } from '../diagnostics/doctor-gc-pacer.ts';
@@ -656,6 +657,7 @@ async function assembleDoctorReport(
   const { settingsContext, machineSettings, settings, selected, doctors } = prepared;
   const env = operation?.env ?? process.env;
   const io = doctorIo(operation);
+  const worktrees = withoutUnhandledRejection(linkedWorktreeFindings(root, operation));
   const stim = await inspectVersions(version);
 
   const { findings, context } = await runDoctor(
@@ -792,6 +794,7 @@ async function assembleDoctorReport(
     ...daemonFindings(answered, { probed: true, now: decidedAt }),
     ...gcMarkHealthFindings(answered, decidedAt),
     ...diskPacerFindings(answered, decidedAt),
+    ...(await worktrees),
     ...(await trashHealthFindings(decidedAt, operation?.signal)),
   );
   const silent = unansweredFindings(answered, decidedAt);

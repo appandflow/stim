@@ -532,7 +532,7 @@ export function checkCompilationCache(podfileSource: string | null, xcodeMajor: 
     'note',
     'The Podfile enables compilation caching but leaves the CAS at its default path',
     'The default CAS lives at the DerivedData root, and DerivedData is per-workspace -- so nothing is actually shared between worktrees, which is the only reason to turn it on. Builds Stim drives are unaffected: they override COMPILATION_CACHE_CAS_PATH to a shared path on the xcodebuild command line, which wins over the project setting. This costs only the builds you run outside Stim.',
-    'Nothing to do for Stim. For builds outside it: set COMPILATION_CACHE_CAS_PATH to a fixed path outside DerivedData -- ~/.stim/compilation-cache is where Stim puts its own, so the two share entries instead of filling two caches.',
+    'Nothing to do for Stim. For builds outside it: set COMPILATION_CACHE_CAS_PATH to a fixed path outside DerivedData -- ~/.stim/compilation-cache.noindex is where Stim puts its own, so the two share entries instead of filling two caches.',
   );
 }
 

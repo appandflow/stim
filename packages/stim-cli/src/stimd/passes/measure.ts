@@ -19,6 +19,7 @@ import { planCacheEmptying } from '../../commands/gc/caches.ts';
 import { canonicalPath } from '../../commands/gc/paths.ts';
 import { collectWorkspaceOutputs } from '../../commands/gc/workspaces.ts';
 import { cacheUser } from '../../cache/cache-claim.ts';
+import { leftoverNoindexCaches } from '../../workspace/noindex-folders.ts';
 
 export function measureDisk(): MaintenancePressure['disk'] {
   return readVolumeSpace([configDir(), ...Object.keys(loadConfig()?.projects ?? {}), buildWorkerRoot(loadConfig())]);
@@ -158,6 +159,11 @@ export async function measureSizes(
       category: 'compilation-cache',
     },
   ];
+  for (const leftover of leftoverNoindexCaches())
+    known.push({
+      name: known.find((entry) => entry.category === leftover.category)?.name ?? leftover.dir,
+      ...leftover,
+    });
   const caches = discovered ?? (await discoverCachesAsync());
   for (const cache of caches) {
     if (cache.source !== 'registered' && !canonicalPath(cache.dir).startsWith(`${canonicalPath(configDir())}/`))

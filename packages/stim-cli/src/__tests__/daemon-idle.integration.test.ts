@@ -21,11 +21,13 @@ import { collectOwnedDeviceActivityAsync, type OwnedDeviceActivity } from '../co
 import * as stopCommand from '../commands/stop.ts';
 import { forgetCreatedDevice, recordCreatedDevice } from '../devices/created-devices.ts';
 import { recordDeferredShutdown } from '../devices/deferred-shutdown.ts';
+import { clearDeviceIdleShutdown } from '../devices/idle-shutdown.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
 import * as teardown from '../devices/teardown.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { runBootedParkedPass, shutDownDeferredIosSim } from '../daemon/booted-parked.ts';
 import { runIdlePass } from '../daemon/idle.ts';
+import type { DaemonLog } from '../daemon/step-timing.ts';
 import { getProject, loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState, recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
@@ -85,6 +87,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   volume.short = null;
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
@@ -130,11 +133,76 @@ function writeLog(root: string, file: string, record: Record<string, unknown>) {
   writeFileSync(join(workspaceLogsDir(root), file), `${JSON.stringify({ ts: Date.now(), ...record })}\n`);
 }
 
-async function pass(act = true, drive: (device: OwnedDeviceActivity) => OwnedDeviceActivity = (device) => device) {
+async function pass(
+  act = true,
+  drive: (device: OwnedDeviceActivity) => OwnedDeviceActivity = (device) => device,
+  log: DaemonLog = () => {},
+) {
   const config = loadConfig();
   const devices = (await collectOwnedDeviceActivityAsync(config, sims, Date.now())).map(drive);
-  return runIdlePass({ config, now: Date.now(), sims, simsError: null, devices, act, log: () => {} });
+  return runIdlePass({ config, now: Date.now(), sims, simsError: null, devices, act, log });
 }
+
+test('a device booted again after idle shutdown gets one activity window without repeated logs', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  const { root, udid } = bootedWorkspace('booted-again', 20 * MINUTE_MS);
+  const log = vi.fn<DaemonLog>();
+  expect(await pass()).toEqual([expect.objectContaining({ outcome: 'idle' })]);
+  expect(tornDown).toEqual([udid]);
+  expect(readDeviceIdleShutdowns(readWorkspaceState(root)).ios).toMatchObject({ idleMinutes: 15 });
+  expect(readDeviceIdleShutdowns(readWorkspaceState(root)).ios?.bootedAgainAt).toBeUndefined();
+
+  vi.setSystemTime(Date.now() + MINUTE_MS);
+  await pass(false);
+  expect(readDeviceIdleShutdowns(readWorkspaceState(root)).ios?.bootedAgainAt).toBeUndefined();
+  expect(tornDown).toHaveLength(1);
+  expect(await pass(true, undefined, log)).toEqual([
+    expect.objectContaining({
+      outcome: 'active',
+      lastActivity: expect.objectContaining({ basis: 'device booted again' }),
+    }),
+  ]);
+  const bootedAgainAt = readDeviceIdleShutdowns(readWorkspaceState(root)).ios?.bootedAgainAt;
+  expect(bootedAgainAt).toBe(new Date().toISOString());
+  expect(readFileSync(join(workspaceLogsDir(root), 'metro.ndjson'), 'utf8')).toContain('device_booted_after_idle');
+  expect(await pass(true, undefined, log)).toEqual([expect.objectContaining({ outcome: 'active' })]);
+  expect(tornDown).toHaveLength(1);
+  expect(log.mock.calls.filter((call) => call[1] === 'device_booted_after_idle')).toHaveLength(1);
+
+  vi.setSystemTime(Date.now() + 16 * MINUTE_MS);
+  expect(await pass()).toEqual([expect.objectContaining({ outcome: 'idle' })]);
+  expect(tornDown).toEqual([udid, udid]);
+  expect(readDeviceIdleShutdowns(readWorkspaceState(root)).ios?.bootedAgainAt).toBeUndefined();
+});
+
+test.each([
+  ['memory pressure', { pressure: { level: 'high' as const, reasons: ['memory'] } }],
+  ['disk pressure', { disk: {} }],
+])('under %s a device booted again after idle shutdown gets no activity window', async (_name, pressure) => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  const { root, udid } = bootedWorkspace('booted-again-pressure', 20 * MINUTE_MS);
+  expect(await pass()).toEqual([expect.objectContaining({ outcome: 'idle' })]);
+
+  vi.setSystemTime(Date.now() + MINUTE_MS);
+  expect(await pass()).toEqual([expect.objectContaining({ outcome: 'active' })]);
+  expect(readDeviceIdleShutdowns(readWorkspaceState(root)).ios?.bootedAgainAt).toBe(new Date().toISOString());
+
+  vi.setSystemTime(Date.now() + MINUTE_MS);
+  const config = loadConfig();
+  const devices = await collectOwnedDeviceActivityAsync(config, sims, Date.now());
+  const decisions = await runIdlePass({
+    config,
+    now: Date.now(),
+    sims,
+    simsError: null,
+    devices,
+    act: true,
+    log: () => {},
+    ...pressure,
+  });
+  expect(decisions).toEqual([expect.objectContaining({ path: root, outcome: 'idle' })]);
+  expect(tornDown).toEqual([udid, udid]);
+});
 
 test('a timed-out idle cleanup persists its partial size', async () => {
   const { root, derivedData } = bootedWorkspace('partial', 20 * MINUTE_MS);
@@ -271,6 +339,7 @@ test.skipIf(process.platform === 'win32')(
       for (const deadline = Date.now() + 5_000; alive() && Date.now() < deadline;) await new Promise(setImmediate);
     }
 
+    await clearDeviceIdleShutdown(root, 'ios');
     bootedWorkspace('exact', 20 * MINUTE_MS);
     await pass();
     expect(existsSync(join(root, 'target', 'debug'))).toBe(false);

@@ -78,6 +78,7 @@ client already decodes them.
 | `frames.live`, `action`, `settings.get`, `recording.set`                               | yes   | no. Desktop uses `desktop.settings.get` and its local CLI.            |
 | `machine.get`, `machine.details`, `machine.history`                                    | yes   | no. Desktop reads its own machine from the CLI and `desktop.reports`. |
 | `build.plan`                                                                           | yes   | no. Desktop uses `desktop.plan.get`.                                  |
+| `device.rename`                                                                        | yes   | no                                                                    |
 | `notifications.list`, `push.*`, `status.subscribe` fallback                            | yes   | no                                                                    |
 
 So a remote view in Desktop reuses its existing decoders for workspaces,

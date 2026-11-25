@@ -173,7 +173,7 @@ An invalid pin still refuses with `STIM_BAD_ARG`. Release builds skip Metro.
 
 After 15 minutes of inactivity by default, Stim can stop Metro, keep its port, shut down owned devices and clear regenerable build output. The next Debug run starts Metro again.
 
-Stim counts commands, builds, Metro bundle and HMR requests, device input and active leases. App logs and a view that only streams frames do not count. Running builds, live shares and pinned workspaces are protected. Custom Metro commands, Re.Pack and Expo SDKs before 54 do not report enough activity for idle stop.
+Stim counts commands, builds, Metro bundle and HMR requests, device input and active leases. A device shut down for being idle that another tool boots again counts as active for one idle window, except under memory or disk pressure. App logs and a view that only streams frames do not count. Running builds, live shares and pinned workspaces are protected. Custom Metro commands, Re.Pack and Expo SDKs before 54 do not report enough activity for idle stop.
 
 Set `idle.minutes` to `0` to disable idle stop. Under memory pressure, idle stop acts after two idle minutes. Under [disk pressure](./build-caches.md#disk-pressure) alone it waits for `idle.minutes`, and cleanup deletes the build outputs of workspaces with nothing running after two idle minutes.
 
@@ -659,7 +659,7 @@ AGENT_DEVICE_STATE_DIR="$STATE_DIR" agent-device snapshot --session <name>
 ```
 
 Sessions, logs, metro-sessions, allocations and daemon files live under
-`$STIM_HOME/workspaces/<name>/agent-device/`. The Apple runner build cache and
+`$STIM_HOME/workspaces/<name>/agent-device.noindex/`. The Apple runner build cache and
 device claims stay shared: leave `AGENT_DEVICE_IOS_RUNNER_DERIVED_PATH` and
 `AGENT_DEVICE_CLAIMS_DIR` unset. Each active workspace adds one daemon, which
 exits after five idle minutes with no open session. This is opt-in per command; forgetting the

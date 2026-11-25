@@ -147,9 +147,56 @@ export function buildCacheRoot(home?: string, env?: NodeJS.ProcessEnv): string {
   );
 }
 
+// @ref LLP 0028#churn-folders-end-in-noindex -- Spotlight skips a folder named *.noindex and all below it
+export const NOINDEX_SUFFIX = '.noindex';
+
+function pathEntryExists(file: string): boolean {
+  try {
+    return fs.lstatSync(file, { throwIfNoEntry: false }) !== undefined;
+  } catch {
+    return true;
+  }
+}
+
+/** The name `dir`, a `*.noindex` folder of the Stim home, had before the rename: `dir` without the suffix. */
+export function legacyNoindexDir(dir: string): string {
+  return dir.endsWith(NOINDEX_SUFFIX) ? dir.slice(0, -NOINDEX_SUFFIX.length) : dir;
+}
+
+/**
+ * The folder a Stim home keeps at the `*.noindex` path `dir`: `dir` once it exists, else the folder under its name
+ * before the rename while that is still there, else `dir`. The CLI renames the old folder once nothing holds it.
+ */
+export function noindexDir(dir: string): string {
+  const legacy = legacyNoindexDir(dir);
+  return pathEntryExists(dir) || !pathEntryExists(legacy) || isNoindexLink(legacy, dir) ? dir : legacy;
+}
+
+/** Whether `legacy` is the link the CLI leaves at a renamed folder's old name, pointing at its `*.noindex` path `dir`. */
+export function isNoindexLink(legacy: string, dir: string): boolean {
+  try {
+    return path.resolve(path.dirname(legacy), fs.readlinkSync(legacy)) === path.resolve(dir);
+  } catch {
+    return false;
+  }
+}
+
+function configuredMetroCacheRoot(): string | null {
+  return absoluteEnvPath('STIM_METRO_CACHE') || cachePathSetting('metroCache');
+}
+
+const homeMetroCacheRoot = () => path.join(configDir(), `metro-cache${NOINDEX_SUFFIX}`);
+
+/**
+ * The home's own Metro cache root at its `*.noindex` path, or null when `STIM_METRO_CACHE` or `caches.metroCache` names
+ * the root instead.
+ */
+export function defaultMetroCacheRoot(): string | null {
+  return configuredMetroCacheRoot() === null ? homeMetroCacheRoot() : null;
+}
+
 export function metroCacheRoot(name?: string | null): string {
-  const root =
-    absoluteEnvPath('STIM_METRO_CACHE') || cachePathSetting('metroCache') || path.join(configDir(), 'metro-cache');
+  const root = configuredMetroCacheRoot() ?? noindexDir(homeMetroCacheRoot());
   return name === undefined || name === null || name === '' ? root : path.join(root, cacheNameSegment(name));
 }
 

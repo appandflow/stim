@@ -1,6 +1,6 @@
 {
   "name": "stim",
-  "version": "2.0.0-rc.5",
+  "version": "2.0.0-rc.6",
   "description": "Stim: fast, isolated React Native environments for coding agents",
   "keywords": [
     "agent",
@@ -23,10 +23,9 @@
     "directory": "packages/stim-cli"
   },
   "bin": {
-    "stim": "bin/stim.cjs"
+    "stim": "bin/stim.mjs"
   },
   "files": [
-    "bin/stim.cjs",
     "bin/stim.mjs",
     "bin/route.mjs",
     "dist",

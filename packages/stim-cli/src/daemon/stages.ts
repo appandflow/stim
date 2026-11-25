@@ -781,8 +781,8 @@ export async function enterDormantStage(
         operation,
       );
       const logs = hasLogs(path);
-      if (logs) await archiveWorkspace(path, 'maintenance', readWorkspaceState(path), operation);
-      const archived = logs && !hasLogs(path);
+      const archived =
+        logs && (await archiveWorkspace(path, 'maintenance', readWorkspaceState(path), operation)) && !hasLogs(path);
       const record: DormantStageRecord = {
         at: new Date().toISOString(),
         dormantDays: dormantAfterMs(config) / DAY_MS,
@@ -791,7 +791,7 @@ export async function enterDormantStage(
       };
       await updateWorkspaceStateAsync(path, (state) => ({ ...state, [DORMANT_STAGE_KEY]: record }));
       const restore = dormantRestore(path, deleted);
-      const detail = `no activity for ${Math.floor(idleMs / MINUTE_MS)} minutes (${action.reason}): ${deleted.length ? `deleted ${deleted.join(', ')}` : 'no owned device to delete'}${unmeasured.length ? ` (freed size not counted for ${unmeasured.join(', ')}: its data directory could not be measured)` : ''}${failures ? `; ${failures} could not be deleted and stay recorded` : ''}; ${archived ? 'archived its logs' : 'kept its logs (archive.enabled is off or nothing to archive)'}; node_modules and Pods that are copy-on-write clones stay. ${deleted.length ? 'The next stim ios or stim android creates a device.' : `${restore} resumes it.`}`;
+      const detail = `no activity for ${Math.floor(idleMs / MINUTE_MS)} minutes (${action.reason}): ${deleted.length ? `deleted ${deleted.join(', ')}` : 'no owned device to delete'}${unmeasured.length ? ` (freed size not counted for ${unmeasured.join(', ')}: its data directory could not be measured)` : ''}${failures ? `; ${failures} could not be deleted and stay recorded` : ''}; ${archived ? 'archived its logs' : 'kept its logs (archiving is off, refused or had nothing to move)'}; node_modules and Pods that are copy-on-write clones stay. ${deleted.length ? 'The next stim ios or stim android creates a device.' : `${restore} resumes it.`}`;
       writeWorkspaceEvent(path, failures ? 'warn' : 'info', 'workspace_dormant', detail, {
         bytes,
         deletedDevices: deleted,

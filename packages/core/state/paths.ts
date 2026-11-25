@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { configDir, workspaceName, workspaceStateDir as workspaceDir } from '../index.ts';
+import { configDir, NOINDEX_SUFFIX, noindexDir, workspaceName, workspaceStateDir as workspaceDir } from '../index.ts';
 
 export function getConfigPath(): string {
   return join(configDir(), 'config.json');
@@ -15,8 +15,23 @@ export function workspaceMetadataFile(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'workspace.json');
 }
 
+const AGENT_DEVICE_DIR = `agent-device${NOINDEX_SUFFIX}`;
+
+/** The agent-device state directory of the workspace, under its old name `agent-device` until the CLI renames it. */
 export function workspaceAgentDeviceDir(projectRoot: string): string {
-  return join(workspaceDir(projectRoot), 'agent-device');
+  return noindexDir(join(workspaceDir(projectRoot), AGENT_DEVICE_DIR));
+}
+
+/**
+ * Both agent-device state directories a workspace directory can hold, `agent-device.noindex` first: an agent that kept
+ * the path Stim printed before the rename can still start a daemon under the old name.
+ */
+export function agentDeviceStateDirsIn(workspaceDirectory: string): [current: string, legacy: string] {
+  return [join(workspaceDirectory, AGENT_DEVICE_DIR), join(workspaceDirectory, 'agent-device')];
+}
+
+export function workspaceAgentDeviceStateDirs(projectRoot: string): [current: string, legacy: string] {
+  return agentDeviceStateDirsIn(workspaceDir(projectRoot));
 }
 
 export function workspaceLogsDir(projectRoot: string): string {
@@ -102,12 +117,17 @@ export function emulatorLogFile(projectRoot: string): string {
   return join(workspaceLogsDir(projectRoot), 'emulator.log');
 }
 
+/** The `*.noindex` paths of the shared compilation cache and the shared ccache, whichever name each folder has now. */
+export function sharedNoindexCaches(): [compilationCache: string, ccache: string] {
+  return [join(configDir(), `compilation-cache${NOINDEX_SUFFIX}`), join(configDir(), `ccache${NOINDEX_SUFFIX}`)];
+}
+
 export function sharedCompilationCache(): string {
-  return join(configDir(), 'compilation-cache');
+  return noindexDir(sharedNoindexCaches()[0]);
 }
 
 export function sharedCcache(): string {
-  return join(configDir(), 'ccache');
+  return noindexDir(sharedNoindexCaches()[1]);
 }
 
 export function sharedGradle(): string {

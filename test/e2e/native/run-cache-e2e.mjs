@@ -65,7 +65,7 @@ const WORK_DIR = args.dryRun ? '<dry-run>' : mkdtempSync(join(tmpdir(), `stim-ca
 const BUILD_CACHE_ROOT = args.dryRun ? '<dry-run>' : join(HOME_DIR, 'build-cache');
 const METRO_CACHE_ROOT = args.dryRun ? '<dry-run>' : join(HOME_DIR, 'metro-cache');
 const CACHE_TMP_DIR = args.dryRun ? '<dry-run>' : join(HOME_DIR, 'tmp');
-const CAS_DIR = join(HOME_DIR, 'compilation-cache');
+const CAS_DIR = join(HOME_DIR, 'compilation-cache.noindex');
 if (!args.dryRun) mkdirSync(CACHE_TMP_DIR, { recursive: true });
 const ENV = {
   ...process.env,

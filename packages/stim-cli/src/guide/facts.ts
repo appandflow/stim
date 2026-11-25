@@ -176,8 +176,24 @@ leased until <time>" for each one.`,
   sections: {
     payloads: {
       summary:
-        'every field of the start, ios, android, macos, web, reload and revive payloads, the error contract, the device rules',
-      body: () => `  stim start --json
+        'every field of the start, ios, android, macos, web, reload, revive and worktree list payloads, the error contract, the device rules',
+      body: () => `  worktree list --json is a separate payload:
+    { scope: "repository" | "machine", daemonMode: "on" | "report" | "off",
+      repositories: [{ repository, checkedAt, oldestCheckedAt,
+      worktrees: [{ path, branch, idleDays, realBytes, apparentBytes,
+        measuredAt, willRemove, reason, detail, checkedAt, old, large }],
+      summary: Summary }], total: Summary }
+    Summary = { count, realBytes, unmeasured, unchecked, removeBytes,
+      keptBytes, kept: [{ reason, count, realBytes }] }
+    Paths are absolute. Unknown values are null; reason is the kept gc code or removal-off.
+    Repository checkedAt/oldestCheckedAt are the newest/oldest observation times
+    (--all), or now (current check); null when never checked. --all uses saved
+    observations; unchecked worktrees have willRemove null.
+    Real size is whole-worktree private bytes (APFS or Linux link counts),
+    unknown when unavailable; apparent size is allocated bytes. Neither includes
+    Stim workspace data outside the checkout.
+
+  stim start --json
 
   port            the Metro port RESERVED for this workspace
   supervisorPid   the pid of the dev server stimd runs, or NULL when a dev

@@ -11,6 +11,7 @@ import {
   tryAcquireClaim,
 } from '@stim-cli/core/ownership-claim';
 import {
+  agentDeviceStateDirsIn,
   archiveDir,
   archiveLock,
   archiveRoot,
@@ -55,6 +56,15 @@ const KIND_PATH: Record<Kind, string> = {
   recordings: 'recordings',
   agentActions: 'agent-device/sessions',
 };
+
+async function lstatOrNull(path: string): Promise<Awaited<ReturnType<typeof lstat>> | null> {
+  try {
+    return await lstat(path);
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return null;
+    throw error;
+  }
+}
 
 function archiveSettings(env: NodeJS.ProcessEnv = process.env) {
   const config = loadConfig();
@@ -312,9 +322,9 @@ export async function archiveWorkspace(
   removedBy: 'worktree-remove' | 'gc' | 'maintenance',
   state: WorkspaceState | null = readWorkspaceState(root),
   operation?: StimContext,
-): Promise<void> {
+): Promise<boolean> {
   operation?.signal.throwIfAborted();
-  await writeArchive(root, removedBy, state, operation);
+  const archived = await writeArchive(root, removedBy, state, operation);
   operation?.signal.throwIfAborted();
   try {
     await enforceArchiveRetention(undefined, operation);
@@ -327,6 +337,7 @@ export async function archiveWorkspace(
       operation,
     );
   }
+  return archived;
 }
 
 async function writeArchive(
@@ -334,29 +345,30 @@ async function writeArchive(
   removedBy: 'worktree-remove' | 'gc' | 'maintenance',
   state: WorkspaceState | null,
   operation?: StimContext,
-): Promise<void> {
+): Promise<boolean> {
   const env = operation?.env ?? process.env;
+  const moves: { from: string; to: string }[] = [];
   let staging: string | null = null;
   let claim: ReturnType<typeof tryAcquireClaim>['acquired'];
   try {
     const dir = workspaceDir(root);
-    if (!existsSync(dir) || (await lstat(dir)).isSymbolicLink()) return;
+    if (!existsSync(dir) || (await lstat(dir)).isSymbolicLink()) return false;
     if (existsSync(root)) root = realpathSync(root);
     try {
       await sweepArchiveStaging(true, 5000, operation?.signal);
     } catch {
       operation?.signal.throwIfAborted();
     }
-    if (!enabled(root, env)) return;
+    if (!enabled(root, env)) return false;
     const limits = archiveSettings(env);
-    if (!limits.maxAgeDays || !limits.maxCount) return;
+    if (!limits.maxAgeDays || !limits.maxCount) return false;
     const logs = join(dir, 'logs');
     if (
       !existsSync(join(dir, 'state.json')) &&
       !Object.values(readBuildHistory(state)).some((entries) => entries?.length) &&
       (!existsSync(logs) || (await readdir(logs)).length === 0)
     )
-      return;
+      return false;
     const worktree = await gitFacts(root, operation);
     operation?.signal.throwIfAborted();
     await mkdir(archiveRoot(), { recursive: true, mode: 0o700 });
@@ -377,6 +389,7 @@ async function writeArchive(
         const moveHistory = async (from: string, to: string) => {
           if (!movedHistory) operation?.signal.throwIfAborted();
           await rename(from, to);
+          moves.push({ from, to });
           movedHistory = true;
         };
         await mkdir(staging!, { mode: 0o700 });
@@ -392,13 +405,24 @@ async function writeArchive(
           const data = readJsonObject(join(dir, name));
           if (data) await writeFile(join(staging!, name), `${JSON.stringify(stripPids(data))}\n`, { mode: 0o600 });
         }
+        const parts: { part: string; to: string }[] = [];
         const move = async (kind: Kind) => {
-          const from = join(dir, KIND_PATH[kind]);
-          if (!limits[`${kind}.maxAgeDays`] || !existsSync(from)) return;
+          if (!limits[`${kind}.maxAgeDays`]) return;
+          const stateDirs = kind === 'agentActions' ? agentDeviceStateDirsIn(dir) : [];
+          for (const stateDir of stateDirs)
+            if ((await lstatOrNull(stateDir))?.isSymbolicLink()) throw new Error(`refusing symlink ${stateDir}`);
+          const sources = stateDirs.length
+            ? stateDirs.map((stateDir) => join(stateDir, 'sessions'))
+            : [join(dir, KIND_PATH[kind])];
           const to = join(staging!, KIND_PATH[kind]);
-          await mkdir(join(to, '..'), { recursive: true, mode: 0o700 });
-          await moveHistory(from, to);
-          await secureTree(to);
+          for (const [index, from] of sources.entries()) {
+            if (!(await lstatOrNull(from))) continue;
+            await mkdir(join(to, '..'), { recursive: true, mode: 0o700 });
+            const part = `${to}.part-${index}`;
+            await moveHistory(from, part);
+            await secureTree(part);
+            parts.push({ part, to });
+          }
         };
         await move('logs');
         await move('agentActions');
@@ -428,6 +452,18 @@ async function writeArchive(
               }
             }
           }
+        }
+        for (const { part, to } of parts) {
+          if (!existsSync(to)) {
+            await moveHistory(part, to);
+            continue;
+          }
+          for (const name of await readdir(part)) {
+            let target = name;
+            for (let n = 2; existsSync(join(to, target)); n++) target = `${name}-${n}`;
+            await moveHistory(join(part, name), join(to, target));
+          }
+          await rmdir(part);
         }
         const index = readJsonObject(join(staging!, 'log-error-index.json'));
         const indexed = Object.values(
@@ -476,9 +512,18 @@ async function writeArchive(
     releaseClaim(claim);
     claim = undefined;
     staging = null;
+    return true;
   } catch (error) {
     if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
       throw error;
+    for (const { from, to } of moves.toReversed()) {
+      try {
+        if ((await lstatOrNull(to)) && !(await lstatOrNull(from))) {
+          await mkdir(join(from, '..'), { recursive: true, mode: 0o700 });
+          await rename(to, from);
+        }
+      } catch {}
+    }
     if (staging) {
       try {
         await rm(staging, { recursive: true, force: true });
@@ -486,6 +531,7 @@ async function writeArchive(
     }
     operation?.signal.throwIfAborted();
     archiveWarning(`could not archive: ${String((error as Error)?.message ?? error).split('\n')[0]}`, operation);
+    return false;
   } finally {
     releaseClaim(claim);
   }

@@ -32,6 +32,7 @@ import {
 } from '@stim-cli/core/state';
 import type { PresencePublishParams } from '@stim-cli/core/protocol';
 import { phaseLine, refuseNoProject } from '../command-output.ts';
+import { migrateWorkspaceAgentDeviceDir } from '../workspace/noindex-folders.ts';
 import { runProcessOperation } from '../cli-operation.ts';
 import { hostedAgentSessionName } from '../hosted-names.ts';
 import { resolveOwnedAvdSerialAsync } from '../devices/android.ts';
@@ -725,6 +726,7 @@ async function execute(
   root: string | null,
 ): Promise<void> {
   const local = root !== null && run?.plan.device.kind !== 'hosted';
+  if (local) migrateWorkspaceAgentDeviceDir(root);
   const env = { ...process.env, ...(local ? { AGENT_DEVICE_STATE_DIR: workspaceAgentDeviceDir(root) } : {}) };
   const sessionsDir = root ? join(workspaceAgentDeviceDir(root), 'sessions') : null;
   const command = run?.plan.command ?? null;
