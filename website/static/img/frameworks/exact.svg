@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 161.803 100" role="img" aria-labelledby="title description">
+  <title id="title">Exact mark</title>
+  <desc id="description">A golden rectangle partitioned into a square and a reciprocal golden rectangle.</desc>
+  <g
+    fill="none"
+    stroke="#737373"
+    stroke-width="7"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  >
+    <rect x="3.5" y="3.5" width="154.803" height="93" rx="8" />
+    <path d="M100 4v92" />
+  </g>
+</svg>

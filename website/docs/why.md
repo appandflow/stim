@@ -1,7 +1,7 @@
 ---
 title: 'Why Stim'
 sidebar_position: 1
-description: 'Fast, isolated React Native environments for coding agents'
+description: 'Run React Native, Expo and native apps for coding agents, in parallel, on every device and machine you have'
 ---
 
 :::note[Command examples]
@@ -11,14 +11,16 @@ Commands use `stim`. If it is not installed globally, replace `stim` with
 
 :::
 
-Stim gives each coding agent a complete React Native environment. Each project
-or git worktree gets a reserved Metro port and an owned simulator or emulator.
+Stim is where coding agents build and run your app. Each project or git
+worktree gets a reserved Metro port and an owned simulator or emulator.
 The agent can build, install, launch, inspect errors, and clean up through one
 small command surface.
 
-Stim supports React Native Community CLI and Expo projects. Builds run on the
-local machine. Apps can run on owned simulators and emulators, connected
-physical devices, or configured remote devices.
+Stim supports Expo, React Native Community CLI and Re.Pack projects, native
+Xcode and Gradle apps, and web pages in an owned Chrome. Builds run on this
+machine or on an approved [remote machine](./remote-machines.md). Apps can run
+on owned simulators and emulators, connected physical devices, or configured
+remote devices.
 
 [Report an issue](https://github.com/appandflow/stim/issues) when a workflow
 does not behave as documented.
@@ -66,6 +68,13 @@ is leased for the run and never added to the owned-device registry.
 removes orphaned resources. This ownership model makes cleanup safe after an
 agent exits early. [Getting started](./getting-started.md#terms) defines these
 terms.
+
+Beyond its own resources, Stim watches CPU, memory and disk for the whole
+machine. It sets concurrency limits so builds, devices and test runs wait their
+turn instead of overloading it. When disk or memory runs low, Stim frees space.
+With `maintenance.autoDiscover` on, or folders named in
+`maintenance.discoverRoots`, it also reaches checkouts no `stim` command ran in.
+[Automatic maintenance](./build-caches.md#automatic-maintenance) lists what it frees.
 
 ## Why run locally
 

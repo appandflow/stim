@@ -37,7 +37,7 @@ stim ios        # or: stim android`}
 
 3. Select the workspace in the sidebar, then click its device. Choose **Control** to use the device and press **Esc** to release it.
 
-![Stim Desktop showing a workspace with two iPhone simulators, the build stage, and the current branch and pull request](/img/desktop/workspace.webp)
+![Stim Desktop showing a workspace with two live iPhone simulators running a music player and a fitness app](/img/desktop/workspace.webp)
 
 For a separate workspace per task, see [Worktrees](./worktrees.md).
 

@@ -10,7 +10,7 @@ const themeCommon = require.resolve('@docusaurus/theme-common', { paths: [preset
 
 const config: Config = {
   title: 'Stim',
-  tagline: 'Fast, isolated React Native environments for coding agents',
+  tagline: 'Orchestrate fast builds and devices for coding agents',
   favicon: 'img/branding/logo.svg',
 
   future: {
