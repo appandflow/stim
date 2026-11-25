@@ -263,6 +263,33 @@ test('removal keeps history and closed footage while deleting open footage and o
   expect(err).not.toHaveBeenCalled();
 });
 
+test.each([
+  ['agent-device.noindex', { 'agent-device.noindex': ['a'] }, { a: 'agent-device.noindex' }],
+  [
+    'both names, a session name in both kept apart',
+    { 'agent-device.noindex': ['a', 'b'], 'agent-device': ['a', 'c'] },
+    { a: 'agent-device.noindex', b: 'agent-device.noindex', c: 'agent-device', 'a-2': 'agent-device' },
+  ],
+] as const)('removal archives the agent-action sessions under %s', async (_name, live_, archived_) => {
+  const dir = live();
+  for (const [stateDir, sessions] of Object.entries(live_))
+    for (const session of sessions) {
+      mkdirSync(join(dir, stateDir, 'sessions', session), { recursive: true });
+      writeFileSync(join(dir, stateDir, 'sessions', session, 'events.ndjson'), stateDir);
+    }
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+
+  await reclaimProject(root, { archive: { removedBy: 'worktree-remove' } });
+
+  const [archive] = readArchives();
+  expect(archive).toBeDefined();
+  const sessions = join(archiveDir(archive?.id ?? ''), 'agent-device', 'sessions');
+  expect(readdirSync(sessions).toSorted()).toEqual(Object.keys(archived_).toSorted());
+  for (const [session, from] of Object.entries(archived_))
+    expect(readFileSync(join(sessions, session, 'events.ndjson'), 'utf8')).toBe(from);
+  expect(existsSync(dir)).toBe(false);
+});
+
 function cachePullRequest(worktree: string, state: 'merged' | 'open') {
   const file = pullRequestCacheFile(worktree);
   mkdirSync(join(file, '..'), { recursive: true });
@@ -310,7 +337,7 @@ test('a deleted root whose repo layer could disable archives fails closed', asyn
 
 test('a mid-archive failure removes staging and does not block removal or print stdout', async () => {
   const dir = live();
-  const sessions = join(dir, 'agent-device', 'sessions');
+  const sessions = join(dir, 'agent-device.noindex', 'sessions');
   mkdirSync(join(sessions, '..'), { recursive: true });
   symlinkSync(root, sessions, process.platform === 'win32' ? 'junction' : 'dir');
   const out = vi.spyOn(console, 'log').mockImplementation(() => {});

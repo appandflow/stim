@@ -11,6 +11,7 @@ import {
   tryAcquireClaim,
 } from '@stim-cli/core/ownership-claim';
 import {
+  agentDeviceStateDirsIn,
   archiveDir,
   archiveLock,
   archiveRoot,
@@ -393,11 +394,22 @@ async function writeArchive(
           if (data) await writeFile(join(staging!, name), `${JSON.stringify(stripPids(data))}\n`, { mode: 0o600 });
         }
         const move = async (kind: Kind) => {
-          const from = join(dir, KIND_PATH[kind]);
-          if (!limits[`${kind}.maxAgeDays`] || !existsSync(from)) return;
+          const sources = (
+            kind === 'agentActions'
+              ? agentDeviceStateDirsIn(dir).map((stateDir) => join(stateDir, 'sessions'))
+              : [join(dir, KIND_PATH[kind])]
+          ).filter((from) => existsSync(from));
+          const [first, ...rest] = sources;
+          if (!limits[`${kind}.maxAgeDays`] || first === undefined) return;
           const to = join(staging!, KIND_PATH[kind]);
           await mkdir(join(to, '..'), { recursive: true, mode: 0o700 });
-          await moveHistory(from, to);
+          await moveHistory(first, to);
+          for (const from of rest)
+            for (const name of await readdir(from)) {
+              let target = name;
+              for (let n = 2; existsSync(join(to, target)); n++) target = `${name}-${n}`;
+              await moveHistory(join(from, name), join(to, target));
+            }
           await secureTree(to);
         };
         await move('logs');
