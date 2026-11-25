@@ -143,6 +143,28 @@ export function replacementAdvice(key: string, old: unknown): (RemovedSetting & 
 }
 // compat end
 
+/** The setting keys a 1.x Stim read that 2.0 does not; other unknown keys are left to stim settings and doctor. */
+export const RETIRED_SETTING_KEYS: ReadonlySet<string> = new Set([
+  ...[...REMOVED_SETTINGS].flatMap(([key, entry]) => (entry.kept ? [] : [key])),
+  'remote.buildMode',
+  'daemon.enabled',
+  'caches.injectMetroStore',
+  'devices.reclaimIdleMinutes',
+  'share.webrtc',
+  'budget.maxCommittedMemoryGb',
+  'budget.maxLiveWorkspaces',
+  'maintenance.pressureCheckMinutes',
+  'maintenance.sizeCheckMinutes',
+  'maintenance.maxLoadPerCore',
+  'maintenance.memoryPressureLevel',
+  'maintenance.memoryWarningMinutes',
+  'maintenance.minAvailableMemoryGb',
+  'maintenance.capTargetPercent',
+  'maintenance.idleCheckMinutes',
+  'maintenance.urgentFreeDiskGb',
+  'maintenance.pressureProtectMinutes',
+]);
+
 /** The migration steps for an agent working in a home or project an earlier Stim used. */
 export const UPGRADE_GUIDE_URL = 'https://stim.appandflow.com/docs/migrate-to-2#for-agents';
 
